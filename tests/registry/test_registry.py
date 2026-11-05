@@ -18,7 +18,6 @@ UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 _V2_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v2/wbtc_weth/17600000.json")
-_PY_BOT = _Engine()
 
 
 def _offline_bot() -> Bot:
@@ -32,9 +31,9 @@ def _recorded_pool() -> UniswapV2Pool:
     return load_pool(_V2_WBTC_WETH_GOLDEN, chain_id=1, block=17_600_000)
 
 
-def _weth_token() -> Erc20Token:
+def _weth_token(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         WETH_ADDRESS,
         name="Wrapped Ether",
         symbol="WETH",
@@ -74,9 +73,9 @@ def test_deleting_pool():
     assert bot.pools.get(pool_address=pool.address, chain_id=bot.chain_id) is None
 
 
-def test_adding_token():
+def test_adding_token(py_bot):
     bot = _offline_bot()
-    token = _weth_token()
+    token = _weth_token(py_bot)
     bot.tokens.add(token_address=token.address, chain_id=bot.chain_id, token=token)
     assert bot.tokens.get(token_address=token.address, chain_id=bot.chain_id) is token
 
@@ -84,9 +83,9 @@ def test_adding_token():
         bot.tokens.add(token_address=token.address, chain_id=bot.chain_id, token=token)
 
 
-def test_deleting_token():
+def test_deleting_token(py_bot):
     bot = _offline_bot()
-    token = _weth_token()
+    token = _weth_token(py_bot)
     bot.tokens.add(token_address=token.address, chain_id=bot.chain_id, token=token)
     assert bot.tokens.get(token_address=token.address, chain_id=bot.chain_id) is token
     bot.tokens.remove(token_address=token.address, chain_id=bot.chain_id)

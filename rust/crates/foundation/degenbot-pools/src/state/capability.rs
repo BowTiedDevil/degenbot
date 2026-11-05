@@ -159,21 +159,6 @@ impl Family {
                 | Self::CurveStableswap
         )
     }
-
-    /// Stable label for diagnostics and test messages.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::V2 => "v2",
-            Self::V3 => "v3",
-            Self::V4 => "v4",
-            Self::SolidlyStable => "solidly-stable",
-            Self::BalancerWeighted => "balancer-weighted",
-            Self::BalancerStable => "balancer-stable",
-            Self::CurveStableswap => "curve-stableswap",
-            Self::LfjBinned => "lfj-binned",
-        }
-    }
 }
 
 /// A family's declared verdict on the four ADR-059 D2 pipeline tiers.
@@ -344,9 +329,8 @@ mod tests {
                 assert_eq!(
                     rows.len(),
                     1,
-                    "{} x {} must have exactly one declaration row",
-                    arm.label(),
-                    family.label()
+                    "{:?} x {family:?} must have exactly one declaration row",
+                    arm.label()
                 );
                 assert_eq!(capabilities(arm, family), Some(rows[0].2));
             }
@@ -358,10 +342,8 @@ mod tests {
         for family in Family::ALL {
             let caps = capabilities(Arm::Backrun, family).expect("table row");
             assert_eq!(
-                caps.discover,
-                caps.compose,
-                "backrun {}: discovery and composition move together",
-                family.label()
+                caps.discover, caps.compose,
+                "backrun {family:?}: discovery and composition move together"
             );
         }
     }
@@ -373,8 +355,7 @@ mod tests {
             assert_eq!(
                 caps.compose,
                 ENCODER_FAMILIES.contains(&family),
-                "settlement {}: compose must track the executor's HopInfo arm set",
-                family.label()
+                "settlement {family:?}: compose must track the executor's HopInfo arm set"
             );
         }
     }

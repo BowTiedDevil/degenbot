@@ -631,39 +631,39 @@ fn parse_frame_line(line: &str, now: u64) -> Option<BackrunFeedEvent> {
     let obj = serde_json::from_str::<serde_json::Value>(line)
         .ok()?
         .take_object()?;
-    let sget = |k: &str| {
+    let string_field = |k: &str| {
         obj.get(k)
             .and_then(serde_json::Value::as_str)
             .filter(|s| !s.is_empty())
     };
-    let uget = |k: &str| {
+    let uint_field = |k: &str| {
         obj.get(k)
             .and_then(quantity)
             .and_then(|n| u64::try_from(n).ok())
     };
-    let addr = |k: &str| sget(k).and_then(|s| s.parse().ok());
+    let address_field = |k: &str| string_field(k).and_then(|s| s.parse().ok());
     Some(BackrunFeedEvent {
-        chain_id: uget("chain_id").unwrap_or(1),
-        from: addr("from")?,
-        to: addr("to"),
+        chain_id: uint_field("chain_id").unwrap_or(1),
+        from: address_field("from")?,
+        to: address_field("to"),
         value: obj.get("value").and_then(quantity).unwrap_or_default(),
-        data: sget("data")
+        data: string_field("data")
             .and_then(|s| alloy::hex::decode(s).ok())
             .map(Bytes::from)
             .unwrap_or_default(),
-        gas: uget("gas").unwrap_or(120_000),
-        max_fee_per_gas: u128::from(uget("max_fee_per_gas").unwrap_or(0)),
-        max_priority_fee_per_gas: u128::from(uget("max_priority_fee_per_gas").unwrap_or(0)),
-        nonce: uget("nonce").unwrap_or(0),
+        gas: uint_field("gas").unwrap_or(120_000),
+        max_fee_per_gas: u128::from(uint_field("max_fee_per_gas").unwrap_or(0)),
+        max_priority_fee_per_gas: u128::from(uint_field("max_priority_fee_per_gas").unwrap_or(0)),
+        nonce: uint_field("nonce").unwrap_or(0),
         // `trim_start_matches` strips ALL leading repeats — the captured
         // feed carries `hash` as `0x0x…` (kept verbatim in the fixture; the
         // loader is the tolerant side of the contract).
-        hash: sget("hash")
+        hash: string_field("hash")
             .and_then(|s| s.trim_start_matches("0x").parse().ok())
             .unwrap_or_default(),
         access_list: serde_json::Value::Null,
-        tx_type: u8::try_from(uget("tx_type").unwrap_or(2)).unwrap_or(2),
-        received_unix_ms: uget("received_unix_ms").unwrap_or(now),
+        tx_type: u8::try_from(uint_field("tx_type").unwrap_or(2)).unwrap_or(2),
+        received_unix_ms: uint_field("received_unix_ms").unwrap_or(now),
         raw_signed_tx: None,
     })
 }

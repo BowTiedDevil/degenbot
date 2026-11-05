@@ -16,11 +16,9 @@ from tests.fakes.tokens import FakeToken
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 
-_PY_BOT = Bot()
 
 # ── Addresses used across tests ──
 
@@ -43,10 +41,10 @@ class TestFakeTokenErc20Interoperability:
         b = FakeToken(WETH_ADDRESS, symbol="WETH", decimals=18)
         assert a != b
 
-    def test_erc20_token_equals_fake_token_by_address(self) -> None:
+    def test_erc20_token_equals_fake_token_by_address(self, py_bot) -> None:
         fake = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
         erc20 = make_erc20(
-            _PY_BOT,
+            py_bot,
             USDC_ADDRESS,
             name="USD Coin",
             symbol="USDC",
@@ -61,10 +59,10 @@ class TestFakeTokenErc20Interoperability:
         b = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
         assert hash(a) == hash(b)
 
-    def test_hash_compatibility_erc20_token(self) -> None:
+    def test_hash_compatibility_erc20_token(self, py_bot) -> None:
         fake = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
         erc20 = make_erc20(
-            _PY_BOT,
+            py_bot,
             USDC_ADDRESS,
             name="USD Coin",
             symbol="USDC",
@@ -73,11 +71,11 @@ class TestFakeTokenErc20Interoperability:
         )
         assert hash(fake) == hash(erc20)
 
-    def test_dict_key_interchangeability(self) -> None:
+    def test_dict_key_interchangeability(self, py_bot) -> None:
         """FakeToken and Erc20Token with the same address should map to the same dict key."""
         fake = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
         erc20 = make_erc20(
-            _PY_BOT,
+            py_bot,
             USDC_ADDRESS,
             name="USD Coin",
             symbol="USDC",
@@ -90,10 +88,10 @@ class TestFakeTokenErc20Interoperability:
         assert len(d) == 1
         assert d[fake] == "via_erc20"
 
-    def test_set_membership(self) -> None:
+    def test_set_membership(self, py_bot) -> None:
         fake = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
         erc20 = make_erc20(
-            _PY_BOT,
+            py_bot,
             USDC_ADDRESS,
             name="USD Coin",
             symbol="USDC",

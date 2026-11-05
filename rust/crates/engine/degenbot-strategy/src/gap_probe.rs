@@ -63,12 +63,12 @@ impl GapProbe {
         let _ = claimed;
         let t = Instant::now();
         let latest = self.nonce_of(sender, "latest").await;
-        let latest_ms = ms(&t);
+        let latest_ms = elapsed_ms(&t);
         let latest_nonce = latest.unwrap_or(u64::MAX);
 
         let t = Instant::now();
         let pending = self.nonce_of(sender, "pending").await;
-        let pending_ms = ms(&t);
+        let pending_ms = elapsed_ms(&t);
         let pending_nonce = pending.unwrap_or(u64::MAX);
 
         let t = Instant::now();
@@ -81,7 +81,7 @@ impl GapProbe {
                 serde_json::json!([sender, nonce_hex]),
             )
             .await;
-        let gap_first_ms = ms(&t);
+        let gap_first_ms = elapsed_ms(&t);
         let gap_first_present = first.as_ref().is_ok_and(|v| !v.is_null());
 
         let t = Instant::now();
@@ -89,7 +89,7 @@ impl GapProbe {
             .provider
             .make_request("txpool_contentFrom", serde_json::json!([sender]))
             .await;
-        let pool_entry_ms = ms(&t);
+        let pool_entry_ms = elapsed_ms(&t);
         let pool_entry_present = entry.as_ref().is_ok_and(|v| {
             v.as_object().is_some_and(|m| {
                 m.get("pending")
@@ -151,6 +151,6 @@ pub fn quantity_u64(value: &serde_json::Value) -> Option<u64> {
     u64::from_str_radix(value.as_str()?.trim_start_matches("0x"), 16).ok()
 }
 
-fn ms(t: &Instant) -> u64 {
-    u64::try_from(t.elapsed().as_millis()).unwrap_or(u64::MAX)
+fn elapsed_ms(start: &Instant) -> u64 {
+    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }

@@ -15,6 +15,8 @@
 //! 6. no worker ever holds a GIL across role work (the fleet carries no
 //!    Python into the graph; units run as `'static + Send` Rust closures);
 //! 7. per-role busy/idle gauges exist across `ALL_ROLES`.
+//!
+//! Design: docs/architecture/worker-fleet.md
 
 #![expect(clippy::expect_used)]
 
@@ -160,7 +162,7 @@ fn every_v1_active_role_walks_its_legal_transition_path() {
 // (the deleted first_idle_home_slot budget re-derivation: every
 // scripted-seat read now goes through the boot-frozen SlotLayout.)
 
-/// §3.3's illegal table, asserted on the pure FSM for EVERY role in
+/// design doc §3.3's illegal table, asserted on the pure FSM for EVERY role in
 /// `ALL_ROLES` (declared roles included — the table is role-complete).
 #[test]
 fn every_illegal_transition_is_rejected_for_every_role() {
@@ -185,7 +187,7 @@ fn every_illegal_transition_is_rejected_for_every_role() {
                 Transition::DrainComplete,
                 Transition::ReleasePin,
             ] {
-                // Sweep the FULL cross product; anything not in §3.3's rows
+                // Sweep the FULL cross product; anything not in design doc §3.3's rows
                 // must reject. The legal pairs (superset below) are excluded
                 // by matching the exact from/t combinations the table allows.
                 if legal_in_table(from, t) {
@@ -211,7 +213,7 @@ fn every_illegal_transition_is_rejected_for_every_role() {
     }
 }
 
-/// The legal (from, transition) pairs of §3.3, table-encoded exactly once —
+/// The legal (from, transition) pairs of design doc §3.3, table-encoded exactly once —
 /// the harness's independent restatement of the table.
 fn legal_in_table(from: SlotState, t: Transition) -> bool {
     matches!(
@@ -235,7 +237,7 @@ fn legal_in_table(from: SlotState, t: Transition) -> bool {
     )
 }
 
-/// §3.3's named illegal rows, asserted by exact class.
+/// design doc §3.3's named illegal rows, asserted by exact class.
 #[test]
 fn the_named_illegal_rows_reject_by_class() {
     const ADMITS: TransitionContext = TransitionContext {
@@ -433,7 +435,7 @@ fn role_work_never_crosses_python_the_fleet_graph_is_pyo3_free() {
     let text = std::fs::read_to_string(manifest).expect("crate manifest readable");
     assert!(
         !text.contains("pyo3"),
-        "degenbot-workers must not pull pyo3 (the FFI boundary rule, docs/architecture/worker-fleet.md §8: FFI crossed only for runtime/startup concerns)"
+        "degenbot-workers must not pull pyo3 (the FFI boundary rule, docs/architecture/worker-fleet.md design doc §8: FFI crossed only for runtime/startup concerns)"
     );
     // Units dispatch as plain Rust closures: a real thread runs the unit
     // body to completion host-side without any interpreter round-trip.
@@ -804,7 +806,7 @@ mod pin_derive {
 /// LW-T2 (Seam B): the lane ctx's warm arena is minted at the GRANT seam —
 /// the FIRST cycle's ctx already carries the warm token; the identity
 /// survives cycles within a pin, and a T9 role switch yields a DIFFERENT
-/// token on re-claim (an arena never lives across a role switch, §3.4).
+/// token on re-claim (an arena never lives across a role switch, design doc §3.4).
 #[test]
 fn lane_ctx_arena_is_minted_at_grant_time_warm_across_cycles_and_fresh_after_t9() {
     let mut host = stub_host();

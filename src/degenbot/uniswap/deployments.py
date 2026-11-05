@@ -11,8 +11,11 @@ JSON — only the factory address is a literal here, and it doubles as the
 ``(chain_id, factory)`` lookup key. A factory address absent from the JSON raises
 ``KeyError`` at import (fail-loud) rather than shipping a stray constant.
 
-V4 ``pool_manager`` / ``state_view`` are singleton addresses with no factory path
-in the registry yet; they remain literals pending a V4 deployment-row epic.
+V4 ``pool_manager`` / ``state_view`` are singleton addresses, not CREATE2 factory
+deployments: one pool manager hosts many pool ids, so neither has a
+``(chain_id, factory)`` row in ``registry/deployments.json`` and both are
+literals here. The Rust manager identity is the ``(chain_id, manager)``-keyed
+view over the species manifest (``degenbot-uniswap``'s ``manager_deployments``).
 """
 
 from __future__ import annotations

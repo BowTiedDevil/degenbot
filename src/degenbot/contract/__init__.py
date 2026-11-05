@@ -152,8 +152,9 @@ class Contract:
         if args is None:
             args = []
 
-        # Handle block number - for now we only support int or None
-        # Full block tag support will be added in Phase 4
+        # Only an explicit block number crosses this seam: the provider ladder
+        # owns block tags (`types.rpc_types.BlockTag`), so anything else is
+        # refused loudly instead of being resolved to "latest" here.
         block_num: int | None = None
         if isinstance(block_number, int):
             block_num = block_number

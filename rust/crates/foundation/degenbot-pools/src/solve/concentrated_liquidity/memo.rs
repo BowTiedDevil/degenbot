@@ -215,8 +215,9 @@ impl WalkMemo {
             // number. Forward-only contract — hold the higher epoch's
             // state (the same early-return shape as the equal-epoch path)
             // instead of swapping the census backwards, which would leave
-            // the memo serving entries stamped from a future epoch. Full
-            // rollback semantics are a separate, deepening epic.
+            // the memo serving entries stamped from a future epoch. Rollback
+            // past a reorg is not modelled: the higher epoch's state is held
+            // until a block at or above it arrives.
             tracing::warn!(
                 held_epoch = st.epoch,
                 regressed_epoch = epoch,

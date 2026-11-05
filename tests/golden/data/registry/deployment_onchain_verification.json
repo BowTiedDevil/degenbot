@@ -1,13 +1,14 @@
 {
   "chains": {
-    "1": "https://ethereum-rpc.publicnode.com",
-    "42161": "https://arbitrum-one-rpc.publicnode.com",
-    "8453": "https://mainnet.base.org"
+    "1": "http://host.containers.internal:8545",
+    "42161": "https://lb.drpc.live",
+    "8453": "https://lb.drpc.live"
   },
-  "recorded_at": "2026-09-17T23:18:35+00:00",
+  "recorded_at": "2026-11-05T01:17:17+00:00",
   "rows": {
     "1:0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865": {
       "bytecode_present": true,
+      "contract_name": "PancakeV3Factory",
       "name": "PancakeSwap V3",
       "pool": {
         "computed_address": "0x1ac1A8FEaAEa1900C4166dEeed0C11cC10669D36",
@@ -42,6 +43,7 @@
     },
     "1:0x1097053fd2ea711dad45caccc45eff7548fcb362": {
       "bytecode_present": true,
+      "contract_name": "PancakeFactory",
       "name": "PancakeSwap V2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -61,6 +63,7 @@
     },
     "1:0x1f98431c8ad98523631ae4a59f267346ea31f984": {
       "bytecode_present": true,
+      "contract_name": "UniswapV3Factory",
       "name": "Uniswap V3",
       "pool": {
         "computed_address": "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
@@ -87,6 +90,7 @@
     },
     "1:0x5b42ec6d40f7b7965be5308c70e2603c0281c1e9": {
       "bytecode_present": true,
+      "contract_name": "ComposableStablePoolFactory",
       "name": "Balancer V2 ComposableStable Pool Factory - rev6",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -110,6 +114,7 @@
     },
     "1:0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f": {
       "bytecode_present": true,
+      "contract_name": "UniswapV2Factory",
       "name": "Uniswap V2",
       "pool": {
         "computed_address": "0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11",
@@ -137,6 +142,7 @@
     },
     "1:0x5dd94da3644ddd055fcf6b3e1aa310bb7801eb8b": {
       "bytecode_present": true,
+      "contract_name": "WeightedPoolFactory",
       "name": "Balancer V2 Weighted Pool Factory - rev3",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -160,6 +166,7 @@
     },
     "1:0x85a80afee867adf27b50bdb7b76da70f1e853062": {
       "bytecode_present": true,
+      "contract_name": "ComposableStablePoolFactory",
       "name": "Balancer V2 ComposableStable Pool Factory - rev2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -183,6 +190,7 @@
     },
     "1:0x897888115ada5773e02aa29f775430bfb5f34c51": {
       "bytecode_present": true,
+      "contract_name": "WeightedPoolFactory",
       "name": "Balancer V2 Weighted Pool Factory - rev4",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -206,6 +214,7 @@
     },
     "1:0x8df6efec5547e31b0eb7d1291b511ff8a2bf987c": {
       "bytecode_present": true,
+      "contract_name": "StablePoolFactory",
       "name": "Balancer V2 Stable Pool Factory - rev2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -226,6 +235,7 @@
     },
     "1:0x8e9aa87e45e92bad84d5f8dd1bff34fb92637de9": {
       "bytecode_present": true,
+      "contract_name": "WeightedPoolFactory",
       "name": "Balancer V2 Weighted Pool Factory - rev1",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -240,6 +250,7 @@
     },
     "1:0xa5bf2ddf098bb0ef6d120c98217dd6b141c74ee0": {
       "bytecode_present": true,
+      "contract_name": "WeightedPool2TokensFactory",
       "name": "Balancer V2 Weighted Pool 2 Tokens Factory",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -254,6 +265,7 @@
     },
     "1:0xbaceb8ec6b9355dfc0269c18bac9d6e2bdc29c4f": {
       "bytecode_present": true,
+      "contract_name": "UniswapV3Factory",
       "name": "SushiSwap V3",
       "pool": {
         "computed_address": "0x35644Fb61aFBc458bf92B15AdD6ABc1996Be5014",
@@ -280,6 +292,7 @@
     },
     "1:0xc0aee478e3658e2610c5f7a4a2e1777ce9e4f2ac": {
       "bytecode_present": true,
+      "contract_name": "UniswapV2Factory",
       "name": "SushiSwap V2",
       "pool": {
         "computed_address": "0xC3D03e4F041Fd4cD388c549Ee2A29a9E5075882f",
@@ -310,6 +323,7 @@
     },
     "1:0xc66ba2b6595d3613ccab350c886ace23866ede24": {
       "bytecode_present": true,
+      "contract_name": "StablePoolFactory",
       "name": "Balancer V2 Stable Pool Factory - rev1",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -324,6 +338,7 @@
     },
     "1:0xcc508a455f5b0073973107db6a878ddbdab957bc": {
       "bytecode_present": true,
+      "contract_name": "WeightedPoolFactory",
       "name": "Balancer V2 Weighted Pool Factory - rev2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -345,6 +360,7 @@
     },
     "1:0xdb8d758bcb971e482b2c45f7f8a7740283a1bd3a": {
       "bytecode_present": true,
+      "contract_name": "ComposableStablePoolFactory",
       "name": "Balancer V2 ComposableStable Pool Factory - rev5",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -368,6 +384,7 @@
     },
     "1:0xdba127fbc23fb20f5929c546af220a991b5c6e01": {
       "bytecode_present": true,
+      "contract_name": "ComposableStablePoolFactory",
       "name": "Balancer V2 ComposableStable Pool Factory - rev3",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -391,6 +408,7 @@
     },
     "1:0xf9ac7b9df2b3454e841110cce5550bd5ac6f875f": {
       "bytecode_present": true,
+      "contract_name": "ComposableStablePoolFactory",
       "name": "Balancer V2 ComposableStable Pool Factory - rev1",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -411,6 +429,7 @@
     },
     "1:0xfada0f4547ab2de89d1304a668c39b3e09aa7c76": {
       "bytecode_present": true,
+      "contract_name": "ComposableStablePoolFactory",
       "name": "Balancer V2 ComposableStable Pool Factory - rev4",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -434,6 +453,8 @@
     },
     "42161:0x1af415a1eba07a4986a52b6f2e7de7003d82231e": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "SushiSwap V3",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -451,6 +472,8 @@
     },
     "42161:0x1f98431c8ad98523631ae4a59f267346ea31f984": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "Uniswap V3",
       "pool": {
         "skip": "getPair/getPool returned zero \u2014 the known pair is not deployed on this chain/factory"
@@ -468,6 +491,8 @@
     },
     "42161:0x6eccab422d763ac031210895c81787e87b43a652": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "Camelot V2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -497,6 +522,8 @@
     },
     "42161:0xc35dadb65012ec5796536bd9864ed8773abc74c4": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "SushiSwap V2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -518,6 +545,8 @@
     },
     "8453:0x02a84c1b3bbd7401a5f7fa98a384ebc70bb5749e": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "PancakeSwap V2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -537,6 +566,8 @@
     },
     "8453:0x04c9f118d21e8b767d2e50c946f0cc9f6c367300": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "SwapBased V2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -556,6 +587,8 @@
     },
     "8453:0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "PancakeSwap V3",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -581,6 +614,8 @@
     },
     "8453:0x33128a8fc17869897dce68ed026d694621f6fdfd": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "Uniswap V3",
       "pool": {
         "skip": "getPair/getPool returned zero \u2014 the known pair is not deployed on this chain/factory"
@@ -598,6 +633,8 @@
     },
     "8453:0x420dd381b31aef6683db6b902084cb0ffece40da": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "Aerodrome V2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -632,6 +669,8 @@
     },
     "8453:0x5e7bb104d84c7cb9b682aac2f3d509f5f406809a": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "Aerodrome V3",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -667,6 +706,8 @@
     },
     "8453:0x71524b4f93c58fcbf659783284e38825f0622859": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "SushiSwap V2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -688,6 +729,8 @@
     },
     "8453:0x8909dc15e40173ff4699343b6eb8132c65e18ec6": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "Uniswap V2",
       "pool": {
         "skip": "no known pair registered for this factory"
@@ -706,6 +749,8 @@
     },
     "8453:0xc35dadb65012ec5796536bd9864ed8773abc74c4": {
       "bytecode_present": true,
+      "contract_name": null,
+      "contract_name_skip": "verifier call failed: HTTP Error 403: Forbidden",
       "name": "SushiSwap V3",
       "pool": {
         "skip": "no known pair registered for this factory"

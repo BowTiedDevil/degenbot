@@ -38,7 +38,6 @@ from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot as _Engine
 from tests.helpers.swap_amount_multipliers import UNISWAP_TOKEN_AMOUNT_MULTIPLIERS
 
 WBTC_WETH_V3_POOL_ADDRESS = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
@@ -72,13 +71,12 @@ UNISWAP_V3_QUOTER_ABI = pydantic_core.from_json(
 
 
 _V3_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v3/wbtc_weth/17600000.json.gz")
-_PY_BOT = _Engine()
 
 
 @pytest.fixture
-def dai() -> Erc20Token:
+def dai(py_bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        py_bot,
         DAI_CONTRACT_ADDRESS,
         name="Dai Stablecoin",
         symbol="DAI",

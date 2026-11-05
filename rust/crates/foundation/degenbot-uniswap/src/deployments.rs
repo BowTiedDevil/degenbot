@@ -200,7 +200,7 @@ pub struct DeploymentRecord {
     /// The JSON `pool_type` slug (`"uniswap-v3"`, `"pancakeswap-v3"`,
     /// …) — the V2/V3 structural discriminator, exactly what the Python
     /// `pool_type_registry` keys on.
-    pub pool_type: Option<&'static str>,
+    pub pool_type: Option<Box<str>>,
 }
 
 /// Map a `deployments.json` `name` label to a [`DexName`].
@@ -248,26 +248,72 @@ pub fn effective_deployer(record: &DeploymentRecord) -> Address {
     record.effective_deployer()
 }
 
-/// The parsed lookup table, built once and reused for the process lifetime.
+/// Why a deployments JSON text could not become a [`DeploymentTable`].
 ///
-/// Keyed by `(chain_id, Address)` so a single `Address` equality (case-
-/// insensitive) resolves a row regardless of the JSON's checksum casing.
-type Table = HashMap<(u64, Address), DeploymentRecord>;
+/// The shipped table is validated at commit time, so these variants surface
+/// only for caller-supplied JSON — nothing in the bot silently degrades on a
+/// malformed table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeploymentTableError {
+    /// The text does not match the deployments schema.
+    Json(String),
+    /// A row's `factory` is not a parseable address.
+    Factory {
+        /// The chain id of the offending row.
+        chain_id: u64,
+        /// The raw `factory` text that failed to parse.
+        value: String,
+    },
+}
 
-fn table() -> &'static Table {
-    static TABLE: OnceLock<Table> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        // Embedded, commit-time-validated constant; a parse failure is a build
-        // artifact regression, so a loud panic (targeted expect, fulfilled) with
-        // no error channel from the `&'static Table` OnceLock initializer.
-        #[expect(clippy::expect_used)]
-        let root: Root = serde_json::from_str(DEPLOYMENTS_JSON)
-            .expect("embedded deployments.json must parse (validated at commit time)");
-        let mut map = HashMap::with_capacity(root.deployments.len());
+impl std::fmt::Display for DeploymentTableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Json(message) => write!(f, "deployments JSON does not parse: {message}"),
+            Self::Factory { chain_id, value } => write!(
+                f,
+                "deployments JSON row on chain {chain_id} has an unparseable factory {value:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DeploymentTableError {}
+
+/// A parsed deployments table, keyed by `(chain_id, Address)`.
+///
+/// The key is the pair so a single `Address` equality (case-insensitive)
+/// resolves a row regardless of the JSON's checksum casing. [`from_json`] is
+/// the one parser: the shipped constant (`table()`) and any caller-supplied
+/// JSON (a unit test's minimal table) both build through it, so the registry
+/// is testable without the shipped file.
+///
+/// [`from_json`]: Self::from_json
+#[derive(Clone, Debug, Default)]
+pub struct DeploymentTable {
+    rows: HashMap<(u64, Address), DeploymentRecord>,
+}
+
+impl DeploymentTable {
+    /// Parse a deployments table from `deployments.json` text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeploymentTableError::Json`] when the text is not a
+    /// `{"deployments": [...]}` document, and
+    /// [`DeploymentTableError::Factory`] when a row's `factory` is not an
+    /// address.
+    pub fn from_json(json: &str) -> Result<Self, DeploymentTableError> {
+        let root: Root = serde_json::from_str(json)
+            .map_err(|err| DeploymentTableError::Json(err.to_string()))?;
+        let mut rows = HashMap::with_capacity(root.deployments.len());
         for raw in root.deployments {
-            #[expect(clippy::expect_used)]
-            let factory = address_utils::parse_address(&raw.factory)
-                .expect("embedded deployments.json factory must be a valid address");
+            let factory = address_utils::parse_address(&raw.factory).map_err(|_| {
+                DeploymentTableError::Factory {
+                    chain_id: raw.chain_id,
+                    value: raw.factory.clone(),
+                }
+            })?;
             let deployer = raw
                 .deployer
                 .as_deref()
@@ -288,13 +334,12 @@ fn table() -> &'static Table {
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .and_then(dex_name_from_label);
-            // Leak the slug per distinct row (bounded by the shipped table).
-            let pool_type: Option<&'static str> = raw
+            let pool_type: Option<Box<str>> = raw
                 .pool_type
                 .filter(|s| !s.is_empty())
-                .map(|s| &*Box::leak(s.into_boxed_str()));
+                .map(String::into_boxed_str);
             let chain_id = raw.chain_id;
-            map.insert(
+            rows.insert(
                 (chain_id, factory),
                 DeploymentRecord {
                     chain_id,
@@ -307,7 +352,33 @@ fn table() -> &'static Table {
                 },
             );
         }
-        map
+        Ok(Self { rows })
+    }
+
+    /// The record for a `(chain_id, factory)` pair, or `None` when absent.
+    #[must_use]
+    pub fn get(&self, chain_id: u64, factory: Address) -> Option<&DeploymentRecord> {
+        self.rows.get(&(chain_id, factory))
+    }
+
+    /// Every record in the table; the order is unspecified (the backing map
+    /// is a `HashMap`).
+    pub fn records(&self) -> impl Iterator<Item = &DeploymentRecord> {
+        self.rows.values()
+    }
+}
+
+/// The shipped table, parsed once and reused for the process lifetime.
+fn table() -> &'static DeploymentTable {
+    static TABLE: OnceLock<DeploymentTable> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        // Embedded, commit-time-validated constant; a parse failure is a build
+        // artifact regression, so a loud panic (targeted expect, fulfilled) with
+        // no error channel from the `&'static DeploymentTable` OnceLock
+        // initializer.
+        #[expect(clippy::expect_used)]
+        DeploymentTable::from_json(DEPLOYMENTS_JSON)
+            .expect("embedded deployments.json must parse (validated at commit time)")
     })
 }
 
@@ -345,7 +416,7 @@ pub fn implementation_address(chain_id: u64, factory: Address) -> Option<Address
 /// ```
 #[must_use]
 pub fn lookup(chain_id: u64, factory: Address) -> Option<&'static DeploymentRecord> {
-    table().get(&(chain_id, factory))
+    table().get(chain_id, factory)
 }
 
 /// Iterate every parsed deployment record in the shipped `deployments.json`.
@@ -354,7 +425,7 @@ pub fn lookup(chain_id: u64, factory: Address) -> Option<&'static DeploymentReco
 /// shipped table", which the species-manifest reconciliation gate needs. The
 /// iterator order is unspecified (the backing map is a `HashMap`).
 pub fn records() -> impl Iterator<Item = &'static DeploymentRecord> {
-    table().values()
+    table().records()
 }
 
 /// Resolve the DEX name for a `(chain_id, factory)` pool deployment.
@@ -379,7 +450,7 @@ pub fn resolve_dex_name(chain_id: u64, factory: Address) -> Option<DexName> {
 pub fn is_pancakeswap_v3_factory(chain_id: u64, factory: Address) -> bool {
     matches!(
         lookup(chain_id, factory),
-        Some(rec) if rec.pool_type == Some("pancakeswap-v3")
+        Some(rec) if rec.pool_type.as_deref() == Some("pancakeswap-v3")
     )
 }
 
@@ -676,10 +747,72 @@ mod tests {
         // Acceptance criterion: every row parses (no serde panic at first
         // access). The table is built lazily; touching it here forces the parse.
         let t = table();
-        assert!(
-            t.len() >= 32,
-            "expected at least 32 shipped rows, got {}",
-            t.len()
+        let rows = t.records().count();
+        assert!(rows >= 32, "expected at least 32 shipped rows, got {rows}");
+    }
+
+    #[test]
+    fn from_json_builds_a_table_without_the_shipped_file() {
+        // Minimal two-row table: proves the constructor is pure (no shipped
+        // JSON, no global OnceLock) so registry consumers are unit-testable.
+        let json = r#"{
+            "deployments": [
+                {
+                    "name": "Uniswap V2",
+                    "chain_id": 1,
+                    "pool_type": "uniswap-v2",
+                    "factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+                    "deployer": null,
+                    "init_hash": "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+                },
+                {
+                    "name": "PancakeSwap V3",
+                    "chain_id": 1,
+                    "pool_type": "pancakeswap-v3",
+                    "factory": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+                    "deployer": "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
+                    "init_hash": ""
+                }
+            ]
+        }"#;
+        let table = DeploymentTable::from_json(json).expect("minimal table parses");
+        assert_eq!(table.records().count(), 2);
+
+        let v2 = table
+            .get(1, UNISWAP_V2_MAINNET_FACTORY)
+            .expect("v2 row present");
+        assert_eq!(v2.pool_type.as_deref(), Some("uniswap-v2"));
+        assert_eq!(v2.effective_deployer(), UNISWAP_V2_MAINNET_FACTORY);
+        assert_eq!(v2.init_hash, Some(UNISWAP_V2_MAINNET_INIT_HASH));
+        assert_eq!(v2.dex, Some(DexName::Uniswap));
+
+        let v3 = table
+            .get(1, PANCAKESWAP_V3_MAINNET_FACTORY)
+            .expect("v3 row present");
+        assert_eq!(v3.pool_type.as_deref(), Some("pancakeswap-v3"));
+        assert_eq!(v3.effective_deployer(), PANCAKESWAP_V3_MAINNET_DEPLOYER);
+        assert_eq!(v3.init_hash, None, "empty init_hash means no CREATE2");
+
+        assert!(table
+            .get(1, address!("1234567890123456789012345678901234567890"))
+            .is_none());
+    }
+
+    #[test]
+    fn from_json_reports_schema_and_address_faults() {
+        let err = DeploymentTable::from_json("[]").expect_err("a JSON array is not the schema");
+        assert!(matches!(err, DeploymentTableError::Json(_)));
+
+        let err = DeploymentTable::from_json(
+            r#"{"deployments": [{"chain_id": 1, "factory": "0xnot-an-address"}]}"#,
+        )
+        .expect_err("an unparseable factory is a loud fault");
+        assert_eq!(
+            err,
+            DeploymentTableError::Factory {
+                chain_id: 1,
+                value: "0xnot-an-address".to_owned(),
+            }
         );
     }
 

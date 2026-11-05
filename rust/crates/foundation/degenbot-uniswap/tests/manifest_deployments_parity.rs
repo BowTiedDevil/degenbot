@@ -68,7 +68,11 @@ fn every_non_balancer_deployments_row_has_a_manifest_species() {
     for record in deployments::records() {
         // Balancer is a different structural family the manifest does not
         // model as a V2/V3/V4 species; every other shipped row must be one.
-        if record.pool_type.is_some_and(|p| p.starts_with("balancer")) {
+        if record
+            .pool_type
+            .as_ref()
+            .is_some_and(|p| p.starts_with("balancer"))
+        {
             continue;
         }
         assert!(

@@ -8,18 +8,15 @@ import pytest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.utils.bytes import to_bytes
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
-
-_PY_BOT = Bot()
 
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 
 
 @pytest.fixture
-def offline_wbtc():
+def offline_wbtc(py_bot):
     return make_erc20(
-        _PY_BOT,
+        py_bot,
         WBTC_ADDRESS,
         name="Wrapped BTC",
         symbol="WBTC",
@@ -29,9 +26,9 @@ def offline_wbtc():
 
 
 @pytest.fixture
-def offline_weth():
+def offline_weth(py_bot):
     return make_erc20(
-        _PY_BOT,
+        py_bot,
         WETH_ADDRESS,
         name="Wrapped Ether",
         symbol="WETH",

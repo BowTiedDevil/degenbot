@@ -870,12 +870,13 @@ test-flake-probe:
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
 # fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:
 #   just record-golden -- tests/uniswap/v3/test_uniswap_v3_liquidity_pool.py::test_cached_calculations
-# Single-process (-n0): parametrized parity tests share one golden file per
+# Single-process (serial by default — there is no xdist in the dev env):
+# parametrized parity tests share one golden file per
 # test function and accumulate keys across params; xdist parallelism would race
 # the shared file (last-writer-wins, losing keys). Replay is read-only and safe
 # under xdist, but record accumulates writes.
 record-golden *args:
-    {{ py_run }} pytest --golden-mode record -m onchain_oracle -q --no-header -n0 {{ args }}
+    {{ py_run }} pytest --golden-mode record -m onchain_oracle -q --no-header {{ args }}
 
 # Live chain-data drift gate (explicit only — never in test/pre-push/CI lanes):
 # re-records every py_oracle corpus twice and requires byte-identity with disk,
@@ -906,22 +907,24 @@ check-readme-cassette:
 
 # Verify every shipped deployment address is actually deployed on-chain (cast).
 # Tier 1 (bytecode presence) by default; escalate via the env var:
-#   DEGENBOT_VERIFY_DEPLOYMENTS=2 just verify-deployments   # +selector fingerprint
-#   DEGENBOT_VERIFY_DEPLOYMENTS=3 ETHERSCAN_API_KEY=... just verify-deployments  # +Etherscan source
 #   DEGENBOT_VERIFY_DEPLOYMENTS=4 just verify-deployments   # +init_code_hash reproduces pool address
+# Tiers 2 (selector fingerprint) and 3 (verified source name) are no longer
+# live here: they are recorded facts, replayed offline by
+# tests/registry/test_deployment_golden_verification.py in the default suite.
 # Requires a reachable RPC per chain (tests.env / env vars). Deselected from the
 # default `test-python` run (online_rpc marker) — run on demand only.
 verify-deployments *args:
     DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} {{ py_run }} pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
-# Re-populate the golden deployment-verification capture (tiers 1/2/4 facts for
-# every factory row on a reachable chain) consumed by the hermetic replay
+# Re-populate the golden deployment-verification capture (tier 1/2/4 facts for
+# every factory row on a reachable chain, plus the tier-3 verified source name
+# for every row) consumed by the hermetic replay
 # tests tests/registry/test_deployment_golden_verification.py (default suite,
 # fully offline). Requires a reachable RPC per chain (tests.env / env vars);
 # unreachable chains contribute no rows. Tier 4 is asserted live while
 # recording, so a capture is only committed when every recorded row verified.
 record-deployment-golden *args:
-    DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ py_run }} pytest --golden-mode record -m online_rpc -q --no-header -p no:randomly -n0 {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ py_run }} pytest --golden-mode record -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # ========== Tier-3 On-Chain Oracles ==========
 #

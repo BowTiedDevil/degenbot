@@ -275,6 +275,19 @@ for _name in PY_PACKAGE_ROOT_LOGGER_NAMES:
     _pkg_logger.propagate = False
 
 
+def flush_console_log() -> None:
+    """Block until every record queued so far has reached the console writer.
+
+    A ``QueueListener`` has no flush of its own. Stopping it drains the queue
+    and joins the writer thread; starting it again re-arms the same
+    queue/handler pair. That pair of calls is the drain barrier: emit, flush,
+    then assert on whatever stream the writer resolved at emit time. Safe to
+    call when the queue is empty, and safe to call repeatedly.
+    """
+    _LOG_LISTENER.stop()
+    _LOG_LISTENER.start()
+
+
 def set_log_level(level: int) -> None:
     """Set the degenbot + Rust-bridge log level from one knob.
 

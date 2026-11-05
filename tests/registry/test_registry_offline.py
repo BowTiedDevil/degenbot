@@ -18,7 +18,6 @@ from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-_PY_BOT = Bot()
 
 CHAIN_DATA_PATH = Path(__file__).parent.parent / "fixtures" / "chain_data"
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
@@ -27,7 +26,7 @@ UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
 )
 
 
-def _get_offline_v2_pool() -> UniswapV2Pool:
+def _get_offline_v2_pool(bot) -> UniswapV2Pool:
     """Construct a V2 pool using offline data."""
     data_file = CHAIN_DATA_PATH / "1" / "block_24945920.json"
     provider = OfflineProvider.from_json_file(data_file)
@@ -35,7 +34,7 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
 
     factory_address = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     wbtc = make_erc20(
-        _PY_BOT,
+        bot,
         get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
         name="Wrapped BTC",
         symbol="WBTC",
@@ -43,7 +42,7 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
         chain_id=1,
     )
     weth = make_erc20(
-        _PY_BOT,
+        bot,
         get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         name="Wrapped Ether",
         symbol="WETH",
@@ -87,10 +86,10 @@ def test_distinct_registry_instances():
     assert new_token_registry is not token_registry
 
 
-def test_adding_pool():
+def test_adding_pool(py_bot):
     """Adding a pool to the registry makes it retrievable; double-add is an error."""
     pool_registry = PoolRegistry(py_bot=Bot(chain_id=1))
-    lp = _get_offline_v2_pool()
+    lp = _get_offline_v2_pool(py_bot)
     pool_registry.add(pool_address=lp.address, chain_id=1, pool=lp)
     assert pool_registry.get(pool_address=lp.address, chain_id=1) is lp
 
@@ -98,20 +97,20 @@ def test_adding_pool():
         pool_registry.add(pool_address=lp.address, chain_id=1, pool=lp)
 
 
-def test_deleting_pool():
+def test_deleting_pool(py_bot):
     """Removing a pool from the registry makes it unretrievable."""
     pool_registry = PoolRegistry(py_bot=Bot(chain_id=1))
-    lp = _get_offline_v2_pool()
+    lp = _get_offline_v2_pool(py_bot)
     pool_registry.add(pool_address=lp.address, chain_id=1, pool=lp)
     assert pool_registry.get(pool_address=lp.address, chain_id=1) is lp
     pool_registry.remove(pool_address=lp.address, chain_id=1)
     assert pool_registry.get(pool_address=lp.address, chain_id=1) is None
 
 
-def test_adding_token():
+def test_adding_token(py_bot):
     """Adding a token to the registry makes it retrievable; double-add is an error."""
     token_registry = TokenRegistry(py_bot=Bot(chain_id=1))
-    lp = _get_offline_v2_pool()
+    lp = _get_offline_v2_pool(py_bot)
     weth = lp.token1
     token_registry.add(token_address=weth.address, chain_id=1, token=weth)
     assert token_registry.get(token_address=weth.address, chain_id=1) is weth
@@ -120,10 +119,10 @@ def test_adding_token():
         token_registry.add(token_address=weth.address, chain_id=1, token=weth)
 
 
-def test_deleting_token():
+def test_deleting_token(py_bot):
     """Removing a token from the registry makes it unretrievable."""
     token_registry = TokenRegistry(py_bot=Bot(chain_id=1))
-    lp = _get_offline_v2_pool()
+    lp = _get_offline_v2_pool(py_bot)
     weth = lp.token1
     token_registry.add(token_address=weth.address, chain_id=1, token=weth)
     assert token_registry.get(token_address=weth.address, chain_id=1) is weth

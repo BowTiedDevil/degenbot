@@ -614,9 +614,8 @@ where
 /// Exactly one console-emitting writer per process (ADR-043 §6), and the
 /// binding IS present here, so [`PythonLogLayer`] owns the console and the
 /// `fmt` layer must stay silent — otherwise every record is written twice.
-/// This replaces the `DEGENBOT_LOG_FMT` two-tunnel hack (retired). The writer
-/// (not the layer) is swapped so the builder types — and every caller/test
-/// against them — stay unchanged.
+/// The writer (not the layer) is swapped so the builder types — and every
+/// caller/test against them — stay unchanged.
 fn fmt_writer() -> tracing_subscriber::fmt::writer::BoxMakeWriter {
     tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink)
 }

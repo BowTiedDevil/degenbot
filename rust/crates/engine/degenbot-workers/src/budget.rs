@@ -1,5 +1,5 @@
-//! `FleetBudget` — the ONE budget authority bounding the SUM (design doc
-//! §5; ADR-042 §3).
+//! `FleetBudget` — the ONE budget authority bounding the SUM (design doc §5;
+//! ADR-042 §3).
 //!
 //! Every consumer declares a peak-CPU share and a thread/slot count; the
 //! fleet refuses to boot when the declared shares exceed the quota —
@@ -43,6 +43,8 @@
 //! bins sit exactly one ABOVE the fleet seats. Integer quotas are the
 //! deployment norm, and fleet-hosted cycles bind bins at the seat count
 //! anyway, so the divergence is inert in production.
+//!
+//! Design: docs/architecture/worker-fleet.md
 
 use degenbot_config::FleetConfig;
 
@@ -321,8 +323,8 @@ impl FleetBudget {
         // bin, the bin count following cpu_budget's solve-bin POLICY —
         // minus the solve headroom, floored at 1 — but FLOORING the quota:
         // cpu_budget ceils fractional quotas for worker-existence; Solver
-        // threads never spend the fractional remainder (§5).
-        // Walk admission stays the share S — a gated bin parks (§5).
+        // threads never spend the fractional remainder (design doc §5).
+        // Walk admission stays the share S — a gated bin parks (design doc §5).
         let pinned_pin_count = usize::try_from(quota_floor)
             .unwrap_or(usize::MAX)
             .saturating_sub(solve_headroom)
@@ -478,7 +480,7 @@ impl FleetBudget {
 }
 
 /// Fractional quota detection seam: the typed `fleet.quota_cpus` override
-/// wins (terminal, per the §5 override rule); unset detects the real cgroup
+/// wins (terminal, per the design doc §5 override rule); unset detects the real cgroup
 /// via [`crate::quota::fractional_cpu_budget`]. Tests inject values
 /// directly into [`FleetBudget::derive`].
 #[must_use]

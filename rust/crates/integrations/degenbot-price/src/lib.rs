@@ -17,8 +17,8 @@
 //! these readers with **zero Python, zero `pyo3`** (verified by
 //! `just check-no-pyo3-in-cores`). This crate owns the feed-*reading*
 //! mechanism; the *consumer* valuation orchestration (ranking paths by USD
-//! value, per-token `_price_oracle` plumbing on `Erc20Token`) stays Python
-//! until its own port epic — that is out of scope here.
+//! value, per-token `_price_oracle` plumbing on `Erc20Token`) is Python's and
+//! is not part of this crate.
 //!
 //! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
@@ -31,7 +31,7 @@
 //!
 //! # Non-goals
 //!
-//! - The `PyO3` seam + Python cutover (sibling task).
+//! - The `PyO3` seam and the Python driver bindings (the binding crate).
 //! - Reading the oracle address from the DB (the Aave rehydrate path,
 //!   ) — this crate **consumes** a resolved `Address`.
 //! - Valuation/ranking orchestration using the prices (stays-Python).

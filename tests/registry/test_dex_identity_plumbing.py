@@ -23,17 +23,15 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import PoolRegistration, pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot, DexIdentity, dex_identity
+from tests.helpers.seam import DexIdentity, dex_identity
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
 
-_PY_BOT = Bot()
 
-
-def _make_token(addr: str, *, symbol: str, decimals: int, name: str = "") -> Erc20Token:
-    return make_erc20(_PY_BOT, addr, name=name or symbol, symbol=symbol, decimals=decimals)
+def _make_token(bot, addr: str, *, symbol: str, decimals: int, name: str = "") -> Erc20Token:
+    return make_erc20(bot, addr, name=name or symbol, symbol=symbol, decimals=decimals)
 
 
 # Canonical-chain factories (from src/degenbot/{uniswap,sushiswap,pancakeswap,
@@ -212,11 +210,11 @@ class TestLiquidityPoolDexIdentity:
         assert ident is not None
         return ident
 
-    def test_dex_resolved_off_handle_and_provides_factory_when_omitted(self) -> None:
+    def test_dex_resolved_off_handle_and_provides_factory_when_omitted(self, py_bot) -> None:
         """When factory is omitted, the dex preset's factory is registered + recovered."""
 
-        token0 = _make_token("0x" + "0a" * 20, symbol="TK0", decimals=18)
-        token1 = _make_token("0x" + "0b" * 20, symbol="TK1", decimals=6)
+        token0 = _make_token(py_bot, "0x" + "0a" * 20, symbol="TK0", decimals=18)
+        token1 = _make_token(py_bot, "0x" + "0b" * 20, symbol="TK1", decimals=6)
         uniswap = self._uniswap_preset
 
         pool = make_v2_pool(
@@ -241,11 +239,11 @@ class TestLiquidityPoolDexIdentity:
         assert pool.fee_token0 == Fraction(3, 1000)
         assert pool.fee_token1 == Fraction(3, 1000)
 
-    def test_explicit_factory_registered_and_recovered(self) -> None:
+    def test_explicit_factory_registered_and_recovered(self, py_bot) -> None:
         """An explicit factory is registered in Rust + read off the handle."""
 
-        token0 = _make_token("0x" + "0a" * 20, symbol="TK0", decimals=18)
-        token1 = _make_token("0x" + "0b" * 20, symbol="TK1", decimals=6)
+        token0 = _make_token(py_bot, "0x" + "0a" * 20, symbol="TK0", decimals=18)
+        token1 = _make_token(py_bot, "0x" + "0b" * 20, symbol="TK1", decimals=6)
         uniswap = self._uniswap_preset
         explicit_factory = "0x" + "ee" * 20
 
@@ -269,11 +267,11 @@ class TestLiquidityPoolDexIdentity:
         assert pool.fee_token0 == Fraction(5, 1000)
         assert pool.fee_token1 == Fraction(5, 1000)
 
-    def test_dex_always_resolved_from_variant(self) -> None:
+    def test_dex_always_resolved_from_variant(self, py_bot) -> None:
         """Even without a dex preset, the variant defaults to uniswap-v2 + resolves."""
 
-        token0 = _make_token("0x" + "0a" * 20, symbol="TK0", decimals=18)
-        token1 = _make_token("0x" + "0b" * 20, symbol="TK1", decimals=6)
+        token0 = _make_token(py_bot, "0x" + "0a" * 20, symbol="TK0", decimals=18)
+        token1 = _make_token(py_bot, "0x" + "0b" * 20, symbol="TK1", decimals=6)
 
         pool = make_v2_pool(
             "0x" + "cc" * 20,
@@ -289,11 +287,11 @@ class TestLiquidityPoolDexIdentity:
         assert pool.dex is not None
         assert pool.dex.variant == "uniswap-v2"
 
-    def test_pancakeswap_preset_carries_3_tuple_reserves_abi_via_dex(self) -> None:
+    def test_pancakeswap_preset_carries_3_tuple_reserves_abi_via_dex(self, py_bot) -> None:
         """PancakeSwap's preset (resolved off the handle) carries the 3-tuple reserves_abi."""
 
-        token0 = _make_token("0x" + "0a" * 20, symbol="TK0", decimals=18)
-        token1 = _make_token("0x" + "0b" * 20, symbol="TK1", decimals=6)
+        token0 = _make_token(py_bot, "0x" + "0a" * 20, symbol="TK0", decimals=18)
+        token1 = _make_token(py_bot, "0x" + "0b" * 20, symbol="TK1", decimals=6)
         pancake = dex_identity("pancakeswap-v2")
         assert pancake is not None
 

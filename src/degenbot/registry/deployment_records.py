@@ -175,12 +175,25 @@ def _read_json(path: Path) -> list[DeploymentRecord]:
     return [_parse_record(entry) for entry in deployments]
 
 
-def _overlay_path_from_config() -> Path | None:
-    """Read the ``[deployments] overlay`` path from the operator file, if set.
+class _Unset:
+    """Sentinel type: the caller named no config file (read the installed one)."""
+
+    __slots__ = ()
+
+
+#: Default for :func:`load_deployments`'s ``config_path``: resolve the operator
+#: config from the process install. Distinct from ``None``, which means "this
+#: call has no file layer at all".
+_UNSET_CONFIG = _Unset()
+
+
+def _overlay_path_from_config(selected: Path | str | None) -> Path | None:
+    """Read the ``[deployments] overlay`` path from an operator config file.
 
     ``[deployments]`` is free-form: the typed schema does not declare it, so it
-    is read as a raw table from the file the loader selected — the same file
-    the typed load read, not a re-derived path.
+    is read as a raw table from the file the caller settled on — the same file
+    the typed load read, not a re-derived path. ``selected`` is the caller's
+    choice (see :func:`load_deployments`); this function is the one reader.
 
     Absent means none: no file layer, no ``[deployments]`` section, or no
     ``overlay`` key all return ``None`` quietly, because an operator who did
@@ -190,8 +203,8 @@ def _overlay_path_from_config() -> Path | None:
     the bot must never silently drop the operator's overlay deployments.
 
     Returns:
-        The overlay path (expanded + absolute), or ``None`` when the process
-        has no file layer or the section/key is absent.
+        The overlay path (expanded + absolute), or ``None`` when the caller
+        named no file layer or the section/key is absent.
 
     Raises:
         DegenbotValueError: When the selected config file exists but cannot
@@ -199,7 +212,6 @@ def _overlay_path_from_config() -> Path | None:
             problem.
 
     """
-    selected = config_file_path()
     if selected is None:
         return None
     path = Path(selected)
@@ -238,24 +250,41 @@ def _overlay_path_from_config() -> Path | None:
     return Path(overlay).expanduser().absolute()
 
 
-def load_deployments(*, overlay_path: Path | str | None = None) -> list[DeploymentRecord]:
+def load_deployments(
+    *,
+    overlay_path: Path | str | None = None,
+    config_path: Path | str | _Unset | None = _UNSET_CONFIG,
+) -> list[DeploymentRecord]:
     """Load deployment records from the shipped JSON, merged with an optional overlay.
 
     The overlay is resolved in this order:
 
     1. The ``overlay_path`` argument (programmatic — used by tests).
-    2. The ``[deployments] overlay`` setting in ``~/.config/degenbot/config.toml``.
+    2. The ``[deployments] overlay`` setting in the operator config file
+       (``config_path``, default: the process-installed file).
 
     Shipped defaults load first; overlay entries override on
     ``(chain_id, factory)`` conflict (overlay wins). The merged list preserves
     insertion order (shipped order, with overlays replacing in-place).
+
+    Args:
+        overlay_path: An explicit overlay deployments file; skips the config
+            lookup entirely.
+        config_path: The operator config file to read ``[deployments]
+            overlay`` from. Omitted (the default) resolves the installed file
+            through :func:`degenbot.config.config_file_path`; ``None`` means
+            this call has no file layer.
 
     Returns:
         The merged deployment records.
 
     """
     records = _read_json(_SHIPPED_JSON)
-    overlay = Path(overlay_path) if overlay_path is not None else _overlay_path_from_config()
+    if overlay_path is not None:
+        overlay: Path | None = Path(overlay_path)
+    else:
+        selected = config_file_path() if config_path is _UNSET_CONFIG else config_path
+        overlay = _overlay_path_from_config(selected)
     if overlay is not None and overlay.exists():
         overlay_records = _read_json(overlay)
         records = _merge_overlay(records, overlay_records, overlay)

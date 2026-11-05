@@ -37,7 +37,11 @@ from tests.helpers.bot_factory import make_bot_with_provider
 # tests/suite_env.py for the full contract — including why the pin is
 # force-set rather than setdefault, and why the declared database path is an
 # absent per-session file.
-from tests.helpers.seam import reinstall_config_holder_for_tests, shutdown_log_drainer
+from tests.helpers.seam import (
+    Bot as EngineBot,
+    reinstall_config_holder_for_tests,
+    shutdown_log_drainer,
+)
 from tests.offline import is_offline
 from tests.standalone_anvil import seed as seed_catalog
 from tests.suite_env import SUITE_ENV
@@ -532,6 +536,19 @@ def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
         fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         storage_caching=False,
     )
+
+
+@pytest.fixture
+def py_bot() -> EngineBot:
+    """A fresh handle-less engine for one test.
+
+    The engine handle owns mutable Rust state — registered tokens, their
+    cached balances and approvals — so a module-level engine would carry one
+    test's registrations into the next and make the module order-dependent by
+    construction. Every test that needs an engine takes this fixture instead
+    of building one at import.
+    """
+    return EngineBot()
 
 
 @pytest.fixture

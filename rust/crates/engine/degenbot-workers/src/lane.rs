@@ -7,6 +7,8 @@
 //! cold-miss budget is the capacity ceiling and is visible at the port's
 //! gauge surface; escalated work drives on the port's own capability lane
 //! (CPU cannot starve I/O) and propagates the caller's span context.
+//!
+//! Design: docs/architecture/worker-fleet.md
 
 use std::future::Future;
 use std::pin::Pin;
@@ -166,7 +168,7 @@ impl EscalationGate {
 /// escalated work drives on the port's own capability lane (the default
 /// impl: the degenbot-inline-sim runtime, registered at hook install where
 /// pyo3 is fine) and NEVER occupies the caller's CPU seat (reth research
-/// §7: CPU cannot starve I/O).
+/// design doc §7: CPU cannot starve I/O).
 pub trait EscalationPort: Send + Sync + 'static {
     /// Submit ONE escalated work item. Fail-fast beyond the cold-miss
     /// budget: [`EscalationError::ColdMissBudgetExceeded`] returns
@@ -197,7 +199,7 @@ impl EscalationPort for NoEscalationPort {
 
 /// The installed DEFAULT escalation port (the degenbot-inline-sim runtime,
 /// registered at `install_inline_simulator` where pyo3 is fine — ADR-042
-/// §8: no worker crate ever depends on pyo3).
+/// design doc §8: no worker crate ever depends on pyo3).
 static DEFAULT_ESCALATION_PORT: Mutex<Option<Arc<dyn EscalationPort>>> = Mutex::new(None);
 
 /// Register the default escalation port. Replacing an installed port is

@@ -64,15 +64,15 @@ class FakeArbitrageEngine:
         return path_id
 
 
-def test_register_path_dispatches_keys_and_directions() -> None:
+def test_register_path_dispatches_keys_and_directions(py_bot) -> None:
     """register_path maps each pool to its engine key + direction. No
     Python PathInfo is built/stored — the returned path_id is the handle the
     candidate resolves composers::PathInfo from."""
     fake = FakeArbitrageEngine()
     registry = EngineRegistry(bot=None, engine=fake)
 
-    v2 = _make_uniswap_v2_pool()
-    v3 = _make_uniswap_v3_pool()
+    v2 = _make_uniswap_v2_pool(py_bot)
+    v3 = _make_uniswap_v3_pool(py_bot)
     fake.register_identity("v2", v2.address, 100)
     fake.register_identity("v3", v3.address, 200)
 
@@ -84,7 +84,7 @@ def test_register_path_dispatches_keys_and_directions() -> None:
     assert isinstance(path_id, int)
 
 
-def test_register_path_v4_keyed_by_the_manager_and_pool_id_pair() -> None:
+def test_register_path_v4_keyed_by_the_manager_and_pool_id_pair(py_bot) -> None:
     """A V4 pool resolves its engine key by the (PoolManager, pool_id) pair.
 
     One manager hosts many pools, so the pair — not the pool id alone — is the
@@ -93,7 +93,7 @@ def test_register_path_v4_keyed_by_the_manager_and_pool_id_pair() -> None:
     fake = FakeArbitrageEngine()
     registry = EngineRegistry(bot=None, engine=fake)
 
-    v4 = _make_uniswap_v4_pool()
+    v4 = _make_uniswap_v4_pool(py_bot)
     pool_id_hex = to_0x_hex(v4.pool_id)
     fake.register_identity("v4", f"{v4.address}/{pool_id_hex}", 999)
 
@@ -104,11 +104,11 @@ def test_register_path_v4_keyed_by_the_manager_and_pool_id_pair() -> None:
     assert isinstance(path_id, int)
 
 
-def test_register_path_refuses_an_unregistered_identity() -> None:
+def test_register_path_refuses_an_unregistered_identity(py_bot) -> None:
     """An unregistered identity is a typed ValueError, not a stale cached key."""
     fake = FakeArbitrageEngine()
     registry = EngineRegistry(bot=None, engine=fake)
-    v2 = _make_uniswap_v2_pool()
+    v2 = _make_uniswap_v2_pool(py_bot)
 
     with pytest.raises(ValueError, match="Pool not registered"):
         registry.register_path([(v2, True)])
@@ -180,7 +180,7 @@ def test_bot_supplies_py_bot_to_real_engine() -> None:
     assert registry.engine.reserve_pair_pool_count() == 1
 
 
-def test_register_path_dispatches_aerodrome_key() -> None:
+def test_register_path_dispatches_aerodrome_key(py_bot) -> None:
     """An Aerodrome pool routes its shared-core key through register_path.
 
     register_aerodrome_pool caches the pool_id (the engine's derive_hop_type
@@ -193,8 +193,8 @@ def test_register_path_dispatches_aerodrome_key() -> None:
     fake = FakeArbitrageEngine()
     registry = EngineRegistry(bot=None, engine=fake)
 
-    usdc = _make_usdc()
-    weth = _make_weth()
+    usdc = _make_usdc(py_bot)
+    weth = _make_weth(py_bot)
     aero = make_aerodrome_v2_pool(
         address="0xAE7FFAe65eC9eA34741B0FbA1E5dBc4F0eC5Ea6F",
         token0=usdc,

@@ -272,8 +272,8 @@ pub const RETIRED_ENV_NAMES: &[(&str, &str)] = &[
     ("DEGENBOT_GATE_TRACE", "degenbot::solver=debug"),
     ("DEGENBOT_AAVE_EVTRACE", "degenbot::aave=debug"),
     ("DEGENBOT_AAVE_TX_TRACE", "degenbot::aave=debug"),
-    // The retired two-tunnel console hack (ADR-043 §6): exactly one
-    // console-emitting writer per process is derived from binding-present.
+    // `DEGENBOT_LOG_FMT` named a second console tunnel; the console writer is
+    // now derived from binding presence — exactly one per process (ADR-043 §6).
     (
         "DEGENBOT_LOG_FMT",
         "the console writer is derived (one writer per process)",

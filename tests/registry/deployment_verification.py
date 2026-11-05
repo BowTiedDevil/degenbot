@@ -5,11 +5,16 @@ One home for the facts the on-chain deployment verification tiers consume:
 - :class:`CastHarness` — the injectable cast seam. The live ``online_rpc``
   harness and the golden record driver bind :class:`FoundryCast` (the real
   ``cast`` binary); nothing else in the codebase touches it.
-- ``EXPECTED_FACTORY_SELECTORS`` / ``KNOWN_PAIRS`` — the tier-2 interface
-  fingerprints and the tier-4 known deployed pairs/pools. The live harness
+- ``EXPECTED_FACTORY_SELECTORS`` / ``EXPECTED_CONTRACT_NAME`` /
+  ``KNOWN_PAIRS`` — the tier-2 interface fingerprints, the tier-3 verified
+  source names, and the tier-4 known deployed pairs/pools. The record driver
   and the hermetic replay module (``test_deployment_golden_verification.py``)
   both derive expectations from these tables, so the two verification paths
   cannot drift apart.
+- :class:`VerifiedSource` — the injectable verified-source seam. The record
+  driver binds :class:`BlockscoutVerifiedSource` (key-less); nothing hermetic
+  touches it. The recorded name is the capture's fact, so replaying tier 3
+  needs no external service.
 - :class:`DeploymentGoldenCapture` — record/replay handle over the committed
   capture JSON backing the replay tests.
 
@@ -22,6 +27,7 @@ Capture row schema (keyed ``"<chain_id>:<factory lowercase>"``):
       "pool_type": "uniswap-v2",
       "bytecode_present": true,
       "selectors": ["0xc9c65396", "0xe6a43905", "0x574f2ba3"],
+      "contract_name": "UniswapV2Factory",
       "pool": {
         "kind": "v2",
         "tokens": ["0x…", "0x…"],
@@ -35,14 +41,22 @@ Capture row schema (keyed ``"<chain_id>:<factory lowercase>"``):
 
 ``pool`` is ``{"skip": "<reason>"}`` when tier 4 does not apply (no known
 pair registered, or the factory reports the zero address for the known pair).
-Rows whose chain was unreachable at record time have no entry, which the
-replay tests surface as loud skips, never silent passes.
+
+``contract_name`` is the address's verified source-contract name (the tier-3
+fact), or ``null`` with a sibling ``contract_name_skip`` reason when the
+verified-source endpoint had no answer for it. A row recorded before this
+field existed has no key at all: the replay tests treat that as a capture gap
+and fail, naming the re-record command — a recorded ``null`` is a fact about
+the chain, a missing key is drift in the artifact.
 """
 
 from __future__ import annotations
 
 import json
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
@@ -90,6 +104,68 @@ class CastHarness(Protocol):
     def call(self, factory: str, signature: str, *args: str, rpc_url: str) -> str:
         """Return the decoded result of a read-only contract call."""
         ...
+
+
+class VerifiedSource(Protocol):
+    """The verified-source read the tier-3 capture is recorded from.
+
+    One method, one fact: the address's source-contract name. The record
+    driver binds :class:`BlockscoutVerifiedSource`; nothing hermetic binds
+    anything, because replay reads the committed capture instead.
+    """
+
+    def contract_name(self, chain_id: int, address: str) -> str | None:
+        """Return the verified source-contract name, or ``None`` if unverified."""
+        ...
+
+
+#: The key-less verified-source endpoints, per chain. Etherscan's V2 API
+#: requires an API key; Blockscout serves the same fact (the verified
+#: source-contract name) without one, so recording needs no credential.
+_BLOCKSCOUT_BASE_URL: dict[int, str] = {
+    1: "https://eth.blockscout.com",
+    8453: "https://base.blockscout.com",
+    42161: "https://arbitrum.blockscout.com",
+}
+
+#: Blockscout rejects the stock Python user agent (HTTP 403).
+_BLOCKSCOUT_USER_AGENT = "degenbot-deployment-record/1.0"
+
+
+class BlockscoutVerifiedSource:
+    """VerifiedSource binding over the Blockscout v2 API (key-less).
+
+    The only place the tier-3 name is fetched — the capture is the durable
+    fact, so a re-record is the one path that touches the network.
+    """
+
+    def contract_name(self, chain_id: int, address: str) -> str | None:
+        """Return the verified source-contract name, or ``None`` when absent.
+
+        Raises:
+            KeyError: No Blockscout endpoint is known for ``chain_id``.
+            urllib.error.URLError: The endpoint did not answer.
+
+        """
+        base = _BLOCKSCOUT_BASE_URL[chain_id]
+        url = f"{base}/api/v2/smart-contracts/{address}"
+        request = urllib.request.Request(  # ruff: ignore[suspicious-url-open-usage] — fixed https scheme + base
+            url,
+            headers={"User-Agent": _BLOCKSCOUT_USER_AGENT},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:  # ruff: ignore[suspicious-url-open-usage]
+                payload = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            # HTTPError is itself the response object: close it or the
+            # interpreter's ResourceWarning (fatal under the suite's
+            # warnings-as-errors) fires when it is collected.
+            exc.close()
+            if exc.code == 404:  # an unverified/unknown address, not a fault
+                return None
+            raise
+        name = payload.get("name")
+        return name if isinstance(name, str) and name else None
 
 
 def _cast(*args: str, timeout: int = 30) -> str:
@@ -254,6 +330,25 @@ def compute_pool_address(deployer: str, init_hash: str, known: KnownPair) -> str
 
 
 # ---------------------------------------------------------------------------
+# Verified source names per pool_type (Tier 3 expectations)
+# ---------------------------------------------------------------------------
+
+# None entries skip the name assertion (the contract is still asserted
+# deployed via tiers 1/2). Names are the verified source-contract names the
+# record driver stores in the capture.
+EXPECTED_CONTRACT_NAME: dict[str, str | None] = {
+    "uniswap-v2": "Factory",
+    "uniswap-v3": "UniswapV3Factory",
+    "pancakeswap-v3": "PancakeV3Factory",
+    "sushiswap-v3": "UniswapV3Factory",  # Sushi V3 forks the V3 factory contract
+    "aerodrome-v2": "PoolFactory",
+    "aerodrome-v3": "PoolFactory",
+    "balancer-weighted": "WeightedPool",  # WeightedPoolFactory / WeightedPool2TokensFactory
+    "balancer-stable": None,  # StablePoolFactory OR ComposableStablePoolFactory
+}
+
+
+# ---------------------------------------------------------------------------
 # Expected factory interfaces per pool_type (Tier 2 fingerprints)
 # ---------------------------------------------------------------------------
 # Each value is a set of 4-byte selectors the deployed factory *must* expose.
@@ -324,6 +419,20 @@ EXPECTED_FACTORY_SELECTORS: dict[str, set[str]] = {
 # ---------------------------------------------------------------------------
 
 
+def _endpoint_origin(rpc_url: str) -> str:
+    """The endpoint's ``scheme://host[:port]`` — provenance, never a credential.
+
+    An RPC URL frequently carries an API token in its path or query, and this
+    capture is committed: the origin is what a reader needs to know which node
+    family produced the facts, so everything after the authority is dropped.
+    """
+    parts = urllib.parse.urlsplit(rpc_url)
+    if not parts.scheme or not parts.netloc:
+        return "<unnamed endpoint>"
+    authority = parts.netloc.rsplit("@", 1)[-1]  # drop any user:password@
+    return f"{parts.scheme}://{authority}"
+
+
 def row_key(chain_id: int, factory: str) -> str:
     """The capture-map key for one deployment row (factory lowercased)."""
     return f"{chain_id}:{factory.lower()}"
@@ -361,8 +470,12 @@ class DeploymentGoldenCapture:
         )
 
     def bind_chain(self, chain_id: int, rpc_url: str) -> None:
-        """Record the provenance of a chain's rows (record mode only)."""
-        self._data["chains"][str(chain_id)] = rpc_url
+        """Record the provenance of a chain's rows (record mode only).
+
+        The endpoint is stored as its origin (see :func:`_endpoint_origin`):
+        the committed capture must not carry an API token.
+        """
+        self._data["chains"][str(chain_id)] = _endpoint_origin(rpc_url)
 
     def rows(self) -> dict[str, dict]:
         """All captured rows, keyed by :func:`row_key`."""
@@ -382,4 +495,21 @@ class DeploymentGoldenCapture:
             msg = "put_row called on a replay-mode capture"
             raise AssertionError(msg)
         self._data["rows"][row_key(chain_id, factory)] = row
+        self._flush()
+
+    def merge_row(self, chain_id: int, factory: str, facts: dict) -> None:
+        """Merge facts into an already captured row (record mode only).
+
+        For facts that do not need the row's chain: a record run that cannot
+        reach a chain still refreshes what it can prove about the row. A row
+        that was never captured is left alone — the replay tests already skip
+        it loudly, and inventing a partial row would hide that.
+        """
+        if not self._recording:
+            msg = "merge_row called on a replay-mode capture"
+            raise AssertionError(msg)
+        row = self._data["rows"].get(row_key(chain_id, factory))
+        if row is None:
+            return
+        row.update(facts)
         self._flush()

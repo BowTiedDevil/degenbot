@@ -19,11 +19,9 @@ if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import Pool
 
-_PY_BOT = Bot()
 
-
-def _make_token(addr: str, *, symbol: str, decimals: int) -> Erc20Token:
-    return make_erc20(_PY_BOT, addr, name=symbol, symbol=symbol, decimals=decimals)
+def _make_token(bot, addr: str, *, symbol: str, decimals: int) -> Erc20Token:
+    return make_erc20(bot, addr, name=symbol, symbol=symbol, decimals=decimals)
 
 
 class _RegisterSpy:
@@ -52,10 +50,10 @@ class _RegisterSpy:
 class TestMakeV2PoolPassesDescriptorParams:
     """``make_v2_pool`` threads variant/stable_swap/fee_denominator into Rust."""
 
-    def test_uniswap_default_variant_passed(self) -> None:
+    def test_uniswap_default_variant_passed(self, py_bot) -> None:
         """Without dex, register_v2_pool receives variant='uniswap-v2'."""
-        token0 = _make_token("0x" + "1a" * 20, symbol="T0", decimals=18)
-        token1 = _make_token("0x" + "1b" * 20, symbol="T1", decimals=18)
+        token0 = _make_token(py_bot, "0x" + "1a" * 20, symbol="T0", decimals=18)
+        token1 = _make_token(py_bot, "0x" + "1b" * 20, symbol="T1", decimals=18)
         spy = _RegisterSpy(Bot())
 
         make_v2_pool(
@@ -75,10 +73,10 @@ class TestMakeV2PoolPassesDescriptorParams:
         assert spy.captured_kwargs["stable_swap"] is False
         assert spy.captured_kwargs["fee_denominator"] is None
 
-    def test_variant_derived_from_dex_preset(self) -> None:
+    def test_variant_derived_from_dex_preset(self, py_bot) -> None:
         """With dex, variant comes from dex.variant."""
-        token0 = _make_token("0x" + "3a" * 20, symbol="T0", decimals=18)
-        token1 = _make_token("0x" + "3b" * 20, symbol="T1", decimals=18)
+        token0 = _make_token(py_bot, "0x" + "3a" * 20, symbol="T0", decimals=18)
+        token1 = _make_token(py_bot, "0x" + "3b" * 20, symbol="T1", decimals=18)
         spy = _RegisterSpy(Bot())
         dex = dex_identity("sushiswap-v2")
         assert dex is not None
@@ -96,10 +94,10 @@ class TestMakeV2PoolPassesDescriptorParams:
         assert spy.captured_kwargs is not None
         assert spy.captured_kwargs["variant"] == "sushiswap-v2"
 
-    def test_explicit_stable_swap_fee_denominator_passed(self) -> None:
+    def test_explicit_stable_swap_fee_denominator_passed(self, py_bot) -> None:
         """Explicit stable_swap + fee_denominator are forwarded."""
-        token0 = _make_token("0x" + "5a" * 20, symbol="T0", decimals=18)
-        token1 = _make_token("0x" + "5b" * 20, symbol="T1", decimals=18)
+        token0 = _make_token(py_bot, "0x" + "5a" * 20, symbol="T0", decimals=18)
+        token1 = _make_token(py_bot, "0x" + "5b" * 20, symbol="T1", decimals=18)
         spy = _RegisterSpy(Bot())
 
         make_v2_pool(

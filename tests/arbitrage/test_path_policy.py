@@ -117,13 +117,13 @@ def test_path_rejected_error_is_not_value_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_touched_tokens_captures_input_intermediate_output() -> None:
+def test_touched_tokens_captures_input_intermediate_output(py_bot) -> None:
     """touched_tokens returns input + every intermediate + output address.
 
     A 2-hop USDC→WETH→USDC path touches {USDC, WETH} (USDC is both input and
     final output, WETH the intermediate). Uses V2 + V4 (both USDC/WETH)."""
-    v2a = _make_uniswap_v2_pool()  # USDC/WETH (token0=USDC, token1=WETH)
-    v4 = _make_uniswap_v4_pool()  # USDC/WETH (currency0=USDC, currency1=WETH)
+    v2a = _make_uniswap_v2_pool(py_bot)  # USDC/WETH (token0=USDC, token1=WETH)
+    v4 = _make_uniswap_v4_pool(py_bot)  # USDC/WETH (currency0=USDC, currency1=WETH)
     # v2 zfo=True → in=USDC, out=WETH
     # v4 zfo=False → in=WETH, out=USDC
     pools_and_zfos = [(v2a, True), (v4, False)]
@@ -131,8 +131,8 @@ def test_touched_tokens_captures_input_intermediate_output() -> None:
     assert touched == {USDC, WETH}
 
 
-def test_touched_tokens_preserves_order_uniqueness() -> None:
-    v2a = _make_uniswap_v2_pool()
+def test_touched_tokens_preserves_order_uniqueness(py_bot) -> None:
+    v2a = _make_uniswap_v2_pool(py_bot)
     pools_and_zfos = [(v2a, True)]
     assert touched_tokens(pools_and_zfos) == [USDC, WETH]
 
@@ -142,9 +142,9 @@ def test_touched_tokens_preserves_order_uniqueness() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_noop_predicate_accepts_everything() -> None:
+def test_noop_predicate_accepts_everything(py_bot) -> None:
     predicate = NoOpPathPredicate()
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True)]
     # Returns None (no raise) for any input.
     assert predicate.evaluate(pools_and_zfos) is None
 
@@ -159,91 +159,91 @@ def test_predicates_satisfy_protocol() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_policy_default_accepts_any_path() -> None:
+def test_policy_default_accepts_any_path(py_bot) -> None:
     """A default PathPolicy (all checks off/relaxed) accepts a 1-hop path."""
     policy = PathPolicy()
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True)]
     assert policy.evaluate(pools_and_zfos) is None  # no raise
 
 
-def test_policy_token_denylist_rejects_intermediate_token() -> None:
+def test_policy_token_denylist_rejects_intermediate_token(py_bot) -> None:
     """A touched (intermediate) token on the denylist raises
     TokenDenylistedError carrying that token."""
     policy = PathPolicy(disallowed_tokens=frozenset({USDC}))
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True), (_make_uniswap_v3_pool(), False)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True), (_make_uniswap_v3_pool(py_bot), False)]
     with pytest.raises(TokenDenylistedError) as exc_info:
         policy.evaluate(pools_and_zfos)
     assert exc_info.value.token == USDC
 
 
-def test_policy_token_denylist_case_insensitive_via_checksum() -> None:
+def test_policy_token_denylist_case_insensitive_via_checksum(py_bot) -> None:
     """Denylist membership normalizes by checksummed address, so a lowercase
     denylist entry still matches the checksummed pool token address."""
     policy = PathPolicy(disallowed_tokens=frozenset({USDC.lower()}))
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True)]
     with pytest.raises(TokenDenylistedError) as exc_info:
         policy.evaluate(pools_and_zfos)
     assert exc_info.value.token == USDC
 
 
-def test_policy_token_allowlist_rejects_unknown_token() -> None:
+def test_policy_token_allowlist_rejects_unknown_token(py_bot) -> None:
     """When an allowlist is set, any touched token absent from it rejects."""
     policy = PathPolicy(allowed_tokens=frozenset({WETH}))  # USDC not allowed
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True)]
     with pytest.raises(TokenDenylistedError) as exc_info:
         policy.evaluate(pools_and_zfos)
     assert exc_info.value.token == USDC
 
 
-def test_policy_token_allowlist_accepts_when_all_allowed() -> None:
+def test_policy_token_allowlist_accepts_when_all_allowed(py_bot) -> None:
     policy = PathPolicy(allowed_tokens=frozenset({USDC, WETH}))
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True)]
     assert policy.evaluate(pools_and_zfos) is None
 
 
-def test_policy_min_hops_rejects_too_short() -> None:
+def test_policy_min_hops_rejects_too_short(py_bot) -> None:
     policy = PathPolicy(min_hops=3)
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True), (_make_uniswap_v3_pool(), False)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True), (_make_uniswap_v3_pool(py_bot), False)]
     with pytest.raises(HopCountInsufficientError) as exc_info:
         policy.evaluate(pools_and_zfos)
     assert exc_info.value.hop_count == 2
     assert exc_info.value.min_hops == 3
 
 
-def test_policy_max_hops_rejects_too_long() -> None:
+def test_policy_max_hops_rejects_too_long(py_bot) -> None:
     policy = PathPolicy(max_hops=1)
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True), (_make_uniswap_v3_pool(), False)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True), (_make_uniswap_v3_pool(py_bot), False)]
     with pytest.raises(HopCountExceededError) as exc_info:
         policy.evaluate(pools_and_zfos)
     assert exc_info.value.hop_count == 2
     assert exc_info.value.max_hops == 1
 
 
-def test_policy_duplicate_pool_rejects_same_pool_twice() -> None:
+def test_policy_duplicate_pool_rejects_same_pool_twice(py_bot) -> None:
     """The same pool object appearing twice in the path is rejected (a
     degenerate, non-executable cycle). V2/V3 keyed by address, V4 by pool_id."""
-    pool = _make_uniswap_v2_pool()
+    pool = _make_uniswap_v2_pool(py_bot)
     policy = PathPolicy(reject_duplicate_pools=True)
     with pytest.raises(DuplicatePoolError):
         policy.evaluate([(pool, True), (pool, False)])
 
 
-def test_policy_duplicate_pool_can_be_disabled() -> None:
-    pool = _make_uniswap_v2_pool()
+def test_policy_duplicate_pool_can_be_disabled(py_bot) -> None:
+    pool = _make_uniswap_v2_pool(py_bot)
     policy = PathPolicy(reject_duplicate_pools=False)
     assert policy.evaluate([(pool, True), (pool, False)]) is None
 
 
-def test_policy_duplicate_pool_distinguishes_v2_and_v3_by_address() -> None:
+def test_policy_duplicate_pool_distinguishes_v2_and_v3_by_address(py_bot) -> None:
     """Two different pools are not flagged as duplicates."""
     policy = PathPolicy(reject_duplicate_pools=True)
-    pools_and_zfos = [(_make_uniswap_v2_pool(), True), (_make_uniswap_v3_pool(), False)]
+    pools_and_zfos = [(_make_uniswap_v2_pool(py_bot), True), (_make_uniswap_v3_pool(py_bot), False)]
     assert policy.evaluate(pools_and_zfos) is None
 
 
-def test_policy_liquidity_gate_rejects_below_minimum() -> None:
+def test_policy_liquidity_gate_rejects_below_minimum(py_bot) -> None:
     """min_liquidity + liquidity_of extractor rejects pools below the floor."""
-    v2 = _make_uniswap_v2_pool()  # reserves 2_000_000e6 USDC / 1000e18 WETH
+    v2 = _make_uniswap_v2_pool(py_bot)  # reserves 2_000_000e6 USDC / 1000e18 WETH
 
     def reserves_sum(pool) -> int:
         return pool.reserves_token0 + pool.reserves_token1
@@ -255,20 +255,20 @@ def test_policy_liquidity_gate_rejects_below_minimum() -> None:
     assert exc_info.value.liquidity == reserves_sum(v2)
 
 
-def test_policy_liquidity_gate_skipped_without_extractor() -> None:
+def test_policy_liquidity_gate_skipped_without_extractor(py_bot) -> None:
     """min_liquidity with no extractor is a no-op (the library does not encode
     pool-type-specific liquidity math — callers supply the proxy)."""
-    v2 = _make_uniswap_v2_pool()
+    v2 = _make_uniswap_v2_pool(py_bot)
     policy = PathPolicy(min_liquidity=10**30, liquidity_of=None)
     assert policy.evaluate([(v2, True)]) is None
 
 
-def test_policy_rules_compose() -> None:
+def test_policy_rules_compose(py_bot) -> None:
     """All enabled rules run; the first violation (in rule order) raises."""
     # denylist + max_hops both violated; denylist is checked after hop-count,
     # so a 2-hop path under max_hops=1 raises HopCountExceededError first.
-    v2 = _make_uniswap_v2_pool()
-    v4 = _make_uniswap_v4_pool()
+    v2 = _make_uniswap_v2_pool(py_bot)
+    v4 = _make_uniswap_v4_pool(py_bot)
     pools_and_zfos = [(v2, True), (v4, False)]
     policy = PathPolicy(
         disallowed_tokens=frozenset({USDC}),
@@ -288,14 +288,14 @@ def test_policy_rules_compose() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_register_path_invokes_predicate_before_engine() -> None:
+def test_register_path_invokes_predicate_before_engine(py_bot) -> None:
     """register_path runs the injected predicate BEFORE build_hops/dispatch — a
     rejection must surface as the typed exception and the engine must NOT be
     called."""
     registry, fake = _registry_with_fake_engine(
         predicate=PathPolicy(disallowed_tokens=frozenset({USDC}))
     )
-    v2 = _make_uniswap_v2_pool()
+    v2 = _make_uniswap_v2_pool(py_bot)
     fake.register_identity("v2", v2.address, 100)
 
     with pytest.raises(TokenDenylistedError):
@@ -304,9 +304,9 @@ def test_register_path_invokes_predicate_before_engine() -> None:
     assert fake.calls == [], "engine must not be reached on a policy rejection"
 
 
-def test_register_path_default_predicate_accepts() -> None:
+def test_register_path_default_predicate_accepts(py_bot) -> None:
     registry, fake = _registry_with_fake_engine()  # no predicate → NoOp
-    v2 = _make_uniswap_v2_pool()
+    v2 = _make_uniswap_v2_pool(py_bot)
     fake.register_identity("v2", v2.address, 100)
 
     path_id = registry.register_path([(v2, True)])
@@ -315,7 +315,7 @@ def test_register_path_default_predicate_accepts() -> None:
     assert isinstance(path_id, int)
 
 
-def test_register_path_custom_predicate_injection() -> None:
+def test_register_path_custom_predicate_injection(py_bot) -> None:
     """A caller-supplied predicate (structural, not PathPolicy) is honored."""
     calls: list[int] = []
 
@@ -324,7 +324,7 @@ def test_register_path_custom_predicate_injection() -> None:
             calls.append(len(pools_and_zfos))
 
     registry, fake = _registry_with_fake_engine(predicate=RecordingPredicate())
-    v2 = _make_uniswap_v2_pool()
+    v2 = _make_uniswap_v2_pool(py_bot)
     fake.register_identity("v2", v2.address, 7)
 
     registry.register_path([(v2, True)])

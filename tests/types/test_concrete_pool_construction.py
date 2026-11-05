@@ -6,6 +6,7 @@ Pool addresses and token data come from the project's reference database
 """
 
 from fractions import Fraction
+from functools import partial
 
 import pytest
 
@@ -18,21 +19,19 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.helpers.v4_pool_factory import make_v4_pool
 
-_PY_BOT = Bot()
 
 # ---------------------------------------------------------------------------
 # Shared tokens (Ethereum mainnet)
 # ---------------------------------------------------------------------------
 
 
-def _make_weth() -> Erc20Token:
+def _make_weth(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         chain_id=1,
         name="Wrapped Ether",
@@ -41,9 +40,9 @@ def _make_weth() -> Erc20Token:
     )
 
 
-def _make_usdc() -> Erc20Token:
+def _make_usdc(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         chain_id=1,
         name="USD Coin",
@@ -52,9 +51,9 @@ def _make_usdc() -> Erc20Token:
     )
 
 
-def _make_usdt() -> Erc20Token:
+def _make_usdt(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         "0xdAC17F958D2ee523a2206206994597C13D831ec7",
         chain_id=1,
         name="Tether USD",
@@ -63,9 +62,9 @@ def _make_usdt() -> Erc20Token:
     )
 
 
-def _make_sushi() -> Erc20Token:
+def _make_sushi(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2",
         chain_id=1,
         name="SushiSwap",
@@ -74,9 +73,9 @@ def _make_sushi() -> Erc20Token:
     )
 
 
-def _make_uni() -> Erc20Token:
+def _make_uni(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
         chain_id=1,
         name="Uniswap",
@@ -85,9 +84,9 @@ def _make_uni() -> Erc20Token:
     )
 
 
-def _make_dai() -> Erc20Token:
+def _make_dai(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         "0x6B175474E89094C44Da98b954EedeAC495271d0F",
         chain_id=1,
         name="Dai Stablecoin",
@@ -115,9 +114,9 @@ V4_POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90"
 # ---------------------------------------------------------------------------
 
 
-def _make_uniswap_v2_pool() -> UniswapV2Pool:
-    weth = _make_weth()
-    usdc = _make_usdc()
+def _make_uniswap_v2_pool(bot) -> UniswapV2Pool:
+    weth = _make_weth(bot)
+    usdc = _make_usdc(bot)
 
     return make_v2_pool(
         address="0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
@@ -133,9 +132,9 @@ def _make_uniswap_v2_pool() -> UniswapV2Pool:
     )
 
 
-def _make_sushiswap_v2_pool() -> UniswapV2Pool:
-    sushi = _make_sushi()
-    usdt = _make_usdt()
+def _make_sushiswap_v2_pool(bot) -> UniswapV2Pool:
+    sushi = _make_sushi(bot)
+    usdt = _make_usdt(bot)
 
     return make_v2_pool(
         address="0x680A025Da7b1be2c204D7745e809919bCE074026",
@@ -151,9 +150,9 @@ def _make_sushiswap_v2_pool() -> UniswapV2Pool:
     )
 
 
-def _make_pancakeswap_v2_pool() -> UniswapV2Pool:
-    weth = _make_weth()
-    usdc = _make_usdc()
+def _make_pancakeswap_v2_pool(bot) -> UniswapV2Pool:
+    weth = _make_weth(bot)
+    usdc = _make_usdc(bot)
 
     return make_v2_pool(
         address="0x2E8135bE71230c6B1B4045696d41C09Db0414226",
@@ -169,9 +168,9 @@ def _make_pancakeswap_v2_pool() -> UniswapV2Pool:
     )
 
 
-def _make_uniswap_v3_pool() -> UniswapV3Pool:
-    weth = _make_weth()
-    uni = _make_uni()
+def _make_uniswap_v3_pool(bot) -> UniswapV3Pool:
+    weth = _make_weth(bot)
+    uni = _make_uni(bot)
 
     return make_v3_pool(
         address="0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
@@ -187,9 +186,9 @@ def _make_uniswap_v3_pool() -> UniswapV3Pool:
     )
 
 
-def _make_sushiswap_v3_pool() -> UniswapV3Pool:
-    weth = _make_weth()
-    usdc = _make_usdc()
+def _make_sushiswap_v3_pool(bot) -> UniswapV3Pool:
+    weth = _make_weth(bot)
+    usdc = _make_usdc(bot)
 
     return make_v3_pool(
         address="0x35644Fb61aFBc458bf92B15AdD6ABc1996Be5014",
@@ -206,9 +205,9 @@ def _make_sushiswap_v3_pool() -> UniswapV3Pool:
     )
 
 
-def _make_pancakeswap_v3_pool() -> PancakeswapV3Pool:
-    usdc = _make_usdc()
-    dai = _make_dai()
+def _make_pancakeswap_v3_pool(bot) -> PancakeswapV3Pool:
+    usdc = _make_usdc(bot)
+    dai = _make_dai(bot)
 
     return make_v3_pool(
         address="0xD9e497BD8f491fE163b42A62c296FB54CaEA74B7",
@@ -225,9 +224,9 @@ def _make_pancakeswap_v3_pool() -> PancakeswapV3Pool:
     )
 
 
-def _make_uniswap_v4_pool() -> UniswapV4Pool:
-    weth = _make_weth()
-    usdc = _make_usdc()
+def _make_uniswap_v4_pool(bot) -> UniswapV4Pool:
+    weth = _make_weth(bot)
+    usdc = _make_usdc(bot)
 
     return make_v4_pool(
         pool_id="0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7",
@@ -265,9 +264,14 @@ POOL_IDS = [expected_type.__name__ for _, expected_type, _ in MAINNET_POOLS]
 
 
 @pytest.fixture(params=MAINNET_POOLS, ids=POOL_IDS)
-def pool_case(request):
-    """A (constructor, expected_type, pool_family) tuple for a mainnet pool."""
-    return request.param
+def pool_case(request, py_bot):
+    """A (constructor, expected_type, pool_family) tuple for a mainnet pool.
+
+    The constructor is bound to this test's engine, so one case's token
+    registrations can never leak into the next case's pool.
+    """
+    constructor, expected_type, pool_family = request.param
+    return partial(constructor, py_bot), expected_type, pool_family
 
 
 # ---------------------------------------------------------------------------
@@ -309,8 +313,8 @@ class TestV2PoolInterface:
         params=[c for c, t, f in MAINNET_POOLS if f == PoolFamily.CONSTANT_PRODUCT],
         ids=[t.__name__ for c, t, f in MAINNET_POOLS if f == PoolFamily.CONSTANT_PRODUCT],
     )
-    def v2_pool(self, request):
-        return request.param()
+    def v2_pool(self, request, py_bot):
+        return request.param(py_bot)
 
     def test_reserves(self, v2_pool):
         assert v2_pool.reserves_token0 > 0
@@ -339,8 +343,8 @@ class TestV3PoolInterface:
             if f == PoolFamily.CONCENTRATED_LIQUIDITY and t is not UniswapV4Pool
         ],
     )
-    def v3_pool(self, request):
-        return request.param()
+    def v3_pool(self, request, py_bot):
+        return request.param(py_bot)
 
     def test_concentrated_state(self, v3_pool):
         assert v3_pool.sqrt_price_x96 > 0
@@ -361,27 +365,27 @@ class TestV3PoolInterface:
 class TestV4PoolInterface:
     """UniswapV4Pool exposes V4-specific attributes."""
 
-    def test_pool_id(self):
-        pool = _make_uniswap_v4_pool()
+    def test_pool_id(self, py_bot):
+        pool = _make_uniswap_v4_pool(py_bot)
         assert pool.pool_id == bytes.fromhex(
             "4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7",
         )
 
-    def test_address_is_pool_manager(self):
-        pool = _make_uniswap_v4_pool()
+    def test_address_is_pool_manager(self, py_bot):
+        pool = _make_uniswap_v4_pool(py_bot)
         assert pool.address.lower() == V4_POOL_MANAGER.lower()
 
-    def test_protocol_fee(self):
-        pool = _make_uniswap_v4_pool()
+    def test_protocol_fee(self, py_bot):
+        pool = _make_uniswap_v4_pool(py_bot)
         assert pool.protocol_fee.zero_for_one == 0
         assert pool.protocol_fee.one_for_zero == 0
 
-    def test_lp_fee(self):
-        pool = _make_uniswap_v4_pool()
+    def test_lp_fee(self, py_bot):
+        pool = _make_uniswap_v4_pool(py_bot)
         assert pool.lp_fee == 500000
 
-    def test_sparse_without_tick_data(self):
-        pool = _make_uniswap_v4_pool()
+    def test_sparse_without_tick_data(self, py_bot):
+        pool = _make_uniswap_v4_pool(py_bot)
         assert pool.sparse_liquidity_map is True
 
 

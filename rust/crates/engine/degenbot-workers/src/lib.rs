@@ -31,6 +31,8 @@
 //! there is deliberately no pyo3 dependency — simulation never round-trips
 //! Python and the FFI is crossed only for runtime/startup concerns
 //! (design doc §8).
+//!
+//! Design: docs/architecture/worker-fleet.md
 
 pub mod budget;
 pub mod dispatcher;

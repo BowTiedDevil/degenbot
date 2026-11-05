@@ -24,7 +24,6 @@ from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot as _Engine
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
@@ -50,7 +49,6 @@ def _make_bot(fork: AnvilFork) -> Bot:
 
 
 _V2_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v2/wbtc_weth/17600000.json")
-_PY_BOT = _Engine()
 
 
 def _load_wbtc_weth_v2_pool() -> UniswapV2Pool:
@@ -71,9 +69,9 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool() -> UniswapV2Pool:
 
 
 @pytest.fixture
-def dai() -> Erc20Token:
+def dai(py_bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        py_bot,
         DAI_CONTRACT_ADDRESS,
         name="Dai Stablecoin",
         symbol="DAI",

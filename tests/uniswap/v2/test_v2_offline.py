@@ -16,9 +16,6 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolState,
 )
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
-
-_PY_BOT = Bot()
 
 
 class TestV2PoolCalculations:
@@ -143,6 +140,7 @@ class TestV2PoolCalculations:
 
     def test_simulate_exact_input_rejects_unknown_token(
         self,
+        py_bot,
         offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """An unknown ``token_in`` is rejected before any calc runs.
@@ -158,7 +156,7 @@ class TestV2PoolCalculations:
         # A token registered in the same Bot but not in this pool's pair —
         # distinct address, distinct identity, no swap path.
         stranger = make_erc20(
-            _PY_BOT,
+            py_bot,
             "0x" + "e" * 40,
             name="Stranger",
             symbol="STR",
@@ -193,6 +191,7 @@ class TestV2PoolCalculations:
 
     def test_simulate_exact_output_rejects_unknown_token(
         self,
+        py_bot,
         offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """An unknown ``token_out`` is rejected before any calc runs.
@@ -206,7 +205,7 @@ class TestV2PoolCalculations:
         pool = offline_wbtc_weth_v2_pool
 
         stranger = make_erc20(
-            _PY_BOT,
+            py_bot,
             "0x" + "d" * 40,
             name="Stranger",
             symbol="STR",

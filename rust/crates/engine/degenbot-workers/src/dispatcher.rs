@@ -12,10 +12,12 @@
 //!
 //! `Merge` is pinned at boot and NEVER queued. Queues are bounded and
 //! overflow LOUDLY (ADR-021 posture: classify, stop loudly, never silently
-//! drop). The deadlock ledger carries over (§10): a unit whose results feed
+//! drop). The deadlock ledger carries over (design doc §10): a unit whose results feed
 //! a pipe is never abandoned silently — abandoning one mid-flight trips the
 //! loud-abort tripwire (log at error + `std::process::abort`), mirroring the
 //! executor discipline.
+//!
+//! Design: docs/architecture/worker-fleet.md
 
 use degenbot_core::{op_error, op_info};
 use std::collections::VecDeque;
@@ -299,7 +301,7 @@ pub enum SubmitError {
 }
 
 /// The submit-seam receipt (LW-T5, Seam E): a unit is NEVER dropped — the
-/// unbounded host backlog absorbs overflow (§10 ledger); the receipt TELLS
+/// unbounded host backlog absorbs overflow (design doc §10 ledger); the receipt TELLS
 /// the caller which path its unit took.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubmitReceipt {
@@ -502,7 +504,7 @@ impl FleetHost {
     /// pinned to the LAST index, solver seats == LPT bins), then build the
     /// slot table / per-role queues / census rows FROM that layout, pin
     /// the merge sidecar (T1→T2→T4, exactly one), and self-register every
-    /// hosted role into the worker census (§7).
+    /// hosted role into the worker census (design doc §7).
     ///
     /// # Errors
     /// [`BudgetError`] fail-fasts on over-subscription / pinned-role floor;
@@ -700,7 +702,7 @@ impl FleetHost {
     }
 
     /// The sim intake cap in the current posture (read through the shared
-    /// owner — cordon floors it per §6 effect (b)).
+    /// owner — cordon floors it per design doc §6 effect (b)).
     #[must_use]
     pub fn sim_intake_cap(&self, slot_cap: usize) -> usize {
         self.posture.sim_intake_cap(slot_cap)
@@ -724,7 +726,7 @@ impl FleetHost {
     }
 
     /// The slot's warm arena token: identity is STABLE across cycles while
-    /// the pin lives; `None` once released via T9 (§3.4).
+    /// the pin lives; `None` once released via T9 (design doc §3.4).
     #[must_use]
     pub fn arena(&self, slot: SlotId) -> Option<ArenaToken> {
         let idx = usize::try_from(slot).ok()?;
@@ -849,7 +851,7 @@ impl FleetHost {
     }
 
     /// Release the pin on `key` (T9, epoch boundary only) and drop its warm
-    /// arena — an arena is never live across a role switch (§3.4).
+    /// arena — an arena is never live across a role switch (design doc §3.4).
     ///
     /// # Errors
     /// [`HostError::Transition`] (the FSM's `MidCyclePin`) off-boundary.
@@ -912,7 +914,7 @@ impl FleetHost {
         self.try_enqueue(unit).map_err(|(err, _)| err)
     }
 
-    /// The lossless refusal seam (§10 never-drop): like [`FleetHost::
+    /// The lossless refusal seam (design doc §10 never-drop): like [`FleetHost::
     /// enqueue`], but a refusal returns the unit BACK next to the typed
     /// error. The pooled-intake hosts need this under the SHARED posture
     /// owner: the owner is fed from the throttle-poller
@@ -1097,12 +1099,12 @@ impl FleetHost {
         }
 
         // 3. Solver queue intake: new pin claims, admission-capped by the
-        //    Solver CPU share (a gated bin parks — §5 note). Only reached
+        //    Solver CPU share (a gated bin parks — design doc §5 note). Only reached
         //    after the sim queue drained: sim-before-solve at lease time.
         //    A unit whose key is HOT (pinned or in flight on its seat) is
         //    skipped here — it is granted only via T6 onto its OWN seat by
         //    the continuation lane; granting a hot key cold would seat one
-        //    bin on two workers (the pin IS the key, §3.4).
+        //    bin on two workers (the pin IS the key, design doc §3.4).
         let admission_cap = usize::try_from(self.budget.solver_cpus).unwrap_or(1);
         while self.count_leased_or_running(WorkerRole::Solver) < admission_cap {
             let Some(idle) = self.first_idle_slot() else {
@@ -1163,7 +1165,7 @@ impl FleetHost {
     /// grants run strictly BEHIND solve/sim/resolve precedence (the deferrable
     /// role drains the leftovers). Cordon is enforced at ENQUEUE time —
     /// Deferrable intake is held while cordoned, so this loop sees no queued
-    /// units then; in-flight units finish normally (never cancelled, §6).
+    /// units then; in-flight units finish normally (never cancelled, design doc §6).
     fn dispatch_pool_state_updates(&mut self, grants: &mut Vec<(Grant, Unit)>) {
         let poolupd_cap = self.budget.pool_state_updater_slots;
         let mut poolupd_busy = self.count_leased_or_running(WorkerRole::PoolStateUpdater);
@@ -1451,7 +1453,7 @@ impl FleetHost {
     }
 }
 
-/// The default loud-abort tripwire (executor discipline, §10 ledger item 3): the error
+/// The default loud-abort tripwire (executor discipline, design doc §10 ledger item 3): the error
 /// is logged by [`FleetHost::strand_unit`], then the process aborts —
 /// swallowing the error is never an option.
 fn loud_abort(_reason: &str) {

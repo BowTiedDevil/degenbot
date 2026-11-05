@@ -799,6 +799,19 @@ serialization stamp, and the per-table digests — owned in both directions (ren
 validated parse) by the digest writer.
 _Avoid_: opaque pre-rendered strings; hand-parsed JSON inverses.
 
+## Curve stableswap vocabulary
+
+**`yd_variant`** (`YDVariant`):
+The Curve stableswap `_get_y_d` formula selector: `STANDARD` (`1`) or
+`VARIANT_0` (`2`, A_PRECISION folded into the b/c terms). The name is the
+Vyper `_get_y_d` function's own and is carried verbatim across every layer
+— the Rust `YDVariant`, the FFI `stableswap_get_y_d(..., yd_variant)`, and
+`CurvePoolState.yd_variant` — so one spelling reaches Python unchanged.
+
+_Avoid_: `variant` alone on the wire (collides with the DEX-identity
+`PoolTypeDescriptor.variant`); `y_d_variant` in one layer and `yd_variant`
+in another.
+
 ## Piecewise concentrated-liquidity solving
 
 **Concentrated Liquidity Kernel**:

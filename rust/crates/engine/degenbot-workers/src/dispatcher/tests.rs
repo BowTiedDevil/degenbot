@@ -1,5 +1,7 @@
 //! Dispatcher/host unit tests: bounded queues, precedence, loud overflow,
 //! cordon intake, census + gauge integration.
+//!
+//! Design: docs/architecture/worker-fleet.md
 #![expect(clippy::expect_used)]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -432,7 +434,7 @@ fn submitting_sims_and_solves_together_grants_all_sims_before_any_solve() {
         .expect("solver grants present");
     assert!(
         last_sim < first_solve,
-        "ALL sims must grant before ANY solve (§4 rule 2): {grants:?}"
+        "ALL sims must grant before ANY solve (design doc §4 rule 2): {grants:?}"
     );
 }
 

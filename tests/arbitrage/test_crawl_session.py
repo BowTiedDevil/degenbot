@@ -11,6 +11,7 @@ that the trim never severs.
 from __future__ import annotations
 
 import importlib
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -134,6 +135,28 @@ def _anchor_lines(lines: list[str]) -> list[str]:
     return [line for line in lines if line.endswith("duplicates")]
 
 
+@pytest.fixture
+def render_lines(caplog: pytest.LogCaptureFixture):
+    """Return the rendered ``build_paths`` lines once a test has finished.
+
+    The render path logs through ``degenbot.runner.build_paths.bot_logger``,
+    which is the ``degenbot.logging`` package logger — its ``propagate`` is off
+    (it feeds the console writer through the queue), so the root-attached caplog
+    handler never sees those records. This attaches the same handler to that
+    logger for the duration of the test: no module global is swapped and no
+    logger implementation is stubbed.
+    """
+    logger = importlib.import_module("degenbot.runner.build_paths").bot_logger
+    caplog.set_level(logging.INFO, logger=logger.name)
+    logger.addHandler(caplog.handler)
+    try:
+        yield lambda: [
+            record.getMessage() for record in caplog.records if record.name == logger.name
+        ]
+    finally:
+        logger.removeHandler(caplog.handler)
+
+
 def _recording_bot() -> _MeteredBot:
     return _MeteredBot()
 
@@ -148,7 +171,7 @@ def _craft_receipts() -> list[dict[str, Any]]:
 
 
 @pytest.mark.asyncio
-async def test_a_drained_burst_prints_the_anchor_once(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_drained_burst_prints_the_anchor_once(render_lines) -> None:
     """A lagging consumer drains a burst without reprinting the same line.
 
     The engine's fold has already absorbed every receipt it sent, so a burst this
@@ -170,17 +193,11 @@ async def test_a_drained_burst_prints_the_anchor_once(monkeypatch: pytest.Monkey
             "register_fail_count": 0,
         },
     )
-    lines: list[str] = []
     bot = _recording_bot()
-    monkeypatch.setattr(
-        # The package re-exports the `build_paths` FUNCTION, which shadows the
-        # submodule attribute: resolve the module itself.
-        importlib.import_module("degenbot.runner.build_paths"),
-        "bot_logger",
-        type("_Recorder", (), {"info": lambda _self, line: lines.append(line)})(),
-    )
 
     await _consume(session, bot=bot, progress_interval_s=30.0)
+
+    lines = render_lines()
 
     assert len(_anchor_lines(lines)) == 1, "a frozen fold prints its boundary once"
     cadence = [line for line in lines if "(terminal render)" in line]
@@ -189,9 +206,7 @@ async def test_a_drained_burst_prints_the_anchor_once(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
-async def test_a_live_crawl_prints_one_anchor_per_thousand(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_live_crawl_prints_one_anchor_per_thousand(render_lines) -> None:
     """While the fold keeps up, the anchor keeps its per-1000 cadence."""
     session = _ScriptedCrawl(
         _craft_receipts(),
@@ -204,14 +219,9 @@ async def test_a_live_crawl_prints_one_anchor_per_thousand(
         },
         advance=True,
     )
-    lines: list[str] = []
-    monkeypatch.setattr(
-        importlib.import_module("degenbot.runner.build_paths"),
-        "bot_logger",
-        type("_Recorder", (), {"info": lambda _self, line: lines.append(line)})(),
-    )
-
     await _consume(session, bot=_recording_bot(), progress_interval_s=30.0)
+
+    lines = render_lines()
 
     assert len(_anchor_lines(lines)) == 2, "2500 created registrations cross two boundaries"
 

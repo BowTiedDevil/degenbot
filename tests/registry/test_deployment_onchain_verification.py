@@ -1,8 +1,10 @@
 """On-chain verification of shipped deployment addresses (cast harness).
 
 Every factory address in ``registry/deployments.json`` is checked against the
-chain it claims to live on, using Foundry's ``cast``. Three tiers, each
-progressively stronger and more expensive:
+chain it claims to live on, using Foundry's ``cast``. Two tiers stay live and
+on demand; the other two are replayed offline from a committed capture
+(``test_deployment_golden_verification.py``), so no live path reads an external
+verifier:
 
 **Tier 1 — bytecode presence** (default, cheapest, key-less).
     ``cast code <factory> --rpc-url <chain_rpc>`` returns non-empty bytecode
@@ -12,24 +14,13 @@ progressively stronger and more expensive:
     tx history), wholesale-fabricated placeholders that looked plausible but
     resolved to nothing. Runs against a local RPC; no API key needed.
 
-**Tier 2 — selector fingerprint** (opt-in via ``DEGENBOT_VERIFY_DEPLOYMENTS=2``).
-    The deployed bytecode is decoded into its 4-byte function selectors
-    (``cast selectors``) and asserted to expose the *factory interface* expected
-    for the deployment's ``pool_type`` (e.g. a ``uniswap-v2`` factory must expose
-    ``getPair(address,address)`` + ``createPair(address,address)``; a
-    ``_balancer-weighted`` factory must expose ``getCreationCode()`` +
-    ``isPoolFromFactory(address)``). A fabricated address that happens to land on
-    *some* deployed contract still fails here unless it impersonates the right
-    factory interface. Key-less (selectors resolve via ``cast 4byte`` /
-    openchain.xyz, but the assertion is on raw 4-byte presence, so no network
-    beyond the RPC is strictly required).
-
-**Tier 3 — Etherscan source name** (opt-in via ``DEGENBOT_VERIFY_DEPLOYMENTS=3``,
-    requires ``ETHERSCAN_API_KEY``). ``getsourcecode`` returns the verified
-    Solidity ``ContractName``, asserted to match the expected name for the
-    ``pool_type`` (e.g. ``WeightedPoolFactory``, ``UniswapV2Factory``). The
-    deepest signal — but unreliable for unverified contracts and unavailable
-    without an API key.
+**Captured — Tier 2 (selector fingerprint) and Tier 3 (verified source name).**
+    Both are facts about a deployed address that do not change between runs,
+    so the record driver below stores them and the hermetic replay module
+    asserts them: the selector set the bytecode exposes, and the verified
+    source-contract name. Recording the name goes through
+    :class:`tests.registry.deployment_verification.BlockscoutVerifiedSource`
+    (key-less), never a per-run external lookup.
 
 **Tier 4 — init_code_hash reproduces pool address** (opt-in via
     ``DEGENBOT_VERIFY_DEPLOYMENTS=4``). The CREATE2 ``init_code_hash`` is the
@@ -52,28 +43,27 @@ runs offline and never needs a node. Run on demand against a local/mainnet RPC::
 
 Escalate tiers with the env var (default ``1``)::
 
-    # Tier 2 (+selector fingerprint)
-    DEGENBOT_VERIFY_DEPLOYMENTS=2 just verify-deployments
-    # Tier 3 (+Etherscan source name; needs key)
-    DEGENBOT_VERIFY_DEPLOYMENTS=3 ETHERSCAN_API_KEY=... just verify-deployments
     # Tier 4 (+init_code_hash reproduces pool address)
     DEGENBOT_VERIFY_DEPLOYMENTS=4 just verify-deployments
+
+    # Re-record the captured tier-2/tier-3 facts (selectors + verified name)
+    just record-deployment-golden
 
 Per-chain rows skip individually when their chain's RPC is unreachable (e.g.
 on a machine with only a local Ethereum node, the Base/Arbitrum rows skip).
 
-The tier 1/2/4 read paths run through the injectable
-:class:`tests.registry.deployment_verification.CastHarness` seam, which the
-record driver below binds to fill the committed golden capture replayed —
+The tier 1/4 read paths run through the injectable
+:class:`tests.registry.deployment_verification.CastHarness` seam, and the tier-3
+name through
+:class:`tests.registry.deployment_verification.BlockscoutVerifiedSource`; the
+record driver below binds both to fill the committed golden capture replayed —
 fully offline — by ``tests/registry/test_deployment_golden_verification.py``
 in the default suite.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import urllib.request
 from functools import cache
 
 import pytest
@@ -85,11 +75,12 @@ from tests.conftest import (
     TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
 )
 from tests.registry.deployment_verification import (
-    EXPECTED_FACTORY_SELECTORS,
     KNOWN_PAIRS,
+    BlockscoutVerifiedSource,
     CastHarness,
     DeploymentGoldenCapture,
     FoundryCast,
+    VerifiedSource,
     compute_pool_address,
     is_zero_address,
     onchain_pool_address,
@@ -101,11 +92,8 @@ from tests.registry.deployment_verification import (
 # ---------------------------------------------------------------------------
 
 _VERIFY_TIER = int(os.environ.get("DEGENBOT_VERIFY_DEPLOYMENTS", "1"))
-"""Verification tier: 1 = bytecode presence (default), 2 = +selector
-fingerprint, 3 = +Etherscan source ContractName, 4 = +init_code_hash
-reproduces pool address."""
-
-_ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
+"""Live verification tier: 1 = bytecode presence (default), 4 = +init_code_hash
+reproduces the pool address. Tiers 2/3 are captured facts replayed offline."""
 
 
 def _tier(gte: int) -> bool:
@@ -153,42 +141,6 @@ def _skip_if_unreachable(chain_id: int) -> str | None:
     return None
 
 
-def _etherscan_source_name(chain_id: int, factory: str) -> str | None:
-    """Fetch the verified ``ContractName`` from Etherscan, or None if unverified."""
-    key = _ETHERSCAN_API_KEY
-    if not key:
-        pytest.skip("Tier 3 requires ETHERSCAN_API_KEY")  # pragma: no cover
-    url = (
-        f"https://api.etherscan.io/v2/api?chainid={chain_id}"
-        f"&module=contract&action=getsourcecode&address={factory}&apikey={key}"
-    )
-    with urllib.request.urlopen(url, timeout=30) as resp:
-        data = json.loads(resp.read())
-    result = data.get("result")
-    if not isinstance(result, list) or not result:
-        return None
-    name = result[0].get("ContractName")
-    return name if isinstance(name, str) and name else None
-
-
-# ---------------------------------------------------------------------------
-# Tier 3 — expected verified ContractName substring per pool_type
-# ---------------------------------------------------------------------------
-
-# None entries skip the name assertion (the contract is still asserted
-# deployed via Tiers 1-2). Names verified via Etherscan getsourcecode.
-EXPECTED_CONTRACT_NAME: dict[str, str | None] = {
-    "uniswap-v2": "Factory",
-    "uniswap-v3": "UniswapV3Factory",
-    "pancakeswap-v3": "PancakeV3Factory",
-    "sushiswap-v3": "UniswapV3Factory",  # Sushi V3 forks the V3 factory contract
-    "aerodrome-v2": "PoolFactory",
-    "aerodrome-v3": "PoolFactory",
-    "balancer-weighted": "WeightedPool",  # WeightedPoolFactory / WeightedPool2TokensFactory
-    "balancer-stable": None,  # StablePoolFactory OR ComposableStablePoolFactory
-}
-
-
 # ---------------------------------------------------------------------------
 # Parametrization
 # ---------------------------------------------------------------------------
@@ -197,6 +149,12 @@ _RECORDS: list[DeploymentRecord] = load_deployments()
 """All shipped deployments, loaded once at collection time."""
 
 _RECORD_IDS = [f"{r.chain_id}-{r.factory[:10]}…-{r.name}" for r in _RECORDS]
+
+
+@pytest.fixture
+def verified_source() -> VerifiedSource:
+    """The verified-source seam the record driver records names through."""
+    return BlockscoutVerifiedSource()
 
 
 @pytest.fixture
@@ -245,60 +203,6 @@ class TestDeploymentOnchainVerification:
             f"bytecode — `cast code` returned {code!r}. The address is not a "
             f"deployed contract. This is the Balancer-corruption bug class: a "
             f"plausible-looking address that resolves to nothing on-chain."
-        )
-
-    # --- Tier 2: selector fingerprint ------------------------------------
-
-    @pytest.mark.skipif(not _tier(2), reason="Tier 2 needs DEGENBOT_VERIFY_DEPLOYMENTS>=2")
-    def test_tier2_factory_selector_fingerprint(self, record: DeploymentRecord) -> None:
-        """Tier 2: the deployed bytecode exposes the expected factory interface.
-
-        The factory's 4-byte selector set (decoded from its bytecode via
-        ``cast selectors``) must be a *superset* of the canonical selectors for
-        its ``pool_type``. A fabricated address that happened to land on some
-        unrelated deployed contract fails here unless it impersonates the right
-        factory interface.
-        """
-        skip = _skip_if_unreachable(record.chain_id)
-        if skip is not None:
-            pytest.skip(skip)
-        expected = EXPECTED_FACTORY_SELECTORS.get(record.pool_type)
-        if expected is None:
-            pytest.skip(f"no selector fingerprint defined for pool_type={record.pool_type!r}")
-        rpc_url = _CHAIN_RPC[record.chain_id]
-        deployed = _CAST.selectors(_CAST.code(record.factory, rpc_url=rpc_url))
-        missing = expected - deployed
-        assert not missing, (
-            f"{record.name} ({record.factory}, chain {record.chain_id}, "
-            f"pool_type={record.pool_type!r}) is missing expected factory "
-            f"selectors {sorted(missing)}. Deployed selectors: {sorted(deployed)[:12]}…"
-        )
-
-    # --- Tier 3: Etherscan source ContractName --------------------------
-
-    @pytest.mark.skipif(not _tier(3), reason="Tier 3 needs DEGENBOT_VERIFY_DEPLOYMENTS>=3")
-    def test_tier3_etherscan_contract_name(self, record: DeploymentRecord) -> None:
-        """Tier 3: the Etherscan-verified ContractName matches the pool_type.
-
-        The deepest signal — the verified Solidity source's contract name.
-        Unverified contracts (ContractName=="") are skipped, not failed: source
-        verification is optional and absent for some legitimate factories.
-        """
-        if not _ETHERSCAN_API_KEY:
-            pytest.skip("Tier 3 requires ETHERSCAN_API_KEY")
-        skip = _skip_if_unreachable(record.chain_id)
-        if skip is not None:
-            pytest.skip(skip)
-        name = _etherscan_source_name(record.chain_id, record.factory)
-        expected_substring = EXPECTED_CONTRACT_NAME.get(record.pool_type)
-        if expected_substring is None:
-            pytest.skip(f"no expected ContractName defined for pool_type={record.pool_type!r}")
-        if not name:
-            pytest.skip(f"{record.name} ({record.factory}) source not verified on Etherscan")
-        assert expected_substring.lower() in name.lower(), (
-            f"{record.name} ({record.factory}, chain {record.chain_id}) "
-            f"Etherscan ContractName={name!r} does not contain "
-            f"{expected_substring!r} (expected for pool_type={record.pool_type!r})"
         )
 
     # --- Tier 4: init_code_hash reproduces pool address ----------------
@@ -355,10 +259,15 @@ class TestRecordDeploymentGoldenCapture:
 
     Skipped unless ``--golden-mode=record`` (wired up as
     ``just record-deployment-golden``). Every row on a reachable chain
-    persists its tier 1/2/4 facts into the committed capture; unreachable
-    chains contribute nothing, and the hermetic replay module
-    (``test_deployment_golden_verification.py``) skips those rows with a
-    reason instead of passing silently.
+    persists its chain-derived tier 1/2/4 facts into the committed capture.
+
+    The tier-3 name is chain-independent (a verifier lookup, not an RPC read),
+    so it is recorded for EVERY shipped row, including rows whose chain this
+    run cannot reach: those keep their previously recorded chain facts and
+    gain the name field. A row whose verifier cannot answer records the reason
+    instead of a name, and the hermetic replay module
+    (``test_deployment_golden_verification.py``) skips it with that reason
+    instead of passing silently.
     """
 
     @pytest.mark.parametrize("record", _RECORDS, ids=_RECORD_IDS)
@@ -366,25 +275,48 @@ class TestRecordDeploymentGoldenCapture:
         self,
         deployment_capture: DeploymentGoldenCapture,
         record: DeploymentRecord,
+        verified_source: VerifiedSource,
     ) -> None:
-        """Capture one deployment row's tier 1/2/4 facts from the chain."""
+        """Capture one deployment row's tier 1/2/3/4 facts from their sources."""
+        name_facts = self._capture_contract_name(verified_source, record)
         skip = _skip_if_unreachable(record.chain_id)
         if skip is not None:
+            # The name needs no chain read, so it still lands on the row a
+            # previous run recorded; the chain facts stay as they were.
+            deployment_capture.merge_row(record.chain_id, record.factory, name_facts)
             pytest.skip(skip)
         rpc_url = _CHAIN_RPC[record.chain_id]
         deployment_capture.bind_chain(record.chain_id, rpc_url)
         code = _CAST.code(record.factory, rpc_url=rpc_url)
-        deployment_capture.put_row(
-            record.chain_id,
-            record.factory,
-            {
-                "name": record.name,
-                "pool_type": record.pool_type,
-                "bytecode_present": len(code) > 2,
-                "selectors": sorted(_CAST.selectors(code)),
-                "pool": self._capture_pool(record, rpc_url),
-            },
-        )
+        row = {
+            "name": record.name,
+            "pool_type": record.pool_type,
+            "bytecode_present": len(code) > 2,
+            "selectors": sorted(_CAST.selectors(code)),
+            "pool": self._capture_pool(record, rpc_url),
+        }
+        row.update(name_facts)
+        deployment_capture.put_row(record.chain_id, record.factory, row)
+
+    @staticmethod
+    def _capture_contract_name(verified_source: VerifiedSource, record: DeploymentRecord) -> dict:
+        """Capture the tier-3 verified source name, or its recorded skip reason.
+
+        A transport fault is recorded as the skip reason rather than aborting
+        the run: a verifier outage must not cost the tier-1/2/4 facts this run
+        proved. The replay module skips that row with the recorded reason
+        (loud, never silent).
+        """
+        try:
+            name = verified_source.contract_name(record.chain_id, record.factory)
+        except Exception as exc:  # ruff: ignore[blind-except] — verifier outages are any-transport
+            return {"contract_name": None, "contract_name_skip": f"verifier call failed: {exc}"}
+        if not name:
+            return {
+                "contract_name": None,
+                "contract_name_skip": "address is not verified on the source endpoint",
+            }
+        return {"contract_name": name}
 
     @staticmethod
     def _capture_pool(record: DeploymentRecord, rpc_url: str) -> dict:

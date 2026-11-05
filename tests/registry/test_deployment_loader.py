@@ -350,84 +350,63 @@ class TestOverlayConfigFailsLoudly:
     "no config file / no section / no overlay key" remains a quiet ``None``.
     """
 
-    @staticmethod
-    def _select_config_file(monkeypatch, path) -> None:
-        """Point the raw-table read at a specific operator file.
-
-        The installed verdict is frozen at FFI init (see the freeze test
-        above), so in-process tests swap the data module's ``config_file_path``
-        import — the same seam ``load_deployments`` reads through.
-        """
-        monkeypatch.setattr(
-            "degenbot.registry.deployment_records.config_file_path",
-            lambda: None if path is None else str(path),
-        )
-
-    def test_no_config_file_is_quiet(self, monkeypatch) -> None:
+    def test_no_config_file_is_quiet(self, tmp_path) -> None:
         """A process with no file layer returns the shipped defaults, quietly."""
-        self._select_config_file(monkeypatch, None)
-        records = load_deployments()
-        assert records == load_deployments(overlay_path=None)
+        records = load_deployments(config_path=None)
+        assert records == load_deployments(overlay_path=tmp_path / "nonexistent.json")
 
-    def test_absent_section_is_quiet(self, tmp_path, monkeypatch) -> None:
+    def test_absent_section_is_quiet(self, tmp_path) -> None:
         """A config file without a ``[deployments]`` section returns shipped defaults."""
         config_file = tmp_path / "config.toml"
         config_file.write_text(
             '[nodes]\nhttp = { 1 = "http://localhost:8545" }\n', encoding="utf-8"
         )
-        self._select_config_file(monkeypatch, config_file)
-        records = load_deployments()
-        assert records == load_deployments(overlay_path=None)
+        records = load_deployments(config_path=config_file)
+        assert records == load_deployments(config_path=None)
 
-    def test_section_without_overlay_key_is_quiet(self, tmp_path, monkeypatch) -> None:
+    def test_section_without_overlay_key_is_quiet(self, tmp_path) -> None:
         """A ``[deployments]`` section with no ``overlay`` key returns shipped defaults."""
         config_file = tmp_path / "config.toml"
         config_file.write_text('[deployments]\nother_key = "unrelated"\n', encoding="utf-8")
-        self._select_config_file(monkeypatch, config_file)
-        records = load_deployments()
-        assert records == load_deployments(overlay_path=None)
+        records = load_deployments(config_path=config_file)
+        assert records == load_deployments(config_path=None)
 
-    def test_unreadable_config_file_raises(self, tmp_path, monkeypatch) -> None:
+    def test_unreadable_config_file_raises(self, tmp_path) -> None:
         """A config file that cannot be opened raises, naming the file."""
         # A directory at the selected path: open() fails with IsADirectoryError,
         # an OSError, regardless of the test user's privileges.
         config_file = tmp_path / "config.toml"
         config_file.mkdir()
-        self._select_config_file(monkeypatch, config_file)
         with pytest.raises(DegenbotValueError, match=r"config\.toml"):
-            load_deployments()
+            load_deployments(config_path=config_file)
 
-    def test_unparseable_config_file_raises(self, tmp_path, monkeypatch) -> None:
+    def test_unparseable_config_file_raises(self, tmp_path) -> None:
         """A config file that is not valid TOML raises, naming the file."""
         config_file = tmp_path / "config.toml"
         config_file.write_text("not [valid toml", encoding="utf-8")
-        self._select_config_file(monkeypatch, config_file)
         with pytest.raises(DegenbotValueError, match=r"config\.toml"):
-            load_deployments()
+            load_deployments(config_path=config_file)
 
-    def test_non_table_deployments_section_raises(self, tmp_path, monkeypatch) -> None:
+    def test_non_table_deployments_section_raises(self, tmp_path) -> None:
         """A ``[deployments]`` section that is not a table raises, naming the file."""
         config_file = tmp_path / "config.toml"
         config_file.write_text("deployments = 42\n", encoding="utf-8")
-        self._select_config_file(monkeypatch, config_file)
         with pytest.raises(DegenbotValueError, match=r"config\.toml"):
-            load_deployments()
+            load_deployments(config_path=config_file)
 
-    def test_non_string_overlay_raises(self, tmp_path, monkeypatch) -> None:
+    def test_non_string_overlay_raises(self, tmp_path) -> None:
         """A non-string ``overlay`` value raises, naming the file."""
         config_file = tmp_path / "config.toml"
         config_file.write_text("[deployments]\noverlay = 42\n", encoding="utf-8")
-        self._select_config_file(monkeypatch, config_file)
         with pytest.raises(DegenbotValueError, match=r"config\.toml"):
-            load_deployments()
+            load_deployments(config_path=config_file)
 
-    def test_empty_overlay_raises(self, tmp_path, monkeypatch) -> None:
+    def test_empty_overlay_raises(self, tmp_path) -> None:
         """An empty-string ``overlay`` value raises, naming the file."""
         config_file = tmp_path / "config.toml"
         config_file.write_text('[deployments]\noverlay = ""\n', encoding="utf-8")
-        self._select_config_file(monkeypatch, config_file)
         with pytest.raises(DegenbotValueError, match=r"config\.toml"):
-            load_deployments()
+            load_deployments(config_path=config_file)
 
 
 class TestRegisterFromDeployments:

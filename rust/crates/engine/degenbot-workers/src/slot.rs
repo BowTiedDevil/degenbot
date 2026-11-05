@@ -1,15 +1,16 @@
-//! Worker-slot states + the T1–T9 legal-transition table (design doc
-//! §3.2–§3.3).
+//! Worker-slot states + the T1–T9 legal-transition table (design doc §3.2–§3.3).
 //!
 //! A worker **slot** is a persistent host resource (a thread/booted task);
 //! its `role` is the scheduling unit. The FSM is a pure, total function:
 //! `transition(from, t, ctx) -> Result<SlotState, RejectedTransition>`. Any
 //! move not covered by a T-row is a loud, typed rejection — never a silent
-//! re-wrap (§3.3's illegal list).
+//! re-wrap (design doc §3.3's illegal list).
+//!
+//! Design: docs/architecture/worker-fleet.md
 
 use crate::role::{CordonClass, WorkerRole};
 
-/// Pin key = the LPT bin id (job→bin affinity; §3.4).
+/// Pin key = the LPT bin id (job→bin affinity; design doc §3.4).
 pub type PinKey = u64;
 /// Unit id per role queue.
 pub type UnitId = u64;
@@ -19,7 +20,7 @@ pub type UnitId = u64;
 pub const MERGE_PIN_KEY: PinKey = 0;
 
 /// State of one worker slot (design doc §3.2). `Cordoned` is a PROCESS-level
-/// posture, deliberately NOT a slot state — it gates transitions (§6).
+/// posture, deliberately NOT a slot state — it gates transitions (design doc §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SlotState {
     /// Parked; no lease; zero CPU.
@@ -136,7 +137,7 @@ pub enum RejectionReason {
     /// T1: a Merge claim does not carry the single merge pin key.
     #[error("Merge pin claims must carry MERGE_PIN_KEY (T1/T4: exactly one merge pin)")]
     MergeKeyMismatch,
-    /// The from/transition pair is off the table's end (§3.3 illegal list:
+    /// The from/transition pair is off the table's end (design doc §3.3 illegal list:
     /// `Idle → Running`, mid-unit `Running → Idle` for pinned roles,
     /// re-keying a pin without T9, `Draining → Leased`, ...).
     #[error("no legal row (T1-T9) covers this from/transition pair")]
@@ -161,11 +162,11 @@ pub fn transition(
             reason,
         })
     };
-    // Posture guard on the T1 INTAKE edge: §3.3 — leasing a cordon-
+    // Posture guard on the T1 INTAKE edge: design doc §3.3 — leasing a cordon-
     // deferrable role under cordon is illegal (sim-pool roles only floor
     // their intake, so they pass). The START edges (T2/T6) are
     // deliberately unguarded: intake admitted before the cordon always
-    // completes (the §3.3 invariant T7 encodes) — it just takes nothing
+    // completes (the design doc §3.3 invariant T7 encodes) — it just takes nothing
     // new while the fleet is cordoned.
     let posture_guards_role = |role: WorkerRole| {
         (role.cordon_class() == CordonClass::Deferrable && !ctx.posture_admits_role)
@@ -198,7 +199,7 @@ pub fn transition(
         // T6 (same Start constructor): Pinned(r, k) → Running(r, k) — the
         // pin IS the key, the host only dispatches that key here. No
         // posture re-check (cordon never sheds a pin; the continuation
-        // runs — §6: cited pins are cycle-critical work).
+        // runs — design doc §6: cited pins are cycle-critical work).
         (SlotState::Pinned { role, key }, Transition::Start { .. }) => Ok(SlotState::Running {
             role,
             key: Some(key),
@@ -211,7 +212,7 @@ pub fn transition(
                     None => reject(RejectionReason::MissingPinKey),
                 },
                 // T4: exactly one merge pin, at THE merge key. The pipe-drain
-                // handoff verification is host bookkeeping (§3.3 T4).
+                // handoff verification is host bookkeeping (design doc §3.3 T4).
                 WorkerRole::Merge => Ok(SlotState::Pinned {
                     role,
                     key: MERGE_PIN_KEY,
@@ -543,7 +544,7 @@ mod tests {
 
     #[test]
     fn t5_rejects_running_to_idle_for_pinned_roles() {
-        // §3.3 illegal: `Running → Idle` mid-unit for the pinned roles —
+        // design doc §3.3 illegal: `Running → Idle` mid-unit for the pinned roles —
         // Solver must complete to Pinned (T3), Merge to its pin (T4).
         for (role, key) in [
             (WorkerRole::Solver, Some(1)),
@@ -633,7 +634,7 @@ mod tests {
 
     #[test]
     fn t8_draining_rejects_new_work() {
-        // §3.3 illegal: Draining takes nothing new — no Start, no Lease.
+        // design doc §3.3 illegal: Draining takes nothing new — no Start, no Lease.
         for t in [
             Transition::Start { unit: 1 },
             Transition::Lease {
@@ -680,7 +681,7 @@ mod tests {
 
     #[test]
     fn t9_never_re_keys_in_place() {
-        // §3.3 illegal: Pinned(Solver, k) → Pinned(Solver, k') — re-keying
+        // design doc §3.3 illegal: Pinned(Solver, k) → Pinned(Solver, k') — re-keying
         // is T9 then T1. There is no CompleteToPinned from Pinned, and any
         // other move from Pinned must go through Start (T6) or ReleasePin.
         let rejected = transition(
@@ -697,7 +698,7 @@ mod tests {
 
     #[test]
     fn illegal_idle_to_running_is_rejected() {
-        // §3.3: lease required — there is no direct Idle → Running.
+        // design doc §3.3: lease required — there is no direct Idle → Running.
         for t in [
             Transition::Start { unit: 1 },
             Transition::CompleteToPinned,

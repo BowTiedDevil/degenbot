@@ -11,19 +11,16 @@ from degenbot.fork import AnvilFork
 from degenbot.utils.bytes import to_bytes
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
-from tests.helpers.seam import Bot as _Engine
 from tests.standalone_anvil import seed as seed_catalog
-
-_PY_BOT = _Engine()
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 
 
-def _wbtc() -> Erc20Token:
+def _wbtc(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         WBTC_ADDRESS,
         name="Wrapped BTC",
         symbol="WBTC",
@@ -32,9 +29,9 @@ def _wbtc() -> Erc20Token:
     )
 
 
-def _weth() -> Erc20Token:
+def _weth(bot) -> Erc20Token:
     return make_erc20(
-        _PY_BOT,
+        bot,
         WETH_ADDRESS,
         name="Wrapped Ether",
         symbol="WETH",
@@ -44,13 +41,13 @@ def _weth() -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc() -> Erc20Token:
-    return _wbtc()
+def wbtc(py_bot) -> Erc20Token:
+    return _wbtc(py_bot)
 
 
 @pytest.fixture
-def weth() -> Erc20Token:
-    return _weth()
+def weth(py_bot) -> Erc20Token:
+    return _weth(py_bot)
 
 
 def test_bad_address(standalone_anvil: AnvilFork):
@@ -152,10 +149,10 @@ def test_non_compliant_tokens(bot_mainnet_full: Bot):
         assert token.address == get_checksum_address(token_address)
 
 
-def test_erc20token_with_price_feed(standalone_anvil: AnvilFork):
+def test_erc20token_with_price_feed(standalone_anvil: AnvilFork, py_bot):
     """A price feed loads from the seeded mock Chainlink aggregator (no upstream)."""
     bot = make_bot_with_provider(standalone_anvil.provider)
-    weth = _weth()
+    weth = _weth(py_bot)
     # Set price oracle directly on the token
     weth._price_oracle = ChainlinkPriceContract(
         address=seed_catalog.CHAINLINK,
@@ -170,8 +167,8 @@ def test_erc20token_without_price_feed(weth: Erc20Token):
 
 
 @pytest.mark.online_rpc
-def test_ether_placeholder(fork_mainnet_full: AnvilFork):
-    ether = make_ether_placeholder(_PY_BOT, ZERO_ADDRESS)
+def test_ether_placeholder(fork_mainnet_full: AnvilFork, py_bot):
+    ether = make_ether_placeholder(py_bot, ZERO_ADDRESS)
 
     fake_balance = 69_420_000
     current_block = fork_mainnet_full.provider.get_block_number()

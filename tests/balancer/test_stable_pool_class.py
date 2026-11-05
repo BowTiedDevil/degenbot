@@ -43,7 +43,6 @@ pytestmark = pytest.mark.online_rpc
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
 
-_PY_BOT = Bot()
 
 # ---------- ABIs ----------
 
@@ -181,6 +180,7 @@ def _build_stable_pool(
     fork: AnvilFork,
     pool_address: str,
     *,
+    bot: Bot,
     inject_rate_provider: bool = False,
     invariant_version: int = INVARIANT_V2,
 ) -> BalancerV2StablePool:
@@ -227,7 +227,7 @@ def _build_stable_pool(
             rate = ONE
 
         fresh_rates.append(rate)
-        erc20_tokens.append(make_erc20(_PY_BOT, t, name=name, symbol=symbol, decimals=decimals))
+        erc20_tokens.append(make_erc20(bot, t, name=name, symbol=symbol, decimals=decimals))
 
     # Fresh scaling factors = base_sf * rate // ONE (mulDown)
     fresh_scaling_factors = [
@@ -308,17 +308,19 @@ class TestBalancerV2StablePoolMetaStable:
     """
 
     @pytest.fixture
-    def wsteth_weth_pool(self, fork_mainnet_archive):
+    def wsteth_weth_pool(self, fork_mainnet_archive, py_bot):
         return _build_stable_pool(
             fork_mainnet_archive,
             META_STABLE_POOL_ADDRESSES["wsteth_weth"],
+            bot=py_bot,
         )
 
     @pytest.fixture
-    def cbeth_wsteth_pool(self, fork_mainnet_archive):
+    def cbeth_wsteth_pool(self, fork_mainnet_archive, py_bot):
         return _build_stable_pool(
             fork_mainnet_archive,
             META_STABLE_POOL_ADDRESSES["cbeth_wsteth"],
+            bot=py_bot,
         )
 
     @pytest.mark.parametrize("pct", [100, 1000])
@@ -450,19 +452,21 @@ class TestBalancerV2StablePoolComposableExact:
     """
 
     @pytest.fixture
-    def tusd_bsp_pool(self, fork_mainnet_archive):
+    def tusd_bsp_pool(self, fork_mainnet_archive, py_bot):
         return _build_stable_pool(
             fork_mainnet_archive,
             COMPOSABLE_STABLE_POOL_ADDRESSES["tusd_bsp"],
+            bot=py_bot,
             inject_rate_provider=True,
             invariant_version=INVARIANT_V1,
         )
 
     @pytest.fixture
-    def bb_s_usd_pool(self, fork_mainnet_archive):
+    def bb_s_usd_pool(self, fork_mainnet_archive, py_bot):
         return _build_stable_pool(
             fork_mainnet_archive,
             COMPOSABLE_STABLE_POOL_ADDRESSES["bb_s_usd"],
+            bot=py_bot,
             inject_rate_provider=True,
             invariant_version=INVARIANT_V1,
         )
@@ -591,10 +595,11 @@ class TestBalancerV2StablePoolComposableStaleRates:
     """
 
     @pytest.fixture
-    def tusd_bsp_pool_no_provider(self, fork_mainnet_archive):
+    def tusd_bsp_pool_no_provider(self, fork_mainnet_archive, py_bot):
         return _build_stable_pool(
             fork_mainnet_archive,
             COMPOSABLE_STABLE_POOL_ADDRESSES["tusd_bsp"],
+            bot=py_bot,
             inject_rate_provider=False,
             invariant_version=INVARIANT_V1,
         )

@@ -10,6 +10,8 @@
 //! the posture counters (never a silent degrade). Time is passed in as
 //! monotonic milliseconds so the FSM is deterministic under test; callers
 //! feed `Instant::now()` deltas from their throttle poller.
+//!
+//! Design: docs/architecture/worker-fleet.md
 
 use degenbot_core::diag;
 use degenbot_core::{op_info, op_warn};
@@ -65,7 +67,7 @@ pub enum PostureCause {
     /// (the lane is still dead) — the cordon is STICKY until a fresh
     /// process. In-flight paths get terminal receipts; the process
     /// stays alive (the cordoned posture holds deferrable intake and
-    /// floors sim intake — the §6 cordon effects).
+    /// floors sim intake — the design doc §6 cordon effects).
     LaneDeath,
 }
 
@@ -94,7 +96,7 @@ pub struct PosturePolicy {
     /// Enter trigger (b) window.
     pub duty_window_ms: u64,
     /// Exit: this much continuous clean time required after the last dirty
-    /// sample (hysteresis prevents flapping; §6: 10 s).
+    /// sample (hysteresis prevents flapping; design doc §6: 10 s).
     pub exit_clean_ms: u64,
     /// Cordon effect (b): sim intake cap while cordoned; `None` = half the
     /// slot cap (in-flight sims are never cancelled).
@@ -130,7 +132,7 @@ impl PosturePolicy {
     }
 
     /// The cordon sim-intake cap: override or half the slot cap, floored
-    /// at 1, never above the cap (§6 effect (b)).
+    /// at 1, never above the cap (design doc §6 effect (b)).
     #[must_use]
     pub fn sim_intake_cap(&self, slot_cap: usize) -> usize {
         self.sim_intake_floor_override
@@ -297,7 +299,7 @@ impl ThrottleSample {
 }
 
 /// Loud-transition counters (exported with the posture metrics so
-/// thresholds are tuned against measurements, §6).
+/// thresholds are tuned against measurements, design doc §6).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PostureCounters {
     /// Cordons entered.
@@ -331,7 +333,7 @@ pub struct PostureStateMachine {
     /// exit refuses to lift the cordon — the lane is still dead. Only
     /// a fresh process clears it (the operator restart path); there is
     /// deliberately no in-process clear API (a sticky cordon that
-    /// silently un-sticks is exactly the silent-narrow class §10
+    /// silently un-sticks is exactly the silent-narrow class design doc §10
     /// forbids).
     lane_death_hold: bool,
 }
@@ -405,7 +407,7 @@ impl PostureStateMachine {
     /// cordon from ANY state with its OWN exit discipline: the cordon
     /// is sticky (the clean window never lifts it — see
     /// [`Self::maybe_exit`]), in-flight paths get terminal receipts at
-    /// the detection site, and the process stays alive under the §6
+    /// the detection site, and the process stays alive under the design doc §6
     /// cordon effects. Idempotent while the hold is already set (the
     /// counter still counts every cause).
     pub fn observe_cause(&mut self, cause: PostureCause) -> PostureChange {
@@ -437,7 +439,7 @@ impl PostureStateMachine {
     }
 
     /// Whether the posture admits new lease intake for `class` right now
-    /// (§6: `Never` and `SimPool` lease freely — sim is only intake-FLOORED;
+    /// (design doc §6: `Never` and `SimPool` lease freely — sim is only intake-FLOORED;
     /// `Deferrable` is held while cordoned).
     #[must_use]
     pub const fn admits_lease(&self, class: CordonClass) -> bool {
@@ -447,7 +449,7 @@ impl PostureStateMachine {
         )
     }
 
-    /// The sim intake cap in the current posture (§6 effect (b)).
+    /// The sim intake cap in the current posture (design doc §6 effect (b)).
     #[must_use]
     pub fn sim_intake_cap(&self, slot_cap: usize) -> usize {
         match self.state {
@@ -525,7 +527,7 @@ impl PostureStateMachine {
             return PostureChange::Held;
         }
         // Exit: `exit_clean_ms` of clean time since the last dirty sample
-        // (hysteresis; §6: 10 s of clean windows).
+        // (hysteresis; design doc §6: 10 s of clean windows).
         let dirty_recently = self
             .last_unclean_ms
             .is_some_and(|last| now_ms.saturating_sub(last) < self.policy.exit_clean_ms);
@@ -906,7 +908,7 @@ mod tests {
     }
 
     /// The cordon effects hold under a lane-death cause exactly as under
-    /// a throttle cause (the §6 vocabulary: deferrable intake held,
+    /// a throttle cause (the design doc §6 vocabulary: deferrable intake held,
     /// sim intake floored, in-flight units complete).
     #[test]
     fn lane_death_cordon_effects_match_the_throttle_vocabulary() {

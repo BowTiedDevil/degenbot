@@ -83,7 +83,7 @@ BALANCER_VARIANTS = frozenset(
 )
 
 
-def classify_pool_variant(variant: str | None) -> PoolVariant | None:
+def classify_pool_variant(variant: VariantOverride) -> PoolVariant | None:
     """Classify one raw variant string into the variant taxonomy — the ONE conversion point.
 
     Args:
@@ -104,6 +104,18 @@ def classify_pool_variant(variant: str | None) -> PoolVariant | None:
         return PoolVariant.UNRECOGNIZED
 
 
+#: A descriptor's DEX-identity override, carried verbatim from the registration
+#: or ``deployments.json`` row.
+#:
+#: ``None`` is the **canonical Uniswap identity** — no DEX override to apply —
+#: and is deliberately not the string ``"uniswap"``: the field mirrors the
+#: stored override, and a null must not become a second spelling of a species
+#: that already has one (``derive_kind`` renders the null as ``uniswap_v2`` /
+#: ``uniswap_v3``). Read it through :func:`classify_pool_variant`, the one
+#: conversion point, instead of comparing raw strings.
+type VariantOverride = str | None
+
+
 @dataclass(frozen=True)
 class PoolTypeDescriptor:
     """Describes the resolved type of a pool.
@@ -112,13 +124,14 @@ class PoolTypeDescriptor:
     """
 
     family: PoolFamily
-    variant: str | None  # "sushiswap", "camelot", "aerodrome", etc.
-    # None = canonical Uniswap variant
+    #: ``"sushiswap"``, ``"camelot"``, ``"aerodrome"``, …; ``None`` is the
+    #: canonical Uniswap identity (see :data:`VariantOverride`).
+    variant: VariantOverride
     kind: str  # DB polymorphic type: "uniswap_v2", "sushiswap_v3", etc.
     factory: ChecksummedAddress | None
 
 
-def derive_kind(family: PoolFamily, variant: str | None) -> str:
+def derive_kind(family: PoolFamily, variant: VariantOverride) -> str:
     """Derive the DB kind string from family + variant.
 
     Examples:

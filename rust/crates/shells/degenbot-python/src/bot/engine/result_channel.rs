@@ -1,9 +1,9 @@
 //! `PyO3` wrapper for the engine stage surface — `result_channel` `#[pymethods]` slice.
 //!
-//! Split out of the former monolithic `py_binding.rs` ,
-//! mirroring `crates/engine/degenbot-bot/src/arb_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
-//! blocks per type, so each concern file contributes one slice.
+//! One concern per file, mirroring
+//! `crates/engine/degenbot-bot/src/arb_engine/`'s layout: `PyO3` allows
+//! multiple `#[pymethods] impl PyArbEngine { … }` blocks per type, so each
+//! concern file contributes one slice.
 
 use super::{
     Address, Arc, BlockNotification, EngineStages, HopType, PyArbEngine, PyDict, PyList,

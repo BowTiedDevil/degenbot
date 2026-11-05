@@ -20,10 +20,8 @@ from tests.constants import (
     WETH_ETH,
 )
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
 from tests.helpers.v3_pool_factory import make_v3_pool
 
-_PY_BOT = Bot()
 
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"
@@ -72,7 +70,7 @@ def offline_adapter(offline_provider: OfflineProvider) -> AlloyProvider:
 
 
 @pytest.fixture
-def offline_wbtc_weth_v3_pool(offline_adapter: AlloyProvider) -> UniswapV3Pool:
+def offline_wbtc_weth_v3_pool(offline_adapter: AlloyProvider, py_bot) -> UniswapV3Pool:
     """Provide WBTC-WETH V3 pool using offline provider with complete tick data."""
     # Load tick data from recorded file
     data_file = CHAIN_DATA_PATH / "1" / f"block_{UNISWAP_V3_WBTC_WETH_BLOCK}.json"
@@ -102,7 +100,7 @@ def offline_wbtc_weth_v3_pool(offline_adapter: AlloyProvider) -> UniswapV3Pool:
 
     # Construct I/O-free tokens
     wbtc = make_erc20(
-        _PY_BOT,
+        py_bot,
         WBTC_ETH,
         name="Wrapped BTC",
         symbol="WBTC",
@@ -110,7 +108,7 @@ def offline_wbtc_weth_v3_pool(offline_adapter: AlloyProvider) -> UniswapV3Pool:
         chain_id=1,
     )
     weth = make_erc20(
-        _PY_BOT,
+        py_bot,
         WETH_ETH,
         name="Wrapped Ether",
         symbol="WETH",

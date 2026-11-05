@@ -65,6 +65,14 @@
 # rides on; `union`'s existing set-construction API cannot express a removal,
 # and a registration-time fact such as `SPARSE_COVERAGE` never lifts.
 #
+# The 1075 -> 1074 review is the capability-label retirement:
+# `state::capability::Family::label()` is gone. It was a second kebab label
+# table over the capability axis (`"solidly-stable"`, `"curve-stableswap"`,
+# `"lfj-binned"`), and its only readers were assertion messages in this crate
+# and in `degenbot-strategy`'s family test. Those messages now render the
+# variant's `Debug` name, so the registry's `RegisteredPoolFamily::tag()`
+# remains the ONE kebab family vocabulary (ADR-059 D1).
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

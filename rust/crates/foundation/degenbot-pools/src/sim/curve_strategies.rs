@@ -212,12 +212,16 @@ pub fn resolve_yd_variant(addr: Address) -> u8 {
 // `(metapool_rate_style, metapool_underlying_style)`; unlisted fields stay 1.
 // ---------------------------------------------------------------------------
 
+/// The four curve-strategy discriminants one address maps onto.
+///
+/// Field order is the table's order: `swap_style`, `lending_rate_style`,
+/// `metapool_rate_style`, `metapool_underlying_style`. `1` is the default for
+/// every axis, so an unmapped address resolves to `(1, 1, 1, 1)`.
+type MappedStrategies = (u8, u8, u8, u8);
+
 /// Look up the address-specific (non-variant) strategy discriminants.
 /// Returns `None` for an unmapped address (→ all defaults).
-#[must_use]
-fn mapped_strategies(addr: Address) -> Option<(u8, u8, u8, u8)> {
-    // (swap_style, lending_rate_style, metapool_rate_style,
-    //  metapool_underlying_style); 1 = default.
+fn mapped_strategies(addr: Address) -> Option<MappedStrategies> {
     Some(match addr {
         // Metapool rate style variants.
         x if x == address!("0xC61557C5d177bd7DC889A3b621eEC333e168f68A") => (1, 1, 2, 3),

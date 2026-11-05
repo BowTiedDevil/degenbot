@@ -115,14 +115,12 @@ fn hop_type_solve_coverage_and_settlement_compose_match_the_declaration() {
         assert_eq!(
             HopType::try_from(&identity_for(family)).ok(),
             Some(hop),
-            "{} must project to {hop:?}",
-            family.label()
+            "{family:?} must project to {hop:?}"
         );
         assert!(family.is_solver());
         assert!(
             capabilities(Arm::Settlement, family).is_some(),
-            "settlement is missing a declaration row for {}",
-            family.label()
+            "settlement is missing a declaration row for {family:?}"
         );
     }
     assert_eq!(Family::SOLVER.len(), HOP_TYPES.len());
@@ -134,8 +132,7 @@ fn hop_type_solve_coverage_and_settlement_compose_match_the_declaration() {
         assert_eq!(
             caps.compose,
             ENCODER_FAMILIES.contains(&family),
-            "settlement {}: compose must track the encoder roster",
-            family.label()
+            "settlement {family:?}: compose must track the encoder roster"
         );
     }
     assert_eq!(ENCODER_FAMILIES, [Family::V2, Family::V3, Family::V4]);

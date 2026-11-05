@@ -6,6 +6,8 @@
 //! role variant without declaring its `ALL_ROLES` position is a compile
 //! error, and the conformance harness indexes roles by position, so any
 //! new role or re-ordering fails the harness loudly.
+//!
+//! Design: docs/architecture/worker-fleet.md
 
 /// Class deciding what cordon does to a role's lease intake (design doc §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

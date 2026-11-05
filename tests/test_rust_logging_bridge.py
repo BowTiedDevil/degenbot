@@ -11,8 +11,10 @@ These tests pin the *base-config* contract: importing ``degenbot`` must, by
 itself, make those Rust records visible at INFO without any caller wiring.
 """
 
+import io
 import logging
-import logging.handlers
+import sys
+import threading
 
 import degenbot  # ruff: ignore[unused-import]  (import triggers base config)
 
@@ -191,163 +193,184 @@ def test_degenbot_arbitrage_info_record_reaches_handler() -> None:
 # that ever calls ``stream.flush()`` (single writer → no lock contention).
 
 
-def test_configured_loggers_attach_queue_handler_not_stream_handler() -> None:
-    """The GIL-held-across-flush stall class is closed by routing records
-    through ``QueueHandler`` instead of a bare ``StreamHandler``.
+class _WriteRecordingStream(io.StringIO):
+    """A stdout probe that records WHICH thread wrote each chunk.
 
-    A direct ``StreamHandler(sys.stdout)`` on a piped stdout blocks on
-    ``stream.flush()`` under pyo3-log's ``Python::attach`` → GIL held across
-    the I/O wait. ``QueueHandler.emit`` is a fast non-blocking queue put —
-    no stream I/O, no GIL held across slow writes.
+    The single-writer discipline is the whole point of the queue pair: the
+    producing thread must never touch the stream, only the listener thread
+    may. Recording the writer's identity turns that into a deterministic
+    assertion — no timing window between an emit and a read.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.writers: list[int] = []
+
+    def write(self, text: str) -> int:
+        self.writers.append(threading.get_ident())
+        return super().write(text)
+
+
+def test_configured_loggers_hand_records_off_instead_of_writing_the_stream() -> None:
+    """Every configured logger queues its record; the producer never writes stdout.
+
+    The stall class this closes is a record written to a blocked stdout while
+    the producer holds the GIL. Two behavioural facts pin it: the record still
+    reaches the console (the handoff is lossless), and the console write came
+    from another thread than the emitter (the handoff is a handoff — nobody
+    writes the stream inline).
+
+    The probe asserts on the CONSOLE writer, whose level the suite raises to
+    ``WARNING`` (``tests/conftest.py``), so these records are warnings: an
+    ``INFO`` record would stop one gate earlier and prove nothing about the
+    handoff.
     """
     import degenbot.logging as dl
-    from degenbot.logging import (
-        PY_PACKAGE_ROOT_LOGGER_NAMES,
-        RUST_BRIDGE_LOGGER_NAMES,
-    )
+    from degenbot.logging import PY_PACKAGE_ROOT_LOGGER_NAMES
 
-    # Pytest's logging plugin attaches its own ``LogCaptureHandler`` (a
-    # ``StreamHandler`` subclass) to each logger at test time for capture —
-    # that is test-only infra, not the production config, so we filter it
-    # out (module starts with ``_pytest.``) and check the contract on the
-    # handlers degenbot's base config actually attached: the ``QueueHandler``
-    # is on every configured logger, and the bare ``_STDOUT_HANDLER`` is on
-    # NONE (it lives only as a ``QueueListener`` destination).
-    for name in (*RUST_BRIDGE_LOGGER_NAMES, *PY_PACKAGE_ROOT_LOGGER_NAMES, "degenbot.logging"):
-        lg = logging.getLogger(name)
-        own_handlers = [h for h in lg.handlers if not type(h).__module__.startswith("_pytest.")]
-        assert any(h is dl._QUEUED_HANDLER for h in own_handlers), (
-            f"{name} is not attached to degenbot.logging._QUEUED_HANDLER — records "
-            "flow directly to a StreamHandler and the GIL is held across stdout "
-            "flush (the piped-stdout stall class)"
-        )
-        assert dl._STDOUT_HANDLER not in own_handlers, (
-            f"{name} attaches _STDOUT_HANDLER directly — records bypass the queue "
-            "and block on stdout flush under the GIL"
-        )
-
-
-def test_queue_listener_started_and_drains_to_stdout_handler() -> None:
-    """A dedicated listener thread owns the only stdout write path.
-
-    ``QueueListener``'s listener is the single writer — slow ``os.write`` to a
-    full pipe blocks only the listener thread (whose sole job is writing), not
-    any GIL-holding Rust log call. The listener MUST be started at import
-    (``is_alive()``) so records are never silently queued-and-dropped.
-    """
-    import degenbot.logging as dl
-
-    assert hasattr(dl, "_LOG_LISTENER"), (
-        "degenbot.logging does not expose _LOG_LISTENER — no queue drain thread"
-    )
-    listener = dl._LOG_LISTENER
-    assert isinstance(listener, logging.handlers.QueueListener), (
-        f"_LOG_LISTENER is {type(listener).__name__}, not a QueueListener"
-    )
-    assert listener._thread is not None, (
-        "_LOG_LISTENER thread is None — QueueListener was never started"
-    )
-    assert listener._thread.is_alive(), (
-        "_LOG_LISTENER thread is not running — queued records would never drain"
-    )
-
-
-def test_rust_info_record_still_reaches_handler_via_queue() -> None:
-    """Regression guard: routing through the queue does NOT drop records.
-
-    The contract ``test_rust_info_record_is_visible`` pins (an INFO record on
-    a deep Rust target reaches the crate-root handler) must still hold after
-    the QueueHandler/QueueListener decoupling — the listener must forward
-    through to its destination handler.
-    """
-    import degenbot.logging as dl
-    from degenbot.logging import RUST_BRIDGE_LOGGER_NAMES
-
-    crate_root = RUST_BRIDGE_LOGGER_NAMES[0]
-    capture = _CaptureHandler()
-    # Attach the capture as a QueueListener destination so the record is
-    # observed after the listener thread drains the queue.
-    listener = dl._LOG_LISTENER
-    listener.handlers = (*listener.handlers, capture)
+    dl.flush_console_log()
+    probe = _WriteRecordingStream()
+    original = sys.stdout
+    sys.stdout = probe
+    tokens = []
     try:
-        logging.getLogger(f"{crate_root}.bot_core.block_pump").info(
-            "queue-bridged info %s", crate_root
-        )
-        # Drain: the listener thread processes the queue asynchronously.
-        # A bounded retry loop because the listener runs on its own thread.
-        import time
-
-        for _ in range(100):
-            visible = [r for r in capture.records if r.levelno == logging.INFO]
-            if any("queue-bridged" in r.getMessage() for r in visible):
-                return
-            time.sleep(0.01)
-        msg = (
-            f"INFO record on {crate_root} did not reach the listener's "
-            "destination handler via the queue - records are lost"
-        )
-        raise AssertionError(msg)
+        for name in (*RUST_BRIDGE_LOGGER_NAMES, *PY_PACKAGE_ROOT_LOGGER_NAMES, "degenbot.logging"):
+            token = f"queued-handoff {name}"
+            tokens.append(token)
+            logging.getLogger(name).warning(token)
+        dl.flush_console_log()
     finally:
-        listener.handlers = tuple(h for h in listener.handlers if h is not capture)
+        sys.stdout = original
+    written = probe.getvalue()
+    for token in tokens:
+        assert token in written, f"{token} was lost between the queue and the console writer"
+    emitter = threading.get_ident()
+    assert probe.writers, "the console writer never wrote — the probe saw nothing"
+    assert emitter not in probe.writers, (
+        "a record was written to stdout on the emitting thread — the pipeline "
+        "wrote the stream inline instead of handing it to the listener "
+        "(the GIL-held-across-flush stall class)"
+    )
 
 
-def test_stdout_handler_resolves_stream_at_emit_time() -> None:
-    """The console handler must late-bind ``sys.stdout``, never pin it.
+def test_a_record_emitted_after_a_drain_still_reaches_the_console() -> None:
+    """The drain barrier leaves the pipeline armed: a later record is not lost.
 
-    ``degenbot.logging`` is imported while pytest's global capture owns
-    ``sys.stdout``, and pytest closes that capture object at session teardown.
-    A handler that pins the import-time stream then sprays
-    ``--- Logging error ---`` (``ValueError: I/O operation on closed file``)
-    for every record flushed after teardown — swallowed by
-    ``Handler.handleError``, so the suite stays green while logging is broken.
-    Late binding lands each record in the CURRENT stdout: the active capture
-    during the session, the real stdout after it.
+    ``flush_console_log`` stops and restarts the writer thread. A record
+    emitted after that cycle still has to land on the console — a listener
+    that came back up without its queue, or a queue swapped out from under the
+    producers, would silently drop everything after the first flush.
     """
-    import io
-    import sys
 
     import degenbot.logging as dl
 
-    handler = dl._STDOUT_HANDLER
     probe = io.StringIO()
     original = sys.stdout
     sys.stdout = probe
     try:
-        assert handler.stream is probe, (
-            "_STDOUT_HANDLER must resolve the CURRENT sys.stdout at emit time, "
-            "not pin the import-time object"
-        )
-        record = logging.LogRecord(
-            "degenbot.test", logging.INFO, __file__, 1, "late-bound emit", (), None
-        )
-        handler.emit(record)
-        assert "late-bound emit" in probe.getvalue(), (
-            "the record must land in the stream that is current at emit time"
-        )
+        dl.flush_console_log()
+        logging.getLogger(RUST_BRIDGE_LOGGER_NAMES[0]).warning("late record after a drain")
+        dl.flush_console_log()
     finally:
         sys.stdout = original
+    assert "late record after a drain" in probe.getvalue(), (
+        "a record emitted after a drain never reached the console — the "
+        "listener is queueing into a dead hand-off"
+    )
 
 
-def test_stdout_handler_never_targets_a_closed_stream() -> None:
-    """A closed active stdout (post-teardown race) falls back, never raises.
+def test_rust_info_record_still_reaches_the_console_via_the_queue() -> None:
+    """Regression guard: routing through the queue does NOT drop records.
 
-    Between the handler resolving the stream and the listener's write, pytest
-    can close the active capture; the property must then return an OPEN stream
-    (the process original) instead of the closed object.
+    The contract ``test_rust_info_record_is_visible`` pins (a record on a deep
+    Rust target reaches the crate-root handler) must still hold after the
+    QueueHandler/QueueListener decoupling — the listener must forward through
+    to the console writer the process actually has. A warning is used so the
+    record clears the suite's ``WARNING`` console gate.
     """
-    import io
-    import sys
 
     import degenbot.logging as dl
 
-    handler = dl._STDOUT_HANDLER
-    closed = io.StringIO()
-    closed.close()
+    crate_root = RUST_BRIDGE_LOGGER_NAMES[0]
+    probe = io.StringIO()
     original = sys.stdout
-    sys.stdout = closed
+    sys.stdout = probe
     try:
-        stream = handler.stream
-        assert stream is not closed, "_STDOUT_HANDLER must not return a closed stream to emit()"
-        assert not stream.closed
+        logging.getLogger(f"{crate_root}.bot_core.block_pump").warning(
+            "queue-bridged info %s", crate_root
+        )
+        dl.flush_console_log()
     finally:
         sys.stdout = original
+    assert f"queue-bridged info {crate_root}" in probe.getvalue(), (
+        f"INFO record on {crate_root} did not reach the console writer via the "
+        "queue — records are lost"
+    )
+
+
+def test_the_console_writer_resolves_the_stream_current_at_emit_time() -> None:
+    """The console write resolves ``sys.stdout`` per record, never pins it.
+
+    ``degenbot.logging`` is imported while pytest's global capture owns
+    ``sys.stdout``, and pytest closes that capture object at session teardown.
+    A writer that pinned the import-time stream then sprays
+    ``--- Logging error ---`` (``ValueError: I/O operation on closed file``)
+    for every record flushed after teardown — swallowed by
+    ``Handler.handleError``, so the suite stays green while logging is broken.
+    Late binding lands each record in the CURRENT stdout: the active capture
+    during the session, whatever stream is installed after it. A warning is
+    used so the record clears the suite's ``WARNING`` console gate.
+    """
+
+    import degenbot.logging as dl
+
+    probe = io.StringIO()
+    original = sys.stdout
+    sys.stdout = probe
+    try:
+        logging.getLogger("degenbot.logging").warning("late-bound emit")
+        dl.flush_console_log()
+    finally:
+        sys.stdout = original
+    assert "late-bound emit" in probe.getvalue(), (
+        "the record must land in the stream that is current at emit time, "
+        "not the one that was current when the writer was configured"
+    )
+
+
+def test_a_closed_console_stream_falls_back_without_a_logging_error() -> None:
+    """A closed active stdout (post-teardown race) falls back, never raises.
+
+    ``Handler.handleError`` swallows an emit failure into a
+    ``--- Logging error ---`` block on stderr, so a broken console pipeline
+    leaves the suite green. The contract is behavioural: emit while
+    ``sys.stdout`` is closed and the pipeline reports no handler error (it
+    writes to the process original instead), and a record emitted afterwards
+    still lands. Warnings clear the suite's ``WARNING`` console gate.
+    """
+
+    import degenbot.logging as dl
+
+    closed = io.StringIO()
+    closed.close()
+    errors = io.StringIO()
+    probe = io.StringIO()
+    original_out, original_err = sys.stdout, sys.stderr
+    sys.stdout = closed
+    sys.stderr = errors
+    try:
+        logging.getLogger("degenbot.logging").warning("closed-stream probe")
+        dl.flush_console_log()
+        sys.stdout = probe
+        logging.getLogger("degenbot.logging").warning("record after the closed stream")
+        dl.flush_console_log()
+    finally:
+        sys.stdout = original_out
+        sys.stderr = original_err
+    assert "Logging error" not in errors.getvalue(), (
+        "the console writer raised on a closed stream — every post-teardown "
+        f"record sprays a handler error:\n{errors.getvalue()}"
+    )
+    assert "record after the closed stream" in probe.getvalue(), (
+        "the console pipeline did not recover after a closed stream"
+    )
