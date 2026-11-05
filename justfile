@@ -1341,7 +1341,7 @@ setup-git-hooks:
 test-settlement-parity:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-settlement-bot-example --test boot_gate
     {{ py_run }} pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
-    {{ py_run }} python tests/standalone_parity/dual_driver_gate.py --recorded
+    {{ py_run }} python -m tests.standalone_parity.dual_driver_gate --recorded
 
 # ========== No-Python Console Gate (ADR-051 D10) ==========
 #
