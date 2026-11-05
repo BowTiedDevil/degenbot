@@ -12,6 +12,7 @@
 
 #![expect(clippy::unwrap_used)]
 use alloy::primitives::Address;
+use degenbot_core::fee::V2FeePair;
 use degenbot_db::{DegenbotDb, V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 
 /// Parse a 0x-prefixed hex address into an alloy [`Address`].
@@ -86,6 +87,44 @@ fn upsert_v2_pool_inserts_base_and_subclass_row() {
         .unwrap();
     assert_eq!(pool_id, pools_count); // subclass PK == base pools.id
     assert_eq!((fee_token0, fee_token1, fee_denominator), (3, 3, 1_000));
+}
+
+/// The column CONVENTION, pinned end to end: the three i64 columns are fee
+/// NUMERATORS, so a row written from the spec's `v2_fee_token` projects through
+/// `V2FeePair::from_discovered` (the one projection over them) to the retained
+/// ratio the presets carry. A future gamma-convention writer would land as a
+/// `997/1000` CHARGE — a 99.7% fee — and this assertion fails.
+#[test]
+fn v2_fee_columns_are_numerators_and_the_projection_round_trips() {
+    let db = fresh_seeded_db();
+    let rows = vec![V2PoolRowInput {
+        address: addr("0x4444444444444444444444444444444444444444"),
+        token0_address: addr("0x000000000000000000000000000000000000000a"),
+        token1_address: addr("0x000000000000000000000000000000000000000b"),
+        fee_token0: 3,
+        fee_token1: 25,
+        stable: None,
+    }];
+    db.upsert_v2_pools(1, "uniswap_v2", 1, 1_000, &rows)
+        .unwrap();
+
+    let conn = db.lock();
+    let (fee_token0, fee_token1, fee_denominator): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT fee_token0, fee_token1, fee_denominator FROM uniswap_v2_pools",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+
+    let fees =
+        V2FeePair::from_discovered(Some(fee_token0), Some(fee_token1), Some(fee_denominator))
+            .resolve()
+            .unwrap();
+    // The columns are the CHARGED numerators, so the retained complements are
+    // the fractions the presets carry.
+    assert_eq!(fees.token0.retained_fraction().as_pair(), (997, 1_000));
+    assert_eq!(fees.token1.retained_fraction().as_pair(), (975, 1_000));
 }
 
 #[test]

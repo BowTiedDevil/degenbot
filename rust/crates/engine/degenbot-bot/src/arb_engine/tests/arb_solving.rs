@@ -902,8 +902,8 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
     let expected = IntHopState::new(
         state.reserve1.to::<U256>(),
         state.reserve0.to::<U256>(),
-        identity.fee_token1.0,
-        identity.fee_token1.1,
+        identity.fee_token1.gamma_numer(),
+        identity.fee_token1.denominator(),
     )
     .swap(clamped)
     .expect("V2 twin does not overflow");

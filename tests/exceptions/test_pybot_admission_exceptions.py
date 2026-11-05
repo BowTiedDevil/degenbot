@@ -433,3 +433,102 @@ class TestV4SeamAdmission:
         kw_reject["fee"] = 65_536
         with pytest.raises(HighFeePoolRejectedError):
             bot.register_v4_pool(**kw_reject)
+
+
+# -----------------------------------------------------------------------
+# The fee boundary — the fee shapes are validated at the seam.
+# -----------------------------------------------------------------------
+
+
+class TestV2FeeBoundary:
+    """The V2 verbs take a RETAINED pair, validated at the boundary.
+
+    An unusable tuple (a 100% fee, a gamma above its denominator, a zero
+    denominator) raises where it previously registered the pool, so a pool
+    that could only quote zero for every input cannot enter the registry.
+    """
+
+    def _register(self, bot: Bot, gamma: int, denom: int) -> int:
+        return bot.register_v2_pool(
+            address=V2_DAI_WETH_ADDR,
+            token0=WETH,
+            token1=DAI,
+            reserve0=1,
+            reserve1=2,
+            gamma_numer0=gamma,
+            fee_denom0=denom,
+            gamma_numer1=gamma,
+            fee_denom1=denom,
+            factory=UNISWAP_V2_FACTORY,
+        )
+
+    @pytest.mark.parametrize(
+        ("gamma", "denom"),
+        [
+            (0, 1000),  # a 100% fee: retained gamma of zero
+            (1001, 1000),  # retained above the whole input
+            (997, 0),  # no scale
+        ],
+    )
+    def test_an_unpriceable_retained_pair_raises(self, gamma: int, denom: int) -> None:
+        bot = Bot(chain_id=1)
+
+        with pytest.raises(ValueError, match="unusable retained fee") as exc_info:
+            self._register(bot, gamma, denom)
+
+        assert "unusable retained fee" in str(exc_info.value)
+        assert f"({gamma}, {denom})" in str(exc_info.value)
+
+    def test_a_legal_pair_registers_after_a_refused_one(self) -> None:
+        """The refusal mutates nothing: the same bot then registers the 0.3% pair."""
+        bot = Bot(chain_id=1)
+
+        with pytest.raises(ValueError, match="unusable retained fee"):
+            self._register(bot, 0, 1000)
+
+        pool_id = self._register(bot, 997, 1000)
+        pool = bot.get_pool(pool_id)
+        assert pool is not None
+        assert pool.fee_token0 == (997, 1000)
+        # The Camelot integer scale is non-Camelot's `None` here.
+        assert pool.fee_denominator is None
+
+
+class TestAerodromeFeeBoundary:
+    """The Aerodrome door takes a CHARGED fraction (the opposite direction).
+
+    The same boundary rule applies: a fraction at or above its denominator is
+    a 100% fee, and it raises rather than registering.
+    """
+
+    def _register(self, bot: Bot, fee_numer: int, fee_denom: int) -> int:
+        return bot.register_aerodrome_pool(
+            address="0x" + "a1" * 20,
+            token0="0x" + "a2" * 20,
+            token1="0x" + "a3" * 20,
+            factory="0x" + "a4" * 20,
+            variant="aerodrome-v2-volatile",
+            stable=False,
+            fee_numer=fee_numer,
+            fee_denom=fee_denom,
+            token0_decimals=18,
+            token1_decimals=18,
+            reserve0=1,
+            reserve1=2,
+        )
+
+    def test_a_total_charged_fee_raises(self) -> None:
+        bot = Bot(chain_id=8453)
+
+        with pytest.raises(ValueError, match="unusable fee fraction") as exc_info:
+            self._register(bot, 10_000, 10_000)
+
+        assert "unusable fee fraction" in str(exc_info.value)
+
+    def test_a_volatile_fee_registers(self) -> None:
+        bot = Bot(chain_id=8453)
+
+        pool_id = self._register(bot, 30, 10_000)
+        pool = bot.get_pool(pool_id)
+        assert pool is not None
+        assert pool.aerodrome_fee == (30, 10_000)

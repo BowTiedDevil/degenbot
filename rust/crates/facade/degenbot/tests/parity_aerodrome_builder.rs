@@ -97,7 +97,7 @@ fn standalone_rust_consumer_aerodrome_builder_identity_state_matches_fixture() {
             factory,
             variant,
             stable: fx.fixture.stable,
-            fee: (fx.fixture.fee_numer, fx.fixture.fee_denom),
+            fee: degenbot_core::fee::fee_fraction(fx.fixture.fee_numer, fx.fixture.fee_denom),
             token0_decimals: fx.fixture.token0_decimals,
             token1_decimals: fx.fixture.token1_decimals,
             reserve0,
@@ -126,7 +126,7 @@ fn standalone_rust_consumer_aerodrome_builder_identity_state_matches_fixture() {
     assert_eq!(aero_id.stable, fx.fixture.stable, "stable flag diverged");
     assert_eq!(
         aero_id.fee,
-        (fx.fixture.fee_numer, fx.fixture.fee_denom),
+        degenbot_core::fee::fee_fraction(fx.fixture.fee_numer, fx.fixture.fee_denom),
         "fee diverged"
     );
     assert_eq!(

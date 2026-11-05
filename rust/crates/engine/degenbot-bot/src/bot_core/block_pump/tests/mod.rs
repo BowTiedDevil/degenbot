@@ -10,6 +10,7 @@
 use super::*;
 use crate::bot_core::stage_machine::QuiesceParams;
 use degenbot_config::QuiesceMode;
+use degenbot_core::fee::fee_ratio;
 use degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC;
 use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
 use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
@@ -549,14 +550,14 @@ fn register_burst_pool(bot: &Arc<Bot>) {
         token1: A::from([0xa1u8; 20]),
         reserve0: U112::from(1_000),
         reserve1: U112::from(2_000),
-        fee_token0: (997, 1000),
-        fee_token1: (997, 1000),
+        fee_token0: fee_ratio(997, 1000),
+        fee_token1: fee_ratio(997, 1000),
         factory: A::from([0xf0u8; 20]),
         update_block: 100,
         variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
+        deployer: Address::ZERO,
+        init_hash: B256::ZERO,
     })
     .expect("test setup: V2 registration");
 }
@@ -846,14 +847,14 @@ fn bot_with_registered_v2(pool_addr: Address, update_block: u64) -> (Arc<Bot>, u
             token1: Address::from([0xa1u8; 20]),
             reserve0: U112::from(1_000),
             reserve1: U112::from(2_000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::from([0xf0u8; 20]),
             update_block,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: B256::ZERO,
         })
         .expect("test setup: V2 registration");
     (bot, pool_id)

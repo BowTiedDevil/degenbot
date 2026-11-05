@@ -15,7 +15,7 @@ use degenbot_pathfinding::PoolKind;
 use degenbot_pools::solve::SolvePathResult;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant};
 
-use degenbot_substrate::executor_hop::V2Fees;
+use degenbot_core::fee::V2Fees;
 use degenbot_substrate::planning::{PlanningHop, Workspace};
 use degenbot_substrate::pool_ingress::{IngressDecline, PoolAdmission, PoolIngress, VerifyLevel};
 
@@ -278,8 +278,8 @@ mod tests {
     use crate::execution_context::ExecutionContext;
     use crate::project_candidate;
     use alloy::primitives::{address, aliases::U112};
+    use degenbot_core::fee::{fee_ratio, V2FeePair};
     use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
-    use degenbot_substrate::executor_hop::V2FeePair;
     use degenbot_substrate::planning::{ExplicitPoolState, PlanningPoolParams};
 
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
@@ -365,8 +365,11 @@ mod tests {
             ExplicitPoolState::V2 {
                 reserve0: U112::from(r0),
                 reserve1: U112::from(r1),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
+                variant: degenbot_pools::DexVariant::UniswapV2,
+                factory: Address::ZERO,
+                stable_swap: false,
             },
             1,
         )
@@ -521,9 +524,14 @@ mod tests {
                 token1: WETH,
                 reserve0: U112::from(500_000),
                 reserve1: U112::from(1_000),
-                fee_token0: (997, 1_000),
-                fee_token1: (997, 1_000),
-                ..Default::default()
+                fee_token0: fee_ratio(997, 1_000),
+                fee_token1: fee_ratio(997, 1_000),
+                factory: Address::ZERO,
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                update_block: 0,
+                variant: degenbot_pools::DexVariant::UniswapV2,
+                stable_swap: false,
             })
             .expect("registers settlement P");
         let q_id = core
@@ -533,9 +541,14 @@ mod tests {
                 token1: WETH,
                 reserve0: U112::from(200_000),
                 reserve1: U112::from(900),
-                fee_token0: (997, 1_000),
-                fee_token1: (997, 1_000),
-                ..Default::default()
+                fee_token0: fee_ratio(997, 1_000),
+                fee_token1: fee_ratio(997, 1_000),
+                factory: Address::ZERO,
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                update_block: 0,
+                variant: degenbot_pools::DexVariant::UniswapV2,
+                stable_swap: false,
             })
             .expect("registers settlement Q");
         let settlement_path = degenbot_substrate::path_info::build_path_info(
@@ -833,13 +846,13 @@ mod taxonomy_tests {
     //! graph kind. The lagging (unsupported) legs are pinned here too.
     use super::{LaneFamily, LaneFamilyTag};
     use alloy::primitives::{Address, B256};
+    use degenbot_core::fee::{V2FeePair, V2Fees};
     use degenbot_pathfinding::PoolKind;
     use degenbot_pools::solve::HopType;
     use degenbot_pools::{
         BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
         ReservePairVariant,
     };
-    use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 
     fn v2_fees() -> V2Fees {
         V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))

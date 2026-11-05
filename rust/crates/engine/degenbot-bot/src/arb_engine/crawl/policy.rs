@@ -13,6 +13,8 @@
 use std::collections::BTreeSet;
 
 use alloy::primitives::{Address, U256};
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 use degenbot_pools::{PoolEntry, RegisteredPoolFamily};
 use degenbot_substrate::BotState;
 
@@ -235,7 +237,7 @@ pub fn registered_hop_facts(state: &BotState, pool_id: u64) -> Option<Registered
             facts.address = Some(pool.0.address);
             facts.token0 = pool.0.token0;
             facts.token1 = pool.0.token1;
-            facts.fee_pair = Some((pool.0.fee_token0, pool.0.fee_token1));
+            facts.fee_pair = Some((pool.0.fee_token0.as_pair(), pool.0.fee_token1.as_pair()));
             facts.reserve_sum = Some(U256::from(pool.1.reserve0) + U256::from(pool.1.reserve1));
         }
         PoolEntry::AerodromeV2(pool) => {
@@ -563,15 +565,14 @@ mod registered_hop_facts_tests {
                 token1: WETH,
                 reserve0: U112::from(reserve0),
                 reserve1: U112::from(reserve1),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
                 deployer: address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
                 init_hash: B256::ZERO,
                 update_block: 1,
                 variant: DexVariant::UniswapV2,
                 stable_swap: false,
-                fee_denominator: None,
             })
             .expect("the fixture registers");
         (state, pool_id)

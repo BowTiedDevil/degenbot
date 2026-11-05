@@ -85,6 +85,8 @@ use degenbot_uniswap::dex_identity::DexVariant;
 use crate::state::v3_state::SimulateSwapError;
 
 use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
+#[cfg(test)]
+use degenbot_core::fee::{fee_fraction, fee_ratio};
 
 /// The state slices — the family's read surface lives in
 /// `crate::aerodrome_v2_state` / `crate::v2_state` (I/O-free per ADR-001)
@@ -186,8 +188,8 @@ pub fn capture_hop(
             token_in: u8::from(!zero_for_one),
             // The Aerodrome fee is stored as the fee fraction directly
             // (cf. the Camelot arm below).
-            fee_numer: U256::from(identity.fee.0),
-            fee_denom: U256::from(identity.fee.1),
+            fee_numer: U256::from(identity.fee.fee_numer()),
+            fee_denom: U256::from(identity.fee.denominator()),
             stable: identity.stable,
             variant: identity.variant,
         },
@@ -199,7 +201,7 @@ pub fn capture_hop(
             // fraction, so invert: `fee_numer = denom - gamma`,
             // `fee_denom = denom`. Selected by `zero_for_one` (token0 in →
             // fee_token0; token1 in → fee_token1).
-            let (gamma, denom) = if zero_for_one {
+            let ratio = if zero_for_one {
                 identity.fee_token0
             } else {
                 identity.fee_token1
@@ -210,8 +212,8 @@ pub fn capture_hop(
                 decimals_0: decimals.0,
                 decimals_1: decimals.1,
                 token_in: u8::from(!zero_for_one),
-                fee_numer: U256::from(denom.saturating_sub(gamma)),
-                fee_denom: U256::from(denom),
+                fee_numer: U256::from(ratio.fee_numer()),
+                fee_denom: U256::from(ratio.denominator()),
                 stable: identity.stable_swap,
                 variant: identity.variant,
             }
@@ -305,7 +307,7 @@ fn read_aerodrome_stable_swap(
         return Ok(U256::ZERO);
     }
     let token_in: u8 = u8::from(!zero_for_one);
-    let (fee_numer, fee_denom) = identity.fee;
+    let fee = identity.fee;
     solidly::calc_exact_in_stable_solidly(
         amount_in,
         token_in,
@@ -313,8 +315,8 @@ fn read_aerodrome_stable_swap(
         state.reserve1.to::<U256>(),
         U256::from(10u64).pow(U256::from(identity.token0_decimals)),
         U256::from(10u64).pow(U256::from(identity.token1_decimals)),
-        U256::from(fee_numer),
-        U256::from(fee_denom),
+        U256::from(fee.fee_numer()),
+        U256::from(fee.denominator()),
     )
     .map_err(|_| SimulateSwapError::NotComputable)
 }
@@ -360,7 +362,7 @@ fn read_camelot_stable_swap(
         return Ok(U256::ZERO);
     }
     let token_in: u8 = u8::from(!zero_for_one);
-    let (gamma, denom) = if zero_for_one {
+    let ratio = if zero_for_one {
         identity.fee_token0
     } else {
         identity.fee_token1
@@ -372,8 +374,8 @@ fn read_camelot_stable_swap(
         state.reserve1.to::<U256>(),
         decimals.0,
         decimals.1,
-        U256::from(denom.saturating_sub(gamma)),
-        U256::from(denom),
+        U256::from(ratio.fee_numer()),
+        U256::from(ratio.denominator()),
     )
     .map_err(|_| SimulateSwapError::NotComputable)
 }
@@ -428,7 +430,7 @@ mod tests {
                 degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile
             },
             stable,
-            fee: (3, 10_000),
+            fee: fee_fraction(3, 10_000),
             token0_decimals: 18,
             token1_decimals: 18,
         };
@@ -447,14 +449,13 @@ mod tests {
             address: Address::repeat_byte(0xc1),
             token0: Address::repeat_byte(0x01),
             token1: Address::repeat_byte(0x02),
-            fee_token0: (CAM_SNAPSHOT[5], CAM_SNAPSHOT[6]),
-            fee_token1: (CAM_SNAPSHOT[5], CAM_SNAPSHOT[6]),
+            fee_token0: fee_ratio(CAM_SNAPSHOT[5], CAM_SNAPSHOT[6]),
+            fee_token1: fee_ratio(CAM_SNAPSHOT[5], CAM_SNAPSHOT[6]),
             factory: Address::repeat_byte(0xfa),
             deployer: Address::ZERO,
             init_hash: alloy::primitives::B256::ZERO,
             variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
             stable_swap: true,
-            fee_denominator: Some(10_000),
             token0_decimals: Some(6),
             token1_decimals: Some(6),
         };
@@ -690,7 +691,7 @@ mod tests {
 
         // token1 in: the gamma selection flips (fee_token1 here).
         let (mut flipped_identity, flipped_state) = camelot_fixture();
-        flipped_identity.fee_token1 = (9_970, 10_000);
+        flipped_identity.fee_token1 = fee_ratio(9_970, 10_000);
         let hop = capture_hop(
             SolidlyState::Camelot {
                 identity: &flipped_identity,

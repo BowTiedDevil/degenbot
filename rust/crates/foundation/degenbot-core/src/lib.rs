@@ -15,6 +15,8 @@
 //!   `AbiDecodeError`, `AddressError`, `ProviderError`, `ContractError`) with
 //!   inter-error conversions. The `From<Error> for PyErr` impls are gated behind
 //!   the `pyo3` feature.
+//! - [`fee`] — the V2 fee vocabulary: one validated type per fee convention
+//!   (the fee fraction vs the retained gamma), with typed refusals.
 //! - [`hex_utils`] — pure-Rust hex encoding/decoding.
 //! - [`address_utils`] — EIP-55 checksummed Ethereum addresses.
 //! - [`cpu_budget`] — cgroup-aware CPU budget detection and the two-runtime
@@ -45,6 +47,7 @@ pub mod channel_lifecycle;
 pub mod cpu_budget;
 pub mod eip_1559;
 pub mod errors;
+pub mod fee;
 pub mod fee_percentiles;
 pub mod hex_utils;
 pub mod libzip;

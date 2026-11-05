@@ -40,6 +40,8 @@ use degenbot_substrate::BotState;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::pool_builder::curve_choreography;
 use crate::bot_core::pool_ops;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 
 /// Whether a refresh changed the pool's state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -440,14 +442,14 @@ mod tests {
                 token1: Address::from([0xa1u8; 20]),
                 reserve0: U112::from(1_000u64),
                 reserve1: U112::from(2_000u64),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: Address::from([0xf0u8; 20]),
                 update_block: 100,
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 stable_swap: false,
-                fee_denominator: None,
-                ..Default::default()
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
             })
             .expect("test setup: V2 registration");
         (state, pool_id)

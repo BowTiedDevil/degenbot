@@ -16,6 +16,8 @@ use crate::concentrated_liquidity_route::ApplyOutcome;
 use crate::pool_lookup::PoolLookup;
 use crate::state_lock::StateLock;
 use crate::BotState;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 use degenbot_decoders::v2_sync_decoder::decode_sync_log;
 use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
 use degenbot_decoders::v3_pancakeswap_swap_decoder::decode_v3_pancakeswap_swap_log;
@@ -908,14 +910,14 @@ mod tests {
                 token1: alloy::primitives::Address::ZERO,
                 reserve0: alloy::primitives::aliases::U112::from(1000),
                 reserve1: alloy::primitives::aliases::U112::from(2000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: alloy::primitives::Address::ZERO,
+                deployer: alloy::primitives::Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
                 update_block: 0,
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 stable_swap: false,
-                fee_denominator: None,
-                ..Default::default()
             })
             .expect("test setup: V2 registration");
 
@@ -984,14 +986,14 @@ mod tests {
                 token1: alloy::primitives::Address::ZERO,
                 reserve0: alloy::primitives::aliases::U112::from(1000),
                 reserve1: alloy::primitives::aliases::U112::from(2000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: alloy::primitives::Address::ZERO,
+                deployer: alloy::primitives::Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
                 update_block: 0,
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 stable_swap: false,
-                fee_denominator: None,
-                ..Default::default()
             })
             .expect("test setup: V2 registration");
         dispatcher.dispatch(&sentinel_log(), &state, None); // applied

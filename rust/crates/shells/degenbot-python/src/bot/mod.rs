@@ -57,6 +57,7 @@ use degenbot_bot::bot_core::{
     Bot, RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
     RegisterCurvePoolParams,
 };
+use degenbot_core::fee::{FeeRatio, V2Fee};
 use degenbot_pools::PoolTickCoverage;
 use degenbot_pools::RegisterAerodromeV2PoolParams;
 use degenbot_pools::RegisterV2PoolParams;
@@ -623,6 +624,33 @@ impl PyBot {
     }
 }
 
+/// A Python `(gamma_numer, fee_denom)` RETAINED pair as a validated
+/// [`FeeRatio`].
+///
+/// The registration verbs take raw u64s, so the boundary is where an unusable
+/// tuple becomes an exception: a zero or above-denominator gamma (a 100% fee)
+/// or a zero denominator raises instead of registering a pool that could never
+/// price a swap.
+fn fee_ratio_param(gamma_numer: u64, fee_denom: u64) -> PyResult<FeeRatio> {
+    FeeRatio::new(gamma_numer, fee_denom).map_err(|refusal| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "unusable retained fee ({gamma_numer}, {fee_denom}): {refusal}"
+        ))
+    })
+}
+
+/// A Python `(fee_numer, fee_denom)` CHARGED fraction as a validated [`V2Fee`].
+///
+/// The Aerodrome door's direction is the opposite of the V2 retained pair; the
+/// same boundary rule applies — an out-of-range answer raises.
+fn fee_fraction_param(fee_numer: u64, fee_denom: u64) -> PyResult<V2Fee> {
+    V2Fee::new(fee_numer, fee_denom).map_err(|refusal| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "unusable fee fraction ({fee_numer}, {fee_denom}): {refusal}"
+        ))
+    })
+}
+
 #[pymethods]
 impl PyBot {
     #[new]
@@ -963,7 +991,7 @@ impl PyBot {
     ///
     /// Returns the auto-assigned pool ID.
     #[expect(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory, update_block=0, variant="uniswap-v2", stable_swap=false, fee_denominator=None))]
+    #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory, update_block=0, variant="uniswap-v2", stable_swap=false))]
     fn register_v2_pool(
         &self,
         py: Python<'_>,
@@ -980,7 +1008,6 @@ impl PyBot {
         update_block: u64,
         variant: &str,
         stable_swap: bool,
-        fee_denominator: Option<u64>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let t0 = parse_address(token0)?;
@@ -996,6 +1023,11 @@ impl PyBot {
         )?;
         let variant_enum = DexVariant::try_from(variant)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        // The retained pair is validated HERE: a tuple no pool could price (a
+        // 100% fee, a zero denominator, a gamma above its denominator) raises
+        // instead of registering.
+        let fee_token0 = fee_ratio_param(gamma_numer0, fee_denom0)?;
+        let fee_token1 = fee_ratio_param(gamma_numer1, fee_denom1)?;
 
         // ADR-078 D3 step 3: the kwargs translate into the ONE door request
         // and dispatch through the engine verb ([`Bot::register`]); the
@@ -1013,8 +1045,8 @@ impl PyBot {
                         token1: t1,
                         reserve0: r0,
                         reserve1: r1,
-                        fee_token0: (gamma_numer0, fee_denom0),
-                        fee_token1: (gamma_numer1, fee_denom1),
+                        fee_token0,
+                        fee_token1,
                         factory: fac,
                         // Derived identity (deployer/init-hash) is completed
                         // core-side, inside the request interior.
@@ -1023,7 +1055,6 @@ impl PyBot {
                         update_block,
                         variant: variant_enum,
                         stable_swap,
-                        fee_denominator,
                     })))
             })
             .map_err(map_refusal)?;
@@ -1830,7 +1861,6 @@ impl PyBot {
         update_block: u64,
         variant: &str,
         stable_swap: bool,
-        fee_denominator: Option<u64>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let t0 = parse_address(token0)?;
@@ -1846,6 +1876,10 @@ impl PyBot {
         )?;
         let variant_enum = DexVariant::try_from(variant)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        // The retained pair is validated at this boundary too: an unusable
+        // tuple raises rather than registering.
+        let fee_token0 = fee_ratio_param(gamma_numer0, fee_denom0)?;
+        let fee_token1 = fee_ratio_param(gamma_numer1, fee_denom1)?;
         // T1-scan-exempt: test-only seam (pure-Rust test callers, no GIL held).
         self.bot
             .state_arc()
@@ -1856,15 +1890,14 @@ impl PyBot {
                 token1: t1,
                 reserve0: r0,
                 reserve1: r1,
-                fee_token0: (gamma_numer0, fee_denom0),
-                fee_token1: (gamma_numer1, fee_denom1),
+                fee_token0,
+                fee_token1,
                 factory: fac,
                 deployer: fac,
                 init_hash: alloy::primitives::B256::default(),
                 update_block,
                 variant: variant_enum,
                 stable_swap,
-                fee_denominator,
             })
             .map_err(|err| map_register_v2_err(&err))
     }
@@ -3005,6 +3038,11 @@ impl PyBot {
         let variant_enum = DexVariant::try_from(variant)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
+        // The Aerodrome fee is a CHARGED fraction — the opposite direction
+        // from the V2 retained pair — and it is validated here: an out-of-range
+        // answer raises instead of registering a pool it could not price.
+        let fee = fee_fraction_param(fee_numer, fee_denom)?;
+
         // ADR-078 D3 step 3: the params ride the ONE door request and
         // dispatch through the engine verb ([`Bot::register`]); the EIP-1167
         // verify (skipped for non-JSON (chain, factory) rows) is core-owned
@@ -3019,7 +3057,7 @@ impl PyBot {
                     factory: fac,
                     variant: variant_enum,
                     stable,
-                    fee: (fee_numer, fee_denom),
+                    fee,
                     token0_decimals,
                     token1_decimals,
                     reserve0: r0,
@@ -3344,7 +3382,6 @@ mod tests {
                     5,
                     "uniswap-v2",
                     false,
-                    None,
                 )
                 .expect("test setup: V2 registration");
 
@@ -3415,7 +3452,6 @@ mod tests {
                 5,
                 "uniswap-v2",
                 false,
-                None,
             )
             .expect("test setup: V2 registration");
         let pool = bot.get_pool(py, pool_id).expect("registered handle");

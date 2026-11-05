@@ -121,7 +121,7 @@ const MAX_FEE_PER_GAS: u128 = 200_000_000_000;
 const MAX_PRIORITY_FEE_PER_GAS: u128 = 1_000_000_000;
 
 /// The V2 constant-product fee both canonical routers charge (0.3%).
-const V2_FEE: (u64, u64) = (997, 1000);
+const V2_FEE: degenbot_core::fee::FeeRatio = degenbot_core::fee::fee_ratio(997, 1_000);
 
 // ─────────────────────────────────────────────────────────────────────────
 // ABI helpers (hand-encoded)
@@ -758,7 +758,9 @@ async fn fetch_v2_hop(provider: &AlloyProvider, spec: &HopSpec, block: u64) -> F
         factory: spec.dex.factory(),
         update_block: block,
         variant: DexVariant::UniswapV2,
-        ..Default::default()
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
+        stable_swap: false,
     };
     let (identity, state) = V2PoolState::from_params(&params, 8, (None, None));
     let (reserve_in, reserve_out) = if spec.zfo {
@@ -766,7 +768,12 @@ async fn fetch_v2_hop(provider: &AlloyProvider, spec: &HopSpec, block: u64) -> F
     } else {
         (U256::from(reserves.reserve1), U256::from(reserves.reserve0))
     };
-    let hop_state = IntHopState::new(reserve_in, reserve_out, V2_FEE.0, V2_FEE.1);
+    let hop_state = IntHopState::new(
+        reserve_in,
+        reserve_out,
+        V2_FEE.gamma_numer(),
+        V2_FEE.denominator(),
+    );
     let decimals_in = token_decimals(provider, spec.token_in(), block).await;
     FetchedHop {
         entry: PoolEntry::V2(Box::new((identity, state))),

@@ -43,6 +43,8 @@ use degenbot_core::{op_error, op_warn};
 use std::sync::Arc;
 
 use crate::bot_core::Bot;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 
 /// A too-deep reorg — the removed event's block is at or below the journal's
 /// earliest surviving delta. There is no known state before it, so the bot
@@ -365,14 +367,14 @@ mod tests {
                 token1: Address::from([0xa1u8; 20]),
                 reserve0: U112::from(1_000),
                 reserve1: U112::from(2_000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: Address::from([0xf0u8; 20]),
                 update_block,
-                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                variant: degenbot_pools::DexVariant::UniswapV2,
                 stable_swap: false,
-                fee_denominator: None,
-                ..Default::default()
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
             })
             .expect("test setup: V2 registration");
         (bot, pool_id)

@@ -165,41 +165,6 @@ pub fn narrow_v2_reserve(value: U256, field: &'static str) -> Result<U112, SpecV
     Ok(value.to::<U112>())
 }
 
-/// Validate one direction of a solidly-stable V2 identity's fee pair.
-///
-/// The identity stores the post-fee RETAINED fraction `(gamma_numer, denom)`
-/// and the solidly-stable math takes the complement as the fee, so a gamma of
-/// zero is a 100% fee: every swap prices at zero output. A `stable_swap`
-/// identity whose pair carries that shape (the Camelot stable preset's
-/// `(0, denom)` "read the pool" marker is one) cannot quote, so it is refused
-/// at admission rather than registered as a silently-unpriceable pool.
-///
-/// `field` is the offending struct-field name (`"fee_token0"` /
-/// `"fee_token1"`).
-///
-/// # Errors
-///
-/// Returns [`Err`] with a [`SpecViolation`] bound `"non-zero fee denominator"`
-/// for `denom == 0`, and bound `"retained gamma > 0 (...)"` for `gamma == 0`.
-pub fn validate_stable_swap_fee(fee: (u64, u64), field: &'static str) -> Result<(), SpecViolation> {
-    let (gamma_numer, fee_denom) = fee;
-    if fee_denom == 0 {
-        return Err(SpecViolation {
-            field,
-            value: SpecValue::U64(fee_denom),
-            bound: "non-zero fee denominator",
-        });
-    }
-    if gamma_numer == 0 {
-        return Err(SpecViolation {
-            field,
-            value: SpecValue::U64(gamma_numer),
-            bound: "retained gamma > 0 (a zero gamma prices every swap at zero output)",
-        });
-    }
-    Ok(())
-}
-
 /// Validate a V3/V4 `sqrtPriceX96` (`TickMath`-bounded `uint160`).
 ///
 /// On-chain invariant: `MIN_SQRT_RATIO <= sqrtPriceX96 < MAX_SQRT_RATIO`
@@ -321,41 +286,6 @@ mod tests {
         assert_eq!(validate_v2_reserve(U112::ZERO, "reserve1"), Ok(()));
     }
 
-    #[test]
-    fn stable_swap_fee_accepts_a_retained_gamma() {
-        // Arbitrum MIM/USDC stable: 40/100000 fee → retained 99960/100000.
-        assert_eq!(
-            validate_stable_swap_fee((99_960, 100_000), "fee_token0"),
-            Ok(())
-        );
-        // The smallest retained gamma is still a priceable fee.
-        assert_eq!(validate_stable_swap_fee((1, 100_000), "fee_token1"), Ok(()));
-    }
-
-    #[test]
-    fn stable_swap_fee_rejects_a_zero_gamma() {
-        // A 100% fee: the solidly math's complement is the whole input.
-        assert_eq!(
-            validate_stable_swap_fee((0, 100_000), "fee_token0"),
-            Err(SpecViolation {
-                field: "fee_token0",
-                value: SpecValue::U64(0),
-                bound: "retained gamma > 0 (a zero gamma prices every swap at zero output)",
-            })
-        );
-    }
-
-    #[test]
-    fn stable_swap_fee_rejects_a_zero_denominator() {
-        assert_eq!(
-            validate_stable_swap_fee((997, 0), "fee_token1"),
-            Err(SpecViolation {
-                field: "fee_token1",
-                value: SpecValue::U64(0),
-                bound: "non-zero fee denominator",
-            })
-        );
-    }
     // Note: the pre-widening `v2_reserve_rejects_uint112_max_plus_one` test is
     // removed — a value `> UINT112_MAX` cannot be constructed as a `U112`
     // (the type's `MAX` *is* `UINT112_MAX`), so the runtime reject branch is

@@ -26,16 +26,18 @@
 //!
 //! ## Fee convention
 //!
-//! `fee_tokenN: (u64, u64)` = `(gamma_numer, fee_denom)` where `gamma_numer`
-//! is the **retained post-fee fraction** numerator (e.g. `997` for a 0.3% fee,
-//! `fee_denom=1000`) — NOT the fee numerator. This matches `V2PoolState`'s
-//! `fee_tokenN` field doc + the `IntHopState` convention + `register_v2_pool`'s
-//! parameter meaning. The fee numerator (3) must never be registered instead of
-//! the retained fraction (997); these presets bake the correct convention in by
-//! construction (e.g. `PancakeSwap`'s
-//! `Fraction(25, 10000)` FEE → preset `(9975, 10_000)`).
+//! `fee_tokenN: FeeSpec` declares either a **retained post-fee fraction**
+//! (`gamma_numer / denominator`, e.g. `997/1000` for a 0.3% fee) — NOT the fee
+//! numerator — or, for a deployment whose fee is per-pool on-chain, the
+//! "read the pool live" MARKER carrying only the read's denominator. This
+//! matches `V2PoolState`'s `fee_tokenN` field doc + the `IntHopState`
+//! convention + `register_v2_pool`'s parameter meaning. The fee numerator (3)
+//! must never be registered instead of the retained fraction (997); these
+//! presets bake the correct convention in by construction (e.g.
+//! `PancakeSwap`'s `Fraction(25, 10000)` FEE → preset `9975/10_000`).
 
 use alloy::primitives::{address, b256, Address, B256};
+use degenbot_core::fee::{fee_spec_marker, fee_spec_retained, FeeSpec};
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -238,8 +240,10 @@ impl ReservesAbi {
 /// `DexVariant` tag. Lighter than a `V2PoolState` — no reserves, no journal
 /// (identity is construction-time data, not per-block state).
 ///
-/// `fee_tokenN.0` is the RETAINED post-fee fraction numerator (`gamma_numer`
-/// in `IntHopState` / `register_v2_pool`); `fee_tokenN.1` is the denominator.
+/// `fee_tokenN` is a [`FeeSpec`]: either a declared RETAINED ratio (the share
+/// the swapper keeps — `gamma_numer / denominator`, the `IntHopState` /
+/// `register_v2_pool` convention) or the per-pool "read the fee live" marker,
+/// which carries only the on-chain read's denominator and is never a ratio.
 /// See the module-level fee-convention comment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DexIdentity {
@@ -252,11 +256,12 @@ pub struct DexIdentity {
     pub deployer: Address,
     /// The CREATE2 init code hash (Solidity `keccak256(type.creationCode)`).
     pub init_hash: B256,
-    /// `token0→token1` fee parameters: `(gamma_numer, fee_denom)` — the
-    /// retained post-fee fraction. `(997, 1000)` for a 0.3% fee.
-    pub fee_token0: (u64, u64),
-    /// `token1→token0` fee parameters: `(gamma_numer, fee_denom)`.
-    pub fee_token1: (u64, u64),
+    /// `token0→token1` fee declaration: a retained ratio (`997/1000` for a
+    /// 0.3% fee) or the per-pool marker for a deployment whose fee is read
+    /// on-chain.
+    pub fee_token0: FeeSpec,
+    /// `token1→token0` fee declaration. See [`Self::fee_token0`].
+    pub fee_token1: FeeSpec,
     /// The ABI struct-type shape for `Sync`-event reserve decoders.
     pub reserves_abi: ReservesAbi,
     /// The DEX+variant discriminator.
@@ -312,8 +317,8 @@ pub const UNISWAP_V2: DexIdentity = DexIdentity {
     factory: address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
     deployer: address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
     init_hash: b256!("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"),
-    fee_token0: (997, 1000),
-    fee_token1: (997, 1000),
+    fee_token0: fee_spec_retained(997, 1000),
+    fee_token1: fee_spec_retained(997, 1000),
     reserves_abi: ReservesAbi::Standard,
     variant: DexVariant::UniswapV2,
 };
@@ -323,8 +328,8 @@ pub const SUSHISWAP_V2: DexIdentity = DexIdentity {
     factory: address!("C0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"),
     deployer: address!("C0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"),
     init_hash: b256!("e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"),
-    fee_token0: (997, 1000),
-    fee_token1: (997, 1000),
+    fee_token0: fee_spec_retained(997, 1000),
+    fee_token1: fee_spec_retained(997, 1000),
     reserves_abi: ReservesAbi::Standard,
     variant: DexVariant::SushiswapV2,
 };
@@ -334,8 +339,8 @@ pub const PANCAKESWAP_V2: DexIdentity = DexIdentity {
     factory: address!("1097053Fd2ea711dad45caCcc45EfF7548fCB362"),
     deployer: address!("1097053Fd2ea711dad45caCcc45EfF7548fCB362"),
     init_hash: b256!("57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d"),
-    fee_token0: (9975, 10_000),
-    fee_token1: (9975, 10_000),
+    fee_token0: fee_spec_retained(9975, 10_000),
+    fee_token1: fee_spec_retained(9975, 10_000),
     reserves_abi: ReservesAbi::PancakeswapStyle,
     variant: DexVariant::PancakeswapV2,
 };
@@ -345,8 +350,8 @@ pub const SWAPBASED_V2: DexIdentity = DexIdentity {
     factory: address!("04C9f118d21e8B767D2e50C946f0cC9F6C367300"),
     deployer: address!("04C9f118d21e8B767D2e50C946f0cC9F6C367300"),
     init_hash: b256!("b64118b4e99d4a4163453838112a1695032df46c09f7f09064d4777d2767f8ea"),
-    fee_token0: (997, 1000),
-    fee_token1: (997, 1000),
+    fee_token0: fee_spec_retained(997, 1000),
+    fee_token1: fee_spec_retained(997, 1000),
     reserves_abi: ReservesAbi::Standard,
     variant: DexVariant::SwapbasedV2,
 };
@@ -358,56 +363,56 @@ pub const CAMELOT_V2_VOLATILE: DexIdentity = DexIdentity {
     factory: address!("6EcCab422D763aC031210895C81787E87B43A652"),
     deployer: address!("6EcCab422D763aC031210895C81787E87B43A652"),
     init_hash: b256!("a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"),
-    fee_token0: (99_700, 100_000),
-    fee_token1: (99_700, 100_000),
+    fee_token0: fee_spec_retained(99_700, 100_000),
+    fee_token1: fee_spec_retained(99_700, 100_000),
     reserves_abi: ReservesAbi::Standard,
     variant: DexVariant::CamelotV2Volatile,
 };
 
-/// Camelot V2 stable. Fee is per-pool on-chain; preset carries no
-/// compile-time fee default (gamma 0 signals "fetched per-pool"); the
-/// denominator mirrors Camelot's `FEE_DENOMINATOR` for encoding contexts.
+/// Camelot V2 stable. Fee is per-pool on-chain; the preset declares NO fee —
+/// it carries the per-pool MARKER, whose only payload is the denominator
+/// Camelot's `FEE_DENOMINATOR()` read reports.
 ///
-/// This pair is a marker, never a quotable fee: `build_v2` reads the pool's
+/// The marker is never a quotable ratio: `build_v2` reads the pool's
 /// `token0FeePercent()`/`token1FeePercent()` over its own `FEE_DENOMINATOR()`
-/// and registers that pair, and `BotState::register_v2_pool` refuses a
-/// `stable_swap` identity whose gamma is zero (a 100% fee quotes zero for
-/// every input), so the marker cannot reach a pool's state.
+/// and registers those as `FeeRatio`s, and a marker has no `FeeRatio` to hand
+/// the registration door — so it cannot reach a pool's state.
 pub const CAMELOT_V2_STABLE: DexIdentity = DexIdentity {
     factory: address!("6EcCab422D763aC031210895C81787E87B43A652"),
     deployer: address!("6EcCab422D763aC031210895C81787E87B43A652"),
     init_hash: b256!("a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"),
-    fee_token0: (0, 100_000),
-    fee_token1: (0, 100_000),
+    fee_token0: fee_spec_marker(100_000),
+    fee_token1: fee_spec_marker(100_000),
     reserves_abi: ReservesAbi::Standard,
     variant: DexVariant::CamelotV2Stable,
 };
 
 /// Aerodrome V2 volatile (canonical Base, chain 8453). Fee is per-pool
-/// on-chain (`volatileFee` over `FEE_DENOMINATOR=10000`); preset carries a
-/// typical 0.3% default (gamma 9970/10000). Init hash is empty in the Python
-/// source (different address generation — documented here as zero with a
+/// on-chain (`getFee` over `FEE_DENOMINATOR=10000`), so the preset declares NO
+/// fee: it carries the per-pool marker with that denominator, and the
+/// Aerodrome door reads the live fee. Init hash is empty in the Python source
+/// (different address generation — documented here as zero with a
 /// `factory`-only budget; encoding/address-derivation for Aerodrome is carried
 /// by a different path).
 pub const AERODROME_V2_VOLATILE: DexIdentity = DexIdentity {
     factory: address!("420DD381b31aEf6683db6B902084cB0FFECe40Da"),
     deployer: address!("420DD381b31aEf6683db6B902084cB0FFECe40Da"),
     init_hash: B256::ZERO,
-    fee_token0: (9970, 10_000),
-    fee_token1: (9970, 10_000),
+    fee_token0: fee_spec_marker(10_000),
+    fee_token1: fee_spec_marker(10_000),
     reserves_abi: ReservesAbi::Standard,
     variant: DexVariant::AerodromeV2Volatile,
 };
 
 /// Aerodrome V2 stable. Init hash is empty in the Python source (different
-/// address generation); fee is per-pool on-chain (gamma 0 signals "fetched
-/// per-pool"; denominator 10000 mirrors Aerodrome's `FEE_DENOMINATOR`).
+/// address generation); the fee is per-pool on-chain, so the preset declares
+/// none — the marker carries Aerodrome's `FEE_DENOMINATOR` (`10_000`).
 pub const AERODROME_V2_STABLE: DexIdentity = DexIdentity {
     factory: address!("420DD381b31aEf6683db6B902084cB0FFECe40Da"),
     deployer: address!("420DD381b31aEf6683db6B902084cB0FFECe40Da"),
     init_hash: B256::ZERO,
-    fee_token0: (0, 10_000),
-    fee_token1: (0, 10_000),
+    fee_token0: fee_spec_marker(10_000),
+    fee_token1: fee_spec_marker(10_000),
     reserves_abi: ReservesAbi::Standard,
     variant: DexVariant::AerodromeV2Stable,
 };
@@ -493,8 +498,8 @@ mod tests {
         );
         // Fraction(3, 1000) fee → RETAINED fraction (1000-3, 1000) = (997, 1000).
         // gamma_numer is the kept amount, NOT the fee.
-        assert_eq!(ident.fee_token0, (997, 1000));
-        assert_eq!(ident.fee_token1, (997, 1000));
+        assert_eq!(ident.fee_token0.as_pair(), (997, 1000));
+        assert_eq!(ident.fee_token1.as_pair(), (997, 1000));
         assert_eq!(ident.reserves_abi, ReservesAbi::Standard);
         assert_eq!(ident.variant, DexVariant::UniswapV2);
     }
@@ -512,8 +517,8 @@ mod tests {
             ident.init_hash,
             b256!("e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303")
         );
-        assert_eq!(ident.fee_token0, (997, 1000)); // 3/1000 fee
-        assert_eq!(ident.fee_token1, (997, 1000));
+        assert_eq!(ident.fee_token0.as_pair(), (997, 1000)); // 3/1000 fee
+        assert_eq!(ident.fee_token1.as_pair(), (997, 1000));
         assert_eq!(ident.reserves_abi, ReservesAbi::Standard);
     }
 
@@ -533,8 +538,8 @@ mod tests {
             b256!("57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d")
         );
         // Fraction(25, 10000) fee → RETAINED fraction (9975, 10_000).
-        assert_eq!(ident.fee_token0, (9975, 10_000));
-        assert_eq!(ident.fee_token1, (9975, 10_000));
+        assert_eq!(ident.fee_token0.as_pair(), (9975, 10_000));
+        assert_eq!(ident.fee_token1.as_pair(), (9975, 10_000));
         // Pancake's RESERVES_STRUCT_TYPES override = 3-tuple.
         assert_eq!(ident.reserves_abi, ReservesAbi::PancakeswapStyle);
         assert_eq!(
@@ -557,8 +562,8 @@ mod tests {
             b256!("b64118b4e99d4a4163453838112a1695032df46c09f7f09064d4777d2767f8ea")
         );
         // Swapbased inherits UniswapV2Pool.FEE = Fraction(3, 1000).
-        assert_eq!(ident.fee_token0, (997, 1000));
-        assert_eq!(ident.fee_token1, (997, 1000));
+        assert_eq!(ident.fee_token0.as_pair(), (997, 1000));
+        assert_eq!(ident.fee_token1.as_pair(), (997, 1000));
         assert_eq!(ident.reserves_abi, ReservesAbi::Standard);
     }
 
@@ -578,8 +583,8 @@ mod tests {
             ident.init_hash,
             b256!("a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1")
         );
-        assert_eq!(ident.fee_token0, (99_700, 100_000));
-        assert_eq!(ident.fee_token1, (99_700, 100_000));
+        assert_eq!(ident.fee_token0.as_pair(), (99_700, 100_000));
+        assert_eq!(ident.fee_token1.as_pair(), (99_700, 100_000));
         assert_eq!(ident.reserves_abi, ReservesAbi::Standard);
     }
 
@@ -608,8 +613,12 @@ mod tests {
         );
         assert_eq!(ident.deployer, ident.factory);
         // Acceptance criterion (aerodrome/pools.py FEE_DENOMINATOR=10000).
-        assert_eq!(ident.fee_token0.1, 10_000);
-        assert_eq!(ident.fee_token1.1, 10_000);
+        assert_eq!(ident.fee_token0.denominator(), 10_000);
+        assert_eq!(ident.fee_token1.denominator(), 10_000);
+        // The volatile fee is read per-pool (`getFee`), so the preset declares
+        // no ratio at all: the marker is not a fee a pool could register with.
+        assert_eq!(ident.fee_token0.ratio(), None);
+        assert_eq!(ident.fee_token1.ratio(), None);
         assert_eq!(ident.variant, DexVariant::AerodromeV2Volatile);
     }
 
@@ -619,8 +628,10 @@ mod tests {
         let volatile = AERODROME_V2_VOLATILE;
         assert_eq!(stable.factory, volatile.factory);
         assert_eq!(stable.deployer, volatile.deployer);
-        assert_eq!(stable.fee_token0.1, 10_000);
-        assert_eq!(stable.fee_token1.1, 10_000);
+        assert_eq!(stable.fee_token0.denominator(), 10_000);
+        assert_eq!(stable.fee_token1.denominator(), 10_000);
+        assert_eq!(stable.fee_token0.ratio(), None);
+        assert_eq!(stable.fee_token1.ratio(), None);
         assert_eq!(stable.variant, DexVariant::AerodromeV2Stable);
     }
 

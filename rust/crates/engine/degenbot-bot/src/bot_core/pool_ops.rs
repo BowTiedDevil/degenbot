@@ -15,6 +15,8 @@
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 use degenbot_pools::CurveDataProvider;
 use degenbot_pools::RegisteredPoolFamily;
 use degenbot_pools::{fetch_and_merge, TransientTickMap, WordFetchPolicy};
@@ -530,14 +532,14 @@ mod tests {
                     token1: Address::from([0xa1u8; 20]),
                     reserve0: U112::from(1_000u64),
                     reserve1: U112::from(2_000u64),
-                    fee_token0: (997, 1000),
-                    fee_token1: (997, 1000),
+                    fee_token0: fee_ratio(997, 1000),
+                    fee_token1: fee_ratio(997, 1000),
                     factory: Address::from([0xf0u8; 20]),
                     update_block: 100,
                     variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                     stable_swap: false,
-                    fee_denominator: None,
-                    ..Default::default()
+                    deployer: Address::ZERO,
+                    init_hash: alloy::primitives::B256::ZERO,
                 })
                 .expect("v2 registration");
             // V3-consistent nets: the ticks below the current tick 0 sum to

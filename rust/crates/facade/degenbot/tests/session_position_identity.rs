@@ -40,6 +40,7 @@ use degenbot::substrate::session_registry::{
 };
 use degenbot::substrate::state_lock::LockSite;
 use degenbot::substrate::RegisterV2PoolParams;
+use degenbot_core::fee::fee_ratio;
 
 const CHAIN_ID: u64 = 1;
 
@@ -62,11 +63,14 @@ fn v2_params(address: Address, token0: Address, token1: Address) -> RegisterV2Po
         token1,
         reserve0: U256::from(1_500_000u64 * 1_000_000u64).to::<U112>(),
         reserve1: (U256::from(800u64) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>(),
-        fee_token0: (997, 1000),
-        fee_token1: (997, 1000),
+        fee_token0: fee_ratio(997, 1000),
+        fee_token1: fee_ratio(997, 1000),
         factory: Address::ZERO,
         update_block: 0,
-        ..Default::default()
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
+        variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+        stable_swap: false,
     }
 }
 

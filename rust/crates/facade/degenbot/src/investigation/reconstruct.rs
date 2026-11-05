@@ -16,6 +16,7 @@ use crate::pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState
 use crate::pools::TickInfo;
 use crate::substrate::BotState;
 use crate::{DexVariant, RegisterV2PoolParams};
+use degenbot_core::fee::FeeRatio;
 
 use super::fixture::{PoolData, TickJson};
 
@@ -59,10 +60,14 @@ pub const V2_DEFAULT_FEE: (u64, u64) = (997, 1000);
 /// `997/1000` default (matches the legacy `_v2_get_amount_out` convention the
 /// live bot uses).
 pub fn register_v2(core: &mut BotState, p: &PoolData) -> Result<u64, String> {
-    let fee = match (p.fee_gamma, p.fee_denom) {
+    // The fixture's own retained ratio when present, else the Sushi default;
+    // an out-of-bound capture is refused rather than registered.
+    let (gamma_numer, denominator) = match (p.fee_gamma, p.fee_denom) {
         (Some(g), Some(d)) => (g, d),
         _ => V2_DEFAULT_FEE,
     };
+    let fee = FeeRatio::new(gamma_numer, denominator)
+        .map_err(|refusal| format!("register_v2: unusable fee pair: {refusal}"))?;
     core.register_v2_pool(&RegisterV2PoolParams {
         address: p.address.expect("v2 pool address"),
         token0: p.token0.expect("v2 token0"),
@@ -79,7 +84,6 @@ pub fn register_v2(core: &mut BotState, p: &PoolData) -> Result<u64, String> {
         update_block: p.liquidity_update_block.unwrap_or(0),
         variant: DexVariant::UniswapV2,
         stable_swap: false,
-        fee_denominator: None,
     })
     .map_err(|e| format!("register_v2: {e:?}"))
 }

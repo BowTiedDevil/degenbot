@@ -62,6 +62,8 @@ use alloy::primitives::aliases::U112;
 #[cfg(test)]
 use alloy::primitives::Address;
 use dashmap::DashMap;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 use degenbot_substrate::resolve::HopProjectionCache;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
@@ -551,14 +553,14 @@ impl ArbitrageEngine {
             token1: Address::ZERO,
             reserve0,
             reserve1,
-            fee_token0: (gamma_numer, fee_denom),
-            fee_token1: (gamma_numer, fee_denom),
+            fee_token0: fee_ratio(gamma_numer, fee_denom),
+            fee_token1: fee_ratio(gamma_numer, fee_denom),
             factory: Address::ZERO,
             update_block: 0,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
         };
         self.core
             .write_at(degenbot_substrate::state_lock::LockSite::Solver)

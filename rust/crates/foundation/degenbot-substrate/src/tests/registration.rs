@@ -1,5 +1,6 @@
 use super::*;
 use crate::RegisterAerodromePoolError;
+use degenbot_core::fee::{fee_fraction, fee_ratio, FeeRatio, FeeRatioRefusal, FeeSpec};
 use degenbot_pools::PoolLiquidityUpdate;
 
 #[test]
@@ -30,8 +31,8 @@ fn register_v2_pool_and_calculate_tokens_out() {
 
 #[test]
 fn v2_identity_round_trip() {
-    // The identity (address/tokens/fees/factory/variant/stable_swap/
-    // fee_denominator) round-trips through register_v2_pool ->
+    // The identity (address/tokens/fees/factory/variant/stable_swap)
+    // round-trips through register_v2_pool ->
     // get_v2_identity. Identity is pure immutable registration data
     // (mirrors TokenEntry), distinct from the mutable V2PoolState.
     let mut core = BotState::new();
@@ -52,7 +53,6 @@ fn v2_identity_round_trip() {
         degenbot_uniswap::dex_identity::DexVariant::UniswapV2
     );
     assert!(!id.stable_swap);
-    assert_eq!(id.fee_denominator, None);
 }
 
 #[test]
@@ -415,7 +415,7 @@ fn pool_family_dispatches_every_registered_family() {
             factory: Address::from([0xafu8; 20]),
             variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
             stable: false,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             token0_decimals: 18,
             token1_decimals: 18,
             reserve0: U112::from(1_000_000u64),
@@ -1116,7 +1116,7 @@ fn registered_family_readers_tag_every_registered_family() {
             factory: Address::from([0xafu8; 20]),
             variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
             stable: false,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             token0_decimals: 18,
             token1_decimals: 18,
             reserve0: U112::from(1_000_000u64),
@@ -1210,43 +1210,31 @@ fn unregister_pool_on_unknown_address_returns_false_silently() {
 // on (a) and silently degrading to `U256::MAX` on (b).
 // -----------------------------------------------------------------------
 #[test]
-fn register_v2_pool_refuses_a_stable_swap_identity_with_zero_gamma() {
+fn a_stable_swap_identity_cannot_carry_a_zero_gamma() {
     // A solidly-stable fee pair is the RETAINED gamma fraction, so gamma 0 is
     // a 100% fee: the pool would quote zero for every input. The Camelot
-    // stable preset's `(0, denom)` "read the pool" marker must not become a
-    // registered pool's fee, whichever door carried it.
+    // stable preset's `(0, denom)` "read the pool" MARKER is not a `FeeRatio`
+    // at all — the ratio constructor refuses a zero retained gamma, so no
+    // registration door can carry the marker into a pool's state.
+    assert_eq!(
+        FeeRatio::new(0, 100_000),
+        Err(FeeRatioRefusal::ZeroRetained)
+    );
+    assert_eq!(
+        FeeSpec::marker(100_000).expect("a scaled marker").ratio(),
+        None
+    );
+
+    // A real per-token fee pair registers.
     let mut core = BotState::new();
     let params = RegisterV2PoolParams {
         stable_swap: true,
         variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
-        fee_token0: (0, 100_000),
-        fee_token1: (0, 100_000),
-        fee_denominator: Some(100_000),
+        fee_token0: fee_ratio(99_960, 100_000),
+        fee_token1: fee_ratio(99_960, 100_000),
         ..make_params(U112::from(1000), U112::from(2000))
     };
-    assert_eq!(
-        core.register_v2_pool(&params),
-        Err(RegisterV2PoolError::SpecViolation(
-            degenbot_pools::SpecViolation {
-                field: "fee_token0",
-                value: degenbot_pools::SpecValue::U64(0),
-                bound: "retained gamma > 0 (a zero gamma prices every swap at zero output)",
-            }
-        ))
-    );
-    assert_eq!(
-        core.pool_count(),
-        0,
-        "a refused registration mutates nothing"
-    );
-
-    // The same pool with a real per-token fee pair registers.
-    let ok = RegisterV2PoolParams {
-        fee_token0: (99_960, 100_000),
-        fee_token1: (99_960, 100_000),
-        ..params
-    };
-    core.register_v2_pool(&ok)
+    core.register_v2_pool(&params)
         .expect("a priced stable pair registers");
     assert_eq!(core.pool_count(), 1);
 }
@@ -1284,7 +1272,7 @@ fn make_aerodrome_params_in_spec(address: Address) -> RegisterAerodromeV2PoolPar
         reserve1: U112::from(2000),
         factory: make_factory(),
         variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
-        fee: (3, 1000),
+        fee: fee_fraction(3, 1000),
         token0_decimals: 18,
         token1_decimals: 18,
         update_block: 0,

@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 use alloy::primitives::aliases::U128;
 use alloy::primitives::{Address, U256};
+use degenbot_core::fee::{V2FeePair, V2Fees};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
 use degenbot_db::ApplyLiquidityAtTick;
@@ -48,7 +49,6 @@ use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
 use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
-use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 use degenbot_substrate::pool_ingress::{PoolAdmission, V2Identity, V2State};
 use hashbrown::HashMap as HbMap;
 

@@ -631,7 +631,14 @@ mod tests {
             token1: Address::from([0xbbu8; 20]),
             reserve0: alloy::primitives::aliases::U112::from(1_000_000u64),
             reserve1: alloy::primitives::aliases::U112::from(2_000_000u64),
-            ..Default::default()
+            fee_token0: degenbot::core::fee::fee_ratio(997, 1_000),
+            fee_token1: degenbot::core::fee::fee_ratio(997, 1_000),
+            factory: Address::ZERO,
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            update_block: 0,
+            variant: degenbot::uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
         }
     }
 

@@ -30,6 +30,7 @@
 //! for identical state are one verdict.
 
 use alloy::primitives::{aliases::U112, Address, B256, U256};
+use degenbot_core::fee::FeeRatio;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
@@ -38,9 +39,12 @@ use degenbot_pools::TickInfo;
 use degenbot_pools::{Envelope, GateDeps};
 use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
 use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
+use degenbot_uniswap::dex_identity::DexVariant;
 
 use super::resolve::{resolve_hops, HopProjectionCache};
 use super::BotState;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 
 /// The pool identity an explicit-state admission rides on: address + token
 /// pair (canonical order). Everything stateful travels separately in
@@ -188,11 +192,21 @@ pub enum ExplicitPoolState {
     /// Reserves + per-direction fee fractions, e.g. the canonical 0.3%
     /// preset `(997, 1000)`. Reserves are registry-validated against the
     /// on-chain `uint112` width.
+    ///
+    /// The identity fields (`variant` / `factory` / `stable_swap`) are the
+    /// admitting caller's values, carried verbatim into registration — the
+    /// scope never invents an identity for the pool it admits.
     V2 {
         reserve0: U112,
         reserve1: U112,
-        fee_token0: (u64, u64),
-        fee_token1: (u64, u64),
+        fee_token0: FeeRatio,
+        fee_token1: FeeRatio,
+        /// The DEX+variant the caller resolved for this pool.
+        variant: DexVariant,
+        /// The factory the caller resolved for this pool.
+        factory: Address,
+        /// The Camelot solidly-stable flag the caller resolved.
+        stable_swap: bool,
     },
     /// Slot0 + active liquidity + a caller-fetched tick map with its
     /// coverage tag (frame replay or a sparse bootstrap; the scope never
@@ -376,6 +390,9 @@ impl Workspace {
                 reserve1,
                 fee_token0,
                 fee_token1,
+                variant,
+                factory,
+                stable_swap,
             } => self
                 .state
                 .register_v2_pool(&RegisterV2PoolParams {
@@ -386,8 +403,12 @@ impl Workspace {
                     reserve1,
                     fee_token0,
                     fee_token1,
+                    factory,
+                    deployer: Address::ZERO,
+                    init_hash: alloy::primitives::B256::ZERO,
                     update_block: seed_block,
-                    ..RegisterV2PoolParams::default()
+                    variant,
+                    stable_swap,
                 })
                 .map_err(PlanningAdmissionError::V2),
             ExplicitPoolState::V3 {
@@ -650,8 +671,11 @@ mod tests {
             ExplicitPoolState::V2 {
                 reserve0: U112::from(r0),
                 reserve1: U112::from(r1),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
+                variant: DexVariant::UniswapV2,
+                factory: Address::ZERO,
+                stable_swap: false,
             },
             SEED,
         )
@@ -935,10 +959,14 @@ mod tests {
                 token1: WETH,
                 reserve0: U112::from(313_131u64),
                 reserve1: U112::from(212_121u64),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
+                factory: Address::ZERO,
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
                 update_block: 7,
-                ..::degenbot_pools::RegisterV2PoolParams::default()
+                variant: DexVariant::UniswapV2,
+                stable_swap: false,
             })
             .expect("canonical P");
         let canonical_before = canonical.pool_reserves(canonical_id);

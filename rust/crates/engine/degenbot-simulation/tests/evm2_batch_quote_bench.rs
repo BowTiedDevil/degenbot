@@ -92,6 +92,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alloy::primitives::{address, keccak256, Address, Bytes, U256};
+use degenbot_core::fee::fee_ratio;
 use degenbot_pools::{
     decode_tick_word, decode_v2_reserves_word, decode_v3_slot0, decode_v4_slot0, simulate_swap,
     v4_liquidity_slot, v4_pool_id, v4_pool_state_base_slot, v4_slot0_slot,
@@ -478,12 +479,14 @@ async fn fetch_white_box(provider: &AlloyProvider, source: &AlloyTickWordSource)
         token1: WETH,
         reserve0: reserves.reserve0,
         reserve1: reserves.reserve1,
-        fee_token0: (997, 1000),
-        fee_token1: (997, 1000),
+        fee_token0: fee_ratio(997, 1000),
+        fee_token1: fee_ratio(997, 1000),
         factory: V2_FACTORY,
         update_block: PIN,
         variant: DexVariant::UniswapV2,
-        ..Default::default()
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
+        stable_swap: false,
     };
     let (v2_identity, v2_state) = V2PoolState::from_params(&v2_params, 8, (Some(6), Some(18)));
 

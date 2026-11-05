@@ -312,7 +312,7 @@ pub struct V2Identity {
 pub struct V2State {
     pub reserve0: u128,
     pub reserve1: u128,
-    pub fees: crate::executor_hop::V2FeePair,
+    pub fees: degenbot_core::fee::V2FeePair,
 }
 
 /// A V3 pool's admission identity.
@@ -470,6 +470,27 @@ pub struct PoolIngress {
     verifier: Option<Arc<dyn TickMapSampleVerifier>>,
     /// The backfill witness sink (the strategy's JSONL capture).
     witness: Option<Arc<dyn IngressWitness>>,
+}
+
+/// The planning state one V2 admission carries.
+///
+/// The connector edge carries no DEX identity (its `V2Identity` is address +
+/// token pair), so the scope's identity is the V2-neutral one this path has
+/// always registered with: the silent `DexVariant` default, spelled.
+fn v2_explicit_state(
+    fees: degenbot_core::fee::V2Fees,
+    reserve0: U112,
+    reserve1: U112,
+) -> ExplicitPoolState {
+    ExplicitPoolState::V2 {
+        reserve0,
+        reserve1,
+        fee_token0: fees.token0.retained_fraction(),
+        fee_token1: fees.token1.retained_fraction(),
+        variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+        factory: alloy::primitives::Address::ZERO,
+        stable_swap: false,
+    }
 }
 
 impl PoolIngress {
@@ -679,12 +700,7 @@ impl PoolIngress {
                         token0: identity.token0,
                         token1: identity.token1,
                     },
-                    ExplicitPoolState::V2 {
-                        reserve0,
-                        reserve1,
-                        fee_token0: fees.token0.retained_fraction(),
-                        fee_token1: fees.token1.retained_fraction(),
-                    },
+                    v2_explicit_state(fees, reserve0, reserve1),
                     head,
                 )
                 .map_err(|error| IngressDecline::Register(format!("{error:?}")))
@@ -1430,7 +1446,7 @@ mod tests {
                     POOL,
                     500_000,
                     1_000,
-                    crate::executor_hop::V2FeePair::missing(),
+                    degenbot_core::fee::V2FeePair::missing(),
                 ),
                 VerifyLevel::default(),
                 100,
@@ -1501,7 +1517,7 @@ mod tests {
         address: Address,
         reserve0: u128,
         reserve1: u128,
-        fees: crate::executor_hop::V2FeePair,
+        fees: degenbot_core::fee::V2FeePair,
     ) -> PoolAdmission {
         PoolAdmission::V2 {
             identity: V2Identity {
@@ -1518,8 +1534,8 @@ mod tests {
     }
 
     /// A validated directional fee pair charging `fee_bips` of 1,000,000.
-    fn fee_pair(fee_bips: u64) -> crate::executor_hop::V2FeePair {
-        crate::executor_hop::V2FeePair::from_discovered(
+    fn fee_pair(fee_bips: u64) -> degenbot_core::fee::V2FeePair {
+        degenbot_core::fee::V2FeePair::from_discovered(
             Some(i64::try_from(fee_bips).unwrap()),
             Some(i64::try_from(fee_bips).unwrap()),
             Some(1_000_000),

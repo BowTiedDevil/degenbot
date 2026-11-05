@@ -20,6 +20,7 @@ use std::sync::Arc;
 use crate::arb_engine::path_objects::EnginePathObjects;
 use crate::arb_engine::{EngineDriver, EngineStages};
 use crate::bot_core::Bot;
+use degenbot_core::fee::fee_ratio;
 use degenbot_pools::RegisterV2PoolParams;
 use degenbot_substrate::session_registry::{
     ObjectRefusal, PathObject, PoolIdentity, SessionObjectRegistry,
@@ -428,9 +429,14 @@ fn booted_session() -> (Arc<EngineDriver>, Arc<SessionObjectRegistry>) {
                     token1,
                     reserve0,
                     reserve1,
-                    fee_token0: (GAMMA_03, FEE_DENOM_03),
-                    fee_token1: (GAMMA_03, FEE_DENOM_03),
-                    ..Default::default()
+                    fee_token0: fee_ratio(GAMMA_03, FEE_DENOM_03),
+                    fee_token1: fee_ratio(GAMMA_03, FEE_DENOM_03),
+                    factory: Address::ZERO,
+                    deployer: Address::ZERO,
+                    init_hash: alloy::primitives::B256::ZERO,
+                    update_block: 0,
+                    variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                    stable_swap: false,
                 })
                 .expect("test setup: V2 pool");
         }

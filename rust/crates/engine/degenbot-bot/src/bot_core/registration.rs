@@ -30,6 +30,8 @@ use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{
     RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams,
 };
+#[cfg(test)]
+use degenbot_core::fee::{fee_fraction, fee_ratio};
 use degenbot_pools::RegisteredPoolFamily;
 use degenbot_pools::TickInfo;
 use degenbot_pools::{
@@ -744,12 +746,14 @@ mod tests {
             token1: Address::from([0x02u8; 20]),
             reserve0: U112::from(1000),
             reserve1: U112::from(2000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory,
             update_block: 10,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            stable_swap: false,
         }))
     }
 
@@ -1030,7 +1034,7 @@ mod tests {
                     factory: Address::from([0x33u8; 20]),
                     variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
                     stable: false,
-                    fee: (30, 10_000),
+                    fee: fee_fraction(30, 10_000),
                     token0_decimals: 18,
                     token1_decimals: 18,
                     reserve0: U112::from(1000),

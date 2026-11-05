@@ -235,9 +235,9 @@ impl PyArbEngine {
                         // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
                         let gamma_numer = identity.map(|i| {
                             if pool_ref.zero_for_one {
-                                i.fee_token0.0
+                                i.fee_token0.gamma_numer()
                             } else {
-                                i.fee_token1.0
+                                i.fee_token1.gamma_numer()
                             }
                         });
                         HopInfo {

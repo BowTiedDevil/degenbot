@@ -19,6 +19,7 @@ use alloy::primitives::{aliases::U112, Address};
 use crate::state::state_history::{
     JournalError, ReorgJournal, ReorgPoolState, ReservePairPoolState, V2BlockDelta,
 };
+use degenbot_core::fee::V2Fee;
 use degenbot_uniswap::dex_identity::DexVariant;
 
 // ---------------------------------------------------------------------------
@@ -34,7 +35,10 @@ use degenbot_uniswap::dex_identity::DexVariant;
 ///
 /// The fee is the **fee fraction** (`amount_in_after_fee = amount_in - amount_in * fee_numer / fee_denom`),
 /// matching [`degenbot_math::solidly::calc_exact_in_volatile`]'s convention —
-/// NOT the V2 retained-fraction `(gamma_numer, fee_denom)` convention.
+/// NOT the V2 retained-gamma convention. The two conventions are opposite, so
+/// they no longer share a bare tuple: this field is a [`V2Fee`] (the charged
+/// share) while a V2 identity's `fee_tokenN` is a
+/// [`degenbot_core::fee::FeeRatio`] (the kept share).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AerodromeV2PoolIdentity {
     /// Pool contract address.
@@ -49,9 +53,9 @@ pub struct AerodromeV2PoolIdentity {
     pub variant: DexVariant,
     /// Solidly stable-invariant flag (false ⇒ volatile constant-product).
     pub stable: bool,
-    /// Unidirectional fee: `(fee_numer, fee_denom)`. The same fraction applies
-    /// to both swap directions.
-    pub fee: (u64, u64),
+    /// Unidirectional fee: the validated [`V2Fee`] FRACTION (charged, not
+    /// retained). The same fraction applies to both swap directions.
+    pub fee: V2Fee,
     /// ERC-20 decimal count for token0. Converted to the `10**decimals` scale
     /// factor at calc time by the Solidly stable invariant; the volatile path
     /// ignores it, but both are carried so a standalone Rust consumer can
@@ -95,8 +99,8 @@ pub struct RegisterAerodromeV2PoolParams {
     pub factory: Address,
     pub variant: DexVariant,
     pub stable: bool,
-    /// Unidirectional fee: `(fee_numer, fee_denom)`.
-    pub fee: (u64, u64),
+    /// Unidirectional fee: the validated [`V2Fee`] fraction.
+    pub fee: V2Fee,
     /// ERC-20 decimal counts for token0 / token1 (the `10**decimals` scale
     /// factors the Solidly stable invariant needs).
     pub token0_decimals: u8,

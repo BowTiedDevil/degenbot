@@ -31,6 +31,8 @@ use super::pool_builder::builder;
 use super::pool_builder::construction_door::PoolConstruction;
 use super::pool_builder::route;
 use super::registration_ledger::{RefusalKind, RegistrationPhase};
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 use degenbot_pools::RegisteredPoolFamily;
 
 /// The `calculate_tokens_out` refusal (the legacy Python surface: a
@@ -345,12 +347,14 @@ mod tests {
             token1: Address::from([0x02u8; 20]),
             reserve0: U256::from(1000).to::<alloy::primitives::aliases::U112>(),
             reserve1: U256::from(2000).to::<alloy::primitives::aliases::U112>(),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: adhoc_factory(),
             update_block: 10,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            stable_swap: false,
         })))
         .expect("test setup: V2 registration")
     }

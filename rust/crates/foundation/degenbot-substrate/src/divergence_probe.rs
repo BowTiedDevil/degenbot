@@ -68,6 +68,8 @@ use degenbot_pools::{
 use degenbot_pools::{ConcentratedLiquiditySlotLayout, V3PoolState};
 
 use crate::{BotState, PoolEntry};
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 
 /// Which tracked-pool scalar storage slot the probe packed.
 ///
@@ -526,14 +528,13 @@ mod tests {
             token1: Address::from([0xa0; 20]),
             reserve0: U112::from(0x6a68_0ee7_0000_0000_00fd_e867u128),
             reserve1: U112::from(0x7811_7bf0_c05bu128),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::ZERO,
             deployer: Address::ZERO,
             init_hash: B256::ZERO,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
             update_block: 18_012_345,
         }
     }

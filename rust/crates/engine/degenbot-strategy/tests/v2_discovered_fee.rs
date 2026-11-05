@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use alloy::primitives::{address, aliases::U112, Address, Bytes, U256};
+use degenbot_core::fee::fee_ratio;
 use degenbot_db::{DegenbotDb, V2PoolRowInput};
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 use degenbot_pools::solve::{HopType, MixedPoolRef};
@@ -186,9 +187,14 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
             token1: TOKEN1,
             reserve0: U112::from(500_000),
             reserve1: U112::from(1_000),
-            fee_token0: (9_995, 10_000),
-            fee_token1: (9_993, 10_000),
-            ..Default::default()
+            fee_token0: fee_ratio(9_995, 10_000),
+            fee_token1: fee_ratio(9_993, 10_000),
+            factory: Address::ZERO,
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            update_block: 0,
+            variant: degenbot_pools::DexVariant::UniswapV2,
+            stable_swap: false,
         })
         .unwrap();
     let q = core
@@ -198,9 +204,14 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
             token1: TOKEN1,
             reserve0: U112::from(200_000),
             reserve1: U112::from(900),
-            fee_token0: (9_995, 10_000),
-            fee_token1: (9_993, 10_000),
-            ..Default::default()
+            fee_token0: fee_ratio(9_995, 10_000),
+            fee_token1: fee_ratio(9_993, 10_000),
+            factory: Address::ZERO,
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            update_block: 0,
+            variant: degenbot_pools::DexVariant::UniswapV2,
+            stable_swap: false,
         })
         .unwrap();
     let settlement_path = build_path_info(

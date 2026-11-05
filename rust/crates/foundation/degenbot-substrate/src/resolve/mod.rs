@@ -45,6 +45,8 @@ use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPat
 use degenbot_pools::{has_amount_modifying_hook, Caveats, V4PoolIdentity};
 
 use super::BotState;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 
 /// A cached hop projection: either a successfully built [`ResolvedHop`] or
 /// the terminal invalidation reason, tagged with the pool `state_nonce` it
@@ -1041,14 +1043,14 @@ mod tests {
             token1: Address::from([0x31u8; 20]),
             reserve0: U112::from(1_200_u64),
             reserve1: U112::from(1_000_u64),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::from([0x33u8; 20]),
+            deployer: Address::from([0x33u8; 20]),
+            init_hash: alloy::primitives::B256::ZERO,
             update_block: 0,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
         })
         .expect("v2 registration")
     }

@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
+use degenbot_core::fee::{V2FeePair, V2Fees};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::journal_pools::{
@@ -20,7 +21,6 @@ use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
-use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 use degenbot_substrate::pool_ingress::{PoolAdmission, V2Identity, V2State};
 
 fn v2_fee_pair() -> V2FeePair {

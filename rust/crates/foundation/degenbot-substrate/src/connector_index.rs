@@ -17,9 +17,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::executor_hop::V2FeePair;
 use alloy::primitives::{address, Address, Bytes, B256, U256};
 use async_trait::async_trait;
+use degenbot_core::fee::V2FeePair;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::error::DbError;
 use degenbot_pathfinding::PoolKind;

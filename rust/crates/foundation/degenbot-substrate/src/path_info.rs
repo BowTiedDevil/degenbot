@@ -25,8 +25,9 @@ use ::degenbot_executor::composers::{HopInfo, PathInfo};
 use ::degenbot_pools::solve::{HopType, MixedPoolRef};
 use thiserror::Error;
 
-use crate::executor_hop::{v2_hop, v3_hop, v4_hop, V2Fee, V2FeeRefusal};
+use crate::executor_hop::{v2_hop, v3_hop, v4_hop};
 use crate::BotState;
+use degenbot_core::fee::V2Fee;
 
 /// Why [`build_path_info`] could not build a `PathInfo`.
 #[derive(Debug, Error)]
@@ -40,13 +41,6 @@ pub enum PathInfoBuildError {
         "hop_type {hop_type:?} (pool_id {pool_id}) is not supported by the command-stream encoder"
     )]
     UnsupportedHopType { hop_type: HopType, pool_id: u64 },
-    /// The registered V2 fee cannot be represented by the executor.
-    #[error("pool_id {pool_id} has an invalid V2 fee: {reason}")]
-    InvalidV2Fee {
-        pool_id: u64,
-        #[source]
-        reason: V2FeeRefusal,
-    },
 }
 
 /// Build the `composers::PathInfo` for a hop list straight off the shared
@@ -85,21 +79,18 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
             // The Python `build_hops_from_pools` computes
             // `fee = int(pool.fee_token0 * 10000)` where the Python
             // `fee_token0` is the FEE fraction `Fraction(denom - gamma, denom)`
-            // derived from the Rust `(gamma_numer, fee_denom)` pair (see
+            // derived from the Rust retained ratio (see
             // `v2_liquidity_pool.py` — `self._fee_token0 = Fraction(denom - gamma, denom)`).
             // `int()` truncates toward zero; both operands are non-negative so
-            // this is floor division. The projection matches by construction.
-            let (gamma, denom) = if pool_ref.zero_for_one {
+            // this is floor division. The projection matches by construction,
+            // and the conversion is total: the identity's `FeeRatio` bound is
+            // exactly the bound a legal charge needs.
+            let retained = if pool_ref.zero_for_one {
                 id.fee_token0
             } else {
                 id.fee_token1
             };
-            let fee = V2Fee::from_retained(gamma, denom).map_err(|reason| {
-                PathInfoBuildError::InvalidV2Fee {
-                    pool_id: pool_ref.pool_key,
-                    reason,
-                }
-            })?;
+            let fee = V2Fee::from_retained(retained);
             Ok(v2_hop(
                 id.address,
                 id.token0,

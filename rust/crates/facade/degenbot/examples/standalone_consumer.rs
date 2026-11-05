@@ -69,6 +69,16 @@ use degenbot::bot_core::{ConstructionIo, NoDb, RpcConstruction};
 use degenbot::errors::ProviderError;
 use degenbot::rpc::provider::EthBlock;
 
+/// A preset's declared fee as the registration ratio it converts to.
+///
+/// The presets hold a [`FeeSpec`](degenbot_core::fee::FeeSpec) — a declared
+/// retained ratio, or the per-pool marker. These fixtures register
+/// constant-product pools with the declared preset, so a marker (a deployment
+/// that reads its fee live) is a fixture bug, not a silent fallback.
+fn preset_fee(spec: degenbot_core::fee::FeeSpec) -> degenbot_core::fee::FeeRatio {
+    spec.ratio().expect("fixture preset declares a fee")
+}
+
 /// A construction RPC that always fails (no RPC wired in the standalone
 /// no-network example) — proves the trait-object seam compiles + runs
 /// without a backend, and that `probe_pool_type` surfaces the RPC fault
@@ -235,14 +245,14 @@ fn main() {
         token1,
         reserve0: reserve0.to::<U112>(),
         reserve1: reserve1.to::<U112>(),
-        fee_token0: UNISWAP_V2.fee_token0,
-        fee_token1: UNISWAP_V2.fee_token1,
+        fee_token0: preset_fee(UNISWAP_V2.fee_token0),
+        fee_token1: preset_fee(UNISWAP_V2.fee_token1),
         factory: UNISWAP_V2.factory,
         update_block: 19_000_000,
         variant: UNISWAP_V2.variant,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
     };
     let pool_id = bot
         .register_v2_pool(&params)

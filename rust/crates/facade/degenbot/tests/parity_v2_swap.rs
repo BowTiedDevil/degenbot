@@ -41,6 +41,16 @@ use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 use degenbot::{BotState, RegisterV2PoolParams};
 
+/// A preset's declared fee as the registration ratio it converts to.
+///
+/// The presets hold a [`FeeSpec`](degenbot_core::fee::FeeSpec) — a declared
+/// retained ratio, or the per-pool marker. These fixtures register
+/// constant-product pools with the declared preset, so a marker (a deployment
+/// that reads its fee live) is a fixture bug, not a silent fallback.
+fn preset_fee(spec: degenbot_core::fee::FeeSpec) -> degenbot_core::fee::FeeRatio {
+    spec.ratio().expect("fixture preset declares a fee")
+}
+
 // ---- the shared canonical fixture (mirror in the Python parity test) ----
 const TOKEN0: alloy::primitives::Address = address!("000000000000000000000000000000000000000A");
 const TOKEN1: alloy::primitives::Address = address!("000000000000000000000000000000000000000B");
@@ -84,14 +94,14 @@ fn register_canonical_v2_pool() -> u64 {
         token1: TOKEN1,
         reserve0: U256::from(RESERVE0).to::<U112>(),
         reserve1: U256::from(RESERVE1).to::<U112>(),
-        fee_token0: UNISWAP_V2.fee_token0,
-        fee_token1: UNISWAP_V2.fee_token1,
+        fee_token0: preset_fee(UNISWAP_V2.fee_token0),
+        fee_token1: preset_fee(UNISWAP_V2.fee_token1),
         factory: UNISWAP_V2.factory,
         update_block: 19_000_000,
         variant: UNISWAP_V2.variant,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
+        deployer: alloy::primitives::Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
     };
     bot.register_v2_pool(&params)
         .expect("standalone parity: register canonical V2 pool")
@@ -116,14 +126,14 @@ fn standalone_rust_consumer_matches_closed_form() {
         token1: TOKEN1,
         reserve0: U256::from(RESERVE0).to::<U112>(),
         reserve1: U256::from(RESERVE1).to::<U112>(),
-        fee_token0: UNISWAP_V2.fee_token0,
-        fee_token1: UNISWAP_V2.fee_token1,
+        fee_token0: preset_fee(UNISWAP_V2.fee_token0),
+        fee_token1: preset_fee(UNISWAP_V2.fee_token1),
         factory: UNISWAP_V2.factory,
         update_block: 19_000_000,
         variant: UNISWAP_V2.variant,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
+        deployer: alloy::primitives::Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
     };
     let pid = bot
         .register_v2_pool(&params)
@@ -168,14 +178,14 @@ fn standalone_rust_consumer_reverse_matches_closed_form() {
         token1: TOKEN1,
         reserve0: U256::from(RESERVE0).to::<U112>(),
         reserve1: U256::from(RESERVE1).to::<U112>(),
-        fee_token0: UNISWAP_V2.fee_token0,
-        fee_token1: UNISWAP_V2.fee_token1,
+        fee_token0: preset_fee(UNISWAP_V2.fee_token0),
+        fee_token1: preset_fee(UNISWAP_V2.fee_token1),
         factory: UNISWAP_V2.factory,
         update_block: 19_000_000,
         variant: UNISWAP_V2.variant,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
+        deployer: alloy::primitives::Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
     };
     let pid = bot
         .register_v2_pool(&params)

@@ -1499,7 +1499,6 @@ class Bot:
         update_block: SupportsIndex = 0,
         variant: str = "uniswap-v2",
         stable_swap: bool = False,
-        fee_denominator: SupportsIndex | None = None,
     ) -> int:
         """
         Register a V2 pool by contract address.
@@ -1522,7 +1521,6 @@ class Bot:
         update_block: SupportsIndex,
         variant: str,
         stable_swap: bool,
-        fee_denominator: SupportsIndex | None,
     ) -> int:
         """
         Prototype test-only V2 registration that bypasses CREATE2 verification.
@@ -3549,7 +3547,9 @@ class Pool:
     @property
     def fee_denominator(self, /) -> int | None:
         """
-        Camelot integer fee scaling. `None` for non-Camelot V2 / non-V2.
+        Camelot integer fee scaling — the solidly-stable math's denominator,
+        DERIVED from the identity's retained pair (the pair is the only owner).
+        `None` for non-Camelot V2 / non-V2.
         """
     @property
     def fee_token0(self, /) -> tuple[int, int]:

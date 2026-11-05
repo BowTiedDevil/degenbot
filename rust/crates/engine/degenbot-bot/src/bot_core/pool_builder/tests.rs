@@ -17,6 +17,7 @@ use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, FixedBytes
 use alloy::sol_types::SolCall;
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
+use degenbot_core::fee::{fee_ratio, fee_spec_retained};
 use degenbot_pools::SpecRefusal;
 use degenbot_rpc::abi::{self, ContractRead, Slot0Prefix, TickLiquidity, V2Reserves, V4Slot0};
 
@@ -739,7 +740,7 @@ async fn resolve_v2_dex_matches_uniswap_factory_without_read() {
         .unwrap()
         .unwrap();
     assert_eq!(id.variant, DexVariant::UniswapV2);
-    assert_eq!(id.fee_token0, (997, 1000));
+    assert_eq!(id.fee_token0, fee_spec_retained(997, 1000));
 }
 
 #[tokio::test]
@@ -847,15 +848,14 @@ async fn build_v2_reads_the_camelot_stable_fee_pair_from_the_pool() {
     assert_eq!(params.variant, DexVariant::CamelotV2Stable);
     assert!(params.stable_swap);
     // 0.04% fee = 40/100000 → retained gamma 99960/100000, both directions.
-    assert_eq!(params.fee_token0, (99_960, 100_000));
-    assert_eq!(params.fee_token1, (99_960, 100_000));
-    assert_eq!(params.fee_denominator, Some(100_000));
+    assert_eq!(params.fee_token0, fee_ratio(99_960, 100_000));
+    assert_eq!(params.fee_token1, fee_ratio(99_960, 100_000));
 
     // The registered identity carries the pool's own pair, not the marker's.
     let (identity, _state) =
         degenbot_pools::V2PoolState::from_params(&params, 8, (Some(18), Some(6)));
-    assert_eq!(identity.fee_token0, (99_960, 100_000));
-    assert_eq!(identity.fee_token1, (99_960, 100_000));
+    assert_eq!(identity.fee_token0, fee_ratio(99_960, 100_000));
+    assert_eq!(identity.fee_token1, fee_ratio(99_960, 100_000));
 }
 
 /// A stable fee configuration that retains nothing (a 100% fee, i.e. the
@@ -1018,15 +1018,15 @@ async fn build_v2_keeps_the_preset_pair_for_camelot_volatile() {
         .unwrap();
     assert_eq!(params.variant, DexVariant::CamelotV2Volatile);
     assert!(!params.stable_swap);
+    // The preset -> params boundary converted the declared ratio.
     assert_eq!(
-        params.fee_token0,
-        dex_identity::CAMELOT_V2_VOLATILE.fee_token0
+        Some(params.fee_token0),
+        dex_identity::CAMELOT_V2_VOLATILE.fee_token0.ratio()
     );
     assert_eq!(
-        params.fee_token1,
-        dex_identity::CAMELOT_V2_VOLATILE.fee_token1
+        Some(params.fee_token1),
+        dex_identity::CAMELOT_V2_VOLATILE.fee_token1.ratio()
     );
-    assert_eq!(params.fee_denominator, None);
 }
 
 #[tokio::test]
@@ -1060,7 +1060,7 @@ async fn build_v2_assembles_register_params_from_onchain() {
     assert_eq!(params.token0, tok0);
     assert_eq!(params.token1, tok1);
     assert_eq!(params.variant, DexVariant::UniswapV2);
-    assert_eq!(params.fee_token0, (997, 1000));
+    assert_eq!(params.fee_token0, fee_ratio(997, 1_000));
     assert_eq!(params.update_block, 18_000_000);
     assert!(!params.stable_swap);
     // Proxy preserves the resulting identity/state build.

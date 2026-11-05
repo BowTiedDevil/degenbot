@@ -146,8 +146,8 @@ pub use sim::rate_provider::{BalancerRateProvider, RateProviderError, StaticRate
 pub use sim::caveats::Caveats;
 
 pub use state::spec_bounds::{
-    narrow_v2_reserve, validate_stable_swap_fee, validate_v2_reserve, SpecValue, SpecViolation,
-    MAX_TICK_SPACING, UINT112_MAX, V3_FEE_MAX, V4_FEE_MAX,
+    narrow_v2_reserve, validate_v2_reserve, SpecValue, SpecViolation, MAX_TICK_SPACING,
+    UINT112_MAX, V3_FEE_MAX, V4_FEE_MAX,
 };
 
 pub use state::state_history::ReorgPoolState;
@@ -180,6 +180,11 @@ pub use sim::pool::{
 /// caller reads, the registration DTO it submits, and the refusal enum the
 /// registration raises. A consumer building, seeding, or inspecting a family's
 /// state names these, never `state::<family>_state`.
+/// The DEX+variant discriminator every registration identity carries. Re-exported
+/// from `degenbot-uniswap` (its definition site) so a consumer holding a
+/// `RegisterV2PoolParams` / `V2PoolIdentity` can name the field's type without a
+/// direct dependency on the preset crate.
+pub use degenbot_uniswap::dex_identity::DexVariant;
 pub use state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState};
 
 pub use state::aerodrome_v2_state::{

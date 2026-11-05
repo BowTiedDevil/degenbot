@@ -6,6 +6,7 @@ use crate::state::state_history::{
     JournalError, ReorgJournal, ReorgPoolState, ReservePairPoolState, V2BlockDelta,
 };
 use alloy::primitives::{aliases::U112, Address, B256};
+use degenbot_core::fee::FeeRatio;
 use degenbot_uniswap::dex_identity::DexVariant;
 
 /// Immutable V2 registration identity (ADR-005 identity slice).
@@ -17,9 +18,10 @@ use degenbot_uniswap::dex_identity::DexVariant;
 /// journal + update block).
 ///
 /// This completes the half-done ADR-005 split: the former `V2PoolDescriptor`
-/// (`variant/stable_swap/fee_denominator`) is folded in here, alongside the
-/// level-2 identity (address/tokens/fees/factory) that previously sat on the
-/// mutable `V2PoolState`. The `PyLiquidityPool` handle reads all of this
+/// (`variant`/`stable_swap`; the retained fee pair is the one owner of the fee
+/// denominator) is folded in here, alongside the level-2 identity
+/// (address/tokens/fees/factory) that previously sat on the mutable
+/// `V2PoolState`. The `PyLiquidityPool` handle reads all of this
 /// through [`BotState::get_v2_identity`] — the Polars `_from_pydf` end state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct V2PoolIdentity {
@@ -29,10 +31,11 @@ pub struct V2PoolIdentity {
     pub token0: Address,
     /// Token1 contract address.
     pub token1: Address,
-    /// Fee parameters for token0→token1 swaps: (`gamma_numer`, `fee_denom`).
-    pub fee_token0: (u64, u64),
-    /// Fee parameters for token1→token0 swaps: (`gamma_numer`, `fee_denom`).
-    pub fee_token1: (u64, u64),
+    /// Fee parameters for token0→token1 swaps: the RETAINED fraction the
+    /// swapper keeps (a validated [`FeeRatio`], never the charged numerator).
+    pub fee_token0: FeeRatio,
+    /// Fee parameters for token1→token0 swaps: the RETAINED fraction.
+    pub fee_token1: FeeRatio,
     /// Pool factory address.
     pub factory: Address,
     /// The CREATE2 deployer this pool's address was verified against (Fork A). The JSON row's `deployer` (or `factory` for null), or the
@@ -50,13 +53,10 @@ pub struct V2PoolIdentity {
     pub variant: DexVariant,
     /// Camelot solidly-stable strategy flag (false for all non-Camelot V2).
     pub stable_swap: bool,
-    /// Camelot's integer fee scaling (used by the solidly-stable math). `None`
-    /// for non-Camelot V2 (the volatile calc ignores it).
-    pub fee_denominator: Option<u64>,
     /// ERC-20 decimal count for token0, captured at CONSTRUCTION from the
     /// token registry (ADR-003's single source — the same construction I/O
-    /// that seeds the `V2PoolDescriptor`'s `stable_swap`/`fee_denominator`
-    /// precedent). The Camelot-stable read arm scales the invariant with
+    /// that seeds the `V2PoolDescriptor`'s `stable_swap` precedent). The
+    /// Camelot-stable read arm scales the invariant with
     /// these; `None` (token unregistered at registration time) makes the
     /// read arm answer its typed refusal rather than guess a scale.
     pub token0_decimals: Option<u8>,
@@ -96,7 +96,10 @@ pub struct V2PoolState {
 }
 
 /// Parameters for registering a V2 pool.
-#[derive(Clone, Debug, Default)]
+///
+/// No `Default`: [`FeeRatio`]'s bounds admit no truthful default value — any
+/// default would be a fabricated fee.
+#[derive(Clone, Debug)]
 pub struct RegisterV2PoolParams {
     pub address: Address,
     pub token0: Address,
@@ -105,8 +108,11 @@ pub struct RegisterV2PoolParams {
     /// width.
     pub reserve0: U112,
     pub reserve1: U112,
-    pub fee_token0: (u64, u64),
-    pub fee_token1: (u64, u64),
+    /// The RETAINED fraction `token0→token1` (validated at this door, so the
+    /// 100%-fee marker pair cannot enter a registration).
+    pub fee_token0: FeeRatio,
+    /// The RETAINED fraction `token1→token0`.
+    pub fee_token1: FeeRatio,
     pub factory: Address,
     /// The CREATE2 deployer the Rust builder verified this pool's address
     /// against (Fork A). Equals the JSON row's `deployer`, or
@@ -128,8 +134,6 @@ pub struct RegisterV2PoolParams {
     pub variant: DexVariant,
     /// Camelot solidly-stable strategy flag.
     pub stable_swap: bool,
-    /// Camelot integer fee scaling (the solidly-stable math's denominator).
-    pub fee_denominator: Option<u64>,
 }
 
 /// Typed rejection from [`BotState::register_v2_pool`] (the spec-bound +
@@ -194,7 +198,6 @@ impl V2PoolState {
             init_hash: params.init_hash,
             variant: params.variant,
             stable_swap: params.stable_swap,
-            fee_denominator: params.fee_denominator,
             token0_decimals: token_decimals.0,
             token1_decimals: token_decimals.1,
         };
@@ -278,6 +281,7 @@ mod apply_inherent_tests {
     #![expect(unused_imports)]
     use super::*;
     use alloy::primitives::U256;
+    use degenbot_core::fee::fee_ratio;
 
     fn state_with_reserves(r0: u64, r1: u64) -> V2PoolState {
         V2PoolState {
@@ -339,9 +343,14 @@ mod apply_inherent_tests {
             token1: Address::repeat_byte(0x02),
             reserve0: U112::from(1_000u64),
             reserve1: U112::from(2_000u64),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
+            factory: Address::ZERO,
+            deployer: Address::ZERO,
+            init_hash: B256::ZERO,
             update_block: 42,
             variant: DexVariant::UniswapV2,
-            ..RegisterV2PoolParams::default()
+            stable_swap: false,
         };
 
         let (identity, state) = V2PoolState::from_params(&params, 8, (Some(6), Some(18)));

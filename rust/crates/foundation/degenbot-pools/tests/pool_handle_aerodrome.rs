@@ -2,6 +2,7 @@
 
 #![expect(clippy::expect_used)]
 use alloy::primitives::{aliases::U112, Address, U256};
+use degenbot_core::fee::fee_fraction;
 use degenbot_pools::sim::registry::PoolEntry;
 use degenbot_pools::state::aerodrome_v2_state::{
     AerodromeV2PoolState, RegisterAerodromeV2PoolParams,
@@ -17,7 +18,7 @@ fn make_aerodrome_v2_pool(reserve0: u128, reserve1: u128, stable: bool) -> PoolE
         factory: Address::from([0x22u8; 20]),
         variant: DexVariant::AerodromeV2Volatile,
         stable,
-        fee: (3, 10_000),
+        fee: fee_fraction(3, 10_000),
         token0_decimals: 18,
         token1_decimals: 18,
         reserve0: U112::from(reserve0),

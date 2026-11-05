@@ -32,11 +32,11 @@ fn v2_registration(address: Address) -> PoolRegistration {
         fee_token0: FEE_03,
         fee_token1: FEE_03,
         factory: make_factory(),
+        deployer: make_factory(),
+        init_hash: alloy::primitives::B256::ZERO,
         update_block: 0,
         variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
     }))
 }
 
@@ -168,7 +168,7 @@ fn aerodrome_params(address: Address) -> RegisterAerodromeV2PoolParams {
         token1: make_token1(),
         factory: make_factory(),
         variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
-        fee: FEE_03,
+        fee: FEE_FRACTION_03,
         token0_decimals: 18,
         token1_decimals: 18,
         reserve0: U112::from(1_000),

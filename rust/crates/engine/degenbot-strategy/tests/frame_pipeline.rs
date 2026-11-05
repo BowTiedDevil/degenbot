@@ -29,6 +29,7 @@ use degenbot_simulation::sim::journal_pools::{
 use degenbot_simulation::RunVerdict;
 use std::sync::Arc;
 
+use degenbot_core::fee::{V2FeePair, V2Fees};
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
 use degenbot_strategy::backrun::ObserveReason;
@@ -47,7 +48,6 @@ use degenbot_strategy::frame_pipeline::{
 };
 use degenbot_strategy::project_candidate;
 use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge};
-use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 use degenbot_substrate::pool_ingress::{PoolAdmission, PoolIngress, V2Identity, V2State};
 
 fn v2_fee_pair() -> V2FeePair {

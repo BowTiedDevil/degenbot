@@ -52,6 +52,7 @@ use std::str::FromStr;
 
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, B256, U256};
+use degenbot_core::fee::fee_ratio;
 use degenbot_pools::{ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolParams};
 use degenbot_substrate::divergence_probe::TrackedSlotKind;
 use degenbot_substrate::{BotState, RegisterV2PoolParams, SimAnchorState};
@@ -416,14 +417,14 @@ fn anchor_at_v2_block() -> SimAnchorState {
         token1: addr(WETH),
         reserve0: U112::from(0x625c_d3cbbefb_dc3c4cau128),
         reserve1: U112::from(0xb35b_41683aae_1733u128),
-        fee_token0: (997, 1000),
-        fee_token1: (997, 1000),
+        fee_token0: fee_ratio(997, 1000),
+        fee_token1: fee_ratio(997, 1000),
         factory: addr("0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"),
         update_block: 26_305_173,
         variant: DexVariant::UniswapV2,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
+        deployer: Address::ZERO,
+        init_hash: B256::ZERO,
     })
     .expect("V2 registration");
     SimAnchorState::snapshot(&core)

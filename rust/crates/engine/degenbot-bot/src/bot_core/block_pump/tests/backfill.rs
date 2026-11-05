@@ -1,4 +1,5 @@
 use super::*;
+use degenbot_core::fee::fee_ratio;
 
 // -----------------------------------------------------------------
 // ADR-008 D2: `LogsQuiesced` solver-release gate.
@@ -65,14 +66,14 @@ async fn newhead_promoted_solve_does_not_publish_until_quiesced() {
             token1: A::from([0xa1u8; 20]),
             reserve0: U112::from(1_000),
             reserve1: U112::from(2_000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: A::from([0xf0u8; 20]),
             update_block: 500,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
         })
         .expect("test setup: V2 registration");
     }

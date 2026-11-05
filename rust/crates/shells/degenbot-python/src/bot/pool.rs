@@ -38,6 +38,8 @@ use degenbot_substrate::swap_simulation::{
 };
 
 use super::narrow_reserve;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 use degenbot_substrate::{BotState, CurveInputsError};
 
 /// `PyO3` adapter wrapping a Python fetch-word callable as a
@@ -1288,7 +1290,7 @@ impl PyLiquidityPool {
     fn fee_token0(&self, py: Python<'_>) -> (u64, u64) {
         self.with_state(py, |core| {
             core.pool_slice::<degenbot_pools::V2PoolIdentity>(self.pool_id)
-                .map(|s| s.fee_token0)
+                .map(|s| s.fee_token0.as_pair())
                 .unwrap_or_default()
         })
     }
@@ -1299,7 +1301,7 @@ impl PyLiquidityPool {
     fn fee_token1(&self, py: Python<'_>) -> (u64, u64) {
         self.with_state(py, |core| {
             core.pool_slice::<degenbot_pools::V2PoolIdentity>(self.pool_id)
-                .map(|s| s.fee_token1)
+                .map(|s| s.fee_token1.as_pair())
                 .unwrap_or_default()
         })
     }
@@ -1347,12 +1349,14 @@ impl PyLiquidityPool {
         Ok(self.family_of(py)?.to_string())
     }
 
-    /// Camelot integer fee scaling. `None` for non-Camelot V2 / non-V2.
+    /// Camelot integer fee scaling — the solidly-stable math's denominator,
+    /// DERIVED from the identity's retained pair (the pair is the only owner).
+    /// `None` for non-Camelot V2 / non-V2.
     #[getter]
     fn fee_denominator(&self, py: Python<'_>) -> Option<u64> {
         self.with_state(py, |core| {
             core.pool_slice::<degenbot_pools::V2PoolIdentity>(self.pool_id)
-                .and_then(|d| d.fee_denominator)
+                .and_then(|d| d.stable_swap.then(|| d.fee_token0.denominator()))
         })
     }
 
@@ -1541,7 +1545,7 @@ impl PyLiquidityPool {
     fn aerodrome_fee(&self, py: Python<'_>) -> (u64, u64) {
         self.with_state(py, |core| {
             core.pool_slice::<degenbot_pools::AerodromeV2PoolIdentity>(self.pool_id)
-                .map(|d| d.fee)
+                .map(|d| (d.fee.fee_numer(), d.fee.denominator()))
                 .unwrap_or_default()
         })
     }
@@ -2419,11 +2423,14 @@ mod tests {
                 token1: Address::repeat_byte(0x02),
                 reserve0: alloy::primitives::aliases::U112::from(1_000_000u64),
                 reserve1: alloy::primitives::aliases::U112::from(2_000_000u64),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: Address::repeat_byte(0xfa),
                 update_block: 7,
-                ..Default::default()
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
             })
             .expect("v2 registration");
         handle_for(state, pool_id)

@@ -99,8 +99,8 @@ mod tests {
 
     use super::*;
     use crate::connector_index::V3Edge;
-    use crate::executor_hop::V2FeePair;
     use crate::log_dispatcher::LogDispatcher;
+    use degenbot_core::fee::V2FeePair;
 
     fn v2_edge(pool_id: u64, address: Address) -> crate::connector_index::V2Edge {
         crate::connector_index::V2Edge {

@@ -74,6 +74,8 @@ use crate::state::state_history::{ReorgJournal, ReservePairPoolState, V2BlockDel
 use crate::state::v3_state::SimulateSwapError;
 
 use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest, SyncEvent};
+#[cfg(test)]
+use degenbot_core::fee::{fee_fraction, fee_ratio};
 
 /// The state slices + their registration DTOs — the family's read surface
 /// lives in `crate::v2_state` / `crate::aerodrome_v2_state` (I/O-free per
@@ -138,15 +140,15 @@ pub fn capture_hop(
         (
             state.reserve0.to::<U256>(),
             state.reserve1.to::<U256>(),
-            identity.fee_token0.0,
-            identity.fee_token0.1,
+            identity.fee_token0.gamma_numer(),
+            identity.fee_token0.denominator(),
         )
     } else {
         (
             state.reserve1.to::<U256>(),
             state.reserve0.to::<U256>(),
-            identity.fee_token1.0,
-            identity.fee_token1.1,
+            identity.fee_token1.gamma_numer(),
+            identity.fee_token1.denominator(),
         )
     };
     IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom)
@@ -172,12 +174,11 @@ pub fn capture_aerodrome_hop(
     } else {
         (state.reserve1.to::<U256>(), state.reserve0.to::<U256>())
     };
-    let (fee_numer, fee_denom) = identity.fee;
     IntHopState::new(
         reserve_in,
         reserve_out,
-        fee_denom.saturating_sub(fee_numer),
-        fee_denom,
+        identity.fee.retained_fraction().gamma_numer(),
+        identity.fee.denominator(),
     )
 }
 
@@ -563,14 +564,13 @@ fn read_aerodrome_volatile_swap(
         return Ok(U256::ZERO);
     }
     let token_in: u8 = u8::from(!zero_for_one);
-    let (fee_numer, fee_denom) = identity.fee;
     solidly::calc_exact_in_volatile(
         amount_in,
         token_in,
         state.reserve0.to::<U256>(),
         state.reserve1.to::<U256>(),
-        U256::from(fee_numer),
-        U256::from(fee_denom),
+        U256::from(identity.fee.fee_numer()),
+        U256::from(identity.fee.denominator()),
     )
     .map_err(|_| SimulateSwapError::NotComputable)
 }
@@ -602,14 +602,13 @@ mod tests {
             address: alloy::primitives::Address::repeat_byte(0x11),
             token0: alloy::primitives::Address::repeat_byte(0x01),
             token1: alloy::primitives::Address::repeat_byte(0x02),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: alloy::primitives::Address::repeat_byte(0xfa),
             deployer: alloy::primitives::Address::ZERO,
             init_hash: alloy::primitives::B256::ZERO,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
             token0_decimals: None,
             token1_decimals: None,
         };
@@ -631,7 +630,7 @@ mod tests {
             factory: alloy::primitives::Address::repeat_byte(0xaf),
             variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
             stable,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             token0_decimals: 18,
             token1_decimals: 18,
         };
@@ -657,7 +656,7 @@ mod tests {
 
         // token1 in: orientation flips (reserves AND fee selection).
         let mut flipped = identity;
-        flipped.fee_token1 = (9995, 10_000);
+        flipped.fee_token1 = fee_ratio(9995, 10_000);
         let hop = capture_hop(&state, &flipped, false);
         assert_eq!(hop.reserve_in, U256::from(RESERVE1));
         assert_eq!(hop.reserve_out, U256::from(RESERVE0));
@@ -796,8 +795,8 @@ mod tests {
         // numerator saturates here; the door must answer the exact value.
         let gamma_numer = fee_denom - 1;
         let amount_out = reserve_out / U256::from(2u64);
-        identity.fee_token0 = (gamma_numer, fee_denom);
-        identity.fee_token1 = (gamma_numer, fee_denom);
+        identity.fee_token0 = fee_ratio(gamma_numer, fee_denom);
+        identity.fee_token1 = fee_ratio(gamma_numer, fee_denom);
         let (numerator, oracle) =
             exact_out_oracle_u512(reserve_in, reserve_out, gamma_numer, fee_denom, amount_out);
         assert!(numerator > U512::from(U256::MAX));
@@ -823,8 +822,8 @@ mod tests {
         // value.
         let gamma_numer = 1;
         let amount_out = reserve_out - U256::from(1u64);
-        identity.fee_token0 = (gamma_numer, fee_denom);
-        identity.fee_token1 = (gamma_numer, fee_denom);
+        identity.fee_token0 = fee_ratio(gamma_numer, fee_denom);
+        identity.fee_token1 = fee_ratio(gamma_numer, fee_denom);
         let (numerator, oracle) =
             exact_out_oracle_u512(reserve_in, reserve_out, gamma_numer, fee_denom, amount_out);
         assert!(numerator > U512::from(U256::MAX));
@@ -859,8 +858,8 @@ mod tests {
         // Guards the boundary against a lazy blanket `NotComputable`.
         let fee_denom = 4_294_967_296u64;
         let gamma_numer = 4u64;
-        identity.fee_token0 = (gamma_numer, fee_denom);
-        identity.fee_token1 = (gamma_numer, fee_denom);
+        identity.fee_token0 = fee_ratio(gamma_numer, fee_denom);
+        identity.fee_token1 = fee_ratio(gamma_numer, fee_denom);
 
         let (numerator, oracle) =
             exact_out_oracle_u512(reserve_in, reserve_out, gamma_numer, fee_denom, amount_out);
@@ -989,14 +988,13 @@ mod tests {
             address: alloy::primitives::Address::repeat_byte(0xc1),
             token0: alloy::primitives::Address::repeat_byte(0x01),
             token1: alloy::primitives::Address::repeat_byte(0x02),
-            fee_token0: (CAM2[5], CAM2[6]),
-            fee_token1: (CAM2[5], CAM2[6]),
+            fee_token0: fee_ratio(CAM2[5], CAM2[6]),
+            fee_token1: fee_ratio(CAM2[5], CAM2[6]),
             factory: alloy::primitives::Address::repeat_byte(0xfa),
             deployer: alloy::primitives::Address::ZERO,
             init_hash: alloy::primitives::B256::ZERO,
             variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
             stable_swap: true,
-            fee_denominator: Some(10_000),
             token0_decimals: Some(6),
             token1_decimals: Some(6),
         };
@@ -1312,7 +1310,7 @@ mod tests {
         // The transient reserves equal the registered ones, so the override
         // read answers the registered constant exactly.
         assert_eq!(read(&identity), U256::from(EXPECTED_AMOUNT_OUT));
-        identity.fee_token0 = (99, 100);
+        identity.fee_token0 = fee_ratio(99, 100);
         assert!(read(&identity) < U256::from(EXPECTED_AMOUNT_OUT));
     }
 

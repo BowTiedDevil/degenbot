@@ -30,6 +30,7 @@ use degenbot::strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
 use degenbot::substrate::session_registry::{PathObject, PoolIdentity, SessionObjectRegistry};
 use degenbot::substrate::state_lock::LockSite;
 use degenbot::substrate::RegisterV2PoolParams;
+use degenbot_core::fee::fee_ratio;
 
 const CHAIN_ID: u64 = 1;
 
@@ -62,11 +63,14 @@ fn v2_params(
         token1,
         reserve0: r0,
         reserve1: r1,
-        fee_token0: (997, 1000),
-        fee_token1: (997, 1000),
+        fee_token0: fee_ratio(997, 1000),
+        fee_token1: fee_ratio(997, 1000),
         factory: Address::ZERO,
         update_block: 0,
-        ..Default::default()
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
+        variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+        stable_swap: false,
     }
 }
 

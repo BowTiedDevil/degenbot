@@ -87,8 +87,14 @@ mod tests {
     use super::SolveAnchor;
     use alloy::primitives::aliases::U112;
     use alloy::primitives::Address;
+    use degenbot_core::fee::{fee_ratio, FeeRatio};
     use degenbot_pools::RegisterV2PoolParams;
     use degenbot_substrate::BotState;
+
+    /// The canonical 0.3% retained ratio. The fee is not what these fixtures
+    /// assert, so the registration carries the one named constant instead of a
+    /// fabricated value.
+    const FEE_03: FeeRatio = fee_ratio(997, 1000);
 
     /// A single-pool state whose pool-state head tracks `block`.
     fn core_with_head(block: u64) -> BotState {
@@ -98,7 +104,16 @@ mod tests {
             address: addr,
             token0: Address::from([0xbb; 20]),
             token1: Address::from([0xcc; 20]),
-            ..Default::default()
+            reserve0: alloy::primitives::aliases::U112::ZERO,
+            reserve1: alloy::primitives::aliases::U112::ZERO,
+            fee_token0: FEE_03,
+            fee_token1: FEE_03,
+            factory: Address::ZERO,
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
         })
         .expect("setup: V2 pool registration");
         core.apply_sync_by_address(addr, U112::from(1_000), U112::from(1_000), block)

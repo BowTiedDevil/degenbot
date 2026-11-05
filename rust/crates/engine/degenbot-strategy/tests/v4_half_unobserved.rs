@@ -10,6 +10,7 @@
 
 use alloy::primitives::{address, aliases::U112, Address};
 
+use degenbot_core::fee::V2FeePair;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::V2ReservesParts;
 use degenbot_simulation::sim::journal_pools::{
@@ -20,7 +21,6 @@ use degenbot_strategy::backrun_strategy::admit_extracted;
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
 use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge};
-use degenbot_substrate::executor_hop::V2FeePair;
 
 fn v2_fee_pair() -> V2FeePair {
     V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))

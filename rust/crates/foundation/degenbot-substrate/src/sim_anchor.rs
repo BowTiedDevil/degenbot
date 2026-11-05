@@ -42,6 +42,8 @@ use alloy::primitives::{Address, U256};
 
 use super::divergence_probe::TrackedSlotProbe;
 use super::BotState;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 
 /// The view `BotStateDb`/`Evm2BlockSimHandle` consult for pool membership and,
 /// when it carries engine state, for the divergence observer's words.
@@ -204,14 +206,14 @@ mod tests {
             token1: Address::new([0xcc; 20]),
             reserve0: U256::from(1000u64).to::<alloy::primitives::aliases::U112>(),
             reserve1: U256::from(2000u64).to::<alloy::primitives::aliases::U112>(),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::new([0xdd; 20]),
+            deployer: Address::new([0xdd; 20]),
+            init_hash: alloy::primitives::B256::ZERO,
             update_block: 42,
             variant: DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
         })
         .expect("V2 registration");
         for i in 0..v3_pools {
@@ -360,14 +362,14 @@ mod tests {
             token1: Address::new([0xcc; 20]),
             reserve0: U112::from(1000),
             reserve1: U112::from(2000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::new([0xdd; 20]),
+            deployer: Address::new([0xdd; 20]),
+            init_hash: alloy::primitives::B256::ZERO,
             update_block: 42,
             variant: DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
         })
         .expect("test setup: V2 registration");
         core
@@ -448,14 +450,14 @@ mod tests {
             token1: Address::new([0xcc; 20]),
             reserve0: U112::from(1000),
             reserve1: U112::from(2000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::new([0xdd; 20]),
+            deployer: Address::new([0xdd; 20]),
+            init_hash: alloy::primitives::B256::ZERO,
             update_block: 42,
             variant: DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
         })
         .expect("V2 registration");
         core.register_v3_pool(&RegisterV3PoolParams {
@@ -483,7 +485,7 @@ mod tests {
             token0_id: 10,
             token1_id: 20,
             address: V2,
-            fees: crate::executor_hop::V2FeePair::from_discovered(Some(3), Some(3), Some(1_000)),
+            fees: degenbot_core::fee::V2FeePair::from_discovered(Some(3), Some(3), Some(1_000)),
         });
         index.push_v3_edge(V3Edge {
             pool_id: 2,

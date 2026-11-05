@@ -634,6 +634,7 @@ impl Bot {
 #[cfg(test)]
 mod tests {
     use alloy::primitives::{aliases::U112, Address};
+    use degenbot_core::fee::fee_ratio;
     use degenbot_pools::RegisterV2PoolParams;
 
     /// The orchestrator carries `chain_id` (ADR-006 D1) and shares one
@@ -661,14 +662,14 @@ mod tests {
             token1: Address::from([0x02u8; 20]),
             reserve0: U112::from(1000),
             reserve1: U112::from(2000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::from([0x33u8; 20]),
             update_block: 0,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
         };
         state
             .write_at(degenbot_substrate::state_lock::LockSite::Core)
@@ -799,14 +800,14 @@ mod tests {
             token1: Address::from([0x02u8; 20]),
             reserve0: U112::from(1000),
             reserve1: U112::from(2000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::from([0x33u8; 20]),
             update_block: 10,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
         }
     }
 

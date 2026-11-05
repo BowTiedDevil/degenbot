@@ -14,6 +14,7 @@ use crate::{
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolError,
     RegisterV3PoolParams, RegisterV4PoolParams,
 };
+use degenbot_core::fee::fee_fraction;
 use degenbot_pools::RegisteredPoolFamily;
 
 // ---------------------------------------------------------------------------
@@ -146,7 +147,7 @@ fn aerodrome_params(address: Address) -> RegisterAerodromeV2PoolParams {
         factory: Address::from([0xafu8; 20]),
         variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
         stable: false,
-        fee: (3, 1000),
+        fee: fee_fraction(3, 1000),
         token0_decimals: 18,
         token1_decimals: 18,
         reserve0: U112::from(1_000_000u64),

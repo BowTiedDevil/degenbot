@@ -15,6 +15,7 @@ mod tests {
     use ::degenbot_pools::CurveDataProvider;
     use ::degenbot_pools::{BlockDelta, ReorgJournal};
     use alloy::primitives::{aliases::U112, Address, U256};
+    use degenbot_core::fee::fee_ratio;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
 
@@ -116,14 +117,14 @@ mod tests {
                 token1: Address::repeat_byte(0x02),
                 reserve0: U112::from(1_000),
                 reserve1: U112::from(2_000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: Address::repeat_byte(0xff),
                 update_block: 0,
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 stable_swap: false,
-                fee_denominator: None,
-                ..Default::default()
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
             })
             .expect("test setup: V2 registration");
         let affected = core.apply_balance_update_by_pool_id(v2, vec![U256::from(1_500)], 5);

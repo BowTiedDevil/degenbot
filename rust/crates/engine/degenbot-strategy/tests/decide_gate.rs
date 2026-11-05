@@ -32,13 +32,9 @@ fn evaluated_with_profit(profit: u128) -> BackrunEvaluated {
             token1: WETH,
             zfo: false,
             family: LaneFamily::V2 {
-                fees: degenbot_substrate::executor_hop::V2FeePair::from_discovered(
-                    Some(3),
-                    Some(3),
-                    Some(1_000),
-                )
-                .resolve()
-                .unwrap(),
+                fees: degenbot_core::fee::V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+                    .resolve()
+                    .unwrap(),
             },
         },
         BackrunHopRef {
@@ -48,13 +44,9 @@ fn evaluated_with_profit(profit: u128) -> BackrunEvaluated {
             token1: WETH,
             zfo: true,
             family: LaneFamily::V2 {
-                fees: degenbot_substrate::executor_hop::V2FeePair::from_discovered(
-                    Some(3),
-                    Some(3),
-                    Some(1_000),
-                )
-                .resolve()
-                .unwrap(),
+                fees: degenbot_core::fee::V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+                    .resolve()
+                    .unwrap(),
             },
         },
     ];

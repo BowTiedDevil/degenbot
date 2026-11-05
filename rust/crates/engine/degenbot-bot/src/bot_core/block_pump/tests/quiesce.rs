@@ -1,4 +1,5 @@
 use super::*;
+use degenbot_core::fee::fee_ratio;
 
 #[tokio::test(start_paused = true)]
 async fn early_slice_fires_mid_burst_then_settles() {
@@ -371,14 +372,14 @@ async fn solve_gate_waits_for_buffered_log_before_solving() {
             token1: A::from([0xa1u8; 20]),
             reserve0: U112::from(1_000),
             reserve1: U112::from(2_000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: A::from([0xf0u8; 20]),
             update_block: 100,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
         })
         .expect("test setup: V2 registration");
     }

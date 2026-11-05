@@ -42,6 +42,8 @@ use ::degenbot_pools::V3SwapOutcome;
 use ::degenbot_pools::{Observe, Observed, ReadOutcome, SwapReadRequest};
 
 use super::BotState;
+#[cfg(test)]
+use degenbot_core::fee::fee_ratio;
 
 /// A swap-simulation request over registered pool state.
 ///
@@ -1345,11 +1347,14 @@ mod tests {
             token1: alloy::primitives::Address::from([1u8; 20]),
             reserve0: U112::from(1_000u64),
             reserve1: U112::from(2_000u64),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: alloy::primitives::Address::ZERO,
+            deployer: alloy::primitives::Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
             update_block: 0,
-            ..Default::default()
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
         })
         .expect("test setup: V2 registration")
     }

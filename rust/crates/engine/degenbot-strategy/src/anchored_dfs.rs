@@ -417,11 +417,7 @@ mod tests {
             token0_id,
             token1_id,
             address: Address::new([u8::try_from(pool_id % 254).unwrap_or(0); 20]),
-            fees: degenbot_substrate::executor_hop::V2FeePair::from_discovered(
-                Some(3),
-                Some(3),
-                Some(1_000),
-            ),
+            fees: degenbot_core::fee::V2FeePair::from_discovered(Some(3), Some(3), Some(1_000)),
         }
     }
 

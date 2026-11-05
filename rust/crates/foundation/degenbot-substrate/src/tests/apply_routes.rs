@@ -1,5 +1,6 @@
 use super::*;
 use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
+use degenbot_core::fee::fee_fraction;
 use degenbot_pools::{BufferedPoolEvent, PoolLiquidityUpdate};
 
 /// Staged-router contract (`concentrated_liquidity_route)`: `route_event` is THE decision
@@ -153,7 +154,7 @@ fn aerodrome_reserve_mutation_and_reorg_rollback() {
             factory: Address::from([0xafu8; 20]),
             variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
             stable: false,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             token0_decimals: 18,
             token1_decimals: 18,
             reserve0: U112::from(1_000u64),
@@ -166,7 +167,7 @@ fn aerodrome_reserve_mutation_and_reorg_rollback() {
     let identity = core
         .pool_slice::<degenbot_pools::AerodromeV2PoolIdentity>(pool_id)
         .expect("aerodrome identity");
-    assert_eq!(identity.fee, (3, 1000));
+    assert_eq!(identity.fee, fee_fraction(3, 1_000));
     assert!(!identity.stable);
 
     // Initial registration state (genesis anchor at block 10).
@@ -304,11 +305,11 @@ fn calculate_tokens_out_realistic_amounts() {
         fee_token0: FEE_03,
         fee_token1: FEE_03,
         factory: make_factory(),
+        deployer: make_factory(),
+        init_hash: alloy::primitives::B256::ZERO,
         update_block: 0,
         variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
     };
     let pool_id = core
         .register_v2_pool(&params)

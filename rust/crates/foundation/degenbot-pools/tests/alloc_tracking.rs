@@ -23,8 +23,31 @@ use degenbot_pools::TickInfo;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use alloy::primitives::{Address, U128, U256};
+use alloy::primitives::{aliases::U112, Address, B256, U128, U256};
+use degenbot_core::fee::fee_ratio;
+use degenbot_uniswap::dex_identity::DexVariant;
 use hashbrown::HashMap as HB;
+
+/// The bare print of a V2 registration: zero address/tokens/reserves and the
+/// canonical 0.3% retained ratio. The fee pair is explicit because the retained
+/// gamma must be positive — a zeroed pair is not a priceable fee.
+fn bare_v2_params() -> RegisterV2PoolParams {
+    RegisterV2PoolParams {
+        address: Address::ZERO,
+        token0: Address::ZERO,
+        token1: Address::ZERO,
+        reserve0: U112::ZERO,
+        reserve1: U112::ZERO,
+        fee_token0: fee_ratio(997, 1000),
+        fee_token1: fee_ratio(997, 1000),
+        factory: Address::ZERO,
+        deployer: Address::ZERO,
+        init_hash: B256::ZERO,
+        update_block: 0,
+        variant: DexVariant::UniswapV2,
+        stable_swap: false,
+    }
+}
 
 struct Tracking;
 
@@ -147,18 +170,10 @@ fn pool_lifecycle_alloc_report() {
 
     // V2 registration (journal-twinned scalars, no tick map).
     measure("v2_register_journal8", || {
-        V2PoolState::from_params(
-            &RegisterV2PoolParams::default(),
-            JOURNAL_DEPTH,
-            (None, None),
-        )
+        V2PoolState::from_params(&bare_v2_params(), JOURNAL_DEPTH, (None, None))
     });
 
     // V2 state clone.
-    let (_, v2_state) = V2PoolState::from_params(
-        &RegisterV2PoolParams::default(),
-        JOURNAL_DEPTH,
-        (None, None),
-    );
+    let (_, v2_state) = V2PoolState::from_params(&bare_v2_params(), JOURNAL_DEPTH, (None, None));
     measure("v2_state_clone", || v2_state.clone());
 }

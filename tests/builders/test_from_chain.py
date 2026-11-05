@@ -152,9 +152,7 @@ class TestCamelotBuilderConstruction:
 
     def test_build_camelot_fetches_camelot_specific_state(self, tmp_path: Path) -> None:
         """build() should fetch stableSwap, FEE_DENOMINATOR, and fee percents."""
-        provider = _camelot_provider(
-            stable_swap=True, fee_denominator=1000, fee_token0=5, fee_token1=7
-        )
+        provider = _camelot_provider(stable_swap=True, fee_token0=5, fee_token1=7)
         io = provider
         builder = _make_camelot_builder(provider, database_path=tmp_path / "unused.db")
         pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))

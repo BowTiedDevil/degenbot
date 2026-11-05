@@ -1,4 +1,5 @@
 use super::*;
+use degenbot_core::fee::fee_ratio;
 
 /// Solve-anchor regression (ADR-008 D2 solver-release gate): the SOLVE anchor
 /// follows the LOG-DRIVEN settled block (`open`), not a header that raced a
@@ -210,12 +211,14 @@ async fn resume_boundary_duplicate_dropped_live_block_applied() {
                 token1: Address::from([0xa1u8; 20]),
                 reserve0: U112::from(1_000),
                 reserve1: U112::from(2_000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: Address::from([0xf0u8; 20]),
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 update_block: w - 10,
-                ..Default::default()
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                stable_swap: false,
             })
             .expect("test setup: V2 registration");
         // Simulate the backfill having applied W (the boundary): state +
@@ -290,12 +293,14 @@ async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
                 token1: Address::from([0xa1u8; 20]),
                 reserve0: U112::from(1_000),
                 reserve1: U112::from(2_000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: Address::from([0xf0u8; 20]),
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 update_block: w - 10,
-                ..Default::default()
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                stable_swap: false,
             })
             .expect("test setup: V2 registration");
         // Backfill-applied state: w-5 then W (both inside [S+1, W]).
@@ -372,12 +377,14 @@ async fn log_applied_pairing_forward_records_reorg_does_not() {
                 token1: Address::from([0xa1u8; 20]),
                 reserve0: U112::from(1_000),
                 reserve1: U112::from(2_000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
+                fee_token0: fee_ratio(997, 1000),
+                fee_token1: fee_ratio(997, 1000),
                 factory: Address::from([0xf0u8; 20]),
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 update_block: w,
-                ..Default::default()
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                stable_swap: false,
             })
             .expect("test setup: V2 registration");
     }

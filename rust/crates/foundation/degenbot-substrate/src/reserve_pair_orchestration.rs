@@ -40,10 +40,9 @@ impl BotState {
     /// `Sync(uint112,uint112)` events is structurally spec-bound, so spec
     /// checks fire only on synthetic / corrupt registration.
     ///
-    /// Also returns [`RegisterV2PoolError::SpecViolation`] when a
-    /// `stable_swap` identity carries a zero retained gamma (or a zero fee
-    /// denominator): the solidly-stable math inverts that pair into the fee, so
-    /// gamma 0 is a 100% fee and the pool would quote zero for every input.
+    /// A fee is admitted by TYPE, not by a re-check here: `params.fee_tokenN`
+    /// is a `FeeRatio`, whose constructor already refuses a zero or oversized
+    /// retained gamma, so a 100%-fee (or marker) pair cannot reach this entry.
     pub fn register_v2_pool(
         &mut self,
         params: &RegisterV2PoolParams,
@@ -56,20 +55,9 @@ impl BotState {
         ::degenbot_pools::validate_v2_reserve(params.reserve0, "reserve0")?;
         ::degenbot_pools::validate_v2_reserve(params.reserve1, "reserve1")?;
 
-        // Solidly-stable admission: the Camelot-stable math takes the
-        // complement of a RETAINED gamma fraction, so a gamma-0 pair is a 100%
-        // fee and quotes zero for every input. The stable preset's `(0, denom)`
-        // pair is a "read the pool" marker, and a marker that reaches this
-        // entry is a pool that could never price a swap.
-        if params.stable_swap {
-            ::degenbot_pools::validate_stable_swap_fee(params.fee_token0, "fee_token0")?;
-            ::degenbot_pools::validate_stable_swap_fee(params.fee_token1, "fee_token1")?;
-        }
-
         // Construction I/O (ADR-003 single source): capture the pair's token
         // decimal scales off the token registry at registration — the same
-        // construction seam that carries `stable_swap`/`fee_denominator` onto
-        // the identity. The Camelot-stable read arm scales from them; an
+        // construction seam that carries `stable_swap` onto the identity. The Camelot-stable read arm scales from them; an
         // unregistered token leaves `None` and that arm refuses rather than
         // guess a scale.
         let token_decimals = (

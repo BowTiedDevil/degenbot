@@ -458,15 +458,15 @@ fn build_engine_pool_state(
                 (
                     state.reserve0.to::<U256>(),
                     state.reserve1.to::<U256>(),
-                    identity.fee_token0.0,
-                    identity.fee_token0.1,
+                    identity.fee_token0.gamma_numer(),
+                    identity.fee_token0.denominator(),
                 )
             } else {
                 (
                     state.reserve1.to::<U256>(),
                     state.reserve0.to::<U256>(),
-                    identity.fee_token1.0,
-                    identity.fee_token1.1,
+                    identity.fee_token1.gamma_numer(),
+                    identity.fee_token1.denominator(),
                 )
             };
             Some(DiagnosticPoolState::V2 {

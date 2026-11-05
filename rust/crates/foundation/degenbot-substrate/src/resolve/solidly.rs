@@ -102,6 +102,7 @@ mod tests {
     use super::project_solidly;
     use crate::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
     use alloy::primitives::{aliases::U112, Address, U256};
+    use degenbot_core::fee::{fee_fraction, fee_ratio};
     use degenbot_pools::solve::{HopType, MixedPoolRef};
     use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -131,7 +132,7 @@ mod tests {
             factory: Address::from([0xafu8; 20]),
             variant: DexVariant::AerodromeV2Stable,
             stable: true,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             reserve0: U112::from(r0),
             reserve1: U112::from(r1),
             update_block: 0,
@@ -215,14 +216,14 @@ mod tests {
                 token1: Address::from([0x02u8; 20]),
                 reserve0: U112::from(1_000_000u64),
                 reserve1: U112::from(2_000_000u64),
-                fee_token0: (9970, 10000),
-                fee_token1: (9970, 10000),
+                fee_token0: fee_ratio(9970, 10000),
+                fee_token1: fee_ratio(9970, 10000),
                 factory: Address::from([0xfau8; 20]),
+                deployer: Address::from([0xfau8; 20]),
+                init_hash: alloy::primitives::B256::ZERO,
                 update_block: 0,
                 variant: DexVariant::CamelotV2Stable,
                 stable_swap: true,
-                fee_denominator: Some(10000),
-                ..Default::default()
             })
             .expect("test setup: V2 registration");
 

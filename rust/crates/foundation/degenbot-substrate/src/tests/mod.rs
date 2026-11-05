@@ -5,6 +5,7 @@ use alloy::primitives::aliases::U112;
 use alloy::primitives::uint;
 use alloy::primitives::I256;
 use alloy::primitives::U256;
+use degenbot_core::fee::{fee_fraction, fee_ratio, FeeRatio, V2Fee};
 
 mod apply_routes;
 mod pool_identity;
@@ -53,7 +54,11 @@ fn applied_directly(outcome: Result<ApplyOutcome, crate::PoolRefusal>) -> u64 {
     }
 }
 
-const FEE_03: (u64, u64) = (997, 1000);
+/// The canonical 0.3% RETAINED ratio — the V2 solver direction.
+const FEE_03: FeeRatio = fee_ratio(997, 1000);
+
+/// The same 0.3% as a CHARGED fraction — the Solidly/Aerodrome direction.
+const FEE_FRACTION_03: V2Fee = fee_fraction(3, 1_000);
 
 fn make_pool_addr() -> Address {
     Address::from([0xaa; 20])
@@ -81,11 +86,11 @@ fn make_params(r0: U112, r1: U112) -> RegisterV2PoolParams {
         fee_token0: FEE_03,
         fee_token1: FEE_03,
         factory: make_factory(),
+        deployer: make_factory(),
+        init_hash: alloy::primitives::B256::ZERO,
         update_block: 0,
         variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
     }
 }
 

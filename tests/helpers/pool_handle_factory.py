@@ -75,7 +75,6 @@ def make_v2_handle(
             update_block=update_block,
             variant="uniswap-v2",
             stable_swap=False,
-            fee_denominator=None,
         ),
     )
 

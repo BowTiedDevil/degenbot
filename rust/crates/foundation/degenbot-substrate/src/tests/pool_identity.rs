@@ -45,7 +45,7 @@ fn aerodrome_params(address: Address) -> RegisterAerodromeV2PoolParams {
         reserve1: U112::from(2000),
         factory: make_factory(),
         variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
-        fee: FEE_03,
+        fee: FEE_FRACTION_03,
         token0_decimals: 18,
         token1_decimals: 18,
         update_block: 0,

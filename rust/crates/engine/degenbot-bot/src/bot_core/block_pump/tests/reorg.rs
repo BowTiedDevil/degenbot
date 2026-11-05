@@ -1,4 +1,5 @@
 use super::*;
+use degenbot_core::fee::fee_ratio;
 
 /// A `removed: true` V2 Sync log for a registered pool, when its block is
 /// within the reorg journal's depth, drives the pump's reorg branch to
@@ -669,14 +670,14 @@ async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
             token1: Address::from([0xa1u8; 20]),
             reserve0: U112::from(1_000),
             reserve1: U112::from(2_000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::from([0xf0u8; 20]),
             update_block: 100,
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
         })
         .expect("test setup: V2 registration");
     }

@@ -277,10 +277,7 @@ pub async fn admit_extracted_verified(
                             state: V2State {
                                 reserve0: r0,
                                 reserve1: r1,
-                                fees: degenbot_substrate::executor_hop::V2FeePair::new(
-                                    fees.token0,
-                                    fees.token1,
-                                ),
+                                fees: degenbot_core::fee::V2FeePair::new(fees.token0, fees.token1),
                             },
                         },
                         rt.verify_level(),

@@ -418,6 +418,13 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
         PoolBuilderError::TickAssembly(inner) => {
             ConstructionRefusal::Skipped(tick_assembly_failure(&inner))
         }
+        // Neither is modeled by the stable-vs-transient taxonomy: a preset that
+        // declares no fee (its deployment reads one per-pool) and an on-chain
+        // `getFee` answer that is not a fraction. Both keep the never-memoized
+        // class rather than borrowing another pool-fact name.
+        other @ (PoolBuilderError::PerPoolFee { .. } | PoolBuilderError::AerodromeFee { .. }) => {
+            ConstructionRefusal::Skipped(BuildFailure::Transient(other.to_string()))
+        }
     }
 }
 

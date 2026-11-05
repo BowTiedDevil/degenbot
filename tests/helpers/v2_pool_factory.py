@@ -62,7 +62,6 @@ def make_v2_pool(
     py_bot: Bot | None = None,
     variant: str | None = None,
     stable_swap: bool = False,
-    fee_denominator: int | None = None,
 ) -> UniswapV2Pool:
     """Construct an I/O-free V2-style pool companion over a fresh ``Pool`` handle.
 
@@ -122,10 +121,10 @@ def make_v2_pool(
     py_bot = py_bot if py_bot is not None else new_pool_bot()
 
     # Descriptor params (ADR-005): ``variant`` defaults from the dex
-    # preset (if provided) or "uniswap-v2". ``stable_swap``/``fee_denominator``
-    # default to False/None — callers building a Camelot stable pool pass them
-    # explicitly. These flow into Rust as a ``V2PoolDescriptor`` on the
-    # ``Pool`` handle.
+    # preset (if provided) or "uniswap-v2". ``stable_swap`` defaults to False —
+    # a caller building a Camelot stable pool passes it explicitly, and the
+    # Camelot fee denominator is DERIVED from the registered retained pair.
+    # These flow into Rust on the ``Pool`` handle's registration identity.
     resolved_variant = (
         variant if variant is not None else (dex.variant if dex is not None else "uniswap-v2")
     )
@@ -144,7 +143,6 @@ def make_v2_pool(
         update_block=state_block,
         variant=resolved_variant,
         stable_swap=stable_swap,
-        fee_denominator=fee_denominator,
     )
     # ADR-006: the pool's tokens must live in the SAME Bot as
     # the pool — ``from_handle`` recovers them via ``py_pool.get_token0``/

@@ -1,4 +1,5 @@
 use super::*;
+use degenbot_core::fee::fee_ratio;
 use degenbot_pools::PoolLiquidityUpdate;
 use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
 use degenbot_substrate::PoolLookup;
@@ -658,14 +659,14 @@ fn with_core_adopts_shared_bot_state() {
         token1: Address::from([0x02u8; 20]),
         reserve0: U112::from(1000),
         reserve1: U112::from(2000),
-        fee_token0: (997, 1000),
-        fee_token1: (997, 1000),
+        fee_token0: fee_ratio(997, 1000),
+        fee_token1: fee_ratio(997, 1000),
         factory: Address::from([0x33u8; 20]),
         update_block: 0,
-        variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+        variant: degenbot_pools::DexVariant::UniswapV2,
         stable_swap: false,
-        fee_denominator: None,
-        ..Default::default()
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
     };
     let _pool_id = core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
@@ -702,14 +703,14 @@ fn register_path_rejects_pool_id_not_in_bot() {
             token1: Address::from([0x02u8; 20]),
             reserve0: U112::from(1000),
             reserve1: U112::from(2000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::from([0x33u8; 20]),
             update_block: 0,
-            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            variant: degenbot_pools::DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
         })
         .expect("test setup: V2 registration");
     let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));

@@ -23,7 +23,27 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use address_utils::{address_to_checksum_string, parse_address};
+use degenbot_core::fee::FeeSpec;
 use degenbot_uniswap::dex_identity::{DexIdentity, DexVariant, ReservesAbi};
+
+/// One Python `(gamma_numer, denominator)` pair as a preset fee declaration.
+///
+/// A zero gamma is the per-pool MARKER (a deployment that reads its fee live);
+/// anything else is a declared retained ratio. An out-of-bound pair raises: the
+/// Python boundary refuses what a pool could not register.
+fn fee_spec(pair: (u64, u64)) -> PyResult<FeeSpec> {
+    let (gamma_numer, denominator) = pair;
+    let spec = if gamma_numer == 0 {
+        FeeSpec::marker(denominator)
+    } else {
+        FeeSpec::retained(gamma_numer, denominator)
+    };
+    spec.map_err(|refusal| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "unusable fee pair ({gamma_numer}, {denominator}): {refusal}"
+        ))
+    })
+}
 
 /// Frozen Python view over a `DexIdentity` preset.
 ///
@@ -53,8 +73,10 @@ impl PyDexIdentity {
             factory: address_to_checksum_string(&ident.factory),
             deployer: address_to_checksum_string(&ident.deployer),
             init_hash: format!("{:#x}", ident.init_hash),
-            fee_token0: ident.fee_token0,
-            fee_token1: ident.fee_token1,
+            // The Python view keeps the historical `(gamma, denominator)` tuple;
+            // a per-pool marker projects as its own `(0, denominator)` shape.
+            fee_token0: ident.fee_token0.as_pair(),
+            fee_token1: ident.fee_token1.as_pair(),
             reserves_abi: ident
                 .reserves_abi
                 .as_types()
@@ -109,8 +131,8 @@ impl PyDexIdentity {
             factory: factory_addr,
             deployer: factory_addr,
             init_hash: init_hash_b256,
-            fee_token0,
-            fee_token1,
+            fee_token0: fee_spec(fee_token0)?,
+            fee_token1: fee_spec(fee_token1)?,
             reserves_abi: reserves_abi_enum,
             variant: variant_enum,
         };

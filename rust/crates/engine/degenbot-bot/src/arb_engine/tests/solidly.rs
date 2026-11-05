@@ -1,4 +1,5 @@
 use super::*;
+use degenbot_core::fee::{fee_fraction, fee_ratio};
 
 // -----------------------------------------------------------------
 // HopType::SolidlyStable + ResolvedHop::SolidlyStable variant (Plan: Port
@@ -113,7 +114,7 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
             factory: Address::from([0xfau8; 20]),
             variant: DexVariant::AerodromeV2Stable,
             stable: true,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             reserve0: tokens(1000),
             reserve1: tokens(100),
             update_block: 0,
@@ -130,7 +131,7 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
             factory: Address::from([0xfau8; 20]),
             variant: DexVariant::AerodromeV2Stable,
             stable: true,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             // Pool B holds the SAME pair but with twice the token0 — its
             // token1→token0 price (reserve0 / reserve1) is 2x Pool A's, so a
             // token0→token1→token0 cycle is profitable (the V2-equivalent
@@ -239,7 +240,7 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
             factory: Address::from([0xfau8; 20]),
             variant: DexVariant::AerodromeV2Stable,
             stable: true,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             reserve0: tokens(1000),
             reserve1: tokens(100),
             update_block: 0,
@@ -253,14 +254,14 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
             token1: Address::from([0x02u8; 20]),
             reserve0: tokens(2000),
             reserve1: tokens(100),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
+            fee_token0: fee_ratio(997, 1000),
+            fee_token1: fee_ratio(997, 1000),
             factory: Address::from([0xfbu8; 20]),
             update_block: 0,
             variant: DexVariant::UniswapV2,
             stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
         })
         .expect("test setup: V2 registration");
     let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
@@ -359,7 +360,7 @@ fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
             factory: Address::from([0xfau8; 20]),
             variant: DexVariant::AerodromeV2Stable,
             stable: true,
-            fee: (3, 1000),
+            fee: fee_fraction(3, 1000),
             reserve0: (U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>(),
             reserve1: (U256::from(100u64) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>(),
             update_block: 0,

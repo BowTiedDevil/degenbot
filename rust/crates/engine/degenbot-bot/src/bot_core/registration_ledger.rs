@@ -608,6 +608,13 @@ impl RefusalKind {
                 phase,
                 failure: tick_assembly_failure(inner),
             },
+            PoolBuilderError::PerPoolFee { .. } | PoolBuilderError::AerodromeFee { .. } => {
+                Self::BuildRefused {
+                    family,
+                    phase,
+                    failure: BuildFailure::Transient(err.to_string()),
+                }
+            }
         }
     }
 

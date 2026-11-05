@@ -22,6 +22,7 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderError;
+use degenbot_core::fee::{FeeRatio, FeeSpec, V2Fee, V2FeeRefusal};
 use degenbot_db::error::DbError;
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::resolve_curve_strategy_discriminants;
@@ -124,6 +125,26 @@ pub enum PoolBuilderError {
     Db(#[from] DbError),
     #[error("V4 identity incomplete: {message}")]
     MissingIdentity { message: String },
+    /// A V2 deployment's preset declares NO fee (the per-pool marker): its fee
+    /// is read by that deployment's own door, so a constant-product
+    /// registration has nothing truthful to register here.
+    #[error("{variant:?} pool {address} declares no preset fee — its fee is read per-pool")]
+    PerPoolFee {
+        /// The pool that asked.
+        address: Address,
+        /// The preset whose fee is per-pool.
+        variant: DexVariant,
+    },
+    /// An Aerodrome pool's on-chain `getFee` answer is not a usable fraction:
+    /// the read reported a charge at or above its denominator, which prices
+    /// every swap at zero output.
+    #[error("Aerodrome pool {address} answered an unusable getFee: {refusal}")]
+    AerodromeFee {
+        /// The pool that answered.
+        address: Address,
+        /// Why the answer is not a fee.
+        refusal: V2FeeRefusal,
+    },
     /// A Camelot solidly-stable pool answered a fee configuration that cannot
     /// price a swap: a zero `FEE_DENOMINATOR()`, a per-token percent above it,
     /// or a percent that leaves no retained gamma. The pool is refused by
@@ -775,23 +796,21 @@ fn retained_gamma(
     address: Address,
     denominator: u64,
     fee_percent: u64,
-) -> Result<(u64, u64), PoolBuilderError> {
+) -> Result<FeeRatio, PoolBuilderError> {
     let refuse = |detail: String| PoolBuilderError::CamelotStableFee { address, detail };
-    if denominator == 0 {
-        return Err(refuse("FEE_DENOMINATOR() is zero".to_owned()));
-    }
     let gamma = denominator.checked_sub(fee_percent).ok_or_else(|| {
         refuse(format!(
             "token fee percent {fee_percent} exceeds FEE_DENOMINATOR() {denominator}"
         ))
     })?;
-    if gamma == 0 {
-        return Err(refuse(format!(
-            "token fee percent {fee_percent} over FEE_DENOMINATOR() {denominator} retains nothing, \
-             so every swap would price at zero output"
-        )));
-    }
-    Ok((gamma, denominator))
+    // The address-carrying refusal is the surface: the ratio's own bound is
+    // what decides, and the door re-states its reason with the pool's address.
+    FeeRatio::new(gamma, denominator).map_err(|refusal| {
+        refuse(format!(
+            "token fee percent {fee_percent} over FEE_DENOMINATOR() {denominator} \
+             is not a priceable retained ratio: {refusal}"
+        ))
+    })
 }
 
 /// A Camelot solidly-stable pool's fee configuration in the V2 identity's
@@ -799,12 +818,10 @@ fn retained_gamma(
 /// share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CamelotFees {
-    /// `(gamma_numer, fee_denom)` for token0 → token1.
-    token0: (u64, u64),
-    /// `(gamma_numer, fee_denom)` for token1 → token0.
-    token1: (u64, u64),
-    /// The pool's `FEE_DENOMINATOR()`, shared by both pairs.
-    denominator: u64,
+    /// The RETAINED ratio for token0 → token1.
+    token0: FeeRatio,
+    /// The RETAINED ratio for token1 → token0.
+    token1: FeeRatio,
 }
 
 /// Build a Camelot solidly-stable pool's fee configuration from the pool's own
@@ -830,7 +847,6 @@ fn camelot_stable_fee(
     Ok(CamelotFees {
         token0: retained_gamma(address, denominator, state.token0_fee_percent)?,
         token1: retained_gamma(address, denominator, state.token1_fee_percent)?,
-        denominator,
     })
 }
 
@@ -885,12 +901,20 @@ pub async fn build_v2(
     // `stableSwap()` rides the fee read: the species and the fee configuration
     // are one fact about a Camelot pool, and the construction read memo serves
     // the resolver's identical read for free.
-    let (fee_token0, fee_token1, fee_denominator) = if stable_swap {
+    let (fee_token0, fee_token1) = if stable_swap {
         let camelot = fetch_camelot_state(io, &address, block).await?;
         let fees = camelot_stable_fee(address, &camelot)?;
-        (fees.token0, fees.token1, Some(fees.denominator))
+        (fees.token0, fees.token1)
     } else {
-        (id.fee_token0, id.fee_token1, None)
+        // The preset -> params boundary: a declared ratio converts, a
+        // per-pool marker refuses (that deployment's own door reads the fee).
+        let declared = |fee: FeeSpec| {
+            fee.ratio().ok_or(PoolBuilderError::PerPoolFee {
+                address,
+                variant: id.variant,
+            })
+        };
+        (declared(id.fee_token0)?, declared(id.fee_token1)?)
     };
 
     Ok(RegisterV2PoolParams {
@@ -907,7 +931,6 @@ pub async fn build_v2(
         update_block: block.unwrap_or(0),
         variant: id.variant,
         stable_swap,
-        fee_denominator,
     })
 }
 
@@ -975,6 +998,11 @@ pub async fn build_aerodrome_v2(
             message: "token1 decimals overflow u8 while building Aerodrome V2 pool".into(),
         })?;
 
+    // The read's `getFee` is a fraction over Aerodrome's `FEE_DENOMINATOR`
+    // (`10_000`); the door refuses an answer at or above it.
+    let fee = V2Fee::new(common.fee_bps, 10_000)
+        .map_err(|refusal| PoolBuilderError::AerodromeFee { address, refusal })?;
+
     Ok(RegisterAerodromeV2PoolParams {
         address,
         token0: imm.token0,
@@ -982,7 +1010,7 @@ pub async fn build_aerodrome_v2(
         factory: imm.factory,
         variant: id.variant,
         stable: common.stable,
-        fee: (common.fee_bps, 10_000),
+        fee,
         token0_decimals: decimals0,
         token1_decimals: decimals1,
         reserve0,

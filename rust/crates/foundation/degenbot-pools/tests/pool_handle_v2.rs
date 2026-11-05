@@ -2,6 +2,7 @@
 
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 use alloy::primitives::{aliases::U112, Address, B256, U256};
+use degenbot_core::fee::fee_ratio;
 use degenbot_pools::sim::registry::PoolEntry;
 use degenbot_pools::state::state_history::{ReorgJournal, V2BlockDelta};
 use degenbot_pools::state::v2_state::{V2PoolIdentity, V2PoolState};
@@ -13,14 +14,13 @@ fn make_v2_pool(factory: Address, reserve0: u128, reserve1: u128) -> PoolEntry {
         address: Address::from([0x11u8; 20]),
         token0: Address::from([0xAAu8; 20]),
         token1: Address::from([0xBBu8; 20]),
-        fee_token0: (997, 1000),
-        fee_token1: (997, 1000),
+        fee_token0: fee_ratio(997, 1000),
+        fee_token1: fee_ratio(997, 1000),
         factory,
         deployer: factory,
         init_hash: B256::default(),
         variant: DexVariant::UniswapV2,
         stable_swap: false,
-        fee_denominator: None,
         token0_decimals: None,
         token1_decimals: None,
     };

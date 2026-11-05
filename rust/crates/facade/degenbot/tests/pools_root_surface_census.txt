@@ -73,11 +73,15 @@
 # variant's `Debug` name, so the registry's `RegisteredPoolFamily::tag()`
 # remains the ONE kebab family vocabulary (ADR-059 D1).
 #
-# The 1074 -> 1076 review is the solidly-stable fee bound:
-# `state::spec_bounds::validate_stable_swap_fee` (its declaration plus the door
-# name) joins the surface because `degenbot-substrate`'s `register_v2_pool`
-# applies it — a `stable_swap` identity whose retained gamma is zero is a 100%
-# fee, so the entry refuses a pool that could only ever quote zero.
+# The 1074 -> 1076 -> 1075 review is the fee-typing chunk. The +2 was
+# `state::spec_bounds::validate_stable_swap_fee` (declaration + door name),
+# which applied the solidly-stable zero-gamma bound at registration; the type
+# now enforces it (`FeeRatio` refuses a zero retained gamma at construction),
+# so the validator retired (-2) and the registration door's re-check with it.
+# The +1 is the `DexVariant` re-export at the root: it is the type of
+# `RegisterV2PoolParams::variant` / `V2PoolIdentity::variant`, so a consumer
+# holding those params can name it without an extra edge on the preset crate
+# (`degenbot-strategy`'s fixtures are that consumer).
 #
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
