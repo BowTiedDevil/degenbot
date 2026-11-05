@@ -49,9 +49,10 @@ _UNSET: Any = object()
 _FAMILY_TO_POOL_KIND = FAMILY_TAG_TO_POOL_KIND
 
 # Render labels for PoolKind members (the pyclass str() spells "PoolKind.V2";
-# the operator-facing lines keep the bare version spelling). This is the
-# DISPLAY casing, minted from the core's exported label list: one of the two
-# surfaces (with the operator wire) that keeps it.
+# operator-facing text keeps the bare version spelling). This is the DISPLAY
+# casing, minted from the core's exported label list — every version-label
+# reader renders from it (these lines, the operator wire's value set, and the
+# snapshot load line).
 _POOL_KIND_LABEL = POOL_KIND_LABEL
 
 

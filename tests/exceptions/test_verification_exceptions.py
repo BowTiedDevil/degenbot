@@ -52,7 +52,7 @@ def test_verification_errors_are_distinct_types() -> None:
 
 def test_verification_mismatch_error_carries_message() -> None:
     """The exception preserves its message (``str(exc)`` round-trips)."""
-    msg = "V3 pool 0x.. at snapshot block 1: tick data mismatch: ..."
+    msg = "v3 pool 0x.. at snapshot block 1: tick data mismatch: ..."
     exc = VerificationMismatchError(msg)
     assert str(exc) == msg
 
@@ -92,10 +92,10 @@ def test_rpc_transport_failure_message_is_not_a_mismatch() -> None:
     ``VerificationMismatchError``; they now surface as the retryable type.
     """
     transport_msg = (
-        "V3 pool 0x.. at snapshot block 1: tickBitmap(0) RPC call failed: connection reset"
+        "v3 pool 0x.. at snapshot block 1: tickBitmap(0) RPC call failed: connection reset"
     )
     rpc_exc = VerificationRpcError(transport_msg)
-    mismatch_exc = VerificationMismatchError("V3 pool 0x.. at snapshot block 1: tick data mismatch")
+    mismatch_exc = VerificationMismatchError("v3 pool 0x.. at snapshot block 1: tick data mismatch")
     # A transport failure raises the Rpc type, not the Mismatch type — the
     # two are distinguishable by isinstance (the contract build_paths relies
     # on.

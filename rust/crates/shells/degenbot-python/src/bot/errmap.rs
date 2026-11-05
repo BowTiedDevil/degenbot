@@ -584,7 +584,7 @@ mod tests {
     #[test]
     fn liquidity_verify_refusals_pin_the_typed_vocabulary() {
         let err = map_refusal(verify_mismatch(
-            "V3 pool 0x.. block=1: tick 5 liquidityGross mismatch",
+            "v3 pool 0x.. block=1: tick 5 liquidityGross mismatch",
         ));
         Python::attach(|py| {
             assert!(
@@ -598,14 +598,14 @@ mod tests {
         });
         assert_eq!(
             message(&err),
-            "V3 pool 0x.. block=1: tick 5 liquidityGross mismatch"
+            "v3 pool 0x.. block=1: tick 5 liquidityGross mismatch"
         );
 
         let err = map_refusal(RefusalKind::verify_failed(
             RegistrationPhase::Verify,
             false,
             VerifyOrigin::Transport,
-            "V3 pool 0x..: tickBitmap(0) RPC call failed: timeout".to_string(),
+            "v3 pool 0x..: tickBitmap(0) RPC call failed: timeout".to_string(),
         ));
         Python::attach(|py| {
             assert!(
@@ -619,7 +619,7 @@ mod tests {
         });
         assert_eq!(
             message(&err),
-            "V3 pool 0x..: tickBitmap(0) RPC call failed: timeout"
+            "v3 pool 0x..: tickBitmap(0) RPC call failed: timeout"
         );
     }
 

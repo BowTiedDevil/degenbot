@@ -348,7 +348,7 @@ mod tests {
     fn run_concentrated_liquidity_verification_snapshot_mismatch_short_circuits() {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_snapshot = Some(mismatch(
-            "V3 pool 0x.. at snapshot block 10: tick data mismatch: lg=1 vs 2",
+            "v3 pool 0x.. at snapshot block 10: tick data mismatch: lg=1 vs 2",
         ));
 
         let snap =
@@ -372,7 +372,7 @@ mod tests {
     fn run_concentrated_liquidity_verification_backfill_mismatch_propagates() {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_backfill = Some(mismatch(
-            "V3 pool 0x.. at backfill block 20: tick data mismatch",
+            "v3 pool 0x.. at backfill block 20: tick data mismatch",
         ));
 
         let snap =
@@ -429,7 +429,7 @@ mod tests {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_snapshot = Some(transient(
             VerifyOrigin::Transport,
-            "V3 pool 0x.. at snapshot block 10: tickBitmap(0) RPC call failed: timeout",
+            "v3 pool 0x.. at snapshot block 10: tickBitmap(0) RPC call failed: timeout",
         ));
 
         let snap =
@@ -462,7 +462,7 @@ mod tests {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_backfill = Some(transient(
             VerifyOrigin::Transport,
-            "V3 pool 0x.. at backfill block 20: ticks(100) RPC call failed: connection reset",
+            "v3 pool 0x.. at backfill block 20: ticks(100) RPC call failed: connection reset",
         ));
 
         let snap =

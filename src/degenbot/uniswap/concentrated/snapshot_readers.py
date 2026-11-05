@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
 from degenbot.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.logging import logger
+from degenbot.pathfinding import POOL_KIND_LABEL
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any, ClassVar, Self
 
+    from degenbot.pathfinding import PoolKind
     from degenbot.types.aliases import BlockNumber, ChainId
 
 
@@ -236,9 +238,14 @@ class DatabaseSnapshotBase[K]:
 
 
 class LiquiditySnapshotBase[K, U, E: LiquidityEvent, S: LiquiditySnapshotSource]:
-    """Retrieve and maintain liquidity positions for concentrated-liquidity pools."""
+    """Retrieve and maintain liquidity positions for concentrated-liquidity pools.
 
-    _family_label: ClassVar[str]
+    Each snapshot names its taxonomy member (``_pool_kind``) and the load line
+    renders that member's version label from :data:`POOL_KIND_LABEL` — the one
+    label owner, the map the runner's hop renderer reads too.
+    """
+
+    _pool_kind: ClassVar[PoolKind]
     _update_type: ClassVar[Callable[..., Any]]
 
     def __init__(self, source: S) -> None:
@@ -262,7 +269,8 @@ class LiquiditySnapshotBase[K, U, E: LiquidityEvent, S: LiquiditySnapshotSource]
         )
 
         logger.info(
-            f"Loaded Uniswap {self._family_label} LP snapshot from {source.storage_kind} source"
+            f"Loaded Uniswap {POOL_KIND_LABEL[self._pool_kind]} LP snapshot "
+            f"from {source.storage_kind} source"
         )
 
     def _source_liquidity_map(self, pool_key: K) -> LiquidityMap | None:

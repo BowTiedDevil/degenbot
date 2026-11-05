@@ -296,10 +296,14 @@ pub async fn verify_live_map<T: TickMap + ?Sized>(
     map_live_facts(&facts, pool, &pool_label(key), "pool", block_number)
 }
 
-/// The label a mismatch message carries: the family word plus the key text (a
-/// V3 address, or a V4 `pool_manager:pool_id` pair).
+/// The label a mismatch message carries: the family tag plus the key text (a V3
+/// address, or a V4 `pool_manager:pool_id` pair).
+///
+/// The family word is the registry tag (`RegisteredPoolFamily::tag`) — the one
+/// spelling the registration refusals render — so a verify detail and the
+/// refusal it accompanies name a family identically.
 fn pool_label(key: PoolLookup) -> String {
-    format!("{} pool {key}", key.family().tag().to_uppercase())
+    format!("{} pool {key}", key.family().tag())
 }
 
 #[cfg(test)]
@@ -518,6 +522,21 @@ mod tests {
             call_key(pool_manager, &extsload_calldata(&bitmap_slots)): extsload_return(&bitmap_values),
             call_key(pool_manager, &extsload_calldata(&tick_slots)): extsload_return(&[B256::from(packed)]),
         })
+    }
+
+    /// The mismatch label spells the registry family tag, the one family
+    /// vocabulary the registration refusals render — never a hand-rolled
+    /// uppercase of it.
+    #[test]
+    fn pool_label_spells_the_registry_family_tag() {
+        let v3 = PoolLookup::from_address(ActiveWindowPool::ADDRESS);
+        assert_eq!(pool_label(v3), format!("v3 pool {v3}"));
+
+        let v4 = PoolLookup::V4 {
+            pool_manager: address!("0000000000000000000000000000000000000002"),
+            pool_id: [0xabu8; 32],
+        };
+        assert_eq!(pool_label(v4), format!("v4 pool {v4}"));
     }
 
     /// One table over the key shapes: the map stores no tick at 256 while the

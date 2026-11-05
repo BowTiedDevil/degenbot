@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Protocol, override
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import UnknownPool
+from degenbot.pathfinding import PoolKind
 from degenbot.types.chain import ChecksummedAddress
 from degenbot.uniswap.concentrated.snapshot_readers import (
     DatabaseSnapshotBase,
@@ -93,7 +94,7 @@ class UniswapV3LiquiditySnapshot(
 ):
     """Retrieve and maintain liquidity positions for Uniswap V3 pools."""
 
-    _family_label = "V3"
+    _pool_kind = PoolKind.V3
     _update_type = UniswapV3PoolLiquidityMappingUpdate
 
     @override
