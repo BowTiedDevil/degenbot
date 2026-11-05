@@ -316,9 +316,9 @@ _Avoid_: "CLI layer", "Python CLI".
 ## Driver cockpit
 
 **Driver cockpit**:
-The Python-companion module (`degenbot.runner`) that owns one settlement-arbitrage
-session behind the `BotRunner` lifecycle. Its block loop, dispatch, renderers, and session
-coordination are private internals.
+The Python-companion module (`degenbot.runner`) that presents one settlement-arbitrage
+session behind the `BotRunner` lifecycle. Its dispatch policy, renderers, and operator
+coordination are private internals; session consumption and end detection are core-owned.
 _Avoid_: "driver shell" (that is the whole Python companion), "backrun session".
 
 **Registration outcome ledger**:
@@ -348,19 +348,17 @@ _Avoid_: "session dict", "cockpit config", facade-side mirrors of session fields
 **Session watch**:
 The cockpit's one owner of a session's end-state RANKING: the typed watch-set
 transitions (``_WatchSet`` / ``on_task_done``), the end-verdict ranking, and teardown.
-Detection of *why* the session ended is core-owned
-(``degenbot_bot::arb_engine::session_end``: ``SessionEndCause`` delivered once via
-``SessionEndFacts`` over ``EngineDriver::wait_session_end`` / the heartbeat stall
-watchdog); the watch reads that fact and applies its own ranking.
+Detection of *why* the session ended is core-owned by the **Session consumer**; the
+watch reads that typed fact and applies its own ranking.
 _Avoid_: "await loop", "fail-fast wrapper", "detection owner".
 
 **Run ritual**:
-The cockpit's one owner of a running session's startup ordering — consumer-attach,
-watch-attach, resume, registration, main loop — as a state machine; the registration
-mode and the task scheduler are data it consumes, never branches tests select. It
-sits strictly behind the ``run()`` phase gate and re-legislates no legality the Rust
-``SessionPhase`` table already owns.
-_Avoid_: "run loop" (the main loop is the session watch's), "startup sequence"
+The cockpit's thin startup adapter over the **Driver seam** and **Session consumer**:
+it resolves policy values and attaches the watch and renderers, then delegates claim,
+connect/run, and registration to the core behind the ``run()`` phase gate. It owns no
+independent consume choreography and re-legislates no legality the Rust ``SessionPhase``
+table already owns.
+_Avoid_: "run loop" (the main loop is the **Session consumer**'s), "startup sequence"
 (prose, not a module), exposing ritual states as a public lifecycle vocabulary.
 
 ## Provider surface
@@ -498,14 +496,22 @@ The highest block the pump has fully delivered, tombstoned by the first `removed
 log of the next block. A registration's state application may not advance past it.
 
 **Verify lifecycle**:
-The per-pool choreography — quarantine, seed verification, drain, post-drain
-verification, live — plus its block-resolution and config-gating policy and a bounded
-retry for transient failures, owned by the Rust core. A per-call RPC or
-provider-construction failure is retried under the core's backoff with the
-driver-injected policy; an on-chain snapshot mismatch is fatal and never retried.
+The pose-independent per-pool capability and choreography — quarantine, seed
+verification, drain, post-drain verification, live — plus its block-resolution,
+config-gating policy, and bounded retry for transient failures, owned by the Rust
+core. A per-call RPC or provider-construction failure is retried under the core's
+backoff with the driver-injected policy; an on-chain snapshot mismatch is fatal and
+never retried.
 
-_Avoid_: a driver-side retry loop over the lifecycle; the dance and its failure
-classification belong to the core.
+_Avoid_: a driver-side retry loop or per-family driver verb matrix over the lifecycle;
+the dance and its failure classification belong to the core.
+
+**Registration admission**:
+The core path a candidate takes to registration (memoization, construction, eligibility,
+**Verify lifecycle**, registration) — one implementation with crawl-discovery and
+direct-registration adapters (ADR-093 D4); benign-skip and loud-abort semantics preserved.
+_Avoid_: a `CrawlHost` back-reference to `EngineDriver`; a hand-wired pure-Rust admission
+twin; a driver-side construction fallback chain.
 
 **State tripwire**:
 The verification failure raised as the terminal gate so `Live` is unreachable while
@@ -1268,11 +1274,35 @@ The single dirt ledger recording pool-state changes, with exactly one owner.
 _Avoid_: the retired subscriber bus (`PoolStateSubscriber`, `notify_pool_state_changed`).
 
 **Driver seam**:
-The arb engine's one external interface (`EngineDriver`) — the stage surface both the block
-pump and the Python companion cross. Everything else is internal machinery. Distinct from
-the host's **Strategy driver** and the submission crate's **Pending-transaction driver**.
-_Avoid_: "engine facade" (a facade fronts another surface; there is no second door); using
+The arb engine's session-lifecycle interface (`EngineDriver`): consumer attachment,
+connect/run/close, crawl attachment, and session-end observation. Engine operations
+cross `EngineStages` directly and the **Verify lifecycle** is pose-independent;
+distinct from the host's **Strategy driver** and the submission crate's
+**Pending-transaction driver**.
+_Avoid_: "engine facade"; mirroring engine or verification verbs on the driver; using
 bare "driver" where a strategy loop, the Python cockpit, or the settlement arm is meant.
+
+**Session event stream**:
+The single ordered data-plane drain of one engine session: `Block(N)` precedes every
+`Batch(N)`, zero or more batches may follow, and natural end is delivered exactly once.
+It carries engine products, not **Pipeline census** events or a rewind fact.
+_Avoid_: parallel block and result clocks; treating batch metadata as the epoch marker;
+folding telemetry into the stream.
+
+**Consumer claim**:
+The non-cloneable proof that a session's event consumer was attached before `run`;
+moving it into `run` consumes the right to start that session's event production. It is
+a lifecycle fact, not a receiver or a second legality table.
+_Avoid_: a result-receiver-taken latch; an optional-receiver check; a cloneable claim.
+
+**Session consumer**:
+The Rust-core owner of a session's consume loop above `degenbot-bot`: it folds the
+**Session event stream** into executor work, drives `BatchExecutor`, emits **Batch
+outcome records**, owns stall detection and loud-abort propagation, and closes the
+driver on failure or termination. Pure Rust and Python are adapters over it, not
+parallel consume implementations.
+_Avoid_: dispatch ownership in `EngineDriver`; a Python-owned consume loop; conflating
+it with **Session watch** ranking or a **Strategy driver**.
 
 **Engine retune**:
 The typed operator re-parameterization applied at construction and at runtime.
