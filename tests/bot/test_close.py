@@ -11,7 +11,7 @@ These are behavioural postcondition tests against the *real* objects Bot owns
 — a real Python pool registry populated through its own ``add()`` path. The
 only stand-in is the injected provider (the external RPC boundary, whose real
 ``AlloyProvider.close()`` is an unobservable no-op). No call-count assertions on
-doubles.
+doubles; the one order assertion observes the teardown stack's own sequence.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from degenbot import bot_lifecycle
 from degenbot.bot import Bot
 from tests.fakes.pools import FakeSessionPool
 from tests.helpers.bot_factory import bot_session
@@ -138,3 +139,128 @@ class TestBotContextManager:
         bot.close()
         assert bot._closed is True
         assert provider.closed is True
+
+
+class _ProbingProvider(_BoundaryProvider):
+    """The provider boundary, recording what the Bot still held when closed.
+
+    The teardown's load-bearing ordering edge is "provider first, holder drops
+    after": a ``close()`` that ran once the ``Arc``-pinning holders were
+    already gone would be closing a connection nobody pins. What the Bot still
+    holds AT close is therefore the observable, not a timestamp.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(1)
+        self.bot: Bot | None = None
+        self.held_at_close: dict[str, bool] = {}
+
+    def close(self) -> None:
+        bot = self.bot
+        assert bot is not None, "the probe must be bound to its bot"
+        self.held_at_close = {
+            "_py_bot": bot._py_bot is not None,
+            "_io": bot._io is not None,
+            "pools": bot.pools is not None,
+        }
+        super().close()
+
+    def get_probe_recording(self) -> dict[str, bool]:
+        """Return what the Bot held when this provider was closed."""
+        return self.held_at_close
+
+
+class _RecordingRegistry:
+    """A registry double whose one teardown call lands in a shared event list."""
+
+    def __init__(self, events: list[str], name: str) -> None:
+        self._events = events
+        self._name = name
+
+    def _reset(self, *, propagate_to_rust: bool) -> None:
+        self._events.append(f"{self._name}._reset(propagate_to_rust={propagate_to_rust})")
+
+    def reset(self) -> None:
+        self._events.append(f"{self._name}.reset()")
+
+
+class _RecordingProvider:
+    """A provider boundary double whose one close() lands in the shared event list."""
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def close(self) -> None:
+        self._events.append("provider.close()")
+
+
+class _TeardownObserver:
+    """A ``_BotLike``-shaped observer: the teardown ORDER is the observable.
+
+    A real ``Bot``'s rungs are individually invisible from outside (a dropped
+    attribute and a closed connection look the same afterwards). This object
+    makes every rung's effect an entry in one list, so the stack's order is
+    assertable as a sequence rather than inferred from prose.
+    """
+
+    def __init__(self) -> None:
+        events: list[str] = []
+        self.events = events
+        object.__setattr__(self, "_recording", False)
+        self.pools = _RecordingRegistry(events, "pools")
+        self.tokens = _RecordingRegistry(events, "tokens")
+        self.managed_pools = object()
+        self._provider = _RecordingProvider(events)
+        self._py_bot = object()
+        self._io = object()
+        self._async_adapter = object()
+        self._erc20_builder = object()
+        self._curve_builder = object()
+        self._closed = False
+        object.__setattr__(self, "_recording", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_recording", False):
+            self.events.append(f"{name} = {'None' if value is None else 'kept'}")
+        object.__setattr__(self, name, value)
+
+
+class TestTeardownOrder:
+    def test_provider_closes_before_the_arc_pinning_holders_are_dropped(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """The provider is closed while the Bot still pins its ``Arc``."""
+        provider = _ProbingProvider()
+        bot = Bot(**bot_session(tmp_path), provider=provider)
+        provider.bot = bot
+        _seed_pool_registry(bot)
+
+        bot.close()
+
+        assert provider.get_probe_recording() == {
+            "_py_bot": True,
+            "_io": True,
+            "pools": True,
+        }, "the provider must be closed before the handles that pin its Arc are dropped"
+
+    def test_close_drives_the_teardown_stack_in_declared_order(self) -> None:
+        """One ordered owner: the rungs run top to bottom, exactly once each."""
+        observer = _TeardownObserver()
+
+        bot_lifecycle.close(observer)
+
+        assert observer.events == [
+            "_closed = kept",  # the idempotence latch, set before any rung runs
+            "pools._reset(propagate_to_rust=False)",
+            "tokens.reset()",
+            "provider.close()",
+            "_py_bot = None",
+            "_provider = None",
+            "_io = None",
+            "_async_adapter = None",
+            "pools = None",
+            "tokens = None",
+            "managed_pools = None",
+            "_erc20_builder = None",
+            "_curve_builder = None",
+        ]

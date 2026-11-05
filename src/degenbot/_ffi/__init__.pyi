@@ -1099,8 +1099,14 @@ class Bot:
         it's closed, there's no Db arm for late registrations; they'd need a
         fresh handle). Idempotent on a not-loaded bot (no-op).
 
+        The commit is the core guard's own teardown: it drains the tick-map
+        assemblies still holding a handle before it unwraps and re-reads the
+        canary, so a teardown that races a live assembler refuses loudly
+        instead of reporting a clone leak it invented.
+
         # Errors
-        `PyRuntimeError` if the `COMMIT` fails.
+        `PyRuntimeError` if the quiescence drain expires with an assembler still
+        holding the handle, or if the `COMMIT` fails.
         """
     def construct_pool(self, /, request: PoolConstructionRequest) -> ConstructionOutcome:
         """

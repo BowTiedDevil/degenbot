@@ -346,17 +346,28 @@ class TestRegistrationHandoff:
         assert session.actors is not None
         assert session.actors.engine_registry.engine.resume_facets == []
 
-    async def test_cancelled_registration_skips_the_read_tx_canary(self) -> None:
-        """The hand-off's CancelledError semantics: skip the read-tx canary,
-        run the rest of the trim."""
+    async def test_cancelled_registration_closes_the_read_tx_after_the_assemblers(
+        self,
+    ) -> None:
+        """The hand-off's CancelledError semantics: the same trim, in order.
+
+        A cancelled registration unwinds its builder (releasing the tick-map
+        handle that builder held) before the trim runs, so the read-tx close sees
+        a sole holder. CancelledError still propagates; the rest of the trim runs.
+        """
         started = asyncio.Event()
+        calls: list[str] = []
+        py_bot = RecordingPyBot(calls)
 
         async def hanging_builder(**kwargs: Any) -> None:
+            py_bot.acquire_tick_map_handle()
             started.set()
-            await asyncio.Event().wait()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                py_bot.release_tick_map_handle()
 
-        calls: list[str] = []
-        bot = FakeBot(py_bot=RecordingPyBot(calls))
+        bot = FakeBot(py_bot=py_bot)
         session = _session(bot=bot)
         ritual = RunRitual(session)
         task = asyncio.create_task(
@@ -374,9 +385,10 @@ class TestRegistrationHandoff:
 
         with pytest.raises(asyncio.CancelledError):
             await task
-        # The read-tx canary was skipped; the rest of the trim still ran.
+
+        # The assembler released before the canary ran; the rest of the trim ran.
+        assert calls == ["assembler_acquired", "assembler_released", "close_snapshot_tx"]
         assert bot.released is True
-        assert "close_snapshot_tx" not in calls
 
     async def test_registration_failure_surfaces_through_the_watch_verdict(self) -> None:
         """A fatal registration error takes the watch's RegistrationFailed

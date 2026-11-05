@@ -135,7 +135,11 @@ pub struct PyBot {
     /// probe share the SAME `Mutex<Connection>` + its open tx — every read
     /// shares one frozen DB snapshot across `build_paths` (WAL MVCC).
     /// `close_snapshot_tx()` commits the tx at end of `build_paths`.
-    db: Arc<parking_lot::Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>>,
+    ///
+    /// The slot holds the core's [`degenbot_bot::bot_core::RetainedSnapshotTx`]
+    /// guard, not a bare handle: the guard owns the quiescence its canary needs,
+    /// so the commit cannot run while a tick-map assembly still holds a clone.
+    db: Arc<parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::RetainedSnapshotTx>>>>,
     /// PRG-1: the engine-internal single-flight build table —
     /// claims collapsed into the Rust build path (was the `PoolBuildClaims`
     /// FFI peer + the Python `(family, key)` claim driver).
@@ -163,7 +167,7 @@ impl PyBot {
     /// retains its own Arc so subsequent callers still get `Some`.
     #[must_use]
     pub(crate) fn db_handle(&self) -> Option<Arc<degenbot_db::snapshot_db::SnapshotDb>> {
-        self.db.lock().clone()
+        self.db.lock().as_ref().and_then(|tx| tx.acquire())
     }
 
     /// The snapshot SLOT itself — the handle source a consumer that runs its own
@@ -176,7 +180,7 @@ impl PyBot {
     #[must_use]
     pub(crate) fn db_slot(
         &self,
-    ) -> Arc<parking_lot::Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>> {
+    ) -> Arc<parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::RetainedSnapshotTx>>>> {
         Arc::clone(&self.db)
     }
 
@@ -716,12 +720,14 @@ impl PyBot {
                     ))
                 }
             })?;
-        // Retain the `SnapshotDb` as a long-lived `Arc` so the registration-
-        // path PyO3 functions (`assemble_v3_tick_map` etc.) clone it to feed
-        // `&dyn TickMapDb` to the tick-map assembly helper's Db arm. Stored
-        // AFTER the snapshot load succeeded, so a failure leaves `db` as
-        // `None` (cold-start).
-        *self.db.lock() = Some(Arc::new(snap));
+        // Retain the `SnapshotDb` behind the core's guard so the registration-
+        // path PyO3 functions (`assemble_v3_tick_map` etc.) take a tracked
+        // handle from it to feed `&dyn TickMapDb` to the tick-map assembly
+        // helper's Db arm. `S` (the canary's basis) is captured HERE, inside
+        // the held tx, which is the only place it is readable. Stored AFTER the
+        // snapshot load succeeded, so a failure leaves `db` as `None`
+        // (cold-start).
+        *self.db.lock() = Some(Arc::new(self.bot.retain_snapshot_tx(snap)));
         Ok(())
     }
 
@@ -732,28 +738,34 @@ impl PyBot {
     /// it's closed, there's no Db arm for late registrations; they'd need a
     /// fresh handle). Idempotent on a not-loaded bot (no-op).
     ///
+    /// The commit is the core guard's own teardown: it drains the tick-map
+    /// assemblies still holding a handle before it unwraps and re-reads the
+    /// canary, so a teardown that races a live assembler refuses loudly
+    /// instead of reporting a clone leak it invented.
+    ///
     /// # Errors
-    /// `PyRuntimeError` if the `COMMIT` fails.
+    /// `PyRuntimeError` if the quiescence drain expires with an assembler still
+    /// holding the handle, or if the `COMMIT` fails.
     fn close_snapshot_tx(&self, py: Python<'_>) -> PyResult<()> {
         use degenbot_bot::bot_core::CloseSnapshotTxError;
-        // Canary: capture S_snapshot (read inside the
-        // held tx) before committing, then re-read S_live after COMMIT on the
-        // same connection (now seeing the live DB). If S_live > S_snapshot the
-        // pool_updater committed concurrently with startup — a discipline
-        // violation. Correctness was already preserved by the held tx; the
-        // canary only surfaces it. That teardown — S capture, sole-Arc
-        // unwrap, COMMIT + canary re-read — is the core
-        // `Bot::close_snapshot_tx`; the shell maps the typed refusals and
-        // emits the operator warning.
-        // GIL hygiene: the teardown runs under this py.detach.
-        let snap = self.db.lock().take();
+        // Canary: the guard holds S_snapshot (captured inside the held tx) and
+        // re-reads S_live after COMMIT on the same connection (now seeing the
+        // live DB). If S_live > S_snapshot the pool_updater committed
+        // concurrently with startup — a discipline violation. Correctness was
+        // already preserved by the held tx; the canary only surfaces it.
+        // GIL hygiene: the teardown (including the drain wait) runs under this
+        // py.detach.
+        let tx = self.db.lock().take();
         let report = py
-            .detach(|| self.bot.close_snapshot_tx(snap))
+            .detach(|| match tx {
+                Some(tx) => tx.close(),
+                None => Ok(None),
+            })
             .map_err(|e| match e {
                 CloseSnapshotTxError::Close(e) => crate::db::db_err_to_py(&e),
-                CloseSnapshotTxError::ArcHeld => pyo3::exceptions::PyRuntimeError::new_err(
-                    "close_snapshot_tx: SnapshotDb Arc still held (clone leak — \
-                         a caller didn't drop its handle)",
+                CloseSnapshotTxError::AssemblersHeld => pyo3::exceptions::PyRuntimeError::new_err(
+                    "close_snapshot_tx: tick-map assemblies still hold the SnapshotDb \
+                         after the quiescence drain — the read tx was not committed",
                 ),
             })?;
         if let Some(report) = report {

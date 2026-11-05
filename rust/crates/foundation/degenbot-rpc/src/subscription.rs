@@ -214,7 +214,7 @@ pub async fn pump_blocks(provider: Arc<dyn Provider<Ethereum>>, handle: Arc<Subs
 pub(crate) async fn reconnect_new_heads_stream(
     provider: Arc<dyn Provider<Ethereum>>,
 ) -> Option<HeaderStream> {
-    use crate::provider::rpc_retry_policy;
+    use crate::retry_policy::rpc_retry_policy;
     // This loop retries indefinitely, so the policy's attempt bound is unused;
     // only its shared curve (base/cap) is consumed.
     let policy = rpc_retry_policy(u32::MAX);

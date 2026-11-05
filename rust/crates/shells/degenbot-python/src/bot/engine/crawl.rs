@@ -319,12 +319,16 @@ impl PyArbEngine {
 /// calling `PyBot::db_handle()` per use; a session-scoped clone would pin the
 /// read transaction past the close and keep reading a stale DB view.
 struct PySnapshotArm {
-    slot: Arc<parking_lot::Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>>,
+    slot: Arc<parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::RetainedSnapshotTx>>>>,
 }
 
 impl SnapshotArm for PySnapshotArm {
     fn acquire(&self) -> Option<Arc<dyn TickMapDb>> {
-        self.slot.lock().clone().map(|db| db as Arc<dyn TickMapDb>)
+        self.slot
+            .lock()
+            .as_ref()
+            .and_then(|tx| tx.acquire())
+            .map(|db| db as Arc<dyn TickMapDb>)
     }
 }
 

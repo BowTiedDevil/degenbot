@@ -97,25 +97,41 @@ class FakeBot:
 
 
 class RecordingPyBot:
-    """The Rust ``Bot._py_bot`` handle double.
+    """The Rust ``Bot._py_bot`` handle double, with the snapshot fence.
 
-    Records ``close_snapshot_tx`` on the shared event list (the trim's healthy
-    path commits the snapshot read tx there) and can trip the ``Arc`` canary the
-    real handle raises when in-flight build workers still hold a clone —
-    ``raise_on_close`` is the mid-registration-cancel scenario a caller must not
-    reach.
+    Models the retained-tx guard at the Python seam:
+
+    * ``acquire_tick_map_handle()`` is one ``assemble_*_tick_map`` call taking
+      its handle (the guard's ``acquire``);
+    * ``release_tick_map_handle()`` is that call releasing it;
+    * ``close_snapshot_tx()`` is the guard's commit: it refuses while any
+      assembler still holds a handle, exactly as the guard's drain-then-canary
+      does.
+
+    So a test can assert the ORDERING INVARIANT directly — no assembler is live
+    when the canary runs — instead of observing a bare drop-commit call.
     """
 
-    def __init__(self, events: list[str], *, raise_on_close: bool = False) -> None:
+    def __init__(self, events: list[str]) -> None:
         self._events = events
-        self._raise_on_close = raise_on_close
+        self.in_flight = 0
+
+    def acquire_tick_map_handle(self) -> None:
+        """Take one assembly call's handle."""
+        self.in_flight += 1
+        self._events.append("assembler_acquired")
+
+    def release_tick_map_handle(self) -> None:
+        """Release one assembly call's handle."""
+        self.in_flight -= 1
+        self._events.append("assembler_released")
 
     def close_snapshot_tx(self) -> None:
-        """Record the read-tx commit (and optionally trip the replica canary)."""
-        self._events.append("close_snapshot_tx")
-        if self._raise_on_close:
+        """Commit the read tx — refused while an assembler still holds a handle."""
+        if self.in_flight:
             msg = (
-                "close_snapshot_tx: SnapshotDb Arc still held "
-                "(clone leak \u2014 a caller didn't drop its handle)"
+                "close_snapshot_tx: tick-map assemblies still hold the "
+                "SnapshotDb after the quiescence drain"
             )
             raise RuntimeError(msg)
+        self._events.append("close_snapshot_tx")

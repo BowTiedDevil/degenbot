@@ -257,3 +257,50 @@ class MultiTokenSwapQuote(Protocol):
     ) -> int:
         """Calculate the `token_out` amount an exact input of `quantity` of `token_in` returns."""
         ...
+
+
+# ── The pricing protocol ─────────────────────────────────────────────
+#
+# The price/rate verb family is the documented public surface a library
+# consumer quotes with (README.md, docs/getting-started.md): four verbs, two
+# raw and two decimal-corrected, each pair in the price-is-the-reciprocal-of-
+# the-rate relation. One implementation serves every family
+# (:class:`degenbot.types.price_ladder.PriceLadder`); this protocol is the
+# declaration a consumer can hold a pool against.
+
+
+@runtime_checkable
+class PoolPricing(Protocol):
+    """A priced pool: the two rate verbs and the two price verbs derived from them."""
+
+    def get_absolute_exchange_rate(
+        self,
+        token: Erc20Token,
+        override_state: AbstractPoolState | None = None,
+    ) -> Fraction:
+        """Get the rate of `token` in the other token, in raw units."""
+        ...
+
+    def get_absolute_price(
+        self,
+        token: Erc20Token,
+        override_state: AbstractPoolState | None = None,
+    ) -> Fraction:
+        """Get the price of `token`, in raw units — the reciprocal of its rate."""
+        ...
+
+    def get_nominal_exchange_rate(
+        self,
+        token: Erc20Token,
+        override_state: AbstractPoolState | None = None,
+    ) -> Fraction:
+        """Get the rate of `token`, corrected for the pair's decimals."""
+        ...
+
+    def get_nominal_price(
+        self,
+        token: Erc20Token,
+        override_state: AbstractPoolState | None = None,
+    ) -> Fraction:
+        """Get the price of `token`, corrected for the pair's decimals."""
+        ...

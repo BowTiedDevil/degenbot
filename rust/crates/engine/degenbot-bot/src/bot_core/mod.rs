@@ -174,7 +174,9 @@ pub use construction_io::{
 };
 
 /// The `Bot` facade's snapshot + block-stream error vocabulary.
-pub use lifecycle::{BlockStreamError, CloseSnapshotTxError, SnapshotOpenError};
+pub use lifecycle::{
+    BlockStreamError, CloseSnapshotTxError, RetainedSnapshotTx, SnapshotOpenError,
+};
 
 /// Liquidity verification against a live tick map.
 pub use liquidity_verifier::verify_live_map;

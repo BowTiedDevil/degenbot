@@ -6,7 +6,8 @@ results based on current state but don't modify it.
 
 The swap verbs (calculate_tokens_out_from_tokens_in /
 calculate_tokens_in_from_tokens_out) delegate to the pool's `swap_quoter`; the
-pricing verbs below are pure functions over state and stay here.
+pricing verbs come from `PriceLadder`, and the one leaf that differs per family
+— how the state encodes the exchange rate — is below.
 
 See: contract_reference/uniswap/V3/UniswapV3Factory.sol
 (UniswapV3Pool swap, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath)
@@ -15,19 +16,21 @@ See: contract_reference/uniswap/V3/UniswapV3Factory.sol
 from __future__ import annotations
 
 from abc import abstractmethod
-from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from degenbot.exceptions import DegenbotValueError
+from degenbot.types.price_ladder import PriceLadder
 from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
 
 if TYPE_CHECKING:
+    from fractions import Fraction
+
     from degenbot.erc20 import Erc20Token
+    from degenbot.types.abstract import AbstractPoolState
     from degenbot.uniswap.v3_pool_quoter import UniswapV3SwapQuoter
     from degenbot.uniswap.v3_types import UniswapV3PoolSimulationResult, UniswapV3PoolState
 
 
-class UniswapV3PoolCalc:
+class UniswapV3PoolCalc(PriceLadder):
     """Calculation methods matching the Uniswap V3 contract.
 
     All methods operate on state held by the concrete class via V3PoolState.
@@ -129,73 +132,16 @@ class UniswapV3PoolCalc:
             override_state=override_state,
         )
 
-    def get_absolute_price(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV3PoolState | None = None,
-    ) -> Fraction:
-        """Get the absolute price for the given token, expressed in units of the other.
-
-        Returns:
-            The absolute price as a Fraction.
-
-        """
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV3PoolState | None = None,
-    ) -> Fraction:
-        """Get the absolute exchange rate for the given token.
-
-        A V3 pool encodes the token1/token0 exchange rate in sqrt_price_x96,
-        so it can be directly obtained.
+    def _absolute_rate(self, token: Erc20Token, state: AbstractPoolState) -> Fraction:
+        """Read the rate out of `sqrt_price_x96` — the concentrated-liquidity encoding.
 
         Returns:
             The absolute exchange rate as a Fraction.
 
-        Raises:
-            DegenbotValueError: If the token is not held by this pool.
-
         """
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
+        sqrt_price_x96 = cast("UniswapV3PoolState", state).sqrt_price_x96
         return (
-            exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
+            exchange_rate_from_sqrt_price_x96(sqrt_price_x96)
             if token == self._token1
-            else 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV3PoolState | None = None,
-    ) -> Fraction:
-        """Get the nominal price, corrected for decimals.
-
-        Returns:
-            The nominal price as a Fraction.
-
-        """
-        return 1 / self.get_nominal_rate(token, override_state=override_state)
-
-    def get_nominal_rate(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV3PoolState | None = None,
-    ) -> Fraction:
-        """Get the nominal rate of exchange, corrected for decimal place values.
-
-        Returns:
-            The nominal exchange rate as a Fraction.
-
-        """
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
-            if token == self._token0
-            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
+            else 1 / exchange_rate_from_sqrt_price_x96(sqrt_price_x96)
         )

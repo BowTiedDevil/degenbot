@@ -1,13 +1,18 @@
 //! The `Bot` snapshot + pump-lifecycle + block-stream cluster (ADR-006 D4).
 //!
 //! The retained-tx snapshot open/teardown pair
-//! ([`Bot::load_snapshot_from_db_path`] + [`Bot::close_snapshot_tx`]), the
-//! driver subscribe/resume/stop wrappers, the verification-config setters,
-//! and the once-only block-stream hand-off. The PyO3 shell keeps only arg
+//! ([`Bot::load_snapshot_from_db_path`] + [`RetainedSnapshotTx`]), the driver
+//! subscribe/resume/stop wrappers, the verification-config setters, and the
+//! once-only block-stream hand-off. The PyO3 shell keeps only arg
 //! parsing + `PyErr` mapping for this surface; the typed errors are
 //! re-exported from `bot.rs` so the shell's import paths hold.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
+
+use degenbot_core::{op_info, op_warn};
 
 use crate::arb_engine::{DriverError, EngineDriver};
 use crate::bot_core::bot::Bot;
@@ -27,12 +32,13 @@ pub enum SnapshotOpenError {
     Load(RefusalKind),
 }
 
-/// Error from [`Bot::close_snapshot_tx`].
+/// Error from [`RetainedSnapshotTx::close`].
 #[derive(Debug)]
 pub enum CloseSnapshotTxError {
-    /// `Arc::try_unwrap` failed — a caller still holds a `SnapshotDb` clone
-    /// (the shell's "clone leak" `RuntimeError`).
-    ArcHeld,
+    /// The quiescence wait expired with tick-map assemblers still holding
+    /// handles, so the sole-holder canary could only false-positive: the tx is
+    /// left uncommitted rather than committing under a live reader.
+    AssemblersHeld,
     /// The `COMMIT` or the post-commit canary re-read failed.
     Close(degenbot_db::DbError),
 }
@@ -87,41 +93,17 @@ impl Bot {
         Ok(snap)
     }
 
-    /// Commit + drop the held snapshot read transaction — the teardown half
-    /// of [`Bot::load_snapshot_from_db_path`], called at end of `build_paths`
-    /// so the WAL snapshot is released and the updater's checkpoint can
-    /// reclaim `-wal` space. `db` is the retained handle, taken out of the
-    /// caller's D4 `db` slot: the sole `Arc` is unwrapped, `S_snapshot` is
-    /// captured from the state, and `close_with_canary` commits + re-reads
-    /// `S_live` on the same connection (the operator-discipline canary). A
-    /// `None` handle (not-loaded / already-closed bot) is an idempotent
-    /// no-op returning `Ok(None)`.
-    ///
-    /// # Errors
-    /// [`CloseSnapshotTxError::ArcHeld`] when clones of the handle remain (a
-    /// caller didn't drop its handle — surfaced rather than silently leaking
-    /// the tx), [`CloseSnapshotTxError::Close`] when the `COMMIT` or the
-    /// canary re-read fails.
-    pub fn close_snapshot_tx(
+    /// Arm the retained read-tx guard over a freshly-opened handle.
+    #[must_use]
+    pub fn retain_snapshot_tx(
         &self,
-        db: Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>,
-    ) -> Result<Option<degenbot_db::snapshot_db::CanaryReport>, CloseSnapshotTxError> {
-        let Some(snap) = db else {
-            return Ok(None);
-        };
-        let s_snapshot = self.snapshot_seed_block();
-        let chain = i64::try_from(self.chain_id()).unwrap_or(0);
-        // `Arc::try_unwrap` succeeds only if the `assemble_*` calls released
-        // their clones. During `build_paths` the Db arm clones per-call +
-        // drops before the teardown runs, so at this point the only remaining
-        // `Arc` is the caller's.
-        match Arc::try_unwrap(snap) {
-            Ok(snap) => snap
-                .close_with_canary(s_snapshot, chain)
-                .map(Some)
-                .map_err(CloseSnapshotTxError::Close),
-            Err(_) => Err(CloseSnapshotTxError::ArcHeld),
-        }
+        db: degenbot_db::snapshot_db::SnapshotDb,
+    ) -> RetainedSnapshotTx {
+        RetainedSnapshotTx::new(
+            db,
+            self.snapshot_seed_block(),
+            i64::try_from(self.chain_id()).unwrap_or(0),
+        )
     }
 
     /// Subscribe to the WS `newHeads` + logs streams — the `block_on` wrapper
@@ -191,6 +173,177 @@ impl Bot {
         let pump = driver.ok_or(BlockStreamError::NoPumpState)?;
         pump.take_block_receiver()
             .ok_or(BlockStreamError::AlreadyTaken)
+    }
+}
+
+/// How long [`RetainedSnapshotTx`] waits for the tick-map assemblers still
+/// holding a handle before it refuses the canary.
+///
+/// The wait is a drain, not a deadline in the normal case: an assembler holds
+/// its handle for one `fetch_liquidity_map` read. The budget exists so a
+/// genuinely stuck worker becomes a loud refusal instead of a wedged teardown.
+const QUIESCENCE_BUDGET: Duration = Duration::from_secs(30);
+
+/// The first probe interval of the quiescence wait.
+const QUIESCENCE_PROBE_START: Duration = Duration::from_millis(1);
+
+/// The largest probe interval of the quiescence wait.
+const QUIESCENCE_PROBE_MAX: Duration = Duration::from_millis(25);
+
+/// The retained read transaction over a snapshot DB: the sole owner of the
+/// handle, and of the quiescence its canary depends on.
+///
+/// `SnapshotDb` carries a held deferred read transaction, so the snapshot load
+/// and every per-pool tick-map read during registration share one frozen WAL
+/// view. Releasing it (COMMIT + the operator-discipline canary) is only lawful
+/// once nothing else reads through the handle — `Arc::try_unwrap` is exactly
+/// that question, and answering it by *guessing* is what makes a canary
+/// false-positive: an `assemble_*_tick_map` call that still holds a clone makes
+/// the unwrap fail and masks the real teardown reason with a clone-leak error.
+///
+/// So the guard owns the invariant instead of documenting it:
+///
+/// - [`Self::acquire`] is the ONE way to clone the handle — every assembler
+///   call goes through it, and the clone it answers is tracked by the handle's
+///   own strong count;
+/// - [`Self::close`] (and [`Drop`]) first empties the slot, which makes
+///   [`Self::acquire`] answer `None` forever, so the holder count can only
+///   fall from that moment on — no new holder can appear mid-drain;
+/// - the drain then waits for the count to reach one (the guard's own handle)
+///   before it unwraps and commits. A holder that never releases is
+///   [`CloseSnapshotTxError::AssemblersHeld`], never a false-positive canary.
+///
+/// Misuse is therefore not expressible: there is no argument a caller can pass
+/// to skip the drain, and no second way to reach the handle.
+pub struct RetainedSnapshotTx {
+    /// `Some` until the tx is closed. Interior mutability because the guard is
+    /// held behind an `Arc` (the shell's `db` slot) and both paths — explicit
+    /// close and `Drop` — must consume the same one handle.
+    db: Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>,
+    /// `S` captured inside the held tx, the canary's basis.
+    s_snapshot: Option<u64>,
+    /// The chain the canary re-reads.
+    chain_id: i64,
+}
+
+impl RetainedSnapshotTx {
+    /// Wrap an opened handle. `s_snapshot` is the seed block read inside the
+    /// held transaction, which is what the canary compares against.
+    #[must_use]
+    pub fn new(
+        db: degenbot_db::snapshot_db::SnapshotDb,
+        s_snapshot: Option<u64>,
+        chain_id: i64,
+    ) -> Self {
+        Self {
+            db: Mutex::new(Some(Arc::new(db))),
+            s_snapshot,
+            chain_id,
+        }
+    }
+
+    /// A handle for one tick-map assembly call, or `None` once the tx is
+    /// closing (the caller then takes the no-DB arm: chain reads).
+    ///
+    /// The answered clone is a tracked holder: it keeps the commit from
+    /// running until it drops.
+    #[must_use]
+    pub fn acquire(&self) -> Option<Arc<degenbot_db::snapshot_db::SnapshotDb>> {
+        self.db.lock().as_ref().map(Arc::clone)
+    }
+
+    /// Commit the held read transaction and report the canary.
+    ///
+    /// Returns `Ok(None)` when there is nothing to close (never armed, or
+    /// already closed) — the idempotent no-op a second teardown call gets.
+    ///
+    /// # Errors
+    /// [`CloseSnapshotTxError::AssemblersHeld`] when the drain budget expires
+    /// with a handle still held (the tx is then left uncommitted),
+    /// [`CloseSnapshotTxError::Close`] when the `COMMIT` or the canary re-read
+    /// fails.
+    pub fn close(
+        &self,
+    ) -> Result<Option<degenbot_db::snapshot_db::CanaryReport>, CloseSnapshotTxError> {
+        self.finish(QUIESCENCE_BUDGET)
+    }
+
+    /// The shared body of [`Self::close`] and [`Drop`], with an explicit drain
+    /// budget so a test can observe the refusal without waiting a full budget.
+    fn finish(
+        &self,
+        budget: Duration,
+    ) -> Result<Option<degenbot_db::snapshot_db::CanaryReport>, CloseSnapshotTxError> {
+        let Some(db) = self.db.lock().take() else {
+            return Ok(None);
+        };
+        // Acquire is closed from here on, so the holder count is monotone
+        // downward: this is what makes the unwrap below answerable instead of
+        // hopeful.
+        let held = drain_holders(&db, budget);
+        if held > 0 {
+            op_warn!(
+                domain = state,
+                held,
+                budget_ms = u64::try_from(budget.as_millis()).unwrap_or(u64::MAX),
+                "retained snapshot tx: tick-map assemblers still hold the SnapshotDb — canary skipped"
+            );
+            return Err(CloseSnapshotTxError::AssemblersHeld);
+        }
+        match Arc::try_unwrap(db) {
+            Ok(snap) => snap
+                .close_with_canary(self.s_snapshot, self.chain_id)
+                .map(Some)
+                .map_err(CloseSnapshotTxError::Close),
+            // The drain reported a sole holder, so this arm is unreachable
+            // without a foreign clone the guard never handed out.
+            Err(_) => Err(CloseSnapshotTxError::AssemblersHeld),
+        }
+    }
+}
+
+impl Drop for RetainedSnapshotTx {
+    fn drop(&mut self) {
+        // `Ok(None)` is the already-closed no-op, and a refusal was already
+        // reported by `finish` — which leaves the connection to roll back with
+        // the handle it kept.
+        let Ok(Some(report)) = self.finish(QUIESCENCE_BUDGET) else {
+            return;
+        };
+        if report.advanced {
+            op_warn!(
+                domain = state,
+                s_snapshot = report.s_snapshot.unwrap_or(0),
+                s_live = report.s_live.unwrap_or(0),
+                "DB advanced during startup — operator discipline violation"
+            );
+        }
+        op_info!(domain = state, "retained snapshot tx committed on drop");
+    }
+}
+
+/// Wait until `db` has exactly one strong reference (the caller's), returning
+/// the number still held when the budget expires.
+///
+/// An `Arc` exposes no drop notification, and giving every assembler call site
+/// a lease type would put the invariant back in the callers' hands — the
+/// arrangement this guard exists to replace. Probing the strong count is the
+/// borrow the standard library does expose, and the backoff keeps a short drain
+/// (the normal case) cheap.
+fn drain_holders(db: &Arc<degenbot_db::snapshot_db::SnapshotDb>, budget: Duration) -> usize {
+    let started = Instant::now();
+    let mut probe = QUIESCENCE_PROBE_START;
+    loop {
+        let held = Arc::strong_count(db).saturating_sub(1);
+        if held == 0 {
+            return 0;
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= budget {
+            return held;
+        }
+        std::thread::sleep(probe.min(budget.saturating_sub(elapsed)));
+        probe = (probe * 2).min(QUIESCENCE_PROBE_MAX);
     }
 }
 
@@ -269,48 +422,100 @@ mod tests {
         );
     }
 
-    /// The teardown pair: `close_snapshot_tx` commits the held read tx (the
-    /// handle is consumed, the WAL snapshot released) and reports the canary;
-    /// with no handle it is an idempotent no-op (`None`).
-    #[test]
-    fn close_snapshot_tx_commits_then_is_an_idempotent_noop() {
+    /// Arm a guard over a fresh in-memory snapshot the bot has loaded.
+    fn armed_guard() -> (Bot, std::sync::Arc<super::RetainedSnapshotTx>) {
         let (snap, _schema) = degenbot_db::snapshot_db::SnapshotDb::open_in_memory()
             .expect("test setup: in-memory snapshot db");
         let bot = Bot::new(1);
         bot.load_snapshot_from_db(&snap, 1)
             .expect("test setup: cold-start load");
+        let tx = std::sync::Arc::new(bot.retain_snapshot_tx(snap));
+        (bot, tx)
+    }
 
-        let report = bot
-            .close_snapshot_tx(Some(std::sync::Arc::new(snap)))
-            .expect("the sole Arc unwraps")
+    /// The teardown: `close` commits the held read tx (the handle is consumed,
+    /// the WAL snapshot released) and reports the canary; on an already-closed
+    /// guard it is an idempotent no-op (`None`).
+    #[test]
+    fn retained_snapshot_tx_commits_then_is_an_idempotent_noop() {
+        let (_bot, tx) = armed_guard();
+
+        let report = tx
+            .close()
+            .expect("the drain finds a sole holder")
             .expect("a held handle closes with a canary report");
         assert!(!report.advanced, "no concurrent writer in the test");
         assert_eq!(report.s_snapshot, None, "cold start: S = None");
 
-        // After the handle is gone the teardown is a no-op (idempotent).
+        // After the tx is closed the teardown is a no-op (idempotent), and no
+        // handle can be taken from it.
         assert!(
-            bot.close_snapshot_tx(None)
-                .expect("no handle: Ok")
-                .is_none(),
-            "a not-loaded bot closes idempotently"
+            tx.close().expect("no handle: Ok").is_none(),
+            "a closed guard closes idempotently"
+        );
+        assert!(
+            tx.acquire().is_none(),
+            "a closed guard hands out no handles"
         );
     }
 
-    /// A leaked `SnapshotDb` clone (a caller kept a handle past `build_paths`)
-    /// is the typed `ArcHeld` refusal — the shell maps it to the historical
-    /// "clone leak" `RuntimeError` rather than silently rolling the tx back.
+    /// The quiescence invariant: a tick-map assembler still holding a handle
+    /// keeps the canary from running. The edge asserted is the release, not a
+    /// duration — the closer cannot report before that drop.
     #[test]
-    fn close_snapshot_tx_refuses_a_leaked_clone() {
-        let (snap, _schema) = degenbot_db::snapshot_db::SnapshotDb::open_in_memory()
-            .expect("test setup: in-memory snapshot db");
-        let bot = Bot::new(1);
-        let arc = std::sync::Arc::new(snap);
-        let leaked = std::sync::Arc::clone(&arc);
+    fn retained_snapshot_tx_waits_for_the_last_assembler_before_the_canary() {
+        let (_bot, tx) = armed_guard();
+
+        // Two assembler calls take their own handles; a second ask must still
+        // be served (the guard is a source, not a once-only hand-off).
+        let first = tx.acquire().expect("an armed guard hands out handles");
+        drop(tx.acquire().expect("every call gets its own handle"));
+
+        let (events_tx, events_rx) = std::sync::mpsc::channel();
+        let closer = {
+            let tx = std::sync::Arc::clone(&tx);
+            std::thread::spawn(move || {
+                let report = tx.close();
+                events_tx.send(()).expect("test channel");
+                report
+            })
+        };
+
+        assert!(
+            events_rx.try_recv().is_err(),
+            "the canary ran while an assembler still held the handle"
+        );
+
+        drop(first);
+        events_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the drain completes once the last holder releases");
+        let report = closer
+            .join()
+            .expect("the closer thread")
+            .expect("the drain finds a sole holder")
+            .expect("a held handle closes with a canary report");
+        assert!(!report.advanced);
+    }
+
+    /// A holder that outlives the drain budget is the typed refusal — never the
+    /// false-positive canary, and never a commit under a live reader.
+    #[test]
+    fn retained_snapshot_tx_refuses_the_canary_when_the_drain_budget_expires() {
+        let (_bot, tx) = armed_guard();
+        let held = tx.acquire().expect("an armed guard hands out handles");
+
         assert!(matches!(
-            bot.close_snapshot_tx(Some(arc)),
-            Err(super::CloseSnapshotTxError::ArcHeld)
+            tx.finish(std::time::Duration::from_millis(20)),
+            Err(super::CloseSnapshotTxError::AssemblersHeld)
         ));
-        drop(leaked); // keep leak trackers quiet
+
+        // The refusal leaves the tx uncommitted and the slot emptied: no new
+        // holder can appear, and a second teardown is the idempotent no-op.
+        assert!(tx.acquire().is_none());
+        assert!(tx.close().expect("no handle: Ok").is_none());
+
+        drop(held);
     }
 
     /// The block-clock receiver is handed out exactly once: a missing driver

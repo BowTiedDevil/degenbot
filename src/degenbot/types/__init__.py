@@ -8,6 +8,7 @@ from .concrete import BoundedCache, KeyedDefaultDict
 from .pool_protocols import (
     MultiTokenSwapCalculation,
     MultiTokenSwapQuote,
+    PoolPricing,
     PoolSimulation,
     StateManageablePool,
     TwoTokenSwapCalculation,
@@ -22,6 +23,7 @@ __all__ = (
     "MultiTokenSwapCalculation",
     "MultiTokenSwapQuote",
     "Pool",
+    "PoolPricing",
     "PoolSimulation",
     "StateManageablePool",
     "TwoTokenSwapCalculation",

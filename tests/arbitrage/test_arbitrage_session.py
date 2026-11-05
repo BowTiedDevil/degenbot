@@ -691,28 +691,35 @@ class TestSubBBackgroundRegistration:
         assert session.actors is not None
         assert session.actors.bot is None
 
-    async def test_background_cancel_skips_close_snapshot_tx(self) -> None:
-        """A mid-registration cancel must NOT close the snapshot read-tx.
+    async def test_background_cancel_closes_snapshot_tx_after_the_assemblers(self) -> None:
+        """A mid-registration cancel closes the read-tx AFTER the assemblies release.
 
-        Registration offloads `assemble_*_tick_map` (which clone the
-        `Arc<SnapshotDb>`) onto a ThreadPoolExecutor; on cancel those worker
-        threads may still hold their clones, so `close_snapshot_tx`'s
-        `Arc::try_unwrap` canary false-positives and would raise
-        ``RuntimeError: SnapshotDb Arc still held`` during teardown. The cancel
-        branch must instead drop the Arc naturally and stay quiet — the teardown
-        stays clean and CancelledError propagates unadorned.
+        Registration's `assemble_*_tick_map` calls each hold a handle on the
+        retained snapshot read tx. Cancelling the registration unwinds the
+        builder FIRST — its `finally` releases that handle — and only then does
+        the trim reach `close_snapshot_tx`. The double's canary refuses while any
+        assembler still holds a handle, so passing it IS the invariant: the
+        commit ran with a sole holder, and CancelledError propagated unadorned.
+
+        The residual holders live deeper (inside the engine's crawl units), where
+        the core guard's own drain waits them out; the edge asserted here is the
+        one the ritual owns — the builder is unwound before the trim.
         """
         calls: list[str] = []
-        # Simulate the in-flight-worker-clone scenario: the held `_py_bot`
-        # would trip the canary if `close_snapshot_tx` were invoked mid-cancel.
-        bot = FakeBot(events=calls, py_bot=RecordingPyBot(calls, raise_on_close=True))
+        py_bot = RecordingPyBot(calls)
+        bot = FakeBot(events=calls, py_bot=py_bot)
         session = session_for_test(bot=bot)
 
         builder_started = asyncio.Event()
 
         async def hanging_path_builder(**kwargs: Any) -> None:
+            # One in-flight tick-map assembly, held for the builder's lifetime.
+            py_bot.acquire_tick_map_handle()
             builder_started.set()
-            await asyncio.Event().wait()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                py_bot.release_tick_map_handle()
 
         task = asyncio.create_task(
             RunRitual(session)._run_registration_background(
@@ -726,15 +733,18 @@ class TestSubBBackgroundRegistration:
         # test asserts on.
         await asyncio.wait_for(builder_started.wait(), timeout=DEADLOCK_GUARD_S)
         task.cancel()
-        # The cancelled task re-raises CancelledError cleanly — the secondary
-        # `close_snapshot_tx` RuntimeError must NOT surface in its place.
+        # CancelledError propagates cleanly — the close must not raise in its place.
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        # The read-tx canary was deliberately skipped for the teardown path.
-        assert "close_snapshot_tx" not in calls, (
-            "close_snapshot_tx must not run on the mid-registration cancel path"
+        # The invariant, as an ordering edge: the assembler released its handle
+        # before the canary ran, and nothing was left in flight.
+        assert "close_snapshot_tx" in calls, "the cancel branch runs the same trim"
+        assert calls.index("assembler_released") < calls.index("close_snapshot_tx"), (
+            "the snapshot read-tx must close only after the assemblies released"
         )
+        assert py_bot.in_flight == 0
+        assert bot.released is True
 
 
 class TestSubCBgRegistrationConcurrency:

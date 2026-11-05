@@ -5,7 +5,8 @@ V2PoolState (or a compatible state mixin). All methods are non-mutating.
 
 The swap verbs (calculate_tokens_out_from_tokens_in /
 calculate_tokens_in_from_tokens_out) delegate to the pool's `swap_quoter`; the
-pricing verbs below are pure functions over state and stay here.
+pricing verbs come from `PriceLadder`, and the one leaf that differs per family
+— how the state encodes the exchange rate — is below.
 
 Pools with different calculation paths (e.g., Aerodrome's stable mode,
 Camelot's k invariant) answer through their own quoter instead of using this
@@ -17,18 +18,19 @@ See: contract_reference/uniswap/V2/UniswapV2Factory.sol (UniswapV2Pair swap/mint
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from degenbot.exceptions import DegenbotValueError
+from degenbot.types.price_ladder import PriceLadder
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
     from degenbot.types import Pool
+    from degenbot.types.abstract import AbstractPoolState
     from degenbot.uniswap.v2_pool_quoter import UniswapV2SwapQuoter
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
-class UniswapV2PoolCalc:
+class UniswapV2PoolCalc(PriceLadder):
     """Calculation methods matching the Uniswap V2 contract.
 
     All methods operate on state held by the concrete class via V2PoolState.
@@ -62,8 +64,6 @@ class UniswapV2PoolCalc:
     def state(self) -> UniswapV2PoolState:
         """The pool's current state (concrete pool provides)."""
         raise NotImplementedError
-
-    tokens: tuple[Erc20Token, Erc20Token]
 
     @property
     def update_block(self) -> int:
@@ -120,70 +120,16 @@ class UniswapV2PoolCalc:
             override_state=override_state,
         )
 
-    def get_absolute_price(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> Fraction:
-        """Get the absolute price for the given token, expressed in units of the other.
-
-        Returns:
-            The absolute price as a Fraction.
-
-        """
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> Fraction:
-        """Get the absolute exchange rate for the given token.
+    def _absolute_rate(self, token: Erc20Token, state: AbstractPoolState) -> Fraction:
+        """Return the raw reserve ratio — a V2 pool encodes the rate in its reserves.
 
         Returns:
             The absolute exchange rate as a Fraction.
 
-        Raises:
-            DegenbotValueError: If the token is not held by this pool.
-
         """
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
+        reserves = cast("UniswapV2PoolState", state)
         return (
-            Fraction(state.reserves_token1, state.reserves_token0)
+            Fraction(reserves.reserves_token1, reserves.reserves_token0)
             if token == self._token1
-            else Fraction(state.reserves_token0, state.reserves_token1)
-        )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> Fraction:
-        """Get the nominal price for the given token, corrected for decimals.
-
-        Returns:
-            The nominal price as a Fraction.
-
-        """
-        return 1 / self.get_nominal_exchange_rate(token=token, override_state=override_state)
-
-    def get_nominal_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> Fraction:
-        """Get the nominal exchange rate, corrected for decimal place values.
-
-        Returns:
-            The nominal exchange rate as a Fraction.
-
-        """
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
-            if token == self._token0
-            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
+            else Fraction(reserves.reserves_token0, reserves.reserves_token1)
         )

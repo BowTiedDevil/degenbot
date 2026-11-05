@@ -708,7 +708,7 @@ class Session:
             advance_block=self.advance_block,
         )
 
-    def trim_python_state(self, *, close_read_tx: bool = True) -> None:
+    def trim_python_state(self) -> None:
         """Trim redundant Python state once registration is done.
 
         Refuses while a background registration is live and still climbing: only
@@ -716,15 +716,6 @@ class Session:
         or the cancel branch). Releases the held snapshot read tx, then drops
         the Python-side caches and nulls the session's bot ref so the hot loop
         isn't pinning Python pool objects.
-
-        Args:
-            close_read_tx: on the healthy path (``build_paths`` completed) the
-                ``Arc<SnapshotDb>`` canary fires and the read tx is committed to
-                reclaim WAL space. On the mid-registration cancel/teardown
-                branch it is ``False`` — build-worker ``Arc<SnapshotDb>`` clones
-                may still be live, so the canary would false-positive; the tx is
-                instead dropped with ``Bot`` at process teardown. Callers must
-                keep the canary active whenever registration actually finished.
 
         Raises:
             RuntimeError: If a background registration is still climbing (only
@@ -760,12 +751,12 @@ class Session:
         # during `build_paths` shared one frozen DB snapshot. Pool registration
         # is done — commit the tx to release the WAL snapshot so the updater's
         # checkpoint can reclaim `-wal` space for the hot loop. No-op for the
-        # cold-start path (no DB). `getattr` so test fakes (`_FakeBot`) without
-        # a real `_py_bot` skip. Skipped entirely on the cancel/teardown branch:
-        # in-flight executor `assemble_*` clones would trip the canary, and the
-        # WAL is moot once the process is exiting.
+        # cold-start path (no DB); `getattr` so test fakes (`_FakeBot`) without
+        # a real `_py_bot` skip. The close is safe from either branch: the core's
+        # retained-tx guard drains the tick-map assemblies still holding a
+        # handle before it runs its canary.
         py_bot = getattr(bot, "_py_bot", None)
-        if py_bot is not None and close_read_tx:
+        if py_bot is not None:
             py_bot.close_snapshot_tx()
 
         # Trim redundant Python state — Rust engine owns canonical pool state.

@@ -5,8 +5,9 @@ Provides calculation methods that operate on state held by AerodromeV2PoolState.
 The swap verbs delegate to the pool's `swap_quoter`, which wires the species'
 leaves at construction (stable: the Solidly invariant; volatile: constant
 product, with the hypothetical arm over the Rust swap-simulation door) — no
-runtime `if self._stable` dispatch in hot paths. The pricing verbs below are pure
-functions over state and stay here.
+runtime `if self._stable` dispatch in hot paths. The pricing verbs come from
+`PriceLadder`; the reserve-ratio leaf is below, shared by both species (the
+invariant does not change the reserve relation a price reads).
 
 Two calculation strategies:
 - Volatile: standard constant-product (x*y=k)
@@ -16,17 +17,18 @@ Two calculation strategies:
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from degenbot.exceptions import DegenbotValueError
+from degenbot.types.price_ladder import PriceLadder
 
 if TYPE_CHECKING:
     from degenbot.aerodrome.types import AerodromeV2PoolState
     from degenbot.aerodrome.v2_pool_quoter import AerodromeV2SwapQuoter
     from degenbot.erc20 import Erc20Token
+    from degenbot.types.abstract import AbstractPoolState
 
 
-class AerodromeV2PoolCalc:
+class AerodromeV2PoolCalc(PriceLadder):
     """Calculation methods for Aerodrome V2 pools.
 
     The swap verbs delegate to the per-species quoter the concrete pool builds;
@@ -54,8 +56,6 @@ class AerodromeV2PoolCalc:
     def state(self) -> AerodromeV2PoolState:
         """The pool's current state (concrete pool provides)."""
         raise NotImplementedError
-
-    tokens: tuple[Erc20Token, Erc20Token]
 
     @property
     def update_block(self) -> int:
@@ -103,70 +103,16 @@ class AerodromeV2PoolCalc:
             override_state=override_state,
         )
 
-    def get_absolute_price(
-        self,
-        token: Erc20Token,
-        override_state: AerodromeV2PoolState | None = None,
-    ) -> Fraction:
-        """Get the absolute price for the given token, expressed in units of the other.
+    def _absolute_rate(self, token: Erc20Token, state: AbstractPoolState) -> Fraction:
+        """Return the raw reserve ratio — an Aerodrome pool encodes the rate in its reserves.
 
         Returns:
-            The computed value.
+            The absolute exchange rate as a Fraction.
 
         """
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: AerodromeV2PoolState | None = None,
-    ) -> Fraction:
-        """Get the absolute exchange rate for the given token.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: If the token is not held by this pool.
-
-        """
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
+        reserves = cast("AerodromeV2PoolState", state)
         return (
-            Fraction(state.reserves_token1, state.reserves_token0)
+            Fraction(reserves.reserves_token1, reserves.reserves_token0)
             if token == self._token1
-            else Fraction(state.reserves_token0, state.reserves_token1)
-        )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: AerodromeV2PoolState | None = None,
-    ) -> Fraction:
-        """Get the nominal price, corrected for decimals.
-
-        Returns:
-            The computed value.
-
-        """
-        return 1 / self.get_nominal_exchange_rate(token=token, override_state=override_state)
-
-    def get_nominal_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: AerodromeV2PoolState | None = None,
-    ) -> Fraction:
-        """Get the nominal exchange rate, corrected for decimal place values.
-
-        Returns:
-            The computed value.
-
-        """
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
-            if token == self._token0
-            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
+            else Fraction(reserves.reserves_token0, reserves.reserves_token1)
         )
