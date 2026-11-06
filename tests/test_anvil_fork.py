@@ -18,6 +18,14 @@ from .conftest import (
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
+# The pinned transaction-hash fork fixture: this mainnet transaction was included
+# in block 20987964, and that block is the fork head anvil serves.
+# ``anvil --fork-transaction-hash`` documents "fetch state from after a specific
+# transaction hash has been applied over a remote endpoint", so the fork state is
+# the transaction's own block with the transaction applied.
+PINNED_FORK_TX_HASH = "0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
+PINNED_FORK_TX_BLOCK = 20987964
+
 
 def test_web3_endpoints(standalone_anvil: AnvilFork):
     fork = standalone_anvil
@@ -118,12 +126,10 @@ def test_fork_from_transaction_hash(anvil_factory: AnvilFactory):
     fork = anvil_factory(
         fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
-            fork_transaction_hash=(
-                "0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
-            ),
+            fork_transaction_hash=PINNED_FORK_TX_HASH,
         ),
     )
-    assert fork.provider.get_block_number() == 20987963
+    assert fork.provider.get_block_number() == PINNED_FORK_TX_BLOCK
 
 
 def test_set_next_block_base_fee(standalone_anvil: AnvilFork):
@@ -177,10 +183,8 @@ def test_reset_to_new_transaction_hash(anvil_factory: AnvilFactory):
     fork = anvil_factory(
         fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
     )
-    fork.reset(
-        transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6",
-    )
-    assert fork.provider.get_block_number() == 20987963
+    fork.reset(transaction_hash=PINNED_FORK_TX_HASH)
+    assert fork.provider.get_block_number() == PINNED_FORK_TX_BLOCK
 
 
 @pytest.mark.online_rpc

@@ -145,8 +145,10 @@ class TestForkProvider:
         """Test that the fork provider delegates to the RPC endpoint."""
         adapter = fork_mainnet_full.provider
 
-        assert adapter.chain_id == 1
-        assert adapter.block_number > 0
+        # The surface is the eth-namespace method pair (`eth_chainId` /
+        # `eth_blockNumber`); `chain_id` is a constructor argument and the head
+        # is read through `get_block_number()`, never a `block_number` attribute.
+        assert adapter.get_chain_id() == 1
 
         block_number = adapter.get_block_number()
         assert isinstance(block_number, int)
