@@ -42,11 +42,18 @@ All notable changes to the Rust workspace crates are recorded here.
   construction — the refused hand-off and driver attach to another consumer
   unchanged and the first session keeps working (attach-after-run, second-run
   `NoSession`, run-without-resume, and the unguarded `consume(EventFeed)` are
-  unchanged). `SessionConsumer::attach_admissible()` shares the same rule as a
-  check a caller runs BEFORE taking a hand-off from somewhere else (the Python
-  adapter checks it before `engine.take_handoff()`, so a refused attach leaves
-  that hand-off claimable), and `ConsumerErrorKind::AlreadyAttached` is stamped
-  at the core `already_attached()` constructor — the ONE stamping site. The
+  unchanged). `SessionConsumer::attach_with(driver, acquire)` is the
+  transactional form for a caller that takes a hand-off from somewhere else:
+  the core checks admission FIRST and invokes the acquisition closure only when
+  attachment can proceed (the Python adapter's `engine.take_handoff()` cannot
+  run for an already-attached consumer, so a refused attach leaves that
+  hand-off claimable), and installation after acquisition has no refusal path.
+  Its `AttachFailure` keeps the stages distinct — `Refused` (the core's
+  `AlreadyAttached`, the closure returned UN-invoked) versus `Acquisition` (the
+  caller's own error, passed through untouched) — and `attach_admissible()` /
+  `already_attached()` are private admission internals, with
+  `ConsumerErrorKind::AlreadyAttached` stamped at the core
+  `already_attached()` constructor — the ONE stamping site. The
   Python surface gains the typed classification: every attach/resume/run
   refusal raises `degenbot.dispatch.SessionConsumerError` (adapter-local slot
   refusals no longer raise a bare `RuntimeError`) with a `kind` attribute — a
@@ -63,9 +70,9 @@ All notable changes to the Rust workspace crates are recorded here.
 
   | --- | --- |
 
-  | `SessionConsumer::attach(handoff, driver) -> ()` silently replaced an attached session | `attach` returns `Result<(), AttachRefusal>`; a second attach refuses replacement (`AlreadyAttached`) with the un-installed hand-off + driver returned |
+  | `SessionConsumer::attach(handoff, driver) -> ()` silently replaced an attached session | `attach` returns `Result<(), AttachRefusal>` (non-consuming; un-installed values handed back); `attach_with(driver, acquire)` is the transactional form returning `Result<(), AttachFailure<E, A>>`, admission checked BEFORE the acquisition closure runs |
 
-  | `ConsumerErrorKind` — `NoSession` / `ClaimSpent` / `DriverRefusedTheMove` / `LeafFailure` | + `AlreadyAttached`, stamped at the core `already_attached()` constructor (public, shared with shells pre-checking `attach_admissible()`) |
+  | `ConsumerErrorKind` — `NoSession` / `ClaimSpent` / `DriverRefusedTheMove` / `LeafFailure` | + `AlreadyAttached`, stamped at the core `already_attached()` constructor (private; shells stamp no kind of their own) |
 
   | the Python slot's own `Fresh(_, Attached)` attach refusal (`RuntimeError`, "one session has one consumer") | deleted — the core's shared rule refuses it (`SessionConsumerError.kind == AlreadyAttached`) before the engine's hand-off is taken |
 

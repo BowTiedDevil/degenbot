@@ -206,12 +206,12 @@ class TestConsumerSlotTransitions:
     def test_a_second_attach_is_refused_and_keeps_the_hand_off(self):
         """One session has one consumer: a second attach is refused by the core.
 
-        The second-attach rule is the CORE's shared legality rule
-        (``attach_admissible``), and the classification is stamped at the core's
-        own refusal constructor — the seam reads ``AlreadyAttached`` and
-        re-classifies nothing. The refusal fires BEFORE the second engine's
-        hand-off is taken, so a refused attach destroys nothing: that engine's
-        stream is still claimable by a consumer of its own. The message is
+        The second-attach rule is the CORE's shared admission rule, ordered
+        BEFORE the hand-off acquisition: the engine's hand-off is never taken
+        for an attach that cannot proceed. The classification is stamped at the
+        core's own refusal constructor — the seam reads ``AlreadyAttached`` and
+        re-classifies nothing. The refusal raises the shared class itself (a
+        ``RuntimeError``), so no panic path reaches the caller. The message is
         prefix-free — no leaf ran.
         """
         executor = offline_executor(Dispatcher.for_block(12_345))
@@ -222,6 +222,9 @@ class TestConsumerSlotTransitions:
         with pytest.raises(SessionConsumerError, match="refuses replacement") as refusal:
             consumer.attach(second)
 
+        assert type(refusal.value) is SessionConsumerError, (
+            "the refusal raises the shared class — never a PanicException"
+        )
         assert refusal.value.kind == ConsumerErrorKind.AlreadyAttached, (
             "the classification is the core's own stamp, not the shell's"
         )
@@ -230,6 +233,8 @@ class TestConsumerSlotTransitions:
         )
         assert refusal.value.batch_index == 0
 
+        # The refusal took no hand-off: the second engine's stream is still
+        # claimable and attaches to a consumer of its own.
         SessionConsumer(executor, allow_quiet_end=True).attach(second)
 
     async def test_a_scripted_consumer_refuses_attach(self):

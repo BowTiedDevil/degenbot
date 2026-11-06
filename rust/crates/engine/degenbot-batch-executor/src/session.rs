@@ -386,7 +386,7 @@ pub struct SessionReport {
 /// another consumer.
 pub struct AttachRefusal {
     /// The refusal's own typed error ([`ConsumerErrorKind::AlreadyAttached`]),
-    /// stamped at [`already_attached`].
+    /// stamped at the core's `already_attached` constructor.
     pub error: ConsumerError,
     /// The hand-off the refused move did not install.
     pub handoff: EventHandoff,
@@ -400,6 +400,51 @@ impl std::fmt::Debug for AttachRefusal {
             .field("error", &self.error)
             .field("handoff", &self.handoff)
             .finish_non_exhaustive()
+    }
+}
+
+/// A transactional attach's failure: the typed error of the stage that failed
+/// — admission or acquisition — plus the driver the failed move did not
+/// install.
+///
+/// The stages fail DISTINCTLY: the admission refusal ([`Self::Refused`]) is the
+/// core's own `AlreadyAttached` stamp and never invokes the acquisition
+/// closure (handed back UN-invoked, so the hand-off source is untouched), while
+/// an acquisition failure ([`Self::Acquisition`]) carries the caller's own
+/// error through untouched — the core classifies only what it raises itself.
+/// Neither arm installs anything, and both hand the driver back.
+pub enum AttachFailure<E, A> {
+    /// Admission refused the attach BEFORE the acquisition ran.
+    Refused {
+        /// The refusal's own typed error
+        /// ([`ConsumerErrorKind::AlreadyAttached`]), stamped at the core's
+        /// `already_attached` constructor.
+        error: ConsumerError,
+        /// The driver the refused move did not install.
+        driver: Arc<EngineDriver>,
+        /// The acquisition closure, handed back UN-invoked.
+        acquire: A,
+    },
+    /// The acquisition ran and failed: nothing was installed.
+    Acquisition {
+        /// The caller's own acquisition error, passed through untouched.
+        error: E,
+        /// The driver the failed move did not install.
+        driver: Arc<EngineDriver>,
+    },
+}
+
+impl<E, A> std::fmt::Debug for AttachFailure<E, A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Refused { error, .. } => f
+                .debug_struct("AttachFailure::Refused")
+                .field("error", error)
+                .finish_non_exhaustive(),
+            Self::Acquisition { .. } => f
+                .debug_struct("AttachFailure::Acquisition")
+                .finish_non_exhaustive(),
+        }
     }
 }
 
@@ -467,7 +512,8 @@ impl SessionConsumer {
         }
     }
 
-    /// Attach the session's one hand-off and its driver.
+    /// Attach the session's one hand-off and its driver — the non-consuming
+    /// form, for a caller that already holds the hand-off.
     ///
     /// The hand-off's claim is moved into [`Self::resume`], so production cannot
     /// start without the attached-consumer proof the claim carries. One session
@@ -477,21 +523,93 @@ impl SessionConsumer {
     /// # Errors
     ///
     /// [`AttachRefusal`] ([`ConsumerErrorKind::AlreadyAttached`]) when a session
-    /// is already attached. A caller that takes a hand-off from somewhere else
-    /// checks [`Self::attach_admissible`] FIRST, so a refused attach leaves that
-    /// hand-off claimable where it was.
+    /// is already attached. A caller that must TAKE a hand-off from somewhere
+    /// else uses [`Self::attach_with`], which orders admission before the
+    /// taking.
     pub fn attach(
         &mut self,
         handoff: EventHandoff,
         driver: Arc<EngineDriver>,
     ) -> Result<(), AttachRefusal> {
-        if !self.attach_admissible() {
-            return Err(AttachRefusal {
-                error: already_attached(),
-                handoff,
+        // The direct form's hand-off is already in hand, so its acquisition is
+        // the trivial one; a refusal hands that acquisition back UN-invoked and
+        // this arm reclaims the hand-off from it — the refusal still returns
+        // the un-installed values and consumes nothing.
+        let acquire = || Ok::<_, std::convert::Infallible>(handoff);
+        match self.attach_inner(driver, acquire) {
+            Ok(()) => Ok(()),
+            Err(AttachFailure::Refused {
+                error,
                 driver,
+                acquire,
+            }) => {
+                let handoff = match acquire() {
+                    Ok(handoff) => handoff,
+                    Err(never) => match never {},
+                };
+                Err(AttachRefusal {
+                    error,
+                    handoff,
+                    driver,
+                })
+            }
+            Err(AttachFailure::Acquisition { error, .. }) => match error {},
+        }
+    }
+
+    /// Attach the session's one hand-off, acquired on demand — the
+    /// transactional form.
+    ///
+    /// Admission runs FIRST: `acquire` is invoked only when attachment can
+    /// proceed, so a refused attach never reaches the hand-off source — an
+    /// engine's hand-off stays claimable where it was. After acquisition,
+    /// installation cannot be refused: [`Self::attach_inner`] installs the
+    /// admitted pair unconditionally, and `&mut self` is held across `acquire`,
+    /// so the admission rule cannot change under the move.
+    ///
+    /// # Errors
+    ///
+    /// [`AttachFailure::Refused`] ([`ConsumerErrorKind::AlreadyAttached`]) when
+    /// a session is already attached — `acquire` is handed back UN-invoked — or
+    /// [`AttachFailure::Acquisition`] when `acquire` failed, its own error
+    /// passed through untouched and nothing installed. Both arms hand the
+    /// driver back.
+    pub fn attach_with<E, A>(
+        &mut self,
+        driver: Arc<EngineDriver>,
+        acquire: A,
+    ) -> Result<(), AttachFailure<E, A>>
+    where
+        A: FnOnce() -> Result<EventHandoff, E>,
+    {
+        self.attach_inner(driver, acquire)
+    }
+
+    /// The ONE admission + install implementation every attach form shares.
+    ///
+    /// Admission runs before the acquisition closure, and the closure runs
+    /// before installation — so the admission rule never refuses an
+    /// installation that already took a hand-off, and a refused attach never
+    /// touches the hand-off source.
+    fn attach_inner<E, A>(
+        &mut self,
+        driver: Arc<EngineDriver>,
+        acquire: A,
+    ) -> Result<(), AttachFailure<E, A>>
+    where
+        A: FnOnce() -> Result<EventHandoff, E>,
+    {
+        if !self.attach_admissible() {
+            return Err(AttachFailure::Refused {
+                error: already_attached(),
+                driver,
+                acquire,
             });
         }
+        let handoff = acquire().map_err(|error| AttachFailure::Acquisition {
+            error,
+            driver: Arc::clone(&driver),
+        })?;
         let (stream, claim) = handoff.split();
         self.session = Some(SessionHalf {
             stream,
@@ -501,14 +619,16 @@ impl SessionConsumer {
         Ok(())
     }
 
-    /// Whether [`Self::attach`] would admit a hand-off — the ONE attach
-    /// legality rule every consumer shares.
+    /// Whether an attach would admit a hand-off — the ONE attach legality rule
+    /// every attach form shares, checked by [`Self::attach_inner`] before the
+    /// hand-off is acquired.
     ///
     /// `true` while no session is attached (including after [`Self::run`]
     /// consumed one — attach-after-run is admitted); `false` while a session is
-    /// attached, where a second attach would replace it.
-    #[must_use]
-    pub fn attach_admissible(&self) -> bool {
+    /// attached, where a second attach would replace it. Private: a caller
+    /// that must not take a hand-off before admission uses
+    /// [`Self::attach_with`], which orders the check itself.
+    fn attach_admissible(&self) -> bool {
         self.session.is_none()
     }
 
@@ -758,12 +878,10 @@ fn unattached(method: &str) -> SessionFailure {
 
 /// A session move the consumer could not make: a session is already attached.
 ///
-/// The ONE [`ConsumerErrorKind::AlreadyAttached`] stamping site. Public
-/// because a shell that checks [`SessionConsumer::attach_admissible`] before
-/// taking a hand-off raises the same core-stamped refusal the authoritative
-/// [`SessionConsumer::attach`] returns — a shell stamps no kind of its own.
-#[must_use]
-pub fn already_attached() -> ConsumerError {
+/// The ONE [`ConsumerErrorKind::AlreadyAttached`] stamping site, raised by the
+/// admission check every attach form shares — a shell reads the classification
+/// the core recorded (a shell stamps no kind of its own).
+fn already_attached() -> ConsumerError {
     ConsumerError {
         kind: ConsumerErrorKind::AlreadyAttached,
         batch_index: 0,

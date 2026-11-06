@@ -316,8 +316,8 @@ class SessionConsumer:
 
         Production builds this shape and then moves the engine's hand-off into
         it with :meth:`attach`; the slot starts `Pending` (no stream has moved
-        in), and a second attach is the core's own refusal (the shared
-        `attach_admissible` rule) rather than a silent replacement.
+        in), and a second attach is the core's own refusal (the core's shared
+        admission rule) rather than a silent replacement.
         `allow_quiet_end` is the session's end
         policy:
         `False` for a supervised session, where a natural stream end means the
@@ -334,9 +334,10 @@ class SessionConsumer:
         the consumer's :meth:`resume` is the only way production starts. One
         session has one consumer: the slot guards its own lifecycle states (a
         scripted consumer, one with a move in flight, a spent one) and the
-        CORE's shared attach rule refuses a second attach — both checked BEFORE
-        the engine's hand-off is taken, so a refused attach destroys nothing:
-        the other engine's stream stays claimable.
+        CORE's shared admission rule refuses a second attach. The core's
+        transactional attach orders that admission BEFORE the engine's hand-off
+        is taken, so a refused attach destroys nothing: the other engine's
+        stream stays claimable.
 
         # Errors
 

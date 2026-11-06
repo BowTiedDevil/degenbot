@@ -795,11 +795,19 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
   AttachRefusal>`, and `AttachRefusal { error, handoff, driver }` hands the
   un-installed values back, so a refusal consumes nothing by construction — the
   refused hand-off and driver attach to another consumer unchanged, and the
-  first session keeps working. `attach_admissible()` shares the same rule
-  (a second attach refuses replacement) as a check a caller runs BEFORE taking
-  a hand-off from somewhere else, and `ConsumerErrorKind::AlreadyAttached` is
-  stamped at the core's `already_attached()` constructor — the ONE stamping
-  site, read (never re-stamped) by the shell. The Python `ConsumerSlot` keeps
+  first session keeps working. `attach_with(driver, acquire)` is the
+  transactional form for a caller that takes a hand-off from somewhere else:
+  admission is checked FIRST and the acquisition closure runs only when
+  attachment can proceed, so the shell's `engine.take_handoff()` cannot run for
+  an already-attached consumer and installation after acquisition has no
+  refusal path. Its `AttachFailure` keeps the stages distinct — `Refused`
+  (the core's `AlreadyAttached`, the closure returned UN-invoked) versus
+  `Acquisition` (the caller's own error, passed through untouched) — and
+  `ConsumerErrorKind::AlreadyAttached` is stamped at the core's
+  `already_attached()` constructor — the ONE stamping site, read (never
+  re-stamped) by the shell. `attach_admissible()` and `already_attached()` are
+  private admission internals: no shell-side pre-check survives, because the
+  core orders the check itself. The Python `ConsumerSlot` keeps
   exactly the lifecycle rules the core does not model — one in-flight move at a
   time, terminal `Spent`, and the scripted origin's attach refusal — and is
   therefore DELIBERATELY stricter than the core: the slot refuses

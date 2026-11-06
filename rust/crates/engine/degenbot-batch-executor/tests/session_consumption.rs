@@ -32,18 +32,20 @@
 //! gate observes the consumer, not itself.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::{Bytes, U256};
 use degenbot_arbitrage::{FeeOnTransferRegistry, PoolDivergence};
 use degenbot_batch_executor::session::{
-    ConsumerErrorKind, ConsumerPolicy, SessionClock, SessionConsumer, SessionProgress,
+    AttachFailure, ConsumerErrorKind, ConsumerPolicy, SessionClock, SessionConsumer,
+    SessionProgress,
 };
 use degenbot_batch_executor::{
     BatchExecutor, ExecutorConfig, ExecutorRuntime, PathResolver, SessionReport,
 };
-use degenbot_bot::arb_engine::EngineDriver;
 use degenbot_bot::arb_engine::{BlockNotification, Heartbeat, ResultBatch, SessionEvent};
+use degenbot_bot::arb_engine::{EngineDriver, EventHandoff};
 use degenbot_bot::bot_core::Bot;
 use degenbot_core::address_utils::parse_address;
 use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo};
@@ -660,17 +662,9 @@ async fn a_second_attach_refuses_replacement_and_consumes_nothing() {
         SessionClock::new(dispatcher()),
         ConsumerPolicy::new(true),
     );
-    assert!(
-        consumer.attach_admissible(),
-        "a fresh consumer admits the first hand-off"
-    );
     consumer
         .attach(handoff, Arc::clone(&driver))
         .expect("the first attach installs");
-    assert!(
-        !consumer.attach_admissible(),
-        "an attached consumer refuses a second hand-off"
-    );
 
     let refusal = consumer
         .attach(second_handoff, Arc::clone(&second_driver))
@@ -749,7 +743,6 @@ async fn the_attach_rule_leaves_the_unguarded_moves_alone() {
 
     // attach-after-run: the run consumed the first session, so a new hand-off
     // is admitted rather than refused as a replacement.
-    assert!(consumer.attach_admissible());
     let second_driver = Arc::new(EngineDriver::new(
         Arc::new(Bot::new(1)),
         degenbot_config::holder::config_arc(),
@@ -762,4 +755,140 @@ async fn the_attach_rule_leaves_the_unguarded_moves_alone() {
         .expect("attach-after-run is admitted");
     let report = run_until_closed(&mut consumer, &Arc::clone(&second_driver)).await;
     assert_eq!(report.consumer.end_of_stream, 1);
+}
+
+/// The transactional attach: admission runs BEFORE hand-off acquisition, so a
+/// refused second attach never invokes the acquisition closure — the original
+/// session stays usable and the refused side's hand-off source is untouched.
+#[tokio::test]
+async fn a_second_transactional_attach_refuses_without_invoking_acquisition() {
+    let driver = Arc::new(EngineDriver::new(
+        Arc::new(Bot::new(1)),
+        degenbot_config::holder::config_arc(),
+    ));
+    let handoff = driver.claim_consumer().expect("the session's one hand-off");
+    let second_driver = Arc::new(EngineDriver::new(
+        Arc::new(Bot::new(1)),
+        degenbot_config::holder::config_arc(),
+    ));
+    let second_handoff = second_driver
+        .claim_consumer()
+        .expect("the second session's one hand-off");
+
+    let mut consumer = SessionConsumer::new(
+        offline_executor().await,
+        SessionClock::new(dispatcher()),
+        ConsumerPolicy::new(true),
+    );
+    consumer
+        .attach_with(Arc::clone(&driver), || Ok::<_, ()>(handoff))
+        .expect("the first transactional attach installs");
+
+    // The second attach's acquisition would take the second session's hand-off
+    // from its source; a refused attach must never run it.
+    let source = Arc::new(std::sync::Mutex::new(Some(second_handoff)));
+    let invoked = Arc::new(AtomicBool::new(false));
+    let acquire = {
+        let source = Arc::clone(&source);
+        let invoked = Arc::clone(&invoked);
+        move || {
+            invoked.store(true, Ordering::SeqCst);
+            Ok::<_, ()>(source.lock().unwrap().take().unwrap())
+        }
+    };
+    let refusal = consumer
+        .attach_with(Arc::clone(&second_driver), acquire)
+        .expect_err("a second transactional attach refuses replacement");
+    let AttachFailure::Refused {
+        error,
+        driver: refused_driver,
+        acquire,
+    } = refusal
+    else {
+        panic!("the refusal is admission's own, before acquisition ever runs");
+    };
+    assert_eq!(error.kind, ConsumerErrorKind::AlreadyAttached);
+    assert_eq!(
+        error.detail,
+        "the session consumer already has an attached session; a second attach \
+         refuses replacement"
+    );
+    assert_eq!(error.batch_index, 0);
+    assert!(
+        !invoked.load(Ordering::SeqCst),
+        "a refused attach never invokes the acquisition closure"
+    );
+
+    // The closure comes back UN-invoked: running it by hand still takes the
+    // hand-off, so the source held it the whole time.
+    let recovered = acquire().expect("the returned closure still holds the hand-off");
+    assert!(
+        !refused_driver.is_stopped(),
+        "the refusal consumes nothing and closes nothing"
+    );
+
+    // The original session stays functional: its loop consumes its own stream
+    // to its typed end and closes its own driver.
+    let report = run_until_closed(&mut consumer, &Arc::clone(&driver)).await;
+    assert_eq!(report.consumer.end_of_stream, 1);
+    assert!(driver.is_stopped(), "the run closes its own session");
+
+    // The recovered hand-off runs under a consumer of its own unchanged.
+    let mut other = SessionConsumer::new(
+        offline_executor().await,
+        SessionClock::new(dispatcher()),
+        ConsumerPolicy::new(true),
+    );
+    other
+        .attach_with(Arc::clone(&second_driver), || Ok::<_, ()>(recovered))
+        .expect("the untouched hand-off attaches elsewhere");
+    let report = run_until_closed(&mut other, &Arc::clone(&second_driver)).await;
+    assert_eq!(report.consumer.end_of_stream, 1);
+    assert!(
+        second_driver.is_stopped(),
+        "the second session closed under its own consumer"
+    );
+}
+
+/// A failed acquisition installs nothing: the failure is the caller's own
+/// error, passed through untouched, and the same consumer admits a later
+/// hand-off.
+#[tokio::test]
+async fn an_acquisition_failure_installs_nothing_and_allows_a_later_attach() {
+    let driver = Arc::new(EngineDriver::new(
+        Arc::new(Bot::new(1)),
+        degenbot_config::holder::config_arc(),
+    ));
+    let handoff = driver.claim_consumer().expect("the session's one hand-off");
+
+    let mut consumer = SessionConsumer::new(
+        offline_executor().await,
+        SessionClock::new(dispatcher()),
+        ConsumerPolicy::new(true),
+    );
+    let failure = consumer
+        .attach_with(Arc::clone(&driver), || {
+            Err::<EventHandoff, _>("the engine's event stream is already claimed")
+        })
+        .expect_err("a failed acquisition installs nothing");
+    let AttachFailure::Acquisition { error, .. } = failure else {
+        panic!("the acquisition stage reports its own failure");
+    };
+    assert_eq!(error, "the engine's event stream is already claimed");
+
+    // Nothing was installed: the consumer still has no session to run.
+    let unattached = consumer
+        .run()
+        .await
+        .expect_err("the failed acquisition installed nothing");
+    assert_eq!(unattached.error.kind, ConsumerErrorKind::NoSession);
+    assert!(unattached.teardown.is_none());
+
+    // The consumer admits a later hand-off and runs it to its typed end.
+    consumer
+        .attach_with(Arc::clone(&driver), || Ok::<_, ()>(handoff))
+        .expect("a later attach succeeds after the failed acquisition");
+    let report = run_until_closed(&mut consumer, &Arc::clone(&driver)).await;
+    assert_eq!(report.consumer.end_of_stream, 1);
+    assert!(driver.is_stopped(), "the run closes its own session");
 }

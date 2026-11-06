@@ -30,7 +30,7 @@ use crate::simulation::batch::PyBatchExecutor;
 use crate::simulation::dispatch::payload_row_from_dict;
 use crate::submission::sim_pipeline::LEAF_FAILURE_PREFIX;
 use degenbot_batch_executor::session::{
-    already_attached, simulated_path, ConsumerErrorKind, ConsumerPolicy, ConsumerReport,
+    simulated_path, AttachFailure, ConsumerErrorKind, ConsumerPolicy, ConsumerReport,
     FeeHistoryPolicy, SessionClock, SessionConsumer, SessionProgress,
 };
 use degenbot_bot::arb_engine::{
@@ -431,8 +431,8 @@ impl PySessionConsumer {
     ///
     /// Production builds this shape and then moves the engine's hand-off into
     /// it with :meth:`attach`; the slot starts `Pending` (no stream has moved
-    /// in), and a second attach is the core's own refusal (the shared
-    /// `attach_admissible` rule) rather than a silent replacement.
+    /// in), and a second attach is the core's own refusal (the core's shared
+    /// admission rule) rather than a silent replacement.
     /// `allow_quiet_end` is the session's end
     /// policy:
     /// `False` for a supervised session, where a natural stream end means the
@@ -499,9 +499,10 @@ impl PySessionConsumer {
     /// the consumer's :meth:`resume` is the only way production starts. One
     /// session has one consumer: the slot guards its own lifecycle states (a
     /// scripted consumer, one with a move in flight, a spent one) and the
-    /// CORE's shared attach rule refuses a second attach — both checked BEFORE
-    /// the engine's hand-off is taken, so a refused attach destroys nothing:
-    /// the other engine's stream stays claimable.
+    /// CORE's shared admission rule refuses a second attach. The core's
+    /// transactional attach orders that admission BEFORE the engine's hand-off
+    /// is taken, so a refused attach destroys nothing: the other engine's
+    /// stream stays claimable.
     ///
     /// # Errors
     ///
@@ -524,33 +525,34 @@ impl PySessionConsumer {
         let ConsumerSlot::Fresh(consumer, origin) = &mut *slot else {
             unreachable!("the admission check just proved the slot fresh");
         };
-        // The core's ONE attach legality rule, checked BEFORE the engine's
-        // hand-off is taken. Its refusal is the core's own constructor — the
-        // shell stamps no kind — so the shared rule reaches Python with the
-        // classification the core recorded.
-        if !consumer.attach_admissible() {
-            let error = already_attached();
-            return Err(abort_error(
-                py,
-                Some(error.kind),
-                &error.detail,
-                error.batch_index,
-                ReportView::of(&error.report),
-            ));
-        }
-        let handoff = engine.take_handoff().ok_or_else(|| {
-            abort_error(
-                py,
-                None,
-                "the engine's event stream is already claimed; one consumer hand-off \
-                 per session",
-                0,
-                ReportView::default(),
-            )
-        })?;
-        let driver = engine.driver_arc();
-        if let Err(refusal) = consumer.attach(handoff, driver) {
-            unreachable!("attach_admissible() was checked under the slot lock: {refusal:?}");
+        // The core's transactional attach orders admission before the hand-off
+        // acquisition: `take_handoff` runs only when attachment can proceed,
+        // so it cannot run for an already-attached consumer and a refused
+        // attach takes nothing. Each failure stage keeps its own
+        // classification — the core's `AlreadyAttached` stamp (the shell
+        // re-classifies nothing) or the absent hand-off's own unclassified
+        // refusal — and installation after acquisition cannot be refused.
+        match consumer.attach_with(engine.driver_arc(), || engine.take_handoff().ok_or(())) {
+            Ok(()) => {}
+            Err(AttachFailure::Refused { error, .. }) => {
+                return Err(abort_error(
+                    py,
+                    Some(error.kind),
+                    &error.detail,
+                    error.batch_index,
+                    ReportView::of(&error.report),
+                ));
+            }
+            Err(AttachFailure::Acquisition { .. }) => {
+                return Err(abort_error(
+                    py,
+                    None,
+                    "the engine's event stream is already claimed; one consumer hand-off \
+                     per session",
+                    0,
+                    ReportView::default(),
+                ));
+            }
         }
         *origin = EventOrigin::Attached;
         Ok(())
