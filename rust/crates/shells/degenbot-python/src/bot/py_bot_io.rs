@@ -867,11 +867,16 @@ impl PyBotIo {
 
     /// Probe a pool's type by trying method calls in order.
     ///
-    /// Mirrors `type_resolution.py::resolve_pool_type_by_probing`: tries V3
-    /// (`slot0()`), then V2 (`getReserves()`), then Balancer (`getPoolId()` +
-    /// `getNormalizedWeights()` sub-probe). Returns a string tag identifying
-    /// which probe succeeded so the Python caller can construct a
-    /// `PoolTypeDescriptor` from the registry.
+    /// Mirrors `type_resolution.py::resolve_pool_type_by_probing`: positive
+    /// evidence first — Curve (`coins(0)`, either supported coin-getter
+    /// shape) — then raw selector presence: V3 (`slot0()`), V2
+    /// (`getReserves()`), Balancer (`getPoolId()` + `getNormalizedWeights()`
+    /// sub-probe). The typed Curve identity outranks the raw presence arms:
+    /// a non-reverting fallback answers those with empty returndata (the
+    /// artifact an EOA's `eth_call` produces), which must never preempt a
+    /// decodable Curve coin getter. Returns the code identifying which probe
+    /// succeeded so the Python caller can construct a `PoolTypeDescriptor`
+    /// from the registry.
     ///
     /// Returns the 1-based `u8` code of the
     /// ``degenbot.types.pool_type.PoolProbe`` member (the `curve_math`
@@ -880,7 +885,8 @@ impl PyBotIo {
     /// - `PoolProbe.V3` (2) — V3 concentrated-liquidity pool.
     /// - `PoolProbe.BALANCER_WEIGHTED` (3) — Balancer weighted pool.
     /// - `PoolProbe.BALANCER_STABLE` (4) — Balancer stable pool.
-    /// - `PoolProbe.STABLESWAP` (5) — Curve: `coins(uint256)` answered.
+    /// - `PoolProbe.STABLESWAP` (5) — Curve: a supported Curve coin getter
+    ///   answered (`coins(uint256)`, or the legacy `coins(int128)`).
     ///
     /// Keep the `match` below in lock-step with `PoolProbe`'s member order —
     /// a new `PoolFamily` variant fails this match to compile until its wire

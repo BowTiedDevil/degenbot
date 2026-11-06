@@ -287,7 +287,7 @@ class TestResolvePoolTypeByProbing:
         assert result.variant == "balancer_stable"
 
     def test_curve_probe_returns_stableswap(self) -> None:
-        """coins(uint256) answered (verified Curve tag) → STABLESWAP."""
+        """A supported Curve coin getter answered (verified Curve tag) → STABLESWAP."""
         io = FakePyBotIo(probe_result=PoolProbe.STABLESWAP)
         result = resolve_pool_type_by_probing(
             "0xPool",  # type: ignore[arg-type]
@@ -345,11 +345,12 @@ class TestResolvePoolType:
 
     def test_answers_generic_curve_when_factory_fails_and_no_db_entry(self) -> None:
         # Discovery-only identity (Curve exposes no factory(), no DB row, no
-        # Balancer membership) with its positive identity — `coins(uint256)`
-        # answered: the resolver answers the generic Curve descriptor rather
-        # than raising — the caller routes it through the ONE construction
-        # entry's Curve arm. An address with no positive identity is refused
-        # under the typed error instead (tested separately).
+        # Balancer membership) with its positive identity — a supported Curve
+        # coin getter answered (`coins(uint256)`, or the legacy `coins(int128)`
+        # of old registry deployments): the resolver answers the generic Curve
+        # descriptor rather than raising — the caller routes it through the ONE
+        # construction entry's Curve arm. An address with no positive identity
+        # is refused under the typed error instead (tested separately).
         io = FakePyBotIo(
             factory_address=None,
             pool_row=None,

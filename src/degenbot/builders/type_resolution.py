@@ -363,9 +363,13 @@ def resolve_pool_type_by_probing(
 ) -> PoolTypeDescriptor:
     """Determine pool type by probing the contract on-chain.
 
-    Tries V3 first (slot0), then V2 (getReserves), then Balancer
-    (getPoolId + getNormalizedWeights), then Curve (coins(uint256)). When
-    no probe answers, the Rust probe reports unknown identity; the seam
+    Positive evidence first: Curve (a supported `coins(0)` coin getter —
+    `coins(uint256)`, or the legacy `coins(int128)`) is the typed identity
+    read and outranks the raw presence chain that follows — V3 (slot0), V2
+    (getReserves), Balancer (getPoolId + getNormalizedWeights) — whose
+    non-revert answers carry the empty-returndata artifact a non-reverting
+    fallback (or an EOA) produces. When no probe answers, the Rust probe
+    reports unknown identity; the seam
     failures cross as the package's typed refusal (`DegenbotValueError`
     from :func:`_probe_identity`) — an unverified contract is not silently
     classified as Curve.
@@ -401,9 +405,9 @@ def resolve_pool_type_by_probing(
                 factory=factory,
             )
         case PoolProbe.STABLESWAP:
-            # Positive Curve identity: coins(uint256) answered. This is the
-            # generic Curve descriptor the old ``succeeded=None`` fallback
-            # produced; it deliberately bypasses the registry.
+            # Positive Curve identity: a supported Curve coin getter answered.
+            # This is the generic Curve descriptor the old ``succeeded=None``
+            # fallback produced; it deliberately bypasses the registry.
             return PoolTypeDescriptor(
                 family=PoolFamily.STABLESWAP,
                 variant=None,
@@ -431,9 +435,11 @@ def resolve_pool_type(
 
     A discovery-only pool (Curve exposes no `factory()`, no DB row, no
     Balancer membership) resolves to the generic Curve descriptor on its
-    positive identity — `coins(uint256)` answering. An address with no
-    positive identity is refused with `DegenbotValueError` — the typed
-    refusal for an undeterminable address, never a Curve guess.
+    positive identity — a supported Curve coin getter answering
+    (`coins(uint256)`, or the legacy `coins(int128)` of old registry
+    deployments). An address with no positive identity is refused with
+    `DegenbotValueError` — the typed refusal for an undeterminable address,
+    never a Curve guess.
 
     Returns:
         The computed value.
@@ -482,9 +488,10 @@ def resolve_pool_type(
 
     # Discovery-only identity: Curve pools expose no `factory()`, no DB `kind`,
     # and no Balancer factory membership, so nothing above can classify them.
-    # Curve identity is positive — `coins(uint256)` answering with a decodable
-    # address is what names a Curve pool — so the probe decides here too: the
-    # generic Curve descriptor is answered only on that positive identity, and
+    # Curve identity is positive — a supported Curve coin getter (`coins(uint256)`
+    # or the legacy `coins(int128)`) answering with a decodable address is what
+    # names a Curve pool — so the probe decides here too: the generic Curve
+    # descriptor is answered only on that positive identity, and
     # the caller routes it through the ONE core construction entry's generic
     # Curve arm like every other family (never a second path). An address with
     # no positive identity is the undeterminable case the public seam refuses

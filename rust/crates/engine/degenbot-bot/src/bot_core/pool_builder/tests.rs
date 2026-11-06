@@ -689,6 +689,78 @@ async fn probe_pool_type_dispatches() {
 }
 
 #[tokio::test]
+async fn probe_pool_type_typed_curve_identity_outranks_the_presence_artifact() {
+    // Mainnet Curve registry pool 39/49,
+    // 0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5, at the pinned registry
+    // sweep block: a non-reverting fallback answers `slot0()` /
+    // `getReserves()` / `getPoolId()` with empty returndata (the same artifact
+    // an EOA's `eth_call` produces), while `coins(uint256)` answers with a
+    // decodable address. The typed Curve identity names the pool — the raw
+    // presence artifact must never preempt it.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"slot0()"), vec![]);
+    f.set(abi::selector(b"getReserves()"), vec![]);
+    f.set(abi::selector(b"getPoolId()"), vec![]);
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(SV),
+    );
+    assert_eq!(
+        builder::probe_pool_type(&io_with(f), TO, None)
+            .await
+            .unwrap(),
+        builder::PoolFamily::Curve
+    );
+}
+
+#[tokio::test]
+async fn probe_pool_type_accepts_the_legacy_int128_curve_shape() {
+    // A legacy Curve registry pool exposes only `coins(int128)` — the other
+    // supported coin-getter shape (`curve_choreography::CurvePrototype`);
+    // `coins(uint256)` reverts on it (mainnet Curve registry pool 4/49,
+    // 0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27 at block 26204126). The
+    // legacy shape is positive Curve identity: it resolves as Curve, never
+    // into the unknown-identity refusal that broke that pool's construction.
+    let mut f = FakeRpc::new();
+    f.set_full(
+        abi::ICurvePoolInt128::coinsCall { i: 0i128 }.abi_encode(),
+        addr_word(SV),
+    );
+    assert_eq!(
+        builder::probe_pool_type(&io_with(f), TO, None)
+            .await
+            .unwrap(),
+        builder::PoolFamily::Curve
+    );
+
+    // A garbage answer from the legacy getter is not identity either.
+    let mut f = FakeRpc::new();
+    f.set_full(
+        abi::ICurvePoolInt128::coinsCall { i: 0i128 }.abi_encode(),
+        vec![0u8; 1],
+    );
+    assert!(matches!(
+        builder::probe_pool_type(&io_with(f), TO, None).await,
+        Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
+    ));
+
+    // A transport fault on the legacy leg is not absence: it propagates.
+    let mut f = FakeRpc::new();
+    f.set_error(
+        abi::selector(b"coins(int128)"),
+        ProviderError::ConnectionFailed {
+            message: "rpc down".into(),
+        },
+    );
+    match builder::probe_pool_type(&io_with(f), TO, None).await {
+        Err(builder::PoolBuilderError::Rpc(ProviderError::ConnectionFailed { message })) => {
+            assert_eq!(message, "rpc down");
+        }
+        other => panic!("expected ConnectionFailed, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn probe_pool_type_propagates_transport_failure() {
     // A probe that fails with a transport/RPC error is NOT an absent selector:
     // it must surface, never degrade the pool to Curve.

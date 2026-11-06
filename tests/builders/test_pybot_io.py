@@ -228,23 +228,32 @@ def _probe_offline_provider(
     succeed: set[str],
     *,
     coins_answers: bool = False,
+    coins_int128_answers: bool = False,
+    raw_presence_empty: bool = False,
 ) -> RustAlloyProvider:
     """An `OfflineProvider` cassette modelling a probe contract.
 
     Every identity selector is recorded explicitly: a `None` value (the
     recorded-revert shape, mirroring a live selector-absent revert) unless it
-    is named in `succeed`. `coins(0)` needs its index word in the calldata, so
-    it is keyed by full calldata and recorded as a revert unless
-    `coins_answers`. No Python double (O3).
+    is named in `succeed`. Both `coins(0)` getter shapes need their index word
+    in the calldata, so each is keyed by full calldata and recorded as a revert
+    unless its `*_answers` flag is set. No Python double (O3).
     """
     import json
 
     pool_addr = "aa" * 20
+    # `raw_presence_empty` records the non-reverting-fallback shape: the raw
+    # presence probes "answer" with empty returndata (the same artifact an
+    # EOA's `eth_call` produces).
+    empty: str = "" if raw_presence_empty else "00" * 32
     calls: dict[str, str | None] = {f"0x{pool_addr}:0x{sel}": None for sel in _PROBE_SELECTORS}
     for sel in succeed:
-        calls[f"0x{pool_addr}:0x{sel}"] = "00" * 32
+        calls[f"0x{pool_addr}:0x{sel}"] = empty
     calls[f"0x{pool_addr}:0x{_COINS_UINT_CALLDATA}"] = (
         "00" * 12 + "11" * 20 if coins_answers else None
+    )
+    calls[f"0x{pool_addr}:0x{_COINS_INT128_CALLDATA}"] = (
+        "00" * 12 + "22" * 20 if coins_int128_answers else None
     )
     return RustAlloyProvider.offline_from_json_string(
         json.dumps({
@@ -265,6 +274,9 @@ _GET_NORMALIZED_WEIGHTS = function_selector("getNormalizedWeights()").hex()
 _PROBE_SELECTORS = (_SLOT0, _GET_RESERVES, _GET_POOL_ID, _GET_NORMALIZED_WEIGHTS)
 # coins(uint256) with index 0 — the ABI decoder rejects a bare selector.
 _COINS_UINT_CALLDATA = (function_selector("coins(uint256)") + (0).to_bytes(32, "big")).hex()
+# coins(int128) with index 0 — the legacy coin-getter shape old registry pools
+# expose instead of `coins(uint256)`.
+_COINS_INT128_CALLDATA = (function_selector("coins(int128)") + (0).to_bytes(32, "big")).hex()
 
 
 def test_pybot_io_probe_pool_type_returns_slot0_for_v3():
@@ -301,6 +313,41 @@ def test_pybot_io_probe_pool_type_raises_for_unknown_identity():
 def test_pybot_io_probe_pool_type_returns_stableswap_when_coins_answers():
     """coins(uint256) answering with an address → the positive Curve tag."""
     io = BotIo(provider=_probe_offline_provider(set(), coins_answers=True))
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
+
+
+def test_pybot_io_probe_pool_type_returns_stableswap_for_the_legacy_int128_shape():
+    """The legacy Curve shape (`coins(int128)` only) is positive Curve identity.
+
+    Chain shape: mainnet Curve registry pool 4/49
+    0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27 at the registry sweep pin
+    (``tests/sweep_pin.py``) reverts on `coins(uint256)` and answers
+    `coins(int128)`. Both coin-getter shapes are
+    the supported Curve interface, so the probe answers STABLESWAP here —
+    never the unknown-identity refusal that would break this pool's
+    construction.
+    """
+    io = BotIo(provider=_probe_offline_provider(set(), coins_int128_answers=True))
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
+
+
+def test_pybot_io_probe_pool_type_curve_identity_outranks_the_presence_artifact():
+    """Typed Curve evidence outranks the raw-presence artifact.
+
+    Chain shape: mainnet Curve registry pool 39/49
+    0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5 — a non-reverting fallback
+    answers `slot0()` / `getReserves()` / `getPoolId()` with empty returndata
+    (the same artifact an EOA's `eth_call` produces) while `coins(uint256)`
+    answers with a decodable address. The typed Curve identity names the pool:
+    the probe answers STABLESWAP, never an artifact family.
+    """
+    io = BotIo(
+        provider=_probe_offline_provider(
+            {_SLOT0, _GET_RESERVES, _GET_POOL_ID},
+            coins_answers=True,
+            raw_presence_empty=True,
+        )
+    )
     assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
 
 

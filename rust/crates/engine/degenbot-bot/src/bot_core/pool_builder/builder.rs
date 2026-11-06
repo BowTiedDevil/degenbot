@@ -42,8 +42,8 @@ use degenbot_pools::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
 use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_rpc::abi::{
     self, BalancerPoolId, ContractRead, IAerodromeFactory, IBalancerPool, IBalancerPoolFactory,
-    IBalancerVault, ICurvePool, IPoolIdentity, IUniswapV2Pair, IUniswapV3Pool, IUniswapV4StateView,
-    Slot0Prefix, V2Reserves, V4Slot0,
+    IBalancerVault, ICurvePool, ICurvePoolInt128, IPoolIdentity, IUniswapV2Pair, IUniswapV3Pool,
+    IUniswapV4StateView, Slot0Prefix, V2Reserves, V4Slot0,
 };
 use degenbot_rpc::erc20;
 use degenbot_rpc::tick_bootstrap::{fetch_tick_word_via, UnreadableBitmapPolicy};
@@ -505,14 +505,22 @@ pub async fn fetch_aerodrome_stable_and_fee(
     Ok(AerodromeV2Common { stable, fee_bps })
 }
 
-/// Probe a pool contract to identify its family via the canonical read-call
-/// probe order (mirrors `type_resolution.py::probe_pool_type`):
+/// Probe a pool contract to identify its family by positive evidence first,
+/// then raw selector presence (mirrors `type_resolution.py::resolve_pool_type`):
+/// `coins(0)` (either supported Curve coin-getter shape) → Curve, then
 /// `slot0()` → V3, `getReserves()` → V2, `getPoolId()` → Balancer (weighted vs
-/// stable by `getNormalizedWeights()`), `coins(0)` → Curve.
+/// stable by `getNormalizedWeights()`).
+///
+/// The precedence is the evidence quality: the Curve leg is the only *typed*
+/// identity read (a decodable address answer is positive evidence), while the
+/// raw presence arms only see whether the call reverted. A non-reverting
+/// fallback answers those arms with empty returndata — the same artifact an
+/// EOA's `eth_call` produces — and must never preempt positive evidence: a
+/// Curve pool whose fallback answers `slot0()` with nothing is a Curve pool.
 ///
 /// An EVM revert means the selector is absent: the next probe runs. When no
-/// probe answers — every selector reverts, or `coins(0)` returns an
-/// undecodable word — the contract has no recognized identity and this
+/// probe answers — every selector reverts, or neither `coins(0)` shape
+/// returns a decodable address — the contract has no recognized identity and this
 /// returns [`PoolBuilderError::UnknownPoolIdentity`], never
 /// [`PoolFamily::Curve`]: an unverified contract is not a Curve pool. A
 /// provider failure that is NOT a revert (transport, timeout, rate limit,
@@ -529,7 +537,9 @@ pub async fn probe_pool_type(
     address: Address,
     block: Option<u64>,
 ) -> Result<PoolFamily, PoolBuilderError> {
-    if probe_present(
+    if probe_curve(io, address, block).await? {
+        Ok(PoolFamily::Curve)
+    } else if probe_present(
         io,
         address,
         IUniswapV3Pool::slot0Call {}.abi_encode(),
@@ -569,8 +579,6 @@ pub async fn probe_pool_type(
                 PoolFamily::BalancerStable
             },
         )
-    } else if probe_curve(io, address, block).await? {
-        Ok(PoolFamily::Curve)
     } else {
         Err(PoolBuilderError::UnknownPoolIdentity { address })
     }
@@ -592,14 +600,23 @@ async fn probe_present(
     }
 }
 
-/// `true` when `coins(0)` answers with a decodable address.
+/// `true` when a supported Curve coin getter answers `coins(0)` with a
+/// decodable address.
 ///
-/// `coins(uint256)` is exposed by every supported Curve family
-/// (stable/metapools/two/tricrypto) — it is the positive identity signal. A
-/// revert means the selector is absent and an answer that does not decode as
-/// an address means the call site is not a Curve coin getter: both are "not
-/// Curve". A provider failure that is neither a revert nor a decode failure
-/// propagates.
+/// The supported Curve interface carries two coin-getter shapes (the
+/// `curve_choreography::CurvePrototype` dual the construction choreography
+/// already builds against): `coins(uint256)`, and the legacy `coins(int128)`
+/// of the old registry deployments — which is the *only* coin getter some of
+/// them expose (mainnet Curve registry pool 4/49,
+/// `0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27`, reverts on `coins(uint256)`).
+/// Either answering is positive Curve identity, so the uint shape is tried
+/// first and the legacy shape is the fallback on its absence.
+///
+/// Per shape, a revert means the selector is absent and an answer that does
+/// not decode as an address means the call site is not a Curve coin getter:
+/// both are "not Curve". A provider failure that is neither a revert nor a
+/// decode failure propagates — the fallback runs only on the first shape's
+/// absence, never around an RPC fault.
 ///
 /// The typed read owns the ABI decode, so the garbage-return case arrives as
 /// [`ProviderError::DecodingError`] instead of as bytes; an undecodable answer
@@ -618,7 +635,18 @@ async fn probe_curve(
     {
         Ok(_) => Ok(true),
         Err(ProviderError::ExecutionReverted { .. } | ProviderError::DecodingError { .. }) => {
-            Ok(false)
+            // The uint shape is absent: the legacy shape decides before the
+            // identity is refused as unknown.
+            match read
+                .read(address, ICurvePoolInt128::coinsCall { i: 0i128 }, block)
+                .await
+            {
+                Ok(_) => Ok(true),
+                Err(
+                    ProviderError::ExecutionReverted { .. } | ProviderError::DecodingError { .. },
+                ) => Ok(false),
+                Err(e) => Err(e),
+            }
         }
         Err(e) => Err(e),
     }
