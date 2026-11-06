@@ -9,9 +9,11 @@ All notable changes to the Rust workspace crates are recorded here.
 - **One ERC-20 metadata read: `degenbot_rpc::erc20`.** `name()` / `symbol()` /
   `decimals()` now have a single chain-read home over the `ContractRead` seam:
   `read` (one token, with a `FieldMask` for Pool construction's partial
-  fallback reads) and `read_batch` (ordered Multicall3 reads), under a closed
-  `MetadataShape` — `LowerOnly` (lower spelling, ABI-value decode,
-  short-circuiting sequential form), `LowerUpperFallThrough` (both spellings,
+  fallback reads) and `read_batch` (ordered Multicall3 reads for the two
+  eager shapes; `LowerUpperFallThrough` degrades directly to per-token
+  `read` calls), under a closed `MetadataShape` — `LowerOnly` (lower
+  spelling, ABI-value decode, short-circuiting sequential form),
+  `LowerUpperFallThrough` (both spellings,
   any failure falls through, `bytes32` string answers with NULs trimmed,
   `u8`-width decimals), and `LowerUpperStopOnCallError` (both spellings, a
   call failure ends the field, strict dynamic-string decode with the

@@ -4,11 +4,13 @@
 //! Two consumers read token metadata with genuinely different tolerances, and
 //! each used to carry its own selector/decode/fallback family. This module is
 //! that family's one home: [`read`] answers one token, [`read_batch`] folds an
-//! ordered token list into Multicall3 wire shapes, and the closed
-//! [`MetadataShape`] names which fallback contract each caller's request set
-//! and decode dialect must keep. The variants are ports of established
-//! consumer behavior, not a knob matrix — a quirk documented on a variant is
-//! the contract, not an accident:
+//! ordered token list into one of the production batch contracts (eager
+//! Multicall3 wire shapes — or, for the shape with no eager request set, the
+//! exact per-token [`read`] sequence), and the closed [`MetadataShape`] names
+//! which fallback contract each caller's request set and decode dialect must
+//! keep. The variants are ports of established consumer behavior, not a
+//! knob matrix — a quirk documented on a variant is the contract, not an
+//! accident:
 //!
 //! - [`MetadataShape::LowerOnly`] — the lower spelling only, decoded strictly
 //!   as ABI values (no `bytes32` answers), and the sequential form
@@ -20,7 +22,9 @@
 //!   a `string` answer may come back as a NUL-padded `bytes32` (NULs trimmed
 //!   from both ends — an all-NUL answer is an empty string, present not
 //!   absent), and a `decimals()` answer is only accepted at `u8` width, so an
-//!   out-of-width word falls through too.
+//!   out-of-width word falls through too. The batched form carries no eager
+//!   request set: [`read_batch`] issues exactly this sequential walk, one
+//!   token at a time.
 //! - [`MetadataShape::LowerUpperStopOnCallError`] — both spellings, but a
 //!   failed call ends the field without consulting the fallback spelling;
 //!   only a succeeded-but-undecodable return falls through. The `string`
@@ -130,19 +134,25 @@ pub async fn read(
     meta
 }
 
-/// Read many tokens' metadata in ordered Multicall3 wire shapes — one
-/// `aggregate3` call carrying every spelling of every field, eager — with one
-/// [`TokenMetadata`] per input address, in input order.
+/// Read many tokens' metadata in ordered wire shapes with one
+/// [`TokenMetadata`] per input address, in input order — under one of two
+/// production batch contracts:
 ///
-/// Because the request set always carries the fallback spellings, the
-/// per-field decisions (identical to [`read`]'s) may never consult some of
-/// them; a recorder sees the batched shape whole. When the batch itself
-/// cannot answer, the shape's own degradation applies:
-/// [`MetadataShape::LowerOnly`] / [`MetadataShape::LowerUpperFallThrough`]
-/// degrade to per-token [`read`] calls (the exact pre-batch request shape);
-/// [`MetadataShape::LowerUpperStopOnCallError`] degrades to sequential
-/// per-sub-call `eth_call`s through [`multicall3_batch`], keeping the whole
-/// eager request set.
+/// - [`MetadataShape::LowerOnly`] / [`MetadataShape::LowerUpperStopOnCallError`]
+///   are eager: one `aggregate3` carrying every spelling of every field.
+///   Because the request set always carries the fallback spellings, the
+///   per-field decisions (identical to [`read`]'s) may never consult some of
+///   them; a recorder sees the batched shape whole. When the eager batch
+///   itself cannot answer, the shape's own degradation applies:
+///   [`MetadataShape::LowerOnly`] degrades to per-token [`read`] calls (the
+///   exact pre-batch request shape);
+///   [`MetadataShape::LowerUpperStopOnCallError`] degrades to sequential
+///   per-sub-call `eth_call`s through [`multicall3_batch`], keeping the whole
+///   eager request set.
+///
+/// - [`MetadataShape::LowerUpperFallThrough`] has no eager request set: its
+///   batched form is exactly the per-token [`read`] sequence (fallback legs
+///   and per-field degradation included), issued token by token.
 ///
 /// No failure escapes: a failed batch or sub-call is per-field absence under
 /// the same per-field rules as [`read`].
@@ -155,12 +165,13 @@ pub async fn read_batch(
     if tokens.is_empty() {
         return Vec::new();
     }
-    let calls: Vec<(Address, Bytes)> = tokens
-        .iter()
-        .flat_map(|token| sub_calls(*token, shape))
-        .collect();
     match shape {
-        MetadataShape::LowerOnly | MetadataShape::LowerUpperFallThrough => {
+        MetadataShape::LowerUpperFallThrough => read_each(transport, tokens, shape, block).await,
+        MetadataShape::LowerOnly => {
+            let calls: Vec<(Address, Bytes)> = tokens
+                .iter()
+                .flat_map(|token| sub_calls(*token, &[b"name()", b"symbol()", b"decimals()"]))
+                .collect();
             // ONE `aggregate3` for the whole list (the construction batch's
             // wire shape — no chunking), consumed only if BOTH the call and
             // the return decode cleanly; otherwise the pre-batch per-token
@@ -172,15 +183,27 @@ pub async fn read_batch(
             }
             .await;
             let Ok(results) = batch else {
-                let mut out = Vec::with_capacity(tokens.len());
-                for token in tokens {
-                    out.push(read(transport, *token, shape, FieldMask::ALL, block).await);
-                }
-                return out;
+                return read_each(transport, tokens, shape, block).await;
             };
-            decode_batch_results(shape, tokens.len(), &results)
+            decode_lower_only_batch(&results)
         }
         MetadataShape::LowerUpperStopOnCallError => {
+            let calls: Vec<(Address, Bytes)> = tokens
+                .iter()
+                .flat_map(|token| {
+                    sub_calls(
+                        *token,
+                        &[
+                            b"name()",
+                            b"NAME()",
+                            b"symbol()",
+                            b"SYMBOL()",
+                            b"decimals()",
+                            b"DECIMALS()",
+                        ],
+                    )
+                })
+                .collect();
             // `multicall3_batch` degrades a failed/malformed batch to
             // sequential per-call `eth_call`s mapped to per-item `success`
             // flags; an `Err` can only mean its own encode step failed
@@ -196,9 +219,25 @@ pub async fn read_batch(
                     })
                     .collect(),
             };
-            decode_batch_results(shape, tokens.len(), &results)
+            decode_stop_on_call_error_batch(&results)
         }
     }
+}
+
+/// Per-token [`read`] calls in input order: the exact pre-batch request
+/// sequence — the batched form of a shape with no eager request set, and the
+/// lower-only shape's fallback when its `aggregate3` cannot answer.
+async fn read_each(
+    transport: &impl ContractRead,
+    tokens: &[Address],
+    shape: MetadataShape,
+    block: Option<u64>,
+) -> Vec<TokenMetadata> {
+    let mut out = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        out.push(read(transport, *token, shape, FieldMask::ALL, block).await);
+    }
+    out
 }
 
 /// Decode one name/symbol-shaped `eth_call` return: the strict ABI dynamic
@@ -389,67 +428,47 @@ async fn call_getter(
         .await
 }
 
-/// The sub-call sequence one token contributes to a batch: every field's
-/// spellings in field order — the lower-only shape issues just the lower
-/// spellings, the fallback shapes carry both (eager).
-fn sub_calls(token: Address, shape: MetadataShape) -> Vec<(Address, Bytes)> {
-    let sigs: &[&[u8]] = match shape {
-        MetadataShape::LowerOnly => &[b"name()", b"symbol()", b"decimals()"],
-        MetadataShape::LowerUpperFallThrough | MetadataShape::LowerUpperStopOnCallError => &[
-            b"name()",
-            b"NAME()",
-            b"symbol()",
-            b"SYMBOL()",
-            b"decimals()",
-            b"DECIMALS()",
-        ],
-    };
+/// The sub-call sequence one token contributes to an eager batch: the
+/// request set's spellings in field order.
+fn sub_calls(token: Address, sigs: &[&[u8]]) -> Vec<(Address, Bytes)> {
     sigs.iter()
         .map(|sig| (token, Bytes::copy_from_slice(&selector(sig))))
         .collect()
 }
+/// Fold one eager lower-only batch's sub-call results into per-token
+/// [`TokenMetadata`]s — one whole token's request-set chunk each, in input
+/// order (the strict batch decode refuses any other result count) — under
+/// the per-field rule: a failed sub-call is absence, a decoded answer is the
+/// value.
+fn decode_lower_only_batch(results: &[MulticallResult]) -> Vec<TokenMetadata> {
+    results
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|chunk| TokenMetadata {
+            name: single_text(&chunk[0], decode_text_declared),
+            symbol: single_text(&chunk[1], decode_text_declared),
+            decimals: single_uint(&chunk[2], decode_uint_declared),
+        })
+        .collect()
+}
 
-/// Fold one batch's sub-call results into per-token [`TokenMetadata`]s under
-/// `shape`'s per-field decision — the exact sequential order (which failure
-/// ends the field, and when the fallback spelling is consulted, is the
-/// shape's contract). The callers carry exactly one whole token's eager
-/// request set per chunk (the strict batch decode refuses any other result
-/// count), so every chunk folds to exactly one [`TokenMetadata`].
-fn decode_batch_results(
-    shape: MetadataShape,
-    token_count: usize,
-    results: &[MulticallResult],
-) -> Vec<TokenMetadata> {
-    let per_token = match shape {
-        MetadataShape::LowerOnly => 3,
-        MetadataShape::LowerUpperFallThrough | MetadataShape::LowerUpperStopOnCallError => 6,
-    };
-    let mut out = Vec::with_capacity(token_count);
-    for chunk in results.chunks_exact(per_token) {
-        let (name, symbol, decimals) = match shape {
-            MetadataShape::LowerOnly => (
-                single_text(&chunk[0], decode_text_declared),
-                single_text(&chunk[1], decode_text_declared),
-                single_uint(&chunk[2], decode_uint_declared),
-            ),
-            MetadataShape::LowerUpperFallThrough => (
-                fall_through_text(&chunk[0], &chunk[1]),
-                fall_through_text(&chunk[2], &chunk[3]),
-                fall_through_uint(&chunk[4], &chunk[5]),
-            ),
-            MetadataShape::LowerUpperStopOnCallError => (
-                stop_on_call_error_text(&chunk[0], &chunk[1]),
-                stop_on_call_error_text(&chunk[2], &chunk[3]),
-                stop_on_call_error_uint(&chunk[4], &chunk[5]),
-            ),
-        };
-        out.push(TokenMetadata {
-            name,
-            symbol,
-            decimals,
-        });
-    }
-    out
+/// Fold one eager stop-on-call-error batch's sub-call results into per-token
+/// [`TokenMetadata`]s — one whole token's request-set chunk each, in input
+/// order — under the shape's per-field decision, the exact sequential order
+/// (which failure ends the field, and when the fallback spelling is
+/// consulted, is the shape's contract).
+fn decode_stop_on_call_error_batch(results: &[MulticallResult]) -> Vec<TokenMetadata> {
+    results
+        .as_chunks::<6>()
+        .0
+        .iter()
+        .map(|chunk| TokenMetadata {
+            name: stop_on_call_error_text(&chunk[0], &chunk[1]),
+            symbol: stop_on_call_error_text(&chunk[2], &chunk[3]),
+            decimals: stop_on_call_error_uint(&chunk[4], &chunk[5]),
+        })
+        .collect()
 }
 
 /// One eager sub-call's answer under the lower-only rule: a failed sub-call
@@ -469,28 +488,6 @@ fn single_uint(res: &MulticallResult, decode: fn(&[u8]) -> Option<u64>) -> Optio
     } else {
         None
     }
-}
-
-/// The fall-through pair decision: the first spelling whose sub-call
-/// succeeded AND decodes wins — a failed sub-call falls through exactly like
-/// the sequential shape's call error.
-fn fall_through_text(lower: &MulticallResult, upper: &MulticallResult) -> Option<String> {
-    for res in [lower, upper] {
-        if let Some(value) = single_text(res, decode_text_or_bytes32) {
-            return Some(value);
-        }
-    }
-    None
-}
-
-/// [`fall_through_text`]'s decimals twin (the `u8`-width decode included).
-fn fall_through_uint(lower: &MulticallResult, upper: &MulticallResult) -> Option<u64> {
-    for res in [lower, upper] {
-        if let Some(value) = single_uint(res, decode_uint_word_u8) {
-            return Some(value);
-        }
-    }
-    None
 }
 
 /// The stop-on-call-error pair decision — the exact sequential order: a
@@ -1169,73 +1166,65 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_batch_fall_through_folds_six_sub_calls_and_falls_per_spelling() {
+    async fn read_batch_fall_through_is_the_exact_per_token_request_sequence() {
+        // This shape has no eager batch request: the batched form is exactly
+        // the pre-batch per-token sequence. Fallback legs and malformed-result
+        // degradation ride along unchanged (a reverting name() falls to NAME(),
+        // an unshaped symbol() return falls to SYMBOL()'s bytes32, an
+        // out-of-width decimals() word falls to DECIMALS(), a field whose
+        // spellings all answer malformed is absent), and a resolved field
+        // stops at its lower spelling.
         let chain = Chain::new()
-            .answer(TOKEN_A, b"name()", str_ret("Alpha"))
-            .fail(TOKEN_A, b"symbol()", revert())
-            .answer(TOKEN_A, b"SYMBOL()", str_ret("ALPHA"))
+            .fail(TOKEN_A, b"name()", revert())
+            .answer(TOKEN_A, b"NAME()", str_ret("Alpha"))
+            .answer(TOKEN_A, b"symbol()", vec![0u8; 16])
+            .answer(TOKEN_A, b"SYMBOL()", bytes32_ret("ALPHA"))
             .answer(TOKEN_A, b"decimals()", word_ret(300))
-            .answer(TOKEN_A, b"DECIMALS()", word_ret(6));
+            .answer(TOKEN_A, b"DECIMALS()", word_ret(6))
+            .answer(TOKEN_B, b"name()", vec![0u8; 16])
+            .answer(TOKEN_B, b"NAME()", vec![0u8; 16])
+            .answer(TOKEN_B, b"symbol()", str_ret("BETA"))
+            .answer(TOKEN_B, b"decimals()", word_ret(18));
+
         let metas = read_batch(
             &chain,
-            &[TOKEN_A],
+            &[TOKEN_A, TOKEN_B],
             MetadataShape::LowerUpperFallThrough,
             PIN,
         )
         .await;
-        assert_eq!(
-            metas[0],
-            TokenMetadata {
-                name: Some("Alpha".into()),
-                symbol: Some("ALPHA".into()),
-                decimals: Some(6),
-            }
-        );
-        assert_eq!(
-            wire(&chain),
-            vec![(MULTICALL3_ADDRESS, AGGREGATE3_SELECTOR, PIN)]
-        );
-        assert_eq!(
-            subs(&chain),
-            vec![
-                (TOKEN_A, selector(b"name()")),
-                (TOKEN_A, selector(b"NAME()")),
-                (TOKEN_A, selector(b"symbol()")),
-                (TOKEN_A, selector(b"SYMBOL()")),
-                (TOKEN_A, selector(b"decimals()")),
-                (TOKEN_A, selector(b"DECIMALS()")),
-            ]
-        );
-    }
 
-    #[tokio::test]
-    async fn read_batch_fall_through_degrades_to_per_token_sequential_reads() {
-        let chain = Chain::new()
-            .failing_batch()
-            .fail(TOKEN_A, b"name()", revert())
-            .answer(TOKEN_A, b"NAME()", str_ret("Alpha"));
-        let metas = read_batch(
-            &chain,
-            &[TOKEN_A],
-            MetadataShape::LowerUpperFallThrough,
-            None,
-        )
-        .await;
-        assert_eq!(metas[0].name.as_deref(), Some("Alpha"));
-        // The degraded per-token read is the exact sequential fall-through
-        // shape: name() -> NAME(), then the absent fields' own walks.
+        assert_eq!(
+            metas,
+            vec![
+                TokenMetadata {
+                    name: Some("Alpha".into()),
+                    symbol: Some("ALPHA".into()),
+                    decimals: Some(6),
+                },
+                TokenMetadata {
+                    name: None,
+                    symbol: Some("BETA".into()),
+                    decimals: Some(18),
+                },
+            ]
+        );
         assert_eq!(
             wire(&chain),
             vec![
-                (MULTICALL3_ADDRESS, AGGREGATE3_SELECTOR, None),
-                (TOKEN_A, selector(b"name()"), None),
-                (TOKEN_A, selector(b"NAME()"), None),
-                (TOKEN_A, selector(b"symbol()"), None),
-                (TOKEN_A, selector(b"SYMBOL()"), None),
-                (TOKEN_A, selector(b"decimals()"), None),
-                (TOKEN_A, selector(b"DECIMALS()"), None),
+                (TOKEN_A, selector(b"name()"), PIN),
+                (TOKEN_A, selector(b"NAME()"), PIN),
+                (TOKEN_A, selector(b"symbol()"), PIN),
+                (TOKEN_A, selector(b"SYMBOL()"), PIN),
+                (TOKEN_A, selector(b"decimals()"), PIN),
+                (TOKEN_A, selector(b"DECIMALS()"), PIN),
+                (TOKEN_B, selector(b"name()"), PIN),
+                (TOKEN_B, selector(b"NAME()"), PIN),
+                (TOKEN_B, selector(b"symbol()"), PIN),
+                (TOKEN_B, selector(b"decimals()"), PIN),
             ]
         );
+        assert!(subs(&chain).is_empty());
     }
 
     #[tokio::test]
