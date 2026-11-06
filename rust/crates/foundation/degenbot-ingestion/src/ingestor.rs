@@ -13,17 +13,16 @@ use tokio::time::timeout;
 
 use crate::events::IngestEvent;
 use crate::events::PoolEvent;
+use crate::handshake::{HandshakeCompletion, HandshakeEffect, HandshakeEvent, HandshakeMachine};
 use crate::topics::{is_relevant_log, RELEVANT_TOPICS};
 
 /// How long to wait with no activity before assuming the connection is dead
 /// (the runtime's settle window AND the handshake's degraded-path deadline).
 pub const BACKFILL_TIMEOUT_SECS: u64 = 60;
 
-/// Default window (seconds) for the subscribe handshake's log-catchup settle:
-/// after the head is header-confirmed, wait (bounded) for the logs stream to
-/// deliver its first log before falling back to the header-confirmed
-/// boundary. Bounds startup latency on a quiet/log-free chain while still
-/// capturing the log stream's true live-from block on active ones.
+/// Default window (seconds) for the subscribe handshake's log-catchup settle.
+/// Bounds startup latency on a quiet/log-free chain while still capturing
+/// the log stream's true live-from block on active ones.
 pub const LOG_CATCHUP_SETTLE_SECS: u64 = 15;
 
 /// Default chunk size (blocks per `eth_getLogs` request) for the
@@ -103,10 +102,10 @@ impl WsIngestor {
     }
 
     /// Single-stream handshake + delivery-hole-free boundary.
-    /// Connects, merges both subscriptions, confirms the boundary from the
-    /// LOG STREAM's actual liveness (two consecutive headers + first-delivered
-    /// log, header fallback past the settle window), and returns the boundary
-    /// + the SAME stream with any handshake-consumed logs re-injected.
+    /// Connects, merges both subscriptions, runs the
+    /// [`crate::handshake::HandshakeMachine`] to pick the boundary, and
+    /// returns it + the SAME stream with any handshake-consumed logs
+    /// re-injected.
     ///
     /// # Errors
     /// Provider connect + subscribe failures.
@@ -128,20 +127,9 @@ impl WsIngestor {
         shutdown: std::sync::Arc<AtomicBool>,
         mut combined: stream::BoxStream<'static, IngestEvent>,
     ) -> SubscribeBoundary {
-        let (first_block, first_timestamp, pending) =
-            self.observe_complete_block(&shutdown, &mut combined).await;
-        // Re-inject any logs the handshake consumed while polling for
-        // headers (preserving arrival order).
-        let combined = if pending.is_empty() {
-            combined
-        } else {
-            stream::iter(pending).chain(combined).boxed()
-        };
-        SubscribeBoundary {
-            first_block,
-            first_timestamp,
-            stream: combined,
-        }
+        self.run_handshake(&shutdown, &mut combined)
+            .await
+            .into_boundary(combined)
     }
 
     /// The authoritative head (the degraded handshake path + the runtime's
@@ -177,115 +165,37 @@ impl WsIngestor {
         self.provider.get_logs(&filter).await
     }
 
-    /// Handshake (Alternative B) that confirms the boundary from the
-    /// LOG STREAM's actual liveness, not headers alone. Polls the
-    /// fused stream until (a) two consecutive distinct headers confirm the
-    /// head is near/finalized AND (b) the `logs` sub has delivered at least
-    /// one log — the block of that first log (`first_log_block`) is where the
-    /// log stream is PROVABLY live. The boundary `W` returned is
-    /// `first_log_block` (falls back to the header-confirmed head if the log
-    /// stream stays silent past [`LOG_CATCHUP_SETTLE_SECS`]).
-    #[expect(clippy::too_many_lines)] // ADR-043 domain-target args widen the emit calls
-    async fn observe_complete_block(
+    /// The async adapter around [`crate::handshake::HandshakeMachine`]: stream
+    /// polling, the `eth_blockNumber` fallback, the injected clock, and
+    /// loop-head shutdown observation. Boundary legality stays in the machine.
+    async fn run_handshake(
         &self,
         shutdown: &AtomicBool,
         combined: &mut stream::BoxStream<'static, IngestEvent>,
-    ) -> (u64, u64, Vec<IngestEvent>) {
-        let mut prev_header: Option<u64> = None;
-        let mut prev_timestamp: u64 = 0;
-        // The block of the FIRST log the WS `logs` sub delivers — the earliest
-        // proof the log stream is provably LIVE. The resume boundary + backfill
-        // inclusive target = this block.
-        let mut first_log_block: Option<u64> = None;
-        // The highest header-confirmed-finalized block (two consecutive
-        // headers). Advances as headers flow.
-        let mut confirmed_head: Option<u64> = None;
-        // Deadline to keep waiting for the log stream's first log after the
-        // head is header-confirmed.
-        let mut settle_deadline: Option<tokio::time::Instant> = None;
-        let mut pending: Vec<IngestEvent> = Vec::new();
-
+    ) -> HandshakeCompletion {
+        let clock = tokio::time::Instant::now();
+        let mut machine = HandshakeMachine::new();
         loop {
+            let now_ms = millis(clock.elapsed());
             if shutdown.load(Ordering::Relaxed) {
                 op_info!(
                     domain = ingest,
                     "WsIngestor: shutting down during subscribe phase"
                 );
-                return (0, 0, pending);
+                return terminal(machine.handle(now_ms, HandshakeEvent::Shutdown));
             }
 
-            let event = timeout(Duration::from_secs(BACKFILL_TIMEOUT_SECS), combined.next()).await;
-
-            match event {
-                Err(_) => {
-                    // Timeout — fall back to eth_blockNumber RPC (degraded path).
-                    op_warn!(
-                        domain = ingest,
-                        "WsIngestor: timeout during subscribe, fetching current block"
-                    );
-                    match self.provider.get_block_number().await {
-                        Ok(block) => {
-                            op_info!(domain = ingest, block,
-                                "WsIngestor: subscribe observed block via RPC (degraded - no two-header confirmation)"
-                            );
-                            return (block, 0, pending);
-                        }
-                        Err(e) => {
-                            op_error!(domain = ingest, %e, "WsIngestor: can't get block number during subscribe");
-                        }
+            let budget = poll_budget(now_ms, machine.settle_deadline());
+            let polled = timeout(budget, combined.next()).await;
+            let now_ms = millis(clock.elapsed());
+            match polled {
+                Ok(Some(event)) => {
+                    if let HandshakeEffect::Complete(completion) =
+                        machine.handle(now_ms, HandshakeEvent::from(event))
+                    {
+                        log_boundary(&completion, &machine);
+                        return completion;
                     }
-                }
-
-                Ok(Some(IngestEvent::BlockHeader {
-                    number,
-                    timestamp,
-                    base_fee_per_gas: _,
-                    gas_used: _,
-                    gas_limit: _,
-                })) => {
-                    if let Some(prev) = prev_header {
-                        if number == prev + 1 {
-                            // Two consecutive headers: `prev` confirmed
-                            // finalized. Advance the confirmed head (and arm
-                            // the log-catch-up settle deadline on first
-                            // confirmation).
-                            if confirmed_head.is_none() {
-                                settle_deadline = Some(
-                                    tokio::time::Instant::now()
-                                        + Duration::from_secs(LOG_CATCHUP_SETTLE_SECS),
-                                );
-                            }
-                            confirmed_head = Some(prev);
-                            prev_timestamp = timestamp;
-                            op_info!(
-                                domain = ingest,
-                                prev,
-                                number,
-                                "WsIngestor: subscribe confirmed head at {prev} (header {number})"
-                            );
-                        } else if number > prev {
-                            // Gap or jump - re-anchor on the newer header.
-                            prev_header = Some(number);
-                            prev_timestamp = timestamp;
-                        }
-                        // else: duplicate/stale header for the same block - ignore.
-                    } else {
-                        // First header ever observed.
-                        prev_header = Some(number);
-                        prev_timestamp = timestamp;
-                    }
-                }
-
-                Ok(Some(IngestEvent::Pool(pe))) => {
-                    if first_log_block.is_none() {
-                        if let Some(lb) = pe.payload.block_number {
-                            first_log_block = Some(lb);
-                        }
-                    }
-                    // Collect every log observed during the handshake; the
-                    // handshake never touches the data plane (some may be for
-                    // the boundary block and are already backfilled).
-                    pending.push(IngestEvent::Pool(pe));
                 }
 
                 Ok(None) => {
@@ -293,35 +203,48 @@ impl WsIngestor {
                         domain = ingest,
                         "WsIngestor: subscription streams ended during subscribe"
                     );
-                    return (prev_header.unwrap_or(0), prev_timestamp, pending);
+                    return terminal(machine.handle(now_ms, HandshakeEvent::StreamEnded));
                 }
-            }
 
-            // Finalize once we're near the head (headers confirmed) AND we know
-            // the log stream's live-from block — or the settle window elapsed.
-            if let Some(head) = confirmed_head {
-                let deadline_passed =
-                    settle_deadline.is_some_and(|d| tokio::time::Instant::now() >= d);
-                let boundary_ok = match first_log_block {
-                    // Boundary (first_log_block) is finalizable once the
-                    // confirmed head reaches it; accept past the deadline.
-                    Some(l) => l <= head || deadline_passed,
-                    None => deadline_passed,
-                };
-                if boundary_ok {
-                    let boundary = first_log_block.unwrap_or(head);
-                    op_info!(
+                Err(_) => {
+                    if machine.settle_deadline().is_some_and(|d| now_ms >= d) {
+                        return terminal(machine.handle(now_ms, HandshakeEvent::Tick));
+                    }
+                    // Stream silence: the degraded path asks `eth_blockNumber`.
+                    op_warn!(
                         domain = ingest,
-                        confirmed_head = head,
-                        boundary,
-                        source = if first_log_block.is_some() {
-                            "first-delivered-log"
-                        } else {
-                            "header-fallback"
-                        },
-                        "WsIngestor: subscribe boundary set to {boundary}"
+                        "WsIngestor: timeout during subscribe, fetching current block"
                     );
-                    return (boundary, prev_timestamp, pending);
+                    match machine.handle(now_ms, HandshakeEvent::StreamTimeout) {
+                        HandshakeEffect::FetchLatestBlock => {
+                            match self.provider.get_block_number().await {
+                                Ok(block) => {
+                                    op_info!(domain = ingest, block,
+                                        "WsIngestor: subscribe observed block via RPC (degraded - no two-header confirmation)"
+                                    );
+                                    return terminal(machine.handle(
+                                        millis(clock.elapsed()),
+                                        HandshakeEvent::LatestBlock(block),
+                                    ));
+                                }
+                                Err(e) => {
+                                    op_error!(domain = ingest, %e, "WsIngestor: can't get block number during subscribe");
+                                    if let HandshakeEffect::Complete(completion) = machine.handle(
+                                        millis(clock.elapsed()),
+                                        HandshakeEvent::LatestBlockFailed,
+                                    ) {
+                                        log_boundary(&completion, &machine);
+                                        return completion;
+                                    }
+                                }
+                            }
+                        }
+                        HandshakeEffect::Complete(completion) => {
+                            log_boundary(&completion, &machine);
+                            return completion;
+                        }
+                        HandshakeEffect::Continue => {}
+                    }
                 }
             }
         }
@@ -362,36 +285,80 @@ pub fn stream_select(
     stream::select(block_events, log_events).boxed()
 }
 
+/// Injected-clock milliseconds measured from the handshake's start.
+fn millis(elapsed: Duration) -> u64 {
+    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The stream-poll budget: the silence timeout, cut short by an armed settle
+/// deadline so its fallback rules run at expiry rather than at the next
+/// stream event.
+fn poll_budget(now_ms: u64, settle_deadline: Option<u64>) -> Duration {
+    let silence_ms = BACKFILL_TIMEOUT_SECS * 1_000;
+    let ms = settle_deadline.map_or(silence_ms, |deadline| {
+        deadline.saturating_sub(now_ms).min(silence_ms)
+    });
+    Duration::from_millis(ms)
+}
+
+/// Shutdown, stream end, `eth_blockNumber` success, and a passed deadline
+/// each have exactly one transition-table outcome: [`HandshakeEffect::Complete`].
+fn terminal(effect: HandshakeEffect) -> HandshakeCompletion {
+    match effect {
+        HandshakeEffect::Complete(completion) => completion,
+        HandshakeEffect::Continue | HandshakeEffect::FetchLatestBlock => {
+            unreachable!("terminal handshake events only complete")
+        }
+    }
+}
+
+/// The boundary chosen by the finalize rules. The degraded, stream-end, and
+/// shutdown paths log their own outcomes.
+fn log_boundary(completion: &HandshakeCompletion, machine: &HandshakeMachine) {
+    let boundary = completion.first_block;
+    op_info!(
+        domain = ingest,
+        boundary,
+        source = if machine.first_log_block().is_some() {
+            "first-delivered-log"
+        } else {
+            "header-fallback"
+        },
+        "WsIngestor: subscribe boundary set to {boundary}"
+    );
+}
+
 #[cfg(test)]
 mod handshake_tests {
-    //! Handshake tests (migrated from the `block_pump` with the transport they
-    //! exercise). Offline: a mock transport under the
-    //! ingestor, synthetic fused streams. The handshake polls headers /
-    //! collects logs and never touches the data plane.
+    //! The public seam: scripted merged streams through
+    //! [`WsIngestor::handshake`]. Offline by construction — a mock transport
+    //! under the ingestor, synthetic fused streams, and a handshake that never
+    //! touches the data plane.
 
     use super::*;
     use alloy::primitives::{Address, Bytes, U256};
     use alloy::rpc::types::Log;
+    use alloy::transports::mock::Asserter;
     use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
     use degenbot_rpc::provider::AlloyProvider;
     use std::sync::Arc;
 
-    /// An ingestor over a mock transport (never hit on the no-timeout
-    /// handshake paths).
-    fn ingestor_for_test() -> (WsIngestor, Arc<AtomicBool>) {
+    /// An ingestor over a mock transport whose [`Asserter`] answers (or fails
+    /// to answer) the degraded path's `eth_blockNumber`.
+    fn ingestor_for_test() -> (WsIngestor, Arc<AtomicBool>, Asserter) {
         use alloy::network::Ethereum as NetEth;
         use alloy::providers::{Provider, ProviderBuilder};
         use alloy::rpc::client::ClientBuilder;
-        use alloy::transports::mock::{Asserter, MockTransport};
+        use alloy::transports::mock::MockTransport;
 
         let asserter = Asserter::new();
-        let client = ClientBuilder::default().transport(MockTransport::new(asserter), true);
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
         let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
         let provider = Arc::new(AlloyProvider::from_provider(
             Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>
         ));
         let ingestor = WsIngestor::with_provider(provider);
-        (ingestor, Arc::new(AtomicBool::new(false)))
+        (ingestor, Arc::new(AtomicBool::new(false)), asserter)
     }
 
     fn header(number: u64) -> IngestEvent {
@@ -491,16 +458,225 @@ mod handshake_tests {
         }
     }
 
-    /// The single-stream handshake does NOT drop block-W
-    /// logs. The handshake polls headers ONLY (two consecutive headers W,
-    /// W+1 confirm the boundary), collecting any `IngestEvent::Pool` the
-    /// fused stream interleaves and re-injecting it. With the OLD
-    /// drop+resubscribe, the Mint/Burn queued after the confirming log were
-    /// lost . Under Alternative B they survive in `pending` and
-    /// reach the resume stream.
+    fn header_ts(number: u64, timestamp: u64) -> IngestEvent {
+        IngestEvent::BlockHeader {
+            number,
+            timestamp,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        }
+    }
+
+    /// First topic of every re-injected pool event, in delivery order.
+    async fn drained_topics(
+        mut s: stream::BoxStream<'static, IngestEvent>,
+    ) -> Vec<alloy::primitives::B256> {
+        let mut topics = Vec::new();
+        while let Some(ev) = s.next().await {
+            if let IngestEvent::Pool(pe) = ev {
+                topics.push(pe.payload.topics().first().copied().unwrap_or_default());
+            }
+        }
+        topics
+    }
+
+    /// Logs before, between, and after the confirming headers are re-injected
+    /// exactly once, in arrival order, and the boundary is the first log's
+    /// block once the confirmed head reaches it.
+    #[tokio::test]
+    async fn handshake_reinjects_pending_logs_once_in_arrival_order() {
+        let (ingestor, shutdown, _asserter) = ingestor_for_test();
+        let w = 500u64;
+        let pool = Address::from([0xccu8; 20]);
+
+        let combined = stream::iter(vec![
+            IngestEvent::Pool(PoolEvent::from_log(make_v3_mint_log_with_block(
+                pool,
+                -100,
+                100,
+                w + 2,
+            ))),
+            header(w),
+            IngestEvent::Pool(PoolEvent::from_log(make_v3_burn_log_with_block(
+                pool, -100, 100, w,
+            ))),
+            header(w + 1),
+            IngestEvent::Pool(PoolEvent::from_log(make_v3_mint_log_with_block(
+                pool, -100, 100, w,
+            ))),
+            header(w + 2),
+            header(w + 3),
+        ])
+        .boxed();
+
+        let boundary = ingestor.handshake(shutdown, combined).await;
+        assert_eq!(
+            boundary.first_block,
+            w + 2,
+            "boundary is the first log's block once the confirmed head reaches it"
+        );
+        assert_eq!(
+            drained_topics(boundary.stream).await,
+            vec![V3_MINT_TOPIC, V3_BURN_TOPIC, V3_MINT_TOPIC],
+            "every pending log is re-injected once, in arrival order"
+        );
+    }
+
+    /// Shutdown at the adapter loop head takes the existing zero boundary and
+    /// still hands the pending logs onward.
+    #[tokio::test]
+    async fn handshake_shutdown_returns_zero_boundary_and_preserves_pending() {
+        let (ingestor, shutdown, _asserter) = ingestor_for_test();
+        let w = 700u64;
+        let pool = Address::from([0xddu8; 20]);
+
+        let shutdown_flag = Arc::clone(&shutdown);
+        let flip_then_header = stream::once(async move {
+            shutdown_flag.store(true, Ordering::Relaxed);
+            header(w + 3)
+        });
+        let combined = stream::iter(vec![
+            IngestEvent::Pool(PoolEvent::from_log(make_v3_mint_log_with_block(
+                pool, -100, 100, w,
+            ))),
+            header(w),
+        ])
+        .chain(flip_then_header)
+        .boxed();
+
+        let boundary = ingestor.handshake(shutdown, combined).await;
+        assert_eq!(boundary.first_block, 0);
+        assert_eq!(boundary.first_timestamp, 0);
+        assert_eq!(
+            drained_topics(boundary.stream).await,
+            vec![V3_MINT_TOPIC],
+            "pending logs survive shutdown"
+        );
+    }
+
+    /// A stream that ends before completion takes the anchor header as the
+    /// fallback boundary, keeping the pending logs.
+    #[tokio::test]
+    async fn handshake_stream_end_falls_back_to_the_anchor_and_preserves_pending() {
+        let (ingestor, shutdown, _asserter) = ingestor_for_test();
+        let w = 900u64;
+        let pool = Address::from([0xeeu8; 20]);
+
+        let combined = stream::iter(vec![
+            IngestEvent::Pool(PoolEvent::from_log(make_v3_mint_log_with_block(
+                pool,
+                -100,
+                100,
+                w + 3,
+            ))),
+            header_ts(w, 50),
+        ])
+        .boxed();
+
+        let boundary = ingestor.handshake(shutdown, combined).await;
+        assert_eq!(boundary.first_block, w);
+        assert_eq!(boundary.first_timestamp, 50);
+        assert_eq!(drained_topics(boundary.stream).await, vec![V3_MINT_TOPIC]);
+    }
+
+    #[tokio::test]
+    async fn handshake_stream_end_without_headers_completes_at_zero() {
+        let (ingestor, shutdown, _asserter) = ingestor_for_test();
+        let pool = Address::from([0xffu8; 20]);
+
+        let combined = stream::iter(vec![IngestEvent::Pool(PoolEvent::from_log(
+            make_v3_mint_log_with_block(pool, -100, 100, 1),
+        ))])
+        .boxed();
+
+        let boundary = ingestor.handshake(shutdown, combined).await;
+        assert_eq!(boundary.first_block, 0);
+        assert_eq!(boundary.first_timestamp, 0);
+        assert_eq!(drained_topics(boundary.stream).await, vec![V3_MINT_TOPIC]);
+    }
+
+    /// A silent stream times out into the `eth_blockNumber` degraded path.
+    #[tokio::test(start_paused = true)]
+    async fn handshake_stream_timeout_completes_via_the_rpc_degraded_path() {
+        let (ingestor, shutdown, asserter) = ingestor_for_test();
+        asserter.push_success(&"0x1234");
+
+        let boundary = ingestor
+            .handshake(shutdown, stream::pending().boxed())
+            .await;
+        assert_eq!(
+            boundary.first_block, 0x1234,
+            "the degraded boundary is the RPC block"
+        );
+        assert_eq!(
+            boundary.first_timestamp, 0,
+            "the degraded path invents no confirmed-head timestamp"
+        );
+    }
+
+    /// A failed `eth_blockNumber` is not terminal: the handshake keeps
+    /// waiting and the existing rules still pick the boundary.
+    #[tokio::test(start_paused = true)]
+    async fn handshake_timeout_rpc_failure_keeps_waiting_then_completes() {
+        let (ingestor, shutdown, _asserter) = ingestor_for_test();
+        let w = 321u64;
+        let pool = Address::from([0x11u8; 20]);
+
+        // silence past the stream-timeout first; then the stream wakes
+        let items = vec![
+            IngestEvent::Pool(PoolEvent::from_log(make_v3_mint_log_with_block(
+                pool, -100, 100, w,
+            ))),
+            header_ts(w, 50),
+            header_ts(w + 1, 60),
+        ];
+        let combined = stream::once(async move {
+            tokio::time::sleep(Duration::from_secs(61)).await;
+            stream::iter(items).boxed()
+        })
+        .flatten()
+        .boxed();
+
+        let boundary = ingestor.handshake(shutdown, combined).await;
+        assert_eq!(
+            boundary.first_block, w,
+            "after the failed fallback the normal rules still choose the boundary"
+        );
+        assert_eq!(boundary.first_timestamp, 60);
+        assert_eq!(drained_topics(boundary.stream).await, vec![V3_MINT_TOPIC]);
+    }
+
+    /// The settle deadline is a real trigger: once it expires with no log,
+    /// the header-confirmed fallback is selected without waiting for the next
+    /// stream event (the queued RPC answer is never consumed).
+    #[tokio::test(start_paused = true)]
+    async fn handshake_deadline_wake_completes_with_the_header_fallback() {
+        let (ingestor, shutdown, asserter) = ingestor_for_test();
+        asserter.push_success(&"0x1234");
+
+        let combined = stream::iter(vec![header_ts(5, 50), header_ts(6, 60)])
+            .chain(stream::pending())
+            .boxed();
+
+        let boundary = ingestor.handshake(shutdown, combined).await;
+        assert_eq!(
+            (boundary.first_block, boundary.first_timestamp),
+            (5, 60),
+            "deadline expiry selects the confirmed header fallback"
+        );
+        assert_eq!(
+            asserter.read_q().len(),
+            1,
+            "the degraded RPC path is not taken once the deadline owns completion"
+        );
+    }
+
+    /// Block-`W` logs interleaved between the confirming headers survive the
+    /// handshake in `pending` and reach the resume stream.
     #[tokio::test]
     async fn handshake_preserves_w_logs() {
-        let (ingestor, shutdown) = ingestor_for_test();
+        let (ingestor, shutdown, _asserter) = ingestor_for_test();
         let w = 21_500_000u64;
         let pool = Address::from([0xaau8; 20]);
 
@@ -536,21 +712,19 @@ mod handshake_tests {
         }
         assert!(
             got_mint,
-            "block-W Mint MUST survive the handshake (Alternative B re-injects it)"
+            "block-W Mint MUST survive the handshake (re-injected from pending)"
         );
         assert!(
             got_burn,
-            "block-W Burn MUST survive the handshake (Alternative B re-injects it)"
+            "block-W Burn MUST survive the handshake (re-injected from pending)"
         );
     }
 
-    /// the handshake consumes ONLY headers (and collects logs); it
-    /// never matches or interprets a log. Both W logs arrive between
-    /// header(W) and header(W+1) and must be re-injected into `pending` for
-    /// the resume stream.
+    /// The handshake never interprets a log: both block-`W` logs it collects
+    /// between the confirming headers are re-injected into the resume stream.
     #[tokio::test]
     async fn handshake_does_not_consume_logs() {
-        let (ingestor, shutdown) = ingestor_for_test();
+        let (ingestor, shutdown, _asserter) = ingestor_for_test();
         let w = 42u64;
         let pool = Address::from([0xbbu8; 20]);
 

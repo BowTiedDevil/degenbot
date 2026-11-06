@@ -141,7 +141,6 @@ rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/two_hop_seed_
 rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/two_hop_uniswap_only.rs::derive
 rust/crates/foundation/degenbot-executor/tests/encoders_parity.rs::!module
 rust/crates/foundation/degenbot-executor/tests/grammar_parity.rs::!module
-rust/crates/foundation/degenbot-ingestion/src/ingestor.rs::observe_complete_block	ADR-043 domain-target args widen the emit calls
 rust/crates/foundation/degenbot-math/src/curve/mod.rs::!module
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::apply_chunk_writes_on_conn
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::compute_preverified_liquidity

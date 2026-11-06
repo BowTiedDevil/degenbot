@@ -5,6 +5,9 @@
 //!
 //! - WS subscriptions (`newHeads` + unfiltered `logs`), merged into one
 //!   [`IngestEvent`] stream (fair interleave; one WS connection).
+//! - The subscribe handshake as a pure [`handshake::HandshakeMachine`]: the
+//!   machine picks the delivery-hole-free boundary; the transport adapter
+//!   drives it and re-injects the handshake-consumed logs.
 //! - Rust-side topic/address filtering ([`RELEVANT_TOPICS`]).
 //! - Gap backfill FETCH ([`build_backfill_filter`] + chunked `eth_getLogs`
 //!   via [`WsIngestor`]). The APPLY half (decoding, state machine, solves)
@@ -25,12 +28,16 @@
 
 pub mod events;
 pub mod filter;
+pub mod handshake;
 pub mod ingestor;
 pub mod topics;
 pub mod watchdog;
 
 pub use events::{IngestEvent, PoolEvent};
 pub use filter::{backfill_filter, build_backfill_filter};
+pub use handshake::{
+    HandshakeCompletion, HandshakeEffect, HandshakeEvent, HandshakeMachine, HandshakeState,
+};
 pub use ingestor::{
     SubscribeBoundary, WsIngestor, BACKFILL_TIMEOUT_SECS, DEFAULT_BACKFILL_CHUNK_SIZE,
     LOG_CATCHUP_SETTLE_SECS,
