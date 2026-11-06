@@ -43,7 +43,9 @@ use parking_lot::Mutex;
 
 use super::Bot;
 use crate::arb_engine::{EngineChannelHandles, EngineDriver, EngineStages};
-use crate::hosted_sources::{HeadTrigger, HostedHeadClock, HostedSources};
+use crate::hosted_sources::{
+    HeadTrigger, HostedHeadClock, HostedSources, HostedStartError, StreamRefusal,
+};
 use crate::strategy_host::{FacetStatus, HeadReconciler, HostError, HostSupervisor, StrategyHost};
 
 /// One facet admitted at boot.
@@ -128,7 +130,7 @@ pub struct SessionConstruction {
     pub state_root: Option<PathBuf>,
 }
 
-/// Why a session boot refused to compose the plane.
+/// Why a session boot refused to compose the plane, or refused to start it.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionBootError {
     /// The host refused a facet registration or a spawn attachment — two rows
@@ -138,6 +140,15 @@ pub enum SessionBootError {
     /// The hosted sources could not be minted over the booted hub.
     #[error(transparent)]
     Hosted(#[from] HubError),
+    /// The hosted sources refused a start transition — an in-flight start, a
+    /// start after a failed launch, or a torn-down owner. The typed refusals
+    /// reach the caller unchanged.
+    #[error(transparent)]
+    HostedStart(#[from] HostedStartError),
+    /// An arm's stream was already handed out: two arm rows named one source
+    /// kind, which the boot may not produce.
+    #[error(transparent)]
+    Stream(#[from] StreamRefusal),
 }
 
 /// A booted engine session: the driver attached to the host's hub, the shared
@@ -270,11 +281,12 @@ impl EngineSession {
     ///
     /// # Errors
     ///
-    /// [`SessionBootError::Hosted`] when the hosted head source cannot be
-    /// registered — a miswired boot fails closed rather than driving a
-    /// clockless fleet, and the caller must drop the session (the deferred-I/O
-    /// latch is already consumed, so a retry is a no-op), and
-    /// [`SessionBootError::Host`] when the host refuses a driver's start.
+    /// [`SessionBootError::HostedStart`] when the hosted sources refuse the
+    /// start transition — a miswired boot whose head source cannot be
+    /// registered lands half-started (never running), and a retry on that
+    /// session is a typed `StartAfterFailure`, so the caller must drop it and
+    /// boot again. [`SessionBootError::Host`] when the host refuses a driver's
+    /// start.
     pub async fn start(&self) -> Result<usize, SessionBootError> {
         if let Some(hosted) = self.hosted.as_ref() {
             hosted.start().await?;
@@ -320,7 +332,16 @@ fn provision_hosted(
         .collect::<Vec<_>>();
     let mut hosted = HostedSources::mint(Arc::clone(&hub), feeds, clock, trigger)?;
     for arm in arms {
-        let stream = hosted.take_stream(arm.source);
+        // An arm with no minted pump is handed no stream (its driver halts at
+        // its live-mode gate); a stream already handed out is a miswired boot
+        // and fails closed.
+        let stream = match hosted.take_stream(arm.source) {
+            Ok(stream) => Some(stream),
+            Err(StreamRefusal::NoPump(_)) => None,
+            Err(refusal @ StreamRefusal::AlreadyTaken(_)) => {
+                return Err(SessionBootError::Stream(refusal))
+            }
+        };
         let spawn = (arm.spawn)(&hub, stream);
         host.lock().attach_spawn(&arm.id, spawn)?;
     }
@@ -567,8 +588,9 @@ mod tests {
             );
         }
 
-        // The start boundary is once-only: the pumps' latch is consumed and no
-        // driver is left in a startable pose.
+        // The start boundary is once-only: the lifecycle is `Running` (so the
+        // hosted re-entry is an idempotent no-op) and no driver is left in a
+        // startable pose.
         let restarted = degenbot_core::runtime::get_runtime()
             .block_on(session.start())
             .expect("a second start is a no-op");

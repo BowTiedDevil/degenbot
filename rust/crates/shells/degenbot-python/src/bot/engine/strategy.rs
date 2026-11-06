@@ -86,6 +86,16 @@ pub(crate) fn map_session_boot_error(error: SessionBootError) -> pyo3::PyErr {
         SessionBootError::Hosted(cause) => pyo3::exceptions::PyRuntimeError::new_err(format!(
             "hosted sources failed to start: {cause}"
         )),
+        // A refused start transition (in flight, after a failed launch, or after
+        // teardown) is the same runtime failure the caller settles by dropping
+        // the engine, and a stream handed out twice is a miswired boot: both are
+        // runtime errors, never a silent success.
+        SessionBootError::HostedStart(cause) => pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "hosted sources failed to start: {cause}"
+        )),
+        SessionBootError::Stream(cause) => {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("hosted sources miswired: {cause}"))
+        }
         SessionBootError::Host(cause) => map_host_error(cause),
     }
 }
