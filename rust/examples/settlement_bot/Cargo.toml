@@ -56,7 +56,7 @@ degenbot-eventhub.workspace = true
 # degenbot-bot/src/profiling.rs. No example-side guard is constructed here ON
 # PURPOSE: the pump owns the process's single HotpathGuard, and building a
 # second live one panics (hotpath 0.28.5) — a guard held across
-# `EngineDriver::resume` would abort the driven run it is meant to measure.
+# `EngineDriver::run` would abort the driven run it is meant to measure.
 hotpath = ["degenbot/hotpath"]
 
 [dev-dependencies]

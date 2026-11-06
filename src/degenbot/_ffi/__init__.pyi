@@ -239,17 +239,16 @@ class ArbitrageEngine:
         """
     def close(self, /) -> dict:
         """
-        Stop the pump and signal the Rust core to clean up (ADR-006 D4).
+        Close the session: the one teardown, returned as a dict
+        (`from` / `pump` / `crawl` / `delivery`).
 
-        The symmetric teardown half of `resume()`: sets the shutdown flag and
-        aborts the spawned pump task so a Ctrl-C exits promptly — the pump loop
-        otherwise blocks up to `BACKFILL_TIMEOUT_SECS` (60s) on a silent WS
-        stream before re-checking its shutdown flag, and indefinitely if the WS
-        subscription never delivers a final frame. Aborting unblocks the
-        `combined.next().await` immediately and drops the WS subscription
-        futures (closing the transport). Idempotent — safe from both the
-        session teardown path and a signal handler. Delegates to the shared
-        `PumpState`.
+        Total from every pose, idempotent, and shared — a concurrent caller
+        joins the same teardown and reads the same report (ADR-093 D2). The
+        pump exits cooperatively unless the teardown's grace expires, in which
+        case it is aborted; either way the event stream closes once, so a
+        pending consumer receive sees end-of-stream exactly once.
+
+        Blocks at this adapter boundary, never inside the core runtime.
         """
     def connect(self, /, rpc_url: str) -> int:
         """
@@ -629,17 +628,17 @@ class ArbitrageEngine:
         """
     def start(self, /, node_http: str, node_ws: str, verify_state_view: str | None = None) -> int:
         """
-        Pre-pump startup ritual: `subscribe(ws)` → verify-config
+        Pre-pump startup ritual: `connect(ws)` → verify-config
         (`node_http`, optional `verify_state_view`).
 
-        The one-call sibling of `subscribe` / `set_verify_rpc_url` /
-        `set_verify_state_view`, delegating to the shared `EngineDriver::start`
-        so the boot ordering is authored once. Stops before `resume()`; the
-        snapshot seed `S` must already be on the shared `BotState` (the driver
-        reads it while subscribing).
+        This shell's one-call adapter over the two core facts the ritual needs:
+        the `connect` lifecycle move (which carries no configuration, ADR-093
+        D1) and the verify home's own configuration. It stops before production;
+        the snapshot seed `S` must already be on the shared `BotState` (the
+        driver reads it while connecting).
 
-        Raises `RuntimeError` if the phase is past the subscribe window, the
-        pump is already started/subscribed, or the WS subscribe fails.
+        Raises `RuntimeError` if the pose refuses the move (another lifecycle
+        move in flight, a terminal session) or the WS handshake fails.
         """
     def start_hosted_session(self, /) -> int:
         """

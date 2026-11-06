@@ -82,7 +82,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [047](ADR-047-retire-subscriber-bus.md) | Retire the ADR-006 D4 subscriber bus | accepted (D4 reaffirmed and enforced by ADR-087) |
 | [048](ADR-048-fleet-boot-registry.md) | Fleet boot registry | accepted |
 | [049](ADR-049-engine-stage-driver-seam.md) | The engine's interface is one stage seam | accepted |
-| [050](ADR-050-rust-native-engine-driver.md) | A public `EngineDriver` is the Rust driver seam | accepted |
+| [050](ADR-050-rust-native-engine-driver.md) | A public `EngineDriver` is the Rust driver seam | accepted (partially superseded by [093](ADR-093-session-lifecycle-and-consumer.md) — consumer attachment, the driver-resident registration lifecycles, the synchronous stop mechanism) |
 | [051](ADR-051-rust-owned-console.md) | The degenbot console is a Rust binary | accepted |
 | [052](ADR-052-db-auto-upgrade-alembic-retirement.md) | The database upgrades itself at open — Alembic retires in-tree | accepted (executed; supersedes ADR-010/011) |
 | [054](ADR-054-strategy-plumbing-surface.md) | The strategy plumbing surface | accepted |
@@ -105,7 +105,6 @@ The load-bearing decisions behind the two-consumer architecture:
 | [071](ADR-071-family-modules-and-concentrated-liquidity-kernel.md) | Family modules and the Concentrated Liquidity Kernel — one module, one row, one enum arm supersedes the eight-site family change | accepted |
 | [073](ADR-073-family-read-modules.md) | The family read module — one family, two homes, rows at the seams; `concentrated_liquidity` naming | accepted / implemented (landed across epic JE3DED; A5 amendment dissolved `degenbot-solvers`) |
 | [074](ADR-074-push-gate-manifest.md) | The push-gate manifest — `just pre-push` delegates to prek.toml's pre-push entries | accepted |
-| [075](ADR-075-mirrored-engine-surfaces-stay.md) | The mirrored engine surfaces stay — the driver/stages mirror is accepted, policed by the drift gates | superseded by [093](ADR-093-session-lifecycle-and-consumer.md) (mirror deleted by subtraction, ergo KKUMXS) |
 | [076](ADR-076-epoch-phases.md) | The epoch phases — `SolveCycle::run_epoch` decomposes into named phases behind one interface | accepted |
 | [077](ADR-077-refusal-vocabulary.md) | The refusal vocabulary — one `RefusalKind` owned by the registration outcome ledger, and the eligibility gate moves core-side | accepted |
 | [078](ADR-078-family-write-door.md) | The family write door — one `PoolRegistration` request, one verdict, family as data; pool identity is one table's | accepted |
@@ -123,7 +122,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [090](ADR-090-v4-hook-black-box-finalist-requote.md) | V4 hooked pools — approximate search, exact black-box finalist re-quote (the fidelity tier's first production use) | accepted |
 | [091](ADR-091-retire-revm-completely.md) | Retire revm completely — evm2 sole EVM; Tier-3 oracles ported; reth is the independent interpreter | implemented |
 | [092](ADR-092-regenerable-math-oracles.md) | Frozen math oracles are regenerable — one generator per snapshot, the deployed contract is the authority | accepted |
-| [093](ADR-093-session-lifecycle-and-consumer.md) | The settlement session — a lifecycle-only Driver seam, one ordered Session event stream, one Session consumer | accepted |
+| [093](ADR-093-session-lifecycle-and-consumer.md) | The settlement session — a lifecycle-only Driver seam, one ordered Session event stream, one Session consumer | accepted / implemented (§6.7's slices landed; §6.8 pairs each with its commit) |
 
 ## Historical — provenance only
 
@@ -142,6 +141,7 @@ what they describe, or re-litigate them.
 | [036](ADR-036-window-guards-not-relanded.md) | The V3/V4 window guards were not re-landed — the refined terminal subsumes them | [ADR-087](ADR-087-deletion-is-the-retirement.md) (deletion is the complete retirement; the "do not re-land" prose prohibition deleted) |
 | [037](ADR-037-engine-mutex-sharding.md) | Engine Mutex sharding (RAYPAR) | [ADR-041](ADR-041-block-epoch-pipeline.md) (no `drain_lock`; engine `Mutex` off the solve path) |
 | [053](ADR-053-ffi-stub-generation.md) | FFI Stub Generation — hand-maintained `.pyi` set | [ADR-066](ADR-066-deterministic-stub-generation.md) (stubs are generated; only the `pyo3-stub-gen` rejection stands) |
+| [075](ADR-075-mirrored-engine-surfaces-stay.md) | The mirrored engine surfaces stay — the driver/stages mirror is accepted, policed by the drift gates | [ADR-093](ADR-093-session-lifecycle-and-consumer.md) D3 (mirror deleted by subtraction; the driver's nine forwarding members are gone) |
 
 ## Numbering note
 

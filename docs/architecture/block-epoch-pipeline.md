@@ -269,10 +269,12 @@ out of the retired coordinator). This live *channel* type is unrelated to the
 retired `BlockClock` *machine*.
 
 **`degenbot-python` — the driver shell.** The PyO3 layer subscribes like any other
-sink: `PyBot` owns the pump lifecycle (`PumpState`, `bot/pump.rs`), the result-batch
-consumer (`bot/engine/result_channel.rs`) and the header `block_stream` hang off
-the Published/block-clock edges, and `PySubscriberAdapter` (`bot/subscriber.rs`)
-bridges `PoolStateSubscriber` callbacks. No raw WS stream reaches Python.
+sink: `PyBot` owns the pump lifecycle (`PumpState`, `bot/pump.rs`), the session's
+ONE ordered event stream (`SessionEvent::{Block, Batch}`) leaves the engine as a
+single `EventHandoff` whose claim the Python consumer's `resume` spends (the
+payload serializer lives in `bot/engine/result_channel.rs`), and
+`PySubscriberAdapter` (`bot/subscriber.rs`) bridges `PoolStateSubscriber`
+callbacks. No raw WS stream reaches Python.
 
 ### The as-built epoch cycle
 

@@ -1,6 +1,9 @@
 # ADR-093: The settlement session — a lifecycle-only Driver seam, one ordered Session event stream, one Session consumer
 
-**Status: accepted** (2026-11-05, PM review after fix round). Drafted against
+**Status: accepted / implemented** — accepted 2026-11-05 (PM review after a fix
+round); every landing slice §6.7 schedules, plus this ADR's own certification
+slice (§6.7.6), landed the same day, and §6.8 records each one against the
+commit that shipped it. Drafted against
 the current code and the ADR-050 / ADR-049 / ADR-075 / ADR-057 / ADR-084 record,
 and reviewed against each of §8's three questions before the status flip.
 
@@ -225,6 +228,18 @@ that already owns it, ADR-050 D2). The 41 members in `driver.rs`'s single
 `impl EngineDriver` block become 12; with `wait_session_end`, already in its own
 `impl EngineDriver` block (`session_end.rs:220`), the seam is 13 members — and
 the four that sequence a session are the ones that remain.
+
+**As shipped (§6.8).** The seam carries twenty-one public members: those
+thirteen, the three crawl moves D2/D4 keep (`begin_crawl`, `begin_crawl_with`,
+`crawl_handle`), and five one-line projections of state another home owns
+(`core`, `verify`, `pool_id_for_identity`, `snapshot_seed_block`,
+`set_snapshot_seed_block`). None of the five keeps a second copy of anything —
+each reads or writes the shared `Bot`, `BotState`, or verify home through that
+home's own door — so the decision (no capability state on the seam) stands
+while the count moved from thirteen to twenty-one. The snapshot-seed pair's
+authority is the shared `BotState` (`Bot::snapshot_seed_block` is the same
+read), and the FFI's engine getter goes through the shared core rather than
+through the driver.
 
 ### D2 — The pose is private and data-carrying; moves are a serialized take-out / land pair, and no lock is held across an await
 
@@ -491,9 +506,11 @@ change: `PyArbEngine` (`rust/crates/shells/degenbot-python/src/bot/engine/`),
 
 ## 4. Consequences
 
-**The session becomes deep.** A caller learns thirteen lifecycle members instead
-of forty-one, and the sixteen forwarded operations move to the seam that
-performs them, where they are already the interface. Locality improves in the
+**The session becomes deep.** A caller learns twenty-one public members instead
+of forty-one — thirteen lifecycle moves, the three crawl moves, and five
+one-line projections of shared state (D1, as shipped) — and the sixteen
+forwarded operations move to the seam that performs them, where they are
+already the interface. Locality improves in the
 opposite direction too: a failure in path registration no longer names the
 session, and a session failure no longer surfaces as a registration error arm.
 
@@ -559,14 +576,15 @@ gate-checked claims rather than this ADR's word alone.
 | Verify lifecycle | `degenbot_bot::bot_core` | `run_verify_lifecycle`, `run_registration_lifecycle`, `PoolVerifications`, `VerifyClaims`, `RefusalKind` | yes |
 | Registration admission | `degenbot_bot::bot_core` + `degenbot_bot::arb_engine::crawl` | `RegistrationLedger`, `PathAdmission`, `CrawlPathPolicy`, `CrawlLedger`, `BuildFlights` | yes |
 
-Three capabilities have **no code home yet**, so they are recorded here rather
-than committed as catalog rows whose paths would not resolve:
+Three capabilities were recorded here without catalog rows while their homes did
+not exist yet. All three have landed, so they are gate-checked catalog rows
+rather than promises:
 
-| Planned capability | Intended home | Landing slice |
-|---|---|---|
-| Session event stream | `degenbot_bot::arb_engine` (`SessionEvent`, `SessionStream`) | §6.7.4, the ordered-source slice: the two named hub channels become one source, and `BlockClock`/`SessionProgress` move down beside it |
-| Consumer claim | `degenbot_bot::arb_engine` (`ConsumerClaim`, `EventHandoff`, `claim_consumer`) | §6.7.4 also — the claim travels with the stream and the `result_receiver_taken` latch retires with it |
-| Session consumer | `degenbot_batch_executor` (`SessionConsumer`) | §6.7.5, the consumer slice: `consume.rs`, `dispatch.rs`'s loop, and `_consume.py` become adapters; the loop lives here |
+| Capability | Home | Door items | Row added |
+|---|---|---|---|
+| Session event stream | `degenbot_bot::arb_engine` | `SessionEvent`, `SessionStream` | yes — the Driver seam row |
+| Consumer claim | `degenbot_bot::arb_engine` | `ConsumerClaim`, `EventHandoff`, `ClaimRefusal` | yes — the Driver seam row |
+| Session consumer | `degenbot_batch_executor` | `SessionConsumer`, `ConsumerPolicy`, `SessionClock`, `ConsumerReport`, `SessionReport` | yes — the Batch execution row |
 
 **Dependency charter (ADR-084 D3): no rule widens.** The charter's live rules are
 `* : pyo3 zstd ; except degenbot-python`. `degenbot-batch-executor` already
@@ -575,6 +593,9 @@ and no C-build dependency; the relocation moves code *down* the existing edge.
 No per-crate rule needs a new line, and nothing is whitelisted: if the consumer
 slice discovers it needs a dependency the charter forbids, the leak is fixed
 rather than the charter widened, and this ADR is amended with the rationale.
+As shipped the charter holds unchanged — `just check-dependency-charter` passes
+over the landed `SessionConsumer` with no per-crate line added — and
+`just check-capability-catalog` resolves every row above.
 
 ## 6. Migration
 
@@ -639,13 +660,13 @@ a host-owned `Live` sub-state"), which stays open on the host side.
 | close | `stop() -> Result<(), DriverError>` — synchronous, `block_on` inside the runtime | `close() -> TeardownReport` — asynchronous, total from every pose, idempotent, shared; the report is *returned*, not a `Result` union |
 | resume gate | `DriverError::NoResultReceiver` — deleted with its atomic as unrepresentable | a second `claim_consumer()` declines with `ClaimRefusal::AlreadyClaimed`; `run` cannot be called without a claim |
 | session end | natural end indistinguishable from a dropped channel; the stall verdict published on `SessionEndCause` beside the crate-level heartbeat | the stream's exactly-once closure, plus one typed terminal fact per pump exit on the session-end surface; the stall verdict is the Session consumer's report |
-| snapshot seed | `EngineDriver::{snapshot_seed_block, set_snapshot_seed_block}` | `Bot::{snapshot_seed_block, set_snapshot_seed_block}` over the shared `BotState` fact it already owns (ADR-050 D2) |
+| snapshot seed | `EngineDriver::{snapshot_seed_block, set_snapshot_seed_block}` | `Bot::snapshot_seed_block` over the shared `BotState` fact it already owns (ADR-050 D2); the driver keeps a derived read/write pair over that same fact, which no consumer routes through (the FFI's engine getter reads the shared core) |
 | path registry | `EngineDriver::{register_path, register_and_solve_path, deregister_path, set_path_cap, path_count, path_dedups, path_info_for}` | `EngineStages::{…}` (same names) |
 | retune / inline sim | `EngineDriver::{apply_retune, set_inline_simulator}` | `EngineStages::{apply_retune, set_inline_simulator}` |
 | results read | `EngineDriver::latest_results()` | `EngineStages::latest_results()` |
 | verify configuration | `EngineDriver::{set_verify_rpc_url, set_verify_state_view}` | the verify home plus the one provider the `Bot` owns (ADR-022 D3) |
 | registration lifecycles | `EngineDriver::{run_registration_lifecycle, _sync, _with_retry, _with_retry_sync}` | `bot_core::{run_registration_lifecycle, run_verify_lifecycle}` over the core-owned retry policy |
-| verify reads | `EngineDriver::{pool_id_for_identity, is_pool_verified, live_verify_claim_count, verified_pool_count}` | `PoolVerifications::{is_verified, live_claim_count, verified_pool_count}` plus `EngineStages` for the identity join |
+| verify reads | `EngineDriver::{pool_id_for_identity, is_pool_verified, live_verify_claim_count, verified_pool_count}` | `PoolVerifications::{is_verified, live_claim_count, verified_pool_count}`; the identity join stays `EngineDriver::pool_id_for_identity`, a derived `BotState` read whose readers are the FFI identity adapter and the driver's own tests |
 | live-loop health | `EngineDriver::pump_handle_armed()` | `PumpPhase::live_loop_armed` on the pose projection |
 | crawl | `EngineDriver::{begin_crawl, begin_crawl_with, crawl_handle}` reachable through `CrawlHost::driver` | a crawl attach session move plus its handle; `CrawlHost` holds the capability handles it needs, never `Arc<EngineDriver>` |
 | pose storage | `PumpPhase` stored in `EngineStages::phase: PhaseCell` beside five payload slots | a private data-carrying `PumpPose`; `PumpPhase` is a derived `Copy` projection |
@@ -657,23 +678,54 @@ a host-owned `Live` sub-state"), which stays open on the host side.
 
 ### 6.6 Consumer migration notes
 
-- **`PyArbEngine`** keeps the lifecycle adapters (`claim_consumer` returning the
-  hand-off, `connect`, `run` driving the handed-out stream as an async iterator,
-  `close` as an awaitable returning the teardown report, `current_phase`) and
-  loses the lifecycle/path forwarders; its
-  `map_path_registration_err`/verify mappers re-point at the doors that now
-  raise those refusals. Python awaits `close()`; the FFI blocks, where it must,
-  at its own boundary and never parks the core runtime. The generated stub set
-  moves in the same change (ADR-066), and the FFI stays private (ADR-013).
+**The public was → is table.** The six rows a consumer migrates by, with the
+retired name in the "was" column only (the same rows the `CHANGELOG` carries):
+
+| # | Was | Is |
+|---|---|---|
+| 1 | consumer attachment: `take_result_receiver` / `take_block_receiver`, two once-only channel hand-offs | the Session event stream plus the Consumer claim: `claim_consumer()` → `EventHandoff`, then `run(claim)` starts production over the stream |
+| 2 | `subscribe` → `resume` → `stop` | `connect` → `run` → `close`: two serialized moves with typed refusals, and one asynchronous total close that returns the shared `TeardownReport` |
+| 3 | driver engine mirrors: the nine forwarding members (`register_path`, `register_and_solve_path`, `deregister_path`, `set_path_cap`, `path_count`, `path_dedups`, `path_info_for`, `apply_retune`, `set_inline_simulator`, `latest_results`) | `EngineStages` directly: take `driver.stages()` once and keep that handle |
+| 4 | verify method matrix: the verify-config setters, the four verify reads, and the four `run_*_registration_lifecycle` wrappers | one Verify lifecycle — `VerifyLifecycle` in `degenbot_bot::bot_core` with its provider and bounded retry as construction values — plus `PoolVerifications` for the claim facts and `bot_core::{run_verify_lifecycle, run_registration_lifecycle}` |
+| 5 | hand-wired registration: the crawl unit's stage order, `RegistrationPipeline::prepare_candidate`, and `build_paths.py` | one Registration admission (`arb_engine::crawl::admission::RegistrationAdmission`) behind the crawl and direct-registration adapters |
+| 6 | shell consume loops: `examples/settlement_bot/src/consume.rs`'s loop and `src/degenbot/runner/_consume.py`'s loop | the Session consumer (`degenbot_batch_executor::session::SessionConsumer`); both shells keep only the display drain and the report rendering |
+
+- **`PyArbEngine`** keeps the lifecycle adapters the cockpit calls — `connect`
+  (the `Detached → Subscribed` move, returning the link block), `start` (this
+  shell's own one-call ritual: `connect` plus the verify home's configuration),
+  `close` as an awaitable returning the rendered teardown report, and
+  `session_end_future` (the core detection fact) — and loses the lifecycle/path
+  forwarders; its `map_path_registration_err`/verify mappers re-point at the
+  doors that now raise those refusals. The hand-off is not a pymethod:
+  `SessionConsumer.attach(engine)` takes the engine's one `EventHandoff`, and
+  the consumer's own `resume`/`run` are the session moves. Python awaits
+  `close()`; the FFI blocks, where it must, at its own boundary and never parks
+  the core runtime. The generated stub set moves in the same change (ADR-066),
+  and the FFI stays private (ADR-013).
 - **`examples/settlement_bot`** deletes `consume.rs`'s loop and `dispatch.rs`'s
   seam plumbing, keeps the resolver/receipt-probe adapters, and drives
   `SessionConsumer`; `run_loop.rs` keeps the teardown ordering and awaits
   `close()`, and `session_watch.rs` keeps the end-verdict ranking over the
   consumer's typed report.
 - **The Driver cockpit** (`src/degenbot/runner/`) reduces to an adapter: the Run
-  ritual claims the hand-off, connects, and runs, `_consume.py` is deleted with
-  the block-clock mutator it fed, and `_session_watch.py` ranks the Session
-  consumer's report instead of racing two tasks and detecting no stall itself.
+  ritual claims the hand-off, connects, and runs, `_consume.py` keeps the
+  display drain and the report rendering (its loop and the block-clock mutator
+  it fed are gone), and `_session_watch.py` ranks the Session consumer's report
+  instead of racing two tasks and detecting no stall itself.
+- **One FFI mapping wart, recorded rather than smoothed.** `PySessionConsumer`
+  raises one exception type for two different facts: an abort and a refusal both
+  become `degenbot.dispatch.SessionConsumerError` under the executor's shared
+  loud-abort prefix (`sim-submit-pipeline leaf task failed - aborting the
+  consumer loudly: `). The prefix is exactly right for a leaf failure and wrong
+  for a programming-error refusal, where no leaf ran: an unattached `resume()`
+  reads `... leaf task failed - ... the session consumer has no attached session
+  to resume`, and an unattached `run()` reads the same prefix over `... no
+  attached session to run`. The typed discriminator is already on the value —
+  `SessionFailure.teardown` is `None` exactly when no session was ever attached
+  — so splitting the mapping needs no new fact; until then a caller separates
+  the two by the message body (`no attached session`) and by `batch_index == 0`,
+  and `SessionConsumerError`'s `batch_index`/`report` attributes stay the loop's
+  counts.
 
 ### 6.7 Landing order
 
@@ -682,6 +734,7 @@ the capability doors settle first, the session's interior is rewritten on top of
 them, and each public surface cuts whole in its own slice — `EngineStages` in
 §6.7.3, the lifecycle in §6.7.4 — with certification last, so no consumer is
 ever left driving a half-migrated seam. Each slice lands green on the one before
+it; all six have landed, and §6.8 pairs each one with the commit that shipped
 it.
 
 1. **This ADR** — ergo `O5RI26`. The record is accepted before any dependent
@@ -712,6 +765,70 @@ churn while the `CrawlHost` back-reference and the pure-Rust admission twin stil
 reach into that same object, so the first slice would have to carry the pose
 rewrite *and* re-point every reach-through caller. The confirmed foundation-first
 order settles those callers first and shrinks each slice's blast radius instead.
+
+### 6.8 Landing record
+
+Every slice §6.7 schedules landed green on the slice beneath it. Each row names
+the ergo task and the commit that shipped it:
+
+| Slice | ergo | Commit | What shipped |
+|---|---|---|---|
+| §6.7.1 — this ADR | `O5RI26` | `1db7332ab` (with `ac56bf7f0`, the truthful-lifecycle doc chunk) | the record, plus the capability and lifecycle claims the code answers |
+| §6.7.2 — Verify lifecycle, Registration admission, `CrawlHost` back-reference | `MKXFYI` | `3e4d7f6d6` | one `VerifyLifecycle` home (`bot_core::verify_lifecycle`), one `RegistrationAdmission` behind the crawl and direct-registration adapters, `CrawlHost { admission, snapshot }` with no driver handle |
+| §6.7.3 — the `EngineStages` direct cutover | `KKUMXS` | `74a724170` | every engine caller at the seam, the nine-name mirror deleted, ADR-075 superseded in the same change |
+| §6.7.4 — private pose, Session event stream, Consumer claim, connect/run/close | `CGXZYJ` | `b59d46d4a` | the data-carrying pose machine (9 poses × 11 events), `SessionEvent`/`SessionStream`/`ConsumerClaim`/`EventHandoff`/`claim_consumer`, `connect`/`run`/`close`, the shared `TeardownReport`, typed refusals, and the total idempotent close |
+| §6.7.5 — the Session consumer | `ZJZU27` | `80a9e8b45`, `f350c36db` | `degenbot_batch_executor::session` with the shared event-sequence oracle (`tests/standalone_parity/fixtures/session_consumption.json` and its Rust and Python halves); the pure-Rust example and the Python cockpit become adapters |
+| §6.7.6 — certification and the final public cut | `BGZQFG` | this change | this ADR's status and landing record, the `CHANGELOG`'s public was→is rows, both consumers' docs, regenerated stubs, and the full gate battery |
+
+Two details the shipped surface settled differently from the decision sketches;
+both are recorded rather than re-litigated:
+
+- **`connect`'s signature.** It takes the WS endpoint (`connect(&self, node_ws:
+  &str)`) and reports `Connected { link_block }`; D1's `NodeEndpoints` sketch was
+  shorthand written before the slice. The intent is unchanged — the move carries
+  no configuration, because the provider and its retry policy are construction
+  values on the verify home.
+- **The seam's member count.** Twenty-one, not thirteen (D1, as shipped): the
+  thirteen lifecycle members, the three crawl moves, and five one-line
+  projections of shared state.
+
+**Certification evidence.** The accepted gate set ran in order on this tree:
+`just test` (lint-rust-check's sub-gates including `check-capability-catalog`
+and `check-dependency-charter`, the retirement-tripwire ratchet, 5382 nextest
+tests, the release-profile cargo suite, 3232 Python tests, and the C5 consumer
+probes), `just test-rust` (306 cargo test suites plus the standalone-consumer
+smoke), `just test-flake-probe` (3/3 runs of the two ordering-sensitive Python
+suites, 47 tests each), `just test-fork` against the reth node this environment
+declares (`just node-identity` → `reth/v2.10.0-f5192ac`, chain 1), and
+`just pre-push` (every pre-push hook, the whole-tree battery).
+
+The targeted evidence was repeated rather than sampled once:
+
+| Suite | Repeats | Result |
+|---|---|---|
+| `degenbot-bot` session selection — `arb_engine::{tests::session_lifecycle, driver::tests, pump_session::tests, delivery_lifecycle::tests, session_end::tests}`, 69 tests | 20 | 20/20 green |
+| the shared event-sequence oracle, Rust half (`binary(session_consumption)`, 5 tests) | 10 | 10/10 green |
+| the shared event-sequence oracle, Python half (`test_session_consumption_gate.py`, 2 tests) | 10 | 10/10 green |
+| the Python cockpit's session suite (`test_arbitrage_session.py`, 39 tests) | 10 | 10/10 green |
+
+`just test-fork`'s Rust live fork-truth legs ran 11/11 green against that node.
+Its Python `online_rpc` legs left five failures and one setup error, all outside
+this change's surface and recorded here rather than papered over: two
+`tests/test_anvil_fork.py` pinned-block assertions expect `20987963` where the
+installed anvil 1.8.7 reports `20987964`; one anvil spawn timed out against the
+rate-limited Base endpoint (dRPC free tier, HTTP 429) and took a Base fork test's
+setup with it; one Base construction test lost a required read to the same
+upstream limit; and
+`tests/provider/test_provider_interface.py::TestForkProvider::test_fork_provider_delegates_to_eth_namespace`
+asserts an `AlloyProvider.chain_id` attribute the class does not expose.
+
+Certification also found one generated-artifact gap and closed it through the
+owning pipeline: `SessionConsumerError` is exported on
+`degenbot._ffi.simulation` but carries no `_PYO3_DEF`, so the introspection
+chunks never described it and `just lint-stubtest` reported it missing from the
+stub. The fix is its declaration in the stub generator's exception manifest
+(`rust/tools/stubgen/src/exception_manifest.rs`) — the ADR-066 D3 pattern —
+followed by `just gen-stubs`; no stub was hand-edited.
 
 ## 7. Vocabulary
 

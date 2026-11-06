@@ -1,6 +1,17 @@
 # ADR-050: A public `EngineDriver` is the Rust driver seam — the engine stays crate-private behind the one stage seam
 
-**Status: accepted** (2026-09-14; RSP-3a design phase, epic `RGZG4S`, task `OJI4FH`; decides Gap G1 / task `5XOGRK`; supervisor review accepted the driver-over-EngineStages layering and the PyArbEngine re-parent). Implementation is tracked by the RSP task chain `5XOGRK` (the driver), `XFEJUG` (registration pipeline), `L4E7RI` (consume/dispatch), and `IUGFLH` (the ownership sweep that ratifies the lift). The crate sources remain the last word on what the code does today.
+**Status: accepted; partially superseded by
+[ADR-093](ADR-093-session-lifecycle-and-consumer.md) (2026-11-05)** — D3's
+consumer-before-resume ordering, D4's driver-resident registration lifecycles,
+and D6's synchronous `stop()` mechanism; `connect`/`run`/`close` and the one
+ordered stream replace them (ADR-093 §6.1). D2's snapshot-seed bullet and D7's
+PyO3 re-parent stand, under the names ADR-093 gives them. (2026-09-14; RSP-3a
+design phase, epic `RGZG4S`, task `OJI4FH`; decides Gap G1 / task `5XOGRK`;
+supervisor review accepted the driver-over-EngineStages layering and the
+PyArbEngine re-parent). Implementation is tracked by the RSP task chain
+`5XOGRK` (the driver), `XFEJUG` (registration pipeline), `L4E7RI`
+(consume/dispatch), and `IUGFLH` (the ownership sweep that ratifies the lift).
+The crate sources remain the last word on what the code does today.
 
 > **As-built amendment (2026-11-02).** D2/D5/D6 below named the retired `EnginePhase` API (`require`, `allow_subscribe`, `after_subscribe`, and the `Created → Subscribed → SnapshotLoaded → Backfilled → Resumed` ladder). The landed driver publishes one total transition table (`arb_engine/pump_session.rs`, 9 poses × 10 events) through `EngineStages::advance_phase`, and every legality answer is that table's. The amendment bullets carry the as-built shape; the ladder it replaces is provenance.
 >

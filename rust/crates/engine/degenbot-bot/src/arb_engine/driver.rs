@@ -244,9 +244,10 @@ impl std::error::Error for BackfillGap {}
 /// exists only to carry a sentence. The three prose arms the old surface had
 /// (`SessionState(String)`, `Subscribe(String)`, `Backfill(String)`) became a
 /// typed pose refusal, a typed transport refusal at `connect`, and this gap.
-/// `NoResultReceiver` is deleted as unrepresentable: the hand-off carries the
-/// claim and `run` takes it by value, so "no consumer attached" has no state to
-/// name. `Registration` left with the operation (ADR-093 D4/D7).
+/// A "no consumer attached" arm has no state to name: the hand-off carries the
+/// claim and `run` takes it by value, so the rule is refused at the hand-off
+/// (`ClaimRefusal`) instead. `Registration` left with the operation (ADR-093
+/// D4/D7).
 #[derive(Debug)]
 pub enum DriverError {
     /// The session's pose does not admit `run` (a concurrent move in flight, a

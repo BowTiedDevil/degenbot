@@ -17,6 +17,11 @@ from . import ArbitrageEngine, ConfigValues
 from .provider import AsyncAlloyProvider
 from .submission import Dispatcher, TxSigner
 
+class SessionConsumerError(RuntimeError):
+    """
+    A session consume-loop abort: the leaf failure that stopped the loop. The message is the leaf's own detail under the shared loud-abort prefix; `batch_index` is the batch whose pass failed and `report` the counts the loop reached before it stopped (the typed consumer report).
+    """
+
 @final
 class AssemblyVerdict:
     """
@@ -732,6 +737,7 @@ __all__ = [
     "PayloadOutcome",
     "PayloadVerdict",
     "SessionConsumer",
+    "SessionConsumerError",
     "SimReceipt",
     "SimulateContext",
     "SimulateVerdict",

@@ -159,8 +159,9 @@ mechanism in the tree today, not a preference:
    spans an await is the 2026-08-21 class, and the workspace `deny` on
    `await_holding_lock` does not cover `parking_lot` guards.
 3. **Abort is an escalation, never the primary mechanism; cooperative exit
-   first.** `EngineDriver::stop` is the reference implementation: set the flag,
-   wait out the grace, escalate loudly and log it.
+   first.** `EngineDriver::close`'s teardown is the reference implementation:
+   set the flag, wait out the grace, escalate loudly and log it (the call is
+   asynchronous and total from every pose, ADR-093 D2).
 4. **Loud abort over silent drop (ADR-021 posture).** A stranded pipe is a
    process abort, not data loss — the worker fleet's stranded-result-pipe
    tripwire is the model. Never heal a divergence quietly; classify, stop

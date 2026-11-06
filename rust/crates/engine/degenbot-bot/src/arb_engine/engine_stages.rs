@@ -441,14 +441,14 @@ impl EngineStages {
     /// close is a quiet no-op and a post-close send reports not-sent.
     ///
     /// The block pump calls this from `PumpControl::on_pump_ended` when the
-    /// live loop terminates cooperatively; the public `EngineDriver::stop`
+    /// live loop terminates cooperatively; the public `EngineDriver::close`
     /// calls it too, because an aborted pump task never reaches the loop end
-    /// (ADR-050 D3/D6).
+    /// (ADR-050 D3/D6, ADR-093 D2).
     pub fn close_delivery_channels(&self) {
         self.engine.lock().delivery.lifecycle.close();
     }
 
-    /// Final `WalkMemo` stats drain at engine teardown: `EngineDriver::stop`
+    /// Final `WalkMemo` stats drain at engine teardown: `EngineDriver::close`
     /// calls this AFTER the pump task is down — no further cycle can advance
     /// an epoch, so the LAST epoch's counters have no boundary left to flush
     /// them and are drained here instead. Inert unless the memo recorded

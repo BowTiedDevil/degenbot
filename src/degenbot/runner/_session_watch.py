@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 class SessionEndVerdict(Enum):
     """How a pump session's main loop ended (the *session watch* verdict).
 
-    - ``PumpEnded``: the consumer task itself ended (block/result streams
-      closed, or the consumer raised — the exception propagates from
+    - ``PumpEnded``: the consumer task itself ended (the session's ordered
+      stream closed, or the consumer raised — the exception propagates from
       :meth:`SessionWatch.wait` exactly as the former twins' plain
       ``await main_task`` did).
     - ``RegistrationFailed``: a fatal registration error was surfaced through

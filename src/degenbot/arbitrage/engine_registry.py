@@ -130,18 +130,18 @@ class EngineRegistry:
         *,
         verify_state_view: str | None = None,
     ) -> int:
-        """Run the pre-pump startup ritual and stop BEFORE resume().
+        """Run the pre-pump startup ritual and stop BEFORE production starts.
 
-        Delegates the core ordering to the engine's one-call startup ritual
-        (the Rust ``EngineDriver::start`` mirror — ``subscribe(ws)`` then
-        verify-config); the Python side keeps only the snapshot seed ``S``
-        read-back.
-        Stops at the snapshot-loaded phase so the caller can attach its result
-        consumer before batches begin to flow (`resume()` is the single gate
-        after which the pump emits one ResultBatch per block into the
-        fire-and-forget channel — attaching the consumer after resume risks
-        unbounded backlog and stale-batch dispatch; `resume()` also runs the
-        auto-backfill that closes the snapshot→WS gap).
+        The ritual is this shell's composition of two core facts: ``connect``
+        (the ``Detached -> Subscribed`` move — the WS handshake plus the first
+        complete block, which carries no configuration) and the verify home's
+        own configuration (ADR-093 D1); the Python side keeps only the snapshot
+        seed ``S`` read-back.
+        Production starts at the session consumer's ``resume`` — the claim's one
+        use — so the caller moves the engine's event hand-off into that consumer
+        first. Attaching late risks backlog and stale-batch dispatch, and the
+        driver-owned move also runs the auto-backfill that closes the
+        snapshot→WS gap.
 
         DB snapshot (Shape 2): the V3+V4 DB snapshot is eagerly loaded
         into the core ``BotState`` at ``Bot.__init__`` time via
@@ -167,19 +167,20 @@ class EngineRegistry:
         # `Bot.load_snapshot_from_db` at construction (the DB path) or is
         # `None` on a cold start; the injected-snapshot setter seam is retired.
         # Read it back here so the per-pool step-1 verify seed and the core
-        # auto-backfill inside `resume()` (which closes the snapshot→WS gap)
-        # both see it. `S` is already on `BotState` before `subscribe()` on the
-        # DB path, so the driver-owned `resume` backfill anchors on it (the
-        # pump phase is `subscribed` there; no phase depends on the snapshot).
+        # auto-backfill inside the consumer's `resume` (which closes the
+        # snapshot→WS gap) both see it. `S` is already on `BotState` before
+        # `connect` on the DB path, so the driver-owned backfill anchors on it
+        # (the pump phase is `subscribed` there; no phase depends on the
+        # snapshot).
         snapshot_block = self.engine.snapshot_seed_block
         self._verify_snapshot_block = snapshot_block
 
-        # The one-call startup ritual (the Rust `EngineDriver::start` mirror):
-        # subscribe(ws) -> verify-config(http, view), consumer-safe (it stops
-        # before `resume()`, so nothing emits yet). `S` is already on the shared
-        # `BotState` above; the driver reads it internally while subscribing.
-        # Intentionally NOT calling resume() — the caller attaches its
-        # consumer next, then calls resume() as the single batch-flow gate.
+        # The one-call startup ritual (this shell's adapter): connect(ws) ->
+        # verify-config(http, view), consumer-safe (it stops before production,
+        # so nothing emits yet). `S` is already on the shared `BotState` above;
+        # the driver reads it internally while connecting. Intentionally NOT
+        # starting production — the caller moves the hand-off into its consumer
+        # next, and that consumer's `resume` is the single batch-flow gate.
         return self.engine.start(node_http, node_ws, verify_state_view)
 
     @staticmethod

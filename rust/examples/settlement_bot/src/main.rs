@@ -22,10 +22,13 @@
 //!
 //! Ledger rows 1–5 (CLI, driver config, RPC-URI cascade, DB path,
 //! snapshot-load boot slice) are driven directly; rows 6–8 (the engine
-//! handshake, the result-batch stream, and path registration) go through the
-//! public `degenbot::EngineDriver` (ADR-050 / Gap G1):
-//! `EngineDriver::start` → `take_result_receiver` → `resume` (the driver owns
-//! the `S+1..W` auto-backfill) → `stop`. The G3 registration pipeline is
+//! handshake, the session event stream, and path registration) go through the
+//! public `degenbot::EngineDriver` (ADR-050 as amended by ADR-093 / Gap G1):
+//! `claim_consumer` (the one ordered stream plus its claim) → `connect` (the
+//! handshake and first complete block) → `run(claim)` (the driver owns the
+//! `S+1..W` auto-backfill) → `close` (the total, idempotent teardown). The
+//! consume loop itself is the core's `SessionConsumer` (ADR-093 D6). The G3
+//! registration pipeline is
 //! driver-side; Gap G4's `consume`/`dispatch`/`submission` modules mirror rows
 //! 15–18, and Gap G5's `session_watch` (the typed end-state verdict ranking
 //! over the core session-end detection facts) and `operator_channel` (the
@@ -385,17 +388,17 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("03-rpc-cascade", "REACHABLE", "degenbot::config::{resolve_node_request_uri,resolve_node_subscription_uri} (ADR-062 capability-scoped, file+env)"),
         ("04-db-path", "REACHABLE", "degenbot::config::resolve_database_path (+ offline.fixture_db typed key)"),
         ("05-snapshot-load", "REACHABLE", "SnapshotDb::open + Bot::load_snapshot_from_db"),
-        ("06-engine-subscribe-resume", "REACHED-via-EngineDriver", "EngineDriver::start → subscribe → verify-config (stops pre-resume); resume owns the S+1..W auto-backfill via BlockPump::backfill_with_drain"),
-        ("07-result-batch-stream", "REACHED-via-EngineDriver", "EngineDriver::take_result_receiver (attach pre-resume); ResultBatch over the existing unbounded channel"),
+        ("06-engine-subscribe-resume", "REACHED-via-EngineDriver", "EngineDriver::connect (handshake + first complete block, stops before production) then run(claim), which owns the S+1..W auto-backfill via BlockPump::backfill_with_drain; close() is the total teardown"),
+        ("07-result-batch-stream", "REACHED-via-EngineDriver", "EngineDriver::claim_consumer hands out ONE ordered SessionEvent stream (Block precedes that epoch's Batch) with its non-cloneable ConsumerClaim"),
         ("08-register-and-solve-path", "REACHED-via-EngineStages", "EngineStages::register_path / register_and_solve_path / set_path_cap (through the driver's stages() handle); the crawl reaches the same seam through Registration admission"),
-        ("09-verify-lifecycles", "REACHABLE", "EngineDriver::run_v3/v4_registration_lifecycle(+_sync) expose the core lifecycles and now carry the at-most-once claim (bot_core::VerifyClaims, ZTEUTA); the outcome ledger is the core's (bot_core::registration_ledger, ZTEUTA); the bounded retry dance is the core's (bot_core::verification_retry)"),
+        ("09-verify-lifecycles", "REACHABLE", "bot_core::{VerifyLifecycle, run_verify_lifecycle, run_registration_lifecycle} own the lifecycle with its at-most-once claim (bot_core::VerifyClaims, ZTEUTA); the outcome ledger is the core's (bot_core::registration_ledger, ZTEUTA); the bounded retry dance is the core's (bot_core::verification_retry); a driver reads its verify home with EngineDriver::verify()"),
         ("10-pool-construction", "REACHABLE", "probe_pool_type + build_v2/v3/v4/... (umbrella)"),
         ("11-discovery-db-enumeration", "REACHABLE", "degenbot::db::SnapshotDb::fetch_discovery_rows (degenbot-db::discovery_read) + tests/discovery_read_parity.rs"),
         ("12-path-discovery-batching", "REACHABLE", "discovery.rs: graph build over G2 rows + batched lazy OwnedPathFinder (batch_size<=1 per-path; one cooperative async hop per batch)"),
         ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation); discovery admits every token as an intermediate hop"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
         ("15-dispatch-selection", "REACHABLE", "degenbot::batch_executor::BatchExecutor stage-1 assembly: typed AssemblyVerdict pre-sim policy (empty-hops / resolve-miss / payload-served / suppression / thin-margin / divergent-pool / fee-on-transfer); the batch-local payload-served set (derived per BatchWork from the payload rows) and the cross-block suppression registry (ExecutorConfig.suppression) stay DISTINCT policy inputs; dispatch.rs keeps only the seam extraction (raw_row/payload_row/batch_work)"),
-        ("16-sim-fanout-submitter", "REACHABLE", "degenbot::batch_executor::BatchExecutor over degenbot::submission::SimSubmitPipeline: bounded sim fan-out + single ordered FIFO submit lane + fail-loud raise_if_failed; the driver enqueues BatchWork (caps as plain counts) and drains the typed BatchOutcome record stream; consume.rs HeartbeatSink drains it reading only the block clock (row 7 result stream)"),
+        ("16-sim-fanout-submitter", "REACHABLE", "degenbot::batch_executor::SessionConsumer over BatchExecutor over degenbot::submission::SimSubmitPipeline: the consumer reads the session's ordered stream (the Block arm is the clock, the Batch arm the work), enqueues BatchWork (caps as plain counts) and drains the typed BatchOutcome record stream; bounded sim fan-out + single ordered FIFO submit lane + fail-loud raise_if_failed; consume.rs drains the records for display only"),
         ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
         ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
         ("19-session-watch", "DRIVER-POLICY", "session_watch.rs ranks the core detection facts (degenbot::session_end::{SessionEndCause,SessionEndFacts,SessionEndDetection} over EngineDriver::wait_session_end + the heartbeat stall watchdog) into SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} (watch-as-observer; ranking + teardown stay driver)"),
@@ -522,7 +525,7 @@ fn run() -> Result<(), String> {
 
     // ── Boot slice (ledger row 5): DB snapshot load → seed block S ──
     // The Python path loads the DB snapshot eagerly inside `Bot.__init__`
-    // and stashes S on the shared state before `engine.subscribe(...)`.
+    // and stashes S on the shared state before the engine connects.
     // Database path (ADR-062 D1/D4): `--database` > `DEGENBOT_DB_PATH` >
     // `database.path` > the state-home default, all through the one loaded
     // config. The `offline.fixture_db` typed key (the old DEGENBOT_FIXTURE_DB
@@ -737,7 +740,7 @@ fn run() -> Result<(), String> {
     if cli.smoke_offline || smoke_rpc.is_none() {
         println!(
             "[smoke-offline] engine handshake skipped: set SMOKE_RPC_URL='ws://...' to drive \
-             EngineDriver::start → take_result_receiver → resume (--smoke-offline forces offline)"
+             claim_consumer → connect → run → close (--smoke-offline forces offline)"
         );
         return Ok(());
     }
@@ -775,9 +778,10 @@ fn run() -> Result<(), String> {
         .map_err(|refusal| refusal.to_string())?;
     let runtime = degenbot::runtime::get_runtime();
     let outcome = runtime.block_on(async {
-        // G4 : the result-batch consumer runs concurrently with
-        // the live registration arm; `driver.stop()` below closes the channel
-        // so its pending `recv()` sees end-of-stream exactly once (ADR-050 D6).
+        // G4 : the session consumer runs concurrently with
+        // the live registration arm; `driver.close()` below ends the session and
+        // closes the stream so its pending `recv()` sees end-of-stream exactly
+        // once, and the consumer's own exit closes again (idempotent, ADR-093 D6).
         // G5 : the consumer beats a session-watch heartbeat per
         // batch and the watch aborts it (`WatchdogTripped`) if the loop stalls.
         let heartbeat = degenbot::session_end::Heartbeat::new();

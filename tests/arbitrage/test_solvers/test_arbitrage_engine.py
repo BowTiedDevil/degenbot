@@ -78,8 +78,8 @@ class TestLifecycleMoves:
 
 
 class TestEngineStartRefusals:
-    """Real-FFI pins for ``ArbitrageEngine.start`` — the one-call
-    ``EngineDriver::start`` delegation (subscribe → verify-config).
+    """Real-FFI pins for ``ArbitrageEngine.start`` — the one-call ritual
+    (connect → verify-config) the shell composes.
 
     The suite reaches the driver's refusal paths without a live node, exactly
     as :class:`TestSubscribeResume` does: a fresh engine's phase admits

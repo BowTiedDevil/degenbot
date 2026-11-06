@@ -11,7 +11,7 @@
 //!   signature, so this module only renders what it hands back; one line per
 //!   boundary is the whole contract — never more.
 //! * the **final drain** — the same tap at engine teardown
-//!   (`EngineDriver::stop` → [`super::engine_stages::EngineStages`], which
+//!   (`EngineDriver::close` → [`super::engine_stages::EngineStages`], which
 //!   locks the engine and calls [`final_drain`]), so the LAST epoch's
 //!   counters are not lost to the boundary that never comes after it.
 //!
@@ -203,7 +203,7 @@ pub(crate) fn emit_epoch_boundary_into(
     );
 }
 
-/// THE teardown tap (the `EngineDriver::stop` one-liner via
+/// THE teardown tap (the `EngineDriver::close` one-liner via
 /// `EngineStages`): drain the LAST epoch, whose boundary never comes because
 /// the pump is already down. Same gate as the boundary drain; a
 /// stop-before-resume run (no solving) emits nothing.

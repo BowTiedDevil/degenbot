@@ -206,9 +206,10 @@ are kept separate everywhere below.
 
 The chassis is the pure-Rust settlement driver (`rust/examples/settlement_bot`
 — the external-consumer parity twin whose entire surface is the umbrella
-`degenbot` crate), driven via the public `degenbot::EngineDriver` (`start` →
-`take_result_receiver` → `resume` → `stop`; the main.rs parity-ledger rows
-6–8 handshake). The run is **non-live by posture**: no `--live` was passed
+`degenbot` crate), driven via the public `degenbot::EngineDriver`
+(`claim_consumer` → `connect` → `run(claim)` → `close`, with the core
+`SessionConsumer` driving the session; the main.rs parity-ledger rows 6–8
+handshake). The run is **non-live by posture**: no `--live` was passed
 to the direct invocation (and the launcher form never implies it either) —
 the driver observes the node's chain feed and solves; nothing is submitted.
 

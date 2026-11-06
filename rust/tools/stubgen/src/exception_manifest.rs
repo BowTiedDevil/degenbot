@@ -1,11 +1,13 @@
 // The `create_exception!` declaration manifest (ADR-066 D3).
 //
-// The island exception types register at `#[pymodule_init]` time
-// (`shells/degenbot-python/src/lib.rs::register_exception_types` and
-// `fleet.rs::init`), not as `#[pymodule_export]` declarations: they carry no
-// `_PYO3_DEF`, so the introspection chunks never describe them and the
-// generated stubs could not spell them (18 stubtest allowlist entries at the
-// ADR-066 re-gate). This table is the tool-layer declaration manifest — the
+// The island exception types carry no `_PYO3_DEF`, so the introspection chunks
+// never describe them and the generated stubs could not spell them (18
+// stubtest allowlist entries at the ADR-066 re-gate). Most register at
+// `#[pymodule_init]` time (`shells/degenbot-python/src/lib.rs::
+// register_exception_types` and `fleet.rs::init`); naming one in an export
+// list is the same position — the export writes the runtime `__all__` but no
+// chunk, so its class still comes from this manifest
+// (`SessionConsumerError` on `degenbot._ffi.simulation` is that case). This table is the tool-layer declaration manifest — the
 // same declaration-table pattern as `config_projection.rs`
 // (SCHEMA/SECTION_PATHS): one entry per island exception, from which the
 // generator splices `class <Name>(<Base>):` into the owning module's stub
@@ -201,6 +203,13 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         name: "PostureRetuneError",
         base: "ValueError",
         message: "The fleet posture re-tune channel refused the patch (unknown key, non-dict patch, empty patch, or a threshold outside its typed range).",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi.simulation",
+        rust_path: "simulation::session",
+        name: "SessionConsumerError",
+        base: "RuntimeError",
+        message: "A session consume-loop abort: the leaf failure that stopped the loop. The message is the leaf's own detail under the shared loud-abort prefix; `batch_index` is the batch whose pass failed and `report` the counts the loop reached before it stopped (the typed consumer report).",
     },
 ];
 

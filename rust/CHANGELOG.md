@@ -6,6 +6,35 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **ADR-093 (the settlement session): one lifecycle-only Driver seam, one
+  ordered Session event stream with its Consumer claim, and one Session
+  consumer in the core.** The driver stops forwarding engine operations and
+  stops owning the consume loop; both first-class consumers (the pure-Rust
+  `examples/settlement_bot` and the Python cockpit) become adapters over the
+  same core values. The six public was→is rows a consumer migrates by:
+
+  | Was | Is |
+  | --- | --- |
+  | `take_result_receiver` / `take_block_receiver` — two once-only channel hand-offs latched by `result_receiver_taken` | `claim_consumer() -> Result<EventHandoff, ClaimRefusal>`: one hand-off carrying the ordered `SessionStream` and the non-cloneable `ConsumerClaim`; `run(claim)` starts production |
+  | `subscribe` → `resume` → `stop` | `connect` → `run` → `close`; `close()` is asynchronous, total from every pose, idempotent and shared, and returns the typed `TeardownReport` |
+  | the driver's engine mirrors (`register_path`, `register_and_solve_path`, `deregister_path`, `set_path_cap`, `path_count`, `path_dedups`, `path_info_for`, `apply_retune`, `set_inline_simulator`, `latest_results`) | `EngineStages` directly: take one `driver.stages()` handle and keep it |
+  | the verify method matrix (`set_verify_rpc_url` / `set_verify_state_view`, the verify reads, the four `run_*_registration_lifecycle` wrappers) | one Verify lifecycle: `degenbot_bot::bot_core::{VerifyLifecycle, run_verify_lifecycle, run_registration_lifecycle}`, with the provider and the bounded retry as construction values, plus `PoolVerifications` for the claim facts |
+  | hand-wired registration (the crawl unit's stage order, the example's `prepare_candidate`, `build_paths.py`) | one Registration admission (`degenbot_bot::arb_engine::crawl::admission::RegistrationAdmission`) behind the crawl and direct-registration adapters |
+  | shell consume loops (`examples/settlement_bot/src/consume.rs`, `src/degenbot/runner/_consume.py`) | `degenbot_batch_executor::session::SessionConsumer`: the shells keep only the display drain and the report rendering |
+
+  The stream is `SessionEvent::{Block, Batch}` — a `Block(N)` precedes every
+  `Batch(N)`, no variant carries an end item, natural end is the stream's
+  exactly-once closure, and the typed terminal fact rides the session-end
+  surface. The Python surface moves with it: the engine object keeps
+  `connect`/`start`/`close`/`session_end_future` over the seam, the hand-off
+  moves through `degenbot.dispatch.SessionConsumer.attach(engine)`, and that
+  consumer's `resume`/`run` are the session moves; `block_stream` and the
+  driver's own consume loop are gone. One mapping wart is recorded in ADR-093
+  §6.6: a programming-error refusal (`resume`/`run` with no attached session)
+  raises the same `SessionConsumerError` under the executor's loud-abort prefix
+  that a leaf failure does, and the message body is how a caller tells them
+  apart today.
+
 - **ADR-084 D2 (the engine's doors):** `degenbot-bot`'s two capability homes
   are curated surfaces. Every `bot_core` / `arb_engine` submodule is
   `pub(crate)`; the items the drivers use are re-exported at those two module

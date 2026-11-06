@@ -964,13 +964,14 @@ class Session:
         return bool(readiness.settlement_active)
 
     def _stop_engine(self) -> None:
-        """Stop the engine — the ONE entrypoint (``shutdown()`` + SIGINT funnel here).
+        """Close the engine — the ONE entrypoint (``shutdown()`` + SIGINT funnel here).
 
-        Mirrors the Rust ``stop()`` contract: idempotent, sets the shutdown
-        flag, and aborts the pump task. Best-effort — a torn-down engine during
-        a partial startup must not mask the in-flight exception. An injected
-        ``stop_engine`` actor (tests) replaces the registry stop; ``None``
-        (production) stops the real engine.
+        Mirrors the Rust ``close()`` contract: total from every pose, idempotent,
+        and shared, so a second call joins the one teardown and reads the same
+        report. Best-effort — a torn-down engine during a partial startup must
+        not mask the in-flight exception. An injected ``stop_engine`` actor
+        (tests) replaces the registry close; ``None`` (production) closes the
+        real engine.
         """
         actors = self.actors
         if actors is None:
@@ -986,7 +987,7 @@ class Session:
     def _install_sigint_handler(self) -> None:
         """Bind a SIGINT handler that stops the Rust pump *immediately*.
 
-        The ``close()`` -> ``shutdown()`` -> ``engine.stop()`` path only fires
+        The ``close()`` -> ``shutdown()`` -> ``engine.close()`` path only fires
         once the awaited coroutine unwinds — and during ``build_paths`` the main
         thread is blocked inside the synchronous ``find_paths`` graph prep / the
         Rust ``find_paths_rust`` DFS. Python's default SIGINT -> raise
@@ -998,8 +999,10 @@ class Session:
         pump.
 
         Installing this handler closes the gap: the moment SIGINT arrives,
-        ``engine.stop()`` runs (it just sets the shutdown flag + aborts the pump
-        task — cheap, GIL-only, idempotent) regardless of what the main thread
+        ``engine.close()`` runs (the one teardown: it ends the session and
+        closes the event stream, so the consumer's pending receive sees
+        end-of-stream — idempotent, and safe to join later) regardless of what
+        the main thread
         is doing. The Rust ``find_paths_rust`` DFS releases the GIL via
         ``py.detach()``, so the handler *can* run even mid-DFS. We then re-raise
         so the normal ``KeyboardInterrupt`` unwind proceeds to ``close()``

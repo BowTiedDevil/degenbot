@@ -161,9 +161,10 @@ def test_start_stashes_None_blocks_when_no_snapshots() -> None:
 
 
 def test_start_delegates_the_ritual_to_one_engine_call() -> None:
-    """EngineRegistry.start authors the subscribe -> verify ordering exactly
-    once, through the engine's one-call ``start`` (the Rust
-    ``EngineDriver::start`` mirror) — not three separate FFI crossings.
+    """EngineRegistry.start authors the connect -> verify ordering exactly
+    once, through the engine's one-call ``start`` (this shell's adapter over
+    `connect` plus the verify home's configuration) — not three separate FFI
+    crossings.
     """
     fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)

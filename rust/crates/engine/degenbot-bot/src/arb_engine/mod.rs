@@ -174,7 +174,7 @@ mod solver_capture;
 mod workload_partition;
 // The per-epoch WalkMemoStats tap: drains the
 // engine-owned WalkMemo ONCE per begin_block boundary (drain-then-advance)
-// plus a final drain at EngineDriver::stop, into the logs/walkmemo_stats.jsonl
+// plus a final drain at EngineDriver::close, into the logs/walkmemo_stats.jsonl
 // sink and the ADR-043 `degenbot.solver.walk_memo_*` instruments.
 // Observation only — zero behavior change to solving.
 pub(crate) mod walk_telemetry;
