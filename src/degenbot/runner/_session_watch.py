@@ -172,15 +172,23 @@ def _consumer_fact(
 
     The output is retrieved on EVERY path (so a simultaneous failure never
     leaves an unretrieved task exception); a returned report's ``end`` verdict
-    is the ``ConsumerEnd`` spelling (``quiet-end`` -> ``QuietEnd``,
-    ``pump-stopped`` -> ``PumpStopped``), and a raised or cancelled task is the
-    consumer failure.
+    translates through the exhaustive ``ConsumerEnd`` table (``quiet-end`` ->
+    ``QuietEnd``, ``pump-stopped`` -> ``PumpStopped``), and a raised or
+    cancelled task is the consumer failure.
+
+    An ``end`` outside the table is refused LOUDLY here, before the core's
+    Session-end ranking could fold an unknown ending into the intended close
+    (``QuietEnd`` / ``PumpEnded`` + ``Nothing``).
 
     Args:
         consumer_task: The finished consumer task.
 
     Returns:
         The ``(outcome name, retained output, failure)`` triple.
+
+    Raises:
+        ValueError: when a returned report's ``end`` is not a ``ConsumerEnd``
+            spelling; the refusal fires before the ranking fold.
 
     """
     if consumer_task.cancelled():
@@ -190,8 +198,17 @@ def _consumer_fact(
         return "Failed", None, error
     output = consumer_task.result()
     end = output.get("end") if isinstance(output, dict) else None
-    outcome = "PumpStopped" if end == "pump-stopped" else "QuietEnd"
-    return outcome, output, None
+    match end:
+        case "quiet-end":
+            return "QuietEnd", output, None
+        case "pump-stopped":
+            return "PumpStopped", output, None
+        case _:
+            message = (
+                f"unknown consumer end {end!r}: expected the ConsumerEnd spelling "
+                "'quiet-end' or 'pump-stopped'"
+            )
+            raise ValueError(message)
 
 
 def _session_end_abort(cause: str | None, consumer_outcome: str | None) -> RuntimeError:
@@ -296,7 +313,8 @@ class SessionWatch:
         reads the gathered CONTENTS (a same-batch registration failure and
         consumer completion are both collected), so the verdict cannot depend
         on task completion order. The consumer's output is retrieved on every
-        path and retained.
+        path and retained; a report whose ``end`` is not a ``ConsumerEnd``
+        spelling refuses loudly at the translation, before the fold.
 
         Returns:
             The ranked end-state verdict — ``RegistrationFailed`` (the caller

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from degenbot.arbitrage import session_end_rank
+from degenbot.runner import _session_watch
 from degenbot.runner._consume import _PUMP_STOPPED_MESSAGE
 from degenbot.runner._session_watch import (
     RaiseSlot,
@@ -38,10 +39,12 @@ class _RegistrationPanic(BaseException):
     """The Python analogue of a Rust background-registration task panic."""
 
 
-async def _quick_consumer(ticks: int = 1) -> None:
-    """A consumer that ends on its own after a few loop ticks."""
+async def _quick_consumer(ticks: int = 1) -> dict[str, Any]:
+    """A consumer that ends on its own after a few loop ticks, reporting the
+    quiet end in the typed report shape every consumer returns."""
     for _ in range(ticks):
         await asyncio.sleep(0)
+    return {"batches": 0, "end": "quiet-end"}
 
 
 async def _hanging_consumer() -> None:
@@ -101,7 +104,7 @@ def _absorbing_watchdog_factory() -> Coroutine[Any, Any, None]:
     return _watchdog()
 
 
-def _report_consumer(end: str) -> Any:
+def _report_consumer(end: str | None) -> Any:
     """A consumer double returning the typed report shape (``end`` is the
     ``ConsumerEnd`` spelling the FFI report carries)."""
 
@@ -434,6 +437,45 @@ class TestIntendedEndTies:
 
         assert await watch.wait() is SessionEndVerdict.PumpEnded
         assert watch.consumer_output == {"batches": 0, "end": "quiet-end"}
+
+
+class TestConsumerEndTranslation:
+    """The ``ConsumerEnd`` translation is exhaustive: exactly the two FFI
+    spellings translate to core consumer outcomes, and anything else is
+    refused loudly at the boundary.
+    """
+
+    @pytest.mark.parametrize("unknown_end", ["flubber-end", None])
+    async def test_an_unknown_consumer_end_fails_loud_before_ranking(
+        self,
+        unknown_end: str | None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A report whose ``end`` is not a ``ConsumerEnd`` spelling is refused
+        at the translation - before the core's Session-end ranking can fold an
+        unknown ending into the intended close (``QuietEnd`` / ``PumpEnded`` +
+        ``Nothing``) - and the refusal leaves no unobserved task exception.
+
+        The rank fold is tripped, not scripted: crossing it fails the test.
+        """
+
+        consumer = asyncio.create_task(_report_consumer(unknown_end)())
+        watch = _watch(consumer, _never_watchdog)
+
+        def _rank_must_not_run(**_facts: Any) -> Any:
+            msg = "the rank fold must not run for an unknown end"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(_session_watch, "session_end_rank", _rank_must_not_run)
+
+        with pytest.raises(ValueError, match="unknown consumer end") as excinfo:
+            await watch.wait()
+
+        assert repr(unknown_end) in str(excinfo.value)
+        assert consumer.done()
+        assert not consumer.cancelled()
+        assert consumer.exception() is None
+        assert consumer.result() == {"batches": 0, "end": unknown_end}
 
 
 class TestWatchSetRecord:

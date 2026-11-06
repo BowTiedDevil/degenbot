@@ -70,6 +70,15 @@ def noop_coro():
     return _n()
 
 
+def quiet_report_coro():
+    """The drain-adapter double: the typed report of a quiet consumer end."""
+
+    async def _report() -> dict:  # ruff: ignore[unused-async] -- a completed report double
+        return {"batches": 0, "end": "quiet-end"}
+
+    return _report()
+
+
 @dataclass(frozen=True)
 class FakeBootReadiness:
     """The posture-readiness double: what the boot's readiness probe answers."""
@@ -152,7 +161,7 @@ def boot_runner(
             pipeline_factory=StubPipeline,
             consumer_factory=fake_session_consumer,
             path_builder=path_builder if path_builder is not None else (lambda **kw: None),
-            consumer=lambda *args, **kw: noop_coro(),
+            consumer=lambda *args, **kw: quiet_report_coro(),
             settlement_arm=settlement_arm,
             readiness=readiness,
             settlement_endpoints=settlement_endpoints,

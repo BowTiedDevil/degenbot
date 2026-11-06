@@ -26,6 +26,7 @@ import pytest
 
 from tests.fakes.engine import FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
+from tests.helpers.boot_actors import quiet_report_coro
 from tests.helpers.session import session_for_test
 from tests.helpers.session_drive import block_event, drive_session, session_with_real_clock
 
@@ -44,11 +45,7 @@ class TestSessionOwner:
         def capturing_consumer(loop: object, consumer: object) -> object:
             captured["loop"] = loop
             captured["consumer"] = consumer
-
-            async def _n() -> None:
-                pass
-
-            return _n()
+            return quiet_report_coro()
 
         StubPipeline.instances.clear()
         session = session_for_test(consumer=capturing_consumer)

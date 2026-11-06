@@ -41,7 +41,7 @@ from degenbot.runner.session import PhaseError, Session, SessionPhase
 from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.fakes.bot import FakeBot, RecordingPyBot
 from tests.fakes.engine import FakeEngine, FakeEngineRegistry
-from tests.helpers.boot_actors import FakeAsyncW3, noop_coro
+from tests.helpers.boot_actors import FakeAsyncW3, quiet_report_coro
 from tests.helpers.session import (
     injected_test_actors,
     offline_cfg,
@@ -76,12 +76,9 @@ def _runner(**overrides: Any) -> BotRunner:
     )
 
 
-def _noop_coro() -> Any:
-    return noop_coro()
-
-
 class _Recorder:
-    """Records call order via an injected events list; returns a no-op coroutine.
+    """Records call order via an injected events list; returns a coroutine
+    answering the typed quiet-end consumer report.
 
     The append fires synchronously at __call__ time (i.e. at ``create_task``
     argument evaluation for the consumer, or at the ``await`` for the path
@@ -95,7 +92,7 @@ class _Recorder:
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         self._events.append(self._tag)
-        return _noop_coro()
+        return quiet_report_coro()
 
 
 class TestBotRunnerStart:
@@ -760,11 +757,12 @@ class TestSubCBgRegistrationConcurrency:
                     0
                 )  # yield stands in for the real builder's per-path construction await
 
-        async def consumer(*args: Any, **kwargs: Any) -> None:
+        async def consumer(*args: Any, **kwargs: Any) -> dict[str, Any]:
             # dispatch path — discrete work, then end the main loop
             for n in range(25):
                 dispatch_work.append(n)
                 await asyncio.sleep(0)  # yield stands in for one dispatch hot-loop await
+            return {"batches": 0, "end": "quiet-end"}
 
         session = session_for_test(
             path_builder=forever_path_builder,
@@ -795,7 +793,7 @@ class TestSubCBgRegistrationConcurrency:
                 verify_steps += 1
                 await asyncio.sleep(0)  # each yield stands in for one RPC-verify await
 
-        async def consumer(*args: Any, **kwargs: Any) -> None:
+        async def consumer(*args: Any, **kwargs: Any) -> dict[str, Any]:
             # The hot loop does not depend on a 'final' discovery state: advance
             # dispatch while registration drains, then finish with it complete.
             for n in range(10):
@@ -804,6 +802,7 @@ class TestSubCBgRegistrationConcurrency:
             registration_task = session.registration_task
             assert registration_task is not None
             await registration_task  # returns once the drain is done
+            return {"batches": 0, "end": "quiet-end"}
 
         session = session_for_test(path_builder=draining_path_builder, consumer=consumer)
         await session.run()
@@ -863,9 +862,10 @@ class TestSubCBgRegistrationConcurrency:
                     0
                 )  # yield stands in for the real builder's per-path construction await
 
-        async def recording_consumer(loop: object, consumer: object) -> None:
+        async def recording_consumer(loop: object, consumer: object) -> dict[str, Any]:
             for _ in range(3):
                 await asyncio.sleep(0)  # yield stands in for the drain's per-batch render await
+            return {"batches": 0, "end": "quiet-end"}
 
         session = session_for_test(
             path_builder=forever_path_builder,
@@ -903,9 +903,10 @@ class TestOngoingDiscovery:
         async def forever_path_builder(**kwargs: Any) -> None:
             await asyncio.Event().wait()  # never completes on its own
 
-        async def consumer(*args: Any, **kwargs: Any) -> None:
+        async def consumer(*args: Any, **kwargs: Any) -> dict[str, Any]:
             for _ in range(3):
                 await asyncio.sleep(0)  # each yield stands in for one hot-loop await
+            return {"batches": 0, "end": "quiet-end"}
 
         session = session_for_test(
             bot=bot,
@@ -1002,7 +1003,7 @@ class TestSessionOperatorSurface:
 
         fake_pipeline = _FakePipeline()
 
-        async def consumer(*args: Any, **kwargs: Any) -> None:
+        async def consumer(*args: Any, **kwargs: Any) -> dict[str, Any]:
             for n in range(20):
                 dispatch_work.append(n)
                 if n == 7:
@@ -1021,6 +1022,7 @@ class TestSessionOperatorSurface:
                     await session.enqueue_path(["hop-a", "hop-b"], directions=[True, False])
                     await session.trigger_discovery(bound=3)
                 await asyncio.sleep(0)  # yield stands in for one dispatch hot-loop await
+            return {"batches": 0, "end": "quiet-end"}
 
         session = session_for_test(consumer=consumer)
         await session.run()

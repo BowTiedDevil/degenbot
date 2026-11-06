@@ -24,7 +24,12 @@ from tests.fakes.bot import FakeBot
 from tests.fakes.engine import FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline, fake_session_consumer
 from tests.helpers import verdict_probe as probe
-from tests.helpers.boot_actors import FakeAsyncW3, inline_registration_scheduler, noop_coro
+from tests.helpers.boot_actors import (
+    FakeAsyncW3,
+    inline_registration_scheduler,
+    noop_coro,
+    quiet_report_coro,
+)
 
 if TYPE_CHECKING:
     from degenbot.runner._session_watch import SessionWatch
@@ -113,8 +118,9 @@ class FakeReadiness:
 
 
 def noop_consumer(*args: Any, **kwargs: Any) -> Any:
-    """The drain-adapter double: a coroutine that ends the main loop immediately."""
-    return noop_coro()
+    """The drain-adapter double: a coroutine answering the typed quiet-end
+    report and ending the main loop immediately."""
+    return quiet_report_coro()
 
 
 def noop_builder(**kwargs: Any) -> Any:

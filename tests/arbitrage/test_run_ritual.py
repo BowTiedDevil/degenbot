@@ -29,7 +29,7 @@ from degenbot.runner.session import InjectedActors
 from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.fakes.bot import FakeBot, RecordingPyBot
 from tests.fakes.engine import FakeEngineRegistry
-from tests.helpers.boot_actors import inline_registration_scheduler, noop_coro
+from tests.helpers.boot_actors import inline_registration_scheduler, quiet_report_coro
 from tests.helpers.session import OFFLINE_RELAY, FakeReadiness, session_for_test
 
 
@@ -82,14 +82,15 @@ class _StubScheduler:
 
 
 class _RecordingConsumer:
-    """A consumer double that records its attach and returns a no-op coroutine."""
+    """A consumer double that records its attach and returns the typed quiet-end
+    report."""
 
     def __init__(self, events: list[str]) -> None:
         self._events = events
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         self._events.append("consumer")
-        return noop_coro()
+        return quiet_report_coro()
 
 
 class _RecordingBuilder:
