@@ -6,6 +6,21 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **The registration outcome ledger reports its own registration-skip census
+  facts.** The one outcome fold (`PipelineReport::absorb`) is now the sole
+  emitter of `CensusEvent::RegistrationSkip`: the fine-to-coarse label collapse
+  lives beside the census event, the driver-side reason-string round trip is
+  deleted, and the metric can no longer disagree with the counters. One label
+  change: `BuildV2`/`V3`/`V4Refused` now count as `pool-build-error` (the dead
+  `build-v2:`-prefix arm's intent) where they previously fell to `other`.
+
+  | Was | Is |
+  | --- | --- |
+  | `degenbot._ffi.Bot.record_registration_skip(reason)` | deleted — the fold reports the fact at classification |
+  | `registration_skip_kind` / `Bot::record_registration_skip` | deleted — one typed mapping beside the census event |
+  | `build_paths._observe_skip`'s meter hop | deleted — the cockpit keeps display only |
+  | the registry-dedup site's `"dup"` census literal | deleted — both dedup producers fold once, the fold reports once |
+
 - **ADR-093 (the settlement session): one lifecycle-only Driver seam, one
   ordered Session event stream with its Consumer claim, and one Session
   consumer in the core.** The driver stops forwarding engine operations and

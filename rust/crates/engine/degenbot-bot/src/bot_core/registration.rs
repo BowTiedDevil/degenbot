@@ -76,25 +76,6 @@ pub fn parse_address_list(items: &[String]) -> Result<Vec<Address>, RefusalKind>
     items.iter().map(|s| parse_address_str(s)).collect()
 }
 
-/// Collapse a registration-skip reason onto the closed label set (the
-/// instruments' cardinality discipline) — per-error-class detail stays in
-/// the greppable `[build_paths] Progress` breakdown, not label cardinality.
-#[must_use]
-pub fn registration_skip_kind(reason: &str) -> &'static str {
-    match reason {
-        "v4-hook-rejected" | "v4-dynamic-fee-rejected" | "v4-high-fee-rejected" => "v4-admission",
-        "path-cap" => "path-cap",
-        "dup" => "dup",
-        "direction-mismatch" | "v4-no-hash" | "unknown-pool-type" => "candidate-invalid",
-        "engine-reject" => "engine-reject",
-        other if other.starts_with("register-fail") => "register-fail",
-        other if other.starts_with("build-v2:") => "pool-build-error",
-        other if other.starts_with("build-v3:") => "pool-build-error",
-        other if other.starts_with("build-v4:") => "pool-build-error",
-        _ => "other",
-    }
-}
-
 /// Normalize assembled ticks into the dict-row shape the shell marshals into
 /// a Python `{tick: (gross, net, block)}` dict, in the map's own iteration
 /// order (the historical dict ordering — no sort is introduced).
@@ -661,15 +642,6 @@ impl Bot {
             key.currency1.to_checksum(None),
             pm.to_checksum(None),
         )))
-    }
-
-    /// PRG-2: record one registration skip into the
-    /// `degenbot.registration.skips` metric family (Rust meter), collapsing
-    /// `reason` onto the closed label set ([`registration_skip_kind`]).
-    pub fn record_registration_skip(&self, reason: &str) {
-        crate::instruments::record(crate::instruments::CensusEvent::RegistrationSkip {
-            reason: registration_skip_kind(reason),
-        });
     }
 
     /// Assemble a V3 pool's tick map with the `Db → Chain` precedence
@@ -1412,31 +1384,6 @@ mod tests {
                 assert_eq!(gross, alloy::primitives::U128::MAX.to::<u128>());
                 assert_eq!((net, block), (0i128, 0u64));
             }
-        }
-    }
-
-    /// The skip-label collapse onto the closed cardinality set (the Python
-    /// `SkipGate` memo's Rust twin) — every historical reason class maps to
-    /// its label, and unknown reasons fall to `other`.
-    #[test]
-    fn registration_skip_kind_collapses_onto_the_closed_label_set() {
-        for (reason, label) in [
-            ("v4-hook-rejected", "v4-admission"),
-            ("v4-dynamic-fee-rejected", "v4-admission"),
-            ("v4-high-fee-rejected", "v4-admission"),
-            ("path-cap", "path-cap"),
-            ("dup", "dup"),
-            ("direction-mismatch", "candidate-invalid"),
-            ("v4-no-hash", "candidate-invalid"),
-            ("unknown-pool-type", "candidate-invalid"),
-            ("engine-reject", "engine-reject"),
-            ("register-fail-already", "register-fail"),
-            ("build-v2: rpc down", "pool-build-error"),
-            ("build-v3: timeout", "pool-build-error"),
-            ("build-v4: decode", "pool-build-error"),
-            ("something-new", "other"),
-        ] {
-            assert_eq!(super::registration_skip_kind(reason), label, "{reason}");
         }
     }
 

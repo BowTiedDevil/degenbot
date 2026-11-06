@@ -323,39 +323,16 @@ def crawl_config(  # ruff: ignore[too-many-arguments] - the resolved values of o
     return config
 
 
-# ──────────────────────────────────────────────────────────────────
-# The observation policy (the counters are the engine's fold)
-# ──────────────────────────────────────────────────────────────────
-
-
-def _observe_skip(bot: Any, reason: str, detail: str | None = None) -> None:
-    """Apply the driver-side observation policy for one skip reason.
-
-    ``reason`` is a short stable tag (e.g. ``"build-v3-refused"``), never an
-    interpolated address, so the aggregate stays compact and greppable. The skip
-    ALSO lands in the Rust ``degenbot.registration.skips`` metric family
-    (closed-set labels); the per-error-class detail stays here in logs, first few
-    occurrences only so a skip flood cannot resurrect the log-flood hazard.
-    """
-    if detail is not None:
-        bot_logger.debug(f"[build_paths] Pool-build skip ({reason}): {detail}")
-    py_bot = getattr(bot, "_py_bot", None)
-    if py_bot is not None:
-        py_bot.record_registration_skip(reason)
-
-
 async def _consume(
     session: CrawlSession,
     *,
-    bot: Any,
     progress_interval_s: float,
 ) -> None:
-    """Consume the engine's receipt stream: cadence, observation, anchors.
+    """Consume the engine's receipt stream: cadence and anchors.
 
     The counters, the stage profile and the cap latch are the ENGINE's fold; this
-    coroutine only decides WHEN a line is printed and which skip reasons land in
-    the metric family. The render itself is ``session.progress_line()`` /
-    ``session.stage_profile_lines()``.
+    coroutine only decides WHEN a line is printed. The render itself is
+    ``session.progress_line()`` / ``session.stage_profile_lines()``.
 
     Raises:
         RuntimeError: the crawl's run aborted or failed loudly; the run's own
@@ -372,11 +349,7 @@ async def _consume(
 
         kind = receipt["kind"]
         tag = receipt["tag"]
-        if kind == "skip":
-            if tag is not None:
-                _observe_skip(bot, tag)
-        elif kind == "register-fail":
-            _observe_skip(bot, tag or "register-fail")
+        if kind == "register-fail":
             if session.summary()["register_fail_count"] <= 5:
                 bot_logger.warning(f"Path registration failed: {tag}")
         elif kind == "cap":
@@ -385,16 +358,13 @@ async def _consume(
             # time-throttled cadence would repeat the terminal line every
             # interval. Announce it once, print the terminal line once, then
             # leave the loop for the completion render.
-            _observe_skip(bot, "path-cap")
             bot_logger.info("[build_paths] Path cap reached — stopping discovery crawl")
             bot_logger.info(session.progress_line())
             break
         elif kind == "registered":
             if receipt["path_id"] is None:
-                # The engine's own signature dedup answered: no counter moved, so
-                # the anchor must not fire — the dup is a skip metric, as the
-                # retired pipeline recorded it.
-                _observe_skip(bot, "dup")
+                # The engine's own signature dedup answered: no counter moved,
+                # so the anchor must not fire.
                 continue
             # The anchor fires ONCE per 1000-boundary the engine's fold reaches,
             # never once per receipt: the fold has already absorbed every receipt
@@ -517,7 +487,6 @@ async def build_paths(
     try:
         await _consume(
             session,
-            bot=bot,
             progress_interval_s=options.progress_interval_secs,
         )
         completed = True

@@ -1525,8 +1525,13 @@ pub struct PipelineReport {
 }
 
 impl PipelineReport {
-    /// Fold one unit outcome into the report — the one outcome-counter fold.
+    /// Fold one unit outcome into the report — the one outcome-counter fold,
+    /// and the one place a unit's registration-skip census fact is reported
+    /// (classification and emission are one act).
     pub fn absorb(&mut self, outcome: &RegistrationUnitOutcome) {
+        if let Some(event) = crate::census::CensusEvent::registration_skip(outcome) {
+            crate::instruments::record(event);
+        }
         self.units_folded += 1;
         match outcome {
             RegistrationUnitOutcome::Skip {
@@ -3212,5 +3217,81 @@ mod tests {
             );
             assert_tags(&kind, Some(family), RegistrationPhase::Register);
         }
+    }
+}
+
+// ── The fold reports the registration-skip fact ────────────────────────────
+
+#[cfg(test)]
+mod census_reporting_tests {
+    use super::{OutcomeLabel, PipelineReport, RegistrationOutcome, RegistrationUnitOutcome};
+    use crate::census::{test_probe, CensusEvent};
+
+    fn recorded_reasons(
+        report: &mut PipelineReport,
+        outcomes: &[RegistrationUnitOutcome],
+    ) -> Vec<Option<&'static str>> {
+        test_probe::take();
+        for outcome in outcomes {
+            report.absorb(outcome);
+        }
+        test_probe::take()
+            .into_iter()
+            .map(|event| match event {
+                CensusEvent::RegistrationSkip { reason } => Some(reason),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The fold is the one reporter: each unit outcome reports exactly one
+    /// registration-skip fact at classification, so the metric moves with the
+    /// counters and no driver sends a reason string back.
+    #[test]
+    fn the_fold_reports_one_registration_skip_fact_per_unit() {
+        let mut report = PipelineReport::default();
+        let reasons = recorded_reasons(
+            &mut report,
+            &[
+                RegistrationUnitOutcome::Skip {
+                    label: OutcomeLabel::Vocabulary(RegistrationOutcome::BuildV3Refused),
+                    counts_as_skip: true,
+                    detail: None,
+                },
+                RegistrationUnitOutcome::Cap,
+                RegistrationUnitOutcome::RegisterFailed { detail: None },
+                // Both dedup producers fold to this one outcome — one fact.
+                RegistrationUnitOutcome::Registered {
+                    created: false,
+                    v4_hops: 0,
+                },
+            ],
+        );
+        assert_eq!(
+            reasons,
+            [
+                Some("pool-build-error"),
+                Some("path-cap"),
+                Some("register-fail"),
+                Some("dup")
+            ]
+        );
+    }
+
+    /// A created registration and a counted rejection move no census fact.
+    #[test]
+    fn a_created_registration_and_a_rejection_record_no_fact() {
+        let mut report = PipelineReport::default();
+        let reasons = recorded_reasons(
+            &mut report,
+            &[
+                RegistrationUnitOutcome::Registered {
+                    created: true,
+                    v4_hops: 0,
+                },
+                RegistrationUnitOutcome::Reject { detail: None },
+            ],
+        );
+        assert!(reasons.is_empty());
     }
 }

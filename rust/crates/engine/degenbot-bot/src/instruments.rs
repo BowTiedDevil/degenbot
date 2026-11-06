@@ -1683,6 +1683,8 @@ impl PipelineInstruments {
 /// the event. Emit sites call this unconditionally; no site names a metric or
 /// touches [`pipeline`].
 pub fn record(event: CensusEvent) {
+    #[cfg(test)]
+    crate::census::test_probe::record(event);
     if let Some(p) = pipeline() {
         p.apply(event);
     }

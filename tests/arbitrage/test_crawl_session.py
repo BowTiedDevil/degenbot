@@ -112,21 +112,6 @@ class _ScriptedCrawl:
         return ("completed", None)
 
 
-class _SkipMeter:
-    """The skip-metric sink a real ``Bot`` exposes to ``_observe_skip``."""
-
-    def __init__(self) -> None:
-        self.reasons: list[str] = []
-
-    def record_registration_skip(self, reason: str) -> None:
-        self.reasons.append(reason)
-
-
-class _MeteredBot:
-    def __init__(self) -> None:
-        self._py_bot = _SkipMeter()
-
-
 def _registered(path_id: int | None) -> dict[str, Any]:
     return {"seq": 0, "kind": "registered", "tag": None, "path_id": path_id}
 
@@ -157,10 +142,6 @@ def render_lines(caplog: pytest.LogCaptureFixture):
         logger.removeHandler(caplog.handler)
 
 
-def _recording_bot() -> _MeteredBot:
-    return _MeteredBot()
-
-
 def _craft_receipts() -> list[dict[str, Any]]:
     receipts: list[dict[str, Any]] = []
     for index in range(2500):
@@ -177,8 +158,8 @@ async def test_a_drained_burst_prints_the_anchor_once(render_lines) -> None:
     The engine's fold has already absorbed every receipt it sent, so a burst this
     consumer is still draining reads ONE (unchanged) count for the whole burst.
     The anchor fires once per 1000-boundary the fold reaches — never once per
-    receipt — and a duplicate (no path id) moves no counter: it stays a skip
-    metric, as the retired pipeline recorded it.
+    receipt — and a duplicate (no path id) moves no counter and fires no
+    anchor.
     """
     receipts = _craft_receipts()
     # The frozen fold: exactly what a drained burst sees after the crawl resolved.
@@ -193,16 +174,13 @@ async def test_a_drained_burst_prints_the_anchor_once(render_lines) -> None:
             "register_fail_count": 0,
         },
     )
-    bot = _recording_bot()
-
-    await _consume(session, bot=bot, progress_interval_s=30.0)
+    await _consume(session, progress_interval_s=30.0)
 
     lines = render_lines()
 
     assert len(_anchor_lines(lines)) == 1, "a frozen fold prints its boundary once"
     cadence = [line for line in lines if "(terminal render)" in line]
     assert len(cadence) == 1, "the time-throttled cadence does not repeat inside one burst"
-    assert bot._py_bot.reasons.count("dup") == len(receipts) - 2500
 
 
 @pytest.mark.asyncio
@@ -219,7 +197,7 @@ async def test_a_live_crawl_prints_one_anchor_per_thousand(render_lines) -> None
         },
         advance=True,
     )
-    await _consume(session, bot=_recording_bot(), progress_interval_s=30.0)
+    await _consume(session, progress_interval_s=30.0)
 
     lines = render_lines()
 

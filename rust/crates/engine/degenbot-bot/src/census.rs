@@ -19,6 +19,10 @@
 //! sets, so an event payload that could not be `&'static` is that gate's
 //! refusal arriving at compile time.
 
+use crate::bot_core::registration_ledger::{
+    OutcomeLabel, RegistrationOutcome, RegistrationUnitOutcome,
+};
+
 /// One drain-path happening, data-carrying where a metric needs a value.
 /// One variant per instrument answer; `instruments::record` is the sole
 /// dispatcher.
@@ -294,4 +298,172 @@ pub enum CensusEvent {
         resident_programs: u64,
         code_bytes: u64,
     },
+}
+
+// ── The registration-skip label collapse ───────────────────────────────────
+
+impl CensusEvent {
+    /// The registration-skip fact one folded unit outcome reports — the ONE
+    /// fine-to-coarse label collapse, beside the event it serves. `reason` is
+    /// a member of the metric's closed label set; a free-form breakdown label
+    /// collapses to `other`. `None` records no skip fact: a created
+    /// registration or a counted rejection (the counts carry it).
+    pub(crate) fn registration_skip(outcome: &RegistrationUnitOutcome) -> Option<Self> {
+        use RegistrationUnitOutcome as Unit;
+        let reason = match outcome {
+            Unit::Skip { label, .. } => match label {
+                OutcomeLabel::Vocabulary(labelled) => coarse_label(labelled),
+                OutcomeLabel::FreeForm(_) => "other",
+            },
+            Unit::Cap => "path-cap",
+            Unit::RegisterFailed { .. } => "register-fail",
+            Unit::Registered { created: false, .. } => "dup",
+            Unit::Registered { created: true, .. } | Unit::Reject { .. } => return None,
+        };
+        Some(Self::RegistrationSkip { reason })
+    }
+}
+
+/// The metric label one bounded outcome reports — the cardinality collapse
+/// onto the closed set; per-error-class detail stays in the outcome
+/// breakdown, never in label cardinality.
+fn coarse_label(outcome: &RegistrationOutcome) -> &'static str {
+    match outcome {
+        RegistrationOutcome::Dup => "dup",
+        RegistrationOutcome::PathCap => "path-cap",
+        RegistrationOutcome::DirectionMismatch
+        | RegistrationOutcome::UnknownPoolType
+        | RegistrationOutcome::V4NoHash => "candidate-invalid",
+        RegistrationOutcome::V4HookRejected | RegistrationOutcome::V4DynamicFeeRejected => {
+            "v4-admission"
+        }
+        RegistrationOutcome::BuildV2Refused
+        | RegistrationOutcome::BuildV3Refused
+        | RegistrationOutcome::BuildV4Refused => "pool-build-error",
+        RegistrationOutcome::RegisterFailed => "register-fail",
+        RegistrationOutcome::Registered
+        | RegistrationOutcome::PathRejected
+        | RegistrationOutcome::Refused(_) => "other",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CensusEvent;
+    use crate::bot_core::registration_ledger::{
+        LifecyclePrecondition, OutcomeLabel, RefusalKind, RegistrationOutcome, RegistrationPhase,
+        RegistrationUnitOutcome,
+    };
+
+    fn skip_of(label: RegistrationOutcome) -> RegistrationUnitOutcome {
+        RegistrationUnitOutcome::Skip {
+            label: OutcomeLabel::Vocabulary(label),
+            counts_as_skip: true,
+            detail: None,
+        }
+    }
+
+    fn reason_of(outcome: &RegistrationUnitOutcome) -> Option<&'static str> {
+        CensusEvent::registration_skip(outcome).and_then(|event| match event {
+            CensusEvent::RegistrationSkip { reason } => Some(reason),
+            _ => None,
+        })
+    }
+
+    /// The one fine-to-coarse label collapse, pinned value by value: the
+    /// metric's closed label set and which outcome reports each member.
+    /// Build refusals report `pool-build-error` — the collapsed arm's intent.
+    #[test]
+    fn every_outcome_reports_its_registration_skip_label() {
+        let cases = [
+            (RegistrationOutcome::Registered, "other"),
+            (RegistrationOutcome::Dup, "dup"),
+            (RegistrationOutcome::PathCap, "path-cap"),
+            (RegistrationOutcome::DirectionMismatch, "candidate-invalid"),
+            (RegistrationOutcome::UnknownPoolType, "candidate-invalid"),
+            (RegistrationOutcome::V4NoHash, "candidate-invalid"),
+            (RegistrationOutcome::V4HookRejected, "v4-admission"),
+            (RegistrationOutcome::V4DynamicFeeRejected, "v4-admission"),
+            (RegistrationOutcome::PathRejected, "other"),
+            (RegistrationOutcome::BuildV2Refused, "pool-build-error"),
+            (RegistrationOutcome::BuildV3Refused, "pool-build-error"),
+            (RegistrationOutcome::BuildV4Refused, "pool-build-error"),
+            (RegistrationOutcome::RegisterFailed, "register-fail"),
+        ];
+        for (outcome, expected) in cases {
+            assert_eq!(
+                reason_of(&skip_of(outcome.clone())),
+                Some(expected),
+                "{outcome:?}"
+            );
+        }
+        // A refusal rides its own kind-tag vocabulary, never a metric label.
+        let refused = RegistrationOutcome::Refused(RefusalKind::LifecyclePrecondition {
+            phase: RegistrationPhase::Lifecycle,
+            reason: LifecyclePrecondition::MissingVerifyProvider,
+        });
+        assert_eq!(reason_of(&skip_of(refused)), Some("other"));
+        // A free-form driver label collapses for the metric; the breakdown
+        // keeps it verbatim.
+        assert_eq!(
+            reason_of(&RegistrationUnitOutcome::Skip {
+                label: OutcomeLabel::FreeForm("driver-owned-tag".to_owned()),
+                counts_as_skip: true,
+                detail: None,
+            }),
+            Some("other")
+        );
+    }
+
+    /// Which unit outcomes report a skip fact at all: both dedup producers
+    /// fold to one outcome and one fact; a created registration and a counted
+    /// rejection record none — the counts carry them.
+    #[test]
+    fn skip_class_outcomes_report_a_fact_and_the_others_do_not() {
+        assert_eq!(reason_of(&RegistrationUnitOutcome::Cap), Some("path-cap"));
+        assert_eq!(
+            reason_of(&RegistrationUnitOutcome::RegisterFailed { detail: None }),
+            Some("register-fail")
+        );
+        assert_eq!(
+            reason_of(&RegistrationUnitOutcome::Registered {
+                created: false,
+                v4_hops: 0
+            }),
+            Some("dup")
+        );
+        assert_eq!(
+            reason_of(&RegistrationUnitOutcome::Registered {
+                created: true,
+                v4_hops: 0
+            }),
+            None
+        );
+        assert_eq!(
+            reason_of(&RegistrationUnitOutcome::Reject { detail: None }),
+            None
+        );
+    }
+}
+
+// ── The test-only capture at the census door ──────────────────────────────
+
+/// The internal seam a module's own tests use to assert what a fold reported
+/// at the census door, without standing up the instrument set.
+#[cfg(test)]
+pub(crate) mod test_probe {
+    use super::CensusEvent;
+    use std::cell::RefCell;
+
+    std::thread_local! {
+        static RECORDED: RefCell<Vec<CensusEvent>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(crate) fn record(event: CensusEvent) {
+        RECORDED.with(|recorded| recorded.borrow_mut().push(event));
+    }
+
+    pub(crate) fn take() -> Vec<CensusEvent> {
+        RECORDED.with(|recorded| std::mem::take(&mut *recorded.borrow_mut()))
+    }
 }

@@ -324,10 +324,14 @@ _Avoid_: "driver shell" (that is the whole Python companion), "backrun session".
 **Registration outcome ledger**:
 The core's owner of the registration memo: the hop-identity key, the typed
 stable-vs-transient build refusal, the bounded outcome vocabulary behind the metric
-tags, and the **Refusal vocabulary** (ADR-077). The cockpit consumes it through a thin
-adapter — outcomes and tags are minted from the core's exported lists, never re-owned.
+tags, and the **Refusal vocabulary** (ADR-077). Its one outcome fold is also the one
+place a unit's outcome is classified and its registration-skip census fact reported —
+one act, so no driver sends a reason string back for the core to classify again. The
+cockpit consumes it through a thin adapter — outcomes and tags are minted from the
+core's exported lists, never re-owned.
 _Avoid_: "skip gate", "class-name refusal set"; a Python-side outcome type that mirrors
-the core's.
+the core's; a driver-supplied reason string re-classified at the core; a skip label
+derived outside the ledger.
 
 **Refusal vocabulary**:
 The one closed `RefusalKind` the registration outcome ledger owns (ADR-077): every
@@ -1322,7 +1326,8 @@ that feeds it).
 The drain path's one owner of the event→metric map (`degenbot-bot/src/instruments.rs`):
 every pipeline stage reports happenings as closed **census events** — the ADR-041 stage
 table's and the Batch outcome record's own vocabulary — and the census alone decides which
-instrument, labels, and buckets answer an event. Metric names, the Grafana/alert couplings
+instrument, labels, and buckets answer an event, including any coarsening of a domain
+vocabulary onto metric labels. Metric names, the Grafana/alert couplings
 that quote them verbatim, and the None-guard live here and nowhere else; emit sites never
 name a metric. The trace-span channel stays separate (ADR-043: one fact per channel).
 _Avoid_: naming a metric at an emit site; a per-site `pipeline()` None-guard; a census

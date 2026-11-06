@@ -1299,14 +1299,6 @@ class Bot:
         """
         Number of registered pools.
         """
-    def record_registration_skip(self, /, reason: str) -> None:
-        """
-        PRG-2: the Python driver records registration skips into
-        the Rust `degenbot.registration.skips` meter family; the former
-        Python `SkipGate` memo is retired — immutable V4 admission verdicts
-        are refused pre-RPC by the core registration gate. The label
-        collapse + meter write are core-owned; observation only.
-        """
     def register_aerodrome_pool(
         self,
         /,

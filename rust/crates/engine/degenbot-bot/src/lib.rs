@@ -276,7 +276,10 @@ pub mod instruments {
     /// no-op census door: metrics are compiled out of this build. The
     /// event still type-checks the emit sites so both builds share one
     /// call surface.
-    pub fn record(_event: CensusEvent) {}
+    pub fn record(_event: CensusEvent) {
+        #[cfg(test)]
+        crate::census::test_probe::record(_event);
+    }
 
     /// Always `None` — metrics are compiled out of this build.
     #[must_use]

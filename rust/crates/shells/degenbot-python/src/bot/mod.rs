@@ -866,19 +866,6 @@ impl PyBot {
         Ok(())
     }
 
-    /// PRG-2: the Python driver records registration skips into
-    /// the Rust `degenbot.registration.skips` meter family; the former
-    /// Python `SkipGate` memo is retired — immutable V4 admission verdicts
-    /// are refused pre-RPC by the core registration gate. The label
-    /// collapse + meter write are core-owned; observation only.
-    #[pyo3(signature = (reason))]
-    fn record_registration_skip(&self, py: Python<'_>, reason: &str) {
-        // GIL hygiene: the skip-kind collapse + meter write run detached —
-        // both are core-owned ([`Bot::record_registration_skip`]); no state
-        // guard is involved.
-        py.detach(|| self.bot.record_registration_skip(reason));
-    }
-
     /// The snapshot seed block `S` (or `None` when no DB snapshot was loaded —
     /// the cold-start path). Python reads this in `engine_registry.start()`
     /// to stash `_verify_snapshot_block` for the per-pool two-step verify.
