@@ -20,6 +20,7 @@ from degenbot._ffi import (
     ArbitrageEngine,
     RegistrationLifecycle,
     RetryPolicy,
+    session_end_rank,
     session_phase_next,
     solve_balancer_weighted_basket,
 )
@@ -28,6 +29,7 @@ __all__ = (
     "ArbitrageEngine",
     "RegistrationLifecycle",
     "RetryPolicy",
+    "session_end_rank",
     "session_phase_next",
     "solve_balancer_weighted_basket",
 )

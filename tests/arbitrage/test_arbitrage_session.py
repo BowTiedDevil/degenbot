@@ -1035,7 +1035,8 @@ class TestSessionOperatorSurface:
 class TestPumpFinishedWatchdog:
     """Pump watchdog: when the Rust pump task finishes OUTSIDE ``stop()``
     (hotpath timed exit / WS stream end / panic), the session must notice and
-    tear down gracefully instead of idling forever on a dead engine.
+    tear down — surfacing the loud session-end abort, never idling forever on
+    a dead engine.
 
     The watchdog awaits the engine's real completion future — no poll, no
     injected-engine bypass. Test doubles satisfy the same awaitable contract:
@@ -1043,7 +1044,7 @@ class TestPumpFinishedWatchdog:
     finishing/panicking engine resolves it.
     """
 
-    async def test_pump_finished_outside_stop_ends_run_gracefully(self) -> None:
+    async def test_pump_finished_outside_stop_surfaces_the_session_end_abort(self) -> None:
         engine_registry = FakeEngineRegistry()
 
         class _FinishingEngine(FakeEngine):
@@ -1082,9 +1083,11 @@ class TestPumpFinishedWatchdog:
 
         fire = asyncio.create_task(_end_pump_soon())
         try:
-            # run() must RETURN (not hang) once the watchdog fires.
-            async with session:
-                await session.run()
+            # run() must surface the loud session-end abort (and never hang)
+            # once the watchdog fires.
+            with pytest.raises(RuntimeError, match="PumpFinished"):
+                async with session:
+                    await session.run()
         finally:
             fire.cancel()
 
@@ -1122,8 +1125,9 @@ class TestPumpFinishedWatchdog:
             engine_registry=engine_registry,
             consumer=hanging_consumer,
         )
-        async with session:
-            await session.run()
+        with pytest.raises(RuntimeError, match="PumpFinished"):
+            async with session:
+                await session.run()
 
         assert consumer_exited.is_set(), "panicked pump must cancel the consumer"
         assert cancel_count == 1, "the consumer is cancelled exactly once"

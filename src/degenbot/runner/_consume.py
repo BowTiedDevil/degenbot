@@ -9,9 +9,13 @@ adapter owns in Python:
 
 * the display drain of the executor's Batch outcome records (the render fold and
   the ``[dispatch]`` lines), which the loop quiesces when it ends;
-* the report's rendering: a ``pump-stopped`` end verdict is the loud abort a
-  supervised settlement session must not survive, and its message is the
-  cockpit's operator-facing vocabulary.
+* the report's retrieval — the typed report (with its ``quiet-end`` /
+  ``pump-stopped`` end verdict) is returned to the session watch, which ranks
+  it through the core's Session-end ranking;
+* the session-end abort's rendering (:func:`pump_stopped_abort`): a
+  ``pump-stopped`` end verdict is the loud abort a supervised settlement
+  session must not survive, and its message is the cockpit's operator-facing
+  vocabulary. The session watch raises it at its one ``SessionEnd`` slot.
 
 Nothing here decides a candidate's fate: a renderer reads the typed records and
 emits lines (``stays-python``); every sim/submit arithmetic runs in the core.
@@ -51,6 +55,24 @@ _PUMP_STOPPED_MESSAGE = (
 )
 
 
+def pump_stopped_abort() -> RuntimeError:
+    """Render the loud ``pump-stopped`` session-end abort.
+
+    The message home stays here (the cockpit's operator-facing vocabulary);
+    the session watch raises the returned error at its one ``SessionEnd``
+    raise slot.
+
+    Returns:
+        The loud abort to raise.
+
+    """
+    bot_logger.error(
+        "[consumer] block/result stream ended - the Rust pump stopped "
+        "(WS subscription dead or pump task exited); aborting"
+    )
+    return RuntimeError(_PUMP_STOPPED_MESSAGE)
+
+
 @dataclass(frozen=True)
 class BlockLoop:
     """The display drain's collaborators, assembled once by the session.
@@ -67,25 +89,23 @@ class BlockLoop:
     smoke: SubmissionSmoke
 
 
-async def consume_result_batches(loop: BlockLoop, consumer: Any) -> None:
+async def consume_result_batches(loop: BlockLoop, consumer: Any) -> dict[str, Any]:
     """Run the session consumer, draining its record stream for display.
 
     The consumer has already attached the engine's hand-off and started
     production (its ``resume`` is the claim's one use), so this adapter's share is
     the drain plus the report: the loop publishes the executor's typed records,
-    the drain renders each drained batch, and a natural end under the supervised
-    policy is re-raised here in the caller's frame.
+    the drain renders each drained batch, and the typed report (including the
+    ``quiet-end`` / ``pump-stopped`` end verdict) is RETURNED for the session
+    watch to rank — this adapter raises nothing.
 
     Args:
         loop: The drain's collaborators (dispatch state, pipeline, render
             policy, smoke FSM).
         consumer: The session consumer handle (``resume``/``run``).
 
-    Raises:
-        RuntimeError: If the ordered stream ended outside this session's own
-            teardown (``pump-stopped``: a settlement bot cannot trade from a
-            dead clock). A leaf failure surfaces as the consumer's own
-            ``SessionConsumerError``, before this adapter sees a report.
+    Returns:
+        The typed consumer report (``end`` is the ``ConsumerEnd`` spelling).
 
     """
     bot_logger.info("[consumer] Starting - the session consumer owns the loop")
@@ -102,12 +122,7 @@ async def consume_result_batches(loop: BlockLoop, consumer: Any) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await drain
 
-    if cast("dict[str, Any]", report)["end"] == "pump-stopped":
-        bot_logger.error(
-            "[consumer] block/result stream ended - the Rust pump stopped "
-            "(WS subscription dead or pump task exited); aborting"
-        )
-        raise RuntimeError(_PUMP_STOPPED_MESSAGE)
+    return cast("dict[str, Any]", report)
 
 
 async def _drain_batch_outcomes(loop: BlockLoop, executor: Any) -> None:

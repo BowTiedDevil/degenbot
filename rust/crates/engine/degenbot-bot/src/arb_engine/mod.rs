@@ -47,7 +47,7 @@
 //! | `block_cursor` | The engine block cursor — one owner of the engine-side block-coordinate residue |
 //! | `detached_cycle` | THE one detached/in-cycle solve-arm machine: per-cycle states, the merge pipe, the gauge pair, the seq counters, the ledger door, the disposition counters, the fan-in tripwire, and the ONE sidecar spawn |
 //! | `lifecycle` | Path registration, buffer management, engine accessors |
-//! | `session_end` | The session-end detection facts the drivers rank into their own verdicts |
+//! | `session_end` | The session-end detection facts and the pure Session-end ranking (`rank`) the drivers render |
 //! | `tests` | Unit tests |
 //!
 //! The `PyO3` wrapper (`PyArbitrageEngine`) lives in the `degenbot_rs` shell.
@@ -223,13 +223,12 @@ pub use inline_sim::{
 /// Path registration's rejection vocabulary — the typed refusal the drivers
 /// map onto their own error surfaces.
 pub use lifecycle::PathRegistrationError;
-/// The engine-session end DETECTION facts: the typed cause vocabulary, the
-/// heartbeat stall watchdog, and the once-only delivery channel the drivers
-/// rank into their own end-state verdicts.
 pub use pump_session::{transition, CrawlExit, PumpDecline, PumpEvent, PumpExit, PumpPhase};
 pub use retune::EngineRetune;
 pub use session_end::{
-    Heartbeat, SessionEndCause, SessionEndDetection, SessionEndFacts, SessionEndPublisher,
+    rank, ConsumerOutcome, Heartbeat, RaiseSlot, RegistrationOutcome, SessionEndCause,
+    SessionEndDetection, SessionEndFacts, SessionEndObservation, SessionEndPublisher,
+    SessionEndRanking, SessionEndVerdict,
 };
 pub use session_events::{
     ClaimRefusal, ConsumerClaim, EventHandoff, SessionEvent, SessionEventSource, SessionStream,

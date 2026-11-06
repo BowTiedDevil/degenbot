@@ -263,6 +263,10 @@ impl ConsumerPolicy {
 }
 
 /// How a session's ordered stream ended.
+///
+/// The core Session-end ranking never names this type: THIS crate (the upper
+/// one) owns the translation into the core's consumer-outcome vocabulary (the
+/// `From` impls below), so both drivers exchange the core's stable spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsumerEnd {
     /// A natural stream end that this session's teardown intended.
@@ -279,6 +283,30 @@ impl ConsumerEnd {
             Self::QuietEnd => "quiet-end",
             Self::PumpStopped => "pump-stopped",
         }
+    }
+}
+
+/// The ONE translation of [`ConsumerEnd`] into the core's Session-end ranking
+/// vocabulary (`degenbot_bot::arb_engine::ConsumerOutcome`) — the vocabulary
+/// `rank` folds.
+///
+/// The core module never names [`ConsumerEnd`]; the translation lives here, on
+/// the upper crate's own type.
+impl From<ConsumerEnd> for degenbot_bot::arb_engine::ConsumerOutcome {
+    fn from(end: ConsumerEnd) -> Self {
+        match end {
+            ConsumerEnd::QuietEnd => Self::QuietEnd,
+            ConsumerEnd::PumpStopped => Self::PumpStopped,
+        }
+    }
+}
+
+/// The translation of a consume-loop report into the core's consumer-outcome
+/// vocabulary: the report's own end verdict, or `ConsumerOutcome::Failed` for
+/// a report whose loop aborted before the stream closed.
+impl From<&ConsumerReport> for degenbot_bot::arb_engine::ConsumerOutcome {
+    fn from(report: &ConsumerReport) -> Self {
+        report.end.map_or(Self::Failed, Self::from)
     }
 }
 
@@ -1210,6 +1238,37 @@ mod tests {
             0,
             "the removed path keeps no suppression entry"
         );
+    }
+
+    /// The `ConsumerEnd` translation into the core ranking vocabulary is
+    /// owned HERE (the upper crate), and a report whose loop aborted before
+    /// the stream closed translates as the consumer failure.
+    #[test]
+    fn the_consumer_end_translates_into_the_core_outcome_vocabulary() {
+        use degenbot_bot::arb_engine::ConsumerOutcome;
+        assert_eq!(
+            ConsumerOutcome::from(ConsumerEnd::QuietEnd),
+            ConsumerOutcome::QuietEnd
+        );
+        assert_eq!(
+            ConsumerOutcome::from(ConsumerEnd::PumpStopped),
+            ConsumerOutcome::PumpStopped
+        );
+        let quiet = ConsumerReport {
+            end: Some(ConsumerEnd::QuietEnd),
+            ..Default::default()
+        };
+        assert_eq!(ConsumerOutcome::from(&quiet), ConsumerOutcome::QuietEnd);
+        let stopped = ConsumerReport {
+            end: Some(ConsumerEnd::PumpStopped),
+            ..Default::default()
+        };
+        assert_eq!(
+            ConsumerOutcome::from(&stopped),
+            ConsumerOutcome::PumpStopped
+        );
+        let aborted = ConsumerReport::default();
+        assert_eq!(ConsumerOutcome::from(&aborted), ConsumerOutcome::Failed);
     }
 
     /// Each refusal is stamped with its OWN kind and message at the core

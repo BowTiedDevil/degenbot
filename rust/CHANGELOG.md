@@ -6,6 +6,38 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **Core-owned Session-end ranking: one closed end observation, one pure `rank`
+  fold.** `degenbot_bot::arb_engine::session_end` (umbrella
+  `degenbot::session_end`) now owns the deterministic fold of the gathered end
+  facts — detection cause, translated consumer outcome, registration outcome,
+  and the consumer's already-retrieved output — into one `SessionEndVerdict`
+  (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`), one `RaiseSlot`
+  (`Nothing` / `Registration` / `Consumer` / `SessionEnd`), and the retained
+  consumer output. Registration failure is maximal (a registration task panic
+  is never clean completion); an intended consumer end disarms a simultaneous
+  detection fact (the expected close also publishes `PumpFinished`); detection
+  without an intended consumer end and the consumer's `PumpStopped` end are the
+  unexpected session end (`WatchdogTripped` + the `SessionEnd` raise slot,
+  whose loud failure is the one delivered primary failure), while the empty
+  no-failure remainder is `PumpEnded` + `Nothing`; the fold is total over every
+  input combination and independent of fact arrival order.
+  New public items: `SessionEndObservation`, `SessionEndRanking`,
+  `SessionEndVerdict`, `RaiseSlot`, `ConsumerOutcome`, `RegistrationOutcome`,
+  `rank`, and `SessionEndCause::from_name`. `degenbot-batch-executor` owns the
+  `ConsumerEnd` / `ConsumerReport` -> `ConsumerOutcome` translation — the core
+  module never names `ConsumerEnd`. Both Session watches become adapters over
+  the fold (gather/retrieve facts, cancel/reap, render at most one primary
+  failure; the consumer output is retained and never re-raised over a
+  registration or session-end failure).
+
+  | Was | Is |
+  | --- | --- |
+  | each driver's Session watch ranked its own end verdict from task-completion order | one core pure fold: `degenbot_bot::arb_engine::session_end::rank` over the closed `SessionEndObservation` |
+  | `examples/settlement_bot`'s local `session_watch::SessionEndVerdict` enum | the core `SessionEndVerdict` + `RaiseSlot` (the example re-exports the verdict) |
+  | Python `SessionEndVerdict` + the `_WatchKind` local task-completion table | `SessionEndVerdict` / `RaiseSlot` constructed from `session_end_rank`'s stable names (`degenbot.arbitrage`) |
+  | `consume_result_batches` raised the `pump-stopped` abort inside the consumer task | it returns the typed report; the session watch raises `pump_stopped_abort()` at its one `SessionEnd` slot |
+  | the Rust watch lost the consumer output at its top-of-loop finished check and masked a missing consumer as `WatchdogTripped` | the output is retrieved on every path (including a simultaneous registration failure) and the missing-consumer refusal propagates (`supervise_consumer` returns `Result`) |
+
 - **The registration outcome ledger reports its own registration-skip census
   facts.** The one outcome fold (`PipelineReport::absorb`) is now the sole
   emitter of `CensusEvent::RegistrationSkip`: the fine-to-coarse label collapse

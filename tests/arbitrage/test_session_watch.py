@@ -3,11 +3,11 @@
 The cockpit's ONE owner of a pump session's end-state
 (``degenbot.runner._session_watch`` — the GLOSSARY.md *session watch* term):
 the watch-set assembly ({consumer} + optional {registration, watchdog},
-exactly the task sets the former twin await loops watched), the
-``SessionEndVerdict`` ranking (a fail-fast registration verdict outranks a
-watchdog verdict in the same wait batch — written once, not per loop), and
-the idempotent teardown the ``run()`` finally / ``__aexit__`` / twin-loop
-sites hand-rolled.
+exactly the task sets the former twin await loops watched), the fact gather
+over the core's **Session-end ranking** (``session_end_rank`` — the verdict
+and raise slot come from the core fold, never a local task-completion table),
+and the idempotent teardown the ``run()`` finally / ``__aexit__`` /
+twin-loop sites hand-rolled.
 
 Pure asyncio — no engine, no RPC (ADR-019: the watch stays inside
 ``degenbot.runner`` and coordinates plain ``asyncio.Task`` objects).
@@ -16,18 +16,26 @@ Pure asyncio — no engine, no RPC (ADR-019: the watch stays inside
 from __future__ import annotations
 
 import asyncio
-import contextlib
-from collections.abc import Coroutine
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from degenbot.arbitrage import session_end_rank
+from degenbot.runner._consume import _PUMP_STOPPED_MESSAGE
 from degenbot.runner._session_watch import (
+    RaiseSlot,
     SessionEndVerdict,
     SessionWatch,
-    _WatchKind,
+    _session_end_abort,
     _WatchSet,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
+
+class _RegistrationPanic(BaseException):
+    """The Python analogue of a Rust background-registration task panic."""
 
 
 async def _quick_consumer(ticks: int = 1) -> None:
@@ -54,7 +62,7 @@ def _pump_end_watchdog(consumer: asyncio.Task[Any]) -> Coroutine[Any, Any, None]
     watchdog itself cancels the idling consumer once its completion future
     resolves; completion always means the pump ended."""
 
-    async def _watchdog() -> None:
+    async def _watchdog() -> None:  # ruff: ignore[unused-async] -- cancels without awaiting
         if not consumer.done():
             consumer.cancel()
 
@@ -93,6 +101,17 @@ def _absorbing_watchdog_factory() -> Coroutine[Any, Any, None]:
     return _watchdog()
 
 
+def _report_consumer(end: str) -> Any:
+    """A consumer double returning the typed report shape (``end`` is the
+    ``ConsumerEnd`` spelling the FFI report carries)."""
+
+    async def _consumer() -> dict[str, Any]:
+        await asyncio.sleep(0)
+        return {"batches": 0, "end": end}
+
+    return _consumer
+
+
 class TestVerdictEnum:
     def test_verdict_members_pin_the_end_state(self) -> None:
         """The settled enum: exactly the three end-state members."""
@@ -101,6 +120,51 @@ class TestVerdictEnum:
             "RegistrationFailed",
             "WatchdogTripped",
         }
+
+    def test_verdict_and_slot_construct_from_core_output(self) -> None:
+        """``SessionEndVerdict`` / ``RaiseSlot`` are constructed from the core
+        rank's stable names — not from a local task-completion table."""
+        assert SessionEndVerdict("PumpEnded") is SessionEndVerdict.PumpEnded
+        assert SessionEndVerdict("RegistrationFailed") is SessionEndVerdict.RegistrationFailed
+        assert SessionEndVerdict("WatchdogTripped") is SessionEndVerdict.WatchdogTripped
+        assert RaiseSlot("Nothing") is RaiseSlot.Nothing
+        assert RaiseSlot("Registration") is RaiseSlot.Registration
+        assert RaiseSlot("Consumer") is RaiseSlot.Consumer
+        assert RaiseSlot("SessionEnd") is RaiseSlot.SessionEnd
+
+
+class TestCoreRankDoor:
+    """The FFI door over the core ``rank`` fold, by stable names."""
+
+    def test_the_rank_door_exposes_the_core_verdicts_and_slots(self) -> None:
+        assert session_end_rank(cause=None, consumer="QuietEnd", registration=None) == (
+            "PumpEnded",
+            "Nothing",
+        )
+        assert session_end_rank(cause="PumpFinished", consumer="Failed", registration="Failed") == (
+            "RegistrationFailed",
+            "Registration",
+        )
+        assert session_end_rank(cause=None, consumer="PumpStopped", registration=None) == (
+            "WatchdogTripped",
+            "SessionEnd",
+        )
+        assert session_end_rank(cause="PumpFinished", consumer=None, registration=None) == (
+            "WatchdogTripped",
+            "SessionEnd",
+        )
+        assert session_end_rank(cause=None, consumer=None, registration=None) == (
+            "PumpEnded",
+            "Nothing",
+        )
+
+    def test_the_rank_door_refuses_names_outside_the_core_vocabulary(self) -> None:
+        with pytest.raises(ValueError, match="session-end cause"):
+            session_end_rank(cause="nope", consumer=None, registration=None)
+        with pytest.raises(ValueError, match="consumer outcome"):
+            session_end_rank(cause=None, consumer="nope", registration=None)
+        with pytest.raises(ValueError, match="registration outcome"):
+            session_end_rank(cause=None, consumer=None, registration="nope")
 
 
 class TestWatchSetMatrix:
@@ -118,20 +182,22 @@ class TestWatchSetMatrix:
         watch = _watch(consumer, factory)
 
         assert await watch.wait() is SessionEndVerdict.PumpEnded
-        assert consumer.done() and not consumer.cancelled()
+        assert consumer.done()
+        assert not consumer.cancelled()
         # The watchdog was assembled into the watch-set (both former twins
         # always created it) and wait()'s exit drained it.
         assert factory_calls == 1
         watchdog_task = watch._watchdog_task
         assert watchdog_task is not None
-        assert watchdog_task.done() and watchdog_task.cancelled()
+        assert watchdog_task.done()
+        assert watchdog_task.cancelled()
 
     async def test_consumer_exception_propagates_from_wait(self) -> None:
-        """The consumer's own exception surfaces from ``wait()`` — the plain
-        ``await main_task`` tail the twins kept."""
+        """The consumer's own failure is delivered at the one consumer raise
+        slot — the plain ``await main_task`` tail the twins kept."""
         boom = RuntimeError("loud abort")
 
-        async def consumer() -> None:
+        async def consumer() -> None:  # ruff: ignore[unused-async] -- a raising task double
             raise boom
 
         task = asyncio.create_task(consumer())
@@ -153,7 +219,8 @@ class TestWatchSetMatrix:
         watch = _watch(consumer, _never_watchdog, registration)
 
         assert await watch.wait() is SessionEndVerdict.PumpEnded
-        assert consumer.done() and not consumer.cancelled()
+        assert consumer.done()
+        assert not consumer.cancelled()
         assert registration.done()
         assert registration.exception() is None
         assert watch.registration_error is None
@@ -180,13 +247,13 @@ class TestWatchSetMatrix:
         assert registration.exception() is boom
 
     async def test_same_batch_fail_fast_outranks_watchdog(self) -> None:
-        """THE ranking, written once: when a fatal registration error and a
-        watchdog trip complete in the SAME wait batch, the fail-fast verdict
-        outranks the watchdog verdict."""
+        """THE ranking, written once in the core: when a fatal registration
+        error and a watchdog trip complete in the SAME wait batch, the
+        registration verdict outranks the detection fact."""
         consumer = asyncio.create_task(_hanging_consumer())
         boom = ValueError("verification mismatch")
 
-        async def failing_registration() -> None:
+        async def failing_registration() -> None:  # ruff: ignore[unused-async] -- a raising task double
             raise boom
 
         registration = asyncio.create_task(failing_registration())
@@ -195,7 +262,7 @@ class TestWatchSetMatrix:
             # Deliberately does NOT cancel the consumer: if this verdict won,
             # the consumer would be left pending and the verdict would be
             # WatchdogTripped — the assertion below pins which branch ran.
-            async def _watchdog() -> None:
+            async def _watchdog() -> None:  # ruff: ignore[unused-async] -- an instant task double
                 return
 
             return _watchdog()
@@ -207,12 +274,54 @@ class TestWatchSetMatrix:
         # The consumer was cancelled by the FAIL-FAST path, not left idle.
         assert consumer.cancelled()
 
+    async def test_same_batch_registration_failure_retrieves_the_consumer_output(self) -> None:
+        """Same-batch registration failure + consumer error: the verdict is
+        ``RegistrationFailed``, the consumer's output is retrieved (never left
+        unretrieved), and ONLY the registration failure is delivered."""
+        boom = ValueError("consumer boom")
+        reg_boom = ValueError("reg boom")
+
+        async def failing_consumer() -> None:  # ruff: ignore[unused-async] -- a raising task double
+            raise boom
+
+        async def failing_registration() -> None:  # ruff: ignore[unused-async] -- a raising task double
+            raise reg_boom
+
+        consumer = asyncio.create_task(failing_consumer())
+        registration = asyncio.create_task(failing_registration())
+        watch = _watch(consumer, _never_watchdog, registration)
+
+        # The consumer's boom is retrieved and retained — NOT raised over the
+        # registration failure (the no-double-raise rule).
+        assert await watch.wait() is SessionEndVerdict.RegistrationFailed
+        assert watch.registration_error is reg_boom
+        assert consumer.exception() is boom, "the consumer output is retrieved"
+
+    async def test_registration_panic_is_not_clean_completion(self) -> None:
+        """A registration task that dies outside its own error surface (the
+        Python analogue of a Rust task panic) is a registration failure, never
+        a clean completion."""
+        consumer = asyncio.create_task(_hanging_consumer())
+        panic_message = "reg panic"
+
+        async def panicking_registration() -> None:  # ruff: ignore[unused-async] -- a panicking task double
+            raise _RegistrationPanic(panic_message)
+
+        registration = asyncio.create_task(panicking_registration())
+        watch = _watch(consumer, _never_watchdog, registration)
+        await asyncio.sleep(0)
+
+        assert await watch.wait() is SessionEndVerdict.RegistrationFailed
+        assert str(watch.registration_error) == "reg panic"
+        assert consumer.cancelled()
+
     async def test_watchdog_trip_ends_the_session_and_cancels_registration(
         self,
     ) -> None:
         """A real pump end outside ``stop()``: the watchdog cancels the
         consumer, the watch cancels the still-pending registration, and the
-        session leaves via ``WatchdogTripped`` without raising."""
+        session leaves via the loud session-end abort (detection without an
+        intended consumer end is the unexpected session end)."""
         consumer = asyncio.create_task(_hanging_consumer())
 
         async def climbing_registration() -> None:
@@ -221,11 +330,11 @@ class TestWatchSetMatrix:
         registration = asyncio.create_task(climbing_registration())
         watch = _watch(consumer, lambda: _pump_end_watchdog(consumer), registration)
 
-        # No guard timeout here: the verdict itself is the completion gate
+        # No guard timeout here: the abort itself is the completion gate
         # (`_pump_end_watchdog` cancels the consumer, which ends the watch-set),
         # matching the bare awaits its sibling verdict tests use.
-        verdict = await watch.wait()
-        assert verdict is SessionEndVerdict.WatchdogTripped
+        with pytest.raises(RuntimeError, match="PumpFinished"):
+            await watch.wait()
         assert consumer.cancelled()
         # The watch requested the registration cancel (the former twin's
         # watchdog-True branch)...
@@ -233,6 +342,25 @@ class TestWatchSetMatrix:
         # ...and the teardown duty drains it to a clean cancelled state.
         await watch.teardown()
         assert registration.cancelled()
+
+    async def test_detection_without_an_intended_end_raises_the_session_end_abort(self) -> None:
+        """Detection without an intended consumer end ranks the unexpected
+        session end: the loud abort raises at the one session-end slot (the
+        ``WatchdogTripped`` verdict always rides that slot)."""
+        consumer = asyncio.create_task(_hanging_consumer())
+
+        def instant_watchdog() -> Coroutine[Any, Any, str]:
+            async def _watchdog() -> str:
+                await asyncio.sleep(0)
+                return "StallWatchdogTripped"
+
+            return _watchdog()
+
+        watch = _watch(consumer, instant_watchdog)
+
+        with pytest.raises(RuntimeError, match="StallWatchdogTripped"):
+            await watch.wait()
+        assert consumer.cancelled()
 
     async def test_late_registration_failure_surfaces_with_hanging_watchdog(
         self,
@@ -263,58 +391,75 @@ class TestWatchSetMatrix:
         watch = _watch(consumer, _never_watchdog)
 
         assert await watch.wait() is SessionEndVerdict.PumpEnded
-        assert consumer.done() and not consumer.cancelled()
+        assert consumer.done()
+        assert not consumer.cancelled()
 
 
-class TestWatchSetTransitions:
-    """The typed task-set record's one-batch decision (R3)."""
+class TestIntendedEndTies:
+    """The tie: an intended consumer end disarms the simultaneous detection
+    fact (the expected close publishes ``PumpFinished`` too)."""
 
-    async def test_fail_fast_outranks_watchdog_in_one_batch(self) -> None:
+    async def test_an_intended_end_disarms_the_simultaneous_detection_fact(self) -> None:
+        consumer = asyncio.create_task(_report_consumer("quiet-end")())
+
+        def instant_watchdog() -> Coroutine[Any, Any, str]:
+            async def _watchdog() -> str:
+                await asyncio.sleep(0)
+                return "PumpFinished"
+
+            return _watchdog()
+
+        watch = _watch(consumer, instant_watchdog)
+
+        assert await watch.wait() is SessionEndVerdict.PumpEnded
+        assert consumer.done()
+        assert not consumer.cancelled()
+        assert watch.consumer_output == {"batches": 0, "end": "quiet-end"}
+
+    async def test_a_pump_stopped_report_is_the_unexpected_session_end(self) -> None:
+        """A ``pump-stopped`` consumer outcome selects the watchdog verdict
+        and raises its own loud abort at the one session-end slot."""
+        consumer = asyncio.create_task(_report_consumer("pump-stopped")())
+        watch = _watch(consumer, _never_watchdog)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            await watch.wait()
+        assert str(excinfo.value) == _PUMP_STOPPED_MESSAGE
+        # The retained consumer output is not raised again over it.
+        assert watch.consumer_output == {"batches": 0, "end": "pump-stopped"}
+
+    async def test_the_consumer_output_is_retrieved_and_retained(self) -> None:
+        consumer = asyncio.create_task(_report_consumer("quiet-end")())
+        watch = _watch(consumer, _never_watchdog)
+
+        assert await watch.wait() is SessionEndVerdict.PumpEnded
+        assert watch.consumer_output == {"batches": 0, "end": "quiet-end"}
+
+
+class TestWatchSetRecord:
+    """The typed watch-set record the GLOSSARY.md session watch owns."""
+
+    async def test_members_drop_registration_once_it_completes(self) -> None:
+        async def _noop() -> None:  # ruff: ignore[unused-async] -- an instant task double
+            return None
+
         consumer = asyncio.create_task(_hanging_consumer())
-        boom = ValueError("reg boom")
+        watchdog = asyncio.create_task(_noop())
+        registration = asyncio.create_task(_noop())
+        watch = _WatchSet(consumer, watchdog, registration)
+        assert watch.members() == {consumer, watchdog, registration}
+        assert watch.without_registration().members() == {consumer, watchdog}
 
-        async def failing() -> None:
-            raise boom
-
-        registration = asyncio.create_task(failing())
-        watchdog = asyncio.create_task(_quick_consumer(ticks=0))
-        await asyncio.sleep(0)
-        assert registration.done()
-        assert watchdog.done()
-
-        step = _WatchSet(consumer, watchdog, registration).on_task_done({registration, watchdog})
-        assert step.kind is _WatchKind.REGISTRATION_FAILED
-        assert step.error is boom
-
-        consumer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await consumer
-
-    async def test_clean_registration_is_dropped_from_the_set(self) -> None:
-        consumer = asyncio.create_task(_hanging_consumer())
-        registration = asyncio.create_task(_quick_consumer(ticks=0))
-        watchdog = asyncio.create_task(_quick_consumer(ticks=0))
-        await asyncio.sleep(0)
-
-        step = _WatchSet(consumer, watchdog, registration).on_task_done({registration})
-        assert step.kind is _WatchKind.CONTINUE
-        assert step.watch.registration is None
-        assert step.watch.consumer is consumer
-        assert step.watch.watchdog is watchdog
-
-        consumer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await consumer
+        for task in (consumer, watchdog, registration):
+            task.cancel()
 
 
 class TestCancellationObservation:
     """The reap discipline: a cancel the watch requested must be OBSERVED.
 
-    The watch reaps used ``contextlib.suppress(CancelledError)`` with no
-    assertion, so a task that absorbed its cancellation and returned
-    normally was reaped silently. Each reap now ends in
-    ``assert task.cancelled()`` (via ``cancel_and_reap``), so a swallowed
-    cancel fails loudly instead of leaving a lost cancellation invisible.
+    Each reap ends in ``assert task.cancelled()`` (via ``cancel_and_reap``),
+    so a swallowed cancel fails loudly instead of leaving a lost cancellation
+    invisible.
     """
 
     async def test_fail_fast_observes_consumer_cancellation(self) -> None:
@@ -323,7 +468,7 @@ class TestCancellationObservation:
         consumer = asyncio.create_task(_cancellation_absorbing_consumer())
         boom = ValueError("verification mismatch")
 
-        async def failing_registration() -> None:
+        async def failing_registration() -> None:  # ruff: ignore[unused-async] -- a raising task double
             raise boom
 
         registration = asyncio.create_task(failing_registration())
@@ -349,6 +494,24 @@ class TestCancellationObservation:
 
         with pytest.raises(AssertionError, match="cancellation"):
             await watch.teardown_registration()
+
+
+class TestSessionEndAbort:
+    """The session-end abort's message names the ranked facts truthfully."""
+
+    def test_the_abort_names_the_detection_cause_that_fired(self) -> None:
+        for cause in ("PumpFinished", "StallWatchdogTripped"):
+            abort = _session_end_abort(cause, "Failed")
+            assert cause in str(abort)
+            assert "without an intended consumer end" in str(abort)
+
+    def test_the_pump_stopped_abort_keeps_its_operator_message(self) -> None:
+        abort = _session_end_abort(None, "PumpStopped")
+        assert str(abort) == _PUMP_STOPPED_MESSAGE
+
+    def test_the_empty_remainder_message_says_nothing_fired(self) -> None:
+        abort = _session_end_abort(None, None)
+        assert "no consumer end and no detection fact" in str(abort)
 
 
 class TestTeardown:

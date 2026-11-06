@@ -420,12 +420,39 @@ Its home is `degenbot-batch-executor`, which already depends on `degenbot-bot`
 `degenbot-executor`, `degenbot-simulation`) and already owns the per-batch
 dispatch choreography. The consumer's whole knowledge of the session is what it
 was handed — the `EventHandoff` (stream and claim) plus `close()` — never the
-engine, and never an end verdict on the stream it reads: **it owns stall
-detection**, beating its watchdog on stream activity, and it returns the typed
-end/outcome report whose ranking the cockpit's Session watch performs. The block
+engine, and never an end verdict on the stream it reads: **it feeds stall
+detection** from stream activity, and it returns the typed end/outcome report
+whose Session-end ranking is the core's own pure fold (below). The block
 clock (`consume.rs`'s `BlockClock`) and the progress/heartbeat record
 (`SessionProgress`) move down beside it: they are session facts that two drivers
 had begun to spell twice.
+
+**Session-end ranking is core-owned and pure.** The gathered end facts — the
+detection cause, the translated consumer outcome, the registration outcome, and
+the consumer's already-retrieved output — fold through one closed
+`SessionEndObservation` and one pure `rank` in `arb_engine::session_end`:
+
+| Priority | Observation | `SessionEndVerdict` | `RaiseSlot` |
+|---|---|---|---|
+| 1 | registration outcome `Failed` (a task panic included — a panic is never clean completion) | `RegistrationFailed` | `Registration` |
+| 2 | consumer outcome `QuietEnd` (the intended consumer end) | `PumpEnded` | `Nothing` |
+| 3 | consumer outcome `PumpStopped` (the unexpected session end) | `WatchdogTripped` | `SessionEnd` |
+| 4 | a detection cause, without an intended consumer end | `WatchdogTripped` | `SessionEnd` |
+| 5 | consumer outcome `Failed`, no higher-priority fact | `PumpEnded` | `Consumer` |
+| 6 | the empty remainder (no consumer outcome, no detection cause) | `PumpEnded` | `Nothing` |
+
+Registration failure is maximal; the intended consumer end disarms a
+simultaneous detection fact, because the expected close also publishes
+`PumpFinished`; the fold is total over every input combination and independent
+of fact arrival order — task completion order never re-authors the verdict.
+The core module never names `degenbot-batch-executor::ConsumerEnd`: the
+translation lives in that crate (the `From` impls on its own `ConsumerEnd` /
+`ConsumerReport`) and in the adapters. The fold returns the retained consumer
+output, which an adapter delivers at most once — in exactly the one
+`RaiseSlot` the fold named — and never raises again over a registration or
+session-end failure. Both Session watches become adapters that gather and
+retrieve facts, cancel/reap, and render the ranked product; the core fold owns
+no collector FSM, no task spawning, no cancellation, and no rendering.
 
 Pulling that loop *into* `degenbot-bot` is rejected (§3, alternative 3): it would drag
 `degenbot-submission`, `degenbot-executor` and `degenbot-simulation` into the
@@ -665,7 +692,7 @@ a host-owned `Live` sub-state"), which stays open on the host side.
 | start ordering | `subscribe()` … `resume()` with the consumer attached between them by convention | `connect(node)` → `Connected { link_block }`, then `run(claim)`; each move refuses a concurrent one, and the claim is the attachment proof |
 | close | `stop() -> Result<(), DriverError>` — synchronous, `block_on` inside the runtime | `close() -> TeardownReport` — asynchronous, total from every pose, idempotent, shared; the report is *returned*, not a `Result` union |
 | resume gate | `DriverError::NoResultReceiver` — deleted with its atomic as unrepresentable | a second `claim_consumer()` declines with `ClaimRefusal::AlreadyClaimed`; `run` cannot be called without a claim |
-| session end | natural end indistinguishable from a dropped channel; the stall verdict published on `SessionEndCause` beside the crate-level heartbeat | the stream's exactly-once closure, plus one typed terminal fact per pump exit on the session-end surface; the stall verdict is the Session consumer's report |
+| session end | natural end indistinguishable from a dropped channel; the stall verdict published on `SessionEndCause` beside the crate-level heartbeat; each driver ranked its own end verdict locally | the stream's exactly-once closure, plus one typed terminal fact per pump exit on the session-end surface; one core pure fold (`arb_engine::session_end::rank` over `SessionEndObservation`) returns the `SessionEndVerdict` + `RaiseSlot` + retained consumer output, and both drivers render that product |
 | snapshot seed | `EngineDriver::{snapshot_seed_block, set_snapshot_seed_block}` | `Bot::snapshot_seed_block` over the shared `BotState` fact it already owns (ADR-050 D2); the driver keeps a derived read/write pair over that same fact, which no consumer routes through (the FFI's engine getter reads the shared core) |
 | path registry | `EngineDriver::{register_path, register_and_solve_path, deregister_path, set_path_cap, path_count, path_dedups, path_info_for}` | `EngineStages::{…}` (same names) |
 | retune / inline sim | `EngineDriver::{apply_retune, set_inline_simulator}` | `EngineStages::{apply_retune, set_inline_simulator}` |
@@ -713,13 +740,16 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
 - **`examples/settlement_bot`** deletes `consume.rs`'s loop and `dispatch.rs`'s
   seam plumbing, keeps the resolver/receipt-probe adapters, and drives
   `SessionConsumer`; `run_loop.rs` keeps the teardown ordering and awaits
-  `close()`, and `session_watch.rs` keeps the end-verdict ranking over the
-  consumer's typed report.
+  `close()`, and `session_watch.rs` is the Session-end ranking's ADAPTER — it
+  gathers the facts, retrieves the consumer output on every path, translates
+  `ConsumerEnd` (in `degenbot-batch-executor`), and renders the core fold's
+  verdict + raise slot.
 - **The Driver cockpit** (`src/degenbot/runner/`) reduces to an adapter: the Run
   ritual claims the hand-off, connects, and runs, `_consume.py` keeps the
   display drain and the report rendering (its loop and the block-clock mutator
-  it fed are gone), and `_session_watch.py` ranks the Session consumer's report
-  instead of racing two tasks and detecting no stall itself.
+  it fed are gone), and `_session_watch.py` gathers the task facts and renders
+  the core's ranked verdict + raise slot (over `session_end_rank`, the `_ffi`
+  door) instead of racing two tasks into a local task-completion table.
 - **The dict boundary after the cut-over.** Exactly two shapes cross the Python
   seam as dicts: a *scripted* session's ordered events (`block` / `batch`, the
   engine result-channel shape, accepted only by `scripted()` — the live door
@@ -861,8 +891,8 @@ followed by `just gen-stubs`; no stub was hand-edited.
 
 ## 7. Vocabulary
 
-GLOSSARY.md is canonical for all nine terms; this ADR uses them in the recorded
-sense and records nothing new:
+GLOSSARY.md is canonical for every term below; this ADR uses them in the
+recorded sense and records nothing new:
 
 - **Driver seam** — the arb engine's session-lifecycle interface: consumer
   attachment, connect/run/close, crawl attachment, session-end observation.
@@ -887,13 +917,20 @@ sense and records nothing new:
   session's event production.
 - **Session consumer** — the core owner of a session's consume loop above
   `degenbot-bot`: folds the stream into executor work, drives `BatchExecutor`,
-  emits Batch outcome records, owns stall detection and loud-abort propagation,
-  closes the driver on failure or termination, and returns the typed
-  end/outcome report the watch ranks. Pure Rust and Python are adapters over it.
+  emits Batch outcome records, feeds stall detection from stream activity,
+  owns loud-abort propagation, closes the driver on failure or termination, and
+  returns the typed end/outcome report the *Session-end ranking* folds. Pure
+  Rust and Python are adapters over it.
 - **Driver cockpit** — the Python companion presenting one session behind the
   `BotRunner` lifecycle; session consumption and end detection are core-owned.
-- **Session watch** — the cockpit's owner of end-state *ranking* and teardown;
-  the *why* is the Session consumer's typed fact.
+- **Session watch** — the Driver cockpit's adapter over *Session-end ranking*:
+  it owns the typed watch-set, cancellation/reaping, and teardown, then renders
+  or propagates the ranked verdict. Detection and ranking are core-owned; the
+  watch never infers a verdict from which task happened to finish first.
+- **Session-end ranking** — the core's deterministic fold of typed session-end
+  causes, consumer outcomes, and registration outcomes into `PumpEnded`,
+  `RegistrationFailed`, or `WatchdogTripped` (registration failure highest
+  priority), plus the one `RaiseSlot` a primary failure may be delivered in.
 - **Run ritual** — the cockpit's thin startup adapter over the Driver seam and
   the Session consumer; it owns no consume choreography.
 

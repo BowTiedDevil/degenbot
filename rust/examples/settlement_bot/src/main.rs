@@ -401,7 +401,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("16-sim-fanout-submitter", "REACHABLE", "degenbot::batch_executor::SessionConsumer over BatchExecutor over degenbot::submission::SimSubmitPipeline: the consumer reads the session's ordered stream (the Block arm is the clock, the Batch arm the work), enqueues BatchWork (caps as plain counts) and drains the typed BatchOutcome record stream; bounded sim fan-out + single ordered FIFO submit lane + fail-loud raise_if_failed; consume.rs drains the records for display only"),
         ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
         ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
-        ("19-session-watch", "DRIVER-POLICY", "session_watch.rs ranks the core detection facts (degenbot::session_end::{SessionEndCause,SessionEndFacts,SessionEndDetection} over EngineDriver::wait_session_end + the heartbeat stall watchdog) into SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} (watch-as-observer; ranking + teardown stay driver)"),
+        ("19-session-watch", "DRIVER-POLICY", "Session-end ranking is core-owned: degenbot::session_end::rank folds SessionEndObservation {SessionEndCause over EngineDriver::wait_session_end + the heartbeat stall watchdog, translated ConsumerOutcome, RegistrationOutcome} into SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} + RaiseSlot {Nothing,Registration,Consumer,SessionEnd}; session_watch.rs is the adapter (gather/retrieve/cancel-reap/render; watch-as-observer)"),
         ("20-operator-channel", "DRIVER-POLICY", "operator_channel.rs: tokio UnixListener JSON-lines add_path/discover/set+get_fleet_posture; fleet posture through degenbot::workers::posture::process_owner (reachable via the umbrella)"),
     ];
     for (row, status, note) in rows {
@@ -885,12 +885,15 @@ fn run() -> Result<(), String> {
                 .and_then(|raw| raw.parse::<u64>().ok())
                 .unwrap_or(120_000),
         );
-        // The watch ranks the end state; the heartbeat it watches is the
+        // The watch gathers the end facts and renders; the RANKING is the
+        // core's pure fold (the translated consumer outcome rides
+        // `live_consumer_outcome`), and the heartbeat it watches is the
         // consumer's own stream-activity feed.
         let watch_task = tokio::spawn(session_watch::supervise_consumer(
             consumer_task,
             heartbeat.clone(),
             stall_after,
+            session_watch::live_consumer_outcome,
         ));
 
         // ── G3 live registration arm (gated by SMOKE_RPC_URL) ──
@@ -1052,7 +1055,8 @@ fn run() -> Result<(), String> {
         || {
             runtime
                 .block_on(watch_task)
-                .map_err(|e| format!("session watch join: {e}"))
+                .map_err(|e| format!("session watch join: {e}"))?
+                .map_err(|e| format!("session watch: {e}"))
         },
     )?;
     // G5 row 19: the session-watch verdict. `PumpEnded` is the graceful stop

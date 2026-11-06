@@ -42,11 +42,14 @@ pub mod investigation;
 pub use degenbot_bot as bot;
 
 pub mod session_end {
-    //! Engine-session end DETECTION facts: the typed cause vocabulary, the
-    //! heartbeat stall watchdog, and the once-only delivery channel both drivers
-    //! share.
+    //! Engine-session end DETECTION facts and the pure Session-end ranking: the
+    //! typed cause vocabulary, the heartbeat stall watchdog, the once-only
+    //! delivery channel both drivers share, and the one `rank` fold over the
+    //! closed end observation.
     pub use degenbot_bot::arb_engine::{
-        Heartbeat, SessionEndCause, SessionEndDetection, SessionEndFacts, SessionEndPublisher,
+        rank, ConsumerOutcome, Heartbeat, RaiseSlot, RegistrationOutcome, SessionEndCause,
+        SessionEndDetection, SessionEndFacts, SessionEndObservation, SessionEndPublisher,
+        SessionEndRanking, SessionEndVerdict,
     };
 }
 

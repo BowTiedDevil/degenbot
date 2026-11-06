@@ -349,12 +349,19 @@ current block, provider, credentials) — the public ``Session`` in
 session as its host; ``BotRunner`` is only the operator shell over it.
 _Avoid_: "session dict", "cockpit config", facade-side mirrors of session fields.
 
+**Session-end ranking**:
+The core's deterministic fold of typed session-end causes, consumer outcomes, and
+registration outcomes into ``PumpEnded``, ``RegistrationFailed``, or
+``WatchdogTripped``; registration failure has highest priority. Task completion order
+never re-authors the verdict.
+_Avoid_: driver-specific ranking, task-race verdicts, a second end-cause vocabulary.
+
 **Session watch**:
-The cockpit's one owner of a session's end-state RANKING: the typed watch-set
-transitions (``_WatchSet`` / ``on_task_done``), the end-verdict ranking, and teardown.
-Detection of *why* the session ended is core-owned by the **Session consumer**; the
-watch reads that typed fact and applies its own ranking.
-_Avoid_: "await loop", "fail-fast wrapper", "detection owner".
+The Driver cockpit's adapter over **Session-end ranking**: it owns the typed watch-set,
+cancellation/reaping, and teardown, then renders or propagates the ranked verdict.
+Detection and ranking are core-owned; the watch never infers a verdict from which task
+happened to finish first.
+_Avoid_: "await loop", "fail-fast wrapper", "detection owner", "end-ranking owner".
 
 **Run ritual**:
 The cockpit's thin startup adapter over the **Driver seam** and **Session consumer**:
@@ -377,6 +384,14 @@ records each surface's adapters/own code — the shared contract lives on the
 surface), so agreement is pinned by the walk, never maintained by hand (ADR-086).
 _Avoid_: call-convention unification (the seam pair is real — ADR-086); shared
 logic living in one tree because the other does not need it yet.
+
+**ERC-20 metadata read**:
+The core's one chain-read capability for ERC-20 name, symbol, and decimals, with
+single-token and multicall call shapes. It owns selector fallback and decoding only;
+Pool construction's database/default policy and Aave's per-field optional policy stay
+with their consumers.
+_Avoid_: per-consumer selector or decode implementations; folding database write-back
+or UNKNOWN sentinels into the chain read.
 
 ## Pool construction
 
@@ -1311,11 +1326,11 @@ _Avoid_: a result-receiver-taken latch; an optional-receiver check; a cloneable 
 **Session consumer**:
 The Rust-core owner of a session's consume loop above `degenbot-bot`: it folds the
 **Session event stream** into executor work, drives `BatchExecutor`, emits **Batch
-outcome records**, owns stall detection and loud-abort propagation, and closes the
-driver on failure or termination. Pure Rust and Python are adapters over it, not
-parallel consume implementations.
+outcome records**, feeds stall detection from stream activity, owns loud-abort
+propagation, and closes the driver on failure or termination. Pure Rust and Python
+are adapters over it, not parallel consume implementations.
 _Avoid_: dispatch ownership in `EngineDriver`; a Python-owned consume loop; conflating
-it with **Session watch** ranking or a **Strategy driver**.
+it with **Session watch** adaptation or a **Strategy driver**.
 
 **Engine retune**:
 The typed operator re-parameterization applied at construction and at runtime.

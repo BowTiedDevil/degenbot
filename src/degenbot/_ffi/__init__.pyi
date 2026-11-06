@@ -4950,6 +4950,26 @@ def runtime_status() -> dict:
     resource).
     """
 
+def session_end_rank(
+    cause: str | None, consumer: str | None, registration: str | None
+) -> tuple[str, str]:
+    """
+    The core Session-end ranking over the stable fact spellings — the Python
+    session watch's ONE verdict source (never a local task-completion table).
+
+    `cause` is the detection cause name (`PumpFinished` /
+    `StallWatchdogTripped`), `consumer` the translated consumer outcome
+    (`QuietEnd` / `PumpStopped` / `Failed`), `registration` the registration
+    outcome (`Completed` / `Failed`); `None` records an absent fact. Returns
+    the ranked `(verdict, raise_slot)` names — the core's stable spellings
+    (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`, and `Nothing` /
+    `Registration` / `Consumer` / `SessionEnd`).
+
+    # Errors
+
+    `ValueError` when a fact name is outside the core's closed vocabulary.
+    """
+
 def session_phase_next(current: str, operation: str) -> str | None:
     """
     The cockpit session-phase table, exposed so the Python `_Phase` translates
@@ -5139,6 +5159,7 @@ __all__ = [
     "resolved_config",
     "resolved_node_uri_for_tests",
     "runtime_status",
+    "session_end_rank",
     "session_phase_next",
     "shutdown_log_drainer",
     "solve_balancer_weighted_basket",

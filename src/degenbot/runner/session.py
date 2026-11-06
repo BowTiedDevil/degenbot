@@ -817,7 +817,7 @@ class Session:
             f"Entering main loop.",
         )
 
-    async def pump_finished_watchdog(self) -> None:
+    async def pump_finished_watchdog(self) -> str:
         """Await the core session-end detection fact, then cancel the consumer.
 
         The hotpath timed exit (``HOTPATH_SHUTDOWN_MS``) makes the pump return
@@ -834,10 +834,13 @@ class Session:
         same awaitable contract (a fake pump that never finishes parks here
         forever, which is exactly the pre-finish consumer shape). The driver
         only reads the core fact and cancels the consumer; the verdict ranking
-        stays with the session watch.
+        is the core's Session-end fold over the fact this returns.
 
-        Returns once the pump finished; the consumer was cancelled here, so the
-        session watch observes the pump end as ``WatchdogTripped``.
+        Returns:
+            The core detection-cause name (``PumpFinished`` /
+            ``StallWatchdogTripped``); the consumer was cancelled here, so the
+            session watch gathers the pump end as its detection fact.
+
         """
         actors = self.actors
         assert actors is not None, "the watchdog runs on a started session"
@@ -849,6 +852,7 @@ class Session:
         main_task = self.result_consumer_task
         if main_task is not None and not main_task.done():
             main_task.cancel()
+        return cause
 
     # ── Mutators (the one write discipline) ─────────────────────────
     def attach_consumer_task(self, task: asyncio.Task[Any]) -> None:

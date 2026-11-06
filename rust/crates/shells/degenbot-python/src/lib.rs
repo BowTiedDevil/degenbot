@@ -381,6 +381,13 @@ mod _ffi {
         session_phase_next, PyArbEngine, PyCrawlReceiptStream, PyCrawlSession,
     };
 
+    // The core Session-end ranking over the stable fact spellings: the Python
+    // session watch ranks through this door (the core `session_end::rank`
+    // fold) instead of a local task-completion table.
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::pump::session_end_rank;
+
     // Bot — Rust-owned state (feature = "bot"). `PyConcentratedLiquidityView`
     // keeps the (missing) gate it had in the pre-conversion registration body —
     // mirrored, not fixed, so the surface stays byte-equivalent; `bot` is a

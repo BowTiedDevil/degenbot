@@ -82,3 +82,93 @@ pub(crate) fn session_end_future<'py>(
         async move { Ok(driver.wait_session_end().await.name()) },
     )
 }
+
+/// The core Session-end ranking over the stable fact spellings — the Python
+/// session watch's ONE verdict source (never a local task-completion table).
+///
+/// `cause` is the detection cause name (`PumpFinished` /
+/// `StallWatchdogTripped`), `consumer` the translated consumer outcome
+/// (`QuietEnd` / `PumpStopped` / `Failed`), `registration` the registration
+/// outcome (`Completed` / `Failed`); `None` records an absent fact. Returns
+/// the ranked `(verdict, raise_slot)` names — the core's stable spellings
+/// (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`, and `Nothing` /
+/// `Registration` / `Consumer` / `SessionEnd`).
+///
+/// # Errors
+///
+/// `ValueError` when a fact name is outside the core's closed vocabulary.
+#[pyfunction]
+pub(crate) fn session_end_rank(
+    cause: Option<&str>,
+    consumer: Option<&str>,
+    registration: Option<&str>,
+) -> PyResult<(&'static str, &'static str)> {
+    use degenbot_bot::arb_engine::{
+        rank, ConsumerOutcome, RegistrationOutcome, SessionEndCause, SessionEndObservation,
+    };
+
+    let cause = cause
+        .map(|name| {
+            SessionEndCause::from_name(name).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown session-end cause {name:?}"
+                ))
+            })
+        })
+        .transpose()?;
+    let consumer = consumer
+        .map(|name| {
+            ConsumerOutcome::from_name(name).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown consumer outcome {name:?}"
+                ))
+            })
+        })
+        .transpose()?;
+    let registration = registration
+        .map(|name| {
+            RegistrationOutcome::from_name(name).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown registration outcome {name:?}"
+                ))
+            })
+        })
+        .transpose()?;
+    let ranking = rank::<()>(SessionEndObservation {
+        cause,
+        consumer,
+        registration,
+        output: None,
+    });
+    Ok((ranking.verdict.name(), ranking.slot.name()))
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests assert on the seam's known-valid names"
+)]
+mod tests {
+    use super::*;
+
+    /// The seam folds through the core's own vocabulary: the names in are the
+    /// names the core parses, the names out are the names it emits.
+    #[test]
+    fn the_rank_seam_round_trips_the_core_vocabularies() {
+        assert_eq!(
+            session_end_rank(Some("PumpFinished"), Some("QuietEnd"), None).unwrap(),
+            ("PumpEnded", "Nothing")
+        );
+        assert_eq!(
+            session_end_rank(None, Some("PumpStopped"), Some("Completed")).unwrap(),
+            ("WatchdogTripped", "SessionEnd")
+        );
+        assert_eq!(
+            session_end_rank(Some("StallWatchdogTripped"), Some("Failed"), Some("Failed")).unwrap(),
+            ("RegistrationFailed", "Registration")
+        );
+        assert!(session_end_rank(Some("nope"), None, None).is_err());
+        assert!(session_end_rank(None, Some("nope"), None).is_err());
+        assert!(session_end_rank(None, None, Some("nope")).is_err());
+    }
+}
