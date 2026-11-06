@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from degenbot.dispatch import SimSubmitPipeline
+from degenbot.dispatch import EnqueueDecline, SimSubmitPipeline
 from tests.helpers import verdict_probe as probe
 from tests.helpers.seam import executor_policy_py
 
@@ -105,5 +105,56 @@ async def test_a_leaf_failure_surfaces_through_raise_if_failed() -> None:
 
     pipeline = SimSubmitPipeline(sim=sim, submit=submit, concurrency=1)
     pipeline.enqueue(0)
+    with pytest.raises(RuntimeError, match="aborting the consumer loudly"):
+        await pipeline.shutdown()
+
+
+async def test_a_closed_lane_declines_the_batch_without_side_effects() -> None:
+    """A shutdown pipeline answers with a typed refusal, not a silent accept."""
+
+    submitted: list[object] = []
+
+    async def sim(work: object) -> object:
+        return work
+
+    async def submit(_work: object, outcome: object) -> None:
+        submitted.append(outcome)
+
+    pipeline = SimSubmitPipeline(sim=sim, submit=submit, concurrency=2)
+    assert pipeline.enqueue(0) is None, "the accepted batch returns no decline"
+    await pipeline.shutdown()
+
+    counted = (pipeline.enqueued, pipeline.submitted)
+    assert pipeline.enqueue(1) == EnqueueDecline.Closed
+    await asyncio.sleep(0)
+
+    assert (pipeline.enqueued, pipeline.submitted) == counted, (
+        "a declined batch is neither counted nor submitted"
+    )
+    assert submitted == [0]
+
+
+async def test_a_failed_lane_declines_and_keeps_reporting_its_failure() -> None:
+    """Observing the failure does not reopen the lane, and the teardown is total."""
+
+    class LeafExploded(RuntimeError):
+        """Test leaf failure carrier (raw-string-exception lint)."""
+
+    async def sim(_work: object) -> object:
+        raise LeafExploded
+
+    async def submit(_work: object, _outcome: object) -> None:
+        return None
+
+    pipeline = SimSubmitPipeline(sim=sim, submit=submit, concurrency=1)
+    assert pipeline.enqueue(0) is None
+    with pytest.raises(RuntimeError, match="aborting the consumer loudly"):
+        await pipeline.shutdown()
+
+    counted = pipeline.enqueued
+    assert pipeline.enqueue(1) == EnqueueDecline.Closed
+    assert pipeline.enqueued == counted
+
+    # The teardown never reports a fresh success contradicting the failure.
     with pytest.raises(RuntimeError, match="aborting the consumer loudly"):
         await pipeline.shutdown()

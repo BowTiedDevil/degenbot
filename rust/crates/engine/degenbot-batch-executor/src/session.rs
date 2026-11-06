@@ -56,7 +56,7 @@ use degenbot_core::eip_1559::{
 use degenbot_pools::solve::SolvePathResult;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::capture::SwapFamily;
-use degenbot_submission::{fetch_fee_history, Dispatcher};
+use degenbot_submission::{fetch_fee_history, Dispatcher, EnqueueDecline, EnqueueOutcome};
 use tokio::sync::mpsc;
 
 use crate::executor::{BatchExecutor, BatchWork};
@@ -762,7 +762,29 @@ impl SessionConsumer {
             }
             match event {
                 SessionEvent::Block(notification) => self.accept_block(&notification, &mut report),
-                SessionEvent::Batch(batch) => self.enqueue_batch(&batch, &mut report),
+                SessionEvent::Batch(batch) => {
+                    if self.enqueue_batch(&batch, &mut report).is_err() {
+                        // The lane's typed decline is terminal for this loop:
+                        // the refused batch — and every later one — cannot run.
+                        // Quiescing publishes the record stream's tail; the
+                        // lane's own authoritative failure is this loop's
+                        // verdict, and a lane closed WITHOUT one ends the pump
+                        // (the source is still feeding, so this loop did not
+                        // intend the end).
+                        let _ = self.quiesce().await;
+                        return if let Some(failure) = self.executor.failure() {
+                            Err(ConsumerError {
+                                kind: ConsumerErrorKind::LeafFailure,
+                                batch_index: report.batches,
+                                detail: failure.detail,
+                                report,
+                            })
+                        } else {
+                            report.end = Some(ConsumerEnd::PumpStopped);
+                            Ok(report)
+                        };
+                    }
+                }
             }
         }
     }
@@ -770,6 +792,10 @@ impl SessionConsumer {
     /// Drain the ordered lane: no further batch can be enqueued, so the lane's
     /// stored failure (if any) is this session's terminal verdict, and the
     /// record stream's tail is published for the adapter's drain.
+    ///
+    /// The lane's own shutdown is idempotent and total, so a quiesce after a
+    /// failed or already-closed lane reports the same verdict instead of
+    /// hanging on a second join.
     async fn quiesce(&self) -> Result<(), degenbot_submission::PipelineFailure> {
         self.executor.shutdown().await
     }
@@ -821,7 +847,15 @@ impl SessionConsumer {
     }
 
     /// Enqueue one batch's work at the session's current clock.
-    fn enqueue_batch(&mut self, batch: &ResultBatch, report: &mut ConsumerReport) {
+    ///
+    /// Returns the lane's typed decline when it refused the batch. A declined
+    /// batch never entered the lane — nothing was counted, spawned, or queued —
+    /// so the loop, not the lane, decides what the refusal means.
+    fn enqueue_batch(
+        &mut self,
+        batch: &ResultBatch,
+        report: &mut ConsumerReport,
+    ) -> Result<(), EnqueueDecline> {
         if self.clock.is_stale(batch.solve_block) {
             report.stale_batches += 1;
         }
@@ -840,9 +874,14 @@ impl SessionConsumer {
         }
         let mut work = batch_work(batch, &self.clock);
         work.block_priority_fees = self.priority_fees();
-        self.executor.enqueue(work);
-        report.batches += 1;
-        self.policy.progress.note_batch(self.clock.current_block);
+        match self.executor.enqueue(work) {
+            EnqueueOutcome::Accepted => {
+                report.batches += 1;
+                self.policy.progress.note_batch(self.clock.current_block);
+                Ok(())
+            }
+            EnqueueOutcome::Declined(decline) => Err(decline),
+        }
     }
 
     /// The dispatcher's latest recorded priority-fee percentiles, if any.
@@ -1542,6 +1581,74 @@ mod tests {
             executor.enqueued(),
             1,
             "the second batch never reached the lane"
+        );
+    }
+
+    /// A lane that is already CLOSED declines the batch: nothing reaches it,
+    /// and the loop ends on the pump's unintended end rather than a leaf
+    /// failure no leaf produced. The second `quiesce` proves the lane's
+    /// shutdown is idempotent from the consumer's side too.
+    #[tokio::test]
+    async fn a_closed_lane_declines_the_batch_and_ends_the_pump() {
+        let executor = fake_executor(None, Arc::new(tokio::sync::Notify::new()));
+        executor.shutdown().await.expect("no leaf failed");
+        let (mut consumer, _heartbeat) = consumer(Arc::clone(&executor), true);
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+        drop(tx);
+
+        let report = consumer
+            .consume(&mut rx)
+            .await
+            .expect("a closed lane is not a leaf failure");
+        assert_eq!(
+            report.batches, 0,
+            "the declined batch never entered the lane"
+        );
+        assert_eq!(report.end, Some(ConsumerEnd::PumpStopped));
+        assert_eq!(report.end_of_stream, 0);
+        assert_eq!(executor.enqueued(), 0);
+    }
+
+    /// A lane that already FAILED declines later batches, and the loop's
+    /// verdict is the lane's own authoritative failure text — never a
+    /// paraphrased refusal, and never a clean end.
+    #[tokio::test]
+    async fn a_failed_lane_declines_later_batches_with_its_own_failure() {
+        let passed = Arc::new(tokio::sync::Notify::new());
+        let executor = fake_executor(Some(100), Arc::clone(&passed));
+        let (mut consumer, _heartbeat) = consumer(Arc::clone(&executor), true);
+
+        // The first stream's batch fails in the sim leaf, so the end-of-stream
+        // quiesce reports the leaf's own text.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(SessionEvent::Block(block(100, 1))).unwrap();
+        tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+        drop(tx);
+        let first = consumer
+            .consume(&mut rx)
+            .await
+            .expect_err("the leaf failed");
+        assert_eq!(first.kind, ConsumerErrorKind::LeafFailure);
+        assert_eq!(first.detail, "sim leaf failed at block 100");
+
+        // The second stream meets a terminal lane: the batch is declined, and
+        // the loop surfaces the SAME failure instead of inventing one.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+        drop(tx);
+        let second = consumer
+            .consume(&mut rx)
+            .await
+            .expect_err("the lane is terminal");
+        assert_eq!(second.kind, ConsumerErrorKind::LeafFailure);
+        assert_eq!(second.detail, "sim leaf failed at block 100");
+        assert_eq!(second.batch_index, 0);
+        assert_eq!(
+            executor.enqueued(),
+            1,
+            "the declined batch never entered the lane"
         );
     }
 

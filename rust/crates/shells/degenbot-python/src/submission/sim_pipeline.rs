@@ -19,7 +19,8 @@
 use std::sync::Arc;
 
 use degenbot_submission::{
-    PipelineFailure, SimFuture, SimLeaf, SimSubmitPipeline, SubmitFuture, SubmitLeaf,
+    EnqueueDecline, EnqueueOutcome, PipelineFailure, SimFuture, SimLeaf, SimSubmitPipeline,
+    SubmitFuture, SubmitLeaf,
 };
 use pyo3_async_runtimes::{into_future_with_locals, TaskLocals};
 
@@ -93,6 +94,44 @@ fn leaf_failure_err(failure: PipelineFailure) -> PyErr {
     pyo3::exceptions::PyRuntimeError::new_err(format!("{LEAF_FAILURE_PREFIX}{detail}"))
 }
 
+/// Why the ordered lane declined a batch: the pipeline's lifecycle state at the
+/// moment of the enqueue. A declined batch has NO effect — nothing was counted,
+/// spawned, or queued.
+///
+// `hash` rides with `eq`: a decline crosses as a VALUE (`==`/`in`), never as a
+// class-attribute singleton — the seam builds a fresh instance per call, so
+// identity comparison silently answers "not this decline".
+#[pyclass(
+    name = "EnqueueDecline",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    from_py_object,
+    module = "degenbot._ffi.submission"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PyEnqueueDecline {
+    /// A sim or submit leaf (or the queue send) failed: terminal for new work.
+    Failed,
+
+    /// Shutdown has begun: the queue takes no new work.
+    Closing,
+
+    /// Shutdown finished: the pipeline is closed.
+    Closed,
+}
+
+impl From<EnqueueDecline> for PyEnqueueDecline {
+    fn from(decline: EnqueueDecline) -> Self {
+        match decline {
+            EnqueueDecline::Failed => Self::Failed,
+            EnqueueDecline::Closing => Self::Closing,
+            EnqueueDecline::Closed => Self::Closed,
+        }
+    }
+}
+
 /// A bounded concurrent sim fan-out with a single ordered submit lane.
 ///
 /// Construct with the two async callables and the in-flight sim cap; `enqueue`
@@ -142,9 +181,16 @@ impl PySimSubmitPipeline {
     }
 
     /// Background one batch's sim (bounded) and register it in the FIFO queue.
-    fn enqueue(&self, work: Py<PyAny>) {
+    ///
+    /// Returns `None` when the lane accepted the batch, or the typed decline
+    /// when it refused it: admission is the lifecycle's, so a refused batch was
+    /// not counted, spawned, or queued.
+    fn enqueue(&self, work: Py<PyAny>) -> Option<PyEnqueueDecline> {
         let _guard = runtime::get_runtime().enter();
-        self.inner.enqueue(Arc::new(work));
+        match self.inner.enqueue(Arc::new(work)) {
+            EnqueueOutcome::Accepted => None,
+            EnqueueOutcome::Declined(decline) => Some(decline.into()),
+        }
     }
 
     /// The configured in-flight sim bound.
@@ -175,6 +221,11 @@ impl PySimSubmitPipeline {
     }
 
     /// Drain in-flight work and join the submitter.
+    ///
+    /// Idempotent: the queue, the submitter, and the stored failure are each
+    /// consumed once, and while the lane carries a failure every call raises
+    /// that same failure rather than reporting a success the terminal state
+    /// contradicts.
     ///
     /// # Errors
     ///

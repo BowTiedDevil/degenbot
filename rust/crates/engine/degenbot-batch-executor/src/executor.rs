@@ -24,9 +24,9 @@ use degenbot_arbitrage::{
 use degenbot_executor::composers::{EncodeOptions, PathInfo};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::{
-    dispatch_and_submit, Dispatcher, PathSuppression, PipelineFailure, ReceiptProbe, SimFuture,
-    SimLeaf, SimSubmitPipeline, SubmissionLedger, SubmissionTarget, SubmitLeaf, SubmitRecord,
-    TxSigner,
+    dispatch_and_submit, Dispatcher, EnqueueOutcome, PathSuppression, PipelineFailure,
+    ReceiptProbe, SimFuture, SimLeaf, SimSubmitPipeline, SubmissionLedger, SubmissionTarget,
+    SubmitLeaf, SubmitRecord, TxSigner,
 };
 use degenbot_substrate::nonce::NonceLane;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
@@ -597,8 +597,12 @@ impl BatchExecutor {
     /// Enqueue one batch: its rows enter the ordered lane (assembly, sim,
     /// and submit run internally). Returns immediately — the caller keeps
     /// advancing.
-    pub fn enqueue(&self, work: BatchWork) {
-        self.pipeline.enqueue(work);
+    ///
+    /// The lane's typed [`EnqueueOutcome`] is passed through unchanged: a
+    /// declined batch never entered the lane (nothing was counted, spawned, or
+    /// queued), and the caller decides what a stopped lane means for it.
+    pub fn enqueue(&self, work: BatchWork) -> EnqueueOutcome {
+        self.pipeline.enqueue(work)
     }
 
     /// Await the next batch's outcome set (`None` when the lane is closed
@@ -666,23 +670,38 @@ impl BatchExecutor {
         self.pipeline.submitted()
     }
 
+    /// The lane's authoritative failure, reported or not (`None` while the
+    /// lane is healthy). This read observes nothing.
+    #[must_use]
+    pub fn failure(&self) -> Option<PipelineFailure> {
+        self.pipeline.failure()
+    }
+
     /// Re-raise the first stored leaf failure in the CALLER's frame (the
-    /// loud-abort rule).
+    /// loud-abort rule) — once.
+    ///
+    /// Reporting is not recovery: the lane stays terminal (every later enqueue
+    /// is declined) and the failure stays readable through [`Self::failure`].
     ///
     /// # Errors
     ///
-    /// [`PipelineFailure`] when a leaf (assembly corruption, sim, or submit)
-    /// failed.
+    /// [`PipelineFailure`] the first time a leaf (assembly corruption, sim, or
+    /// submit) failed.
     pub fn raise_if_failed(&self) -> Result<(), PipelineFailure> {
         self.pipeline.raise_if_failed()
     }
 
     /// Graceful teardown: close the queue, drain in-flight work, await the
-    /// submitter, then re-raise any stored failure.
+    /// submitter, release the record stream, then report the stored failure.
+    ///
+    /// Idempotent: the sender, the submitter handle, and the record stream are
+    /// released exactly once, and while the lane carries a failure every call
+    /// reports that same failure.
     ///
     /// # Errors
     ///
-    /// [`PipelineFailure`] when a leaf failed.
+    /// [`PipelineFailure`] when a leaf failed — on every call while the lane
+    /// carries it.
     pub async fn shutdown(&self) -> Result<(), PipelineFailure> {
         let result = self.pipeline.shutdown().await;
         // Release the record channel (see the field doc): the lane drained
@@ -799,6 +818,11 @@ mod tests {
         }
     }
 
+    /// Enqueue one batch and assert the lane accepted it.
+    fn accepted(executor: &BatchExecutor, work: BatchWork) {
+        assert_eq!(executor.enqueue(work), EnqueueOutcome::Accepted);
+    }
+
     fn executor_with(
         sim: ReversedFinishSim,
         order: Arc<std::sync::Mutex<Vec<u64>>>,
@@ -827,7 +851,7 @@ mod tests {
         let order = Arc::new(std::sync::Mutex::new(Vec::new()));
         let executor = executor_with(ReversedFinishSim { fail_block: None }, Arc::clone(&order));
         for batch in 0_u64..4 {
-            executor.enqueue(work(BASE_BLOCK + batch));
+            accepted(&executor, work(BASE_BLOCK + batch));
         }
         let failure = executor.shutdown().await;
         assert!(failure.is_ok(), "no leaf failed: {failure:?}");
@@ -863,8 +887,8 @@ mod tests {
             },
             Arc::clone(&order),
         );
-        executor.enqueue(work(BASE_BLOCK));
-        executor.enqueue(work(BASE_BLOCK + 1));
+        accepted(&executor, work(BASE_BLOCK));
+        accepted(&executor, work(BASE_BLOCK + 1));
 
         let failure = executor.shutdown().await;
         let failure = failure.expect_err("the failing batch's detail is re-raised");
@@ -885,8 +909,8 @@ mod tests {
             },
             order,
         );
-        executor.enqueue(work(BASE_BLOCK));
-        executor.enqueue(work(BASE_BLOCK + 1));
+        accepted(&executor, work(BASE_BLOCK));
+        accepted(&executor, work(BASE_BLOCK + 1));
         // Batch 0 submits; batch 1's sim failure stops the lane.
         let _ = executor.try_next_outcome().await;
         while executor.submitted() < 1 {
@@ -895,10 +919,26 @@ mod tests {
         let failure = executor.raise_if_failed().expect_err("stored failure");
         assert_eq!(failure.detail, "sim leaf failed at block 101");
         assert!(executor.raise_if_failed().is_ok());
-        executor
-            .shutdown()
-            .await
-            .expect("the failure was already re-raised");
+
+        // Reporting did not recover the lane: a new batch is declined, the
+        // failure stays readable, and the teardown keeps reporting it rather
+        // than a fresh success contradicting the terminal state.
+        assert_eq!(
+            executor.enqueue(work(BASE_BLOCK + 2)),
+            EnqueueOutcome::Declined(degenbot_submission::EnqueueDecline::Failed)
+        );
+        assert_eq!(
+            executor.failure().map(|failure| failure.detail),
+            Some("sim leaf failed at block 101".to_string())
+        );
+        assert_eq!(
+            executor
+                .shutdown()
+                .await
+                .expect_err("the failure is still the verdict")
+                .detail,
+            "sim leaf failed at block 101"
+        );
     }
 
     /// The block-only drain (the Rust bot's `HeartbeatSink` shape): the
@@ -909,7 +949,7 @@ mod tests {
         let order = Arc::new(std::sync::Mutex::new(Vec::new()));
         let executor = executor_with(ReversedFinishSim { fail_block: None }, order);
         for batch in 0_u64..3 {
-            executor.enqueue(work(BASE_BLOCK + batch));
+            accepted(&executor, work(BASE_BLOCK + batch));
         }
         executor.shutdown().await.expect("no failure");
         let mut heartbeats = Vec::new();
@@ -1050,7 +1090,7 @@ mod tests {
             tx,
             rx,
         );
-        executor.enqueue(work(BASE_BLOCK));
+        accepted(&executor, work(BASE_BLOCK));
         executor.shutdown().await.expect("no failure");
 
         // ── The renderer-shaped drain: every stage + path_info ──
@@ -1175,5 +1215,36 @@ mod tests {
                 "path=9 solve_block=4242 net_wei=456 gas=200000 calldata=beef".to_string()
             )
         );
+    }
+
+    /// Shutdown is idempotent at the executor boundary: the first call drains
+    /// the lane and releases the record stream, and a repeat call joins
+    /// nothing, publishes nothing, and leaves the closed stream closed.
+    #[tokio::test]
+    async fn shutdown_is_idempotent_and_closes_the_outcome_stream_once() {
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let executor = executor_with(ReversedFinishSim { fail_block: None }, order);
+        for batch in 0_u64..2 {
+            accepted(&executor, work(BASE_BLOCK + batch));
+        }
+        executor.shutdown().await.expect("no failure");
+
+        let mut drained = Vec::new();
+        while let Some(records) = executor.next_outcome().await {
+            drained.extend(records.records.iter().map(|r| r.block));
+        }
+        assert_eq!(drained, vec![BASE_BLOCK, BASE_BLOCK + 1]);
+
+        // A repeated teardown returns (rather than awaiting a join twice) and
+        // cannot reopen the record stream.
+        tokio::time::timeout(Duration::from_secs(1), executor.shutdown())
+            .await
+            .expect("the repeat shutdown returns")
+            .expect("no failure");
+        assert!(
+            executor.try_next_outcome().await.is_none(),
+            "the stream stays closed"
+        );
+        assert_eq!(executor.submitted(), 2, "no batch ran twice");
     }
 }

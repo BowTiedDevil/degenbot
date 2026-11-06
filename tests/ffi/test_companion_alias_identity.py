@@ -82,6 +82,9 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     # dicts into the typed records of degenbot.dispatch.records (behavior is
     # pinned by tests/dispatch/test_submit_records.py).
     (_DISPATCH, "Dispatcher", _SUBMIT, "Dispatcher"),
+    # The ordered lane's typed enqueue refusal: a driver reads WHY its batch was
+    # declined by the same companion name the pipeline is built from.
+    (_DISPATCH, "EnqueueDecline", _SUBMIT, "EnqueueDecline"),
     (_DISPATCH, "SimSubmitPipeline", _SUBMIT, "SimSubmitPipeline"),
     (_DISPATCH, "TxSigner", _SUBMIT, "TxSigner"),
     (_DISPATCH, "fetch_fee_history", _SUBMIT, "fetch_fee_history_py"),
@@ -143,7 +146,10 @@ def test_dispatch_all_pins_public_surface() -> None:
     consume loop moved into ``degenbot-batch-executor``: the cockpit builds the
     consumer from here and catches its abort by this name. The abort's typed
     ``kind`` vocabulary (``ConsumerErrorKind``) joined when the exception
-    gained its classification attribute.
+    gained its classification attribute. ``EnqueueDecline`` joined with the
+    ordered lane's explicit lifecycle: an enqueue answers with the pipeline's
+    state when it refuses, so a driver handles the refusal instead of assuming
+    the batch was counted.
     """
 
     d = degenbot.dispatch
@@ -154,6 +160,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "BatchOutcomeSet",
         "ConsumerErrorKind",
         "Dispatcher",
+        "EnqueueDecline",
         "FailureDetail",
         "FailureKind",
         "PayloadOutcome",

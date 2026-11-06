@@ -116,7 +116,8 @@ pub use monitor::{
     SubmittedTx, BLOCKS_BEFORE_NONCE_EXPIRES,
 };
 pub use sim_pipeline::{
-    PipelineFailure, SimFuture, SimLeaf, SimSubmitPipeline, SubmitFuture, SubmitLeaf,
+    EnqueueDecline, EnqueueOutcome, PipelineFailure, PipelineState, SimFuture, SimLeaf,
+    SimSubmitPipeline, SubmitFuture, SubmitLeaf, TerminalFailure,
 };
 pub use submission_ledger::{
     release_hold, replace_hold, HeadPolicy, HoldDecline, LedgerDecline, Notification,

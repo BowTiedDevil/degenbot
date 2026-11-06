@@ -60,7 +60,13 @@ from degenbot._ffi.simulation import (
 )
 from degenbot._ffi.simulation import build_batch_executor_py as build_batch_executor
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
-from degenbot._ffi.submission import Dispatcher, SimSubmitPipeline, SubmitCandidate, TxSigner
+from degenbot._ffi.submission import (
+    Dispatcher,
+    EnqueueDecline,
+    SimSubmitPipeline,
+    SubmitCandidate,
+    TxSigner,
+)
 from degenbot._ffi.submission import dispatch_and_submit_py as _dispatch_and_submit_py
 from degenbot._ffi.submission import fetch_fee_history_py as fetch_fee_history
 from degenbot.dispatch.records import (
@@ -144,6 +150,7 @@ __all__ = [
     "BatchOutcomeSet",
     "ConsumerErrorKind",
     "Dispatcher",
+    "EnqueueDecline",
     "FailureDetail",
     "FailureKind",
     "PayloadOutcome",

@@ -9,7 +9,7 @@ pyfunctions. The parent module registers the submodule itself and its
 `sys.modules` entry.
 """
 
-from typing import Any, SupportsFloat, SupportsIndex, final
+from typing import Any, Final, SupportsFloat, SupportsIndex, final
 
 from _typeshed import SupportsGetItem
 
@@ -18,6 +18,7 @@ from .provider import AsyncAlloyProvider
 __all__ = [
     "Dispatcher",
     "DivergentPool",
+    "EnqueueDecline",
     "SimSubmitPipeline",
     "SubmitCandidate",
     "TxParams",
@@ -222,6 +223,31 @@ class DivergentPool:
         """
 
 @final
+class EnqueueDecline:
+    """
+    Why the ordered lane declined a batch: the pipeline's lifecycle state at the
+    moment of the enqueue. A declined batch has NO effect — nothing was counted,
+    spawned, or queued.
+    """
+
+    Closed: Final[EnqueueDecline]
+    """
+    Shutdown finished: the pipeline is closed.
+    """
+    Closing: Final[EnqueueDecline]
+    """
+    Shutdown has begun: the queue takes no new work.
+    """
+    Failed: Final[EnqueueDecline]
+    """
+    A sim or submit leaf (or the queue send) failed: terminal for new work.
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __hash__(self, /) -> int: ...
+    def __int__(self, /) -> int: ...
+    def __ne__(self, value: object, /) -> bool: ...
+
+@final
 class SimSubmitPipeline:
     """
     A bounded concurrent sim fan-out with a single ordered submit lane.
@@ -247,9 +273,13 @@ class SimSubmitPipeline:
         """
         The configured in-flight sim bound.
         """
-    def enqueue(self, /, work: Any) -> None:
+    def enqueue(self, /, work: Any) -> EnqueueDecline | None:
         """
         Background one batch's sim (bounded) and register it in the FIFO queue.
+
+        Returns `None` when the lane accepted the batch, or the typed decline
+        when it refused it: admission is the lifecycle's, so a refused batch was
+        not counted, spawned, or queued.
         """
     @property
     def enqueued(self, /) -> int:
@@ -267,6 +297,11 @@ class SimSubmitPipeline:
     def shutdown(self, /) -> Any:
         """
         Drain in-flight work and join the submitter.
+
+        Idempotent: the queue, the submitter, and the stored failure are each
+        consumed once, and while the lane carries a failure every call raises
+        that same failure rather than reporting a success the terminal state
+        contradicts.
 
         # Errors
 
@@ -578,6 +613,7 @@ def finalize_fees(
 __all__ = [
     "Dispatcher",
     "DivergentPool",
+    "EnqueueDecline",
     "SimSubmitPipeline",
     "SubmitCandidate",
     "TxParams",

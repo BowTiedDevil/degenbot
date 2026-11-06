@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex};
 
 use degenbot::batch_executor::{BatchExecutor, BatchWork, ExecutorConfig, ExecutorRuntime};
 use degenbot::submission::{
-    Dispatcher, PathSuppression, ReceiptProbe, SimFuture, SimLeaf, SimSubmitPipeline,
-    SubmissionLedger, SubmissionTarget, SubmitFuture, SubmitLeaf, TxSigner,
+    Dispatcher, EnqueueOutcome, PathSuppression, ReceiptProbe, SimFuture, SimLeaf,
+    SimSubmitPipeline, SubmissionLedger, SubmissionTarget, SubmitFuture, SubmitLeaf, TxSigner,
 };
 struct EchoSim;
 
@@ -57,7 +57,7 @@ async fn core_pipeline_is_reachable_through_the_umbrella() {
     );
     assert_eq!(pipeline.concurrency(), 2);
     for id in [1_u64, 2, 3] {
-        pipeline.enqueue(id);
+        assert_eq!(pipeline.enqueue(id), EnqueueOutcome::Accepted);
     }
     assert!(pipeline.shutdown().await.is_ok(), "no leaf failure");
     assert_eq!(*order.lock().unwrap(), vec![1, 2, 3]);
@@ -193,7 +193,7 @@ async fn batch_executor_is_reachable_through_the_umbrella() {
         block_timestamp: 1_700_000_000,
         block_priority_fees: None,
     };
-    executor.enqueue(work);
+    assert_eq!(executor.enqueue(work), EnqueueOutcome::Accepted);
     executor.shutdown().await.expect("no leaf failure");
     let set = executor
         .try_next_outcome()

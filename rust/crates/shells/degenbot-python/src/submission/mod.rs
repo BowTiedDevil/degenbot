@@ -23,7 +23,7 @@ pub mod submit;
 pub use dispatcher::{PyDispatcher, PyDivergentPool};
 pub use params::PyTxParams;
 pub use signer::PyTxSigner;
-pub use sim_pipeline::PySimSubmitPipeline;
+pub use sim_pipeline::{PyEnqueueDecline, PySimSubmitPipeline};
 pub use submit::PySubmitCandidate;
 
 /// The `degenbot._ffi.submission` Python submodule (declarative
@@ -36,8 +36,8 @@ pub use submit::PySubmitCandidate;
 pub mod submission {
     #[pymodule_export]
     use super::{
-        PyDispatcher, PyDivergentPool, PySimSubmitPipeline, PySubmitCandidate, PyTxParams,
-        PyTxSigner,
+        PyDispatcher, PyDivergentPool, PyEnqueueDecline, PySimSubmitPipeline, PySubmitCandidate,
+        PyTxParams, PyTxSigner,
     };
 
     #[pymodule_export]
