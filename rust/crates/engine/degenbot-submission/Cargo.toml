@@ -74,9 +74,13 @@ degenbot-rpc = { workspace = true, features = ["test-utils"] }
 # `hosted_driver_ambient_runtime` builds the engine's blocking cold-miss
 # adapter (`BlockingAsyncDb` over `AlloyAsyncDb`) as the async read surface a
 # driver's ambient runtime polls.
-degenbot-simulation.workspace = true
+# Version-less on purpose: a `version` key would make `cargo publish` require
+# degenbot-simulation on crates.io at packaging (same rule as the evm2 dev-dep).
+degenbot-simulation = { path = "../degenbot-simulation" }
 # The adapter's `Database` trait (the read the ambient-runtime contract drives).
-evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = [
+# No `version` key: `cargo publish` strips git-only dev-deps at packaging, while a
+# `version` becomes a registry requirement that must resolve on crates.io (ADR-089).
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", default-features = false, features = [
     "async",
     "std",
 ] }

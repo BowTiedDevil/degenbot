@@ -42,5 +42,7 @@ async-trait = "0.1"
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 proptest = "^1.12"
 # The engine (ADR-089 cutover) — the replay fixtures drive the evm2 in-memory DB.
-evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
+# No `version` key: `cargo publish` strips git-only dev-deps at packaging, while a
+# `version` becomes a registry requirement that must resolve on crates.io (ADR-089).
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", default-features = false, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
 tempfile = { version = "^3.27" }

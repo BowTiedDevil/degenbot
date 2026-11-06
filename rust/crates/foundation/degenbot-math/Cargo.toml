@@ -24,7 +24,9 @@ criterion = { version = "^0.8", default-features = false, features = ["cargo_ben
 # Tier-3a byte-exact oracle (cl module): the SwapMath harness executes on
 # evm2's in-memory DB (ADR-091). Dev-only, so the no-pyo3-in-cores check is
 # unaffected.
-evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = [
+# No `version` key: `cargo publish` strips git-only dev-deps at packaging, while a
+# `version` becomes a registry requirement that must resolve on crates.io (ADR-089).
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", default-features = false, features = [
     "asm-keccak",
     "blst",
     "c-kzg",
