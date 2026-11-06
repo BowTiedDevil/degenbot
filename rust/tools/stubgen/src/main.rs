@@ -322,6 +322,23 @@ fn collect_module_paths(
     }
 }
 
+// The introspected class names as `module::class` — the manifest gate's
+// attribute-reference evidence: a declared attribute's class reference must
+// name a class the runtime registers on the island's own module.
+fn collect_class_names(
+    module: &Module,
+    prefix: &str,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    let path = format!("{prefix}.{}", module.name);
+    for class in &module.classes {
+        out.insert(format!("{path}::{}", class.name));
+    }
+    for sub in &module.modules {
+        collect_class_names(sub, &path, out);
+    }
+}
+
 // CLI progress diagnostics go to stderr; the tool is a recipe helper, not a
 // library, so the workspace-wide print_stderr denial is scoped to this binary.
 #[expect(clippy::print_stderr)]
@@ -367,9 +384,11 @@ fn main() -> Result<()> {
     let root_path = format!("degenbot.{module_name}");
     let mut module_paths = std::collections::BTreeSet::new();
     collect_module_paths(&module, "degenbot", &mut module_paths);
+    let mut class_names = std::collections::BTreeSet::new();
+    collect_class_names(&module, "degenbot", &mut class_names);
     let symbols = exception_manifest::symbol_blob(Path::new(&binary))
         .map_err(|err| anyhow!("exception manifest gate: {err}"))?;
-    exception_manifest::validate(EXCEPTION_ISLANDS, &module_paths, &symbols)
+    exception_manifest::validate(EXCEPTION_ISLANDS, &module_paths, &class_names, &symbols)
         .map_err(|err| anyhow!("{err}"))?;
 
     let stubs = module_stub_files(&module);

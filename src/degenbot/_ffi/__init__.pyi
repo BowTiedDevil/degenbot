@@ -97,6 +97,10 @@ class ChainMismatchError(ValueError):
     The endpoint serves a different chain than the one it was bound to.
     """
 
+    actual: int
+    endpoint: str
+    expected: int
+
 class DynamicFeePoolRejectedError(PoolRegistrationError):
     """
     A V4 pool with a dynamic fee was rejected at registration: the solver assumes a fixed fee.
@@ -156,6 +160,10 @@ class SwapRefused(Exception):
     """
     The swap-simulation seam refused the read (ADR-037). Typed attributes: `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere; `amount` is the signed request the read could not meet (negative = exact input, positive = exact output), `None` on the fetch arms, which never got to answer for an amount.
     """
+
+    amount: int | None
+    kind: SwapRefusalKind
+    word: int | None
 
 class TickMapIntakeInconsistentError(PoolRegistrationError):
     """

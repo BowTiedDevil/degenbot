@@ -10,8 +10,8 @@
 // (`SessionConsumerError` on `degenbot._ffi.simulation` is that case). This table is the tool-layer declaration manifest — the
 // same declaration-table pattern as `config_projection.rs`
 // (SCHEMA/SECTION_PATHS): one entry per island exception, from which the
-// generator splices `class <Name>(<Base>):` into the owning module's stub
-// file.
+// generator splices `class <Name>(<Base>):` (doc plus typed attribute
+// declarations) into the owning module's stub file.
 //
 // `validate` is the manifest-vs-runtime gate: every manifested Python module
 // must exist in the introspected module tree, and every manifested name and
@@ -32,10 +32,81 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::annotation_imports;
+
 /// The builtin bases a manifested island may declare (the runtime bases the
 /// `create_exception!` arms use). Anything else must itself be manifested in
 /// the same module.
 const BUILTIN_BASES: &[&str] = &["Exception", "RuntimeError", "ValueError"];
+
+/// One public attribute a manifested island stamps on the raised instance.
+///
+/// The declaration source is the runtime construction audit: each island's
+/// one builder stamps the same names on every instance it raises, and this
+/// table spells them so the class body can declare `name: <ty>`. The
+/// `tests/ffi` attribute-surface suite ties both ends — the raised instance's
+/// `__dict__` against these declarations.
+#[derive(Clone, Copy)]
+pub(crate) struct ExceptionAttribute {
+    /// The Python-visible attribute name (the runtime `setattr` key).
+    pub name: &'static str,
+    /// The stamped value's stub-expressible type.
+    pub ty: AttributeType,
+}
+
+/// The stub-expressible attribute types the manifest vocabulary covers.
+#[derive(Clone, Copy)]
+pub(crate) enum AttributeType {
+    /// `int`.
+    Int,
+    /// `str`.
+    Str,
+    /// `int | None`.
+    OptionalInt,
+    /// `dict[str, Any]` — the typed consumer report the loop hands back.
+    AnyDict,
+    /// A class of the island's own module (the seam's enums, e.g.
+    /// `SwapRefusalKind`), validated against the introspected class names.
+    ClassRef(&'static str),
+    /// The same reference, `None`-able (e.g. `ConsumerErrorKind | None`).
+    OptionalClassRef(&'static str),
+}
+
+impl AttributeType {
+    /// The stub spelling of the type.
+    pub(crate) fn render(self) -> String {
+        match self {
+            Self::Int => "int".to_owned(),
+            Self::Str => "str".to_owned(),
+            Self::OptionalInt => "int | None".to_owned(),
+            Self::AnyDict => "dict[str, Any]".to_owned(),
+            Self::ClassRef(name) => (*name).to_owned(),
+            Self::OptionalClassRef(name) => format!("{name} | None"),
+        }
+    }
+
+    /// `(bound name, import line)` the rendered spelling needs, when any. A
+    /// same-module class reference resolves inside the stub's own module and
+    /// needs no import; only the `Any`-bearing spelling names an import.
+    pub(crate) fn import(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::AnyDict => Some(("Any", "from typing import Any")),
+            Self::Int
+            | Self::Str
+            | Self::OptionalInt
+            | Self::ClassRef(_)
+            | Self::OptionalClassRef(_) => None,
+        }
+    }
+
+    /// The class the stub spelling references, when any.
+    pub(crate) fn class_ref(self) -> Option<&'static str> {
+        match self {
+            Self::ClassRef(name) | Self::OptionalClassRef(name) => Some(name),
+            Self::Int | Self::Str | Self::OptionalInt | Self::AnyDict => None,
+        }
+    }
+}
 
 /// One `create_exception!` island exception, as the runtime registers it.
 #[derive(Clone, Copy)]
@@ -54,6 +125,11 @@ pub(crate) struct ExceptionIsland {
     pub base: &'static str,
     /// The exception's doc, mirrored from the `create_exception!` arm.
     pub message: &'static str,
+
+    /// The public attributes the island's builder stamps on every raised
+    /// instance, rendered into the class body as `name: <ty>` declarations.
+    /// Empty for the message-only islands.
+    pub attributes: &'static [ExceptionAttribute],
 }
 
 pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
@@ -61,6 +137,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "VerificationMismatchError",
+        attributes: &[],
         base: "RuntimeError",
         message: "A verification mismatch: the engine's tick data does not match on-chain state.",
     },
@@ -68,6 +145,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "VerificationRpcError",
+        attributes: &[],
         base: "RuntimeError",
         message: "An RPC/transport error during on-chain verification (e.g. provider construction failed).",
     },
@@ -75,6 +153,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "UnsupportedPoolFamilyError",
+        attributes: &[],
         base: "RuntimeError",
         message: "A construction route refused a pool whose factory no rung serves (no built-in DEX variant preset, no identity selector answered, or CREATE2 verification failed). Loud typed abort under the loud-abort rule (ADR-055 D4) — never a silent skip.",
     },
@@ -82,6 +161,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PoolRegistrationError",
+        attributes: &[],
         base: "ValueError",
         message: "A pool was refused at registration (duplicate address, out-of-spec field, V4 amount-modifying hook, V4 dynamic fee, or V4 high static fee > 65535). Subclasses classify the specific admission reason so build_paths skips rejected pools by type, not string matching.",
     },
@@ -89,6 +169,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "HookedPoolRejectedError",
+        attributes: &[],
         base: "PoolRegistrationError",
         message: "A V4 pool with an amount-modifying hook was rejected at registration: the solver's concentrated-liquidity math assumes no hook intervention.",
     },
@@ -96,6 +177,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "DynamicFeePoolRejectedError",
+        attributes: &[],
         base: "PoolRegistrationError",
         message: "A V4 pool with a dynamic fee was rejected at registration: the solver assumes a fixed fee.",
     },
@@ -103,6 +185,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "HighFeePoolRejectedError",
+        attributes: &[],
         base: "PoolRegistrationError",
         message: "A V4 pool whose static fee exceeds the cmd_executor's 2-byte encoding limit (fee > 65535) was rejected at registration: the executor encodes fee as u16 in both V4_SWAP_COMPACT and V4_SWAP_DYNAMIC, so such pools cannot be encoded. They are also unprofitable (32%+ per swap).",
     },
@@ -110,6 +193,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PoolAlreadyRegisteredError",
+        attributes: &[],
         base: "PoolRegistrationError",
         message: "A pool at this address is already registered. Subclasses PoolRegistrationError (a wiring/programming error surfaced at admission time, distinct from per-field spec violations / V4 admission categories).",
     },
@@ -117,6 +201,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "SpecViolationError",
+        attributes: &[],
         base: "PoolRegistrationError",
         message: "A pool was refused as out of spec, either at registration (a field violates its on-chain Solidity bound: e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range) or at build (the pool is unbuildable, e.g. a known-broken pool, too few coins, an unreadable coin). The message identifies the offending field, its value, and the bound it violates; a build refusal names its reason in parentheses, e.g. `pool build refused: out of spec (curve broken pool)`.",
     },
@@ -124,6 +209,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PoolBuildRpcError",
+        attributes: &[],
         base: "PoolRegistrationError",
         message: "A pool build could not complete because a provider call failed (transport error, failed eth_call, unreachable endpoint). Transient and retry-worthy: the refusal says nothing about the pool's admissibility because its state was never read.",
     },
@@ -131,6 +217,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PoolBuildDecodeError",
+        attributes: &[],
         base: "PoolRegistrationError",
         message: "A pool build read chain data successfully but the returned values do not decode into a valid pool shape (e.g. a token reporting more than 18 decimals, a value that does not fit its field). Permanent for the observed state: re-reading the same data decodes the same way, so the pool is inadmissible rather than momentarily unreachable.",
     },
@@ -138,6 +225,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "TickMapIntakeInconsistentError",
+        attributes: &[],
         base: "PoolRegistrationError",
         message: "A tracked pool was refused at intake: the database snapshot's tick rows and the chain word bits disagree. Stable for the session — the snapshot does not change under the crawl — so the refusal memoizes as a pool fact instead of being retried.",
     },
@@ -145,6 +233,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PossibleInaccurateResult",
+        attributes: &[],
         base: "ValueError",
         message: "The simulated swap crosses a pool whose amount-modifying hook may have invalidated the result; the attached amounts are the standard-math approximation.",
     },
@@ -152,6 +241,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PathRegistryFullError",
+        attributes: &[],
         base: "ValueError",
         message: "The engine path registry is at its configured registered-path cap. Benign stop: discovery must stop offering new candidate paths.",
     },
@@ -159,6 +249,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "BootRefused",
+        attributes: &[],
         base: "RuntimeError",
         message: "The fleet host refused to boot: the detected CPU budget is below the pinned-role floor, or a boot invariant failed. The library never aborts the host process on this arm; the message carries the detected budget, the floor, and one operator hint.",
     },
@@ -166,6 +257,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "StrategyHostError",
+        attributes: &[],
         base: "RuntimeError",
         message: "A strategy-host operator verb was refused (a lifecycle transition the FSM does not allow).",
     },
@@ -173,6 +265,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "UnknownStrategyError",
+        attributes: &[],
         base: "StrategyHostError",
         message: "The named strategy is not registered on the host: the operator named a driver the host never admitted.",
     },
@@ -180,6 +273,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "UnconfiguredStrategyError",
+        attributes: &[],
         base: "StrategyHostError",
         message: "The named strategy is registered but unconfigured: no config facet with its required keys was booted, so it cannot be enabled.",
     },
@@ -187,6 +281,20 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "rpc::errors",
         name: "ChainMismatchError",
+        attributes: &[
+            ExceptionAttribute {
+                name: "expected",
+                ty: AttributeType::Int,
+            },
+            ExceptionAttribute {
+                name: "actual",
+                ty: AttributeType::Int,
+            },
+            ExceptionAttribute {
+                name: "endpoint",
+                ty: AttributeType::Str,
+            },
+        ],
         base: "ValueError",
         message: "The endpoint serves a different chain than the one it was bound to.",
     },
@@ -194,6 +302,20 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::pool",
         name: "SwapRefused",
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("SwapRefusalKind"),
+            },
+            ExceptionAttribute {
+                name: "word",
+                ty: AttributeType::OptionalInt,
+            },
+            ExceptionAttribute {
+                name: "amount",
+                ty: AttributeType::OptionalInt,
+            },
+        ],
         base: "Exception",
         message: "The swap-simulation seam refused the read (ADR-037). Typed attributes: `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere; `amount` is the signed request the read could not meet (negative = exact input, positive = exact output), `None` on the fetch arms, which never got to answer for an amount.",
     },
@@ -201,6 +323,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi.fleet",
         rust_path: "fleet",
         name: "PostureRetuneError",
+        attributes: &[],
         base: "ValueError",
         message: "The fleet posture re-tune channel refused the patch (unknown key, non-dict patch, empty patch, or a threshold outside its typed range).",
     },
@@ -208,6 +331,20 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi.simulation",
         rust_path: "simulation::session",
         name: "SessionConsumerError",
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::OptionalClassRef("ConsumerErrorKind"),
+            },
+            ExceptionAttribute {
+                name: "batch_index",
+                ty: AttributeType::Int,
+            },
+            ExceptionAttribute {
+                name: "report",
+                ty: AttributeType::AnyDict,
+            },
+        ],
         base: "RuntimeError",
         message: "A session consume-loop abort: a pipeline leaf failure, or a lifecycle refusal. A leaf failure's message is the leaf's own detail under the shared loud-abort prefix; a refusal (no attached session, a spent claim, the driver refusing the move, or a second attach) is prefix-free and carries the refusal's own text, because no leaf ran. `kind` is the core `ConsumerErrorKind` classification (`None` for an adapter-local slot refusal); `batch_index` is the batch whose pass failed and `report` the counts the loop reached before it stopped (the typed consumer report).",
     },
@@ -245,18 +382,57 @@ pub(crate) fn splice(stub: &str, islands: &[ExceptionIsland]) -> Result<String, 
     }
     out.push_str(&lines[anchor..].join("\n"));
     out.push('\n');
-    Ok(out)
+    let imports = attribute_imports(&islands, &out);
+    if imports.is_empty() {
+        Ok(out)
+    } else {
+        Ok(annotation_imports::insert_imports(&out, &imports))
+    }
 }
 
-/// The class declaration for one island exception: the manifested base plus
-/// the manifested message as its doc.
+/// The import lines the islands' attribute annotations need and the stub does
+/// not already bind (a duplicate binding is a redefinition).
+fn attribute_imports(islands: &[&ExceptionIsland], stub: &str) -> Vec<&'static str> {
+    let mut needed: Vec<&'static str> = Vec::new();
+    for island in islands {
+        for attribute in island.attributes {
+            if let Some((name, line)) = attribute.ty.import() {
+                if !annotation_imports::imports_name(stub, name)
+                    && !stub.contains(line)
+                    && !needed.contains(&line)
+                {
+                    needed.push(line);
+                }
+            }
+        }
+    }
+    needed
+}
+
+/// The class declaration for one island exception: the manifested base, the
+/// manifested message as its doc, and one `name: <ty>` declaration per
+/// stamped attribute (sorted by name, like the islands themselves, so the
+/// emission is declaration-independent).
 fn island_class(island: &ExceptionIsland) -> String {
-    format!(
+    let mut class = format!(
         "class {name}({base}):\n    \"\"\"\n    {message}\n    \"\"\"\n",
         name = island.name,
         base = island.base,
         message = island.message
-    )
+    );
+    let mut attributes: Vec<&ExceptionAttribute> = island.attributes.iter().collect();
+    attributes.sort_unstable_by_key(|attribute| attribute.name);
+    if !attributes.is_empty() {
+        class.push('\n');
+        for attribute in attributes {
+            class.push_str("    ");
+            class.push_str(attribute.name);
+            class.push_str(": ");
+            class.push_str(&attribute.ty.render());
+            class.push('\n');
+        }
+    }
+    class
 }
 
 /// The first top-level declaration line's index: anything that is neither
@@ -281,11 +457,13 @@ fn declaration_anchor(stub: &str) -> Option<usize> {
 
 /// The manifest-vs-runtime gate: named errors for every manifested island the
 /// runtime evidence does not back (module absent from the introspected tree,
-/// name or Rust path segment absent from the cdylib's symbol table, or a base
-/// that is neither builtin nor manifested in the same module).
+/// name or Rust path segment absent from the cdylib's symbol table, a base
+/// that is neither builtin nor manifested in the same module, or an attribute
+/// reference that names no class of the island's own module).
 pub(crate) fn validate(
     islands: &[ExceptionIsland],
     module_paths: &BTreeSet<String>,
+    class_names: &BTreeSet<String>,
     symbol_blob: &str,
 ) -> Result<(), String> {
     let mut errors: Vec<String> = Vec::new();
@@ -310,6 +488,22 @@ pub(crate) fn validate(
                 ));
             }
         }
+        for attribute in island.attributes {
+            if let Some(referenced) = attribute.ty.class_ref() {
+                let resolved = class_names
+                    .contains(&format!("{}::{referenced}", island.python_module))
+                    || islands.iter().any(|other| {
+                        other.name == referenced && other.python_module == island.python_module
+                    });
+                if !resolved {
+                    errors.push(format!(
+                        "attribute `{}` (island `{}`) references `{referenced}`, which is neither an introspected class nor a manifested island of `{}`",
+                        attribute.name, island.name, island.python_module
+                    ));
+                }
+            }
+        }
+
         let base_is_manifested = islands
             .iter()
             .any(|other| other.name == island.base && other.python_module == island.python_module);
@@ -409,6 +603,7 @@ mod tests {
             name,
             base,
             message: "synthetic message.",
+            attributes: &[],
         }
     }
 
@@ -429,6 +624,13 @@ mod tests {
         paths.iter().map(|p| (*p).to_owned()).collect()
     }
 
+    fn classes(entries: &[(&str, &str)]) -> BTreeSet<String> {
+        entries
+            .iter()
+            .map(|(module, name)| format!("{module}::{name}"))
+            .collect()
+    }
+
     /// `splice` for the success path: asserts the result rather than
     /// panicking through a closure (the workspace denies `clippy::panic`).
     fn splice_ok(stub: &str, islands: &[ExceptionIsland]) -> String {
@@ -442,14 +644,110 @@ mod tests {
     }
 
     /// `validate` for the failure path, same policy.
-    fn validate_err(islands: &[ExceptionIsland], paths: &BTreeSet<String>, blob: &str) -> String {
-        let result = validate(islands, paths, blob);
+    fn validate_err(
+        islands: &[ExceptionIsland],
+        paths: &BTreeSet<String>,
+        classes: &BTreeSet<String>,
+        blob: &str,
+    ) -> String {
+        let result = validate(islands, paths, classes, blob);
         assert!(
             result.is_err(),
             "validate must fail: {:?}",
             result.as_ref().ok()
         );
         result.err().unwrap_or_default()
+    }
+
+    #[test]
+    fn attribute_types_render_their_stub_spellings() {
+        assert_eq!(AttributeType::Int.render(), "int");
+        assert_eq!(AttributeType::Str.render(), "str");
+        assert_eq!(AttributeType::OptionalInt.render(), "int | None");
+        assert_eq!(AttributeType::AnyDict.render(), "dict[str, Any]");
+        assert_eq!(
+            AttributeType::ClassRef("SwapRefusalKind").render(),
+            "SwapRefusalKind"
+        );
+        assert_eq!(
+            AttributeType::OptionalClassRef("ConsumerErrorKind").render(),
+            "ConsumerErrorKind | None"
+        );
+    }
+
+    #[test]
+    fn splice_declares_the_typed_attributes_in_the_class_body() {
+        let refusal = ExceptionIsland {
+            attributes: &[
+                ExceptionAttribute {
+                    name: "word",
+                    ty: AttributeType::OptionalInt,
+                },
+                ExceptionAttribute {
+                    name: "kind",
+                    ty: AttributeType::ClassRef("SwapRefusalKind"),
+                },
+                ExceptionAttribute {
+                    name: "amount",
+                    ty: AttributeType::OptionalInt,
+                },
+            ],
+            ..island("SwapRefused", "Exception")
+        };
+        let out = splice_ok("class Later:\n    pass\n", &[refusal]);
+        assert_eq!(
+            out,
+            concat!(
+                "class SwapRefused(Exception):\n",
+                "    \"\"\"\n",
+                "    synthetic message.\n",
+                "    \"\"\"\n",
+                "\n",
+                "    amount: int | None\n",
+                "    kind: SwapRefusalKind\n",
+                "    word: int | None\n",
+                "\n",
+                "class Later:\n",
+                "    pass\n",
+            )
+        );
+    }
+
+    #[test]
+    fn splice_inserts_the_typing_import_an_attribute_needs() {
+        let report = ExceptionIsland {
+            attributes: &[ExceptionAttribute {
+                name: "report",
+                ty: AttributeType::AnyDict,
+            }],
+            ..island("SessionConsumerError", "RuntimeError")
+        };
+        let out = splice_ok(
+            "from typing import Final\n\ndef later() -> int: ...\n",
+            &[report],
+        );
+        assert!(
+            out.starts_with("from typing import Final\nfrom typing import Any\n\n"),
+            "the missing typing import lands with the stub's own imports: {out}"
+        );
+        assert_eq!(out.matches("from typing import Any").count(), 1);
+    }
+
+    #[test]
+    fn splice_leaves_an_import_the_stub_already_binds_alone() {
+        let report = ExceptionIsland {
+            attributes: &[ExceptionAttribute {
+                name: "report",
+                ty: AttributeType::AnyDict,
+            }],
+            ..island("SessionConsumerError", "RuntimeError")
+        };
+        let out = splice_ok(
+            "from typing import Any, Final\n\ndef later() -> int: ...\n",
+            &[report],
+        );
+        assert_eq!(out.matches("from typing").count(), 1, "no duplicate import");
+        assert!(out.contains("    report: dict[str, Any]\n"));
     }
 
     #[test]
@@ -534,7 +832,42 @@ mod tests {
             "PostureRetuneError",
         ]);
         let paths = modules(&["degenbot._ffi", "degenbot._ffi.fleet"]);
-        assert!(validate(&[root, fleet], &paths, &blob).is_ok());
+        assert!(validate(&[root, fleet], &paths, &classes(&[]), &blob).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_a_class_reference_the_runtime_registers() {
+        let refusal = ExceptionIsland {
+            attributes: &[ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::OptionalClassRef("ConsumerErrorKind"),
+            }],
+            ..island("SessionConsumerError", "RuntimeError")
+        };
+        let blob = blob_with(&["bot", "engine", "errors", "SessionConsumerError"]);
+        let paths = modules(&["degenbot._ffi"]);
+        let classes = classes(&[("degenbot._ffi", "ConsumerErrorKind")]);
+        assert!(validate(&[refusal], &paths, &classes, &blob).is_ok());
+    }
+
+    #[test]
+    fn validate_names_an_attribute_reference_drift() {
+        let refusal = ExceptionIsland {
+            attributes: &[ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("SwapRefusalKindX"),
+            }],
+            ..island("SwapRefused", "Exception")
+        };
+        let blob = blob_with(&["bot", "engine", "errors", "SwapRefused"]);
+        let paths = modules(&["degenbot._ffi"]);
+        let classes = classes(&[("degenbot._ffi", "SwapRefusalKind")]);
+        let err = validate_err(&[refusal], &paths, &classes, &blob);
+        assert!(
+            err.contains("SwapRefusalKindX"),
+            "names the drifted reference: {err}"
+        );
+        assert!(err.contains("kind"), "names the attribute: {err}");
     }
 
     #[test]
@@ -542,7 +875,7 @@ mod tests {
         let drifted = island("BootRefusedX", "RuntimeError");
         let blob = blob_with(&["bot", "engine", "errors", "BootRefused"]);
         let paths = modules(&["degenbot._ffi"]);
-        let err = validate_err(&[drifted], &paths, &blob);
+        let err = validate_err(&[drifted], &paths, &classes(&[]), &blob);
         assert!(
             err.contains("BootRefusedX"),
             "the error names the drift: {err}"
@@ -554,7 +887,7 @@ mod tests {
         let moved = island("BootRefused", "RuntimeError");
         let blob = blob_with(&["bot", "engine", "BootRefused"]);
         let paths = modules(&["degenbot._ffi"]);
-        let err = validate_err(&[moved], &paths, &blob);
+        let err = validate_err(&[moved], &paths, &classes(&[]), &blob);
         assert!(err.contains("errors"), "names the missing segment: {err}");
     }
 
@@ -567,7 +900,7 @@ mod tests {
         };
         let blob = blob_with(&["fleet", "BootRefused"]);
         let paths = modules(&["degenbot._ffi"]);
-        let err = validate_err(&[island], &paths, &blob);
+        let err = validate_err(&[island], &paths, &classes(&[]), &blob);
         assert!(
             err.contains("degenbot._ffi.fleet"),
             "names the module: {err}"
@@ -581,7 +914,7 @@ mod tests {
         let drifted = island("Error", "Exception");
         let blob = "NtNtCsym_115ErrorNtB4_ NtNtCsym_3botNtB4_ ";
         let paths = modules(&["degenbot._ffi"]);
-        assert!(validate(&[drifted], &paths, blob).is_err());
+        assert!(validate(&[drifted], &paths, &classes(&[]), blob).is_err());
     }
 
     #[test]
@@ -589,8 +922,41 @@ mod tests {
         let drifted = island("BootRefused", "NotAnException");
         let blob = blob_with(&["bot", "engine", "errors", "BootRefused"]);
         let paths = modules(&["degenbot._ffi"]);
-        let err = validate_err(&[drifted], &paths, &blob);
+        let err = validate_err(&[drifted], &paths, &classes(&[]), &blob);
         assert!(err.contains("NotAnException"), "names the base: {err}");
+    }
+
+    #[test]
+    fn manifest_declares_every_stamped_attribute() {
+        let mut declared: Vec<(&str, &str, String)> = Vec::new();
+        for island in EXCEPTION_ISLANDS {
+            for attribute in island.attributes {
+                declared.push((island.name, attribute.name, attribute.ty.render()));
+            }
+        }
+        declared.sort_unstable();
+        assert_eq!(
+            declared,
+            vec![
+                ("ChainMismatchError", "actual", "int".to_owned()),
+                ("ChainMismatchError", "endpoint", "str".to_owned()),
+                ("ChainMismatchError", "expected", "int".to_owned()),
+                ("SessionConsumerError", "batch_index", "int".to_owned()),
+                (
+                    "SessionConsumerError",
+                    "kind",
+                    "ConsumerErrorKind | None".to_owned(),
+                ),
+                (
+                    "SessionConsumerError",
+                    "report",
+                    "dict[str, Any]".to_owned()
+                ),
+                ("SwapRefused", "amount", "int | None".to_owned()),
+                ("SwapRefused", "kind", "SwapRefusalKind".to_owned()),
+                ("SwapRefused", "word", "int | None".to_owned()),
+            ]
+        );
     }
 
     #[test]
@@ -627,6 +993,29 @@ mod tests {
                 "{}: duplicate manifest name",
                 island.name
             );
+
+            let mut attribute_names = std::collections::BTreeSet::new();
+            for attribute in island.attributes {
+                assert!(
+                    !attribute.name.is_empty()
+                        && attribute
+                            .name
+                            .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                        && attribute
+                            .name
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                    "{}.{}: an attribute name is a Python identifier",
+                    island.name,
+                    attribute.name
+                );
+                assert!(
+                    attribute_names.insert(attribute.name),
+                    "{}.{}: duplicate attribute name",
+                    island.name,
+                    attribute.name
+                );
+            }
             let base_is_manifested = EXCEPTION_ISLANDS.iter().any(|other| {
                 other.name == island.base && other.python_module == island.python_module
             });

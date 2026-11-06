@@ -46,7 +46,7 @@ fn annotation_referenced(stub: &str, name: &str) -> bool {
 /// Whether any top-level import line already binds `name`, in any spelling
 /// (`from m import name`, `from m import other as name`, `import m.name`). A
 /// duplicate binding is a redefinition, so the pass never adds one.
-fn imports_name(stub: &str, name: &str) -> bool {
+pub(crate) fn imports_name(stub: &str, name: &str) -> bool {
     stub.lines()
         .filter(|line| line.starts_with("from ") || line.starts_with("import "))
         .any(|line| {
@@ -58,7 +58,7 @@ fn imports_name(stub: &str, name: &str) -> bool {
 /// Insert `lines` after the stub's last top-level import line. A stub with no
 /// import block gets them first, where the emitter puts its own imports; the
 /// recipe's `ruff check --fix` then sorts them into canonical order.
-fn insert_imports(stub: &str, lines: &[&str]) -> String {
+pub(crate) fn insert_imports(stub: &str, lines: &[&str]) -> String {
     let all: Vec<&str> = stub.lines().collect();
     let insert_at = all
         .iter()
