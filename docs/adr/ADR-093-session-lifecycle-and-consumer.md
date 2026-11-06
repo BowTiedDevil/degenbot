@@ -239,7 +239,13 @@ home's own door — so the decision (no capability state on the seam) stands
 while the count moved from thirteen to twenty-one. The snapshot-seed pair's
 authority is the shared `BotState` (`Bot::snapshot_seed_block` is the same
 read), and the FFI's engine getter goes through the shared core rather than
-through the driver.
+through the driver. A caller inventory of the five
+([driver-seam projection audit](../architecture/driver-seam-projection-audit.md))
+leaves them in place: `verify`'s callers hold only the driver because no other
+home carries a verify lifecycle (`EngineStages` has no such member), and the
+other four each carry a read/write discipline — a `LockSite` claim, and in the
+shell the guard-inside-`py.detach` rule — that a caller reaching through
+`stages().core()` would have to restate.
 
 ### D2 — The pose is private and data-carrying; moves are a serialized take-out / land pair, and no lock is held across an await
 
