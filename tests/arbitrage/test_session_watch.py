@@ -60,14 +60,15 @@ def _never_watchdog() -> Coroutine[Any, Any, None]:
     return _watchdog()
 
 
-def _pump_end_watchdog(consumer: asyncio.Task[Any]) -> Coroutine[Any, Any, None]:
-    """Production watchdog semantics (``_pump_finished_watchdog``): the
-    watchdog itself cancels the idling consumer once its completion future
-    resolves; completion always means the pump ended."""
+def _pump_end_watchdog() -> Coroutine[Any, Any, str]:
+    """Production pump-finished watchdog semantics: resolve the detection
+    fact and stop there. The WATCH owns consumer cancellation (its retrieval
+    cancels and reaps an idling consumer), so the detection path cancels
+    nothing itself."""
 
-    async def _watchdog() -> None:  # ruff: ignore[unused-async] -- cancels without awaiting
-        if not consumer.done():
-            consumer.cancel()
+    async def _watchdog() -> str:
+        await asyncio.sleep(0)
+        return "PumpFinished"
 
     return _watchdog()
 
@@ -321,21 +322,23 @@ class TestWatchSetMatrix:
     async def test_watchdog_trip_ends_the_session_and_cancels_registration(
         self,
     ) -> None:
-        """A real pump end outside ``stop()``: the watchdog cancels the
-        consumer, the watch cancels the still-pending registration, and the
-        session leaves via the loud session-end abort (detection without an
-        intended consumer end is the unexpected session end)."""
+        """A real pump end outside ``stop()``: the watch's retrieval cancels
+        and reaps the idling consumer, the gather cancels the still-pending
+        registration, and the session leaves via the loud session-end abort
+        (detection without an intended consumer end is the unexpected session
+        end)."""
         consumer = asyncio.create_task(_hanging_consumer())
 
         async def climbing_registration() -> None:
             await asyncio.Event().wait()
 
         registration = asyncio.create_task(climbing_registration())
-        watch = _watch(consumer, lambda: _pump_end_watchdog(consumer), registration)
+        watch = _watch(consumer, _pump_end_watchdog, registration)
 
-        # No guard timeout here: the abort itself is the completion gate
-        # (`_pump_end_watchdog` cancels the consumer, which ends the watch-set),
-        # matching the bare awaits its sibling verdict tests use.
+        # No guard timeout here: the abort itself is the completion gate (the
+        # detection fact ends the gather; the watch's retrieval then cancels and
+        # reaps the consumer), matching the bare awaits its sibling verdict
+        # tests use.
         with pytest.raises(RuntimeError, match="PumpFinished"):
             await watch.wait()
         assert consumer.cancelled()

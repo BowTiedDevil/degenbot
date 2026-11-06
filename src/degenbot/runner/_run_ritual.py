@@ -8,10 +8,10 @@ data it consumes, never branches tests select. It sits strictly behind the
 table already owns.
 
 The host is the :class:`~degenbot.runner.session.Session` that owns the run's
-state: the ritual reads its collaborators and writes the run-phase handles
-(the consumer/registration task refs and the registration-owned construction
-context) through the session's mutators. Ritual
-states are private; diagnostics read facts, never states.
+state: the ritual reads its collaborators, hands the consumer and registration
+tasks straight to the session watch (task membership has one home), and writes
+the registration-owned construction context through the session's mutator.
+Ritual states are private; diagnostics read facts, never states.
 """
 
 from __future__ import annotations
@@ -161,8 +161,8 @@ class RunRitual:
         """Start the consumer task and attach it to the session watch.
 
         The task's lifetime is the session's: the watch holds it for the whole
-        main loop, and the pump-finished watchdog cancels it when the pump ends
-        outside ``stop()``.
+        main loop, and its retrieval cancels and reaps the consumer when the
+        pump ends outside ``stop()``.
 
         """
         self._expect(_RitualState.ATTACH_WATCH)
@@ -172,14 +172,11 @@ class RunRitual:
         consumer = session.consumer
         assert consumer is not None, "attach_consumer built the session consumer"
         adapter = actors.consumer or consume_result_batches
-        session.attach_consumer_task(
-            asyncio.create_task(
-                adapter(session.block_loop(), consumer),
-                name="result-consumer",
-            )
+        consumer_task = asyncio.create_task(
+            adapter(session.block_loop(), consumer),
+            name="result-consumer",
         )
-        consumer_task = session.result_consumer_task
-        assert consumer_task is not None, "attach_watch just created the consumer task"
+        # The task goes straight to the watch: task membership has one home.
         session.session_watch.attach(
             consumer_task=consumer_task,
             watchdog_factory=session.pump_finished_watchdog,
@@ -215,8 +212,9 @@ class RunRitual:
         # registration task's observable name here (the deterministic double's
         # replay task uses the same one).
         task.set_name("registration-background")
-        session.attach_registration(task, registration_context)
-        # The optional registration member joins the watch-set.
+        session.attach_registration_context(registration_context)
+        # The optional registration member joins the watch-set — the task goes
+        # straight to the watch (task membership has one home).
         session.session_watch.attach_registration(task)
         self._state = _RitualState.MAIN_LOOP
 

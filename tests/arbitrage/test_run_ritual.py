@@ -39,18 +39,14 @@ class _RecordingWatch(SessionWatch):
     def __init__(self, events: list[str]) -> None:
         super().__init__()
         self.events = events
-        self.attached_consumer: object | None = None
-        self.attached_registration: object | None = None
 
     def attach(self, *, consumer_task: Any, watchdog_factory: Any) -> None:
         super().attach(consumer_task=consumer_task, watchdog_factory=watchdog_factory)
         self.events.append("watch-attach")
-        self.attached_consumer = consumer_task
 
     def attach_registration(self, registration_task: Any) -> None:
         super().attach_registration(registration_task)
         self.events.append("watch-attach-registration")
-        self.attached_registration = registration_task
 
     async def wait(self) -> SessionEndVerdict:
         self.events.append("main-loop")
@@ -166,7 +162,7 @@ class TestTransitionTable:
         assert ritual._state is _RitualState.ATTACH_WATCH
         ritual.attach_watch()
         assert ritual._state is _RitualState.REGISTRATION
-        assert session.result_consumer_task is not None
+        assert session.session_watch.consumer_task is not None
         ritual.registration()
         assert ritual._state is _RitualState.MAIN_LOOP
         verdict = await ritual.main_loop()
@@ -214,7 +210,7 @@ class TestTransitionTable:
         await ritual.attach_consumer()
         consumer = session.consumer
         assert consumer is not None, "the consumer exists before the pump arms"
-        assert session.result_consumer_task is None, "nothing is spawned before the arm"
+        assert session.session_watch.consumer_task is None, "nothing is spawned before the arm"
         assert session.actors is not None
         assert session.actors.engine_registry.engine.resumed is False
 
@@ -223,7 +219,7 @@ class TestTransitionTable:
         assert session.actors.engine_registry.engine.resumed is True
 
         ritual.attach_watch()
-        assert watch.attached_consumer is session.result_consumer_task
+        assert session.session_watch.consumer_task is not None, "the watch owns the spawned task"
         assert events.index("consumer") < events.index("watch-attach")
 
 
@@ -283,8 +279,7 @@ class TestSchedulerAsData:
         ritual.registration()
 
         assert len(scheduler.scheduled) == 1
-        assert session.registration_task is scheduler.tasks[0]
-        assert watch.attached_registration is scheduler.tasks[0]
+        assert session.session_watch.registration_task is scheduler.tasks[0]
 
     async def test_production_scheduler_names_the_registration_task(self) -> None:
         """The production default scheduler cannot carry a task name through
@@ -295,7 +290,7 @@ class TestSchedulerAsData:
 
         ritual.registration()
 
-        task = session.registration_task
+        task = session.session_watch.registration_task
         assert isinstance(task, asyncio.Task)
         assert task.get_name() == "registration-background"
         await task  # the fake builder completes without suspending: reap it
@@ -317,7 +312,7 @@ class TestSchedulerAsData:
         ritual.registration()
 
         assert scheduler.scheduled == []
-        assert session.registration_task is None
+        assert session.session_watch.registration_task is None
         assert session.registration_context is None
         assert "watch-attach-registration" not in events
         assert bot.released is False

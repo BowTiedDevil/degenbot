@@ -2,9 +2,12 @@
 
 A :class:`Session` is the ONE home for what a running pump session needs and
 knows: the typed config, the resolved actors, the dispatcher, the block clock,
-the sim context, the run-phase handles (the drain/reistration tasks and the
+the sim context, the run-phase handles (the registration context and the
 pipelines), the submission-smoke FSM, and the lifecycle FSM. Nothing is mirrored
 on a facade — readers consult the session, and mutations ride its mutators.
+
+The run's tasks are not session state: the session watch owns their membership,
+cancellation, and reaping.
 
 The lifecycle is the Rust host's ``SessionPhase`` table (``strategy_host.rs``),
 read through ``degenbot._ffi.session_phase_next``; :class:`SessionPhase`
@@ -352,15 +355,14 @@ class Session:
 
     Write discipline: downstream modules (the run ritual, the drain, the trim)
     read fields directly but mutate ONLY through the owner's mutators
-    (``attach_consumer_task`` / ``attach_registration`` / ``drop_bot`` /
-    ``build_pipeline`` / ``build_consumer``) — remote attribute pokes are
-    forbidden.
+    (``attach_registration_context`` / ``drop_bot`` / ``build_pipeline`` /
+    ``build_consumer``) — remote attribute pokes are forbidden.
 
     The mutable run-phase handles are the session's own lifecycle facts:
-    ``result_consumer_task`` and ``registration_task``/``registration_context``
-    are written by the run ritual through the mutators above, and
-    ``sim_submit_pipeline`` attaches once its producer lands (after ``start()``,
-    by design).
+    ``registration_context`` is written by the run ritual through the mutator
+    above, and ``sim_submit_pipeline`` attaches once its producer lands (after
+    ``start()``, by design). The run's TASKS are not among them — the session
+    watch is the one home for their membership, cancellation, and reaping.
     """
 
     cfg: ArbitrageConfig
@@ -399,14 +401,6 @@ class Session:
     #: engine's booted crawl session — the operator add-a-path surface — and the
     #: main-loop trim never severs it.
     registration_context: ConstructionContext | None = None
-    #: The result-consumer drain task (written by the run ritual at
-    #: consumer-attach; read by the pump-finished watchdog and handed to the
-    #: session watch). ``None`` before ``run()``.
-    result_consumer_task: asyncio.Task[Any] | None = None
-    #: The scheduled registration hand-off (the run ritual's scheduler output;
-    #: the trim guard reads it to refuse a mid-climb outside trim). ``None`` for
-    #: a backrun-only boot, which schedules nothing.
-    registration_task: asyncio.Task[Any] | None = None
     _sigint_installed: bool = field(default=False, repr=False)
     _previous_sigint_handler: object = field(default=signal.SIG_DFL, repr=False)
 
@@ -771,7 +765,7 @@ class Session:
         # Only the registration task may trim while it is live (its own
         # completion hand-off, or its cancel branch); an outside caller is
         # mid-climb and would tear down a live crawl.
-        registration_task = self.registration_task
+        registration_task = self.session_watch.registration_task
         if registration_task is not None and not registration_task.done():
             try:
                 current = asyncio.current_task()
@@ -818,7 +812,7 @@ class Session:
         )
 
     async def pump_finished_watchdog(self) -> str:
-        """Await the core session-end detection fact, then cancel the consumer.
+        """Await the core session-end detection fact for the watch's gather.
 
         The hotpath timed exit (``HOTPATH_SHUTDOWN_MS``) makes the pump return
         normally after writing its report. Without this watcher the session's
@@ -833,13 +827,14 @@ class Session:
         there is no injected-engine/no-surface bypass: test doubles satisfy the
         same awaitable contract (a fake pump that never finishes parks here
         forever, which is exactly the pre-finish consumer shape). The driver
-        only reads the core fact and cancels the consumer; the verdict ranking
-        is the core's Session-end fold over the fact this returns.
+        only reads the core fact — the consumer's teardown is the session
+        watch's duty — and the verdict ranking is the core's Session-end fold
+        over the fact this returns.
 
         Returns:
             The core detection-cause name (``PumpFinished`` /
-            ``StallWatchdogTripped``); the consumer was cancelled here, so the
-            session watch gathers the pump end as its detection fact.
+            ``StallWatchdogTripped``); the session watch gathers it as the
+            pump-end detection fact and cancels/reaps an idling consumer.
 
         """
         actors = self.actors
@@ -847,37 +842,22 @@ class Session:
         cause = await actors.engine_registry.engine.session_end_future()
         bot_logger.warning(
             f"[shutdown] core session-end fact {cause} outside stop() — "
-            "cancelling the consumer for a graceful teardown"
+            "the session watch cancels the idling consumer for a graceful teardown"
         )
-        main_task = self.result_consumer_task
-        if main_task is not None and not main_task.done():
-            main_task.cancel()
         return cause
 
     # ── Mutators (the one write discipline) ─────────────────────────
-    def attach_consumer_task(self, task: asyncio.Task[Any]) -> None:
-        """Attach the result-consumer drain task (written by the run ritual).
+    def attach_registration_context(self, context: ConstructionContext | None) -> None:
+        """Attach the registration-owned construction context.
+
+        The scheduled hand-off's TASK is not stored here — it goes straight to
+        the session watch (task membership has one home).
 
         Args:
-            task: The consumer task the session watch and watchdog read.
-
-        """
-        self.result_consumer_task = task
-
-    def attach_registration(
-        self,
-        task: asyncio.Task[Any],
-        context: ConstructionContext | None,
-    ) -> None:
-        """Attach the scheduled registration hand-off and its construction context.
-
-        Args:
-            task: The scheduled ``build_paths`` hand-off.
             context: The registration-owned construction context (``None`` for
                 an injected builder, which has no construction surface).
 
         """
-        self.registration_task = task
         self.registration_context = context
 
     def drop_bot(self) -> None:

@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
 import signal
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -205,8 +207,32 @@ class TestBotRunnerRun:
                 await session.run()
 
         # the consumer task must have been cancelled by the exit teardown
-        assert session.result_consumer_task is not None
-        assert session.result_consumer_task.cancelled()
+        consumer_task = session.session_watch.consumer_task
+        assert consumer_task is not None
+        assert consumer_task.cancelled()
+
+    async def test_teardown_leaves_no_pending_tasks_or_unawaited_coroutines(self) -> None:
+        """The one-owner teardown is complete: every session task is reaped by
+        the context-manager exit, and nothing leaks a pending task or an
+        unawaited coroutine."""
+
+        async def forever_path_builder(**kwargs: Any) -> None:
+            await asyncio.Event().wait()  # never completes on its own
+
+        session = session_for_test(
+            path_builder=forever_path_builder,
+            scheduler=asyncio.create_task,
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            async with session:
+                await session.run()
+            gc.collect()
+
+        leaked = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+        assert leaked == []
+        assert [warning for warning in caught if "never awaited" in str(warning.message)] == []
 
 
 class TestSessionPhaseMachine:
@@ -428,6 +454,45 @@ class TestShutdown:
         assert engine_registry.engine.stop_calls == 1
         assert "close" in events
 
+    async def test_close_stops_the_pump_before_cancelling_the_consumer(self) -> None:
+        """The ordering edge with a LIVE consumer: the pump stop (the engine
+        close) lands before the consumer observes its cancellation.
+
+        A raising detection future ends the main loop before the watch's
+        retrieval can run, so the consumer is still pending when close() tears
+        the session down — exactly the window the ordering protects.
+        """
+
+        events: list[str] = []
+
+        class _RaisingDetectionEngine(FakeEngine):
+            async def session_end_future(self) -> str:
+                msg = "pump channel dropped"
+                raise RuntimeError(msg)
+
+        engine_registry = FakeEngineRegistry(
+            engine=_RaisingDetectionEngine(events=events),
+            events=events,
+        )
+
+        async def hanging_consumer(*args: Any, **kwargs: Any) -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("consumer-cancelled")
+                raise
+
+        session = session_for_test(
+            engine_registry=engine_registry,
+            consumer=hanging_consumer,
+        )
+
+        with pytest.raises(RuntimeError, match="pump channel dropped"):
+            async with session:
+                await session.run()
+
+        assert events.index("close") < events.index("consumer-cancelled")
+
 
 class TestSigintHandler:
     """The SIGINT->``engine.close()`` handler closes the "first Ctrl-C swallowed"
@@ -569,10 +634,11 @@ class TestSubBBackgroundRegistration:
         with pytest.raises(VerificationMismatchError, match="tick data mismatch"):
             await session.run()
 
-        # Fail-fast cancelled the main-loop consumer so the session can't keep
+        # The watch cancelled the main-loop consumer so the session can't keep
         # trading on unverified state.
-        assert session.result_consumer_task is not None
-        assert session.result_consumer_task.cancelled()
+        consumer_task = session.session_watch.consumer_task
+        assert consumer_task is not None
+        assert consumer_task.cancelled()
 
     async def test_background_run_trims_after_completion(self) -> None:
         """The state-trim runs after the background registration completes, not
@@ -631,7 +697,7 @@ class TestSubBBackgroundRegistration:
             # fake builder's own edge. The budget only turns "the registration
             # never climbed" into a named failure.
             await asyncio.wait_for(started.wait(), timeout=DEADLOCK_GUARD_S)
-            registration_task = session.registration_task
+            registration_task = session.session_watch.registration_task
             assert registration_task is not None
             assert not registration_task.done()
 
@@ -777,7 +843,7 @@ class TestSubCBgRegistrationConcurrency:
         assert dispatch_work == list(range(25))
         assert climbed > 0, "registration must have actually climbed"
         # run()'s finally cancelled the still-climbing registration at teardown.
-        reg = session.registration_task
+        reg = session.session_watch.registration_task
         assert reg is not None
         assert reg.cancelled()
 
@@ -799,7 +865,7 @@ class TestSubCBgRegistrationConcurrency:
             for n in range(10):
                 dispatch_work.append(n)
                 await asyncio.sleep(0)  # yield stands in for one dispatch hot-loop await
-            registration_task = session.registration_task
+            registration_task = session.session_watch.registration_task
             assert registration_task is not None
             await registration_task  # returns once the drain is done
             return {"batches": 0, "end": "quiet-end"}
@@ -810,7 +876,7 @@ class TestSubCBgRegistrationConcurrency:
         assert verify_steps == 40, "registration must have drained all verifies"
 
         assert dispatch_work == list(range(10))
-        reg = session.registration_task
+        reg = session.session_watch.registration_task
         # Clean, deadlock-free completion: registration finished without error.
         assert reg is not None
         assert reg.done()
@@ -838,11 +904,12 @@ class TestSubCBgRegistrationConcurrency:
         with pytest.raises(VerificationRpcError, match="provider transport"):
             await session.run()
 
-        # Fail-fast cancelled the hot loop and the fatal was surfaced exactly
+        # The watch cancelled the hot loop and the fatal was surfaced exactly
         # once (retrieved from the task, not re-raised twice).
-        assert session.result_consumer_task is not None
-        assert session.result_consumer_task.cancelled()
-        reg = session.registration_task
+        consumer_task = session.session_watch.consumer_task
+        assert consumer_task is not None
+        assert consumer_task.cancelled()
+        reg = session.session_watch.registration_task
         assert reg is not None
         assert reg.done()
         assert isinstance(reg.exception(), VerificationRpcError)
@@ -880,8 +947,9 @@ class TestSubCBgRegistrationConcurrency:
         assert climbed > 0, "registration must have climbed concurrently with the main loop"
         # Main loop ended (the drain adapter returned); run()'s finally
         # cancelled the still-climbing registration.
-        assert session.registration_task is not None
-        assert session.registration_task.cancelled()
+        registration_task = session.session_watch.registration_task
+        assert registration_task is not None
+        assert registration_task.cancelled()
 
 
 class TestOngoingDiscovery:
@@ -921,7 +989,7 @@ class TestOngoingDiscovery:
         # Main loop ended (finite consumer) -> run()'s finally cancelled the
         # forever registration -> trim ran on cancellation (shutdown-time).
         assert bot.released is True
-        reg = session.registration_task
+        reg = session.session_watch.registration_task
         assert reg is not None
         assert reg.cancelled()
 
@@ -1093,11 +1161,11 @@ class TestPumpFinishedWatchdog:
         finally:
             fire.cancel()
 
-        assert consumer_exited.is_set(), "watchdog must cancel the idling consumer"
+        assert consumer_exited.is_set(), "the watch must cancel the idling consumer"
 
     async def test_pump_panic_completion_cancels_consumer_exactly_once(self) -> None:
         # A panicked pump drops its completion sender, so the future resolves
-        # (never hangs). The watchdog then cancels the consumer exactly once.
+        # (never hangs). The watch then cancels the idling consumer exactly once.
         engine_registry = FakeEngineRegistry()
 
         class _PanickedEngine(FakeEngine):
@@ -1131,7 +1199,7 @@ class TestPumpFinishedWatchdog:
             async with session:
                 await session.run()
 
-        assert consumer_exited.is_set(), "panicked pump must cancel the consumer"
+        assert consumer_exited.is_set(), "the watch must cancel the idling consumer"
         assert cancel_count == 1, "the consumer is cancelled exactly once"
 
     async def test_watchdog_parks_while_pump_is_live_and_resolves_at_pump_finish(self) -> None:

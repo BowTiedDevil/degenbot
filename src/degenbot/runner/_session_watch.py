@@ -240,7 +240,12 @@ def _session_end_abort(cause: str | None, consumer_outcome: str | None) -> Runti
 
 
 class SessionWatch:
-    """One owner of a pump session's end-state: watch-set, gather, teardown.
+    """One owner of a pump session's end-state AND its task set.
+
+    Watch-set, gather, teardown: task membership, cancellation, and reaping
+    have this one home — the run ritual hands scheduled tasks straight here,
+    and coordination reads the membership below rather than a mirrored task
+    field.
 
     Watch-set: {consumer} + {pump-finished watchdog} + optional {background
     registration} — assembled exactly as the former twin loops' sets. The
@@ -287,6 +292,25 @@ class SessionWatch:
         then exactly {consumer, watchdog}.
         """
         self._registration_task = registration_task
+
+    # ── The narrow watch interface ───────────────────────────────────
+    @property
+    def consumer_task(self) -> asyncio.Task[Any] | None:
+        """The watch-set's consumer member (``None`` before :meth:`attach`).
+
+        The coordination read that replaces a mirrored task field: membership
+        has one home, and cancellation/reaping stay the watch's duties.
+        """
+        return self._consumer_task
+
+    @property
+    def registration_task(self) -> asyncio.Task[Any] | None:
+        """The watch-set's registration member (``None`` when the arm skipped it).
+
+        Same one-home read as :attr:`consumer_task`; the trim guard compares
+        task identity against it.
+        """
+        return self._registration_task
 
     @property
     def registration_error(self) -> BaseException | None:
