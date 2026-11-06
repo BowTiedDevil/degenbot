@@ -36,6 +36,7 @@ a later caller can install another.
 """
 
 import atexit
+import enum
 import io
 import logging
 import logging.handlers
@@ -182,12 +183,65 @@ _LOG_LISTENER = logging.handlers.QueueListener(
     _STDOUT_HANDLER,
     respect_handler_level=True,
 )
-_LOG_LISTENER.start()
+
+
+class _ConsoleArm(enum.Enum):
+    """Whether the console listener's writer thread is armed."""
+
+    STOPPED = enum.auto()
+    RUNNING = enum.auto()
+
+
+class _ConsolePipeline:
+    """The console listener's arming, with both transitions idempotent.
+
+    The listener cannot arbitrate this itself: ``stop()`` clears ``_thread`` and
+    then joins it unguarded, so a stop-after-stop raises ``AttributeError`` on
+    3.12 (upstream guards that from 3.13, gh-114706), and ``start()`` refuses a
+    double arm only from 3.15. Two drivers stop this listener — pytest's
+    ``pytest_sessionfinish`` while capture is still open, then ``atexit`` — so
+    the arm lives here, where the second call is a no-op on every supported
+    version.
+    """
+
+    def __init__(self) -> None:
+        """Start unarmed; :meth:`start` is what installs the writer thread."""
+        self.arm: _ConsoleArm = _ConsoleArm.STOPPED
+
+    def start(self) -> None:
+        """Arm the console writer thread. A no-op while it is already armed."""
+        if self.arm is _ConsoleArm.RUNNING:
+            return
+        _LOG_LISTENER.start()
+        self.arm = _ConsoleArm.RUNNING
+
+    def stop(self) -> None:
+        """Drain the console queue, then stop the writer thread.
+
+        A no-op when the thread is already gone. The arm flips before the join,
+        so a raise inside the stdlib ``stop()`` never leaves this object
+        believing a thread is still armed.
+        """
+        if self.arm is _ConsoleArm.STOPPED:
+            return
+        self.arm = _ConsoleArm.STOPPED
+        _LOG_LISTENER.stop()
+
+
+_console_pipeline = _ConsolePipeline()
+_console_pipeline.start()
+
+
 # ``atexit`` rather than ``__del__``: ``QueueListener``'s thread is a daemon
 # by default, so without an explicit ``stop()`` the listener could be torn
 # down by interpreter shutdown while a queued record is mid-``emit`` → a
 # truncated final log line. ``atexit`` drains the queue before shutdown.
-atexit.register(_LOG_LISTENER.stop)
+#
+# The drain itself goes through this module's one pipeline object rather than
+# the listener's own bound ``stop``: the session end usually stopped the same
+# listener first, and that second, unguarded stop raises from an ``atexit``
+# callback, where its ``AttributeError`` is printed and swallowed as unraisable.
+atexit.register(_console_pipeline.stop)
 
 logger.addHandler(_QUEUED_HANDLER)
 
@@ -278,14 +332,15 @@ for _name in PY_PACKAGE_ROOT_LOGGER_NAMES:
 def flush_console_log() -> None:
     """Block until every record queued so far has reached the console writer.
 
-    A ``QueueListener`` has no flush of its own. Stopping it drains the queue
-    and joins the writer thread; starting it again re-arms the same
-    queue/handler pair. That pair of calls is the drain barrier: emit, flush,
-    then assert on whatever stream the writer resolved at emit time. Safe to
-    call when the queue is empty, and safe to call repeatedly.
+    A ``QueueListener`` has no flush of its own. :meth:`_ConsolePipeline.stop`
+    drains the queue and joins the writer thread; :meth:`_ConsolePipeline.start`
+    re-arms the same queue/handler pair. That pair of calls is the drain
+    barrier: emit, flush, then assert on whatever stream the writer resolved at
+    emit time. Safe to call when the queue is empty, and safe to call
+    repeatedly.
     """
-    _LOG_LISTENER.stop()
-    _LOG_LISTENER.start()
+    _console_pipeline.stop()
+    _console_pipeline.start()
 
 
 def set_log_level(level: int) -> None:

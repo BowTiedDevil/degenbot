@@ -22,7 +22,12 @@ from hypothesis import settings
 
 from degenbot.bot import Bot
 from degenbot.fork import AnvilFork, ForkLaunchConfig
-from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, _STDOUT_HANDLER, set_log_level
+from degenbot.logging import (
+    _QUEUED_HANDLER,
+    _STDOUT_HANDLER,
+    _console_pipeline,
+    set_log_level,
+)
 from tests.fork_endpoint import spawn_fork
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.golden.recorded_pool import RecordedPool
@@ -207,7 +212,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     means any late Rust record only lands in the now-inert queue. Idempotent;
     a no-op in the xdist controller (its listener owns no pending records).
     """
-    _LOG_LISTENER.stop()
+    _console_pipeline.stop()
     shutdown_log_drainer()
 
 
