@@ -25,8 +25,11 @@ use pyo3_async_runtimes::{into_future_with_locals, TaskLocals};
 
 use crate::prelude::*;
 
-/// The loud-abort prefix the cockpit's leaf-failure surface carries.
-const LEAF_FAILURE_PREFIX: &str =
+/// The loud-abort prefix a pipeline LEAF FAILURE carries — the ONE home of the
+/// string, shared by every executor seam that maps a leaf failure (this
+/// pipeline's own re-raise, and the session consumer's abort mapping). A
+/// refusal wears no prefix: no leaf ran.
+pub(crate) const LEAF_FAILURE_PREFIX: &str =
     "sim-submit-pipeline leaf task failed - aborting the consumer loudly: ";
 
 /// The Python work payload is opaque to the core pipeline.

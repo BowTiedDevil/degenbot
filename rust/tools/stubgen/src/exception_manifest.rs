@@ -209,7 +209,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         rust_path: "simulation::session",
         name: "SessionConsumerError",
         base: "RuntimeError",
-        message: "A session consume-loop abort: the leaf failure that stopped the loop. The message is the leaf's own detail under the shared loud-abort prefix; `batch_index` is the batch whose pass failed and `report` the counts the loop reached before it stopped (the typed consumer report).",
+        message: "A session consume-loop abort: a pipeline leaf failure, or a lifecycle refusal. A leaf failure's message is the leaf's own detail under the shared loud-abort prefix; a refusal (no attached session, a spent claim, or the driver refusing the move) is prefix-free and carries the refusal's own text, because no leaf ran. `batch_index` is the batch whose pass failed and `report` the counts the loop reached before it stopped (the typed consumer report).",
     },
 ];
 

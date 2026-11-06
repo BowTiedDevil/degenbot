@@ -7,6 +7,7 @@ import pytest
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.dispatch import Dispatcher, SessionConsumer, SessionConsumerError
 from tests.helpers.session_drive import block_event, offline_executor
+from tests.helpers.v2_cycle_engine import build_two_hop_v2_engine
 
 # The prefix every mapped leaf failure carries. A slot-local refusal is
 # prefix-free by construction, so its presence in a slot message means that
@@ -62,8 +63,11 @@ class TestLifecycleMoves:
         """`resume` consumes the consumer claim, so an unattached consumer refuses.
 
         A consumer built but never handed the engine's event hand-off holds no
-        claim; resuming it must fail loud (the shared loud-abort mapping) rather
-        than drive a stream nobody gave it.
+        claim; resuming it is refused for the hand-off that was never attached,
+        in the refusal's own words. No pipeline leaf ran, so the mapped error is
+        prefix-free — the loud-abort prefix is a leaf failure's label and only
+        that — while the typed facts behind the refusal (`batch_index`) ride the
+        error itself.
         """
         executor = offline_executor(Dispatcher.for_block(12_345))
         consumer = SessionConsumer(executor, allow_quiet_end=True)
@@ -261,3 +265,114 @@ class TestConsumerSlotTransitions:
 
         with pytest.raises(SessionConsumerError, match="no attached session to resume"):
             await consumer.resume()
+
+
+class TestAbortMappingByKind:
+    """The abort mapping classifies by the core's typed kind.
+
+    A core ``ConsumerError`` carries a ``kind``. The three REFUSAL kinds — no
+    attached session, a spent claim, the driver refusing the move — map WITHOUT
+    the loud-abort prefix, carrying the refusal's own text, because no pipeline
+    leaf ran; only ``LeafFailure`` wears the prefix, with the leaf's detail
+    under it. The slot's own refusals are a fourth shape entirely: a bare
+    ``RuntimeError``, pinned by ``TestConsumerSlotTransitions``.
+    """
+
+    async def test_an_unattached_resume_maps_the_no_session_refusal_without_the_prefix(self):
+        """NoSession: the no-session text, prefix-free.
+
+        Nothing was attached, so no leaf ran: the refusal keeps its own words
+        and the mapped error carries none of the loud-abort prefix.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer(executor, allow_quiet_end=True)
+
+        with pytest.raises(SessionConsumerError) as refusal:
+            await consumer.resume()
+
+        message = str(refusal.value)
+        assert LOUD_ABORT_PREFIX not in message, (
+            "a refusal maps prefix-free; the prefix here means the mapping "
+            "labelled a no-session refusal as a leaf failure"
+        )
+        assert "no attached session to resume" in message
+        assert refusal.value.batch_index == 0
+        assert refusal.value.report["batches"] == 0
+
+    async def test_a_claim_spent_resume_maps_the_spent_claim_refusal_without_the_prefix(self):
+        """ClaimSpent: the truthful claim text, prefix-free.
+
+        The first ``resume`` is driver-refused and takes the claim with it, so
+        the second is refused for the SPENT CLAIM — and says so. It must not
+        borrow the no-session words: that message named the wrong transition.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer(executor, allow_quiet_end=False)
+        consumer.attach(ArbitrageEngine())
+
+        with pytest.raises(SessionConsumerError):
+            await consumer.resume()
+        with pytest.raises(SessionConsumerError) as refusal:
+            await consumer.resume()
+
+        message = str(refusal.value)
+        assert LOUD_ABORT_PREFIX not in message
+        assert message == "the consumer's claim was already used; resume refused", (
+            "a spent claim names its own transition"
+        )
+
+    async def test_a_driver_refused_resume_maps_the_driver_refusal_without_the_prefix(self):
+        """DriverRefusedTheMove: the driver's own refusal text, prefix-free.
+
+        The session's driver refused the move (a never-connected driver cannot
+        resume), and the mapped error is that refusal — not a leaf failure.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer(executor, allow_quiet_end=False)
+        consumer.attach(ArbitrageEngine())
+
+        with pytest.raises(SessionConsumerError) as refusal:
+            await consumer.resume()
+
+        message = str(refusal.value)
+        assert LOUD_ABORT_PREFIX not in message
+        assert "cannot resume from detached" in message, "the driver's refusal carries its own text"
+        assert "resume requires subscribed" in message
+        assert refusal.value.batch_index == 0
+
+    async def test_a_leaf_failure_maps_under_the_loud_abort_prefix(self):
+        """LeafFailure: the prefix plus the leaf's detail (the one prefixed kind).
+
+        A batch whose row cannot be assembled (one hop output where the path has
+        two) fails the pipeline's leaf; the loop re-raises it in the caller's
+        frame under the shared prefix, with the leaf's own words after it.
+        """
+        engine, path_id = build_two_hop_v2_engine()
+        executor = offline_executor(Dispatcher.for_block(0), engine=engine)
+        events = [
+            block_event(100),
+            {
+                "kind": "batch",
+                "solve_block": 100,
+                "timestamp": 0,
+                "base_fee_per_gas": None,
+                "gas_used": 0,
+                "gas_limit": 0,
+                "fresh": [(path_id, 1_000, 100, (100,), (1_000,), (1,))],
+                "updated": [],
+                "expired": [],
+                "removed": [],
+                "payloads": {},
+            },
+        ]
+        consumer = SessionConsumer.scripted(executor, events, allow_quiet_end=True)
+
+        with pytest.raises(SessionConsumerError) as refusal:
+            await consumer.run()
+
+        message = str(refusal.value)
+        assert message.startswith(LOUD_ABORT_PREFIX), (
+            "a leaf failure keeps the shared loud-abort prefix"
+        )
+        assert "hop_outputs length (1)" in message
+        assert refusal.value.batch_index == 1

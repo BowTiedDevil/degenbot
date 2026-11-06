@@ -298,13 +298,39 @@ pub struct ConsumerReport {
     pub end: Option<ConsumerEnd>,
 }
 
-/// A consumer-loop abort: the leaf failure that stopped the loop.
+/// Which class of fact a [`ConsumerError`] reports.
+///
+/// The core is the ONE stamping site: a refusal kind is set by the constructor
+/// that raises the refusal, and [`ConsumerErrorKind::LeafFailure`] only where
+/// the consume loop surfaces a pipeline leaf failure. A shell never stamps a
+/// kind — it reads the one the core recorded — so a refusal cannot be reported
+/// as a leaf failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConsumerErrorKind {
+    /// The move found no attached session: the consumer was never handed the
+    /// engine's one event hand-off.
+    NoSession,
+    /// The move found the claim already used: `resume` is a session's one
+    /// start, and a spent claim starts nothing.
+    ClaimSpent,
+    /// The session's driver refused the move; `detail` is the driver's own
+    /// refusal text.
+    DriverRefusedTheMove,
+    /// A pipeline leaf ran and failed; `detail` is the leaf's own text.
+    LeafFailure,
+}
+
+/// A consumer-loop abort: the leaf failure that stopped the loop, or the
+/// refusal that ended the move.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConsumerError {
+    /// Which class of fact this abort reports — a refusal (no leaf ran) or a
+    /// leaf failure. The classifier a shell maps by.
+    pub kind: ConsumerErrorKind,
     /// The batch index whose pass the failure belongs to (the batch count at
     /// the moment the failure surfaced).
     pub batch_index: u64,
-    /// The leaf's own detail (never paraphrased).
+    /// The failure's or refusal's own detail (never paraphrased).
     pub detail: String,
     /// The counts the loop reached before it stopped.
     pub report: ConsumerReport,
@@ -415,14 +441,17 @@ impl SessionConsumer {
     ///
     /// # Errors
     ///
-    /// [`SessionFailure`] when no session is attached, the claim was already
-    /// used, or the driver refused the move (the refusal's own text is kept).
+    /// [`SessionFailure`] when no session is attached
+    /// ([`ConsumerErrorKind::NoSession`]), the claim was already used
+    /// ([`ConsumerErrorKind::ClaimSpent`]), or the driver refused the move
+    /// ([`ConsumerErrorKind::DriverRefusedTheMove`], the refusal's own text
+    /// kept). Each refusal is stamped with its own kind at its constructor.
     pub async fn resume(&mut self) -> Result<(), SessionFailure> {
         let Some(half) = self.session.as_mut() else {
             return Err(unattached("resume"));
         };
         let Some(claim) = half.claim.take() else {
-            return Err(unattached("resume (the claim was already used)"));
+            return Err(claim_spent("resume"));
         };
         match half.driver.run(claim).await {
             Ok(()) => Ok(()),
@@ -430,6 +459,7 @@ impl SessionConsumer {
                 let teardown = half.driver.close().await;
                 Err(SessionFailure {
                     error: ConsumerError {
+                        kind: ConsumerErrorKind::DriverRefusedTheMove,
                         batch_index: 0,
                         detail: error.to_string(),
                         report: ConsumerReport::default(),
@@ -475,9 +505,9 @@ impl SessionConsumer {
     ///
     /// # Errors
     ///
-    /// [`ConsumerError`] when the ordered lane stored a leaf failure: the detail
-    /// is re-raised HERE, in the caller's frame, before any further batch is
-    /// enqueued.
+    /// [`ConsumerError`] when the ordered lane stored a leaf failure
+    /// ([`ConsumerErrorKind::LeafFailure`]): the detail is re-raised HERE, in the
+    /// caller's frame, before any further batch is enqueued.
     pub async fn consume(
         &mut self,
         source: &mut dyn SessionEventSource,
@@ -499,6 +529,7 @@ impl SessionConsumer {
                 return match self.quiesce().await {
                     Ok(()) => Ok(report),
                     Err(failure) => Err(ConsumerError {
+                        kind: ConsumerErrorKind::LeafFailure,
                         batch_index: report.batches,
                         detail: failure.detail,
                         report,
@@ -539,6 +570,7 @@ impl SessionConsumer {
             .raise_if_failed()
             .err()
             .map(|failure| ConsumerError {
+                kind: ConsumerErrorKind::LeafFailure,
                 batch_index: report.batches,
                 detail: failure.detail,
                 report: *report,
@@ -621,12 +653,29 @@ impl SessionConsumer {
     }
 }
 
-/// A session move the consumer could not make.
+/// A session move the consumer could not make: no session was ever attached.
 fn unattached(method: &str) -> SessionFailure {
     SessionFailure {
         error: ConsumerError {
+            kind: ConsumerErrorKind::NoSession,
             batch_index: 0,
             detail: format!("the session consumer has no attached session to {method}"),
+            report: ConsumerReport::default(),
+        },
+        teardown: None,
+    }
+}
+
+/// A session move the consumer could not make: the claim was already used.
+///
+/// The refusal names the spent claim, not the attachment — a consumer whose
+/// claim went to a refused start still holds its session.
+fn claim_spent(method: &str) -> SessionFailure {
+    SessionFailure {
+        error: ConsumerError {
+            kind: ConsumerErrorKind::ClaimSpent,
+            batch_index: 0,
+            detail: format!("the consumer's claim was already used; {method} refused"),
             report: ConsumerReport::default(),
         },
         teardown: None,
@@ -1072,6 +1121,28 @@ mod tests {
         );
     }
 
+    /// Each refusal is stamped with its OWN kind and message at the core
+    /// constructor that raises it: a spent claim is not an unattached consumer,
+    /// so it never borrows the no-session text.
+    #[test]
+    fn the_refusal_constructors_carry_their_own_kind_and_message() {
+        let no_session = unattached("resume");
+        assert_eq!(no_session.error.kind, ConsumerErrorKind::NoSession);
+        assert_eq!(
+            no_session.error.detail,
+            "the session consumer has no attached session to resume"
+        );
+        assert!(no_session.teardown.is_none());
+
+        let spent = claim_spent("resume");
+        assert_eq!(spent.error.kind, ConsumerErrorKind::ClaimSpent);
+        assert_eq!(
+            spent.error.detail,
+            "the consumer's claim was already used; resume refused"
+        );
+        assert!(spent.teardown.is_none());
+    }
+
     /// The loud-abort rule's placement: a stored leaf failure stops the loop
     /// BEFORE the next batch reaches the lane. The source is sequenced on the
     /// leaf's own signal, so the ordering is the contract, not a race.
@@ -1105,6 +1176,11 @@ mod tests {
             "the failure surfaced after the one batch"
         );
         assert_eq!(error.detail, "sim leaf failed at block 100");
+        assert_eq!(
+            error.kind,
+            ConsumerErrorKind::LeafFailure,
+            "a lane failure is the leaf class"
+        );
         assert_eq!(
             executor.enqueued(),
             1,

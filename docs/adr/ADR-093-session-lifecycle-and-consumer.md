@@ -678,7 +678,7 @@ a host-owned `Live` sub-state"), which stays open on the host side.
 
 ### 6.6 Consumer migration notes
 
-**The public was → is table.** The six rows a consumer migrates by, with the
+**The public was → is table.** The seven rows a consumer migrates by, with the
 retired name in the "was" column only (the same rows the `CHANGELOG` carries):
 
 | # | Was | Is |
@@ -689,6 +689,7 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
 | 4 | verify method matrix: the verify-config setters, the four verify reads, and the four `run_*_registration_lifecycle` wrappers | one Verify lifecycle — `VerifyLifecycle` in `degenbot_bot::bot_core` with its provider and bounded retry as construction values — plus `PoolVerifications` for the claim facts and `bot_core::{run_verify_lifecycle, run_registration_lifecycle}` |
 | 5 | hand-wired registration: the crawl unit's stage order, `RegistrationPipeline::prepare_candidate`, and `build_paths.py` | one Registration admission (`arb_engine::crawl::admission::RegistrationAdmission`) behind the crawl and direct-registration adapters |
 | 6 | shell consume loops: `examples/settlement_bot/src/consume.rs`'s loop and `src/degenbot/runner/_consume.py`'s loop | the Session consumer (`degenbot_batch_executor::session::SessionConsumer`); both shells keep only the display drain and the report rendering |
+| 7 | `ConsumerError` with no outcome class: a `resume`/`run` refusal read as a leaf failure, which on the Python surface made every `SessionConsumerError` wear the loud-abort prefix | `ConsumerError { kind: ConsumerErrorKind, .. }` — `NoSession` / `ClaimSpent` / `DriverRefusedTheMove` / `LeafFailure`, stamped only where the core raises the error; the Python `SessionConsumerError` maps the three refusal kinds prefix-free with the refusal's own text and only the leaf failure under the prefix |
 
 - **`PyArbEngine`** keeps the lifecycle adapters the cockpit calls — `connect`
   (the `Detached → Subscribed` move, returning the link block), `start` (this
@@ -712,20 +713,29 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
   display drain and the report rendering (its loop and the block-clock mutator
   it fed are gone), and `_session_watch.py` ranks the Session consumer's report
   instead of racing two tasks and detecting no stall itself.
-- **One FFI mapping wart, recorded rather than smoothed.** `PySessionConsumer`
-  raises one exception type for two different facts: an abort and a refusal both
-  become `degenbot.dispatch.SessionConsumerError` under the executor's shared
-  loud-abort prefix (`sim-submit-pipeline leaf task failed - aborting the
-  consumer loudly: `). The prefix is exactly right for a leaf failure and wrong
-  for a programming-error refusal, where no leaf ran: an unattached `resume()`
-  reads `... leaf task failed - ... the session consumer has no attached session
-  to resume`, and an unattached `run()` reads the same prefix over `... no
-  attached session to run`. The typed discriminator is already on the value —
-  `SessionFailure.teardown` is `None` exactly when no session was ever attached
-  — so splitting the mapping needs no new fact; until then a caller separates
-  the two by the message body (`no attached session`) and by `batch_index == 0`,
-  and `SessionConsumerError`'s `batch_index`/`report` attributes stay the loop's
-  counts.
+- **One FFI error class, a classified mapping.** `PySessionConsumer` raises one
+  exception type for two different facts — an abort and a refusal both become
+  `degenbot.dispatch.SessionConsumerError` — and that stays: the class is the
+  pipeline's error, not the leaf's. What the mapping no longer does is report a
+  refusal AS a leaf failure. The classification is the core's, stamped at the
+  one site that raises the error (`ConsumerError.kind`): `NoSession` from
+  `SessionConsumer`'s `unattached` constructor, `ClaimSpent` from `claim_spent`,
+  `DriverRefusedTheMove` from the driver-refused arm of `resume`, and
+  `LeafFailure` from the two consume-loop sites that surface a stored pipeline
+  failure. The shell reads that kind and re-classifies nothing, so a refusal
+  cannot be relabelled downstream. The mapping splits on it: the three refusal
+  kinds carry the refusal's own text with NO prefix — an unattached `resume()`
+  reads `the session consumer has no attached session to resume`, a second
+  `resume` reads `the consumer's claim was already used; resume refused`, and a
+  driver refusal reads the pump table's own decline — while `LeafFailure` keeps
+  the executor's shared loud-abort prefix (`sim-submit-pipeline leaf task failed
+  - aborting the consumer loudly: `) with the leaf's detail under it. The
+  prefix string has one home, `submission::sim_pipeline`'s `pub(crate)`
+  constant, shared by the pipeline's own re-raise and this mapping. The residual
+  wart is the class alone: `SessionConsumerError` still exposes no typed kind
+  attribute on the Python side, so a caller distinguishes the two shapes by
+  `batch_index == 0` plus the message's own words, and its
+  `batch_index`/`report` attributes stay the loop's counts.
 
 ### 6.7 Landing order
 

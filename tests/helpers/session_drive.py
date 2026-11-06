@@ -78,7 +78,7 @@ def block_event(
     }
 
 
-def offline_executor(dispatcher: Any) -> BatchExecutor:
+def offline_executor(dispatcher: Any, *, engine: Any | None = None) -> BatchExecutor:
     """Build the core session executor over a dead-port provider.
 
     The session's executor is the core's, so the construction needs the whole
@@ -87,6 +87,8 @@ def offline_executor(dispatcher: Any) -> BatchExecutor:
 
     Args:
         dispatcher: The session's dispatch state (the consumer's clock).
+        engine: The engine whose resolved paths the script may name; a bare one
+            when the script resolves nothing.
 
     Returns:
         The constructed core executor.
@@ -104,7 +106,7 @@ def offline_executor(dispatcher: Any) -> BatchExecutor:
             inject_code=False,
         ),
         dispatcher=dispatcher,
-        engine=ArbitrageEngine(),
+        engine=ArbitrageEngine() if engine is None else engine,
         signer=TxSigner(key="0x" + "11" * 32, chain_id=1),
         submit_provider=AsyncAlloyProvider(AlloyProvider(_RPC_URL)),
         operator_nonce=5,

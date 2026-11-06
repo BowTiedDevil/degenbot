@@ -11,7 +11,7 @@ All notable changes to the Rust workspace crates are recorded here.
   consumer in the core.** The driver stops forwarding engine operations and
   stops owning the consume loop; both first-class consumers (the pure-Rust
   `examples/settlement_bot` and the Python cockpit) become adapters over the
-  same core values. The six public was→is rows a consumer migrates by:
+  same core values. The seven public was→is rows a consumer migrates by:
 
   | Was | Is |
   | --- | --- |
@@ -21,6 +21,7 @@ All notable changes to the Rust workspace crates are recorded here.
   | the verify method matrix (`set_verify_rpc_url` / `set_verify_state_view`, the verify reads, the four `run_*_registration_lifecycle` wrappers) | one Verify lifecycle: `degenbot_bot::bot_core::{VerifyLifecycle, run_verify_lifecycle, run_registration_lifecycle}`, with the provider and the bounded retry as construction values, plus `PoolVerifications` for the claim facts |
   | hand-wired registration (the crawl unit's stage order, the example's `prepare_candidate`, `build_paths.py`) | one Registration admission (`degenbot_bot::arb_engine::crawl::admission::RegistrationAdmission`) behind the crawl and direct-registration adapters |
   | shell consume loops (`examples/settlement_bot/src/consume.rs`, `src/degenbot/runner/_consume.py`) | `degenbot_batch_executor::session::SessionConsumer`: the shells keep only the display drain and the report rendering |
+  | `ConsumerError` with no outcome class: a refusal read as a leaf failure (the Python `SessionConsumerError` wore the loud-abort prefix for both) | `ConsumerError { kind: ConsumerErrorKind, .. }` — `NoSession` / `ClaimSpent` / `DriverRefusedTheMove` / `LeafFailure`; the Python class maps the three refusal kinds prefix-free and only the leaf failure under the prefix |
 
   The stream is `SessionEvent::{Block, Batch}` — a `Block(N)` precedes every
   `Batch(N)`, no variant carries an end item, natural end is the stream's
@@ -29,11 +30,10 @@ All notable changes to the Rust workspace crates are recorded here.
   `connect`/`start`/`close`/`session_end_future` over the seam, the hand-off
   moves through `degenbot.dispatch.SessionConsumer.attach(engine)`, and that
   consumer's `resume`/`run` are the session moves; `block_stream` and the
-  driver's own consume loop are gone. One mapping wart is recorded in ADR-093
-  §6.6: a programming-error refusal (`resume`/`run` with no attached session)
-  raises the same `SessionConsumerError` under the executor's loud-abort prefix
-  that a leaf failure does, and the message body is how a caller tells them
-  apart today.
+  driver's own consume loop are gone. The one mapping wart ADR-093 §6.6 records
+  — a `resume`/`run` refusal raised as `SessionConsumerError` under the
+  executor's loud-abort prefix, told from a leaf failure only by the message
+  body — is closed by the typed classification below.
 
 - **The Python `SessionConsumer` attach transition is refused by name where it
   used to replace or discard.** `degenbot.dispatch.SessionConsumer` holds its
@@ -45,8 +45,30 @@ All notable changes to the Rust workspace crates are recorded here.
   drove the live arm instead) now raise a `RuntimeError` naming the refused
   transition. The slot is checked before the engine's one-shot hand-off is
   taken, so a refused attach leaves the other engine's stream claimable. The
-  unattached / claim-spent / driver refusals keep delegating to the core, and
-  their `SessionConsumerError` mapping is unchanged.
+  unattached / claim-spent / driver refusals keep delegating to the core, which
+  stamps their kind (see the classified abort mapping below).
+
+- **The session consumer's abort mapping is classified by typed kind — a
+  Rust-API break; the Python class keeps its name.** `ConsumerError` in
+  `degenbot_batch_executor::session` gains a `kind: ConsumerErrorKind` field
+  (`NoSession`, `ClaimSpent`, `DriverRefusedTheMove`, `LeafFailure`), stamped
+  only where the core constructs the error — the three refusal constructors and
+  the two consume-loop leaf-failure sites — and `ConsumerErrorKind` is
+  re-exported from the crate root. `ConsumerError` is a `pub` struct of `pub`
+  fields with no `#[non_exhaustive]`, so an external struct-literal constructor
+  must name the field: a breaking additive change, licensed by ADR-088's hard
+  cutover. The existing `detail` / `batch_index` / `report` fields and the
+  report shape are unchanged. The FFI classifier reads that kind and never
+  re-classifies: `degenbot.dispatch.SessionConsumerError` keeps its name, its
+  base and its `batch_index` / `report` attributes, and splits its message — the
+  three refusal kinds map prefix-free carrying the refusal's own text (no leaf
+  ran), and `LeafFailure` maps under the shared loud-abort prefix with the
+  leaf's detail. The prefix string has one home (`submission::sim_pipeline`'s
+  `pub(crate)` constant) instead of two byte-identical copies. The spent-claim
+  refusal in `SessionConsumer::resume` now names its own transition through a
+  new `claim_spent` constructor — `the consumer's claim was already used;
+  resume refused` — where it used to borrow the no-session text
+  (`... no attached session to resume (the claim was already used)`).
 
 - **ADR-084 D2 (the engine's doors):** `degenbot-bot`'s two capability homes
   are curated surfaces. Every `bot_core` / `arb_engine` submodule is
