@@ -161,9 +161,10 @@ pub async fn fetch_priority_fees(
 }
 
 /// Record the p10/p50 percentile pair on the shared dispatcher through the
-/// umbrella submission leaf (`degenbot::submission::fetch_fee_history`).
-/// Returns `true` when the sample was recorded (RPC failure / empty rewards
-/// are advisory — the previous samples remain valid).
+/// umbrella submission leaf (`degenbot::submission::fetch_fee_history`) —
+/// the row-17 standalone-RPC reach proof, uncalled by design. Returns `true`
+/// when the sample was recorded (RPC failure / empty rewards are advisory —
+/// the previous samples remain valid).
 pub async fn record_fee_history(
     provider: &AlloyProvider,
     dispatcher: &Arc<Mutex<Dispatcher>>,

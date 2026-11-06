@@ -230,3 +230,12 @@ All notable changes to the Rust workspace crates are recorded here.
   (`pathfinding_sweep/grid_4x4_d5`, `pathfinding_snapshot/native_min2_emd3`)
   now pass `max_depth` alone (their paired `node_valid_depths` tables dropped
   with the filters) and enumerate exactly the path sets they enumerated before.
+
+- **The fee ring's three write surfaces are documented without an API change:**
+  one writer home (`Dispatcher::record_priority_fees`) is reached by the session
+  consumer's advisory fire-and-forget spawn
+  (`degenbot_batch_executor::session`, the one live in-tree caller), by the
+  public FFI `record_priority_fees` pymethod as the driver-facing recording
+  door, and by the settlement example's `fetch_priority_fees` /
+  `record_fee_history`, which stay uncalled by design as the row-17
+  standalone-RPC reach proofs.
