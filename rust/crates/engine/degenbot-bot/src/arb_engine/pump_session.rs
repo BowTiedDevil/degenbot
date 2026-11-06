@@ -1,34 +1,25 @@
 //! `pump_session` — the pump session's lifecycle, as one machine.
 //!
-//! The session used to be split across two owners with no table: a bare phase
-//! byte the engine stored, and five independently-mutated fields on the driver
-//! (`pump_handle`, `pump_finished_tx`, `subscribe_state`, `stopped`,
-//! `result_receiver_taken`). Legality was decided from the driver's fields and
-//! asserted against the engine's byte, which had to be kept in sync by hand.
-//!
-//! The phase could not be an ordering because the session is not a ladder:
+//! The phase is not an ordering, because the session is not a ladder:
 //! `subscribe` is legal from `Detached` **or** from a phase that already loaded
 //! a snapshot, because the snapshot may be loaded before or after the WS
-//! subscribe. A comparison cannot say that, so the old code carried four
-//! legality functions and a raw setter whose doc said "the caller validates".
-//!
-//! Here the states are named, and [`transition`] is the whole legality table:
-//! one total function over (pose, event) that answers every pair. Anything not
-//! allowed is a typed [`PumpDecline`], never a silent no-op.
+//! subscribe. A comparison cannot say that. So the states are named, and
+//! [`transition`] is the whole legality table: one total function over (pose,
+//! event) that answers every pair. Anything not allowed is a typed
+//! [`PumpDecline`], never a silent no-op.
 //!
 //! # The pose carries its own data (ADR-093 D2)
 //!
-//! Legality is only half of the machine. A pose that is a bare byte beside five
+//! Legality is only half of the machine. A pose that is a bare byte beside
 //! payload slots lets a payload move the table no longer admits still install
-//! itself — which is how a live pump could be armed onto a `Stopped` session,
-//! and how a crawl could be booted over one (ADR-093 §1.3). So the private
-//! [`PumpPose`] **owns** what that pose holds: `Subscribed` owns the pump and
-//! the live stream, `Running` owns the live-loop handle. [`PumpSession::take`]
-//! moves a payload OUT under the lock and [`SessionMove`]'s land methods are the
-//! only ways back in, each re-checking the table first. A dropped move publishes
-//! its abandonment edge and drops its payload (aborting a loop it cannot
-//! install), so no cancellation strands the session and no refused landing
-//! leaves a task running.
+//! itself: a live pump armed onto a `Stopped` session, a crawl booted over one
+//! (ADR-093 §1.3). So the private [`PumpPose`] **owns** what that pose holds:
+//! `Subscribed` owns the pump and the live stream, `Running` owns the live-loop
+//! handle. [`PumpSession::take`] moves a payload OUT under the lock and
+//! [`SessionMove`]'s land methods are the only ways back in, each re-checking
+//! the table first. A dropped move publishes its abandonment edge and drops its
+//! payload (aborting a loop it cannot install), so no cancellation strands the
+//! session and no refused landing leaves a task running.
 //!
 //! Nothing here awaits: the take-out and the land are synchronous, and the
 //! driver's awaits live between them, which is what keeps a `parking_lot` guard

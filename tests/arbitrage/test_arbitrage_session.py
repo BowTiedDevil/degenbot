@@ -41,9 +41,8 @@ from degenbot.runner.session import PhaseError, Session, SessionPhase
 from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.fakes.bot import FakeBot, RecordingPyBot
 from tests.fakes.engine import FakeEngine, FakeEngineRegistry
-from tests.helpers.boot_actors import noop_coro
+from tests.helpers.boot_actors import FakeAsyncW3, noop_coro
 from tests.helpers.session import (
-    FakeAsyncW3,
     injected_test_actors,
     offline_cfg,
     session_for_test,

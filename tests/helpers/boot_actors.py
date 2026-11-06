@@ -91,7 +91,12 @@ class FakeEth:
 
 
 class FakeAsyncW3:
-    """The boot-path provider double (non-Alloy, so no sim context is built)."""
+    """The runner provider double (non-Alloy, so no sim context is built).
+
+    One definition for every runner-path test: the boot pair and the cockpit
+    suite both inject it, and it answers through ``.eth`` the way alloy's
+    provider does so a caller reaching either shape reads the same block.
+    """
 
     def __init__(self) -> None:
         self.eth = FakeEth()

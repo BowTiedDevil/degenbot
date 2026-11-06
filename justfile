@@ -20,6 +20,24 @@ set positional-arguments := true
 
 py_run := "uv run --no-sync"
 
+# The type checker's exact version. Every gate that runs `ty` reads this one
+# pin: an unpinned `--with ty` resolved whatever PyPI published that minute, so
+# an upstream release could flip the shared pre-push gate's verdict with no
+# diff on our side to review. Bump deliberately: check `--with ty==X.Y.Z`
+# against the tree, then edit this line in its own gated change.
+ty_version := "ty==0.0.91"
+
+# The linter/formatter's exact version, for the same reason as the type
+# checker's: every gate that runs ruff reads this one pin (`lint-python`,
+# `lint-python-check`, `fmt-check-python`, `format`, and the gen-stubs
+# formatting pipeline whose output lands in the committed stub tree). An
+# unpinned `uvx ruff` resolved whatever PyPI published that minute, and ruff
+# rewrites files under `check --fix` / `format`, so an upstream release could
+# flip — or silently rewrite — the shared gate's verdict with no diff on our
+# side to review. Bump deliberately: check `--with ruff==X.Y.Z` against the
+# tree, then edit this line in its own gated change.
+ruff_version := "ruff==0.17.4"
+
 # Default recipe - show available commands
 default:
     @just --list
@@ -1174,11 +1192,11 @@ lint-markdown:
 
 # Lint Python files
 lint-python:
-    uvx ruff check --fix src/ examples/
+    uvx --with {{ ruff_version }} ruff check --fix src/ examples/
     # ty must run under the project environment (it resolves third-party imports
-    # and the degenbot stubs from the venv), so `uvx ty` cannot work; `--with ty`
-    # gives the latest ty without pinning it into the venv.
-    {{ py_run }} --with ty ty check --fix --no-progress src/
+    # and the degenbot stubs from the venv), so `uvx ty` cannot work; `--with`
+    # installs it beside the venv, at the exact version `ty_version` pins.
+    {{ py_run }} --with {{ ty_version }} ty check --fix --no-progress src/
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -1207,8 +1225,8 @@ lint-tripwire-ratchet:
     {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
 lint-python-check:
-    uvx ruff check src/ examples/
-    {{ py_run }} --with ty ty check --no-progress src/
+    uvx --with {{ ruff_version }} ruff check src/ examples/
+    {{ py_run }} --with {{ ty_version }} ty check --no-progress src/
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see
@@ -1232,7 +1250,7 @@ dead-code-deep:
 
 # Check Python formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check-python:
-    uvx ruff format --check src/
+    uvx --with {{ ruff_version }} ruff format --check src/
 
 # Lint commit messages across a range (default: everything not yet pushed).
 # Examples: just lint-commits              # @{push}..HEAD
@@ -1257,7 +1275,7 @@ lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
 
 # Format all code
 format: check-toolchain
-    uvx ruff format src/
+    uvx --with {{ ruff_version }} ruff format src/
     cargo fmt --manifest-path rust/Cargo.toml --all
 
 # ========== Dependency Updates ==========
@@ -1485,8 +1503,8 @@ gen-stubs check="":
     # and the tree would not be reproducible. The generated-stub rules the
     # check pass cannot fix (Rust doc-comment prose) are exempted under the
     # bare `"*.pyi"` per-file-ignores key, which matches the temp dir too.
-    uvx ruff format --config pyproject.toml "$out"
-    uvx ruff check --fix --config pyproject.toml "$out"
+    uvx --with {{ ruff_version }} ruff format --config pyproject.toml "$out"
+    uvx --with {{ ruff_version }} ruff check --fix --config pyproject.toml "$out"
     if [ "$check" = 1 ] && [ -z "${REGEN_STUBS:-}" ]; then
         if diff -ru src/degenbot/_ffi "$out"; then
             echo "✓ committed stubs match generator output"

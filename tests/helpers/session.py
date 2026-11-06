@@ -24,7 +24,7 @@ from tests.fakes.bot import FakeBot
 from tests.fakes.engine import FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline, fake_session_consumer
 from tests.helpers import verdict_probe as probe
-from tests.helpers.boot_actors import inline_registration_scheduler, noop_coro
+from tests.helpers.boot_actors import FakeAsyncW3, inline_registration_scheduler, noop_coro
 
 if TYPE_CHECKING:
     from degenbot.runner._session_watch import SessionWatch
@@ -76,33 +76,6 @@ def offline_cfg(
         rpc=RpcCascadeOverrides(chain_id=1, node=NODE),
         values=probe.hypothetical_values(identity),
     )
-
-
-class FakeAsyncW3:
-    """The session provider double (non-Alloy, so no sim context is built)."""
-
-    async def get_block(self, block_identifier: str):
-        return {
-            "number": 12_345,
-            "baseFeePerGas": 10**9,
-            "gasUsed": 0,
-            "gasLimit": 30_000_000,
-        }
-
-    async def get_transaction_count(self, address: str) -> int:
-        return 7
-
-    async def make_request(self, method: str, params: list) -> dict[str, Any]:
-        # The session tests do not drive the typed dispatch RPCs; an incidental
-        # call answers an empty result.
-        return {}
-
-    @property
-    def rpc_url(self) -> str:
-        return "http://fake:8545"
-
-    def as_async_alloy(self) -> None:
-        return None
 
 
 class FakeDispatcher:

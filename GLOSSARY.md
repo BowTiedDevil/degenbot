@@ -439,6 +439,15 @@ recognizable without an RPC. One identity per pool, whatever its family; the tex
 registered pool and addresses V4 by `(pool_manager, pool_id)` (ADR-081, ADR-082).
 _Avoid_: pool key string, `v3:`/`v4:` prefix, memo key format.
 
+**Pool name**:
+
+A display label, never identity: a pool companion's `name` is human-facing text built from its
+tokens and its class (`WETH-USDC (UniswapV3Pool, 0.05%)`), and any writer may set or replace it.
+A pool's identity is its address — the on-chain pool id for a V4 pool — and registered state is
+keyed on the core's `pool_id`, never on the name.
+_Avoid_: keying a registration, dedup, or lookup on `name`; reading the name as immutable, or as
+anything a caller may use to decide *which* pool it holds.
+
 **Effect vs view** (naming rule):
 An *effect* acts on a pool and is named family-free over a `PoolLookup`; a *view* that can
 only exist for one family may keep the family word; a verb whose payload narrows per family

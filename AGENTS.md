@@ -115,7 +115,7 @@ The one on-demand lane for the legs every offline gate deliberately deselects: t
 
 ## Python Environment
 
-Use `uv`. The `--no-sync` prefix is defined once as the justfile `py_run` variable; `just venv` prints the active venv path, `just py <cmd>` runs ad-hoc commands against it. Python linters run through `uvx` (ephemeral, latest); the exceptions (`ty`, `maturin`) need the project venv and stay on `py_run`. On the host, direnv loads a gitignored `.envrc` (template: `.envrc.example`) that redirects the venv, bytecode cache, and cargo target dir; the devcontainer sets equivalents in `containerEnv`.
+Use `uv`. The `--no-sync` prefix is defined once as the justfile `py_run` variable; `just venv` prints the active venv path, `just py <cmd>` runs ad-hoc commands against it. Python linters run through `uvx`; the exceptions (`ty`, `maturin`) need the project venv and stay on `py_run`, with `ty`'s version pinned exactly by the justfile's `ty_version` — a bump is a deliberate, gated edit, never a floating `latest` that flips a shared gate's verdict with no diff to review. On the host, direnv loads a gitignored `.envrc` (template: `.envrc.example`) that redirects the venv, bytecode cache, and cargo target dir; the devcontainer sets equivalents in `containerEnv`.
 
 ## Node access
 
