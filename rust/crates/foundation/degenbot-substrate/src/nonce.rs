@@ -9,18 +9,21 @@
 //! a released reservation is refilled by the next signer rather than filled
 //! with an artificial self-send.
 //!
-//! Three disjoint sets make up the outstanding ledger: at most one **lease**
-//! per strategy (the reservation a strategy signs against), the **broadcasts** a
-//! lease becomes once its transaction is on the wire, and the
-//! **delivery-unknown holds** a lease becomes when its delivery attempt left the
-//! transaction's fate open. A hold occupies its nonce exactly as a broadcast
-//! does — the bytes may be live, so nothing is issued there for free — and it
-//! carries the fee caps a replacement must dominate so an intentionally repriced
-//! lane replaces the held transaction instead of shadowing it. Advancing the
-//! confirmed chain nonce reconciles landed broadcasts and lapsed holds out of the
-//! tracked set; releasing a strategy (a skip or a tombstone) removes its lease,
-//! every broadcast it still owns, and its hold, so a successor's stamp self-heals
-//! the chain.
+//! One occupancy map makes up the outstanding ledger: a per-nonce table whose
+//! value is the slot's one [`NonceOccupant`] — at most one **lease** per
+//! strategy (the reservation a strategy signs against), the **broadcast** a
+//! lease becomes once its transaction is on the wire, the **delivery-unknown
+//! hold** a lease becomes when its delivery attempt left the transaction's fate
+//! open, and the two retained forms confirmation leaves behind. Absence means
+//! the nonce is free, so a slot can never be double-booked. A hold occupies its
+//! nonce exactly as a broadcast does — the bytes may be live, so nothing is
+//! issued there for free — and it carries the fee caps a replacement must
+//! dominate so an intentionally repriced lane replaces the held transaction
+//! instead of shadowing it. Advancing the confirmed chain nonce moves confirmed
+//! broadcasts and holds into their retained forms, which keep their slots until
+//! a reorg rewind restores them; releasing a strategy (a skip or a tombstone)
+//! removes its lease, every broadcast it still owns, and its hold, so a
+//! successor's stamp self-heals the chain.
 //!
 //! Strategies reach the authority through the seam it mints for them: a
 //! [`NonceLane`] binds one strategy's name to the shared authority and to that
@@ -378,84 +381,389 @@ impl ReorgAdvisory {
     }
 }
 
+/// What occupies one nonce in the authority's occupancy map. Absence from the
+/// map means the slot is free, and one nonce carries at most one occupant, so a
+/// lease, broadcast, or hold can never double-book a slot.
+///
+/// Confirmation moves a broadcast or hold into its retained form
+/// ([`Landed`](Self::Landed) / [`LapsedHold`](Self::LapsedHold)) rather than out
+/// of the map: the slot stays occupied, and only the reorg rewind
+/// ([`NonceAuthority::set_confirmed_reorg`]) returns it to the wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NonceOccupant {
+    /// A strategy's sign-time reservation.
+    Lease {
+        /// The strategy the lease belongs to.
+        strategy: StrategyId,
+    },
+    /// A signed transaction on the wire.
+    Broadcast {
+        /// The strategy whose bytes are on the wire.
+        strategy: StrategyId,
+    },
+    /// A delivery-unknown hold, in either window phase ([`HoldPhase`]).
+    DeliveryHold(DeliveryHold),
+    /// A broadcast the chain confirmed, retained so a rewind can restore it to
+    /// the wire.
+    Landed {
+        /// The strategy whose bytes landed.
+        strategy: StrategyId,
+    },
+    /// A hold the chain passed, retained so a rewind can restore it.
+    LapsedHold(DeliveryHold),
+}
+
+impl NonceOccupant {
+    /// The strategy whose submission the occupant covers.
+    #[must_use]
+    pub fn strategy(&self) -> &StrategyId {
+        match self {
+            Self::Lease { strategy } | Self::Broadcast { strategy } | Self::Landed { strategy } => {
+                strategy
+            }
+            Self::DeliveryHold(hold) | Self::LapsedHold(hold) => hold.strategy(),
+        }
+    }
+
+    /// Whether the occupant is an open reservation. Retained confirmation
+    /// history is occupancy truth without being outstanding work.
+    #[must_use]
+    pub fn is_outstanding(&self) -> bool {
+        matches!(
+            self,
+            Self::Lease { .. } | Self::Broadcast { .. } | Self::DeliveryHold(_)
+        )
+    }
+}
+
+/// The authority's complete state under its lock: the confirmed chain nonce and
+/// the one occupancy map every transition writes.
 #[derive(Debug, Default)]
 struct NonceState {
+    /// The confirmed chain nonce (the account's next nonce): scalar chain
+    /// state, deliberately not an occupant.
     confirmed: u64,
-    leases: BTreeMap<StrategyId, u64>,
-    broadcasts: BTreeMap<u64, StrategyId>,
-    /// Broadcasts the chain had confirmed below the tracked nonce, retained so
-    /// a rewind can restore them: a reorged transaction returns to the wire
-    /// and its nonce must not be re-issued out of the landed range.
-    landed: BTreeMap<u64, StrategyId>,
-    /// Delivery-unknown holds, keyed by the nonce their bytes were signed
-    /// against. A hold occupies its nonce exactly as a broadcast does — in
-    /// either phase — so nothing is issued at the slot for free.
-    holds: BTreeMap<u64, DeliveryHold>,
-    /// Holds the chain had confirmed below the tracked nonce, retained so a
-    /// rewind can restore them: a reorged hold returns to the wire and its
-    /// nonce must not be issued freely out of the rewound range. The `landed`
-    /// index's counterpart for holds.
-    lapsed_holds: BTreeMap<u64, DeliveryHold>,
+    /// The one authoritative occupancy map, keyed by nonce; absence means free.
+    /// Every transition method below edits this map and nothing else.
+    occupancy: BTreeMap<u64, NonceOccupant>,
 }
 
 impl NonceState {
-    /// Move every broadcast and hold strictly below `confirmed` out of the
-    /// outstanding set and into its retention index. Shared by the monotonic
-    /// and reorg head paths so they cannot drift.
-    ///
-    /// A hold the chain has passed is over: whichever transaction consumed the
-    /// slot, the held bytes can no longer be included at it. The slot stops
-    /// occupying the nonce, and the hold is retained (not discarded) so a
-    /// rewind can restore it into replace-or-dominate.
-    fn land_below(&mut self, confirmed: u64) {
-        let landed: Vec<u64> = self
-            .broadcasts
-            .keys()
-            .copied()
-            .filter(|nonce| *nonce < confirmed)
-            .collect();
-        for nonce in landed {
-            if let Some(owner) = self.broadcasts.remove(&nonce) {
-                self.landed.insert(nonce, owner);
-            }
-        }
-        let lapsed: Vec<u64> = self
-            .holds
-            .keys()
-            .copied()
-            .filter(|nonce| *nonce < confirmed)
-            .collect();
-        for nonce in lapsed {
-            if let Some(hold) = self.holds.remove(&nonce) {
-                self.lapsed_holds
-                    .insert(nonce, hold.with_phase(HoldPhase::ReplaceOrDominate));
-            }
-        }
-    }
-
-    /// The lane's outstanding delivery-unknown hold, if it has one.
+    /// The lane's outstanding delivery-unknown hold, if it has one. A retained
+    /// [`NonceOccupant::LapsedHold`] is history, not an open hold: the
+    /// hold-shaped verbs decline on it and only a rewind restores it.
     fn hold_of(&self, strategy: &StrategyId) -> Option<&DeliveryHold> {
-        self.holds.values().find(|hold| hold.strategy == *strategy)
+        self.occupancy.values().find_map(|occupant| match occupant {
+            NonceOccupant::DeliveryHold(hold) if hold.strategy() == strategy => Some(hold),
+            _ => None,
+        })
     }
 
-    fn is_outstanding(&self, nonce: u64) -> bool {
-        self.broadcasts.contains_key(&nonce)
-            || self.holds.contains_key(&nonce)
-            || self.leases.values().any(|held| *held == nonce)
+    /// The nonce of the strategy's outstanding lease, if it holds one.
+    fn lease_nonce_of(&self, strategy: &StrategyId) -> Option<u64> {
+        self.occupancy
+            .iter()
+            .find_map(|(nonce, occupant)| match occupant {
+                NonceOccupant::Lease { strategy: owner } if owner == strategy => Some(*nonce),
+                _ => None,
+            })
     }
 
-    fn lowest_free(&self, confirmed: u64) -> Option<u64> {
-        let mut nonce = confirmed;
+    /// Whether a live reservation sits below the confirmed chain nonce, so the
+    /// ledger contradicts the chain. Retained confirmation history is exempt:
+    /// it is not a reservation, and every lawful head leaves it below the
+    /// confirmed nonce.
+    fn stale_reservation(&self) -> bool {
+        self.occupancy.iter().any(|(nonce, occupant)| {
+            *nonce < self.confirmed
+                && matches!(
+                    occupant,
+                    NonceOccupant::Lease { .. } | NonceOccupant::Broadcast { .. }
+                )
+        })
+    }
+
+    /// The lowest free nonce at or above the confirmed chain nonce. Every
+    /// occupant parks its slot — including the retained forms, which leave it
+    /// only through reorg revival.
+    fn lowest_free(&self) -> Option<u64> {
+        let mut nonce = self.confirmed;
         loop {
-            if !self.is_outstanding(nonce) {
+            if !self.occupancy.contains_key(&nonce) {
                 return Some(nonce);
             }
             nonce = nonce.checked_add(1)?;
         }
     }
+
+    /// The lease handle's nonce while it still names the strategy's current
+    /// reservation. Verification is by occupancy, never by a second index, so
+    /// a handle for another strategy's slot — or a consumed one — declines.
+    fn verified_lease_nonce(&self, lease: &NonceLease) -> Result<u64, DeclineKind> {
+        match self.occupancy.get(&lease.nonce()) {
+            Some(NonceOccupant::Lease { strategy }) if strategy == lease.strategy() => {
+                Ok(lease.nonce())
+            }
+            _ => Err(DeclineKind::UnknownLease),
+        }
+    }
+
+    /// `free -> lease`: reserve the lowest free nonce for the strategy. The
+    /// decline order is the contract: the strategy's own outstanding lease, its
+    /// own delivery-unknown hold (the bytes there may be live), then any stale
+    /// reservation contradicting the chain.
+    fn enter_lease(&mut self, strategy: &StrategyId) -> Result<NonceLease, DeclineKind> {
+        if self.lease_nonce_of(strategy).is_some() {
+            return Err(DeclineKind::StrategyLeaseOutstanding);
+        }
+        if self.hold_of(strategy).is_some() {
+            return Err(DeclineKind::DeliveryUnknownHold);
+        }
+        if self.stale_reservation() {
+            return Err(DeclineKind::BelowChainNonce);
+        }
+        let nonce = self.lowest_free().ok_or(DeclineKind::Exhausted)?;
+        self.occupancy.insert(
+            nonce,
+            NonceOccupant::Lease {
+                strategy: strategy.clone(),
+            },
+        );
+        Ok(NonceLease {
+            strategy: strategy.clone(),
+            nonce,
+        })
+    }
+
+    /// `lease -> broadcast`: the transaction is on the wire and its nonce stays
+    /// occupied until the chain confirms it.
+    fn enter_broadcast(&mut self, lease: &NonceLease) -> Result<(), DeclineKind> {
+        let nonce = self.verified_lease_nonce(lease)?;
+        if nonce < self.confirmed {
+            return Err(DeclineKind::BelowChainNonce);
+        }
+        self.occupancy.insert(
+            nonce,
+            NonceOccupant::Broadcast {
+                strategy: lease.strategy().clone(),
+            },
+        );
+        Ok(())
+    }
+
+    /// `lease -> delivery hold (Frozen)`: the bytes may be live at the lease's
+    /// nonce, so the slot stays occupied and a replacement must dominate the
+    /// fee caps recorded here. The hold takes the lease's slot over — one slot,
+    /// one occupant — and starts [`HoldPhase::Frozen`]: the window has to run
+    /// before a sweep may release the slot.
+    fn enter_hold(
+        &mut self,
+        lease: &NonceLease,
+        fees: HeldFees,
+        window: HoldWindow,
+        at_head: u64,
+    ) -> Result<DeliveryHold, DeclineKind> {
+        let nonce = self.verified_lease_nonce(lease)?;
+        if nonce < self.confirmed {
+            return Err(DeclineKind::BelowChainNonce);
+        }
+        let hold = DeliveryHold {
+            strategy: lease.strategy().clone(),
+            nonce,
+            fees,
+            entered_at_head: at_head,
+            window,
+            phase: HoldPhase::Frozen,
+        };
+        self.occupancy
+            .insert(nonce, NonceOccupant::DeliveryHold(hold.clone()));
+        Ok(hold)
+    }
+
+    /// `hold -> hold (ReplaceOrDominate)`: the window closed. Idempotent — a
+    /// hold already released answers with its current state, so a second sweep
+    /// cannot re-release the same slot.
+    fn expire_hold(
+        &mut self,
+        strategy: &StrategyId,
+        nonce: u64,
+    ) -> Result<DeliveryHold, DeclineKind> {
+        match self.occupancy.get_mut(&nonce) {
+            Some(NonceOccupant::DeliveryHold(hold)) if hold.strategy() == strategy => {
+                hold.phase = HoldPhase::ReplaceOrDominate;
+                Ok(hold.clone())
+            }
+            _ => Err(DeclineKind::UnknownHold),
+        }
+    }
+
+    /// `hold -> lease`: the replacement re-signs at the very nonce the hold
+    /// occupies, in exchange for fees that dominate the held transaction's.
+    /// This is the only way a held slot is reused: the nonce is re-signed by
+    /// the lane that created the hazard, never handed to another signer.
+    fn replace_hold(
+        &mut self,
+        strategy: &StrategyId,
+        fees: HeldFees,
+    ) -> Result<NonceLease, DeclineKind> {
+        let Some(hold) = self.hold_of(strategy).cloned() else {
+            return Err(DeclineKind::UnknownHold);
+        };
+        if hold.nonce() < self.confirmed {
+            return Err(DeclineKind::BelowChainNonce);
+        }
+        if !fees.dominates(hold.fees()) {
+            return Err(DeclineKind::FeesDoNotDominate);
+        }
+        self.occupancy.insert(
+            hold.nonce(),
+            NonceOccupant::Lease {
+                strategy: strategy.clone(),
+            },
+        );
+        Ok(NonceLease {
+            strategy: strategy.clone(),
+            nonce: hold.nonce(),
+        })
+    }
+
+    /// `lease -> free`: a sign path that built against a lease but never got
+    /// the transaction onto the wire frees only that reservation.
+    fn relinquish_lease(&mut self, lease: &NonceLease) -> Result<u64, DeclineKind> {
+        let nonce = self.verified_lease_nonce(lease)?;
+        self.occupancy.remove(&nonce);
+        Ok(nonce)
+    }
+
+    /// `broadcast -> free`: the monitor's expiry verdict — the caller asserts
+    /// the transaction will never land. Retained landed occupancy is not a
+    /// broadcast and declines here.
+    fn expire_broadcast(&mut self, strategy: &StrategyId, nonce: u64) -> Result<u64, DeclineKind> {
+        let owned = matches!(
+            self.occupancy.get(&nonce),
+            Some(NonceOccupant::Broadcast { strategy: owner }) if owner == strategy
+        );
+        if !owned {
+            return Err(DeclineKind::UnknownBroadcast);
+        }
+        self.occupancy.remove(&nonce);
+        Ok(nonce)
+    }
+
+    /// `lease/broadcast/hold -> free` for one strategy: the tombstone path,
+    /// freed nonces ascending. Retained confirmation history stays — it is not
+    /// a reservation — so a rewind still restores what the chain rewrites.
+    fn release_all(&mut self, strategy: &StrategyId) -> Vec<u64> {
+        let mut freed = Vec::new();
+        self.occupancy.retain(|nonce, occupant| {
+            if occupant.strategy() == strategy && occupant.is_outstanding() {
+                freed.push(*nonce);
+                false
+            } else {
+                true
+            }
+        });
+        freed.sort_unstable();
+        freed
+    }
+
+    /// The monotonic head advance: everything the chain passed takes its
+    /// retained form. A lease is deliberately not pruned, so a reservation the
+    /// chain has passed still declines at the next sign instead of silently
+    /// becoming reusable.
+    fn advance_to(&mut self, confirmed: u64) {
+        self.confirmed = confirmed;
+        self.land_below(confirmed);
+    }
+
+    /// `broadcast -> landed` and `hold -> lapsed hold` for every occupant
+    /// strictly below `confirmed`. Both retained forms keep their slot, so a
+    /// rewind restores them instead of leaving the nonce looking free. A hold
+    /// the chain has passed is over — whichever transaction consumed the slot,
+    /// the held bytes can no longer be included at it — so it can only ever be
+    /// restored into replace-or-dominate. Shared by the monotonic and reorg
+    /// head paths so they cannot drift.
+    fn land_below(&mut self, confirmed: u64) {
+        for (nonce, occupant) in &mut self.occupancy {
+            if *nonce >= confirmed {
+                continue;
+            }
+            let retained = match occupant {
+                NonceOccupant::Broadcast { strategy } => Some(NonceOccupant::Landed {
+                    strategy: strategy.clone(),
+                }),
+                NonceOccupant::DeliveryHold(hold) => Some(NonceOccupant::LapsedHold(
+                    hold.clone().with_phase(HoldPhase::ReplaceOrDominate),
+                )),
+                _ => None,
+            };
+            if let Some(retained) = retained {
+                *occupant = retained;
+            }
+        }
+    }
+
+    /// The reorg-safe head reconciliation: one state transition for the whole
+    /// head update, applied under the authority lock. A forward move is the
+    /// ordinary confirmation path; a backward move is a rewind that restores
+    /// the rewound window (`landed -> broadcast`, `lapsed hold -> hold`) and
+    /// releases every lease reserved inside it with one advisory per lease.
+    fn reconcile_head(&mut self, confirmed: u64) -> Vec<ReorgAdvisory> {
+        let old = self.confirmed;
+        if confirmed >= old {
+            self.advance_to(confirmed);
+            return Vec::new();
+        }
+        self.confirmed = confirmed;
+
+        // Revival: the reorged transactions may be back on the wire, so every
+        // retained form the rewound window covers returns to its open form and
+        // its nonce must not look free.
+        for (nonce, occupant) in &mut self.occupancy {
+            if *nonce < confirmed || *nonce >= old {
+                continue;
+            }
+            let revived = match occupant {
+                NonceOccupant::Landed { strategy } => Some(NonceOccupant::Broadcast {
+                    strategy: strategy.clone(),
+                }),
+                NonceOccupant::LapsedHold(hold) => Some(NonceOccupant::DeliveryHold(hold.clone())),
+                _ => None,
+            };
+            if let Some(revived) = revived {
+                *occupant = revived;
+            }
+        }
+
+        // A lease reserved in the rewound window was stamped against a head
+        // that is no longer canonical: release it and advise its owner.
+        let mut advisories: Vec<ReorgAdvisory> = self
+            .occupancy
+            .iter()
+            .filter_map(|(nonce, occupant)| match occupant {
+                NonceOccupant::Lease { strategy } if *nonce >= confirmed && *nonce < old => {
+                    Some(ReorgAdvisory {
+                        strategy: strategy.clone(),
+                        nonce: *nonce,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        for advisory in &advisories {
+            self.occupancy.remove(&advisory.nonce);
+        }
+        advisories.sort_by(|left, right| {
+            left.strategy
+                .cmp(&right.strategy)
+                .then_with(|| left.nonce.cmp(&right.nonce))
+        });
+        advisories
+    }
 }
 
-/// The process-wide nonce ledger shared by every signed strategy.
+/// The process-wide nonce ledger shared by every signed strategy: the sole
+/// writer of the occupancy map.
 #[derive(Debug, Default)]
 pub struct NonceAuthority {
     state: Mutex<NonceState>,
@@ -481,20 +789,18 @@ impl NonceAuthority {
 
     /// Advance the confirmed chain nonce to the chain's authoritative value.
     ///
-    /// Broadcasts strictly below the new value are confirmed on-chain and leave
-    /// the outstanding set; they are retained in the landed index (not
-    /// discarded) so [`set_confirmed_reorg`](Self::set_confirmed_reorg) can
-    /// restore them if a reorg un-confirms that range. A strategy lease is
-    /// deliberately not pruned here, so a reservation the chain has passed
-    /// still declines at the next sign instead of silently becoming reusable.
+    /// Occupants strictly below the new value are confirmed on-chain and move
+    /// into their retained forms; they keep their slots (not discarded) so
+    /// [`set_confirmed_reorg`](Self::set_confirmed_reorg) can restore them if a
+    /// reorg un-confirms that range. A strategy lease is deliberately not
+    /// pruned here, so a reservation the chain has passed still declines at the
+    /// next sign instead of silently becoming reusable.
     ///
     /// This is the monotonic path: it defines only the advancing case. A head
     /// update that may move backward must go through
     /// [`set_confirmed_reorg`](Self::set_confirmed_reorg).
     pub fn set_confirmed(&self, confirmed: u64) {
-        let mut state = self.state.lock();
-        state.confirmed = confirmed;
-        state.land_below(confirmed);
+        self.state.lock().advance_to(confirmed);
     }
 
     /// Advance the confirmed chain nonce from an observed chain read, never
@@ -519,12 +825,12 @@ impl NonceAuthority {
     ///
     /// A forward move is the ordinary confirmation path and behaves exactly
     /// like [`set_confirmed`](Self::set_confirmed). A backward move is a reorg
-    /// rewind: every broadcast the old head had confirmed inside the rewound
-    /// window is restored to the outstanding set (its transaction may be back
-    /// on the wire, so its nonce must not be re-issued), and every live lease
-    /// reserved inside that window is released with an advisory so the owning
-    /// strategy re-leases at the recovered head. Leases at or above the old
-    /// nonce are untouched.
+    /// rewind: every retained form the old head confirmed inside the rewound
+    /// window is restored to the wire (its transaction may be back on it, so
+    /// its nonce must not be re-issued), and every live lease reserved inside
+    /// that window is released with an advisory so the owning strategy
+    /// re-leases at the recovered head. Leases at or above the old nonce are
+    /// untouched.
     ///
     /// Advisories are returned in strategy-name order, then ascending nonce.
     /// The call is idempotent for a repeated same-value rewind. Revived
@@ -534,67 +840,17 @@ impl NonceAuthority {
     /// alive or must be released.
     #[must_use]
     pub fn set_confirmed_reorg(&self, confirmed: u64) -> Vec<ReorgAdvisory> {
-        let mut state = self.state.lock();
-        let old = state.confirmed;
-        if confirmed >= old {
-            state.confirmed = confirmed;
-            state.land_below(confirmed);
-            return Vec::new();
-        }
-        state.confirmed = confirmed;
-
-        // Restore the broadcasts the old head confirmed inside the rewound
-        // window. This is the re-issue fix: without it the forward prune would
-        // leave an in-flight nonce looking free.
-        let revived: Vec<u64> = state
-            .landed
-            .range(confirmed..old)
-            .map(|(nonce, _)| *nonce)
-            .collect();
-        for nonce in revived {
-            if let Some(owner) = state.landed.remove(&nonce) {
-                state.broadcasts.insert(nonce, owner);
-            }
-        }
-
-        // Restore the holds the old head had lapsed inside the rewound
-        // window: the held bytes may be back on the wire, so the slot returns
-        // to replace-or-dominate instead of looking free. The landed-index
-        // rule, one book over.
-        let restored: Vec<u64> = state
-            .lapsed_holds
-            .range(confirmed..old)
-            .map(|(nonce, _)| *nonce)
-            .collect();
-        for nonce in restored {
-            if let Some(hold) = state.lapsed_holds.remove(&nonce) {
-                state.holds.insert(nonce, hold);
-            }
-        }
-
-        // A lease reserved in the rewound window was stamped against a head
-        // that is no longer canonical: release it and advise its owner.
-        let revoked: Vec<(StrategyId, u64)> = state
-            .leases
-            .iter()
-            .filter(|(_, nonce)| **nonce >= confirmed && **nonce < old)
-            .map(|(strategy, nonce)| (strategy.clone(), *nonce))
-            .collect();
-        let mut advisories = Vec::with_capacity(revoked.len());
-        for (strategy, nonce) in revoked {
-            state.leases.remove(&strategy);
-            advisories.push(ReorgAdvisory { strategy, nonce });
-        }
-        advisories
+        self.state.lock().reconcile_head(confirmed)
     }
 
     /// Reserve the lowest nonce at or above the confirmed chain nonce that no
-    /// lease, broadcast, or hold occupies.
+    /// occupant holds.
     ///
     /// A delivery-unknown hold occupies its nonce in either phase: a swept
     /// release is not a free nonce, so ordinary issuance parks the slot and
     /// only the owning lane's explicit [`lease_replace`](Self::lease_replace)
-    /// can reuse it.
+    /// can reuse it. The retained confirmation forms park their slots the same
+    /// way, and only a reorg rewind restores them.
     ///
     /// # Errors
     ///
@@ -604,30 +860,12 @@ impl NonceAuthority {
     /// [`DeclineKind::BelowChainNonce`] if a tracked reservation sits below the
     /// confirmed chain nonce (reconcile before signing).
     pub fn lease(&self, strategy: &StrategyId) -> Result<NonceLease, DeclineKind> {
-        let mut state = self.state.lock();
-        if state.leases.contains_key(strategy) {
-            return Err(DeclineKind::StrategyLeaseOutstanding);
-        }
-        if state.hold_of(strategy).is_some() {
-            return Err(DeclineKind::DeliveryUnknownHold);
-        }
-        if state.leases.values().any(|held| *held < state.confirmed)
-            || state.broadcasts.keys().any(|held| *held < state.confirmed)
-        {
-            return Err(DeclineKind::BelowChainNonce);
-        }
-        let confirmed = state.confirmed;
-        let nonce = state.lowest_free(confirmed).ok_or(DeclineKind::Exhausted)?;
-        state.leases.insert(strategy.clone(), nonce);
-        Ok(NonceLease {
-            strategy: strategy.clone(),
-            nonce,
-        })
+        self.state.lock().enter_lease(strategy)
     }
 
     /// Park `lease` as a delivery-unknown hold: the bytes may be live at the
-    /// lease's nonce, so the slot stays occupied and a replacement must dominate
-    /// the fee caps recorded here.
+    /// lease's nonce, so the slot stays occupied and a replacement must
+    /// dominate the fee caps recorded here.
     ///
     /// The hold replaces the lease rather than joining it — one slot, one
     /// occupant — and it always starts [`HoldPhase::Frozen`]: the window has to
@@ -646,25 +884,7 @@ impl NonceAuthority {
         window: HoldWindow,
         at_head: u64,
     ) -> Result<DeliveryHold, DeclineKind> {
-        let mut state = self.state.lock();
-        match state.leases.get(lease.strategy()) {
-            Some(nonce) if *nonce == lease.nonce() => {}
-            _ => return Err(DeclineKind::UnknownLease),
-        }
-        if lease.nonce() < state.confirmed {
-            return Err(DeclineKind::BelowChainNonce);
-        }
-        state.leases.remove(lease.strategy());
-        let hold = DeliveryHold {
-            strategy: lease.strategy().clone(),
-            nonce: lease.nonce(),
-            fees,
-            entered_at_head: at_head,
-            window,
-            phase: HoldPhase::Frozen,
-        };
-        state.holds.insert(hold.nonce(), hold.clone());
-        Ok(hold)
+        self.state.lock().enter_hold(lease, fees, window, at_head)
     }
 
     /// Release a delivery-unknown hold whose window closed: the slot moves to
@@ -683,15 +903,7 @@ impl NonceAuthority {
         strategy: &StrategyId,
         nonce: u64,
     ) -> Result<DeliveryHold, DeclineKind> {
-        let mut state = self.state.lock();
-        let Some(hold) = state.holds.get_mut(&nonce) else {
-            return Err(DeclineKind::UnknownHold);
-        };
-        if hold.strategy != *strategy {
-            return Err(DeclineKind::UnknownHold);
-        }
-        hold.phase = HoldPhase::ReplaceOrDominate;
-        Ok(hold.clone())
+        self.state.lock().expire_hold(strategy, nonce)
     }
 
     /// Grant the lane that holds a delivery-unknown hold a fresh lease at the
@@ -714,22 +926,7 @@ impl NonceAuthority {
         strategy: &StrategyId,
         fees: HeldFees,
     ) -> Result<NonceLease, DeclineKind> {
-        let mut state = self.state.lock();
-        let Some(hold) = state.hold_of(strategy).cloned() else {
-            return Err(DeclineKind::UnknownHold);
-        };
-        if hold.nonce() < state.confirmed {
-            return Err(DeclineKind::BelowChainNonce);
-        }
-        if !fees.dominates(hold.fees()) {
-            return Err(DeclineKind::FeesDoNotDominate);
-        }
-        state.holds.remove(&hold.nonce());
-        state.leases.insert(strategy.clone(), hold.nonce());
-        Ok(NonceLease {
-            strategy: strategy.clone(),
-            nonce: hold.nonce(),
-        })
+        self.state.lock().replace_hold(strategy, fees)
     }
 
     /// Every delivery-unknown hold, ascending by nonce.
@@ -738,7 +935,15 @@ impl NonceAuthority {
     /// ever freed, so the pass that owns the chain read owns the list.
     #[must_use]
     pub fn holds(&self) -> Vec<DeliveryHold> {
-        self.state.lock().holds.values().cloned().collect()
+        self.state
+            .lock()
+            .occupancy
+            .values()
+            .filter_map(|occupant| match occupant {
+                NonceOccupant::DeliveryHold(hold) => Some(hold.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The lane's outstanding delivery-unknown hold, if it has one.
@@ -753,17 +958,18 @@ impl NonceAuthority {
     /// one stale lease otherwise declines every lane's stamp account-wide.
     #[must_use]
     pub fn outstanding_leases(&self) -> Vec<NonceLease> {
-        let state = self.state.lock();
-        let mut leases: Vec<NonceLease> = state
-            .leases
+        self.state
+            .lock()
+            .occupancy
             .iter()
-            .map(|(strategy, nonce)| NonceLease {
-                strategy: strategy.clone(),
-                nonce: *nonce,
+            .filter_map(|(nonce, occupant)| match occupant {
+                NonceOccupant::Lease { strategy } => Some(NonceLease {
+                    strategy: strategy.clone(),
+                    nonce: *nonce,
+                }),
+                _ => None,
             })
-            .collect();
-        leases.sort_by_key(NonceLease::nonce);
-        leases
+            .collect()
     }
 
     /// Promote `lease` to a broadcast: the transaction is on the wire and its
@@ -775,19 +981,7 @@ impl NonceAuthority {
     /// reservation; [`DeclineKind::BelowChainNonce`] if the chain has already
     /// passed the reserved nonce.
     pub fn record_broadcast(&self, lease: &NonceLease) -> Result<(), DeclineKind> {
-        let mut state = self.state.lock();
-        match state.leases.get(lease.strategy()) {
-            Some(nonce) if *nonce == lease.nonce() => {}
-            _ => return Err(DeclineKind::UnknownLease),
-        }
-        if lease.nonce() < state.confirmed {
-            return Err(DeclineKind::BelowChainNonce);
-        }
-        state.leases.remove(lease.strategy());
-        state
-            .broadcasts
-            .insert(lease.nonce(), lease.strategy().clone());
-        Ok(())
+        self.state.lock().enter_broadcast(lease)
     }
 
     /// Release one strategy's outstanding lease without touching the
@@ -804,46 +998,17 @@ impl NonceAuthority {
     /// [`DeclineKind::UnknownLease`] if `lease` is not the strategy's current
     /// outstanding reservation.
     pub fn release_lease(&self, lease: &NonceLease) -> Result<u64, DeclineKind> {
-        let mut state = self.state.lock();
-        match state.leases.get(lease.strategy()) {
-            Some(nonce) if *nonce == lease.nonce() => {
-                state.leases.remove(lease.strategy());
-                Ok(lease.nonce())
-            }
-            _ => Err(DeclineKind::UnknownLease),
-        }
+        self.state.lock().relinquish_lease(lease)
     }
 
-    /// Release every reservation a strategy owns — its lease and its
-    /// broadcasts — and return the freed nonces, ascending. Idempotent: a
+    /// Release every reservation a strategy owns — its lease, its broadcasts,
+    /// and its holds — and return the freed nonces, ascending. Idempotent: a
     /// strategy with nothing outstanding frees nothing.
+    ///
+    /// Retained confirmation history stays: a landed or lapsed occupant is not
+    /// a reservation, and a rewind must still restore what the chain rewrites.
     pub fn release_strategy(&self, strategy: &StrategyId) -> Vec<u64> {
-        let mut state = self.state.lock();
-        let mut freed = Vec::new();
-        if let Some(nonce) = state.leases.remove(strategy) {
-            freed.push(nonce);
-        }
-        state.broadcasts.retain(|nonce, owner| {
-            if owner == strategy {
-                freed.push(*nonce);
-                false
-            } else {
-                true
-            }
-        });
-        // A tombstone clears holds too: a hold occupies its nonce exactly as a
-        // broadcast does, so leaving one behind would wedge the account's nonce
-        // prefix on a lane that no longer exists.
-        state.holds.retain(|nonce, hold| {
-            if hold.strategy == *strategy {
-                freed.push(*nonce);
-                false
-            } else {
-                true
-            }
-        });
-        freed.sort_unstable();
-        freed
+        self.state.lock().release_all(strategy)
     }
 
     /// Release one broadcast the strategy owns, returning the freed nonce.
@@ -856,58 +1021,77 @@ impl NonceAuthority {
     /// still on the wire is the double-issuance hazard the authority otherwise
     /// refuses, so this entry point exists only for a monitor's expiry verdict.
     ///
-    /// The landed index is untouched: a nonce that already confirmed is not a
-    /// broadcast and declines here.
+    /// Retained landed occupancy is untouched: a nonce that already confirmed
+    /// is not a broadcast and declines here.
     ///
     /// # Errors
     ///
     /// [`DeclineKind::UnknownBroadcast`] if `nonce` is not a broadcast owned
     /// by `strategy`.
     pub fn release_broadcast(&self, strategy: &StrategyId, nonce: u64) -> Result<u64, DeclineKind> {
-        let mut state = self.state.lock();
-        match state.broadcasts.get(&nonce) {
-            Some(owner) if owner == strategy => {
-                state.broadcasts.remove(&nonce);
-                Ok(nonce)
-            }
-            _ => Err(DeclineKind::UnknownBroadcast),
-        }
+        self.state.lock().expire_broadcast(strategy, nonce)
     }
 
     /// The strategy's outstanding lease, if it holds one.
     #[must_use]
     pub fn lease_of(&self, strategy: &StrategyId) -> Option<NonceLease> {
         let state = self.state.lock();
-        state.leases.get(strategy).map(|nonce| NonceLease {
+        state.lease_nonce_of(strategy).map(|nonce| NonceLease {
             strategy: strategy.clone(),
-            nonce: *nonce,
+            nonce,
         })
     }
 
-    /// Whether any lease or broadcast is currently outstanding.
+    /// Whether any live occupant — lease, broadcast, or hold — is outstanding.
     ///
     /// The per-head reconcile guard reads this to skip the chain-nonce refresh
-    /// when no strategy has signed anything since boot.
+    /// when no strategy has signed anything since boot; retained confirmation
+    /// history is not outstanding work.
     #[must_use]
     pub fn has_outstanding(&self) -> bool {
-        let state = self.state.lock();
-        !state.leases.is_empty() || !state.broadcasts.is_empty() || !state.holds.is_empty()
+        self.state
+            .lock()
+            .occupancy
+            .values()
+            .any(NonceOccupant::is_outstanding)
     }
 
-    /// Every outstanding nonce — leases, broadcasts, and holds — ascending, with
-    /// no duplicates.
+    /// Every outstanding nonce — leases, broadcasts, and holds — ascending,
+    /// with no duplicates.
     ///
     /// A hold belongs here in either phase: the ledger's reconcile reads this
     /// set to decide a record went stale, and a held or released-but-unreplaced
-    /// slot is still the lane's.
+    /// slot is still the lane's. The retained confirmation forms are not
+    /// outstanding and stay out; [`occupancy`](Self::occupancy) is the whole
+    /// truth.
     #[must_use]
     pub fn outstanding_nonces(&self) -> Vec<u64> {
-        let state = self.state.lock();
-        let mut nonces: Vec<u64> = state.broadcasts.keys().copied().collect();
-        nonces.extend(state.holds.keys().copied());
-        nonces.extend(state.leases.values().copied());
-        nonces.sort_unstable();
-        nonces
+        self.state
+            .lock()
+            .occupancy
+            .iter()
+            .filter_map(|(nonce, occupant)| occupant.is_outstanding().then_some(*nonce))
+            .collect()
+    }
+
+    /// The occupant at `nonce`, if any; absence means the slot is free. The
+    /// retained confirmation forms are occupants too, so a caller can see what
+    /// a rewind would restore without polling the wire.
+    #[must_use]
+    pub fn occupant(&self, nonce: u64) -> Option<NonceOccupant> {
+        self.state.lock().occupancy.get(&nonce).cloned()
+    }
+
+    /// Every occupant — open reservations and retained confirmation history —
+    /// ascending by nonce: the authority's whole occupancy truth.
+    #[must_use]
+    pub fn occupancy(&self) -> Vec<(u64, NonceOccupant)> {
+        self.state
+            .lock()
+            .occupancy
+            .iter()
+            .map(|(nonce, occupant)| (*nonce, occupant.clone()))
+            .collect()
     }
 }
 
@@ -1178,6 +1362,8 @@ impl<L: NonceLedger> NonceLane<L> {
     reason = "unit tests: a malformed fixture must fail the test loudly"
 )]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     fn sid(name: &str) -> StrategyId {
@@ -2031,13 +2217,14 @@ mod tests {
         StrategyId::new(format!("s{index}"))
     }
 
-    /// The lowest nonce at or above `confirmed` absent from the public
-    /// `outstanding` snapshot, by a plain scan. This is the independent
-    /// oracle: it shares no code with the authority's private ledger scan.
-    fn brute_lowest_free(confirmed: u64, outstanding: &[u64]) -> Option<u64> {
+    /// The lowest nonce at or above `confirmed` whose slot no occupant holds,
+    /// by a plain scan over the public occupancy — open reservations and the
+    /// retained confirmation forms alike. This is the independent oracle: it
+    /// shares no code with the authority's private ledger scan.
+    fn brute_lowest_free(confirmed: u64, blocked: &[u64]) -> Option<u64> {
         let mut nonce = confirmed;
         loop {
-            if !outstanding.contains(&nonce) {
+            if !blocked.contains(&nonce) {
                 return Some(nonce);
             }
             nonce = nonce.checked_add(1)?;
@@ -2061,6 +2248,10 @@ mod tests {
         confirmed: u64,
         leases: BTreeMap<usize, u64>,
         broadcasts: BTreeMap<u64, usize>,
+        /// Nonces the chain confirmed: retained occupancy, still blocking
+        /// their slots (only a reorg revival returns them, which no op here
+        /// performs).
+        retained: BTreeSet<u64>,
     }
 
     impl Mirror {
@@ -2072,6 +2263,15 @@ mod tests {
         fn outstanding(&self) -> Vec<u64> {
             let mut nonces: Vec<u64> = self.broadcasts.keys().copied().collect();
             nonces.extend(self.leases.values().copied());
+            nonces.sort_unstable();
+            nonces
+        }
+
+        /// Every slot an occupant holds: open reservations plus retained
+        /// confirmation history.
+        fn blocked(&self) -> Vec<u64> {
+            let mut nonces = self.outstanding();
+            nonces.extend(self.retained.iter().copied());
             nonces.sort_unstable();
             nonces
         }
@@ -2093,7 +2293,7 @@ mod tests {
                 match op {
                     Op::Lease(index) => {
                         let before_confirmed = authority.confirmed();
-                        let before_outstanding = authority.outstanding_nonces();
+                        let before_blocked = mirror.blocked();
                         let result = authority.lease(&strategy(index));
                         if mirror.leases.contains_key(&index) {
                             prop_assert_eq!(result, Err(DeclineKind::StrategyLeaseOutstanding));
@@ -2103,7 +2303,7 @@ mod tests {
                             let lease = result.expect("free nonce must be issued");
                             prop_assert_eq!(
                                 lease.nonce(),
-                                brute_lowest_free(before_confirmed, &before_outstanding).unwrap()
+                                brute_lowest_free(before_confirmed, &before_blocked).unwrap()
                             );
                             prop_assert_eq!(lease.strategy(), &strategy(index));
                             mirror.leases.insert(index, lease.nonce());
@@ -2146,7 +2346,16 @@ mod tests {
                     Op::SetConfirmed(value) => {
                         authority.set_confirmed(value);
                         mirror.confirmed = value;
-                        mirror.broadcasts.retain(|nonce, _| *nonce >= value);
+                        let landed: Vec<u64> = mirror
+                            .broadcasts
+                            .keys()
+                            .copied()
+                            .filter(|nonce| *nonce < value)
+                            .collect();
+                        for nonce in landed {
+                            mirror.broadcasts.remove(&nonce);
+                            mirror.retained.insert(nonce);
+                        }
                     }
                 }
 

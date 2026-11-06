@@ -1594,6 +1594,69 @@ mod tests {
         );
     }
 
+    /// One head update moves broadcast occupants into their retained landed
+    /// form; a rewind restores exactly the rewound window and leaves the rest
+    /// retained. A revival is no notice — a caller diffs the occupancy.
+    #[test]
+    fn a_head_update_retains_occupancy_and_rewinds_exactly_the_window() {
+        use degenbot_substrate::nonce::NonceOccupant;
+
+        let mut host = host();
+        let id = register(&mut host, "backrun");
+        host.enable(&id).expect("enable");
+        for _ in 0..2 {
+            let lease = host.nonce().lease(&id).expect("lease");
+            host.nonce().record_broadcast(&lease).expect("broadcast");
+        }
+
+        assert!(
+            host.on_head(9).is_empty(),
+            "a forward head folds no notices"
+        );
+        assert_eq!(
+            host.nonce().occupancy(),
+            vec![
+                (
+                    7,
+                    NonceOccupant::Landed {
+                        strategy: id.clone()
+                    }
+                ),
+                (
+                    8,
+                    NonceOccupant::Landed {
+                        strategy: id.clone()
+                    }
+                ),
+            ],
+            "confirmation retains both occupants"
+        );
+
+        assert!(
+            host.on_head(8).is_empty(),
+            "a revival is no notice: a caller diffs the occupancy"
+        );
+        assert_eq!(
+            host.nonce().occupancy(),
+            vec![
+                (
+                    7,
+                    NonceOccupant::Landed {
+                        strategy: id.clone()
+                    }
+                ),
+                (
+                    8,
+                    NonceOccupant::Broadcast {
+                        strategy: id.clone()
+                    }
+                ),
+            ],
+            "the rewind restores exactly the rewound window [8, 9)"
+        );
+        assert_eq!(host.nonce().outstanding_nonces(), vec![8]);
+    }
+
     #[test]
     fn subscribing_an_unknown_strategy_is_refused() {
         let host = host();

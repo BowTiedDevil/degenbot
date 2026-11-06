@@ -353,7 +353,7 @@ mod tests {
     use degenbot_bot::strategy_host::{FacetStatus, StrategyHost};
     use degenbot_eventhub::Hub;
     use degenbot_substrate::nonce::{
-        DeclineKind, HeldFees, HoldWindow, LanePolicy, NonceAuthority, NonceLease,
+        DeclineKind, HeldFees, HoldWindow, LanePolicy, NonceAuthority, NonceLease, NonceOccupant,
     };
     use degenbot_substrate::route_registry::RouteRegistry;
 
@@ -904,5 +904,100 @@ mod tests {
             "the monitor tracks the replacement's bytes"
         );
         assert!(rig.authority.hold_of(&rig.strategy).is_none());
+    }
+
+    /// Confirmation lands broadcasts into their retained form, and a rewind
+    /// restores exactly the rewound window: the recovered head's broadcast
+    /// returns to the wire, everything below the recovered head stays landed,
+    /// and a repeated same-head reconciliation changes nothing.
+    #[tokio::test]
+    async fn a_rewind_restores_exactly_the_rewound_window() {
+        let rig = rig();
+        for _ in 0..2 {
+            let lease = rig.lane.stamp().expect("stamp");
+            signed_broadcast(&rig, &lease);
+        }
+        // A live peer lease keeps hosted activity open, so the head feed still
+        // reconciles after both records close.
+        let peer = rig.peer_lane.stamp().expect("peer stamp");
+        assert_eq!(peer.nonce(), 2);
+        rig.read.reports(2);
+        let rec = reconciliation(&rig);
+
+        assert_eq!(
+            rec.reconcile_head(100).await,
+            ReconcileOutcome::Reconciled {
+                folded: 2,
+                swept: SweepOutcome::default(),
+            },
+            "both confirmed broadcasts fold a Landed notice"
+        );
+        let landed = vec![
+            (
+                0,
+                NonceOccupant::Landed {
+                    strategy: rig.strategy.clone(),
+                },
+            ),
+            (
+                1,
+                NonceOccupant::Landed {
+                    strategy: rig.strategy.clone(),
+                },
+            ),
+            (
+                2,
+                NonceOccupant::Lease {
+                    strategy: rig.peer.clone(),
+                },
+            ),
+        ];
+        assert_eq!(
+            rig.authority.occupancy(),
+            landed,
+            "confirmation moves both occupants into their retained form"
+        );
+
+        assert_eq!(rec.reconcile_head(100).await, ReconcileOutcome::Deduped);
+        assert_eq!(
+            rig.authority.occupancy(),
+            landed,
+            "a repeated same-head reconciliation is idempotent"
+        );
+
+        rig.read.reports(1);
+        assert_eq!(
+            rec.reconcile_head(101).await,
+            ReconcileOutcome::Reconciled {
+                folded: 0,
+                swept: SweepOutcome::default(),
+            },
+            "the rewind folds nothing new: both records already closed"
+        );
+        assert_eq!(
+            rig.authority.occupancy(),
+            vec![
+                (
+                    0,
+                    NonceOccupant::Landed {
+                        strategy: rig.strategy.clone(),
+                    },
+                ),
+                (
+                    1,
+                    NonceOccupant::Broadcast {
+                        strategy: rig.strategy.clone(),
+                    },
+                ),
+                (
+                    2,
+                    NonceOccupant::Lease {
+                        strategy: rig.peer.clone(),
+                    },
+                ),
+            ],
+            "the rewind restores exactly the rewound window [1, 2)"
+        );
+        assert_eq!(rig.authority.outstanding_nonces(), vec![1, 2]);
     }
 }
