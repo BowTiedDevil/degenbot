@@ -345,11 +345,16 @@ class TestResolvePoolType:
 
     def test_answers_generic_curve_when_factory_fails_and_no_db_entry(self) -> None:
         # Discovery-only identity (Curve exposes no factory(), no DB row, no
-        # Balancer membership): the resolver answers the generic Curve
-        # descriptor rather than raising — the caller routes it through the ONE
-        # construction entry's Curve arm. The unverified-contract loud-abort is
-        # a different path (the probing arm), tested separately.
-        io = FakePyBotIo(factory_address=None, pool_row=None)
+        # Balancer membership) with its positive identity — `coins(uint256)`
+        # answered: the resolver answers the generic Curve descriptor rather
+        # than raising — the caller routes it through the ONE construction
+        # entry's Curve arm. An address with no positive identity is refused
+        # under the typed error instead (tested separately).
+        io = FakePyBotIo(
+            factory_address=None,
+            pool_row=None,
+            probe_result=PoolProbe.STABLESWAP,
+        )
         descriptor = resolve_pool_type(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
@@ -358,6 +363,38 @@ class TestResolvePoolType:
         assert descriptor.family is PoolFamily.STABLESWAP
         assert descriptor.variant is None
         assert descriptor.factory is None
+
+    def test_refuses_an_address_with_no_identity_selector(self) -> None:
+        # The public seam's typed refusal for an undeterminable address: no DB
+        # row, no factory() getter, no Balancer membership, and no identity
+        # selector answered. Nothing positive names a pool, so this must never
+        # be guessed as Curve.
+        io = FakePyBotIo(
+            factory_address=None,
+            pool_row=None,
+            probe_exception=ValueError("no identity selector answered"),
+        )
+        with pytest.raises(DegenbotValueError, match="no identity selector answered"):
+            resolve_pool_type(
+                "0x0000000000000000000000000000000000000000",  # type: ignore[arg-type]
+                chain_id=CHAIN_ID,
+                io=io,
+            )
+
+    def test_refuses_a_factory_less_answer_that_is_not_curve(self) -> None:
+        # The zero-address artifact shape: a non-contract address "answers"
+        # slot0 with empty returndata (the probe counts a non-revert call as
+        # presence), but no factory() getter and no Curve selector answered.
+        # Every V2/V3-family deployment exposes factory(), so a factory-less
+        # non-Curve probe answer is not a pool identity — refuse under the
+        # typed error, never classify.
+        io = FakePyBotIo(factory_address=None, pool_row=None, probe_result=PoolProbe.V3)
+        with pytest.raises(DegenbotValueError, match="Cannot determine pool type"):
+            resolve_pool_type(
+                "0x0000000000000000000000000000000000000000",  # type: ignore[arg-type]
+                chain_id=CHAIN_ID,
+                io=io,
+            )
 
     def test_probes_when_no_db_entry(self) -> None:
         factory_address = "0x1234567890AbCdEf1234567890aBcDeF12345678"

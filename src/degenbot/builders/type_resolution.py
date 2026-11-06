@@ -311,33 +311,27 @@ def fetch_factory_from_chain(
     return io.fetch_factory_address(address)
 
 
-def resolve_pool_type_by_probing(
+def _probe_identity(
     address: ChecksummedAddress,
     *,
     chain_id: ChainId,
-    factory: ChecksummedAddress,
     io: BotIo,
-) -> PoolTypeDescriptor:
-    """Determine pool type by probing the contract on-chain.
+) -> PoolProbe:
+    """Run the Rust identity probe and parse its wire code.
 
-    Tries V3 first (slot0), then V2 (getReserves), then Balancer
-    (getPoolId + getNormalizedWeights), then Curve (coins(uint256)). When
-    no probe answers, the Rust probe raises UnknownPoolIdentity, which this
-    function surfaces as DegenbotValueError — an unverified contract is not
-    silently classified as Curve.
+    One home for the two seam failures every probing caller must treat as a
+    typed refusal: no identity selector answered, and a wire code outside the
+    ``PoolProbe`` space (Rust/Python lock-step drift). Neither is ever a
+    classification.
 
     Returns:
-        The computed value.
+        The probe outcome.
 
     Raises:
         DegenbotValueError: When the seam reports no identity selector
-            answered, or on a probe code outside the PoolProbe space —
-            Rust/Python wire-order drift, never silently classified.
+            answered, or on a probe code outside the PoolProbe space.
 
     """
-    # Delegate the probing choreography to Rust (``BotIo.probe_pool_type``).
-    # BotIo is the only executor; the Python slot0/getReserves/getPoolId probing
-    # fallback is retired.
     try:
         result = io.probe_pool_type(address)
     except ValueError as e:
@@ -349,7 +343,7 @@ def resolve_pool_type_by_probing(
         )
         raise DegenbotValueError(message=msg) from e
     try:
-        probe = PoolProbe(result)
+        return PoolProbe(result)
     except ValueError as e:
         raise DegenbotValueError(
             message=(
@@ -358,6 +352,32 @@ def resolve_pool_type_by_probing(
                 "and degenbot.types.pool_type.PoolProbe are out of lock-step"
             ),
         ) from e
+
+
+def resolve_pool_type_by_probing(
+    address: ChecksummedAddress,
+    *,
+    chain_id: ChainId,
+    factory: ChecksummedAddress,
+    io: BotIo,
+) -> PoolTypeDescriptor:
+    """Determine pool type by probing the contract on-chain.
+
+    Tries V3 first (slot0), then V2 (getReserves), then Balancer
+    (getPoolId + getNormalizedWeights), then Curve (coins(uint256)). When
+    no probe answers, the Rust probe reports unknown identity; the seam
+    failures cross as the package's typed refusal (`DegenbotValueError`
+    from :func:`_probe_identity`) — an unverified contract is not silently
+    classified as Curve.
+
+    Returns:
+        The computed value.
+
+    """
+    # Delegate the probing choreography to Rust (``BotIo.probe_pool_type``).
+    # BotIo is the only executor; the Python slot0/getReserves/getPoolId probing
+    # fallback is retired.
+    probe = _probe_identity(address, chain_id=chain_id, io=io)
 
     match probe:
         case PoolProbe.V3 | PoolProbe.V2:
@@ -410,11 +430,16 @@ def resolve_pool_type(
        answer at all (every deployed Balancer pool)
 
     A discovery-only pool (Curve exposes no `factory()`, no DB row, no
-    Balancer membership) resolves to the generic Curve descriptor; the
-    unverified-contract loud-abort lives in the probing arm.
+    Balancer membership) resolves to the generic Curve descriptor on its
+    positive identity — `coins(uint256)` answering. An address with no
+    positive identity is refused with `DegenbotValueError` — the typed
+    refusal for an undeterminable address, never a Curve guess.
 
     Returns:
         The computed value.
+
+    Raises:
+        DegenbotValueError: If the pool's type cannot be determined.
 
     """
     # Step 1: DB lookup — the `kind` column is the most direct signal.
@@ -457,11 +482,23 @@ def resolve_pool_type(
 
     # Discovery-only identity: Curve pools expose no `factory()`, no DB `kind`,
     # and no Balancer factory membership, so nothing above can classify them.
-    # Answer the generic Curve descriptor rather than raising — the caller
-    # routes it through the ONE core construction entry's generic Curve arm
-    # like every other family (never a second path). This is NOT the
-    # unverified-contract case: that raise lives in the probing arm, which the
-    # factory read already proved is not in play here.
+    # Curve identity is positive — `coins(uint256)` answering with a decodable
+    # address is what names a Curve pool — so the probe decides here too: the
+    # generic Curve descriptor is answered only on that positive identity, and
+    # the caller routes it through the ONE core construction entry's generic
+    # Curve arm like every other family (never a second path). An address with
+    # no positive identity is the undeterminable case the public seam refuses
+    # under the typed error, never guessed as Curve — and a factory-less
+    # non-Curve probe answer is that case too (every V2/V3-family deployment
+    # exposes `factory()`, and Balancer identity answered above).
+    probe = _probe_identity(address, chain_id=chain_id, io=io)
+    if probe is not PoolProbe.STABLESWAP:
+        msg = (
+            f"Cannot determine pool type for address {address} on chain {chain_id}: "
+            f"no factory() getter answered and the identity probe reported "
+            f"{probe.name} — refusing to classify a factory-less {probe.name} pool."
+        )
+        raise DegenbotValueError(message=msg)
     return PoolTypeDescriptor(
         family=PoolFamily.STABLESWAP,
         variant=None,
