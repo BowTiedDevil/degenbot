@@ -341,6 +341,10 @@ pub enum ConsumerErrorKind {
     /// The move found the claim already used: `resume` is a session's one
     /// start, and a spent claim starts nothing.
     ClaimSpent,
+    /// The move found a session already attached: `attach` installs one
+    /// session, and a second attach refuses replacement (the refusal hands the
+    /// un-installed hand-off and driver back).
+    AlreadyAttached,
     /// The session's driver refused the move; `detail` is the driver's own
     /// refusal text.
     DriverRefusedTheMove,
@@ -372,6 +376,31 @@ pub struct SessionReport {
     pub consumer: ConsumerReport,
     /// The session's teardown report (the same value every close caller gets).
     pub teardown: TeardownReport,
+}
+
+/// A second attach's refusal: the typed error plus EVERY value the refused
+/// move did not install.
+///
+/// The hand-off travels back un-split and the driver with it, so the refusal
+/// consumes nothing by construction — the caller may attach the pair to
+/// another consumer.
+pub struct AttachRefusal {
+    /// The refusal's own typed error ([`ConsumerErrorKind::AlreadyAttached`]),
+    /// stamped at [`already_attached`].
+    pub error: ConsumerError,
+    /// The hand-off the refused move did not install.
+    pub handoff: EventHandoff,
+    /// The driver the refused move did not install.
+    pub driver: Arc<EngineDriver>,
+}
+
+impl std::fmt::Debug for AttachRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AttachRefusal")
+            .field("error", &self.error)
+            .field("handoff", &self.handoff)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A session-attached consumer's failure: the loop's abort (or the session's
@@ -441,14 +470,46 @@ impl SessionConsumer {
     /// Attach the session's one hand-off and its driver.
     ///
     /// The hand-off's claim is moved into [`Self::resume`], so production cannot
-    /// start without the attached-consumer proof the claim carries.
-    pub fn attach(&mut self, handoff: EventHandoff, driver: Arc<EngineDriver>) {
+    /// start without the attached-consumer proof the claim carries. One session
+    /// at a time: while a session is attached, a second attach refuses
+    /// replacement and hands its un-installed values back (consumes nothing).
+    ///
+    /// # Errors
+    ///
+    /// [`AttachRefusal`] ([`ConsumerErrorKind::AlreadyAttached`]) when a session
+    /// is already attached. A caller that takes a hand-off from somewhere else
+    /// checks [`Self::attach_admissible`] FIRST, so a refused attach leaves that
+    /// hand-off claimable where it was.
+    pub fn attach(
+        &mut self,
+        handoff: EventHandoff,
+        driver: Arc<EngineDriver>,
+    ) -> Result<(), AttachRefusal> {
+        if !self.attach_admissible() {
+            return Err(AttachRefusal {
+                error: already_attached(),
+                handoff,
+                driver,
+            });
+        }
         let (stream, claim) = handoff.split();
         self.session = Some(SessionHalf {
             stream,
             claim: Some(claim),
             driver,
         });
+        Ok(())
+    }
+
+    /// Whether [`Self::attach`] would admit a hand-off — the ONE attach
+    /// legality rule every consumer shares.
+    ///
+    /// `true` while no session is attached (including after [`Self::run`]
+    /// consumed one — attach-after-run is admitted); `false` while a session is
+    /// attached, where a second attach would replace it.
+    #[must_use]
+    pub fn attach_admissible(&self) -> bool {
+        self.session.is_none()
     }
 
     /// The clock as the loop last accepted it.
@@ -692,6 +753,24 @@ fn unattached(method: &str) -> SessionFailure {
             report: ConsumerReport::default(),
         },
         teardown: None,
+    }
+}
+
+/// A session move the consumer could not make: a session is already attached.
+///
+/// The ONE [`ConsumerErrorKind::AlreadyAttached`] stamping site. Public
+/// because a shell that checks [`SessionConsumer::attach_admissible`] before
+/// taking a hand-off raises the same core-stamped refusal the authoritative
+/// [`SessionConsumer::attach`] returns — a shell stamps no kind of its own.
+#[must_use]
+pub fn already_attached() -> ConsumerError {
+    ConsumerError {
+        kind: ConsumerErrorKind::AlreadyAttached,
+        batch_index: 0,
+        detail: "the session consumer already has an attached session; a second attach \
+                 refuses replacement"
+            .to_owned(),
+        report: ConsumerReport::default(),
     }
 }
 
@@ -1291,6 +1370,16 @@ mod tests {
             "the consumer's claim was already used; resume refused"
         );
         assert!(spent.teardown.is_none());
+
+        let attached = already_attached();
+        assert_eq!(attached.kind, ConsumerErrorKind::AlreadyAttached);
+        assert_eq!(
+            attached.detail,
+            "the session consumer already has an attached session; a second attach \
+             refuses replacement"
+        );
+        assert_eq!(attached.batch_index, 0);
+        assert_eq!(attached.report, ConsumerReport::default());
     }
 
     /// The loud-abort rule's placement: a stored leaf failure stops the loop

@@ -877,7 +877,9 @@ fn run() -> Result<(), String> {
                 progress: progress.clone(),
             },
         );
-        consumer.attach(handoff, std::sync::Arc::clone(&driver));
+        consumer
+            .attach(handoff, std::sync::Arc::clone(&driver))
+            .map_err(|refusal| refusal.error.detail)?;
         consumer
             .resume()
             .await

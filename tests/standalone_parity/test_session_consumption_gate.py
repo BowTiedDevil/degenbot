@@ -32,6 +32,7 @@ import pytest
 
 from degenbot.dispatch import (
     BatchExecutor,
+    ConsumerErrorKind,
     Dispatcher,
     SessionConsumer,
     SessionConsumerError,
@@ -155,6 +156,7 @@ async def _run_scenario(scenario: dict[str, Any], path_a: int) -> dict[str, Any]
     outcome = "ok"
     detail: str | None = None
     aborted_at: int | None = None
+    abort_kind: Any = None
     try:
         report = await consumer.run()
     except SessionConsumerError as exc:
@@ -162,6 +164,11 @@ async def _run_scenario(scenario: dict[str, Any], path_a: int) -> dict[str, Any]
         detail = str(exc)
         aborted_at = exc.batch_index
         report = exc.report
+        abort_kind = exc.kind
+    if abort_kind is not None:
+        assert abort_kind == ConsumerErrorKind.LeafFailure, (
+            "the gate's aborts are stored leaf failures, core-stamped"
+        )
 
     records: list[list[dict[str, Any]]] = []
     while True:

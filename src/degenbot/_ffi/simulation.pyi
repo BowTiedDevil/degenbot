@@ -19,7 +19,7 @@ from .submission import Dispatcher, TxSigner
 
 class SessionConsumerError(RuntimeError):
     """
-    A session consume-loop abort: a pipeline leaf failure, or a lifecycle refusal. A leaf failure's message is the leaf's own detail under the shared loud-abort prefix; a refusal (no attached session, a spent claim, or the driver refusing the move) is prefix-free and carries the refusal's own text, because no leaf ran. `batch_index` is the batch whose pass failed and `report` the counts the loop reached before it stopped (the typed consumer report).
+    A session consume-loop abort: a pipeline leaf failure, or a lifecycle refusal. A leaf failure's message is the leaf's own detail under the shared loud-abort prefix; a refusal (no attached session, a spent claim, the driver refusing the move, or a second attach) is prefix-free and carries the refusal's own text, because no leaf ran. `kind` is the core `ConsumerErrorKind` classification (`None` for an adapter-local slot refusal); `batch_index` is the batch whose pass failed and `report` the counts the loop reached before it stopped (the typed consumer report).
     """
 
 @final
@@ -139,6 +139,38 @@ class BatchOutcomeSet:
         The submit-lane records as the FFI wire dicts (the
         `dispatch_and_submit` shape — `typed_submit_record` decodes them).
         """
+
+@final
+class ConsumerErrorKind:
+    """
+    The consume loop's abort kinds on the Python surface — the core's
+    [`ConsumerErrorKind`] verbatim, so the shell re-classifies nothing.
+    """
+
+    AlreadyAttached: Final[ConsumerErrorKind]
+    """
+    A session was already attached: a second attach refuses replacement.
+    """
+    ClaimSpent: Final[ConsumerErrorKind]
+    """
+    The claim was already used: a spent claim starts nothing.
+    """
+    DriverRefusedTheMove: Final[ConsumerErrorKind]
+    """
+    The session's driver refused the move; the detail is the driver's text.
+    """
+    LeafFailure: Final[ConsumerErrorKind]
+    """
+    A pipeline leaf ran and failed; the detail is the leaf's text.
+    """
+    NoSession: Final[ConsumerErrorKind]
+    """
+    No session was ever attached: the consumer was never handed a hand-off.
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __hash__(self, /) -> int: ...
+    def __int__(self, /) -> int: ...
+    def __ne__(self, value: object, /) -> bool: ...
 
 @final
 class ExecutorPolicyValues:
@@ -284,8 +316,9 @@ class SessionConsumer:
 
         Production builds this shape and then moves the engine's hand-off into
         it with :meth:`attach`; the slot starts `Pending` (no stream has moved
-        in), which is what makes a second attach and a scripted attach refusals
-        rather than silent replacements. `allow_quiet_end` is the session's end
+        in), and a second attach is the core's own refusal (the shared
+        `attach_admissible` rule) rather than a silent replacement.
+        `allow_quiet_end` is the session's end
         policy:
         `False` for a supervised session, where a natural stream end means the
         pump died outside its own teardown and the end verdict says so. A
@@ -299,16 +332,19 @@ class SessionConsumer:
 
         The hand-off travels with the claim that proves a consumer holds it, so
         the consumer's :meth:`resume` is the only way production starts. One
-        session has one consumer, and the attach transition is guarded here: a
-        consumer that already holds a hand-off, a scripted consumer, one with a
-        move in flight, and a spent one are each refused by name. The slot is
-        checked BEFORE the engine's hand-off is taken, so a refused attach
-        destroys nothing — the other engine's stream stays claimable.
+        session has one consumer: the slot guards its own lifecycle states (a
+        scripted consumer, one with a move in flight, a spent one) and the
+        CORE's shared attach rule refuses a second attach — both checked BEFORE
+        the engine's hand-off is taken, so a refused attach destroys nothing:
+        the other engine's stream stays claimable.
 
         # Errors
 
-        `RuntimeError`: the slot refuses the attach transition, or the engine's
-        hand-off is already claimed.
+        `SessionConsumerError` (a `RuntimeError`) for every refused attach: the
+        slot's own refusal (`kind` is `None`), the core's second-attach refusal
+        (`kind` is the core's `AlreadyAttached`, stamped at the core's own
+        constructor), or the engine's hand-off already claimed (`kind` is
+        `None`).
         """
     @property
     def beats(self, /) -> int:
@@ -333,11 +369,11 @@ class SessionConsumer:
 
         # Errors
 
-        `RuntimeError`: the slot refuses the move (a move is already in flight,
-        or the consumer already ran).
-        `SessionConsumerError` (a `RuntimeError`) carrying the core's refusal —
-        the driver's refusal, a spent claim, or no attached session. A refusal is
-        prefix-free: its message is the refusal's own text.
+        `SessionConsumerError` (a `RuntimeError`) for every refused move: the
+        slot's own (`kind` is `None` — a move in flight, or the consumer already
+        ran) or the core's (`kind` carries `NoSession`, `ClaimSpent`, or
+        `DriverRefusedTheMove`). A refusal is prefix-free: its message is the
+        refusal's own text.
         """
     def run(self, /) -> Any:
         """
@@ -354,13 +390,14 @@ class SessionConsumer:
 
         # Errors
 
-        `RuntimeError`: the slot refuses the move (a move is already in flight,
-        or the consumer already ran).
-        `SessionConsumerError` (a `RuntimeError`): the ordered lane stored a leaf
-        failure, or the core refused the move (no attached session). A leaf
-        failure's message is the leaf's own text under the shared loud-abort
-        prefix, re-raised in this caller's frame before any further batch reached
-        the lane; a refusal's message is the refusal's own text, prefix-free.
+        `SessionConsumerError` (a `RuntimeError`) for every refused move and
+        abort: the slot's own refusal (`kind` is `None` — a move in flight, or
+        the consumer already ran), the core's refusal (`kind` carries
+        `NoSession`), or the ordered lane's stored leaf failure (`kind` carries
+        `LeafFailure`). A leaf failure's message is the leaf's own text under
+        the shared loud-abort prefix, re-raised in this caller's frame before
+        any further batch reached the lane; a refusal's message is the refusal's
+        own text, prefix-free.
         """
     @staticmethod
     def scripted(
@@ -752,6 +789,7 @@ __all__ = [
     "BatchExecutor",
     "BatchOutcome",
     "BatchOutcomeSet",
+    "ConsumerErrorKind",
     "ExecutorPolicyValues",
     "FailureDetail",
     "FailureKind",

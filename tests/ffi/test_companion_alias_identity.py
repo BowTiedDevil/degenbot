@@ -36,6 +36,8 @@ import importlib
 import pytest
 
 import degenbot.dispatch
+from degenbot.exceptions import VerificationRpcError
+from tests.helpers.seam import VerificationRpcError as FfiVerificationRpcError
 
 # Module aliases keep each table row on a single line.
 _DISPATCH = "degenbot.dispatch"
@@ -66,6 +68,10 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     # exception so a driver's ``except`` keeps matching what the core raises.
     (_DISPATCH, "SessionConsumer", _SIM, "SessionConsumer"),
     (_DISPATCH, "SessionConsumerError", _SIM, "SessionConsumerError"),
+    # The abort's typed `kind` vocabulary: the core's classification, exported
+    # beside its exception so a driver reads the class AND the kind by stable
+    # companion names.
+    (_DISPATCH, "ConsumerErrorKind", _SIM, "ConsumerErrorKind"),
     (_DISPATCH, "SimulateContext", _SIM, "SimulateContext"),
     (_DISPATCH, "PayloadOutcome", _SIM, "PayloadOutcome"),
     (_DISPATCH, "PayloadVerdict", _SIM, "PayloadVerdict"),
@@ -135,7 +141,9 @@ def test_dispatch_all_pins_public_surface() -> None:
     the payload arm started routing through the same Rust sim join. The
     session consumer (``SessionConsumer`` + its typed abort) joined when the
     consume loop moved into ``degenbot-batch-executor``: the cockpit builds the
-    consumer from here and catches its abort by this name.
+    consumer from here and catches its abort by this name. The abort's typed
+    ``kind`` vocabulary (``ConsumerErrorKind``) joined when the exception
+    gained its classification attribute.
     """
 
     d = degenbot.dispatch
@@ -144,6 +152,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "BatchExecutor",
         "BatchOutcome",
         "BatchOutcomeSet",
+        "ConsumerErrorKind",
         "Dispatcher",
         "FailureDetail",
         "FailureKind",
@@ -182,8 +191,6 @@ def test_rust_raised_exception_is_caught_by_companion_alias() -> None:
     ``except`` matches; the raise here goes through the FFI symbol and the
     catch through the companion symbol to pin the cross-module contract.
     """
-    from degenbot.exceptions import VerificationRpcError
-    from tests.helpers.seam import VerificationRpcError as FfiVerificationRpcError
 
     msg = "transport blip"
     with pytest.raises(VerificationRpcError) as caught:

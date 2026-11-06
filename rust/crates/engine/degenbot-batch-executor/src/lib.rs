@@ -57,7 +57,8 @@ pub use record::{
 };
 pub use row::{PayloadFailure, PayloadRow, RawResult};
 pub use session::{
-    batch_work, payload_row, raw_row, simulated_path, BlockClock, ConsumerEnd, ConsumerError,
-    ConsumerErrorKind, ConsumerPolicy, ConsumerReport, EventFeed, FeeHistoryPolicy, SessionClock,
-    SessionConsumer, SessionFailure, SessionProgress, SessionReport,
+    already_attached, batch_work, payload_row, raw_row, simulated_path, AttachRefusal, BlockClock,
+    ConsumerEnd, ConsumerError, ConsumerErrorKind, ConsumerPolicy, ConsumerReport, EventFeed,
+    FeeHistoryPolicy, SessionClock, SessionConsumer, SessionFailure, SessionProgress,
+    SessionReport,
 };

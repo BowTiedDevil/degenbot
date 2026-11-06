@@ -72,7 +72,7 @@ pub mod simulation {
     use super::dispatch::{merge_payload_results_py, PyPayloadOutcome, PyPayloadVerdict};
 
     #[pymodule_export]
-    use super::session::{PySessionConsumer, SessionConsumerError};
+    use super::session::{PyConsumerErrorKind, PySessionConsumer, SessionConsumerError};
 
     #[pymodule_export]
     use super::in_process_probe::{

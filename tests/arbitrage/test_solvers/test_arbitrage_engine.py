@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
-from degenbot.dispatch import Dispatcher, SessionConsumer, SessionConsumerError
+from degenbot.dispatch import (
+    ConsumerErrorKind,
+    Dispatcher,
+    SessionConsumer,
+    SessionConsumerError,
+)
 from tests.helpers.session_drive import block_event, offline_executor
 from tests.helpers.v2_cycle_engine import build_two_hop_v2_engine
 
@@ -74,12 +81,13 @@ class TestLifecycleMoves:
         with pytest.raises(SessionConsumerError, match="no attached session") as refusal:
             await consumer.resume()
         assert refusal.value.batch_index == 0
+        assert refusal.value.kind == ConsumerErrorKind.NoSession, (
+            "the classification is the core's own stamp, read verbatim at the seam"
+        )
 
     def test_connect_signature_takes_the_endpoint_only(self):
         """Configuration is not a lifecycle argument (ADR-093 D1)."""
         engine = ArbitrageEngine()
-        import inspect
-
         sig = inspect.signature(engine.connect)
         params = list(sig.parameters.keys())
         assert "rpc_url" in params
@@ -125,14 +133,14 @@ class TestConsumerSlotTransitions:
     ``SessionConsumer`` holds a slot over the core consumer, and the consumer
     moves together with its event origin: a scripted consumer's refused move
     restores the scripted receiver, so the follow-on ``run`` still consumes the
-    script the caller supplied. A move the slot cannot make is refused by name
-    (the slot's own transition-naming message, outside the core's mapping), and
-    that refusal is pinned exactly: a bare ``RuntimeError``, carrying none of
-    the loud-abort prefix the mapped errors wear, so routing a slot refusal
-    through the mapping fails the test instead of passing under a broader
-    ``RuntimeError`` match. The unattached, claim-spent and driver refusals stay
-    the core's, so a test that reaches them pins the occurrence and the
-    follow-on product, not the text.
+    script the caller supplied. Every refusal raises the ONE shared
+    ``SessionConsumerError``: an adapter-local slot refusal (a move in flight,
+    a spent consumer, or the scripted-origin attach rule) carries
+    ``kind=None`` and none of the loud-abort prefix, while the second-attach
+    rule is the CORE's shared legality rule and carries its own stamped
+    ``AlreadyAttached`` kind. The unattached, claim-spent and driver refusals
+    stay the core's too, so a test that reaches them pins the occurrence and
+    the follow-on product, not the text.
     """
 
     async def test_a_refused_resume_keeps_the_scripted_origin(self):
@@ -196,28 +204,31 @@ class TestConsumerSlotTransitions:
         assert report["blocks"] == 0
 
     def test_a_second_attach_is_refused_and_keeps_the_hand_off(self):
-        """One session has one consumer: a second attach is refused by name.
+        """One session has one consumer: a second attach is refused by the core.
 
-        The refusal fires on the slot BEFORE the second engine's hand-off is
-        taken, so a refused attach destroys nothing: that engine's stream is
-        still claimable by a consumer of its own. It is the slot's own
-        refusal, so its shape is exact: a bare ``RuntimeError``, prefix-free.
+        The second-attach rule is the CORE's shared legality rule
+        (``attach_admissible``), and the classification is stamped at the core's
+        own refusal constructor — the seam reads ``AlreadyAttached`` and
+        re-classifies nothing. The refusal fires BEFORE the second engine's
+        hand-off is taken, so a refused attach destroys nothing: that engine's
+        stream is still claimable by a consumer of its own. The message is
+        prefix-free — no leaf ran.
         """
         executor = offline_executor(Dispatcher.for_block(12_345))
         consumer = SessionConsumer(executor, allow_quiet_end=True)
         consumer.attach(ArbitrageEngine())
         second = ArbitrageEngine()
 
-        with pytest.raises(RuntimeError, match="one session has one consumer") as refusal:
+        with pytest.raises(SessionConsumerError, match="refuses replacement") as refusal:
             consumer.attach(second)
 
-        assert type(refusal.value) is RuntimeError, (
-            "the slot refuses in its own type; a SessionConsumerError here means "
-            "the refusal was routed through the loud-abort mapping"
+        assert refusal.value.kind == ConsumerErrorKind.AlreadyAttached, (
+            "the classification is the core's own stamp, not the shell's"
         )
         assert LOUD_ABORT_PREFIX not in str(refusal.value), (
-            "the slot's refusal is prefix-free, not a mapped leaf failure"
+            "a refusal is prefix-free, not a mapped leaf failure"
         )
+        assert refusal.value.batch_index == 0
 
         SessionConsumer(executor, allow_quiet_end=True).attach(second)
 
@@ -226,27 +237,55 @@ class TestConsumerSlotTransitions:
 
         The refused attach leaves both sides intact: the scripted receiver stays
         armed for the consumer's ``run``, and the engine's hand-off is still
-        claimable. It is the slot's own refusal, so its shape is exact: a bare
-        ``RuntimeError``, prefix-free.
+        claimable. The scripted-origin rule is the SLOT's (adapter-local), so
+        the shared exception carries ``kind=None`` — no core classification —
+        and the message is prefix-free.
         """
         executor = offline_executor(Dispatcher.for_block(12_345))
         consumer = SessionConsumer.scripted(executor, [block_event(100)], allow_quiet_end=True)
         engine = ArbitrageEngine()
 
-        with pytest.raises(RuntimeError, match="a scripted consumer cannot attach") as refusal:
+        with pytest.raises(
+            SessionConsumerError, match="scripted consumer cannot attach"
+        ) as refusal:
             consumer.attach(engine)
 
-        assert type(refusal.value) is RuntimeError, (
-            "the slot refuses in its own type; a SessionConsumerError here means "
-            "the refusal was routed through the loud-abort mapping"
-        )
+        assert refusal.value.kind is None, "an adapter-local refusal carries no core classification"
         assert LOUD_ABORT_PREFIX not in str(refusal.value), (
-            "the slot's refusal is prefix-free, not a mapped leaf failure"
+            "a slot refusal is prefix-free, not a mapped leaf failure"
+        )
+        assert refusal.value.batch_index == 0
+        assert refusal.value.report["batches"] == 0, (
+            "the batch_index/report attributes are uniform across every shape"
         )
 
         SessionConsumer(executor, allow_quiet_end=True).attach(engine)
         report = await consumer.run()
         assert report["blocks"] == 1, "the refused attach kept the scripted stream"
+
+    async def test_a_spent_consumer_refuses_in_the_local_type(self):
+        """The terminal ``Spent`` rule is the slot's: ``kind=None``, prefix-free.
+
+        The consume loop ran, so every follow-on move is refused by the slot's
+        own lifecycle rule — an adapter-local fact the core does not model (the
+        core's own second ``run`` answer is the separate ``NoSession``
+        delegation, pinned at the Rust seam).
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer.scripted(executor, [block_event(100)], allow_quiet_end=True)
+        report = await consumer.run()
+        assert report["end_of_stream"] == 1
+
+        with pytest.raises(SessionConsumerError, match="a spent consumer cannot run") as refusal:
+            await consumer.run()
+        assert refusal.value.kind is None
+        assert LOUD_ABORT_PREFIX not in str(refusal.value)
+
+        with pytest.raises(SessionConsumerError, match="a spent consumer cannot resume"):
+            await consumer.resume()
+
+        with pytest.raises(SessionConsumerError, match="a spent consumer cannot attach"):
+            consumer.attach(ArbitrageEngine())
 
     async def test_an_unattached_run_reports_the_no_session_refusal(self):
         """A never-attached consumer's ``run`` reports the core's own refusal.
@@ -274,8 +313,9 @@ class TestAbortMappingByKind:
     attached session, a spent claim, the driver refusing the move — map WITHOUT
     the loud-abort prefix, carrying the refusal's own text, because no pipeline
     leaf ran; only ``LeafFailure`` wears the prefix, with the leaf's detail
-    under it. The slot's own refusals are a fourth shape entirely: a bare
-    ``RuntimeError``, pinned by ``TestConsumerSlotTransitions``.
+    under it. The slot's own refusals wear the same class with ``kind=None`` —
+    no core classification, still prefix-free — pinned by
+    ``TestConsumerSlotTransitions``.
     """
 
     async def test_an_unattached_resume_maps_the_no_session_refusal_without_the_prefix(self):
@@ -298,6 +338,7 @@ class TestAbortMappingByKind:
         assert "no attached session to resume" in message
         assert refusal.value.batch_index == 0
         assert refusal.value.report["batches"] == 0
+        assert refusal.value.kind == ConsumerErrorKind.NoSession
 
     async def test_a_claim_spent_resume_maps_the_spent_claim_refusal_without_the_prefix(self):
         """ClaimSpent: the truthful claim text, prefix-free.
@@ -320,6 +361,7 @@ class TestAbortMappingByKind:
         assert message == "the consumer's claim was already used; resume refused", (
             "a spent claim names its own transition"
         )
+        assert refusal.value.kind == ConsumerErrorKind.ClaimSpent
 
     async def test_a_driver_refused_resume_maps_the_driver_refusal_without_the_prefix(self):
         """DriverRefusedTheMove: the driver's own refusal text, prefix-free.
@@ -339,6 +381,7 @@ class TestAbortMappingByKind:
         assert "cannot resume from detached" in message, "the driver's refusal carries its own text"
         assert "resume requires subscribed" in message
         assert refusal.value.batch_index == 0
+        assert refusal.value.kind == ConsumerErrorKind.DriverRefusedTheMove
 
     async def test_a_leaf_failure_maps_under_the_loud_abort_prefix(self):
         """LeafFailure: the prefix plus the leaf's detail (the one prefixed kind).
@@ -376,3 +419,4 @@ class TestAbortMappingByKind:
         )
         assert "hop_outputs length (1)" in message
         assert refusal.value.batch_index == 1
+        assert refusal.value.kind == ConsumerErrorKind.LeafFailure

@@ -30,8 +30,8 @@ use crate::simulation::batch::PyBatchExecutor;
 use crate::simulation::dispatch::payload_row_from_dict;
 use crate::submission::sim_pipeline::LEAF_FAILURE_PREFIX;
 use degenbot_batch_executor::session::{
-    simulated_path, ConsumerErrorKind, ConsumerPolicy, ConsumerReport, FeeHistoryPolicy,
-    SessionClock, SessionConsumer, SessionProgress,
+    already_attached, simulated_path, ConsumerErrorKind, ConsumerPolicy, ConsumerReport,
+    FeeHistoryPolicy, SessionClock, SessionConsumer, SessionProgress,
 };
 use degenbot_bot::arb_engine::{
     BlockNotification, Heartbeat, ResultBatch, SessionEvent, SimulatedPathResult,
@@ -47,11 +47,54 @@ pyo3::create_exception!(
     PyRuntimeError,
     "A session consume-loop abort: a pipeline leaf failure, or a lifecycle\n\
      refusal. A leaf failure's message is the leaf's own detail under the shared\n\
-     loud-abort prefix; a refusal (no attached session, a spent claim, a driver\n\
-     refusal) is prefix-free and carries the refusal's own text, because no leaf\n\
-     ran. `batch_index` is the batch whose pass failed and `report` the counts\n\
-     the loop reached before it stopped (the typed consumer report)."
+     loud-abort prefix; a refusal (no attached session, a spent claim, the driver\n\
+     refusing the move, or a second attach) is prefix-free and carries the\n\
+     refusal's own text, because no leaf ran. `kind` is the core\n\
+     `ConsumerErrorKind` classification (`None` for an adapter-local slot\n\
+     refusal); `batch_index` is the batch whose pass failed and `report` the\n\
+     counts the loop reached before it stopped (the typed consumer report)."
 );
+
+/// The consume loop's abort kinds on the Python surface — the core's
+/// [`ConsumerErrorKind`] verbatim, so the shell re-classifies nothing.
+///
+// `hash` rides with `eq`: a kind crosses as a VALUE (`==`/`in`), never as a
+// class-attribute singleton — the seam builds a fresh instance per error, so
+// identity comparison silently answers "not this kind".
+#[pyclass(
+    name = "ConsumerErrorKind",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    from_py_object,
+    module = "degenbot._ffi.simulation"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PyConsumerErrorKind {
+    /// No session was ever attached: the consumer was never handed a hand-off.
+    NoSession,
+    /// The claim was already used: a spent claim starts nothing.
+    ClaimSpent,
+    /// The session's driver refused the move; the detail is the driver's text.
+    DriverRefusedTheMove,
+    /// A pipeline leaf ran and failed; the detail is the leaf's text.
+    LeafFailure,
+    /// A session was already attached: a second attach refuses replacement.
+    AlreadyAttached,
+}
+
+impl From<ConsumerErrorKind> for PyConsumerErrorKind {
+    fn from(kind: ConsumerErrorKind) -> Self {
+        match kind {
+            ConsumerErrorKind::NoSession => Self::NoSession,
+            ConsumerErrorKind::ClaimSpent => Self::ClaimSpent,
+            ConsumerErrorKind::DriverRefusedTheMove => Self::DriverRefusedTheMove,
+            ConsumerErrorKind::LeafFailure => Self::LeafFailure,
+            ConsumerErrorKind::AlreadyAttached => Self::AlreadyAttached,
+        }
+    }
+}
 
 /// The consume loop's counts, in the shape a caller reads.
 #[derive(Clone, Copy, Debug, Default)]
@@ -92,33 +135,48 @@ impl ReportView {
     }
 }
 
-/// The consume loop's typed abort as the Python exception surface.
+/// The consume loop's typed abort as the Python exception surface — the ONE
+/// builder every refusal and failure raises.
 ///
 /// The core's [`ConsumerErrorKind`] classifies the message and the shell never
 /// re-classifies: a leaf failure maps under the shared loud-abort prefix with
-/// the leaf's detail after it, while a refusal
-/// ([`ConsumerErrorKind::NoSession`], [`ConsumerErrorKind::ClaimSpent`],
-/// [`ConsumerErrorKind::DriverRefusedTheMove`]) maps prefix-free, carrying the
-/// refusal's own text — no leaf ran. The batch index and the report ride as
-/// attributes, so a caller reads typed facts instead of parsing the text.
+/// the leaf's detail after it, while a refusal maps prefix-free, carrying the
+/// refusal's own text — no leaf ran. `kind` carries the core's classification
+/// (`None` only for an adapter-local slot refusal, which the core never
+/// stamps), and `batch_index`/`report` ride as attributes on every shape, so a
+/// caller reads typed facts instead of parsing the text.
 fn abort_error(
     py: Python<'_>,
-    kind: ConsumerErrorKind,
+    kind: Option<ConsumerErrorKind>,
     detail: &str,
     batch_index: u64,
     report: ReportView,
 ) -> PyErr {
     let message = match kind {
-        ConsumerErrorKind::LeafFailure => format!("{LEAF_FAILURE_PREFIX}{detail}"),
-        ConsumerErrorKind::NoSession
-        | ConsumerErrorKind::ClaimSpent
-        | ConsumerErrorKind::DriverRefusedTheMove => detail.to_owned(),
+        Some(ConsumerErrorKind::LeafFailure) => format!("{LEAF_FAILURE_PREFIX}{detail}"),
+        Some(
+            ConsumerErrorKind::NoSession
+            | ConsumerErrorKind::ClaimSpent
+            | ConsumerErrorKind::AlreadyAttached
+            | ConsumerErrorKind::DriverRefusedTheMove,
+        )
+        | None => detail.to_owned(),
     };
     let Ok(instance) = SessionConsumerError::type_object(py).call1((message.clone(),)) else {
         // Building the typed instance is the whole point of the call; if the
         // type is not callable the plain error still carries the contract.
         return PyRuntimeError::new_err(message);
     };
+    let kind_arg: Bound<'_, PyAny> = match kind {
+        Some(kind) => match Bound::new(py, PyConsumerErrorKind::from(kind)) {
+            Ok(member) => member.into_any(),
+            Err(err) => return err,
+        },
+        None => py.None().into_bound(py),
+    };
+    if let Err(err) = instance.setattr("kind", kind_arg) {
+        return err;
+    }
     if let Err(err) = instance.setattr("batch_index", batch_index) {
         return err;
     }
@@ -178,13 +236,13 @@ impl SlotMove {
     fn admit(self, slot: &ConsumerSlot) -> Result<(), &'static str> {
         match self {
             Self::Attach => match slot {
-                ConsumerSlot::Fresh(_, EventOrigin::Pending) => Ok(()),
-                ConsumerSlot::Fresh(_, EventOrigin::Attached) => {
-                    Err("one session has one consumer")
-                }
                 ConsumerSlot::Fresh(_, EventOrigin::Scripted(_)) => {
                     Err("a scripted consumer cannot attach an engine hand-off")
                 }
+                // The second-attach rule is the CORE's shared legality rule
+                // (`attach_admissible`): the slot guards only its own
+                // lifecycle states here.
+                ConsumerSlot::Fresh(_, _) => Ok(()),
                 ConsumerSlot::Running(_) => Err("a move is already in flight"),
                 ConsumerSlot::Spent => Err("a spent consumer cannot attach"),
             },
@@ -232,25 +290,28 @@ impl ConsumerSlot {
         }
     }
 
-    /// The refusal for a move this slot cannot make: one message per illegal
-    /// transition, naming the move and the state it found.
+    /// The refusal message for a move this slot cannot make: one message per
+    /// illegal transition, naming the move and the state it found.
     ///
-    /// Shell-local by construction: the core never models a slot transition, so
-    /// the message carries no core kind and never traverses the loud-abort
-    /// mapping that prefixes a leaf failure.
-    fn refuse(&self, moved: SlotMove, why: &str) -> PyErr {
-        PyRuntimeError::new_err(format!(
+    /// Shell-local by construction: the core never models a slot transition,
+    /// so the raise site stamps `kind=None` and the message never traverses the
+    /// loud-abort mapping that prefixes a leaf failure. The message is built
+    /// here and the typed error at the raise site, so the slot lock is never
+    /// held across a GIL acquisition.
+    fn refuse(&self, moved: SlotMove, why: &str) -> String {
+        format!(
             "the session consumer slot refuses {}: it is {}; {why}",
             moved.name(),
             self.state()
-        ))
+        )
     }
 
     /// Take the consumer out for `resume`, leaving its origin behind in
     /// [`Self::Running`].
     ///
-    /// A refused take leaves the slot untouched.
-    fn take_for_resume(&mut self) -> PyResult<SessionConsumer> {
+    /// A refused take leaves the slot untouched; the refusal is the message,
+    /// typed into the shared exception at the caller's raise site.
+    fn take_for_resume(&mut self) -> Result<SessionConsumer, String> {
         if let Err(why) = SlotMove::Resume.admit(self) {
             return Err(self.refuse(SlotMove::Resume, why));
         }
@@ -275,7 +336,7 @@ impl ConsumerSlot {
     /// The loop reads the origin's receiver itself, so the origin cannot stay
     /// behind; the slot goes [`Self::Spent`] at dispatch (a concurrent or later
     /// move is refused as spent) and a delegated refusal restores the pair.
-    fn take_for_run(&mut self) -> PyResult<(SessionConsumer, EventOrigin)> {
+    fn take_for_run(&mut self) -> Result<(SessionConsumer, EventOrigin), String> {
         if let Err(why) = SlotMove::Run.admit(self) {
             return Err(self.refuse(SlotMove::Run, why));
         }
@@ -370,8 +431,9 @@ impl PySessionConsumer {
     ///
     /// Production builds this shape and then moves the engine's hand-off into
     /// it with :meth:`attach`; the slot starts `Pending` (no stream has moved
-    /// in), which is what makes a second attach and a scripted attach refusals
-    /// rather than silent replacements. `allow_quiet_end` is the session's end
+    /// in), and a second attach is the core's own refusal (the shared
+    /// `attach_admissible` rule) rather than a silent replacement.
+    /// `allow_quiet_end` is the session's end
     /// policy:
     /// `False` for a supervised session, where a natural stream end means the
     /// pump died outside its own teardown and the end verdict says so. A
@@ -435,32 +497,61 @@ impl PySessionConsumer {
     ///
     /// The hand-off travels with the claim that proves a consumer holds it, so
     /// the consumer's :meth:`resume` is the only way production starts. One
-    /// session has one consumer, and the attach transition is guarded here: a
-    /// consumer that already holds a hand-off, a scripted consumer, one with a
-    /// move in flight, and a spent one are each refused by name. The slot is
-    /// checked BEFORE the engine's hand-off is taken, so a refused attach
-    /// destroys nothing — the other engine's stream stays claimable.
+    /// session has one consumer: the slot guards its own lifecycle states (a
+    /// scripted consumer, one with a move in flight, a spent one) and the
+    /// CORE's shared attach rule refuses a second attach — both checked BEFORE
+    /// the engine's hand-off is taken, so a refused attach destroys nothing:
+    /// the other engine's stream stays claimable.
     ///
     /// # Errors
     ///
-    /// `RuntimeError`: the slot refuses the attach transition, or the engine's
-    /// hand-off is already claimed.
-    fn attach(&self, engine: &PyArbEngine) -> PyResult<()> {
+    /// `SessionConsumerError` (a `RuntimeError`) for every refused attach: the
+    /// slot's own refusal (`kind` is `None`), the core's second-attach refusal
+    /// (`kind` is the core's `AlreadyAttached`, stamped at the core's own
+    /// constructor), or the engine's hand-off already claimed (`kind` is
+    /// `None`).
+    fn attach(&self, py: Python<'_>, engine: &PyArbEngine) -> PyResult<()> {
         let mut slot = self.slot.lock();
         if let Err(why) = SlotMove::Attach.admit(&slot) {
-            return Err(slot.refuse(SlotMove::Attach, why));
+            return Err(abort_error(
+                py,
+                None,
+                &slot.refuse(SlotMove::Attach, why),
+                0,
+                ReportView::default(),
+            ));
+        }
+        let ConsumerSlot::Fresh(consumer, origin) = &mut *slot else {
+            unreachable!("the admission check just proved the slot fresh");
+        };
+        // The core's ONE attach legality rule, checked BEFORE the engine's
+        // hand-off is taken. Its refusal is the core's own constructor — the
+        // shell stamps no kind — so the shared rule reaches Python with the
+        // classification the core recorded.
+        if !consumer.attach_admissible() {
+            let error = already_attached();
+            return Err(abort_error(
+                py,
+                Some(error.kind),
+                &error.detail,
+                error.batch_index,
+                ReportView::of(&error.report),
+            ));
         }
         let handoff = engine.take_handoff().ok_or_else(|| {
-            PyRuntimeError::new_err(
+            abort_error(
+                py,
+                None,
                 "the engine's event stream is already claimed; one consumer hand-off \
                  per session",
+                0,
+                ReportView::default(),
             )
         })?;
         let driver = engine.driver_arc();
-        let ConsumerSlot::Fresh(consumer, origin) = &mut *slot else {
-            unreachable!("the admission check just proved the slot pending");
-        };
-        consumer.attach(handoff, driver);
+        if let Err(refusal) = consumer.attach(handoff, driver) {
+            unreachable!("attach_admissible() was checked under the slot lock: {refusal:?}");
+        }
         *origin = EventOrigin::Attached;
         Ok(())
     }
@@ -475,15 +566,29 @@ impl PySessionConsumer {
     ///
     /// # Errors
     ///
-    /// `RuntimeError`: the slot refuses the move (a move is already in flight,
-    /// or the consumer already ran).
-    /// `SessionConsumerError` (a `RuntimeError`) carrying the core's refusal —
-    /// the driver's refusal, a spent claim, or no attached session. A refusal is
-    /// prefix-free: its message is the refusal's own text.
+    /// `SessionConsumerError` (a `RuntimeError`) for every refused move: the
+    /// slot's own (`kind` is `None` — a move in flight, or the consumer already
+    /// ran) or the core's (`kind` carries `NoSession`, `ClaimSpent`, or
+    /// `DriverRefusedTheMove`). A refusal is prefix-free: its message is the
+    /// refusal's own text.
     fn resume<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slot = Arc::clone(&self.slot);
         crate::ambient_runtime::future_into_py(py, async move {
-            let mut consumer = slot.lock().take_for_resume()?;
+            // The slot guard is never held across a GIL acquisition: the local
+            // refusal's message leaves the take, and the typed error is built
+            // after the guard drops.
+            let taken = {
+                let mut guard = slot.lock();
+                guard.take_for_resume()
+            };
+            let mut consumer = match taken {
+                Ok(consumer) => consumer,
+                Err(message) => {
+                    return Err(Python::attach(|py| {
+                        abort_error(py, None, &message, 0, ReportView::default())
+                    }))
+                }
+            };
             let outcome = consumer.resume().await;
             slot.lock().restore(consumer);
             match outcome {
@@ -491,7 +596,7 @@ impl PySessionConsumer {
                 Err(failure) => Err(Python::attach(|py| {
                     abort_error(
                         py,
-                        failure.error.kind,
+                        Some(failure.error.kind),
                         &failure.error.detail,
                         failure.error.batch_index,
                         ReportView::of(&failure.error.report),
@@ -514,45 +619,57 @@ impl PySessionConsumer {
     ///
     /// # Errors
     ///
-    /// `RuntimeError`: the slot refuses the move (a move is already in flight,
-    /// or the consumer already ran).
-    /// `SessionConsumerError` (a `RuntimeError`): the ordered lane stored a leaf
-    /// failure, or the core refused the move (no attached session). A leaf
-    /// failure's message is the leaf's own text under the shared loud-abort
-    /// prefix, re-raised in this caller's frame before any further batch reached
-    /// the lane; a refusal's message is the refusal's own text, prefix-free.
+    /// `SessionConsumerError` (a `RuntimeError`) for every refused move and
+    /// abort: the slot's own refusal (`kind` is `None` — a move in flight, or
+    /// the consumer already ran), the core's refusal (`kind` carries
+    /// `NoSession`), or the ordered lane's stored leaf failure (`kind` carries
+    /// `LeafFailure`). A leaf failure's message is the leaf's own text under
+    /// the shared loud-abort prefix, re-raised in this caller's frame before
+    /// any further batch reached the lane; a refusal's message is the refusal's
+    /// own text, prefix-free.
     fn run<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slot = Arc::clone(&self.slot);
         crate::ambient_runtime::future_into_py(py, async move {
-            let (mut consumer, mut origin) = slot.lock().take_for_run()?;
+            // The slot guard is never held across a GIL acquisition (see
+            // `resume`).
+            let taken = {
+                let mut guard = slot.lock();
+                guard.take_for_run()
+            };
+            let (mut consumer, mut origin) = match taken {
+                Ok(pair) => pair,
+                Err(message) => {
+                    return Err(Python::attach(|py| {
+                        abort_error(py, None, &message, 0, ReportView::default())
+                    }))
+                }
+            };
             let outcome = match &mut origin {
                 EventOrigin::Scripted(rx) => consumer
                     .consume(rx)
                     .await
-                    .map(|report| ReportView::of(&report))
-                    .map_err(|error| (error.kind, error.detail, error.batch_index, error.report)),
+                    .map(|report| ReportView::of(&report)),
                 EventOrigin::Attached | EventOrigin::Pending => consumer
                     .run()
                     .await
                     .map(|report| ReportView::of(&report.consumer))
-                    .map_err(|failure| {
-                        (
-                            failure.error.kind,
-                            failure.error.detail,
-                            failure.error.batch_index,
-                            failure.error.report,
-                        )
-                    }),
+                    .map_err(|failure| failure.error),
             };
             match outcome {
                 Ok(view) => Python::attach(|py| view.to_py_dict(py)),
-                Err((kind, detail, batch_index, report)) => {
+                Err(error) => {
                     // The refused move leaves the slot fresh: the claim and
                     // attachment facts are core-owned, so the caller may dispatch
                     // the move the core's contract admits.
                     *slot.lock() = ConsumerSlot::Fresh(consumer, origin);
                     Err(Python::attach(|py| {
-                        abort_error(py, kind, &detail, batch_index, ReportView::of(&report))
+                        abort_error(
+                            py,
+                            Some(error.kind),
+                            &error.detail,
+                            error.batch_index,
+                            ReportView::of(&error.report),
+                        )
                     }))
                 }
             }

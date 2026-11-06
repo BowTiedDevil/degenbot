@@ -725,7 +725,7 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
 | 4 | verify method matrix: the verify-config setters, the four verify reads, and the four `run_*_registration_lifecycle` wrappers | one Verify lifecycle — `VerifyLifecycle` in `degenbot_bot::bot_core` with its provider and bounded retry as construction values — plus `PoolVerifications` for the claim facts and `bot_core::{run_verify_lifecycle, run_registration_lifecycle}` |
 | 5 | hand-wired registration: the crawl unit's stage order, `RegistrationPipeline::prepare_candidate`, and `build_paths.py` | one Registration admission (`arb_engine::crawl::admission::RegistrationAdmission`) behind the crawl and direct-registration adapters |
 | 6 | shell consume loops: `examples/settlement_bot/src/consume.rs`'s loop and `src/degenbot/runner/_consume.py`'s loop | the Session consumer (`degenbot_batch_executor::session::SessionConsumer`); both shells keep only the display drain and the report rendering |
-| 7 | `ConsumerError` with no outcome class: a `resume`/`run` refusal read as a leaf failure, which on the Python surface made every `SessionConsumerError` wear the loud-abort prefix | `ConsumerError { kind: ConsumerErrorKind, .. }` — `NoSession` / `ClaimSpent` / `DriverRefusedTheMove` / `LeafFailure`, stamped only where the core raises the error; the Python `SessionConsumerError` maps the three refusal kinds prefix-free with the refusal's own text and only the leaf failure under the prefix |
+| 7 | `ConsumerError` with no outcome class: a `resume`/`run` refusal read as a leaf failure, which on the Python surface made every `SessionConsumerError` wear the loud-abort prefix | `ConsumerError { kind: ConsumerErrorKind, .. }` — `NoSession` / `ClaimSpent` / `AlreadyAttached` / `DriverRefusedTheMove` / `LeafFailure`, stamped only where the core raises the error; the Python `SessionConsumerError` maps the four refusal kinds prefix-free with the refusal's own text, only the leaf failure under the prefix, and carries the classification as its typed `kind` attribute (`None` for an adapter-local slot refusal) |
 | 8 | `SessionEventSource` — one name for two roles: the batch-executor's consumer-input trait and `degenbot-bot`'s event producer | `EventFeed` for the input trait (`degenbot_batch_executor::session::EventFeed`); the bot's producer keeps `SessionEventSource` and the FFI-private origin enum is `EventOrigin` — three roles, three names |
 
 - **`PyArbEngine`** keeps the lifecycle adapters the cockpit calls — `connect`
@@ -772,6 +772,7 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
   refusal AS a leaf failure. The classification is the core's, stamped at the
   one site that raises the error (`ConsumerError.kind`): `NoSession` from
   `SessionConsumer`'s `unattached` constructor, `ClaimSpent` from `claim_spent`,
+  `AlreadyAttached` from `already_attached` (the second-attach refusal),
   `DriverRefusedTheMove` from the driver-refused arm of `resume`, and
   `LeafFailure` from the two consume-loop sites that surface a stored pipeline
   failure. The shell reads that kind and re-classifies nothing, so a refusal
@@ -783,11 +784,31 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
   the executor's shared loud-abort prefix (`sim-submit-pipeline leaf task failed
   - aborting the consumer loudly: `) with the leaf's detail under it. The
   prefix string has one home, `submission::sim_pipeline`'s `pub(crate)`
-  constant, shared by the pipeline's own re-raise and this mapping. The residual
-  wart is the class alone: `SessionConsumerError` still exposes no typed kind
-  attribute on the Python side, so a caller distinguishes the two shapes by
-  `batch_index == 0` plus the message's own words, and its
-  `batch_index`/`report` attributes stay the loop's counts.
+  constant, shared by the pipeline's own re-raise and this mapping. The class
+  carries its classification as the typed `kind` attribute (a `ConsumerErrorKind`
+  member, exported as `degenbot.dispatch.ConsumerErrorKind`) for every
+  core-stamped refusal or failure, `None` for an adapter-local slot refusal, so
+  a caller reads the shape instead of parsing the text; `batch_index`/`report`
+  stay uniform across every shape.
+- **The one shared attach rule, and the deliberately stricter Python slot.**
+  `SessionConsumer::attach` is a typed move: it returns `Result<(),
+  AttachRefusal>`, and `AttachRefusal { error, handoff, driver }` hands the
+  un-installed values back, so a refusal consumes nothing by construction — the
+  refused hand-off and driver attach to another consumer unchanged, and the
+  first session keeps working. `attach_admissible()` shares the same rule
+  (a second attach refuses replacement) as a check a caller runs BEFORE taking
+  a hand-off from somewhere else, and `ConsumerErrorKind::AlreadyAttached` is
+  stamped at the core's `already_attached()` constructor — the ONE stamping
+  site, read (never re-stamped) by the shell. The Python `ConsumerSlot` keeps
+  exactly the lifecycle rules the core does not model — one in-flight move at a
+  time, terminal `Spent`, and the scripted origin's attach refusal — and is
+  therefore DELIBERATELY stricter than the core: the slot refuses
+  attach-after-run while core `attach` admits a fresh hand-off once `run`
+  consumed the session. The asymmetry is not a divergence to close: the slot
+  guards the cockpit's calling conventions (GIL-tied moves), the core guards
+  session legality. Every refusal at the seam raises the one
+  `SessionConsumerError` — `kind=None` for the adapter-local ones — so the
+  shared class is the whole refusal surface.
 
 ### 6.7 Landing order
 

@@ -31,6 +31,45 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **Non-consuming consumer attach refusal: the second-attach legality rule is
+  the core's.** `degenbot_batch_executor::session::SessionConsumer::attach` is
+  now a typed move returning `Result<(), AttachRefusal>`: while a session is
+  attached, a second attach refuses replacement instead of silently swapping
+  the attached session, and `AttachRefusal { error, handoff, driver }` hands
+  back every un-installed value so the refusal consumes nothing by
+  construction — the refused hand-off and driver attach to another consumer
+  unchanged and the first session keeps working (attach-after-run, second-run
+  `NoSession`, run-without-resume, and the unguarded `consume(EventFeed)` are
+  unchanged). `SessionConsumer::attach_admissible()` shares the same rule as a
+  check a caller runs BEFORE taking a hand-off from somewhere else (the Python
+  adapter checks it before `engine.take_handoff()`, so a refused attach leaves
+  that hand-off claimable), and `ConsumerErrorKind::AlreadyAttached` is stamped
+  at the core `already_attached()` constructor — the ONE stamping site. The
+  Python surface gains the typed classification: every attach/resume/run
+  refusal raises `degenbot.dispatch.SessionConsumerError` (adapter-local slot
+  refusals no longer raise a bare `RuntimeError`) with a `kind` attribute — a
+  `degenbot.dispatch.ConsumerErrorKind` member for core-stamped refusals and
+  failures, `None` for adapter-local ones — while `batch_index`/`report` stay
+  uniform and only `LeafFailure` wears the loud-abort prefix. The
+  `ConsumerSlot` keeps the GIL one-in-flight take/restore, terminal `Spent`,
+  and the scripted-origin attach rules unchanged — deliberately stricter than
+  the core (the slot refuses attach-after-run where core `attach` admits it):
+  an asymmetry between calling-convention guards and session legality, not a
+  divergence.
+
+  | Was | Is |
+
+  | --- | --- |
+
+  | `SessionConsumer::attach(handoff, driver) -> ()` silently replaced an attached session | `attach` returns `Result<(), AttachRefusal>`; a second attach refuses replacement (`AlreadyAttached`) with the un-installed hand-off + driver returned |
+
+  | `ConsumerErrorKind` — `NoSession` / `ClaimSpent` / `DriverRefusedTheMove` / `LeafFailure` | + `AlreadyAttached`, stamped at the core `already_attached()` constructor (public, shared with shells pre-checking `attach_admissible()`) |
+
+  | the Python slot's own `Fresh(_, Attached)` attach refusal (`RuntimeError`, "one session has one consumer") | deleted — the core's shared rule refuses it (`SessionConsumerError.kind == AlreadyAttached`) before the engine's hand-off is taken |
+
+  | Python slot refusals raised bare `RuntimeError`, and `SessionConsumerError` exposed no typed kind | every attach/resume/run refusal raises `SessionConsumerError`; `kind` is the core `ConsumerErrorKind` member or `None` (adapter-local), and `ConsumerErrorKind` joins `degenbot.dispatch` (FFI `degenbot._ffi.simulation.ConsumerErrorKind`) |
+
+
 - **Core-owned Session-end ranking: one closed end observation, one pure `rank`
   fold.** `degenbot_bot::arb_engine::session_end` (umbrella
   `degenbot::session_end`) now owns the deterministic fold of the gathered end
