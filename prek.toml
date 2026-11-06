@@ -100,6 +100,18 @@ hooks = [
   # live-invariant gate (ADR-087 D2): watches the live `too_many_lines` waiver sites in the Rust tree against their census; not tripwire precedent.
   { id = "too-many-lines-waivers", name = "too_many_lines waiver ratchet", language = "system", entry = "just check-too-many-lines-waivers", files = '^rust/.*\.rs$|^scripts/hooks/too-many-lines-waiver-census\.txt$|^scripts/hooks/too_many_lines_waivers\.py$', stages = ["pre-commit"], pass_filenames = false },
 
+  # The settlement-bot parity ledger's statuses live in exactly one
+  # machine-checked place — the boot gate's oracle,
+  # tests/standalone_parity/fixtures/settlement_bot_boot.json
+  # `expected.ledger_rows` — and the doc repeats them in three prose places.
+  # This fires when the commit touches the doc, the oracle, or the gate itself,
+  # and compares BOTH whole files (pass_filenames = false): a one-sided status
+  # edit is exactly the drift it exists to catch, so this commit's slice is not
+  # what the reconciliation needs. Two parses, instant tier.
+  #
+  # live-invariant gate (ADR-087 D2): watches the live parity-ledger prose against the boot-gate oracle's ledger rows; not tripwire precedent.
+  { id = "parity-ledger-single-source", name = "Parity ledger single source", language = "system", entry = "just check-parity-ledger-single-source", files = '^docs/architecture/rust-settlement-bot-parity\.md$|^tests/standalone_parity/fixtures/settlement_bot_boot\.json$|^scripts/hooks/parity_ledger_single_source\.py$', stages = ["pre-commit"], pass_filenames = false },
+
   # Staged-files format gates: the same detectors as the whole-tree sweeps
   # (ruff format / rustfmt), sliced to the commit's own files, so an
   # untracked unformatted file from another lane can neither block this

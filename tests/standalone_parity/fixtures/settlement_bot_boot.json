@@ -40,7 +40,7 @@
     },
     "ledger_rows": {
       "01-cli": "REACHABLE",
-      "02-driver-config": "REACHABLE",
+      "02-driver-config": "DRIVER-POLICY",
       "03-rpc-cascade": "REACHABLE",
       "04-db-path": "REACHABLE",
       "05-snapshot-load": "REACHABLE",

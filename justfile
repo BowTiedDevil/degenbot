@@ -1363,6 +1363,22 @@ test-settlement-parity:
     {{ py_run }} pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
     {{ py_run }} python -m tests.standalone_parity.dual_driver_gate --recorded
 
+# Single-source check for the settlement-bot parity ledger's statuses. They have
+# exactly one machine-checked home — the boot gate's oracle,
+# tests/standalone_parity/fixtures/settlement_bot_boot.json
+# `expected.ledger_rows` — and the prose in
+# docs/architecture/rust-settlement-bot-parity.md repeats those facts in three
+# places. This recipe reconciles each of the three against the oracle in both
+# directions (a status either side drops or changes fails, and so does a prose
+# row the oracle's contiguous 01..NN series lacks) and fails any status restated
+# beside a row reference outside them. Registered at pre-commit so a one-sided
+# status edit cannot land; negative probes in
+# tests/test_parity_ledger_single_source.py.
+#
+# live-invariant gate (ADR-087 D2): watches the live parity-ledger prose against the boot-gate oracle's ledger rows; not tripwire precedent.
+check-parity-ledger-single-source:
+    {{py_run}} python scripts/hooks/parity_ledger_single_source.py
+
 # ========== No-Python Console Gate (ADR-051 D10) ==========
 #
 # The Rust-owned console (`degenbot`) must build and run with NO Python in the

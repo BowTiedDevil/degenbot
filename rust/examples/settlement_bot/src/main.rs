@@ -384,7 +384,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
     #[rustfmt::skip]
     let rows: &[(&str, &str, &str)] = &[
         ("01-cli", "REACHABLE", "parse_cli (driver-local, mirrors runner/cli.py); one scheme-classified --node per transport (ADR-062 D6)"),
-        ("02-driver-config", "REACHABLE", "build (mirrors runner/config.py)"),
+        ("02-driver-config", "DRIVER-POLICY", "build (mirrors runner/config.py)"),
         ("03-rpc-cascade", "REACHABLE", "degenbot::config::{resolve_node_request_uri,resolve_node_subscription_uri} (ADR-062 capability-scoped, file+env)"),
         ("04-db-path", "REACHABLE", "degenbot::config::resolve_database_path (+ offline.fixture_db typed key)"),
         ("05-snapshot-load", "REACHABLE", "SnapshotDb::open + Bot::load_snapshot_from_db"),
