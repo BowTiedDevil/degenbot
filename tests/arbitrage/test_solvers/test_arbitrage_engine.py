@@ -6,7 +6,12 @@ import pytest
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.dispatch import Dispatcher, SessionConsumer, SessionConsumerError
-from tests.helpers.session_drive import offline_executor
+from tests.helpers.session_drive import block_event, offline_executor
+
+# The prefix every mapped leaf failure carries. A slot-local refusal is
+# prefix-free by construction, so its presence in a slot message means that
+# refusal was routed through the loud-abort mapping.
+LOUD_ABORT_PREFIX = "sim-submit-pipeline leaf task failed - aborting the consumer loudly: "
 
 # sqrt price at tick 0 (1:1 price for 18-decimal tokens)
 SQRT_PRICE_TICK_0 = 79228162514264337593543950336
@@ -108,3 +113,151 @@ class TestEngineStartRefusals:
         engine.close()
         with pytest.raises(RuntimeError, match="session is stopped"):
             engine.start("http://127.0.0.1:1", "ws://127.0.0.1:1")
+
+
+class TestConsumerSlotTransitions:
+    """The session consumer's lifecycle slot: one consumer, one origin, one move.
+
+    ``SessionConsumer`` holds a slot over the core consumer, and the consumer
+    moves together with its event origin: a scripted consumer's refused move
+    restores the scripted receiver, so the follow-on ``run`` still consumes the
+    script the caller supplied. A move the slot cannot make is refused by name
+    (the slot's own transition-naming message, outside the core's mapping), and
+    that refusal is pinned exactly: a bare ``RuntimeError``, carrying none of
+    the loud-abort prefix the mapped errors wear, so routing a slot refusal
+    through the mapping fails the test instead of passing under a broader
+    ``RuntimeError`` match. The unattached, claim-spent and driver refusals stay
+    the core's, so a test that reaches them pins the occurrence and the
+    follow-on product, not the text.
+    """
+
+    async def test_a_refused_resume_keeps_the_scripted_origin(self):
+        """A scripted consumer's refused ``resume`` leaves the script armed.
+
+        ``resume`` takes the consumer out for its await and restores it - with
+        its origin. A scripted consumer holds no session to resume, so the core
+        refuses; the restore must keep the scripted receiver, so the follow-on
+        ``run`` consumes the scripted stream rather than the (absent) live arm.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer.scripted(executor, [block_event(100)], allow_quiet_end=True)
+
+        with pytest.raises(SessionConsumerError, match="no attached session"):
+            await consumer.resume()
+
+        report = await consumer.run()
+        assert report["blocks"] == 1, "the refused resume kept the scripted stream"
+        assert report["end_of_stream"] == 1
+        assert report["end"] == "quiet-end"
+
+    async def test_a_driver_refused_resume_then_run_consumes_the_closed_session(self):
+        """A driver-refused resume leaves the consumer able to ``run``.
+
+        The core's ``run`` deliberately drops the claim ``resume`` uses, so a
+        session whose driver refused the resume is still consumed to its typed
+        end verdict by the next move (a never-connected driver's stream is
+        already closed).
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer(executor, allow_quiet_end=False)
+        consumer.attach(ArbitrageEngine())
+
+        with pytest.raises(SessionConsumerError):
+            await consumer.resume()
+
+        report = await consumer.run()
+        assert report["end"] == "pump-stopped"
+        assert report["end_of_stream"] == 1
+        assert report["blocks"] == 0
+
+    async def test_a_claim_spent_resume_then_run_consumes_the_closed_session(self):
+        """The claim-spent refusal is reachable through a driver refusal.
+
+        The first ``resume`` is driver-refused and takes the claim with it, so a
+        second ``resume`` is refused claim-spent; the slot restores after both,
+        and ``run`` still consumes the closed session's stream to its typed end.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer(executor, allow_quiet_end=False)
+        consumer.attach(ArbitrageEngine())
+
+        with pytest.raises(SessionConsumerError):
+            await consumer.resume()
+        with pytest.raises(SessionConsumerError, match="claim was already used"):
+            await consumer.resume()
+
+        report = await consumer.run()
+        assert report["end"] == "pump-stopped"
+        assert report["end_of_stream"] == 1
+        assert report["blocks"] == 0
+
+    def test_a_second_attach_is_refused_and_keeps_the_hand_off(self):
+        """One session has one consumer: a second attach is refused by name.
+
+        The refusal fires on the slot BEFORE the second engine's hand-off is
+        taken, so a refused attach destroys nothing: that engine's stream is
+        still claimable by a consumer of its own. It is the slot's own
+        refusal, so its shape is exact: a bare ``RuntimeError``, prefix-free.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer(executor, allow_quiet_end=True)
+        consumer.attach(ArbitrageEngine())
+        second = ArbitrageEngine()
+
+        with pytest.raises(RuntimeError, match="one session has one consumer") as refusal:
+            consumer.attach(second)
+
+        assert type(refusal.value) is RuntimeError, (
+            "the slot refuses in its own type; a SessionConsumerError here means "
+            "the refusal was routed through the loud-abort mapping"
+        )
+        assert LOUD_ABORT_PREFIX not in str(refusal.value), (
+            "the slot's refusal is prefix-free, not a mapped leaf failure"
+        )
+
+        SessionConsumer(executor, allow_quiet_end=True).attach(second)
+
+    async def test_a_scripted_consumer_refuses_attach(self):
+        """A scripted consumer cannot attach an engine hand-off.
+
+        The refused attach leaves both sides intact: the scripted receiver stays
+        armed for the consumer's ``run``, and the engine's hand-off is still
+        claimable. It is the slot's own refusal, so its shape is exact: a bare
+        ``RuntimeError``, prefix-free.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer.scripted(executor, [block_event(100)], allow_quiet_end=True)
+        engine = ArbitrageEngine()
+
+        with pytest.raises(RuntimeError, match="a scripted consumer cannot attach") as refusal:
+            consumer.attach(engine)
+
+        assert type(refusal.value) is RuntimeError, (
+            "the slot refuses in its own type; a SessionConsumerError here means "
+            "the refusal was routed through the loud-abort mapping"
+        )
+        assert LOUD_ABORT_PREFIX not in str(refusal.value), (
+            "the slot's refusal is prefix-free, not a mapped leaf failure"
+        )
+
+        SessionConsumer(executor, allow_quiet_end=True).attach(engine)
+        report = await consumer.run()
+        assert report["blocks"] == 1, "the refused attach kept the scripted stream"
+
+    async def test_an_unattached_run_reports_the_no_session_refusal(self):
+        """A never-attached consumer's ``run`` reports the core's own refusal.
+
+        The slot's ``Pending`` origin guards the attach transition only: an
+        unattached ``run`` still delegates, so ADR-093 6.6's no-session text
+        survives at the FFI. The refused move restores the slot fresh, so the
+        next move delegates again instead of reading as spent.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer(executor, allow_quiet_end=True)
+
+        with pytest.raises(SessionConsumerError, match="no attached session to run") as refusal:
+            await consumer.run()
+        assert refusal.value.batch_index == 0
+
+        with pytest.raises(SessionConsumerError, match="no attached session to resume"):
+            await consumer.resume()

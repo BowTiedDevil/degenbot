@@ -283,7 +283,10 @@ class SessionConsumer:
         Build the session consumer over a session executor, unattached.
 
         Production builds this shape and then moves the engine's hand-off into
-        it with :meth:`attach`. `allow_quiet_end` is the session's end policy:
+        it with :meth:`attach`; the slot starts `Pending` (no stream has moved
+        in), which is what makes a second attach and a scripted attach refusals
+        rather than silent replacements. `allow_quiet_end` is the session's end
+        policy:
         `False` for a supervised session, where a natural stream end means the
         pump died outside its own teardown and the end verdict says so. A
         `fee_history_provider` opts the session into the advisory per-header
@@ -295,14 +298,17 @@ class SessionConsumer:
         consumer.
 
         The hand-off travels with the claim that proves a consumer holds it, so
-        the consumer's :meth:`resume` is the only way production starts. A
-        second attach — or an engine whose hand-off another consumer holds — is
-        refused by name: one session has one consumer.
+        the consumer's :meth:`resume` is the only way production starts. One
+        session has one consumer, and the attach transition is guarded here: a
+        consumer that already holds a hand-off, a scripted consumer, one with a
+        move in flight, and a spent one are each refused by name. The slot is
+        checked BEFORE the engine's hand-off is taken, so a refused attach
+        destroys nothing — the other engine's stream stays claimable.
 
         # Errors
 
-        `RuntimeError`: the engine's hand-off is gone, or this consumer has
-        already run.
+        `RuntimeError`: the slot refuses the attach transition, or the engine's
+        hand-off is already claimed.
         """
     @property
     def beats(self, /) -> int:
@@ -320,10 +326,15 @@ class SessionConsumer:
         Start production: the claim's one use is the driver's `run`.
 
         The core closes the session on a refusal too, so a consumer that could
-        not start never leaves a session running with nobody consuming it.
+        not start never leaves a session running with nobody consuming it. The
+        refusal itself is the core's (the claim is core-owned); the slot restores
+        the consumer with its event origin, so a scripted consumer refused here
+        still consumes its script when the caller turns to :meth:`run`.
 
         # Errors
 
+        `RuntimeError`: the slot refuses the move (a move is already in flight,
+        or the consumer already ran).
         `SessionConsumerError` (a `RuntimeError`) carrying the driver's refusal.
         """
     def run(self, /) -> Any:
@@ -335,11 +346,18 @@ class SessionConsumer:
         (`quiet-end` / `pump-stopped`). The executor's record stream is quiesced
         by the loop's own exit, so a concurrent drain ends by itself.
 
+        An unattached consumer's `run` is the core's refusal, not the slot's: the
+        core's `unattached("run")` text (no attached session to run) survives
+        verbatim, and the refused move restores the slot fresh with its origin.
+
         # Errors
 
+        `RuntimeError`: the slot refuses the move (a move is already in flight,
+        or the consumer already ran).
         `SessionConsumerError` (a `RuntimeError`): the ordered lane stored a leaf
-        failure. The detail is the leaf's own text, re-raised in this caller's
-        frame before any further batch reached the lane.
+        failure, or the core refused the move (no attached session). The detail is
+        the leaf's own text, re-raised in this caller's frame before any further
+        batch reached the lane.
         """
     @staticmethod
     def scripted(

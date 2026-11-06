@@ -35,6 +35,19 @@ All notable changes to the Rust workspace crates are recorded here.
   that a leaf failure does, and the message body is how a caller tells them
   apart today.
 
+- **The Python `SessionConsumer` attach transition is refused by name where it
+  used to replace or discard.** `degenbot.dispatch.SessionConsumer` holds its
+  lifecycle as a slot (`Fresh(consumer, origin)` / `Running(origin)` / `Spent`)
+  instead of an `Option` + `ran` pair, and `attach` is guarded by it: a consumer
+  that already holds an engine hand-off (previously a second `attach`, even with
+  a different engine, silently replaced the live session) and a scripted
+  consumer (previously the attach silently discarded the scripted receiver and
+  drove the live arm instead) now raise a `RuntimeError` naming the refused
+  transition. The slot is checked before the engine's one-shot hand-off is
+  taken, so a refused attach leaves the other engine's stream claimable. The
+  unattached / claim-spent / driver refusals keep delegating to the core, and
+  their `SessionConsumerError` mapping is unchanged.
+
 - **ADR-084 D2 (the engine's doors):** `degenbot-bot`'s two capability homes
   are curated surfaces. Every `bot_core` / `arb_engine` submodule is
   `pub(crate)`; the items the drivers use are re-exported at those two module

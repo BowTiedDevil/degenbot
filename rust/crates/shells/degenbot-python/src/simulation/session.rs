@@ -124,19 +124,156 @@ fn abort_error(py: Python<'_>, detail: &str, batch_index: u64, report: ReportVie
 }
 
 /// Where the consumer reads its ordered events from.
-enum EventSource {
-    /// Production: the engine's one hand-off, moved into the consumer.
+///
+/// The origin rides every slot move: `resume` takes the consumer out for its
+/// await and restores it WITH the origin, so a scripted consumer refused
+/// `resume` still consumes its script for the follow-on `run`.
+enum EventOrigin {
+    /// The `#[new]` door's placeholder: no stream has moved in yet.
+    ///
+    /// It guards the ATTACH transition only. An unattached `resume` / `run`
+    /// stays the core's refusal (its own `unattached` constructor), so the
+    /// shipped no-session message and its mapping path are unchanged.
+    Pending,
+    /// Production: the engine's one hand-off, moved in by `attach`.
     Attached,
     /// The oracle: a caller-supplied script, queued before the loop starts.
     Scripted(tokio::sync::mpsc::UnboundedReceiver<SessionEvent>),
 }
 
-/// The consumer's session state: taken for the duration of an await, so a
-/// second concurrent move is refused by name instead of aliasing the loop.
-struct ConsumerSlot {
-    consumer: Option<SessionConsumer>,
-    source: EventSource,
-    ran: bool,
+/// A lifecycle move a caller asks the slot to make.
+#[derive(Clone, Copy, Debug)]
+enum SlotMove {
+    /// The engine's hand-off moves in (`Pending -> Attached`).
+    Attach,
+    /// The claim's one use (`Fresh -> Running -> Fresh`).
+    Resume,
+    /// The consume loop (`Fresh -> Spent`, restored on a delegated refusal).
+    Run,
+}
+
+impl SlotMove {
+    /// The move's name, as a slot refusal spells it.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Attach => "attach",
+            Self::Resume => "resume",
+            Self::Run => "run",
+        }
+    }
+
+    /// Why the slot refuses this move, or `Ok` when it admits it.
+    ///
+    /// One reason per illegal pair, so no refusal borrows another's text.
+    fn admit(self, slot: &ConsumerSlot) -> Result<(), &'static str> {
+        match self {
+            Self::Attach => match slot {
+                ConsumerSlot::Fresh(_, EventOrigin::Pending) => Ok(()),
+                ConsumerSlot::Fresh(_, EventOrigin::Attached) => {
+                    Err("one session has one consumer")
+                }
+                ConsumerSlot::Fresh(_, EventOrigin::Scripted(_)) => {
+                    Err("a scripted consumer cannot attach an engine hand-off")
+                }
+                ConsumerSlot::Running(_) => Err("a move is already in flight"),
+                ConsumerSlot::Spent => Err("a spent consumer cannot attach"),
+            },
+            Self::Resume => match slot {
+                ConsumerSlot::Fresh(_, _) => Ok(()),
+                ConsumerSlot::Running(_) => Err("a move is already in flight"),
+                ConsumerSlot::Spent => Err("a spent consumer cannot resume"),
+            },
+            Self::Run => match slot {
+                ConsumerSlot::Fresh(_, _) => Ok(()),
+                ConsumerSlot::Running(_) => Err("a move is already in flight"),
+                ConsumerSlot::Spent => Err("a spent consumer cannot run"),
+            },
+        }
+    }
+}
+
+/// The consumer's lifecycle: the consumer and its event origin, one in-flight
+/// move at a time, and nothing after the loop ran.
+///
+/// A refused move leaves the slot fresh, and the claim/attachment facts stay
+/// core-owned: a delegated refusal (`resume` / `run` with no session, a spent
+/// claim, a driver refusal) restores [`Self::Fresh`] with the origin it took, so
+/// the caller may dispatch the follow-on move the core's own contract admits.
+enum ConsumerSlot {
+    /// The consumer may move; nothing is in flight.
+    Fresh(SessionConsumer, EventOrigin),
+    /// An awaitable holds the consumer. The origin stays behind, so the restore
+    /// is origin-preserving and a concurrent move is refused instead of aliasing
+    /// the loop.
+    Running(EventOrigin),
+    /// The consume loop ran: nothing moves again.
+    Spent,
+}
+
+impl ConsumerSlot {
+    /// The state a refusal message names.
+    fn state(&self) -> &'static str {
+        match self {
+            Self::Fresh(_, EventOrigin::Pending) => "pending (no engine hand-off attached)",
+            Self::Fresh(_, EventOrigin::Attached) => "attached",
+            Self::Fresh(_, EventOrigin::Scripted(_)) => "scripted",
+            Self::Running(_) => "running",
+            Self::Spent => "spent",
+        }
+    }
+
+    /// The refusal for a move this slot cannot make: one message per illegal
+    /// transition, naming the move and the state it found.
+    ///
+    /// Shell-local by construction: the core never models a slot transition, so
+    /// the message carries no core kind and never traverses the loud-abort
+    /// mapping that prefixes a leaf failure.
+    fn refuse(&self, moved: SlotMove, why: &str) -> PyErr {
+        PyRuntimeError::new_err(format!(
+            "the session consumer slot refuses {}: it is {}; {why}",
+            moved.name(),
+            self.state()
+        ))
+    }
+
+    /// Take the consumer out for `resume`, leaving its origin behind in
+    /// [`Self::Running`].
+    ///
+    /// A refused take leaves the slot untouched.
+    fn take_for_resume(&mut self) -> PyResult<SessionConsumer> {
+        if let Err(why) = SlotMove::Resume.admit(self) {
+            return Err(self.refuse(SlotMove::Resume, why));
+        }
+        let Self::Fresh(consumer, origin) = std::mem::replace(self, Self::Spent) else {
+            unreachable!("the admission check just proved the slot fresh");
+        };
+        *self = Self::Running(origin);
+        Ok(consumer)
+    }
+
+    /// Put `resume`'s consumer back, with the origin it left behind.
+    fn restore(&mut self, consumer: SessionConsumer) {
+        let Self::Running(origin) = std::mem::replace(self, Self::Spent) else {
+            debug_assert!(false, "a restore follows its own take");
+            return;
+        };
+        *self = Self::Fresh(consumer, origin);
+    }
+
+    /// Take the consumer AND its origin for the terminal `run`.
+    ///
+    /// The loop reads the origin's receiver itself, so the origin cannot stay
+    /// behind; the slot goes [`Self::Spent`] at dispatch (a concurrent or later
+    /// move is refused as spent) and a delegated refusal restores the pair.
+    fn take_for_run(&mut self) -> PyResult<(SessionConsumer, EventOrigin)> {
+        if let Err(why) = SlotMove::Run.admit(self) {
+            return Err(self.refuse(SlotMove::Run, why));
+        }
+        let Self::Fresh(consumer, origin) = std::mem::replace(self, Self::Spent) else {
+            unreachable!("the admission check just proved the slot fresh");
+        };
+        Ok((consumer, origin))
+    }
 }
 
 /// The session consume loop (the core's `SessionConsumer`) plus its one
@@ -152,7 +289,7 @@ impl PySessionConsumer {
     /// Build the core consumer over one session executor and clock.
     fn build(
         executor: &PyBatchExecutor,
-        source: EventSource,
+        origin: EventOrigin,
         allow_quiet_end: bool,
         fee_history: Option<FeeHistoryPolicy>,
     ) -> Self {
@@ -170,11 +307,9 @@ impl PySessionConsumer {
         }
         let consumer = SessionConsumer::new(executor.executor_arc(), clock, policy);
         Self {
-            slot: Arc::new(parking_lot::Mutex::new(ConsumerSlot {
-                consumer: Some(consumer),
-                source,
-                ran: false,
-            })),
+            slot: Arc::new(parking_lot::Mutex::new(ConsumerSlot::Fresh(
+                consumer, origin,
+            ))),
             heartbeat,
             progress,
         }
@@ -224,7 +359,10 @@ impl PySessionConsumer {
     /// Build the session consumer over a session executor, unattached.
     ///
     /// Production builds this shape and then moves the engine's hand-off into
-    /// it with :meth:`attach`. `allow_quiet_end` is the session's end policy:
+    /// it with :meth:`attach`; the slot starts `Pending` (no stream has moved
+    /// in), which is what makes a second attach and a scripted attach refusals
+    /// rather than silent replacements. `allow_quiet_end` is the session's end
+    /// policy:
     /// `False` for a supervised session, where a natural stream end means the
     /// pump died outside its own teardown and the end verdict says so. A
     /// `fee_history_provider` opts the session into the advisory per-header
@@ -245,7 +383,7 @@ impl PySessionConsumer {
     ) -> Self {
         Self::build(
             executor,
-            EventSource::Attached,
+            EventOrigin::Pending,
             allow_quiet_end,
             Self::fee_history(fee_history_provider, fee_history_blocks),
         )
@@ -276,7 +414,7 @@ impl PySessionConsumer {
         drop(tx);
         Ok(Self::build(
             executor,
-            EventSource::Scripted(rx),
+            EventOrigin::Scripted(rx),
             allow_quiet_end,
             None,
         ))
@@ -286,15 +424,22 @@ impl PySessionConsumer {
     /// consumer.
     ///
     /// The hand-off travels with the claim that proves a consumer holds it, so
-    /// the consumer's :meth:`resume` is the only way production starts. A
-    /// second attach — or an engine whose hand-off another consumer holds — is
-    /// refused by name: one session has one consumer.
+    /// the consumer's :meth:`resume` is the only way production starts. One
+    /// session has one consumer, and the attach transition is guarded here: a
+    /// consumer that already holds a hand-off, a scripted consumer, one with a
+    /// move in flight, and a spent one are each refused by name. The slot is
+    /// checked BEFORE the engine's hand-off is taken, so a refused attach
+    /// destroys nothing — the other engine's stream stays claimable.
     ///
     /// # Errors
     ///
-    /// `RuntimeError`: the engine's hand-off is gone, or this consumer has
-    /// already run.
+    /// `RuntimeError`: the slot refuses the attach transition, or the engine's
+    /// hand-off is already claimed.
     fn attach(&self, engine: &PyArbEngine) -> PyResult<()> {
+        let mut slot = self.slot.lock();
+        if let Err(why) = SlotMove::Attach.admit(&slot) {
+            return Err(slot.refuse(SlotMove::Attach, why));
+        }
         let handoff = engine.take_handoff().ok_or_else(|| {
             PyRuntimeError::new_err(
                 "the engine's event stream is already claimed; one consumer hand-off \
@@ -302,37 +447,33 @@ impl PySessionConsumer {
             )
         })?;
         let driver = engine.driver_arc();
-        let mut slot = self.slot.lock();
-        let Some(consumer) = slot.consumer.as_mut() else {
-            return Err(PyRuntimeError::new_err(
-                "this session consumer already ran; a spent consumer cannot attach",
-            ));
+        let ConsumerSlot::Fresh(consumer, origin) = &mut *slot else {
+            unreachable!("the admission check just proved the slot pending");
         };
         consumer.attach(handoff, driver);
-        slot.source = EventSource::Attached;
-        drop(slot);
+        *origin = EventOrigin::Attached;
         Ok(())
     }
 
     /// Start production: the claim's one use is the driver's `run`.
     ///
     /// The core closes the session on a refusal too, so a consumer that could
-    /// not start never leaves a session running with nobody consuming it.
+    /// not start never leaves a session running with nobody consuming it. The
+    /// refusal itself is the core's (the claim is core-owned); the slot restores
+    /// the consumer with its event origin, so a scripted consumer refused here
+    /// still consumes its script when the caller turns to :meth:`run`.
     ///
     /// # Errors
     ///
+    /// `RuntimeError`: the slot refuses the move (a move is already in flight,
+    /// or the consumer already ran).
     /// `SessionConsumerError` (a `RuntimeError`) carrying the driver's refusal.
     fn resume<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slot = Arc::clone(&self.slot);
         crate::ambient_runtime::future_into_py(py, async move {
-            let mut consumer = {
-                let mut guard = slot.lock();
-                guard.consumer.take().ok_or_else(|| {
-                    PyRuntimeError::new_err("this session consumer is already running or spent")
-                })?
-            };
+            let mut consumer = slot.lock().take_for_resume()?;
             let outcome = consumer.resume().await;
-            slot.lock().consumer = Some(consumer);
+            slot.lock().restore(consumer);
             match outcome {
                 Ok(()) => Ok(()),
                 Err(failure) => Err(Python::attach(|py| {
@@ -354,29 +495,29 @@ impl PySessionConsumer {
     /// (`quiet-end` / `pump-stopped`). The executor's record stream is quiesced
     /// by the loop's own exit, so a concurrent drain ends by itself.
     ///
+    /// An unattached consumer's `run` is the core's refusal, not the slot's: the
+    /// core's `unattached("run")` text (no attached session to run) survives
+    /// verbatim, and the refused move restores the slot fresh with its origin.
+    ///
     /// # Errors
     ///
+    /// `RuntimeError`: the slot refuses the move (a move is already in flight,
+    /// or the consumer already ran).
     /// `SessionConsumerError` (a `RuntimeError`): the ordered lane stored a leaf
-    /// failure. The detail is the leaf's own text, re-raised in this caller's
-    /// frame before any further batch reached the lane.
+    /// failure, or the core refused the move (no attached session). The detail is
+    /// the leaf's own text, re-raised in this caller's frame before any further
+    /// batch reached the lane.
     fn run<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slot = Arc::clone(&self.slot);
         crate::ambient_runtime::future_into_py(py, async move {
-            let (mut consumer, source) = {
-                let mut guard = slot.lock();
-                if guard.ran {
-                    return Err(PyRuntimeError::new_err("this session consumer already ran"));
-                }
-                guard.ran = true;
-                let consumer = guard
-                    .consumer
-                    .take()
-                    .ok_or_else(|| PyRuntimeError::new_err("this session consumer already ran"))?;
-                let source = std::mem::replace(&mut guard.source, EventSource::Attached);
-                (consumer, source)
-            };
-            let outcome = match source {
-                EventSource::Attached => consumer
+            let (mut consumer, mut origin) = slot.lock().take_for_run()?;
+            let outcome = match &mut origin {
+                EventOrigin::Scripted(rx) => consumer
+                    .consume(rx)
+                    .await
+                    .map(|report| ReportView::of(&report))
+                    .map_err(|error| (error.detail, error.batch_index, error.report)),
+                EventOrigin::Attached | EventOrigin::Pending => consumer
                     .run()
                     .await
                     .map(|report| ReportView::of(&report.consumer))
@@ -387,17 +528,18 @@ impl PySessionConsumer {
                             failure.error.report,
                         )
                     }),
-                EventSource::Scripted(mut rx) => consumer
-                    .consume(&mut rx)
-                    .await
-                    .map(|report| ReportView::of(&report))
-                    .map_err(|error| (error.detail, error.batch_index, error.report)),
             };
             match outcome {
                 Ok(view) => Python::attach(|py| view.to_py_dict(py)),
-                Err((detail, batch_index, report)) => Err(Python::attach(|py| {
-                    abort_error(py, &detail, batch_index, ReportView::of(&report))
-                })),
+                Err((detail, batch_index, report)) => {
+                    // The refused move leaves the slot fresh: the claim and
+                    // attachment facts are core-owned, so the caller may dispatch
+                    // the move the core's contract admits.
+                    *slot.lock() = ConsumerSlot::Fresh(consumer, origin);
+                    Err(Python::attach(|py| {
+                        abort_error(py, &detail, batch_index, ReportView::of(&report))
+                    }))
+                }
             }
         })
     }
