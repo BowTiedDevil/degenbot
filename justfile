@@ -719,9 +719,16 @@ check-dependency-charter:
 # Wired into `lint-rust-check` (hence `just test` / CI / the pre-push
 # `rust-clippy` hook) plus the pre-commit `too-many-lines-waivers` hook.
 #
+# Interpreter: a plain `python3`, deliberately NOT `{{ py_run }} python`. The script
+# imports nothing outside the standard library, and this recipe hangs off the uv-free
+# Rust lint leg: CI's `rust` job provisions the Rust toolchain, `just`, ripgrep and
+# Foundry, and never uv (the same absence `test-rust`'s best-effort LIBDIR probe
+# documents). A `uv run` line here kills the leg with `uv: not found` before clippy
+# starts, in the job `just test` is not allowed to assume a Python toolchain for.
+#
 # live-invariant gate (ADR-087 D2): watches the live `too_many_lines` waiver sites in the Rust tree against scripts/hooks/too-many-lines-waiver-census.txt; not tripwire precedent.
 check-too-many-lines-waivers *args:
-    {{py_run}} python scripts/hooks/too_many_lines_waivers.py "$@"
+    python3 scripts/hooks/too_many_lines_waivers.py "$@"
 
 # ADR-084 D1/C5 consumer probes: each named catalog consumer completes a real
 # task through its own surface. (ii) the pools-only Rust consumer solves a

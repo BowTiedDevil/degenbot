@@ -367,7 +367,11 @@ the ceiling are maintained by hand.
 **Run it.** `just check-too-many-lines-waivers` — also a dependency of
 `lint-rust-check`, so `just test`, the pre-push `rust-clippy` gate and CI run it over a
 complete tree, and the `too-many-lines-waivers` pre-commit hook runs it when a commit
-touches a Rust source or one of the gate's own two files.
+touches a Rust source or one of the gate's own two files. The script imports nothing
+outside the standard library, so the recipe runs it with a plain `python3` rather than
+the project venv: `lint-rust-check` is the uv-free Rust lane (CI's `rust` job
+provisions the Rust toolchain, `just` and ripgrep, no `uv`), and a `uv run` line there
+fails the leg with `uv: not found` before clippy starts.
 `tests/test_too_many_lines_waiver_gate.py` is the committed negative probe: it drives
 the real gate with `--root` pointed at a throwaway tree and requires the red path for a
 fresh site, both reason-drift directions, the stale row, the breached ceiling, and the
