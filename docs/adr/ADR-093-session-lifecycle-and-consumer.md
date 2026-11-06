@@ -714,6 +714,18 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
   display drain and the report rendering (its loop and the block-clock mutator
   it fed are gone), and `_session_watch.py` ranks the Session consumer's report
   instead of racing two tasks and detecting no stall itself.
+- **The dict boundary after the cut-over.** Exactly two shapes cross the Python
+  seam as dicts: a *scripted* session's ordered events (`block` / `batch`, the
+  engine result-channel shape, accepted only by `scripted()` — the live door
+  attaches the engine's hand-off in Rust, so the production path crosses no
+  dict) and the drained submit-lane records, decoded into
+  `degenbot.dispatch`'s typed submit records. The seam's other product is typed
+  pyclasses: the outcome records, both verdicts, and the `report` counts the
+  exception carries. Translation is the adapter's whole share —
+  `payload_row_from_dict` parses a caller's payload dict into a `PayloadRow`,
+  and the projection back into the engine's `SimulatedPathResult` is the core's
+  own (`degenbot_batch_executor::session::simulated_path`, the pinned inverse of
+  `payload_row`) rather than a second field list maintained in the shell.
 - **One FFI error class, a classified mapping.** `PySessionConsumer` raises one
   exception type for two different facts — an abort and a refusal both become
   `degenbot.dispatch.SessionConsumerError` — and that stays: the class is the

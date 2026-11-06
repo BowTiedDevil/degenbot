@@ -71,6 +71,25 @@ All notable changes to the Rust workspace crates are recorded here.
   resume refused` — where it used to borrow the no-session text
   (`... no attached session to resume (the claim was already used)`).
 
+- **The Python seam's dict boundary is documented, and the one payload
+  projection it had duplicated is back in the core.** Exactly two shapes cross
+  the Python seam as dicts: a **scripted session's ordered events** (`block` /
+  `batch`, the engine result-channel shape, accepted only by
+  `degenbot.dispatch.SessionConsumer.scripted` — the live door attaches the
+  engine's hand-off in Rust, so no dict crosses on the production path) and the
+  **drained submit-lane records** (`BatchOutcomeSet.submit_records`, decoded by
+  `degenbot.dispatch.typed_submit_record`). Everything else the seam exposes is
+  a typed pyclass (the outcome records, both verdicts, the report counts on
+  `SessionConsumerError`), and no derived product — the block clock, a batch's
+  work, an assembly/sim/submit verdict — crosses as data for a shell to
+  re-derive. The adapters own the translation only: `payload_row_from_dict`
+  parses a caller's payload dict into `degenbot_batch_executor::row::PayloadRow`,
+  and the projection back into the engine's `SimulatedPathResult` is now the
+  core's own `degenbot_batch_executor::session::simulated_path` (umbrella
+  `degenbot::batch_executor::simulated_path`), the pinned inverse of
+  `payload_row` — the field list has one home instead of a hand-written copy in
+  the Python shell.
+
 - **ADR-084 D2 (the engine's doors):** `degenbot-bot`'s two capability homes
   are curated surfaces. Every `bot_core` / `arb_engine` submodule is
   `pub(crate)`; the items the drivers use are re-exported at those two module

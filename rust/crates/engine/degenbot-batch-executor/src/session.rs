@@ -49,7 +49,7 @@ use degenbot_bot::arb_engine::{
     BlockNotification, ConsumerClaim, EngineDriver, EventHandoff, Heartbeat, ResultBatch,
     SessionEvent, SessionStream, SimulatedPathResult, TeardownReport,
 };
-use degenbot_bot::arb_engine::{CapturedSwapRow, InlineSwapFamily};
+use degenbot_bot::arb_engine::{CapturedSwapRow, InlineSimFailure, InlineSwapFamily};
 use degenbot_core::eip_1559::{
     next_base_fee, DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR, DEFAULT_ELASTICITY_MULTIPLIER,
 };
@@ -760,6 +760,81 @@ fn captured_swap(row: &CapturedSwapRow) -> CapturedSwap {
     }
 }
 
+/// Reassemble the engine's inline-sim payload from the executor's payload row —
+/// the inverse of [`payload_row`].
+///
+/// The scripted session door parses a caller's payload dict into a
+/// [`PayloadRow`] (the FFI's boundary parser) and needs the engine value back to
+/// feed the loop. Both projections therefore live here, next to each other: one
+/// field list, pinned inverse by
+/// `the_payload_row_and_the_simulated_path_are_inverse`. An adapter that owned
+/// only the reverse direction would silently drop a field the forward one
+/// carries, so the pair owns both.
+///
+/// `hop_count` is an argument because the row does not carry it: a candidate's
+/// hop count is the resolved path info's, which the executor derives, so the
+/// engine value's copy never crosses the seam.
+#[must_use]
+pub fn simulated_path(row: &PayloadRow, hop_count: usize) -> SimulatedPathResult {
+    SimulatedPathResult {
+        path_id: row.path_id,
+        gross_profit: row.gross_profit,
+        net_profit: row.net_profit,
+        gas_used: row.gas_used,
+        priority_fee: row.priority_fee,
+        base_fee_next: row.base_fee_next,
+        execute_calldata: row.execute_calldata.to_vec(),
+        access_list: row.access_list.as_ref().map(access_list_rows),
+        captured_swaps: row.captured_swaps.iter().map(captured_swap_row).collect(),
+        hop_count,
+        failure: row.failure.as_ref().map(inline_sim_failure),
+    }
+}
+
+/// The RPC access-list shape back into the engine's primitive rows — the
+/// inverse of [`access_list`].
+fn access_list_rows(list: &alloy::rpc::types::AccessList) -> Vec<AccessListRow> {
+    list.0
+        .iter()
+        .map(|item| AccessListRow {
+            address: item.address,
+            storage_keys: item
+                .storage_keys
+                .iter()
+                .map(|key| alloy::primitives::U256::from_be_bytes(key.0))
+                .collect(),
+        })
+        .collect()
+}
+
+/// The sim core's decoded swap back into the engine's primitive mirror — the
+/// inverse of [`captured_swap`].
+fn captured_swap_row(swap: &CapturedSwap) -> CapturedSwapRow {
+    CapturedSwapRow {
+        emitter: swap.emitter,
+        family: match swap.family {
+            SwapFamily::V2 => InlineSwapFamily::V2,
+            SwapFamily::V3 => InlineSwapFamily::V3,
+            SwapFamily::V4 => InlineSwapFamily::V4,
+        },
+        amount0: swap.amount0,
+        amount1: swap.amount1,
+        sqrt_price_x96: swap.sqrt_price_x96,
+        liquidity: swap.liquidity,
+        tick: swap.tick,
+    }
+}
+
+/// The payload failure row back into the engine's inline-sim failure — the
+/// inverse of the `failure` projection in [`payload_row`].
+fn inline_sim_failure(failure: &PayloadFailure) -> InlineSimFailure {
+    InlineSimFailure {
+        fail_index: failure.fail_index,
+        revert_data: failure.revert_data.to_vec(),
+        bucket: failure.bucket.clone(),
+    }
+}
+
 /// Build one batch's executor work from a consumed result batch and the session
 /// clock.
 ///
@@ -954,12 +1029,8 @@ mod tests {
         assert_eq!(row.hop_outputs, vec![u128::MAX]);
     }
 
-    /// Every payload field crosses: the calldata bytes, the access-list rows
-    /// decoded back into the RPC shape, the failure record, and the sim's own
-    /// capture (the failure dump's ACTUAL half).
-    #[test]
-    fn payload_row_projects_the_inline_sim_row() {
-        let sim = degenbot_bot::arb_engine::SimulatedPathResult {
+    fn inline_sim_result() -> degenbot_bot::arb_engine::SimulatedPathResult {
+        degenbot_bot::arb_engine::SimulatedPathResult {
             path_id: 4,
             gross_profit: alloy::primitives::U256::from(1_000_u64),
             net_profit: alloy::primitives::U256::from(900_u64),
@@ -992,7 +1063,15 @@ mod tests {
                 revert_data: vec![0x01, 0x02],
                 bucket: "no-profit".to_string(),
             }),
-        };
+        }
+    }
+
+    /// Every payload field crosses: the calldata bytes, the access-list rows
+    /// decoded back into the RPC shape, the failure record, and the sim's own
+    /// capture (the failure dump's ACTUAL half).
+    #[test]
+    fn payload_row_projects_the_inline_sim_row() {
+        let sim = inline_sim_result();
         let row = payload_row(&sim);
         assert_eq!(row.path_id, 4);
         assert_eq!(row.net_profit, alloy::primitives::U256::from(900_u64));
@@ -1029,6 +1108,17 @@ mod tests {
         let row = payload_row(&healthy);
         assert!(row.failure.is_none());
         assert!(row.access_list.is_none());
+    }
+
+    /// The row and the engine value are ONE field list in two directions: the
+    /// scripted session door parses a caller's payload dict into the executor's
+    /// row and needs the engine's own payload back to feed the loop, so the
+    /// pair is pinned inverse — a field added to either shape fails here rather
+    /// than crossing one way only.
+    #[test]
+    fn the_payload_row_and_the_simulated_path_are_inverse() {
+        let sim = inline_sim_result();
+        assert_eq!(simulated_path(&payload_row(&sim), sim.hop_count), sim);
     }
 
     /// The batch's work: `fresh` and `updated` join in stream order, the

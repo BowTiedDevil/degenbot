@@ -29,17 +29,14 @@ use crate::rpc::async_provider::PyAsyncAlloyProvider;
 use crate::simulation::batch::PyBatchExecutor;
 use crate::simulation::dispatch::payload_row_from_dict;
 use crate::submission::sim_pipeline::LEAF_FAILURE_PREFIX;
-use degenbot_arbitrage::CapturedSwap;
 use degenbot_batch_executor::session::{
-    ConsumerErrorKind, ConsumerPolicy, ConsumerReport, FeeHistoryPolicy, SessionClock,
-    SessionConsumer, SessionProgress,
+    simulated_path, ConsumerErrorKind, ConsumerPolicy, ConsumerReport, FeeHistoryPolicy,
+    SessionClock, SessionConsumer, SessionProgress,
 };
 use degenbot_bot::arb_engine::{
-    AccessListRow, BlockNotification, CapturedSwapRow, Heartbeat, InlineSimFailure,
-    InlineSwapFamily, ResultBatch, SessionEvent, SimulatedPathResult,
+    BlockNotification, Heartbeat, ResultBatch, SessionEvent, SimulatedPathResult,
 };
 use degenbot_pools::solve::SolvePathResult;
-use degenbot_simulation::sim::capture::SwapFamily;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
 use pyo3::PyTypeInfo;
@@ -720,57 +717,17 @@ fn optional_u64(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<u64>> {
 
 /// The result-channel payload dict back into the engine's inline-sim payload.
 ///
-/// A scripted batch arrives in the engine's own payload-dict shape, so the ONE
-/// parser (`payload_row_from_dict`) reads it and this inversion restores the
-/// engine value the consumer's `payload_row` extraction consumes. The two
-/// translations are inverse, so a scripted payload reaches the executor exactly
-/// as a live one does.
+/// A scripted batch arrives in the engine's own payload-dict shape: the seam's
+/// ONE dict parser (`payload_row_from_dict`) reads it, and the core's own
+/// inverse projection restores the engine value the consumer's `payload_row`
+/// extraction consumes. A scripted payload therefore reaches the executor
+/// exactly as a live one does, and the field list has one home instead of a
+/// copy on each side of the boundary.
 fn simulated_path_result_from_dict(row: &Bound<'_, PyDict>) -> PyResult<SimulatedPathResult> {
     let hop_count = optional_u64(row, "hop_count")?;
-    let row = payload_row_from_dict(row)?;
-    Ok(SimulatedPathResult {
-        path_id: row.path_id,
-        gross_profit: row.gross_profit,
-        net_profit: row.net_profit,
-        gas_used: row.gas_used,
-        priority_fee: row.priority_fee,
-        base_fee_next: row.base_fee_next,
-        execute_calldata: row.execute_calldata.to_vec(),
-        access_list: row.access_list.as_ref().map(|list| {
-            list.0
-                .iter()
-                .map(|item| AccessListRow {
-                    address: item.address,
-                    storage_keys: item
-                        .storage_keys
-                        .iter()
-                        .map(|key| alloy::primitives::U256::from_be_bytes(key.0))
-                        .collect(),
-                })
-                .collect()
-        }),
-        captured_swaps: row
-            .captured_swaps
-            .iter()
-            .map(|swap: &CapturedSwap| CapturedSwapRow {
-                emitter: swap.emitter,
-                family: match swap.family {
-                    SwapFamily::V2 => InlineSwapFamily::V2,
-                    SwapFamily::V3 => InlineSwapFamily::V3,
-                    SwapFamily::V4 => InlineSwapFamily::V4,
-                },
-                amount0: swap.amount0,
-                amount1: swap.amount1,
-                sqrt_price_x96: swap.sqrt_price_x96,
-                liquidity: swap.liquidity,
-                tick: swap.tick,
-            })
-            .collect(),
-        hop_count: usize::try_from(hop_count.unwrap_or_default()).unwrap_or_default(),
-        failure: row.failure.as_ref().map(|failure| InlineSimFailure {
-            fail_index: failure.fail_index,
-            revert_data: failure.revert_data.to_vec(),
-            bucket: failure.bucket.clone(),
-        }),
-    })
+    let payload = payload_row_from_dict(row)?;
+    Ok(simulated_path(
+        &payload,
+        usize::try_from(hop_count.unwrap_or_default()).unwrap_or_default(),
+    ))
 }
