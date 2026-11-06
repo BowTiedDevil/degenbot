@@ -22,6 +22,8 @@ The reentrancy is therefore NOT exploitable for fund theft under the current
 code. This test guards the invariant against future regressions.
 """
 
+#pragma version ^0.5.0b2
+
 # Test-only interface to reenter executor.withdraw().
 interface ReenterTarget:
     def withdraw(amount: uint256, destination: address): nonpayable

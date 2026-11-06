@@ -11,6 +11,8 @@ method calls, orchestrating SqrtPriceMath for price/amount deltas.
 
 """
 
+#pragma version ^0.5.0b2
+
 from . import full_math
 from . import sqrt_price_math
 

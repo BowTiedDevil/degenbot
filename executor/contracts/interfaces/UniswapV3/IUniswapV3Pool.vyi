@@ -1,7 +1,5 @@
-# Uniswap V3 Pool interface — matches UniswapV3Pool.sol
-# Bytes size matches executor contracts (callers).
-
-MAX_CALLBACK_DATA_LENGTH: constant(uint256) = 512
+# Uniswap V3 Pool interface — matches UniswapV3Pool.sol.
+# `bytes` in Solidity is unbounded, so the Vyper mirror uses Bytes[INF].
 
 # ── Events (from IUniswapV3PoolEvents.sol) ──
 
@@ -22,7 +20,7 @@ def swap(
     zeroForOne: bool,
     amountSpecified: int256,
     sqrtPriceLimitX96: uint160,
-    data: Bytes[MAX_CALLBACK_DATA_LENGTH]
+    data: Bytes[INF]
 ) -> (int256, int256):
     ...
 

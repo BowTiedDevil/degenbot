@@ -18,13 +18,15 @@ is updated directly from compute_swap_step's returned next price (no
 balance-derived recomputation). This matches the real V3 pool's approach.
 """
 
+#pragma version ^0.5.0b2
+#pragma experimental-codegen
+
 from .interfaces.UniswapV3 import IUniswapV3Pool
 from .interfaces.UniswapV3 import IUniswapV3SwapCallback
 from .interfaces.UniswapV3 import IPancakeV3SwapCallback
 from ethereum.ercs import IERC20
 from .libraries import swap_math
 
-MAX_CALLDATA_LENGTH: constant(uint256) = 512
 
 # Fixed-point constants (also defined in swap_math, re-declared for local use
 # in add_liquidity where the library constant cannot be used in a storage write)
@@ -149,7 +151,7 @@ def swap(
     zero_for_one: bool,
     amount_specified: int256,
     sqrt_price_limit_x96: uint160,
-    data: Bytes[MAX_CALLDATA_LENGTH]
+    data: Bytes[INF]
 ) -> (int256, int256):
     """
     Perform a V3-style swap.

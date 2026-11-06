@@ -12,6 +12,8 @@ iterative squaring (log₂). This port reimplements those algorithms in
 pure Vyper using shift/comparison operations.
 """
 
+#pragma version ^0.5.0b2
+
 # Tick bounds
 MIN_TICK: constant(int24) = -887272
 MAX_TICK: constant(int24) = 887272

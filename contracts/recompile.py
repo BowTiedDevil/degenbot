@@ -8,7 +8,7 @@ Usage:
     uv run python contracts/recompile.py --compile  # additionally run the
                                                     #   AUTHORITATIVE compile-vs-use gate
                                                     #   (tier3-oracle/verify-tier3-executor-artifact.
-                                                    #   sh): a fresh vyper 0.5.0a3 + solc 0.7.6
+                                                    #   sh): a fresh vyper 0.5.0b2 + solc 0.7.6
                                                     #   compile byte-compared against ALL committed
                                                     #   executor artifacts + the V3 topology harness.
                                                     #   Opt-in; requires the toolchain.
@@ -25,8 +25,8 @@ newline; the ABI is copied verbatim):
 Vyper bytecode layout (re-derived for the current artifact — the code section
 moved with U3WVLL / 767TN5 / TGUZCT; do NOT hand-bake offsets, they are
 compiler-generated):
-    runtime  = [code_section][CBOR_metadata]            (16,097 B @ this commit)
-    deployed = runtime + [5 x 32-byte immutable slots]  (16,257 B)
+    runtime  = [code_section][CBOR_metadata]            (16,462 B @ this commit)
+    deployed = runtime + [5 x 32-byte immutable slots]  (16,622 B)
 
 The runtime code's CODECOPY instructions read the immutable slots from
 offsets at/after the end of the runtime section, so the 160-byte tail
@@ -136,7 +136,7 @@ def _check_manifest() -> None:
 
 def _verify_compile_matches_artifacts() -> None:
     """Opt-in strict path: run the AUTHORITATIVE compile-vs-use gate
-    (tier3-oracle/verify-tier3-executor-artifact.sh) — a fresh vyper 0.5.0a3 +
+    (tier3-oracle/verify-tier3-executor-artifact.sh) — a fresh vyper 0.5.0b2 +
     solc 0.7.6 compile byte-compared against ALL committed executor artifacts
     (creation, runtime, abi, error_map, immutables) plus the V3 topology
     harness. Replaces the former inline 2-format vyper check, which covered

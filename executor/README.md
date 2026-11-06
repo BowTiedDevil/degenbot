@@ -1,6 +1,6 @@
 # Executor
 
-On-chain arbitrage executor contracts for Uniswap V2/V3/V4, written in Vyper 0.5.0a3.
+On-chain arbitrage executor contracts for Uniswap V2/V3/V4, written in Vyper 0.5.0b2.
 
 > **[`docs/user-guide.md`](docs/user-guide.md)** — Comprehensive guide for constructing, encoding, and executing optimal arbitrage paths. Includes the full 2-hop and 3-hop path encyclopedia with command stream examples for all 27 permutations.
 >
@@ -442,7 +442,7 @@ tests/
 ## Configuration
 
 See `ape-config.yaml`. The project uses:
-- **Vyper 0.5.0a3** with `#pragma experimental-codegen` (Venom) and `#pragma optimize gas`
+- **Vyper 0.5.0b2** with `#pragma experimental-codegen` (Venom) and `#pragma optimize gas`
 - **Foundry** (Anvil) for local test execution with mainnet fork
 - **Custom test mnemonic** to avoid EIP-7702 delegation issues on forked networks
 
@@ -572,7 +572,7 @@ The operator constructs:
 
 ## `#pragma experimental-codegen` (Venom Backend) — Recommended
 
-Vyper's experimental Venom codegen (enabled via `#pragma experimental-codegen` on 0.5.0a3) **beats the default codegen on all 7 paths** after function extraction enabled Venom's liveness analysis to reclaim memory across mutually exclusive command handlers. The progression from +5–9% regression to −0.6–1.9% improvement demonstrates that **contract structure dictates Venom performance** — the algorithm is correct, but monolithic dispatch loops defeat its liveness analysis.
+Vyper's experimental Venom codegen (enabled via `#pragma experimental-codegen`) **beats the default codegen on all 7 paths** after function extraction enabled Venom's liveness analysis to reclaim memory across mutually exclusive command handlers. The progression from +5–9% regression to −0.6–1.9% improvement demonstrates that **contract structure dictates Venom performance** — the algorithm is correct, but monolithic dispatch loops defeat its liveness analysis.
 
 ### Three Key Structural Changes
 

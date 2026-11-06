@@ -13,7 +13,7 @@
 //! present (with non-empty hex bytecode for the `.hex` files). A tracked
 //! source edit without a rebuild+re-publish fails here.
 //!
-//! The AUTHORITATIVE compile-vs-use check (requires the real vyper 0.5.0a3
+//! The AUTHORITATIVE compile-vs-use check (requires the real vyper 0.5.0b2
 //! toolchain) is `tier3-oracle/verify-tier3-executor-artifact.sh` — it runs in
 //! the CI `tier3-oracle` job. The default cargo-test path needs no toolchain.
 //!

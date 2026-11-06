@@ -9,6 +9,9 @@ Currency is encoded identically to address at the EVM level,
 so the same interface works for both PMs.
 """
 
+#pragma version ^0.5.0b2
+#pragma experimental-codegen
+
 from .interfaces.UniswapV4 import IPoolManager, IPoolManagerExttload, IUnlockCallback
 
 # V4 transient storage slot constants

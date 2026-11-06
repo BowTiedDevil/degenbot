@@ -27,7 +27,7 @@ unlockCallback phases:
 - Phase 3: Settle all nonzero deltas via _v4_settle_currency
 """
 
-#pragma version ^0.5.0a3
+#pragma version ^0.5.0b2
 #pragma experimental-codegen
 #pragma optimize gas
 

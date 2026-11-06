@@ -34,7 +34,7 @@ code contains the recomputed `WETH_DELTA_SLOT`/`NATIVE_DELTA_SLOT` + both
 addresses.
 
 ## CRITICAL finding: no per-PC line attribution from vyper's source map
-Both the venom (experimental_codegen, on by default in 0.5.0a3) and legacy
+Both the venom (experimental-codegen) and legacy
 `-f source_map` outputs emit ONLY a single whole-file span — the
 `pc_pos_map_compressed` is ~15k segments that all inherit `[0, <file len>, ...]`,
 and the structured `pc_pos_map` collapses to a single `{"0": [1,0,2077,103]}`.
@@ -46,7 +46,7 @@ the V4 path), and (c) direct source inspection of the V4 custody flow
 
 ## Regenerate / verify
 - Rebuild + re-publish: `tier3-oracle/build-tier3-executor-harness.sh` (PUBLISH=1).
-- Authoritative compile-vs-use (real vyper 0.5.0a3, CI tier3-oracle job):
+- Authoritative compile-vs-use (real vyper 0.5.0b2, CI tier3-oracle job):
   `just verify-tier3-executor-artifact` (= `verify-tier3-executor-artifact.sh`).
 - Toolchain-free drift guard (default cargo-test path):
   `rust/crates/engine/degenbot-simulation/tests/tier3_executor_artifacts.rs`.

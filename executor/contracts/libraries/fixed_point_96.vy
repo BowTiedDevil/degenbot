@@ -7,5 +7,7 @@ Source: contracts/libraries/FixedPoint96.sol
 Defines the Q64.96 fixed-point format used throughout V3 for sqrt prices.
 """
 
+#pragma version ^0.5.0b2
+
 RESOLUTION: constant(uint8) = 96
 Q96: constant(uint256) = 79228162514264337593543950336  # 2^96 = 0x1000000000000000000000000

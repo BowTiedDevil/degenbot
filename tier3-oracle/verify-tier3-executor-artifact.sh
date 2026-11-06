@@ -5,11 +5,11 @@
 # rebuild+re-publish fails CI.
 #
 # Covered:
-#   - executor/contracts/cmd_executor.vy      (vyper 0.5.0a3)   -> artifacts/executor/cmd_executor.*
+#   - executor/contracts/cmd_executor.vy      (vyper 0.5.0b2)   -> artifacts/executor/cmd_executor.*
 #   - src-executor/ExecutorV3Harness.sol      (solc 0.7.6)      -> artifacts/executor/ExecutorV3Harness.sol/ExecutorV3Harness.json
 #
 # REQUIRES the toolchain: the in-repo `executor/` uv project (vyper
-# ==0.5.0a3) + solc 0.7.6 (svm cache). Runs in the CI `tier3-oracle`
+# ==0.5.0b2) + solc 0.7.6 (svm cache). Runs in the CI `tier3-oracle`
 # job, NOT the default cargo-test path. The default cargo-test path is guarded toolchain-free by
 # `rust/crates/engine/degenbot-simulation/tests/tier3_executor_artifacts.rs`.
 set -euo pipefail
@@ -36,7 +36,7 @@ check() {
 echo "── recompiling executor + V3 topology harness via build-tier3-executor-harness.sh"
 for f in cmd_executor.creation.hex cmd_executor.runtime.hex cmd_executor.abi.json \
          cmd_executor.error_map.json cmd_executor.immutables.json; do
-    check "${f}" "vyper 0.5.0a3"
+    check "${f}" "vyper 0.5.0b2"
 done
 check "ExecutorV3Harness.sol/ExecutorV3Harness.json" "solc 0.7.6"
 
@@ -47,4 +47,4 @@ if [ "${fail}" != "0" ]; then
     exit 1
 fi
 echo
-echo "OK: committed tier-3b artifacts match fresh vyper 0.5.0a3 + solc 0.7.6 compiles."
+echo "OK: committed tier-3b artifacts match fresh vyper 0.5.0b2 + solc 0.7.6 compiles."

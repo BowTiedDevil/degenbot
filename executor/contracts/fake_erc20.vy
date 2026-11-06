@@ -1,3 +1,5 @@
+#pragma version ^0.5.0b2
+
 from ethereum.ercs import IERC20
 from ethereum.ercs import IERC20Detailed
 

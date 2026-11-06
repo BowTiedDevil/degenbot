@@ -1,9 +1,7 @@
-# PoolManager interface — matches Uniswap V4's IPoolManager.sol
-# Bytes sizes set to match executor contracts (callers), not the full 4096.
-# The implementing contract (fake PM) uses larger sizes internally.
-
-MAX_COMMANDS_LENGTH: constant(uint256) = 512
-MAX_HOOK_DATA_LENGTH: constant(uint256) = 32
+# PoolManager interface — matches Uniswap V4's IPoolManager.sol.
+# Solidity `bytes` is unbounded (unlock(bytes) returns (bytes),
+# swap/modifyLiquidity/donate take bytes hookData), so these mirror as
+# Bytes[INF]. Implementers widen from their own bounded stream types.
 
 struct PoolKey:
     currency0: address
@@ -62,7 +60,7 @@ event Donate:
 # ── Unlock ──
 
 @nonpayable
-def unlock(data: Bytes[MAX_COMMANDS_LENGTH]) -> Bytes[MAX_COMMANDS_LENGTH]:
+def unlock(data: Bytes[INF]) -> Bytes[INF]:
     ...
 
 # ── Pool lifecycle ──
@@ -78,7 +76,7 @@ def initialize(
 def modifyLiquidity(
     key: PoolKey,
     params: ModifyLiquidityParams,
-    hook_data: Bytes[MAX_HOOK_DATA_LENGTH],
+    hook_data: Bytes[INF],
 ) -> (int256, int256):
     ...
 
@@ -87,7 +85,7 @@ def donate(
     key: PoolKey,
     amount0: uint256,
     amount1: uint256,
-    hook_data: Bytes[MAX_HOOK_DATA_LENGTH],
+    hook_data: Bytes[INF],
 ) -> int256:
     ...
 
@@ -97,7 +95,7 @@ def donate(
 def swap(
     key: PoolKey,
     params: SwapParams,
-    hook_data: Bytes[MAX_HOOK_DATA_LENGTH],
+    hook_data: Bytes[INF],
 ) -> int256:
     ...
 

@@ -109,7 +109,7 @@ artifacts to the current in-repo source via the manifest source-sha
 ```bash
 uv run python contracts/recompile.py            # default: mainnet PM baked
 uv run python contracts/recompile.py --no-patch # POOL_MANAGER slot baked as zero (testnet/dev; patch later with the recipe above)
-uv run python contracts/recompile.py --compile  # additionally compile the in-repo source (vyper 0.5.0a3 via the executor uv project) and fail on any sha256 drift vs the artifacts
+uv run python contracts/recompile.py --compile  # additionally compile the in-repo source (vyper 0.5.0b2 via the executor uv project) and fail on any sha256 drift vs the artifacts
 ```
 
 The previous pipeline compiled from the retired `~/code/executor/` path
@@ -119,8 +119,8 @@ The previous pipeline compiled from the retired `~/code/executor/` path
 
 ## cmd_executor — Command-Stream Executor
 
-**Vyper**: 0.5.0a3 | **EVM**: Cancun | **Runtime**: 16,257 bytes (16,097 B code + CBOR + 160 B immutables)
-**Source**: in-repo `executor/contracts/cmd_executor.vy` (vendored); committed artifacts in `tier3-oracle/artifacts/executor/` (vyper 0.5.0a3, compile-vs-use gate: `just verify-tier3-executor-artifact`)
+**Vyper**: 0.5.0b2 | **EVM**: Cancun | **Runtime**: 16,622 bytes (16,462 B code + CBOR + 160 B immutables)
+**Source**: in-repo `executor/contracts/cmd_executor.vy` (vendored); committed artifacts in `tier3-oracle/artifacts/executor/` (vyper 0.5.0b2, compile-vs-use gate: `just verify-tier3-executor-artifact`)
 **Tests**: in-repo `executor/tests/` (Ape + Foundry)
 
 Compact command-stream executor. All execution decisions are made off-chain and encoded as a byte stream; the contract is a pure command interpreter. Two modes are freely mixed:

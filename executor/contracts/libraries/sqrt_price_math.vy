@@ -9,6 +9,8 @@ and amount deltas. These are the core math primitives that V3's swap
 execution uses instead of the V2 constant-product formula.
 """
 
+#pragma version ^0.5.0b2
+
 from . import  full_math
 from . import  unsafe_math
 from . import  safe_cast

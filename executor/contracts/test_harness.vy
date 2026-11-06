@@ -5,6 +5,8 @@ Deploy this contract in tests, then call the @external wrappers
 to compare against Solidity reference values from `chisel eval`.
 """
 
+#pragma version ^0.5.0b2
+
 from .libraries import full_math
 from .libraries import unsafe_math
 from .libraries import safe_cast

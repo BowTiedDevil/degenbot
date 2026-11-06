@@ -9,6 +9,7 @@ already performs checked narrowing conversions (reverts on overflow/underflow),
 so these are thin wrappers for API parity with v3-core.
 """
 
+#pragma version ^0.5.0b2
 
 @internal
 @pure

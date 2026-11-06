@@ -3,7 +3,7 @@
 # (deterministic evm2 replay of the V3->V4->V3 sim-Halt against real bytecode).
 #
 # Compiles the vendored `executor/contracts/cmd_executor.vy` with the PINNED
-# vyper 0.5.0a3 (the only version proven to compile it — ./AGENTS.md), emits creation + runtime bytecode + ABI + method identifiers +
+# vyper 0.5.0b2 (the pinned executor/ uv project version), emits creation + runtime bytecode + ABI + method identifiers +
 # error map + immutable-deploy layout, and writes the artifact + manifest under
 # `artifacts/executor/`. The compiled output is byte-for-byte deterministic
 # (verified: a fresh build of the committed source equals the committed
@@ -11,7 +11,7 @@
 # is compiled alongside with solc 0.7.6.
 #
 # Toolchain: the in-repo `executor/` uv project (`uv run vyper` executes
-# inside it; vyper pinned ==0.5.0a3, requires-python >=3.14). The executor
+# inside it; vyper pinned ==0.5.0b2, requires-python >=3.14). The executor
 # contracts were pulled in from the sibling /workspaces/executor repo
 # (now in-repo) — degenbot is self-contained.
 #
@@ -37,10 +37,10 @@ OUT="${OUT_ROOT}/executor"
 # source + interfaces live in the vendored executor/ project.
 SRC_DIR="src-executor"
 
-echo "▸ compiling ${VYPER_SRC} with pinned vyper 0.5.0a3"
+echo "▸ compiling ${VYPER_SRC} with pinned vyper 0.5.0b2"
 mkdir -p "${OUT}"
 # `uv run vyper` must run inside the executor project (its venv + pyproject own
-# the pinned vyper 0.5.0a3 and the `ethereum` builtin package). Vyper resolves
+# the pinned vyper 0.5.0b2 and the `ethereum` builtin package). Vyper resolves
 # the `.interfaces` relative import from the input file's own directory, so
 # passing the absolute contracts path works regardless of cwd.
 (

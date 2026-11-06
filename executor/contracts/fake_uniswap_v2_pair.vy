@@ -38,13 +38,15 @@ Fee parameter: swap_fee is a fraction of 10000.
   PancakeSwap:         25 (0.25%)
 """
 
+#pragma version ^0.5.0b2
+#pragma experimental-codegen
+
 from .interfaces.UniswapV2 import IUniswapV2Pair
 from .interfaces.UniswapV2 import IUniswapV2Callee
 from .interfaces.UniswapV2 import IHookCallee
 from .interfaces.UniswapV2 import IPancakeCallee
 from ethereum.ercs import IERC20
 
-MAX_CALLDATA_LENGTH: constant(uint256) = 512
 
 implements: IUniswapV2Pair
 
@@ -164,7 +166,7 @@ def swap(
     amount0Out: uint256,
     amount1Out: uint256,
     to: address,
-    data: Bytes[MAX_CALLDATA_LENGTH],
+    data: Bytes[INF],
 ):
     """
     Perform a V2 swap with constant-product invariant enforcement.

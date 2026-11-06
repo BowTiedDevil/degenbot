@@ -18,6 +18,7 @@ unsafe_mul/unsafe_sub for the modular arithmetic in the Newton-Raphson
 inverse computation.
 """
 
+#pragma version ^0.5.0b2
 
 @internal
 @pure

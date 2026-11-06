@@ -1,8 +1,11 @@
-MAX_CALLBACK_DATA_LENGTH: constant(uint256) = 512
+# PancakeSwap callee — matches IPancakeCallee.sol
+# (pancakeswap/pancake-swap-core, contracts/interfaces/IPancakeCallee.sol).
+# `bytes` in Solidity is unbounded, so the Vyper mirror uses Bytes[INF].
+
 
 def pancakeCall(
     sender: address,
     amount0Out: uint256,
     amount1Out: uint256,
-    data: Bytes[MAX_CALLBACK_DATA_LENGTH]
+    data: Bytes[INF]
 ): ...

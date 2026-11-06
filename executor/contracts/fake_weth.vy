@@ -1,3 +1,5 @@
+#pragma version ^0.5.0b2
+
 import fake_erc20
 from ethereum.ercs import IERC20
 initializes: fake_erc20

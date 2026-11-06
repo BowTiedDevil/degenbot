@@ -5,11 +5,9 @@ requires-python = ">=3.14"
 dependencies = [
     "eth-ape[recommended-plugins]",
     "hypothesis",
-    # Hard pin: byte-deterministic artifact builds (BHL2R2). 0.5.0a3+
-    # commit.994bfdec on python 3.14.6 reproduces the committed
-    # tier3-oracle/artifacts/executor/ byte-for-byte — the only vyper
-    # proven to compile cmd_executor.vy (task 2ISTMX).
-    "vyper == 0.5.0b1",
+    # Hard pin: the committed tier3-oracle/artifacts/executor/ must be
+    # reproducible byte-for-byte from this source with this exact compiler.
+    "vyper == 0.5.0b2",
 ]
 
 [tool.uv]

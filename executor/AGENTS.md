@@ -4,7 +4,7 @@
 
 ## What This Project Is
 
-An on-chain arbitrage executor for Uniswap V2/V3/V4, written in **Vyper 0.5.0a3** with the experimental Venom codegen backend. The primary contract (`cmd_executor.vy`) is a compact byte-stream VM that executes multi-hop swap paths across all three Uniswap protocol versions in a single atomic transaction.
+An on-chain arbitrage executor for Uniswap V2/V3/V4, written in **Vyper 0.5.0b2** with the experimental Venom codegen backend. The primary contract (`cmd_executor.vy`) is a compact byte-stream VM that executes multi-hop swap paths across all three Uniswap protocol versions in a single atomic transaction.
 
 **No prefunding required** — the executor borrows all working capital atomically via V2/V3 flash swaps and V4 PoolManager `take()`. Can be deployed with zero balance.
 
@@ -32,7 +32,7 @@ uv run ape test tests/test_cmd_executor_*.py -v   # cmd_executor only
 uv run ape test tests/test_cmd_executor_three_hop_optimized.py -v -s  # Gas benchmark
 ```
 
-Uses **Foundry (Anvil)** for local test execution. `ape-config.yaml` sets Vyper 0.5.0a3, mainnet-fork default, and a custom test mnemonic (to avoid EIP-7702 delegation issues).
+Uses **Foundry (Anvil)** for local test execution. `ape-config.yaml` sets Vyper 0.5.0b2, mainnet-fork default, and a custom test mnemonic (to avoid EIP-7702 delegation issues).
 
 Sequential runs (`-j1`) if xdist races appear. The test suite uses Hypothesis for fuzz testing — `.hypothesis/` contains cached examples.
 
@@ -125,13 +125,13 @@ The fake contracts replicate **the same invariant checks** as real Uniswap. Test
 
 ## Vyper/Venom Constraints
 
-1. **No `while` loops** — Vyper 0.5.0a3 only supports `for range()`. `while` causes `SyntaxException`.
+1. **No `while` loops** — Vyper 0.5 only supports `for range()`. `while` causes `SyntaxException`.
 2. **`#pragma experimental-codegen`** (Venom) and `#pragma optimize gas` are required. Do NOT switch to `optimize codesize`.
 3. **Named variables help Venom** — they give Venom better liveness info for memory allocation. Inlining named `uint256`/`address` variables into struct constructors **regresses +242 gas** each.
 4. **Bytes intermediaries should be inlined** — if a `Bytes[N]` variable is constructed from a slice and used once in an extcall, remove the variable and pass the slice directly. Saves Venom memory allocation.
 5. **`unsafe_add`/`unsafe_sub`** — Every offset arithmetic (`offset + constant`) in a 512-byte stream can never overflow. Use `unsafe_add` to skip ADD+JUMPI overflow checks. Same for balance sums, delta negation (with care).
 6. **Venom already optimizes**: `%` for power-of-2 → bitwise AND, double-convert folding, constant expression folding, `@pure` vs `@internal` inlining, `len()` caching, `shift()` vs `>>`.
-7. **Custom errors** — Vyper 0.5.0a3 adds module-level `error` declarations. The contract uses 8 custom errors (`Unauthorized`, `InvalidCallback`, `InsufficientBalance`, `InsufficientProfit`, `InvalidCommand`, `BipsTooHigh`, `InvalidMsgValue`, `NotPlainEthTransfer`) with `raise` and `assert ..., ErrorName(args)`. Error arguments are evaluated on the failure path only, so successful assertions have zero gas overhead. Bytecode cost is +231 bytes for the error selector + encoding logic.
+7. **Custom errors** — Vyper 0.5 adds module-level `error` declarations. The contract uses 8 custom errors (`Unauthorized`, `InvalidCallback`, `InsufficientBalance`, `InsufficientProfit`, `InvalidCommand`, `BipsTooHigh`, `InvalidMsgValue`, `NotPlainEthTransfer`) with `raise` and `assert ..., ErrorName(args)`. Error arguments are evaluated on the failure path only, so successful assertions have zero gas overhead. Bytecode cost is +231 bytes for the error selector + encoding logic.
 
 ### Inspecting Venom IR with `vyper -f ir_runtime`
 

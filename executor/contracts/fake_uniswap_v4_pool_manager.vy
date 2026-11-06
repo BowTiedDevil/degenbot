@@ -14,6 +14,9 @@ The fake PM's transient slot values are verified against the real on-chain
 PoolManager via the ExttloadComparator contract.
 """
 
+#pragma version ^0.5.0b2
+#pragma experimental-codegen
+
 from .interfaces.UniswapV4 import IPoolManager
 from .interfaces.UniswapV4 import IPoolManagerExttload
 from .interfaces.UniswapV4 import IUnlockCallback
@@ -23,9 +26,7 @@ from ethereum.ercs import IERC20
 import utility_functions
 
 NATIVE_ADDRESS: constant(address) = empty(address)
-MAX_CALLDATA_LENGTH: constant(uint256) = 512
 MAX_CURRENCIES: constant(uint256) = 256
-MAX_EXTTLOAD_SLOTS: constant(uint256) = 32
 MAX_HOOK_DATA_LENGTH: constant(uint256) = 32
 
 # ── V4 transient storage slot constants ──
@@ -351,7 +352,7 @@ def set_next_modify_liquidity(
 def modifyLiquidity(
     key: IPoolManager.PoolKey,
     params: IPoolManager.ModifyLiquidityParams,
-    hook_data: Bytes[MAX_HOOK_DATA_LENGTH],
+    hook_data: Bytes[INF],
 ) -> (int256, int256):
     """
     Modify liquidity in a pool. Uses pre-configured delta amounts.
@@ -424,7 +425,7 @@ def donate(
     key: IPoolManager.PoolKey,
     amount0: uint256,
     amount1: uint256,
-    hook_data: Bytes[MAX_HOOK_DATA_LENGTH],
+    hook_data: Bytes[INF],
 ) -> int256:
     """
     Donate token amounts to a pool. Uses pre-configured amounts if set,
@@ -614,13 +615,13 @@ def clear(currency: address, amount: uint256):
 # ══════════════════════════════════════════
 
 @external
-def unlock(data: Bytes[MAX_CALLDATA_LENGTH]) -> Bytes[MAX_CALLDATA_LENGTH]:
+def unlock(data: Bytes[INF]) -> Bytes[INF]:
     assert not self.t_unlocked, "AlreadyUnlocked"
 
     self.t_unlocked = True
     self.t_ext_slot[T_LOCK_SLOT] = convert(True, bytes32)
 
-    result: Bytes[MAX_CALLDATA_LENGTH] = extcall IUnlockCallback(msg.sender).unlockCallback(data)
+    result: Bytes[INF] = extcall IUnlockCallback(msg.sender).unlockCallback(data)
 
     self.t_ext_slot[T_LOCK_SLOT] = convert(False, bytes32)
     self.t_unlocked = False
@@ -685,7 +686,7 @@ def set_next_swap(
 def swap(
     key: IPoolManager.PoolKey,
     params: IPoolManager.SwapParams,
-    hookData: Bytes[MAX_CALLDATA_LENGTH]
+    hookData: Bytes[INF]
 ) -> int256:
     """
     Perform a fake swap using pre-configured amounts.

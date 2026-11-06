@@ -5,6 +5,7 @@ Source: contracts/libraries/UnsafeMath.sol
   https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/UnsafeMath.sol
 """
 
+#pragma version ^0.5.0b2
 
 @internal
 @pure

@@ -93,7 +93,7 @@ t_addresses directly instead, saving 200-300 gas of TSTOREs per V4
 swap/take when V4_SETTLE_ALL is not called (all optimal paths).
 """
 
-#pragma version ^0.5.0a3
+#pragma version ^0.5.0b2
 #pragma experimental-codegen
 #pragma optimize gas
 

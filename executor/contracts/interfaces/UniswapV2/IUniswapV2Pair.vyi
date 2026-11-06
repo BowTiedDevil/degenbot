@@ -1,7 +1,5 @@
-# Uniswap V2 Pair interface — matches UniswapV2Pair.sol
-# Bytes size matches executor contracts (callers).
-
-MAX_SWAP_DATA_LENGTH: constant(uint256) = 512
+# Uniswap V2 Pair interface — matches UniswapV2Pair.sol.
+# `bytes` in Solidity is unbounded, so the Vyper mirror uses Bytes[INF].
 
 # ── Events (from UniswapV2Pair.sol) ──
 
@@ -43,7 +41,7 @@ def swap(
     amount0Out: uint256,
     amount1Out: uint256,
     to: address,
-    data: Bytes[MAX_SWAP_DATA_LENGTH]
+    data: Bytes[INF]
 ):
     ...
 

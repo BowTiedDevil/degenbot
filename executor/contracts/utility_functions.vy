@@ -1,3 +1,5 @@
+#pragma version ^0.5.0b2
+
 @internal
 @pure
 def _convert_address_to_checksummed_addr_str(input_address: address) -> String[42]:
