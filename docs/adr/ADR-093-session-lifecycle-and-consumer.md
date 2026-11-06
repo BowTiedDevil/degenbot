@@ -334,8 +334,10 @@ consumer that took the driver asks `driver.stages()` once and keeps the handle.
   Verify configuration becomes a property of the verify home plus the one
   provider the `Bot` owns (ADR-022 D3), not a session poke. Callers configure
   the home directly through its own `config()`/`configure()` door;
-  `bot_core::build_verify_provider` is the one provider-construction home and
-  refuses a dead endpoint at that door (`Result`, never a swallowed `Option`).
+  `bot_core::build_verify_provider` is the one provider-construction home, and
+  a refused construction — unsupported transport, malformed URL, or failed
+  build-time WS/IPC connect — fails at that door (`Result`, never a swallowed
+  `Option`).
 - **Registration admission.** One implementation of the stage order (memo →
   construction → eligibility → Verify lifecycle → registration) lives at
   `arb_engine::crawl::admission`, beside the two adapters it feeds and

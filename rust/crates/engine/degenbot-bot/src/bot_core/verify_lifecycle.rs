@@ -211,15 +211,21 @@ impl VerifyLifecycle {
 ///
 /// The one home of "make a provider for verification": the session boot and
 /// every verify-home configuration call it, so a provider cannot be built two
-/// different ways. Construction failure is the CALLER's to refuse at once
-/// (`Result`, never a swallowed `Option`): a dead endpoint fails the
-/// configuration door loudly instead of leaving the verify home silently
-/// unconfigured — where the tracked pool would only later trip the
-/// missing-provider precondition.
+/// different ways. A construction failure is the CALLER's to refuse at once
+/// (`Result`, never a swallowed `Option`): a refused URL/transport — an
+/// unsupported scheme, a malformed URL, or a WS/IPC connect that failed at
+/// build time — fails the configuration door loudly instead of leaving the
+/// verify home silently unconfigured, where the tracked pool would only later
+/// trip the missing-provider precondition. Construction is not a liveness
+/// verdict: the HTTP transport is lazy (it dials on the first call), so a
+/// successful construction says nothing about whether the endpoint answers,
+/// and a valid-but-unresponsive endpoint is not a construction failure.
 ///
 /// # Errors
 ///
-/// The transport's own [`ProviderError`] when the endpoint cannot be built.
+/// The transport's own [`ProviderError`] when construction refuses the
+/// URL/transport: an unsupported scheme, a malformed URL, or a WS/IPC connect
+/// that failed at build time (HTTP construction dials nothing).
 pub async fn build_verify_provider(rpc_url: &str) -> Result<AlloyProvider, ProviderError> {
     AlloyProvider::new(rpc_url, degenbot_rpc::provider::DEFAULT_MAX_RETRIES).await
 }

@@ -402,11 +402,13 @@ All notable changes to the Rust workspace crates are recorded here.
   `VerifyLifecycle` directly through its `config()`/`configure()` door.**
   `degenbot_bot::bot_core::build_verify_provider` becomes the public
   provider-construction door and returns `Result<AlloyProvider, ProviderError>`
-  instead of `Option`: a dead endpoint refuses at the configuration call
-  instead of silently leaving the verify home unconfigured (the registration
-  missing-provider precondition remains the backstop for a home nobody
-  configured). The Python pymethod surfaces (`Bot.set_verify_rpc_url` /
-  `set_verify_state_view` and the `ArbitrageEngine` twins) keep their shape but
+  instead of `Option`: a refused construction — unsupported transport,
+  malformed URL, or a failed build-time WS/IPC connect — fails at the
+  configuration call instead of silently leaving the verify home
+  unconfigured (the registration missing-provider precondition remains the
+  backstop for a home nobody configured). The Python pymethod surfaces
+  (`Bot.set_verify_rpc_url` / `set_verify_state_view` and the `ArbitrageEngine`
+  twins) keep their shape but
   fail loud at the adapter: a missing engine raises `RuntimeError`, a provider
   construction failure raises immediately with the configuration unchanged,
   and a malformed `StateView` raises `ValueError` with the configuration

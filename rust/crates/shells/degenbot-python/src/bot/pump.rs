@@ -257,10 +257,14 @@ mod tests {
         });
     }
 
-    /// A dead verify endpoint refuses AT the setter: the provider build's
+    /// A refused provider build fails AT the setter: the construction
     /// failure raises immediately and installs nothing on the verify home.
+    /// The error path is the build's `Result` — this ws:// URL fails its
+    /// build-time connect — not an endpoint-liveness verdict; a lazy HTTP
+    /// build dials nothing and installs against a valid-but-unresponsive
+    /// endpoint without complaint.
     #[test]
-    fn a_dead_verify_endpoint_raises_immediately_and_installs_nothing() {
+    fn a_refused_provider_build_raises_immediately_and_installs_nothing() {
         Python::attach(|py| {
             let bot = PyBot::new(1);
             let driver = driver();

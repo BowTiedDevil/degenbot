@@ -120,9 +120,13 @@ def test_set_verify_state_view_rejects_a_malformed_address() -> None:
         bot.set_verify_state_view("not-an-address")
 
 
-def test_set_verify_rpc_url_raises_immediately_on_a_dead_endpoint() -> None:
-    """A dead verify endpoint raises at the setter: provider construction
-    failure is never swallowed into a silently unconfigured verify home."""
+def test_set_verify_rpc_url_raises_immediately_on_a_provider_construction_failure() -> None:
+    """A refused provider construction raises at the setter: the failure is
+    never swallowed into a silently unconfigured verify home. This ws:// URL is
+    refused at construction (the build-time WS connect fails); the error path
+    under test is the construction `Result`, not an endpoint-liveness verdict —
+    a lazy HTTP construction dials nothing and installs against a
+    valid-but-unresponsive endpoint without complaint."""
     bot = Bot()
     runner.ArbitrageEngine(py_bot=bot)
     with pytest.raises(RuntimeError, match="failed to create verification provider"):
