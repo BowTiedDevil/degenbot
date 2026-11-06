@@ -23,6 +23,7 @@ from hypothesis import settings
 from degenbot.bot import Bot
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, _STDOUT_HANDLER, set_log_level
+from tests.fork_endpoint import spawn_fork
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.golden.recorded_pool import RecordedPool
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -366,7 +367,10 @@ class AnvilFactory:
         *,
         launch: ForkLaunchConfig | None = None,
     ) -> AnvilFork:
-        fork = AnvilFork(fork_url=fork_url, launch=launch)
+        fork = spawn_fork(
+            lambda: AnvilFork(fork_url=fork_url, launch=launch),
+            fork_url=fork_url,
+        )
         self._forks.append(fork)
         return fork
 
@@ -464,13 +468,16 @@ def _fork(
     correctness; head forks keep it.
     """
     _require_live_node()
-    fork = AnvilFork(
-        fork_url=fork_url,
-        fork_block=fork_block,
-        launch=ForkLaunchConfig(
-            storage_caching=storage_caching and fork_block is None,
-            anvil_opts=["--accounts=0", *extra_opts],
+    fork = spawn_fork(
+        lambda: AnvilFork(
+            fork_url=fork_url,
+            fork_block=fork_block,
+            launch=ForkLaunchConfig(
+                storage_caching=storage_caching and fork_block is None,
+                anvil_opts=["--accounts=0", *extra_opts],
+            ),
         ),
+        fork_url=fork_url,
     )
     yield fork
     fork.close()

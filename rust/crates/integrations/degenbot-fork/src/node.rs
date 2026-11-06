@@ -368,7 +368,16 @@ impl AnvilForkBuilder {
 
     /// Spawn deadline for a forked anvil (alloy's default is 10s, tuned
     /// for in-memory spawns).
-    const FORK_SPAWN_TIMEOUT_MS: u64 = 60_000;
+    ///
+    /// A forked child's startup includes fetching fork metadata and genesis
+    /// state from the upstream, so the deadline is an upstream-latency budget,
+    /// not a local process-spawn budget: a hosted endpoint with a configured
+    /// compute-unit cap stretches every fetch, and a deep fork (a pinned block
+    /// or transaction hash) issues many of them. The deadline is therefore
+    /// deliberately far above any plausible local spawn cost — a stalling
+    /// upstream must not be reported as a missing binary — while staying under
+    /// the test suite's per-test budget (300s) that the fork lane spawns into.
+    const FORK_SPAWN_TIMEOUT_MS: u64 = 180_000;
 
     /// Render a spawn failure with the fork target and the cause alloy's
     /// message hides.
