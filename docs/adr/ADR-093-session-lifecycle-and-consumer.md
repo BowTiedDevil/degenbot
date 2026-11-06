@@ -332,7 +332,10 @@ consumer that took the driver asks `driver.stages()` once and keeps the handle.
   provider, so the retry loop (`bot_core/verification_retry.rs`) moves beside
   the machine and the *core* owns the bounded retry the glossary already claims.
   Verify configuration becomes a property of the verify home plus the one
-  provider the `Bot` owns (ADR-022 D3), not a session poke.
+  provider the `Bot` owns (ADR-022 D3), not a session poke. Callers configure
+  the home directly through its own `config()`/`configure()` door;
+  `bot_core::build_verify_provider` is the one provider-construction home and
+  refuses a dead endpoint at that door (`Result`, never a swallowed `Option`).
 - **Registration admission.** One implementation of the stage order (memo →
   construction → eligibility → Verify lifecycle → registration) lives at
   `arb_engine::crawl::admission`, beside the two adapters it feeds and
@@ -697,7 +700,7 @@ a host-owned `Live` sub-state"), which stays open on the host side.
 | path registry | `EngineDriver::{register_path, register_and_solve_path, deregister_path, set_path_cap, path_count, path_dedups, path_info_for}` | `EngineStages::{…}` (same names) |
 | retune / inline sim | `EngineDriver::{apply_retune, set_inline_simulator}` | `EngineStages::{apply_retune, set_inline_simulator}` |
 | results read | `EngineDriver::latest_results()` | `EngineStages::latest_results()` |
-| verify configuration | `EngineDriver::{set_verify_rpc_url, set_verify_state_view}` | the verify home plus the one provider the `Bot` owns (ADR-022 D3) |
+| verify configuration | `EngineDriver::{set_verify_rpc_url, set_verify_state_view}` | the verify home's own `config()`/`configure()` door (`VerifyLifecycle`), over `bot_core::build_verify_provider` for the one provider (ADR-022 D3) |
 | registration lifecycles | `EngineDriver::{run_registration_lifecycle, _sync, _with_retry, _with_retry_sync}` | `bot_core::{run_registration_lifecycle, run_verify_lifecycle}` over the core-owned retry policy |
 | verify reads | `EngineDriver::{pool_id_for_identity, is_pool_verified, live_verify_claim_count, verified_pool_count}` | `PoolVerifications::{is_verified, live_claim_count, verified_pool_count}`; the identity join stays `EngineDriver::pool_id_for_identity`, a derived `BotState` read whose readers are the FFI identity adapter and the driver's own tests |
 | live-loop health | `EngineDriver::pump_handle_armed()` | `PumpPhase::live_loop_armed` on the pose projection |

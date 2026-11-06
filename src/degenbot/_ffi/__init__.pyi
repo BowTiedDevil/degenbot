@@ -582,13 +582,25 @@ class ArbitrageEngine:
         """
         Set the HTTP RPC URL used for verification during registration.
 
-        Must be called before enabling `verify_on_register`.
+        Must be called before enabling `verify_on_register`. Builds the verify
+        home's ONE provider and installs it through the home's own
+        `config()`/`configure()` door (the verify home is the ONE owner of the
+        provider, ADR-093 D4; the body blocks at this adapter boundary with the
+        GIL detached).
+
+        # Errors
+        `RuntimeError` when the provider cannot be built — the verify home's
+        configuration is then left unchanged.
         """
     def set_verify_state_view(self, /, state_view_address: str) -> None:
         """
         Set the `StateView` contract address for V4 verification during registration.
 
         Must be called before any V4 pools are registered with verification enabled.
+
+        # Errors
+        `ValueError` on a malformed address — the configuration is then left
+        unchanged, and an invalid `StateView` never becomes the zero address.
         """
     @property
     def snapshot_seed_block(self, /) -> int | None:
@@ -1675,11 +1687,24 @@ class Bot:
     def set_verify_rpc_url(self, /, rpc_url: str) -> None:
         """
         Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
-        Delegates to the shared `PumpState`.
+
+        Builds the verify home's ONE provider and installs it through the
+        home's own `config()`/`configure()` door (the body blocks at this
+        adapter boundary with the GIL detached).
+
+        # Errors
+        `RuntimeError` when no engine is attached to this bot, or when the
+        provider cannot be built — the verify home's configuration is then
+        left unchanged.
         """
     def set_verify_state_view(self, /, state_view_address: str) -> None:
         """
         Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
+
+        # Errors
+        `RuntimeError` when no engine is attached to this bot; `ValueError` on
+        a malformed address — the configuration is then left unchanged, and an
+        invalid `StateView` never becomes the zero address.
         """
     @property
     def snapshot_seed_block(self, /) -> int | None:

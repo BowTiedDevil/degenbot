@@ -2,10 +2,10 @@
 //!
 //! The retained-tx snapshot open/teardown pair
 //! ([`Bot::load_snapshot_from_db_path`] + [`RetainedSnapshotTx`]), the driver
-//! subscribe/resume/stop wrappers, the verification-config setters, and the
-//! once-only block-stream hand-off. The PyO3 shell keeps only arg
-//! parsing + `PyErr` mapping for this surface; the typed errors are
-//! re-exported from `bot.rs` so the shell's import paths hold.
+//! connect/run/close wrappers, and the once-only block-stream hand-off. The
+//! PyO3 shell keeps only arg parsing + `PyErr` mapping for this surface; the
+//! typed errors are re-exported from `bot.rs` so the shell's import paths
+//! hold.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -128,44 +128,6 @@ impl Bot {
     /// runtime).
     pub fn close(driver: &EngineDriver) -> TeardownReport {
         degenbot_core::runtime::get_runtime().block_on(driver.close())
-    }
-
-    /// Install the verify home's RPC provider from `rpc_url`. `None` (no engine
-    /// constructed against the bot) is a no-op — the guard the `PyO3` shell
-    /// held as a swallowed `pump_state` error.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called from within a Tokio runtime (it parks on the shared
-    /// runtime via `block_on`).
-    pub fn set_verify_rpc_url(driver: Option<&EngineDriver>, rpc_url: &str) {
-        if let Some(pump) = driver {
-            let verify = pump.verify();
-            let rpc_url = rpc_url.to_owned();
-            let verify = Arc::clone(verify);
-            degenbot_core::runtime::get_runtime().block_on(async move {
-                let provider =
-                    crate::bot_core::verify_lifecycle::build_verify_provider(&rpc_url).await;
-                let mut config = verify.config();
-                config.provider = provider;
-                verify.configure(config);
-            });
-        }
-    }
-
-    /// Set the `StateView` contract address for V4 verification. `None` (no
-    /// engine constructed against the bot) is a no-op.
-    pub fn set_verify_state_view(driver: Option<&EngineDriver>, state_view_address: &str) {
-        if let Some(pump) = driver {
-            let verify = pump.verify();
-            let mut config = verify.config();
-            config.state_view = Some(
-                state_view_address
-                    .parse()
-                    .unwrap_or(alloy::primitives::Address::ZERO),
-            );
-            verify.configure(config);
-        }
     }
 }
 
@@ -509,21 +471,6 @@ mod tests {
         assert!(tx.close().expect("no handle: Ok").is_none());
 
         drop(held);
-    }
-
-    /// The verify-config setters no-op without an attached engine (the shell's
-    /// swallowed `pump_state` error), and accept one without side effects the
-    /// shell could observe.
-    #[test]
-    fn set_verify_config_noops_without_an_attached_driver() {
-        Bot::set_verify_rpc_url(None, "http://127.0.0.1:1");
-        Bot::set_verify_state_view(None, "0x0000000000000000000000000000000000000001");
-
-        let bot = std::sync::Arc::new(Bot::new(8453));
-        let driver =
-            crate::arb_engine::EngineDriver::new(bot, degenbot_config::holder::config_arc());
-        Bot::set_verify_rpc_url(Some(&driver), "http://127.0.0.1:1");
-        Bot::set_verify_state_view(Some(&driver), "0x0000000000000000000000000000000000000001");
     }
 
     /// `Bot::close` drives the driver's total, idempotent close (the shell keeps

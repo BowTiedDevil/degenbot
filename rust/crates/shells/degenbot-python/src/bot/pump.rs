@@ -12,16 +12,88 @@
 //! `PyArbEngine` call with their shared driver handle (the typed `DriverError`
 //! → Python-exception maps live in [`crate::bot::errmap`]). The `start`
 //! wrapper is this shell's one-call ritual — `connect` plus the verify home's
-//! configuration, a composition and never a second ordering. The registration
-//! lifecycles are one value behind one pymethod pair in
+//! configuration, a composition and never a second ordering — and the verify
+//! configuration wrappers ([`install_verify_provider`] /
+//! [`install_verify_state_view`]) are the blocking bodies the two
+//! `set_verify_*` pymethod pairs delegate to. The registration lifecycles are
+//! one value behind one pymethod pair in
 //! [`crate::bot::registration_lifecycle`].
 
+use alloy::primitives::Address;
 use degenbot_bot::arb_engine::EngineDriver;
+use degenbot_bot::bot_core::build_verify_provider;
 use pyo3::prelude::*;
 use pyo3::Bound;
 use std::sync::Arc;
 
 use crate::bot::errmap::map_connect_err;
+
+/// Parse a Python-supplied V4 `StateView` address at the seam boundary.
+///
+/// A malformed address raises `ValueError` HERE — before anything touches the
+/// verify home's configuration — so an invalid `StateView` is never installed
+/// as the zero address, and a refused parse leaves the configuration exactly
+/// as it was.
+///
+/// # Errors
+/// `ValueError` when `state_view_address` is not a hex address.
+pub(crate) fn parse_state_view(state_view_address: &str) -> PyResult<Address> {
+    state_view_address.parse().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "set_verify_state_view: malformed StateView address {state_view_address:?}: {e}"
+        ))
+    })
+}
+
+/// Merge the `StateView` address into the verify home's construction values —
+/// through the home's own `config()`/`configure()` door (ADR-093 D4), so the
+/// bounded retry and any already-installed provider survive the merge.
+pub(crate) fn install_verify_state_view(driver: &Arc<EngineDriver>, state_view: Address) {
+    let verify = Arc::clone(driver.verify());
+    let mut config = verify.config();
+    config.state_view = Some(state_view);
+    verify.configure(config);
+}
+
+/// Build the verify home's ONE provider from `rpc_url` and merge it into the
+/// construction values. Awaited — a caller already on the runtime (the `start`
+/// ritual) never nests a `block_on` — with [`install_verify_provider`] as the
+/// blocking pymethod body over it.
+///
+/// # Errors
+/// `RuntimeError` when the provider cannot be constructed; the verify home's
+/// configuration is then left unchanged.
+pub(crate) async fn configure_verify_provider(
+    driver: &Arc<EngineDriver>,
+    rpc_url: &str,
+) -> PyResult<()> {
+    let provider = build_verify_provider(rpc_url).await.map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "failed to create verification provider from {rpc_url}: {e}"
+        ))
+    })?;
+    let verify = Arc::clone(driver.verify());
+    let mut config = verify.config();
+    config.provider = Some(provider);
+    verify.configure(config);
+    Ok(())
+}
+
+/// The blocking body behind the `set_verify_rpc_url` pymethods: GIL detached,
+/// provider construction blocked at this adapter boundary (never inside the
+/// core runtime).
+///
+/// # Errors
+/// See [`configure_verify_provider`].
+pub(crate) fn install_verify_provider(
+    py: Python<'_>,
+    driver: &Arc<EngineDriver>,
+    rpc_url: &str,
+) -> PyResult<()> {
+    py.detach(|| {
+        degenbot_core::runtime::get_runtime().block_on(configure_verify_provider(driver, rpc_url))
+    })
+}
 
 /// Run the pre-pump startup ritual: `connect(ws)` then verify-config
 /// (`http`, optional `view`), detached from the GIL.
@@ -31,8 +103,10 @@ use crate::bot::errmap::map_connect_err;
 /// presence (`connect` lands the table's `Connecting -> Subscribed`).
 ///
 /// # Errors
-/// `PyRuntimeError` if the pose refuses the move (another lifecycle move in
-/// flight, a terminal session) or the WS handshake fails.
+/// `ValueError` on a malformed `StateView` — refused before the ritual runs,
+/// leaving the verify home's configuration unchanged. `PyRuntimeError` if the
+/// pose refuses the move (another lifecycle move in flight, a terminal
+/// session), the WS handshake fails, or the verify provider cannot be built.
 pub(crate) fn start(
     py: Python<'_>,
     driver: &Arc<EngineDriver>,
@@ -43,22 +117,24 @@ pub(crate) fn start(
     let driver = Arc::clone(driver);
     let node_http = node_http.to_string();
     let node_ws = node_ws.to_string();
-    let verify_state_view = verify_state_view.map(str::to_string);
+    // Argument validation FIRST: a malformed `StateView` refuses before the
+    // ritual runs, and can never land as the zero address.
+    let state_view = verify_state_view.map(parse_state_view).transpose()?;
     // GIL-release across the WS handshake `block_on`: the handshake future
     // (WS subscribe + header polling + provider build) does NOT need the GIL.
     //
     // The ritual is an ADAPTER over two core doors: `connect` (the lifecycle
     // move, which deliberately carries no configuration — ADR-093 D1) and the
-    // verify home's own configuration door.
+    // verify home's own `config()`/`configure()` door.
     py.detach(move || {
-        let connected = degenbot_core::runtime::get_runtime()
-            .block_on(driver.connect(&node_ws))
-            .map_err(map_connect_err)?;
-        degenbot_bot::bot_core::Bot::set_verify_rpc_url(Some(&driver), &node_http);
-        if let Some(view) = verify_state_view.as_deref() {
-            degenbot_bot::bot_core::Bot::set_verify_state_view(Some(&driver), view);
-        }
-        Ok(connected.link_block)
+        degenbot_core::runtime::get_runtime().block_on(async move {
+            let connected = driver.connect(&node_ws).await.map_err(map_connect_err)?;
+            configure_verify_provider(&driver, &node_http).await?;
+            if let Some(state_view) = state_view {
+                install_verify_state_view(&driver, state_view);
+            }
+            Ok(connected.link_block)
+        })
     })
 }
 
@@ -146,10 +222,81 @@ pub(crate) fn session_end_rank(
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
-    reason = "tests assert on the seam's known-valid names"
+    clippy::expect_used,
+    reason = "tests assert on the seam's known-valid names and fail-loud paths"
 )]
 mod tests {
     use super::*;
+
+    use crate::bot::PyBot;
+    use degenbot_bot::bot_core::Bot;
+
+    /// A driver over a fresh bot — the verify home the setters configure.
+    fn driver() -> Arc<EngineDriver> {
+        Arc::new(EngineDriver::new(
+            Arc::new(Bot::new(1)),
+            degenbot_config::holder::config_arc(),
+        ))
+    }
+
+    /// The verify setters fail LOUD on a bot with no engine attached: the
+    /// missing-engine case raises at the adapter instead of swallowing the
+    /// call as a no-op.
+    #[test]
+    fn the_verify_setters_raise_without_an_attached_engine() {
+        Python::attach(|py| {
+            let bot = PyBot::new(1);
+            let err = bot
+                .set_verify_rpc_url(py, "http://127.0.0.1:8545")
+                .unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+            let err = bot
+                .set_verify_state_view("0x0000000000000000000000000000000000000001")
+                .unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+        });
+    }
+
+    /// A dead verify endpoint refuses AT the setter: the provider build's
+    /// failure raises immediately and installs nothing on the verify home.
+    #[test]
+    fn a_dead_verify_endpoint_raises_immediately_and_installs_nothing() {
+        Python::attach(|py| {
+            let bot = PyBot::new(1);
+            let driver = driver();
+            bot.attach_pump_state(Arc::clone(&driver));
+            let err = bot.set_verify_rpc_url(py, "ws://127.0.0.1:1").unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+            assert!(
+                driver.verify().config().provider.is_none(),
+                "a refused provider build leaves the verify home unconfigured"
+            );
+        });
+    }
+
+    /// A malformed `StateView` raises `ValueError` and leaves the verify
+    /// home's configuration unchanged — the invalid address never becomes
+    /// the zero address.
+    #[test]
+    fn a_malformed_state_view_raises_value_error_and_changes_nothing() {
+        Python::attach(|py| {
+            let bot = PyBot::new(1);
+            let driver = driver();
+            bot.attach_pump_state(Arc::clone(&driver));
+            bot.set_verify_state_view("0x0000000000000000000000000000000000000001")
+                .expect("a valid view installs");
+            let installed = driver.verify().config().state_view;
+
+            let err = bot.set_verify_state_view("not-an-address").unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert_eq!(
+                driver.verify().config().state_view,
+                installed,
+                "a refused parse leaves the configuration unchanged"
+            );
+            assert_ne!(installed, Some(alloy::primitives::Address::ZERO));
+        });
+    }
 
     /// The seam folds through the core's own vocabulary: the names in are the
     /// names the core parses, the names out are the names it emits.

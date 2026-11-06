@@ -930,22 +930,34 @@ impl PyBot {
     }
 
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
-    /// Delegates to the shared `PumpState`.
+    ///
+    /// Builds the verify home's ONE provider and installs it through the
+    /// home's own `config()`/`configure()` door (the body blocks at this
+    /// adapter boundary with the GIL detached).
+    ///
+    /// # Errors
+    /// `RuntimeError` when no engine is attached to this bot, or when the
+    /// provider cannot be built — the verify home's configuration is then
+    /// left unchanged.
     #[pyo3(signature = (rpc_url))]
-    fn set_verify_rpc_url(&self, rpc_url: &str) {
-        // No engine attached → no-op (the swallowed pump_state error, now the
-        // core `None` arm).
-        let pump = self.pump_state().ok();
-        Bot::set_verify_rpc_url(pump.as_deref(), rpc_url);
+    fn set_verify_rpc_url(&self, py: Python<'_>, rpc_url: &str) -> PyResult<()> {
+        // Missing engine raises at once (no swallowed `pump_state` error).
+        let driver = self.pump_state()?;
+        crate::bot::pump::install_verify_provider(py, &driver, rpc_url)
     }
 
     /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
+    ///
+    /// # Errors
+    /// `RuntimeError` when no engine is attached to this bot; `ValueError` on
+    /// a malformed address — the configuration is then left unchanged, and an
+    /// invalid `StateView` never becomes the zero address.
     #[pyo3(signature = (state_view_address))]
-    fn set_verify_state_view(&self, state_view_address: &str) {
-        // No engine attached → no-op (the swallowed pump_state error, now the
-        // core `None` arm).
-        let pump = self.pump_state().ok();
-        Bot::set_verify_state_view(pump.as_deref(), state_view_address);
+    fn set_verify_state_view(&self, state_view_address: &str) -> PyResult<()> {
+        let driver = self.pump_state()?;
+        let state_view = crate::bot::pump::parse_state_view(state_view_address)?;
+        crate::bot::pump::install_verify_state_view(&driver, state_view);
+        Ok(())
     }
 
     /// Register a V2 pool by contract address.

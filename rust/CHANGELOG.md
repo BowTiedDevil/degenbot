@@ -349,6 +349,32 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Removed
 
+- **Direct Verify lifecycle configuration: `Bot::set_verify_rpc_url` /
+  `Bot::set_verify_state_view` are deleted — every caller configures
+  `VerifyLifecycle` directly through its `config()`/`configure()` door.**
+  `degenbot_bot::bot_core::build_verify_provider` becomes the public
+  provider-construction door and returns `Result<AlloyProvider, ProviderError>`
+  instead of `Option`: a dead endpoint refuses at the configuration call
+  instead of silently leaving the verify home unconfigured (the registration
+  missing-provider precondition remains the backstop for a home nobody
+  configured). The Python pymethod surfaces (`Bot.set_verify_rpc_url` /
+  `set_verify_state_view` and the `ArbitrageEngine` twins) keep their shape but
+  fail loud at the adapter: a missing engine raises `RuntimeError`, a provider
+  construction failure raises immediately with the configuration unchanged,
+  and a malformed `StateView` raises `ValueError` with the configuration
+  unchanged — an invalid address never becomes the zero address. Pure Rust
+  callers await provider construction (the settlement example's nested
+  `block_on` hazard is gone); the pymethod bodies own the GIL detachment and
+  blocking. The retry-merge behavior (`config()` -> set one field ->
+  `configure()`) and the connect-then-configure ritual are preserved.
+
+  | Was | Is |
+  | --- | --- |
+  | `degenbot_bot::bot_core::Bot::set_verify_rpc_url(Option<&EngineDriver>, &str)` | deleted — `bot_core::build_verify_provider(rpc_url).await` + `VerifyLifecycle::configure` over a `config()` merge |
+  | `degenbot_bot::bot_core::Bot::set_verify_state_view(Option<&EngineDriver>, &str)` (a parse failure silently became `Address::ZERO`) | deleted — parse at the seam (`ValueError` on malformed) + `VerifyLifecycle::configure` |
+  | `build_verify_provider -> Option<AlloyProvider>`, module-private | `degenbot_bot::bot_core::build_verify_provider -> Result<AlloyProvider, ProviderError>` (public; umbrella `degenbot::bot_core`) |
+  | the no-op unit test `set_verify_config_noops_without_an_attached_driver` | deleted with the statics; the fail-loud error paths are tested at the PyO3 adapter |
+
 - **`degenbot_simulation::sim::divergence_probe::reset_divergence_tally`**
   (umbrella-reachable as `degenbot::simulation::divergence_probe`): the
   test-only drain of the process-global divergence tally. A test that needs

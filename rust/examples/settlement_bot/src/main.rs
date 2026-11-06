@@ -824,14 +824,13 @@ fn run() -> Result<(), String> {
         // The V4 full-map verifier targets the `PoolManager` + `PoolId` from
         // the enumerated `pool_managers` rows. `StateView` remains optional
         // scalar/bootstrap configuration and is not a full-map target.
-        let verify_state_view =
-            live::resolve_verify_state_view(&discovered).map(|address| format!("{address:#x}"));
-        match verify_state_view.as_deref() {
+        let verify_state_view = live::resolve_verify_state_view(&discovered);
+        match verify_state_view {
             Some(view) => {
-                println!("[registration] V4 verify state view = {view} (from pool_managers)");
+                println!("[registration] V4 verify state view = {view:#x} (from pool_managers)");
                 degenbot::op_info!(
                     domain = pump,
-                    state_view = view,
+                    state_view = format!("{view:#x}"),
                     "registration: V4 verify state view bound"
                 );
             }
@@ -841,11 +840,20 @@ fn run() -> Result<(), String> {
             ),
         }
         // The verify home's configuration is NOT a lifecycle argument
-        // (ADR-093 D1): this adapter sets it on the home, then makes the move.
-        degenbot::bot_core::Bot::set_verify_rpc_url(Some(&driver), &http);
-        if let Some(view) = verify_state_view.as_deref() {
-            degenbot::bot_core::Bot::set_verify_state_view(Some(&driver), view);
+        // (ADR-093 D1): this adapter configures the home directly through its
+        // `config()`/`configure()` door, then makes the move. Provider
+        // construction is AWAITED here — nothing parks a nested `block_on`
+        // inside the session runtime.
+        let verify_provider = degenbot::bot_core::build_verify_provider(&http)
+            .await
+            .map_err(|e| format!("verify provider from {http}: {e}"))?;
+        let verify = driver.verify();
+        let mut verify_config = verify.config();
+        verify_config.provider = Some(verify_provider);
+        if let Some(view) = verify_state_view {
+            verify_config.state_view = Some(view);
         }
+        verify.configure(verify_config);
         let w = driver
             .connect(&ws)
             .await

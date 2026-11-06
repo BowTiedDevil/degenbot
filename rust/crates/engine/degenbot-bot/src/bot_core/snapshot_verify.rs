@@ -153,8 +153,8 @@ where
         return Err(RefusalKind::verify_not_configured(
             RegistrationPhase::Verify,
             "verify_on_register is enabled but verification is not configured — \
-             call set_verify_rpc_url() (and set_verify_state_view() for V4 pools) \
-             before registering snapshot pools"
+             configure the verify home through its `config()`/`configure()` door \
+             (provider, and `state_view` for V4 pools) before registering snapshot pools"
                 .to_string(),
         ));
     }
@@ -498,14 +498,15 @@ mod tests {
     /// A `NotConfigured` returned by an opted-in phase (e.g. a V4 snapshot
     /// closure that found `state_view` unset) propagates to the caller — it is
     /// NOT swallowed. The register.rs V4 closures rely on this to surface a
-    /// missing `set_verify_state_view()` as a loud fatal error.
+    /// missing `state_view` in the verify home's configuration as a loud fatal
+    /// error.
     #[test]
     fn run_concentrated_liquidity_verification_propagates_not_configured_from_phase() {
         let rpc = FakeVerifyRpc::new(true);
         let snap = |_: &FakeVerifyRpc, _b: u64| {
             Err(RefusalKind::verify_not_configured(
                 RegistrationPhase::Verify,
-                "missing set_verify_state_view() for V4 pool".to_string(),
+                "missing state_view in the verify home's configuration for V4 pool".to_string(),
             ))
         };
         let back = |_: &FakeVerifyRpc, b: u64| {
@@ -516,6 +517,6 @@ mod tests {
         let Err(RefusalKind::VerifyNotConfigured { detail, .. }) = res else {
             panic!("NotConfigured from a phase must propagate: {res:?}");
         };
-        assert!(detail.contains("set_verify_state_view"));
+        assert!(detail.contains("state_view"));
     }
 }

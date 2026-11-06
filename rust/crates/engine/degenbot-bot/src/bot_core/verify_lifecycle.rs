@@ -21,6 +21,7 @@ use alloy::primitives::Address;
 use parking_lot::Mutex;
 use tracing::Instrument as _;
 
+use degenbot_core::errors::ProviderError;
 use degenbot_core::{diag, op_warn};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_substrate::state_lock::LockSite;
@@ -208,22 +209,19 @@ impl VerifyLifecycle {
 
 /// Build the bot's ONE verify provider from a node endpoint (ADR-022 D3).
 ///
-/// The one home of "make a provider for verification": the driver's session
-/// boot and the `Bot` facade's configuration door both call it, so a provider
-/// cannot be built two different ways. A failure is reported and answers `None`
-/// (the tracked pool then fails fast with the missing-provider precondition
-/// rather than verifying against nothing).
-pub async fn build_verify_provider(rpc_url: &str) -> Option<AlloyProvider> {
-    match AlloyProvider::new(rpc_url, degenbot_rpc::provider::DEFAULT_MAX_RETRIES).await {
-        Ok(provider) => Some(provider),
-        Err(e) => {
-            #[expect(clippy::print_stderr)] // startup diagnostic
-            {
-                eprintln!("Failed to create verification provider: {e}");
-            }
-            None
-        }
-    }
+/// The one home of "make a provider for verification": the session boot and
+/// every verify-home configuration call it, so a provider cannot be built two
+/// different ways. Construction failure is the CALLER's to refuse at once
+/// (`Result`, never a swallowed `Option`): a dead endpoint fails the
+/// configuration door loudly instead of leaving the verify home silently
+/// unconfigured — where the tracked pool would only later trip the
+/// missing-provider precondition.
+///
+/// # Errors
+///
+/// The transport's own [`ProviderError`] when the endpoint cannot be built.
+pub async fn build_verify_provider(rpc_url: &str) -> Result<AlloyProvider, ProviderError> {
+    AlloyProvider::new(rpc_url, degenbot_rpc::provider::DEFAULT_MAX_RETRIES).await
 }
 
 /// The claim key for a pool key: the identity the ledger memos on.

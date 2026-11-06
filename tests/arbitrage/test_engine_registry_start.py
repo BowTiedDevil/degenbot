@@ -14,6 +14,7 @@ import pytest
 
 import degenbot.arbitrage.engine_registry as runner
 from tests.fakes.engine import FakeEngine
+from tests.helpers.seam import Bot
 
 
 def test_start_no_snapshots_calls_subscribe_then_verify_never_resume() -> None:
@@ -98,6 +99,34 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
         "set_verify_state_view",
     ):
         assert hasattr(bot, method), f"Bot must expose {method} after engine attach"
+
+
+def test_pybot_verify_setters_fail_loud_without_an_attached_engine() -> None:
+    """The verify setters RAISE on a bot with no engine attached (the old
+    swallowed no-op is gone): the missing-engine case fails at the adapter."""
+    bot = Bot()
+    with pytest.raises(RuntimeError, match="No engine attached"):
+        bot.set_verify_rpc_url("http://localhost:8545")
+    with pytest.raises(RuntimeError, match="No engine attached"):
+        bot.set_verify_state_view("0x0000000000000000000000000000000000000abc")
+
+
+def test_set_verify_state_view_rejects_a_malformed_address() -> None:
+    """A malformed StateView raises ValueError at the adapter and is never
+    installed as the zero address (the configuration is left unchanged)."""
+    bot = Bot()
+    runner.ArbitrageEngine(py_bot=bot)
+    with pytest.raises(ValueError, match="malformed StateView"):
+        bot.set_verify_state_view("not-an-address")
+
+
+def test_set_verify_rpc_url_raises_immediately_on_a_dead_endpoint() -> None:
+    """A dead verify endpoint raises at the setter: provider construction
+    failure is never swallowed into a silently unconfigured verify home."""
+    bot = Bot()
+    runner.ArbitrageEngine(py_bot=bot)
+    with pytest.raises(RuntimeError, match="failed to create verification provider"):
+        bot.set_verify_rpc_url("ws://127.0.0.1:1")
 
 
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:

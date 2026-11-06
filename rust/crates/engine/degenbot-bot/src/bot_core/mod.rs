@@ -20,9 +20,9 @@ pub(crate) mod curve_data_provider_impl;
 pub(crate) mod curve_state;
 /// The snapshot + pump-lifecycle + block-stream cluster on the `Bot`
 /// facade: the retained-tx snapshot open/teardown pair, the driver
-/// subscribe/resume/stop wrappers, the verification-config setters, and the
-/// once-only block-stream hand-off. The cluster's typed errors are door items
-/// of this module, beside the `Bot` facade they belong to.
+/// connect/run/close wrappers, and the once-only block-stream hand-off. The
+/// cluster's typed errors are door items of this module, beside the `Bot`
+/// facade they belong to.
 pub(crate) mod lifecycle;
 pub(crate) mod liquidity_verifier;
 pub(crate) mod pool_builder;
@@ -121,7 +121,7 @@ pub use stage_handlers::{
     SimulateOutcome, Solve, SolveOutcome, Stage, StageError, StageHandlers,
 };
 pub use verify_claims::{PoolVerifications, VerifyClaims};
-pub use verify_lifecycle::{VerifyLifecycle, VerifyLifecycleConfig};
+pub use verify_lifecycle::{build_verify_provider, VerifyLifecycle, VerifyLifecycleConfig};
 
 // Re-export the unified block stage machine : the
 // per-block state map + decision producer + watchdogs + gates in ONE pure

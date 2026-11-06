@@ -16,7 +16,7 @@ ADR-093 D1 ("As shipped") records twenty-one public seam members, five of which 
 
 Paths in the tables are relative to `rust/crates/` — `engine/degenbot-bot/src/`, `foundation/degenbot-substrate/src/`, `shells/degenbot-python/src/`, `facade/degenbot/src/` — and `rust/examples/` for the example.
 
-A note the audit had to establish first: of the five, only four are projections in the strict sense. `verify` is the composition's own door. The verify lifecycle is built in `assemble` (`driver.rs:600`) and installed nowhere else — `EngineStages` carries no verify member at all (`grep -c verify arb_engine/engine_stages.rs` → 0), and no `Bot` accessor reaches it either: the two `set_verify_*` setters take the *driver* as their argument (`bot_core/lifecycle.rs:141`, `:158`).
+A note the audit had to establish first: of the five, only four are projections in the strict sense. `verify` is the composition's own door. The verify lifecycle is built in `assemble` (`driver.rs:600`) and installed nowhere else — `EngineStages` carries no verify member at all (`grep -c verify arb_engine/engine_stages.rs` → 0), and no `Bot` accessor reaches it: the `Bot`-static `set_verify_*` adapters are deleted (direct-verify slice), so every caller configures the home through its own `config()` / `configure()` door over a `verify()` handle.
 
 ## The caller inventory
 
@@ -32,16 +32,16 @@ Every call site of the five in the workspace, with the handle each caller holds 
 
 `core` is the only one of the five whose callers all hold `stages()` and whose body states no rule: it is `self.stages.core()` verbatim (`driver.rs:620`). The irony worth recording: `every_engine_operation_is_reached_at_the_stage_seam` (`:576`) reaches the core through the driver while holding the stages arc.
 
-### `verify` — ten call sites, none holding a verify home
+### `verify` — fourteen call sites, none holding a verify home
 
 | Call site | The handle in hand |
 |---|---|
-| `engine/degenbot-bot/src/bot_core/lifecycle.rs:143` (`Bot::set_verify_rpc_url`) | `Option<&EngineDriver>` |
-| `.../bot_core/lifecycle.rs:160` (`Bot::set_verify_state_view`) | `Option<&EngineDriver>` |
-| `.../arb_engine/driver.rs:1767` (test helper `live_crawl_for_test`) | `Arc<EngineDriver>` |
+| `engine/degenbot-bot/src/arb_engine/driver.rs:1767` (test helper `live_crawl_for_test`) | `Arc<EngineDriver>` |
 | `.../arb_engine/crawl/controller/tests.rs:503` (crawl fixture) | `Arc<EngineDriver>` — its `stages` arc was moved INTO the driver at `:498` |
 | `shells/degenbot-python/src/bot/registration_lifecycle.rs:331`, `:338`, `:351` | `&Arc<EngineDriver>`, passed from `self.session.driver()` (`:388`) and from the `Bot` twin's `pump_state()` (`:408`) |
-| `examples/settlement_bot/src/main.rs:919`, `:921`, `:931` | `driver: Arc<EngineDriver>` (`:756`), which derives `driver.stages()` at `:767`, `:930`, `:1178` |
+| `shells/degenbot-python/src/bot/pump.rs:52`, `:75` (the verify-config install wrappers the `set_verify_*` pymethod pairs and the `start` ritual delegate to) | `&Arc<EngineDriver>`, passed from `self.session.driver()` and the `Bot` twin's `pump_state()` |
+| `shells/degenbot-python/src/bot/pump.rs:271`, `:288`, `:293` (the adapter's fail-loud error-path tests) | `Arc<EngineDriver>` |
+| `examples/settlement_bot/src/main.rs:850`, `:930`, `:932`, `:942` (the verify-home configuration + the retry merge + the admission's verify handle) | `driver: Arc<EngineDriver>` (`:756`), which derives `driver.stages()` in the same boot block |
 
 Narrowed form: **none exists**. `stages()` cannot answer — the verify home has no member on `EngineStages` — so "moving" `verify()` would first have to relocate the verify home into another type, which is a D4 reshaping, not a seam narrowing. The callers are not missing a handle; the destination is absent.
 
@@ -69,7 +69,7 @@ No production consumer outside the driver's own `backfill_gap`, and the Python-v
 
 **No change.** The conditional fails on its own terms:
 
-- `verify` — ten call sites, no alternative home to move it to. Neither a caller-side handle nor a stages-side member exists, so the projection is not redundancy laundered through the driver; it is the only door.
+- `verify` — fourteen call sites (nine production, five test), no alternative home to move it to. Neither a caller-side handle nor a stages-side member exists, so the projection is not redundancy laundered through the driver; it is the only door, and the deleted `Bot`-static setters only ever borrowed it.
 - `pool_id_for_identity`, `snapshot_seed_block`, `set_snapshot_seed_block` — the callers do hold `stages()`/`bot()`, but what they would have to restate is the part the projection owns: which `LockSite` the read/write is claimed under, and (in the shell) that the guard is acquired inside `py.detach`. Deleting the door spreads that rule to every caller to save a one-liner.
 - `core` — the one strict candidate; priced below.
 

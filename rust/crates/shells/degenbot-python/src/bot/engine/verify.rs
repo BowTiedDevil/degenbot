@@ -82,22 +82,32 @@ impl PyArbEngine {
 
     /// Set the HTTP RPC URL used for verification during registration.
     ///
-    /// Must be called before enabling `verify_on_register`.
+    /// Must be called before enabling `verify_on_register`. Builds the verify
+    /// home's ONE provider and installs it through the home's own
+    /// `config()`/`configure()` door (the verify home is the ONE owner of the
+    /// provider, ADR-093 D4; the body blocks at this adapter boundary with the
+    /// GIL detached).
+    ///
+    /// # Errors
+    /// `RuntimeError` when the provider cannot be built — the verify home's
+    /// configuration is then left unchanged.
     #[pyo3(signature = (rpc_url))]
-    fn set_verify_rpc_url(&self, rpc_url: &str) {
-        // The verify home is the ONE owner of the provider (ADR-093 D4).
-        degenbot_bot::bot_core::Bot::set_verify_rpc_url(Some(self.session.driver()), rpc_url);
+    fn set_verify_rpc_url(&self, py: Python<'_>, rpc_url: &str) -> PyResult<()> {
+        crate::bot::pump::install_verify_provider(py, self.session.driver(), rpc_url)
     }
 
     /// Set the `StateView` contract address for V4 verification during registration.
     ///
     /// Must be called before any V4 pools are registered with verification enabled.
+    ///
+    /// # Errors
+    /// `ValueError` on a malformed address — the configuration is then left
+    /// unchanged, and an invalid `StateView` never becomes the zero address.
     #[pyo3(signature = (state_view_address))]
-    fn set_verify_state_view(&self, state_view_address: &str) {
+    fn set_verify_state_view(&self, state_view_address: &str) -> PyResult<()> {
         // The verify home is the ONE owner of the view address (ADR-093 D4).
-        degenbot_bot::bot_core::Bot::set_verify_state_view(
-            Some(self.session.driver()),
-            state_view_address,
-        );
+        let state_view = crate::bot::pump::parse_state_view(state_view_address)?;
+        crate::bot::pump::install_verify_state_view(self.session.driver(), state_view);
+        Ok(())
     }
 }
