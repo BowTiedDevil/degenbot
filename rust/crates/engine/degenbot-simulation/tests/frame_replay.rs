@@ -953,6 +953,7 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
         None,
         false,
         None,
+        None,
     )
     .expect("live handle builds");
     let scratch = handle.scratch_evm().expect("scratch evm stacks");
@@ -1099,6 +1100,7 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
         &warm_cache,
         None,
         false,
+        None,
         None,
     )
     .expect("live handle builds");

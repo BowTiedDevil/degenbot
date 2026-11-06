@@ -15,6 +15,8 @@
 use alloy::primitives::{Address, B256, KECCAK256_EMPTY};
 use degenbot_substrate::SimAnchorOracle;
 
+use crate::sim::divergence_probe::DivergenceTallyHandle;
+
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, Database};
 use ::evm2::interpreter::Word;
@@ -41,6 +43,10 @@ where
     /// The per-sim on-demand divergence-probe arm (VERIFY2 T2 — sim-failure
     /// re-verify or a random spot-check), skipping the env gate.
     pub divergence_probe: bool,
+    /// The divergence tally the observations accumulate into. `None` — the
+    /// production default — is the process-global tally; a caller that must
+    /// read the counts of its own reads hands its own handle.
+    pub divergence_tally: Option<DivergenceTallyHandle>,
 }
 
 impl<'bot, ExtDb> BotStateDb<'bot, ExtDb>
@@ -56,6 +62,7 @@ where
             fallback,
             storage_memo: None,
             divergence_probe: false,
+            divergence_tally: None,
         }
     }
 
@@ -85,6 +92,23 @@ where
     #[must_use]
     pub fn with_divergence_probe(mut self, arm: bool) -> Self {
         self.divergence_probe = arm;
+        self
+    }
+
+    /// Point this wrapper's divergence observations at `tally` instead of the
+    /// process-global one (the same handle shape as `with_divergence_probe`;
+    /// the process-global stays the production default).
+    #[must_use]
+    pub fn with_divergence_tally(mut self, tally: DivergenceTallyHandle) -> Self {
+        self.divergence_tally = Some(tally);
+        self
+    }
+
+    /// The `Option`-carrying form (mirrors `with_storage_memo_opt` — the
+    /// handle passes its optional tally through).
+    #[must_use]
+    pub fn with_divergence_tally_opt(mut self, tally: Option<&DivergenceTallyHandle>) -> Self {
+        self.divergence_tally = tally.cloned();
         self
     }
 }
@@ -144,13 +168,15 @@ where
             memo.put(*address, *key, rpc_value);
         }
         // Observation (compares engine vs RPC, never changes what the sim
-        // reads); the on-demand arm skips the env gate.
+        // reads); the armed arm is the on-demand one, and both accumulate into
+        // this wrapper's tally (the process-global unless one was handed in).
         if self.divergence_probe {
             crate::sim::divergence_probe::observe_storage_read_forced(
                 self.oracle,
                 *address,
                 *key,
                 rpc_value,
+                self.divergence_tally.as_ref(),
             );
         } else {
             crate::sim::divergence_probe::observe_storage_read(
@@ -158,6 +184,7 @@ where
                 *address,
                 *key,
                 rpc_value,
+                self.divergence_tally.as_ref(),
             );
         }
         Ok(rpc_value)
@@ -314,24 +341,31 @@ mod tests {
     }
 
     /// A block's fan-outs share the anchor's memo: the second one pays no
-    /// storage forward and reads the same value.
+    /// storage forward and reads the same value. Both wrappers are handed the
+    /// same tally — a forward is what a divergence observation rides on, so the
+    /// memo hit observes nothing.
     #[test]
     fn one_anchors_fan_outs_share_the_storage_memo() {
-        let _tally_guard = crate::sim::divergence_probe::TALLY_TEST_GUARD
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let core = bot_state_with_pool();
         let anchor = SimAnchorState::snapshot(&core);
         let cache = crate::sim::StorageMemoCache::new();
+        let tally = crate::sim::divergence_probe::DivergenceTallyHandle::new();
         let key = Word::from(8u64);
 
         let mut first = BotStateDb::new(&anchor, CountingDb::new(42))
-            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)));
+            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)))
+            .with_divergence_tally(tally.clone());
         assert_eq!(first.get_storage(&POOL, &key).unwrap(), Word::from(42u64));
         assert_eq!(first.fallback.storage_calls, 1, "the cold fan-out forwards");
+        assert_eq!(
+            tally.snapshot().slots_compared,
+            1,
+            "the forwarded read observes into the handed tally"
+        );
 
         let mut second = BotStateDb::new(&anchor, CountingDb::new(42))
-            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)));
+            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)))
+            .with_divergence_tally(tally.clone());
         assert_eq!(
             second.get_storage(&POOL, &key).unwrap(),
             Word::from(42u64),
@@ -341,28 +375,34 @@ mod tests {
             second.fallback.storage_calls, 0,
             "the second fan-out at the same anchor pays no storage forward"
         );
+        assert_eq!(
+            tally.snapshot().slots_compared,
+            1,
+            "a memo hit forwards no RPC answer, so it observes nothing"
+        );
     }
 
     /// The anchor moving retires the memo: the value the chain serves at the
-    /// NEW anchor is never shadowed by the old memo's.
+    /// NEW anchor is never shadowed by the old memo's. Each wrapper's forward
+    /// lands in the tally they share — one handle, two observations.
     #[test]
     fn an_anchor_move_starts_a_fresh_storage_memo() {
-        let _tally_guard = crate::sim::divergence_probe::TALLY_TEST_GUARD
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let core = bot_state_with_pool();
         let anchor = SimAnchorState::snapshot(&core);
         let cache = crate::sim::StorageMemoCache::new();
+        let tally = crate::sim::divergence_probe::DivergenceTallyHandle::new();
         let key = Word::from(8u64);
 
         let mut before = BotStateDb::new(&anchor, CountingDb::new(42))
-            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)));
+            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)))
+            .with_divergence_tally(tally.clone());
         assert_eq!(before.get_storage(&POOL, &key).unwrap(), Word::from(42u64));
 
         // The chain answers differently once the anchor moves (a reorg
         // replacement, or simply the next block).
         let mut after = BotStateDb::new(&anchor, CountingDb::new(7))
-            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(101)));
+            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(101)))
+            .with_divergence_tally(tally.clone());
         assert_eq!(
             after.get_storage(&POOL, &key).unwrap(),
             Word::from(7u64),
@@ -371,6 +411,11 @@ mod tests {
         assert_eq!(
             after.fallback.storage_calls, 1,
             "the fresh memo re-fetches at the new anchor"
+        );
+        assert_eq!(
+            tally.snapshot().slots_compared,
+            2,
+            "both wrappers observe into the one handle they were handed"
         );
     }
 }

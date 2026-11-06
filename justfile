@@ -882,29 +882,38 @@ test-flake-probe:
     done
     echo "✓ flake-probe: 3/3 green"
 
-# Repeat-run gate for the three Rust ordering tests that fail only under
-# whole-crate load: the crawl controller's abort/drain and window/receipt tests
-# and the driver's stop-latch test. Their fixtures establish the orderings with
-# events (a teardown latch, a fill gate, a quiesce notify) instead of clocks, so
-# a green run in isolation proves little -- the load that exposed them is the
-# whole-crate run's own scheduling.
+# Repeat-run gate for the Rust tests that fail only under whole-crate load: the
+# crawl controller's abort/drain and window/receipt tests, the driver's
+# close-latches-the-crawl teardown test, and the sim divergence tally's six lib
+# tests. Their fixtures establish the orderings with events (a teardown latch, a
+# fill gate, a quiesce notify) instead of clocks, so a green run in isolation
+# proves little -- the load that exposed them is the whole-crate run's own
+# scheduling.
 #
 # Measured basis for the granularity: the stop-latch test failed 2 of 25
 # consecutive whole-crate `-p degenbot-bot` runs while passing in isolation, and
-# it is the most reproducible of the three. The selection below is therefore the
-# WHOLE crate, never an `-E` filter: a narrow filter re-runs these tests in
-# exactly the isolation where they never flaked. Five consecutive runs; ANY red
-# run fails the recipe.
+# it is the most reproducible of the three. The nextest selection below is
+# therefore the WHOLE packages, never an `-E` filter: a narrow filter re-runs
+# these tests in exactly the isolation where they never flaked. Five consecutive
+# runs; ANY red run fails the recipe.
 #
-# Non-vacuity: `cargo nextest list` must still name all three tests before the
+# The tally tests add a RELEASE repeat of the existing `test-rust-release`
+# recipe (`--locked`, `degenbot-substrate` + `degenbot-simulation` with the sim's
+# `test-harness` feature). Default multi-threaded one-process execution is the
+# point: the interleaving is the race the injected `DivergenceTallyHandle`
+# retires, and the six lib tests are `#[cfg(test)]` unit tests, not
+# `test-harness`-gated -- so the repeat must never serialize with
+# `--test-threads=1`.
+#
+# Non-vacuity: `cargo nextest list` must still name every probe test before the
 # first run, so a rename or a moved module fails here instead of leaving this
 # probe repeating an empty selection (`cargo nextest run` has no `--list`; the
 # listing is its own subcommand, and its selection mirrors `test-rust-nextest`'s
-# for this package, gated feature included).
+# for these packages, gated features included).
 #
-# On demand only -- never in `test`, pre-push, or CI: five repetitions are
-# minutes of wall clock, and the load this gate depends on is the whole-crate
-# run it is repeating.
+# On demand only -- never in `test`, pre-push, or CI: five repetitions of each
+# selection are minutes of wall clock, and the load this gate depends on is the
+# whole-crate run it is repeating.
 test-flake-probe-rust: check-toolchain
     #!/usr/bin/env bash
     set -euo pipefail
@@ -912,15 +921,22 @@ test-flake-probe-rust: check-toolchain
     probe_tests=(
         'arb_engine::crawl::controller::tests::a_fatal_unit_aborts_the_crawl_loudly_after_the_drain'
         'arb_engine::crawl::controller::tests::the_window_fills_by_submission_and_every_receipt_folds_in_order'
-        'arb_engine::driver::tests::a_stop_latches_the_crawl_and_joins_its_run_within_the_grace'
+        'arb_engine::driver::tests::a_close_latches_the_crawl_before_the_pump_join'
+        'sim::divergence_probe::tests::storage_ref_returns_rpc_value_unchanged_when_probe_on_or_off'
+        'sim::divergence_probe::tests::observe_logs_divergence_when_engine_lags_rpc_and_tally_accumulates'
+        'sim::divergence_probe::tests::observe_never_complains_when_engine_matches_rpc'
+        'sim::divergence_probe::tests::observe_ignores_untracked_slot'
+        'sim::evm2::bot_state_db::tests::one_anchors_fan_outs_share_the_storage_memo'
+        'sim::evm2::bot_state_db::tests::an_anchor_move_starts_a_fresh_storage_memo'
     )
     python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     listing="$(cargo nextest list --locked --manifest-path rust/Cargo.toml \
-        -p degenbot-bot --features degenbot-bot/executor-ab-probe)"
+        -p degenbot-bot -p degenbot-simulation \
+        --features degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness)"
     for test in "${probe_tests[@]}"; do
         if ! grep -qF -- "$test" <<<"$listing"; then
-            echo "ERROR: probe test missing from the -p degenbot-bot selection:" >&2
+            echo "ERROR: probe test missing from the -p degenbot-bot -p degenbot-simulation selection:" >&2
             echo "       $test" >&2
             echo "       Renamed or moved? Update this recipe's test ids." >&2
             exit 1
@@ -928,9 +944,13 @@ test-flake-probe-rust: check-toolchain
     done
     for i in $(seq 1 "$runs"); do
         echo "▶ flake-probe-rust run ${i}/${runs}"
-        just test-rust-nextest -p degenbot-bot
+        just test-rust-nextest -p degenbot-bot -p degenbot-simulation
     done
-    echo "✓ flake-probe-rust: ${runs}/${runs} green"
+    for i in $(seq 1 "$runs"); do
+        echo "▶ flake-probe-rust release run ${i}/${runs}"
+        just test-rust-release
+    done
+    echo "✓ flake-probe-rust: ${runs}/${runs} green (nextest) + ${runs}/${runs} green (release)"
 
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
 # fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:

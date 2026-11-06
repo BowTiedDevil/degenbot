@@ -65,7 +65,7 @@ Dispositions: `leave` (safe or already mitigated; reason recorded), `gate`
 | Site | Kind | Classification | Disposition |
 |---|---|---|---|
 | `degenbot-workers/gauges.rs` `DASHBOARD_HOOK` | init-once hook | safe-serialized | **leave** — hook install is idempotent, no test asserts a specific hook. |
-| `degenbot-simulation/sim/evm/serving.rs` `SERVE_ENABLED` + `SERVE_TEST_GUARD`; `divergence_probe.rs` `PROBE_ENABLED`/`TALLY` + `TALLY_TEST_GUARD` | global stance + shared tally | safe-serialized | **leave** — the test-guard mutex is exactly the pattern this audit prescribes for stance-shaped globals. |
+| `degenbot-simulation/sim/divergence_probe.rs` `PROCESS_TALLY` | production-default divergence tally | safe-serialized; injectable | **leave + inject** — the global takes no stance a test can pin, so a test reads a caller-owned `DivergenceTallyHandle` (`BotStateDb::with_divergence_tally`) instead of asserting absolute global counts, and no test-guard mutex is needed. |
 | `degenbot-simulation/sim/evm/sim_metrics.rs` counters | metric counters | safe-serialized | **leave** — write-only in the suite; no test re-reads absolute values. |
 | `degenbot-pools`/`degenbot-math` `tests/alloc_tracking.rs` `#[global_allocator]` shim + `ACTIVE`/`BYTES`/`ALLOCS` | allocator-wide counters | safe-serialized | **leave** — opt-in `DEGENBOT_ALLOC_TRACK=1`; the measuring harness is a single test binary with a single measuring `#[test]` driving all phases on one thread (the pool file's second test is the gate-off pass-through). |
 | `degenbot-abi` `abi_types/cached.rs` `CACHE_TEST_MUTEX` | cache test gate | safe-serialized | **leave** — the canonical test-guard-mutex pattern. |

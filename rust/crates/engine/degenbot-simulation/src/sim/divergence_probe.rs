@@ -29,13 +29,11 @@
 //!
 //! A process-wide [`DivergenceTally`] is accumulated (slots compared,
 //! divergent count, distinct divergent pools) and exposed via
-//! [`divergence_tally_snapshot`] for a driver/test to assert + a periodic
-//! [`dump_divergence_summary`] log line.
-
-//! A process-wide [`DivergenceTally`] is accumulated (slots compared,
-//! divergent count, distinct divergent pools) and exposed via
-//! [`divergence_tally_snapshot`] for a driver/test to assert + a periodic
-//! [`dump_divergence_summary`] log line.
+//! [`divergence_tally_snapshot`] for a driver to assert + a periodic
+//! [`dump_divergence_summary`] log line. That process-global is the PRODUCTION
+//! default: an observation site handed a [`DivergenceTallyHandle`] accumulates
+//! into that handle instead, so a caller that must read the counts of its own
+//! reads owns them as a value and independent taps share nothing.
 
 // The signed→unsigned bit-pattern casts in the tests (two's-complement tick
 // packing) are intentional; clippy's `cast_sign_loss` suggestion is not a real
@@ -46,7 +44,7 @@
 )]
 use degenbot_core::{diag, op_info};
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use alloy::primitives::{Address, B256, U256};
 
@@ -55,9 +53,10 @@ use degenbot_substrate::{divergence_probe::TrackedSlotProbe, SimAnchorOracle};
 /// The `[sim-divergence]` log prefix — verbatim so log greps return here.
 const SIM_DIVERGENCE_LOG_PREFIX: &str = "[sim-divergence]";
 
-/// On-disk, process-wide divergence accumulator (one entry per divergent slot
-/// observation). Testable via [`divergence_tally_snapshot`]; production logs a
-/// summary via [`dump_divergence_summary`].
+/// The counts one accumulator has gathered (one entry per divergent slot
+/// observation, in total and distinct sets). [`DivergenceTallyHandle::snapshot`]
+/// reads a caller-owned one; [`divergence_tally_snapshot`] reads the
+/// process-global; production logs a summary via [`dump_divergence_summary`].
 #[derive(Debug, Default, Clone)]
 pub struct DivergenceTally {
     /// Storage reads compared against the engine (tracked slots only — the
@@ -71,8 +70,6 @@ pub struct DivergenceTally {
     /// Distinct pool addresses that diverged on at least one slot.
     pub divergent_pools: u64,
 }
-
-static TALLY: OnceLock<Mutex<DivergenceTallyAccum>> = OnceLock::new();
 
 /// The internal accumulator: the public [`DivergenceTally`] (counts) + a
 /// `HashSet` of distinct `(address, slot)` + distinct `address` for the
@@ -97,35 +94,69 @@ impl DivergenceTallyAccum {
     }
 }
 
-fn tally() -> &'static Mutex<DivergenceTallyAccum> {
-    TALLY.get_or_init(|| Mutex::new(DivergenceTallyAccum::default()))
+/// A caller-owned divergence accumulator — the injection handle.
+///
+/// The process-global tally is the production default: an observation site
+/// handed no handle accumulates there. A caller that must read the counts of
+/// ITS OWN reads (a test, or a driver measuring one block) constructs a
+/// handle, hands it to `BotStateDb::with_divergence_tally`, and reads it back
+/// through [`Self::snapshot`]. A [`Clone`] shares this handle's accumulator —
+/// one block's fan-outs land in one tally — while independent handles share
+/// nothing, so a tap needs no serialization against other taps.
+#[derive(Debug, Default, Clone)]
+pub struct DivergenceTallyHandle {
+    accum: Arc<Mutex<DivergenceTallyAccum>>,
 }
 
-/// Reset the process-wide tally to empty (test seam — drain state between
-/// assertions). Production leaves the tally accumulating for the run.
-pub fn reset_divergence_tally() {
-    if let Some(m) = TALLY.get() {
-        if let Ok(mut acc) = m.lock() {
-            *acc = DivergenceTallyAccum::default();
+impl DivergenceTallyHandle {
+    /// An empty accumulator, independent of the process-global one.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Take a snapshot of this handle's counts (does NOT drain — the
+    /// accumulator keeps counting).
+    #[must_use]
+    pub fn snapshot(&self) -> DivergenceTally {
+        self.accum
+            .lock()
+            .map(|acc| acc.to_tally())
+            .unwrap_or_default()
+    }
+
+    /// Fold one compared slot into this handle's counts.
+    fn record(&self, address: Address, index: U256, matched: bool) {
+        let Ok(mut acc) = self.accum.lock() else {
+            return;
+        };
+        acc.slots_compared += 1;
+        if !matched {
+            acc.divergent_slots += 1;
+            // The slot key for distinct-pair tracking: the index as a 32-byte
+            // BE word (storage slots are 256-bit).
+            let slot_bytes: [u8; 32] = index.to_be_bytes();
+            acc.divergent_pairs
+                .insert((address, B256::from(slot_bytes)));
+            acc.divergent_pools.insert(address);
         }
     }
 }
 
-/// Take a snapshot of the current divergence tally (does NOT drain — the
-/// production tally keeps accumulating). Tests assert against the counts.
-#[must_use]
-pub fn divergence_tally_snapshot() -> DivergenceTally {
-    tally().lock().map(|acc| acc.to_tally()).unwrap_or_default()
+/// The process-global accumulator — the production default for every
+/// observation site handed no handle.
+static PROCESS_TALLY: OnceLock<DivergenceTallyHandle> = OnceLock::new();
+
+fn process_tally() -> &'static DivergenceTallyHandle {
+    PROCESS_TALLY.get_or_init(DivergenceTallyHandle::new)
 }
 
-/// Serializes every lib-binary test whose reads can bump the process-global
-/// divergence tally: `observe_storage_read` is reached by any `BotStateDb`
-/// storage read of a tracked slot — this module's probe tests and the
-/// `BotStateDb` reader tests alike. The absolute `slots_compared` pins hold
-/// only while no other read interleaves, so every test that reads a tracked
-/// slot takes this guard for its duration.
-#[cfg(test)]
-pub(crate) static TALLY_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Take a snapshot of the process-global divergence tally (does NOT drain —
+/// the production tally keeps accumulating).
+#[must_use]
+pub fn divergence_tally_snapshot() -> DivergenceTally {
+    process_tally().snapshot()
+}
 
 /// The masked RPC comparison: `true` iff the engine's tracked fields
 /// (packed in `probe.engine_word`, untracked bits zeroed) match the RPC word
@@ -136,13 +167,12 @@ fn tracked_fields_match(probe: &TrackedSlotProbe, rpc_word: U256) -> bool {
     engine == (rpc_word & mask)
 }
 
-/// The pure-observation hook `BotStateDb::storage_ref` calls after fetching
-/// the RPC value. Env-gated; when off, returns immediately (single atomic
-/// load). When on: if `address`+`index` maps to a tracked pool scalar slot,
+/// The pure-observation hook a `BotStateDb` storage read calls after fetching
+/// the RPC value. If `address`+`index` maps to a tracked pool scalar slot, it
 /// compares the packed engine word against the masked RPC word, logs a
-/// `[sim-divergence]` line on disagreement, and accumulates the tally. The
-/// RPC value is returned unchanged by the caller — this fn never affects
-/// what the sim reads.
+/// `[sim-divergence]` line on disagreement, and accumulates `tally` (the
+/// process-global one when the caller names none). The RPC value is returned
+/// unchanged by the caller — this fn never affects what the sim reads.
 ///
 /// `index` + `rpc_value` are the storage-read slot-key / slot-value words
 /// (both `U256`) — taken as `U256` to bridge the `alloy` umbrella cleanly.
@@ -151,20 +181,21 @@ pub fn observe_storage_read(
     address: Address,
     index: U256,
     rpc_value: U256,
+    tally: Option<&DivergenceTallyHandle>,
 ) {
-    observe_storage_read_forced(oracle, address, index, rpc_value);
+    observe_storage_read_forced(oracle, address, index, rpc_value, tally);
 }
 
-/// VERIFY2 T2: on-demand form - skips the env gate so a caller can arm the
-/// probe for ONE sim (sim-failure re-verify or a random spot-check) without
-/// rebuilding or touching process-global config. Same pure-observation
-/// contract as `observe_storage_read` (the RPC value is returned unchanged
-/// by the caller).
+/// VERIFY2 T2: on-demand form — the armed arm of the pair (a sim-failure
+/// re-verify or a random spot-check), carrying the same tally contract and the
+/// same pure-observation contract as `observe_storage_read` (the RPC value is
+/// returned unchanged by the caller).
 pub fn observe_storage_read_forced(
     oracle: &dyn SimAnchorOracle,
     address: Address,
     index: U256,
     rpc_value: U256,
+    tally: Option<&DivergenceTallyHandle>,
 ) {
     // The engine's oracle is the build-time SNAPSHOT — scalar slots
     // compare against the engine-at-build words; tick slots are not
@@ -177,7 +208,9 @@ pub fn observe_storage_read_forced(
         return;
     };
     let matched = tracked_fields_match(&probe, rpc_value);
-    record_observation(address, index, &probe, matched);
+    tally
+        .unwrap_or_else(|| process_tally())
+        .record(address, index, matched);
     if matched {
         return;
     }
@@ -189,20 +222,6 @@ pub fn observe_storage_read_forced(
         update_block = probe.update_block,
         "{SIM_DIVERGENCE_LOG_PREFIX}"
     );
-}
-
-fn record_observation(address: Address, index: U256, _probe: &TrackedSlotProbe, matched: bool) {
-    let Ok(mut acc) = tally().lock() else { return };
-    acc.slots_compared += 1;
-    if !matched {
-        acc.divergent_slots += 1;
-        // The slot key for distinct-pair tracking: the index as a 32-byte BE
-        // word (storage slots are 256-bit).
-        let slot_bytes: [u8; 32] = index.to_be_bytes();
-        acc.divergent_pairs
-            .insert((address, B256::from(slot_bytes)));
-        acc.divergent_pools.insert(address);
-    }
 }
 
 /// Render a 32-byte word as a lowercase 64-char hex string (no `0x`).
@@ -370,87 +389,90 @@ mod tests {
 
     #[test]
     fn storage_ref_returns_rpc_value_unchanged_when_probe_on_or_off() {
-        // Reading a tracked slot below bumps the process-global tally.
-        let _tally = TALLY_TEST_GUARD
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, -5010, 18_000_000);
         let anchor = SimAnchorState::snapshot(&core);
         // rpc serves slot0 = a DIFFERENT tick → would diverge IF the probe
         // compared; but the probe must NOT change the returned value either way
-        // (regardless of the gate state — observation only).
+        // (regardless of the arm — observation only).
         let rpc_word = rpc_slot0_with_tick(U256::from(1u128) << 96, 5010);
-        let mut db = FixedStorageDb::default();
-        db.slots.insert((V3_ADDR, U256::ZERO), rpc_word);
+        let tally = DivergenceTallyHandle::new();
 
-        let mut bot_db = BotStateDb::new(&anchor, db);
-        let got = bot_db
-            .get_storage(&V3_ADDR, &U256::ZERO)
-            .expect("storage read ok");
+        // BOTH observation arms: the ambient one and the armed one.
+        for armed in [false, true] {
+            let mut db = FixedStorageDb::default();
+            db.slots.insert((V3_ADDR, U256::ZERO), rpc_word);
+            let mut bot_db = BotStateDb::new(&anchor, db)
+                .with_divergence_probe(armed)
+                .with_divergence_tally(tally.clone());
+            let got = bot_db
+                .get_storage(&V3_ADDR, &U256::ZERO)
+                .expect("storage read ok");
+            assert_eq!(
+                got, rpc_word,
+                "rpc value returned unchanged (armed={armed})"
+            );
+        }
         assert_eq!(
-            got, rpc_word,
-            "rpc value returned unchanged (probe off path)"
+            tally.snapshot().slots_compared,
+            2,
+            "each arm observes through the tally it was handed"
         );
     }
 
     #[test]
     fn observe_logs_divergence_when_engine_lags_rpc_and_tally_accumulates() {
-        let _g = TALLY_TEST_GUARD
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // The probe is always on (the gate flag was retired), so exercise the
-        // divergence path directly: build an engine V3 pool whose tick disagrees
-        // with a fixed rpc slot0, call observe_storage_read, then assert the
-        // tally diverged_slots == 1.
-        reset_divergence_tally();
+        // Exercise the divergence path directly: an engine V3 pool whose tick
+        // disagrees with a fixed rpc slot0, observed into a CALLER-OWNED tally.
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, -5010, 18_000_000);
         let anchor = SimAnchorState::snapshot(&core);
         let rpc_word = rpc_slot0_with_tick(U256::from(1u128) << 96, 5010);
+        let tally = DivergenceTallyHandle::new();
 
-        // Force the probe ON for THIS test (deterministic — no env-gate race).
+        observe_storage_read(&anchor, V3_ADDR, U256::ZERO, rpc_word, Some(&tally));
 
-        observe_storage_read(&anchor, V3_ADDR, U256::ZERO, rpc_word);
-
-        let tally = divergence_tally_snapshot();
-        assert_eq!(tally.slots_compared, 1, "one tracked slot compared");
-        assert_eq!(tally.divergent_slots, 1, "the tick diverged");
-        assert_eq!(tally.divergent_pools, 1, "one distinct pool");
+        let counts = tally.snapshot();
+        assert_eq!(counts.slots_compared, 1, "one tracked slot compared");
+        assert_eq!(counts.divergent_slots, 1, "the tick diverged");
+        assert_eq!(counts.divergent_pools, 1, "one distinct pool");
+        assert_eq!(
+            DivergenceTallyHandle::new().snapshot().slots_compared,
+            0,
+            "handles are independent — the observation landed only in the handed one"
+        );
     }
 
     #[test]
     fn observe_never_complains_when_engine_matches_rpc() {
-        let _g = TALLY_TEST_GUARD
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        reset_divergence_tally();
         let sqrt = U256::from(1u128) << 96;
         let core = v3_pool(sqrt, 1_000_000, -5010, 18_000_000);
         let anchor = SimAnchorState::snapshot(&core);
         // rpc slot0 with the SAME tick as the engine → no divergence.
         let rpc_word = rpc_slot0_with_tick(sqrt, -5010);
+        let tally = DivergenceTallyHandle::new();
 
-        observe_storage_read(&anchor, V3_ADDR, U256::ZERO, rpc_word);
-        let tally = divergence_tally_snapshot();
-        assert_eq!(tally.slots_compared, 1, "compared once");
-        assert_eq!(tally.divergent_slots, 0, "matched → not flagged");
+        observe_storage_read(&anchor, V3_ADDR, U256::ZERO, rpc_word, Some(&tally));
+        let counts = tally.snapshot();
+        assert_eq!(counts.slots_compared, 1, "compared once");
+        assert_eq!(counts.divergent_slots, 0, "matched → not flagged");
     }
 
     #[test]
     fn observe_ignores_untracked_slot() {
-        let _g = TALLY_TEST_GUARD
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // feeGrowthGlobal0X128 (slot 1) is NOT tracked → observe does nothing.
-        reset_divergence_tally();
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, 0, 18_000_000);
         let anchor = SimAnchorState::snapshot(&core);
+        let tally = DivergenceTallyHandle::new();
         observe_storage_read(
             &anchor,
             V3_ADDR,
             U256::from(1u64),
             U256::from(0xdeadbeefu64),
+            Some(&tally),
         );
-        let tally = divergence_tally_snapshot();
-        assert_eq!(tally.slots_compared, 0, "untracked slot never compared");
+        assert_eq!(
+            tally.snapshot().slots_compared,
+            0,
+            "untracked slot never compared"
+        );
     }
 }

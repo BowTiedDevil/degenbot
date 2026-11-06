@@ -1458,6 +1458,7 @@ macro_rules! live_scratch {
             None,
             false,
             None,
+            None,
         )
         .expect("live handle builds");
         #[expect(unused_mut)]

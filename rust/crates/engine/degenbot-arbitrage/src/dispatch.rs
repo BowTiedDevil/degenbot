@@ -833,6 +833,7 @@ pub fn dispatch_profitable_results(
                     &evm2_warm_cache,
                     Some(&storage_memo),
                     false,
+                    None,
                     degenbot_simulation::sim::evm2::jit::shared_runner(),
                 ) {
                     Some(mut handle) => candidates

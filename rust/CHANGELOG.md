@@ -239,3 +239,31 @@ All notable changes to the Rust workspace crates are recorded here.
   door, and by the settlement example's `fetch_priority_fees` /
   `record_fee_history`, which stay uncalled by design as the row-17
   standalone-RPC reach proofs.
+
+- **The sim divergence tally is a value; the process-global stays the
+  production default — a Rust-API break.** `DivergenceTallyHandle`
+  (`degenbot_simulation::sim::divergence_probe`) is a caller-owned accumulator.
+  The two observation arms (`observe_storage_read` /
+  `observe_storage_read_forced`, which every `BotStateDb` storage read drives)
+  take `Option<&DivergenceTallyHandle>`; `BotStateDb::with_divergence_tally` /
+  `with_divergence_tally_opt` point one wrapper at a handle beside
+  `with_divergence_probe`, and `Evm2BlockSimHandle::build` threads one optional
+  handle into both stacks it constructs (the block DB and the frame-replay
+  scratch). Handing none — every production call site — accumulates into the
+  process-global tally that `divergence_tally_snapshot` /
+  `dump_divergence_summary` still read. A caller that asserts absolute counts
+  now owns them as a value, which retires the shipped `TALLY_TEST_GUARD`
+  convention: the six lib tests whose reads reach a tracked slot no longer
+  serialize against each other, and no future test can forget to join them.
+
+### Removed
+
+- **`degenbot_simulation::sim::divergence_probe::reset_divergence_tally`**
+  (umbrella-reachable as `degenbot::simulation::divergence_probe`): the
+  test-only drain of the process-global divergence tally. A test that needs
+  absolute counts constructs a `DivergenceTallyHandle` and hands it to
+  `BotStateDb::with_divergence_tally` instead; production never reset the
+  tally between assertions. A breaking public-Rust-API deletion under the
+  standing hard-cutover rule (no compatibility layer) with zero in-tree
+  consumers outside the module; the `pub(crate)` `TALLY_TEST_GUARD` mutex and
+  its comment go with it.

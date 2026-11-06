@@ -648,6 +648,7 @@ impl InlineSimulator for InlineSimHook {
                             &warm_cache,
                             Some(&storage_memo),
                             verify_divergence,
+                            None,
                             degenbot_simulation::sim::evm2::jit::shared_runner(),
                         ) {
                             let mut buckets = FailBuckets::new();
