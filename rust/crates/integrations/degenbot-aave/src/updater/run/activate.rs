@@ -293,13 +293,19 @@ pub(crate) async fn fetch_activation_metadata(
 ) -> Result<ActivationMetadata, RunError> {
     let market_name = fetch_market_id(provider, ap_address).await?;
     let preview_block = provider.get_block_number().await?;
-    let (gho_name, gho_symbol, gho_decimals) =
-        crate::config_dispatch::fetch_erc20_metadata(provider, gho_address, preview_block).await;
+    let metadata = degenbot_rpc::erc20::read(
+        provider,
+        *gho_address,
+        degenbot_rpc::erc20::MetadataShape::LowerUpperStopOnCallError,
+        degenbot_rpc::erc20::FieldMask::ALL,
+        Some(preview_block),
+    )
+    .await;
     Ok(ActivationMetadata {
         market_name,
-        gho_name,
-        gho_symbol,
-        gho_decimals,
+        gho_name: metadata.name,
+        gho_symbol: metadata.symbol,
+        gho_decimals: metadata.decimals.map(u64::cast_signed),
     })
 }
 
@@ -363,9 +369,10 @@ async fn activate_aave_market_rpc(
 }
 
 /// RPC-fetch `getMarketId()` on the `PoolAddressProvider` (a dynamic `string`
-/// return). Reuses [`decode_dynamic_string`] (the same ABI decoder
-/// `fetch_erc20_string_metadata` uses). Attempts the lowercase selector first,
-/// then the uppercase fallback.
+/// return). Decodes through the shared string-answer decoder
+/// (`degenbot_rpc::erc20::decode_string_return` — the strict dynamic form
+/// first, then the `bytes32` answer some impls give). Attempts the lowercase
+/// selector first, then the uppercase fallback.
 async fn fetch_market_id(
     provider: &AlloyProvider,
     ap_address: &Address,
@@ -373,17 +380,8 @@ async fn fetch_market_id(
     for func in ["getMarketId()", "GETMARKETID()"] {
         let calldata = crate::config_dispatch::encode_no_arg_call(func);
         if let Ok(ret) = provider.eth_call(ap_address, calldata, None).await {
-            if let Some(s) = crate::config_dispatch::decode_dynamic_string(&ret) {
+            if let Some(s) = degenbot_rpc::erc20::decode_string_return(&ret) {
                 return Ok(s);
-            }
-            // bytes32 fallback (some impls return a right-padded bytes32).
-            if ret.len() >= 32 {
-                let s = String::from_utf8_lossy(&ret[..32])
-                    .trim_end_matches('\0')
-                    .to_string();
-                if !s.is_empty() {
-                    return Ok(s);
-                }
             }
         }
     }

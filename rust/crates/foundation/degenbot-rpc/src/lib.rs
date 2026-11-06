@@ -13,6 +13,9 @@
 //! - [`fees`] — per-block priority-fee market oracle (`eth_feeHistory` leaf +
 //!   the typed p10/p50 parse + `BlockPriorityFees`).
 //! - [`contract`] — `Contract` interface with `FunctionSignature` ABI caching.
+//! - [`erc20`] — ERC-20 `name()`/`symbol()`/`decimals()` reads: the one
+//!   selector/decode/fallback family over [`abi::ContractRead`], with
+//!   single-token and multicall call shapes.
 //! - [`subscription`] — double-buffer `SubscriptionHandle`, raw `drain_raw`,
 //!   and the `pump_*` subscription drivers.
 //! - [`head_watch`] — subscription-driven [`HeadWatch`]: the transport half of
@@ -24,6 +27,7 @@ pub mod backrun_feed;
 pub mod cassette;
 pub mod cassette_replay;
 pub mod contract;
+pub mod erc20;
 mod error_class;
 mod feed_shell;
 pub mod fees;

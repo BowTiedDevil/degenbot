@@ -10,8 +10,8 @@
 //! `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` reads and `getSourceOfAsset` — folded into ONE
 //! transport pass when 2+ remain pending) and
 //! [`resolve_collateral_configuration`] (`getConfiguration(address)` fetched
-//! from the Pool at the event block, never trusted from the event fields),
-//! plus the ERC20 metadata fetch family they ride.
+//! from the Pool at the event block, never trusted from the event fields).
+//! The metadata burst rides the shared `degenbot_rpc::erc20` read.
 //!
 //! Surface table: `tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)
 //! row 9 (the per-`ReserveInitialized` EIP-1967 pair + the two impl revision
@@ -22,15 +22,14 @@
 #![expect(clippy::doc_markdown)]
 
 use crate::run::AaveChunkEvent;
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::primitives::{Address, U256};
 use degenbot_db::DegenbotDb;
-use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
+use degenbot_rpc::erc20;
 use degenbot_rpc::provider::AlloyProvider;
 
 use super::context::{BatchRead, BatchReadResult, ChunkContext};
 use super::{
-    checksum, decimals_from_batch, decode_address_return, decode_string_return, discount_to_i64,
-    encode_no_arg_call, encode_single_address_call, string_field_from_batch, word0_to_u256,
+    checksum, decode_address_return, discount_to_i64, encode_single_address_call, word0_to_u256,
     ConfigDispatchError,
 };
 
@@ -340,24 +339,27 @@ pub(super) async fn resolve_reserve_initialized(
     // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken),
     //    RPC-fetching the name/symbol/decimals from the chain (the
     //    standalone-Rust-core constraint — Rust owns the loop, no PyO3 FFI for
-    //    metadata). Port of `erc20_utils._fetch_erc20_token_metadata`. The 3
-    //    tokens' fields ride ONE Multicall3 pass (same block, mutually
-    //    independent reads; the per-field selector fallbacks are part of the
-    //    batch — both spellings are issued and the decision consumes the
-    //    batched results in the sequential logic's exact order).
+    //    metadata). The 3 tokens' fields ride ONE Multicall3 pass through the
+    //    shared `degenbot_rpc::erc20` read (same block, mutually independent
+    //    reads; the per-field selector fallbacks are part of the batch — both
+    //    spellings are issued and the decision consumes the batched results
+    //    in the sequential logic's exact order). Each field lands on the DB's
+    //    nullable column; `decimals` keeps the reference's `i64` width.
     let underlying_str = checksum(&decoded.asset);
     let a_token_str = checksum(&decoded.a_token);
     let v_token_str = checksum(&decoded.variable_debt_token);
-    let metadata = fetch_erc20_metadata_batched(
+    let metadata: [(Option<String>, Option<String>, Option<i64>); 3] = erc20::read_batch(
         ctx.provider(),
-        [
-            &decoded.asset,
-            &decoded.a_token,
-            &decoded.variable_debt_token,
-        ],
-        block_number,
+        &[decoded.asset, decoded.a_token, decoded.variable_debt_token],
+        erc20::MetadataShape::LowerUpperStopOnCallError,
+        Some(block_number),
     )
-    .await;
+    .await
+    .into_iter()
+    .map(|meta| (meta.name, meta.symbol, meta.decimals.map(u64::cast_signed)))
+    .collect::<Vec<_>>()
+    .try_into()
+    .unwrap_or_default();
     let [(underlying_name, underlying_symbol, underlying_decimals), (a_name, a_symbol, a_decimals), (v_name, v_symbol, v_decimals)] =
         metadata;
     let underlying_asset_id = DegenbotDb::get_or_create_erc20_token_on_conn(
@@ -454,157 +456,4 @@ async fn read_implementation_slot(
         .await?;
     // The slot is a 32-byte word; the address is the low 20 bytes.
     Ok(Address::from_slice(&slot.as_slice()[12..]))
-}
-
-// ── ERC20 metadata fetch (name/symbol/decimals) — the dynamic-string ABI decode ──
-
-/// RPC-fetch an ERC20 token's `name()`/`symbol()` (a `string` return — the
-/// dynamic ABI: 32-byte offset + 32-byte length + data padded to 32-byte
-/// multiples). Falls back to the bytes32-decode + null-strip (older tokens —
-/// some USDT-style tokens return bytes32 instead of a dynamic string). Attempts
-/// the lowercase selector first, then the uppercase fallback. Port of
-/// `erc20_utils._try_fetch_token_string` (erc20_utils.py:23-58).
-///
-/// Returns `None` when all fetch attempts fail (the Python's
-/// `contextlib.suppress(Exception)` catches every error).
-/// RPC-fetch the full ERC20 metadata tuple `(name, symbol, decimals)` for a
-/// token. Port of `erc20_utils._fetch_erc20_token_metadata` (erc20_utils.py:85+).
-/// Each field is `None` when its fetch attempts fail (the Python's
-/// `contextlib.suppress(Exception)` per-field tolerance).
-pub(crate) async fn fetch_erc20_metadata(
-    provider: &AlloyProvider,
-    token: &Address,
-    block_number: u64,
-) -> (Option<String>, Option<String>, Option<i64>) {
-    let name = fetch_erc20_string_metadata(provider, token, "name()", "NAME()", block_number).await;
-    let symbol =
-        fetch_erc20_string_metadata(provider, token, "symbol()", "SYMBOL()", block_number).await;
-    let decimals = fetch_erc20_decimals(provider, token, block_number).await;
-    (name, symbol, decimals)
-}
-
-/// RPC-fetch `(name, symbol, decimals)` for SEVERAL tokens in ONE Multicall3
-/// `aggregate3` pass — the `ReserveInitialized` metadata burst (3 tokens ×
-/// 3 fields × 2 selector spellings = 18 same-block reads → 1 round trip).
-///
-/// Per-field semantics mirror [`fetch_erc20_metadata`]'s sequential logic
-/// exactly (`string_field_from_batch` / `decimals_from_batch`): a failed
-/// lower-spelling result (the revert/transport class the sequential path
-/// sees as an `eth_call` error) makes the field `None` WITHOUT consulting
-/// the fallback spelling — the sequential `.ok()?` early-return — and a
-/// succeeded-but-undecodable return falls through to the fallback spelling.
-/// BOTH spellings are always issued (`allowFailure = true`): the per-field
-/// decision consumes the batched results, so the values are identical to
-/// the sequential shape; only the request set always carries the fallback
-/// spelling (read-only calls; a recorder records the batched shape whole).
-async fn fetch_erc20_metadata_batched(
-    provider: &AlloyProvider,
-    tokens: [&Address; 3],
-    block_number: u64,
-) -> [(Option<String>, Option<String>, Option<i64>); 3] {
-    const FIELD_FNS: [&str; 6] = [
-        "name()",
-        "NAME()",
-        "symbol()",
-        "SYMBOL()",
-        "decimals()",
-        "DECIMALS()",
-    ];
-    let mut calls: Vec<(Address, Bytes)> = Vec::with_capacity(tokens.len() * FIELD_FNS.len());
-    for token in tokens {
-        for func in FIELD_FNS {
-            calls.push((*token, encode_no_arg_call(func)));
-        }
-    }
-    // `multicall3_batch` already degrades a failed/malformed batch to
-    // sequential per-call `eth_call`s mapped to per-item `success` flags; an
-    // `Err` can only mean its own encode step failed (defensively
-    // unreachable) — mirror it as all-failed results, which the per-field
-    // decisions turn into the sequential shape's `None` fields.
-    let results: Vec<MulticallResult> =
-        match multicall3_batch(provider, &calls, Some(block_number)).await {
-            Ok(r) => r,
-            Err(_) => calls
-                .iter()
-                .map(|_| MulticallResult {
-                    success: false,
-                    return_data: Bytes::new(),
-                })
-                .collect(),
-        };
-    let field = |i: usize| -> (Option<String>, Option<String>, Option<i64>) {
-        let base = i * FIELD_FNS.len();
-        let name = string_field_from_batch(&results[base], &results[base + 1]);
-        let symbol = string_field_from_batch(&results[base + 2], &results[base + 3]);
-        let decimals = decimals_from_batch(&results[base + 4], &results[base + 5]);
-        (name, symbol, decimals)
-    };
-    [field(0), field(1), field(2)]
-}
-
-async fn fetch_erc20_string_metadata(
-    provider: &AlloyProvider,
-    token: &Address,
-    lower_func: &str,
-    upper_func: &str,
-    block_number: u64,
-) -> Option<String> {
-    for func in [lower_func, upper_func] {
-        let calldata = encode_no_arg_call(func);
-        let ret = provider
-            .eth_call(token, calldata, Some(block_number))
-            .await
-            .ok()?;
-        if let Some(s) = decode_string_return(&ret) {
-            return Some(s);
-        }
-    }
-    None
-}
-
-/// Decode an ABI dynamic `string` return: the first word is the offset to the
-/// length + data (always 0x20 — the data begins at byte 32); the second word
-/// is the byte length; the data follows, right-padded to a 32-byte multiple.
-/// Mirrors `eth_abi.abi.decode(["string"], data)`. Returns `None` when the
-/// return is malformed (too short / the offset isn't 0x20 / the length
-/// overruns the return).
-pub(crate) fn decode_dynamic_string(ret: &[u8]) -> Option<String> {
-    if ret.len() < 64 {
-        return None;
-    }
-    let offset = U256::from_be_slice(&ret[..32]);
-    if offset != U256::from(0x20u32) {
-        return None;
-    }
-    let length = U256::from_be_slice(&ret[32..64]).to::<usize>();
-    if 64 + length > ret.len() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&ret[64..64 + length]).into_owned();
-    // The Python's `str(value)` preserves the bytes; the bytes32 fallback does
-    // the null-strip. For the dynamic-string path, the length is exact — no
-    // trailing NULs to strip.
-    Some(s)
-}
-
-/// RPC-fetch an ERC20 token's `decimals()` (a `uint256` return). Attempts the
-/// lowercase selector first, then the uppercase fallback. Port of
-/// `erc20_utils._try_fetch_token_uint256` (erc20_utils.py:61-84). Returns
-/// `None` when all fetch attempts fail.
-async fn fetch_erc20_decimals(
-    provider: &AlloyProvider,
-    token: &Address,
-    block_number: u64,
-) -> Option<i64> {
-    for func in ["decimals()", "DECIMALS()"] {
-        let calldata = encode_no_arg_call(func);
-        let ret = provider
-            .eth_call(token, calldata, Some(block_number))
-            .await
-            .ok()?;
-        if let Some(v) = word0_to_u256(&ret) {
-            return Some(v.to::<u64>().cast_signed());
-        }
-    }
-    None
 }

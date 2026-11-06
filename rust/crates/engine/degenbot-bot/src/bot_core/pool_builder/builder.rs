@@ -17,7 +17,7 @@
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-use alloy::dyn_abi::{DynSolType, DynSolValue};
+use alloy::dyn_abi::DynSolType;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::address_utils::address_to_checksum_string;
@@ -45,7 +45,7 @@ use degenbot_rpc::abi::{
     IBalancerVault, ICurvePool, IPoolIdentity, IUniswapV2Pair, IUniswapV3Pool, IUniswapV4StateView,
     Slot0Prefix, V2Reserves, V4Slot0,
 };
-use degenbot_rpc::multicall3::{self, MulticallResult, MULTICALL3_ADDRESS};
+use degenbot_rpc::erc20;
 use degenbot_rpc::tick_bootstrap::{fetch_tick_word_via, UnreadableBitmapPolicy};
 use degenbot_uniswap::deployments;
 use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
@@ -167,131 +167,25 @@ const UNKNOWN_NAME: &str = "Unknown Token";
 const UNKNOWN_SYMBOL: &str = "UNKNOWN";
 const UNKNOWN_DECIMALS: u8 = 18;
 
-/// Fetch ERC-20 `name()` / `symbol()` / `decimals()` in three reads.
-///
-/// `None` when any of the three reads fails to answer or fails to decode. That
-/// silence is this read's whole policy: what a field it could not read becomes
-/// is [`build_erc20_metadata`]'s decision (its alternate-prototype fallback),
-/// not this read's.
-pub async fn fetch_erc20_metadata(
-    read: &impl ContractRead,
-    address: &Address,
-) -> Option<(String, String, u64)> {
-    let name = fetch_metadata_string(read, b"name()", address).await?;
-    let symbol = fetch_metadata_string(read, b"symbol()", address).await?;
-    let decimals_bytes = read
-        .call(*address, abi::selector(b"decimals()").to_vec().into(), None)
-        .await
-        .ok()?;
-    let decimals = match DynSolType::Uint(256).abi_decode(&decimals_bytes) {
-        Ok(DynSolValue::Uint(n, _)) => n.to::<u64>(),
-        _ => return None,
-    };
-    Some((name, symbol, decimals))
-}
-
-/// One token-metadata field decoded as a Solidity `string`; a transport or
-/// decode failure is `None` so the caller can try the alternate prototype
-/// (`NAME()` / `SYMBOL()`) or fall back to the UNKNOWN sentinel.
-async fn fetch_metadata_string(
-    read: &impl ContractRead,
-    signature: &[u8],
-    address: &Address,
-) -> Option<String> {
-    let bytes = read
-        .call(*address, abi::selector(signature).to_vec().into(), None)
-        .await
-        .ok()?;
-    match DynSolType::String.abi_decode(&bytes) {
-        Ok(DynSolValue::String(value)) => Some(value),
-        _ => None,
-    }
-}
-
-/// Decode a Multicall3 sub-call's return data as a Solidity `string`
-/// (`name()` / `symbol()`). A reverted sub-call or non-string return is `None`
-/// (the caller's per-field alternate-prototype fallback contract).
-fn decode_metadata_string(res: &MulticallResult) -> Option<String> {
-    if !res.success {
-        return None;
-    }
-    match DynSolType::String.abi_decode(&res.return_data) {
-        Ok(DynSolValue::String(s)) => Some(s),
-        _ => None,
-    }
-}
-
-/// Decode a Multicall3 sub-call's return data as a `uint256` (`decimals()`);
-/// `None` on revert or decode failure.
-fn decode_metadata_decimals(res: &MulticallResult) -> Option<u64> {
-    if !res.success {
-        return None;
-    }
-    match DynSolType::Uint(256).abi_decode(&res.return_data) {
-        Ok(DynSolValue::Uint(n, _)) => Some(n.to::<u64>()),
-        _ => None,
-    }
-}
-
 /// Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
-/// Multicall3 `aggregate3` call, degrading to per-token [`fetch_erc20_metadata`]
-/// when the multicall itself fails.
-///
-/// Returns one `Option<(name, symbol, decimals)>` per input address, in order. A
-/// token whose sub-call reverted or failed to decode is `None`, matching the
-/// single-token path's fallback contract. The chunking and the degradation are
-/// this read's policy; the call step and the `aggregate3` encode/decode are
-/// shared (`degenbot_rpc::multicall3`).
+/// Multicall3 `aggregate3` call — the shared read (`degenbot_rpc::erc20`)
+/// folded to this seam's all-or-nothing per-token tuple: a token whose
+/// metadata is not wholly present is `None`, matching the single-token
+/// fallback contract the Python builder seam carries. The selector, decode,
+/// fallback, and per-token degradation mechanics live in the shared read;
+/// what a `None` becomes is the caller's policy.
 pub async fn fetch_erc20_metadata_batch(
     read: &impl ContractRead,
     addresses: &[Address],
 ) -> Vec<Option<(String, String, u64)>> {
-    if addresses.is_empty() {
-        return Vec::new();
-    }
-
-    // 3 sub-calls per token: name(), symbol(), decimals().
-    let mut calls: Vec<(Address, alloy::primitives::Bytes)> =
-        Vec::with_capacity(addresses.len() * 3);
-    for addr in addresses {
-        calls.push((*addr, abi::selector(b"name()").to_vec().into()));
-        calls.push((*addr, abi::selector(b"symbol()").to_vec().into()));
-        calls.push((*addr, abi::selector(b"decimals()").to_vec().into()));
-    }
-
-    let batch = async {
-        let calldata = multicall3::encode_aggregate3(&calls)?;
-        let data = read.call(MULTICALL3_ADDRESS, calldata, None).await?;
-        multicall3::decode_aggregate3_results(&data, calls.len())
-    }
-    .await;
-
-    let Ok(results) = batch else {
-        // Multicall3 not deployed / unreachable / malformed return: degrade to
-        // the per-token path, preserving the pre-batch behaviour exactly.
-        let mut out = Vec::with_capacity(addresses.len());
-        for addr in addresses {
-            out.push(fetch_erc20_metadata(read, addr).await);
-        }
-        return out;
-    };
-
-    let mut out = Vec::with_capacity(addresses.len());
-    for chunk in results.chunks(3) {
-        if chunk.len() < 3 {
-            out.push(None);
-            continue;
-        }
-        let name = decode_metadata_string(&chunk[0]);
-        let symbol = decode_metadata_string(&chunk[1]);
-        let decimals = decode_metadata_decimals(&chunk[2]);
-        if let (Some(n), Some(s), Some(d)) = (name, symbol, decimals) {
-            out.push(Some((n, s, d)));
-        } else {
-            out.push(None);
-        }
-    }
-    out
+    erc20::read_batch(read, addresses, erc20::MetadataShape::LowerOnly, None)
+        .await
+        .into_iter()
+        .map(|meta| match (meta.name, meta.symbol, meta.decimals) {
+            (Some(name), Some(symbol), Some(decimals)) => Some((name, symbol, decimals)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Resolve ERC-20 token metadata DB-first, then on-chain, with the
@@ -302,8 +196,8 @@ pub async fn fetch_erc20_metadata_batch(
 /// 1. `io.fetch_erc20_token(chain_id, address)` — prefer the persisted row's
 ///    `name`/`symbol`/`decimals` when present.
 /// 2. If any field is missing, guard that a contract is deployed
-///    (`get_code` non-empty), then try the batched `fetch_erc20_metadata`
-///    (all-or-nothing) and backfill missing fields.
+///    (`get_code` non-empty), then run the all-or-nothing lower-spelling read
+///    (`degenbot_rpc::erc20`, `LowerOnly`) and backfill missing fields.
 /// 3. Any field still missing falls back to the alternate prototype reads
 ///    (`name()/NAME()`, `symbol()/SYMBOL()`, `decimals()/DECIMALS()`), else the
 ///    UNKNOWN sentinels.
@@ -345,14 +239,23 @@ pub async fn build_erc20_metadata(
         return Ok((n.clone(), s.clone(), *d));
     }
 
-    // 2. Contract-present guard, then the batched all-or-nothing read.
+    // 2. Contract-present guard, then the all-or-nothing on-chain read (the
+    //    lower spellings, short-circuiting — the shared read's exact shape).
     let code = io.get_code(address, block).await?;
     if code.is_empty() {
         return Err(PoolBuilderError::Decoding {
             message: "No contract deployed at this address".to_owned(),
         });
     }
-    if let Some((n, s, d)) = fetch_erc20_metadata(io, &address).await {
+    let meta = erc20::read(
+        io,
+        address,
+        erc20::MetadataShape::LowerOnly,
+        erc20::FieldMask::ALL,
+        None,
+    )
+    .await;
+    if let (Some(n), Some(s), Some(d)) = (meta.name, meta.symbol, meta.decimals) {
         if name.is_none() {
             name = Some(n);
         }
@@ -364,17 +267,38 @@ pub async fn build_erc20_metadata(
         }
     }
 
-    // 3. Per-field alternate-prototype fallback for anything still missing.
+    // 3. Per-field alternate-prototype fallback for anything still missing —
+    //    one masked fall-through read over the missing fields, in field order.
+    let missing = erc20::FieldMask {
+        name: name.is_none(),
+        symbol: symbol.is_none(),
+        decimals: decimals.is_none(),
+    };
+    let fallback = erc20::read(
+        io,
+        address,
+        erc20::MetadataShape::LowerUpperFallThrough,
+        missing,
+        None,
+    )
+    .await;
     if name.is_none() {
-        name = Some(fetch_field_string(io, address, &[b"name()", b"NAME()"], UNKNOWN_NAME).await);
+        name = Some(fallback.name.unwrap_or_else(|| UNKNOWN_NAME.to_string()));
     }
     if symbol.is_none() {
         symbol = Some(
-            fetch_field_string(io, address, &[b"symbol()", b"SYMBOL()"], UNKNOWN_SYMBOL).await,
+            fallback
+                .symbol
+                .unwrap_or_else(|| UNKNOWN_SYMBOL.to_string()),
         );
     }
     if decimals.is_none() {
-        decimals = Some(fetch_field_decimals(io, address, &[b"decimals()", b"DECIMALS()"]).await);
+        decimals = Some(
+            fallback
+                .decimals
+                .and_then(|d| u8::try_from(d).ok())
+                .unwrap_or(UNKNOWN_DECIMALS),
+        );
     }
     let name = name.unwrap_or_else(|| UNKNOWN_NAME.to_string());
     let symbol = symbol.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string());
@@ -395,35 +319,6 @@ pub async fn build_erc20_metadata(
     }
 
     Ok((name, symbol, decimals))
-}
-
-/// Read a string field trying each prototype in order (e.g. `name()` then
-/// `NAME()`), returning the FIRST that decodes, else `UNKNOWN_NAME`.
-async fn fetch_field_string(
-    io: &ConstructionIo,
-    address: Address,
-    prototypes: &[&[u8]],
-    fallback: &str,
-) -> String {
-    for p in prototypes {
-        if let Ok(s) = abi::fetch_string_field(io, p, &address, None).await {
-            return s;
-        }
-    }
-    fallback.to_string()
-}
-
-/// Read `decimals()` (or an alternate prototype) as a `uint256`, validated to
-/// `u8`; else `UNKNOWN_DECIMALS`.
-async fn fetch_field_decimals(io: &ConstructionIo, address: Address, prototypes: &[&[u8]]) -> u8 {
-    for p in prototypes {
-        if let Ok(v) = abi::fetch_uint256_field(io, p, &address, None).await {
-            if let Ok(dec) = u8::try_from(v.to::<u64>()) {
-                return dec;
-            }
-        }
-    }
-    UNKNOWN_DECIMALS
 }
 
 // ---------------------------------------------------------------------------

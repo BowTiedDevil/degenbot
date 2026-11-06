@@ -172,34 +172,10 @@ async fn fetch_factory_address_decodes() {
 }
 
 #[tokio::test]
-async fn fetch_erc20_metadata_decodes_string_string_uint() {
-    let mut f = FakeRpc::new();
-    f.set(abi::selector(b"name()"), str_ret("Dai Stablecoin"));
-    f.set(abi::selector(b"symbol()"), str_ret("DAI"));
-    f.set(
-        abi::selector(b"decimals()"),
-        enc(DynSolValue::Uint(U256::from(18), 256)),
-    );
-    let io = io_with(f);
-    let got = builder::fetch_erc20_metadata(&io, &TO).await;
-    assert_eq!(
-        got,
-        Some(("Dai Stablecoin".to_string(), "DAI".to_string(), 18))
-    );
-}
-
-#[tokio::test]
-async fn fetch_erc20_metadata_returns_none_on_missing_selector() {
-    // No responses configured → every call reverts → Ok(None).
-    let io = io_with(FakeRpc::new());
-    assert_eq!(builder::fetch_erc20_metadata(&io, &TO).await, None);
-}
-
-#[tokio::test]
 async fn build_erc20_metadata_resolves_on_chain_with_no_db() {
     // with NoDb the DB row is absent (all fields missing), so
     // build_erc20_metadata guards `get_code` then resolves all three on-chain
-    // via the batched read; no write-back (no DB row).
+    // via the lower-spelling read; no write-back (no DB row).
     let mut f = FakeRpc::new();
     f.set_code(Bytes::from_static(&[0x60, 0x80]));
     f.set(abi::selector(b"name()"), str_ret("Wrapped Ether"));
@@ -2651,8 +2627,9 @@ async fn fetch_token_balance_supply_allowance_decode_uint256() {
 }
 
 #[tokio::test]
-async fn fetch_erc20_uint_and_string_field() {
-    // decimals() dynamic-signature uint read.
+async fn fetch_erc20_uint_field_decodes_a_declared_word() {
+    // decimals() dynamic-signature uint read (the name()/symbol() field
+    // reads moved to `degenbot_rpc::erc20` with the metadata family).
     let mut f = FakeRpc::new();
     f.set(
         abi::selector(b"decimals()"),
@@ -2663,32 +2640,6 @@ async fn fetch_erc20_uint_and_string_field() {
         .await
         .unwrap();
     assert_eq!(d, U256::from(18u64));
-
-    // name() as a dynamic string.
-    let mut f2 = FakeRpc::new();
-    f2.set(
-        abi::selector(b"name()"),
-        enc(DynSolValue::String("Wrapped Ether".to_owned())),
-    );
-    let io2 = io_with(f2);
-    let n = abi::fetch_string_field(&io2, b"name()", &TO, None)
-        .await
-        .unwrap();
-    assert_eq!(n, "Wrapped Ether");
-
-    // bytes32 fallback for a token that stores symbol in a bytes32 slot.
-    let mut weth = [0u8; 32];
-    weth[..4].copy_from_slice(b"WETH");
-    let mut f3 = FakeRpc::new();
-    f3.set(
-        abi::selector(b"symbol()"),
-        enc(DynSolValue::FixedBytes(FixedBytes::from(weth), 32)),
-    );
-    let io3 = io_with(f3);
-    let s = abi::fetch_string_field(&io3, b"symbol()", &TO, None)
-        .await
-        .unwrap();
-    assert_eq!(s, "WETH");
 }
 
 #[tokio::test]

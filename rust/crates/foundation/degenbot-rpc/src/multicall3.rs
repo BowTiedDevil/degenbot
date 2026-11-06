@@ -16,7 +16,7 @@
 use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{address, Address, Bytes};
 
-use crate::provider::AlloyProvider;
+use crate::abi::ContractRead;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 
 /// The canonical Multicall3 deployed address (same on every supported chain —
@@ -172,8 +172,8 @@ pub fn decode_aggregate3_results(data: &Bytes, n: usize) -> ProviderResult<Vec<M
 /// actual == zero, the V3/V4 liquidity verifier treats it as a hard RPC
 /// error).
 ///
-/// `block_number` matches `AlloyProvider::eth_call`'s shape: `Some(b)` calls
-/// at block `b`; `None` calls at "pending" (latest).
+/// `block_number` matches [`ContractRead::call`]'s shape: `Some(b)` calls at
+/// block `b`; `None` calls at the transport's own latest.
 ///
 /// If the Multicall3 `eth_call` itself errors (e.g. Multicall3 is not deployed
 /// on the chain — never expected for Aave V3 chains) the batch falls back to
@@ -185,7 +185,7 @@ pub fn decode_aggregate3_results(data: &Bytes, n: usize) -> ProviderResult<Vec<M
 /// Returns [`ProviderError`] only if BOTH the Multicall3 batch and the
 /// sequential fallback `eth_call` for the same batch fail.
 pub async fn multicall3_batch(
-    provider: &AlloyProvider,
+    transport: &impl ContractRead,
     calls: &[(Address, Bytes)],
     block_number: Option<u64>,
 ) -> ProviderResult<Vec<MulticallResult>> {
@@ -199,8 +199,8 @@ pub async fn multicall3_batch(
         // to the prior one-call-per-position path with no semantics change.
         match async {
             let calldata = encode_aggregate3(chunk)?;
-            let data = provider
-                .eth_call(&MULTICALL3_ADDRESS, calldata, block_number)
+            let data = transport
+                .call(MULTICALL3_ADDRESS, calldata, block_number)
                 .await?;
             decode_aggregate3_results(&data, chunk.len())
         }
@@ -213,7 +213,7 @@ pub async fn multicall3_batch(
                 // so verify keeps working (preserves the pre-multicall
                 // per-call behavior).
                 for (target, data) in chunk {
-                    match provider.eth_call(target, data.clone(), block_number).await {
+                    match transport.call(*target, data.clone(), block_number).await {
                         Ok(return_data) => results.push(MulticallResult {
                             success: true,
                             return_data,

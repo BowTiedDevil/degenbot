@@ -39,6 +39,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Log decoding** | `degenbot_decoders` | Rust-only | crate root | production: ingestion + updaters | no db, no async runtime |
 | **Log ingestion plane** | `degenbot_ingestion` | Rust-only | crate root | production: `substrate`/`bot` consumers | foundation-resident (W4): nothing above the engine depends down |
 | **RPC transport** | `degenbot_rpc` | Rust-only | crate root | production: every chain-facing consumer | no pyo3; no C-build dep outside `capture-fixtures` |
+| **ERC-20 metadata read** | `degenbot_rpc::erc20` | Rust-only | `MetadataShape`, `FieldMask`, `TokenMetadata`, `read`, `read_batch`, `decode_string_return` | (i) standalone token-metadata resolution (`build_erc20_metadata`), parity-pinned against the Python consumer in `rust/crates/facade/degenbot/tests/parity_erc20.rs` + `tests/standalone_parity/test_erc20_dual_driver.py` | no pyo3; no consumer policy (UNKNOWN sentinels, DB write-back, nullable columns) inside the read |
 | **Persistence** | `degenbot_db` | `degenbot._ffi.db` | crate root | production: updaters; Aave update in pure Rust | no pyo3 |
 | **Run artifacts** | `degenbot_runs` | Rust-only | crate root | production: session logging | std-only |
 | **Aave updater** | `degenbot_aave` | `degenbot.aave` | `run_aave_update` | (i) `cargo add degenbot` consumer runs `run_aave_update` with no Python | no pyo3 |

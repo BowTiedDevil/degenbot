@@ -31,11 +31,13 @@
 //!
 //! ## Declared-shape reads
 //!
-//! Reads whose return shape the *caller* declares — ERC-20 metadata behind
-//! prototype lists, a fee tier decoded at a declared width, the
-//! stable/volatile flags the resolver probes — have no getter to declare: the
-//! signature is data. They hash it with [`selector`], cross the same
-//! [`ContractRead::call`] primitive, and decode to the shape the caller named.
+//! Reads whose return shape the *caller* declares — a fee tier decoded at a
+//! declared width, the stable/volatile flags the resolver probes — have no
+//! getter to declare: the signature is data. They hash it with [`selector`],
+//! cross the same [`ContractRead::call`] primitive, and decode to the shape
+//! the caller named. The ERC-20 metadata family (name/symbol/decimals with
+//! its selector fallback and field decodes) has its own home in
+//! [`crate::erc20`].
 //!
 //! # Errors
 //!
@@ -705,36 +707,6 @@ pub async fn fetch_uint256_field(
     Ok(U256::from_be_bytes::<32>(word))
 }
 
-/// Call the no-argument `signature` on `to` and decode its return as a
-/// Solidity `string`, falling back to a UTF-8 `bytes32` decode for tokens that
-/// store `name()`/`symbol()` in a fixed bytes slot (trailing NULs trimmed).
-///
-/// # Errors
-///
-/// Returns [`ProviderError`] from the underlying `eth_call` or
-/// [`ProviderError::DecodingError`] when the return decodes as neither
-/// `string` nor `bytes32`.
-pub async fn fetch_string_field(
-    provider: &impl ContractRead,
-    signature: &[u8],
-    to: &Address,
-    block: Option<u64>,
-) -> ProviderResult<String> {
-    let calldata = Bytes::copy_from_slice(&selector(signature));
-    let bytes = provider.call(*to, calldata, block).await?;
-    if let Ok(DynSolValue::String(s)) = DynSolType::String.abi_decode(&bytes) {
-        return Ok(s);
-    }
-    if let Ok(DynSolValue::FixedBytes(fb, _)) = DynSolType::FixedBytes(32).abi_decode(&bytes) {
-        return Ok(String::from_utf8_lossy(fb.as_slice())
-            .trim_matches('\0')
-            .to_string());
-    }
-    Err(ProviderError::DecodingError {
-        message: "could not decode string field as string or bytes32".to_owned(),
-    })
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -1288,47 +1260,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn declared_word_and_text_reads_decode() {
-        let transport = TableTransport::new()
-            .answer(
-                selector(b"decimals()").to_vec(),
-                narrow_uint_return(U256::from(18u64), 8),
-            )
-            .answer(
-                selector(b"name()").to_vec(),
-                DynSolValue::String("Dai Stablecoin".into()).abi_encode(),
-            )
-            .answer(
-                selector(b"symbol()").to_vec(),
-                DynSolValue::FixedBytes(
-                    alloy::primitives::B256::from({
-                        let mut word = [0u8; 32];
-                        word[..4].copy_from_slice(b"WETH");
-                        word
-                    }),
-                    32,
-                )
-                .abi_encode(),
-            );
+    async fn declared_word_reads_decode() {
+        let transport = TableTransport::new().answer(
+            selector(b"decimals()").to_vec(),
+            narrow_uint_return(U256::from(18u64), 8),
+        );
 
         assert_eq!(
             fetch_uint256_field(&transport, b"decimals()", &TO, BLOCK)
                 .await
                 .unwrap(),
             U256::from(18u64)
-        );
-        assert_eq!(
-            fetch_string_field(&transport, b"name()", &TO, BLOCK)
-                .await
-                .unwrap(),
-            "Dai Stablecoin"
-        );
-        assert_eq!(
-            fetch_string_field(&transport, b"symbol()", &TO, BLOCK)
-                .await
-                .unwrap(),
-            "WETH",
-            "a bytes32 symbol decodes with its NUL padding trimmed"
         );
     }
 

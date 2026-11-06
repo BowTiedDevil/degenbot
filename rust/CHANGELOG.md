@@ -4,6 +4,31 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ## Unreleased
 
+### Added
+
+- **One ERC-20 metadata read: `degenbot_rpc::erc20`.** `name()` / `symbol()` /
+  `decimals()` now have a single chain-read home over the `ContractRead` seam:
+  `read` (one token, with a `FieldMask` for Pool construction's partial
+  fallback reads) and `read_batch` (ordered Multicall3 reads), under a closed
+  `MetadataShape` — `LowerOnly` (lower spelling, ABI-value decode,
+  short-circuiting sequential form), `LowerUpperFallThrough` (both spellings,
+  any failure falls through, `bytes32` string answers with NULs trimmed,
+  `u8`-width decimals), and `LowerUpperStopOnCallError` (both spellings, a
+  call failure ends the field, strict dynamic-string decode with the
+  trailing-NULs-only `bytes32` fallback). Results carry per-field absence;
+  consumer policy stays with the consumers (Pool construction's DB-first /
+  UNKNOWN sentinels / all-or-nothing write-back, Aave's per-field nullable
+  cells and `i64` decimals width). `degenbot_rpc::multicall3::multicall3_batch`
+  now crosses the same `ContractRead` seam (signature-only change; wire
+  behavior unchanged).
+
+  | Was | Is |
+  | --- | --- |
+  | `degenbot_bot::bot_core::pool_builder::builder::fetch_erc20_metadata` + private selector/decode/fallback helpers | deleted — `build_erc20_metadata` resolves through `degenbot_rpc::erc20::read` (`LowerOnly`, then a masked `LowerUpperFallThrough` fallback) |
+  | `degenbot_bot::bot_core::fetch_erc20_metadata_batch`'s private multicall mechanics | the shared `degenbot_rpc::erc20::read_batch` (`LowerOnly`) folded to the seam's all-or-nothing per-token tuple |
+  | `degenbot_rpc::abi::fetch_string_field` | deleted — the name/symbol spelling read lives in `degenbot_rpc::erc20`; non-metadata declared-shape reads keep `fetch_uint256_field` |
+  | Aave `config_dispatch::fetch_erc20_metadata` / `fetch_erc20_metadata_batched` / `decode_dynamic_string` / `string_field_from_batch` / `decimals_from_batch` | deleted — `degenbot_rpc::erc20::read` / `read_batch` (`LowerUpperStopOnCallError`); the market-id read decodes through `degenbot_rpc::erc20::decode_string_return` |
+
 ### Changed
 
 - **Core-owned Session-end ranking: one closed end observation, one pure `rank`

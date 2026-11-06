@@ -69,7 +69,7 @@ use crate::run::AaveChunkEvent;
 use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
-use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
+use degenbot_rpc::multicall3::multicall3_batch;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -77,13 +77,11 @@ use rusqlite::Connection;
 //
 // The re-export tiers collapse to what the crate actually consumes. The
 // names `run/` reaches through this module are `pub(crate)`: the context and
-// its span/memo, the proxy matcher and its resolution, the ERC20 metadata
-// fetch, the dynamic-string decoder, and the post-apply discount refresh.
-// Every dispatch arm is reached only through this module's own dispatch loop
-// and the in-crate unit tests, so it stays a private import (its definition
-// drops to `pub(super)` at the child-module seam).
+// its span/memo, the proxy matcher and its resolution, and the post-apply
+// discount refresh. Every dispatch arm is reached only through this module's
+// own dispatch loop and the in-crate unit tests, so it stays a private import
+// (its definition drops to `pub(super)` at the child-module seam).
 
-pub(crate) use asset_config::{decode_dynamic_string, fetch_erc20_metadata};
 pub(crate) use context::{ChunkContext, ChunkSpan, RevisionMemo};
 pub(crate) use discount::refresh_gho_discount;
 pub(crate) use revision::{match_proxy_id, ProxyCreationResolution};
@@ -518,60 +516,6 @@ fn strip_trailing_nulls_from_ascii(id: &alloy::primitives::B256) -> String {
     let bytes = id.as_slice();
     let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |p| p + 1);
     String::from_utf8_lossy(&bytes[..end]).into_owned()
-}
-
-/// The `(name|symbol)` decision over one field's batched `[lower, upper]`
-/// selector results — the exact sequential order of
-/// [`fetch_erc20_string_metadata`]: a failed lower result (the revert /
-/// transport class) returns `None` WITHOUT consulting the upper spelling
-/// (the sequential `.ok()?` early-return); a succeeded-but-undecodable lower
-/// return falls through to the upper spelling; each spelling decodes the
-/// dynamic `string` form before the bytes32 fallback.
-fn string_field_from_batch(lower: &MulticallResult, upper: &MulticallResult) -> Option<String> {
-    if !lower.success {
-        return None;
-    }
-    decode_string_return(&lower.return_data).or_else(|| {
-        if !upper.success {
-            return None;
-        }
-        decode_string_return(&upper.return_data)
-    })
-}
-
-/// The `decimals` decision over one field's batched `[lower, upper]` results
-/// — mirrors [`fetch_erc20_decimals`]'s sequential order with the same
-/// failed-lower early-`None`.
-fn decimals_from_batch(lower: &MulticallResult, upper: &MulticallResult) -> Option<i64> {
-    if !lower.success {
-        return None;
-    }
-    word0_to_u256(&lower.return_data)
-        .map(|v| v.to::<u64>().cast_signed())
-        .or_else(|| {
-            if !upper.success {
-                return None;
-            }
-            word0_to_u256(&upper.return_data).map(|v| v.to::<u64>().cast_signed())
-        })
-}
-
-/// The per-spelling string decode shared by the sequential and batched
-/// metadata paths: dynamic `string` first, then the bytes32 fallback (older
-/// tokens — first 32 bytes, trailing NULs stripped, non-empty).
-fn decode_string_return(ret: &[u8]) -> Option<String> {
-    if let Some(s) = decode_dynamic_string(ret) {
-        return Some(s);
-    }
-    if ret.len() >= 32 {
-        let s = String::from_utf8_lossy(&ret[..32])
-            .trim_end_matches('\0')
-            .to_string();
-        if !s.is_empty() {
-            return Some(s);
-        }
-    }
-    None
 }
 
 #[expect(clippy::doc_markdown, clippy::expect_used, clippy::panic)]
@@ -1450,45 +1394,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decode_dynamic_string_decodes_name() {
-        // ABI dynamic string: 32-byte offset (0x20) + 32-byte length + data
-        // padded to a 32-byte multiple.
-        let mut ret = vec![0u8; 96];
-        // offset = 0x20 at [0..32].
-        ret[31] = 0x20;
-        // length = 4 at [32..64].
-        ret[63] = 4;
-        // data = "DAI" at [64..68] (the length is 4 → "DAI\0"? no, length=4 →
-        // 4 bytes; use "DAI\0" → but we want a printable. Use "WETH" = 4 bytes).
-        ret[64..68].copy_from_slice(b"WETH");
-        assert_eq!(decode_dynamic_string(&ret), Some("WETH".to_string()));
-    }
-
-    #[test]
-    fn decode_dynamic_string_returns_none_for_short_return() {
-        // A bytes32-only return (older tokens) is too short for the dynamic
-        // string decode → None (the bytes32 fallback handles it).
-        assert_eq!(decode_dynamic_string(&[0u8; 32]), None);
-    }
-
-    #[test]
-    fn decode_dynamic_string_returns_none_for_non_0x20_offset() {
-        let mut ret = vec![0u8; 96];
-        ret[31] = 0x40; // offset ≠ 0x20 → malformed.
-        ret[63] = 4;
-        ret[64..68].copy_from_slice(b"WETH");
-        assert_eq!(decode_dynamic_string(&ret), None);
-    }
-
-    #[test]
-    fn decode_dynamic_string_returns_none_for_length_overrun() {
-        let mut ret = vec![0u8; 96];
-        ret[31] = 0x20;
-        ret[63] = 0xff; // length overruns the return.
-        assert_eq!(decode_dynamic_string(&ret), None);
-    }
-
     // ── Discount-event emitter-validation guard (divergence #2) ────────
     // The dispatch returns Ok(None) when (a) the GHO asset has no vToken FK
     // (the Python's `gho_asset.v_token is None` guard) or (b) the decoded
@@ -1793,20 +1698,6 @@ mod tests {
         format!("0x{v:064x}")
     }
 
-    fn batch_success(data: &[u8]) -> MulticallResult {
-        MulticallResult {
-            success: true,
-            return_data: Bytes::from(data.to_vec()),
-        }
-    }
-
-    fn batch_failure() -> MulticallResult {
-        MulticallResult {
-            success: false,
-            return_data: Bytes::new(),
-        }
-    }
-
     /// An ABI dynamic-`string` return: the 0x20 offset word, the length word,
     /// the data right-padded to a 32-byte multiple.
     fn dynamic_string_return(s: &str) -> Vec<u8> {
@@ -1819,81 +1710,6 @@ mod tests {
             v.push(0);
         }
         v
-    }
-
-    #[test]
-    fn string_field_from_batch_mirrors_the_sequential_fallback_order() {
-        // lower succeeds with a dynamic string — the upper spelling is never
-        // consulted (and a garbage upper must not matter).
-        assert_eq!(
-            string_field_from_batch(
-                &batch_success(&dynamic_string_return("WETH")),
-                &batch_failure()
-            ),
-            Some("WETH".to_string())
-        );
-        // lower succeeds but is undecodable as a string (32 zero bytes — the
-        // bytes32 fallback strips to empty) → falls through to the upper
-        // spelling.
-        assert_eq!(
-            string_field_from_batch(
-                &batch_success(&[0u8; 32]),
-                &batch_success(&dynamic_string_return("MKR"))
-            ),
-            Some("MKR".to_string())
-        );
-        // A bytes32-returning lower spelling (older tokens) decodes without
-        // the upper spelling.
-        let mut bytes32 = [0u8; 32];
-        bytes32[..3].copy_from_slice(b"DAI");
-        assert_eq!(
-            string_field_from_batch(&batch_success(&bytes32), &batch_failure()),
-            Some("DAI".to_string())
-        );
-        // A FAILED lower result (the revert/transport class the sequential
-        // path saw as an `eth_call` error) returns None WITHOUT consulting
-        // the upper spelling — the sequential `.ok()?` early-return.
-        assert_eq!(
-            string_field_from_batch(
-                &batch_failure(),
-                &batch_success(&dynamic_string_return("WETH"))
-            ),
-            None
-        );
-        // A succeeded-but-undecodable lower + a failed upper → None.
-        assert_eq!(
-            string_field_from_batch(&batch_success(&[0u8; 32]), &batch_failure()),
-            None
-        );
-    }
-
-    #[test]
-    fn decimals_from_batch_mirrors_the_sequential_fallback_order() {
-        let word = |v: u64| {
-            let mut w = [0u8; 32];
-            w[24..32].copy_from_slice(&v.to_be_bytes());
-            w
-        };
-        // lower succeeds → the upper spelling is never consulted.
-        assert_eq!(
-            decimals_from_batch(&batch_success(&word(18)), &batch_failure()),
-            Some(18)
-        );
-        // lower succeeds but is undecodable (short return) → the upper
-        // spelling answers.
-        assert_eq!(
-            decimals_from_batch(&batch_success(&[0u8; 16]), &batch_success(&word(6))),
-            Some(6)
-        );
-        // A FAILED lower result returns None WITHOUT the upper spelling.
-        assert_eq!(
-            decimals_from_batch(&batch_failure(), &batch_success(&word(18))),
-            None
-        );
-        assert_eq!(
-            decimals_from_batch(&batch_success(&[0u8; 16]), &batch_failure()),
-            None
-        );
     }
 
     #[test]
