@@ -534,6 +534,16 @@ jobs:
       - name: Bootstrap development environment
         run: just bootstrap
 
+      # The comment-hygiene gate (scripts/hooks/comment-hygiene.sh) runs one rg
+      # pass over the WORKING TREE, and tests/test_comment_hygiene_gate.py drives
+      # the real gate as its negative probe, so the pytest tier shells out to
+      # ripgrep. ubuntu-latest no longer preinstalls it - the rust job provisions
+      # it for the engine impl-block gate for the same reason - and a missing rg
+      # is the gate REFUSING to certify rather than a reason to skip: provision
+      # it here. Same dependency the .devcontainer/Dockerfile installs.
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
+
       # Foundry provides `anvil` so the standalone-anvil (T1) tier executes on
       # the floor leg (no RPC secret is ever plumbed: standalone-anvil tests
       # run against a seeded local chain with no upstream). The other legs
