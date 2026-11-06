@@ -2,7 +2,17 @@
 //!
 //! Exposes `AlloySubscription` as a Python class implementing the async iterator
 //! protocol (`__aiter__` / `__anext__`) plus a `drain()` method for bulk
-//! consumption and a `started()` method that awaits WS subscription confirmation.
+//! consumption and a `started()` method that awaits subscription confirmation.
+//!
+//! # This wrapper translates; it does not decide
+//!
+//! Every lifecycle fact lives in the Rust core ([`SubscriptionHandle`]): the
+//! current phase, the latched startup result, and the terminal a reader observes.
+//! The wrapper owns no `ended`/`disconnected` pair and no representation state —
+//! it converts raw items to Python objects and translates a
+//! [`TerminalNotice`] into the one Python exception that notice means, so every
+//! read path (`__anext__`, `drain`, `started`, `__repr__`) reads the same
+//! authority and cannot disagree with another.
 //!
 //! # GIL Safety
 //!
@@ -14,53 +24,38 @@
 
 use crate::ambient_runtime::future_into_py;
 use crate::prelude::*;
-use crate::subscription::SubscriptionHandle;
+use crate::subscription::{
+    DrainNotice, RawSubItem, ReadClaim, ReadOutcome, StartupResult, SubscriptionHandle,
+    TerminalNotice,
+};
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 // =============================================================================
-// Drain result + GIL-bound conversion (split out of the pure subscription core)
+// GIL-bound conversion (the binding-side half of the drain)
 // =============================================================================
 //
-// [`SubscriptionHandle::drain_raw`] and [`RawDrainResult`] live in the
-// `degenbot-rpc` crate (pure Rust, no `pyo3`). The GIL-bound conversion layer
-// (`DrainResult`, `convert_item`, `drain_buffer`) stays here in the binding
-// layer because it constructs Python objects via `conversion::rpc_types`.
+// [`SubscriptionHandle::drain_raw`], [`RawDrain`], [`DrainNotice`], and
+// [`TerminalNotice`] live in the `degenbot-rpc` crate (pure Rust, no `pyo3`). The
+// GIL-bound conversion layer stays here because it constructs Python objects via
+// `conversion::rpc_types`.
 
 use crate::conversion::rpc_types::{block_to_py_dict, header_to_py_dict, log_to_py_dict};
-use crate::subscription::RawSubItem;
 
-/// Result of draining a buffer and converting to Python objects.
-pub(crate) enum DrainResult {
-    /// Normal items converted to Python objects.
-    Items(Vec<Py<PyAny>>),
-    /// The subscription ended cleanly. Contains any items before the end marker.
-    Ended(Vec<Py<PyAny>>),
-    /// The subscription disconnected. Contains any items before the disconnect.
-    Disconnected {
-        items: Vec<Py<PyAny>>,
-        message: String,
-    },
-}
-
-/// Convert a single raw item to a Python object. Returns None for End/Disconnected
-/// (these are handled by `DrainResult` variants).
-fn convert_item(py: Python<'_>, item: RawSubItem) -> PyResult<Option<Py<PyAny>>> {
+/// Convert a single raw item to the Python object it represents.
+fn convert_item(py: Python<'_>, item: RawSubItem) -> PyResult<Py<PyAny>> {
     match item {
         RawSubItem::Header(header) => {
             let d = header_to_py_dict(py, &header)?;
-            Ok(Some(d.into_any().unbind()))
+            Ok(d.into_any().unbind())
         }
         RawSubItem::Block(block) => {
             let d = block_to_py_dict(py, &block)?;
-            Ok(Some(d.into_any().unbind()))
+            Ok(d.into_any().unbind())
         }
         RawSubItem::PendingTxHash(hash) => {
             let hex_str = hash.to_string();
-            Ok(Some(
-                pyo3::types::PyString::new(py, &hex_str).into_any().unbind(),
-            ))
+            Ok(pyo3::types::PyString::new(py, &hex_str).into_any().unbind())
         }
         RawSubItem::FullPendingTx(json_guard) => {
             let json_val = json_guard.lock().take().ok_or_else(|| {
@@ -73,45 +68,65 @@ fn convert_item(py: Python<'_>, item: RawSubItem) -> PyResult<Option<Py<PyAny>>>
                 json_val,
                 crate::conversion::rpc_types::FieldSchema::TRANSACTION,
             )?;
-            Ok(Some(obj.unbind()))
+            Ok(obj.unbind())
         }
         RawSubItem::Log(log) => {
             let d = log_to_py_dict(py, &log)?;
-            Ok(Some(d.into_any().unbind()))
+            Ok(d.into_any().unbind())
         }
-        RawSubItem::End | RawSubItem::Disconnected { message: _ } => Ok(None),
     }
 }
 
-/// Drain the stale buffer and convert all items to Python objects.
-/// Called with the GIL held. Delegates buffer mechanics to [`SubscriptionHandle::drain_raw`].
-pub(crate) fn drain_buffer(handle: &SubscriptionHandle, py: Python<'_>) -> PyResult<DrainResult> {
+/// Convert a raw batch to Python objects. Called with the GIL held.
+fn convert_all(py: Python<'_>, items: Vec<RawSubItem>) -> PyResult<Vec<Py<PyAny>>> {
+    let mut converted = Vec::with_capacity(items.len());
+    for item in items {
+        converted.push(convert_item(py, item)?);
+    }
+    Ok(converted)
+}
+
+/// Drain the handle and convert everything to Python objects.
+///
+/// The typed notice crosses unchanged: this layer never decides whether the
+/// subscription is over — the core's latched phase does.
+fn drain_buffer(
+    handle: &SubscriptionHandle,
+    py: Python<'_>,
+) -> PyResult<(Vec<Py<PyAny>>, Option<DrainNotice>)> {
     let raw = handle.drain_raw();
+    Ok((convert_all(py, raw.items)?, raw.notice))
+}
 
-    // Convert raw items to Python objects
-    let convert_all = |items: Vec<RawSubItem>| -> PyResult<Vec<Py<PyAny>>> {
-        let mut converted = Vec::with_capacity(items.len());
-        for item in items {
-            if let Some(py_obj) = convert_item(py, item)? {
-                converted.push(py_obj);
-            }
-        }
-        Ok(converted)
-    };
+// =============================================================================
+// Terminal translation: the wrapper's whole lifecycle vocabulary
+// =============================================================================
 
-    match raw {
-        crate::subscription::RawDrainResult::Items(items) => {
-            Ok(DrainResult::Items(convert_all(items)?))
+/// The Python exception a terminal notice raises.
+///
+/// A clean end and an unsubscribe both close iteration (`StopAsyncIteration`);
+/// a failure is the terminal error. This is the only place a terminal notice
+/// becomes a Python outcome, so `__anext__` and `drain` cannot disagree.
+fn terminal_to_pyerr(notice: TerminalNotice) -> PyErr {
+    match notice {
+        TerminalNotice::Ended | TerminalNotice::Unsubscribed => {
+            PyStopAsyncIteration::new_err("Subscription closed")
         }
-        crate::subscription::RawDrainResult::Ended(items) => {
-            Ok(DrainResult::Ended(convert_all(items)?))
+        TerminalNotice::Failed { message } => {
+            PyRuntimeError::new_err(format!("Subscription failed: {message}"))
         }
-        crate::subscription::RawDrainResult::Disconnected { items, message } => {
-            Ok(DrainResult::Disconnected {
-                items: convert_all(items)?,
-                message,
-            })
-        }
+    }
+}
+
+/// The Python result of a resolved startup.
+fn startup_result_to_py(result: StartupResult) -> PyResult<()> {
+    match result {
+        StartupResult::Started => Ok(()),
+        StartupResult::Failed { message } => Err(PyRuntimeError::new_err(message)),
+        StartupResult::Closed { phase } => Err(PyRuntimeError::new_err(format!(
+            "Subscription closed before it started ({})",
+            phase.name()
+        ))),
     }
 }
 
@@ -135,17 +150,14 @@ pub(crate) fn drain_buffer(handle: &SubscriptionHandle, py: Python<'_>) -> PyRes
 /// ```python
 /// await subscription.started()  # Raises on failure
 /// ```
+///
+/// A reconnect (`phase == "reconnecting"`) is transient: iteration keeps awaiting
+/// data and does not raise. Only a terminal phase ends it — `StopAsyncIteration`
+/// for a clean end or an unsubscribe, `RuntimeError` for a failure.
 #[pyclass(name = "AlloySubscription", module = "degenbot._ffi.provider")]
 pub struct PyAlloySubscription {
-    /// The shared subscription handle.
+    /// The shared subscription handle — the sole lifecycle authority.
     handle: Arc<SubscriptionHandle>,
-    /// Local batch: items drained from Rust but not yet yielded by __anext__.
-    /// Shared between sync `drain()` and async `__anext__()` future.
-    local_batch: Arc<parking_lot::Mutex<Vec<Py<PyAny>>>>,
-    /// Whether the subscription has ended (End marker received).
-    ended: bool,
-    /// Whether the subscription has disconnected.
-    disconnected: Option<String>,
 }
 
 #[pymethods]
@@ -159,259 +171,312 @@ impl PyAlloySubscription {
     ///
     /// Always returns a coroutine (via `future_into_py`) so that
     /// `await sub.__anext__()` and `async for item in sub` work
-    /// correctly. The fast path (items already in local batch or
-    /// Rust buffer) resolves the future immediately.
+    /// correctly. The core's read loop resolves it as soon as an item is
+    /// buffered.
+    ///
+    /// Raises `RuntimeError` when another read of this subscription is in
+    /// progress — a concurrent `__anext__` is a driver bug, and it must not
+    /// surface as a spurious `StopAsyncIteration`.
     fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        // Check terminal states
-        if self.ended {
-            return Err(PyStopAsyncIteration::new_err("Subscription ended"));
-        }
-        if let Some(ref msg) = self.disconnected {
-            return Err(PyRuntimeError::new_err(format!(
-                "Subscription disconnected: {msg}"
-            )));
-        }
-
-        // Fast path: return from local batch or non-blocking drain
-        if let Some(result) = self.try_fast_drain(py)? {
-            return Ok(result);
-        }
-
-        // Slow path: wait for pump notification, then drain
+        // Claim the read side synchronously, so a concurrent reader gets the
+        // typed refusal at call time instead of racing the buffer.
+        let claim = self.claim_read()?;
         let handle = Arc::clone(&self.handle);
-        let local_batch = Arc::clone(&self.local_batch);
 
         future_into_py(py, async move {
-            loop {
-                // Take the notify_rx, await, put it back
-                let mut rx = handle
-                    .notify_rx
-                    .lock()
-                    .take()
-                    .ok_or_else(|| PyStopAsyncIteration::new_err("Subscription closed"))?;
-
-                let recv_result = rx.recv().await;
-                *handle.notify_rx.lock() = Some(rx);
-
-                match recv_result {
-                    Some(()) => {}
-                    None => return Err(PyStopAsyncIteration::new_err("Subscription closed")),
-                }
-
-                // Drain the buffer with GIL
-                let drain_result = Python::attach(|py| drain_buffer(&handle, py))?;
-
-                match drain_result {
-                    DrainResult::Items(items) if items.is_empty() => {
-                        // Spurious wake — no items yet, loop and wait again
-                    }
-                    DrainResult::Items(mut items) => {
-                        let first = items.remove(0);
-                        if !items.is_empty() {
-                            local_batch.lock().extend(items);
-                        }
-                        return Ok(first);
-                    }
-                    DrainResult::Ended(mut items) => {
-                        if let Some(first) = items.pop() {
-                            if !items.is_empty() {
-                                local_batch.lock().extend(items);
-                            }
-                            return Ok(first);
-                        }
-                        return Err(PyStopAsyncIteration::new_err("Subscription ended"));
-                    }
-                    DrainResult::Disconnected { mut items, message } => {
-                        if let Some(first) = items.pop() {
-                            if !items.is_empty() {
-                                local_batch.lock().extend(items);
-                            }
-                            return Ok(first);
-                        }
-                        return Err(PyRuntimeError::new_err(format!(
-                            "Subscription disconnected: {message}"
-                        )));
-                    }
-                }
-            }
+            // The claim lives until this future resolves: the read side is never
+            // "checked out" in a way a second reader can mistake for closure.
+            let _claim = claim;
+            let outcome = handle.read_next().await;
+            Python::attach(|py| match outcome {
+                ReadOutcome::Item(item) => convert_item(py, item),
+                ReadOutcome::Terminal(terminal) => Err(terminal_to_pyerr(terminal)),
+            })
         })
     }
 
     /// Drain accumulated items from the subscription.
     ///
-    /// Swaps the internal double-buffer and bulk-converts all accumulated
-    /// items to Python dicts. Returns a list of items. The list may be
-    /// empty if no items have arrived since the last drain.
+    /// Bulk-converts every buffered item, in arrival order, to Python objects.
+    /// The list may be empty if no items have arrived since the last drain.
     ///
-    /// Raises `StopAsyncIteration` if the subscription has ended.
-    /// Raises `RuntimeError` if the subscription has disconnected.
+    /// Pre-terminal items are always returned before the terminal is reported:
+    /// the terminal state is latched in the core, so a later call reports it.
+    /// Raises `StopAsyncIteration` once the subscription is over (a clean end or
+    /// an unsubscribe) and `RuntimeError` when it failed. A reconnect is
+    /// transient and is not reported here.
+    ///
+    /// Raises `RuntimeError` when another read of this subscription is in
+    /// progress.
     fn drain(&mut self) -> PyResult<Vec<Py<PyAny>>> {
-        if self.ended {
-            return Err(PyStopAsyncIteration::new_err("Subscription ended"));
-        }
-        if let Some(ref msg) = self.disconnected {
-            return Err(PyRuntimeError::new_err(format!(
-                "Subscription disconnected: {msg}"
-            )));
-        }
+        let _claim = self.claim_read()?;
+        let (items, notice) = Python::attach(|py| drain_buffer(&self.handle, py))?;
 
-        // First, yield any items in the local batch
-        let mut result = Vec::new();
-        let mut batch = self.local_batch.lock();
-        result.append(&mut *batch);
-        drop(batch);
-
-        // Then drain the Rust buffer
-        let drain_result = Python::attach(|py| drain_buffer(&self.handle, py))?;
-        match drain_result {
-            DrainResult::Items(items) => {
-                result.extend(items);
-                Ok(result)
+        match notice {
+            Some(DrainNotice::Terminal(terminal)) if items.is_empty() => {
+                Err(terminal_to_pyerr(terminal))
             }
-            DrainResult::Ended(items) => {
-                result.extend(items);
-                self.ended = true;
-                Ok(result)
-            }
-            DrainResult::Disconnected { items, message } => {
-                result.extend(items);
-                self.disconnected = Some(message.clone());
-                if result.is_empty() {
-                    Err(PyRuntimeError::new_err(format!(
-                        "Subscription disconnected: {message}"
-                    )))
-                } else {
-                    Ok(result)
-                }
-            }
+            Some(DrainNotice::Terminal(_) | DrainNotice::Reconnecting { .. }) | None => Ok(items),
         }
     }
 
     /// Wait for the subscription to be confirmed by the node.
     ///
-    /// Resolves when the WS subscription is active. Raises if the
-    /// subscription failed to establish.
+    /// Resolves when the WS subscription is active. Raises if the subscription
+    /// failed to establish, or was torn down before it started. Every waiter —
+    /// early, late, or repeated — observes the same latched outcome.
     fn started<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        // Fast path: already started/failed
-        if self.handle.started.load(Ordering::Acquire) {
-            return Ok(py.None().into_bound(py).into_any());
-        }
-        if self.handle.start_failed.load(Ordering::Acquire) {
-            let msg = self
-                .handle
-                .start_error
-                .lock()
-                .clone()
-                .unwrap_or_else(|| "Subscription failed to start".into());
-            return Err(PyRuntimeError::new_err(msg));
-        }
-
         let handle = Arc::clone(&self.handle);
-
         future_into_py(py, async move {
-            let mut rx = handle.start_notify_rx.lock().take().ok_or_else(|| {
-                PyRuntimeError::new_err("Start notification channel already consumed")
-            })?;
-
-            let _ = rx.recv().await;
-
-            if handle.started.load(Ordering::Acquire) {
-                Ok(())
-            } else if handle.start_failed.load(Ordering::Acquire) {
-                let msg = handle
-                    .start_error
-                    .lock()
-                    .clone()
-                    .unwrap_or_else(|| "Subscription failed to start".into());
-                Err(PyRuntimeError::new_err(msg))
-            } else {
-                Err(PyRuntimeError::new_err(
-                    "Start notification received but subscription state is ambiguous",
-                ))
-            }
+            startup_result_to_py(handle.await_startup().await)
         })
+    }
+
+    /// The current lifecycle phase, for observability.
+    ///
+    /// One of `starting`, `streaming`, `reconnecting`, `ended`, `failed`,
+    /// `unsubscribed`. `reconnecting` is transient — the subscription is still
+    /// live and iteration continues.
+    #[getter]
+    fn phase(&self) -> String {
+        self.handle.phase().name().to_string()
     }
 
     /// Unsubscribe from the event stream.
     ///
-    /// Stops the background pump task. After calling this,
-    /// `__anext__()` will raise `StopAsyncIteration`.
+    /// Aborts the background pump task and latches the terminal `unsubscribed`
+    /// phase. Idempotent: a second call changes nothing, and a late pump event
+    /// cannot reopen the subscription. After calling this, `__anext__()` raises
+    /// `StopAsyncIteration`.
     fn unsubscribe(&self) {
         self.handle.unsubscribe();
     }
 
     fn __repr__(&self) -> String {
-        let state = if self.ended {
-            "ended"
-        } else if self.disconnected.is_some() {
-            "disconnected"
-        } else {
-            "active"
-        };
-        format!("AlloySubscription(state={state})")
+        let lifecycle = self.handle.lifecycle();
+        let phase = lifecycle.phase();
+        match phase.message() {
+            Some(message) => {
+                format!(
+                    "AlloySubscription(state={}, message={message:?})",
+                    phase.name()
+                )
+            }
+            None => format!("AlloySubscription(state={})", phase.name()),
+        }
     }
 }
 
 impl PyAlloySubscription {
-    /// Try to get an item immediately from the local batch or Rust buffer.
-    /// Returns `Some(future)` if an item (or terminal state) is ready,
-    /// `None` if no items are available and the slow path is needed.
-    fn try_fast_drain<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
-        // Fast path: return from local batch
-        let item = self.local_batch.lock().pop();
-        if let Some(item) = item {
-            return Ok(Some(future_into_py(py, async move { Ok(item) })?));
-        }
-
-        // Try non-blocking drain from Rust buffer
-        let drain_result = Python::attach(|py| drain_buffer(&self.handle, py))?;
-        match drain_result {
-            DrainResult::Items(items) if items.is_empty() => Ok(None),
-            DrainResult::Items(mut items) => {
-                let first = items.remove(0);
-                if !items.is_empty() {
-                    self.local_batch.lock().extend(items);
-                }
-                Ok(Some(future_into_py(py, async move { Ok(first) })?))
-            }
-            DrainResult::Ended(mut items) => {
-                self.ended = true;
-                if let Some(first) = items.pop() {
-                    if !items.is_empty() {
-                        self.local_batch.lock().extend(items);
-                    }
-                    let result: PyResult<Py<PyAny>> = Ok(first);
-                    Ok(Some(future_into_py(py, async move { result })?))
-                } else {
-                    let result: PyResult<Py<PyAny>> =
-                        Err(PyStopAsyncIteration::new_err("Subscription ended"));
-                    Ok(Some(future_into_py(py, async move { result })?))
-                }
-            }
-            DrainResult::Disconnected { mut items, message } => {
-                self.disconnected = Some(message.clone());
-                if let Some(first) = items.pop() {
-                    if !items.is_empty() {
-                        self.local_batch.lock().extend(items);
-                    }
-                    Ok(Some(future_into_py(py, async move { Ok(first) })?))
-                } else {
-                    let result: PyResult<Py<PyAny>> = Err(PyRuntimeError::new_err(format!(
-                        "Subscription disconnected: {message}"
-                    )));
-                    Ok(Some(future_into_py(py, async move { result })?))
-                }
-            }
-        }
+    /// Claim the read side, translating the core's typed refusal.
+    fn claim_read(&self) -> PyResult<ReadClaim> {
+        self.handle
+            .claim_read()
+            .map_err(|refusal| PyRuntimeError::new_err(refusal.to_string()))
     }
 
     /// Create a new Python subscription wrapper from a Rust subscription handle.
     pub fn from_handle(handle: Arc<SubscriptionHandle>) -> Self {
-        Self {
-            handle,
-            local_batch: Arc::new(parking_lot::Mutex::new(Vec::new())),
-            ended: false,
-            disconnected: None,
+        Self { handle }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used, reason = "test assertions fail loudly")]
+
+    use super::{startup_result_to_py, terminal_to_pyerr, PyAlloySubscription};
+    use crate::prelude::*;
+    use crate::subscription::{
+        LifecycleEvent, RawSubItem, StartupResult, SubscriptionHandle, SubscriptionPhase,
+        TerminalNotice,
+    };
+    use std::sync::Arc;
+
+    fn handle() -> Arc<SubscriptionHandle> {
+        Arc::new(SubscriptionHandle::new())
+    }
+
+    fn streaming() -> Arc<SubscriptionHandle> {
+        let handle = handle();
+        handle.apply(LifecycleEvent::Started).unwrap();
+        handle
+    }
+
+    /// The Python exception's message, without the type prefix `Display` adds.
+    fn message(error: &PyErr) -> String {
+        pyo3::Python::attach(|py| error.value(py).to_string())
+    }
+
+    /// `__repr__` reports the core phase — it infers no lifecycle of its own.
+    #[test]
+    fn repr_reports_the_core_phase() {
+        let subscription = PyAlloySubscription::from_handle(handle());
+        assert_eq!(subscription.__repr__(), "AlloySubscription(state=starting)");
+
+        let subscription = PyAlloySubscription::from_handle(streaming());
+        assert_eq!(
+            subscription.__repr__(),
+            "AlloySubscription(state=streaming)"
+        );
+        assert_eq!(subscription.phase(), "streaming");
+
+        let reconnecting = streaming();
+        reconnecting
+            .apply(LifecycleEvent::Stall {
+                message: "no header within watchdog window".to_string(),
+            })
+            .unwrap();
+        let subscription = PyAlloySubscription::from_handle(reconnecting);
+        assert_eq!(
+            subscription.__repr__(),
+            "AlloySubscription(state=reconnecting, message=\"no header within watchdog window\")"
+        );
+        assert_eq!(
+            subscription.phase(),
+            "reconnecting",
+            "a transient reconnect is observable but not terminal"
+        );
+    }
+
+    /// `drain()` returns the pre-terminal items in arrival order; the terminal the
+    /// core latched is reported by the *later* call.
+    #[test]
+    fn drain_returns_items_then_reports_the_latched_terminal() {
+        let handle = streaming();
+        handle.push_item(RawSubItem::Log(alloy::rpc::types::Log::default()));
+        handle.apply(LifecycleEvent::End).unwrap();
+
+        let mut subscription = PyAlloySubscription::from_handle(Arc::clone(&handle));
+        assert_eq!(subscription.drain().unwrap().len(), 1, "the log is drained");
+
+        let terminal = subscription.drain().unwrap_err();
+        pyo3::Python::attach(|py| {
+            assert!(terminal.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py));
+        });
+        assert_eq!(subscription.phase(), "ended");
+    }
+
+    /// The wrapper owns no terminal fields: repeated drains re-read the core's
+    /// latched terminal instead of remembering one locally.
+    #[test]
+    fn the_terminal_state_is_latched_in_the_core_not_the_wrapper() {
+        let handle = streaming();
+        handle.apply(LifecycleEvent::End).unwrap();
+        let mut subscription = PyAlloySubscription::from_handle(Arc::clone(&handle));
+
+        for _ in 0..2 {
+            let terminal = subscription.drain().unwrap_err();
+            pyo3::Python::attach(|py| {
+                assert!(terminal.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py));
+            });
         }
+        assert_eq!(subscription.__repr__(), "AlloySubscription(state=ended)");
+    }
+
+    /// A failure is the terminal error, not a silent close.
+    #[test]
+    fn a_failed_subscription_raises_the_terminal_error() {
+        let handle = streaming();
+        handle
+            .apply(LifecycleEvent::Fail {
+                message: "transport died".to_string(),
+            })
+            .unwrap();
+        let mut subscription = PyAlloySubscription::from_handle(handle);
+
+        let failure = subscription.drain().unwrap_err();
+        pyo3::Python::attach(|py| {
+            assert!(failure.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+        });
+        assert_eq!(message(&failure), "Subscription failed: transport died");
+    }
+
+    /// A concurrent read gets the typed refusal, never a fake closure.
+    #[test]
+    fn a_concurrent_read_is_refused_while_another_read_holds_the_side() {
+        let handle = streaming();
+        let mut subscription = PyAlloySubscription::from_handle(Arc::clone(&handle));
+
+        let claim = handle.claim_read().unwrap();
+        let refusal = subscription.drain().unwrap_err();
+        pyo3::Python::attach(|py| {
+            assert!(refusal.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+            assert!(
+                !refusal.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py),
+                "a checked-out reader must not look like a closed subscription"
+            );
+        });
+        assert_eq!(
+            message(&refusal),
+            "another read of this subscription is in progress"
+        );
+
+        drop(claim);
+        assert!(
+            subscription.drain().is_ok(),
+            "the read side is released with the claim"
+        );
+    }
+
+    /// Unsubscribing is idempotent and terminal.
+    #[test]
+    fn unsubscribe_is_idempotent_and_terminal() {
+        let handle = streaming();
+        let mut subscription = PyAlloySubscription::from_handle(handle);
+
+        subscription.unsubscribe();
+        subscription.unsubscribe();
+        assert_eq!(subscription.phase(), "unsubscribed");
+        assert_eq!(
+            subscription.__repr__(),
+            "AlloySubscription(state=unsubscribed)"
+        );
+
+        let terminal = subscription.drain().unwrap_err();
+        pyo3::Python::attach(|py| {
+            assert!(terminal.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py));
+        });
+    }
+
+    /// The startup translation table: success is silent, a startup failure is its
+    /// message, and a handle torn down before startup says so by phase.
+    #[test]
+    fn the_startup_translation_table_matches_the_terminal_vocabulary() {
+        pyo3::Python::attach(|py| {
+            assert!(startup_result_to_py(StartupResult::Started).is_ok());
+
+            let failed = startup_result_to_py(StartupResult::Failed {
+                message: "no endpoint".to_string(),
+            })
+            .unwrap_err();
+            assert_eq!(message(&failed), "no endpoint");
+            assert!(failed.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+
+            let closed = startup_result_to_py(StartupResult::Closed {
+                phase: SubscriptionPhase::Unsubscribed,
+            })
+            .unwrap_err();
+            assert!(
+                message(&closed).contains("Subscription closed before it started (unsubscribed)")
+            );
+        });
+    }
+
+    /// The terminal translation table: a clean end and an unsubscribe close
+    /// iteration, a failure raises.
+    #[test]
+    fn the_terminal_translation_table_is_exhaustive() {
+        pyo3::Python::attach(|py| {
+            for terminal in [TerminalNotice::Ended, TerminalNotice::Unsubscribed] {
+                let error = terminal_to_pyerr(terminal);
+                assert!(error.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py));
+            }
+            let error = terminal_to_pyerr(TerminalNotice::Failed {
+                message: "transport died".to_string(),
+            });
+            assert!(error.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+            assert_eq!(message(&error), "Subscription failed: transport died");
+        });
     }
 }

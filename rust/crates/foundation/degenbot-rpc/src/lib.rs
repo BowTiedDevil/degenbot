@@ -16,8 +16,9 @@
 //! - [`erc20`] — ERC-20 `name()`/`symbol()`/`decimals()` reads: the one
 //!   selector/decode/fallback family over [`abi::ContractRead`], with
 //!   single-token and multicall call shapes.
-//! - [`subscription`] — double-buffer `SubscriptionHandle`, raw `drain_raw`,
-//!   and the `pump_*` subscription drivers.
+//! - [`subscription`] — the one subscription lifecycle
+//!   (`SubscriptionHandle::apply` over `SubscriptionPhase`), its double buffer
+//!   and `drain_raw`, and the `pump_*` drivers that report into it.
 //! - [`head_watch`] — subscription-driven [`HeadWatch`]: the transport half of
 //!   the process hub's head source, publishing `newHeads` headers into the hub
 //!   with the pump's watchdog/reconnect.

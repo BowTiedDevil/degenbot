@@ -123,6 +123,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [091](ADR-091-retire-revm-completely.md) | Retire revm completely — evm2 sole EVM; Tier-3 oracles ported; reth is the independent interpreter | implemented |
 | [092](ADR-092-regenerable-math-oracles.md) | Frozen math oracles are regenerable — one generator per snapshot, the deployed contract is the authority | accepted |
 | [093](ADR-093-session-lifecycle-and-consumer.md) | The settlement session — a lifecycle-only Driver seam, one ordered Session event stream, one Session consumer | accepted / implemented (§6.7's slices landed; §6.8 pairs each with its commit) |
+| [094](ADR-094-subscription-lifecycle-one-authority.md) | The subscription lifecycle — one Rust state machine, transient reconnect, retained startup, typed drain notices | accepted |
 
 ## Historical — provenance only
 

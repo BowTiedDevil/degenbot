@@ -1,25 +1,51 @@
 //! Subscription support for the Alloy provider.
 //!
-//! Provides the double-buffer pump task infrastructure that reads from Alloy's
-//! subscription streams and accumulates raw items in Rust buffers (zero GIL),
-//! then bulk-converts them to Python objects on drain.
-//!
 //! # Design
 //!
-//! Each subscription spawns a tokio task (the "pump") that:
-//! 1. Awaits the Alloy subscription call
-//! 2. Reads items from the resulting stream
-//! 3. Writes raw items to the active buffer (no GIL needed)
-//! 4. Sets a coalesced signal flag and sends a wake-up notification
+//! One lifecycle, one authority: [`SubscriptionHandle`]. Every pump kind and
+//! every read path (fast `__anext__`, slow `__anext__`, bulk `drain`) changes
+//! subscription state only through [`SubscriptionHandle::apply`] and reads the
+//! same latched [`SubscriptionPhase`], so a terminal reached through one read
+//! path is the terminal every other read path reports.
 //!
-//! The `PyAlloySubscription` class reads accumulated items via `drain()`:
-//! - Atomically swaps the active buffer index (`fetch_xor`)
-//! - Takes the stale buffer contents (`mem::take`)
-//! - Acquires the GIL once for bulk conversion
-//! - Returns a Python list of dicts
+//! # The three planes
 //!
-//! `__anext__()` uses `drain()` internally with a local batch so that
-//! `async for` iteration works naturally.
+//! - **The lifecycle** ([`SubscriptionPhase`] plus the latched startup result)
+//!   is published on a retained `tokio::sync::watch`, so waiting never consumes
+//!   it: an early, late, or repeated `started()` waiter all observe the one
+//!   resolved startup outcome.
+//! - **The data plane** is a double buffer (the pump writes one side, a drain
+//!   takes the other) followed by a pending queue holding drained-but-unread
+//!   items. Its atomics are flags — the active buffer index and the coalesced
+//!   wake-up signal — never lifecycle authority.
+//! - **The read side** is claimed by one reader at a time
+//!   ([`SubscriptionHandle::claim_read`]), so a concurrent read receives the
+//!   typed [`ReadInProgress`] refusal instead of mistaking a checked-out
+//!   receiver for a closed subscription.
+//!
+//! # Reconnect is not terminal
+//!
+//! A watchdog stall moves [`SubscriptionPhase::Streaming`] to
+//! [`SubscriptionPhase::Reconnecting`] and a successful resubscribe moves back;
+//! a reader keeps awaiting data across that transition instead of surfacing a
+//! terminal error. Only [`SubscriptionPhase::Ended`],
+//! [`SubscriptionPhase::Failed`] and [`SubscriptionPhase::Unsubscribed`] end
+//! iteration, and they are absorbing: a late pump write cannot reopen them, and
+//! a reader that observed one keeps observing it.
+//!
+//! # Lock order
+//!
+//! Critical sections acquire `lifecycle` then `pending` then `buffers[*]`, and
+//! never the reverse. No lock is held across an `.await`: a reader's wait uses
+//! [`Notify`], which stores a permit rather than a guard.
+//!
+//! # One publication order
+//!
+//! [`SubscriptionHandle::apply`] writes the state AND publishes it inside one
+//! critical section (a `watch` send is synchronous and cannot block), so the
+//! retained publication has exactly the authority's total order. Two concurrent
+//! applies can never publish in the opposite order from their state writes, and a
+//! subscriber can never read a phase older than the last transition.
 
 use crate::provider::AlloyProvider;
 use degenbot_core::op_warn;
@@ -28,14 +54,15 @@ use alloy::network::Ethereum;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::rpc::types::Filter;
+use futures_util::StreamExt;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use degenbot_core::runtime::get_runtime;
-use futures_util::StreamExt;
-use tokio::sync::mpsc;
+use tokio::sync::{watch, Notify};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
@@ -55,57 +82,328 @@ pub(crate) const HEADER_WATCHDOG_SECS: u64 = 48;
 pub(crate) type HeaderStream = futures_util::stream::BoxStream<'static, alloy::rpc::types::Header>;
 
 // ---------------------------------------------------------------------------
-// Double-buffer subscription handle
+// Lifecycle: the subscription's sole state authority
 // ---------------------------------------------------------------------------
 
-/// Manages the double-buffer and background pump task for a subscription.
+/// The lifecycle phase a [`SubscriptionHandle`] publishes.
 ///
-/// The double-buffer pattern:
-/// - `buffers[active]` is where the pump writes (no GIL)
-/// - `buffers[stale]` is what `drain()` empties and converts (GIL)
-/// - `active` is swapped atomically via `fetch_xor(1)`
-/// - `signaled` is a coalesced flag: pump sets true on write, sends wake-up
-///   only on false→true transition. Python clears on drain.
-pub struct SubscriptionHandle {
-    /// Double buffer: raw items.
-    pub buffers: [parking_lot::Mutex<Vec<RawSubItem>>; 2],
-    /// Index of the active buffer (0 or 1). Pump writes to buffers[active].
-    pub active: AtomicUsize,
-    /// Coalesced signal flag. Pump sets true on write; Python clears on drain.
-    pub signaled: AtomicBool,
-    /// Wake-up channel sender: pump sends () when signaled transitions false→true.
-    pub notify_tx: mpsc::Sender<()>,
-    /// Wake-up channel receiver: Python side takes this and awaits it.
-    pub notify_rx: parking_lot::Mutex<Option<mpsc::Receiver<()>>>,
-    /// Handle to the pump task — aborted on unsubscribe/drop.
-    pub task: parking_lot::Mutex<Option<JoinHandle<()>>>,
-    /// Whether the user explicitly unsubscribed.
-    pub unsubscribed: AtomicBool,
-    /// Set to true when the pump has successfully established the subscription.
-    pub started: AtomicBool,
-    /// Set to true if the pump encountered an error during subscription setup.
-    pub start_failed: AtomicBool,
-    /// Error message if subscription setup failed.
-    pub start_error: parking_lot::Mutex<Option<String>>,
-    /// One-shot channel to notify when subscription is started (or failed).
-    pub start_notify_tx: mpsc::Sender<()>,
-    /// One-shot channel receiver for start notification.
-    pub start_notify_rx: parking_lot::Mutex<Option<mpsc::Receiver<()>>>,
+/// [`Self::Ended`], [`Self::Failed`] and [`Self::Unsubscribed`] are terminal and
+/// absorbing; [`Self::Reconnecting`] is transient on the way back to
+/// [`Self::Streaming`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SubscriptionPhase {
+    /// Spawned; the pump has not yet confirmed the subscription.
+    Starting,
+    /// Subscribed and delivering items.
+    Streaming,
+    /// The stream stalled or dropped and the pump is re-subscribing. Transient:
+    /// a successful resubscribe returns to [`Self::Streaming`].
+    Reconnecting { message: String },
+    /// The stream delivered its terminal end.
+    Ended,
+    /// The subscription failed unrecoverably.
+    Failed { message: String },
+    /// The consumer unsubscribed.
+    Unsubscribed,
 }
 
-impl SubscriptionHandle {
-    /// Signal the pump that we are unsubscribing, and abort the task.
-    pub fn unsubscribe(&self) {
-        self.unsubscribed.store(true, Ordering::SeqCst);
-        // Close the notify_rx so __anext__ returns None → StopAsyncIteration
-        *self.notify_rx.lock() = None;
-        // Abort the pump task
-        let task_handle = self.task.lock().take();
-        if let Some(handle) = task_handle {
-            handle.abort();
+impl SubscriptionPhase {
+    /// Whether this phase ends the subscription for good.
+    #[must_use]
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::Ended | Self::Failed { .. } | Self::Unsubscribed)
+    }
+
+    /// The phase name, as `__repr__` and telemetry report it.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Streaming => "streaming",
+            Self::Reconnecting { .. } => "reconnecting",
+            Self::Ended => "ended",
+            Self::Failed { .. } => "failed",
+            Self::Unsubscribed => "unsubscribed",
+        }
+    }
+
+    /// The phase's diagnostic message, when it carries one.
+    #[must_use]
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Self::Reconnecting { message } | Self::Failed { message } => Some(message),
+            Self::Starting | Self::Streaming | Self::Ended | Self::Unsubscribed => None,
         }
     }
 }
+
+impl std::fmt::Display for SubscriptionPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.message() {
+            Some(message) => write!(f, "{} ({message})", self.name()),
+            None => f.write_str(self.name()),
+        }
+    }
+}
+
+/// An event that drives the lifecycle. [`SubscriptionHandle::apply`] is the only
+/// writer, so every pump kind reports the same vocabulary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LifecycleEvent {
+    /// The pump established the subscription (or re-established it).
+    Started,
+    /// The initial subscribe failed unrecoverably.
+    StartupFailed { message: String },
+    /// A watchdog stall tore the stream down; a resubscribe is in flight.
+    Stall { message: String },
+    /// A resubscribe succeeded after a [`Self::Stall`].
+    Resumed,
+    /// The stream delivered its terminal end.
+    End,
+    /// An unrecoverable stream or transport failure.
+    Fail { message: String },
+    /// The consumer unsubscribed.
+    Unsubscribe,
+}
+
+/// How startup resolved. Latched exactly once, and never revised: a subscription
+/// that streamed and later failed still reports [`Self::Started`] to a waiter
+/// that asked later.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StartupResult {
+    /// The subscription reached [`SubscriptionPhase::Streaming`].
+    Started,
+    /// The subscription failed before it ever streamed.
+    Failed { message: String },
+    /// The subscription was torn down before startup resolved.
+    Closed { phase: SubscriptionPhase },
+}
+
+/// Why a lifecycle event was refused.
+///
+/// A refusal is data, not a falsy return: the caller can branch on the variant,
+/// and both variants carry the phase the event was refused in plus the event.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum LifecycleDecline {
+    /// The subscription is already over. Terminal phases are absorbing, so no
+    /// later event reopens them.
+    #[error("subscription is already over ({phase}), so {event:?} cannot reopen it")]
+    Terminal {
+        /// The terminal phase that absorbed the event.
+        phase: SubscriptionPhase,
+        /// The refused event.
+        event: LifecycleEvent,
+    },
+    /// The event is admissible in principle but means nothing in this phase (a
+    /// duplicate start ack, a resume with nothing to resume).
+    #[error("{event:?} is not admissible while {phase}")]
+    Inadmissible {
+        /// The phase the event could not apply in.
+        phase: SubscriptionPhase,
+        /// The refused event.
+        event: LifecycleEvent,
+    },
+}
+
+impl LifecycleDecline {
+    /// The phase the event was refused in.
+    #[must_use]
+    pub const fn phase(&self) -> &SubscriptionPhase {
+        match self {
+            Self::Terminal { phase, .. } | Self::Inadmissible { phase, .. } => phase,
+        }
+    }
+
+    /// The refused event.
+    #[must_use]
+    pub const fn event(&self) -> &LifecycleEvent {
+        match self {
+            Self::Terminal { event, .. } | Self::Inadmissible { event, .. } => event,
+        }
+    }
+}
+
+/// One published lifecycle snapshot: the current phase plus the latched startup
+/// result (`None` while startup is still pending).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubscriptionLifecycle {
+    phase: SubscriptionPhase,
+    startup: Option<StartupResult>,
+}
+
+impl SubscriptionLifecycle {
+    /// A freshly spawned subscription: starting, with startup unresolved.
+    #[must_use]
+    pub const fn starting() -> Self {
+        Self {
+            phase: SubscriptionPhase::Starting,
+            startup: None,
+        }
+    }
+
+    /// The current phase.
+    #[must_use]
+    pub const fn phase(&self) -> &SubscriptionPhase {
+        &self.phase
+    }
+
+    /// The latched startup result, or `None` while startup is pending.
+    #[must_use]
+    pub const fn startup(&self) -> Option<&StartupResult> {
+        self.startup.as_ref()
+    }
+
+    /// Whether the current phase ends the subscription for good.
+    #[must_use]
+    pub const fn is_terminal(&self) -> bool {
+        self.phase.is_terminal()
+    }
+
+    /// The typed refusal for an event [`Self::next`] returns `None` for.
+    #[must_use]
+    pub fn decline(&self, event: &LifecycleEvent) -> LifecycleDecline {
+        if self.phase.is_terminal() {
+            LifecycleDecline::Terminal {
+                phase: self.phase.clone(),
+                event: event.clone(),
+            }
+        } else {
+            LifecycleDecline::Inadmissible {
+                phase: self.phase.clone(),
+                event: event.clone(),
+            }
+        }
+    }
+
+    /// The lifecycle after `event`, or `None` when the event is not admissible
+    /// (terminal phases absorb every event, and a duplicate ack changes nothing).
+    ///
+    /// The startup result is derived here rather than stored by the pump: it
+    /// latches to the first non-pending phase and never changes again.
+    #[expect(
+        clippy::match_same_arms,
+        reason = "each no-op arm names a distinct rule of the lifecycle table"
+    )]
+    #[must_use]
+    pub fn next(&self, event: &LifecycleEvent) -> Option<Self> {
+        use LifecycleEvent as E;
+        use SubscriptionPhase as P;
+
+        let phase = match (&self.phase, event) {
+            // Terminal phases are absorbing: no event reopens them.
+            (P::Ended | P::Failed { .. } | P::Unsubscribed, _) => return None,
+
+            // The pump's start ack, from a fresh or a re-subscribing handle.
+            (P::Starting, E::Started) | (P::Reconnecting { .. }, E::Started | E::Resumed) => {
+                P::Streaming
+            }
+            (P::Streaming, E::Started | E::Resumed) | (P::Starting, E::Resumed) => return None,
+
+            // Startup failure: only admissible while the handle is starting.
+            (P::Starting, E::StartupFailed { message } | E::Fail { message }) => P::Failed {
+                message: message.clone(),
+            },
+            (P::Streaming | P::Reconnecting { .. }, E::StartupFailed { .. }) => return None,
+
+            // Unrecoverable stream failure.
+            (P::Streaming | P::Reconnecting { .. }, E::Fail { message }) => P::Failed {
+                message: message.clone(),
+            },
+
+            // Transient stall: streaming stalls, and a re-stall only updates the
+            // diagnostic message.
+            (P::Starting | P::Streaming, E::Stall { message }) => P::Reconnecting {
+                message: message.clone(),
+            },
+            (P::Reconnecting { message: current }, E::Stall { message }) if current != message => {
+                P::Reconnecting {
+                    message: message.clone(),
+                }
+            }
+            (P::Reconnecting { .. }, E::Stall { .. }) => return None,
+
+            // Terminal stream end and consumer unsubscribe, from any live phase.
+            (P::Starting | P::Streaming | P::Reconnecting { .. }, E::End) => P::Ended,
+            (P::Starting | P::Streaming | P::Reconnecting { .. }, E::Unsubscribe) => {
+                P::Unsubscribed
+            }
+        };
+
+        let mut next = Self {
+            phase,
+            startup: self.startup.clone(),
+        };
+        if next.startup.is_none() {
+            next.startup = match &next.phase {
+                P::Starting | P::Reconnecting { .. } => None,
+                P::Streaming => Some(StartupResult::Started),
+                P::Failed { message } => Some(StartupResult::Failed {
+                    message: message.clone(),
+                }),
+                P::Ended | P::Unsubscribed => Some(StartupResult::Closed {
+                    phase: next.phase.clone(),
+                }),
+            };
+        }
+        Some(next)
+    }
+}
+
+/// A transient lifecycle notice a read path reports without ending iteration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DrainNotice {
+    /// The stream stalled and a resubscribe is in flight: data may resume.
+    Reconnecting { message: String },
+    /// The subscription is over.
+    Terminal(TerminalNotice),
+}
+
+impl DrainNotice {
+    /// The notice the phase carries, if any.
+    #[must_use]
+    pub fn from_phase(phase: &SubscriptionPhase) -> Option<Self> {
+        match phase {
+            SubscriptionPhase::Starting | SubscriptionPhase::Streaming => None,
+            SubscriptionPhase::Reconnecting { message } => Some(Self::Reconnecting {
+                message: message.clone(),
+            }),
+            SubscriptionPhase::Ended => Some(Self::Terminal(TerminalNotice::Ended)),
+            SubscriptionPhase::Unsubscribed => Some(Self::Terminal(TerminalNotice::Unsubscribed)),
+            SubscriptionPhase::Failed { message } => Some(Self::Terminal(TerminalNotice::Failed {
+                message: message.clone(),
+            })),
+        }
+    }
+}
+
+/// A terminal lifecycle notice: the subscription is over for good.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalNotice {
+    /// The stream delivered its terminal end.
+    Ended,
+    /// The consumer unsubscribed.
+    Unsubscribed,
+    /// The subscription failed unrecoverably.
+    Failed { message: String },
+}
+
+/// What one read of the subscription produced.
+// `RawSubItem` is large; boxing it would allocate once per item read, so the
+// variant stays inline and the outcome is returned by move.
+#[expect(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum ReadOutcome {
+    /// The next pre-terminal item.
+    Item(RawSubItem),
+    /// The subscription is over; iteration does not resume.
+    Terminal(TerminalNotice),
+}
+
+/// The typed refusal a concurrent read receives while another read owns the
+/// subscription.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("another read of this subscription is in progress")]
+pub struct ReadInProgress;
 
 // ---------------------------------------------------------------------------
 // Raw subscription items (stored in buffers, no Python conversion yet)
@@ -124,38 +422,439 @@ pub enum RawSubItem {
     FullPendingTx(parking_lot::Mutex<Option<serde_json::Value>>),
     /// A log.
     Log(alloy::rpc::types::Log),
-    /// The subscription ended cleanly.
-    End,
-    /// The connection dropped or a transport error occurred.
-    Disconnected { message: String },
+}
+
+/// One drain: the items buffered before any lifecycle notice, plus the notice
+/// that applies to them.
+#[derive(Debug)]
+pub struct RawDrain {
+    /// Pre-terminal items, in arrival order.
+    pub items: Vec<RawSubItem>,
+    /// The lifecycle notice observed with this drain, if the phase carries one.
+    pub notice: Option<DrainNotice>,
+}
+
+// ---------------------------------------------------------------------------
+// The subscription handle
+// ---------------------------------------------------------------------------
+
+/// Test-only hook, fired by [`SubscriptionHandle::apply`] immediately before the
+/// transition is published.
+///
+/// It exists so a regression test can deterministically interleave a second
+/// `apply` into the state-write/publication window: if publication can be
+/// displaced, that second apply completes before this one publishes and the
+/// retained snapshot lands behind the authoritative state.
+#[cfg(test)]
+#[derive(Default)]
+struct PublishHook(parking_lot::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>);
+
+#[cfg(test)]
+impl std::fmt::Debug for PublishHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PublishHook(..)")
+    }
+}
+
+#[cfg(test)]
+impl PublishHook {
+    /// Run the installed hook, if any.
+    ///
+    /// The closure is cloned out of the hook mutex before it runs, so a hook that
+    /// installs or clears itself cannot deadlock.
+    fn run(&self) {
+        let hook = self.0.lock().clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+}
+
+/// Manages a subscription's lifecycle, double buffer, and background pump task.
+///
+/// See the module docs for the plane split, the lock order, and the single
+/// publication order. The pump writes items and lifecycle events; a reader claims
+/// the read side, awaits items, and observes the latched phase.
+#[derive(Debug)]
+pub struct SubscriptionHandle {
+    /// The lifecycle authority. Mutated only through [`Self::apply`].
+    lifecycle: parking_lot::Mutex<SubscriptionLifecycle>,
+    /// Retained publication of the lifecycle: every waiter, early or late, sees
+    /// the same snapshot.
+    lifecycle_tx: watch::Sender<SubscriptionLifecycle>,
+    /// Items drained from the buffers but not yet handed to the reader.
+    pending: parking_lot::Mutex<VecDeque<RawSubItem>>,
+    /// Double buffer: the pump writes `buffers[active]`, a drain takes the other.
+    buffers: [parking_lot::Mutex<Vec<RawSubItem>>; 2],
+    /// Index of the active buffer (0 or 1).
+    active: AtomicUsize,
+    /// Coalesced data-plane signal: set on write, cleared on drain.
+    signaled: AtomicBool,
+    /// Wake-up for readers: the pump signals both items and lifecycle changes.
+    /// `Notify` stores a permit, so a wake-up that lands between a drain and a
+    /// wait is never lost.
+    wake: Notify,
+    /// The pump task — aborted on unsubscribe.
+    task: parking_lot::Mutex<Option<JoinHandle<()>>>,
+    /// The current read owner (see [`Self::claim_read`]).
+    read_owner: AtomicBool,
+    /// Test-only publication hook (see [`PublishHook`]).
+    #[cfg(test)]
+    publish_hook: PublishHook,
+}
+
+impl Default for SubscriptionHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SubscriptionHandle {
+    /// A handle with no pump task attached: the lifecycle starts at
+    /// [`SubscriptionPhase::Starting`].
+    ///
+    /// [`spawn_subscription_arc`] is the production constructor; tests drive the
+    /// handle through the public pump, lifecycle, and drain seams.
+    #[must_use]
+    pub fn new() -> Self {
+        let lifecycle = SubscriptionLifecycle::starting();
+        let (lifecycle_tx, _initial_receiver) = watch::channel(lifecycle);
+        Self {
+            lifecycle: parking_lot::Mutex::new(SubscriptionLifecycle::starting()),
+            lifecycle_tx,
+            pending: parking_lot::Mutex::new(VecDeque::new()),
+            buffers: [
+                parking_lot::Mutex::new(Vec::new()),
+                parking_lot::Mutex::new(Vec::new()),
+            ],
+            active: AtomicUsize::new(0),
+            signaled: AtomicBool::new(false),
+            wake: Notify::new(),
+            task: parking_lot::Mutex::new(None),
+            read_owner: AtomicBool::new(false),
+            #[cfg(test)]
+            publish_hook: PublishHook::default(),
+        }
+    }
+
+    /// The current lifecycle snapshot.
+    #[must_use]
+    pub fn lifecycle(&self) -> SubscriptionLifecycle {
+        self.lifecycle.lock().clone()
+    }
+
+    /// The current lifecycle phase.
+    #[must_use]
+    pub fn phase(&self) -> SubscriptionPhase {
+        self.lifecycle.lock().phase().clone()
+    }
+
+    /// Whether the subscription has reached an absorbing terminal phase.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        self.lifecycle.lock().is_terminal()
+    }
+
+    /// A retained subscription to lifecycle changes — the multi-waiter seam.
+    #[must_use]
+    pub fn subscribe_lifecycle(&self) -> watch::Receiver<SubscriptionLifecycle> {
+        self.lifecycle_tx.subscribe()
+    }
+
+    /// Install a hook fired between a transition and its publication (tests).
+    #[cfg(test)]
+    fn set_publish_hook(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self.publish_hook.0.lock() = Some(Arc::new(hook));
+    }
+
+    /// Apply one lifecycle event. The ONLY writer of the lifecycle.
+    ///
+    /// The state write and its publication happen in ONE critical section: a
+    /// `watch` send is synchronous and cannot block, so publishing under the
+    /// authority lock makes the publication's total order exactly the authority's.
+    /// A subscriber therefore can never read a phase older than the authority's
+    /// last transition, even when two applies run concurrently.
+    ///
+    /// A refused event changes nothing, which is what makes a late pump write —
+    /// or a start ack that arrives after [`Self::unsubscribe`] — unable to report
+    /// the subscription active again.
+    ///
+    /// # Errors
+    ///
+    /// [`LifecycleDecline::Terminal`] when the subscription is already over, and
+    /// [`LifecycleDecline::Inadmissible`] when the event means nothing in the
+    /// current phase. Both carry the phase and the event.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "call sites pass an event literal; borrowing every one is noise"
+    )]
+    pub fn apply(&self, event: LifecycleEvent) -> Result<(), LifecycleDecline> {
+        // Lock order: lifecycle -> publish hook (test only) -> pending ->
+        // buffers -> the value publication.
+        let mut current = self.lifecycle.lock();
+        let Some(next) = current.next(&event) else {
+            return Err(current.decline(&event));
+        };
+        *current = next.clone();
+        if next.is_terminal() {
+            // Terminal is absorbing: flush whatever the pump already wrote into
+            // the pending queue so pre-terminal items are still delivered ahead
+            // of the terminal notice. A later write is refused by `buffer_item`,
+            // which reads the phase under this same lock.
+            let mut pending = self.pending.lock();
+            for buffer in &self.buffers {
+                let mut buffer = buffer.lock();
+                pending.extend(buffer.drain(..));
+            }
+        }
+
+        #[cfg(test)]
+        self.publish_hook.run();
+
+        // Publish while the authority lock is held: a later apply cannot slip its
+        // state in behind this one.
+        let _previous = self.lifecycle_tx.send_replace(next);
+        drop(current);
+
+        // A lifecycle change is work for one reader (data may follow a
+        // reconnect, and a terminal ends the wait).
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    /// Claim the read side of the subscription.
+    ///
+    /// One reader at a time: a second concurrent read gets the typed
+    /// [`ReadInProgress`] refusal instead of racing the buffer or mistaking a
+    /// checked-out reader for a closed subscription. The claim is released when
+    /// the returned guard drops.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadInProgress`] when another read already owns the read side.
+    pub fn claim_read(self: &Arc<Self>) -> Result<ReadClaim, ReadInProgress> {
+        if self
+            .read_owner
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            Ok(ReadClaim {
+                handle: Arc::clone(self),
+            })
+        } else {
+            Err(ReadInProgress)
+        }
+    }
+
+    /// Await the next wake-up: a buffered item or a lifecycle change.
+    pub async fn wait_for_work(&self) {
+        self.wake.notified().await;
+    }
+
+    /// The next item, or the terminal notice that ends iteration.
+    ///
+    /// This is the ONE read loop every read path funnels through: buffered items
+    /// first (so a batch that arrived before the terminal is never dropped), then
+    /// the latched phase. [`SubscriptionPhase::Reconnecting`] deliberately does
+    /// not end iteration — the loop keeps awaiting data, which is the intentional
+    /// difference from surfacing a transient stall as a terminal error.
+    pub async fn read_next(&self) -> ReadOutcome {
+        loop {
+            if let Some(item) = self.pop_item() {
+                return ReadOutcome::Item(item);
+            }
+            match DrainNotice::from_phase(&self.phase()) {
+                Some(DrainNotice::Terminal(terminal)) => return ReadOutcome::Terminal(terminal),
+                Some(DrainNotice::Reconnecting { .. }) | None => self.wait_for_work().await,
+            }
+        }
+    }
+
+    /// Drain everything buffered, with the typed lifecycle notice that applies to
+    /// it.
+    ///
+    /// The notice comes from the same authority the pump writes, so the terminal a
+    /// slow `__anext__` observed is the terminal this bulk drain reports.
+    #[must_use]
+    pub fn drain_raw(&self) -> RawDrain {
+        let items = {
+            let mut pending = self.refill_pending();
+            pending.drain(..).collect::<Vec<_>>()
+        };
+
+        // The phase read acquires `lifecycle` only after `pending` and the
+        // buffers are released, so no critical section inverts the lock order.
+        RawDrain {
+            items,
+            notice: DrainNotice::from_phase(&self.phase()),
+        }
+    }
+
+    /// Wait for startup to resolve — safe for early, late, and repeated waiters.
+    ///
+    /// Every waiter observes the same latched outcome (the publication is
+    /// retained, not consumed), so there is no "notification consumed" ambiguity
+    /// and no take-once channel.
+    pub async fn await_startup(&self) -> StartupResult {
+        let mut receiver = self.subscribe_lifecycle();
+        loop {
+            {
+                let snapshot = receiver.borrow_and_update();
+                if let Some(resolved) = snapshot.startup() {
+                    return resolved.clone();
+                }
+            }
+            if receiver.changed().await.is_err() {
+                // The publishing sender is gone: report the last latched state
+                // rather than waiting forever.
+                let snapshot = self.lifecycle();
+                return snapshot
+                    .startup()
+                    .cloned()
+                    .unwrap_or_else(|| StartupResult::Closed {
+                        phase: snapshot.phase().clone(),
+                    });
+            }
+        }
+    }
+
+    /// Unsubscribe: latch [`SubscriptionPhase::Unsubscribed`] and abort the pump.
+    ///
+    /// Idempotent, and terminal against a late pump event: the abort stops the
+    /// task, and the absorbing phase refuses whatever the pump managed to
+    /// publish before it died.
+    pub fn unsubscribe(&self) {
+        // A refused report means the subscription is already over: the absorbing
+        // phase is the authority, and the abort below is still the right cleanup.
+        let _ = self.apply(LifecycleEvent::Unsubscribe);
+        let task = self.task.lock().take();
+        if let Some(task) = task {
+            task.abort();
+        }
+    }
+
+    /// Publish one item without a transport (feature `test-utils`).
+    ///
+    /// Goes through the same write path a pump uses, so a downstream crate's test
+    /// can drive a read path with a real item without standing up a node.
+    #[cfg(feature = "test-utils")]
+    pub fn push_item(&self, item: RawSubItem) {
+        buffer_item(self, item);
+    }
+
+    /// The next buffered item, refilling from the double buffer first.
+    fn pop_item(&self) -> Option<RawSubItem> {
+        self.refill_pending().pop_front()
+    }
+
+    /// Clear the coalesced signal and merge both buffers into the pending queue.
+    ///
+    /// Clearing the signal BEFORE taking means a write that lands during this
+    /// take sets it again and sends a fresh wake-up, so a reader that parks after
+    /// a completed read can never sleep on an item it never saw. Lock order:
+    /// `pending` -> `buffers[*]`.
+    fn refill_pending(&self) -> parking_lot::MutexGuard<'_, VecDeque<RawSubItem>> {
+        self.signaled.store(false, Ordering::Relaxed);
+        let mut pending = self.pending.lock();
+        for buffer in &self.buffers {
+            let mut buffer = buffer.lock();
+            pending.extend(buffer.drain(..));
+        }
+        pending
+    }
+}
+
+/// Exclusive ownership of a subscription's read side, released on drop.
+#[derive(Debug)]
+pub struct ReadClaim {
+    handle: Arc<SubscriptionHandle>,
+}
+
+impl ReadClaim {
+    /// The handle this claim owns.
+    #[must_use]
+    pub fn handle(&self) -> &Arc<SubscriptionHandle> {
+        &self.handle
+    }
+}
+
+impl Drop for ReadClaim {
+    fn drop(&mut self) {
+        self.handle.read_owner.store(false, Ordering::Release);
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Pump task helpers
 // ---------------------------------------------------------------------------
 
-/// Write a raw item to the active buffer, set signal, and optionally send wake-up.
+/// Write one item to the active buffer.
+///
+/// Refuses once the lifecycle is terminal. The phase is read under the lifecycle
+/// lock the pump holds for the whole push, so a write either lands before the
+/// terminal transition — where [`SubscriptionHandle::apply`]'s flush captures it
+/// — or is dropped: post-terminal data can never appear behind a terminal notice.
 fn buffer_item(handle: &SubscriptionHandle, item: RawSubItem) {
-    let active = handle.active.load(Ordering::Relaxed);
-    handle.buffers[active].lock().push(item);
+    {
+        let lifecycle = handle.lifecycle.lock();
+        if lifecycle.is_terminal() {
+            return;
+        }
+        let active = handle.active.load(Ordering::Relaxed);
+        handle.buffers[active].lock().push(item);
+    }
 
-    // Coalesced signal: send wake-up only on false→true transition
+    // Coalesced signal: wake a reader only on the false -> true transition.
     if !handle.signaled.swap(true, Ordering::Relaxed) {
-        let _ = handle.notify_tx.try_send(());
+        handle.wake.notify_one();
     }
 }
 
-/// Signal that the subscription has successfully started.
-fn signal_started(handle: &SubscriptionHandle) {
-    handle.started.store(true, Ordering::Release);
-    let _ = handle.start_notify_tx.try_send(());
+/// Report an event the pump expects to be admissible, tolerating a refusal.
+///
+/// A refusal means the handle is already terminal — a late pump event against an
+/// absorbing phase — which is not an error for a pump: the terminal is the
+/// authority and the report is stale.
+fn report(handle: &SubscriptionHandle, event: LifecycleEvent) {
+    let _ = handle.apply(event);
 }
 
-/// Signal that the subscription failed to start.
+/// Signal that the pump established the subscription.
+fn signal_started(handle: &SubscriptionHandle) {
+    report(handle, LifecycleEvent::Started);
+}
+
+/// Signal that the chain-side subscribe failed.
 fn signal_start_failed(handle: &SubscriptionHandle, message: String) {
-    *handle.start_error.lock() = Some(message);
-    handle.start_failed.store(true, Ordering::Release);
-    let _ = handle.start_notify_tx.try_send(());
+    report(handle, LifecycleEvent::StartupFailed { message });
+}
+
+/// Drive one normalized item stream into the handle.
+///
+/// The shared body of every pump kind: an item is buffered, a clean stream end is
+/// the terminal [`LifecycleEvent::End`], and a stream error is the terminal
+/// [`LifecycleEvent::Fail`]. The loop also stops as soon as the lifecycle is
+/// terminal, so an unsubscribe ends the pump without waiting for the next item.
+pub async fn drive_items<S>(handle: &Arc<SubscriptionHandle>, mut items: S)
+where
+    S: futures_util::Stream<Item = Result<RawSubItem, String>> + Unpin + Send,
+{
+    loop {
+        if handle.is_terminal() {
+            return;
+        }
+        let Some(item) = items.next().await else {
+            report(handle, LifecycleEvent::End);
+            return;
+        };
+        match item {
+            Ok(item) => buffer_item(handle, item),
+            Err(message) => {
+                report(handle, LifecycleEvent::Fail { message });
+                return;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -168,9 +867,9 @@ fn signal_start_failed(handle: &SubscriptionHandle, message: String) {
 /// watchdog: a `newHeads` subscription that delivers no header within
 /// [`HEADER_WATCHDOG_SECS`] is torn down and reconnected, reusing the provider's
 /// existing backend reconnect path (`is_backend_gone` /
-/// `is_pubsub_unavailable`) rather than a duplicate WS backoff. During reconnect
-/// a [`RawSubItem::Disconnected`] is buffered so the Python side sees a clean
-/// restart, not a silent gap.
+/// `is_pubsub_unavailable`) rather than a duplicate WS backoff. A stall is
+/// transient — [`LifecycleEvent::Stall`] then [`LifecycleEvent::Resumed`] — so a
+/// reader sees a reconnect, not a terminal close.
 pub async fn pump_blocks(provider: Arc<dyn Provider<Ethereum>>, handle: Arc<SubscriptionHandle>) {
     let stream: HeaderStream = match provider.subscribe_blocks().await {
         Ok(s) => {
@@ -353,18 +1052,19 @@ where
 }
 
 /// Buffer `newHeads` headers into a [`SubscriptionHandle`] via
-/// [`drive_new_heads`]: a header becomes a [`RawSubItem::Header`], a watchdog
-/// fire a [`RawSubItem::Disconnected`] (so Python sees a clean restart, not a
-/// silent gap), and a clean end a [`RawSubItem::End`].
+/// [`drive_new_heads`]: a header becomes a [`RawSubItem::Header`], a watchdog fire
+/// a transient [`LifecycleEvent::Stall`] (a reconnect, not a disconnect), a
+/// successful resubscribe a [`LifecycleEvent::Resumed`], and a clean stream end
+/// the terminal [`LifecycleEvent::End`].
 ///
-/// Separated from [`pump_blocks`] so the watchdog/reconnect decision is unit-
-/// testable with an injected never-yielding stream + a tiny threshold (no live
-/// RPC — see `test_header_watchdog_fires_on_never_yielding_stream`).
+/// Separated from [`pump_blocks`] so the watchdog/reconnect lifecycle is unit-
+/// testable with an injected never-yielding stream and a tiny threshold (no live
+/// RPC — see `a_watchdog_stall_is_a_transient_reconnect_not_a_terminal_end`).
 async fn pump_header_stream<S, F, Fut>(
     handle: Arc<SubscriptionHandle>,
     stream: S,
     watchdog: Duration,
-    next_stream: F,
+    mut next_stream: F,
 ) where
     S: futures_util::Stream<Item = alloy::rpc::types::Header> + Unpin + Send + 'static,
     F: FnMut() -> Fut + Send + 'static,
@@ -372,28 +1072,47 @@ async fn pump_header_stream<S, F, Fut>(
 {
     let header_handle = Arc::clone(&handle);
     let stall_handle = Arc::clone(&handle);
+    let resume_handle = Arc::clone(&handle);
     let end_handle = Arc::clone(&handle);
+
+    // Every re-established stream resumes the lifecycle. A reconnect that gives up
+    // leaves the handle in `Reconnecting`, which the reader observes as a
+    // transient phase rather than a terminal close.
+    let reconnect = move || {
+        let next = next_stream();
+        let resume_handle = Arc::clone(&resume_handle);
+        async move {
+            let stream = next.await;
+            if stream.is_some() {
+                report(&resume_handle, LifecycleEvent::Resumed);
+            }
+            stream
+        }
+    };
+
     let _ = drive_new_heads(
         stream,
         watchdog,
-        next_stream,
+        reconnect,
         move |header| {
             buffer_item(&header_handle, RawSubItem::Header(header));
-            // Acquire: pairs with unsubscribe()'s SeqCst store, so a pump callback that
-            // observes true has the closed notify_rx visible too.
-            !header_handle.unsubscribed.load(Ordering::Acquire)
+            // Stop feeding once the handle is terminal (unsubscribe, or a terminal
+            // notice the reader has already observed).
+            !header_handle.is_terminal()
         },
         move || {
-            buffer_item(
+            report(
                 &stall_handle,
-                RawSubItem::Disconnected {
-                    message: "newHeads subscription stall: no header within watchdog window, reconnecting".to_string(),
+                LifecycleEvent::Stall {
+                    message:
+                        "newHeads subscription stall: no header within watchdog window, reconnecting"
+                            .to_string(),
                 },
             );
             true
         },
         move || {
-            buffer_item(&end_handle, RawSubItem::End);
+            report(&end_handle, LifecycleEvent::End);
             false
         },
     )
@@ -405,8 +1124,7 @@ pub async fn pump_full_blocks(
     provider: Arc<dyn Provider<Ethereum>>,
     handle: Arc<SubscriptionHandle>,
 ) {
-    let sub_result = provider.subscribe_full_blocks().full().into_stream().await;
-    let mut stream = match sub_result {
+    let stream = match provider.subscribe_full_blocks().full().into_stream().await {
         Ok(s) => {
             signal_started(&handle);
             s
@@ -417,31 +1135,13 @@ pub async fn pump_full_blocks(
         }
     };
 
-    loop {
-        match stream.next().await {
-            Some(Ok(block)) => {
-                buffer_item(&handle, RawSubItem::Block(block));
-            }
-            Some(Err(e)) => {
-                buffer_item(
-                    &handle,
-                    RawSubItem::Disconnected {
-                        message: format!("Full block subscription error: {e}"),
-                    },
-                );
-                return;
-            }
-            None => {
-                buffer_item(&handle, RawSubItem::End);
-                return;
-            }
-        }
-
-        // Acquire: pairs with unsubscribe()'s SeqCst store (see the header callback above).
-        if handle.unsubscribed.load(Ordering::Acquire) {
-            return;
-        }
-    }
+    // Unlike a `newHeads` watchdog stall, a stream error here is terminal: the
+    // subscription itself failed, so there is nothing to resubscribe.
+    let items = stream.map(|item| {
+        item.map(RawSubItem::Block)
+            .map_err(|e| format!("Full block subscription error: {e}"))
+    });
+    drive_items(&handle, items).await;
 }
 
 /// Pump task for pending transaction hash subscriptions.
@@ -449,8 +1149,7 @@ pub async fn pump_pending_transactions(
     provider: Arc<dyn Provider<Ethereum>>,
     handle: Arc<SubscriptionHandle>,
 ) {
-    let sub_result = provider.subscribe_pending_transactions().await;
-    let mut stream = match sub_result {
+    let stream = match provider.subscribe_pending_transactions().await {
         Ok(s) => {
             signal_started(&handle);
             s.into_stream()
@@ -464,19 +1163,8 @@ pub async fn pump_pending_transactions(
         }
     };
 
-    loop {
-        let Some(hash) = stream.next().await else {
-            buffer_item(&handle, RawSubItem::End);
-            return;
-        };
-
-        buffer_item(&handle, RawSubItem::PendingTxHash(hash));
-
-        // Acquire: pairs with unsubscribe()'s SeqCst store (see the header callback above).
-        if handle.unsubscribed.load(Ordering::Acquire) {
-            return;
-        }
-    }
+    let items = stream.map(|hash| Ok(RawSubItem::PendingTxHash(hash)));
+    drive_items(&handle, items).await;
 }
 
 /// Pump task for full pending transaction subscriptions.
@@ -484,8 +1172,7 @@ pub async fn pump_full_pending_transactions(
     provider: Arc<dyn Provider<Ethereum>>,
     handle: Arc<SubscriptionHandle>,
 ) {
-    let sub_result = provider.subscribe_full_pending_transactions().await;
-    let mut stream = match sub_result {
+    let stream = match provider.subscribe_full_pending_transactions().await {
         Ok(s) => {
             signal_started(&handle);
             s.into_stream()
@@ -499,36 +1186,14 @@ pub async fn pump_full_pending_transactions(
         }
     };
 
-    loop {
-        let Some(tx_data) = stream.next().await else {
-            buffer_item(&handle, RawSubItem::End);
-            return;
-        };
-
-        // Serialize the transaction to JSON now (in the tokio task, no GIL)
-        // and store as serde_json::Value. Python conversion happens in drain().
-        let json_val = match serde_json::to_value(&tx_data) {
-            Ok(v) => v,
-            Err(e) => {
-                buffer_item(
-                    &handle,
-                    RawSubItem::Disconnected {
-                        message: format!("Transaction serialization error: {e}"),
-                    },
-                );
-                return;
-            }
-        };
-        buffer_item(
-            &handle,
-            RawSubItem::FullPendingTx(parking_lot::Mutex::new(Some(json_val))),
-        );
-
-        // Acquire: pairs with unsubscribe()'s SeqCst store (see the header callback above).
-        if handle.unsubscribed.load(Ordering::Acquire) {
-            return;
-        }
-    }
+    // Serialize the transaction to JSON in the pump task (no GIL); Python
+    // conversion happens in the drain.
+    let items = stream.map(|tx_data| {
+        serde_json::to_value(&tx_data)
+            .map(|value| RawSubItem::FullPendingTx(parking_lot::Mutex::new(Some(value))))
+            .map_err(|e| format!("Transaction serialization error: {e}"))
+    });
+    drive_items(&handle, items).await;
 }
 
 /// Pump task for log subscriptions.
@@ -537,8 +1202,7 @@ pub async fn pump_logs(
     filter: Filter,
     handle: Arc<SubscriptionHandle>,
 ) {
-    let sub_result = provider.subscribe_logs(&filter).await;
-    let mut stream = match sub_result {
+    let stream = match provider.subscribe_logs(&filter).await {
         Ok(s) => {
             signal_started(&handle);
             s.into_stream()
@@ -549,105 +1213,23 @@ pub async fn pump_logs(
         }
     };
 
-    loop {
-        let Some(log) = stream.next().await else {
-            buffer_item(&handle, RawSubItem::End);
-            return;
-        };
-
-        buffer_item(&handle, RawSubItem::Log(log));
-
-        // Acquire: pairs with unsubscribe()'s SeqCst store (see the header callback above).
-        if handle.unsubscribed.load(Ordering::Acquire) {
-            return;
-        }
-    }
+    let items = stream.map(|log| Ok(RawSubItem::Log(log)));
+    drive_items(&handle, items).await;
 }
 
 // ---------------------------------------------------------------------------
-// Bulk conversion: RawSubItem → Python objects (called with GIL held)
+// Provider-side subscription constructors
 // ---------------------------------------------------------------------------
 
-/// Result of draining the raw (pre-conversion) buffer.
-#[derive(Debug)]
-pub enum RawDrainResult {
-    /// Normal items.
-    Items(Vec<RawSubItem>),
-    /// The subscription ended cleanly. Contains items before the end marker.
-    Ended(Vec<RawSubItem>),
-    /// The subscription disconnected. Contains items before the disconnect.
-    Disconnected {
-        items: Vec<RawSubItem>,
-        message: String,
-    },
-}
-
-impl SubscriptionHandle {
-    /// Drain the stale buffer, returning raw items without `PyO3` conversion.
-    /// Clears the signaled flag first, then swaps buffers.
-    ///
-    /// This is the pure-Rust core of [`drain_buffer`], separated so the
-    /// double-buffer mechanics can be unit-tested without a Python interpreter.
-    pub fn drain_raw(&self) -> RawDrainResult {
-        // Clear signal BEFORE swapping — any new event arriving during drain
-        // will see signaled=false and send a fresh wake-up
-        self.signaled.store(false, Ordering::Relaxed);
-
-        // Swap active buffer: what was active becomes stale (for us to drain),
-        // what was stale becomes active (for pump to write to)
-        let stale = self.active.fetch_xor(1, Ordering::AcqRel);
-
-        // Take the stale buffer contents (leaves it empty for next cycle)
-        let items = std::mem::take(&mut *self.buffers[stale].lock());
-
-        // Scan for terminal markers (End / Disconnected)
-        let mut before_marker = Vec::new();
-        for item in items {
-            match item {
-                RawSubItem::End => return RawDrainResult::Ended(before_marker),
-                RawSubItem::Disconnected { message } => {
-                    return RawDrainResult::Disconnected {
-                        items: before_marker,
-                        message,
-                    };
-                }
-                other => before_marker.push(other),
-            }
-        }
-
-        RawDrainResult::Items(before_marker)
-    }
-}
-// AlloyProvider subscription method implementations
-// ---------------------------------------------------------------------------
-
-/// Create a `SubscriptionHandle` with double-buffer infrastructure and spawn a pump task.
-/// Returns an Arc<SubscriptionHandle> shared between the pump task and the Python side.
+/// Create a [`SubscriptionHandle`] and spawn its pump task.
+///
+/// Returns the `Arc` shared between the pump task and the read side.
 fn spawn_subscription_arc<F, Fut>(pump_fn: F) -> Arc<SubscriptionHandle>
 where
     F: FnOnce(Arc<SubscriptionHandle>) -> Fut,
     Fut: std::future::Future<Output = ()> + Send + 'static,
 {
-    let (notify_tx, notify_rx) = mpsc::channel(16);
-    let (start_notify_tx, start_notify_rx) = mpsc::channel(1);
-
-    let handle = Arc::new(SubscriptionHandle {
-        buffers: [
-            parking_lot::Mutex::new(Vec::new()),
-            parking_lot::Mutex::new(Vec::new()),
-        ],
-        active: AtomicUsize::new(0),
-        signaled: AtomicBool::new(false),
-        notify_tx,
-        notify_rx: parking_lot::Mutex::new(Some(notify_rx)),
-        task: parking_lot::Mutex::new(None),
-        unsubscribed: AtomicBool::new(false),
-        started: AtomicBool::new(false),
-        start_failed: AtomicBool::new(false),
-        start_error: parking_lot::Mutex::new(None),
-        start_notify_tx,
-        start_notify_rx: parking_lot::Mutex::new(Some(start_notify_rx)),
-    });
+    let handle = Arc::new(SubscriptionHandle::new());
 
     let task = get_runtime().spawn(pump_fn(Arc::clone(&handle)));
 
@@ -693,296 +1275,5 @@ impl AlloyProvider {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
-
-#[expect(clippy::panic)]
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Create a `SubscriptionHandle` with double-buffer infrastructure for testing.
-    /// No pump task is spawned — tests push items directly into buffers.
-    fn make_handle() -> Arc<SubscriptionHandle> {
-        let (notify_tx, notify_rx) = mpsc::channel(16);
-        let (start_notify_tx, start_notify_rx) = mpsc::channel(1);
-
-        Arc::new(SubscriptionHandle {
-            buffers: [
-                parking_lot::Mutex::new(Vec::new()),
-                parking_lot::Mutex::new(Vec::new()),
-            ],
-            active: AtomicUsize::new(0),
-            signaled: AtomicBool::new(false),
-            notify_tx,
-            notify_rx: parking_lot::Mutex::new(Some(notify_rx)),
-            task: parking_lot::Mutex::new(None),
-            unsubscribed: AtomicBool::new(false),
-            started: AtomicBool::new(true),
-            start_failed: AtomicBool::new(false),
-            start_error: parking_lot::Mutex::new(None),
-            start_notify_tx,
-            start_notify_rx: parking_lot::Mutex::new(Some(start_notify_rx)),
-        })
-    }
-
-    #[test]
-    fn test_drain_raw_empty_buffer_returns_items_empty() {
-        let handle = make_handle();
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Items(items) => assert!(items.is_empty()),
-            _ => panic!("Expected Items variant with empty vec"),
-        }
-    }
-
-    #[test]
-    fn test_drain_raw_header_returns_items() {
-        let handle = make_handle();
-
-        // Push a header into buffer[0] (the active buffer)
-        let header = alloy::rpc::types::Header::default();
-        handle.buffers[0].lock().push(RawSubItem::Header(header));
-
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Items(items) => {
-                assert_eq!(items.len(), 1);
-                assert!(matches!(items[0], RawSubItem::Header(_)));
-            }
-            _ => panic!("Expected Items variant"),
-        }
-    }
-
-    #[test]
-    fn test_drain_raw_log_returns_items() {
-        let handle = make_handle();
-
-        let log = alloy::rpc::types::Log::default();
-        handle.buffers[0].lock().push(RawSubItem::Log(log));
-
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Items(items) => {
-                assert_eq!(items.len(), 1);
-                assert!(matches!(items[0], RawSubItem::Log(_)));
-            }
-            _ => panic!("Expected Items variant"),
-        }
-    }
-
-    #[test]
-    fn test_drain_raw_end_marker_returns_ended() {
-        let handle = make_handle();
-
-        // Push a header then an End marker
-        let header = alloy::rpc::types::Header::default();
-        handle.buffers[0].lock().push(RawSubItem::Header(header));
-        handle.buffers[0].lock().push(RawSubItem::End);
-
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Ended(items) => {
-                // Only the header; End is consumed by drain_raw
-                assert_eq!(items.len(), 1);
-                assert!(matches!(items[0], RawSubItem::Header(_)));
-            }
-            _ => panic!("Expected Ended variant"),
-        }
-    }
-
-    #[test]
-    fn test_drain_raw_disconnected_returns_disconnected() {
-        let handle = make_handle();
-
-        // Push a header then a Disconnected marker
-        let header = alloy::rpc::types::Header::default();
-        handle.buffers[0].lock().push(RawSubItem::Header(header));
-        handle.buffers[0].lock().push(RawSubItem::Disconnected {
-            message: "connection lost".to_string(),
-        });
-
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Disconnected { items, message } => {
-                assert_eq!(items.len(), 1);
-                assert_eq!(message, "connection lost");
-            }
-            _ => panic!("Expected Disconnected variant"),
-        }
-    }
-
-    #[test]
-    fn test_drain_raw_double_buffer_swap_isolates_reads_from_writes() {
-        let handle = make_handle();
-
-        // Write to buffer[0] (active=0)
-        let header1 = alloy::rpc::types::Header::default();
-        handle.buffers[0].lock().push(RawSubItem::Header(header1));
-
-        // First drain: swaps active to 1, drains buffer[0]
-        let result1 = handle.drain_raw();
-        match result1 {
-            RawDrainResult::Items(items) => assert_eq!(items.len(), 1),
-            _ => panic!("Expected Items"),
-        }
-        assert_eq!(handle.active.load(Ordering::Relaxed), 1);
-
-        // Write to buffer[1] (now active=1)
-        let header2 = alloy::rpc::types::Header::default();
-        handle.buffers[1].lock().push(RawSubItem::Header(header2));
-
-        // Second drain: swaps active to 0, drains buffer[1]
-        let result2 = handle.drain_raw();
-        match result2 {
-            RawDrainResult::Items(items) => assert_eq!(items.len(), 1),
-            _ => panic!("Expected Items"),
-        }
-        assert_eq!(handle.active.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn test_drain_raw_clears_signaled_flag() {
-        let handle = make_handle();
-        handle.signaled.store(true, Ordering::Relaxed);
-
-        let _ = handle.drain_raw();
-
-        assert!(!handle.signaled.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn test_drain_raw_buffer_is_empty_after_drain() {
-        let handle = make_handle();
-
-        let header = alloy::rpc::types::Header::default();
-        handle.buffers[0].lock().push(RawSubItem::Header(header));
-
-        let _ = handle.drain_raw();
-
-        // The drained buffer (was 0, now stale after swap) must be empty
-        assert!(handle.buffers[0].lock().is_empty());
-    }
-
-    #[test]
-    fn test_drain_raw_multiple_items_before_end() {
-        let handle = make_handle();
-
-        let header = alloy::rpc::types::Header::default();
-        let log = alloy::rpc::types::Log::default();
-        handle.buffers[0].lock().push(RawSubItem::Header(header));
-        handle.buffers[0].lock().push(RawSubItem::Log(log));
-        handle.buffers[0].lock().push(RawSubItem::End);
-
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Ended(items) => {
-                assert_eq!(items.len(), 2);
-                assert!(matches!(items[0], RawSubItem::Header(_)));
-                assert!(matches!(items[1], RawSubItem::Log(_)));
-            }
-            _ => panic!("Expected Ended variant"),
-        }
-    }
-
-    #[test]
-    fn test_drain_raw_disconnected_ignores_trailing_items() {
-        let handle = make_handle();
-
-        let header = alloy::rpc::types::Header::default();
-        let log = alloy::rpc::types::Log::default();
-        handle.buffers[0].lock().push(RawSubItem::Header(header));
-        handle.buffers[0].lock().push(RawSubItem::Disconnected {
-            message: "fail".to_string(),
-        });
-        // Items after Disconnected are unreachable — drain stops at the marker
-        handle.buffers[0].lock().push(RawSubItem::Log(log));
-
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Disconnected { items, message } => {
-                assert_eq!(items.len(), 1); // Only the header before the marker
-                assert_eq!(message, "fail");
-            }
-            _ => panic!("Expected Disconnected variant"),
-        }
-    }
-
-    /// A `newHeads` stream that NEVER yields (silently half-open socket) must
-    /// trip the watchdog within the threshold and buffer a clean
-    /// `Disconnected` — not hang the pump forever.
-    #[tokio::test]
-    async fn test_header_watchdog_fires_on_never_yielding_stream() {
-        use futures_util::stream;
-
-        let handle = make_handle();
-        // A header-shaped stream that NEVER yields — simulates a silently
-        // half-open WS socket where `stream.next()` never resolves.
-        let stalled: stream::Pending<alloy::rpc::types::Header> = stream::pending();
-        // Reconnect returns None → the pump exits after the first watchdog
-        // fire (we are testing the watchdog decision, not the reconnect loop).
-        let start = tokio::time::Instant::now();
-
-        pump_header_stream(
-            Arc::clone(&handle),
-            stalled,
-            Duration::from_millis(20),
-            || async move { None },
-        )
-        .await;
-
-        let elapsed = start.elapsed();
-        // The watchdog must fire within a bounded window — well below the
-        // ~48s production threshold, and not hang.
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "watchdog did not fire within bounded time (elapsed={elapsed:?})"
-        );
-
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Disconnected { items, message } => {
-                assert!(items.is_empty(), "no headers buffered before the stall");
-                assert!(
-                    message.contains("newHeads subscription stall"),
-                    "disconnect message must carry the greppable stall prefix: {message}"
-                );
-            }
-            other => panic!("Expected Disconnected after watchdog, got {other:?}"),
-        }
-    }
-
-    /// A healthy stream (headers arrive before the watchdog) must NOT be torn
-    /// down — the watchdog only fires on silence, not on normal flow.
-    #[tokio::test]
-    async fn test_header_watchdog_does_not_fire_on_healthy_stream() {
-        use futures_util::stream;
-
-        let handle = make_handle();
-        // Two real headers then a clean end — no gap exceeds the watchdog.
-        let headers = vec![
-            alloy::rpc::types::Header::default(),
-            alloy::rpc::types::Header::default(),
-        ];
-        let s = stream::iter(headers);
-
-        pump_header_stream(
-            Arc::clone(&handle),
-            s,
-            Duration::from_mins(1),
-            || async move { None },
-        )
-        .await;
-
-        let result = handle.drain_raw();
-        match result {
-            RawDrainResult::Ended(items) => {
-                assert_eq!(items.len(), 2, "both headers buffered, then clean End");
-            }
-            other => {
-                panic!("Expected clean Ended (no watchdog fire) on healthy stream, got {other:?}")
-            }
-        }
-    }
-}
+mod tests;

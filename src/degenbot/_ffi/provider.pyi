@@ -266,6 +266,10 @@ class AlloySubscription:
     ```python
     await subscription.started()  # Raises on failure
     ```
+
+    A reconnect (`phase == "reconnecting"`) is transient: iteration keeps awaiting
+    data and does not raise. Only a terminal phase ends it — `StopAsyncIteration`
+    for a clean end or an unsubscribe, `RuntimeError` for a failure.
     """
     def __aiter__(self, /) -> AlloySubscription:
         """
@@ -277,33 +281,54 @@ class AlloySubscription:
 
         Always returns a coroutine (via `future_into_py`) so that
         `await sub.__anext__()` and `async for item in sub` work
-        correctly. The fast path (items already in local batch or
-        Rust buffer) resolves the future immediately.
+        correctly. The core's read loop resolves it as soon as an item is
+        buffered.
+
+        Raises `RuntimeError` when another read of this subscription is in
+        progress — a concurrent `__anext__` is a driver bug, and it must not
+        surface as a spurious `StopAsyncIteration`.
         """
     def drain(self, /) -> list[Any]:
         """
         Drain accumulated items from the subscription.
 
-        Swaps the internal double-buffer and bulk-converts all accumulated
-        items to Python dicts. Returns a list of items. The list may be
-        empty if no items have arrived since the last drain.
+        Bulk-converts every buffered item, in arrival order, to Python objects.
+        The list may be empty if no items have arrived since the last drain.
 
-        Raises `StopAsyncIteration` if the subscription has ended.
-        Raises `RuntimeError` if the subscription has disconnected.
+        Pre-terminal items are always returned before the terminal is reported:
+        the terminal state is latched in the core, so a later call reports it.
+        Raises `StopAsyncIteration` once the subscription is over (a clean end or
+        an unsubscribe) and `RuntimeError` when it failed. A reconnect is
+        transient and is not reported here.
+
+        Raises `RuntimeError` when another read of this subscription is in
+        progress.
+        """
+    @property
+    def phase(self, /) -> str:
+        """
+        The current lifecycle phase, for observability.
+
+        One of `starting`, `streaming`, `reconnecting`, `ended`, `failed`,
+        `unsubscribed`. `reconnecting` is transient — the subscription is still
+        live and iteration continues.
         """
     def started(self, /) -> Any:
         """
         Wait for the subscription to be confirmed by the node.
 
-        Resolves when the WS subscription is active. Raises if the
-        subscription failed to establish.
+        Resolves when the WS subscription is active. Raises if the subscription
+        failed to establish, or was torn down before it started. Every waiter —
+        early, late, or repeated — observes the same latched outcome.
         """
     def unsubscribe(self, /) -> None:
         """
         Unsubscribe from the event stream.
 
-        Stops the background pump task. After calling this,
-        `__anext__()` will raise `StopAsyncIteration`.
+        Aborts the background pump task and latches the terminal `unsubscribed`
+        phase. Idempotent: a second call changes nothing, and a late pump event
+        cannot reopen the subscription. After calling this, `__anext__()` raises
+        `StopAsyncIteration`.
         """
 
 @final
