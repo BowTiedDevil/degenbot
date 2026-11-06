@@ -103,19 +103,22 @@ pub fn encode_try_aggregate(calls: &[(Address, Bytes)]) -> ProviderResult<Bytes>
 }
 
 /// Decode the `aggregate3` return — `(bool,bytes)[]` — into exactly `n`
-/// results. The decode is strict: a malformed/short payload is a hard
-/// [`ProviderError::DecodingError`] (the batch caller `multicall3_batch`
-/// catches this and falls back to sequential per-call `eth_call`, so a
-/// malformed Multicall3 return never silently masks positions — it degrades
-/// to the exact pre-multicall behavior). A sub-call that reverted is
-/// `success = false` with empty `return_data` (NOT a decode error — verified
-/// by the `allowFailure = true` batch itself succeeding).
+/// results. The decode is strict: a malformed payload or a result array
+/// whose length is not exactly `n` is a hard [`ProviderError::DecodingError`]
+/// (the batch caller `multicall3_batch` catches this and falls back to
+/// sequential per-call `eth_call`, so a malformed or miscounting Multicall3
+/// return never silently masks positions — it degrades to the exact
+/// pre-multicall behavior). A short array is never padded with all-reverted
+/// rows, and a long one is never truncated to the first `n`. A sub-call that
+/// reverted is `success = false` with empty `return_data` (NOT a decode
+/// error — verified by the `allowFailure = true` batch itself succeeding).
+/// For `n == 0` the payload is not consulted and the result is empty.
 ///
 /// # Errors
 ///
 /// Returns [`ProviderError::DecodingError`] when the payload is unreadable
 /// (empty when `n > 0`, truncated, non-array top-level shape, or a malformed
-/// element offset table).
+/// element offset table) or carries a result count other than exactly `n`.
 pub fn decode_aggregate3_results(data: &Bytes, n: usize) -> ProviderResult<Vec<MulticallResult>> {
     if n == 0 {
         return Ok(Vec::new());
@@ -135,8 +138,16 @@ pub fn decode_aggregate3_results(data: &Bytes, n: usize) -> ProviderResult<Vec<M
             message: "multicall3 return was not an array".into(),
         });
     };
+    if arr.len() != n {
+        return Err(ProviderError::DecodingError {
+            message: format!(
+                "multicall3 return carried {} results, expected exactly {n}",
+                arr.len()
+            ),
+        });
+    }
     let mut out = Vec::with_capacity(n);
-    for elem in arr.iter().take(n) {
+    for elem in &arr {
         match elem {
             DynSolValue::Tuple(fields) if fields.len() == 2 => {
                 let success = matches!(fields[0], DynSolValue::Bool(true));
@@ -154,12 +165,6 @@ pub fn decode_aggregate3_results(data: &Bytes, n: usize) -> ProviderResult<Vec<M
                 return_data: Bytes::new(),
             }),
         }
-    }
-    while out.len() < n {
-        out.push(MulticallResult {
-            success: false,
-            return_data: Bytes::new(),
-        });
     }
     Ok(out)
 }
@@ -334,6 +339,33 @@ mod tests {
         assert!(
             result.is_err(),
             "a malformed multicall return must surface as a decode error"
+        );
+    }
+
+    /// A well-formed `(bool,bytes)[]` carrying fewer results than the batch
+    /// requested is a hard decode error — never padded with all-reverted
+    /// rows — so the batch caller degrades to its sequential fallback
+    /// instead of masking a miscounting return.
+    #[test]
+    fn decode_short_result_array_is_a_hard_error() {
+        let data = Bytes::from(REFERENCE_RETURNDATA_2_RESULTS.to_vec());
+        let result = decode_aggregate3_results(&data, 3);
+        assert!(
+            result.is_err(),
+            "a short result array must surface as a decode error"
+        );
+    }
+
+    /// A well-formed `(bool,bytes)[]` carrying more results than the batch
+    /// requested is a hard decode error — never truncated to the first `n` —
+    /// so a misaligned return can never silently shift answers between calls.
+    #[test]
+    fn decode_long_result_array_is_a_hard_error() {
+        let data = Bytes::from(REFERENCE_RETURNDATA_2_RESULTS.to_vec());
+        let result = decode_aggregate3_results(&data, 1);
+        assert!(
+            result.is_err(),
+            "a long result array must surface as a decode error"
         );
     }
 }

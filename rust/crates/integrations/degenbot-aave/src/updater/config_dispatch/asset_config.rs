@@ -348,18 +348,15 @@ pub(super) async fn resolve_reserve_initialized(
     let underlying_str = checksum(&decoded.asset);
     let a_token_str = checksum(&decoded.a_token);
     let v_token_str = checksum(&decoded.variable_debt_token);
-    let metadata: [(Option<String>, Option<String>, Option<i64>); 3] = erc20::read_batch(
-        ctx.provider(),
-        &[decoded.asset, decoded.a_token, decoded.variable_debt_token],
-        erc20::MetadataShape::LowerUpperStopOnCallError,
-        Some(block_number),
-    )
-    .await
-    .into_iter()
-    .map(|meta| (meta.name, meta.symbol, meta.decimals.map(u64::cast_signed)))
-    .collect::<Vec<_>>()
-    .try_into()
-    .unwrap_or_default();
+    let metadata = fold_metadata_rows(
+        erc20::read_batch(
+            ctx.provider(),
+            &[decoded.asset, decoded.a_token, decoded.variable_debt_token],
+            erc20::MetadataShape::LowerUpperStopOnCallError,
+            Some(block_number),
+        )
+        .await,
+    )?;
     let [(underlying_name, underlying_symbol, underlying_decimals), (a_name, a_symbol, a_decimals), (v_name, v_symbol, v_decimals)] =
         metadata;
     let underlying_asset_id = DegenbotDb::get_or_create_erc20_token_on_conn(
@@ -444,6 +441,32 @@ pub(super) async fn resolve_reserve_initialized(
     })
 }
 
+/// A token's stored metadata fields — `(name, symbol, decimals)` — each
+/// absent when the token's call yielded no decodable value.
+type MetadataFields = (Option<String>, Option<String>, Option<i64>);
+
+/// The `[underlying, aToken, vToken]` metadata triple the dispatch consumes.
+type MetadataTriple = [MetadataFields; 3];
+
+/// Fold the metadata burst's per-token rows — one [`MetadataFields`] per
+/// input address — into the [`MetadataTriple`] the dispatch consumes.
+/// `erc20::read_batch` contracts one row per input address; any other count
+/// is an explicit [`ConfigDispatchError`], never three null records over the
+/// token rows.
+fn fold_metadata_rows(
+    rows: Vec<erc20::TokenMetadata>,
+) -> Result<MetadataTriple, ConfigDispatchError> {
+    rows.into_iter()
+        .map(|meta| (meta.name, meta.symbol, meta.decimals.map(u64::cast_signed)))
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| {
+            ConfigDispatchError::DecodeShape(
+                "ReserveInitialized: expected exactly three metadata rows".to_string(),
+            )
+        })
+}
+
 /// Read the EIP-1967 implementation slot for `proxy` at `block_number` +
 /// decode the address.
 async fn read_implementation_slot(
@@ -456,4 +479,37 @@ async fn read_implementation_slot(
         .await?;
     // The slot is a 32-byte word; the address is the low 20 bytes.
     Ok(Address::from_slice(&slot.as_slice()[12..]))
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    /// The metadata burst's fold accepts exactly the three rows the batched
+    /// read contracts — one per token — and fails loudly on any other count,
+    /// never emitting three null records over the token rows.
+    #[test]
+    fn fold_metadata_rows_requires_exactly_three_rows() {
+        let rows = vec![
+            erc20::TokenMetadata {
+                name: Some("Dai".into()),
+                symbol: Some("DAI".into()),
+                decimals: Some(18),
+            },
+            erc20::TokenMetadata::default(),
+            erc20::TokenMetadata {
+                decimals: Some(6),
+                ..Default::default()
+            },
+        ];
+        let folded = fold_metadata_rows(rows).unwrap();
+        assert_eq!(folded[0].0.as_deref(), Some("Dai"));
+        assert_eq!(folded[0].2, Some(18));
+        assert_eq!(folded[1].0, None);
+        assert_eq!(folded[2].2, Some(6));
+        assert!(fold_metadata_rows(Vec::new()).is_err());
+        assert!(fold_metadata_rows(vec![erc20::TokenMetadata::default(); 2]).is_err());
+        assert!(fold_metadata_rows(vec![erc20::TokenMetadata::default(); 4]).is_err());
+    }
 }

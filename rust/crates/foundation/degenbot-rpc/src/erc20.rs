@@ -227,7 +227,9 @@ pub fn decode_string_return(ret: &[u8]) -> Option<String> {
 
 /// The strict dynamic-`string` decode: a 32-byte offset of exactly `0x20`,
 /// the length word, then the data. The length is exact, so trailing NULs
-/// inside it are preserved; a malformed shape is `None`.
+/// inside it are preserved; a malformed shape is `None`. The length word is
+/// untrusted: one that overflows the `usize` conversion or the `64 + length`
+/// bounds sum is `None`, never a truncated or wrapped bound.
 fn decode_dynamic_string(ret: &[u8]) -> Option<String> {
     if ret.len() < 64 {
         return None;
@@ -236,11 +238,12 @@ fn decode_dynamic_string(ret: &[u8]) -> Option<String> {
     if offset != U256::from(0x20u32) {
         return None;
     }
-    let length = U256::from_be_slice(&ret[32..64]).to::<usize>();
-    if 64 + length > ret.len() {
+    let length = usize::try_from(U256::from_be_slice(&ret[32..64])).ok()?;
+    let end = 64usize.checked_add(length)?;
+    if end > ret.len() {
         return None;
     }
-    let s = String::from_utf8_lossy(&ret[64..64 + length]).into_owned();
+    let s = String::from_utf8_lossy(&ret[64..end]).into_owned();
     Some(s)
 }
 
@@ -271,21 +274,24 @@ fn decode_text_or_bytes32(ret: &[u8]) -> Option<String> {
 }
 
 /// [`MetadataShape::LowerOnly`]'s decimals decode: the return must ABI-decode
-/// as a `uint256`, widened to `u64` (an out-of-width answer truncates).
+/// as a `uint256` that fits `u64` — an out-of-width answer is this shape's
+/// decode absence, never a truncated low word.
 fn decode_uint_declared(ret: &[u8]) -> Option<u64> {
     match DynSolType::Uint(256).abi_decode(ret) {
-        Ok(DynSolValue::Uint(n, _)) => Some(n.to::<u64>()),
+        Ok(DynSolValue::Uint(n, _)) => u64::try_from(n).ok(),
         _ => None,
     }
 }
 
 /// The blind first-word read the fallback shapes decode `decimals()` with:
-/// any 32-byte word, widened to `u64` (truncating).
+/// any 32-byte word that fits `u64` — an out-of-width word is this decode's
+/// absence (falling through exactly like an unshaped return), never a
+/// truncated low word.
 fn decode_uint_word(ret: &[u8]) -> Option<u64> {
     if ret.len() < 32 {
         return None;
     }
-    Some(U256::from_be_slice(&ret[..32]).to::<u64>())
+    u64::try_from(U256::from_be_slice(&ret[..32])).ok()
 }
 
 /// [`MetadataShape::LowerUpperFallThrough`]'s decimals decode: the first
@@ -406,7 +412,9 @@ fn sub_calls(token: Address, shape: MetadataShape) -> Vec<(Address, Bytes)> {
 /// Fold one batch's sub-call results into per-token [`TokenMetadata`]s under
 /// `shape`'s per-field decision — the exact sequential order (which failure
 /// ends the field, and when the fallback spelling is consulted, is the
-/// shape's contract).
+/// shape's contract). The callers carry exactly one whole token's eager
+/// request set per chunk (the strict batch decode refuses any other result
+/// count), so every chunk folds to exactly one [`TokenMetadata`].
 fn decode_batch_results(
     shape: MetadataShape,
     token_count: usize,
@@ -417,11 +425,7 @@ fn decode_batch_results(
         MetadataShape::LowerUpperFallThrough | MetadataShape::LowerUpperStopOnCallError => 6,
     };
     let mut out = Vec::with_capacity(token_count);
-    for chunk in results.chunks(per_token) {
-        if chunk.len() < per_token {
-            out.push(TokenMetadata::default());
-            continue;
-        }
+    for chunk in results.chunks_exact(per_token) {
         let (name, symbol, decimals) = match shape {
             MetadataShape::LowerOnly => (
                 single_text(&chunk[0], decode_text_declared),
@@ -444,9 +448,6 @@ fn decode_batch_results(
             symbol,
             decimals,
         });
-    }
-    while out.len() < token_count {
-        out.push(TokenMetadata::default());
     }
     out
 }
@@ -547,13 +548,16 @@ mod tests {
     /// `aggregate3` batch is answered from the same per-sub-call table (a
     /// missing or failing sub-call is a `success = false` item). Flipping
     /// `fail_batch` makes the batch call itself fail, which is where each
-    /// shape's degradation contract becomes observable.
+    /// shape's degradation contract becomes observable; `short_batch` serves
+    /// an `aggregate3` return missing its last result, which is where the
+    /// cardinality decode's degradation becomes observable.
     #[derive(Default)]
     struct Chain {
         answers: Mutex<Answers>,
         calls: Mutex<Vec<(Address, Bytes, Option<u64>)>>,
         sub_calls: Mutex<Vec<(Address, Bytes)>>,
         fail_batch: bool,
+        short_batch: bool,
     }
 
     impl Chain {
@@ -580,6 +584,13 @@ mod tests {
         fn failing_batch(self) -> Self {
             Self {
                 fail_batch: true,
+                ..self
+            }
+        }
+
+        fn short_batch(self) -> Self {
+            Self {
+                short_batch: true,
                 ..self
             }
         }
@@ -617,6 +628,9 @@ mod tests {
                         Ok(bytes) => items.push((true, bytes)),
                         Err(_) => items.push((false, Vec::new())),
                     }
+                }
+                if self.short_batch {
+                    items.pop();
                 }
                 return Ok(Bytes::from(encode_batch_results(&items)));
             }
@@ -683,6 +697,11 @@ mod tests {
     /// A single-word `uint` return.
     fn word_ret(v: u64) -> Vec<u8> {
         U256::from(v).to_be_bytes::<32>().to_vec()
+    }
+
+    /// A single-word `uint` return from a full-width `U256` value.
+    fn big_word_ret(v: U256) -> Vec<u8> {
+        v.to_be_bytes::<32>().to_vec()
     }
 
     /// A left-aligned `bytes32` answer, NUL-padded.
@@ -1104,6 +1123,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_batch_short_aggregate_return_degrades_to_per_token_sequential_reads() {
+        // The batched `aggregate3` return carries one result fewer than the
+        // request: the strict cardinality decode refuses it, and each token
+        // falls back to its exact pre-batch sequential shape — never padded
+        // default metadata.
+        let chain = Chain::new()
+            .short_batch()
+            .answer(TOKEN_A, b"name()", str_ret("Alpha"))
+            .answer(TOKEN_A, b"symbol()", str_ret("ALPHA"))
+            .answer(TOKEN_A, b"decimals()", word_ret(6))
+            .answer(TOKEN_B, b"name()", str_ret("Beta"))
+            .answer(TOKEN_B, b"symbol()", str_ret("BETA"))
+            .answer(TOKEN_B, b"decimals()", word_ret(18));
+
+        let metas = read_batch(&chain, &[TOKEN_A, TOKEN_B], MetadataShape::LowerOnly, None).await;
+
+        assert_eq!(
+            metas,
+            vec![
+                TokenMetadata {
+                    name: Some("Alpha".into()),
+                    symbol: Some("ALPHA".into()),
+                    decimals: Some(6),
+                },
+                TokenMetadata {
+                    name: Some("Beta".into()),
+                    symbol: Some("BETA".into()),
+                    decimals: Some(18),
+                },
+            ]
+        );
+        assert_eq!(
+            wire(&chain),
+            vec![
+                (MULTICALL3_ADDRESS, AGGREGATE3_SELECTOR, None),
+                (TOKEN_A, selector(b"name()"), None),
+                (TOKEN_A, selector(b"symbol()"), None),
+                (TOKEN_A, selector(b"decimals()"), None),
+                (TOKEN_B, selector(b"name()"), None),
+                (TOKEN_B, selector(b"symbol()"), None),
+                (TOKEN_B, selector(b"decimals()"), None),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn read_batch_fall_through_folds_six_sub_calls_and_falls_per_spelling() {
         let chain = Chain::new()
             .answer(TOKEN_A, b"name()", str_ret("Alpha"))
@@ -1369,5 +1434,109 @@ mod tests {
         ret[31] = 0x20;
         ret[63] = 0xff;
         assert_eq!(decode_dynamic_string(&ret), None);
+    }
+
+    #[test]
+    fn decode_dynamic_string_returns_none_for_a_max_u256_length() {
+        // `0xff..ff` must not truncate to `usize::MAX` and overflow the
+        // bounds addition — it is absence.
+        let mut ret = vec![0u8; 96];
+        ret[31] = 0x20;
+        ret[32..64].fill(0xff);
+        assert_eq!(decode_dynamic_string(&ret), None);
+    }
+
+    #[test]
+    fn decode_dynamic_string_returns_none_for_a_length_past_usize_width() {
+        // 2^64 must not truncate to zero and decode as an empty string.
+        let mut ret = vec![0u8; 96];
+        ret[31] = 0x20;
+        ret[55] = 1;
+        assert_eq!(decode_dynamic_string(&ret), None);
+    }
+
+    #[test]
+    fn decode_dynamic_string_returns_none_for_a_length_overflowing_the_bounds_sum() {
+        // `usize::MAX` fits the length conversion but not `64 + length`:
+        // checked addition, not a wrapped bound.
+        let mut ret = vec![0u8; 96];
+        ret[31] = 0x20;
+        ret[56..64].fill(0xff);
+        assert_eq!(decode_dynamic_string(&ret), None);
+    }
+
+    #[tokio::test]
+    async fn read_lower_only_decimals_past_u64_width_is_absence_not_truncation() {
+        // A decimals word past `u64` width is this shape's decode absence —
+        // never a truncated low word.
+        let chain = Chain::new()
+            .answer(TOKEN_A, b"name()", str_ret("Dai"))
+            .answer(TOKEN_A, b"symbol()", str_ret("DAI"))
+            .answer(
+                TOKEN_A,
+                b"decimals()",
+                big_word_ret((U256::from(1u64) << 64) + U256::from(5u64)),
+            );
+        let meta = read(
+            &chain,
+            TOKEN_A,
+            MetadataShape::LowerOnly,
+            FieldMask::ALL,
+            None,
+        )
+        .await;
+        assert_eq!(meta.decimals, None);
+    }
+
+    #[tokio::test]
+    async fn read_fall_through_decimals_past_u64_width_falls_to_the_upper_spelling() {
+        // The lower word is past `u64` width (truncation would read it as 5):
+        // a decode failure, falling through like the `u8` width rule.
+        let chain = Chain::new()
+            .answer(
+                TOKEN_A,
+                b"decimals()",
+                big_word_ret((U256::from(1u64) << 64) + U256::from(5u64)),
+            )
+            .answer(TOKEN_A, b"DECIMALS()", word_ret(6));
+        let meta = read(
+            &chain,
+            TOKEN_A,
+            MetadataShape::LowerUpperFallThrough,
+            FieldMask {
+                name: false,
+                symbol: false,
+                decimals: true,
+            },
+            None,
+        )
+        .await;
+        assert_eq!(meta.decimals, Some(6));
+    }
+
+    #[tokio::test]
+    async fn read_stop_on_call_error_decimals_past_u64_width_is_absence() {
+        // Both spellings answer past `u64` width: absence, never a truncated
+        // low word.
+        let chain = Chain::new()
+            .answer(
+                TOKEN_A,
+                b"decimals()",
+                big_word_ret((U256::from(1u64) << 64) + U256::from(5u64)),
+            )
+            .answer(TOKEN_A, b"DECIMALS()", big_word_ret(U256::MAX));
+        let meta = read(
+            &chain,
+            TOKEN_A,
+            MetadataShape::LowerUpperStopOnCallError,
+            FieldMask {
+                name: false,
+                symbol: false,
+                decimals: true,
+            },
+            None,
+        )
+        .await;
+        assert_eq!(meta.decimals, None);
     }
 }
