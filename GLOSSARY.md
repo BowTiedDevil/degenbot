@@ -71,9 +71,16 @@ The process-lifetime owner of the strategies' source-slot provisioning and the h
 clock (`degenbot-bot/src/hosted_sources.rs`): one typed pending-tx stream per source
 kind, the single head watch + stale-fallback head poller, the feed-telemetry sampler,
 and the head-edge reconciliation trigger. Constructed once at the boot; drivers drain
-their arm's stream and read the hub's latest head.
+their arm's stream and read the hub's latest head. Its lifecycle is one owner-written
+state (provisioned → starting → running | half-started → torn down): a start refusal is
+typed, and a partial startup is **half-started** — terminal, never running — recovered
+only by dropping the owner. The head edge publishes one **head-edge mode** (watch
+connecting, watch live, poll fallback with its cause, hub-hosted, stopped): the mode is
+the policy and one iteration's poll is its decision, so a stale watch polls while its
+watchdog reconnects instead of declaring the edge dead.
 _Avoid_: per-driver feed spawning, a per-driver head watch or head poller, a per-driver
-telemetry scrape, driver-owned reconciliation triggers.
+telemetry scrape, driver-owned reconciliation triggers; a lifecycle inferred from which
+resource exists.
 
 **Pending-transaction driver**:
 The `degenbot-strategy` driver owning the strategy-neutral loop around a strategy's
@@ -152,8 +159,11 @@ _Avoid_: using bare "driver" for the engine session (**Driver seam**) or the Pyt
 **NonceAuthority**:
 The host's single owner of the operator account's nonce space, leased at sign time: a
 strategy receives the lowest free nonce at or above the confirmed chain nonce, so leases
-and broadcasts form a contiguous prefix above it.
-_Avoid_: "nonce manager", "nonce pool".
+and broadcasts form a contiguous prefix above it. Occupancy is per-nonce — exactly one
+occupant per slot (lease, broadcast, **delivery-unknown hold**, or its retained
+confirmed form), so no slot double-books, and a lease handle names a slot rather than a
+second reservation table.
+_Avoid_: "nonce manager", "nonce pool"; a per-strategy lease index beside the occupancy.
 
 **NonceLane**:
 The nonce-flighting seam the NonceAuthority exposes to one strategy: an authority-minted
@@ -217,7 +227,11 @@ The one core owner of a block's concurrent simulate fan-out plus its submit lane
 batch's simulate work runs bounded by an injected in-flight cap, and a single submitter
 drains batches in arrival order, awaiting each batch's own sim before submitting.
 Submission order is therefore nonce order, and the loud-abort contract re-raises the
-first leaf failure in the caller's frame. The simulate and submit leaves are core-owned production code shared by every
+first leaf failure in the caller's frame. The lane's lifecycle is one state value
+(accepting → failed | closing → closed): enqueue admission and the authoritative first
+failure belong to it, a typed decline means the batch had no effect (nothing counted,
+spawned, or queued), and the shutdown is idempotent and keeps reporting the carried
+failure. The simulate and submit leaves are core-owned production code shared by every
 consumer; a driver injects values — the cap as a plain count, the policy values, the
 relay posture and budgets — never choreography code. Its product is the stream of
 Batch outcome records.
@@ -384,6 +398,13 @@ records each surface's adapters/own code — the shared contract lives on the
 surface), so agreement is pinned by the walk, never maintained by hand (ADR-086).
 _Avoid_: call-convention unification (the seam pair is real — ADR-086); shared
 logic living in one tree because the other does not need it yet.
+
+**Subscription lifecycle**:
+The one state machine owning a pub-sub handle's life (ADR-094): starting → streaming,
+with a transient **reconnect** between them and the absorbing terminals ended / failed /
+unsubscribed. Every read path observes the one state — a reconnect keeps iteration
+awaiting data, and only a terminal ends it.
+_Avoid_: per-read-path terminal flags; treating a transient reconnect as a disconnection.
 
 **ERC-20 metadata read**:
 The core's one chain-read capability for ERC-20 name, symbol, and decimals, with
@@ -1296,6 +1317,15 @@ cloned from the registry.
 **degenbot-ingestion**:
 The standalone crate owning event ingestion and its watchdogs (log silence, header
 staleness); the Python layer never sees raw WS streams.
+
+**Subscribe handshake**:
+The startup conversation that picks the delivery-hole-free boundary block `W` before the
+live merged stream is handed to backfill (`degenbot-ingestion`'s pure handshake machine):
+the first header anchors, its successor confirms, and the first pool log or the settle
+window names the boundary; every log the handshake consumed is re-injected ahead of the
+live tail, so no delivery falls in a hole. Boundary legality belongs to the machine,
+never the transport adapter.
+_Avoid_: "catchup" or "warmup" for the settle window; boundary legality in prose.
 
 **Epoch delta ledger**:
 The single dirt ledger recording pool-state changes, with exactly one owner.

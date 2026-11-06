@@ -124,6 +124,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [092](ADR-092-regenerable-math-oracles.md) | Frozen math oracles are regenerable — one generator per snapshot, the deployed contract is the authority | accepted |
 | [093](ADR-093-session-lifecycle-and-consumer.md) | The settlement session — a lifecycle-only Driver seam, one ordered Session event stream, one Session consumer | accepted / implemented (§6.7's slices landed; §6.8 pairs each with its commit) |
 | [094](ADR-094-subscription-lifecycle-one-authority.md) | The subscription lifecycle — one Rust state machine, transient reconnect, retained startup, typed drain notices | accepted |
+| [095](ADR-095-explicit-lifecycle-state.md) | Explicit lifecycle state — one named state machine per lifecycle: nonce occupancy, sim-submit lane, hosted sources, ingestion handshake (subscription cross-links ADR-094) | accepted |
 
 ## Historical — provenance only
 
