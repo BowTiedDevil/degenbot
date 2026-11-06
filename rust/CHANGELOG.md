@@ -11,7 +11,7 @@ All notable changes to the Rust workspace crates are recorded here.
   consumer in the core.** The driver stops forwarding engine operations and
   stops owning the consume loop; both first-class consumers (the pure-Rust
   `examples/settlement_bot` and the Python cockpit) become adapters over the
-  same core values. The seven public was→is rows a consumer migrates by:
+  same core values. The eight public was→is rows a consumer migrates by:
 
   | Was | Is |
   | --- | --- |
@@ -22,6 +22,7 @@ All notable changes to the Rust workspace crates are recorded here.
   | hand-wired registration (the crawl unit's stage order, the example's `prepare_candidate`, `build_paths.py`) | one Registration admission (`degenbot_bot::arb_engine::crawl::admission::RegistrationAdmission`) behind the crawl and direct-registration adapters |
   | shell consume loops (`examples/settlement_bot/src/consume.rs`, `src/degenbot/runner/_consume.py`) | `degenbot_batch_executor::session::SessionConsumer`: the shells keep only the display drain and the report rendering |
   | `ConsumerError` with no outcome class: a refusal read as a leaf failure (the Python `SessionConsumerError` wore the loud-abort prefix for both) | `ConsumerError { kind: ConsumerErrorKind, .. }` — `NoSession` / `ClaimSpent` / `DriverRefusedTheMove` / `LeafFailure`; the Python class maps the three refusal kinds prefix-free and only the leaf failure under the prefix |
+  | `SessionEventSource` — one name for two roles: the batch-executor's consumer-input trait and `degenbot-bot`'s event producer | `EventFeed` for the input trait (`degenbot_batch_executor::session::EventFeed`; umbrella `degenbot::batch_executor::EventFeed`), the bot's producer keeping `SessionEventSource` and the FFI-private origin enum being `EventOrigin` — three roles, three names |
 
   The stream is `SessionEvent::{Block, Batch}` — a `Block(N)` precedes every
   `Batch(N)`, no variant carries an end item, natural end is the stream's

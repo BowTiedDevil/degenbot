@@ -678,7 +678,7 @@ a host-owned `Live` sub-state"), which stays open on the host side.
 
 ### 6.6 Consumer migration notes
 
-**The public was → is table.** The seven rows a consumer migrates by, with the
+**The public was → is table.** The eight rows a consumer migrates by, with the
 retired name in the "was" column only (the same rows the `CHANGELOG` carries):
 
 | # | Was | Is |
@@ -690,6 +690,7 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
 | 5 | hand-wired registration: the crawl unit's stage order, `RegistrationPipeline::prepare_candidate`, and `build_paths.py` | one Registration admission (`arb_engine::crawl::admission::RegistrationAdmission`) behind the crawl and direct-registration adapters |
 | 6 | shell consume loops: `examples/settlement_bot/src/consume.rs`'s loop and `src/degenbot/runner/_consume.py`'s loop | the Session consumer (`degenbot_batch_executor::session::SessionConsumer`); both shells keep only the display drain and the report rendering |
 | 7 | `ConsumerError` with no outcome class: a `resume`/`run` refusal read as a leaf failure, which on the Python surface made every `SessionConsumerError` wear the loud-abort prefix | `ConsumerError { kind: ConsumerErrorKind, .. }` — `NoSession` / `ClaimSpent` / `DriverRefusedTheMove` / `LeafFailure`, stamped only where the core raises the error; the Python `SessionConsumerError` maps the three refusal kinds prefix-free with the refusal's own text and only the leaf failure under the prefix |
+| 8 | `SessionEventSource` — one name for two roles: the batch-executor's consumer-input trait and `degenbot-bot`'s event producer | `EventFeed` for the input trait (`degenbot_batch_executor::session::EventFeed`); the bot's producer keeps `SessionEventSource` and the FFI-private origin enum is `EventOrigin` — three roles, three names |
 
 - **`PyArbEngine`** keeps the lifecycle adapters the cockpit calls — `connect`
   (the `Detached → Subscribed` move, returning the link block), `start` (this

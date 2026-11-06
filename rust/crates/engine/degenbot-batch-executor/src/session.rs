@@ -357,23 +357,24 @@ pub struct SessionFailure {
     pub teardown: Option<TeardownReport>,
 }
 
-/// Where the consumer reads its ordered events from.
+/// Where the consumer reads its ordered events from — the input side of the
+/// session, distinct from the bot's producer that writes into it.
 ///
 /// The production source is the driver's [`SessionStream`]; a scripted source is
 /// an `mpsc` receiver, which is how the shared event-sequence oracle and the
 /// `PyO3` seam drive the same consumer without a live pump.
-pub trait SessionEventSource: Send {
+pub trait EventFeed: Send {
     /// Await the next event; `None` is the stream's natural end.
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<SessionEvent>> + Send + '_>>;
 }
 
-impl SessionEventSource for SessionStream {
+impl EventFeed for SessionStream {
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<SessionEvent>> + Send + '_>> {
         Box::pin(SessionStream::recv(self))
     }
 }
 
-impl SessionEventSource for mpsc::UnboundedReceiver<SessionEvent> {
+impl EventFeed for mpsc::UnboundedReceiver<SessionEvent> {
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<SessionEvent>> + Send + '_>> {
         Box::pin(mpsc::UnboundedReceiver::recv(self))
     }
@@ -510,7 +511,7 @@ impl SessionConsumer {
     /// caller's frame, before any further batch is enqueued.
     pub async fn consume(
         &mut self,
-        source: &mut dyn SessionEventSource,
+        source: &mut dyn EventFeed,
     ) -> Result<ConsumerReport, ConsumerError> {
         let mut report = ConsumerReport::default();
         loop {
@@ -810,7 +811,7 @@ mod tests {
     /// A source that never yields — the stall watchdog's own scenario.
     struct SilentSource;
 
-    impl SessionEventSource for SilentSource {
+    impl EventFeed for SilentSource {
         fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<SessionEvent>> + Send + '_>> {
             Box::pin(std::future::pending())
         }
