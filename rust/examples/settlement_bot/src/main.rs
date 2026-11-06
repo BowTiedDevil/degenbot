@@ -1069,18 +1069,11 @@ fn run() -> Result<(), String> {
                 .map_err(|e| format!("session watch: {e}"))
         },
     )?;
-    // G5 row 19: the session-watch verdict. `PumpEnded` is the graceful stop
-    // path; the other two verdicts are loud failures.
-    match watch_outcome.verdict {
-        session_watch::SessionEndVerdict::PumpEnded => {}
-        session_watch::SessionEndVerdict::WatchdogTripped => {
-            return Err(
-                "session watch: consume loop stalled and the watchdog aborted it (set \
-                 SETTLEMENT_STALL_WATCHDOG_MS to tune)"
-                    .to_string(),
-            );
-        }
-        session_watch::SessionEndVerdict::RegistrationFailed => {
+    // G5 row 19: delivery routes on the core's ONE raise slot — at most one
+    // failure raises, in exactly the slot the fold chose, and the verdict
+    // never re-derives precedence here.
+    match watch_outcome.slot {
+        session_watch::RaiseSlot::Registration => {
             return Err(format!(
                 "session watch: registration failed: {}",
                 watch_outcome
@@ -1089,6 +1082,15 @@ fn run() -> Result<(), String> {
                     .unwrap_or("unknown registration error")
             ));
         }
+        session_watch::RaiseSlot::SessionEnd => {
+            return Err(session_watch::render_session_end_failure(
+                watch_outcome.cause,
+                watch_outcome.consumer_outcome,
+            ));
+        }
+        // `Nothing` is the graceful stop; `Consumer` raises the consumer's
+        // own failure through the retained output retrieved below.
+        session_watch::RaiseSlot::Nothing | session_watch::RaiseSlot::Consumer => {}
     }
     let report = watch_outcome
         .consumer

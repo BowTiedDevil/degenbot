@@ -18,14 +18,15 @@
 use std::time::Duration;
 
 use degenbot::session_end::{
-    rank, ConsumerOutcome, Heartbeat, RaiseSlot, RegistrationOutcome, SessionEndCause,
-    SessionEndDetection, SessionEndFacts, SessionEndObservation,
+    rank, ConsumerOutcome, Heartbeat, RegistrationOutcome, SessionEndCause, SessionEndDetection,
+    SessionEndFacts, SessionEndObservation,
 };
 use tokio::task::JoinHandle;
 
-/// The core's ranked verdict — re-exported so `main` reads the ONE vocabulary
-/// (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`).
-pub use degenbot::session_end::SessionEndVerdict;
+/// The core's ranked verdict and raise slot — re-exported so `main` reads the
+/// ONE vocabulary (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`;
+/// `Nothing` / `Registration` / `Consumer` / `SessionEnd`).
+pub use degenbot::session_end::{RaiseSlot, SessionEndVerdict};
 
 /// The translation of the result-consumer's retrieved output into the core's
 /// consumer-outcome vocabulary — the live arm's share of the seam.
@@ -56,6 +57,8 @@ pub struct SessionWatch<T> {
     consumer_output: Option<Result<T, String>>,
     verdict: Option<SessionEndVerdict>,
     slot: Option<RaiseSlot>,
+    consumer_outcome: Option<ConsumerOutcome>,
+    detection_cause: Option<SessionEndCause>,
 }
 
 impl<T> std::fmt::Debug for SessionWatch<T> {
@@ -71,6 +74,8 @@ impl<T> std::fmt::Debug for SessionWatch<T> {
             )
             .field("verdict", &self.verdict)
             .field("slot", &self.slot)
+            .field("consumer_outcome", &self.consumer_outcome)
+            .field("detection_cause", &self.detection_cause)
             .finish()
     }
 }
@@ -93,6 +98,8 @@ impl<T> SessionWatch<T> {
             consumer_output: None,
             verdict: None,
             slot: None,
+            consumer_outcome: None,
+            detection_cause: None,
         }
     }
 
@@ -137,6 +144,20 @@ impl<T> SessionWatch<T> {
     #[must_use]
     pub fn slot(&self) -> Option<RaiseSlot> {
         self.slot
+    }
+
+    /// The translated consumer outcome the fold ranked (`None` before
+    /// [`Self::wait`]) — retained so delivery can name the consumer's own end.
+    #[must_use]
+    pub fn consumer_outcome(&self) -> Option<ConsumerOutcome> {
+        self.consumer_outcome
+    }
+
+    /// The ranked detection cause (`None` before [`Self::wait`], and when no
+    /// detection fired) — retained so delivery can name why the session ended.
+    #[must_use]
+    pub fn detection_cause(&self) -> Option<SessionEndCause> {
+        self.detection_cause
     }
 
     /// Gather the session's end facts until the session ends, retrieve the
@@ -275,6 +296,9 @@ impl<T> SessionWatch<T> {
         self.consumer_output = ranking.output;
         self.slot = Some(ranking.slot);
         self.verdict = Some(ranking.verdict);
+        // The ranked facts delivery renders from — retained beside the
+        // verdict and slot they explain.
+        (self.detection_cause, self.consumer_outcome) = (cause, consumer_end);
         Ok(ranking.verdict)
     }
 
@@ -309,6 +333,12 @@ pub struct SessionWatchOutcome<T> {
     pub verdict: SessionEndVerdict,
     /// The ONE slot a primary failure may be delivered in.
     pub slot: RaiseSlot,
+    /// The translated consumer outcome the fold ranked — retained so delivery
+    /// can name the consumer's own end.
+    pub consumer_outcome: Option<ConsumerOutcome>,
+    /// The ranked detection cause (when detection fired) — retained so
+    /// delivery can name why the session ended.
+    pub cause: Option<SessionEndCause>,
     /// The fatal registration error, if the verdict was `RegistrationFailed`.
     pub registration_error: Option<String>,
     /// The consumer's result (its own error is `Err(_)`), retrieved on every
@@ -345,9 +375,40 @@ pub async fn supervise_consumer<T: Send + 'static>(
     Ok(SessionWatchOutcome {
         verdict,
         slot,
+        consumer_outcome: watch.consumer_outcome(),
+        cause: watch.detection_cause(),
         registration_error: watch.registration_error().map(ToString::to_string),
         consumer: watch.take_consumer_output(),
     })
+}
+
+/// The loud failure the [`RaiseSlot::SessionEnd`] slot delivers, rendered
+/// from the ranked facts the outcome retained — delivery routes on the slot,
+/// and the message names the cause that actually ended the session.
+#[must_use]
+pub fn render_session_end_failure(
+    cause: Option<SessionEndCause>,
+    consumer: Option<ConsumerOutcome>,
+) -> String {
+    match (consumer, cause) {
+        // The stopped stream is the consumer's own end: it never claims a
+        // watchdog stall.
+        (Some(ConsumerOutcome::PumpStopped), _) => {
+            "session watch: the result consumer's stream stopped where the session did not \
+             intend it"
+                .to_string()
+        }
+        (_, Some(SessionEndCause::StallWatchdogTripped)) => {
+            "session watch: consume loop stalled and the watchdog aborted it (set \
+             SETTLEMENT_STALL_WATCHDOG_MS to tune)"
+                .to_string()
+        }
+        (_, Some(other)) => format!(
+            "session watch: the pump ended outside its intended close (detection: {})",
+            other.name()
+        ),
+        (_, None) => "session watch: unexpected session end".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -596,6 +657,96 @@ mod tests {
         assert!(
             watch.registration.is_none(),
             "the teardown took the climbing registration"
+        );
+    }
+
+    /// The ranked product carries the translated consumer outcome for
+    /// delivery: a `PumpStopped` end raises at the `SessionEnd` slot, and the
+    /// retained outcome lets the delivered message name the stopped stream.
+    #[tokio::test]
+    async fn supervise_consumer_reports_the_pump_stopped_outcome_for_delivery() {
+        let outcome = supervise_consumer(
+            tokio::spawn(async { 7_u64 }),
+            Heartbeat::new(),
+            Duration::from_secs(60),
+            |_| ConsumerOutcome::PumpStopped,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.slot, RaiseSlot::SessionEnd);
+        assert_eq!(
+            outcome.consumer_outcome,
+            Some(ConsumerOutcome::PumpStopped),
+            "the translated outcome is retained for delivery"
+        );
+    }
+
+    /// The ranked product carries the detection cause for delivery: the
+    /// watchdog trip reports its own cause, so the delivered message names
+    /// the stall it actually observed.
+    #[tokio::test(start_paused = true)]
+    async fn supervise_consumer_reports_the_stall_cause_for_delivery() {
+        let supervision = tokio::spawn(supervise_consumer(
+            tokio::spawn(std::future::pending::<u64>()),
+            Heartbeat::new(),
+            Duration::from_secs(1),
+            |_| ConsumerOutcome::Failed,
+        ));
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(1_100)).await;
+        let outcome = supervision.await.unwrap().unwrap();
+        assert_eq!(outcome.slot, RaiseSlot::SessionEnd);
+        assert_eq!(
+            outcome.cause,
+            Some(SessionEndCause::StallWatchdogTripped),
+            "the detection cause is retained for delivery"
+        );
+    }
+
+    /// The `SessionEnd` slot's delivered message names the ranked cause: a
+    /// stopped stream must never claim a watchdog stall.
+    #[test]
+    fn a_stopped_stream_message_never_claims_a_watchdog_stall() {
+        let message = render_session_end_failure(None, Some(ConsumerOutcome::PumpStopped));
+        assert!(
+            message.contains("stream stopped"),
+            "the message names the stopped stream: {message}"
+        );
+        assert!(
+            !message.contains("stalled"),
+            "a stopped stream must not claim a watchdog stall: {message}"
+        );
+    }
+
+    /// The stall cause renders the watchdog message the `WatchdogTripped`
+    /// verdict stands for.
+    #[test]
+    fn the_stall_cause_message_reports_the_watchdog() {
+        let message = render_session_end_failure(
+            Some(SessionEndCause::StallWatchdogTripped),
+            Some(ConsumerOutcome::Failed),
+        );
+        assert!(
+            message.contains("stalled") && message.contains("watchdog"),
+            "the message names the watchdog stall: {message}"
+        );
+    }
+
+    /// Any other detection cause renders its own name — the message never
+    /// borrows the watchdog's stall.
+    #[test]
+    fn any_other_detection_cause_message_names_its_own_cause() {
+        let message = render_session_end_failure(
+            Some(SessionEndCause::PumpFinished),
+            Some(ConsumerOutcome::Failed),
+        );
+        assert!(
+            message.contains("PumpFinished"),
+            "the message names the detection cause: {message}"
+        );
+        assert!(
+            !message.contains("stalled"),
+            "another detection cause must not claim a watchdog stall: {message}"
         );
     }
 }
