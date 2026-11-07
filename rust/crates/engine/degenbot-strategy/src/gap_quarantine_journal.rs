@@ -285,7 +285,12 @@ fn parse_u256(raw: &str) -> Result<U256, JournalError> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParkRecord {
     pub frame: WireFrame,
-    pub sender: Address,
+    /// The frame's sender when the record carries one. `None` is absence as a
+    /// fact: no fold ever borrows an address for a sender the line did not
+    /// carry, and [`Self::to_parked_frame`] refuses to rebuild a sender-less
+    /// frame rather than park one under a fabricated identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<Address>,
     pub claimed_nonce: u64,
     pub expected_nonce: u64,
     pub parked_at_unix_ms: u64,
@@ -303,7 +308,7 @@ impl ParkRecord {
     pub fn new(event: &BackrunFeedEvent, expected_nonce: u64, parked_at_unix_ms: u64) -> Self {
         Self {
             frame: WireFrame::encode(event),
-            sender: event.from,
+            sender: Some(event.from),
             claimed_nonce: event.nonce,
             expected_nonce,
             parked_at_unix_ms,
@@ -335,16 +340,19 @@ impl ParkRecord {
     ///
     /// # Errors
     ///
-    /// [`JournalError`] when the frame hash or the recorded sender fails to
-    /// parse.
+    /// [`JournalError`] when the frame hash fails to parse, or when a degraded
+    /// record carries no sender — [`ParkedFrame`] needs one and absence is
+    /// never filled in.
     pub fn to_parked_frame(&self) -> Result<ParkedFrame, JournalError> {
         if self.fidelity == RecordFidelity::Degraded {
             let hash = self.frame.hash.parse::<B256>()?;
-            // The degraded wire carries its sender as the raw journal string:
-            // an unparsable one makes the identity unrebuildable, so the
-            // rebuild refuses instead of parking the frame under the zero
-            // address (which no tx could ever have sent).
-            let from = self.frame.from.parse::<Address>()?;
+            // The sender is the record's own, exactly as recorded: absence
+            // refuses the rebuild instead of parking the frame under the zero
+            // address (which no tx could ever have sent), and a zero address
+            // the record genuinely carries is preserved as recorded.
+            let from = self.sender.ok_or_else(|| {
+                JournalError::Field(String::from("degraded park carries no sender"))
+            })?;
             return Ok(ParkedFrame {
                 hash,
                 from,
@@ -736,8 +744,10 @@ struct LegacyWireFrame {
 
 /// Rebuild a tracked park from a park-shaped line the current schema rejects.
 /// The wire is FULL only when every field survives and decodes to a
-/// non-degenerate value; any shortcoming degrades to identity only. Returns
-/// `None` when not even the hash and claimed nonce survive.
+/// non-degenerate value; any shortcoming degrades to identity only. The sender
+/// survives only when the line carries one — its `sender` field or a parsable
+/// `from`; a line carrying none migrates with the sender absent. Returns `None`
+/// when not even the hash and claimed nonce survive.
 fn migrate_legacy_park(value: &serde_json::Value) -> Option<(ParkRecord, RecordFidelity)> {
     let legacy: LegacyParkRecord = serde_json::from_value(value.clone()).ok()?;
     let frame = legacy.frame.unwrap_or_default();
@@ -747,15 +757,14 @@ fn migrate_legacy_park(value: &serde_json::Value) -> Option<(ParkRecord, RecordF
         .and_then(|raw| raw.parse::<B256>().ok())
         .or(legacy.hash)?;
     let claimed_nonce = legacy.claimed_nonce.or(frame.nonce).or(legacy.nonce)?;
-    let sender = legacy
-        .sender
-        .or_else(|| {
-            frame
-                .from
-                .as_deref()
-                .and_then(|raw| raw.parse::<Address>().ok())
-        })
-        .unwrap_or(Address::ZERO);
+    // The sender folds only from the line's own fields; a line carrying none
+    // migrates with the sender absent — never a borrowed address.
+    let sender = legacy.sender.or_else(|| {
+        frame
+            .from
+            .as_deref()
+            .and_then(|raw| raw.parse::<Address>().ok())
+    });
     let (wire, fidelity) = match full_wire_candidate(&frame, hash, claimed_nonce) {
         Some(wire) => (wire, RecordFidelity::Full),
         None => (
@@ -804,15 +813,14 @@ fn full_wire_candidate(frame: &LegacyWireFrame, hash: B256, nonce: u64) -> Optio
 }
 
 /// A degraded park keeps its identity (hash, nonce, and the sender when
-/// readable); the wire defaults are zeroed so no event can be fabricated.
+/// readable — carried by [`ParkRecord::sender`]); the wire defaults are zeroed
+/// so no event can be fabricated. A missing `from` stays missing — the wire
+/// never spells a sender the record does not carry.
 fn degraded_wire(frame: &LegacyWireFrame, hash: B256, nonce: u64) -> WireFrame {
     WireFrame {
         hash: hash.to_string(),
         chain_id: 0,
-        from: frame
-            .from
-            .clone()
-            .unwrap_or_else(|| Address::ZERO.to_string()),
+        from: frame.from.clone().unwrap_or_default(),
         to: frame.to.clone(),
         value: String::from("0x0"),
         data: String::from("0x"),
@@ -1218,27 +1226,78 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
     }
 
-    /// A degraded park keeps only its identity, so a sender the wire cannot
-    /// parse makes the frame unrebuildable: the rebuild answers `JournalError`
-    /// instead of parking the frame under the zero address.
+    /// A degraded park keeps only its identity, so the rebuild requires the
+    /// sender the record carries: absence refuses — never a fabricated zero
+    /// address — while a sender the record genuinely carries, including a zero
+    /// address, rebuilds exactly as recorded.
     #[test]
-    fn degraded_frame_with_unparsable_sender_is_refused() {
+    fn degraded_frame_refuses_absent_sender_and_preserves_a_recorded_zero() {
         let mut record = ParkRecord::new(&event(7, 70, 9_000), 68, now_ms());
         record.fidelity = RecordFidelity::Degraded;
-        record.frame.from = String::from("not-an-address");
+        record.sender = None;
 
         let err = record
             .to_parked_frame()
-            .expect_err("an unparsable sender must refuse the rebuild");
+            .expect_err("an absent sender must refuse the rebuild");
         assert!(
             matches!(err, JournalError::Field(_)),
             "the refusal rides the journal's field-error channel: {err}"
         );
 
-        // The readable-sender case still rebuilds: the refusal is the parse,
-        // not the degraded fidelity.
-        record.frame.from = Address::with_last_byte(7).to_string();
+        // A zero address the record genuinely carries is preserved as
+        // recorded: absence and zero are different facts.
+        record.sender = Some(Address::ZERO);
+        let frame = record
+            .to_parked_frame()
+            .expect("a recorded zero sender rebuilds");
+        assert_eq!(frame.from, Address::ZERO);
+
+        // The readable-sender case rebuilds exactly as recorded: the refusal
+        // is the absence, not the degraded fidelity.
+        record.sender = Some(Address::with_last_byte(7));
         let frame = record.to_parked_frame().expect("readable sender rebuilds");
         assert_eq!(frame.from, Address::with_last_byte(7));
+    }
+
+    /// The legacy fold preserves a missing sender as absence — never the zero
+    /// address — and keeps a genuinely recorded zero address as recorded.
+    #[test]
+    fn legacy_migration_preserves_absent_sender_and_a_recorded_zero() {
+        let hash = B256::from([0x0a; 32]);
+        let absent = serde_json::json!({
+            "kind": "park",
+            "frame": {"hash": hash.to_string(), "from": "not-an-address", "nonce": 12},
+            "claimed_nonce": 12,
+        });
+        let (record, fidelity) = migrate_legacy_park(&absent).expect("migrates");
+        assert_eq!(fidelity, RecordFidelity::Degraded);
+        assert_eq!(
+            record.sender, None,
+            "absence is preserved, never Address::ZERO"
+        );
+        assert_eq!(
+            record.frame.from, "not-an-address",
+            "the raw wire string survives for forensics"
+        );
+        record
+            .to_parked_frame()
+            .expect_err("the rebuild refuses without a sender");
+
+        let zero = serde_json::json!({
+            "kind": "park",
+            "frame": {"hash": hash.to_string(), "nonce": 12},
+            "sender": Address::ZERO.to_string(),
+            "claimed_nonce": 12,
+        });
+        let (record, _) = migrate_legacy_park(&zero).expect("migrates");
+        assert_eq!(
+            record.sender,
+            Some(Address::ZERO),
+            "a recorded zero address is preserved as recorded"
+        );
+        let frame = record
+            .to_parked_frame()
+            .expect("a recorded zero sender rebuilds");
+        assert_eq!(frame.from, Address::ZERO);
     }
 }

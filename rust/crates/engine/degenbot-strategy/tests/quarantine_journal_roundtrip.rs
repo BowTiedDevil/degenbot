@@ -531,12 +531,33 @@ fn degenerate_wire_is_degraded_never_full() {
             RecordFidelity::Degraded,
             "a defaulted wire is degraded, never Full"
         );
-        assert!(
-            record.to_parked_frame().expect("frame").is_degraded(),
-            "to_parked_frame agrees with the fidelity label"
-        );
     }
     assert_eq!(read.degraded, 1, "the migrated line counts as degraded");
+
+    // The fold parks by hash string, so the 0x06 park (no sender on the line)
+    // precedes the 0x07 park (a zero address the line genuinely carries):
+    // absence refuses at the rebuild — never a fabricated zero address —
+    // while a recorded zero sender rebuilds exactly as recorded.
+    let (absent, recorded_zero) = (&read.pending[0], &read.pending[1]);
+    assert_eq!(absent.frame.hash, hash(6).to_string());
+    assert_eq!(
+        absent.sender, None,
+        "absence is preserved, never Address::ZERO"
+    );
+    absent
+        .to_parked_frame()
+        .expect_err("a sender-less record must not park under a fabricated address");
+    assert_eq!(recorded_zero.sender, Some(Address::ZERO));
+    let frame = recorded_zero.to_parked_frame().expect("frame");
+    assert!(
+        frame.is_degraded(),
+        "to_parked_frame agrees with the fidelity label"
+    );
+    assert_eq!(
+        frame.from,
+        Address::ZERO,
+        "a genuinely recorded zero sender rebuilds as recorded"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

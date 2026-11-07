@@ -178,8 +178,8 @@ fn map_register_refusal(family: Option<RegisteredPoolFamily>, reason: RegisterRe
             address, pool_key, ..
         } => match (address, pool_key) {
             (Some(address), _) => PoolAlreadyRegisteredError::new_err(format!(
-                "{} pool already registered: address={address}",
-                family_label(family)
+                "{} already registered: address={address}",
+                family_subject(family)
             )),
             (None, Some((pool_manager, pool_id))) => PoolAlreadyRegisteredError::new_err(format!(
                 "v4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
@@ -188,8 +188,8 @@ fn map_register_refusal(family: Option<RegisteredPoolFamily>, reason: RegisterRe
             (None, None) => PoolAlreadyRegisteredError::new_err("pool already registered"),
         },
         RegisterRefusal::SpecViolation { detail } => SpecViolationError::new_err(format!(
-            "{} pool registration failed: {detail}",
-            family_label(family)
+            "{} registration failed: {detail}",
+            family_subject(family)
         )),
         RegisterRefusal::Admission {
             failure,
@@ -220,17 +220,22 @@ fn map_admission(failure: BuildFailure, hook_flags: Option<u16>, fee: Option<u32
     }
 }
 
-/// The family label the registration messages spell.
+/// The registration messages' family subject: `<registry-tag> pool` when the
+/// refusal names a family, the bare `pool` when it does not.
 ///
 /// Every family renders its registry tag ([`RegisteredPoolFamily::tag`]) — the
 /// one lowercase kebab vocabulary the core spells a family with, the same label
 /// `degenbot_strategy::frame_pipeline::family_label` puts in an extract row — so
 /// no family borrows another's spelling and a Balancer or Curve refusal names
-/// itself. The label is display text; the operator wire's `family` field keeps
-/// its own `V2`/`V3`/`V4` spelling, which this function never produces.
-fn family_label(family: Option<RegisteredPoolFamily>) -> &'static str {
-    // A family-less refusal renders the default family's tag.
-    family.unwrap_or(RegisteredPoolFamily::V2).tag()
+/// itself. A family-less refusal names no family: it renders the bare noun,
+/// never a default family's spelling standing in for one. The label is display
+/// text; the operator wire's `family` field keeps its own `V2`/`V3`/`V4`
+/// spelling, which this function never produces.
+fn family_subject(family: Option<RegisteredPoolFamily>) -> String {
+    match family {
+        Some(family) => format!("{} pool", family.tag()),
+        None => String::from("pool"),
+    }
 }
 
 /// A verify failure's Python surface (the historical `map_verify_err` /
@@ -623,20 +628,68 @@ mod tests {
         );
     }
 
-    /// The registration messages' family label IS the registry tag: one
+    /// The registration messages' family subject IS the registry tag: one
     /// vocabulary over the whole registry, no family borrowing another's
-    /// spelling, and a family-less refusal rendering the default family. The
-    /// closed-set census is [`RegisteredPoolFamily::tag`]'s own pin.
+    /// spelling, and a family-less refusal rendering the bare noun — the
+    /// renderer never invents a family. The closed-set census is
+    /// [`RegisteredPoolFamily::tag`]'s own pin.
     #[test]
-    fn family_label_is_the_registry_tag_over_every_family() {
+    fn family_subject_is_the_registry_tag_over_every_family() {
         for family in RegisteredPoolFamily::ALL {
             assert_eq!(
-                family_label(Some(family)),
-                family.tag(),
+                family_subject(Some(family)),
+                format!("{} pool", family.tag()),
                 "{family:?} must not borrow another family's spelling"
             );
         }
-        assert_eq!(family_label(None), "v2");
+        assert_eq!(
+            family_subject(None),
+            "pool",
+            "a family-less refusal must render family-neutral"
+        );
+    }
+
+    /// The same registration refusal renders the family it names and stays
+    /// family-neutral when it names none: `v2 pool …` with a family, the bare
+    /// `pool …` without one — a family-less refusal never borrows the default
+    /// family's spelling.
+    #[test]
+    fn register_refusals_render_family_present_vs_family_absent() {
+        let render = |family, reason| {
+            message(&map_refusal(RefusalKind::RegisterRefused {
+                family,
+                phase: RegistrationPhase::Register,
+                reason,
+            }))
+        };
+
+        let already = RegisterRefusal::AlreadyRegistered {
+            address: Some(addr("0x0101010101010101010101010101010101010101")),
+            pool_key: None,
+            detail: String::new(),
+        };
+        assert_eq!(
+            render(Some(RegisteredPoolFamily::V2), already.clone()),
+            "v2 pool already registered: address=0x0101010101010101010101010101010101010101"
+        );
+        assert_eq!(
+            render(None, already),
+            "pool already registered: address=0x0101010101010101010101010101010101010101"
+        );
+
+        let spec = RegisterRefusal::SpecViolation {
+            detail: String::from(
+                "field `reserve0` value 7 is out of bounds: uint112 (≤ 2^112 − 1)",
+            ),
+        };
+        assert_eq!(
+            render(Some(RegisteredPoolFamily::V2), spec.clone()),
+            "v2 pool registration failed: field `reserve0` value 7 is out of bounds: uint112 (≤ 2^112 − 1)"
+        );
+        assert_eq!(
+            render(None, spec),
+            "pool registration failed: field `reserve0` value 7 is out of bounds: uint112 (≤ 2^112 − 1)"
+        );
     }
 
     #[test]
