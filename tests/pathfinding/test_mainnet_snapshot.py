@@ -26,13 +26,23 @@ from pathlib import Path
 import pytest
 
 from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths
+from tests.helpers.erc20_factory import make_native_token
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 SNAPSHOT_PATH = FIXTURE_DIR / "mainnet_snapshot.db"
 EXPECTED_PATH = FIXTURE_DIR / "mainnet_snapshot_expected.json"
 
 WETH_MAINNET = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-NATIVE_MAINNET = "0x0000000000000000000000000000000000000000"
+# The snapshot's V4 native-currency rows carry the V4 wire sentinel in
+# protocol context; public requests name the asset with `NativeToken`
+# (ADR-097), which resolves to those rows without coalescing them.
+
+
+@pytest.fixture
+def native(py_bot):
+    """The conceptual native token for the snapshot's chain (ADR-097)."""
+    return make_native_token(py_bot)
+
 
 pytestmark = pytest.mark.skipif(
     not SNAPSHOT_PATH.exists(),
@@ -83,7 +93,7 @@ def test_snapshot_graph_facts_match_expected() -> None:
         snap.close()
 
 
-def test_depth2_all_kinds_matches_baseline(tmp_path: Path) -> None:
+def test_depth2_all_kinds_matches_baseline(tmp_path: Path, native) -> None:
     """THE lossless wall: enumeration over the snapshot must reproduce the
     recorded pre-optimization multiset exactly."""
     expected = _expected()["baselines"]["depth2_all_kinds"]
@@ -92,8 +102,8 @@ def test_depth2_all_kinds_matches_baseline(tmp_path: Path) -> None:
         PathfindingRequest(
             database_path=database_path,
             chain_id=1,
-            start_tokens=[WETH_MAINNET, NATIVE_MAINNET],
-            end_tokens=[WETH_MAINNET, NATIVE_MAINNET],
+            start_tokens=[WETH_MAINNET, native],
+            end_tokens=[WETH_MAINNET, native],
             max_depth=2,
             pool_types=[PoolKind.V2, PoolKind.V3, PoolKind.V4],
         )

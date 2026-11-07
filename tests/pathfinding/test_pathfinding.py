@@ -6,9 +6,13 @@ deterministic and runs in the DEFAULT pytest suite — no production snapshot,
 no ``slow`` marker.
 
 The seeded chain is Ethereum (``ChainId.ETH``); ``WETH_ADDRESS`` is its
-wrapped-native token and ``NATIVE_ADDRESS`` is the V4 native-currency
-sentinel (``ZERO_ADDRESS``). V4 pools that hold the native/WETH pair let a
-search reach both tokens from either boundary.
+wrapped-native token. Public pathfinding inputs name the native asset with
+the conceptual :class:`NativeToken` (ADR-097) — a raw sentinel address is
+never a public spelling. The V4 zero sentinel appears ONLY in the seeding
+rows (the V4 protocol's wire spelling of its native currency, in protocol
+context). V4 pools that hold the native/WETH pair let a search reach both
+tokens from either boundary.
+
 """
 
 import pathlib
@@ -17,6 +21,7 @@ import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
+from degenbot.erc20 import NativeToken
 from degenbot.pathfinding import (
     PathfindingRequest,
     PathStep,
@@ -26,10 +31,22 @@ from degenbot.pathfinding import (
 )
 from degenbot.types.chain import ChainId
 from tests.helpers.database import seed_v2_topology, seed_v3_topology, seed_v4_topology
+from tests.helpers.erc20_factory import make_native_token
 
 CHAIN_ID = ChainId.ETH
 WETH_ADDRESS = WRAPPED_NATIVE_TOKENS[CHAIN_ID]
-NATIVE_ADDRESS = ZERO_ADDRESS
+
+# The V4 protocol's wire spelling of its native currency (ADR-097 D3): used
+# ONLY in the seeding rows below (protocol context), never as a public
+# pathfinding input — those name the asset with `NativeToken`.
+V4_NATIVE_SENTINEL = ZERO_ADDRESS
+
+
+@pytest.fixture
+def native(py_bot) -> NativeToken:
+    """The conceptual native token for the seeded chain (ADR-097)."""
+    return make_native_token(py_bot)
+
 
 # Pool addresses as module constants so tests can name the known seeded paths.
 POOL_V2_WETH_A = get_checksum_address("0x" + "21" * 20)
@@ -94,11 +111,11 @@ def _seed_three_family_db(db_path: pathlib.Path) -> pathlib.Path:
     seed_v4_topology(
         db_path,
         [
-            ("0x" + "0" * 63 + "1", NATIVE_ADDRESS, WETH_ADDRESS, ZERO_ADDRESS, 3000),
+            ("0x" + "0" * 63 + "1", V4_NATIVE_SENTINEL, WETH_ADDRESS, ZERO_ADDRESS, 3000),
             ("0x" + "0" * 63 + "2", WETH_ADDRESS, TOKEN_D, ZERO_ADDRESS, 3000),
             ("0x" + "0" * 63 + "3", TOKEN_D, WETH_ADDRESS, ZERO_ADDRESS, 3000),
-            ("0x" + "0" * 63 + "4", NATIVE_ADDRESS, TOKEN_D, ZERO_ADDRESS, 3000),
-            ("0x" + "0" * 63 + "5", TOKEN_D, NATIVE_ADDRESS, ZERO_ADDRESS, 3000),
+            ("0x" + "0" * 63 + "4", V4_NATIVE_SENTINEL, TOKEN_D, ZERO_ADDRESS, 3000),
+            ("0x" + "0" * 63 + "5", TOKEN_D, V4_NATIVE_SENTINEL, ZERO_ADDRESS, 3000),
         ],
         pool_manager_address=POOL_MANAGER,
         chain_id=CHAIN_ID,
@@ -176,7 +193,7 @@ async def test_two_pool_pathfinding_cycling_weth_async(db: pathlib.Path) -> None
     }
 
 
-def test_generic_algo_multiple_tokens(db: pathlib.Path) -> None:
+def test_generic_algo_multiple_tokens(db: pathlib.Path, native: NativeToken) -> None:
     """V4 pools carry both the native sentinel and WETH, so set identities hold.
 
     Every assertion is an exact set identity between searches whose boundary
@@ -201,8 +218,8 @@ def test_generic_algo_multiple_tokens(db: pathlib.Path) -> None:
         )
 
     weth_to_weth = search([WETH_ADDRESS], [WETH_ADDRESS])
-    weth_to_native = search([WETH_ADDRESS], [NATIVE_ADDRESS])
-    weth_to_weth_or_native = search([WETH_ADDRESS], [WETH_ADDRESS, NATIVE_ADDRESS])
+    weth_to_native = search([WETH_ADDRESS], [native])
+    weth_to_weth_or_native = search([WETH_ADDRESS], [WETH_ADDRESS, native])
     assert weth_to_weth
     assert weth_to_native
     assert weth_to_weth_or_native
@@ -212,9 +229,9 @@ def test_generic_algo_multiple_tokens(db: pathlib.Path) -> None:
         weth_to_weth + weth_to_native, key=_step_ids
     )
 
-    native_to_weth = search([NATIVE_ADDRESS], [WETH_ADDRESS])
-    native_to_native = search([NATIVE_ADDRESS], [NATIVE_ADDRESS])
-    native_to_weth_or_native = search([NATIVE_ADDRESS], [WETH_ADDRESS, NATIVE_ADDRESS])
+    native_to_weth = search([native], [WETH_ADDRESS])
+    native_to_native = search([native], [native])
+    native_to_weth_or_native = search([native], [WETH_ADDRESS, native])
     assert native_to_weth
     assert native_to_native
     assert native_to_weth_or_native
@@ -224,9 +241,7 @@ def test_generic_algo_multiple_tokens(db: pathlib.Path) -> None:
         native_to_weth + native_to_native, key=_step_ids
     )
 
-    weth_or_native_to_weth_or_native = search(
-        [WETH_ADDRESS, NATIVE_ADDRESS], [WETH_ADDRESS, NATIVE_ADDRESS]
-    )
+    weth_or_native_to_weth_or_native = search([WETH_ADDRESS, native], [WETH_ADDRESS, native])
     assert weth_or_native_to_weth_or_native
 
     assert len(weth_or_native_to_weth_or_native) == len(weth_to_weth_or_native) + len(
@@ -259,14 +274,15 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types(
 
 def test_three_pool_pathfinding_cycling_weth_native_with_limited_types(
     db: pathlib.Path,
+    native: NativeToken,
 ) -> None:
     depth = 3
     paths = list(
         find_paths(
             request=_request(
                 db,
-                start_tokens=[WETH_ADDRESS, NATIVE_ADDRESS],
-                end_tokens=[WETH_ADDRESS, NATIVE_ADDRESS],
+                start_tokens=[WETH_ADDRESS, native],
+                end_tokens=[WETH_ADDRESS, native],
                 pool_types=[PoolKind.V4],
                 min_depth=depth,
                 max_depth=depth,

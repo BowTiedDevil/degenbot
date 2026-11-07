@@ -14,7 +14,10 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.db import db_resolve_token_ids
+from degenbot.constants import ZERO_ADDRESS
+from degenbot.curve.types import NATIVE_COIN_ALL_ES
+from degenbot.db import db_resolve_native_token_ids, db_resolve_token_ids
+from degenbot.erc20.native_token import NativeToken
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.pathfinding import (
@@ -42,6 +45,16 @@ type TokenId = int
 
 # Minimum elapsed wall-clock between `find_paths_async` progress heartbeats.
 _DISCOVERY_HEARTBEAT_INTERVAL_S: float = 15.0
+
+
+#: The protocol-private spellings of the chain's conceptual native asset (the
+#: V4 ``address(0)`` currency, the Curve all-Es coin). A raw sentinel is one
+#: protocol's WIRE spelling and is refused at this generic entry point
+#: (ADR-097 D1): the conceptual :class:`NativeToken` is the only public
+#: spelling of the native asset.
+_PROTOCOL_NATIVE_SENTINELS: frozenset[ChecksummedAddress] = frozenset(
+    (get_checksum_address(ZERO_ADDRESS), get_checksum_address(NATIVE_COIN_ALL_ES)),
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -130,21 +143,24 @@ class PathfindingRequest:
 
     Fields:
         chain_id: Chain ID restricting pool and token queries.
-        start_tokens: Token addresses that begin a path.
-        end_tokens: Token addresses that end a path.
+        start_tokens: Tokens that begin a path — the conceptual
+            :class:`NativeToken` and/or ERC-20 address spellings. A raw
+            protocol sentinel address is refused loudly (ADR-097 D1).
+        end_tokens: Tokens that end a path, spelled like ``start_tokens``.
         database_path: File-backed SQLite database opened by Rust read seams.
         min_depth: Minimum hops in yielded paths.
         max_depth: Optional maximum hops in yielded paths.
         pool_types: Typed pool families to include (default V2/V3/V4).
         pool_type_per_depth: Optional per-depth allowed pool-family sets; a
             ``None`` entry allows all kinds at that depth.
-        allowed_intermediate_tokens: Optional intermediate-token whitelist.
+        allowed_intermediate_tokens: Optional intermediate-token whitelist,
+            spelled like ``start_tokens``.
 
     """
 
     chain_id: int
-    start_tokens: Iterable[ChecksummedAddress | str]
-    end_tokens: Iterable[ChecksummedAddress | str]
+    start_tokens: Iterable[NativeToken | ChecksummedAddress | str]
+    end_tokens: Iterable[NativeToken | ChecksummedAddress | str]
     database_path: pathlib.Path
     min_depth: int = 2
     max_depth: int | None = None
@@ -153,32 +169,90 @@ class PathfindingRequest:
     # from a hand-written tuple.
     pool_types: Sequence[PoolKind] = ALL_POOL_KINDS
     pool_type_per_depth: Sequence[set[PoolKind] | None] | None = None
-    allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None
+    allowed_intermediate_tokens: Iterable[NativeToken | ChecksummedAddress | str] | None = None
 
 
 def _resolve_boundary_token_ids(
     chain_id: int,
-    tokens: set[ChecksummedAddress],
+    tokens: Iterable[NativeToken | ChecksummedAddress | str],
     database_path: pathlib.Path,
     label: str,
 ) -> list[TokenId]:
-    """Resolve every boundary address to its token id, preserving set order.
+    """Resolve every boundary token to its token id(s), preserving order.
+
+    A :class:`NativeToken` resolves to EVERY protocol sentinel row (the V4
+    ``address(0)`` currency row, the Curve all-Es coin row) — distinct ids,
+    never coalesced (ADR-097 D4); each row IS the native asset in the protocol
+    context that persists it, and session identity resolves both to the one
+    conceptual token. A raw protocol sentinel address is refused loudly: it is
+    one protocol's wire spelling, never a way to spell the conceptual native
+    token (ADR-097 D1).
 
     Returns:
-        The token ids in the same iteration order as ``tokens``.
+        The token ids in first-seen order, deduplicated.
 
     Raises:
-        DegenbotValueError: A boundary token is absent from the database.
+        DegenbotValueError: A boundary token is a raw sentinel, a
+            ``NativeToken`` names another chain, or an ERC-20 token is absent
+            from the database.
 
     """
-    resolved = db_resolve_token_ids(str(database_path), chain_id, list(tokens))
-    ordered: list[TokenId] = []
-    for token in tokens:
-        token_id = resolved.get(token)
-        if token_id is None:
-            msg = f"{label} token {token} was not found in the database."
+    materialized = list(tokens)
+
+    address_spellings: list[ChecksummedAddress] = []
+
+    for token in materialized:
+        if isinstance(token, NativeToken):
+            if token.chain_id != chain_id:
+                msg = (
+                    f"{label} token NativeToken(chain_id={token.chain_id}) does not "
+                    f"belong to chain {chain_id}."
+                )
+                raise DegenbotValueError(message=msg)
+            continue
+        address = get_checksum_address(token)
+        if address in _PROTOCOL_NATIVE_SENTINELS:
+            msg = (
+                f"{label} token {address} is a protocol native-asset sentinel, "
+                "not a token contract address; name the native asset through "
+                "NativeToken (Bot.get_native_token)."
+            )
             raise DegenbotValueError(message=msg)
-        ordered.append(token_id)
+        address_spellings.append(address)
+
+    resolved = (
+        db_resolve_token_ids(str(database_path), chain_id, address_spellings)
+        if address_spellings
+        else {}
+    )
+
+    sentinel_ids: list[TokenId] = []
+
+    if any(isinstance(token, NativeToken) for token in materialized):
+        sentinel_ids = list(db_resolve_native_token_ids(str(database_path), chain_id))
+        if not sentinel_ids:
+            msg = f"The {label} native token has no protocol sentinel row in the database."
+            raise DegenbotValueError(message=msg)
+
+    ordered: list[TokenId] = []
+
+    seen: set[TokenId] = set()
+
+    for token in materialized:
+        if isinstance(token, NativeToken):
+            token_ids = sentinel_ids
+        else:
+            address = get_checksum_address(token)
+            token_id = resolved.get(address)
+            if token_id is None:
+                msg = f"{label} token {address} was not found in the database."
+                raise DegenbotValueError(message=msg)
+            token_ids = [token_id]
+        for token_id in token_ids:
+            if token_id not in seen:
+                seen.add(token_id)
+                ordered.append(token_id)
+
     return ordered
 
 
@@ -192,13 +266,15 @@ def _prepare_traversals(request: PathfindingRequest) -> list[_Traversal]:
     # @dev Liquidity pool lookups using a token ID are implicitly filtered for
     # the chain ID, since token addresses are unique to the chain.
     allowed_token_ids: set[TokenId] | None = None
+
     if request.allowed_intermediate_tokens is not None:
         allowed_token_ids = set(
-            db_resolve_token_ids(
-                str(request.database_path),
+            _resolve_boundary_token_ids(
                 request.chain_id,
-                [get_checksum_address(tok) for tok in request.allowed_intermediate_tokens],
-            ).values(),
+                request.allowed_intermediate_tokens,
+                request.database_path,
+                "Intermediate",
+            ),
         )
 
     graph = _prepare_graph(
@@ -210,16 +286,18 @@ def _prepare_traversals(request: PathfindingRequest) -> list[_Traversal]:
     rust_filter = convert_pool_type_filter(request.pool_type_per_depth)
     start_ids = _resolve_boundary_token_ids(
         request.chain_id,
-        {get_checksum_address(token) for token in request.start_tokens},
+        request.start_tokens,
         request.database_path,
         "Start",
     )
+
     end_ids = _resolve_boundary_token_ids(
         request.chain_id,
-        {get_checksum_address(token) for token in request.end_tokens},
+        request.end_tokens,
         request.database_path,
         "End",
     )
+
     filter_len = (
         len(request.pool_type_per_depth) if request.pool_type_per_depth is not None else None
     )

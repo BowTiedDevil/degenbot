@@ -28,7 +28,7 @@
 )]
 
 use degenbot::pathfinding::{
-    resolve_directions as core_resolve_directions, DirectionHop, PoolKind,
+    resolve_directions as core_resolve_directions, DirectionHop, DirectionToken, PoolKind,
 };
 
 use crate::discovery::{BatchedPathFinder, BuiltGraph, DiscoveryParams};
@@ -79,6 +79,22 @@ fn unknown_pool() -> RegistrationUnitOutcome {
     }
 }
 
+/// The V4 protocol's PRIVATE native-currency spelling (ADR-097 D3): the
+/// graph rows carry the wire view; it is translated to the conceptual native
+/// token at this protocol call site and never crosses the resolver raw.
+const V4_NATIVE_SENTINEL: &str = "0x0000000000000000000000000000000000000000";
+
+/// The direction resolver's conceptual spelling of one node token: the V4
+/// zero currency under the V4 family is the conceptual native token; every
+/// other spelling is its own ERC-20.
+fn node_direction_token(kind: PoolKind, spelling: &str) -> DirectionToken<'_> {
+    if matches!(kind, PoolKind::V4) && spelling == V4_NATIVE_SENTINEL {
+        DirectionToken::Native
+    } else {
+        DirectionToken::Erc20(spelling)
+    }
+}
+
 /// Resolve the per-hop directions from the graph's own token facts and orient
 /// the hop views — the enumeration's direction step.
 ///
@@ -96,14 +112,20 @@ pub fn resolve_path(
         .map(|idx| {
             let node = &built.nodes[*idx];
             DirectionHop {
-                token0: &node.token0,
-                token1: &node.token1,
+                token0: node_direction_token(node.kind, &node.token0),
+                token1: node_direction_token(node.kind, &node.token1),
                 identity: &node.identity,
             }
         })
         .collect();
-    let zfos = core_resolve_directions(&direction_hops, input_token_lower, weth_lower)
-        .map_err(|error| error.to_string())?;
+    let input = if input_token_lower == V4_NATIVE_SENTINEL {
+        DirectionToken::Native
+    } else {
+        DirectionToken::Erc20(input_token_lower)
+    };
+    let zfos = core_resolve_directions(&direction_hops, &input, weth_lower)
+        .map_err(|error| error.to_string())?
+        .zero_for_one;
 
     let hops = pool_indices
         .iter()

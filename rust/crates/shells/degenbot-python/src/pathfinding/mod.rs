@@ -23,7 +23,9 @@ use crate::prelude::*;
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use degenbot_db::DegenbotDb;
 use degenbot_pathfinding::directions::resolve_directions as core_resolve_directions;
+use degenbot_pathfinding::directions::CurrencyBridge as CoreCurrencyBridge;
 use degenbot_pathfinding::directions::DirectionHop as CoreDirectionHop;
+use degenbot_pathfinding::directions::DirectionToken as CoreDirectionToken;
 use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind as CorePoolKind, SearchSpec};
 use degenbot_pools::RegisteredPoolFamily;
 use pyo3::exceptions::{PyKeyError, PyStopAsyncIteration, PyValueError};
@@ -155,35 +157,106 @@ pub fn pool_kind_labels() -> Vec<&'static str> {
 /// Resolve per-hop directions so the cycle closes — the typed-FFI seam over
 /// `degenbot_pathfinding::directions::resolve_directions`.
 ///
-/// Each hop is `(token0, token1, identity)`. Raises the Python
-/// `DirectionResolutionError` on a mid-path mismatch or a non-closing cycle
-/// (the fatal invariant); returns one `zero_for_one` per hop otherwise.
+/// Each hop is `(token0, token1, identity)`, where a token is the conceptual
+/// `NativeToken` (its Python companion or the FFI handle) or an ERC-20
+/// address string; a raw protocol sentinel is refused loudly (ADR-097 D1).
+/// Raises the Python `DirectionResolutionError` on a mid-path mismatch or a
+/// non-closing cycle (the fatal invariant). Returns `(zero_for_one, bridges)`:
+/// one `zero_for_one` per hop in hop order, and one bridge spelling
+/// (`"none"` / `"wrap"` / `"unwrap"`) per value-chain boundary in walk order
+/// (`len(hops) + 1` — the seed side first, the capture side last).
 ///
 /// # Errors
 ///
 /// Raises `degenbot.exceptions.arbitrage.DirectionResolutionError` when the
-/// core refuses the cycle.
+/// core refuses the cycle, `ValueError` on a raw sentinel spelling.
 #[pyfunction]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "PyO3 extracts owned argument values"
-)]
 pub fn resolve_directions(
     py: Python<'_>,
-    hops: Vec<(String, String, String)>,
-    input_token: &str,
+    hops: Vec<(Bound<'_, PyAny>, Bound<'_, PyAny>, String)>,
+    input_token: &Bound<'_, PyAny>,
     weth: &str,
-) -> PyResult<Vec<bool>> {
-    let core_hops: Vec<CoreDirectionHop<'_>> = hops
+) -> PyResult<(Vec<bool>, Vec<String>)> {
+    let mut entries: Vec<(bool, String, bool, String, String)> = Vec::with_capacity(hops.len());
+    for (token0, token1, identity) in hops {
+        let (native0, spelling0) = direction_token_spelling(&token0)?;
+        let (native1, spelling1) = direction_token_spelling(&token1)?;
+        entries.push((native0, spelling0, native1, spelling1, identity));
+    }
+    let (input_native, input_spelling) = direction_token_spelling(input_token)?;
+    let input = if input_native {
+        CoreDirectionToken::Native
+    } else {
+        CoreDirectionToken::Erc20(&input_spelling)
+    };
+    let core_hops: Vec<CoreDirectionHop<'_>> = entries
         .iter()
-        .map(|(token0, token1, identity)| CoreDirectionHop {
-            token0,
-            token1,
-            identity,
+        .map(
+            |(native0, spelling0, native1, spelling1, identity)| CoreDirectionHop {
+                token0: if *native0 {
+                    CoreDirectionToken::Native
+                } else {
+                    CoreDirectionToken::Erc20(spelling0)
+                },
+                token1: if *native1 {
+                    CoreDirectionToken::Native
+                } else {
+                    CoreDirectionToken::Erc20(spelling1)
+                },
+                identity,
+            },
+        )
+        .collect();
+    let resolved = core_resolve_directions(&core_hops, &input, weth)
+        .map_err(|error| direction_resolution_error(py, error.to_string()))?;
+    let bridges = resolved
+        .bridges
+        .iter()
+        .map(|bridge| match bridge {
+            CoreCurrencyBridge::None => "none".to_owned(),
+            CoreCurrencyBridge::Wrap => "wrap".to_owned(),
+            CoreCurrencyBridge::Unwrap => "unwrap".to_owned(),
         })
         .collect();
-    core_resolve_directions(&core_hops, input_token, weth)
-        .map_err(|error| direction_resolution_error(py, error.to_string()))
+    Ok((resolved.zero_for_one, bridges))
+}
+
+/// The conceptual spelling of one direction token: the `NativeToken` (its
+/// Python companion or the FFI handle), or an ERC-20 address string. A raw
+/// protocol sentinel is refused loudly rather than resolved to the native
+/// token (ADR-097 D1).
+fn direction_token_spelling(item: &Bound<'_, PyAny>) -> PyResult<(bool, String)> {
+    if item
+        .extract::<PyRef<'_, crate::bot::token::PyNativeToken>>()
+        .is_ok()
+    {
+        return Ok((true, String::new()));
+    }
+    if let Ok(handle) = item.getattr("_py_native") {
+        if handle
+            .extract::<PyRef<'_, crate::bot::token::PyNativeToken>>()
+            .is_ok()
+        {
+            return Ok((true, String::new()));
+        }
+    }
+    let text = item.extract::<String>().map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(
+            "resolve_directions: each token must be a NativeToken or an address string",
+        )
+    })?;
+    let address = text.parse::<alloy::primitives::Address>().map_err(|err| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "resolve_directions: `{text}` is not an address: {err}"
+        ))
+    })?;
+    if degenbot_db::is_protocol_native_sentinel(&address) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "resolve_directions: `{text}` is a protocol native-asset sentinel, not a token \
+contract address; name the native asset through NativeToken (Bot.get_native_token)"
+        )));
+    }
+    Ok((false, text))
 }
 
 /// Build a `degenbot.exceptions.arbitrage.DirectionResolutionError(message=..)`.

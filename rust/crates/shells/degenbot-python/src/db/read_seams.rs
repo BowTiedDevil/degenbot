@@ -53,6 +53,29 @@ pub(crate) fn db_resolve_token_ids(
     Ok(result.unbind())
 }
 
+/// Resolve the chain's PROTOCOL SENTINEL token rows to their database row
+/// ids.
+///
+/// Returns the ids in protocol order (V4 `address(0)`, Curve all-Es), one per
+/// row that exists — DISTINCT ids, never coalesced (ADR-097 D4). This is the
+/// boundary resolution of the conceptual `NativeToken`: each row IS the
+/// native asset in the protocol context that persists it, and a raw sentinel
+/// address is never a way to spell the conceptual identity. SQLite work runs
+/// with the GIL detached.
+#[pyfunction]
+pub(crate) fn db_resolve_native_token_ids(
+    py: Python<'_>,
+    database_path: &str,
+    chain_id: i64,
+) -> PyResult<Vec<u64>> {
+    let path = PathBuf::from(database_path);
+    py.detach(|| -> Result<_, PyErr> {
+        let (db, _state) = DegenbotDb::open(&path).map_err(|error| db_err_to_py(&error))?;
+        db.fetch_native_sentinel_token_ids(chain_id)
+            .map_err(|error| db_err_to_py(&error))
+    })
+}
+
 /// Return `(v2v3_count, v2v3_max_id, v4_count, v4_max_id)` for a chain.
 ///
 /// The managed-pool branch is scoped through its pool manager's chain. The

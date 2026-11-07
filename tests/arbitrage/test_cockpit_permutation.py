@@ -15,6 +15,8 @@ from degenbot.runner.build_paths import (
     _pool_types_from_filter,
     crawl_config,
 )
+from tests.helpers.erc20_factory import make_native_token
+from tests.helpers.seam import Bot as SeamBot
 
 
 class _Context:
@@ -24,9 +26,19 @@ class _Context:
 
     class construction_route:
         factories = ()
+
         generic = True
 
+    class bot:
+        """The native-token seam the configuration reads (ADR-097)."""
+
+        @staticmethod
+        def get_native_token():
+
+            return make_native_token(SeamBot(chain_id=1))
+
     def __init__(self) -> None:
+
         import pathlib  # ruff:ignore[import-outside-top-level] -- a fixed fixture path
 
         self.database_path = pathlib.Path("/nonexistent/permutation.sqlite")

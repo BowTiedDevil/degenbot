@@ -119,6 +119,7 @@ use degenbot_core::channel_lifecycle::{ChannelDecline, ChannelPhase, DeliveryCha
 use degenbot_core::op_warn;
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pathfinding::PoolKind;
+use degenbot_substrate::session_registry::TokenIdentity;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
@@ -442,10 +443,11 @@ pub struct CrawlConfig {
     pub pool_kinds: Vec<PoolKind>,
     /// The per-depth family permutation filter (`None` = unconstrained).
     pub pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
-    /// Path-start tokens (WETH and the native sentinel for V4).
-    pub start_tokens: Vec<Address>,
-    /// Path-end tokens.
-    pub end_tokens: Vec<Address>,
+    /// Path-start boundary tokens: the conceptual `NativeToken` and any
+    /// ERC-20 anchors (WETH), never a raw protocol sentinel (ADR-097 D1).
+    pub start_tokens: Vec<TokenIdentity>,
+    /// Path-end boundary tokens, spelled like `start_tokens`.
+    pub end_tokens: Vec<TokenIdentity>,
     /// The minimum hop count, before any per-depth filter floor.
     pub min_depth: usize,
     /// The maximum hop count (`None` = unbounded).

@@ -23,6 +23,7 @@
 //! pipeline rendered it, so the port's before/after comparison is a text diff.
 
 use super::{Arc, PyArbEngine, PyBot};
+use crate::bot::token::PyNativeToken;
 use crate::prelude::*;
 
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
@@ -39,6 +40,7 @@ use degenbot_bot::crawl::{
 use degenbot_core::retry::RetryPolicy;
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pathfinding::graph::PoolKind as CorePoolKind;
+use degenbot_substrate::session_registry::TokenIdentity;
 
 /// The crawl's process-lifetime session handle.
 ///
@@ -445,8 +447,8 @@ pub(crate) fn crawl_config_from_python(
         route: ConstructionRoute { factories, generic },
         pool_kinds,
         pool_type_per_depth,
-        start_tokens: config_addresses(&required("start_tokens")?, "start_tokens")?,
-        end_tokens: config_addresses(&required("end_tokens")?, "end_tokens")?,
+        start_tokens: config_boundary_tokens(&required("start_tokens")?, "start_tokens")?,
+        end_tokens: config_boundary_tokens(&required("end_tokens")?, "end_tokens")?,
         min_depth: required("min_depth")?.extract()?,
         max_depth: optional("max_depth")?
             .map(|value| value.extract::<usize>())
@@ -679,11 +681,52 @@ fn config_addresses(
 
 /// Parse one configured address, naming the field on failure.
 fn parse_config_address(field: &str, text: &str) -> PyResult<alloy::primitives::Address> {
-    text.parse::<alloy::primitives::Address>().map_err(|err| {
+    let address = text.parse::<alloy::primitives::Address>().map_err(|err| {
         PyValueError::new_err(format!(
             "begin_crawl: {field}: `{text}` is not an address: {err}"
         ))
-    })
+    })?;
+    // A raw protocol sentinel is one protocol's wire spelling, never a token
+    // contract: refused loudly rather than resolved to the native token
+    // (ADR-097 D1).
+    if degenbot_db::is_protocol_native_sentinel(&address) {
+        return Err(PyValueError::new_err(format!(
+            "begin_crawl: {field}: `{text}` is a protocol native-asset sentinel, not a \
+token contract address; name the native asset through NativeToken (Bot.get_native_token)"
+        )));
+    }
+    Ok(address)
+}
+
+/// Read one boundary-token entry: the conceptual `NativeToken` (its Python
+/// companion or the FFI handle) or an ERC-20 address spelling. A raw
+/// protocol sentinel in the address arm is refused by [`parse_config_address`]
+/// (ADR-097 D1).
+fn config_boundary_token(item: &Bound<'_, PyAny>, field: &str) -> PyResult<TokenIdentity> {
+    if item.extract::<PyRef<'_, PyNativeToken>>().is_ok() {
+        return Ok(TokenIdentity::native());
+    }
+    if let Ok(handle) = item.getattr("_py_native") {
+        if handle.extract::<PyRef<'_, PyNativeToken>>().is_ok() {
+            return Ok(TokenIdentity::native());
+        }
+    }
+    let text = item.extract::<String>().map_err(|_| {
+        PyValueError::new_err(format!(
+            "begin_crawl: {field}: each boundary token must be a NativeToken or an \
+address string"
+        ))
+    })?;
+    Ok(TokenIdentity::erc20(parse_config_address(field, &text)?))
+}
+
+/// Read a boundary token list: `NativeToken` spellings and ERC-20 addresses.
+fn config_boundary_tokens(value: &Bound<'_, PyAny>, field: &str) -> PyResult<Vec<TokenIdentity>> {
+    value
+        .extract::<Vec<Bound<'_, PyAny>>>()?
+        .iter()
+        .map(|item| config_boundary_token(item, field))
+        .collect()
 }
 
 /// Read the typed `PoolKind` values of one configured family list.

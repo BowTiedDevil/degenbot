@@ -51,7 +51,9 @@ use std::time::Instant;
 use alloy::primitives::Address;
 use degenbot_core::op_warn;
 use degenbot_db::snapshot::TickMapDb;
-use degenbot_pathfinding::directions::{resolve_directions, DirectionError, DirectionHop};
+use degenbot_pathfinding::directions::{
+    resolve_directions, DirectionError, DirectionHop, DirectionToken,
+};
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::solve::PoolHop;
 use degenbot_pools::{BuildFailure, RegisterRefusal, RegisteredPoolFamily};
@@ -112,6 +114,28 @@ pub enum DiscoveredHop {
         /// The on-chain pool id — the edge's `hash`, absent on a malformed edge.
         pool_hash: Option<[u8; 32]>,
     },
+}
+
+/// The direction resolver's conceptual spelling of one hop token. The
+/// protocol sentinels resolve to [`DirectionToken::Native`] only in their own
+/// protocol's context — the V4 `address(0)` currency under the V4 family, the
+/// Curve all-Es coin under the Curve family (ADR-097 D3). A raw sentinel
+/// under any other family is not the native token.
+fn hop_direction_token<'a>(
+    family: RegisteredPoolFamily,
+    address: &Address,
+    spelling: &'a str,
+) -> DirectionToken<'a> {
+    let native_context = match family {
+        RegisteredPoolFamily::V4 => address.is_zero(),
+        RegisteredPoolFamily::Curve => *address == degenbot_pools::NATIVE_SENTINEL_ALL_ES,
+        _ => false,
+    };
+    if native_context {
+        DirectionToken::Native
+    } else {
+        DirectionToken::Erc20(spelling)
+    }
 }
 
 impl DiscoveredHop {
@@ -622,17 +646,24 @@ impl RegistrationAdmission {
                         )
                     })
                     .collect();
-                let hops: Vec<DirectionHop<'_>> = spellings
+                // The conceptual spelling of each hop token: the protocol
+                // sentinels resolve to the conceptual native token only in
+                // their own protocol's context (ADR-097 D3), so raw zero
+                // never crosses the resolver as a generic token spelling.
+                let hops: Vec<DirectionHop<'_>> = run
+                    .facts
                     .iter()
-                    .map(|(token0, token1, identity)| DirectionHop {
-                        token0,
-                        token1,
+                    .zip(spellings.iter())
+                    .map(|(facts, (token0, token1, identity))| DirectionHop {
+                        token0: hop_direction_token(facts.family, &facts.token0, token0),
+                        token1: hop_direction_token(facts.family, &facts.token1, token1),
                         identity,
                     })
                     .collect();
                 let profit = self.settings.profit_token.to_string();
-                match resolve_directions(&hops, &profit, &profit) {
-                    Ok(directions) => Ok(Some(directions)),
+                let input = DirectionToken::Erc20(&profit);
+                match resolve_directions(&hops, &input, &profit) {
+                    Ok(resolved) => Ok(Some(resolved.zero_for_one)),
                     Err(err) => Err(CrawlAbort::Direction(err)),
                 }
             }

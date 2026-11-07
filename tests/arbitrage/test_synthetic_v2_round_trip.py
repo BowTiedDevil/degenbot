@@ -175,12 +175,15 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
     path_ids: list[int] = []
     for cycle in cycles:
         pools = [pools_by_address[step.address] for step in cycle]
-        zfo_list = resolve_directions(
+        zfo_list, bridges = resolve_directions(
             [(pool.token0.address, pool.token1.address, str(pool)) for pool in pools],
             WETH_ADDR,
             WETH_ADDR,
         )
         assert zfo_list is not None, "cycle does not close on WETH"
+        assert all(bridge == "none" for bridge in bridges), (
+            "a WETH/WETH V2 cycle crosses no representation gap"
+        )
         path_id, _created = registry.register_path(list(zip(pools, zfo_list, strict=True)))
         path_ids.append(path_id)
 

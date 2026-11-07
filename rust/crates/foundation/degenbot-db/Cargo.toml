@@ -73,6 +73,10 @@ sql-ledger = ["dep:serde_json", "rusqlite/trace", "writer"]
 
 [dev-dependencies]
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
+# Test-only: the drift gate pinning this crate's copy of the Curve native
+# sentinel spelling against `degenbot_pools::NATIVE_SENTINEL_ALL_ES` (the
+# authority). Not in the library graph.
+degenbot-pools.workspace = true
 serde_json = { version = "^1.0" }
 tempfile = { version = "^3.27" }
 

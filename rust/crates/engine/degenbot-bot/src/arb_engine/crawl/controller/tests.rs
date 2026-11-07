@@ -136,6 +136,10 @@ impl DiscoverySource for FixtureSource {
             .collect())
     }
 
+    fn native_sentinel_ids(&self) -> Result<Vec<u64>, CrawlDiscoveryError> {
+        Ok(Vec::new())
+    }
+
     fn candidate_tokens(&self, _kinds: &[PoolKind]) -> Result<HashSet<u64>, CrawlDiscoveryError> {
         Ok(self.candidates.clone())
     }
@@ -438,8 +442,12 @@ fn config(window: usize, batch: usize) -> CrawlConfig {
         route: ConstructionRoute::generic_only(),
         pool_kinds: vec![PoolKind::V4],
         pool_type_per_depth: None,
-        start_tokens: vec![WETH],
-        end_tokens: vec![WETH],
+        start_tokens: vec![degenbot_substrate::session_registry::TokenIdentity::erc20(
+            WETH,
+        )],
+        end_tokens: vec![degenbot_substrate::session_registry::TokenIdentity::erc20(
+            WETH,
+        )],
         min_depth: 2,
         max_depth: Some(2),
         discovery_batch_size: batch,

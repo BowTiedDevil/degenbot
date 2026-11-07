@@ -39,7 +39,6 @@ from degenbot.runner.identity import (
     UNISWAP_V3_MAINNET_FACTORY,
     WETH_ADDRESS,
 )
-from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS
 
 if TYPE_CHECKING:
     import pathlib
@@ -301,11 +300,13 @@ def crawl_config(  # ruff: ignore[too-many-arguments] - the resolved values of o
         "pool_type_per_depth": _depth_filter_value(pool_type_per_depth),
         "start_tokens": [
             WETH_ADDRESS,
-            NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
+            # The conceptual native asset (ADR-097): V4 Ether-paired pools
+            # spell it with their private zero sentinel, never at this input.
+            context.bot.get_native_token(),
         ],
         "end_tokens": [
             WETH_ADDRESS,
-            NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
+            context.bot.get_native_token(),
         ],
         "min_depth": MIN_DEPTH,
         "max_depth": MAX_DEPTH,

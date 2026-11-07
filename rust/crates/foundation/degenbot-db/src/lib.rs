@@ -108,7 +108,7 @@ pub use ops::{
     backup_database, compact_database, convert_alembic_to_rust_owned, create_new_database,
     inspect_schema_state, upgrade_database, UpgradeOutcome,
 };
-pub use pathfinding::{PathEdge, PathGraphData};
+pub use pathfinding::{is_protocol_native_sentinel, PathEdge, PathGraphData};
 pub use read::{ExchangeFamily, GraphEdition};
 pub use rows::{
     LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow, ManagedLiquidityPoolRow,

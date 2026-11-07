@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.pathfinding import (
     PathfindingRequest,
@@ -42,6 +41,8 @@ from degenbot.types.chain import ChainId
 from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.helpers import verdict_probe as probe
 from tests.helpers.database import seed_v2_topology
+from tests.helpers.erc20_factory import make_native_token
+from tests.helpers.seam import Bot as SeamBot
 
 if TYPE_CHECKING:
     import pathlib
@@ -492,7 +493,7 @@ async def test_missing_start_token_raises_at_first_next(db: pathlib.Path) -> Non
         request=PathfindingRequest(
             database_path=db,
             chain_id=CHAIN,
-            start_tokens=[ZERO_ADDRESS],
+            start_tokens=["0x3333333333333333333333333333333333333333"],
             end_tokens=[WETH_ADDR],
             max_depth=2,
             pool_types=[PoolKind.V2],
@@ -525,6 +526,13 @@ class _Context:
 
     chain_id = 1
     construction_route = None
+
+    class bot:
+        """The native-token seam the configuration reads (ADR-097)."""
+
+        @staticmethod
+        def get_native_token():
+            return make_native_token(SeamBot(chain_id=1))
 
     def __init__(self, database_path: pathlib.Path) -> None:
         self.database_path = database_path

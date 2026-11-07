@@ -38,6 +38,8 @@ from degenbot.runner.config import (
     RpcCascadeOverrides,
 )
 from tests.helpers import verdict_probe as probe
+from tests.helpers.erc20_factory import make_native_token
+from tests.helpers.seam import Bot as SeamBot
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -137,6 +139,13 @@ class _Context:
     class construction_route:
         factories = ()
         generic = True
+
+    class bot:
+        """The native-token seam the configuration reads (ADR-097)."""
+
+        @staticmethod
+        def get_native_token():
+            return make_native_token(SeamBot(chain_id=1))
 
     def __init__(self, database_path: pathlib.Path) -> None:
         self.database_path = database_path

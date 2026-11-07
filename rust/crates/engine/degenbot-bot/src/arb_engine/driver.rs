@@ -1661,6 +1661,9 @@ mod tests {
                 (CRAWL_USDC, CRAWL_TOKEN_B),
             ]))
         }
+        fn native_sentinel_ids(&self) -> Result<Vec<u64>, CrawlDiscoveryError> {
+            Ok(Vec::new())
+        }
         fn candidate_tokens(
             &self,
             _kinds: &[PoolKind],
@@ -1691,8 +1694,12 @@ mod tests {
             route: ConstructionRoute::generic_only(),
             pool_kinds: vec![PoolKind::V4],
             pool_type_per_depth: None,
-            start_tokens: vec![CRAWL_WETH],
-            end_tokens: vec![CRAWL_WETH],
+            start_tokens: vec![degenbot_substrate::session_registry::TokenIdentity::erc20(
+                CRAWL_WETH,
+            )],
+            end_tokens: vec![degenbot_substrate::session_registry::TokenIdentity::erc20(
+                CRAWL_WETH,
+            )],
             min_depth: 2,
             max_depth: Some(2),
             discovery_batch_size: 1,

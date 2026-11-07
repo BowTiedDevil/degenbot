@@ -46,10 +46,11 @@ use std::path::Path;
 
 use alloy::primitives::Address;
 use degenbot_core::hex_utils::decode_hex;
-use degenbot_db::{DbError, DegenbotDb, PathGraphData};
+use degenbot_db::{is_protocol_native_sentinel, DbError, DegenbotDb, PathGraphData};
 use degenbot_pathfinding::{
     prepare_traversal_plan, OwnedPathFinder, PathGraph, PoolKind, SearchSpec, TraversalSpec,
 };
+use degenbot_substrate::session_registry::TokenIdentity;
 use hashbrown::{HashMap, HashSet};
 
 use crate::arb_engine::crawl::admission::DiscoveredHop;
@@ -99,6 +100,17 @@ pub trait DiscoverySource: Send + Sync {
         &self,
         addresses: &[Address],
     ) -> Result<HashMap<Address, u64>, CrawlDiscoveryError>;
+
+    /// The token ids of the chain's PROTOCOL SENTINEL rows — the rows one
+    /// protocol spells the conceptual native asset with (V4 `address(0)`,
+    /// Curve all-Es). The ids are distinct database evidence and are never
+    /// coalesced (ADR-097 D4); a [`TokenIdentity::Native`] boundary resolves
+    /// to all of them.
+    ///
+    /// # Errors
+    ///
+    /// [`CrawlDiscoveryError::Db`] when the read fails.
+    fn native_sentinel_ids(&self) -> Result<Vec<u64>, CrawlDiscoveryError>;
 
     /// The tokens appearing in at least [`CANDIDATE_TOKEN_DEGREE`] pools of the
     /// requested families.
@@ -153,6 +165,10 @@ impl DiscoverySource for DbDiscoverySource {
             .fetch_token_ids_by_address(self.chain_id, addresses)?)
     }
 
+    fn native_sentinel_ids(&self) -> Result<Vec<u64>, CrawlDiscoveryError> {
+        Ok(self.db.fetch_native_sentinel_token_ids(self.chain_id)?)
+    }
+
     fn candidate_tokens(&self, kinds: &[PoolKind]) -> Result<HashSet<u64>, CrawlDiscoveryError> {
         Ok(self
             .db
@@ -187,6 +203,33 @@ pub enum CrawlDiscoveryError {
         /// The chain the resolution ran on.
         chain_id: i64,
     },
+    /// A raw protocol native-asset sentinel (V4 zero, Curve all-Es) arrived
+    /// as a generic ERC-20 boundary — refused loudly rather than resolved to
+    /// the native token (ADR-097 D1): a raw sentinel is one protocol's wire
+    /// spelling, never a way to spell the conceptual identity.
+    #[error(
+        "the {boundary} token {address} is a protocol native-asset sentinel, not a token \
+contract address; name the native asset through the conceptual native token"
+    )]
+    RawNativeSentinel {
+        /// Which boundary set the token came from (`Start` / `End`).
+        boundary: &'static str,
+        /// The raw sentinel address the caller supplied.
+        address: Address,
+        /// The chain the resolution ran on.
+        chain_id: i64,
+    },
+    /// The conceptual native token was a boundary, but the chain has no
+    /// protocol sentinel row for it to resolve to.
+    #[error(
+        "the {boundary} native token has no protocol sentinel row in the chain {chain_id} token table"
+    )]
+    MissingNativeSentinel {
+        /// Which boundary set the token came from (`Start` / `End`).
+        boundary: &'static str,
+        /// The chain the resolution ran on.
+        chain_id: i64,
+    },
     /// The graph yielded an edge whose pool id the same read carries no lookup
     /// for. A graph/lookup pair built in one read cannot disagree, so this is a
     /// read that changed underneath the pass (a rewrite between the two
@@ -217,10 +260,11 @@ pub struct DiscoveryConfig {
     pub pool_kinds: Vec<PoolKind>,
     /// Optional per-depth family permutation filter.
     pub pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
-    /// Path-start tokens (WETH and the native sentinel for V4).
-    pub start_tokens: Vec<Address>,
-    /// Path-end tokens.
-    pub end_tokens: Vec<Address>,
+    /// Path-start boundary tokens: the conceptual `NativeToken` and any
+    /// ERC-20 anchors (WETH), never a raw protocol sentinel (ADR-097 D1).
+    pub start_tokens: Vec<TokenIdentity>,
+    /// Path-end boundary tokens, spelled like `start_tokens`.
+    pub end_tokens: Vec<TokenIdentity>,
     /// The minimum hop count, before any per-depth filter floor.
     pub min_depth: usize,
     /// The maximum hop count (`None` = unbounded).
@@ -426,31 +470,63 @@ impl DiscoverySweep {
 
 /// Resolve one boundary token set, preserving the configured order and naming
 /// the first token the database does not know.
+///
+/// The conceptual `TokenIdentity::Native` boundary expands to EVERY protocol
+/// sentinel row (V4 `address(0)`, Curve all-Es) — distinct ids, never
+/// coalesced (ADR-097 D4) — so a path may traverse from one protocol's
+/// sentinel row to another's under the one boundary identity. A raw sentinel
+/// address in the ERC-20 arm is refused loudly
+/// ([`CrawlDiscoveryError::RawNativeSentinel`]) instead of being resolved to
+/// the native token.
 fn resolve_boundary(
     source: &dyn DiscoverySource,
-    tokens: &[Address],
+    tokens: &[TokenIdentity],
     boundary: &'static str,
     chain_id: i64,
 ) -> Result<Vec<u64>, CrawlDiscoveryError> {
-    // First-seen order, deduplicated: the plan's own dedup preserves order, so
-    // the configured order is the sweep order.
-    let mut unique: Vec<Address> = Vec::with_capacity(tokens.len());
+    let mut addresses: Vec<Address> = Vec::with_capacity(tokens.len());
     for token in tokens {
-        if !unique.contains(token) {
-            unique.push(*token);
+        if let TokenIdentity::Erc20(address) = token {
+            if is_protocol_native_sentinel(address) {
+                return Err(CrawlDiscoveryError::RawNativeSentinel {
+                    boundary,
+                    address: *address,
+                    chain_id,
+                });
+            }
+            if !addresses.contains(address) {
+                addresses.push(*address);
+            }
         }
     }
-    let resolved = source.resolve_token_ids(&unique)?;
-    let mut ids: Vec<u64> = Vec::with_capacity(unique.len());
-    for token in unique {
-        match resolved.get(&token) {
-            Some(id) => ids.push(*id),
-            None => {
-                return Err(CrawlDiscoveryError::UnknownBoundaryToken {
-                    boundary,
-                    address: token,
-                    chain_id,
-                })
+    let resolved = source.resolve_token_ids(&addresses)?;
+    // First-seen order, deduplicated by resolved id: the plan's own dedup
+    // preserves order, so the configured order is the sweep order.
+    let mut ids: Vec<u64> = Vec::with_capacity(tokens.len());
+    let mut seen: HashSet<u64> = HashSet::new();
+    for token in tokens {
+        let expanded: Vec<u64> = match token {
+            TokenIdentity::Native => {
+                let sentinel_ids = source.native_sentinel_ids()?;
+                if sentinel_ids.is_empty() {
+                    return Err(CrawlDiscoveryError::MissingNativeSentinel { boundary, chain_id });
+                }
+                sentinel_ids
+            }
+            TokenIdentity::Erc20(address) => match resolved.get(address) {
+                Some(id) => vec![*id],
+                None => {
+                    return Err(CrawlDiscoveryError::UnknownBoundaryToken {
+                        boundary,
+                        address: *address,
+                        chain_id,
+                    })
+                }
+            },
+        };
+        for id in expanded {
+            if seen.insert(id) {
+                ids.push(id);
             }
         }
     }
@@ -469,6 +545,7 @@ mod tests {
         data: PathGraphData,
         candidates: HashSet<u64>,
         tokens: HashMap<Address, u64>,
+        sentinels: Vec<u64>,
     }
 
     impl DiscoverySource for Fixture {
@@ -484,6 +561,10 @@ mod tests {
                 .iter()
                 .filter_map(|address| self.tokens.get(address).map(|id| (*address, *id)))
                 .collect())
+        }
+
+        fn native_sentinel_ids(&self) -> Result<Vec<u64>, CrawlDiscoveryError> {
+            Ok(self.sentinels.clone())
         }
 
         fn candidate_tokens(
@@ -509,10 +590,26 @@ mod tests {
         Address::from([byte; 20])
     }
 
+    fn ident(address: Address) -> TokenIdentity {
+        TokenIdentity::erc20(address)
+    }
+
     fn config(start: Vec<Address>, end: Vec<Address>) -> DiscoveryConfig {
+        typed_config(
+            start.into_iter().map(ident).collect(),
+            end.into_iter().map(ident).collect(),
+            vec![PoolKind::V4],
+        )
+    }
+
+    fn typed_config(
+        start: Vec<TokenIdentity>,
+        end: Vec<TokenIdentity>,
+        pool_kinds: Vec<PoolKind>,
+    ) -> DiscoveryConfig {
         DiscoveryConfig {
             chain_id: 1,
-            pool_kinds: vec![PoolKind::V4],
+            pool_kinds,
             pool_type_per_depth: None,
             start_tokens: start,
             end_tokens: end,
@@ -550,6 +647,7 @@ mod tests {
             data,
             candidates: HashSet::from_iter(candidates),
             tokens: tokens(),
+            sentinels: Vec::new(),
         };
         DiscoverySweep::prepare(&source, config).unwrap()
     }
@@ -599,6 +697,7 @@ mod tests {
             data: two_pool_graph(),
             candidates: HashSet::from_iter([TOKEN_A, TOKEN_B]),
             tokens: tokens(),
+            sentinels: Vec::new(),
         };
         let unknown = addr(0xEF);
         let refused = DiscoverySweep::prepare(&source, &config(vec![unknown], vec![unknown]));
@@ -752,5 +851,260 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 2);
+    }
+
+    // ── the public native boundary (ADR-097) ───────────────────────────────
+
+    /// The V4 protocol sentinel row's token id (the `address(0)` currency row).
+    const S_V4_ROW: u64 = 40;
+    /// The Curve protocol sentinel row's token id (the all-Es coin row) —
+    /// DISTINCT database evidence, never coalesced with the V4 row.
+    const S_CURVE_ROW: u64 = 41;
+    const TOKEN_WETH: u64 = 4;
+
+    fn weth_addr() -> Address {
+        addr(0xC0)
+    }
+
+    fn v4_native_edge(data: &mut PathGraphData) {
+        let hash = format!("0x{}", alloy::hex::encode([0x1du8; 32]));
+        data.edges
+            .push((S_V4_ROW, TOKEN_A, V4_OFFSET + 1, PoolKind::V4));
+        data.v4_lookups.insert(V4_OFFSET + 1, (addr(0xBB), hash));
+    }
+
+    /// The V4/reserve-pair topology: a V4 `native/USDC` pool beside a
+    /// reserve-pair `USDC/WETH`.
+    fn reserve_pair_fixture() -> Fixture {
+        let mut data = PathGraphData::default();
+        v4_native_edge(&mut data);
+        data.edges.push((TOKEN_A, TOKEN_WETH, 11, PoolKind::V2));
+        data.v2v3_addresses.insert(11, addr(0xE1));
+        Fixture {
+            data,
+            candidates: HashSet::from_iter([S_V4_ROW, TOKEN_A, TOKEN_WETH]),
+            tokens: HashMap::from_iter([(addr(0xA1), TOKEN_A), (weth_addr(), TOKEN_WETH)]),
+            sentinels: vec![S_V4_ROW],
+        }
+    }
+
+    /// The V4/Curve topology: a V4 `native/USDC` pool beside a pair whose
+    /// native leg is the Curve-context sentinel ROW — so the path connects
+    /// the two DISTINCT sentinel rows under the one conceptual native token.
+    fn curve_pair_fixture() -> Fixture {
+        let mut data = PathGraphData::default();
+        v4_native_edge(&mut data);
+        data.edges.push((TOKEN_A, S_CURVE_ROW, 12, PoolKind::V2));
+        data.v2v3_addresses.insert(12, addr(0xE2));
+        Fixture {
+            data,
+            candidates: HashSet::from_iter([S_V4_ROW, TOKEN_A, S_CURVE_ROW]),
+            tokens: HashMap::from_iter([(addr(0xA1), TOKEN_A)]),
+            sentinels: vec![S_V4_ROW, S_CURVE_ROW],
+        }
+    }
+
+    #[test]
+    fn a_native_boundary_walks_v4_led_and_reserve_pair_paths_in_both_orientations() {
+        let source = reserve_pair_fixture();
+        let kinds = vec![PoolKind::V2, PoolKind::V4];
+
+        // V4 -> non-V4, native start: `native -> USDC -> WETH`.
+        let config = typed_config(
+            vec![TokenIdentity::native()],
+            vec![ident(weth_addr())],
+            kinds.clone(),
+        );
+        let mut sweep = DiscoverySweep::prepare(&source, &config).unwrap();
+        let path = sweep
+            .next_path()
+            .unwrap()
+            .expect("the V4-led mixed path must be found");
+        assert_eq!(path.hops.len(), 2);
+        assert!(
+            matches!(&path.hops[0], DiscoveredHop::V4 { .. }),
+            "hop ordering: the V4 native pool leads"
+        );
+        assert!(
+            matches!(&path.hops[1], DiscoveredHop::V2 { address } if *address == addr(0xE1)),
+            "hop ordering: the reserve pair tails"
+        );
+        // V4 pool identity is the edge's own manager + parsed pool hash.
+        let DiscoveredHop::V4 {
+            pool_manager,
+            pool_hash,
+        } = &path.hops[0]
+        else {
+            panic!("the lead hop is the V4 pool");
+        };
+        assert_eq!(*pool_manager, addr(0xBB));
+        assert_eq!(*pool_hash, Some([0x1d; 32]));
+        assert!(
+            sweep.next_path().unwrap().is_none(),
+            "one walk per boundary pair"
+        );
+
+        // non-V4 -> V4, native end: `WETH -> USDC -> native`.
+        let config = typed_config(
+            vec![ident(weth_addr())],
+            vec![TokenIdentity::native()],
+            kinds,
+        );
+        let mut sweep = DiscoverySweep::prepare(&source, &config).unwrap();
+        let path = sweep
+            .next_path()
+            .unwrap()
+            .expect("the V4-tailed mixed path must be found");
+        assert_eq!(path.hops.len(), 2);
+        assert!(
+            matches!(&path.hops[0], DiscoveredHop::V2 { address } if *address == addr(0xE1)),
+            "hop ordering: the reserve pair leads"
+        );
+        assert!(
+            matches!(&path.hops[1], DiscoveredHop::V4 { .. }),
+            "hop ordering: the V4 native pool tails"
+        );
+        assert!(sweep.next_path().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_native_boundary_walks_across_the_distinct_v4_and_curve_sentinel_rows() {
+        let source = curve_pair_fixture();
+        let config = typed_config(
+            vec![TokenIdentity::native()],
+            vec![TokenIdentity::native()],
+            vec![PoolKind::V2, PoolKind::V4],
+        );
+        let mut sweep = DiscoverySweep::prepare(&source, &config).unwrap();
+
+        // Both orientations of the walk `S_V4 -> USDC -> S_CURVE`: the path
+        // closes on the conceptual native token even though the sentinel
+        // rows are distinct ids.
+        let mut walks = Vec::new();
+        while let Some(path) = sweep.next_path().unwrap() {
+            walks.push(
+                path.hops
+                    .iter()
+                    .map(|hop| matches!(hop, DiscoveredHop::V4 { .. }))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(
+            walks,
+            vec![vec![true, false], vec![false, true]],
+            "V4 -> non-V4 and non-V4 -> V4 across the distinct sentinel rows"
+        );
+    }
+
+    #[test]
+    fn native_boundary_resolution_keeps_the_sentinel_rows_distinct() {
+        let source = curve_pair_fixture();
+        let ids = resolve_boundary(&source, &[TokenIdentity::native()], "Start", 1).unwrap();
+        assert_eq!(
+            ids,
+            vec![S_V4_ROW, S_CURVE_ROW],
+            "every protocol sentinel row, distinct ids in protocol order"
+        );
+    }
+
+    #[test]
+    fn a_raw_protocol_sentinel_boundary_is_refused_loudly() {
+        let source = reserve_pair_fixture();
+        for sentinel in [Address::ZERO, Address::repeat_byte(0xEE)] {
+            let config = typed_config(
+                vec![ident(sentinel)],
+                vec![TokenIdentity::native()],
+                vec![PoolKind::V2, PoolKind::V4],
+            );
+            match DiscoverySweep::prepare(&source, &config) {
+                Err(CrawlDiscoveryError::RawNativeSentinel {
+                    boundary,
+                    address,
+                    chain_id,
+                }) => {
+                    assert_eq!(boundary, "Start");
+                    assert_eq!(address, sentinel);
+                    assert_eq!(chain_id, 1);
+                }
+                Err(other) => panic!("expected the raw-sentinel refusal, got {other:?}"),
+                Ok(_) => panic!("a raw sentinel must refuse, never resolve to the native token"),
+            }
+        }
+    }
+
+    #[test]
+    fn direction_bridges_classify_exactly_like_the_executor_currency_bridge() {
+        use degenbot_executor::composers::CurrencyBridge as ExecutorBridge;
+        use degenbot_pathfinding::directions::CurrencyBridge as DirectionBridge;
+        use degenbot_pathfinding::directions::DirectionToken;
+
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let weth_addr: Address = weth.parse().unwrap();
+        let native_addr = Address::ZERO;
+
+        // The mixed-path matrix's boundaries — the seed-side and capture-side
+        // representation gaps of V4 -> non-V4 and non-V4 -> V4 walks, plus the
+        // homogeneous pairs — classify IDENTICALLY under the direction
+        // resolver's conceptual vocabulary and the executor's raw-currency
+        // vocabulary: `CurrencyBridge::Wrap`/`Unwrap` exactly where a mixed
+        // path requires a native/WETH conversion (ADR-097 D5).
+        for (upstream, downstream) in [
+            (DirectionToken::Erc20(weth), DirectionToken::Native),
+            (DirectionToken::Native, DirectionToken::Erc20(weth)),
+            (DirectionToken::Native, DirectionToken::Native),
+            (DirectionToken::Erc20(weth), DirectionToken::Erc20(weth)),
+        ] {
+            let direction = DirectionBridge::between(&upstream, &downstream, weth);
+            let up_addr = if matches!(upstream, DirectionToken::Native) {
+                native_addr
+            } else {
+                weth_addr
+            };
+            let down_addr = if matches!(downstream, DirectionToken::Native) {
+                native_addr
+            } else {
+                weth_addr
+            };
+            let executor = ExecutorBridge::at_boundary(up_addr, down_addr);
+            match (direction, executor) {
+                (DirectionBridge::None, ExecutorBridge::None)
+                | (DirectionBridge::Wrap, ExecutorBridge::Wrap)
+                | (DirectionBridge::Unwrap, ExecutorBridge::Unwrap) => {}
+                other => panic!(
+                    "bridge vocabularies disagree at {upstream:?} -> {downstream:?}: {other:?}"
+                ),
+            }
+        }
+
+        // The required conversions, named: WETH -> native unwraps, native ->
+        // WETH wraps. WETH stays distinct from the native asset; the
+        // conversion is explicit, never a registry equivalence.
+        assert_eq!(
+            DirectionBridge::between(&DirectionToken::Erc20(weth), &DirectionToken::Native, weth),
+            DirectionBridge::Unwrap
+        );
+        assert_eq!(
+            DirectionBridge::between(&DirectionToken::Native, &DirectionToken::Erc20(weth), weth),
+            DirectionBridge::Wrap
+        );
+    }
+
+    #[test]
+    fn a_native_boundary_without_sentinel_rows_is_refused() {
+        let mut source = reserve_pair_fixture();
+        source.sentinels.clear();
+        let config = typed_config(
+            vec![TokenIdentity::native()],
+            vec![TokenIdentity::native()],
+            vec![PoolKind::V2, PoolKind::V4],
+        );
+        match DiscoverySweep::prepare(&source, &config) {
+            Err(CrawlDiscoveryError::MissingNativeSentinel { boundary, chain_id }) => {
+                assert_eq!(boundary, "Start");
+                assert_eq!(chain_id, 1);
+            }
+            Err(other) => panic!("expected the missing-sentinel refusal, got {other:?}"),
+            Ok(_) => panic!("a native boundary with no sentinel row must refuse"),
+        }
     }
 }

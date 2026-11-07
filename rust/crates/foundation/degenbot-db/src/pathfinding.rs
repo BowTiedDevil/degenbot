@@ -36,6 +36,35 @@ use hashbrown::{HashMap, HashSet};
 use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
 
+/// The V4 protocol's native-currency wire spelling (`address(0)`): one of the
+/// protocol-private sentinels a sentinel DB row can carry (ADR-097 D3).
+///
+/// Recognized HERE only so a boundary that names the conceptual `NativeToken`
+/// can resolve to the sentinel ROWS the database persists; it is never a
+/// token-contract spelling, and a generic entry point that receives it raw
+/// refuses rather than resolving it.
+const V4_NATIVE_SENTINEL: Address = Address::ZERO;
+
+/// The Curve protocol's native-coin wire spelling (the all-Es address), the
+/// second protocol-private sentinel. Its translation authority is
+/// `degenbot_pools::NATIVE_SENTINEL_ALL_ES`; this copy exists because the
+/// persistence substrate cannot see that crate's door, and the in-crate test
+/// `curve_sentinel_spelling_matches_the_pools_authority` is the drift gate
+/// that keeps the two spellings identical.
+const CURVE_NATIVE_SENTINEL: Address = Address::repeat_byte(0xEE);
+
+/// Whether `address` is one of the protocol-private spellings of the chain's
+/// conceptual native asset (the V4 `address(0)` currency, the Curve all-Es
+/// coin).
+///
+/// A raw sentinel is a protocol's WIRE view, never a token-contract address:
+/// a generic entry point that receives one must refuse it loudly instead of
+/// resolving it to the native token (ADR-097 D1).
+#[must_use]
+pub fn is_protocol_native_sentinel(address: &Address) -> bool {
+    *address == V4_NATIVE_SENTINEL || *address == CURVE_NATIVE_SENTINEL
+}
+
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
 use crate::rows::decode::decode_address;
@@ -373,6 +402,45 @@ impl DegenbotDb {
         }
         Ok(out)
     }
+
+    /// Resolve the chain's PROTOCOL SENTINEL token rows: the `erc20_tokens`
+    /// rows that spell the conceptual native asset in one protocol's wire
+    /// view (the V4 `address(0)` currency, the Curve all-Es coin).
+    ///
+    /// A boundary that names the conceptual `NativeToken` resolves to these
+    /// rows IN THEIR PROTOCOL CONTEXT — each row IS the native asset for the
+    /// protocol that persists it. The ids are returned VERBATIM, in protocol
+    /// order (V4, Curve), one per row that exists: the database never
+    /// coalesces the rows (ADR-097 D4), so a path may traverse from one
+    /// protocol's sentinel row to another's and session identity resolves
+    /// both to the one `NativeToken` without the ids ever merging.
+    ///
+    /// A row that does not exist (a chain with no Curve native coin recorded,
+    /// say) is simply absent — unlike [`Self::fetch_token_ids_by_address`],
+    /// absence here is not an error, because the conceptual token has no
+    /// single row it must be found at.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`]
+    /// on a malformed address column.
+    pub fn fetch_native_sentinel_token_ids(&self, chain_id: i64) -> Result<Vec<u64>, DbError> {
+        let spellings = [V4_NATIVE_SENTINEL, CURVE_NATIVE_SENTINEL];
+        let conn = self.lock();
+        let mut out = Vec::with_capacity(spellings.len());
+        for spelling in spellings {
+            let mut stmt =
+                conn.prepare("SELECT id FROM erc20_tokens WHERE chain = ?1 AND address = ?2")?;
+            let mut rows = stmt.query(rusqlite::params![chain_id, spelling.to_checksum(None)])?;
+            while let Some(row) = rows.next()? {
+                let id: i64 = row.get(0)?;
+                let token_id = u64::try_from(id)
+                    .map_err(|e| DbError::Decode(format!("token id {id} out of u64 range: {e}")))?;
+                out.push(token_id);
+            }
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -427,5 +495,112 @@ mod tests {
     fn fetch_token_ids_by_address_empty_input_returns_empty_without_reading() {
         let db = write_db();
         assert!(db.fetch_token_ids_by_address(1, &[]).unwrap().is_empty());
+    }
+
+    // ── the protocol sentinel rows (ADR-097 D4) ───────────────────────────
+
+    fn insert_token(id: i64, chain: i64, address: Address) -> DegenbotDb {
+        let db = write_db();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, chain, address.to_checksum(None)],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    fn insert_tokens(rows: &[(i64, i64, Address)]) -> DegenbotDb {
+        let db = write_db();
+        {
+            let conn = db.lock();
+            for (id, chain, address) in rows {
+                conn.execute(
+                    "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![id, chain, address.to_checksum(None)],
+                )
+                .unwrap();
+            }
+        }
+        db
+    }
+
+    #[test]
+    fn native_sentinel_rows_resolve_to_distinct_ids_in_protocol_order() {
+        // Both protocol sentinels exist as separate rows: the V4 zero row and
+        // the Curve all-Es row are DISTINCT database evidence (ADR-097 D4).
+        let weth = Address::new([0xC0; 20]);
+        let db = insert_tokens(&[
+            (7, 1, CURVE_NATIVE_SENTINEL),
+            (3, 1, V4_NATIVE_SENTINEL),
+            (9, 1, weth),
+        ]);
+
+        let ids = db.fetch_native_sentinel_token_ids(1).unwrap();
+
+        // Protocol order (V4, Curve); never coalesced into one id.
+        assert_eq!(ids, vec![3, 7]);
+    }
+
+    #[test]
+    fn one_present_sentinel_row_yields_only_its_own_id() {
+        // A chain that recorded only the V4 spelling has one sentinel row;
+        // the missing Curve row is simply absent, never an error and never a
+        // duplicate of the present one.
+        let db = insert_token(4, 1, V4_NATIVE_SENTINEL);
+        assert_eq!(db.fetch_native_sentinel_token_ids(1).unwrap(), vec![4]);
+    }
+
+    #[test]
+    fn no_sentinel_rows_resolves_to_no_ids() {
+        let db = insert_token(4, 1, Address::new([0xC0; 20]));
+        assert!(db.fetch_native_sentinel_token_ids(1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn sentinel_resolution_is_chain_scoped() {
+        let db = insert_tokens(&[
+            (3, 1, V4_NATIVE_SENTINEL),
+            (8, 10, V4_NATIVE_SENTINEL),
+            (9, 10, CURVE_NATIVE_SENTINEL),
+        ]);
+        assert_eq!(db.fetch_native_sentinel_token_ids(1).unwrap(), vec![3]);
+        assert_eq!(db.fetch_native_sentinel_token_ids(10).unwrap(), vec![8, 9]);
+    }
+
+    #[test]
+    fn sentinel_rows_keep_their_distinct_ids_in_the_address_lookup() {
+        // The generic address lookup must not coalesce them either: a replay
+        // reads each protocol's own record under its own id.
+        let db = insert_tokens(&[(3, 1, V4_NATIVE_SENTINEL), (8, 1, CURVE_NATIVE_SENTINEL)]);
+        let resolved = db
+            .fetch_token_ids_by_address(1, &[V4_NATIVE_SENTINEL, CURVE_NATIVE_SENTINEL])
+            .unwrap();
+        assert_eq!(resolved.get(&V4_NATIVE_SENTINEL), Some(&3));
+        assert_eq!(resolved.get(&CURVE_NATIVE_SENTINEL), Some(&8));
+    }
+
+    #[test]
+    fn protocol_sentinel_recognition_covers_exactly_the_two_spellings() {
+        assert!(is_protocol_native_sentinel(&V4_NATIVE_SENTINEL));
+        assert!(is_protocol_native_sentinel(&CURVE_NATIVE_SENTINEL));
+        // Negative probes: one byte off either sentinel is a real address.
+        let mut almost_all_es = [0xEEu8; 20];
+        almost_all_es[19] = 0xED;
+        assert!(!is_protocol_native_sentinel(&Address::new(almost_all_es)));
+        assert!(!is_protocol_native_sentinel(&Address::new([0x01; 20])));
+        assert!(!is_protocol_native_sentinel(&Address::repeat_byte(0xFF)));
+    }
+
+    #[test]
+    fn curve_sentinel_spelling_matches_the_pools_authority() {
+        // Drift gate: this crate's spelling of the Curve sentinel is a copy
+        // (the pools crate owns the authority); the two must never diverge.
+        assert_eq!(
+            CURVE_NATIVE_SENTINEL,
+            degenbot_pools::NATIVE_SENTINEL_ALL_ES
+        );
     }
 }

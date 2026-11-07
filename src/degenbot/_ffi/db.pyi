@@ -45,6 +45,7 @@ __all__ = [
     "db_fetch_pool_row",
     "db_heal_database",
     "db_inspect_schema_state",
+    "db_resolve_native_token_ids",
     "db_resolve_token_ids",
     "db_schema_version",
     "db_set_exchange_active",
@@ -741,6 +742,19 @@ def db_inspect_schema_state(database_path: str) -> str:
     Raises `ValueError` only on a genuine `SQLite` open/query failure.
     """
 
+def db_resolve_native_token_ids(database_path: str, chain_id: SupportsIndex) -> list[int]:
+    """
+    Resolve the chain's PROTOCOL SENTINEL token rows to their database row
+    ids.
+
+    Returns the ids in protocol order (V4 `address(0)`, Curve all-Es), one per
+    row that exists — DISTINCT ids, never coalesced (ADR-097 D4). This is the
+    boundary resolution of the conceptual `NativeToken`: each row IS the
+    native asset in the protocol context that persists it, and a raw sentinel
+    address is never a way to spell the conceptual identity. SQLite work runs
+    with the GIL detached.
+    """
+
 def db_resolve_token_ids(
     database_path: str, chain_id: SupportsIndex, addresses: SupportsGetItem[int, str]
 ) -> dict:
@@ -923,6 +937,7 @@ __all__ = [
     "db_fetch_pool_row",
     "db_heal_database",
     "db_inspect_schema_state",
+    "db_resolve_native_token_ids",
     "db_resolve_token_ids",
     "db_schema_version",
     "db_set_exchange_active",

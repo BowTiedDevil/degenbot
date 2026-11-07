@@ -35,7 +35,10 @@ pub mod directions;
 pub mod graph;
 pub mod plan;
 
-pub use directions::{resolve_directions, DirectionError, DirectionHop};
+pub use directions::{
+    resolve_directions, CurrencyBridge, DirectionError, DirectionHop, DirectionToken,
+    ResolvedDirections,
+};
 pub use graph::{
     Edge, EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind, SearchSpec, UnknownVariant,
 };

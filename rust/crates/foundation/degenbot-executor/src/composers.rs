@@ -742,6 +742,37 @@ mod tests {
     }
 
     #[test]
+    fn mixed_path_boundaries_keep_their_scoped_bridge_encodings() {
+        // The acceptance matrix (ADR-097): V4 -> non-V4 and non-V4 -> V4
+        // mixed paths in both orientations, with native start/end variants.
+        // `NATIVE_CURRENCY_ADDRESS` is the V4 wire spelling of the native
+        // asset — raw zero stays confined to V4 execution — and the
+        // wrap/unwrap encodings stay scoped to their address-table
+        // sentinels.
+        let weth = Address::repeat_byte(0xC0);
+        assert_eq!(NATIVE_CURRENCY_ADDRESS, Address::ZERO);
+
+        // native start variant (the seed side) unwraps WETH -> native; the
+        // native end variant (the capture side) wraps native -> WETH.
+        assert_eq!(
+            CurrencyBridge::at_boundary(weth, NATIVE_CURRENCY_ADDRESS),
+            CurrencyBridge::Unwrap
+        );
+        assert_eq!(
+            CurrencyBridge::at_boundary(NATIVE_CURRENCY_ADDRESS, weth),
+            CurrencyBridge::Wrap
+        );
+
+        // The scoped indices: Wrap takes native and settles WETH, Unwrap
+        // takes WETH and settles native — the sentinels are distinct table
+        // entries, and WETH stays a distinct currency from native.
+        let (take, settle) = CurrencyBridge::Wrap.bridge_indices(SENTINEL_WETH, SENTINEL_NATIVE);
+        assert_eq!((take, settle), (SENTINEL_NATIVE, SENTINEL_WETH));
+        let (take, settle) = CurrencyBridge::Unwrap.bridge_indices(SENTINEL_WETH, SENTINEL_NATIVE);
+        assert_eq!((take, settle), (SENTINEL_WETH, SENTINEL_NATIVE));
+    }
+
+    #[test]
     fn currency_bridge_indices_none_is_unused_but_well_defined() {
         // None never reaches `bridge_indices` (caller guards `needs_bridge()`);
         // the method still returns a deterministic placeholder for safety.

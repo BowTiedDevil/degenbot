@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from degenbot.curve.types import NATIVE_COIN_ALL_ES
 from degenbot.db import (
-    db_upgrade_database,
     db_fetch_graph_edition,
+    db_resolve_native_token_ids,
     db_resolve_token_ids,
+    db_upgrade_database,
 )
 from tests.helpers.database import sqlite_connection
 
@@ -71,6 +73,29 @@ def test_resolve_token_ids_preserves_missing_duplicate_and_chain_semantics(
         [ADDRESS_A, MISSING_ADDRESS, ADDRESS_A, ADDRESS_B.lower()],
     ) == {ADDRESS_A: 1, ADDRESS_B: 2}
     assert db_resolve_token_ids(str(path), 10, [ADDRESS_A, ADDRESS_B]) == {ADDRESS_A: 3}
+
+
+def test_resolve_native_token_ids_returns_distinct_sentinel_rows(tmp_path: Path) -> None:
+    """The protocol sentinel rows resolve as DISTINCT ids in protocol order.
+
+    ADR-097 D4: the V4 `address(0)` currency row and the Curve all-Es coin
+    row are separate persisted evidence — never coalesced.
+    """
+
+    path = tmp_path / "native.db"
+    db_upgrade_database(str(path))
+    with sqlite_connection(path) as connection:
+        connection.executemany(
+            "INSERT INTO erc20_tokens (id, chain, address) VALUES (?, ?, ?)",
+            [
+                (4, 1, "0x0000000000000000000000000000000000000000"),
+                (5, 1, NATIVE_COIN_ALL_ES),
+                (6, 1, ADDRESS_B),
+            ],
+        )
+
+    assert db_resolve_native_token_ids(str(path), 1) == [4, 5]
+    assert db_resolve_native_token_ids(str(path), 10) == []
 
 
 def test_fetch_graph_edition_returns_v2_v3_v4_chain_fingerprint(tmp_path: Path) -> None:

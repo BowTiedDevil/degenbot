@@ -5008,20 +5008,25 @@ def reinstall_config_holder_for_tests(env: dict[str, str], file: str | None = No
     """
 
 def resolve_directions(
-    hops: SupportsGetItem[int, tuple[str, str, str]], input_token: str, weth: str
-) -> list[bool]:
+    hops: SupportsGetItem[int, tuple[Any, Any, str]], input_token: Any, weth: str
+) -> tuple[list[bool], list[str]]:
     """
     Resolve per-hop directions so the cycle closes — the typed-FFI seam over
     `degenbot_pathfinding::directions::resolve_directions`.
 
-    Each hop is `(token0, token1, identity)`. Raises the Python
-    `DirectionResolutionError` on a mid-path mismatch or a non-closing cycle
-    (the fatal invariant); returns one `zero_for_one` per hop otherwise.
+    Each hop is `(token0, token1, identity)`, where a token is the conceptual
+    `NativeToken` (its Python companion or the FFI handle) or an ERC-20
+    address string; a raw protocol sentinel is refused loudly (ADR-097 D1).
+    Raises the Python `DirectionResolutionError` on a mid-path mismatch or a
+    non-closing cycle (the fatal invariant). Returns `(zero_for_one, bridges)`:
+    one `zero_for_one` per hop in hop order, and one bridge spelling
+    (`"none"` / `"wrap"` / `"unwrap"`) per value-chain boundary in walk order
+    (`len(hops) + 1` — the seed side first, the capture side last).
 
     # Errors
 
     Raises `degenbot.exceptions.arbitrage.DirectionResolutionError` when the
-    core refuses the cycle.
+    core refuses the cycle, `ValueError` on a raw sentinel spelling.
     """
 
 def resolve_hypothetical(env: dict[str, str], file: str | None = None) -> HypotheticalConfig:
