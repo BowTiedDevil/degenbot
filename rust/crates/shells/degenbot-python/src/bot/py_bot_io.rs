@@ -867,16 +867,16 @@ impl PyBotIo {
 
     /// Probe a pool's type by trying method calls in order.
     ///
-    /// Mirrors `type_resolution.py::resolve_pool_type_by_probing`: positive
-    /// evidence first — Curve (`coins(0)`, either supported coin-getter
-    /// shape) — then raw selector presence: V3 (`slot0()`), V2
-    /// (`getReserves()`), Balancer (`getPoolId()` + `getNormalizedWeights()`
-    /// sub-probe). The typed Curve identity outranks the raw presence arms:
-    /// a non-reverting fallback answers those with empty returndata (the
-    /// artifact an EOA's `eth_call` produces), which must never preempt a
-    /// decodable Curve coin getter. Returns the code identifying which probe
-    /// succeeded so the Python caller can construct a `PoolTypeDescriptor`
-    /// from the registry.
+    /// Mirrors `type_resolution.py::resolve_pool_type_by_probing`: V3
+    /// (`slot0()`), V2 (`getReserves()`), Balancer (`getPoolId()` +
+    /// `getNormalizedWeights()` sub-probe), then the typed Curve leg
+    /// (`coins(0)`, either supported coin-getter shape). A selector counts as
+    /// answered only with returndata — a revert or a successful empty return
+    /// (the artifact a non-reverting fallback, or an EOA's `eth_call`,
+    /// produces) is absence — so the raw presence arms cannot acquire a
+    /// family by artifact, and a non-Curve pool never pays a Curve probe.
+    /// Returns the code identifying which probe succeeded so the Python
+    /// caller can construct a `PoolTypeDescriptor` from the registry.
     ///
     /// Returns the 1-based `u8` code of the
     /// ``degenbot.types.pool_type.PoolProbe`` member (the `curve_math`
@@ -892,10 +892,10 @@ impl PyBotIo {
     /// a new `PoolFamily` variant fails this match to compile until its wire
     /// code is assigned on both sides.
     ///
-    /// Each probe is a fire-and-forget `call` — only whether it succeeded,
-    /// reverted, or (for `coins`) returned a decodable address matters. A
-    /// revert advances to the next probe; a garbage `coins` return is not
-    /// Curve.
+    /// Each probe is a fire-and-forget `call` — only whether it answered
+    /// with returndata, or (for `coins`) returned a decodable address,
+    /// matters. A revert or empty return advances to the next probe; a
+    /// garbage `coins` return is not Curve.
     ///
     /// Errors:
     /// - `PyValueError` — no identity selector answered

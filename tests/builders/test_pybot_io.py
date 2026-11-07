@@ -230,6 +230,7 @@ def _probe_offline_provider(
     coins_answers: bool = False,
     coins_int128_answers: bool = False,
     raw_presence_empty: bool = False,
+    record_curve_calls: bool = True,
 ) -> RustAlloyProvider:
     """An `OfflineProvider` cassette modelling a probe contract.
 
@@ -237,7 +238,10 @@ def _probe_offline_provider(
     recorded-revert shape, mirroring a live selector-absent revert) unless it
     is named in `succeed`. Both `coins(0)` getter shapes need their index word
     in the calldata, so each is keyed by full calldata and recorded as a revert
-    unless its `*_answers` flag is set. No Python double (O3).
+    unless its `*_answers` flag is set. With `record_curve_calls=False` the
+    coin-getter keys are omitted entirely: the offline provider faults on an
+    unrecorded call, so that omission is the tripwire proving a classification
+    never consults the Curve leg. No Python double (O3).
     """
     import json
 
@@ -249,12 +253,13 @@ def _probe_offline_provider(
     calls: dict[str, str | None] = {f"0x{pool_addr}:0x{sel}": None for sel in _PROBE_SELECTORS}
     for sel in succeed:
         calls[f"0x{pool_addr}:0x{sel}"] = empty
-    calls[f"0x{pool_addr}:0x{_COINS_UINT_CALLDATA}"] = (
-        "00" * 12 + "11" * 20 if coins_answers else None
-    )
-    calls[f"0x{pool_addr}:0x{_COINS_INT128_CALLDATA}"] = (
-        "00" * 12 + "22" * 20 if coins_int128_answers else None
-    )
+    if record_curve_calls:
+        calls[f"0x{pool_addr}:0x{_COINS_UINT_CALLDATA}"] = (
+            "00" * 12 + "11" * 20 if coins_answers else None
+        )
+        calls[f"0x{pool_addr}:0x{_COINS_INT128_CALLDATA}"] = (
+            "00" * 12 + "22" * 20 if coins_int128_answers else None
+        )
     return RustAlloyProvider.offline_from_json_string(
         json.dumps({
             "chain_id": 1,
@@ -331,15 +336,16 @@ def test_pybot_io_probe_pool_type_returns_stableswap_for_the_legacy_int128_shape
     assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
 
 
-def test_pybot_io_probe_pool_type_curve_identity_outranks_the_presence_artifact():
-    """Typed Curve evidence outranks the raw-presence artifact.
+def test_pybot_io_probe_pool_type_curve_leg_decides_when_presence_arms_answer_empty():
+    """Empty presence answers decline; the Curve leg names the pool.
 
     Chain shape: mainnet Curve registry pool 39/49
     0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5 — a non-reverting fallback
     answers `slot0()` / `getReserves()` / `getPoolId()` with empty returndata
     (the same artifact an EOA's `eth_call` produces) while `coins(uint256)`
-    answers with a decodable address. The typed Curve identity names the pool:
-    the probe answers STABLESWAP, never an artifact family.
+    answers with a decodable address. Empty returndata is absence, so the
+    chain reaches the typed Curve leg: the probe answers STABLESWAP, never an
+    artifact family.
     """
     io = BotIo(
         provider=_probe_offline_provider(
@@ -349,6 +355,47 @@ def test_pybot_io_probe_pool_type_curve_identity_outranks_the_presence_artifact(
         )
     )
     assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
+
+
+def test_pybot_io_probe_pool_type_empty_returndata_is_absence():
+    """A successful empty return is absence, never presence.
+
+    The EOA / non-reverting-fallback artifact in full: every raw selector
+    "answers" with empty returndata and no coin getter answers. Nothing
+    positive names a pool, so the probe must refuse — never hand an artifact
+    family to the caller.
+    """
+    io = BotIo(
+        provider=_probe_offline_provider(
+            {_SLOT0, _GET_RESERVES, _GET_POOL_ID},
+            raw_presence_empty=True,
+        )
+    )
+    with pytest.raises(ValueError, match="unknown pool identity"):
+        io.probe_pool_type("0x" + "aa" * 20)
+
+
+def test_pybot_io_probe_pool_type_classifies_v3_without_consulting_curve():
+    """A nonempty `slot0()` answer decides V3 with no Curve round trip.
+
+    The cassette records no coin-getter calls at all (the offline provider
+    faults on unrecorded calls), so this classification holds only if the
+    Curve leg is never consulted: a V3 build must not pay for — or risk —
+    Curve probes.
+    """
+    io = BotIo(provider=_probe_offline_provider({_SLOT0}, record_curve_calls=False))
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.V3
+
+
+def test_pybot_io_probe_pool_type_classifies_v2_without_consulting_curve():
+    """A nonempty `getReserves()` answer decides V2 with no Curve round trip.
+
+    The Camelot V2 shape: the cassette records no coin-getter calls (the
+    offline provider faults on unrecorded calls), so the V2 classification
+    proves the Curve leg was never consulted.
+    """
+    io = BotIo(provider=_probe_offline_provider({_GET_RESERVES}, record_curve_calls=False))
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.V2
 
 
 # === V3 tick bitmap + tick data RPCs ===

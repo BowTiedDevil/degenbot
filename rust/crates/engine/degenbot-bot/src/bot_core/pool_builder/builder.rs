@@ -505,27 +505,30 @@ pub async fn fetch_aerodrome_stable_and_fee(
     Ok(AerodromeV2Common { stable, fee_bps })
 }
 
-/// Probe a pool contract to identify its family by positive evidence first,
-/// then raw selector presence (mirrors `type_resolution.py::resolve_pool_type`):
-/// `coins(0)` (either supported Curve coin-getter shape) → Curve, then
-/// `slot0()` → V3, `getReserves()` → V2, `getPoolId()` → Balancer (weighted vs
-/// stable by `getNormalizedWeights()`).
+/// Probe a pool contract to identify its family by answered selector (mirrors
+/// `type_resolution.py::resolve_pool_type`): `slot0()` → V3, `getReserves()`
+/// → V2, `getPoolId()` → Balancer (weighted vs stable by
+/// `getNormalizedWeights()`), then the typed Curve leg — `coins(0)` in either
+/// supported coin-getter shape → Curve.
 ///
-/// The precedence is the evidence quality: the Curve leg is the only *typed*
-/// identity read (a decodable address answer is positive evidence), while the
-/// raw presence arms only see whether the call reverted. A non-reverting
-/// fallback answers those arms with empty returndata — the same artifact an
-/// EOA's `eth_call` produces — and must never preempt positive evidence: a
-/// Curve pool whose fallback answers `slot0()` with nothing is a Curve pool.
+/// A selector is answered only by nonempty returndata. Both an EVM revert and
+/// a successful *empty* return mean the selector is absent and the next probe
+/// runs: empty returndata is the artifact a non-reverting fallback (or an
+/// EOA's `eth_call`) produces, and every raw selector here has a nonempty
+/// valid answer (`slot0()` seven words, `getReserves()` three, `getPoolId()`
+/// one, `getNormalizedWeights()` an array encoding), so nothing real is lost
+/// by declining it. That keeps the raw presence arms from acquiring a family
+/// by artifact, which is what lets them run first — and a V3/V2/Balancer pool
+/// is thereby decided without a single Curve round trip.
 ///
-/// An EVM revert means the selector is absent: the next probe runs. When no
-/// probe answers — every selector reverts, or neither `coins(0)` shape
-/// returns a decodable address — the contract has no recognized identity and this
-/// returns [`PoolBuilderError::UnknownPoolIdentity`], never
-/// [`PoolFamily::Curve`]: an unverified contract is not a Curve pool. A
-/// provider failure that is NOT a revert (transport, timeout, rate limit,
-/// malformed response) likewise propagates as an error — a broken RPC must
-/// never silently degrade a pool to Curve.
+/// When no probe answers — every selector reverts or returns nothing, and
+/// neither `coins(0)` shape returns a decodable address — the contract has no
+/// recognized identity and this returns
+/// [`PoolBuilderError::UnknownPoolIdentity`], never [`PoolFamily::Curve`]: an
+/// unverified contract is not a Curve pool. A provider failure that is NOT a
+/// revert (transport, timeout, rate limit, malformed response) likewise
+/// propagates as an error — a broken RPC must never silently degrade a pool to
+/// a family or to unknown.
 ///
 /// # Errors
 ///
@@ -537,9 +540,7 @@ pub async fn probe_pool_type(
     address: Address,
     block: Option<u64>,
 ) -> Result<PoolFamily, PoolBuilderError> {
-    if probe_curve(io, address, block).await? {
-        Ok(PoolFamily::Curve)
-    } else if probe_present(
+    if probe_present(
         io,
         address,
         IUniswapV3Pool::slot0Call {}.abi_encode(),
@@ -579,14 +580,19 @@ pub async fn probe_pool_type(
                 PoolFamily::BalancerStable
             },
         )
+    } else if probe_curve(io, address, block).await? {
+        Ok(PoolFamily::Curve)
     } else {
         Err(PoolBuilderError::UnknownPoolIdentity { address })
     }
 }
 
-/// `true` when the selector answered, `false` on an EVM revert (selector
-/// absent), `Err` on any other provider failure (mirrors the benign-revert
-/// rule in [`build_balancer_stable`]).
+/// `true` when the selector answered with returndata, `false` when it is
+/// absent — an EVM revert, or a successful empty return (the artifact a
+/// non-reverting fallback or an EOA's `eth_call` produces) — and `Err` on any
+/// other provider failure (mirrors the benign-revert rule in
+/// [`build_balancer_stable`]). Every raw selector this gates has a nonempty
+/// valid answer, so empty returndata is never the selector answering.
 async fn probe_present(
     read: &impl ContractRead,
     address: Address,
@@ -594,7 +600,7 @@ async fn probe_present(
     block: Option<u64>,
 ) -> Result<bool, ProviderError> {
     match read.call(address, calldata.into(), block).await {
-        Ok(_) => Ok(true),
+        Ok(returndata) => Ok(!returndata.is_empty()),
         Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
         Err(e) => Err(e),
     }

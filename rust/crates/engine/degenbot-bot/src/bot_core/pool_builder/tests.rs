@@ -689,14 +689,15 @@ async fn probe_pool_type_dispatches() {
 }
 
 #[tokio::test]
-async fn probe_pool_type_typed_curve_identity_outranks_the_presence_artifact() {
+async fn probe_pool_type_curve_leg_decides_when_presence_arms_answer_empty() {
     // Mainnet Curve registry pool 39/49,
     // 0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5, at the pinned registry
     // sweep block: a non-reverting fallback answers `slot0()` /
     // `getReserves()` / `getPoolId()` with empty returndata (the same artifact
     // an EOA's `eth_call` produces), while `coins(uint256)` answers with a
-    // decodable address. The typed Curve identity names the pool — the raw
-    // presence artifact must never preempt it.
+    // decodable address. Empty returndata declines every raw presence arm, so
+    // the chain reaches the typed Curve leg and the pool is named by its coin
+    // getter, never by the fallback artifact.
     let mut f = FakeRpc::new();
     f.set(abi::selector(b"slot0()"), vec![]);
     f.set(abi::selector(b"getReserves()"), vec![]);
@@ -777,6 +778,114 @@ async fn probe_pool_type_propagates_transport_failure() {
         }
         other => panic!("expected ConnectionFailed, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn probe_pool_type_treats_empty_returndata_as_absence() {
+    // The EOA / non-reverting-fallback artifact in full: every call "succeeds"
+    // with empty returndata and neither coin getter answers with a decodable
+    // address. Empty success is the absence of the selector, never its
+    // presence — an address with no nonempty answer anywhere has no
+    // recognized identity.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"slot0()"), vec![]);
+    f.set(abi::selector(b"getReserves()"), vec![]);
+    f.set(abi::selector(b"getPoolId()"), vec![]);
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        vec![],
+    );
+    f.set_full(
+        abi::ICurvePoolInt128::coinsCall { i: 0i128 }.abi_encode(),
+        vec![],
+    );
+    assert!(matches!(
+        builder::probe_pool_type(&io_with(f), TO, None).await,
+        Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
+    ));
+}
+
+#[tokio::test]
+async fn probe_pool_type_classifies_v3_without_consulting_curve() {
+    // `slot0()` answering with returndata decides the family without a single
+    // Curve round trip — the coin getters are wired to hard-fault here, so
+    // any consultation of the Curve leg surfaces as an error instead of a
+    // family. The raw presence arms must be able to decide alone: paying for
+    // Curve reads on every V3/V2/Balancer build exposes those builds to
+    // endpoint faults on reads that can add no evidence.
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"slot0()"),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set_error(
+        abi::selector(b"coins(uint256)"),
+        ProviderError::ConnectionFailed {
+            message: "rpc down".into(),
+        },
+    );
+    f.set_error(
+        abi::selector(b"coins(int128)"),
+        ProviderError::ConnectionFailed {
+            message: "rpc down".into(),
+        },
+    );
+    assert_eq!(
+        builder::probe_pool_type(&io_with(f), TO, None)
+            .await
+            .unwrap(),
+        builder::PoolFamily::V3
+    );
+}
+
+#[tokio::test]
+async fn probe_pool_type_classifies_v2_without_consulting_curve() {
+    // The Camelot V2 shape: `getReserves()` answering with returndata decides
+    // V2 with the Curve leg never consulted (coin getters hard-fault here).
+    // A V2 build must neither pay for nor risk Curve probes.
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"getReserves()"),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::ZERO, 112),
+            DynSolValue::Uint(U256::ZERO, 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    f.set_error(
+        abi::selector(b"coins(uint256)"),
+        ProviderError::ConnectionFailed {
+            message: "rpc down".into(),
+        },
+    );
+    f.set_error(
+        abi::selector(b"coins(int128)"),
+        ProviderError::ConnectionFailed {
+            message: "rpc down".into(),
+        },
+    );
+    assert_eq!(
+        builder::probe_pool_type(&io_with(f), TO, None)
+            .await
+            .unwrap(),
+        builder::PoolFamily::V2
+    );
+}
+
+#[tokio::test]
+async fn probe_pool_type_treats_an_empty_curve_answer_as_absence() {
+    // A coin getter "answering" with nothing is absence — not a transport
+    // fault, and not identity: the typed read cannot decode an empty return,
+    // and an undecodable answer never names a family.
+    let mut f = FakeRpc::new();
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        vec![],
+    );
+    assert!(matches!(
+        builder::probe_pool_type(&io_with(f), TO, None).await,
+        Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
+    ));
 }
 
 #[tokio::test]

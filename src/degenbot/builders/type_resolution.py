@@ -363,16 +363,16 @@ def resolve_pool_type_by_probing(
 ) -> PoolTypeDescriptor:
     """Determine pool type by probing the contract on-chain.
 
-    Positive evidence first: Curve (a supported `coins(0)` coin getter —
-    `coins(uint256)`, or the legacy `coins(int128)`) is the typed identity
-    read and outranks the raw presence chain that follows — V3 (slot0), V2
-    (getReserves), Balancer (getPoolId + getNormalizedWeights) — whose
-    non-revert answers carry the empty-returndata artifact a non-reverting
-    fallback (or an EOA) produces. When no probe answers, the Rust probe
-    reports unknown identity; the seam
-    failures cross as the package's typed refusal (`DegenbotValueError`
-    from :func:`_probe_identity`) — an unverified contract is not silently
-    classified as Curve.
+    Tries V3 first (``slot0``), then V2 (``getReserves``), then Balancer
+    (``getPoolId`` + ``getNormalizedWeights``), then Curve (a supported
+    ``coins(0)`` coin getter — ``coins(uint256)``, or the legacy
+    ``coins(int128)``). A selector counts as answered only with returndata: a
+    revert or a successful empty return (the artifact a non-reverting
+    fallback, or an EOA, produces) is absence, so no artifact can name a
+    family. When no probe answers, the Rust probe reports unknown identity;
+    the seam failures cross as the package's typed refusal
+    (``DegenbotValueError`` from :func:`_probe_identity`) — an unverified
+    contract is not silently classified as Curve.
 
     Returns:
         The computed value.

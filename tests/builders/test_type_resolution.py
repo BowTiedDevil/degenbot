@@ -383,12 +383,10 @@ class TestResolvePoolType:
             )
 
     def test_refuses_a_factory_less_answer_that_is_not_curve(self) -> None:
-        # The zero-address artifact shape: a non-contract address "answers"
-        # slot0 with empty returndata (the probe counts a non-revert call as
-        # presence), but no factory() getter and no Curve selector answered.
-        # Every V2/V3-family deployment exposes factory(), so a factory-less
-        # non-Curve probe answer is not a pool identity — refuse under the
-        # typed error, never classify.
+        # A factory-less address whose probe answered with a non-Curve
+        # family. Every V2/V3-family deployment exposes factory(), so a
+        # factory-less non-Curve probe answer is not a pool identity — refuse
+        # under the typed error, never classify.
         io = FakePyBotIo(factory_address=None, pool_row=None, probe_result=PoolProbe.V3)
         with pytest.raises(DegenbotValueError, match="Cannot determine pool type"):
             resolve_pool_type(
