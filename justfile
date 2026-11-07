@@ -1353,7 +1353,10 @@ lint-commits range="@{push}..HEAD":
       from="$range"
       to=HEAD
     fi
-    npx --yes @commitlint/cli --from "$from" --to "$to"
+    # Pinned to ci.yml's commitlint job's rule set (see
+    # tests/test_commitlint_push_gate.py): a floating @commitlint/cli can flip
+    # the shared gate's verdict with no diff to review.
+    npx --yes @commitlint/cli@21.2.4 --from "$from" --to "$to"
 
 # Run all linters (Rust + Python + Markdown)
 lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown

@@ -147,13 +147,16 @@ hooks = [
   { id = "stub-drift-staged", name = "Stub drift (staged FFI)", language = "system", entry = "just gen-stubs --check", files = "^rust/crates/shells/degenbot-python/(src/|Cargo\\.toml)|^rust/tools/stubgen/(src/|Cargo\\.toml)", stages = ["pre-commit"], pass_filenames = false },
 
   # --- commit-msg -----------------------------------------------------------
+  # The @commitlint/cli version is pinned to ci.yml's commitlint job's rule set
+  # (tests/test_commitlint_push_gate.py fails if the pins disagree).
+  #
   # Validate the commit message against the relaxed .commitlintrc.yml. Runs at
   # commit time so a bad message is caught the moment it is written — NOT at
   # push, when amending days-old commits would need a deep rebase. The relaxed
   # rules (free-form scope, 100-col limits, type + non-empty subject) make this
   # low-friction for humans and agents alike. prek appends the commit-message
   # temp file as the trailing `--edit` argument.
-  { id = "commitlint", name = "commitlint", language = "system", entry = "npx --yes @commitlint/cli --edit", stages = ["commit-msg"] },
+  { id = "commitlint", name = "commitlint", language = "system", entry = "npx --yes @commitlint/cli@21.2.4 --edit", stages = ["commit-msg"] },
 
   # --- pre-push -------------------------------------------------------------
   # Whole-tree tier: everything here assumes a COMPLETE tree. Gate the push on

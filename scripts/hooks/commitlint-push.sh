@@ -20,8 +20,9 @@
 set -euo pipefail
 
 if ! command -v npx >/dev/null 2>&1; then
-  echo "⚠  npx not found; skipping pre-push commit-message lint." >&2
-  exit 0
+  echo "ERROR: npx not found - the push-range commit-message lint cannot run." >&2
+  echo "       The range is NOT certified unlinted: install Node.js and re-run." >&2
+  exit 1
 fi
 
 from="$(git rev-parse --symbolic-full-name '@{u}' 2>/dev/null || true)"
@@ -37,7 +38,10 @@ if [ -z "$(git rev-list "$from..HEAD" 2>/dev/null || true)" ]; then
   exit 0
 fi
 
-if ! npx --yes @commitlint/cli --from "$from" --to HEAD >&2; then
+# The rule set is pinned to CI's commitlint job (ci.yml): a floating
+# @commitlint/cli can flip the shared gate's verdict with no diff to review.
+# tests/test_commitlint_push_gate.py fails when the pins disagree.
+if ! npx --yes @commitlint/cli@21.2.4 --from "$from" --to HEAD >&2; then
   echo "" >&2
   echo "💡 Push blocked: one or more commit messages fail commitlint." >&2
   echo "   Fix with: git commit --amend (tip) or git rebase -i." >&2
