@@ -37,12 +37,17 @@
 //!   identity, the refusal vocabulary a read answers with, and the observer
 //!   trait a lending integration implements. It sits here because the engine and
 //!   the lending integrations already share this layer and no other one.
+//! - [`chain_facts`] — the intrinsic chain-facts manifest: one native asset's
+//!   name/symbol/decimals per chain, resolved by chain id. Metadata only —
+//!   native-token identity and the protocol-private sentinel translations
+//!   live at their own layers.
 //! - [`channel_lifecycle`] — the one-way delivery channel's phase. The phase IS
 //!   the sender, so "never attached" and "closed" cannot collapse into one
 //!   `None`; `SendOutcome` names which way a send did not deliver.
 
 pub mod address_utils;
 pub mod block_notification;
+pub mod chain_facts;
 pub mod channel_lifecycle;
 pub mod cpu_budget;
 pub mod eip_1559;

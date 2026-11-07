@@ -24,6 +24,7 @@ use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::fee::{FeeRatio, FeeSpec, V2Fee, V2FeeRefusal};
 use degenbot_db::error::DbError;
+use degenbot_db::rows::Erc20TokenRow;
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::resolve_curve_strategy_discriminants;
 use degenbot_pools::state::spec_bounds;
@@ -35,6 +36,7 @@ use degenbot_pools::RegisterCurvePoolParams;
 use degenbot_pools::RegisterV2PoolParams;
 use degenbot_pools::SpecRefusal;
 use degenbot_pools::TickWordKey;
+use degenbot_pools::NATIVE_SENTINEL_ALL_ES;
 use degenbot_pools::{
     BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 };
@@ -188,6 +190,9 @@ pub async fn fetch_erc20_metadata_batch(
         .collect()
 }
 
+/// One token's built metadata, or the typed failure for that token alone.
+pub type MetadataOutcome = Result<(String, String, u8), PoolBuilderError>;
+
 /// Resolve ERC-20 token metadata DB-first, then on-chain, with the
 /// alternate-prototype + UNKNOWN fallbacks — the core twin of
 /// `Erc20Builder.build` steps 3–5.
@@ -225,22 +230,15 @@ pub async fn build_erc20_metadata(
     address: Address,
     block: Option<u64>,
 ) -> Result<(String, String, u8), PoolBuilderError> {
-    // 1. DB-first.
+    // 1. DB-first: a fully populated row answers without any network read.
     let db_row = io.fetch_erc20_token(chain_id, address).await?;
-    let mut name = db_row.as_ref().and_then(|r| r.name.clone());
-    let mut symbol = db_row.as_ref().and_then(|r| r.symbol.clone());
-    let mut decimals = db_row
-        .as_ref()
-        .and_then(|r| r.decimals)
-        .map(|dec| u8::try_from(dec).unwrap_or(UNKNOWN_DECIMALS));
-
-    // All fields present in the DB — nothing more to resolve.
-    if let (Some(n), Some(s), Some(d)) = (&name, &symbol, &decimals) {
-        return Ok((n.clone(), s.clone(), *d));
+    if let Some(triple) = db_row.as_ref().and_then(complete_row) {
+        return Ok(triple);
     }
 
-    // 2. Contract-present guard, then the all-or-nothing on-chain read (the
-    //    lower spellings, short-circuiting — the shared read's exact shape).
+    // 2. Contract-present guard, then the eager lower-spelling read (the
+    //    shared read's exact single-token shape), then the one per-token tail
+    //    both construction shapes share.
     let code = io.get_code(address, block).await?;
     if code.is_empty() {
         return Err(PoolBuilderError::Decoding {
@@ -255,7 +253,144 @@ pub async fn build_erc20_metadata(
         None,
     )
     .await;
-    if let (Some(n), Some(s), Some(d)) = (meta.name, meta.symbol, meta.decimals) {
+    Ok(fill_missing_metadata(io, chain_id, address, db_row.as_ref(), complete(meta)).await)
+}
+
+/// Build MANY tokens' metadata: the batch call shape over the same per-token
+/// choreography [`build_erc20_metadata`] runs — one result per input address,
+/// in input order, with each token resolved and written back independently so
+/// one broken token is a failure OF THAT TOKEN and never an all-or-nothing
+/// abort of the batch.
+///
+/// Order (per token, identical to [`build_erc20_metadata`]):
+/// 1. DB-first: prefer the persisted row's fields when all present.
+/// 2. Any token still missing fields needs network metadata: those tokens'
+///    eager lower-spelling reads ride ONE `aggregate3`
+///    ([`erc20::read_batch`], [`erc20::MetadataShape::LowerOnly`]) instead of
+///    one round trip each.
+/// 3. Per-token alternate-prototype fallback + UNKNOWN sentinels.
+/// 4. Per-token write-back of a fully blank DB row.
+///
+/// # Errors
+///
+/// Per token: [`PoolBuilderError::Rpc`] / [`PoolBuilderError::Db`] /
+/// [`PoolBuilderError::Decoding`] (no contract deployed). A failure in one
+/// entry does not stop the others.
+pub async fn build_erc20_metadata_batch(
+    io: &ConstructionIo,
+    chain_id: i64,
+    addresses: &[Address],
+    block: Option<u64>,
+) -> Vec<Result<(String, String, u8), PoolBuilderError>> {
+    // 1. DB-first, in input order. `None` = the token needs network metadata.
+    let mut db_rows: Vec<Option<Erc20TokenRow>> = Vec::with_capacity(addresses.len());
+    let mut out: Vec<Option<MetadataOutcome>> = Vec::with_capacity(addresses.len());
+    for &address in addresses {
+        match io.fetch_erc20_token(chain_id, address).await {
+            Ok(row) => {
+                let complete_row = row.as_ref().and_then(complete_row);
+                out.push(complete_row.map(Ok));
+                db_rows.push(row);
+            }
+            Err(err) => {
+                out.push(Some(Err(PoolBuilderError::from(err))));
+                db_rows.push(None);
+            }
+        }
+    }
+
+    // 2. ONE eager batch for every token that still needs network metadata.
+    let needs_network: Vec<usize> = (0..addresses.len())
+        .filter(|&index| out[index].is_none())
+        .collect();
+    let mut eager: Vec<Option<(String, String, u64)>> = vec![None; addresses.len()];
+    if !needs_network.is_empty() {
+        let wanted: Vec<Address> = needs_network
+            .iter()
+            .map(|&index| addresses[index])
+            .collect();
+        let metas = erc20::read_batch(io, &wanted, erc20::MetadataShape::LowerOnly, None).await;
+        for (index, meta) in needs_network.into_iter().zip(metas) {
+            eager[index] = complete(meta);
+        }
+    }
+
+    // 3-4. The shared per-token tail: the contract guard, the fallback, the
+    //      sentinels, and the write-back — one token at a time, so a failure
+    //      lands on that token's slot alone.
+    for (index, &address) in addresses.iter().enumerate() {
+        if out[index].is_some() {
+            continue;
+        }
+        let built = match io.get_code(address, block).await {
+            Ok(code) if code.is_empty() => Err(PoolBuilderError::Decoding {
+                message: "No contract deployed at this address".to_owned(),
+            }),
+            Err(err) => Err(PoolBuilderError::from(err)),
+            Ok(_) => Ok(fill_missing_metadata(
+                io,
+                chain_id,
+                address,
+                db_rows[index].as_ref(),
+                eager[index].take(),
+            )
+            .await),
+        };
+        out[index] = Some(built);
+    }
+
+    // Every slot is resolved above; the defensive arm is unreachable shape,
+    // not a policy.
+    out.into_iter()
+        .map(|slot| {
+            slot.unwrap_or(Err(PoolBuilderError::Decoding {
+                message: "metadata resolution produced no result".to_owned(),
+            }))
+        })
+        .collect()
+}
+
+/// The complete metadata triple the eager read answered, or `None`: the eager
+/// leg contributes only when it answered WHOLE (its own all-or-nothing
+/// contract), so a partial answer falls to the fallback per field.
+fn complete(meta: erc20::TokenMetadata) -> Option<(String, String, u64)> {
+    match (meta.name, meta.symbol, meta.decimals) {
+        (Some(name), Some(symbol), Some(decimals)) => Some((name, symbol, decimals)),
+        _ => None,
+    }
+}
+
+/// A fully populated DB row as the same triple, or `None` when any field is
+/// missing (which is what sends the token to the network leg).
+fn complete_row(row: &Erc20TokenRow) -> Option<(String, String, u8)> {
+    match (&row.name, &row.symbol, row.decimals) {
+        (Some(name), Some(symbol), Some(decimals)) => Some((
+            name.clone(),
+            symbol.clone(),
+            u8::try_from(decimals).unwrap_or(UNKNOWN_DECIMALS),
+        )),
+        _ => None,
+    }
+}
+
+/// The per-token tail both construction shapes share: apply the eager triple
+/// (when the shape's eager leg answered whole) to the fields the DB row left
+/// missing, then the alternate-prototype fallback over whatever is still
+/// missing, then the UNKNOWN sentinels, then the blank-row write-back.
+async fn fill_missing_metadata(
+    io: &ConstructionIo,
+    chain_id: i64,
+    address: Address,
+    db_row: Option<&Erc20TokenRow>,
+    eager: Option<(String, String, u64)>,
+) -> (String, String, u8) {
+    let mut name = db_row.and_then(|r| r.name.clone());
+    let mut symbol = db_row.and_then(|r| r.symbol.clone());
+    let mut decimals = db_row
+        .and_then(|r| r.decimals)
+        .map(|dec| u8::try_from(dec).unwrap_or(UNKNOWN_DECIMALS));
+
+    if let Some((n, s, d)) = eager {
         if name.is_none() {
             name = Some(n);
         }
@@ -267,8 +402,8 @@ pub async fn build_erc20_metadata(
         }
     }
 
-    // 3. Per-field alternate-prototype fallback for anything still missing —
-    //    one masked fall-through read over the missing fields, in field order.
+    // Per-field alternate-prototype fallback for anything still missing — one
+    // masked fall-through read over the missing fields, in field order.
     let missing = erc20::FieldMask {
         name: name.is_none(),
         symbol: symbol.is_none(),
@@ -304,7 +439,7 @@ pub async fn build_erc20_metadata(
     let symbol = symbol.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string());
     let decimals = decimals.unwrap_or(UNKNOWN_DECIMALS);
 
-    // 4. Write back when the DB row existed but was fully blank.
+    // Write back when the DB row existed but was fully blank.
     if db_row.is_some_and(|r| r.name.is_none() && r.symbol.is_none() && r.decimals.is_none()) {
         let addr_hex = address_to_checksum_string(&address);
         let _ = io
@@ -318,7 +453,7 @@ pub async fn build_erc20_metadata(
             .await;
     }
 
-    Ok((name, symbol, decimals))
+    (name, symbol, decimals)
 }
 
 // ---------------------------------------------------------------------------
@@ -1685,6 +1820,7 @@ fn required_read(err: ProviderError) -> PoolBuilderError {
 /// [`SpecRefusal::CurveCoinDecimalsReverted`]).
 #[expect(clippy::too_many_lines)]
 pub async fn build_curve_pool(
+    chain_id: u64,
     address: Address,
     registry_addresses: &[Address],
     io: &ConstructionIo,
@@ -1733,6 +1869,20 @@ pub async fn build_curve_pool(
     // refuse with the same `Spec` taxonomy instead of dying on the decode.
     let mut token_decimals = Vec::with_capacity(coins.token_addresses.len());
     for token in &coins.token_addresses {
+        // The all-Es coin is the Curve protocol's own spelling of the native
+        // asset (ADR-097 D3): translated here — no ERC-20 read, the intrinsic
+        // chain-facts decimals — while every other codeless coin stays the
+        // `NoCodeCoin` refusal below. Zero is the coin-enumeration terminator
+        // and never arrives here.
+        if *token == NATIVE_SENTINEL_ALL_ES {
+            let facts = degenbot_core::chain_facts::native_facts(chain_id).map_err(|refusal| {
+                PoolBuilderError::Decoding {
+                    message: refusal.to_string(),
+                }
+            })?;
+            token_decimals.push(facts.decimals);
+            continue;
+        }
         match fetch_erc20_decimals(io, *token, block).await {
             Ok(decimals) => token_decimals.push(decimals),
             Err(PoolBuilderError::Rpc(ProviderError::ExecutionReverted { .. })) => {

@@ -58,7 +58,7 @@ from tests.golden.oracle import (
     replay_makes_no_network_calls,  # ruff: ignore[unused-import]
 )
 from tests.helpers.contract_compat import make_contract
-from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.erc20_factory import make_erc20, make_native_token
 from tests.helpers.v4_pool_factory import make_v4_pool
 from tests.uniswap.v4.test_uniswap_v4_liquidity_pool import (
     UNISWAP_V4_QUOTER_ABI,
@@ -116,14 +116,20 @@ def _build_eth_usdc_v4_io_free(py_bot: Bot) -> UniswapV4Pool:
     cassette = _load_cassette()
     scalars = cassette["scalars"]
     tick_data = {int(tick): tuple(vals) for tick, vals in cassette["tick_data"].items()}
-    eth = make_erc20(
-        py_bot,
-        cassette["token0"]["address"],
-        name=cassette["token0"]["name"],
-        symbol=cassette["token0"]["symbol"],
-        decimals=cassette["token0"]["decimals"],
-        chain_id=1,
-    )
+    if cassette["token0"]["address"] == NATIVE_CURRENCY_ADDRESS:
+        # V4's `address(0)` currency is the protocol's private spelling of the
+        # native asset (ADR-097 D3): the conceptual NativeToken, never an
+        # ERC-20 registered at the sentinel.
+        eth = make_native_token(py_bot, chain_id=1)
+    else:
+        eth = make_erc20(
+            py_bot,
+            cassette["token0"]["address"],
+            name=cassette["token0"]["name"],
+            symbol=cassette["token0"]["symbol"],
+            decimals=cassette["token0"]["decimals"],
+            chain_id=1,
+        )
     usdc = make_erc20(
         py_bot,
         cassette["token1"]["address"],

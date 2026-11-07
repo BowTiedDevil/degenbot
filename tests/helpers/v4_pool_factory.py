@@ -14,9 +14,11 @@ from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.erc20 import NativeToken
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
+from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool, v4_currency
 from tests.helpers.pool_bot import new_pool_bot
+from tests.helpers.seam import Bot
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -35,8 +37,8 @@ def make_v4_pool(
     *,
     pool_id: str,
     pool_manager_address: str,
-    token0: Erc20Token,
-    token1: Erc20Token,
+    token0: Erc20Token | NativeToken,
+    token1: Erc20Token | NativeToken,
     fee: int,
     tick_spacing: int,
     hook_address: str | None = None,
@@ -78,7 +80,10 @@ def make_v4_pool(
 
     Returns the V4 companion over the `Pool` handle.
     """
-    bot = py_bot if py_bot is not None else new_pool_bot()
+    # A session is per-chain (ADR-006): the default bot takes the tokens'
+    # chain, so the pool's native leg resolves its intrinsic chain facts
+    # (ADR-097 D2) through the same chain the tokens name.
+    bot = py_bot if py_bot is not None else Bot(chain_id=token0.chain_id)
     blk = state_block if state_block is not None else 0
 
     # ADR-006 rolling-start race closure: seed tick_data INLINE in
@@ -107,8 +112,8 @@ def make_v4_pool(
     pool_id_int = bot.register_v4_pool(
         pool_manager=pool_manager_address,
         pool_id_hex=pool_id,
-        currency0=token0.address,
-        currency1=token1.address,
+        currency0=v4_currency(token0),
+        currency1=v4_currency(token1),
         fee=fee,
         tick_spacing=tick_spacing,
         # The REAL hook address — registered in the pool key in full so the
@@ -128,8 +133,12 @@ def make_v4_pool(
     # No separate ``update_tick_data`` — the inline seed is complete (tick
     # map + known bitmap words, atomically with registration). A separate
     # REPLACE would clobber live pump events (the pre-fix V4 desync).
-    # ADR-006: tokens must be in the same Bot as the pool.
+    # ADR-006: ERC-20 tokens must be in the same Bot as the pool; the
+    # conceptual native token needs no registration (its metadata is chain
+    # facts, and it has no address to register).
     for tok in (token0, token1):
+        if isinstance(tok, NativeToken):
+            continue
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
     pool = UniswapV4Pool.from_handle(handle)

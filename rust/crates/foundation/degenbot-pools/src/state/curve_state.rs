@@ -68,7 +68,11 @@ use crate::state::state_history::{
 pub struct RegisterCurvePoolParams {
     /// Pool contract address.
     pub address: Address,
-    /// The pool's ERC-20 tokens (2 or more), in canonical Curve coin order.
+    /// The pool's token coins (2 or more), in canonical Curve coin order —
+    /// the Curve wire view: a native coin is the all-Es sentinel
+    /// ([`crate::NATIVE_SENTINEL_ALL_ES`]), translated to the conceptual
+    /// `NativeToken` only at the construction/projection call sites
+    /// (ADR-097 D3).
     pub tokens: Vec<Address>,
     /// Amplification coefficient `A` (raw; ramping is resolved Python-side at
     /// calculation time via the `CurveDataProvider` + per-block timestamp —

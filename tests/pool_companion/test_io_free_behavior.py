@@ -256,12 +256,24 @@ class TestV2CalcDelegation:
 
 
 class TestBotTokenIOMethods:
-    """Bot.get_token_balance/approval/total_supply use cache + RPC."""
+    """Bot.get_token_balance/approval/total_supply ride the Rust-backed read-through.
 
-    def test_get_token_balance_cache_hit(self, tmp_path: pathlib.Path, py_bot: _Engine) -> None:
-        """Balance returned from cache without RPC call."""
+    The account-value cache is session live state — the Rust
+    ``BotState::accounts()`` per-block streams (depth-8 FIFO per stream) —
+    reached through the thin token adapters. A cache hit answers with no I/O
+    at all, a miss runs the stateless read and fills the stream, and the typed
+    block selector resolves at the seam that owns the RPC clock (a canonical
+    tag is never coerced to the head).
+    """
+
+    def test_get_token_balance_cache_hit(self, tmp_path: pathlib.Path) -> None:
+        """Balance answered from the session stream without any RPC call."""
+        provider = MagicMock()
+        provider.get_chain_id.return_value = 1
+        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
+        provider.is_connected.return_value = True
         token = make_erc20(
-            py_bot,
+            bot._py_bot,
             "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
             chain_id=1,
             name="Wrapped BTC",
@@ -271,30 +283,15 @@ class TestBotTokenIOMethods:
         holder = "0x" + "11" * 20
         token.set_cached_balance(holder, block_number=100, balance=10**18)
 
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.get_chain_id.return_value = 1
-        bot = Bot(database=database, chain_id=1, provider=provider)
-        provider.is_connected.return_value = True
-
         balance = bot.get_token_balance(token, holder, block_identifier=100)
         assert balance == 10**18
         provider.call.assert_not_called()
 
-    def test_get_token_balance_cache_miss(self, tmp_path: pathlib.Path, py_bot: _Engine) -> None:
-        """Balance fetched from chain (offline cassette) on cache miss, then cached."""
-        token = make_erc20(
-            py_bot,
-            "0xDe30239bB7673E3021A8cF8c6B7Df7Af60e9C0d6",
-            chain_id=1,
-            name="Golem",
-            symbol="GLM",
-            decimals=18,
-        )
+    def test_get_token_balance_cache_miss(self, tmp_path: pathlib.Path) -> None:
+        """Fetched through the stateless read on a miss, then cached at the resolved block."""
+        token_address = "0xDe30239bB7673E3021A8cF8c6B7Df7Af60e9C0d6"
         holder = "0x" + "11" * 20
         expected_balance = 5 * 10**18
-
-        database = make_test_database(tmp_path)
 
         balance_of_calldata = (
             function_selector("balanceOf(address)") + abi_encode(types=["address"], args=[holder])
@@ -306,21 +303,29 @@ class TestBotTokenIOMethods:
                 "200": {
                     "timestamp": 1776986723,
                     "calls": {
-                        f"{token.address.lower()}:0x{balance_of_calldata}": (encoded_balance.hex()),
+                        f"{token_address.lower()}:0x{balance_of_calldata}": (encoded_balance.hex()),
                     },
                     "code": {},
                 }
             },
         )
-        bot = Bot(database=database, chain_id=1, provider=offline)
+        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=offline)
+        token = make_erc20(
+            bot._py_bot, token_address, chain_id=1, name="Golem", symbol="GLM", decimals=18
+        )
 
         balance = bot.get_token_balance(token, holder)
         assert balance == expected_balance
         assert token.get_cached_balance(holder, block_number=200) == expected_balance
 
-    def test_get_token_approval_cache_hit(self, tmp_path: pathlib.Path, py_bot: _Engine) -> None:
+    def test_get_token_approval_cache_hit(self, tmp_path: pathlib.Path) -> None:
+        """Allowance answered from the bounded per-pair stream without any RPC call."""
+        provider = MagicMock()
+        provider.get_chain_id.return_value = 1
+        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
+        provider.is_connected.return_value = True
         token = make_erc20(
-            py_bot,
+            bot._py_bot,
             "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
             chain_id=1,
             name="Uniswap",
@@ -331,21 +336,18 @@ class TestBotTokenIOMethods:
         spender = "0x" + "22" * 20
         token.set_cached_approval(block_number=100, owner=owner, spender=spender, amount=500)
 
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.get_chain_id.return_value = 1
-        bot = Bot(database=database, chain_id=1, provider=provider)
-        provider.is_connected.return_value = True
-
         approval = bot.get_token_approval(token, owner, spender, block_identifier=100)
         assert approval == 500
         provider.call.assert_not_called()
 
-    def test_get_token_total_supply_cache_hit(
-        self, tmp_path: pathlib.Path, py_bot: _Engine
-    ) -> None:
+    def test_get_token_total_supply_cache_hit(self, tmp_path: pathlib.Path) -> None:
+        """Total supply answered from the session stream without any RPC call."""
+        provider = MagicMock()
+        provider.get_chain_id.return_value = 1
+        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
+        provider.is_connected.return_value = True
         token = make_erc20(
-            py_bot,
+            bot._py_bot,
             "0x514910771AF9Ca656af840dff83E8264EcF986CA",
             chain_id=1,
             name="Chainlink",
@@ -354,15 +356,80 @@ class TestBotTokenIOMethods:
         )
         token.set_cached_total_supply(block_number=100, total_supply=10**27)
 
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.get_chain_id.return_value = 1
-        bot = Bot(database=database, chain_id=1, provider=provider)
-        provider.is_connected.return_value = True
-
         supply = bot.get_token_total_supply(token, block_identifier=100)
         assert supply == 10**27
         provider.call.assert_not_called()
+
+    def test_block_tags_resolve_at_the_seam_not_to_the_head(self, tmp_path: pathlib.Path) -> None:
+        """A canonical tag keys the stream at its resolved block (earliest -> 0).
+
+        The deleted Python helper coerced every string tag to the head; the
+        typed selector resolves `earliest` to 0, so a stream entry at 0
+        answers the query with no RPC.
+        """
+        provider = MagicMock()
+        provider.get_chain_id.return_value = 1
+        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
+        provider.is_connected.return_value = True
+        token = make_erc20(
+            bot._py_bot,
+            "0x" + "aa" * 20,
+            chain_id=1,
+            name="T",
+            symbol="T",
+            decimals=18,
+        )
+        holder = "0x" + "11" * 20
+        token.set_cached_balance(holder, block_number=0, balance=42)
+
+        assert bot.get_token_balance(token, holder, block_identifier="earliest") == 42
+        provider.call.assert_not_called()
+
+    def test_approval_cache_eviction_is_visible(self, py_bot: _Engine) -> None:
+        """The per-(owner, spender) approval stream is bounded and independent.
+
+        Depth 8, FIFO by insertion: the ninth distinct block evicts the
+        oldest, one pair's overflow never touches another pair's stream, and
+        the visibility is the same adapter surface the Rust core pins.
+        """
+        token = make_erc20(py_bot, "0x" + "b1" * 20, chain_id=1, name="T", symbol="T", decimals=18)
+        owner = "0x" + "11" * 20
+        spender = "0x" + "22" * 20
+        other_spender = "0x" + "33" * 20
+
+        for block in range(100, 109):
+            token.set_cached_approval(
+                block_number=block, owner=owner, spender=spender, amount=block
+            )
+
+        # The ninth insert evicted the oldest block of this stream.
+        assert token.get_cached_approval(100, owner, spender) is None
+        assert token.get_cached_approval(101, owner, spender) == 101
+        assert token.get_cached_approval(108, owner, spender) == 108
+
+        # A second pair has its own stream: its entry survives this pair's
+        # overflow, and its store does not disturb the first stream.
+        token.set_cached_approval(block_number=100, owner=owner, spender=other_spender, amount=777)
+        assert token.get_cached_approval(100, owner, other_spender) == 777
+        assert token.get_cached_approval(101, owner, spender) == 101
+
+    def test_balance_cache_overwrite_keeps_fifo_position(self, py_bot: _Engine) -> None:
+        """Overwriting a cached block keeps its FIFO position (parity with the core).
+
+        The re-stored entry stays the stream's oldest insertion, so it is the
+        one evicted when the stream overflows past depth 8.
+        """
+        token = make_erc20(py_bot, "0x" + "b2" * 20, chain_id=1, name="T", symbol="T", decimals=18)
+        holder = "0x" + "11" * 20
+        for block in range(1, 9):
+            token.set_cached_balance(holder, block_number=block, balance=block)
+
+        token.set_cached_balance(holder, block_number=1, balance=111)
+        token.set_cached_balance(holder, block_number=9, balance=9)
+
+        assert token.get_cached_balance(holder, block_number=1) is None
+        assert token.get_cached_balance(holder, block_number=2) == 2
+        assert token.get_cached_balance(holder, block_number=9) == 9
 
 
 class TestRateProviderIsStored:

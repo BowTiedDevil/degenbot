@@ -8,7 +8,7 @@ lived in the per-class ``*_io_free*.py`` files:
   touches the central provider (probed with a single recording ``MagicMock``
   provider handed to the high-level ``Bot``; no per-call patching).
 * the per-kind I/O-free constructor / ``Bot.build_*`` coverage (V2/V3/V4,
-  token, ether placeholder, Curve data-provider example).
+  token, native token, Curve data-provider example).
 
 ``Bot.build_*`` choreography is alloy-only, so the build paths are driven from
 one-block ``OfflineProvider`` casettes (see ``_helpers``). Per-kind injected
@@ -36,14 +36,15 @@ from degenbot.provider import OfflineProvider
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool, v4_currency
 from degenbot.uniswap.v4_types import UniswapV4PoolKey
 from degenbot.utils.bytes import to_bytes
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.curve_pool_factory import make_curve_pool
-from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
+from tests.helpers.erc20_factory import make_erc20, make_native_token
 from tests.helpers.pool_bot import new_pool_bot
+from tests.helpers.seam import Bot as _RuntimeBot
 from tests.helpers.synthetic_logs import v2_sync, v3_swap, v4_swap
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
@@ -76,7 +77,7 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable
 
-    from degenbot.erc20 import EtherPlaceholder
+    from degenbot.erc20 import NativeToken
     from tests.helpers.seam import Bot as _Engine
 
 # ---------------------------------------------------------------------------
@@ -161,8 +162,8 @@ def _build_erc20(bot: Bot) -> Erc20Token:
     )
 
 
-def _build_ether_placeholder(bot: Bot) -> EtherPlaceholder:
-    return make_ether_placeholder(bot._py_bot, ZERO_ADDRESS, chain_id=1)
+def _build_native_token(bot: Bot) -> NativeToken:
+    return make_native_token(bot._py_bot, chain_id=1)
 
 
 def _build_v2(bot: Bot) -> UniswapV2Pool:
@@ -210,9 +211,7 @@ def _build_v3(bot: Bot) -> UniswapV3Pool:
 
 
 def _build_v4(bot: Bot) -> UniswapV4Pool:
-    native_eth = make_erc20(
-        bot._py_bot, ZERO_ADDRESS, chain_id=1, name="Ether", symbol="ETH", decimals=18
-    )
+    native_eth = make_native_token(bot._py_bot, chain_id=1)
     usdc = make_erc20(
         bot._py_bot, USDC_ADDR, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
     )
@@ -286,7 +285,7 @@ class NoIOCase:
 
 NO_IO_REGISTRY: tuple[NoIOCase, ...] = (
     NoIOCase(id="erc20", pool_kind="token", build=_build_erc20),
-    NoIOCase(id="ether-placeholder", pool_kind="token", build=_build_ether_placeholder),
+    NoIOCase(id="native-token", pool_kind="token", build=_build_native_token),
     NoIOCase(id="v2", pool_kind="v2", build=_build_v2),
     NoIOCase(id="v3", pool_kind="v3", build=_build_v3),
     NoIOCase(id="v4", pool_kind="v4", build=_build_v4),
@@ -537,7 +536,10 @@ class TestV4PoolIOFreeConstructor:
         assert pool.tick_data[-10].liquidity_net == 100
 
     def test_io_free_swap_event_update(self) -> None:
-        bot = new_pool_bot()
+        # A chain-scoped session (ADR-006): the pool's native leg resolves its
+        # intrinsic chain facts (ADR-097 D2), which the chain-0 synthetic
+        # factory bot deliberately does not have.
+        bot = _RuntimeBot(chain_id=1)
         pool = _v4_injected(bot)
 
         # The V4 twin: a `PoolManager` Swap log keyed by pool_id, dispatched
@@ -559,7 +561,7 @@ class TestV4PoolIOFreeConstructor:
         pool = _v4_injected(py_bot)
 
         assert pool.pool_key == UniswapV4PoolKey(
-            currency0=make_native_eth(py_bot).address,
+            currency0=v4_currency(make_native_eth(py_bot)),
             currency1=make_usdc(py_bot).address,
             fee=V4_FEE,
             tick_spacing=V4_TICK_SPACING,
@@ -604,10 +606,9 @@ class TestBotBuildV4Pool:
 
         native_eth = make_native_eth(py_bot)
         usdc = make_usdc(py_bot)
-        for tok in (native_eth, usdc):
-            if bot._py_bot.get_token(tok.address) is None:
-                bot._py_bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, 1)
-        bot.tokens.add(token_address=ZERO_ADDRESS, chain_id=1, token=native_eth)
+        if bot._py_bot.get_token(usdc.address) is None:
+            bot._py_bot.register_token(usdc.address, usdc.name, usdc.symbol, usdc.decimals, 1)
+        bot.tokens.get_or_add_native(chain_id=1, token=native_eth)
         bot.tokens.add(token_address=get_checksum_address(USDC_ADDR), chain_id=1, token=usdc)
 
         pool = bot.build_managed_pool(
@@ -645,7 +646,7 @@ class TestBotBuildV4Pool:
 
 
 # ---------------------------------------------------------------------------
-# Token / ether-placeholder data-only construction
+# Token / native-token data-only construction
 # ---------------------------------------------------------------------------
 
 
@@ -756,19 +757,15 @@ class TestBotBuildErc20Token:
         assert bot.tokens.get(token_address=token.address, chain_id=1) is token
 
 
-class TestEtherPlaceholderDataOnly:
-    """EtherPlaceholder delegates metadata through the Erc20Token handle."""
+class TestNativeTokenDataOnly:
+    """NativeToken reads its metadata from the core chain-facts manifest."""
 
     def test_constructor_with_data(self, py_bot: _Engine) -> None:
-        placeholder = make_ether_placeholder(
-            py_bot,
-            "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
-            chain_id=1,
-        )
-        assert placeholder.chain_id == 1
-        assert placeholder.symbol == "ETH"
-        assert placeholder.name == "Ether Placeholder"
-        assert placeholder.decimals == 18
+        native = make_native_token(py_bot, chain_id=1)
+        assert native.chain_id == 1
+        assert native.symbol == "ETH"
+        assert native.name == "Ether"
+        assert native.decimals == 18
 
 
 # ---------------------------------------------------------------------------

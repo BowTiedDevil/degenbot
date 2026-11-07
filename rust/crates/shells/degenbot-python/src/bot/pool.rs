@@ -7,10 +7,12 @@
 //! Owns no state — property reads and calculation calls cross `PyO3` on every
 //! access, locking the shared `BotState` for reading.
 
-use crate::bot::token::PyErc20Token;
+use crate::bot::token::{PyErc20Token, PyNativeToken};
+
 use crate::prelude::*;
 use alloy::primitives::{Address, I256, U256};
 use degenbot_pools::BalancerWeightedPoolIdentity;
+use degenbot_pools::NATIVE_SENTINEL_ALL_ES;
 use degenbot_pools::{BalancerStablePoolIdentity, BalancerStablePoolState};
 use degenbot_pools::{CurveDataProvider, CurveDataProviderError};
 use degenbot_pools::{CurvePoolIdentity, CurvePoolState};
@@ -1431,9 +1433,9 @@ impl PyLiquidityPool {
 
     /// `PyErc20Token` handle for token0, or `None` if not registered in the
     /// shared `BotState`.
-    fn get_token0(&self, py: Python<'_>) -> PyResult<Option<PyErc20Token>> {
+    fn get_token0(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         let family = self.family_of(py)?;
-        Ok(self.with_state(py, |core| {
+        let slot = self.with_state(py, |core| {
             let token_addr = match family {
                 "v2" => core
                     .pool_slice::<degenbot_pools::V2PoolIdentity>(self.pool_id)
@@ -1449,19 +1451,24 @@ impl PyLiquidityPool {
                     .map(|i| i.token0),
                 _ => None,
             }?;
-            if core.has_token(&token_addr) {
-                Some(PyErc20Token::new(Arc::clone(&self.core), token_addr))
-            } else {
-                None
+            // V4's `address(0)` currency is that protocol's private spelling
+            // of the native asset: translated here, at the V4 identity read,
+            // and nowhere else (ADR-097 D3).
+            if family == "v4" && token_addr.is_zero() {
+                return Some(TokenSlot::Native);
             }
-        }))
+            core.has_token(&token_addr)
+                .then_some(TokenSlot::Erc20(token_addr))
+        });
+        slot.map(|slot| token_slot_object(py, &self.core, self.chain_id, slot))
+            .transpose()
     }
 
     /// `PyErc20Token` handle for token1, or `None` if not registered in the
     /// shared `BotState`.
-    fn get_token1(&self, py: Python<'_>) -> PyResult<Option<PyErc20Token>> {
+    fn get_token1(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         let family = self.family_of(py)?;
-        Ok(self.with_state(py, |core| {
+        let slot = self.with_state(py, |core| {
             let token_addr = match family {
                 "v2" => core
                     .pool_slice::<degenbot_pools::V2PoolIdentity>(self.pool_id)
@@ -1477,12 +1484,14 @@ impl PyLiquidityPool {
                     .map(|i| i.token1),
                 _ => None,
             }?;
-            if core.has_token(&token_addr) {
-                Some(PyErc20Token::new(Arc::clone(&self.core), token_addr))
-            } else {
-                None
+            if family == "v4" && token_addr.is_zero() {
+                return Some(TokenSlot::Native);
             }
-        }))
+            core.has_token(&token_addr)
+                .then_some(TokenSlot::Erc20(token_addr))
+        });
+        slot.map(|slot| token_slot_object(py, &self.core, self.chain_id, slot))
+            .transpose()
     }
 
     // --- V3 state read getters ---
@@ -3023,9 +3032,15 @@ fn u256_list(py: Python<'_>, values: &[U256]) -> PyResult<Py<PyAny>> {
     Ok(pyo3::types::PyList::new(py, py_vals)?.into_any().unbind())
 }
 
-/// The `PyErc20Token` companion handles for `addresses`, or `None` when one of
-/// them is not registered in `state` (the caller pre-registers via
+/// The token companion handles for `addresses`, or `None` when one of them
+/// resolves to nothing (the caller pre-registers ERC-20s via
 /// `Bot.register_token`).
+///
+/// This is a PROTOCOL call site: a Curve coin list may spell its native coin
+/// with the old Vyper all-Es placeholder, and that one spelling translates
+/// here (and back, at the coin-read call sites) to the conceptual
+/// `NativeToken` (ADR-097 D3) — every other codeless coin stays absent. The
+/// raw protocol view never reaches Python.
 fn token_handles(
     state: &BotState,
     core: &Arc<StateLock<BotState>>,
@@ -3037,6 +3052,57 @@ fn token_handles(
             state
                 .has_token(address)
                 .then(|| PyErc20Token::new(Arc::clone(core), *address))
+        })
+        .collect()
+}
+
+/// What one projected token slot resolves to: the `Erc20Token | NativeToken`
+/// union (ADR-097) before it becomes a Python handle. Plain data so a
+/// `BotState` read closure can produce it — the Python object is built after
+/// the guard drops, under the GIL.
+#[derive(Clone, Copy)]
+enum TokenSlot {
+    /// A registered ERC-20 token at this contract address.
+    Erc20(Address),
+    /// The session chain's conceptual native token.
+    Native,
+}
+
+/// One slot's Python handle: `Erc20Token` or `NativeToken`, the public union.
+fn token_slot_object(
+    py: Python<'_>,
+    core: &Arc<StateLock<BotState>>,
+    chain_id: u64,
+    slot: TokenSlot,
+) -> PyResult<Py<PyAny>> {
+    match slot {
+        TokenSlot::Erc20(address) => Ok(PyErc20Token::new(Arc::clone(core), address)
+            .into_pyobject(py)?
+            .into_any()
+            .unbind()),
+        TokenSlot::Native => Ok(PyNativeToken::new(chain_id)
+            .into_pyobject(py)?
+            .into_any()
+            .unbind()),
+    }
+}
+
+/// The Curve coin companion handles: [`token_handles`] plus the Curve
+/// protocol's own native translation — the all-Es coin of the old Vyper
+/// deployments becomes the conceptual `NativeToken` here (and is spelled back
+/// only at the coin-read call sites). Zero stays the coin-enumeration
+/// terminator upstream and never reaches this projection; any other codeless
+/// coin is absent, exactly like an unregistered token.
+fn curve_token_handles(state: &BotState, addresses: &[Address]) -> Option<Vec<TokenSlot>> {
+    addresses
+        .iter()
+        .map(|address| {
+            if *address == NATIVE_SENTINEL_ALL_ES {
+                return Some(TokenSlot::Native);
+            }
+            state
+                .has_token(address)
+                .then_some(TokenSlot::Erc20(*address))
         })
         .collect()
 }
@@ -3281,26 +3347,45 @@ impl PyCurveView {
 
     /// The pool's token companion handles, resolved via the shared `BotState`
     /// token registry. `None` when a token is not registered (the companion
-    /// wraps each via `Erc20Token.from_handle`).
-    fn get_tokens(&self, py: Python<'_>) -> PyResult<Option<Vec<PyErc20Token>>> {
+    /// wraps each handle as `Erc20Token` or `NativeToken`). The all-Es coin
+    /// of the old Vyper deployments projects as the conceptual `NativeToken`.
+    fn get_tokens(&self, py: Python<'_>) -> PyResult<Option<Vec<Py<PyAny>>>> {
         let tokens = self.identity(py, |id| id.tokens.clone())?;
-        let core = Arc::clone(&self.pool.core);
-        Ok(self
+        let slots = self
             .pool
-            .with_state(py, move |state| token_handles(state, &core, &tokens)))
+            .with_state(py, move |state| curve_token_handles(state, &tokens));
+        let chain_id = self.pool.chain_id;
+        let core = Arc::clone(&self.pool.core);
+        slots
+            .map(|slots| {
+                slots
+                    .into_iter()
+                    .map(|slot| token_slot_object(py, &core, chain_id, slot))
+                    .collect()
+            })
+            .transpose()
     }
 
     /// The pool's *underlying* token companion handles (metapool coins beneath
     /// the base-pool intermediaries). `None` for a plain pool, or when an
     /// underlying token is not registered.
-    fn get_tokens_underlying(&self, py: Python<'_>) -> PyResult<Option<Vec<PyErc20Token>>> {
+    fn get_tokens_underlying(&self, py: Python<'_>) -> PyResult<Option<Vec<Py<PyAny>>>> {
         let Some(underlying) = self.identity(py, |id| id.tokens_underlying.clone())? else {
             return Ok(None);
         };
-        let core = Arc::clone(&self.pool.core);
-        Ok(self
+        let slots = self
             .pool
-            .with_state(py, move |state| token_handles(state, &core, &underlying)))
+            .with_state(py, move |state| curve_token_handles(state, &underlying));
+        let chain_id = self.pool.chain_id;
+        let core = Arc::clone(&self.pool.core);
+        slots
+            .map(|slots| {
+                slots
+                    .into_iter()
+                    .map(|slot| token_slot_object(py, &core, chain_id, slot))
+                    .collect()
+            })
+            .transpose()
     }
 
     /// The pool's dedicated LP-token companion handle. `None` ⇔ the pool token

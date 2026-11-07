@@ -45,9 +45,11 @@
 
 use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_core::errors::ProviderResult;
+use degenbot_core::errors::{ProviderError, ProviderResult};
 
-use crate::abi::{selector, ContractRead};
+use alloy::sol_types::SolCall;
+
+use crate::abi::{selector, ContractRead, IERC20};
 use crate::multicall3::{
     decode_aggregate3_results, encode_aggregate3, multicall3_batch, MulticallResult,
     MULTICALL3_ADDRESS,
@@ -517,6 +519,199 @@ fn stop_on_call_error_uint(lower: &MulticallResult, upper: &MulticallResult) -> 
         }
         decode_uint_word(&upper.return_data)
     })
+}
+
+// ── Account reads: balanceOf / allowance / totalSupply ─────────────────────
+
+/// Why one ERC-20 account read produced no value.
+///
+/// The account reads are the stateless family's strict arm: a failure is a
+/// typed value that travels to the consumer, never a swallowed absence.
+/// What a failure MEANS stays the consumer's policy — Aave treats a zero or
+/// missing balance as its own condition, Curve maps a fetch failure to its
+/// provider vocabulary, and the pool builder classifies the no-return shape
+/// as a codeless coin — so this type names the failure without deciding it.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum AccountReadError {
+    /// The `eth_call` itself failed: a revert, or a transport fault. The
+    /// provider's own typed reason is kept verbatim.
+    #[error(transparent)]
+    Call(#[from] ProviderError),
+
+    /// The getter answered with return data that is not one ABI `uint256`
+    /// word. `returned` is the length that arrived: `0` is the no-return
+    /// shape of a contract with no runtime code (a codeless coin, an EOA),
+    /// which consumers classify as a broken address rather than a decode
+    /// miss; a short return is a malformed getter. Never a truncated value.
+    #[error("{getter}() at {token} returned {returned} bytes, not one uint256 word")]
+    NotUint256 {
+        /// The getter that was called (`balanceOf` / `allowance` /
+        /// `totalSupply`).
+        getter: &'static str,
+        /// The token contract the getter was called on.
+        token: Address,
+        /// How many return bytes arrived.
+        returned: usize,
+    },
+}
+
+/// Read `balanceOf(account)`: the account's balance in token units.
+///
+/// The exact `balanceOf(address)` wire shape (`0x70a08231` + one ABI address
+/// word, strict `uint256` return) is this family's; every consumer — Bot
+/// account queries, the Curve data provider, Aave's stkAAVE refresh — reads
+/// through it instead of carrying its own encode/decode.
+///
+/// # Errors
+///
+/// [`AccountReadError::Call`] when the `eth_call` fails,
+/// [`AccountReadError::NotUint256`] when the return is not one `uint256`
+/// word.
+pub async fn balance_of(
+    transport: &impl ContractRead,
+    token: Address,
+    account: Address,
+    block: Option<u64>,
+) -> Result<U256, AccountReadError> {
+    let calldata = Bytes::from(IERC20::balanceOfCall { account }.abi_encode());
+    read_account_word(transport, token, "balanceOf", calldata, block).await
+}
+
+/// Read many accounts' `balanceOf(account)` over ONE `aggregate3`: one
+/// result per account, in input order, each entry's failure typed on its own
+/// (a failed or malformed sub-call is that entry's [`AccountReadError`], never
+/// a batch abort). The wire shape per sub-call is exactly [`balance_of`]'s —
+/// this is the batch call shape over the same family.
+///
+/// When the batch itself cannot answer, the Multicall3 step degrades to the
+/// per-call reads with per-item `success` flags (its own contract), so every
+/// entry still resolves independently.
+///
+/// # Errors
+///
+/// Per account: [`AccountReadError::Call`] for a failed sub-call or
+/// transport fault, [`AccountReadError::NotUint256`] for a malformed return.
+pub async fn balance_of_batch(
+    transport: &impl ContractRead,
+    token: Address,
+    accounts: &[Address],
+    block: Option<u64>,
+) -> Vec<Result<U256, AccountReadError>> {
+    if accounts.is_empty() {
+        return Vec::new();
+    }
+    let calls: Vec<(Address, Bytes)> = accounts
+        .iter()
+        .map(|account| {
+            (
+                token,
+                Bytes::from(IERC20::balanceOfCall { account: *account }.abi_encode()),
+            )
+        })
+        .collect();
+    // `multicall3_batch` degrades a failed/malformed batch to sequential
+    // per-call `eth_call`s mapped to per-item `success` flags; an `Err` can
+    // only be its own encode step (defensively unreachable) — mirror it as
+    // all-failed items, which the per-entry decision below turns into typed
+    // failures.
+    let results = multicall3_batch(transport, &calls, block)
+        .await
+        .unwrap_or_else(|_| {
+            calls
+                .iter()
+                .map(|_| MulticallResult {
+                    success: false,
+                    return_data: Bytes::new(),
+                })
+                .collect()
+        });
+    results
+        .into_iter()
+        .zip(accounts)
+        .map(|(res, account)| {
+            if !res.success {
+                return Err(AccountReadError::Call(ProviderError::ExecutionReverted {
+                    code: -32000,
+                    message: format!("balanceOf({account}) batched sub-call failed"),
+                }));
+            }
+            decode_account_word("balanceOf", token, &res.return_data)
+        })
+        .collect()
+}
+
+/// Read `allowance(owner, spender)`: the amount `spender` may move on
+/// `owner`'s behalf.
+///
+/// The exact `allowance(address,address)` wire shape (`0xdd62ed3e` + two ABI
+/// address words), strict `uint256` return.
+///
+/// # Errors
+///
+/// [`AccountReadError::Call`] when the `eth_call` fails,
+/// [`AccountReadError::NotUint256`] when the return is not one `uint256`
+/// word.
+pub async fn allowance(
+    transport: &impl ContractRead,
+    token: Address,
+    owner: Address,
+    spender: Address,
+    block: Option<u64>,
+) -> Result<U256, AccountReadError> {
+    let calldata = Bytes::from(IERC20::allowanceCall { owner, spender }.abi_encode());
+    read_account_word(transport, token, "allowance", calldata, block).await
+}
+
+/// Read `totalSupply()`: the token's outstanding supply.
+///
+/// The exact `totalSupply()` wire shape (`0x18160ddd`, no args), strict
+/// `uint256` return.
+///
+/// # Errors
+///
+/// [`AccountReadError::Call`] when the `eth_call` fails,
+/// [`AccountReadError::NotUint256`] when the return is not one `uint256`
+/// word.
+pub async fn total_supply(
+    transport: &impl ContractRead,
+    token: Address,
+    block: Option<u64>,
+) -> Result<U256, AccountReadError> {
+    let calldata = Bytes::from(IERC20::totalSupplyCall {}.abi_encode());
+    read_account_word(transport, token, "totalSupply", calldata, block).await
+}
+
+/// One account getter's call + decode: the single `eth_call` step the three
+/// getters share, with the block carried verbatim — a pinned number pins the
+/// read, `None` is the transport's own latest.
+async fn read_account_word(
+    transport: &impl ContractRead,
+    token: Address,
+    getter: &'static str,
+    calldata: Bytes,
+    block: Option<u64>,
+) -> Result<U256, AccountReadError> {
+    let data = transport.call(token, calldata, block).await?;
+    decode_account_word(getter, token, &data)
+}
+
+/// The strict account-getter decode: one ABI `uint256` word — the first 32
+/// bytes carry the value and trailing bytes are ignored as any ABI decoder
+/// ignores them — and a return shorter than one word is a typed failure,
+/// never a truncated value.
+fn decode_account_word(
+    getter: &'static str,
+    token: Address,
+    ret: &[u8],
+) -> Result<U256, AccountReadError> {
+    if ret.len() < 32 {
+        return Err(AccountReadError::NotUint256 {
+            getter,
+            token,
+            returned: ret.len(),
+        });
+    }
+    Ok(U256::from_be_slice(&ret[..32]))
 }
 
 #[cfg(test)]
@@ -1527,5 +1722,121 @@ mod tests {
         )
         .await;
         assert_eq!(meta.decimals, None);
+    }
+
+    // ── Account reads ──────────────────────────────────────────────────────
+
+    /// One ABI `uint256` word of return data, at full width.
+    fn u256_ret(value: U256) -> Vec<u8> {
+        value.to_be_bytes::<32>().to_vec()
+    }
+
+    #[tokio::test]
+    async fn account_reads_decode_one_uint256_word() {
+        let chain = Chain::new()
+            .answer(TOKEN_A, b"balanceOf(address)", u256_ret(U256::from(77u64)))
+            .answer(
+                TOKEN_A,
+                b"allowance(address,address)",
+                u256_ret(U256::from(5u64)),
+            )
+            .answer(TOKEN_A, b"totalSupply()", u256_ret(U256::MAX));
+
+        assert_eq!(
+            balance_of(&chain, TOKEN_A, TOKEN_B, None).await.unwrap(),
+            U256::from(77u64)
+        );
+        assert_eq!(
+            allowance(&chain, TOKEN_A, TOKEN_B, TOKEN_A, None)
+                .await
+                .unwrap(),
+            U256::from(5u64)
+        );
+        assert_eq!(
+            total_supply(&chain, TOKEN_A, None).await.unwrap(),
+            U256::MAX
+        );
+    }
+
+    #[tokio::test]
+    async fn account_read_calls_carry_the_pinned_block() {
+        let chain = Chain::new().answer(TOKEN_A, b"balanceOf(address)", u256_ret(U256::ZERO));
+        balance_of(&chain, TOKEN_A, TOKEN_B, PIN).await.unwrap();
+        let calls = chain.calls.lock().unwrap().clone();
+        assert_eq!(calls, vec![(TOKEN_A, calls[0].1.clone(), PIN)]);
+    }
+
+    #[tokio::test]
+    async fn account_read_the_no_return_shape_is_typed_not_a_value() {
+        // A getter with no runtime code answers with nothing: the typed
+        // no-return shape, never a zero balance.
+        let chain = Chain::new().answer(TOKEN_A, b"totalSupply()", Vec::new());
+        match total_supply(&chain, TOKEN_A, None).await.unwrap_err() {
+            AccountReadError::NotUint256 {
+                getter,
+                token,
+                returned,
+            } => {
+                assert_eq!(getter, "totalSupply");
+                assert_eq!(token, TOKEN_A);
+                assert_eq!(returned, 0);
+            }
+            other @ AccountReadError::Call(_) => {
+                panic!("expected the typed no-return shape, got {other:?}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn account_read_a_short_return_is_typed_not_truncated() {
+        let mut short = u256_ret(U256::from(9u64));
+        short.pop();
+        let chain = Chain::new().answer(TOKEN_A, b"balanceOf(address)", short);
+        match balance_of(&chain, TOKEN_A, TOKEN_B, None)
+            .await
+            .unwrap_err()
+        {
+            AccountReadError::NotUint256 {
+                getter,
+                token,
+                returned,
+            } => {
+                assert_eq!(getter, "balanceOf");
+                assert_eq!(token, TOKEN_A);
+                assert_eq!(returned, 31);
+            }
+            other @ AccountReadError::Call(_) => {
+                panic!("expected the typed short-return shape, got {other:?}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn account_read_trailing_return_bytes_are_ignored_like_any_abi_decoder() {
+        let mut wide = u256_ret(U256::from(42u64));
+        wide.extend_from_slice(&[0xAB; 32]);
+        let chain = Chain::new().answer(TOKEN_A, b"balanceOf(address)", wide);
+        assert_eq!(
+            balance_of(&chain, TOKEN_A, TOKEN_B, None).await.unwrap(),
+            U256::from(42u64)
+        );
+    }
+
+    #[tokio::test]
+    async fn account_read_a_revert_travels_as_a_typed_call_failure() {
+        let chain = Chain::new().fail(
+            TOKEN_A,
+            b"allowance(address,address)",
+            ProviderError::ExecutionReverted {
+                code: -32000,
+                message: "boom".into(),
+            },
+        );
+        assert!(matches!(
+            allowance(&chain, TOKEN_A, TOKEN_B, TOKEN_A, None).await,
+            Err(AccountReadError::Call(
+                ProviderError::ExecutionReverted { .. }
+            ))
+        ));
     }
 }

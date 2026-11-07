@@ -50,7 +50,7 @@ use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
 use degenbot_rpc::abi::{
     BalancerPoolId, ContractRead, IBalancerPool, IBalancerVault, IPoolIdentity, IUniswapV3Pool,
-    IUniswapV4StateView, Slot0Prefix, TickLiquidity, V2Reserves, V4Slot0, IERC20,
+    IUniswapV4StateView, Slot0Prefix, TickLiquidity, V2Reserves, V4Slot0,
 };
 
 /// Slot0 + liquidity state tuple returned by
@@ -522,39 +522,6 @@ impl PyBotIo {
         }
     }
 
-    /// Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
-    /// Multicall3 `aggregate3` `eth_call` , falling back to the
-    /// per-token `fetch_erc20_metadata` path if the multicall itself errors.
-    ///
-    /// Returns one `Option<(name, symbol, decimals)>` per input address, in
-    /// order. A token whose sub-call reverted / failed to decode is `None`,
-    /// matching the single-token batched-fetch caller-side fallback contract
-    /// (the Python builder then retries that token via its alternate-prototype
-    /// fallback). Collapses the two separate per-token `fetch_erc20_metadata`
-    /// round-trips a two-token pool build used to fire into ONE multicall.
-    #[pyo3(signature = (addresses))]
-    fn fetch_erc20_metadata_batch(
-        &self,
-        py: Python<'_>,
-        addresses: Vec<String>,
-    ) -> Vec<Option<(String, String, u64)>> {
-        let Ok(io) = self.required_construction_io() else {
-            return Vec::new();
-        };
-        let mut addrs = Vec::with_capacity(addresses.len());
-        for a in addresses {
-            let Ok(addr) = parse_address_for_call(&a) else {
-                return Vec::new();
-            };
-            addrs.push(alloy::primitives::Address::from(addr));
-        }
-        py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::fetch_erc20_metadata_batch(&io, &addrs).await
-            })
-        })
-    }
-
     /// Fetch a V2-style pool's reserves via `getReserves()`, performing the
     /// encode -> call -> decode choreography in Rust.
     ///
@@ -743,126 +710,6 @@ impl PyBotIo {
             list.append(crate::conversion::alloy::u256_to_py(py, &b)?.unbind())?;
         }
         Ok(list.into())
-    }
-
-    /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
-    /// full encode -> call -> decode choreography in Rust.
-    ///
-    /// Mirrors `degenbot/builders/erc20_builder.py::Erc20Builder.get_token_balance`'s
-    /// I/O call path (cache + checksum are out of scope; the caller still owns
-    /// those). The `balanceOf(address)` selector (`0x70a08231`) + ABI-encoded
-    /// `address` arg and the `uint256` return decode are sourced from the
-    /// `sol!`-generated definitions in `degenbot_rpc::abi`.
-    ///
-    /// Errors propagate: a provider call revert or decode failure surfaces as a
-    /// `PyErr` to the caller (no swallowing) — matches the Python impl's no-
-    /// try/except contract, which trusts the caller to handle.
-    #[pyo3(signature = (token, owner, block=None))]
-    fn fetch_token_balance(
-        &self,
-        py: Python<'_>,
-        token: &str,
-        owner: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
-        let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
-        let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
-        let block_num = self.resolve_block(py, block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                io.read(
-                    token_addr,
-                    IERC20::balanceOfCall {
-                        account: owner_addr,
-                    },
-                    block_num,
-                )
-                .await
-            })
-        });
-        let n = match r {
-            Ok(v) => v,
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                return Err(revert_to_pyerr(py, token, &message));
-            }
-            Err(e) => return Err(e.into()),
-        };
-        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
-    }
-
-    /// Fetch an ERC-20 token allowance via `allowance(address,address)`, the
-    /// two-address-arg parameterized-call pattern.
-    ///
-    /// Mirrors `Erc20Builder.get_token_approval`'s I/O path. Selector
-    /// `0xdd62ed3e`; two ABI-encoded `address` args; decoded `uint256` result.
-    /// Errors propagate (see [`Self::fetch_token_balance`]).
-    #[pyo3(signature = (token, owner, spender, block=None))]
-    fn fetch_token_allowance(
-        &self,
-        py: Python<'_>,
-        token: &str,
-        owner: &str,
-        spender: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
-        let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
-        let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
-        let spender_addr = alloy::primitives::Address::from(parse_address_for_call(spender)?);
-        let block_num = self.resolve_block(py, block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                io.read(
-                    token_addr,
-                    IERC20::allowanceCall {
-                        owner: owner_addr,
-                        spender: spender_addr,
-                    },
-                    block_num,
-                )
-                .await
-            })
-        });
-        let n = match r {
-            Ok(v) => v,
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                return Err(revert_to_pyerr(py, token, &message));
-            }
-            Err(e) => return Err(e.into()),
-        };
-        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
-    }
-
-    /// Fetch an ERC-20 token's total supply via `totalSupply()`, the no-arg
-    /// uint256-returning call pattern.
-    ///
-    /// Mirrors `Erc20Builder.get_token_total_supply`'s I/O path. Selector
-    /// `0x18160ddd`; no args; decoded `uint256` result. Errors propagate.
-    #[pyo3(signature = (token, block=None))]
-    fn fetch_token_total_supply(
-        &self,
-        py: Python<'_>,
-        token: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
-        let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
-        let block_num = self.resolve_block(py, block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                io.read(token_addr, IERC20::totalSupplyCall {}, block_num)
-                    .await
-            })
-        });
-        let n = match r {
-            Ok(v) => v,
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                return Err(revert_to_pyerr(py, token, &message));
-            }
-            Err(e) => return Err(e.into()),
-        };
-        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
     /// Probe a pool's type by trying method calls in order.
@@ -1581,6 +1428,26 @@ impl PyBotIo {
     }
 }
 
+/// Map one typed account-read failure to Python: the revert arm keeps its
+/// per-token `revert_to_pyerr` classification, a transport fault keeps its
+/// `ProviderError` conversion, and the typed decode failure surfaces verbatim.
+pub(crate) fn account_read_error(
+    py: Python<'_>,
+    token: &str,
+    error: degenbot_rpc::erc20::AccountReadError,
+) -> PyErr {
+    use degenbot_rpc::erc20::AccountReadError;
+    match error {
+        AccountReadError::Call(ProviderError::ExecutionReverted { message, .. }) => {
+            revert_to_pyerr(py, token, &message)
+        }
+        AccountReadError::Call(other) => other.into(),
+        error @ AccountReadError::NotUint256 { .. } => {
+            pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
+        }
+    }
+}
+
 /// Extract a native Rust `AlloyProvider` from the held Python provider when
 /// it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
 /// shell). Returns `None` for non-alloy providers (legacy test doubles), which
@@ -1610,7 +1477,9 @@ pub(crate) fn extract_native_alloy(provider: &Bound<'_, PyAny>) -> Option<Arc<Al
 /// other shape is refused. A tag is carried as a TYPED value here — never the
 /// number it might have been coerced into, and never a `None` it might have
 /// been silently dropped to (which reads as the head).
-fn extract_block_selector(block: Option<&Bound<'_, PyAny>>) -> PyResult<Option<BlockSelector>> {
+pub(crate) fn extract_block_selector(
+    block: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<BlockSelector>> {
     let Some(raw) = block else {
         return Ok(None);
     };

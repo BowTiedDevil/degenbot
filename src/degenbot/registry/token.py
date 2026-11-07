@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
     from degenbot._ffi import Bot
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.erc20.native_token import NativeToken
     from degenbot.types.aliases import ChainId
 
 
@@ -36,6 +37,7 @@ class TokenRegistry:
         """
         self._session = SessionObjects(py_bot)
         self._companions: CompanionCache[Erc20Token] = CompanionCache()
+        self._native: dict[ChainId, NativeToken] = {}
 
     def get(
         self,
@@ -105,7 +107,37 @@ class TokenRegistry:
         if handle is not None:
             self._companions.drop(handle)
 
-    def list_all(self) -> Iterator[Erc20Token]:
+    def get_native(
+        self,
+        *,
+        chain_id: ChainId,
+    ) -> NativeToken | None:
+        """Retrieve the chain's conceptual native token companion.
+
+        The native token is keyed by chain (one per chain), never by a
+        sentinel address (ADR-097 D1).
+
+        Returns:
+            The companion, or ``None`` when the session has not built one.
+
+        """
+        return self._native.get(chain_id)
+
+    def get_or_add_native(
+        self,
+        *,
+        chain_id: ChainId,
+        token: NativeToken,
+    ) -> NativeToken:
+        """Get-or-create the one native-token companion per chain.
+
+        Returns:
+            The canonical native-token companion for this chain.
+
+        """
+        return self._native.setdefault(chain_id, token)
+
+    def list_all(self) -> Iterator[Erc20Token | NativeToken]:
         """Yield every registered token.
 
         Yields:
@@ -114,10 +146,12 @@ class TokenRegistry:
         """
         for entry in self._companions.entries():
             yield entry.item
+        yield from self._native.values()
 
     def reset(self) -> None:
         """Drop every token companion. The session's identities are untouched."""
         self._companions.clear()
+        self._native.clear()
 
     def __len__(self) -> int:
         """Count the registered tokens.

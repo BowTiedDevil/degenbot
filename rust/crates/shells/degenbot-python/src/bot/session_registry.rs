@@ -38,7 +38,7 @@ pub struct PySessionObject {
     kind: &'static str,
     key: String,
     family: String,
-    address: Address,
+    address: Option<Address>,
     chain_id: u64,
 }
 
@@ -49,7 +49,7 @@ impl PySessionObject {
             kind: "pool",
             key: pool_key(object.identity()),
             family: object.family_tag().to_owned(),
-            address: object.identity().address(),
+            address: Some(object.identity().address()),
             chain_id: object.chain_id(),
         }
     }
@@ -59,7 +59,11 @@ impl PySessionObject {
         Self {
             kind: "token",
             key: token_key(object.identity()),
-            family: "erc20".to_owned(),
+            family: if object.identity().is_native() {
+                "native".to_owned()
+            } else {
+                "erc20".to_owned()
+            },
             address: object.identity().address(),
             chain_id: object.chain_id(),
         }
@@ -83,9 +87,10 @@ fn pool_key(identity: &PoolIdentity) -> String {
     }
 }
 
-/// The canonical, session-unique name of a token identity.
+/// The canonical, session-unique name of a token identity — the registry's
+/// own [`TokenIdentity::key`] projection (the one token-key spelling).
 fn token_key(identity: &TokenIdentity) -> String {
-    format!("token:erc20:{}", identity.address())
+    identity.key()
 }
 
 /// The family tags this seam can name, for an error that points at the fix.
@@ -183,8 +188,8 @@ impl PySessionObject {
     /// The address component: the pool's own address, or for a V4 pool the
     /// `PoolManager` (which is not a pool address).
     #[getter]
-    fn address(&self) -> String {
-        self.address.to_string()
+    fn address(&self) -> Option<String> {
+        self.address.map(|address| address.to_string())
     }
 
     /// The chain whose session registered this object.

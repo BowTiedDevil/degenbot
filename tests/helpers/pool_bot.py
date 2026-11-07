@@ -18,7 +18,14 @@ from tests.helpers.seam import Bot
 
 
 def new_pool_bot() -> Bot:
-    """A fresh, isolated ``Bot`` for one pool-factory call."""
+    """A fresh, isolated ``Bot`` for one pool-factory call.
+
+    The ``chain_id=0`` construction default is deliberate for these
+    synthetic fixtures: a factory pool is not a chain deployment, and
+    chain 1 would run the real CREATE2/deployment verification against
+    synthetic addresses. A fixture that needs real chain facts (the native
+    token's metadata, ADR-097 D2) passes its own chain-scoped ``py_bot=``.
+    """
     return Bot()
 
 

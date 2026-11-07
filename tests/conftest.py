@@ -559,8 +559,12 @@ def py_bot() -> EngineBot:
     test's registrations into the next and make the module order-dependent by
     construction. Every test that needs an engine takes this fixture instead
     of building one at import.
+
+    Chain 1 (Ethereum): a session is per-chain (ADR-006) and the native
+    token's intrinsic metadata resolves per chain (ADR-097 D2), so the
+    fixture names a real chain rather than the ``chain_id=0`` default.
     """
-    return EngineBot()
+    return EngineBot(chain_id=1)
 
 
 @pytest.fixture

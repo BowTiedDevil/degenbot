@@ -32,10 +32,6 @@ class Erc20Token(AbstractErc20Token):
     # them without inline annotations on the classmethod body (red-knot rejects
     # `self.x: T = ...` as `invalid-type-form`).
     _py_token: _TokenHandle
-    _state_cache_depth: int
-    _cached_approval: dict[tuple[int, ChecksummedAddress, ChecksummedAddress], int]
-    _cached_balance: dict[ChecksummedAddress, BoundedCache[BlockNumber, int]]
-    _cached_total_supply: BoundedCache[BlockNumber, int]
     _price_oracle: ChainlinkPriceContract | None
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
@@ -71,16 +67,17 @@ class Erc20Token(AbstractErc20Token):
         py_token: _TokenHandle,
         *,
         oracle_address: str | None = None,
-        state_cache_depth: int = 8,
     ) -> Self:
         """Wrap a Rust-owned ``_TokenHandle`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Rust
         owns the token metadata (address, name, symbol, decimals, chain_id)
         as a ``TokenEntry``; this companion reads it through ``self._py_token``
-        on every access and holds no metadata copy. Price oracle +
-        balance/approval/total-supply caches stay Python (I/O constructs that
-        cannot move to Rust).
+        on every access and holds no metadata copy. The account-value caches
+        (balance/approval/total supply) are session live state too — the
+        ``BotState::accounts()`` streams, reached through the thin adapters
+        below — so this companion holds no cache storage. The price oracle
+        stays Python.
 
         Only ``Bot.get_token()`` / ``Bot.build_erc20token()`` (production)
         and ``make_erc20`` (tests) should call this — they have already
@@ -94,13 +91,6 @@ class Erc20Token(AbstractErc20Token):
         """
         self = cls.__new__(cls)
         self._py_token = py_token
-
-        self._state_cache_depth = state_cache_depth
-        self._cached_approval = {}
-        self._cached_balance = {}
-        self._cached_total_supply = BoundedCache(
-            max_items=state_cache_depth,
-        )
 
         self._price_oracle = None
         if oracle_address:
@@ -135,25 +125,27 @@ class Erc20Token(AbstractErc20Token):
         """Token decimals (read from Rust-owned ``TokenEntry``)."""
         return self._py_token.decimals
 
-    # -- Cache accessors (dictionary operations, no I/O) --
+    # -- Session account-cache accessors (thin adapters, no I/O) --
+    #
+    # The store is session live state: the Rust `BotState::accounts()`
+    # per-block streams the account read-through fills (depth-8 FIFO per
+    # stream). This companion keeps the historical accessors and holds no
+    # cache storage of its own.
 
     def get_cached_balance(self, address: ChecksummedAddress, block_number: int) -> int | None:
-        """Return cached balance.
+        """Return the session-cached balance of ``address`` at ``block_number``.
 
         Returns:
-            The computed value.
+            The cached value, or ``None`` when the stream holds no entry.
 
         """
-        cache = self._cached_balance.get(address, BoundedCache(max_items=self._state_cache_depth))
-        return cache.get(block_number)
+        return self._py_token.get_cached_balance(address, block_number)
 
     def set_cached_balance(
         self, address: ChecksummedAddress, block_number: int, balance: int
     ) -> None:
-        """Set cached balance."""
-        if address not in self._cached_balance:
-            self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
-        self._cached_balance[address][block_number] = balance
+        """Record ``address``'s balance at ``block_number`` in the session stream."""
+        self._py_token.set_cached_balance(address, block_number, balance)
 
     def get_cached_approval(
         self,
@@ -161,13 +153,13 @@ class Erc20Token(AbstractErc20Token):
         owner: ChecksummedAddress,
         spender: ChecksummedAddress,
     ) -> int | None:
-        """Return cached approval.
+        """Return the session-cached allowance at ``block_number``.
 
         Returns:
-            The computed value.
+            The cached value, or ``None`` when the stream holds no entry.
 
         """
-        return self._cached_approval.get((block_number, owner, spender))
+        return self._py_token.get_cached_approval(owner, spender, block_number)
 
     def set_cached_approval(
         self,
@@ -176,21 +168,21 @@ class Erc20Token(AbstractErc20Token):
         spender: ChecksummedAddress,
         amount: int,
     ) -> None:
-        """Set cached approval."""
-        self._cached_approval[block_number, owner, spender] = amount
+        """Record the allowance at ``block_number`` in the bounded session stream."""
+        self._py_token.set_cached_approval(owner, spender, block_number, amount)
 
     def get_cached_total_supply(self, block_number: int) -> int | None:
-        """Return cached total supply.
+        """Return the session-cached total supply at ``block_number``.
 
         Returns:
-            The computed value.
+            The cached value, or ``None`` when the stream holds no entry.
 
         """
-        return self._cached_total_supply.get(block_number)
+        return self._py_token.get_cached_total_supply(block_number)
 
     def set_cached_total_supply(self, block_number: int, total_supply: int) -> None:
-        """Set cached total supply."""
-        self._cached_total_supply[block_number] = total_supply
+        """Record the total supply at ``block_number`` in the session stream."""
+        self._py_token.set_cached_total_supply(block_number, total_supply)
 
     @property
     def price(self) -> float:

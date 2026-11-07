@@ -24,7 +24,7 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::runtime::bridged_block_on;
 use degenbot_pools::{CurveDataProvider, CurveDataProviderError};
-use degenbot_rpc::abi::{ContractRead, ICurvePool, ILendingRateReads, IERC20};
+use degenbot_rpc::abi::{ContractRead, ICurvePool, ILendingRateReads};
 
 use crate::bot_core::construction_io::RpcConstruction;
 
@@ -150,13 +150,16 @@ impl CurveDataProvider for RpcCurveDataProvider {
         holder_address: Address,
         block_number: u64,
     ) -> Result<U256, CurveDataProviderError> {
-        self.call_uint(
+        // The call shape and decode are the stateless account read's; the
+        // failure policy here is Curve's own — any read failure is the
+        // provider vocabulary's `FetchFailed`, never a fabricated zero.
+        bridged_block_on(degenbot_rpc::erc20::balance_of(
+            &self.rpc,
             token_address,
-            IERC20::balanceOfCall {
-                account: holder_address,
-            },
-            block_number,
-        )
+            holder_address,
+            Some(block_number),
+        ))
+        .map_err(|_| CurveDataProviderError::FetchFailed)
     }
 
     fn token_total_supply(
@@ -164,7 +167,12 @@ impl CurveDataProvider for RpcCurveDataProvider {
         token_address: Address,
         block_number: u64,
     ) -> Result<U256, CurveDataProviderError> {
-        self.call_uint(token_address, IERC20::totalSupplyCall {}, block_number)
+        bridged_block_on(degenbot_rpc::erc20::total_supply(
+            &self.rpc,
+            token_address,
+            Some(block_number),
+        ))
+        .map_err(|_| CurveDataProviderError::FetchFailed)
     }
 
     fn lending_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
@@ -450,6 +458,7 @@ mod tests {
     use alloy::primitives::address;
     use async_trait::async_trait;
     use degenbot_core::errors::ProviderError;
+    use degenbot_rpc::abi::IERC20;
     use degenbot_rpc::provider::EthBlock;
 
     const POOL: Address = address!("0x1111111111111111111111111111111111111111");

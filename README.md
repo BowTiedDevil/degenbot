@@ -525,17 +525,11 @@ V4 uses a singleton pool manager with hooks. Pools are identified by `pool_id` i
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
 _BOT = Bot()
-from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.erc20_factory import make_erc20, make_native_token
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool, UniswapV4PoolKey
 from degenbot.erc20.erc20 import Erc20Token
 
-_eth = make_erc20(_BOT,
-    address='0x0000000000000000000000000000000000000000',
-    name='Ether',
-    symbol='ETH',
-    decimals=18,
-    chain_id=8453,
-)
+_eth = make_native_token(_BOT, chain_id=8453)
 _usdc = make_erc20(_BOT,
     address='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     name='USD Coin',

@@ -10,10 +10,12 @@ pub(crate) mod balancer_stable_state;
 pub(crate) mod balancer_weighted_state;
 pub(crate) mod block_pump;
 pub(crate) mod bot;
-/// The build cluster on the `Bot` facade (moved from the PyO3 shell):
+/// The build cluster on the `Bot` facade (moved from the `PyO3` shell):
 /// the build-and-register entry points per family, the
 /// swap-simulation calc entries, and the construction-DB open — the shell
 /// keeps only arg parsing + `PyErr` mapping + the single-flight claim.
+pub use account_queries::AccountQueryError;
+pub(crate) mod account_queries;
 pub(crate) mod build_register;
 pub(crate) mod construction_io;
 pub(crate) mod curve_data_provider_impl;

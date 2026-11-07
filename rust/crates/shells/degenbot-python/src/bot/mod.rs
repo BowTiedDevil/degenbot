@@ -49,7 +49,7 @@ fn narrow_reserve(
 }
 pub use crate::bot::pool::PyLiquidityPool;
 use crate::bot::pool::TickData;
-use crate::bot::token::PyErc20Token;
+use crate::bot::token::{PyErc20Token, PyNativeToken};
 use degenbot_bot::bot_core::BuiltIdentity;
 use degenbot_bot::bot_core::PoolConstruction;
 use degenbot_bot::bot_core::RefusalKind;
@@ -3110,7 +3110,7 @@ impl PyBot {
         decimals: u8,
         chain_id: u64,
     ) -> PyResult<PyErc20Token> {
-        let addr = parse_address(address)?;
+        let addr = parse_erc20_token_address(address)?;
         let name = name.to_string();
         let symbol = symbol.to_string();
         // release the GIL across the BotState write-lock acquisition +
@@ -3138,7 +3138,7 @@ impl PyBot {
     /// Returns:
     ///     A `PyErc20Token` handle, or `None` if the address is not registered.
     fn get_token(&self, py: Python<'_>, address: &str) -> PyResult<Option<PyErc20Token>> {
-        let addr = parse_address(address)?;
+        let addr = parse_erc20_token_address(address)?;
         // GIL hygiene: the has_token read runs under this py.detach via the core.
         if py.detach(|| self.bot.has_token(&addr)) {
             Ok(Some(PyErc20Token::new(self.bot.state_arc(), addr)))
@@ -3168,7 +3168,7 @@ impl PyBot {
         chain_id: u64,
         block: Option<u64>,
     ) -> PyResult<PyErc20Token> {
-        let addr = parse_address(address)?;
+        let addr = parse_erc20_token_address(address)?;
         // The metadata resolution and token registration are core-owned
         // ([`Bot::build_and_register_erc20_token`]); the GIL is released
         // across the whole scope.
@@ -3179,6 +3179,160 @@ impl PyBot {
             })
             .map_err(|kind| map_build_refusal("build_erc20_token", kind))?;
         Ok(PyErc20Token::new(self.bot.state_arc(), addr))
+    }
+
+    /// The session chain's conceptual native token (ADR-097): one per chain,
+    /// no protocol address of its own, metadata from the core chain-facts
+    /// manifest (never a contract read and never operator config).
+    ///
+    /// Args:
+    ///     `chain_id`: chain whose native asset to name.
+    ///
+    /// Returns:
+    ///     A `NativeToken` handle for that chain.
+    #[staticmethod]
+    fn native_token(chain_id: u64) -> PyResult<PyNativeToken> {
+        degenbot_core::chain_facts::native_facts(chain_id)
+            .map_err(|refusal| pyo3::exceptions::PyValueError::new_err(refusal.to_string()))?;
+        Ok(PyNativeToken::new(chain_id))
+    }
+
+    /// Fetch the balance of `owner` in `token` — an ERC-20 `balanceOf`, or
+    /// the account's native balance for the conceptual `NativeToken`.
+    ///
+    /// The session account-cache read-through over the core's one
+    /// choreography: resolve the typed block selector (a number pins; the
+    /// canonical tags resolve at the seam that owns the RPC clock), answer
+    /// from `BotState::accounts` when the stream holds the resolved block,
+    /// otherwise run the stateless read and cache-fill.
+    ///
+    /// Args:
+    ///     `token`: a `Erc20Token` or `NativeToken` handle.
+    ///     `owner`: account address (hex string).
+    ///     `block`: optional block number or canonical tag.
+    ///
+    /// Returns:
+    ///     The balance as a Python int.
+    #[pyo3(signature = (token, owner, block=None))]
+    fn fetch_token_balance(
+        &self,
+        py: Python<'_>,
+        token: &Bound<'_, PyAny>,
+        owner: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let identity = token_identity_of(token)?;
+        let owner = parse_address(owner)?;
+        let selector = crate::bot::py_bot_io::extract_block_selector(block)?;
+        let value = py
+            .detach(|| self.bot.token_balance(&identity, owner, selector))
+            .map_err(|error| account_query_error(py, &identity, error))?;
+        crate::conversion::alloy::u256_to_py(py, &value).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch the allowance of `owner` to `spender` in `token` (ERC-20 only:
+    /// the native asset has no allowances). Same read-through as
+    /// [`Self::fetch_token_balance`].
+    ///
+    /// Args:
+    ///     `token`: a `Erc20Token` handle.
+    ///     `owner`: owner account address (hex string).
+    ///     `spender`: spender account address (hex string).
+    ///     `block`: optional block number or canonical tag.
+    ///
+    /// Returns:
+    ///     The allowance as a Python int.
+    #[pyo3(signature = (token, owner, spender, block=None))]
+    fn fetch_token_allowance(
+        &self,
+        py: Python<'_>,
+        token: &Bound<'_, PyAny>,
+        owner: &str,
+        spender: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let identity = token_identity_of(token)?;
+        let owner = parse_address(owner)?;
+        let spender = parse_address(spender)?;
+        let selector = crate::bot::py_bot_io::extract_block_selector(block)?;
+        let value = py
+            .detach(|| {
+                self.bot
+                    .token_allowance(&identity, owner, spender, selector)
+            })
+            .map_err(|error| account_query_error(py, &identity, error))?;
+        crate::conversion::alloy::u256_to_py(py, &value).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch `token`'s total supply (ERC-20 only). Same read-through as
+    /// [`Self::fetch_token_balance`].
+    ///
+    /// Args:
+    ///     `token`: a `Erc20Token` handle.
+    ///     `block`: optional block number or canonical tag.
+    ///
+    /// Returns:
+    ///     The total supply as a Python int.
+    #[pyo3(signature = (token, block=None))]
+    fn fetch_token_total_supply(
+        &self,
+        py: Python<'_>,
+        token: &Bound<'_, PyAny>,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let identity = token_identity_of(token)?;
+        let selector = crate::bot::py_bot_io::extract_block_selector(block)?;
+        let value = py
+            .detach(|| self.bot.token_total_supply(&identity, selector))
+            .map_err(|error| account_query_error(py, &identity, error))?;
+        crate::conversion::alloy::u256_to_py(py, &value).map(pyo3::Bound::unbind)
+    }
+
+    /// Build + register MANY ERC-20 tokens: the batch call shape over the
+    /// core's one per-token construction
+    /// ([`Bot::build_and_register_erc20_tokens`]).
+    ///
+    /// Args:
+    ///     `addresses`: token contract addresses (hex strings), in order.
+    ///     `chain_id`: chain ID.
+    ///     `block`: optional block to read on-chain at (None = head).
+    ///
+    /// Returns:
+    ///     One `(handle, error)` pair per input address, in input order:
+    ///     `handle` is a `Erc20Token` for a built-and-registered token and
+    ///     `None` for a refused one, `error` is that refusal's message. A
+    ///     refused token does not abort the batch — the successfully built
+    ///     tokens stay registered.
+    #[pyo3(signature = (addresses, chain_id, block=None))]
+    fn build_erc20_tokens(
+        &self,
+        py: Python<'_>,
+        addresses: Vec<String>,
+        chain_id: u64,
+        block: Option<u64>,
+    ) -> PyResult<Py<PyList>> {
+        let parsed = addresses
+            .into_iter()
+            .map(|raw| parse_erc20_token_address(&raw))
+            .collect::<PyResult<Vec<Address>>>()?;
+        let results = py.detach(|| {
+            self.bot
+                .build_and_register_erc20_tokens(chain_id, &parsed, block)
+        });
+        let list = PyList::empty(py);
+        for (address, result) in parsed.iter().zip(results) {
+            match result {
+                Ok(_) => {
+                    let handle = PyErc20Token::new(self.bot.state_arc(), *address);
+                    list.append((handle, py.None()))?;
+                }
+                Err(kind) => {
+                    let message = build_refusal_text(py, kind);
+                    list.append((py.None(), message))?;
+                }
+            }
+        }
+        Ok(list.unbind())
     }
 
     /// Encode a V2 swap call, returning `(to_address_hex, calldata_hex, value)`.
@@ -3264,6 +3418,80 @@ fn curve_axis<T>(byte: u8, axis: &'static str, decode: fn(u8) -> Option<T>) -> P
     decode(byte).ok_or_else(|| {
         pyo3::exceptions::PyValueError::new_err(format!("unknown Curve {axis} discriminant {byte}"))
     })
+}
+
+/// Whether `address` is one of the raw protocol spellings of native value.
+fn is_native_sentinel(address: Address) -> bool {
+    address.is_zero() || address == degenbot_pools::NATIVE_SENTINEL_ALL_ES
+}
+
+/// Parse one token-contract address for a GENERIC token entry point. A raw
+/// native sentinel is refused loudly rather than resolved to the session's
+/// native token: the sentinel is one protocol's wire spelling, and silently
+/// accepting it is exactly the identity drift ADR-097 removes.
+fn parse_erc20_token_address(s: &str) -> PyResult<Address> {
+    let address = parse_address(s)?;
+    if is_native_sentinel(address) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{s} is a protocol native-asset sentinel, not a token contract address; \
+             name the native asset through NativeToken (Bot.get_native_token)"
+        )));
+    }
+    Ok(address)
+}
+
+/// One batch-construction refusal's message text (the same rendering
+/// [`map_build_refusal`] raises with, kept as text so one broken token is one
+/// item in the batch result instead of an exception).
+fn build_refusal_text(py: Python<'_>, kind: RefusalKind) -> String {
+    let error = map_build_refusal("build_erc20_tokens", kind);
+    error
+        .value(py)
+        .str()
+        .ok()
+        .and_then(|text| text.extract::<String>().ok())
+        .unwrap_or_default()
+}
+
+/// A Python token companion handle (`Erc20Token` or `NativeToken`) -> the
+/// session token identity: the union at the FFI boundary. The handles are the
+/// public spelling — a raw sentinel address is never accepted here (ADR-097
+/// D1).
+fn token_identity_of(
+    token: &Bound<'_, PyAny>,
+) -> PyResult<degenbot_substrate::session_registry::TokenIdentity> {
+    use degenbot_substrate::session_registry::TokenIdentity;
+    if let Ok(handle) = token.extract::<PyRef<'_, PyErc20Token>>() {
+        return Ok(handle.token_identity());
+    }
+    if token.extract::<PyRef<'_, PyNativeToken>>().is_ok() {
+        return Ok(TokenIdentity::native());
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "token must be an Erc20Token or NativeToken handle",
+    ))
+}
+
+/// Map one typed account-query failure to Python: the transport's revert arm
+/// keeps its per-token classification, the no-io and native-query refusals are
+/// their own loud errors, and everything else surfaces verbatim.
+fn account_query_error(
+    py: Python<'_>,
+    identity: &degenbot_substrate::session_registry::TokenIdentity,
+    error: degenbot_bot::bot_core::AccountQueryError,
+) -> PyErr {
+    use degenbot_bot::bot_core::AccountQueryError;
+    match error {
+        AccountQueryError::MissingConstructionIo => pyo3::exceptions::PyRuntimeError::new_err(
+            format!("account query on {identity}: no construction io is attached to this session"),
+        ),
+        AccountQueryError::Read(read) => {
+            crate::bot::py_bot_io::account_read_error(py, &identity.to_string(), read)
+        }
+        AccountQueryError::NoNativeQuery { query } => pyo3::exceptions::PyValueError::new_err(
+            format!("the native asset has no {query} query ({identity})"),
+        ),
+    }
 }
 
 fn parse_address(s: &str) -> PyResult<Address> {

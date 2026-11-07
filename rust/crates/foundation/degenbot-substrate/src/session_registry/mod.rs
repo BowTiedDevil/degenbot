@@ -267,13 +267,21 @@ impl fmt::Display for PoolIdentity {
 }
 
 /// Canonical identity of one session's token object: a chain-scoped ERC-20
-/// contract address. The chain is not a key component because the registry is
-/// constructed for exactly one chain, so it is already implied by the registry
-/// a request arrives on.
+/// contract address, or the chain's conceptual native asset. The chain is not
+/// a key component because the registry is constructed for exactly one chain,
+/// so it is already implied by the registry a request arrives on.
+///
+/// Exactly one [`TokenIdentity::Native`] exists per session's chain. It has
+/// no protocol address of its own: the Curve all-Es coin and the V4
+/// `address(0)` currency are protocol-private translations at those call
+/// sites, and neither sentinel nor any other raw address is a way to spell
+/// this identity from a generic entry point.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TokenIdentity {
     /// An ERC-20 token at `address`.
     Erc20(Address),
+    /// The session chain's conceptual native asset.
+    Native,
 }
 
 impl TokenIdentity {
@@ -283,12 +291,41 @@ impl TokenIdentity {
         Self::Erc20(address)
     }
 
-    /// The token's contract address.
+    /// The identity of the session chain's conceptual native asset.
     #[must_use]
-    pub const fn address(&self) -> Address {
+    pub const fn native() -> Self {
+        Self::Native
+    }
+
+    /// The registry-owned canonical key for this token: `token:erc20:<address>`
+    /// for an ERC-20 token, `token:native` for the chain's conceptual native
+    /// asset.
+    ///
+    /// This is the ONE token-key spelling. The session account streams and
+    /// the `PySessionObject` projection key on it; it is a projection OF the
+    /// identity the registry mints, not a second identity authority.
+    #[must_use]
+    pub fn key(&self) -> String {
         match self {
-            Self::Erc20(address) => *address,
+            Self::Erc20(address) => format!("token:erc20:{address}"),
+            Self::Native => "token:native".to_owned(),
         }
+    }
+
+    /// The token's contract address — `None` for the conceptual native
+    /// token, which has no protocol address of its own.
+    #[must_use]
+    pub const fn address(&self) -> Option<Address> {
+        match self {
+            Self::Erc20(address) => Some(*address),
+            Self::Native => None,
+        }
+    }
+
+    /// Whether this identity is the session chain's conceptual native asset.
+    #[must_use]
+    pub const fn is_native(&self) -> bool {
+        matches!(self, Self::Native)
     }
 }
 
@@ -296,6 +333,7 @@ impl fmt::Display for TokenIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Erc20(address) => write!(f, "erc20 token {address}"),
+            Self::Native => write!(f, "native token"),
         }
     }
 }

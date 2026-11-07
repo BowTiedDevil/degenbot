@@ -340,8 +340,6 @@ fn result_to_u256(result: &MulticallResult) -> U256 {
 /// At revision ≥ 4, `getDiscountPercent` is removed; the verify skips.
 const GHO_DISCOUNT_DEPRECATION_REVISION: i64 = 4;
 
-/// keccak256("balanceOf(address)")[0..4] = `0x70a08231`.
-const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
 /// keccak256("getDiscountPercent(address)")[0..4] = `0x6c53272b`.
 const GET_DISCOUNT_PERCENT_SELECTOR: [u8; 4] = [0x6c, 0x53, 0x27, 0x2b];
 
@@ -454,18 +452,19 @@ pub async fn verify_stk_aave_balances_on_conn(
         eligible.push((user_id, user_address, expected));
     }
     if !eligible.is_empty() {
-        let calls: Vec<(Address, Bytes)> = eligible
-            .iter()
-            .map(|(_, user_address, _)| {
-                (
-                    token_address,
-                    build_call_data(BALANCE_OF_SELECTOR, *user_address),
-                )
-            })
-            .collect();
-        let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
+        let accounts: Vec<Address> = eligible.iter().map(|(_, user, _)| *user).collect();
+        let results = degenbot_rpc::erc20::balance_of_batch(
+            provider,
+            token_address,
+            &accounts,
+            Some(block_number),
+        )
+        .await;
         for ((user_id, user_address, expected), result) in eligible.iter().zip(results.iter()) {
-            let actual = result_to_u256(result);
+            // The verification policy is preserved: an unreadable balance
+            // reconciles as ZERO (the same absence semantics the batched read's
+            // `result_to_u256` gave), so any tracked non-zero row diverges.
+            let actual = result.as_ref().copied().unwrap_or(U256::ZERO);
             if actual != *expected {
                 divergences.push(VerificationDivergence::StkAaveBalance {
                     user_id: *user_id,

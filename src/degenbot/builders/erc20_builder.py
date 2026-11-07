@@ -2,33 +2,36 @@
 
 from __future__ import annotations
 
-import contextlib
-import dataclasses
 from typing import TYPE_CHECKING, cast
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20 import EtherPlaceholder
-from degenbot.erc20.erc20 import Erc20Token
+from degenbot.constants import ZERO_ADDRESS
+from degenbot.erc20 import Erc20Token, NativeToken, token_handle
 from degenbot.exceptions import DegenbotValueError, PoolRegistrationError
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot._ffi import Bot, BotIo
-    from degenbot.db import Erc20TokenRow
+    from degenbot._ffi import Bot
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier
 
 
-@dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
-class _TokenMetadata:
-    """On-chain metadata resolved for a token."""
+#: The raw protocol spellings of native value — V4's `address(0)` currency and
+#: the old Vyper Curve pools' all-Es coin. Neither is ever a token contract
+#: address: generic construction refuses both loudly (ADR-097 D1), and only
+#: the owning protocol translates its own spelling.
+NATIVE_SENTINEL_ADDRESSES = (
+    ZERO_ADDRESS,
+    get_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"),
+)
 
-    name: str
-    symbol: str
-    decimals: int
+
+def _is_native_sentinel(address: str) -> bool:
+    """Whether `address` is a raw protocol native-asset sentinel."""
+    return address in NATIVE_SENTINEL_ADDRESSES
 
 
 class Erc20Builder:
@@ -63,20 +66,32 @@ class Erc20Builder:
         registration are Rust-owned: `Bot.build_erc20_token`
         runs `build_erc20_metadata` over the attached `ConstructionIo`. This
         Python shell keeps only the *companion* concerns: the `TokenRegistry`
-        idempotent short-circuit, the `EtherPlaceholder`
-        special case, and the `Erc20Token.from_handle` display wrapper.
+        idempotent short-circuit, the loud raw-sentinel refusal (ADR-097 D1),
+        and the `Erc20Token.from_handle` display wrapper.
 
         Returns:
             The computed value.
 
         Raises:
-            DegenbotValueError: No contract is deployed at the address, or the
-                token metadata could not be resolved on-chain.
+            DegenbotValueError: The address is a raw protocol native-asset
+                sentinel, no contract is deployed at the address, or the token
+                metadata could not be resolved on-chain.
 
         """
         address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
+
+        # A raw protocol sentinel is never a token contract address: fail
+        # loudly instead of resolving it to the native token (which is named
+        # through `build_native`, and translated privately at each protocol's
+        # own call sites).
+        if _is_native_sentinel(address):
+            msg = (
+                f"{address} is a protocol native-asset sentinel, not a token "
+                "contract address; use Bot.get_native_token(chain_id)"
+            )
+            raise DegenbotValueError(message=msg)
 
         # Check registry first
         if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
@@ -94,23 +109,6 @@ class Erc20Builder:
                     chain_id,
                 )
             return existing
-
-        # Check for Ether placeholder
-        if address in EtherPlaceholder.addresses:
-            py_token = self._py_bot.register_token(
-                address,
-                "Ether Placeholder",
-                "ETH",
-                18,
-                chain_id,
-            )
-            token: Erc20Token = EtherPlaceholder.from_handle(py_token)
-            token = self._tokens.get_or_add(
-                token_address=token.address, chain_id=chain_id, token=token
-            )
-            if not silent:
-                logger.info(f"• {token.symbol} ({token.name})")
-            return token
 
         # DB-first + on-chain + write-back + register: Rust-owned.
         # `Bot.build_erc20_token` resolves name/symbol/decimals (DB row -> on-
@@ -145,173 +143,140 @@ class Erc20Builder:
 
         return token
 
-    def _register_from_metadata(
-        self,
-        address: str,
-        metadata: _TokenMetadata,
-        *,
-        chain_id: ChainId,
-        silent: bool,
-    ) -> Erc20Token:
-        """Register a token in the Rust BotState + Python registry from metadata.
-
-        Returns:
-            The canonical token instance (the ``get_or_add`` path).
-
-        """
-        py_token = self._py_bot.register_token(
-            address, metadata.name, metadata.symbol, metadata.decimals, chain_id
-        )
-        token = Erc20Token.from_handle(py_token)
-        token = self._tokens.get_or_add(token_address=token.address, chain_id=chain_id, token=token)
-        if not silent:
-            logger.info(f"• {token.symbol} ({token.name})")
-        return token
-
     def build_many(
         self,
         addresses: Sequence[str],
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
-        io: BotIo | None = None,
     ) -> list[Erc20Token]:
-        """Build MANY tokens, batching metadata reads into ONE Multicall3 read.
+        """Build MANY tokens over the core's batch construction entry.
 
-        Preserves :meth:`build`'s per-token semantics — registry fast
-        path, Ether placeholder, DB lookup, alternate-prototype fallback — but
-        when 2+ tokens need a network metadata fetch it issues ONE
-        ``io.fetch_erc20_metadata_batch([...])`` instead of N separate
-        ``fetch_erc20_metadata`` round-trips. A token whose batched metadata
-        came back ``None`` falls back to per-token :meth:`build` (so the
-        contract-deployed check + alternate-prototype fallback still apply).
+        The DB-first / network / fallback / write-back / registration
+        choreography is Rust-owned (`Bot.build_erc20_tokens`, the batch call
+        shape over the same per-token core :meth:`build` uses — one batched
+        metadata read serves the network-missing set): one token per input
+        address, in input order, duplicates get-or-create, and a token that
+        cannot be built is a failure of that entry alone — the successfully
+        built tokens stay registered and the whole batch completes before the
+        failure surfaces (no all-or-nothing abort).
 
         Returns:
             One :class:`Erc20Token` per input address, in order.
+
+        Raises:
+            DegenbotValueError: An address is a raw protocol native-asset
+                sentinel, or one or more tokens could not be built (the
+                message names each failed address).
 
         """
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
-        resolved: list[Erc20Token | None] = []
-        # (result_index, address, token_from_db) still needing a network fetch.
-        network_needed: list[tuple[int, str, Erc20TokenRow | None]] = []
-
-        for raw_address in addresses:
-            address = get_checksum_address(raw_address)
-            if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
-                # ADR-006: ensure the token is registered in the shared Bot.
-                if self._py_bot.get_token(address) is None:
-                    self._py_bot.register_token(
-                        address,
-                        existing.name,
-                        existing.symbol,
-                        existing.decimals,
-                        chain_id,
-                    )
-                resolved.append(existing)
-                continue
-            if address in EtherPlaceholder.addresses:
-                resolved.append(
-                    self._register_from_metadata(
-                        address,
-                        _TokenMetadata(name="Ether Placeholder", symbol="ETH", decimals=18),
-                        chain_id=chain_id,
-                        silent=silent,
-                    )
+        checksums = [get_checksum_address(address) for address in addresses]
+        for address in checksums:
+            if _is_native_sentinel(address):
+                msg = (
+                    f"{address} is a protocol native-asset sentinel, not a token "
+                    "contract address; use Bot.get_native_token(chain_id)"
                 )
+                raise DegenbotValueError(message=msg)
+
+        # Registry-first per token (the idempotent short-circuit :meth:`build`
+        # keeps); everything else is the core batch's per-token choreography.
+        resolved: list[Erc20Token | None] = [None] * len(checksums)
+        needed: list[tuple[int, str]] = []
+        for index, address in enumerate(checksums):
+            existing = self._tokens.get(token_address=address, chain_id=chain_id)
+            if existing is None:
+                needed.append((index, address))
                 continue
-            token_from_db = None
-            if io is not None:
-                with contextlib.suppress(Exception):
-                    token_from_db = io.fetch_erc20_token(chain_id=chain_id, address=address)
-            if (
-                token_from_db is not None
-                and token_from_db.name is not None
-                and token_from_db.symbol is not None
-                and token_from_db.decimals is not None
-            ):
-                resolved.append(
-                    self._register_from_metadata(
-                        address,
-                        _TokenMetadata(
-                            name=str(token_from_db.name),
-                            symbol=str(token_from_db.symbol),
-                            decimals=int(token_from_db.decimals),
-                        ),
-                        chain_id=chain_id,
-                        silent=silent,
-                    )
+            if self._py_bot.get_token(address) is None:
+                self._py_bot.register_token(
+                    address,
+                    existing.name,
+                    existing.symbol,
+                    existing.decimals,
+                    chain_id,
                 )
-                continue
-            network_needed.append((len(resolved), address, token_from_db))
-            resolved.append(None)
+            resolved[index] = existing
 
-        if network_needed:
-            assert io is not None, "io required to fetch network token metadata"
-            metas = io.fetch_erc20_metadata_batch([addr for _, addr, _ in network_needed])
-            for (idx, address, token_from_db), meta in zip(network_needed, metas, strict=True):
-                if meta is None:
-                    # Fall back to the full per-token build (which performs the
-                    # contract-deployed check + alternate-prototype fallback).
-                    resolved[idx] = self.build(address, chain_id=chain_id, silent=silent)
-                else:
-                    name, symbol, decimals = meta
-                    # Write back to DB if the record exists but was missing data.
-                    if (
-                        token_from_db is not None
-                        and token_from_db.name is None
-                        and token_from_db.symbol is None
-                        and token_from_db.decimals is None
-                        and io is not None
-                    ):
-                        with contextlib.suppress(Exception):
-                            io.update_erc20_token_metadata(
-                                chain_id=chain_id,
-                                address=address,
-                                name=name,
-                                symbol=symbol,
-                                decimals=decimals,
-                            )
-                    resolved[idx] = self._register_from_metadata(
-                        address,
-                        _TokenMetadata(name=name, symbol=symbol, decimals=int(decimals)),
-                        chain_id=chain_id,
-                        silent=silent,
-                    )
+        failures: list[str] = []
+        if needed:
+            results = self._py_bot.build_erc20_tokens(
+                addresses=[address for _, address in needed], chain_id=chain_id
+            )
+            for (index, address), (handle, error) in zip(needed, results, strict=True):
+                if handle is None:
+                    failures.append(f"{address}: {error}")
+                    continue
+                token = Erc20Token.from_handle(handle)
+                resolved[index] = self._tokens.get_or_add(
+                    token_address=token.address, chain_id=chain_id, token=token
+                )
 
-        return [t for t in resolved if t is not None]
+        if failures:
+            msg = f"token build failed: {'; '.join(failures)}"
+            raise DegenbotValueError(message=msg)
+
+        if not silent:
+            for token in resolved:
+                assert token is not None
+                logger.info(f"• {token.symbol} ({token.name})")
+
+        return [token for token in resolved if token is not None]
+
+    def build_native(
+        self,
+        *,
+        chain_id: ChainId | None = None,
+        silent: bool = False,
+    ) -> NativeToken:
+        """The chain's conceptual native token (ADR-097).
+
+        Metadata resolves through the core chain-facts manifest — no contract
+        read, no DB row, and no operator config. The Python shell keeps only
+        the registry/display adaptation and logging.
+
+        Returns:
+            The chain's :class:`NativeToken`.
+
+        """
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
+
+        if (existing := self._tokens.get_native(chain_id=chain_id)) is not None:
+            return existing
+
+        token = NativeToken.from_handle(self._py_bot.native_token(chain_id))
+        token = self._tokens.get_or_add_native(chain_id=chain_id, token=token)
+        if not silent:
+            logger.info(f"• {token.symbol} ({token.name})")
+        return token
 
     def get_token_balance(  # ruff:ignore[no-self-use]
         self,
-        token: Erc20Token,
+        token: Erc20Token | NativeToken,
         address: str,
         block_identifier: BlockIdentifier | None = None,
-        *,
-        io: BotIo | None = None,
     ) -> int:
-        """Retrieve the ERC-20 balance for the given address.
+        """Retrieve the token balance for the given address.
+
+        The read-through is core-owned (`Bot.fetch_token_balance`): typed
+        block resolution, the session account cache, the stateless read, and
+        the cache-fill — one choreography for an ERC-20 and for the
+        conceptual native token (whose balance is the account's native
+        balance). A cache hit answers without any I/O.
 
         Returns:
             The computed value.
 
         """
         address = get_checksum_address(address)
-        assert token.chain_id is not None
-        assert io is not None
-
-        block_number = _resolve_block_number(io, block_identifier)
-
-        # Check cache
-        if (balance := token.get_cached_balance(address, block_number)) is not None:
-            return balance
-
-        # Delegate the balanceOf choreography to Rust (BotIo is the only
-        # executor; the Python parity-gate fallback is retired).
-        balance = io.fetch_token_balance(token.address, address, block=block_number)
-
-        token.set_cached_balance(address, block_number, balance)
-        return cast("int", balance)
+        return cast(
+            "int",
+            self._py_bot.fetch_token_balance(token_handle(token), address, block_identifier),
+        )
 
     def get_token_approval(  # ruff:ignore[no-self-use]
         self,
@@ -319,10 +284,10 @@ class Erc20Builder:
         owner: str,
         spender: str,
         block_identifier: BlockIdentifier | None = None,
-        *,
-        io: BotIo | None = None,
     ) -> int:
         """Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+
+        Same core-owned read-through as :meth:`get_token_balance`.
 
         Returns:
             The computed value.
@@ -330,68 +295,54 @@ class Erc20Builder:
         """
         owner = get_checksum_address(owner)
         spender = get_checksum_address(spender)
-        assert token.chain_id is not None
-        assert io is not None
-
-        block_number = _resolve_block_number(io, block_identifier)
-
-        # Check cache
-        if (approval := token.get_cached_approval(block_number, owner, spender)) is not None:
-            return approval
-
-        # Same delegation seam as `get_token_balance`.
-        approval = io.fetch_token_allowance(token.address, owner, spender, block=block_number)
-
-        token.set_cached_approval(block_number, owner, spender, approval)
-        return cast("int", approval)
+        return cast(
+            "int",
+            self._py_bot.fetch_token_allowance(
+                token_handle(token), owner, spender, block_identifier
+            ),
+        )
 
     def get_token_total_supply(  # ruff:ignore[no-self-use]
         self,
         token: Erc20Token,
         block_identifier: BlockIdentifier | None = None,
-        *,
-        io: BotIo | None = None,
     ) -> int:
         """Retrieve the total supply for this token.
+
+        Same core-owned read-through as :meth:`get_token_balance`.
 
         Returns:
             The computed value.
 
         """
-        assert token.chain_id is not None
-        assert io is not None
-
-        block_number = _resolve_block_number(io, block_identifier)
-
-        # Check cache
-        if (total_supply := token.get_cached_total_supply(block_number)) is not None:
-            return total_supply
-
-        # Same delegation seam as `get_token_balance`.
-        total_supply = int(io.fetch_token_total_supply(token.address, block=block_number))
-
-        token.set_cached_total_supply(block_number, total_supply)
-        return total_supply
+        return cast(
+            "int",
+            self._py_bot.fetch_token_total_supply(token_handle(token), block_identifier),
+        )
 
     def get_ether_balance(  # ruff:ignore[no-self-use]
         self,
-        chain_id: ChainId,  # ruff:ignore[unused-method-argument]
+        chain_id: ChainId,
         address: str,
         block_identifier: BlockIdentifier | None = None,
-        *,
-        io: BotIo | None = None,
     ) -> int:
-        """Retrieve the native ETH balance for the given address.
+        """Retrieve the native asset balance for the given address.
+
+        The native account balance is exactly
+        :meth:`get_token_balance` on the chain's conceptual `NativeToken`
+        (ADR-097) — one account-query surface, one read-through.
 
         Returns:
             The computed value.
 
         """
         address = get_checksum_address(address)
-        assert io is not None
-
-        block_number = _resolve_block_number(io, block_identifier)
-        return cast("int", io.get_balance(address, block=block_number))
+        return cast(
+            "int",
+            self._py_bot.fetch_token_balance(
+                self.build_native(chain_id=chain_id)._py_native, address, block_identifier
+            ),
+        )
 
 
 # --- Build-failure message rendering ---
@@ -417,21 +368,3 @@ def _build_failure_message(exc: BaseException) -> str:
         if message.startswith(prefix):
             return message.removeprefix(prefix)
     return message
-
-
-# --- Package-level helpers (BotIo equivalents of Erc20Token.fetch_*) ---
-
-
-def _resolve_block_number(io: BotIo, block_identifier: BlockIdentifier | None) -> int:
-    """Resolve a block identifier to a block number.
-
-    Returns:
-        The computed value.
-
-    """
-    if block_identifier is None:
-        return cast("int", io.get_block_number())
-    if isinstance(block_identifier, int):
-        return block_identifier
-    # For string identifiers like 'latest', 'earliest', 'pending'
-    return cast("int", io.get_block_number())

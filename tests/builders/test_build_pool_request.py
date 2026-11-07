@@ -57,7 +57,6 @@ class TestBuildManagedPoolRequest:
         req = BuildManagedPoolRequest(pool_id="0x01")
         assert req.silent is False
         assert req.state_block is None
-        assert req.state_cache_depth == 8
         assert req.state_view_address is None
         assert req.tokens is None
         assert req.fee is None
@@ -82,7 +81,7 @@ class TestBuildPoolRequest:
     def test_carries_the_construction_knobs(self):
         """The generic request declares its optional knobs and route policy."""
         declared = {f.name: f for f in fields(BuildPoolRequest)}
-        assert {"silent", "state_block", "state_cache_depth", "construction_route"} <= set(declared)
+        assert {"silent", "state_block", "construction_route"} <= set(declared)
         assert declared["construction_route"].default is None
 
     def test_construction_route_defaults_to_the_generic_only_route(self):

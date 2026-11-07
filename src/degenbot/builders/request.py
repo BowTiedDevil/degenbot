@@ -27,7 +27,6 @@ class BuildPoolRequest:
     # Common options
     silent: bool = False
     state_block: int | None = None
-    state_cache_depth: int = 8
 
     # The resolved construction route (GLOSSARY.md, Construction route) — the
     # cockpit's policy ordering the core route entry walks. `None` = the
@@ -73,7 +72,6 @@ class BuildManagedPoolRequest:
     # Common options (mirrors BuildPoolRequest's universal fields)
     silent: bool = False
     state_block: int | None = None
-    state_cache_depth: int = 8
 
     # V4 immutable data — required if not in DB
     state_view_address: str | None = None

@@ -654,7 +654,8 @@ def test_pybot_io_native_alloy_poolio_surface():
 def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
     """Native alloy path: a recorded revert (`null` result) surfaces as
     `ContractLogicError` (the alloy revert path), not a generic RuntimeError —
-    driven through a live `fetch_token_balance` whose `balanceOf` call reverts."""
+    driven through the live `Bot.fetch_token_balance` read-through whose
+    `balanceOf` call reverts."""
     import json
 
     from degenbot.exceptions import ContractLogicError
@@ -678,10 +679,16 @@ def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
         "code": {f"0x{token_addr}": "60806040"},
     }
     provider = RustAlloyProvider.offline_from_json_string(json.dumps(data))
-    io = BotIo(provider=provider)
-    token = "0x" + token_addr
+    from tests.helpers.seam import Bot as SeamBot
+
+    bot = SeamBot(chain_id=1)
+    bot.attach_construction_io(provider, None)
+    handle = bot.register_token("0x" + token_addr, "T", "T", 18, 1)
 
     with pytest.raises(ContractLogicError):
-        io.fetch_token_balance(token=token, owner="0x" + "ff" * 20)
+        bot.fetch_token_balance(handle, "0x" + "ff" * 20)
     # The factory() call still succeeds (not the reverted selector).
-    assert io.fetch_factory_address(token) == "0x66f9664f97F2b50F62D13eA064982f936dE76657"
+    io = BotIo(provider=provider)
+    assert (
+        io.fetch_factory_address("0x" + token_addr) == "0x66f9664f97F2b50F62D13eA064982f936dE76657"
+    )

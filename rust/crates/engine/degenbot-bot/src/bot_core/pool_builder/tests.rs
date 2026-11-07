@@ -12,7 +12,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use hashbrown::HashMap;
 
-use alloy::dyn_abi::DynSolValue;
+use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, FixedBytes, I256, U256};
 use alloy::sol_types::SolCall;
 use async_trait::async_trait;
@@ -20,6 +20,7 @@ use degenbot_core::errors::ProviderError;
 use degenbot_core::fee::{fee_ratio, fee_spec_retained};
 use degenbot_pools::SpecRefusal;
 use degenbot_rpc::abi::{self, ContractRead, Slot0Prefix, TickLiquidity, V2Reserves, V4Slot0};
+use degenbot_rpc::multicall3::{AGGREGATE3_SELECTOR, MULTICALL3_ADDRESS};
 
 use super::{builder, curve_choreography};
 use crate::bot_core::construction_io::{
@@ -74,6 +75,9 @@ struct FakeRpc {
     // needs two concurrent constructions interleaved between their
     // get-or-register pre-checks and the one registration.
     yielding: bool,
+    // Every `(target, calldata)` this double answered, in call order: the
+    // batch-shape tests read the wire shape back from here.
+    calls: std::sync::Mutex<Vec<(Address, Vec<u8>)>>,
 }
 
 impl FakeRpc {
@@ -84,6 +88,7 @@ impl FakeRpc {
             code: Bytes::new(),
             errors: HashMap::new(),
             yielding: false,
+            calls: std::sync::Mutex::new(Vec::new()),
         }
     }
     fn set(&mut self, sel: [u8; 4], bytes: Vec<u8>) {
@@ -102,6 +107,11 @@ impl FakeRpc {
 
     fn set_yielding(&mut self) {
         self.yielding = true;
+    }
+
+    /// Every `(target, calldata)` answered so far, in call order.
+    fn calls(&self) -> Vec<(Address, Vec<u8>)> {
+        self.calls.lock().unwrap().clone()
     }
 }
 
@@ -127,10 +137,11 @@ impl RpcConstruction for FakeRpc {
     }
     async fn call(
         &self,
-        _to: Address,
+        to: Address,
         data: Bytes,
         _block: Option<u64>,
     ) -> Result<Bytes, ProviderError> {
+        self.calls.lock().unwrap().push((to, data.to_vec()));
         if self.yielding {
             tokio::task::yield_now().await;
         }
@@ -254,6 +265,155 @@ async fn build_erc20_metadata_uses_db_row_and_skips_on_chain() {
     assert_eq!(name, "Wrapped Ether");
     assert_eq!(symbol, "WETH");
     assert_eq!(decimals, 18);
+}
+
+/// One `aggregate3` return carrying per-sub-call `(success, returnData)` items.
+fn aggregate3_ret(items: &[(bool, Vec<u8>)]) -> Vec<u8> {
+    let tuples: Vec<DynSolValue> = items
+        .iter()
+        .map(|(success, data)| {
+            DynSolValue::Tuple(vec![
+                DynSolValue::Bool(*success),
+                DynSolValue::Bytes(data.clone()),
+            ])
+        })
+        .collect();
+    DynSolValue::Array(tuples).abi_encode()
+}
+
+/// The `(target, sub_calldata)` pairs one `aggregate3` request carries.
+fn decode_batch_calls(data: &[u8]) -> Vec<(Address, Vec<u8>)> {
+    let ty: DynSolType = "(bool,address,bytes)[]".parse().unwrap();
+    let decoded = ty.abi_decode(&data[4..]).unwrap();
+    let DynSolValue::Array(items) = decoded else {
+        panic!("aggregate3 params decode to an array");
+    };
+    items
+        .into_iter()
+        .map(|item| {
+            let DynSolValue::Tuple(fields) = item else {
+                panic!("each aggregate3 item is a tuple");
+            };
+            let (DynSolValue::Address(target), DynSolValue::Bytes(sub)) = (&fields[1], &fields[2])
+            else {
+                panic!("aggregate3 items carry (bool,address,bytes)");
+            };
+            (*target, sub.clone())
+        })
+        .collect()
+}
+
+/// The batch call shape over the one per-token core: a DB-complete token is
+/// excluded from the network set, the network-missing tokens' eager reads
+/// ride exactly ONE `aggregate3`, and a token whose eager sub-calls cannot
+/// answer falls to the per-token alternate-prototype fallback — every
+/// token's result in input order, no all-or-nothing collapse.
+#[tokio::test]
+async fn build_erc20_metadata_batch_is_one_aggregate3_over_the_network_missing_set() {
+    let mut f = FakeRpc::new();
+    f.set_code(Bytes::from_static(&[0x60, 0x80]));
+    let db_complete: Address =
+        alloy::primitives::address!("0xaac0000000000000000000000000000000000031");
+    let network: Address =
+        alloy::primitives::address!("0xaac0000000000000000000000000000000000032");
+    let fallback_only: Address =
+        alloy::primitives::address!("0xaac0000000000000000000000000000000000033");
+
+    // ONE eager `aggregate3` for the two network-missing tokens, in input
+    // order (three lower-spelling sub-calls each): `network` answers whole,
+    // `fallback_only` fails every sub-call.
+    f.set(
+        AGGREGATE3_SELECTOR,
+        aggregate3_ret(&[
+            (true, str_ret("Beta")),
+            (true, str_ret("BETA")),
+            (true, enc(DynSolValue::Uint(U256::from(6u64), 256))),
+            (false, Vec::new()),
+            (false, Vec::new()),
+            (false, Vec::new()),
+        ]),
+    );
+    // The fallback leg's alternate spellings, per field.
+    f.set(abi::selector(b"NAME()"), str_ret("Gamma"));
+    f.set(abi::selector(b"SYMBOL()"), str_ret("GAMMA"));
+    f.set(
+        abi::selector(b"DECIMALS()"),
+        enc(DynSolValue::Uint(U256::from(7u64), 256)),
+    );
+
+    let fake = std::sync::Arc::new(f);
+    let rpc: std::sync::Arc<dyn RpcConstruction> = fake.clone();
+    let io = ConstructionIo::new(
+        std::sync::Arc::new(FakeDb {
+            address: db_complete,
+        }),
+        rpc,
+    );
+
+    let out =
+        builder::build_erc20_metadata_batch(&io, 1, &[db_complete, network, fallback_only], None)
+            .await;
+
+    // In input order: the DB row, the batched read, the per-token fallback.
+    assert_eq!(
+        out[0].as_ref().unwrap(),
+        &("Wrapped Ether".to_owned(), "WETH".to_owned(), 18)
+    );
+    assert_eq!(
+        out[1].as_ref().unwrap(),
+        &("Beta".to_owned(), "BETA".to_owned(), 6)
+    );
+    assert_eq!(
+        out[2].as_ref().unwrap(),
+        &("Gamma".to_owned(), "GAMMA".to_owned(), 7)
+    );
+
+    // ONE aggregate3, covering exactly the network-missing set.
+    let calls = fake.calls();
+    let batches: Vec<&Vec<u8>> = calls
+        .iter()
+        .filter(|(to, data)| {
+            *to == MULTICALL3_ADDRESS && data.len() >= 4 && data[..4] == AGGREGATE3_SELECTOR
+        })
+        .map(|(_, data)| data)
+        .collect();
+    assert_eq!(
+        batches.len(),
+        1,
+        "the network set rides exactly ONE aggregate3"
+    );
+    let subs = decode_batch_calls(batches[0]);
+    assert_eq!(
+        subs.len(),
+        6,
+        "three eager spellings per network-missing token"
+    );
+    assert!(subs
+        .iter()
+        .all(|(target, _)| *target == network || *target == fallback_only));
+    assert!(
+        subs.iter().all(|(target, _)| *target != db_complete),
+        "a DB-complete row is excluded from the network set"
+    );
+
+    // Outside the batch, only the fallback spellings were read — and only for
+    // the token whose eager leg failed.
+    let direct: Vec<(Address, [u8; 4])> = calls
+        .iter()
+        .filter(|(to, _)| *to != MULTICALL3_ADDRESS)
+        .map(|(to, data)| (*to, data[..4].try_into().unwrap()))
+        .collect();
+    assert_eq!(
+        direct,
+        vec![
+            (fallback_only, abi::selector(b"name()")),
+            (fallback_only, abi::selector(b"NAME()")),
+            (fallback_only, abi::selector(b"symbol()")),
+            (fallback_only, abi::selector(b"SYMBOL()")),
+            (fallback_only, abi::selector(b"decimals()")),
+            (fallback_only, abi::selector(b"DECIMALS()")),
+        ]
+    );
 }
 
 /// A `DbConstruction` double returning a fully-populated `Erc20TokenRow` for a
@@ -2452,7 +2612,7 @@ async fn build_curve_pool_assembles_plain_pool_params() {
     );
 
     let io = io_with(f);
-    let p = builder::build_curve_pool(TO, &[REGISTRY], &io, Some(123))
+    let p = builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(123))
         .await
         .unwrap();
 
@@ -2500,7 +2660,7 @@ async fn build_curve_pool_rejects_a_known_broken_v1_pool() {
     for broken in builder::BROKEN_CURVE_V1_POOLS {
         assert!(
             matches!(
-                builder::build_curve_pool(*broken, &[REGISTRY], &io, Some(1)).await,
+                builder::build_curve_pool(1, *broken, &[REGISTRY], &io, Some(1)).await,
                 Err(builder::PoolBuilderError::Spec(
                     SpecRefusal::CurveBrokenPool
                 ))
@@ -2541,7 +2701,7 @@ async fn build_curve_pool_rejects_fewer_than_two_coins() {
     );
     let io = io_with(f);
     assert!(matches!(
-        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
         Err(builder::PoolBuilderError::Spec(
             SpecRefusal::CurveTooFewCoins
         ))
@@ -2593,22 +2753,26 @@ async fn build_curve_pool_rejects_a_pool_whose_required_getter_reverts() {
 
     let io = io_with(f);
     assert!(matches!(
-        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
         Err(builder::PoolBuilderError::Spec(
             SpecRefusal::CurveRequiredReadReverted
         ))
     ));
 }
 
-/// A pool whose discovered coin has no runtime code (an ETH-sentinel coin
-/// from an old vyper pool, or a junk `coins()` return) cannot be built:
-/// its ERC20 reads will never succeed, so the build refuses with `Spec`
-/// rather than dying on the decimals fetch.
+/// A discovered coin with no runtime code (a junk `coins()` return, or a
+/// token that self-destructed after its pool registered) cannot be built: its
+/// ERC-20 reads will never succeed, so the build refuses with `Spec` rather
+/// than dying on the decimals fetch. Deliberately a NON-sentinel address: the
+/// all-Es coin of the old Vyper pools is the Curve spelling of the native
+/// asset and translates to it instead (see
+/// [`build_curve_pool_translates_the_all_es_coin_to_the_native_asset`]).
 #[tokio::test]
 async fn build_curve_pool_rejects_a_coin_with_no_code() {
     let mut f = FakeRpc::new();
     let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000006");
-    let sentinel: Address = alloy::primitives::address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    let codeless: Address =
+        alloy::primitives::address!("0xaac000000000000000000000000000000000dEaD");
 
     f.set_full(
         abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
@@ -2619,7 +2783,7 @@ async fn build_curve_pool_rejects_a_coin_with_no_code() {
             i: U256::from(1u64),
         }
         .abi_encode(),
-        addr_word(sentinel),
+        addr_word(codeless),
     );
     f.set_full(
         abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
@@ -2644,14 +2808,84 @@ async fn build_curve_pool_rejects_a_coin_with_no_code() {
         abi::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(0u64), 256)),
     );
-    // The sentinel's `decimals()` returns nothing (a no-code address).
+    // The codeless coin's `decimals()` returns nothing (no runtime code).
     f.set(abi::selector(b"decimals()"), Vec::new());
 
     let io = io_with(f);
     assert!(matches!(
-        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
         Err(builder::PoolBuilderError::Spec(SpecRefusal::NoCodeCoin))
     ));
+}
+
+/// The all-Es coin of the old Vyper deployments is the Curve protocol's own
+/// spelling of the native asset (ADR-097 D3): the build TRANSLATES it — the
+/// intrinsic chain-facts decimals, no ERC-20 read for the coin — instead of
+/// refusing it as a codeless coin. The canned `decimals()` answer below is 6
+/// for every address that IS read, so a rate multiplier of 10^18 for the
+/// all-Es coin proves its decimals came from the chain-facts manifest (18),
+/// not from an ERC-20 call.
+#[tokio::test]
+async fn build_curve_pool_translates_the_all_es_coin_to_the_native_asset() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000021");
+    let native_coin: Address =
+        alloy::primitives::address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(native_coin),
+    );
+    f.set_full(
+        abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set_full(
+        abi::ICurvePool::balancesCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
+    );
+    f.set(
+        abi::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        abi::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(0u64), 256)),
+    );
+    // The ERC-20 answer every READ coin gets: 6 decimals. The native coin
+    // must not read it.
+    f.set(
+        abi::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(6u64), 256)),
+    );
+
+    let io = io_with(f);
+    let p = builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(123))
+        .await
+        .unwrap();
+
+    // The Curve wire view keeps the all-Es coin; the translation is not a
+    // rewrite of the protocol's own record.
+    assert_eq!(p.tokens, vec![coin0, native_coin]);
+    // coin0 read `decimals()` = 6 -> rate 10^(36-6), precision 10^(18-6);
+    // the native coin took the chain-facts 18 -> rate 10^(36-18), precision 1.
+    let pow = |exp: u32| U256::from(10u64).pow(U256::from(exp));
+    assert_eq!(p.rate_multipliers, vec![pow(30), pow(18)]);
+    assert_eq!(p.precision_multipliers, vec![pow(12), U256::from(1u64)]);
 }
 
 /// A discovered coin whose `decimals()` reverts is the same class of refusal
@@ -2707,7 +2941,7 @@ async fn build_curve_pool_rejects_a_coin_whose_decimals_read_reverts() {
 
     let io = io_with(f);
     assert!(matches!(
-        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
         Err(builder::PoolBuilderError::Spec(
             SpecRefusal::CurveCoinDecimalsReverted
         ))
@@ -2758,7 +2992,7 @@ async fn build_curve_pool_rejects_a_coin_whose_balance_read_fails() {
     );
     let io = io_with(f);
     assert!(matches!(
-        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
         Err(builder::PoolBuilderError::Spec(
             SpecRefusal::CurveCoinsBalancesMismatch
         ))

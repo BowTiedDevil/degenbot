@@ -40,7 +40,7 @@ from .curve import (
     CurveStableswapPoolSimulationResult,
     CurveStableswapPoolState,
 )
-from .erc20 import Erc20Token, EtherPlaceholder
+from .erc20 import Erc20Token, NativeToken
 from .fork import AnvilFork
 from .pancakeswap import PancakeswapV3Pool
 from .registry import (
@@ -95,7 +95,7 @@ __all__ = (
     "CurveStableswapPoolSimulationResult",
     "CurveStableswapPoolState",
     "Erc20Token",
-    "EtherPlaceholder",
+    "NativeToken",
     "ManagedPoolRegistry",
     "PancakeswapV3Pool",
     "PoolRef",

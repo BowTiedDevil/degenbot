@@ -226,6 +226,36 @@ fn v4_pool_identity_is_pool_manager_plus_pool_id() {
     assert_eq!(state.pool_count(), 1);
 }
 
+/// The conceptual native token is one chain-scoped identity per session: one
+/// canonical object, no protocol address of its own, and never the same
+/// identity as any ERC-20 token.
+#[test]
+fn native_token_identity_is_one_per_session_without_an_address() {
+    let registry = SessionObjectRegistry::new(CHAIN_ID);
+
+    let first: Arc<TokenObject> = registry.get_or_create_token(TokenIdentity::native());
+    let again: Arc<TokenObject> = registry.get_or_create_token(TokenIdentity::native());
+
+    assert!(Arc::ptr_eq(&first, &again), "one native token per session");
+    assert_eq!(first.identity().address(), None);
+    assert!(first.identity().is_native());
+
+    // A raw sentinel address is a different identity (an ERC-20 at that
+    // address), never a spelling of the native token.
+    let sentinel = alloy::primitives::address!("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
+    let as_erc20: Arc<TokenObject> = registry.get_or_create_token(TokenIdentity::erc20(sentinel));
+    assert!(!Arc::ptr_eq(&first, &as_erc20));
+    assert_eq!(registry.token_count(), 2);
+
+    assert_eq!(
+        registry
+            .resolve_token(&TokenIdentity::native())
+            .unwrap()
+            .identity(),
+        first.identity()
+    );
+}
+
 /// An ERC-20 token's canonical identity is its chain-scoped address: the same
 /// address is one object, a different address is another, and `BotState`
 /// keeps the live token entry.

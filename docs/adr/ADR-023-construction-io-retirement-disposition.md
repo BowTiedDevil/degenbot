@@ -158,3 +158,48 @@ because the entries are missing.*
 D1's fallback deletion, D3's `alloy_provider()` accessor (caution: provider
 *construction* moves to injection as the updater seam deepens; the accessor survives for
 chain-arm wiring), D4 as history, D5's doc-rot fixes.
+
+## Implementation record — stateless account reads, session account caches, and the collapse ledger
+
+### A6 — What landed against A2's collapse.
+
+- **Account reads are core-owned.** `degenbot_rpc::erc20` now owns the
+  `balanceOf` / `allowance` / `totalSupply` call shapes, the strict
+  `uint256` decode, and the typed failures (`AccountReadError`) beside the
+  metadata reads — the one family home those three reads had per consumer
+  before. The Curve data provider's `token_balance` / `token_total_supply`,
+  the Aave stkAAVE `balanceOf` reads, and the `Bot.fetch_token_*` session
+  read-through serve through it. Consumer policy is
+  deliberately NOT flattened: Curve maps any failure to its provider
+  vocabulary's `FetchFailed`, the FFI keeps its per-token revert
+  classification, and the pool builder keeps classifying the no-return shape
+  as a codeless coin.
+
+- **Account caches are session live state.** The per-token Python caches
+  (`_cached_balance` / `_cached_approval` / `_cached_total_supply`) are
+  deleted; their Rust home is `degenbot_substrate::account_cache::AccountCache`
+  on `BotState` — per-block FIFO streams of depth 8, one per `(token, owner)`
+  balance and per token total supply, and one per `(token, owner, spender)`
+  allowance (bounded, so an approval stream cannot grow for the session's
+  lifetime). The fixed depth is core-owned and supersedes the old companion
+  `state_cache_depth` option (the ADR-005 companion layout): the option is
+  removed from both request types with no alias or ignored-kwarg shim. The token key is the session `TokenIdentity`, so the conceptual
+  `NativeToken` ([ADR-097](ADR-097-native-token.md)) caches exactly like an
+  ERC-20 token without a protocol address. The `Erc20Token.get_cached_*` /
+  `set_cached_*` accessors stay as thin adapters over that store (parity and
+  eviction visible Python-side), the account read-through is core-owned
+  (`Bot.fetch_token_balance` / `fetch_token_allowance` /
+  `fetch_token_total_supply`: typed block selector resolved at the seam, the
+  resolved block as cache key and read block, stateless read, cache-fill), and
+  `_resolve_block_number` — the last string-tag-to-head coercion — is deleted
+  with it.
+
+- **Batch construction is one core entry, two call shapes.** `build_erc20_metadata`
+  and `build_erc20_metadata_batch` share the per-token choreography (DB-first →
+  one eager `aggregate3` for the network-missing set → per-field fallback →
+  UNKNOWN → blank-row write-back), `Bot.build_and_register_erc20_tokens` adds
+  ordered per-token registration with no all-or-nothing failure, and the
+  Python-side batch DB/network/fallback/registration choreography (and its
+  `io=` parameter) is deleted. The `PyBotIo` residue of A4 is fully retired:
+  `fetch_token_balance` / `fetch_token_allowance` / `fetch_token_total_supply`
+  / `fetch_erc20_metadata_batch` are gone from the shell.

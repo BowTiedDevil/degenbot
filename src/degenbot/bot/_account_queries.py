@@ -11,9 +11,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from degenbot._ffi import BotIo
     from degenbot.builders.erc20_builder import Erc20Builder
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.erc20.native_token import NativeToken
     from degenbot.provider import AlloyProvider
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier
@@ -23,7 +23,6 @@ class AccountQueryHost(Protocol):
     """Structural shape of ``Bot`` that the account queries reach through."""
 
     _erc20_builder: Erc20Builder
-    _io: BotIo
     chain_id: ChainId
 
     @property
@@ -35,14 +34,14 @@ class AccountQueryHost(Protocol):
 class AccountQueryMixin(AccountQueryHost):
     """ERC-20 and native-asset account queries surfaced on the ``Bot``.
 
-    All reads flow through ``Erc20Builder`` on the session's single ``BotIo``
-    seam, so the builder's Rust-side fetch + token cache write-through stays
-    the one authority for balances, approvals, and total supply.
+    All reads flow through ``Erc20Builder`` onto the core account
+    read-through (``Bot.fetch_token_*``): typed block resolution, the session
+    account cache, and the stateless read in one choreography.
     """
 
     def get_token_balance(
         self,
-        token: Erc20Token,
+        token: Erc20Token | NativeToken,
         address: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
@@ -52,12 +51,10 @@ class AccountQueryMixin(AccountQueryHost):
             The computed integer value.
 
         """
-        io = self._io
         return self._erc20_builder.get_token_balance(
             token,
             address,
             block_identifier=block_identifier,
-            io=io,
         )
 
     def get_token_approval(
@@ -73,13 +70,11 @@ class AccountQueryMixin(AccountQueryHost):
             The computed integer value.
 
         """
-        io = self._io
         return self._erc20_builder.get_token_approval(
             token,
             owner,
             spender,
             block_identifier=block_identifier,
-            io=io,
         )
 
     def get_token_total_supply(
@@ -93,11 +88,9 @@ class AccountQueryMixin(AccountQueryHost):
             The computed integer value.
 
         """
-        io = self._io
         return self._erc20_builder.get_token_total_supply(
             token,
             block_identifier=block_identifier,
-            io=io,
         )
 
     def get_ether_balance(
@@ -111,12 +104,10 @@ class AccountQueryMixin(AccountQueryHost):
             The computed integer value.
 
         """
-        io = self._io
         return self._erc20_builder.get_ether_balance(
             self.chain_id,
             address,
             block_identifier=block_identifier,
-            io=io,
         )
 
     def get_provider(self) -> AlloyProvider:

@@ -38,7 +38,7 @@ from degenbot.abi import encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import keccak256
-from degenbot.erc20 import Erc20Token
+from degenbot.erc20 import Erc20Token, NativeToken, wrap_token_handle
 from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
@@ -49,6 +49,19 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolState,
 )
 from degenbot.utils.bytes import to_0x_hex
+
+
+def v4_currency(token: Erc20Token | NativeToken) -> ChecksummedAddress:
+    """The V4 `Currency` spelling of `token` — the protocol's wire view.
+
+    One of exactly three places the conceptual native token becomes V4's
+    `address(0)` currency (ADR-097 D3): PoolKey/pool-id derivation. The
+    inverse translation (zero -> `NativeToken`) happens only at the V4
+    identity getters; generic inputs never carry the raw spelling.
+
+    """
+    return ZERO_ADDRESS if isinstance(token, NativeToken) else token.address
+
 
 if TYPE_CHECKING:
     from degenbot.types import Pool
@@ -170,8 +183,8 @@ class UniswapV4Pool(
     hook_address: ChecksummedAddress
     _state_view_address: ChecksummedAddress
     active_hooks: frozenset[Hooks]
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
     _pool_key: UniswapV4PoolKey
     name: str
     protocol_fee: ProtocolFee
@@ -261,13 +274,13 @@ class UniswapV4Pool(
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._token0 = Erc20Token.from_handle(py_token0)
-        self._token1 = Erc20Token.from_handle(py_token1)
+        self._token0 = wrap_token_handle(py_token0)
+        self._token1 = wrap_token_handle(py_token1)
 
         view = py_pool.concentrated_liquidity()
         self._pool_key = UniswapV4PoolKey(
-            currency0=self._token0.address,
-            currency1=self._token1.address,
+            currency0=v4_currency(self._token0),
+            currency1=v4_currency(self._token1),
             fee=view.fee,
             tick_spacing=view.tick_spacing,
             hooks=self.hook_address,
@@ -367,7 +380,7 @@ class UniswapV4Pool(
 
     def calculate_tokens_in_from_tokens_out(
         self,
-        token_out: Erc20Token,
+        token_out: Erc20Token | NativeToken,
         token_out_quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:
@@ -385,7 +398,7 @@ class UniswapV4Pool(
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: Erc20Token,
+        token_in: Erc20Token | NativeToken,
         token_in_quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:

@@ -424,7 +424,10 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
     # makes tick_data non-empty → coverage=tracked, but the zfo path (tick ≤
     # start=0) has NO initialized ticks — liq stays constant to MIN.
     token0 = make_erc20(py_bot, address="0x" + "f" * 40, name="T0", symbol="T0", decimals=18)
-    token1 = make_erc20(py_bot, address="0x" + "e" * 40, name="T1", symbol="T1", decimals=18)
+    # A non-sentinel address: the raw all-Es spelling is the Curve protocol's
+    # native sentinel and is refused at generic token entry points (ADR-097
+    # D1), so a synthetic second token needs a genuine third address.
+    token1 = make_erc20(py_bot, address="0x" + "c" * 40, name="T1", symbol="T1", decimals=18)
     pool_id = _compute_v4_pool_id(token0.address, token1.address, _FEE, _TICK_SPACING, ZERO_ADDRESS)
     tick_data_dense = {
         60: LiquidityAtTick(liquidity_net=_LIQUIDITY, liquidity_gross=_LIQUIDITY, block=0),

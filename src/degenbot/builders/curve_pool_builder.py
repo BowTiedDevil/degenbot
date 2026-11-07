@@ -8,6 +8,7 @@ from degenbot.builders.construction import request_for
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
+from degenbot.curve.types import is_curve_native_coin
 from degenbot.exceptions.pool import BrokenPool
 from degenbot.types.pool_type import PoolFamily
 
@@ -97,19 +98,31 @@ class CurvePoolBuilder:
         # ERC20 companions for the pool coins, sourced from the curve arm's raw
         # token addresses (the registration-gated `curve().get_tokens` returns
         # None until these are built). Skip broken pools (< 2 coins).
+        #
+        # Curve's all-Es coin is the protocol's private native-coin spelling
+        # (ADR-097 D3): it resolves as the conceptual native companion HERE
+        # and nowhere else. Every other coin — including the enumeration
+        # terminator `0x00…00`, which is not a Curve native spelling — takes
+        # the ordinary ERC-20 build (which refuses a zero address loudly).
         token_addresses = arm.token_addresses()
         min_tokens = 2
         if len(token_addresses) < min_tokens:
             raise BrokenPool
         for addr in token_addresses:
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent)
+            if is_curve_native_coin(addr):
+                self._erc20_builder.build_native(chain_id=chain_id, silent=silent)
+            else:
+                self._erc20_builder.build(addr, chain_id=chain_id, silent=silent)
 
         # Metapool underlying + dedicated LP token companions — built purely
         # for registration (Rust already knows their addresses), so
         # `curve().get_tokens_underlying()` / `curve().get_lp_token()` resolve
-        # in `from_handle`.
+        # in `from_handle`. The all-Es native coin translates here too.
         for addr in arm.token_addresses_underlying() or ():
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent)
+            if is_curve_native_coin(addr):
+                self._erc20_builder.build_native(chain_id=chain_id, silent=silent)
+            else:
+                self._erc20_builder.build(addr, chain_id=chain_id, silent=silent)
         lp_address = arm.lp_token_address()
         if lp_address is not None:
             self._erc20_builder.build(

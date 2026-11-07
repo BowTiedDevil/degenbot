@@ -1,4 +1,4 @@
-//! The build cluster on the `Bot` facade. Moved from the PyO3 shell
+//! The build cluster on the `Bot` facade. Moved from the `PyO3` shell
 //! (`degenbot-python/src/bot/mod.rs`): the shell keeps only arg parsing +
 //! `PyErr` mapping + the single-flight claim, while the construction-io
 //! fetch, the builder run on the shared runtime, the identity shaping, the
@@ -122,6 +122,60 @@ impl Bot {
             .write_at(LockSite::Orchestrator)
             .register_token(address, name.clone(), symbol.clone(), decimals, chain_id);
         Ok((name, symbol, decimals))
+    }
+
+    /// Build + register MANY ERC-20 tokens: the batch call shape over the
+    /// same per-token core as [`Self::build_and_register_erc20_token`] —
+    /// one result per input address, in input order, with each token's
+    /// DB-first resolution, fallback, write-back, and registration completing
+    /// independently. A token that refuses is a failure of that entry alone
+    /// (no all-or-nothing abort: the successfully built tokens stay
+    /// registered). Duplicate addresses get-or-create like the single shape.
+    ///
+    /// # Errors
+    ///
+    /// Per token: [`RefusalKind::MissingConstructionIo`] (reported on every
+    /// entry when no I/O is attached) or [`RefusalKind::BuildRefused`].
+    pub fn build_and_register_erc20_tokens(
+        &self,
+        chain_id: u64,
+        addresses: &[Address],
+        block: Option<u64>,
+    ) -> Vec<Result<(String, String, u8), RefusalKind>> {
+        let io = match self.construction_io_required(None) {
+            Ok(io) => io,
+            Err(kind) => {
+                return addresses.iter().map(|_| Err(kind.clone())).collect();
+            }
+        };
+
+        #[expect(clippy::cast_possible_wrap)] // ids are small; core signature is i64
+        let results = degenbot_core::runtime::get_runtime().block_on(
+            builder::build_erc20_metadata_batch(&io, chain_id as i64, addresses, block),
+        );
+
+        addresses
+            .iter()
+            .zip(results)
+            .map(|(&address, result)| {
+                result
+                    .map_err(|err| {
+                        RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build)
+                    })
+                    .map(|(name, symbol, decimals)| {
+                        self.state_arc()
+                            .write_at(LockSite::Orchestrator)
+                            .register_token(
+                                address,
+                                name.clone(),
+                                symbol.clone(),
+                                decimals,
+                                chain_id,
+                            );
+                        (name, symbol, decimals)
+                    })
+            })
+            .collect()
     }
 
     // (The `build_and_register_v4` verb retired with the V4 fold: the

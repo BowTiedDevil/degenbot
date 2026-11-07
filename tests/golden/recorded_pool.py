@@ -23,7 +23,9 @@ from datetime import UTC, datetime
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
-from tests.helpers.erc20_factory import make_erc20
+from degenbot.builders.erc20_builder import NATIVE_SENTINEL_ADDRESSES
+from degenbot.constants import ZERO_ADDRESS
+from tests.helpers.erc20_factory import make_erc20, make_native_token
 from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
@@ -49,7 +51,9 @@ class PoolGoldenError(AssertionError):
 
 def _token_dict(token: Any) -> dict[str, Any]:
     return {
-        "address": token.address,
+        # The wire view: the conceptual native token records its protocol's
+        # sentinel spelling (ADR-097 D3), which `_make_token` translates back.
+        "address": getattr(token, "address", ZERO_ADDRESS),
         "name": token.name,
         "symbol": token.symbol,
         "decimals": token.decimals,
@@ -153,8 +157,15 @@ def extract_pool_state(pool: Any, *, block: int) -> dict[str, Any]:
 
 
 def _make_token(tok: dict[str, Any]) -> Any:
+    bot = Bot(chain_id=tok["chain_id"])
+    if tok["address"] in NATIVE_SENTINEL_ADDRESSES:
+        # The recorded wire view spells the native asset with its protocol
+        # sentinel (ADR-097 D3); the replay rebuilds the conceptual
+        # `NativeToken` from chain facts instead of registering a sentinel as
+        # a token contract.
+        return make_native_token(bot, chain_id=tok["chain_id"])
     return make_erc20(
-        Bot(),
+        bot,
         tok["address"],
         name=tok["name"],
         symbol=tok["symbol"],

@@ -1052,6 +1052,30 @@ class Bot:
             `chain_id`: chain ID.
             `block`: optional block to read on-chain at (None = head).
         """
+    def build_erc20_tokens(
+        self,
+        /,
+        addresses: SupportsGetItem[int, str],
+        chain_id: SupportsIndex,
+        block: SupportsIndex | None = None,
+    ) -> list:
+        """
+        Build + register MANY ERC-20 tokens: the batch call shape over the
+        core's one per-token construction
+        ([`Bot::build_and_register_erc20_tokens`]).
+
+        Args:
+            `addresses`: token contract addresses (hex strings), in order.
+            `chain_id`: chain ID.
+            `block`: optional block to read on-chain at (None = head).
+
+        Returns:
+            One `(handle, error)` pair per input address, in input order:
+            `handle` is a `Erc20Token` for a built-and-registered token and
+            `None` for a refused one, `error` is that refusal's message. A
+            refused token does not abort the batch — the successfully built
+            tokens stay registered.
+        """
     def calculate_tokens_in(
         self, /, pool_id: SupportsIndex, zero_for_one: bool, amount_out: Any
     ) -> Any:
@@ -1265,6 +1289,54 @@ class Bot:
         Returns:
             A tuple `(to_hex, calldata_hex, value)` or `None` if pool not found.
         """
+    def fetch_token_allowance(
+        self, /, token: Any, owner: str, spender: str, block: Any | None = None
+    ) -> Any:
+        """
+        Fetch the allowance of `owner` to `spender` in `token` (ERC-20 only:
+        the native asset has no allowances). Same read-through as
+        [`Self::fetch_token_balance`].
+
+        Args:
+            `token`: a `Erc20Token` handle.
+            `owner`: owner account address (hex string).
+            `spender`: spender account address (hex string).
+            `block`: optional block number or canonical tag.
+
+        Returns:
+            The allowance as a Python int.
+        """
+    def fetch_token_balance(self, /, token: Any, owner: str, block: Any | None = None) -> Any:
+        """
+        Fetch the balance of `owner` in `token` — an ERC-20 `balanceOf`, or
+        the account's native balance for the conceptual `NativeToken`.
+
+        The session account-cache read-through over the core's one
+        choreography: resolve the typed block selector (a number pins; the
+        canonical tags resolve at the seam that owns the RPC clock), answer
+        from `BotState::accounts` when the stream holds the resolved block,
+        otherwise run the stateless read and cache-fill.
+
+        Args:
+            `token`: a `Erc20Token` or `NativeToken` handle.
+            `owner`: account address (hex string).
+            `block`: optional block number or canonical tag.
+
+        Returns:
+            The balance as a Python int.
+        """
+    def fetch_token_total_supply(self, /, token: Any, block: Any | None = None) -> Any:
+        """
+        Fetch `token`'s total supply (ERC-20 only). Same read-through as
+        [`Self::fetch_token_balance`].
+
+        Args:
+            `token`: a `Erc20Token` handle.
+            `block`: optional block number or canonical tag.
+
+        Returns:
+            The total supply as a Python int.
+        """
     def get_or_create_session_pool(
         self,
         /,
@@ -1327,6 +1399,19 @@ class Bot:
         # Errors
         `PyRuntimeError` on a DB open/read failure or a liquidity value
         out of range.
+        """
+    @staticmethod
+    def native_token(chain_id: SupportsIndex) -> NativeToken:
+        """
+        The session chain's conceptual native token (ADR-097): one per chain,
+        no protocol address of its own, metadata from the core chain-facts
+        manifest (never a contract read and never operator config).
+
+        Args:
+            `chain_id`: chain whose native asset to name.
+
+        Returns:
+            A `NativeToken` handle for that chain.
         """
     def pool_count(self, /) -> int:
         """
@@ -1945,21 +2030,6 @@ class BotIo:
 
         Errors propagate.
         """
-    def fetch_erc20_metadata_batch(
-        self, /, addresses: SupportsGetItem[int, str]
-    ) -> list[tuple[str, str, int] | None]:
-        """
-        Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
-        Multicall3 `aggregate3` `eth_call` , falling back to the
-        per-token `fetch_erc20_metadata` path if the multicall itself errors.
-
-        Returns one `Option<(name, symbol, decimals)>` per input address, in
-        order. A token whose sub-call reverted / failed to decode is `None`,
-        matching the single-token batched-fetch caller-side fallback contract
-        (the Python builder then retries that token via its alternate-prototype
-        fallback). Collapses the two separate per-token `fetch_erc20_metadata`
-        round-trips a two-token pool build used to fire into ONE multicall.
-        """
     def fetch_erc20_token(self, /, chain_id: SupportsIndex, address: str) -> Erc20TokenRow | None:
         """
         Fetch an ERC-20 token row from the DB by `(chain_id, address)` — the
@@ -2036,40 +2106,6 @@ class BotIo:
         ABI words, and leaves the rest of the `ticks` tuple unread.
 
         Errors propagate (see [`Self::fetch_tick_bitmap`]).
-        """
-    def fetch_token_allowance(
-        self, /, token: str, owner: str, spender: str, block: Any | None = None
-    ) -> Any:
-        """
-        Fetch an ERC-20 token allowance via `allowance(address,address)`, the
-        two-address-arg parameterized-call pattern.
-
-        Mirrors `Erc20Builder.get_token_approval`'s I/O path. Selector
-        `0xdd62ed3e`; two ABI-encoded `address` args; decoded `uint256` result.
-        Errors propagate (see [`Self::fetch_token_balance`]).
-        """
-    def fetch_token_balance(self, /, token: str, owner: str, block: Any | None = None) -> Any:
-        """
-        Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
-        full encode -> call -> decode choreography in Rust.
-
-        Mirrors `degenbot/builders/erc20_builder.py::Erc20Builder.get_token_balance`'s
-        I/O call path (cache + checksum are out of scope; the caller still owns
-        those). The `balanceOf(address)` selector (`0x70a08231`) + ABI-encoded
-        `address` arg and the `uint256` return decode are sourced from the
-        `sol!`-generated definitions in `degenbot_rpc::abi`.
-
-        Errors propagate: a provider call revert or decode failure surfaces as a
-        `PyErr` to the caller (no swallowing) — matches the Python impl's no-
-        try/except contract, which trusts the caller to handle.
-        """
-    def fetch_token_total_supply(self, /, token: str, block: Any | None = None) -> Any:
-        """
-        Fetch an ERC-20 token's total supply via `totalSupply()`, the no-arg
-        uint256-returning call pattern.
-
-        Mirrors `Erc20Builder.get_token_total_supply`'s I/O path. Selector
-        `0x18160ddd`; no args; decoded `uint256` result. Errors propagate.
         """
     def fetch_v2_reserves(self, /, pool_address: str, block: Any | None = None) -> tuple[Any, Any]:
         """
@@ -3059,13 +3095,14 @@ class CurveView:
         is itself the LP (the common plain-pool case; the companion falls back to
         `tokens[0]`), or the LP token is not registered.
         """
-    def get_tokens(self, /) -> list[Erc20Token] | None:
+    def get_tokens(self, /) -> list[Any] | None:
         """
         The pool's token companion handles, resolved via the shared `BotState`
         token registry. `None` when a token is not registered (the companion
-        wraps each via `Erc20Token.from_handle`).
+        wraps each handle as `Erc20Token` or `NativeToken`). The all-Es coin
+        of the old Vyper deployments projects as the conceptual `NativeToken`.
         """
-    def get_tokens_underlying(self, /) -> list[Erc20Token] | None:
+    def get_tokens_underlying(self, /) -> list[Any] | None:
         """
         The pool's *underlying* token companion handles (metapool coins beneath
         the base-pool intermediaries). `None` for a plain pool, or when an
@@ -3181,10 +3218,39 @@ class Erc20Token:
         acquired inside `py.detach`; owned data comes out and any `PyErr` is
         built after the GIL is re-acquired.
         """
+    def get_cached_approval(self, /, owner: str, spender: str, block: SupportsIndex) -> Any | None:
+        """
+        The cached allowance of `owner` to `spender` at `block`, if this
+        session's stream holds it.
+        """
+    def get_cached_balance(self, /, owner: str, block: SupportsIndex) -> Any | None:
+        """
+        The cached balance of `owner` at `block`, if this session's stream
+        holds it.
+        """
+    def get_cached_total_supply(self, /, block: SupportsIndex) -> Any | None:
+        """
+        The cached total supply at `block`, if this session's stream holds it.
+        """
     @property
     def name(self, /) -> str:
         """
         Token name (e.g. "Wrapped Ether").
+        """
+    def set_cached_approval(
+        self, /, owner: str, spender: str, block: SupportsIndex, amount: Any
+    ) -> None:
+        """
+        Record the allowance of `owner` to `spender` at `block` in this
+        session's bounded stream (depth 8 per owner/spender pair).
+        """
+    def set_cached_balance(self, /, owner: str, block: SupportsIndex, balance: Any) -> None:
+        """
+        Record `owner`'s balance at `block` in this session's stream.
+        """
+    def set_cached_total_supply(self, /, block: SupportsIndex, total_supply: Any) -> None:
+        """
+        Record the total supply at `block` in this session's stream.
         """
     @property
     def symbol(self, /) -> str:
@@ -3248,6 +3314,39 @@ class HypotheticalConfig:
         """
         Every declared key's typed value, as named properties — the same typed
         seam projection the installed verdict exposes.
+        """
+
+@final
+class NativeToken:
+    """
+    A thin Python handle to the session chain's conceptual native token
+    (ADR-097).
+
+    One exists per chain; it has no protocol address of its own and holds no
+    `BotState` entry — the metadata is the core's intrinsic chain facts
+    (`degenbot_core::chain_facts`), read on access. The protocol sentinels
+    (the Curve all-Es coin, the V4 `address(0)` currency) are translated at
+    those protocols' call sites and are never a way to spell this token.
+    """
+    @property
+    def chain_id(self, /) -> int:
+        """
+        Chain ID whose native asset this is.
+        """
+    @property
+    def decimals(self, /) -> int:
+        """
+        The native asset's decimals (chain facts; e.g. 18).
+        """
+    @property
+    def name(self, /) -> str:
+        """
+        The native asset's display name (chain facts; e.g. "Ether").
+        """
+    @property
+    def symbol(self, /) -> str:
+        """
+        The native asset's ticker symbol (chain facts; e.g. "ETH").
         """
 
 @final
@@ -3604,12 +3703,12 @@ class Pool:
         `token1→token0` fee parameters: `(gamma_numer, fee_denom)`. `(0, 0)` if
         not a V2 pool.
         """
-    def get_token0(self, /) -> Erc20Token | None:
+    def get_token0(self, /) -> Any | None:
         """
         `PyErc20Token` handle for token0, or `None` if not registered in the
         shared `BotState`.
         """
-    def get_token1(self, /) -> Erc20Token | None:
+    def get_token1(self, /) -> Any | None:
         """
         `PyErc20Token` handle for token1, or `None` if not registered in the
         shared `BotState`.
@@ -4316,7 +4415,7 @@ class SessionObject:
     `BotState`), so it is safe to hold for the session and cheap to compare.
     """
     @property
-    def address(self, /) -> str:
+    def address(self, /) -> str | None:
         """
         The address component: the pool's own address, or for a V4 pool the
         `PoolManager` (which is not a pool address).
@@ -5166,6 +5265,7 @@ __all__ = [
     "HighFeePoolRejectedError",
     "HookedPoolRejectedError",
     "HypotheticalConfig",
+    "NativeToken",
     "PathBatchIterator",
     "PathGraph",
     "PathIterator",

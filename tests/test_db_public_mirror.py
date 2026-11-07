@@ -75,6 +75,6 @@ def test_companions_read_the_public_db_surface() -> None:
         assert "from degenbot.db import" in source
 
 
-def test_builder_uses_public_erc20_row_type() -> None:
-    source = (REPO_ROOT / "src" / "degenbot" / "builders" / "erc20_builder.py").read_text()
-    assert "from degenbot.db import Erc20TokenRow" in source
+# The builder's public-row pin retired with the Python batch choreography:
+# `erc20_builder` no longer touches `Erc20TokenRow` at all — the row's only
+# consumer is the Rust construction core (`degenbot_db::rows::Erc20TokenRow`).

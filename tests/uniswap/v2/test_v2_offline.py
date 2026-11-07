@@ -157,7 +157,11 @@ class TestV2PoolCalculations:
         # distinct address, distinct identity, no swap path.
         stranger = make_erc20(
             py_bot,
-            "0x" + "e" * 40,
+            # A non-sentinel address: the raw all-Es spelling is the Curve
+            # protocol's native sentinel and is refused at generic entry
+            # points (ADR-097 D1), so the negative case needs a genuine
+            # third token.
+            "0x" + "c" * 40,
             name="Stranger",
             symbol="STR",
             decimals=18,

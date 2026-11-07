@@ -406,6 +406,9 @@ mod _ffi {
     use crate::bot::token::PyErc20Token;
     #[cfg(feature = "bot")]
     #[pymodule_export]
+    use crate::bot::token::PyNativeToken;
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
     use crate::bot::{PyBot, PyConstructionOutcome, PyLiquidityPool, PyPoolConstructionRequest};
     // The Balancer sub-family probe's typed answer. The core `BalancerFamily`
     // stays the semantic owner; this mirrors its two discriminants so a builder

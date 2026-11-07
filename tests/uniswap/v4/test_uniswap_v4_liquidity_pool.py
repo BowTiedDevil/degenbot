@@ -9,6 +9,7 @@ import pytest
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.erc20 import NativeToken
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import (
     HookedPoolResult,
@@ -293,7 +294,8 @@ def _test_pool_exact_output(
 def test_pool_creation(eth_usdc_v4: UniswapV4Pool):
     assert eth_usdc_v4.pool_id == to_bytes(ETH_USDC_V4_POOL_ID)
     assert eth_usdc_v4.address == V4_POOL_MANAGER_ADDRESS
-    assert eth_usdc_v4.tokens[0].address == NATIVE_CURRENCY_ADDRESS
+    assert isinstance(eth_usdc_v4.tokens[0], NativeToken)
+    assert eth_usdc_v4.tokens[0].symbol == "ETH"
     assert eth_usdc_v4.tokens[1].address == USDC_CONTRACT_ADDRESS
 
 

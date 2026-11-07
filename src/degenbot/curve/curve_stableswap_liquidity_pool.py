@@ -24,7 +24,7 @@ from degenbot.curve.types import (
     YDVariant,
     YVariant,
 )
-from degenbot.erc20 import Erc20Token
+from degenbot.erc20 import Erc20Token, NativeToken, wrap_token_handle
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import MissingCurveData
 from degenbot.types.abstract import AbstractLiquidityPool
@@ -186,7 +186,7 @@ class CurveStableswapPool(
     address: ChecksummedAddress
     _py_pool: Pool
     _curve: CurveView
-    _tokens: tuple[Erc20Token, ...]
+    _tokens: tuple[Erc20Token | NativeToken, ...]
     _a_coefficient: int
     _fee: int
     _admin_fee: int
@@ -199,8 +199,8 @@ class CurveStableswapPool(
     _gamma: int
     _strategies: PoolStrategies
     _base_pool: BasePoolPort | None
-    _tokens_underlying: tuple[Erc20Token, ...] | None
-    _lp_token: Erc20Token
+    _tokens_underlying: tuple[Erc20Token | NativeToken, ...] | None
+    _lp_token: Erc20Token | NativeToken
     _use_lending: tuple[bool, ...]
     _initial_a_coefficient: int | None
     _future_a_coefficient: int | None
@@ -283,7 +283,7 @@ class CurveStableswapPool(
                 "register them via Bot.build_pool() / make_erc20 first."
             )
             raise DegenbotValueError(message=msg)
-        self._tokens = tuple(Erc20Token.from_handle(t) for t in py_tokens)
+        self._tokens = tuple(wrap_token_handle(t) for t in py_tokens)
 
         self._a_coefficient = arm.a_coefficient
         self._fee = arm.fee
@@ -330,10 +330,10 @@ class CurveStableswapPool(
         # Underlying + LP tokens — recovered as companion handles.
         underlying = arm.get_tokens_underlying()
         self._tokens_underlying = (
-            tuple(Erc20Token.from_handle(t) for t in underlying) if underlying is not None else None
+            tuple(wrap_token_handle(t) for t in underlying) if underlying is not None else None
         )
         lp = arm.get_lp_token()
-        self._lp_token = Erc20Token.from_handle(lp) if lp is not None else self._tokens[0]
+        self._lp_token = wrap_token_handle(lp) if lp is not None else self._tokens[0]
 
         ul = tuple(arm.use_lending)
         self._use_lending = ul or tuple(False for _ in self._tokens)
@@ -608,8 +608,8 @@ class CurveStableswapPool(
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: Erc20Token,
-        token_out: Erc20Token,
+        token_in: Erc20Token | NativeToken,
+        token_out: Erc20Token | NativeToken,
         token_in_quantity: int,
         override_state: CurveStableswapPoolState | None = None,
         block_identifier: BlockIdentifier | None = None,
@@ -660,7 +660,7 @@ class _LazyBasePool:
         return self._built
 
     @property
-    def tokens(self) -> tuple[Erc20Token, ...]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, ...]:
         return self._pool().tokens
 
     @property

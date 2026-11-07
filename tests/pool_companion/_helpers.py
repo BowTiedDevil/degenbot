@@ -20,9 +20,10 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.provider import OfflineProvider
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.utils.bytes import to_bytes
-from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.erc20_factory import make_erc20, make_native_token
 
 if TYPE_CHECKING:
+    from degenbot.erc20 import NativeToken
     import pathlib
 
     from degenbot.erc20.erc20 import Erc20Token
@@ -65,8 +66,8 @@ def make_usdc(py_bot: Bot) -> Erc20Token:
     return make_erc20(py_bot, USDC_ADDR, chain_id=1, name="USD Coin", symbol="USDC", decimals=6)
 
 
-def make_native_eth(py_bot: Bot) -> Erc20Token:
-    return make_erc20(py_bot, ZERO_ADDRESS, chain_id=1, name="Ether", symbol="ETH", decimals=18)
+def make_native_eth(py_bot: Bot) -> NativeToken:
+    return make_native_token(py_bot, chain_id=1)
 
 
 def v2_offline_provider(

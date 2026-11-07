@@ -22,6 +22,7 @@
 //! swap-call encoding in [`swap_encoding`], and the per-family registration and
 //! apply rows in [`reserve_pair_orchestration`] / [`balance_vector_orchestration`].
 
+pub mod account_cache;
 pub mod apply_telemetry;
 pub mod balance_vector_orchestration;
 pub mod concentrated_liquidity_orchestration;
@@ -108,6 +109,8 @@ pub use ::degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 pub use ::degenbot_ingestion::RELEVANT_TOPICS;
 pub use ::degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 
+pub use account_cache::{AccountCache, ACCOUNT_CACHE_DEPTH};
+
 pub use balance_vector_orchestration::BotCurveBasePoolPort;
 pub use concentrated_liquidity_orchestration::{
     ConcentratedLiquidityApplyError, ConcentratedLiquidityOrchestration, RegisteredV4,
@@ -148,6 +151,12 @@ pub struct BotState {
     pools: pool_table::PoolTable,
     /// Token registry: address -> `TokenEntry`.
     tokens: HashMap<Address, TokenEntry>,
+
+    /// The session's ERC-20 account-value caches (balances, allowances,
+    /// total supply): live state that decays per block, held here rather than
+    /// on token identity or in the stateless read module. Interior-mutable so
+    /// a read guard can serve both the read and the cache-fill store.
+    accounts: AccountCache,
     /// The concentrated-liquidity (V3 + V4) orchestration capability: the
     /// dual liquidity buffers, the state-view registry, the registration
     /// gate, the snapshot seed block, the pump delivery cutoff, and the
@@ -168,8 +177,16 @@ impl BotState {
         Self {
             pools: pool_table::PoolTable::new(journal_depth),
             tokens: HashMap::new(),
+            accounts: AccountCache::new(),
             concentrated_liquidity: ConcentratedLiquidityOrchestration::new(),
         }
+    }
+
+    /// The session's account-value caches, the live state behind every
+    /// balance / allowance / total-supply read-through.
+    #[must_use]
+    pub const fn accounts(&self) -> &AccountCache {
+        &self.accounts
     }
 }
 

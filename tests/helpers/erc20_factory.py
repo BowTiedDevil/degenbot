@@ -1,4 +1,4 @@
-"""Test helpers for constructing Erc20Token/EtherPlaceholder companions.
+"""Test helpers for constructing Erc20Token/NativeToken companions.
 
 Under ADR-005, ``Erc20Token`` is a Python companion over a ``Erc20Token``
 handle (token metadata is owned by the Rust ``Bot``). These helpers register
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot.erc20 import Erc20Token, EtherPlaceholder
+from degenbot.erc20 import Erc20Token, NativeToken
 
 if TYPE_CHECKING:
     from tests.helpers.seam import Bot
@@ -28,7 +28,6 @@ def make_erc20(
     decimals: int,
     chain_id: int = 1,
     oracle_address: str | None = None,
-    state_cache_depth: int = 8,
 ) -> Erc20Token:
     """Register token metadata in the Rust ``Bot`` and wrap the ``Erc20Token`` handle.
 
@@ -41,19 +40,17 @@ def make_erc20(
     return Erc20Token.from_handle(
         py_token,
         oracle_address=oracle_address,
-        state_cache_depth=state_cache_depth,
     )
 
 
-def make_ether_placeholder(
+def make_native_token(
     py_bot: Bot,
-    address: str,
     *,
     chain_id: int = 1,
-    state_cache_depth: int = 8,
-) -> EtherPlaceholder:
-    """Register ETH-placeholder metadata and wrap the handle as an ``EtherPlaceholder``."""
-    py_token = py_bot.get_token(address)
-    if py_token is None:
-        py_token = py_bot.register_token(address, "Ether Placeholder", "ETH", 18, chain_id)
-    return EtherPlaceholder.from_handle(py_token, state_cache_depth=state_cache_depth)
+) -> NativeToken:
+    """Wrap the chain's conceptual ``NativeToken`` handle (ADR-097).
+
+    Metadata comes from the core chain-facts manifest; there is no address
+    and nothing to register.
+    """
+    return NativeToken.from_handle(py_bot.native_token(chain_id))

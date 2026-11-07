@@ -34,6 +34,7 @@ from degenbot.builders.type_resolution import (
     resolve_pool_type as _resolve_pool_type_impl,
 )
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.config import resolve_chain_id, resolve_database_path
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.discovery import PoolRef
@@ -56,7 +57,7 @@ from ._account_queries import AccountQueryMixin
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.pathfinding import PoolKind
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.rpc_types import BlockIdentifier
@@ -377,6 +378,18 @@ class Bot(AccountQueryMixin):
         """
         return self.build_erc20token(address)
 
+    def get_native_token(self) -> NativeToken:
+        """The chain's conceptual native token (ADR-097).
+
+        One per chain: metadata from the core chain-facts manifest — no
+        contract read, no DB row, no protocol address.
+
+        Returns:
+            The chain's :class:`NativeToken`.
+
+        """
+        return self._erc20_builder.build_native(chain_id=self.chain_id)
+
     def resolve_pool_type(self, address: str) -> PoolTypeDescriptor:
         """Resolve a pool's type without building it.
 
@@ -437,8 +450,6 @@ class Bot(AccountQueryMixin):
         request = BuildPoolRequest(
             silent=silent,
             state_block=state_block,
-            # state_cache_depth stays a request field; this facade entry point
-            # carries only the knobs in-tree callers actually set.
             construction_route=construction_route,
         )
 
@@ -748,17 +759,31 @@ class Bot(AccountQueryMixin):
             raise DegenbotValueError(message=str(exc) or "V4 identity resolution failed") from exc
         py_pool_handle = outcome.pool
 
-        # The pool's two tokens build in ONE batched metadata read:
-        # `build_many` collapses the two per-token fetch_erc20_metadata
-        # round-trips into a single Multicall3 aggregate3 eth_call for
-        # network-missing metadata. The currency pair is the outcome's
-        # identity echo.
-        token0, token1 = self._erc20_builder.build_many(
-            [outcome.token0, outcome.token1],
-            chain_id=chain_id,
-            silent=request.silent,
-            io=self._io,
-        )
+        # The pool's two currencies build in ONE core batch entry (the batch
+        # call shape over the same per-token construction `build` uses). V4's
+        # `address(0)` currency is that protocol's private spelling of the
+        # native asset (ADR-097 D3): translated to the session's NativeToken
+        # here, at the construction outcome, and spelled back only inside
+        # PoolKey/pool-id derivation and execution. The currency pair is the
+        # outcome's identity echo.
+        currencies = [outcome.token0, outcome.token1]
+        native_indices = [i for i, currency in enumerate(currencies) if currency == ZERO_ADDRESS]
+        erc20_indices = [i for i, currency in enumerate(currencies) if currency != ZERO_ADDRESS]
+        tokens: list[Erc20Token | NativeToken] = []
+        if erc20_indices:
+            tokens = self._erc20_builder.build_many(
+                [currencies[index] for index in erc20_indices],
+                chain_id=chain_id,
+                silent=request.silent,
+            )
+        resolved: list[Erc20Token | NativeToken | None] = [None, None]
+        for index, token in zip(erc20_indices, tokens, strict=True):
+            resolved[index] = token
+        for index in native_indices:
+            resolved[index] = self._erc20_builder.build_native(
+                chain_id=chain_id, silent=request.silent
+            )
+        token0, token1 = resolved
 
         pool = UniswapV4Pool.from_handle(py_pool_handle)
 

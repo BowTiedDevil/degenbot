@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from degenbot.erc20 import NativeToken
 from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import PoolGoldenError, load_pool
 from tests.uniswap.v4.test_uniswap_v4_liquidity_pool import (
@@ -70,5 +71,6 @@ def test_v4_round_trip_reproduces_identity() -> None:
     assert pool.address == V4_POOL_MANAGER_ADDRESS
     assert pool.liquidity > 0
     assert pool.sqrt_price_x96 > 0
-    assert pool.token0.address == "0x0000000000000000000000000000000000000000"
+    assert isinstance(pool.token0, NativeToken)
+    assert pool.token0.symbol == "ETH"
     assert pool.token1.symbol == "USDC"

@@ -207,21 +207,41 @@ async fn backfill_user_stk_aave_balance_if_none(
     let user_addr: Address = addr_str.parse().map_err(|_| {
         ConfigDispatchError::DecodeShape(format!("bad user_address in backfill: {addr_str}"))
     })?;
-    let calldata = encode_single_address_call("balanceOf(address)", &user_addr);
-    let ret = provider
-        .eth_call(
-            &discount_token,
-            calldata,
-            Some(block_number.saturating_sub(1)),
-        )
-        .await?;
-    let balance = require_word0_u256(
-        &ret,
-        &format!("balanceOf(address) for user {addr_str}"),
-        &discount_token,
-    )?;
+    let balance = read_stk_aave_balance(
+        provider,
+        discount_token,
+        user_addr,
+        &addr_str,
+        block_number.saturating_sub(1),
+    )
+    .await?;
     DegenbotDb::set_user_stk_aave_balance_on_conn(conn, user_id, balance)?;
     Ok(())
+}
+
+/// One stkAAVE `balanceOf(user)` through the stateless ERC-20 account read
+/// (`degenbot_rpc::erc20`). This consumer's zero-intolerance is preserved: a
+/// read that cannot produce a value is a hard typed failure (the
+/// `require_word0_u256` contract), never a silent zero.
+async fn read_stk_aave_balance(
+    provider: &AlloyProvider,
+    discount_token: Address,
+    user_addr: Address,
+    user_str: &str,
+    block: u64,
+) -> Result<U256, ConfigDispatchError> {
+    degenbot_rpc::erc20::balance_of(provider, discount_token, user_addr, Some(block))
+        .await
+        .map_err(|error| match error {
+            degenbot_rpc::erc20::AccountReadError::Call(provider_error) => provider_error.into(),
+            degenbot_rpc::erc20::AccountReadError::NotUint256 { returned, .. } => {
+                ConfigDispatchError::DecodeShape(format!(
+                    "balanceOf(address) for user {user_str} on {}: \
+                     short return data ({returned} bytes, expected at least 32)",
+                    checksum(&discount_token)
+                ))
+            }
+        })
 }
 
 /// `DiscountTokenUpdated(old, new)` → [`AaveChunkEvent::GhoDiscountTokenUpdated`].
@@ -453,19 +473,14 @@ pub(crate) async fn refresh_gho_discount(
                 ctx.user_address
             ))
         })?;
-        let calldata = encode_single_address_call("balanceOf(address)", &user_addr);
-        let ret = provider
-            .eth_call(
-                &discount_token,
-                calldata,
-                Some(block_number.saturating_sub(1)),
-            )
-            .await?;
-        let balance = require_word0_u256(
-            &ret,
-            &format!("balanceOf(address) for user {}", ctx.user_address),
-            &discount_token,
-        )?;
+        let balance = read_stk_aave_balance(
+            provider,
+            discount_token,
+            user_addr,
+            &ctx.user_address,
+            block_number.saturating_sub(1),
+        )
+        .await?;
         DegenbotDb::set_user_stk_aave_balance_on_conn(conn, ctx.user_id, balance)?;
         balance
     };

@@ -112,6 +112,16 @@
 # reserve-pair and Solidly door tests and the reserve-pair override outcome
 # are its consumers.
 #
+# The 1085 -> 1086 review is the native sentinel's root declaration (ADR-097
+# D3 / ADR-084 D2): `NATIVE_SENTINEL_ALL_ES` moves out of `state::curve_state`
+# to the curated crate-root door so the three translation call sites outside
+# the capability crate (the bot's pool builder, the Python bot mod and pool)
+# name the door instead of an implementation module. It is a declaration
+# mover, not a re-export: the deep declaration leaves with it, so the count
+# moves by exactly the one curated constant and no public deep-path alias
+# remains. The name is Curve's wire spelling for its native coin — a
+# protocol-private sentinel, never a token contract address.
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

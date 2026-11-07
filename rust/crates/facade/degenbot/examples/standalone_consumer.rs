@@ -1009,7 +1009,8 @@ fn in_process_sim_standalone_slice() {
     // the fatal `fetch_curve_pool_params` A() read reverts next — the umbrella
     // path + `RegisterCurvePoolParams` for the Curve family are proven by the
     // typed `PoolBuilderError::Rpc`.
-    let err = degenbot::runtime::get_runtime().block_on(build_curve_pool(POOL_B, &[], &io, None));
+    let err =
+        degenbot::runtime::get_runtime().block_on(build_curve_pool(1, POOL_B, &[], &io, None));
     assert!(
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_curve_pool over a failing RPC must yield a typed Rpc error, got {err:?}"

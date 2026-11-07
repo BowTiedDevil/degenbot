@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import dataclasses
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
 
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.abstract import AbstractPoolState
 
 if TYPE_CHECKING:
@@ -26,6 +27,21 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.rpc_types import BlockIdentifier
+
+
+#: The all-Es address the old Vyper Curve pools spell a native coin with —
+#: Curve's PRIVATE sentinel, mirroring
+#: ``degenbot_pools::NATIVE_SENTINEL_ALL_ES`` (ADR-097 D3). It is never a token
+#: contract address and never generic input; only Curve call sites translate
+#: it to the conceptual native token. Zero is NOT a Curve native spelling (it
+#: remains the coin-enumeration terminator) and is deliberately not
+#: recognized here.
+NATIVE_COIN_ALL_ES: Final = get_checksum_address("0x" + "EE" * 20)
+
+
+def is_curve_native_coin(address: str) -> bool:
+    """Whether `address` is Curve's all-Es native-coin sentinel."""
+    return get_checksum_address(address) == NATIVE_COIN_ALL_ES
 
 
 # ── Variant Enums ──

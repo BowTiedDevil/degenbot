@@ -592,7 +592,7 @@ async fn construct_curve(
             built: None,
         });
     }
-    let params = builder::build_curve_pool(address, registries, io, block)
+    let params = builder::build_curve_pool(bot.chain_id(), address, registries, io, block)
         .await
         .map_err(|err| classify_builder_error(err, address))?;
     let minted = BuiltIdentity {

@@ -10,7 +10,7 @@ from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.fork import AnvilFork
 from degenbot.utils.bytes import to_bytes
 from tests.helpers.bot_factory import make_bot_with_provider
-from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
+from tests.helpers.erc20_factory import make_erc20, make_native_token
 from tests.standalone_anvil import seed as seed_catalog
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -59,21 +59,26 @@ def test_bad_address(standalone_anvil: AnvilFork):
 
 
 def test_caches(wbtc: Erc20Token):
-    # Test cache setters and getters (pure in-memory; no chain data needed).
+    # Cache setters and getters over the Rust-backed session streams (pure
+    # in-memory; no chain data needed). The streams' only removal is FIFO
+    # eviction at depth 8, so "cleared" below is the core's eviction
+    # semantics made visible through the thin adapters.
     fake_balance = 69_420_000
     current_block = 100
 
     # Test balance cache
     wbtc.set_cached_balance(VITALIK_ADDRESS, current_block, fake_balance)
     assert wbtc.get_cached_balance(VITALIK_ADDRESS, current_block) == fake_balance
-    wbtc._cached_balance.clear()
+    for block in range(200, 208):
+        wbtc.set_cached_balance(VITALIK_ADDRESS, block, block)
     assert wbtc.get_cached_balance(VITALIK_ADDRESS, current_block) is None
 
     # Test total supply cache
     fake_supply = 69_420_000_000
     wbtc.set_cached_total_supply(current_block, fake_supply)
     assert wbtc.get_cached_total_supply(current_block) == fake_supply
-    wbtc._cached_total_supply.clear()
+    for block in range(200, 208):
+        wbtc.set_cached_total_supply(block, block)
     assert wbtc.get_cached_total_supply(current_block) is None
 
     # Test approval cache
@@ -166,17 +171,31 @@ def test_erc20token_without_price_feed(weth: Erc20Token):
         _ = weth.price
 
 
-def test_ether_placeholder(standalone_anvil: AnvilFork, py_bot):
-    ether = make_ether_placeholder(py_bot, ZERO_ADDRESS)
+def test_native_token(standalone_anvil: AnvilFork, py_bot):
+    """The conceptual native asset: chain-facts metadata and chain identity (ADR-097)."""
+    native = make_native_token(py_bot)
 
-    fake_balance = 69_420_000
-    current_block = standalone_anvil.provider.get_block_number()
-    balance_actual = standalone_anvil.provider.get_balance(VITALIK_ADDRESS)
-    ether.set_cached_balance(VITALIK_ADDRESS, current_block, fake_balance)
-    balance_from_cache = ether.get_cached_balance(VITALIK_ADDRESS, current_block)
-    assert balance_from_cache == fake_balance
-    # clear cached balance and test reset
-    ether._cached_balance.clear()
-    assert ether.get_cached_balance(VITALIK_ADDRESS, current_block) is None
-    ether.set_cached_balance(VITALIK_ADDRESS, current_block, balance_actual)
-    assert ether.get_cached_balance(VITALIK_ADDRESS, current_block) == balance_actual
+    assert native.name == "Ether"
+    assert native.symbol == "ETH"
+    assert native.decimals == 18
+
+    # Canonical chain identity: one conceptual native token per chain, and
+    # the representation names the chain.
+    assert native.chain_id == 1
+    assert repr(native) == "NativeToken(symbol='ETH', chain_id=1)"
+    again = make_native_token(py_bot)
+    assert again == native
+    assert hash(again) == hash(native)
+
+    # A raw protocol sentinel is never a token contract address: generic
+    # construction refuses it loudly instead of resolving it here (the FFI
+    # boundary raises ValueError; the builder layer wraps it as
+    # DegenbotValueError).
+    with pytest.raises(ValueError, match="native-asset sentinel"):
+        make_erc20(
+            py_bot,
+            ZERO_ADDRESS,
+            name="x",
+            symbol="X",
+            decimals=18,
+        )

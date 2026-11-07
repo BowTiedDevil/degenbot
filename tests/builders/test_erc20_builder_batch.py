@@ -1,20 +1,22 @@
-"""Erc20Builder.build_many batches per-pool token metadata reads.
+"""Erc20Builder.build_many rides the core's batch construction entry.
 
-`_build_v4_managed` used to call `_erc20_builder.build(currency0)` then
-`_erc20_builder.build(currency1)` — two SERIAL network `fetch_erc20_metadata`
-round-trips (each 3 eth_calls on a metadata miss). `build_many` collapses the
-network-missing set into ONE `io.fetch_erc20_metadata_batch([a, b])` Multicall3
-`aggregate3` eth_call.
+`build_many` is the batch call shape over the SAME per-token core `build`
+uses (`Bot.build_erc20_tokens` -> `build_erc20_metadata_batch`): one result
+per input address, in input order, each token's DB-first / fallback /
+write-back / registration completing independently. The Python-side batch
+DB/network/fallback/registration choreography is retired onto those core
+entries (ADR-023 A6).
 
-Previously there was no `build_many` (and two separate
-`fetch_erc20_metadata` reads); GREEN: one `fetch_erc20_metadata_batch` call.
 """
 
 from __future__ import annotations
 
 import json
 
+import pytest
+
 from degenbot.builders.erc20_builder import Erc20Builder
+from degenbot.exceptions import DegenbotValueError
 from degenbot.registry import TokenRegistry
 from tests.helpers.seam import AlloyProvider as RustAlloyProvider
 from tests.helpers.seam import Bot
@@ -23,95 +25,74 @@ TOKEN_A = "0x00000000000000000000000000000000000000A1"
 TOKEN_B = "0x00000000000000000000000000000000000000B1"
 
 
-class _RecFakeIo:
-    """Minimal io double recording which network reads `build_many` issues.
-
-    Returns `None` for the DB lookup (so both tokens need a network fetch) and
-    canned metadata for the batch call.
-    """
-
-    def __init__(self) -> None:
-        self.metadata_batch_calls: list[list[str]] = []
-        self.single_metadata_calls = 0
-
-    def fetch_erc20_token(self, chain_id: int, address: str) -> None:
-        return None
-
-    def update_erc20_token_metadata(self, *args: object, **kwargs: object) -> None:
-        return None
-
-    def fetch_erc20_metadata_batch(self, addresses: list[str]) -> list[tuple[str, str, int] | None]:
-        self.metadata_batch_calls.append(list(addresses))
-        return [("Alpha", "ALPHA", 6), ("Beta", "BETA", 18)]
-
-    def get_code(self, address: str) -> bytes:
-        return b"0x0"
-
-    def fetch_erc20_metadata(self, address: str) -> None:
-        self.single_metadata_calls += 1
-        return
-
-    def fetch_erc20_string_field(self, address: str, prototype: str) -> str:
-        msg = "revert"
-        raise ValueError(msg)
-
-    def fetch_erc20_uint_field(self, address: str, prototype: str) -> int:
-        msg = "revert"
-        raise ValueError(msg)
-
-
-def test_build_many_issues_single_batched_fetch() -> None:
-    """Two DB/registry-missing tokens resolve via ONE batched metadata fetch."""
-    py_bot = Bot(chain_id=1)
-    tokens = TokenRegistry(py_bot=py_bot)
-    io = _RecFakeIo()
-    erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
-
-    t_a, t_b = erc20.build_many([TOKEN_A, TOKEN_B], chain_id=1, silent=True, io=io)
-
-    # ONE batched network fetch covering both tokens — no per-token fetches.
-    assert io.metadata_batch_calls == [[TOKEN_A, TOKEN_B]]
-    assert io.single_metadata_calls == 0
-    assert t_a.symbol == "ALPHA"
-    assert t_a.decimals == 6
-    assert t_b.symbol == "BETA"
-    assert t_b.decimals == 18
-
-
-def test_build_many_falls_back_per_token_for_none_meta() -> None:
-    """A token whose batched metadata is `None` falls back to a per-token build
-    (contract-deployed check + alternate-prototype fallback preserved)."""
-    py_bot = Bot(chain_id=1)
-    # The fallback routes through the Rust core (`Bot.build_erc20_token` /
-    # `build_erc20_metadata`), so the Bot must hold a ConstructionIo. Attach
-    # an offline provider with non-empty code for TOKEN_B but NO
-    # name()/symbol()/decimals() responses — the core resolves the alternate
-    # prototype fallback -> UNKNOWN (same observable result as the old Python
-    # path's missing-metadata fallback).
-    provider = RustAlloyProvider.offline_from_json_string(
+def _offline(code: dict[str, str], calls: dict[str, str]) -> RustAlloyProvider:
+    return RustAlloyProvider.offline_from_json_string(
         json.dumps({
             "chain_id": 1,
             "block_number": 100,
             "timestamp": 1_700_000_000,
-            "calls": {},
-            "code": {TOKEN_B.lower(): "6080"},
+            "calls": calls,
+            "code": code,
         })
     )
+
+
+def test_build_many_resolves_each_token_in_order() -> None:
+    """Two registry-missing tokens resolve through one core batch call, in order."""
+    py_bot = Bot(chain_id=1)
+    provider = _offline(code={TOKEN_A.lower(): "6080", TOKEN_B.lower(): "6080"}, calls={})
     py_bot.attach_construction_io(provider, None)
     tokens = TokenRegistry(py_bot=py_bot)
-    io = _RecFakeIo()
     erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
 
-    # Patch the batch to return None for the second token (simulating a revert
-    # / decode failure in the multicall for TOKEN_B).
-    io.fetch_erc20_metadata_batch = lambda addresses: [  # type: ignore[method-assign]
-        ("Alpha", "ALPHA", 6),
-        None,
-    ]
-    t_a, t_b = erc20.build_many([TOKEN_A, TOKEN_B], chain_id=1, silent=True, io=io)
+    t_a, t_b = erc20.build_many([TOKEN_A, TOKEN_B], chain_id=1, silent=True)
 
-    # TOKEN_A comes from the batched fetch; TOKEN_B fell back to the Rust core
-    # per-token build, whose on-chain reads resolve UNKNOWN on a missed
-    # name()/symbol()/decimals() fallback.
-    assert t_a.symbol == "ALPHA"
-    assert t_b.symbol == "UNKNOWN"  # UNKNOWN_SYMBOL const value
+    assert t_a.address == t_a.address  # built, in input order
+    assert (t_a.symbol, t_b.symbol) == ("UNKNOWN", "UNKNOWN")
+    assert (t_a.decimals, t_b.decimals) == (18, 18)
+    # Registration is per token and complete before the call returns.
+    assert py_bot.get_token(TOKEN_A) is not None
+    assert py_bot.get_token(TOKEN_B) is not None
+
+
+def test_build_many_isolates_a_broken_token() -> None:
+    """One unbuildable token is a failure of that entry alone — no all-or-nothing.
+
+    The token that resolved stays registered when the batch surfaces the
+    failure.
+    """
+    py_bot = Bot(chain_id=1)
+    provider = _offline(code={TOKEN_A.lower(): "6080"}, calls={})
+    py_bot.attach_construction_io(provider, None)
+    tokens = TokenRegistry(py_bot=py_bot)
+    erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
+
+    with pytest.raises(DegenbotValueError, match=TOKEN_B):
+        erc20.build_many([TOKEN_A, TOKEN_B], chain_id=1, silent=True)
+
+    assert py_bot.get_token(TOKEN_A) is not None
+    assert py_bot.get_token(TOKEN_B) is None
+
+
+def test_build_many_duplicates_get_or_create() -> None:
+    """A repeated address resolves to one canonical token, twice in order."""
+    py_bot = Bot(chain_id=1)
+    provider = _offline(code={TOKEN_A.lower(): "6080"}, calls={})
+    py_bot.attach_construction_io(provider, None)
+    tokens = TokenRegistry(py_bot=py_bot)
+    erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
+
+    first, second = erc20.build_many([TOKEN_A, TOKEN_A], chain_id=1, silent=True)
+
+    assert first is second
+
+
+def test_build_many_refuses_raw_native_sentinels() -> None:
+    """A raw sentinel is not a token contract address — loud, before any I/O."""
+    py_bot = Bot(chain_id=1)
+    tokens = TokenRegistry(py_bot=py_bot)
+    erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
+
+    for sentinel in ("0x0000000000000000000000000000000000000000", "0x" + "Ee" * 20):
+        with pytest.raises(DegenbotValueError, match="native-asset sentinel"):
+            erc20.build_many([sentinel], chain_id=1, silent=True)

@@ -58,7 +58,6 @@ def make_curve_pool(
     admin_fee: int,
     balances: list[int] | tuple[int, ...],
     state_block: BlockNumber | None = None,
-    state_cache_depth: int = 8,
     data_provider: CurveDataProvider | None = None,
     base_pool: CurveStableswapPool | None = None,
     tokens_underlying: list[Erc20Token] | tuple[Erc20Token, ...] | None = None,
