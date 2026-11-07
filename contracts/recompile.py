@@ -18,30 +18,32 @@ Usage:
 
 Files written (existing file format: 0x-prefixed lowercase hex + trailing
 newline; the ABI is copied verbatim):
-    cmd_executor_runtime_bytecode.txt  = 0x + runtime hex + 5 x 32B immutables
+    cmd_executor_runtime_bytecode.txt  = 0x + runtime hex + 7 x 32B immutables
     cmd_executor_bytecode.txt          = 0x + creation hex (deployment)
     cmd_executor_abi.json              = the artifact ABI
 
 Vyper bytecode layout (re-derived for the current artifact — the code section
 moved with U3WVLL / 767TN5 / TGUZCT; do NOT hand-bake offsets, they are
 compiler-generated):
-    runtime  = [code_section][CBOR_metadata]            (16,462 B @ this commit)
-    deployed = runtime + [5 x 32-byte immutable slots]  (16,622 B)
+    runtime  = [code_section][CBOR_metadata]
+    deployed = runtime + [7 x 32-byte immutable slots]
 
 The runtime code's CODECOPY instructions read the immutable slots from
-offsets at/after the end of the runtime section, so the 160-byte tail
+offsets at/after the end of the runtime section, so the 224-byte tail
 appended to `cmd_executor_runtime_bytecode.txt` lands exactly where the
 compiler expects it. The CBOR metadata MUST NOT be stripped (it doubles
 as the dispatch jump table + JUMPDEST targets), and the tail must come
 AFTER the CBOR — never replace it.
 
-Immutable layout (5 slots, 160 bytes, appended after the CBOR):
+Immutable layout (7 slots, 224 bytes, appended after the CBOR):
     [0] OWNER_ADDR          0x9C56a29c7231974c269E24F9FB3c29203039089E
     [1] WETH_ADDR           0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2
     [2] POOL_MANAGER_ADDR   0x000000000004444c5dc75cB358380D2e3De08A90 (mainnet;
                             zero with --no-patch)
-    [3] WETH_DELTA_SLOT     keccak256(padded20(self), padded20(WETH))
-    [4] NATIVE_DELTA_SLOT   keccak256(padded20(self), padded20(0x0))
+    [3] USDC_ADDR           0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48
+    [4] USDT_ADDR           0xdAC17F958D2ee523a2206206994597C13D831ec7
+    [5] WETH_DELTA_SLOT     keccak256(padded20(self), padded20(WETH))
+    [6] NATIVE_DELTA_SLOT   keccak256(padded20(self), padded20(0x0))
 `self` = INJECTED_EXECUTOR_ADDRESS, the code-injection address — must match
 degenbot.runner._driver_constants.INJECTED_EXECUTOR_ADDRESS. Delta slots are
 precomputed exactly as __init__ computes them (keccak256 of the packed
@@ -80,13 +82,15 @@ OWNER_ADDR = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 WETH_ADDR = "0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2"
 POOL_MANAGER_ADDR = "0x000000000004444c5dc75cB358380D2e3De08A90"
 NATIVE_ADDRESS = "0x0000000000000000000000000000000000000000"
+USDC_ADDR = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"
+USDT_ADDR = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
 
 # The injected executor address — used as `self` for delta slot precomputation.
 # Must match INJECTED_EXECUTOR_ADDRESS in degenbot.runner._driver_constants.
 INJECTED_EXECUTOR_ADDRESS = "0x0D6d4C3CF3bD3b769De1821F2Be0D7d99913e4F1"
 
-NUM_IMMUTABLE_SLOTS = 5
-IMMUTABLE_HEX_LEN = NUM_IMMUTABLE_SLOTS * 64  # 320 hex chars = 160 bytes
+NUM_IMMUTABLE_SLOTS = 7
+IMMUTABLE_HEX_LEN = NUM_IMMUTABLE_SLOTS * 64  # 448 hex chars = 224 bytes
 
 
 def _hex_read(path: pathlib.Path) -> str:
@@ -125,7 +129,9 @@ def _check_manifest() -> None:
             break
     if pin is None:
         sys.exit("manifest.json: no executor/cmd_executor.* pin found")
-    actual = hashlib.sha256((DEGENBOT_ROOT / "executor" / "contracts" / "cmd_executor.vy").read_bytes()).hexdigest()
+    actual = hashlib.sha256(
+        (DEGENBOT_ROOT / "executor" / "contracts" / "cmd_executor.vy").read_bytes()
+    ).hexdigest()
     if actual != pin:
         sys.exit(
             f"source/artifact drift: cmd_executor.vy sha256 {actual[:16]} != manifest pin "
@@ -146,7 +152,9 @@ def _verify_compile_matches_artifacts() -> None:
     try:
         subprocess.run(["bash", str(gate)], check=True)
     except subprocess.CalledProcessError:
-        sys.exit("verify-tier3-executor-artifact.sh failed — source/artifact/toolchain drift; run just rebuild-tier3-artifacts")
+        sys.exit(
+            "verify-tier3-executor-artifact.sh failed — source/artifact/toolchain drift; run just rebuild-tier3-artifacts"
+        )
 
 
 def main() -> None:
@@ -164,11 +172,13 @@ def main() -> None:
 
     pm = POOL_MANAGER_ADDR if patch_pm else NATIVE_ADDRESS
     immutables = (
-        _padded20(OWNER_ADDR)                      # [0] OWNER_ADDR
-        + _padded20(WETH_ADDR)                     # [1] WETH_ADDR
-        + _padded20(pm)                            # [2] POOL_MANAGER_ADDR
-        + _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, WETH_ADDR)              # [3]
-        + _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, NATIVE_ADDRESS)         # [4]
+        _padded20(OWNER_ADDR)  # [0] OWNER_ADDR
+        + _padded20(WETH_ADDR)  # [1] WETH_ADDR
+        + _padded20(pm)  # [2] POOL_MANAGER_ADDR
+        + _padded20(USDC_ADDR)  # [3] USDC_ADDR
+        + _padded20(USDT_ADDR)  # [4] USDT_ADDR
+        + _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, WETH_ADDR)  # [5]
+        + _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, NATIVE_ADDRESS)  # [6]
     )
     runtime_baked = runtime + immutables
 
@@ -181,13 +191,17 @@ def main() -> None:
     print()
     print("Baked into contracts/ (from tier3-oracle/artifacts/executor/):")
     print(f"  runtime (code+CBOR): {len(runtime) // 2} B")
-    print(f"  immutables:          {IMMUTABLE_HEX_LEN // 2} B (first CODECOPY tail offset {hex(len(runtime) // 2)})")
+    print(
+        f"  immutables:          {IMMUTABLE_HEX_LEN // 2} B (first CODECOPY tail offset {hex(len(runtime) // 2)})"
+    )
     print(f"  runtime + immutables: {len(runtime_baked) // 2} B")
     print(f"  OWNER         = {tail[0:64][-40:]}")
     print(f"  WETH          = {tail[64:128][-40:]}")
     print(f"  PM            = {tail[128:192][-40:]}")
-    print(f"  WETH_DELTA    = 0x{tail[192:256]}")
-    print(f"  NATIVE_DELTA  = 0x{tail[256:320]}")
+    print(f"  USDC          = {tail[192:256][-40:]}")
+    print(f"  USDT          = {tail[256:320][-40:]}")
+    print(f"  WETH_DELTA    = 0x{tail[320:384]}")
+    print(f"  NATIVE_DELTA  = 0x{tail[384:448]}")
     print("  creation:          " + hashlib.sha256(creation.encode()).hexdigest()[:16])
     print("Done ✓")
 

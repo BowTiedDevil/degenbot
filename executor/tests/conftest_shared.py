@@ -56,6 +56,8 @@ CMD_V2_SWAP_DIRECT = b"\x22"
 # V3: 0x30–0x3F
 CMD_V3_SWAP_COMPACT = b"\x30"
 CMD_V3_SWAP_DELTA = b"\x31"
+CMD_V3_SWAP_ONE_FOR_ZERO = b"\x33"
+CMD_V3_SWAP_ZERO_FOR_ONE = b"\x34"
 
 # V4 Swaps: 0x40–0x4F
 CMD_V4_SWAP_COMPACT = b"\x40"
@@ -86,8 +88,8 @@ WETH_SENTINEL = 0xFE
 NATIVE_SENTINEL = 0xFF
 SELF_SENTINEL = 0xFD
 PM_SENTINEL = 0xFC
-USER0_SENTINEL = None  # DEPRECATED — user sentinels removed from the contract.
-USER1_SENTINEL = None  # USDC/WBTC are now regular t_addresses entries.
+USER0_SENTINEL = 0xFA
+USER1_SENTINEL = 0xFB
 
 # Terminators — 0xFF is the section separator (end of preprocessing / start of execution)
 
@@ -118,13 +120,25 @@ def enc_v2_swap_compact(pool_idx, zfo, amount_out, recipient_idx, fee=30, forwar
 
 def enc_v3_swap_compact(pool_idx, zfo, amount_specified, recipient_idx, forward_data=b""):
     """
-    V3_SWAP_COMPACT: [0x30][pool_idx:1][zfo:1][amount_specified:12][recipient_idx:1]
-    [forward_len:1][forward_data:N]
-    = 17 + N bytes
+    Emit a direction-specific V3 swap: [0x33/0x34][pool_idx:1][amount:12][recipient:1]
+    [forward_len:1][forward_data:N] = 16 + N bytes
     """
+    if zfo:
+        return enc_v3_swap_zero_for_one(pool_idx, amount_specified, recipient_idx, forward_data)
+    return enc_v3_swap_one_for_zero(pool_idx, amount_specified, recipient_idx, forward_data)
+
+
+def enc_v3_swap_one_for_zero(pool_idx, amount_specified, recipient_idx, forward_data=b""):
     return b"".join([
-        CMD_V3_SWAP_COMPACT, _encode_word(pool_idx, 1),
-        b"\x01" if zfo else b"\x00",
+        CMD_V3_SWAP_ONE_FOR_ZERO, _encode_word(pool_idx, 1),
+        _encode_word(amount_specified, 12), _encode_word(recipient_idx, 1),
+        _encode_word(len(forward_data), 1), forward_data,
+    ])
+
+
+def enc_v3_swap_zero_for_one(pool_idx, amount_specified, recipient_idx, forward_data=b""):
+    return b"".join([
+        CMD_V3_SWAP_ZERO_FOR_ONE, _encode_word(pool_idx, 1),
         _encode_word(amount_specified, 12), _encode_word(recipient_idx, 1),
         _encode_word(len(forward_data), 1), forward_data,
     ])
@@ -498,13 +512,9 @@ class AddressTable:
     """Address lookup table with sentinel support.
 
     Reserves sentinel index values that skip TLOAD and SET_ADDRESS in the contract:
-    0xFC = POOL_MANAGER_ADDR, 0xFD = executor (self), 0xFE = WETH_ADDR, 0xFF = ZERO_ADDRESS / native ETH.
-    Regular addresses are assigned indices 0-0xFB via SET_ADDRESS commands.
-
-    No path-specific tokens are baked into the contract — user0_addr/user1_addr
-    kwargs are accepted for backward compat but treated as *regular table entries*
-    (they get a SET_ADDRESS + TLOAD index like every other address), NOT as
-    sentinel bytes.
+    0xFA = user0 (USDC), 0xFB = user1 (USDT in production, WBTC in benchmarks),
+    0xFC = POOL_MANAGER_ADDR, 0xFD = executor (self), 0xFE = WETH_ADDR,
+    0xFF = ZERO_ADDRESS / native ETH. Other addresses use SET_ADDRESS entries.
     """
     def __init__(self, weth_addr=None, executor_addr=None, pm_addr=None,
                  user0_addr=None, user1_addr=None):
@@ -513,9 +523,9 @@ class AddressTable:
         self._weth_addr = weth_addr
         self._executor_addr = executor_addr
         self._pm_addr = pm_addr
-        # user0_addr / user1_addr are NOT sentinels anymore — pre-register them
-        # as ordinary table entries so callers that pass them get a stable index
-        # and an emitted SET_ADDRESS, identical to any other address.
+        self._user0_addr = user0_addr
+        self._user1_addr = user1_addr
+        # Resolve specialized roles through the same mapping used for all addresses.
         for a in (user0_addr, user1_addr):
             if a is not None:
                 self.add(a)
@@ -530,6 +540,10 @@ class AddressTable:
             return SELF_SENTINEL
         if self._pm_addr is not None and addr_str == self._pm_addr:
             return PM_SENTINEL
+        if self._user0_addr is not None and addr_str == self._user0_addr:
+            return USER0_SENTINEL
+        if self._user1_addr is not None and addr_str == self._user1_addr:
+            return USER1_SENTINEL
         if addr in self._index_map:
             return self._index_map[addr]
         idx = len(self._addresses)

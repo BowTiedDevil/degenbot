@@ -14,14 +14,24 @@
 "length": 32,
 "offset": 64
 },
+"USDC_ADDR": {
+"type": "address",
+"length": 32,
+"offset": 96
+},
+"USDT_ADDR": {
+"type": "address",
+"length": 32,
+"offset": 128
+},
 "WETH_DELTA_SLOT": {
 "type": "bytes32",
 "length": 32,
-"offset": 96
+"offset": 160
 },
 "NATIVE_DELTA_SLOT": {
 "type": "bytes32",
 "length": 32,
-"offset": 128
+"offset": 192
 }
 }

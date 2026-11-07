@@ -226,7 +226,15 @@ fn deploy_contracts(
         take(nonce),
     )?;
     let mut executor_init = load_hex("tier3-oracle/artifacts/executor/cmd_executor.creation.hex");
-    executor_init.extend_from_slice(&(weth.address, pool_manager.address).abi_encode());
+    executor_init.extend_from_slice(
+        &(
+            weth.address,
+            pool_manager.address,
+            Address::repeat_byte(0x33),
+            Address::repeat_byte(0x44),
+        )
+            .abi_encode(),
+    );
     let executor = deploy(evm, Bytes::from(executor_init), take(nonce))?;
     let token = deploy(evm, Bytes::from(load_stub_creation("Token")), take(nonce))?;
     let pair1 = deploy(evm, Bytes::from(load_stub_creation("Pair")), take(nonce))?;

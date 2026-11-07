@@ -65,9 +65,14 @@ fn load_hex(rel: &str) -> Vec<u8> {
     alloy::hex::decode(s).expect("hex decodes")
 }
 
-/// ABI-encode the two `__init__(address weth, address pool_manager)` args.
-fn executor_deploy_args(weth: Address, pool_manager: Address) -> Vec<u8> {
-    (weth, pool_manager).abi_encode()
+/// ABI-encode the constructor's four role addresses.
+fn executor_deploy_args(
+    weth: Address,
+    pool_manager: Address,
+    stablecoin0: Address,
+    stablecoin1: Address,
+) -> Vec<u8> {
+    (weth, pool_manager, stablecoin0, stablecoin1).abi_encode()
 }
 
 /// Load a `Token`/`Pair`-style foundry artifact's creation bytecode
@@ -171,7 +176,12 @@ impl Harness {
             8_000_000,
         )?;
         let mut init = load_hex("tier3-oracle/artifacts/executor/cmd_executor.creation.hex");
-        init.extend_from_slice(&executor_deploy_args(weth, pm));
+        init.extend_from_slice(&executor_deploy_args(
+            weth,
+            pm,
+            Address::repeat_byte(0x33),
+            Address::repeat_byte(0x44),
+        ));
         let executor = deploy(&mut evm, Bytes::from(init), 30_000_000)?;
 
         Ok(Self {
@@ -1129,20 +1139,26 @@ mod tests {
 
     #[test]
     fn executor_deploy_args_calldata() {
-        let args = executor_deploy_args(a(0x11), a(0x22));
+        let args = executor_deploy_args(a(0x11), a(0x22), a(0x33), a(0x44));
         assert_eq!(
             args,
             DynSolValue::Tuple(vec![
                 DynSolValue::Address(a(0x11)),
-                DynSolValue::Address(a(0x22))
+                DynSolValue::Address(a(0x22)),
+                DynSolValue::Address(a(0x33)),
+                DynSolValue::Address(a(0x44))
             ])
             .abi_encode()
         );
-        assert_eq!(args.len(), 64);
+        assert_eq!(args.len(), 128);
         assert!(args[0..12].iter().all(|&b| b == 0));
         assert_eq!(&args[12..32], &a(0x11).into_array());
         assert!(args[32..44].iter().all(|&b| b == 0));
         assert_eq!(&args[44..64], &a(0x22).into_array());
+        assert!(args[64..76].iter().all(|&b| b == 0));
+        assert_eq!(&args[76..96], &a(0x33).into_array());
+        assert!(args[96..108].iter().all(|&b| b == 0));
+        assert_eq!(&args[108..128], &a(0x44).into_array());
     }
 
     // The builders are the encoders: every helper's output is byte-identical
@@ -1229,6 +1245,9 @@ mod tests {
             }
             .abi_encode()
         );
-        assert_eq!(executor_deploy_args(x, y), (x, y).abi_encode());
+        assert_eq!(
+            executor_deploy_args(x, y, a(0x33), a(0x44)),
+            (x, y, a(0x33), a(0x44)).abi_encode()
+        );
     }
 }

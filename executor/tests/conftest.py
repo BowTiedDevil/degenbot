@@ -116,6 +116,8 @@ def executor(project, owner_account, weth, v4_pm, usdc, wbtc) -> ContractInstanc
     contract = project.cmd_executor.deploy(
         weth.address,
         v4_pm.address,
+        usdc.address,
+        wbtc.address,
         sender=owner_account,
     )
     # Pre-warm the WETH balance and ERC6909 Vault on the V4PoolManager

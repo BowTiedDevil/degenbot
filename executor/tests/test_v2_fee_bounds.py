@@ -30,6 +30,8 @@ class TestFeeBoundsV2SwapCalc:
         executor = project.cmd_executor.deploy(
             weth.address,
             v2.address,
+            weth.address,
+            weth.address,
             sender=owner_account,
         )
         # No initialize() — dummy PM (V2 pair has no PM.unlock)
@@ -58,6 +60,8 @@ class TestFeeBoundsV2SwapCalc:
         executor = project.cmd_executor.deploy(
             weth.address,
             v2.address,
+            weth.address,
+            weth.address,
             sender=owner_account,
         )
         # No initialize() — dummy PM (V2 pair has no PM.unlock)
@@ -86,6 +90,8 @@ class TestFeeBoundsV2SwapCalc:
         executor = project.cmd_executor.deploy(
             weth.address,
             v2.address,
+            weth.address,
+            weth.address,
             sender=owner_account,
         )
         # No initialize() — dummy PM (V2 pair has no PM.unlock)
@@ -118,6 +124,8 @@ class TestFeeBoundsV2SwapCompact:
         executor = project.cmd_executor.deploy(
             weth.address,
             v2.address,
+            weth.address,
+            weth.address,
             sender=owner_account,
         )
         # No initialize() — dummy PM (V2 pair has no PM.unlock)

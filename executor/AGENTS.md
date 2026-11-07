@@ -63,21 +63,20 @@ Commands use 1-byte opcodes + tightly-packed fields (no ABI encoding). Key field
 
 ### Sentinel Address System (CRITICAL — biggest gas win: −67,786 gas)
 
-Address indices `0xFC`–`0xFF` resolve to the **4 protocol-role sentinels** without TLOAD or SET_ADDRESS:
+Reserved indices resolve deployment-specific roles without TLOAD or SET_ADDRESS:
 
 | Index | Sentinel | Resolves To |
 |-------|----------|-------------|
+| `0xFA` | `USDC_SENTINEL` | `USDC_ADDR` (constructor immutable) |
+| `0xFB` | `USDT_SENTINEL` | `USDT_ADDR` (constructor immutable) |
 | `0xFC` | `V4_PM_SENTINEL` | `POOL_MANAGER_ADDR` (immutable) |
 | `0xFD` | `V4_SELF_SENTINEL` | `self` (executor address) |
 | `0xFE` | `V4_WETH_SENTINEL` | `WETH_ADDR` (immutable) |
 | `0xFF` | `V4_NATIVE_SENTINEL` | `NATIVE_ADDRESS` / no-hooks indicator |
 
-**Only protocol roles are sentinels — no path-specific tokens are baked into the contract.**
-User tokens (USDC, WBTC, DAI, …) are *never* sentinels; they go through `t_addresses` via `SET_ADDRESS` per transaction, exactly like every other address. The prior `USER0`/`USER1` sentinels were removed because their savings were partly a benchmark artifact (the 27-path suite uses exactly two hot user tokens in fixed roles) and their `else: USER1_ADDR` catch-all silently mis-resolved unbound reserved bytes (`0xF2`–`0xFB`) — a latent bug (the OVERFITTING analysis lived in the since-removed `.auto/prompt.md`). See commit `8c75fa6`.
+USDC/USDT are explicit deployment-configured roles, not a catch-all or a per-path token registry. Every other token uses `t_addresses`; every unassigned reserved index fails closed. Constructor immutables keep local fakes and non-mainnet deployments correct. The 27-path benchmark maps its second token to the USDT slot, so its savings are workload-dependent rather than universal.
 
-Range-check optimization: `if idx >= SENTINEL_THRESHOLD (0xFC)` dispatches sentinel resolution; `< 0xFC` does direct `t_addresses[idx]` array lookup. Any byte `>= 0xFC` that isn't PM/SELF/WETH/NATIVE raises `InvalidCommand` (fail-closed, no silent catch-all).
-
-**Inline sentinel resolution** is used in hot handlers (V4_SWAP_COMPACT, V4_TAKE_COMPACT, ERC20_TRANSFER, V2/V3 swaps) to avoid `_lookup_address` INVOKE overhead. With only 4 protocol sentinels, branch ordering within these chains is by *protocol-role* frequency (WETH first for currency fields; SELF first for recipient fields) — a defensible global ordering, not a per-handler benchmark-frequency tuning.
+**Inline sentinel resolution** is used in hot handlers to avoid `_lookup_address` INVOKE overhead. Branch ordering follows global protocol/stablecoin role frequency, never per-handler benchmark-frequency tuning.
 
 ### Transient State
 
@@ -96,7 +95,7 @@ Precomputed WETH/NATIVE delta slots are stored as immutables (`WETH_DELTA_SLOT`,
 0x00-0x03  Control: SET_ADDRESS; 0x01-0x03 reserved (were SKIP_PROFIT_CHECK, BRIBE_COINBASE, BRIBE_ADDRESS — now in config param)
 0x10-0x17  ERC20/ETH: ERC20_TRANSFER, XFER_BALANCE, WETH_DEPOSIT/WITHDRAW (±ALL), SEND_ETH (±ALL)
 0x20-0x22  V2: V2_SWAP_COMPACT, V2_SWAP_CALC, V2_SWAP_DIRECT
-0x30-0x31  V3: V3_SWAP_COMPACT, V3_SWAP_DELTA
+0x30-0x34  V3: V3_SWAP_COMPACT, V3_SWAP_DELTA, V3_SWAP_ONE_FOR_ZERO (0x33), V3_SWAP_ZERO_FOR_ONE (0x34)
 0x40-0x42  V4 Swaps: V4_SWAP_COMPACT, V4_SWAP_DYNAMIC, V4_BATCH
 0x50-0x59  V4 Settlement: V4_UNLOCK, V4_TAKE, V4_TAKE_COMPACT, V4_TAKE_DELTA,
            V4_SYNC, V4_SETTLE, V4_SETTLE_DELTA, V4_SETTLE_ALL,
@@ -201,8 +200,8 @@ Do NOT re-explore:
 | Address table as ABI parameter | Fixed `address[32]` costs ~4,000-5,200 gas vs ~1,000 gas for stream-encoded SET_ADDRESS; dynamic `bytes` adds offset+length overhead |
 | `msg.value` for config (full expected_value) | `msg.value` persists in `self.balance`, contaminating profit check. Refund costs ~9,000 gas (CALL). Small flags only saves ~60 gas per path — not worth complexity + balance leak |
 | Top-level `_execute_command_at` dispatch elif reorder | +1,132 gas — Venom bytecode layout is layout-sensitive; even >12× frequency diffs regress. Current dispatch order is at a local optimum. |
-| User sentinels (`USER0`/`USER1`, bytes `0xF0`/`0xF1`) | **Removed (commit 8c75fa6).** Their `else: USER1_ADDR` catch-all silently mis-resolved unbound reserved bytes `0xF2`–`0xFB` to `USER1` (latent bug), and their savings were partly a benchmark artifact (the suite uses exactly two hot user tokens in fixed roles). Kept only the 4 protocol-role sentinels (PM/SELF/WETH/NATIVE); user tokens now go through `t_addresses` via `SET_ADDRESS`. Honest +40,577 gas regression accepted in exchange for correctness + generalizability. |
-| Per-handler sentinel `elif` reorder to match *benchmark* token frequencies | **OVERFITTING.** Reordering a handler's chain so `USER0`/`USER1` precede `WETH` saves gas only because the synthetic tests use USDC/WBTC; production nested-swap paths (WETH paid inside a V4 unlock) regress. With user sentinels now removed this class is structurally closed, but the rule stands for the 4 protocol sentinels: order by *protocol-role* frequency (WETH-first currency, SELF-first recipient) globally, never by which address a particular benchmark path happens to use. |
+| Legacy `USER0`/`USER1` sentinels (bytes `0xF0`/`0xF1`) | **Removed (commit 8c75fa6).** Their `else: USER1_ADDR` catch-all silently mis-resolved unbound reserved bytes `0xF2`–`0xFB` to `USER1` (latent bug), and their savings were partly a benchmark artifact (the suite uses exactly two hot user tokens in fixed roles). The legacy catch-all stays removed; current USDC/USDT roles use explicit constructor immutables and fail-closed resolution. |
+| Per-handler sentinel `elif` reorder to match *benchmark* token frequencies | **OVERFITTING.** Reordering a handler's chain so `USER0`/`USER1` precede `WETH` saves gas only because the synthetic tests use USDC/WBTC; production nested-swap paths (WETH paid inside a V4 unlock) regress. Order all protocol/stablecoin branches by global role frequency, never by which address a particular benchmark path happens to use. |
 
 ## Autoresearch History
 

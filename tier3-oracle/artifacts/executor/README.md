@@ -20,18 +20,12 @@ reproduces the V3->V4->V3 executor sim-Halt against real bytecode (tasks
 - `manifest.json` — artifact -> tracked-source sha256 + `vyper_version`.
 
 ## Deploy contract (immutables are deploy-time constructor args)
-`cmd_executor.vy`'s `@deploy __init__(weth, pool_manager)` takes **two** args
-`(address weth, address pool_manager)`. The `immutables.json` `code_layout`
-lists five entries, but only `WETH_ADDR` + `POOL_MANAGER_ADDR` come from the
-appended calldata; `OWNER_ADDR` is `msg.sender` (endogenous) and
-`WETH_DELTA_SLOT`/`NATIVE_DELTA_SLOT` are **computed** in `__init__`
-(`keccak256(abi.encodePacked(self, currency))`). So the evm2 harness deploys
-via `create(creation.hex ++ abi.encode(weth, pool_manager))` (64 bytes), NOT
-5*32 bytes. Immutables are embedded in the runtime **code**, not storage (so
-"verify by reading slot 0" is wrong). VERIFIED by
-`tier3_executor_deploy.rs`: a 2-arg deploy succeeds and the deployed runtime
-code contains the recomputed `WETH_DELTA_SLOT`/`NATIVE_DELTA_SLOT` + both
-addresses.
+The constructor takes four role addresses: WETH, PoolManager, USDC, and USDT.
+The `immutables.json` `code_layout` lists seven entries; `OWNER_ADDR` is
+endogenous and the two delta slots are computed in `__init__`. Deploy with
+`create(creation.hex ++ abi.encode(weth, pool_manager, usdc, usdt))` (128
+bytes), not 7*32 bytes. Immutables live in runtime code, not storage.
+`tier3_executor_deploy.rs` verifies deployment and the computed delta slots.
 
 ## CRITICAL finding: no per-PC line attribution from vyper's source map
 Both the venom (experimental-codegen) and legacy

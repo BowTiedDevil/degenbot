@@ -45,6 +45,8 @@ def _deploy_executor(project, weth, v2_pair, owner_account):
     contract = project.cmd_executor.deploy(
         weth.address,
         v2_pair.address,
+        weth.address,
+        weth.address,
         sender=owner_account,
     )
     # No initialize() — test uses v2_pair as dummy PM (no real PM.unlock)

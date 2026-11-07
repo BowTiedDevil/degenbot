@@ -79,6 +79,8 @@ V2 (0x20–0x2F):
 V3 (0x30–0x3F):
   0x30  V3_SWAP_COMPACT   V3 swap (uint96 amount + default sqrt + auto-pay)
   0x31  V3_SWAP_DELTA     V3 swap (amount from PM exttload + default sqrt + auto-pay)
+  0x33  V3_SWAP_ONE_FOR_ZERO  V3 exact-input with direction and max price baked in
+  0x34  V3_SWAP_ZERO_FOR_ONE  V3 exact-input with direction and min price baked in
 
 V4 Swaps (0x40–0x4F):
   0x40  V4_SWAP_COMPACT   V4 swap (uint96 amount + default sqrt_price_limit)
@@ -455,7 +457,7 @@ See `ape-config.yaml`. The project uses:
 5. **V2_SWAP_CALC reads the pair's excess balance** — `amount_in = balanceOf(pair) - reserves`, so the entire excess at the pair is used as swap input. If the pair's excess includes tokens beyond the intended deposit (e.g., an oversized V4_TAKE, multiple deposits from different steps, or accumulated V2 fees from other swappers), the computed `amount_out` will be larger than expected. The V2 fee is configurable per-swap (fraction of 10000: 30=Uniswap, 25=PancakeSwap). `V2_SWAP_CALC` uses the fee inline; `V2_SWAP_COMPACT` writes the fee to transient `t_v2_pair_fee[pool]` for the callback handler (`_v2_auto_pay`) to compute the owed amount with `_v2_get_amount_in()`.
 6. **`MAX_COMMANDS_LENGTH = 288`** — command streams are limited to 288 bytes (still 1.4× the typical ~200-byte arbitrage path). Command streams exceeding this will revert.
 7. **TSTORE_CONTINUATION (planned)** — not yet implemented. When implemented, it will require a same-tx callback since transient storage is cleared at end of transaction.
-8. **Sentinel indices (0xFC–0xFF) reduce the address table maximum to 252 entries** (indices 0x00–0xFB). In practice, arbitrage paths use 3–7 addresses, so this is not a practical limitation. (The prior user sentinels at 0xF0/0xF1 were removed — see commit `8c75fa6` — so user tokens like USDC/WBTC are now regular `t_addresses` entries.)
+8. **Reserved indices 0xFA–0xFF cover USDC, USDT, and protocol roles.** Other tokens use `t_addresses`; paths typically need only 3–7 entries. USDC/USDT addresses are constructor immutables, and unassigned reserved indices fail closed.
 9. **Inline `_lookup_address` in V4 batch has no gas benefit** — Venom optimizes function calls inside tight loops differently. The batch handler uses the standard `_lookup_address` call.
 
 ## ERC6909 Internal Balances

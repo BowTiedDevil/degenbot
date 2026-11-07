@@ -301,6 +301,14 @@
 {
 "name": "pool_manager",
 "type": "address"
+},
+{
+"name": "usdc",
+"type": "address"
+},
+{
+"name": "usdt",
+"type": "address"
 }
 ],
 "outputs": []

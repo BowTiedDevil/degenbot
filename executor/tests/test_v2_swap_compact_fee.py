@@ -46,6 +46,8 @@ class TestUniswapV2Fee:
         executor = project.cmd_executor.deploy(
             weth.address,
             v2.address,
+            weth.address,
+            weth.address,
             sender=owner_account,
         )
         # No initialize() — dummy PM (V2 pair has no PM.unlock)
@@ -103,6 +105,8 @@ class TestPancakeSwapV2Fee:
         executor = project.cmd_executor.deploy(
             weth.address,
             v2.address,
+            weth.address,
+            weth.address,
             sender=owner_account,
         )
         # No initialize() — dummy PM (V2 pair has no PM.unlock)
@@ -201,6 +205,8 @@ class TestMixedFeeV2V2:
         executor = project.cmd_executor.deploy(
             weth.address,
             v2_pancake.address,
+            weth.address,
+            weth.address,
             sender=owner_account,
         )
         # No initialize() — dummy PM (V2 pair has no PM.unlock)

@@ -17,8 +17,8 @@ contracts/
 
 | File | Contents | Use |
 |------|----------|-----|
-| `*_bytecode.txt` | `vyper -f bytecode` output (artifact creation hex) | Deployment (`cast send --create` + constructor args `(weth, pool_manager)`) |
-| `*_runtime_bytecode.txt` | Runtime bytecode + CBOR + 5 x 32-byte-padded immutables | Code injection (`eth_simulateV1`) |
+| `*_bytecode.txt` | `vyper -f bytecode` output (artifact creation hex) | Deployment (`cast send --create` + constructor args `(weth, pool_manager, usdc, usdt)`) |
+| `*_runtime_bytecode.txt` | Runtime bytecode + CBOR + 7 x 32-byte-padded immutables | Code injection (`eth_simulateV1`) |
 
 ### Vyper bytecode layout
 
@@ -36,7 +36,7 @@ The deployed bytecode appends immutable data **after** the CBOR:
 
 The CODECOPY offsets are compiler-generated against the end of the runtime
 section (with the current 16,097-byte artifact the first slot sits at
-0x3EE1) --- the one invariant the bake must hold is that the 160-byte
+0x3EE1) --- the one invariant the bake must hold is that the 224-byte
 immutables tail is appended AFTER the runtime (i.e. after the CBOR).
 **The CBOR metadata must NOT be stripped** --- removing it breaks the jump
 table, JUMPDEST targets, and CODECOPY offsets.
@@ -44,21 +44,22 @@ table, JUMPDEST targets, and CODECOPY offsets.
 The `*_runtime_bytecode.txt` file has the immutable tail appended after the
 CBOR, so injection needs no storage overrides.
 
-### cmd_executor immutables (5 × 32 bytes, appended after CBOR metadata)
+### cmd_executor immutables (7 × 32 bytes, appended after CBOR metadata)
 
 | Slot | Immutable | Value | Notes |
 |------|-----------|-------|-------|
 | 0 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Must match `EXECUTOR_OWNER` in the settlement-arbitrage script. `execute()` checks `msg.sender == OWNER_ADDR`, so the simulation's `from` address must equal this |
 | 1 | `WETH_ADDR` | `0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2` | WETH on mainnet |
 | 2 | `POOL_MANAGER_ADDR` | **MUST match the target chain's PoolManager** | Controls all V4 operations. If wrong, V4-hybrid paths revert at ~38K gas |
-| 3 | `WETH_DELTA_SLOT` | `keccak256(self, WETH)` | V4 CurrencyDelta precomputed slot |
-| 4 | `NATIVE_DELTA_SLOT` | `keccak256(self, NATIVE)` | V4 CurrencyDelta precomputed slot |
+| 3 | `USDC_ADDR` | `0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48` | USDC role sentinel |
+| 4 | `USDT_ADDR` | `0xdAC17F958D2ee523a2206206994597C13D831ec7` | USDT role sentinel |
+| 5 | `WETH_DELTA_SLOT` | `keccak256(self, WETH)` | V4 CurrencyDelta precomputed slot |
+| 6 | `NATIVE_DELTA_SLOT` | `keccak256(self, NATIVE)` | V4 CurrencyDelta precomputed slot |
 
-The constructor is `__init__(weth, pool_manager)`. Only the two hot protocol
-currencies (WETH, NATIVE) get precomputed delta slots; every other currency
-(including path-specific tokens like USDC/WBTC) computes its delta slot
-on-chain via `keccak256`. Per-path token immutables (the old `USER0`/`USER1`)
-were removed --- those tokens now go through `t_addresses` via `SET_ADDRESS`.
+The constructor is `__init__(weth, pool_manager, usdc, usdt)`. Only WETH and
+NATIVE get precomputed delta slots; every other currency computes its slot
+on-chain. USDC/USDT are deployment-configured role addresses used by their
+reserved command indices, while all other tokens use `t_addresses`.
 
 > ⚠️ **Critical**: The `POOL_MANAGER_ADDR` immutable in the runtime bytecode file **must
 > match the PoolManager address on the target chain**. On Ethereum mainnet, this is
@@ -71,7 +72,7 @@ were removed --- those tokens now go through `t_addresses` via `SET_ADDRESS`.
 ### Patching the injected-code tail
 
 After an unpatched bake (`--no-patch`, PM slot zero), point the PoolManager at the
-target chain by patching slot 2 of the 160-byte tail — no re-bake needed:
+target chain by patching slot 2 of the 224-byte tail — no re-bake needed:
 
 ```python
 # Patch POOL_MANAGER_ADDR in the injected runtime tail
@@ -81,25 +82,25 @@ pm_padded = "0" * 24 + pm[2:].lower()  # left-pad to 32 bytes
 with open("contracts/cmd_executor_runtime_bytecode.txt") as f:
     code = f.read().strip()[2:]  # strip 0x
 
-# Last 320 hex chars = 5 × 32-byte immutable slots
-# Slot layout: [0:OWNER][1:WETH][2:PM][3:WETH_DELTA][4:NATIVE_DELTA]
-tail = code[-320:]
+# Last 448 hex chars = 7 × 32-byte immutable slots
+# Slot layout: [0:OWNER][1:WETH][2:PM][3:USDC][4:USDT][5:WETH_DELTA][6:NATIVE_DELTA]
+tail = code[-448:]
 pm_offset = 2 * 64  # slot index 2, each slot is 64 hex chars
 new_tail = tail[:pm_offset] + pm_padded + tail[pm_offset + 64:]
 
 with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
-    f.write("0x" + code[:-320] + new_tail + "\n")
+    f.write("0x" + code[:-448] + new_tail + "\n")
 ```
 
 A real (non-injected) deployment needs NO file patching: the constructor is
-`__init__(weth, pool_manager)`, `OWNER_ADDR` is `msg.sender` (the deployer),
+`__init__(weth, pool_manager, usdc, usdt)`, `OWNER_ADDR` is `msg.sender` (the deployer),
 and the two delta slots are computed on-chain from the deployed address.
 
 ### Rebaking the injected bytecode (X6OKMV re-sync)
 
 `contracts/recompile.py` bakes the `contracts/cmd_executor_*` files from the
 COMMITTED tier-3 artifacts (toolchain-free): the runtime file is `0x` +
-`tier3-oracle/artifacts/executor/cmd_executor.runtime.hex` + the 5 x 32-byte
+`tier3-oracle/artifacts/executor/cmd_executor.runtime.hex` + the 7 x 32-byte
 immutable slots (mainnet values, delta slots precomputed for
 `INJECTED_EXECUTOR_ADDRESS`); the two init/bytecode files are the artifact
 creation hex; the ABI is copied verbatim. Before writing, it pins the

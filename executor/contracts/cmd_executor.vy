@@ -52,6 +52,8 @@ Command set (grouped by protocol at 0x10 boundaries):
   V3 (0x30-0x3F):
     0x30  V3_SWAP_COMPACT   V3 swap (uint128 amount + default sqrt + auto-pay)
     0x31  V3_SWAP_DELTA     V3 swap (amount from PM exttload + default sqrt + auto-pay)
+    0x33  V3_SWAP_ONE_FOR_ZERO  V3 exact-input with direction and max price baked in
+    0x34  V3_SWAP_ZERO_FOR_ONE  V3 exact-input with direction and min price baked in
 
   V4 Swaps (0x40-0x4F):
     0x40  V4_SWAP_COMPACT   V4 swap (uint128 amount + default sqrt_limit)
@@ -111,6 +113,8 @@ from .interfaces import IWETH
 OWNER_ADDR: immutable(address)
 WETH_ADDR: immutable(address)
 POOL_MANAGER_ADDR: immutable(address)
+USDC_ADDR: immutable(address)
+USDT_ADDR: immutable(address)
 
 # Precomputed V4 delta slots for WETH and NATIVE (saves keccak256 on hot paths).
 # Computed in __init__ as keccak256(abi.encodePacked(self, currency)) per v4-core CurrencyDelta._computeSlot.
@@ -169,6 +173,8 @@ COMMAND_V2_SWAP_DIRECT: constant(bytes1) = 0x22
 # ── V3: 0x30–0x3F ──
 COMMAND_V3_SWAP_COMPACT: constant(bytes1) = 0x30
 COMMAND_V3_SWAP_DELTA: constant(bytes1) = 0x31
+COMMAND_V3_SWAP_ONE_FOR_ZERO: constant(bytes1) = 0x33
+COMMAND_V3_SWAP_ZERO_FOR_ONE: constant(bytes1) = 0x34
 
 # ── V4 Swaps: 0x40–0x4F ──
 COMMAND_V4_SWAP_COMPACT: constant(bytes1) = 0x40
@@ -182,26 +188,21 @@ COMMAND_V4_BATCH: constant(bytes1) = 0x42
 # an open positive WETH delta without a consuming mint reverts at PM.unlock.
 COMMAND_V4_BATCH_OPEN_WETH: constant(bytes1) = 0x43
 
-# ── Sentinel bytes: only protocol roles (0xFC–0xFF). ──
-# No path-specific tokens are baked into the contract.
-# idx < SENTINEL_THRESHOLD → t_addresses table lookup (populated per-tx via SET_ADDRESS).
-# idx >= SENTINEL_THRESHOLD (0xFC) → one of the 4 protocol sentinels below.
-# Any byte >= 0xFC not matching one of these reverts (InvalidCommand) rather
-# than silently mis-resolving — see _lookup_address and inline blocks.
+# ── Reserved address indices: stablecoins (0xFA–0xFB), protocol roles (0xFC–0xFF). ──
+# idx < 0xFA → t_addresses table lookup (populated per-tx via SET_ADDRESS).
+# 0xFA/0xFB → deployment-configured USDC/USDT; 0xFC–0xFF → protocol roles.
+# Every other reserved value fails closed; no catch-all address resolution.
 V4_WETH_SENTINEL:   constant(uint256) = 254  # 0xFE
 V4_SELF_SENTINEL:   constant(uint256) = 253  # 0xFD
 V4_PM_SENTINEL:     constant(uint256) = 252  # 0xFC
 V4_NATIVE_SENTINEL: constant(uint256) = 255  # 0xFF
+USDC_SENTINEL: constant(uint256) = 250  # 0xFA
+USDT_SENTINEL: constant(uint256) = 251  # 0xFB
 SENTINEL_THRESHOLD: constant(uint256) = 252  # 0xFC — idx >= this is a protocol sentinel
 
-# L11 sentinel-branch ordering rule: within each handler's inline sentinel
-# chain, order by PROTOCOL-ROLE frequency (e.g. WETH first for currency fields,
-# SELF first for recipient fields), NOT by which address a particular benchmark
-# path happens to use. Per-handler tuning to benchmark token frequencies is
-# OVERFITTING (see AGENTS.md OVERFITTING). User tokens are never sentinels —
-# they go through t_addresses via SET_ADDRESS. Keeping this rule prevents the
-# latent mis-resolution / benchmark-artifact issues that motivated removing
-# the old USER0/USER1 sentinels (commit 8c75fa6).
+# Inline sentinel chains follow global role frequency, never per-path benchmark
+# frequency. USDC/USDT use deployment immutables so local harnesses and non-mainnet
+# deployments retain explicit, correct address bindings.
 
 
 # ── V4 Settlement / ERC6909: 0x50–0x5F ──
@@ -401,10 +402,17 @@ t_addresses: transient(address[MAX_INDEXED_ADDRESSES])
 
 
 @deploy
-def __init__(weth: address, pool_manager: address):
+def __init__(
+    weth: address,
+    pool_manager: address,
+    usdc: address,
+    usdt: address,
+):
     OWNER_ADDR = msg.sender
     WETH_ADDR = weth
     POOL_MANAGER_ADDR = pool_manager
+    USDC_ADDR = usdc
+    USDT_ADDR = usdt
 
     # Precompute V4 delta slots for hot protocol currencies.
     # Matches v4-core CurrencyDelta._computeSlot: keccak256(abi.encodePacked(target, currency)).
@@ -515,6 +523,10 @@ def _lookup_address(idx: uint256) -> address:
     Any other byte >= 0xFC reverts (InvalidCommand) — no silent catch-all,
     no path-specific tokens are baked into the contract.
     """
+    if idx == USDC_SENTINEL:
+        return USDC_ADDR
+    if idx == USDT_SENTINEL:
+        return USDT_ADDR
     if idx >= SENTINEL_THRESHOLD:
         if idx == V4_WETH_SENTINEL:
             return WETH_ADDR
@@ -686,6 +698,12 @@ def _auto_settle_touched():
     # ── Settle WETH ──
     weth_delta: int256 = convert(staticcall IPoolManagerExttload(POOL_MANAGER_ADDR).exttload(WETH_DELTA_SLOT), int256)
     self._v4_settle_currency(WETH_ADDR, weth_delta)
+
+    # ── Settle deployment-configured stablecoins omitted from the table ──
+    usdc_delta: int256 = self._read_pm_delta(USDC_ADDR)
+    self._v4_settle_currency(USDC_ADDR, usdc_delta)
+    usdt_delta: int256 = self._read_pm_delta(USDT_ADDR)
+    self._v4_settle_currency(USDT_ADDR, usdt_delta)
 
     # ── Settle other currencies from the address table ──
     # Iterates all 32 address slots; empty slots (address(0)) have delta=0 → no-op.
@@ -1092,6 +1110,80 @@ def _cmd_v3_swap_compact(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> u
 
 
 @internal
+def _cmd_v3_swap_one_for_zero(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> uint256:
+    """V3_SWAP_ONE_FOR_ZERO: [0x33][pool:1][amount:12][recipient:1][len:1][data:N]."""
+    fields: uint256 = convert(slice(data, unsafe_add(offset, WIDTH_UINT8), 15), uint256)
+    pool: address = self.t_addresses[fields >> 112]
+    recipient_idx: uint256 = (fields >> 8) & 255
+    recipient: address = empty(address)
+    if recipient_idx == USDC_SENTINEL:
+        recipient = USDC_ADDR
+    elif recipient_idx == USDT_SENTINEL:
+        recipient = USDT_ADDR
+    elif recipient_idx >= SENTINEL_THRESHOLD:
+        if recipient_idx == V4_WETH_SENTINEL:
+            recipient = WETH_ADDR
+        elif recipient_idx == V4_PM_SENTINEL:
+            recipient = POOL_MANAGER_ADDR
+        elif recipient_idx == V4_SELF_SENTINEL:
+            recipient = self
+        elif recipient_idx == V4_NATIVE_SENTINEL:
+            recipient = NATIVE_ADDRESS
+        else:
+            raise InvalidCommand(opcode=recipient_idx)
+    else:
+        recipient = self.t_addresses[recipient_idx]
+
+    self.t_callback_packed = convert(pool, uint256)
+    extcall IUniswapV3Pool(pool).swap(
+        recipient,
+        False,
+        convert((fields >> 16) & 79228162514264337593543950335, int256),
+        MAX_SQRT_PRICE_MINUS1,
+        slice(data, unsafe_add(offset, 16), fields & 255),
+        skip_contract_check=True,
+    )
+    return unsafe_add(unsafe_add(offset, 16), fields & 255)
+
+
+@internal
+def _cmd_v3_swap_zero_for_one(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> uint256:
+    """V3_SWAP_ZERO_FOR_ONE: [0x34][pool:1][amount:12][recipient:1][len:1][data:N]."""
+    fields: uint256 = convert(slice(data, unsafe_add(offset, WIDTH_UINT8), 15), uint256)
+    pool: address = self.t_addresses[fields >> 112]
+    recipient_idx: uint256 = (fields >> 8) & 255
+    recipient: address = empty(address)
+    if recipient_idx == USDC_SENTINEL:
+        recipient = USDC_ADDR
+    elif recipient_idx == USDT_SENTINEL:
+        recipient = USDT_ADDR
+    elif recipient_idx >= SENTINEL_THRESHOLD:
+        if recipient_idx == V4_WETH_SENTINEL:
+            recipient = WETH_ADDR
+        elif recipient_idx == V4_PM_SENTINEL:
+            recipient = POOL_MANAGER_ADDR
+        elif recipient_idx == V4_SELF_SENTINEL:
+            recipient = self
+        elif recipient_idx == V4_NATIVE_SENTINEL:
+            recipient = NATIVE_ADDRESS
+        else:
+            raise InvalidCommand(opcode=recipient_idx)
+    else:
+        recipient = self.t_addresses[recipient_idx]
+
+    self.t_callback_packed = convert(pool, uint256)
+    extcall IUniswapV3Pool(pool).swap(
+        recipient,
+        True,
+        convert((fields >> 16) & 79228162514264337593543950335, int256),
+        MIN_SQRT_PRICE_PLUS1,
+        slice(data, unsafe_add(offset, 16), fields & 255),
+        skip_contract_check=True,
+    )
+    return unsafe_add(unsafe_add(offset, 16), fields & 255)
+
+
+@internal
 def _cmd_v3_swap_delta(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> uint256:
     """V3_SWAP_DELTA: [0x31][pool_idx:1][zfo:1][recipient_idx:1]"""
     # Read pool_idx + zfo + recipient_idx as a single 3-byte slice (saves 1 bounds check)
@@ -1133,7 +1225,11 @@ def _cmd_v4_swap_compact(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> u
     # Inline sentinel resolution for currency0 (saves function call overhead)
     c0_idx: uint256 = all >> 152
     c0: address = empty(address)
-    if c0_idx >= SENTINEL_THRESHOLD:
+    if c0_idx == USDC_SENTINEL:
+        c0 = USDC_ADDR
+    elif c0_idx == USDT_SENTINEL:
+        c0 = USDT_ADDR
+    elif c0_idx >= SENTINEL_THRESHOLD:
         if c0_idx == V4_WETH_SENTINEL:
             c0 = WETH_ADDR
         elif c0_idx == V4_SELF_SENTINEL:
@@ -1150,7 +1246,11 @@ def _cmd_v4_swap_compact(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> u
     # Inline sentinel resolution for currency1
     c1_idx: uint256 = (all >> 144) & 255
     c1: address = empty(address)
-    if c1_idx >= SENTINEL_THRESHOLD:
+    if c1_idx == USDC_SENTINEL:
+        c1 = USDC_ADDR
+    elif c1_idx == USDT_SENTINEL:
+        c1 = USDT_ADDR
+    elif c1_idx >= SENTINEL_THRESHOLD:
         if c1_idx == V4_WETH_SENTINEL:
             c1 = WETH_ADDR
         elif c1_idx == V4_SELF_SENTINEL:
@@ -1201,7 +1301,11 @@ def _cmd_erc20_transfer(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> ui
     # Inline sentinel resolution for token (saves function call overhead)
     t_idx: uint256 = all >> 104
     token: address = empty(address)
-    if t_idx >= SENTINEL_THRESHOLD:
+    if t_idx == USDC_SENTINEL:
+        token = USDC_ADDR
+    elif t_idx == USDT_SENTINEL:
+        token = USDT_ADDR
+    elif t_idx >= SENTINEL_THRESHOLD:
         if t_idx == V4_WETH_SENTINEL:
             token = WETH_ADDR
         elif t_idx == V4_SELF_SENTINEL:
@@ -1218,7 +1322,11 @@ def _cmd_erc20_transfer(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> ui
     # Inline sentinel resolution for recipient
     r_idx: uint256 = (all >> 96) & 255
     recipient: address = empty(address)
-    if r_idx >= SENTINEL_THRESHOLD:
+    if r_idx == USDC_SENTINEL:
+        recipient = USDC_ADDR
+    elif r_idx == USDT_SENTINEL:
+        recipient = USDT_ADDR
+    elif r_idx >= SENTINEL_THRESHOLD:
         if r_idx == V4_PM_SENTINEL:
             recipient = POOL_MANAGER_ADDR
         elif r_idx == V4_SELF_SENTINEL:
@@ -1394,7 +1502,11 @@ def _cmd_v4_sync(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> uint256:
     # Inline sentinel resolution for currency (saves function call overhead)
     _currency_idx: uint256 = convert(slice(data, unsafe_add(offset, WIDTH_UINT8), WIDTH_UINT8), uint256)
     _currency: address = empty(address)
-    if _currency_idx >= SENTINEL_THRESHOLD:
+    if _currency_idx == USDC_SENTINEL:
+        _currency = USDC_ADDR
+    elif _currency_idx == USDT_SENTINEL:
+        _currency = USDT_ADDR
+    elif _currency_idx >= SENTINEL_THRESHOLD:
         if _currency_idx == V4_WETH_SENTINEL:
             _currency = WETH_ADDR
         elif _currency_idx == V4_SELF_SENTINEL:
@@ -1480,7 +1592,11 @@ def _cmd_v4_take_compact(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> u
     # Inline sentinel resolution for currency (saves function call overhead)
     c_idx: uint256 = ira >> 104
     currency: address = empty(address)
-    if c_idx >= SENTINEL_THRESHOLD:
+    if c_idx == USDC_SENTINEL:
+        currency = USDC_ADDR
+    elif c_idx == USDT_SENTINEL:
+        currency = USDT_ADDR
+    elif c_idx >= SENTINEL_THRESHOLD:
         if c_idx == V4_WETH_SENTINEL:
             currency = WETH_ADDR
         elif c_idx == V4_SELF_SENTINEL:
@@ -1497,7 +1613,11 @@ def _cmd_v4_take_compact(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> u
     # Inline sentinel resolution for recipient
     r_idx: uint256 = (ira >> 96) & 255
     recipient: address = empty(address)
-    if r_idx >= SENTINEL_THRESHOLD:
+    if r_idx == USDC_SENTINEL:
+        recipient = USDC_ADDR
+    elif r_idx == USDT_SENTINEL:
+        recipient = USDT_ADDR
+    elif r_idx >= SENTINEL_THRESHOLD:
         if r_idx == V4_SELF_SENTINEL:
             recipient = self
         elif r_idx == V4_WETH_SENTINEL:
@@ -1563,7 +1683,7 @@ def _cmd_v4_settle_delta(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> u
         # redundant WETH/NATIVE comparisons (table indices are always ERC-20).
         # Also inline _read_pm_delta to skip function call overhead + prune
         # WETH/NATIVE slot branches (table addresses always use keccak256 slot).
-        currency: address = self.t_addresses[currency_idx]
+        currency: address = self._lookup_address(currency_idx)
         _slot4: bytes32 = keccak256(concat(
             convert(self, bytes32),
             convert(currency, bytes32),
@@ -1606,7 +1726,11 @@ def _cmd_v4_mint_compact(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> u
     # Inline sentinel resolution for currency (saves function call overhead)
     c_idx: uint256 = ira >> 104
     currency: address = empty(address)
-    if c_idx >= SENTINEL_THRESHOLD:
+    if c_idx == USDC_SENTINEL:
+        currency = USDC_ADDR
+    elif c_idx == USDT_SENTINEL:
+        currency = USDT_ADDR
+    elif c_idx >= SENTINEL_THRESHOLD:
         if c_idx == V4_WETH_SENTINEL:
             currency = WETH_ADDR
         elif c_idx == V4_SELF_SENTINEL:
@@ -1625,7 +1749,11 @@ def _cmd_v4_mint_compact(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> u
     # Inline sentinel resolution for recipient
     r_idx: uint256 = (ira >> 96) & 255
     recipient: address = empty(address)
-    if r_idx >= SENTINEL_THRESHOLD:
+    if r_idx == USDC_SENTINEL:
+        recipient = USDC_ADDR
+    elif r_idx == USDT_SENTINEL:
+        recipient = USDT_ADDR
+    elif r_idx >= SENTINEL_THRESHOLD:
         if r_idx == V4_SELF_SENTINEL:
             recipient = self
         elif r_idx == V4_WETH_SENTINEL:
@@ -1760,6 +1888,10 @@ def _execute_command_at(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> ui
             return self._cmd_v3_swap_compact(data, offset)
         elif command == 49:  # 0x31 V3_SWAP_DELTA
             return self._cmd_v3_swap_delta(data, offset)
+        elif command == 51:  # 0x33 V3_SWAP_ONE_FOR_ZERO
+            return self._cmd_v3_swap_one_for_zero(data, offset)
+        elif command == 52:  # 0x34 V3_SWAP_ZERO_FOR_ONE
+            return self._cmd_v3_swap_zero_for_one(data, offset)
     elif command_hi == 2:  # 0x20-0x2F: V2 swap group
         if command == 34:  # 0x22 V2_SWAP_DIRECT
             return self._cmd_v2_swap_direct(data, offset)

@@ -7,19 +7,19 @@
 //! reproduction harness depends on it.
 //!
 //! ## Finding that this test locks in (correct deployment contract)
-//! `cmd_executor.vy`'s `@deploy __init__(weth, pool_manager)` takes only **two**
-//! constructor args. The `immutables.json` `code_layout` lists five entries,
-//! but only `WETH_ADDR` and `POOL_MANAGER_ADDR` come from the appended calldata:
+//! `cmd_executor.vy`'s constructor takes four role addresses. The `immutables.json`
+//! `code_layout` lists seven entries, but only WETH, `PoolManager`, USDC, and USDT
+//! come from the appended calldata:
 //! `OWNER_ADDR = msg.sender` (endogenous) and `WETH_DELTA_SLOT` /
 //! `NATIVE_DELTA_SLOT` are **computed** inside `__init__`
 //! (`keccak256(abi.encodePacked(self, currency))`). So the deploy calldata is
-//! `creation.hex ++ abi.encode(weth, pool_manager)` (64 bytes), NOT the 5*32
-//! =160 bytes the `code_layout` alone would suggest. (Earlier guidance to
+//! `creation.hex ++ abi.encode(weth, pool_manager, usdc, usdt)` (128 bytes), not
+//! the 7*32 = 224 bytes the `code_layout` alone would suggest. (Earlier guidance to
 //! "read slot 0" was also wrong — vyper embeds immutables in the runtime CODE,
 //! not storage.)
 //!
 //! ## What is asserted
-//! 1. Deployment with the 2-arg append succeeds and yields a created address.
+//! 1. Deployment with the 4-arg append succeeds and yields a created address.
 //! 2. The computed `WETH_DELTA_SLOT` / `NATIVE_DELTA_SLOT` immutables actually
 //!    land: after deployment we recompute them from the deployed address and
 //!    require the 32-byte values to appear in the deployed runtime code
@@ -49,21 +49,30 @@ fn load_hex(rel: &str) -> Vec<u8> {
         .collect()
 }
 
-/// ABI-encode the two `__init__(address weth, address pool_manager)` args.
-fn deploy_args(weth: Address, pool_manager: Address) -> Vec<u8> {
-    let mut args = vec![0u8; 64];
+/// ABI-encode the constructor's four role addresses.
+fn deploy_args(
+    weth: Address,
+    pool_manager: Address,
+    stablecoin0: Address,
+    stablecoin1: Address,
+) -> Vec<u8> {
+    let mut args = vec![0u8; 128];
     args[12..32].copy_from_slice(weth.as_slice());
     args[44..64].copy_from_slice(pool_manager.as_slice());
+    args[76..96].copy_from_slice(stablecoin0.as_slice());
+    args[108..128].copy_from_slice(stablecoin1.as_slice());
     args
 }
 
 #[test]
-fn executor_deploys_with_two_constructor_args_and_embeds_computed_immutables() {
+fn executor_deploys_with_four_constructor_args_and_embeds_computed_immutables() {
     let weth = Address::repeat_byte(0x11);
     let pool_manager = Address::repeat_byte(0x22);
+    let stablecoin0 = Address::repeat_byte(0x33);
+    let stablecoin1 = Address::repeat_byte(0x44);
 
     let mut init = load_hex("tier3-oracle/artifacts/executor/cmd_executor.creation.hex");
-    init.extend_from_slice(&deploy_args(weth, pool_manager));
+    init.extend_from_slice(&deploy_args(weth, pool_manager, stablecoin0, stablecoin1));
 
     let mut evm = oracle::new_fixture_evm();
     oracle::set_disable_nonce_check(&mut evm, true);
@@ -114,4 +123,6 @@ fn executor_deploys_with_two_constructor_args_and_embeds_computed_immutables() {
         has(pool_manager.as_slice()),
         "POOL_MANAGER_ADDR immutable not found in deployed executor code"
     );
+    assert!(has(stablecoin0.as_slice()), "USDC_ADDR immutable not found");
+    assert!(has(stablecoin1.as_slice()), "USDT_ADDR immutable not found");
 }

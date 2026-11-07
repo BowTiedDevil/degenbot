@@ -37,7 +37,7 @@ class TestL2Initialize:
     ):
         """A non-owner calling initialize reverts (Unauthorized)."""
         executor = project.cmd_executor.deploy(
-            weth.address, v4_pm.address, sender=accounts[0]
+            weth.address, v4_pm.address, weth.address, weth.address, sender=accounts[0]
         )
         attacker = accounts[5]
         accounts[0].transfer(attacker, 10**16)
@@ -49,7 +49,7 @@ class TestL2Initialize:
     ):
         """msg.value == 2 (the old amount) now reverts (InvalidMsgValue)."""
         executor = project.cmd_executor.deploy(
-            weth.address, v4_pm.address, sender=owner_account
+            weth.address, v4_pm.address, weth.address, weth.address, sender=owner_account
         )
         with pytest.raises(Exception):
             executor.initialize(value=2, sender=owner_account)
@@ -63,7 +63,7 @@ class TestL2Initialize:
         call itself — NOT a separate ETH transfer (which __default__ now rejects
         per the H3 donation gate)."""
         executor = project.cmd_executor.deploy(
-            weth.address, v4_pm.address, sender=owner_account
+            weth.address, v4_pm.address, weth.address, weth.address, sender=owner_account
         )
         # Executor has 0 ETH after deploy.
         assert executor.balance == 0
