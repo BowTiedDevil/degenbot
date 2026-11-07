@@ -42,11 +42,11 @@ def swap_refusal_to_error(exc: SwapRefused) -> IncompleteSwap | MissingLiquidity
         The typed exception the caller raises (`from exc`).
 
     """
-    kind = exc.kind  # ty: ignore[unresolved-attribute]
+    kind = exc.kind
     if kind in {SwapRefusalKind.FetchFailed, SwapRefusalKind.FetchExhausted}:
-        word = exc.word  # ty: ignore[unresolved-attribute]
+        word = exc.word
         return MissingLiquidityData(word=int(word) if word is not None else -1)
-    amount = exc.amount  # ty: ignore[unresolved-attribute]
+    amount = exc.amount
     if amount is None:  # pragma: no cover — every not-computable refusal names its request
         return IncompleteSwap(amount_in=0, amount_out=0)
     # The sign is the requested side: a negative request is exact input, so the

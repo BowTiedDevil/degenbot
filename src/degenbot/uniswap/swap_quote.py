@@ -136,7 +136,7 @@ def refuse_as_not_computable(exc: SwapRefused, *, message: str) -> NoReturn:
             walk could not fetch) as ``MissingLiquidityData``.
 
     """
-    if exc.kind != SwapRefusalKind.NotComputable:  # ty: ignore[unresolved-attribute]
+    if exc.kind != SwapRefusalKind.NotComputable:
         raise swap_refusal_to_error(exc) from exc
     raise LiquidityPoolError(message=message) from exc
 
