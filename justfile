@@ -836,6 +836,39 @@ test-python: dev
     {{ py_run }} pytest -x -q --no-header
 
 
+# The executor project's Ape suite (executor/tests) — the canonical wrapper for
+# testing the Vyper executor contracts. The in-repo `executor/` uv project owns
+# its own toolchain (ape + vyper ==0.5.0b2, executor/uv.lock), so the recipe pins
+# UV_PROJECT_ENVIRONMENT at that project's venv: the ambient redirect (the root
+# project's container-level venv) has no ape and would misdirect `uv run`.
+# ape-config.yaml's mainnet-fork upstream is ${TEST_ETHEREUM_FULL_NODE_HTTP_URI},
+# resolved through tests/conftest.py's declared layers (env > tests.env) and
+# exported here like `test-fork`; fail closed when the machine declares no
+# endpoint. Extra args forward to `ape test` for tight loops (a single file,
+# a -k filter, -n0); the bare recipe runs the whole suite.
+#   just test-executor                                    # full suite
+#   just test-executor tests/test_sentinel_failclosed.py   # one file
+#   just test-executor tests/ -k 'sentinel'               # filtered
+test-executor target="tests/" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target="${1:-tests/}"; [ $# -eq 0 ] || shift
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_FULL_NODE_HTTP_URI") or "")')"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC declared — set TEST_ETHEREUM_FULL_NODE_HTTP_URI (process env or tests.env) to a reachable Ethereum endpoint" >&2
+        echo "       (the devcontainer's reth: http://host.containers.internal:8545/)" >&2
+        exit 1
+    fi
+    if ! curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "$rpc_uri" | grep -q '"result"'; then
+        echo "ERROR: no reachable Ethereum RPC at TEST_ETHEREUM_FULL_NODE_HTTP_URI=$rpc_uri" >&2
+        exit 1
+    fi
+    cd executor
+    exec env UV_PROJECT_ENVIRONMENT="$PWD/.venv" TEST_ETHEREUM_FULL_NODE_HTTP_URI="$rpc_uri" \
+        uv run --no-sync ape test "$target" "$@"
+
+
 
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
 # pytest with the whole child-process output captured to a log file, then scans
