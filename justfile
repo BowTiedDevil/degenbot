@@ -371,7 +371,9 @@ test-rust-release: check-toolchain
 
 # Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,
 # CI) deliberately deselects:
-#   - the pytest live-RPC tiers (`online_rpc` / `base`, minus `slow`);
+#   - the pytest live-RPC tiers (`online_rpc` / `base`, minus `slow`, minus the
+#     dedicated `deployment_verify` module — deployment-drift verification has
+#     its own owning lane, `just verify-deployments`);
 #   - the Rust live evm2 fork-truth legs: the `#[ignore]`d `live_*` tests in
 #     degenbot-simulation, gated on the chain-1 endpoint env family
 #     `DEGENBOT_RPC_HTTP_CHAINID_1` (exported here from the probe target).
@@ -406,9 +408,9 @@ test-fork: dev
     fi
     echo "▶ fork lane RPC: $rpc_uri (chain $({{ py_run }} python -c 'import json,sys; print(int(json.load(sys.stdin)["result"], 16))' <<<"$chain_id"))"
     echo
-    echo "▶ pytest fork legs: -m '(online_rpc or base) and not slow'"
+    echo "▶ pytest fork legs: -m '(online_rpc or base) and not slow and not deployment_verify'"
     pytest_rc=0
-    {{ py_run }} pytest -m '(online_rpc or base) and not slow' -q --no-header || pytest_rc=$?
+    {{ py_run }} pytest -m '(online_rpc or base) and not slow and not deployment_verify' -q --no-header || pytest_rc=$?
     echo
     echo "▶ Rust live evm2 fork legs: degenbot-simulation live_* (run-ignored only)"
     rust_rc=0
@@ -1022,7 +1024,9 @@ check-readme-cassette:
 # live here: they are recorded facts, replayed offline by
 # tests/registry/test_deployment_golden_verification.py in the default suite.
 # Requires a reachable RPC per chain (tests.env / env vars). Deselected from the
-# default `test-python` run (online_rpc marker) — run on demand only.
+# default `test-python` run (online_rpc marker) and from `just test-fork`
+# (`deployment_verify` marker): this recipe is the single owning live lane for
+# deployment-drift verification — run on demand only.
 verify-deployments *args:
     DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} {{ py_run }} pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 

@@ -218,6 +218,7 @@ markers = [
     "online_rpc: test requiring a live external RPC (mainnet/arbitrum/base archive node) — skipped in CI by default; run on-demand with `-m online_rpc`. See docs/architecture/golden-onchain-parity.md.",
     "live_drift: explicit-only live drift gate — re-runs the record_py_oracle_corpus --check against live archive endpoints per chain (paced, minutes of RPC); never in default, CI, or pre-push runs; run with `-m live_drift` or `just live-drift`",
     "stub_drift: compile-coupled regenerate-and-diff stub gate — cargo-builds the cdylib with the temporary experimental-inspect feature, so it is excluded from the default pytest selection and runs once as the dedicated CI `stub-drift` job; run on demand with `-m stub_drift` or `just lint-stub-drift`",
+    "deployment_verify: dedicated live deployment-drift verification (cast checks over registry/deployments.json) — excluded from the `just test-fork` selection; the single owning live lane is `just verify-deployments` (`just record-deployment-golden` re-records the golden capture)",
 ]
 
 [dependency-groups]

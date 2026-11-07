@@ -37,7 +37,11 @@ Running
 -------
 The whole module is marked ``online_rpc`` and so is **deselected by default**
 (``pyproject.toml`` → ``-m "not slow and not base and not online_rpc and not stub_drift"``) — CI
-runs offline and never needs a node. Run on demand against a local/mainnet RPC::
+runs offline and never needs a node. The dedicated ``deployment_verify`` marker
+additionally excludes the module from ``just test-fork``'s selection: these are
+intentional per-row live drift checks, not routine fork coverage. Its single
+owning live lane is ``just verify-deployments`` (recording:
+``just record-deployment-golden``). Run on demand against a local/mainnet RPC::
 
     just verify-deployments
 
@@ -174,6 +178,7 @@ def deployment_capture(request: pytest.FixtureRequest) -> DeploymentGoldenCaptur
     return DeploymentGoldenCapture(mode=mode)
 
 
+@pytest.mark.deployment_verify
 @pytest.mark.online_rpc
 @pytest.mark.parametrize(
     "record",
@@ -253,6 +258,7 @@ class TestDeploymentOnchainVerification:
         )
 
 
+@pytest.mark.deployment_verify
 @pytest.mark.online_rpc
 class TestRecordDeploymentGoldenCapture:
     """Record driver: fill the golden capture from the live chains.
