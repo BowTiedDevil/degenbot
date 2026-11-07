@@ -195,14 +195,21 @@ pub use pool_ops::{
 /// it, with the identity/verdict payloads they hand back.
 pub use pool_builder::builder::{
     build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_curve_pool,
-    build_erc20_metadata, build_v2, build_v3, build_v4, derive_hook_flags, fetch_balancer_factory,
-    fetch_erc20_metadata_batch, probe_balancer_type, probe_pool_type, resolve_v4_identity,
-    BalancerFamily, PoolBuilderError, PoolFamily, V4BuildResult, V4PoolBuildIdentity,
-    V4PoolBuildOverrides,
+    build_erc20_metadata, build_v2, build_v3, build_v4, derive_hook_flags,
+    fetch_erc20_metadata_batch, resolve_v4_identity, PoolBuilderError, V4BuildResult,
+    V4PoolBuildIdentity, V4PoolBuildOverrides,
 };
 pub use pool_builder::construction_door::{ConstructionVerdict, PoolConstruction};
 pub use pool_builder::curve_choreography::fetch_curve_balances;
 pub use pool_builder::parity::IdentityDivergence;
+/// Pool identity resolution — the ONE core home both consumers resolve
+/// through (the ladder, the kind grammar, the probes, the Balancer
+/// membership walk, and the structured answer).
+pub use pool_builder::pool_identity::{
+    fetch_balancer_factory, identity_for_kind, probe_balancer_type, probe_pool_type,
+    registered_identity, resolve_pool_identity, BalancerFamily, PoolFamily, PoolIdentityError,
+    PoolIdentityFamily, ResolvedPoolIdentity,
+};
 pub use pool_builder::route::{
     BuiltIdentity, ConstructedPool, ConstructionRefusal, ConstructionRoute,
 };

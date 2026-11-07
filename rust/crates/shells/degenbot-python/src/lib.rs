@@ -410,12 +410,12 @@ mod _ffi {
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::{PyBot, PyConstructionOutcome, PyLiquidityPool, PyPoolConstructionRequest};
-    // The Balancer sub-family probe's typed answer. The core `BalancerFamily`
-    // stays the semantic owner; this mirrors its two discriminants so a builder
-    // compares members instead of string-matching the wire.
+    // The resolved pool identity: the structured facts (species, family,
+    // variant, factory, persisted kind) the core ladder answers — the
+    // companion's class-selection input, never a class name.
     #[cfg(feature = "bot")]
     #[pymodule_export]
-    use crate::bot::py_bot_io::PyBalancerFamily;
+    use crate::bot::py_bot_io::PyPoolIdentity;
     // Session object identity — the canonical name the session's pool/token
     // registries resolve through (thin projection of the Rust
     // `SessionObjectRegistry`; the registry stays the identity authority).

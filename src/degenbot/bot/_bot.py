@@ -28,10 +28,8 @@ from degenbot.builders.request import (
     ConstructionRoute,
 )
 from degenbot.builders.type_resolution import (
+    descriptor_for_identity,
     pool_class_for_descriptor,
-)
-from degenbot.builders.type_resolution import (
-    resolve_pool_type as _resolve_pool_type_impl,
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -393,10 +391,11 @@ class Bot(AccountQueryMixin):
     def resolve_pool_type(self, address: str) -> PoolTypeDescriptor:
         """Resolve a pool's type without building it.
 
-        The same resolution ``build_pool()`` performs (DB kind, then the
-        factory's registry entry, then on-chain probing): ask "what would be
-        built?" before spending a build, and compare the preview against the
-        identity a built pool binds.
+        The same resolution ``build_pool()`` performs — the ONE core identity
+        ladder (DB kind, registered species/factory, positive chain probes),
+        projected onto the companion's descriptor: ask "what would be built?"
+        before spending a build, and compare the preview against the identity
+        a built pool binds.
 
         Returns:
             The resolved pool type descriptor.
@@ -406,16 +405,16 @@ class Bot(AccountQueryMixin):
 
         """
         try:
-            return _resolve_pool_type_impl(
-                get_checksum_address(address),
+            identity = self._io.resolve_pool_identity(
                 chain_id=self.chain_id,
-                io=self._io,
+                address=get_checksum_address(address),
             )
         except DegenbotValueError:
             raise
         except Exception as exc:
             msg = f"resolve_pool_type: cannot determine the type of {address}: {exc}"
             raise DegenbotValueError(message=msg) from exc
+        return descriptor_for_identity(identity)
 
     def build_pool(  # ruff:ignore[too-many-locals]
         self,
@@ -458,22 +457,24 @@ class Bot(AccountQueryMixin):
         if existing is not None:
             return existing
 
-        # Resolve the pool type; every family then builds through the ONE core
-        # construction entry below. A discovery-only pool (Curve exposes no
-        # `factory()`) resolves to the generic Curve descriptor from the
-        # resolver itself — never a raise the driver swallows into a family
-        # guess, so an unverified-contract loud-abort propagates instead of
-        # being silently routed as Curve. The resolver's failures classify on
-        # the same taxonomy the public `resolve_pool_type` answers (an
-        # unresolvable type raises the typed error — explicit here so the
-        # docstring's contract is raised by this body, not by a callee).
+        # Resolve the pool identity through the ONE core ladder; every family
+        # then builds through the ONE core construction entry below. A
+        # discovery-only pool (Curve exposes no `factory()`) resolves to the
+        # generic Curve identity from the resolver itself — never a raise the
+        # driver swallows into a family guess, so an unverified-contract
+        # loud-abort propagates instead of being silently routed as Curve. The
+        # resolver's failures classify on the same taxonomy the public
+        # `resolve_pool_type` answers (an unresolvable type raises the typed
+        # error — explicit here so the docstring's contract is raised by this
+        # body, not by a callee).
         try:
-            pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io)
+            identity = io.resolve_pool_identity(chain_id=chain_id, address=address)
         except DegenbotValueError:
             raise
         except Exception as exc:
             msg = f"build_pool: cannot determine the type of {address}: {exc}"
             raise DegenbotValueError(message=msg) from exc
+        pool_type = descriptor_for_identity(identity)
         # The `(family, variant)` identity is what the core dispatches on —
         # DATA from the resolver, never a subclass test.
         family = pool_type.family
@@ -528,6 +529,9 @@ class Bot(AccountQueryMixin):
                 registries=_CURVE_REGISTRIES if is_curve else (),
                 vault=BALANCER_V2_VAULT_ADDRESS,
                 invariant_version=request.invariant_version,
+                # The resolved identity's factory rides the request: the
+                # route and the build consume it, never a second factory read.
+                factory=identity.factory,
             )
         )
 

@@ -19,6 +19,11 @@
 //! - [`builder`] — the `PoolBuilder` orchestration: the pool-identity and
 //!   fee/metadata reads with their construction policy (`build_v2/v3/v4`,
 //!   `build_curve_pool`, `build_balancer_*`).
+//! - [`pool_identity`] — Pool identity resolution: the ONE core home (DB-kind
+//!   lookup, registered species/factory matching, the factory read, the
+//!   positive V3/V2/Balancer/Curve probes, and Balancer factory membership)
+//!   answering the structured [`pool_identity::ResolvedPoolIdentity`] both
+//!   consumers share.
 //! - [`curve_choreography`] — the Curve-specific detection primitives.
 //!
 //! - [`route`] — the construction route: the core's ONE entry from a
@@ -38,6 +43,7 @@ pub mod builder;
 pub mod construction_door;
 pub mod curve_choreography;
 pub mod parity;
+pub mod pool_identity;
 pub mod route;
 pub mod tick_source;
 

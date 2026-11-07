@@ -19,7 +19,6 @@ use std::sync::Arc;
 
 use alloy::dyn_abi::DynSolType;
 use alloy::primitives::{Address, Bytes, B256, U256};
-use alloy::sol_types::SolCall;
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::fee::{FeeRatio, FeeSpec, V2Fee, V2FeeRefusal};
@@ -37,15 +36,11 @@ use degenbot_pools::RegisterV2PoolParams;
 use degenbot_pools::SpecRefusal;
 use degenbot_pools::TickWordKey;
 use degenbot_pools::NATIVE_SENTINEL_ALL_ES;
-use degenbot_pools::{
-    BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
-};
 use degenbot_pools::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
 use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_rpc::abi::{
-    self, BalancerPoolId, ContractRead, IAerodromeFactory, IBalancerPool, IBalancerPoolFactory,
-    IBalancerVault, ICurvePool, ICurvePoolInt128, IPoolIdentity, IUniswapV2Pair, IUniswapV3Pool,
-    IUniswapV4StateView, Slot0Prefix, V2Reserves, V4Slot0,
+    self, BalancerPoolId, ContractRead, IAerodromeFactory, IBalancerPool, IBalancerVault,
+    IPoolIdentity, IUniswapV3Pool, IUniswapV4StateView, Slot0Prefix, V2Reserves, V4Slot0,
 };
 use degenbot_rpc::erc20;
 use degenbot_rpc::tick_bootstrap::{fetch_tick_word_via, UnreadableBitmapPolicy};
@@ -62,51 +57,6 @@ use degenbot_substrate::planning::{TickMapPoolIdentity, TickMapSeed};
 use degenbot_substrate::tick_assembly::{
     chain_arm, reconcile_tracked_rows, resolve_tick_map_arm, seed_row_words, TickMapAssemblyError,
 };
-
-/// The on-chain family a `probe` resolves to (V4 is a separate
-/// `(PoolManager, pool_id)` path, not a single-address probe).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PoolFamily {
-    V2,
-    V3,
-    BalancerWeighted,
-    BalancerStable,
-    Curve,
-}
-
-impl PoolFamily {
-    /// Project the pool taxonomy onto the registration-probe family (ADR-059
-    /// D1).
-    ///
-    /// The probe station LAGS the taxonomy in two places, and the lag is
-    /// explicit rather than silently mapped: an `AerodromeV2` pair registers
-    /// through the dedicated `build_aerodrome_v2` path (its `stable`/fee reads
-    /// have no home here), and a `UniswapV4` pool through the separate
-    /// `(PoolManager, pool_id)` `build_v4` path — neither is reachable from a
-    /// single-address selector probe, so both project to `None`.
-    #[must_use]
-    pub fn from_identity(identity: &Identity) -> Option<Self> {
-        match identity {
-            Identity::ReservePair { variant, .. } => match variant {
-                ReservePairVariant::UniswapV2 => Some(Self::V2),
-                ReservePairVariant::AerodromeV2 { .. } => None,
-            },
-            Identity::ConcentratedLiquidity { variant, .. } => match variant {
-                ConcentratedLiquidityVariant::UniswapV3 => Some(Self::V3),
-                ConcentratedLiquidityVariant::UniswapV4 => None,
-            },
-            Identity::BalanceVector { variant, .. } => match variant {
-                BalanceVectorVariant::Curve => Some(Self::Curve),
-                BalanceVectorVariant::BalancerWeighted => Some(Self::BalancerWeighted),
-                BalanceVectorVariant::BalancerStable => Some(Self::BalancerStable),
-            },
-            // Binned liquidity has no single-address selector probe: its
-            // LBPair identity is an LBFactory deployment the probe station
-            // does not model, so it LAGS the taxonomy and projects to None.
-            Identity::BinnedLiquidity { .. } => None,
-        }
-    }
-}
 
 /// Typed builder failure.
 #[derive(Debug, thiserror::Error)]
@@ -493,18 +443,28 @@ pub struct V3Immutable {
 
 /// Fetch a V2-style pool's `factory()` / `token0()` / `token1()`.
 ///
+/// A RESOLVED factory is consumed instead of re-read (`resolved_factory =
+/// None` reads it) — the identity module's one `factory()` read is never
+/// issued twice for one construction.
+///
 /// # Errors
 ///
-/// Returns a [`ProviderError`] when any of the three reads fails.
-pub async fn fetch_v2_immutable_data(
+/// Returns a [`ProviderError`] when any of the reads fails.
+pub(crate) async fn fetch_v2_immutable_data(
     read: &impl ContractRead,
     address: &Address,
+    resolved_factory: Option<Address>,
     block: Option<u64>,
 ) -> Result<V2Immutable, ProviderError> {
+    let factory = match resolved_factory {
+        Some(factory) => factory,
+        None => {
+            read.read(*address, IPoolIdentity::factoryCall {}, block)
+                .await?
+        }
+    };
     Ok(V2Immutable {
-        factory: read
-            .read(*address, IPoolIdentity::factoryCall {}, block)
-            .await?,
+        factory,
         token0: read
             .read(*address, IPoolIdentity::token0Call {}, block)
             .await?,
@@ -517,17 +477,26 @@ pub async fn fetch_v2_immutable_data(
 /// Fetch a V3-style pool's `factory()` / `token0()` / `token1()` / `fee()` /
 /// `tickSpacing()`.
 ///
+/// A RESOLVED factory is consumed instead of re-read (`resolved_factory =
+/// None` reads it) — the identity module's one `factory()` read is never
+/// issued twice for one construction.
+///
 /// # Errors
 ///
-/// Returns a [`ProviderError`] when any of the five reads fails.
-pub async fn fetch_v3_immutable_data(
+/// Returns a [`ProviderError`] when any of the reads fails.
+pub(crate) async fn fetch_v3_immutable_data(
     read: &impl ContractRead,
     address: &Address,
+    resolved_factory: Option<Address>,
     block: Option<u64>,
 ) -> Result<V3Immutable, ProviderError> {
-    let factory = read
-        .read(*address, IPoolIdentity::factoryCall {}, block)
-        .await?;
+    let factory = match resolved_factory {
+        Some(factory) => factory,
+        None => {
+            read.read(*address, IPoolIdentity::factoryCall {}, block)
+                .await?
+        }
+    };
     let token0 = read
         .read(*address, IPoolIdentity::token0Call {}, block)
         .await?;
@@ -638,159 +607,6 @@ pub async fn fetch_aerodrome_stable_and_fee(
         .await?
         .to::<u64>();
     Ok(AerodromeV2Common { stable, fee_bps })
-}
-
-/// Probe a pool contract to identify its family by answered selector (mirrors
-/// `type_resolution.py::resolve_pool_type`): `slot0()` → V3, `getReserves()`
-/// → V2, `getPoolId()` → Balancer (weighted vs stable by
-/// `getNormalizedWeights()`), then the typed Curve leg — `coins(0)` in either
-/// supported coin-getter shape → Curve.
-///
-/// A selector is answered only by nonempty returndata. Both an EVM revert and
-/// a successful *empty* return mean the selector is absent and the next probe
-/// runs: empty returndata is the artifact a non-reverting fallback (or an
-/// EOA's `eth_call`) produces, and every raw selector here has a nonempty
-/// valid answer (`slot0()` seven words, `getReserves()` three, `getPoolId()`
-/// one, `getNormalizedWeights()` an array encoding), so nothing real is lost
-/// by declining it. That keeps the raw presence arms from acquiring a family
-/// by artifact, which is what lets them run first — and a V3/V2/Balancer pool
-/// is thereby decided without a single Curve round trip.
-///
-/// When no probe answers — every selector reverts or returns nothing, and
-/// neither `coins(0)` shape returns a decodable address — the contract has no
-/// recognized identity and this returns
-/// [`PoolBuilderError::UnknownPoolIdentity`], never [`PoolFamily::Curve`]: an
-/// unverified contract is not a Curve pool. A provider failure that is NOT a
-/// revert (transport, timeout, rate limit, malformed response) likewise
-/// propagates as an error — a broken RPC must never silently degrade a pool to
-/// a family or to unknown.
-///
-/// # Errors
-///
-/// [`PoolBuilderError::Rpc`] from the first probe that failed for a reason
-/// other than [`ProviderError::ExecutionReverted`], or
-/// [`PoolBuilderError::UnknownPoolIdentity`] when no probe answered.
-pub async fn probe_pool_type(
-    io: &ConstructionIo,
-    address: Address,
-    block: Option<u64>,
-) -> Result<PoolFamily, PoolBuilderError> {
-    if probe_present(
-        io,
-        address,
-        IUniswapV3Pool::slot0Call {}.abi_encode(),
-        block,
-    )
-    .await?
-    {
-        Ok(PoolFamily::V3)
-    } else if probe_present(
-        io,
-        address,
-        IUniswapV2Pair::getReservesCall {}.abi_encode(),
-        block,
-    )
-    .await?
-    {
-        Ok(PoolFamily::V2)
-    } else if probe_present(
-        io,
-        address,
-        IBalancerPool::getPoolIdCall {}.abi_encode(),
-        block,
-    )
-    .await?
-    {
-        Ok(
-            if probe_present(
-                io,
-                address,
-                IBalancerPool::getNormalizedWeightsCall {}.abi_encode(),
-                block,
-            )
-            .await?
-            {
-                PoolFamily::BalancerWeighted
-            } else {
-                PoolFamily::BalancerStable
-            },
-        )
-    } else if probe_curve(io, address, block).await? {
-        Ok(PoolFamily::Curve)
-    } else {
-        Err(PoolBuilderError::UnknownPoolIdentity { address })
-    }
-}
-
-/// `true` when the selector answered with returndata, `false` when it is
-/// absent — an EVM revert, or a successful empty return (the artifact a
-/// non-reverting fallback or an EOA's `eth_call` produces) — and `Err` on any
-/// other provider failure (mirrors the benign-revert rule in
-/// [`build_balancer_stable`]). Every raw selector this gates has a nonempty
-/// valid answer, so empty returndata is never the selector answering.
-async fn probe_present(
-    read: &impl ContractRead,
-    address: Address,
-    calldata: Vec<u8>,
-    block: Option<u64>,
-) -> Result<bool, ProviderError> {
-    match read.call(address, calldata.into(), block).await {
-        Ok(returndata) => Ok(!returndata.is_empty()),
-        Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
-        Err(e) => Err(e),
-    }
-}
-
-/// `true` when a supported Curve coin getter answers `coins(0)` with a
-/// decodable address.
-///
-/// The supported Curve interface carries two coin-getter shapes (the
-/// `curve_choreography::CurvePrototype` dual the construction choreography
-/// already builds against): `coins(uint256)`, and the legacy `coins(int128)`
-/// of the old registry deployments — which is the *only* coin getter some of
-/// them expose (mainnet Curve registry pool 4/49,
-/// `0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27`, reverts on `coins(uint256)`).
-/// Either answering is positive Curve identity, so the uint shape is tried
-/// first and the legacy shape is the fallback on its absence.
-///
-/// Per shape, a revert means the selector is absent and an answer that does
-/// not decode as an address means the call site is not a Curve coin getter:
-/// both are "not Curve". A provider failure that is neither a revert nor a
-/// decode failure propagates — the fallback runs only on the first shape's
-/// absence, never around an RPC fault.
-///
-/// The typed read owns the ABI decode, so the garbage-return case arrives as
-/// [`ProviderError::DecodingError`] instead of as bytes; an undecodable answer
-/// is absence, never an RPC fault.
-///
-/// `coins(0)` needs the index word in the calldata (the ABI decoder rejects a
-/// bare selector), so this cannot reuse [`probe_present`].
-async fn probe_curve(
-    read: &impl ContractRead,
-    address: Address,
-    block: Option<u64>,
-) -> Result<bool, ProviderError> {
-    match read
-        .read(address, ICurvePool::coinsCall { i: U256::ZERO }, block)
-        .await
-    {
-        Ok(_) => Ok(true),
-        Err(ProviderError::ExecutionReverted { .. } | ProviderError::DecodingError { .. }) => {
-            // The uint shape is absent: the legacy shape decides before the
-            // identity is refused as unknown.
-            match read
-                .read(address, ICurvePoolInt128::coinsCall { i: 0i128 }, block)
-                .await
-            {
-                Ok(_) => Ok(true),
-                Err(
-                    ProviderError::ExecutionReverted { .. } | ProviderError::DecodingError { .. },
-                ) => Ok(false),
-                Err(e) => Err(e),
-            }
-        }
-        Err(e) => Err(e),
-    }
 }
 
 /// Resolve the [`DexIdentity`] preset (variant + factory + deployer + `init_hash`
@@ -941,7 +757,20 @@ pub async fn build_v2(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterV2PoolParams, PoolBuilderError> {
-    let imm = fetch_v2_immutable_data(io, &address, block).await?;
+    build_v2_with_factory(chain_id, address, None, io, block).await
+}
+
+/// [`build_v2`] over a RESOLVED factory — the construction route's arm: the
+/// identity module's one `factory()` read is consumed here instead of re-read
+/// (`resolved_factory = None` reads it).
+pub(crate) async fn build_v2_with_factory(
+    chain_id: u64,
+    address: Address,
+    resolved_factory: Option<Address>,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<RegisterV2PoolParams, PoolBuilderError> {
+    let imm = fetch_v2_immutable_data(io, &address, resolved_factory, block).await?;
     let v2 = V2Reserves::read(io, address, block).await?;
     let (r0, r1) = (v2.reserve0, v2.reserve1);
     let id = resolve_v2_dex(io, address, imm.factory, block)
@@ -1020,7 +849,20 @@ pub async fn build_aerodrome_v2(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterAerodromeV2PoolParams, PoolBuilderError> {
-    let imm = fetch_v2_immutable_data(io, &address, block).await?;
+    build_aerodrome_v2_with_factory(chain_id, address, None, io, block).await
+}
+
+/// [`build_aerodrome_v2`] over a RESOLVED factory — the construction route's
+/// arm: the identity module's one `factory()` read is consumed here instead of
+/// re-read (`resolved_factory = None` reads it).
+pub(crate) async fn build_aerodrome_v2_with_factory(
+    chain_id: u64,
+    address: Address,
+    resolved_factory: Option<Address>,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<RegisterAerodromeV2PoolParams, PoolBuilderError> {
+    let imm = fetch_v2_immutable_data(io, &address, resolved_factory, block).await?;
     let v2 = V2Reserves::read(io, address, block).await?;
     let (r0, r1) = (v2.reserve0, v2.reserve1);
     let common = fetch_aerodrome_stable_and_fee(io, &address, &imm.factory, block).await?;
@@ -1224,91 +1066,6 @@ async fn balancer_scaling_factor(
             }) => PoolBuilderError::Spec(SpecRefusal::NoCodeCoin),
             other => other,
         })
-}
-
-/// The Balancer pool sub-type resolved by [`probe_balancer_type`] — the
-/// semantic owner of the family vocabulary; the binding mirrors its two
-/// discriminants as the Python `BalancerFamily` enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BalancerFamily {
-    /// Has `getNormalizedWeights()` — a weighted pool.
-    Weighted,
-    /// Has `getAmplificationParameter()` (no weights) — a stable pool.
-    Stable,
-}
-
-/// Find the Balancer V2 factory that owns `pool`, by asking each candidate
-/// factory's `isPoolFromFactory(pool)`.
-///
-/// Balancer V2 exposes no enumerable pool registry (`getPoolCount` / `getPools`
-/// / `getPoolAt` revert on every factory revision), and a deployed pool carries
-/// no `factory()` getter — so membership is the only on-chain ownership answer.
-/// A candidate that reverts or fails to decode is not the owner; a candidate
-/// that does not own the pool reports `false`. That skip is this read's policy:
-/// it is what "ask every candidate" means.
-///
-/// Returns `None` when no candidate owns the pool (a factory revision the
-/// registry does not carry — e.g. the `MetaStablePool` factory).
-pub async fn fetch_balancer_factory(
-    read: &impl ContractRead,
-    pool: &Address,
-    candidates: &[Address],
-    block: Option<u64>,
-) -> Option<Address> {
-    for factory in candidates {
-        let Ok(owns) = read
-            .read(
-                *factory,
-                IBalancerPoolFactory::isPoolFromFactoryCall { pool: *pool },
-                block,
-            )
-            .await
-        else {
-            continue;
-        };
-        if owns {
-            return Some(*factory);
-        }
-    }
-    None
-}
-
-/// Probe a Balancer pool's sub-type: `getNormalizedWeights()` answers →
-/// [`BalancerFamily::Weighted`]; else `getAmplificationParameter()` answers →
-/// [`BalancerFamily::Stable`]; else an error (linear pools unsupported).
-///
-/// # Errors
-///
-/// Returns a [`ProviderError`] when neither probe responds.
-pub async fn probe_balancer_type(
-    read: &impl ContractRead,
-    address: &Address,
-    block: Option<u64>,
-) -> Result<BalancerFamily, ProviderError> {
-    if read
-        .read(*address, IBalancerPool::getNormalizedWeightsCall {}, block)
-        .await
-        .is_ok()
-    {
-        return Ok(BalancerFamily::Weighted);
-    }
-    if read
-        .read(
-            *address,
-            IBalancerPool::getAmplificationParameterCall {},
-            block,
-        )
-        .await
-        .is_ok()
-    {
-        return Ok(BalancerFamily::Stable);
-    }
-    Err(ProviderError::DecodingError {
-        message: format!(
-            "Cannot determine Balancer pool type for {address}: neither \
-             getNormalizedWeights() nor getAmplificationParameter() responded"
-        ),
-    })
 }
 
 /// Assemble `build_balancer_weighted` params for a Balancer V2 weighted pool
@@ -2030,7 +1787,21 @@ pub async fn build_v3(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterV3PoolParams, PoolBuilderError> {
-    let imm = fetch_v3_immutable_data(io, &address, block).await?;
+    build_v3_with_factory(chain_id, address, None, db, io, block).await
+}
+
+/// [`build_v3`] over a RESOLVED factory — the construction route's arm: the
+/// identity module's one `factory()` read is consumed here instead of re-read
+/// (`resolved_factory = None` reads it).
+pub(crate) async fn build_v3_with_factory(
+    chain_id: u64,
+    address: Address,
+    resolved_factory: Option<Address>,
+    db: Option<&dyn TickMapDb>,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<RegisterV3PoolParams, PoolBuilderError> {
+    let imm = fetch_v3_immutable_data(io, &address, resolved_factory, block).await?;
     let slot0 = Slot0Prefix::read(io, address, block).await?;
     let liquidity = io
         .read(address, IUniswapV3Pool::liquidityCall {}, block)
@@ -2400,81 +2171,5 @@ fn order_currencies(a: Address, b: Address) -> (Address, Address) {
         (a, b)
     } else {
         (b, a)
-    }
-}
-
-#[cfg(test)]
-mod taxonomy_tests {
-    //! ADR-059 D1: the registration-probe family is a projection of the pool
-    //! taxonomy. The two legs the probe station cannot reach are pinned as
-    //! `None` here, never silently mapped onto a neighbour.
-    use super::PoolFamily;
-    use degenbot_pools::{
-        BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
-        ReservePairVariant,
-    };
-
-    fn reserve_pair(variant: ReservePairVariant) -> Identity {
-        Identity::ReservePair { variant, dex: None }
-    }
-
-    fn concentrated_liquidity(variant: ConcentratedLiquidityVariant) -> Identity {
-        Identity::ConcentratedLiquidity { variant, dex: None }
-    }
-
-    fn balance_vector(variant: BalanceVectorVariant) -> Identity {
-        Identity::BalanceVector { variant, dex: None }
-    }
-
-    #[test]
-    fn identity_projection_maps_only_the_probed_families() {
-        assert_eq!(
-            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::UniswapV2)),
-            Some(PoolFamily::V2),
-        );
-        assert_eq!(
-            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
-                stable: true
-            })),
-            None,
-        );
-        assert_eq!(
-            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
-                stable: false
-            })),
-            None,
-        );
-        assert_eq!(
-            PoolFamily::from_identity(&concentrated_liquidity(
-                ConcentratedLiquidityVariant::UniswapV3
-            )),
-            Some(PoolFamily::V3),
-        );
-        assert_eq!(
-            PoolFamily::from_identity(&concentrated_liquidity(
-                ConcentratedLiquidityVariant::UniswapV4
-            )),
-            None,
-        );
-        assert_eq!(
-            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::Curve)),
-            Some(PoolFamily::Curve),
-        );
-        assert_eq!(
-            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::BalancerWeighted)),
-            Some(PoolFamily::BalancerWeighted),
-        );
-        assert_eq!(
-            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
-            Some(PoolFamily::BalancerStable),
-        );
-        assert_eq!(
-            PoolFamily::from_identity(&Identity::BinnedLiquidity {
-                variant: BinnedLiquidityVariant::Lfj,
-                dex: None,
-            }),
-            None,
-            "no single-address probe for binned liquidity: it must lag",
-        );
     }
 }

@@ -409,19 +409,33 @@ impl PyBot {
     ) -> PyResult<(PoolConstruction<'a>, bool)> {
         let variant = request.variant.as_deref();
         let vault = request.vault.as_deref();
+        // The resolved identity's factory: the route and the build consume it
+        // instead of issuing a second `factory()` read.
+        let factory = request.factory.as_deref().map(parse_address).transpose()?;
         // An empty hint list is "the caller supplied none": the per-family arms
         // read `Option` (absent = use the family's own default route).
         let registries = (!request.registries.is_empty()).then(|| request.registries.clone());
         match family {
-            RequestFamily::ConstantProduct if variant == Some("aerodrome") => {
-                Ok((PoolConstruction::AerodromeV2 { address: addr }, false))
-            }
-            RequestFamily::ConstantProduct => Ok((PoolConstruction::V2 { address: addr }, true)),
+            RequestFamily::ConstantProduct if variant == Some("aerodrome") => Ok((
+                PoolConstruction::AerodromeV2 {
+                    address: addr,
+                    factory,
+                },
+                false,
+            )),
+            RequestFamily::ConstantProduct => Ok((
+                PoolConstruction::V2 {
+                    address: addr,
+                    factory,
+                },
+                true,
+            )),
             // The fork storage layout is resolved CORE-side from the deployment
             // table, so the driver never names a fork.
             RequestFamily::ConcentratedLiquidity => Ok((
                 PoolConstruction::V3 {
                     address: addr,
+                    factory,
                     db,
                     fetcher: None,
                     slot_layout: None,
@@ -1227,6 +1241,10 @@ pub struct PyPoolConstructionRequest {
     family: String,
     /// The variant the resolver identified (within the family).
     variant: Option<String>,
+    /// The resolved identity's factory: consumed by the construction route
+    /// and the build instead of a second `factory()` read (`None` = the
+    /// route reads it once).
+    factory: Option<String>,
     /// The snapshot block (`None` = chain head, resolved core-side).
     block: Option<u64>,
     /// Whether the DB tick-map arm may seed the construction.
@@ -1274,6 +1292,7 @@ impl PyPoolConstructionRequest {
             address: String::from(address),
             family: String::from(family),
             variant: variant.map(str::to_string),
+            factory: None,
             block,
             db,
             factories: factories.unwrap_or_default(),
@@ -1292,11 +1311,12 @@ impl PyPoolConstructionRequest {
 
 #[pymethods]
 impl PyPoolConstructionRequest {
-    /// A Uniswap-style V2 constant-product pool.
+    /// A Uniswap-style V2 constant-product pool (`factory` = the resolved
+    /// identity's factory, consumed instead of re-read).
     #[staticmethod]
-    #[pyo3(signature = (address, *, block=None, db=true))]
-    fn v2(address: &str, block: Option<u64>, db: bool) -> Self {
-        Self::make(
+    #[pyo3(signature = (address, *, factory=None, block=None, db=true))]
+    fn v2(address: &str, factory: Option<String>, block: Option<u64>, db: bool) -> Self {
+        let mut request = Self::make(
             address,
             "constant_product",
             None,
@@ -1306,14 +1326,17 @@ impl PyPoolConstructionRequest {
             None,
             None,
             None,
-        )
+        );
+        request.factory = factory;
+        request
     }
 
-    /// An Aerodrome V2 (volatile/stable) pool.
+    /// An Aerodrome V2 (volatile/stable) pool (`factory` = the resolved
+    /// identity's factory, consumed instead of re-read).
     #[staticmethod]
-    #[pyo3(signature = (address, *, block=None, db=true))]
-    fn aerodrome_v2(address: &str, block: Option<u64>, db: bool) -> Self {
-        Self::make(
+    #[pyo3(signature = (address, *, factory=None, block=None, db=true))]
+    fn aerodrome_v2(address: &str, factory: Option<String>, block: Option<u64>, db: bool) -> Self {
+        let mut request = Self::make(
             address,
             "constant_product",
             Some("aerodrome"),
@@ -1323,7 +1346,9 @@ impl PyPoolConstructionRequest {
             None,
             None,
             None,
-        )
+        );
+        request.factory = factory;
+        request
     }
 
     /// A positively identified pool whose shape no construction arm models —
@@ -1400,17 +1425,20 @@ impl PyPoolConstructionRequest {
         )
     }
 
-    /// A Uniswap V3 concentrated-liquidity pool.
+    /// A Uniswap V3 concentrated-liquidity pool (`factory` = the resolved
+    /// identity's factory, consumed by the route's rung decision and the
+    /// build instead of a second `factory()` read).
     #[staticmethod]
-    #[pyo3(signature = (address, *, factories=None, invariant_version=None, block=None, db=true))]
+    #[pyo3(signature = (address, *, factories=None, invariant_version=None, factory=None, block=None, db=true))]
     fn concentrated_liquidity(
         address: &str,
         factories: Option<Vec<String>>,
         invariant_version: Option<u8>,
+        factory: Option<String>,
         block: Option<u64>,
         db: bool,
     ) -> Self {
-        Self::make(
+        let mut request = Self::make(
             address,
             "concentrated_liquidity",
             None,
@@ -1420,7 +1448,9 @@ impl PyPoolConstructionRequest {
             None,
             None,
             invariant_version,
-        )
+        );
+        request.factory = factory;
+        request
     }
 
     /// A V4 managed pool keyed by its `PoolManager` + on-chain pool id —
@@ -1481,6 +1511,13 @@ impl PyPoolConstructionRequest {
     #[getter]
     fn variant(&self) -> Option<String> {
         self.variant.clone()
+    }
+
+    /// The resolved identity's factory — consumed by the route and the build
+    /// instead of a second `factory()` read (`None` = the route reads once).
+    #[getter]
+    fn factory(&self) -> Option<String> {
+        self.factory.clone()
     }
 
     /// The snapshot block (`None` = chain head, resolved core-side).
@@ -3620,7 +3657,10 @@ mod tests {
             // No ConstructionIo attached — the registry-of-record pre-check
             // must answer before the io fetch.
             let outcome = bot
-                .construct_pool(py, &PyPoolConstructionRequest::v2(addr, Some(5), true))
+                .construct_pool(
+                    py,
+                    &PyPoolConstructionRequest::v2(addr, None, Some(5), true),
+                )
                 .expect("registered address answers from the registry of record");
             assert_eq!(outcome.pool_id, pool_id);
             assert_eq!(outcome.token0.to_lowercase(), t0);
@@ -3630,7 +3670,7 @@ mod tests {
             // And the single-flight twin: the peer path (claim window
             // closed) re-answers through the same pre-check.
             let outcome2 = bot
-                .construct_pool(py, &PyPoolConstructionRequest::v2(addr, None, true))
+                .construct_pool(py, &PyPoolConstructionRequest::v2(addr, None, None, true))
                 .expect("second build answers from the registry of record");
             assert_eq!(
                 outcome2.pool_id, pool_id,
@@ -3651,6 +3691,7 @@ mod tests {
                     py,
                     &PyPoolConstructionRequest::v2(
                         "0xbBbBbBbbBbbbBbbBbbBBbbbBbBbbBBBbbBBBbbbb",
+                        None,
                         None,
                         true,
                     ),
@@ -3715,7 +3756,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             let (_bot, pool) = registered_v2_handle(py);
             let echo = parity_echo(V2_TOKEN0, V2_TOKEN1, "uniswap-v2");
-            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, true);
+            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, None, true);
             PyBot::assert_identity_parity(py, &request, &echo, &pool)
                 .expect("matching identity is not a divergence");
         });
@@ -3732,7 +3773,7 @@ mod tests {
                 V2_TOKEN1,
                 "uniswap-v2",
             );
-            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, true);
+            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, None, true);
             let err = PyBot::assert_identity_parity(py, &request, &echo, &pool)
                 .expect_err("echoed token0 contradicts the handle");
             let msg = err.to_string();
@@ -3821,7 +3862,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             let (_bot, pool) = registered_v2_handle(py);
             let echo = parity_echo("", "", "uniswap-v2");
-            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, true);
+            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, None, true);
             PyBot::assert_identity_parity(py, &request, &echo, &pool)
                 .expect("no echoed pair means no token cross-check");
         });
@@ -3836,7 +3877,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             let (_bot, pool) = registered_v2_handle(py);
             let echo = parity_echo("", "", "uniswap-v2");
-            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, true);
+            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, None, true);
             PyBot::assert_identity_parity(py, &request, &echo, &pool)
                 .expect("an unclassified echo skips the variant guard");
         });

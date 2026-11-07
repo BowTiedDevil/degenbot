@@ -46,11 +46,20 @@ pub enum PoolConstruction<'a> {
     V2 {
         /// The pool contract address.
         address: Address,
+        /// The resolved identity's factory — consumed by the build instead of
+        /// a second `factory()` read; `None` = the caller resolved nothing and
+        /// the build reads it once.
+        factory: Option<Address>,
     },
     /// A concentrated-liquidity V3 pool (the construction route's walk).
     V3 {
         /// The pool contract address.
         address: Address,
+        /// The resolved identity's factory — consumed by the route's rung
+        /// decision AND the build instead of a second `factory()` read;
+        /// `None` = the caller resolved nothing and the route reads it once
+        /// (the one read the build then consumes).
+        factory: Option<Address>,
         /// The DB tick-map handle: a `TickMapDb` hit seeds `Tracked` (feeding
         /// the quarantine→verify lifecycle); `None` seeds `Sparse` via the
         /// chain arm.
@@ -82,6 +91,10 @@ pub enum PoolConstruction<'a> {
     AerodromeV2 {
         /// The pool contract address.
         address: Address,
+        /// The resolved identity's factory — consumed by the build instead of
+        /// a second `factory()` read; `None` = the caller resolved nothing and
+        /// the build reads it once.
+        factory: Option<Address>,
     },
     /// A Curve `StableSwap` pool (the discovery-only stableswap family with
     /// no `factory()`).
@@ -133,13 +146,17 @@ impl std::fmt::Debug for PoolConstruction<'_> {
         // former are trait objects); the request's identity is what a log
         // line needs.
         match self {
-            Self::V2 { address } => f
+            Self::V2 { address, factory } => f
                 .debug_struct("PoolConstruction::V2")
                 .field("address", address)
+                .field("factory", factory)
                 .finish(),
-            Self::V3 { address, .. } => f
+            Self::V3 {
+                address, factory, ..
+            } => f
                 .debug_struct("PoolConstruction::V3")
                 .field("address", address)
+                .field("factory", factory)
                 .finish(),
             Self::V4 {
                 pool_manager,
@@ -150,9 +167,10 @@ impl std::fmt::Debug for PoolConstruction<'_> {
                 .field("pool_manager", pool_manager)
                 .field("pool_id", pool_id)
                 .finish(),
-            Self::AerodromeV2 { address } => f
+            Self::AerodromeV2 { address, factory } => f
                 .debug_struct("PoolConstruction::AerodromeV2")
                 .field("address", address)
+                .field("factory", factory)
                 .finish(),
             Self::Curve {
                 address,

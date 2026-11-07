@@ -47,7 +47,6 @@ if TYPE_CHECKING:
 # the resolved-config verdict pair, and the registration family vocabulary.
 from degenbot._ffi import (
     ArbitrageEngine,
-    BalancerFamily,
     Bot,
     BotIo,
     ChainMismatchError,
@@ -178,7 +177,6 @@ __all__ = [
     "AlloyProvider",
     "ArbitrageEngine",
     "AsyncAlloyProvider",
-    "BalancerFamily",
     "Bot",
     "BotIo",
     "CancelHandle",

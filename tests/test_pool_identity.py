@@ -12,11 +12,12 @@ immutability, and the family refusal at the ``from_handle`` seam.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from degenbot.bot import Bot
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.types.pool_type import (
@@ -26,10 +27,14 @@ from degenbot.types.pool_type import (
 )
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.pool_bot import new_pool_bot
-from tests.helpers.seam import Pool
 from tests.helpers.v3_pool_factory import make_v3_pool
+
+if TYPE_CHECKING:
+    from degenbot.fork import AnvilFork
+    from tests.helpers.seam import Pool
 
 _TOKEN_ZERO = "0x" + "11" * 20
 _TOKEN_ONE = "0x" + "22" * 20
@@ -157,3 +162,48 @@ def test_resolve_pool_type_contract_is_held_at_the_live_seam() -> None:
     suite's deliberately inert ambient endpoints.
     """
     assert callable(getattr(Bot, "resolve_pool_type", None))
+
+
+# ---------------------------------------------------------------------------
+# Live-fork identity cases (the fork lane runs these; the offline suite stays
+# hermetic). The ladder's arms are core-side and offline-covered — what needs a
+# live chain is the identity a REAL deployment answers: the factory-less
+# Balancer membership walk and the discovery-only Curve identity.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.online_rpc
+def test_resolve_pool_type_names_a_live_balancer_pool_through_factory_membership(
+    fork_mainnet_full: AnvilFork,
+) -> None:
+    """`getPoolId()` + the sub-family probe name a live Balancer pool, and the
+    registered membership walk supplies its owning factory — the structured
+    identity, projected and bound."""
+    bot = make_bot_with_provider(fork_mainnet_full.provider)
+    # bb-s-USD (ComposableStable) — `isPoolFromFactory` reports the shipped
+    # ComposableStable factory row.
+    pool_address = "0x779d01F939D78a918A3de18cC236ee89221dfd4E"
+    composable_factory = "0xdba127fBc23fb20F5929C546af220A991b5C6e01"
+    resolved = bot.resolve_pool_type(pool_address)
+    assert resolved.family is PoolFamily.STABLESWAP
+    assert resolved.variant == "balancer_stable"
+    assert resolved.factory == get_checksum_address(composable_factory)
+    pool = bot.build_pool(pool_address)
+    assert pool.pool_type == resolved
+
+
+@pytest.mark.online_rpc
+def test_resolve_pool_type_names_a_live_curve_pool_on_positive_identity(
+    fork_mainnet_full: AnvilFork,
+) -> None:
+    """Discovery-only identity against a live chain: no `factory()` getter and
+    no DB row — a positive Curve coin getter (the legacy `coins(int128)` shape
+    old registry deployments expose) IS the identity."""
+    bot = make_bot_with_provider(fork_mainnet_full.provider)
+    # mainnet Curve registry pool 4/49 — reverts on `coins(uint256)`.
+    pool_address = "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27"
+    resolved = bot.resolve_pool_type(pool_address)
+    assert resolved.family is PoolFamily.STABLESWAP
+    assert resolved.variant is None
+    assert resolved.kind == "stableswap"
+    assert resolved.factory is None

@@ -85,7 +85,7 @@ def v2_offline_provider(
     recorded calls mirror the alloy transport's exact-calldata keying
     (``{addr}:0x{data}``): ``factory()``/``token0()``/``token1()``/
     ``getReserves()`` for the pool (with ``slot0()`` recorded as a redirect so
-    ``probe_pool_type`` resolves V2, not V3).
+    the core identity probe resolves V2, not V3).
     """
     factory_enc = abi_encode(types=["address"], args=[factory_addr]).hex()
     token0_enc = abi_encode(types=["address"], args=[weth_addr]).hex()

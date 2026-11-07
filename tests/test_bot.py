@@ -40,6 +40,7 @@ Rejected alternatives:
 import pathlib
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
@@ -47,7 +48,6 @@ from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.types.pool_type import PoolProbe
 from tests.fakes.session import session_registry_methods
 from tests.fakes.tokens import FakeToken
 from tests.helpers.bot_factory import ProviderKind, bot_session, fake_provider
@@ -64,8 +64,7 @@ class _ScriptedIo:
     its build path drives (an unscripted read is one the path never calls)."""
 
     get_block_number: Callable[[], int] = lambda: 100
-    fetch_factory_address: Callable[[str], str] | None = None
-    probe_pool_type: Callable[[str], int] | None = None
+    resolve_pool_identity: Callable[..., object] | None = None
 
 
 @dataclass(frozen=True)
@@ -338,6 +337,7 @@ class TestBuildPoolDbArmEligibility:
                 address=request.address,
                 family=request.family,
                 variant=request.variant,
+                factory=request.factory,
                 block=request.block,
                 db=request.db,
                 factories=request.factories,
@@ -351,8 +351,13 @@ class TestBuildPoolDbArmEligibility:
 
     def _bot(self, tmp_path: pathlib.Path, captured: dict[str, object]) -> Bot:
         io = _ScriptedIo(
-            fetch_factory_address=lambda address: _UNREGISTERED_FACTORY,
-            probe_pool_type=lambda address: int(PoolProbe.V3),
+            resolve_pool_identity=lambda **kwargs: SimpleNamespace(
+                species=None,
+                family="concentrated_liquidity",
+                variant=None,
+                factory=_UNREGISTERED_FACTORY,
+                persisted_kind="uniswap_v3",
+            ),
         )
         return Bot(
             **bot_session(tmp_path),
@@ -367,6 +372,14 @@ class TestBuildPoolDbArmEligibility:
             self._bot(tmp_path, captured).build_pool(self._POOL)
         assert captured["db"] is True
         assert captured["block"] == 100  # the io double's head
+
+    def test_resolved_factory_rides_the_request(self, tmp_path: pathlib.Path) -> None:
+        """The resolved identity's factory feeds the construction route: the
+        one `factory()` read is the resolver's, never a second one at the seam."""
+        captured: dict[str, object] = {}
+        with pytest.raises(_SeamCaptured):
+            self._bot(tmp_path, captured).build_pool(self._POOL)
+        assert captured["factory"] == _UNREGISTERED_FACTORY
 
     def test_pinned_head_state_block_keeps_db_arm(self, tmp_path: pathlib.Path) -> None:
         captured: dict[str, object] = {}

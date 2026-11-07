@@ -1,25 +1,26 @@
-"""Shared type resolution for pool construction.
+"""Companion-class selection for a resolved pool identity.
 
-Functions extracted from Bot so that pool type resolution
-logic (DB lookup, factory fetch, on-chain probing, class dispatch) is
-defined once and used by the Bot build path.
+Pool identity resolution has ONE core home (`bot_core::pool_builder::
+pool_identity`) — the ladder (DB kind, registered species/factory, the
+factory read, the positive V3/V2/Balancer/Curve probes, Balancer factory
+membership) and the structured answer both consumers share. The identity
+crosses the seam as ``BotIo.resolve_pool_identity`` (a ``PoolIdentity``
+pyclass: species / family / variant / factory / persisted kind — never a
+Python class name).
 
-Pure functions (no I/O):
-- pool_class_for_descriptor()
-- _descriptor_from_probing_result()
+What remains here is the companion layer's own decision, and nothing else:
+which Python pool class a resolved identity selects. Pure functions only
+(no I/O):
 
-Sync functions (accept BotIo):
-- fetch_factory_from_chain()
-- resolve_pool_type_by_probing()
-- resolve_pool_type()
+- ``descriptor_for_identity()`` — project the core's structured identity
+  onto the ``PoolTypeDescriptor`` the companion binds.
+- ``pool_class_for_descriptor()`` — the class selection.
 """
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING, cast
 
-from degenbot.balancer import BalancerFamily
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.checksum_cache import get_checksum_address
@@ -29,20 +30,38 @@ from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.pool_type import (
     BALANCER_VARIANTS,
     PoolFamily,
-    PoolProbe,
     PoolTypeDescriptor,
     PoolVariant,
     classify_pool_variant,
-    derive_kind,
 )
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from degenbot._ffi import BotIo
+    from degenbot._ffi import PoolIdentity
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
-    from degenbot.types.chain import ChecksummedAddress
+
+
+def descriptor_for_identity(identity: PoolIdentity) -> PoolTypeDescriptor:
+    """Project the core's structured identity onto the Python descriptor.
+
+    A pure projection: the family/variant/kind/factory facts the core
+    resolved, re-typed into the companion's identity value. No resolution
+    happens here (the core ladder already answered), and no class name
+    crosses the seam in either direction.
+
+    Returns:
+        The companion's view of the resolved identity.
+
+    """
+    factory = identity.factory
+    return PoolTypeDescriptor(
+        family=PoolFamily(identity.family),
+        variant=identity.variant,
+        kind=identity.persisted_kind,
+        factory=get_checksum_address(factory) if factory is not None else None,
+    )
 
 
 def pool_class_for_descriptor(
@@ -111,404 +130,3 @@ def pool_class_for_descriptor(
         case _:
             msg = f"No pool class for family {pool_type.family.value!r}"
             raise DegenbotValueError(message=msg)
-
-
-def _build_descriptor_from_seam_rows(
-    *,
-    pool_kind: str,
-    exchange_factory: str,
-) -> PoolTypeDescriptor:
-    """Map Rust-seam rows to a `PoolTypeDescriptor`.
-
-    Takes the two fields the builder reads (`pool.kind` + `pool.exchange.factory`)
-    fetched via `BotIo.fetch_pool_row` / `fetch_exchange`.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        DegenbotValueError: On a kind the registry does not know. A present
-            but unrecognized DB kind must not fall through to on-chain
-            probing, which would silently re-classify the pool.
-
-    """
-    descriptor = pool_type_registry.get_descriptor_by_kind(pool_kind)
-    if descriptor is None:
-        msg = (
-            f"Unrecognized pool kind {pool_kind!r} from the database; "
-            f"pool_type_registry has no descriptor for it."
-        )
-        raise DegenbotValueError(message=msg)
-    return PoolTypeDescriptor(
-        family=descriptor.family,
-        variant=descriptor.variant,
-        kind=descriptor.kind,
-        factory=get_checksum_address(exchange_factory),
-    )
-
-
-def _descriptor_from_probing_result(
-    *,
-    succeeded: PoolProbe | None,
-    chain_id: ChainId,
-    factory: ChecksummedAddress,
-) -> PoolTypeDescriptor:
-    """Map 'which probe succeeded' to a PoolTypeDescriptor.
-
-    If the factory is registered in pool_type_registry, uses the registry
-    descriptor. Otherwise derives a default descriptor from the probe.
-
-    ``None`` (no probe succeeded) raises — an unverified contract is not a
-    Curve pool. The Rust probe reports the unknown identity instead of
-    returning a Curve fallback.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        DegenbotValueError: On ``None`` or a probe result outside the
-            PoolProbe space — an unverified/unknown probe must never be
-            silently classified.
-
-    """
-    if succeeded is None:
-        msg = (
-            "No pool probe succeeded; refusing to classify an unverified "
-            "contract as STABLESWAP. The Rust probe raises UnknownPoolIdentity "
-            "instead of returning a Curve fallback."
-        )
-        raise DegenbotValueError(message=msg)
-
-    registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-    if registry_descriptor is not None:
-        return registry_descriptor
-
-    match succeeded:
-        case PoolProbe.V3:
-            family = PoolFamily.CONCENTRATED_LIQUIDITY
-        case PoolProbe.V2:
-            family = PoolFamily.CONSTANT_PRODUCT
-        case _:
-            raise DegenbotValueError(message=f"Unrecognized probe result: {succeeded!r}")
-
-    return PoolTypeDescriptor(
-        family=family,
-        variant=None,
-        kind=derive_kind(family, None),
-        factory=factory,
-    )
-
-
-def resolve_balancer_descriptor(
-    address: ChecksummedAddress,
-    *,
-    chain_id: ChainId,
-    io: BotIo,
-) -> PoolTypeDescriptor | None:
-    """Resolve a Balancer V2 pool's identity from on-chain factory membership.
-
-    A deployed Balancer pool carries no ``factory()`` getter (the probe
-    :func:`resolve_pool_type` tries first), and Balancer V2 exposes no
-    enumerable pool registry (``getPoolCount`` / ``getPools`` / ``getPoolAt``
-    revert on every factory revision). Two reads do answer universally:
-
-    1. ``getPoolId()`` — every Balancer pool (and no other family we build)
-       defines it. A revert means "not a Balancer pool": return ``None`` so the
-       caller's non-Balancer path is untouched.
-    2. ``isPoolFromFactory(address)`` — every factory revision answers it, so
-       membership across the registry's rows for the probed family names the
-       owning factory, and that row carries the identity (family, variant,
-       kind) plus the class the registry registered for it.
-
-    A pool whose owning factory is not in the registry (the MetaStablePool
-    factory is one) still has a positively probed Balancer identity; its
-    descriptor keeps the variant with ``factory=None`` and
-    :func:`pool_class_for_descriptor` supplies the family's default class.
-
-    A pool whose family probe answers nothing (neither
-    ``getNormalizedWeights()`` nor ``getAmplificationParameter()``) is a
-    Balancer pool of a shape no construction arm models — a linear pool, a
-    boosted pool's linear constituent, a gyro/quant-amm shape. Its identity is
-    still positive, so it resolves to :attr:`PoolFamily.UNMODELED` and is
-    refused under that name; returning ``None`` here is what sent these
-    addresses to the Curve arm, whose builder refused them as a Curve pool.
-
-    Identity is a deployment-time property, so the probes run at the head block
-    like :func:`fetch_factory_from_chain` — not at the construction block.
-
-    Returns:
-        The descriptor, or ``None`` when the contract is not a Balancer pool.
-
-    """
-    try:
-        io.fetch_balancer_pool_id(address)
-    except Exception:  # ruff: ignore[blind-except] — a revert is "not Balancer"
-        return None
-
-    try:
-        balancer_family = io.probe_balancer_pool_type(address)
-    except Exception:  # ruff: ignore[blind-except]
-        # `getPoolId()` answered but neither weights nor amplification did: a
-        # Balancer pool outside the weighted/stable families (linear pools,
-        # boosted-pool constituents, gyro shapes), which no construction arm
-        # models. The identity is positive and keeps its own name — the
-        # construction switchboard refuses it as an unmodeled Balancer family.
-        return PoolTypeDescriptor(
-            family=PoolFamily.UNMODELED,
-            variant="balancer_unmodeled",
-            kind=derive_kind(PoolFamily.UNMODELED, "balancer_unmodeled"),
-            factory=None,
-        )
-
-    variant = (
-        PoolVariant.BALANCER_WEIGHTED
-        if balancer_family is BalancerFamily.Weighted
-        else PoolVariant.BALANCER_STABLE
-    )
-    family = (
-        PoolFamily.WEIGHTED if variant is PoolVariant.BALANCER_WEIGHTED else PoolFamily.STABLESWAP
-    )
-
-    candidates = [
-        descriptor.factory
-        for (row_chain_id, _factory), (_cls, descriptor, _deployment) in (
-            pool_type_registry.registrations.items()
-        )
-        if row_chain_id == chain_id
-        and descriptor.variant == variant
-        and descriptor.factory is not None
-    ]
-    owning_factory = io.fetch_balancer_factory(address, candidates) if candidates else None
-    if owning_factory is not None:
-        registered = pool_type_registry.get_descriptor(chain_id, owning_factory)
-        if registered is not None:
-            return registered
-
-    return PoolTypeDescriptor(
-        family=family,
-        variant=variant,
-        kind=derive_kind(family, variant),
-        factory=None,
-    )
-
-
-def fetch_factory_from_chain(
-    address: ChecksummedAddress,
-    *,
-    chain_id: ChainId,  # ruff:ignore[unused-function-argument] — kept for API consistency with resolve_pool_type
-    io: BotIo,
-) -> ChecksummedAddress | None:
-    """Fetch the factory address from the pool contract's factory() method.
-
-    The encode → call → decode → checksum choreography is Rust-owned
-    (``BotIo.fetch_factory_address``). BotIo is the only executor; the Python
-    parity-gate fallback is retired.
-
-    Returns:
-        The computed value.
-
-    """
-    return io.fetch_factory_address(address)
-
-
-def _probe_identity(
-    address: ChecksummedAddress,
-    *,
-    chain_id: ChainId,
-    io: BotIo,
-) -> PoolProbe:
-    """Run the Rust identity probe and parse its wire code.
-
-    One home for the two seam failures every probing caller must treat as a
-    typed refusal: no identity selector answered, and a wire code outside the
-    ``PoolProbe`` space (Rust/Python lock-step drift). Neither is ever a
-    classification.
-
-    Returns:
-        The probe outcome.
-
-    Raises:
-        DegenbotValueError: When the seam reports no identity selector
-            answered, or on a probe code outside the PoolProbe space.
-
-    """
-    try:
-        result = io.probe_pool_type(address)
-    except ValueError as e:
-        # Rust signals "no identity selector answered" as PyValueError (the
-        # DegenbotValueError parent class); re-raise as the package exception.
-        msg = (
-            f"Cannot determine pool type for address {address} on chain "
-            f"{chain_id}: no identity selector answered."
-        )
-        raise DegenbotValueError(message=msg) from e
-    try:
-        return PoolProbe(result)
-    except ValueError as e:
-        raise DegenbotValueError(
-            message=(
-                f"Unrecognized probe result from BotIo: {result!r} — "
-                "the Rust PoolFamily match in py_bot_io.rs::probe_pool_type "
-                "and degenbot.types.pool_type.PoolProbe are out of lock-step"
-            ),
-        ) from e
-
-
-def resolve_pool_type_by_probing(
-    address: ChecksummedAddress,
-    *,
-    chain_id: ChainId,
-    factory: ChecksummedAddress,
-    io: BotIo,
-) -> PoolTypeDescriptor:
-    """Determine pool type by probing the contract on-chain.
-
-    Tries V3 first (``slot0``), then V2 (``getReserves``), then Balancer
-    (``getPoolId`` + ``getNormalizedWeights``), then Curve (a supported
-    ``coins(0)`` coin getter — ``coins(uint256)``, or the legacy
-    ``coins(int128)``). A selector counts as answered only with returndata: a
-    revert or a successful empty return (the artifact a non-reverting
-    fallback, or an EOA, produces) is absence, so no artifact can name a
-    family. When no probe answers, the Rust probe reports unknown identity;
-    the seam failures cross as the package's typed refusal
-    (``DegenbotValueError`` from :func:`_probe_identity`) — an unverified
-    contract is not silently classified as Curve.
-
-    Returns:
-        The computed value.
-
-    """
-    # Delegate the probing choreography to Rust (``BotIo.probe_pool_type``).
-    # BotIo is the only executor; the Python slot0/getReserves/getPoolId probing
-    # fallback is retired.
-    probe = _probe_identity(address, chain_id=chain_id, io=io)
-
-    match probe:
-        case PoolProbe.V3 | PoolProbe.V2:
-            return _descriptor_from_probing_result(
-                succeeded=probe,
-                chain_id=chain_id,
-                factory=factory,
-            )
-        case PoolProbe.BALANCER_WEIGHTED:
-            return PoolTypeDescriptor(
-                family=PoolFamily.WEIGHTED,
-                variant="balancer_weighted",
-                kind=derive_kind(PoolFamily.WEIGHTED, "balancer_weighted"),
-                factory=factory,
-            )
-        case PoolProbe.BALANCER_STABLE:
-            return PoolTypeDescriptor(
-                family=PoolFamily.STABLESWAP,
-                variant="balancer_stable",
-                kind=derive_kind(PoolFamily.STABLESWAP, "balancer_stable"),
-                factory=factory,
-            )
-        case PoolProbe.STABLESWAP:
-            # Positive Curve identity: a supported Curve coin getter answered.
-            # This is the generic Curve descriptor the old ``succeeded=None``
-            # fallback produced; it deliberately bypasses the registry.
-            return PoolTypeDescriptor(
-                family=PoolFamily.STABLESWAP,
-                variant=None,
-                kind=derive_kind(PoolFamily.STABLESWAP, None),
-                factory=factory,
-            )
-
-
-def resolve_pool_type(
-    address: ChecksummedAddress,
-    *,
-    chain_id: ChainId,
-    io: BotIo,
-) -> PoolTypeDescriptor:
-    """Resolve the pool type for the given address.
-
-    Consults these sources in order:
-    1. Database `kind` column (exact polymorphic type)
-    2. PoolTypeRegistry registration (factory address → descriptor)
-    3. On-chain probing (slot0 vs getReserves) when the factory is unknown to
-       the registry
-    4. Balancer identity — `getPoolId()` plus `isPoolFromFactory()` membership
-       across the registry's Balancer factory rows — when `factory()` does not
-       answer at all (every deployed Balancer pool)
-
-    A discovery-only pool (Curve exposes no `factory()`, no DB row, no
-    Balancer membership) resolves to the generic Curve descriptor on its
-    positive identity — a supported Curve coin getter answering
-    (`coins(uint256)`, or the legacy `coins(int128)` of old registry
-    deployments). An address with no positive identity is refused with
-    `DegenbotValueError` — the typed refusal for an undeterminable address,
-    never a Curve guess.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        DegenbotValueError: If the pool's type cannot be determined.
-
-    """
-    # Step 1: DB lookup — the `kind` column is the most direct signal.
-    # Route through the Rust `BotIo` seam: `fetch_pool_row`
-    # carries `kind` + `exchange_id`; `fetch_exchange` hydrates the factory.
-    # The `contextlib.suppress` makes a missing/empty DB a skip, not an error.
-    # Only the fetches are suppressed: a present-but-unrecognized `kind`
-    # raises from `_build_descriptor_from_seam_rows` (outside the suppress)
-    # rather than falling through to on-chain re-classification.
-    pool_row = None
-    exchange_row = None
-    with contextlib.suppress(Exception):
-        pool_row = io.fetch_pool_row(chain_id=chain_id, address=address)
-        if pool_row is not None:
-            exchange_row = io.fetch_exchange(exchange_id=pool_row.exchange_id)
-    if pool_row is not None and exchange_row is not None:
-        return _build_descriptor_from_seam_rows(
-            pool_kind=pool_row.kind,
-            exchange_factory=exchange_row.factory,
-        )
-
-    # Step 2: Factory address lookup via PoolTypeRegistry
-    factory = fetch_factory_from_chain(address, chain_id=chain_id, io=io)
-    if factory is not None:
-        # Check if the factory is registered in the pool type registry
-        registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-        if registry_descriptor is not None:
-            return registry_descriptor
-
-        # Step 3: No registry match — probe the contract to determine invariant
-        return resolve_pool_type_by_probing(address, chain_id=chain_id, factory=factory, io=io)
-
-    # Step 4: Balancer identity. A Balancer pool has no `factory()` getter and
-    # its factory rows are the only place its identity lives, so the membership
-    # probe is what keeps the caller from falling through to the Curve arm (the
-    # wrong family's refusal).
-    balancer_descriptor = resolve_balancer_descriptor(address, chain_id=chain_id, io=io)
-    if balancer_descriptor is not None:
-        return balancer_descriptor
-
-    # Discovery-only identity: Curve pools expose no `factory()`, no DB `kind`,
-    # and no Balancer factory membership, so nothing above can classify them.
-    # Curve identity is positive — a supported Curve coin getter (`coins(uint256)`
-    # or the legacy `coins(int128)`) answering with a decodable address is what
-    # names a Curve pool — so the probe decides here too: the generic Curve
-    # descriptor is answered only on that positive identity, and
-    # the caller routes it through the ONE core construction entry's generic
-    # Curve arm like every other family (never a second path). An address with
-    # no positive identity is the undeterminable case the public seam refuses
-    # under the typed error, never guessed as Curve — and a factory-less
-    # non-Curve probe answer is that case too (every V2/V3-family deployment
-    # exposes `factory()`, and Balancer identity answered above).
-    probe = _probe_identity(address, chain_id=chain_id, io=io)
-    if probe is not PoolProbe.STABLESWAP:
-        msg = (
-            f"Cannot determine pool type for address {address} on chain {chain_id}: "
-            f"no factory() getter answered and the identity probe reported "
-            f"{probe.name} — refusing to classify a factory-less {probe.name} pool."
-        )
-        raise DegenbotValueError(message=msg)
-    return PoolTypeDescriptor(
-        family=PoolFamily.STABLESWAP,
-        variant=None,
-        kind=derive_kind(PoolFamily.STABLESWAP, None),
-        factory=None,
-    )

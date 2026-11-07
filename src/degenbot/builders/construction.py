@@ -36,12 +36,14 @@ def request_for(  # ruff: ignore[too-many-arguments, too-many-return-statements]
     registries: Iterable[str] = (),
     vault: str | None = None,
     invariant_version: int | None = None,
+    factory: str | None = None,
 ) -> PoolConstructionRequest:
     """Build the family-tagged request for a resolved identity.
 
     The `(family, variant)` pair is the resolver's answer, never a subclass test:
     this maps it onto the constructor whose signature carries that family's
-    required hints.
+    required hints. `factory` is the resolved identity's factory — the route
+    and the build consume it instead of issuing a second `factory()` read.
 
     Returns:
         The request the one construction verb consumes.
@@ -58,14 +60,17 @@ def request_for(  # ruff: ignore[too-many-arguments, too-many-return-statements]
 
     if family is PoolFamily.CONSTANT_PRODUCT:
         if variant == "aerodrome":
-            return PoolConstructionRequest.aerodrome_v2(address, block=block, db=db)
-        return PoolConstructionRequest.v2(address, block=block, db=db)
+            return PoolConstructionRequest.aerodrome_v2(
+                address, factory=factory, block=block, db=db
+            )
+        return PoolConstructionRequest.v2(address, factory=factory, block=block, db=db)
 
     if family is PoolFamily.CONCENTRATED_LIQUIDITY:
         return PoolConstructionRequest.concentrated_liquidity(
             address,
             factories=list(factories) or None,
             invariant_version=invariant_version,
+            factory=factory,
             block=block,
             db=db,
         )

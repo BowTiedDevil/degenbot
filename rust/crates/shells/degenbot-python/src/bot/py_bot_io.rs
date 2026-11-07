@@ -37,20 +37,19 @@
 
 use alloy::primitives::U256;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList};
+use pyo3::types::PyList;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::provider::AlloyProvider;
 use crate::rpc::provider::PyAlloyProvider;
 use crate::rpc::revert_to_pyerr;
-use degenbot_bot::bot_core::BalancerFamily;
 use degenbot_bot::bot_core::{BlockSelector, PacedRead};
 use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
 use degenbot_rpc::abi::{
-    BalancerPoolId, ContractRead, IBalancerPool, IBalancerVault, IPoolIdentity, IUniswapV3Pool,
-    IUniswapV4StateView, Slot0Prefix, TickLiquidity, V2Reserves, V4Slot0,
+    ContractRead, IBalancerPool, IBalancerVault, IUniswapV3Pool, IUniswapV4StateView, Slot0Prefix,
+    TickLiquidity, V2Reserves, V4Slot0,
 };
 
 /// Slot0 + liquidity state tuple returned by
@@ -67,37 +66,48 @@ fn address_lower_hex(a: alloy::primitives::Address) -> String {
     hex
 }
 
-/// A Balancer V2 pool's sub-family — the FFI projection of the core
-/// [`BalancerFamily`] that the `getNormalizedWeights()` /
-/// `getAmplificationParameter()` probe resolves.
-///
-/// [`BalancerFamily`] (`degenbot_bot::bot_core::BalancerFamily`)
-/// stays the semantic owner; this mirrors exactly its two discriminants, so a
-/// builder call site compares an enum member instead of string-matching the
-/// wire. [`balancer_family_to_py`]`s `match` is exhaustive over the core enum,
-/// so a new core discriminant is a compile error here rather than a silently
-/// wrong family.
-#[pyclass(
-    name = "BalancerFamily",
-    eq,
-    hash,
-    frozen,
-    from_py_object,
-    module = "degenbot._ffi"
-)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PyBalancerFamily {
-    /// Has `getNormalizedWeights()` — a weighted pool.
-    Weighted,
-    /// Has `getAmplificationParameter()` (no weights) — a stable pool.
-    Stable,
+/// The ONE resolved pool identity, projected for the Python companion —
+/// structured facts (species, family, variant, factory, persisted kind),
+/// never a Python class name. The core
+/// ([`degenbot_bot::bot_core::ResolvedPoolIdentity`]) is the semantic owner;
+/// this is its seam projection, and the companion's class selection reads it.
+#[pyclass(name = "PoolIdentity", get_all, module = "degenbot._ffi")]
+#[derive(Clone, Debug)]
+pub struct PyPoolIdentity {
+    /// The species-manifest spelling this identity's persisted kind names
+    /// (`"uniswap_v3"`, …), or `None` for a kind the manifest does not carry.
+    pub species: Option<String>,
+    /// The family spelling (the Python `PoolFamily` values).
+    pub family: String,
+    /// The fork spelling (`"sushiswap"`, `"aerodrome"`,
+    /// `"balancer_stable"`, …); `None` is the canonical Uniswap identity.
+    pub variant: Option<String>,
+    /// The factory evidence, EIP-55 checksummed; `None` for the factory-less
+    /// identities (Curve; a Balancer revision no registered factory claims).
+    pub factory: Option<String>,
+    /// The persisted `pools.kind` discriminator this identity carries.
+    pub persisted_kind: String,
 }
 
-/// Project a core [`BalancerFamily`] onto its Python member.
-fn balancer_family_to_py(family: BalancerFamily) -> PyBalancerFamily {
-    match family {
-        BalancerFamily::Weighted => PyBalancerFamily::Weighted,
-        BalancerFamily::Stable => PyBalancerFamily::Stable,
+impl From<degenbot_bot::bot_core::ResolvedPoolIdentity> for PyPoolIdentity {
+    fn from(identity: degenbot_bot::bot_core::ResolvedPoolIdentity) -> Self {
+        Self {
+            species: identity.species.map(str::to_string),
+            family: identity.family.as_str().to_string(),
+            variant: identity.variant,
+            factory: identity.factory.map(|f| f.to_checksum(None)),
+            persisted_kind: identity.persisted_kind,
+        }
+    }
+}
+
+#[pymethods]
+impl PyPoolIdentity {
+    fn __repr__(&self) -> String {
+        format!(
+            "PoolIdentity(species={:?}, family={:?}, variant={:?}, factory={:?}, persisted_kind={:?})",
+            self.species, self.family, self.variant, self.factory, self.persisted_kind,
+        )
     }
 }
 
@@ -419,6 +429,49 @@ impl PyBotIo {
         }
     }
 
+    /// Resolve one pool's identity through the ONE core ladder — the Python
+    /// companion's projection seam. The structured answer (species, family,
+    /// variant, factory, persisted kind) is the same value the pure-Rust
+    /// consumer resolves; the companion keeps no ladder of its own.
+    ///
+    /// Errors:
+    /// - `PyValueError` — a typed identity refusal (an unknown DB kind, an
+    ///   unknown identity, an unsupported or contradictory identity); the
+    ///   caller wraps as `DegenbotValueError`.
+    /// - `PyRuntimeError` / `DbError` — a transport or database failure,
+    ///   which is never a classification.
+    #[pyo3(signature = (chain_id, address))]
+    fn resolve_pool_identity(
+        &self,
+        py: Python<'_>,
+        chain_id: i64,
+        address: &str,
+    ) -> PyResult<PyPoolIdentity> {
+        use degenbot_bot::bot_core::{resolve_pool_identity, PoolIdentityError};
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let chain = u64::try_from(chain_id).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("chain_id must be non-negative")
+        })?;
+        let identity = py
+            .detach(|| {
+                get_runtime().block_on(async move { resolve_pool_identity(chain, addr, &io).await })
+            })
+            .map_err(|err| match err {
+                PoolIdentityError::UnknownDbKind { .. }
+                | PoolIdentityError::UnknownIdentity { .. }
+                | PoolIdentityError::Unsupported { .. }
+                | PoolIdentityError::Contradictory { .. } => {
+                    pyo3::exceptions::PyValueError::new_err(err.to_string())
+                }
+                PoolIdentityError::Db(inner) => crate::db::db_err_to_py(&inner),
+                PoolIdentityError::Io(inner) => {
+                    pyo3::exceptions::PyRuntimeError::new_err(inner.to_string())
+                }
+            })?;
+        Ok(PyPoolIdentity::from(identity))
+    }
+
     /// Return the current block number. Native path: direct `AlloyProvider`
     /// call (no GIL round-trip). Fallback: delegates to the held Python
     /// provider's `get_block_number()` for non-alloy providers.
@@ -485,41 +538,6 @@ impl PyBotIo {
         crate::conversion::alloy::u256_to_py(py, &balance)
             .map(pyo3::Bound::into_any)
             .map(pyo3::Bound::unbind)
-    }
-
-    /// Fetch the factory address for a V2-style pool, performing the full
-    /// encode -> call -> decode -> checksum choreography in Rust.
-    ///
-    /// Mirrors `degenbot/builders/type_resolution.py::fetch_factory_from_chain`:
-    /// encode `factory()`, `eth_call` the pool, ABI-decode the right-aligned
-    /// 20-byte `address`, EIP-55 checksum it. The RPC primitive (`call`)
-    /// still delegates to the held provider; the *choreography* lives in Rust,
-    /// called from Python via `PyBotIo`.
-    ///
-    /// Returns `None` on any provider error, decode failure, or short result —
-    /// implements the `None`-on-failure contract: a pool whose `factory()`
-    /// reverts yields `None`, not an error.
-    #[pyo3(signature = (address))]
-    fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> Option<String> {
-        // Delegate the encode->call->decode->checksum to the core choreography
-        // (14b), then swallow any error into `None` to preserve the
-        // `None`-on-failure contract this method promises: an RPC failure or an
-        // undecodable answer reads as an absent value.
-        let Ok(io) = self.required_construction_io() else {
-            return None;
-        };
-        let Ok(addr) = parse_address_for_call(address) else {
-            return None;
-        };
-        let addr = alloy::primitives::Address::from(addr);
-        let r = py.detach(|| {
-            get_runtime()
-                .block_on(async move { io.read(addr, IPoolIdentity::factoryCall {}, None).await })
-        });
-        match r {
-            Ok(a) => Some(a.to_checksum(None)),
-            Err(_) => None,
-        }
     }
 
     /// Fetch a V2-style pool's reserves via `getReserves()`, performing the
@@ -710,96 +728,6 @@ impl PyBotIo {
             list.append(crate::conversion::alloy::u256_to_py(py, &b)?.unbind())?;
         }
         Ok(list.into())
-    }
-
-    /// Probe a pool's type by trying method calls in order.
-    ///
-    /// Mirrors `type_resolution.py::resolve_pool_type_by_probing`: V3
-    /// (`slot0()`), V2 (`getReserves()`), Balancer (`getPoolId()` +
-    /// `getNormalizedWeights()` sub-probe), then the typed Curve leg
-    /// (`coins(0)`, either supported coin-getter shape). A selector counts as
-    /// answered only with returndata — a revert or a successful empty return
-    /// (the artifact a non-reverting fallback, or an EOA's `eth_call`,
-    /// produces) is absence — so the raw presence arms cannot acquire a
-    /// family by artifact, and a non-Curve pool never pays a Curve probe.
-    /// Returns the code identifying which probe succeeded so the Python
-    /// caller can construct a `PoolTypeDescriptor` from the registry.
-    ///
-    /// Returns the 1-based `u8` code of the
-    /// ``degenbot.types.pool_type.PoolProbe`` member (the `curve_math`
-    /// `try_from_u8` crossing convention):
-    /// - `PoolProbe.V2` (1) — V2 constant-product pool.
-    /// - `PoolProbe.V3` (2) — V3 concentrated-liquidity pool.
-    /// - `PoolProbe.BALANCER_WEIGHTED` (3) — Balancer weighted pool.
-    /// - `PoolProbe.BALANCER_STABLE` (4) — Balancer stable pool.
-    /// - `PoolProbe.STABLESWAP` (5) — Curve: a supported Curve coin getter
-    ///   answered (`coins(uint256)`, or the legacy `coins(int128)`).
-    ///
-    /// Keep the `match` below in lock-step with `PoolProbe`'s member order —
-    /// a new `PoolFamily` variant fails this match to compile until its wire
-    /// code is assigned on both sides.
-    ///
-    /// Each probe is a fire-and-forget `call` — only whether it answered
-    /// with returndata, or (for `coins`) returned a decodable address,
-    /// matters. A revert or empty return advances to the next probe; a
-    /// garbage `coins` return is not Curve.
-    ///
-    /// Errors:
-    /// - `PyValueError` — no identity selector answered
-    ///   (`PoolBuilderError::UnknownPoolIdentity`); the Python caller wraps
-    ///   this as `DegenbotValueError`.
-    /// - `PyRuntimeError` — a non-revert provider failure.
-    #[pyo3(signature = (address, block=None))]
-    fn probe_pool_type(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<u8> {
-        use degenbot_bot::bot_core::{PoolBuilderError, PoolFamily};
-
-        // The construction-IO / address / block conversions `expect`: for the
-        // alloy-backed Offline/RPC providers the builder dispatches through,
-        // all three succeed. A provider failure that is not an EVM revert
-        // crosses to Python as an error, never as a Curve classification.
-        #[expect(clippy::expect_used)] // invariant-guarded (documented)
-        let io = self
-            .required_construction_io()
-            .expect("probe_pool_type requires the alloy-backed construction IO");
-        let addr = alloy::primitives::Address::from(
-            #[expect(clippy::expect_used)] // invariant-guarded (documented)
-            parse_address_for_call(address).expect("probe_pool_type address parse"),
-        );
-        #[expect(clippy::expect_used)] // invariant-guarded (documented)
-        let block_num = self
-            .resolve_block(py, block)
-            .expect("probe_pool_type block parse");
-        let family = py
-            .detach(|| {
-                get_runtime().block_on(async move {
-                    degenbot_bot::bot_core::probe_pool_type(&io, addr, block_num).await
-                })
-            })
-            .map_err(|e| match e {
-                // An unmatched identity is a classification failure, not a
-                // provider fault: surface it as ValueError so the Python
-                // caller can re-wrap as DegenbotValueError.
-                PoolBuilderError::UnknownPoolIdentity { address } => {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "unknown pool identity at {address}: no identity selector answered"
-                    ))
-                }
-                other => pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "probe_pool_type provider failure: {other}"
-                )),
-            })?;
-        Ok(match family {
-            PoolFamily::V2 => 1,               // PoolProbe.V2
-            PoolFamily::V3 => 2,               // PoolProbe.V3
-            PoolFamily::BalancerWeighted => 3, // PoolProbe.BALANCER_WEIGHTED
-            PoolFamily::BalancerStable => 4,   // PoolProbe.BALANCER_STABLE
-            PoolFamily::Curve => 5,            // PoolProbe.STABLESWAP
-        })
     }
 
     /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
@@ -994,39 +922,6 @@ impl PyBotIo {
                 .unbind(),
             pyo3::types::PyInt::new(py, net).into_any().unbind(),
         ))
-    }
-
-    /// Fetch a Balancer pool's `pool_id` via `getPoolId()`.
-    ///
-    /// Mirrors `balancer_builder_base.py::_fetch_pool_id`. Returns the raw
-    /// 32-byte `bytes32` value (no decode — bytes32 is already 32 bytes).
-    ///
-    /// Errors propagate.
-    #[pyo3(signature = (address, block=None))]
-    fn fetch_balancer_pool_id(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
-        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let block_num = self.resolve_block(py, block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                BalancerPoolId::read(&io, addr, block_num)
-                    .await
-                    .map(|id| id.0)
-            })
-        });
-        let id = match r {
-            Ok(v) => Ok(v),
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, address, &message))
-            }
-            Err(e) => Err(e.into()),
-        }?;
-        Ok(PyBytes::new(py, &id).into())
     }
 
     /// Fetch a Balancer pool's swap fee via `getSwapFeePercentage()`.
@@ -1271,91 +1166,6 @@ impl PyBotIo {
         crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
     }
 
-    /// Find the Balancer V2 factory that owns `address`, by asking each
-    /// candidate factory's `isPoolFromFactory(address)`.
-    ///
-    /// Balancer V2 has no enumerable pool registry and deployed pools carry no
-    /// `factory()` getter, so factory membership is the only on-chain ownership
-    /// answer — it is what `type_resolution.py` needs to resolve a Balancer
-    /// address to its registry row (family / variant / class).
-    ///
-    /// Returns the owning factory as a lowercase `0x` hex string, or `None` when
-    /// no candidate owns the pool (a factory revision the registry does not
-    /// carry).
-    #[expect(clippy::needless_pass_by_value)] // PyO3 extracts a `Vec<String>` argument by value
-    #[pyo3(signature = (address, factories, block=None))]
-    fn fetch_balancer_factory(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        factories: Vec<String>,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Option<String>> {
-        let io = self.required_construction_io()?;
-        let pool = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let candidates = factories
-            .iter()
-            .map(|f| parse_address_for_call(f).map(alloy::primitives::Address::from))
-            .collect::<PyResult<Vec<_>>>()?;
-        let block_num = self.resolve_block(py, block)?;
-        let owning = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::fetch_balancer_factory(&io, &pool, &candidates, block_num)
-                    .await
-            })
-        });
-        Ok(owning.map(address_lower_hex))
-    }
-
-    /// Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
-    /// `getAmplificationParameter()` in order. By the time this runs, the pool
-    /// is already known to be Balancer (via `probe_pool_type`, 14i); this
-    /// sub-probe distinguishes weighted vs stable.
-    ///
-    /// Returns:
-    /// - `BalancerFamily.Weighted` — `getNormalizedWeights()` succeeded.
-    /// - `BalancerFamily.Stable` — `getAmplificationParameter()` succeeded (and
-    ///   getNormalizedWeights reverted).
-    ///
-    /// Errors:
-    /// - `PyValueError` — neither method responded (raises so the Python
-    ///   identity probe can name the pool an unmodeled Balancer family; linear
-    ///   pools unsupported).
-    #[pyo3(signature = (address, block=None))]
-    fn probe_balancer_pool_type(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyBalancerFamily> {
-        let io = self.required_construction_io()?;
-        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let block_num = self.resolve_block(py, block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::probe_balancer_type(&io, &addr, block_num).await
-            })
-        });
-        let family = match r {
-            Ok(v) => Ok(v),
-            // Neither probe responded → surface as ValueError so the Python
-            // identity probe (`type_resolution.py`) can record the pool as an
-            // unmodeled Balancer family (linear pools unsupported). The core
-            // returns DecodingError, whose default PyErr mapping is
-            // RuntimeError.
-            Err(ProviderError::DecodingError { .. }) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Cannot determine Balancer pool type for {address}."
-                )))
-            }
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, address, &message))
-            }
-            Err(e) => Err(e.into()),
-        }?;
-        Ok(balancer_family_to_py(family))
-    }
-
     fn __repr__(&self) -> String {
         format!("BotIo(alloy={})", self.alloy.is_some())
     }
@@ -1534,25 +1344,4 @@ pub(crate) fn parse_address_for_call(address: &str) -> PyResult<[u8; 20]> {
     parse_address(address)
         .map(alloy::primitives::Address::into_array)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}")))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{balancer_family_to_py, BalancerFamily, PyBalancerFamily};
-
-    /// The sub-family probe answers the typed pyclass member, one per core
-    /// discriminant — the projection is exhaustive, so a weighted and a stable
-    /// pool can never collapse onto one member.
-    #[test]
-    fn the_balancer_family_projection_mirrors_the_core_discriminants() {
-        assert_eq!(
-            balancer_family_to_py(BalancerFamily::Weighted),
-            PyBalancerFamily::Weighted
-        );
-        assert_eq!(
-            balancer_family_to_py(BalancerFamily::Stable),
-            PyBalancerFamily::Stable
-        );
-        assert_ne!(PyBalancerFamily::Weighted, PyBalancerFamily::Stable);
-    }
 }

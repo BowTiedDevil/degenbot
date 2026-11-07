@@ -22,7 +22,7 @@ use degenbot_pools::SpecRefusal;
 use degenbot_rpc::abi::{self, ContractRead, Slot0Prefix, TickLiquidity, V2Reserves, V4Slot0};
 use degenbot_rpc::multicall3::{AGGREGATE3_SELECTOR, MULTICALL3_ADDRESS};
 
-use super::{builder, curve_choreography};
+use super::{builder, curve_choreography, pool_identity};
 use crate::bot_core::construction_io::{
     ConstructionIo, NoDb, PacedRead, RpcConstruction, TickFetchPace,
 };
@@ -65,6 +65,10 @@ struct FakeRpc {
     // calldata, not just the selector; checked first, falls back to the
     // selector-keyed map.
     responses_full: HashMap<Vec<u8>, Vec<u8>>,
+    // Per-`(target, selector)` responses: the Balancer membership walk sends
+    // identical calldata to many candidate factories, and a test scripts which
+    // candidate owns the pool.
+    responses_by_target: HashMap<(Address, [u8; 4]), Vec<u8>>,
     // Code returned by `get_code` (non-empty for the ERC-20 “contract present”
     // guard; empty by default so pool-family probes treat it as no-code).
     code: Bytes,
@@ -85,6 +89,7 @@ impl FakeRpc {
         Self {
             responses: HashMap::new(),
             responses_full: HashMap::new(),
+            responses_by_target: HashMap::new(),
             code: Bytes::new(),
             errors: HashMap::new(),
             yielding: false,
@@ -96,6 +101,10 @@ impl FakeRpc {
     }
     fn set_full(&mut self, data: Vec<u8>, bytes: Vec<u8>) {
         self.responses_full.insert(data, bytes);
+    }
+
+    fn set_for(&mut self, target: Address, sel: [u8; 4], bytes: Vec<u8>) {
+        self.responses_by_target.insert((target, sel), bytes);
     }
     fn set_code(&mut self, code: Bytes) {
         self.code = code;
@@ -150,8 +159,15 @@ impl RpcConstruction for FakeRpc {
         if let Some(e) = self.errors.get(&data[..4]) {
             return Err(e.clone());
         }
-        // Full-calldata match wins (parameterized calls); otherwise fall back
-        // to the 4-byte selector.
+        // A per-target answer wins (identical calldata, different candidates);
+        // then the full-calldata match (parameterized calls); otherwise the
+        // 4-byte selector.
+        if let Some(b) = self
+            .responses_by_target
+            .get(&(to, data[..4].try_into().unwrap()))
+        {
+            return Ok(b.clone().into());
+        }
         if let Some(b) = self.responses_full.get(data.as_ref()) {
             return Ok(b.clone().into());
         }
@@ -515,7 +531,7 @@ async fn fetch_v2_immutable_data_decodes() {
     f.set(abi::selector(b"token0()"), addr_word(tok0));
     f.set(abi::selector(b"token1()"), addr_word(tok1));
     let io = io_with(f);
-    let d = builder::fetch_v2_immutable_data(&io, &TO, None)
+    let d = builder::fetch_v2_immutable_data(&io, &TO, None, None)
         .await
         .unwrap();
     assert_eq!(d.token0, tok0);
@@ -561,7 +577,7 @@ async fn fetch_v3_immutable_data_decodes_incl_negative_tick_spacing() {
         enc(DynSolValue::Int(I256::try_from(-10i128).unwrap(), 24)),
     );
     let io = io_with(f);
-    let d = builder::fetch_v3_immutable_data(&io, &TO, None)
+    let d = builder::fetch_v3_immutable_data(&io, &TO, None, None)
         .await
         .unwrap();
     assert_eq!(d.token0, tok0);
@@ -774,7 +790,7 @@ async fn fetch_v4_tick_data_decodes() {
 async fn probe_pool_type_dispatches() {
     // No responses → every probe reverts → unknown identity, never Curve.
     assert!(matches!(
-        builder::probe_pool_type(&io_with(FakeRpc::new()), TO, None).await,
+        pool_identity::probe_pool_type(&io_with(FakeRpc::new()), TO, None).await,
         Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
     ));
 
@@ -785,10 +801,10 @@ async fn probe_pool_type_dispatches() {
         addr_word(TO),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::Curve
+        pool_identity::PoolFamily::Curve
     );
 
     // coins(0) answers with garbage → unknown identity, not Curve.
@@ -798,7 +814,7 @@ async fn probe_pool_type_dispatches() {
         vec![0u8; 1],
     );
     assert!(matches!(
-        builder::probe_pool_type(&io_with(f), TO, None).await,
+        pool_identity::probe_pool_type(&io_with(f), TO, None).await,
         Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
     ));
 
@@ -809,10 +825,10 @@ async fn probe_pool_type_dispatches() {
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::V3
+        pool_identity::PoolFamily::V3
     );
 
     // getReserves() present, no slot0 → V2.
@@ -826,20 +842,20 @@ async fn probe_pool_type_dispatches() {
         ])),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::V2
+        pool_identity::PoolFamily::V2
     );
 
     // getPoolId() present, no getNormalizedWeights → BalancerStable.
     let mut f = FakeRpc::new();
     f.set(abi::selector(b"getPoolId()"), addr_word(TO));
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::BalancerStable
+        pool_identity::PoolFamily::BalancerStable
     );
 
     // getPoolId() + getNormalizedWeights() → BalancerWeighted.
@@ -853,10 +869,10 @@ async fn probe_pool_type_dispatches() {
         )])),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::BalancerWeighted
+        pool_identity::PoolFamily::BalancerWeighted
     );
 }
 
@@ -879,10 +895,10 @@ async fn probe_pool_type_curve_leg_decides_when_presence_arms_answer_empty() {
         addr_word(SV),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::Curve
+        pool_identity::PoolFamily::Curve
     );
 }
 
@@ -900,10 +916,10 @@ async fn probe_pool_type_accepts_the_legacy_int128_curve_shape() {
         addr_word(SV),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::Curve
+        pool_identity::PoolFamily::Curve
     );
 
     // A garbage answer from the legacy getter is not identity either.
@@ -913,7 +929,7 @@ async fn probe_pool_type_accepts_the_legacy_int128_curve_shape() {
         vec![0u8; 1],
     );
     assert!(matches!(
-        builder::probe_pool_type(&io_with(f), TO, None).await,
+        pool_identity::probe_pool_type(&io_with(f), TO, None).await,
         Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
     ));
 
@@ -925,7 +941,7 @@ async fn probe_pool_type_accepts_the_legacy_int128_curve_shape() {
             message: "rpc down".into(),
         },
     );
-    match builder::probe_pool_type(&io_with(f), TO, None).await {
+    match pool_identity::probe_pool_type(&io_with(f), TO, None).await {
         Err(builder::PoolBuilderError::Rpc(ProviderError::ConnectionFailed { message })) => {
             assert_eq!(message, "rpc down");
         }
@@ -944,7 +960,7 @@ async fn probe_pool_type_propagates_transport_failure() {
             message: "rpc down".into(),
         },
     );
-    match builder::probe_pool_type(&io_with(f), TO, None).await {
+    match pool_identity::probe_pool_type(&io_with(f), TO, None).await {
         Err(builder::PoolBuilderError::Rpc(ProviderError::ConnectionFailed { message })) => {
             assert_eq!(message, "rpc down");
         }
@@ -972,7 +988,7 @@ async fn probe_pool_type_treats_empty_returndata_as_absence() {
         vec![],
     );
     assert!(matches!(
-        builder::probe_pool_type(&io_with(f), TO, None).await,
+        pool_identity::probe_pool_type(&io_with(f), TO, None).await,
         Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
     ));
 }
@@ -1003,10 +1019,10 @@ async fn probe_pool_type_classifies_v3_without_consulting_curve() {
         },
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::V3
+        pool_identity::PoolFamily::V3
     );
 }
 
@@ -1037,10 +1053,10 @@ async fn probe_pool_type_classifies_v2_without_consulting_curve() {
         },
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None)
+        pool_identity::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
-        builder::PoolFamily::V2
+        pool_identity::PoolFamily::V2
     );
 }
 
@@ -1055,7 +1071,7 @@ async fn probe_pool_type_treats_an_empty_curve_answer_as_absence() {
         vec![],
     );
     assert!(matches!(
-        builder::probe_pool_type(&io_with(f), TO, None).await,
+        pool_identity::probe_pool_type(&io_with(f), TO, None).await,
         Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
     ));
 }
@@ -1787,7 +1803,9 @@ async fn fetch_balancer_weights_decodes_uint256_array() {
 async fn probe_balancer_type_weights_first_then_stable() {
     // No responses → both probes revert → error.
     let io = io_with(FakeRpc::new());
-    assert!(builder::probe_balancer_type(&io, &TO, None).await.is_err());
+    assert!(pool_identity::probe_balancer_type(&io, &TO, None)
+        .await
+        .is_err());
 
     // getNormalizedWeights responds → Weighted.
     let mut f = FakeRpc::new();
@@ -1797,8 +1815,10 @@ async fn probe_balancer_type_weights_first_then_stable() {
     );
     let io = io_with(f);
     assert_eq!(
-        builder::probe_balancer_type(&io, &TO, None).await.unwrap(),
-        builder::BalancerFamily::Weighted
+        pool_identity::probe_balancer_type(&io, &TO, None)
+            .await
+            .unwrap(),
+        pool_identity::BalancerFamily::Weighted
     );
 
     // Only getAmplificationParameter → Stable.
@@ -1813,8 +1833,10 @@ async fn probe_balancer_type_weights_first_then_stable() {
     );
     let io = io_with(f);
     assert_eq!(
-        builder::probe_balancer_type(&io, &TO, None).await.unwrap(),
-        builder::BalancerFamily::Stable
+        pool_identity::probe_balancer_type(&io, &TO, None)
+            .await
+            .unwrap(),
+        pool_identity::BalancerFamily::Stable
     );
 }
 
@@ -1829,7 +1851,9 @@ async fn fetch_balancer_factory_reports_the_owning_candidate() {
     // Every candidate reverts (no response configured) → no owner.
     let io = io_with(FakeRpc::new());
     assert_eq!(
-        builder::fetch_balancer_factory(&io, &TO, &[VAULT], None).await,
+        pool_identity::fetch_balancer_factory(&io, &TO, &[VAULT], None)
+            .await
+            .unwrap(),
         None
     );
 
@@ -1838,7 +1862,9 @@ async fn fetch_balancer_factory_reports_the_owning_candidate() {
     f.set(sel, enc(DynSolValue::Bool(true)));
     let io = io_with(f);
     assert_eq!(
-        builder::fetch_balancer_factory(&io, &TO, &[VAULT], None).await,
+        pool_identity::fetch_balancer_factory(&io, &TO, &[VAULT], None)
+            .await
+            .unwrap(),
         Some(VAULT)
     );
 
@@ -1847,7 +1873,9 @@ async fn fetch_balancer_factory_reports_the_owning_candidate() {
     f.set(sel, enc(DynSolValue::Bool(false)));
     let io = io_with(f);
     assert_eq!(
-        builder::fetch_balancer_factory(&io, &TO, &[VAULT], None).await,
+        pool_identity::fetch_balancer_factory(&io, &TO, &[VAULT], None)
+            .await
+            .unwrap(),
         None
     );
 }
@@ -3184,6 +3212,7 @@ async fn construction_door_v3_transient_rpc_failure_is_a_counted_skip() {
             &route::ConstructionRoute::generic_only(),
             PoolConstruction::V3 {
                 address: pool,
+                factory: None,
                 db: None,
                 fetcher: None,
                 slot_layout: None,
@@ -3227,6 +3256,7 @@ async fn construction_door_v3_unserved_factory_refuses_loud() {
             },
             PoolConstruction::V3 {
                 address: pool,
+                factory: None,
                 db: None,
                 fetcher: None,
                 slot_layout: None,
@@ -3265,6 +3295,7 @@ async fn construction_door_v3_matched_rung_builds_and_registers() {
             &route::ConstructionRoute::generic_only(),
             PoolConstruction::V3 {
                 address: pool,
+                factory: None,
                 db: None,
                 fetcher: None,
                 slot_layout: None,
@@ -3318,6 +3349,7 @@ async fn construction_door_v3_matched_rung_builds_and_registers() {
             &route::ConstructionRoute::generic_only(),
             PoolConstruction::V3 {
                 address: pool,
+                factory: None,
                 db: None,
                 fetcher: None,
                 slot_layout: None,
@@ -3369,6 +3401,7 @@ async fn construction_door_v3_seeds_the_anchor_only_from_a_positive_block() {
                 &route::ConstructionRoute::generic_only(),
                 PoolConstruction::V3 {
                     address: pool,
+                    factory: None,
                     db: None,
                     fetcher: None,
                     slot_layout: None,
@@ -3435,6 +3468,7 @@ async fn construction_identity_parity_guard_reads_registered_identity_and_refuse
             &route::ConstructionRoute::generic_only(),
             PoolConstruction::V3 {
                 address: pool,
+                factory: None,
                 db: None,
                 fetcher: None,
                 slot_layout: None,
@@ -3486,12 +3520,17 @@ async fn construction_identity_parity_guard_reads_registered_identity_and_refuse
 #[test]
 fn construction_door_requests_name_their_family() {
     assert_eq!(
-        PoolConstruction::V2 { address: TO }.family(),
+        PoolConstruction::V2 {
+            address: TO,
+            factory: None
+        }
+        .family(),
         RegisteredPoolFamily::V2
     );
     assert_eq!(
         PoolConstruction::V3 {
             address: TO,
+            factory: None,
             db: None,
             fetcher: None,
             slot_layout: None,
@@ -3539,7 +3578,10 @@ async fn construction_door_v2_constructs_registers_and_reuses() {
     let door = bot
         .construct_pool(
             &plan,
-            PoolConstruction::V2 { address: pool },
+            PoolConstruction::V2 {
+                address: pool,
+                factory: None,
+            },
             &io,
             Some(18_000_000),
         )
@@ -3564,7 +3606,10 @@ async fn construction_door_v2_constructs_registers_and_reuses() {
     let again = bot
         .construct_pool(
             &plan,
-            PoolConstruction::V2 { address: pool },
+            PoolConstruction::V2 {
+                address: pool,
+                factory: None,
+            },
             &io_down,
             Some(18_000_000),
         )
@@ -3824,7 +3869,10 @@ async fn construction_door_aerodrome_v2_constructs_registers_and_reuses() {
     let door = bot
         .construct_pool(
             &plan,
-            PoolConstruction::AerodromeV2 { address: pool },
+            PoolConstruction::AerodromeV2 {
+                address: pool,
+                factory: None,
+            },
             &io,
             Some(123),
         )
@@ -3852,7 +3900,10 @@ async fn construction_door_aerodrome_v2_constructs_registers_and_reuses() {
     let again = bot
         .construct_pool(
             &plan,
-            PoolConstruction::AerodromeV2 { address: pool },
+            PoolConstruction::AerodromeV2 {
+                address: pool,
+                factory: None,
+            },
             &io_down,
             Some(123),
         )
@@ -4059,6 +4110,7 @@ async fn construction_door_v3_rides_its_family_only_inputs() {
             &route::ConstructionRoute::generic_only(),
             PoolConstruction::V3 {
                 address: pool,
+                factory: None,
                 db: Some(&db),
                 fetcher: Some(std::sync::Arc::clone(&fetcher)),
                 slot_layout: Some(degenbot_pools::ConcentratedLiquiditySlotLayout::PancakeV3),
@@ -4116,6 +4168,7 @@ async fn construction_door_folds_an_admission_race_to_the_winners_pool_id() {
     let plan = route::ConstructionRoute::generic_only();
     let request = || PoolConstruction::V3 {
         address: pool,
+        factory: None,
         db: None,
         fetcher: None,
         slot_layout: None,
@@ -4192,5 +4245,659 @@ fn an_unbound_word_source_refuses_an_overrunning_word() {
     assert_eq!(
         source.fetch_tick_word(&key, i32::MAX, 1).unwrap_err(),
         degenbot_pools::TickWordFetchError::OutOfRange
+    );
+}
+
+// ── Pool identity resolution: the ONE ladder both consumers resolve through ──
+//
+// The precedence (DB -> registered species/factory -> positive probes) and the
+// positive-only discipline: every arm below is either a structured identity
+// ([`pool_identity::ResolvedPoolIdentity`]) or a typed
+// [`pool_identity::PoolIdentityError`] — never a family a failure fell into.
+
+use crate::bot_core::pool_builder::pool_identity::{
+    identity_for_kind, resolve_pool_identity, PoolIdentityError, PoolIdentityFamily,
+};
+
+/// A `DbConstruction` double whose pool/exchange rows — or its failure — a
+/// test scripts. The DB precedence arm needs rows, not a chain.
+struct FakeIdentityDb {
+    pool: Option<degenbot_db::rows::LiquidityPoolRow>,
+    exchange: Option<degenbot_db::rows::ExchangeRow>,
+    fail: bool,
+}
+
+#[async_trait]
+impl crate::bot_core::construction_io::DbConstruction for FakeIdentityDb {
+    async fn fetch_erc20_token(
+        &self,
+        _chain_id: i64,
+        _address: Address,
+    ) -> Result<Option<degenbot_db::rows::Erc20TokenRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_pool_row(
+        &self,
+        _chain_id: i64,
+        _address: Address,
+    ) -> Result<Option<degenbot_db::rows::LiquidityPoolRow>, degenbot_db::error::DbError> {
+        if self.fail {
+            return Err(degenbot_db::error::DbError::LedgerArmed);
+        }
+        Ok(self.pool.clone())
+    }
+    async fn fetch_pool_kind(
+        &self,
+        _kind: &str,
+        _pool_id: i64,
+    ) -> Result<Option<degenbot_db::rows::PoolKindRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_token_by_id(
+        &self,
+        _token_id: i64,
+    ) -> Result<Option<degenbot_db::rows::Erc20TokenRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_exchange(
+        &self,
+        _exchange_id: i64,
+    ) -> Result<Option<degenbot_db::rows::ExchangeRow>, degenbot_db::error::DbError> {
+        if self.fail {
+            return Err(degenbot_db::error::DbError::LedgerArmed);
+        }
+        Ok(self.exchange.clone())
+    }
+    async fn fetch_liquidity_positions(
+        &self,
+        _pool_id: i64,
+    ) -> Result<Vec<degenbot_db::rows::LiquidityPositionRow>, degenbot_db::error::DbError> {
+        Ok(Vec::new())
+    }
+    async fn fetch_pool_manager(
+        &self,
+        _chain_id: i64,
+        _address: Address,
+    ) -> Result<Option<degenbot_db::rows::PoolManagerRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_v4_pool_by_pool_hash(
+        &self,
+        _pool_hash_hex: &str,
+    ) -> Result<Option<degenbot_db::rows::V4PoolRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_managed_liquidity_positions(
+        &self,
+        _managed_pool_id: i64,
+    ) -> Result<Vec<degenbot_db::rows::ManagedPoolLiquidityPositionRow>, degenbot_db::error::DbError>
+    {
+        Ok(Vec::new())
+    }
+    async fn update_erc20_token_metadata(
+        &self,
+        _chain_id: i64,
+        _address: &str,
+        _name: Option<&str>,
+        _symbol: Option<&str>,
+        _decimals: Option<i64>,
+    ) -> Result<(), degenbot_db::error::DbError> {
+        Ok(())
+    }
+}
+
+fn identity_db(kind: &str, factory: Address) -> FakeIdentityDb {
+    FakeIdentityDb {
+        pool: Some(degenbot_db::rows::LiquidityPoolRow {
+            id: 1,
+            address: TO,
+            chain: 1,
+            kind: kind.to_owned(),
+            token0_id: 1,
+            token1_id: 2,
+            exchange_id: 7,
+        }),
+        exchange: Some(degenbot_db::rows::ExchangeRow {
+            id: 7,
+            chain_id: 1,
+            name: "test exchange".to_owned(),
+            active: true,
+            last_update_block: None,
+            factory,
+            deployer: None,
+        }),
+        fail: false,
+    }
+}
+
+fn empty_identity_db() -> FakeIdentityDb {
+    FakeIdentityDb {
+        pool: None,
+        exchange: None,
+        fail: false,
+    }
+}
+
+fn io_with_db(fake: FakeRpc, db: FakeIdentityDb) -> ConstructionIo {
+    ConstructionIo::new(std::sync::Arc::new(db), std::sync::Arc::new(fake))
+}
+
+/// The shipped manifest's canonical factories (chain 1) — the registered
+/// species arm's fixtures.
+const UNISWAP_V2_FACTORY: Address =
+    alloy::primitives::address!("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f");
+const UNISWAP_V3_FACTORY: Address =
+    alloy::primitives::address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+const SUSHISWAP_V3_FACTORY: Address =
+    alloy::primitives::address!("0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F");
+const ADHOC_FACTORY: Address =
+    alloy::primitives::address!("0x1234567890abcdef1234567890abcdef12345678");
+const BALANCER_WEIGHTED_FACTORY: Address =
+    alloy::primitives::address!("0x897888115Ada5773E02aA29F775430BFB5F34c51");
+const BALANCER_STABLE_FACTORY: Address =
+    alloy::primitives::address!("0xdba127fBc23fb20F5929C546af220A991b5C6e01");
+
+fn factory_reads(calls: &[(Address, Vec<u8>)]) -> usize {
+    calls
+        .iter()
+        .filter(|(_, data)| data[..4] == abi::selector(b"factory()"))
+        .count()
+}
+
+#[tokio::test]
+async fn identity_db_kind_is_the_precedence_arm_without_a_chain_read() {
+    // A present DB row OWNS the answer: no `factory()` read, no probe.
+    let io = io_with_db(
+        FakeRpc::new(),
+        identity_db("sushiswap_v3", SUSHISWAP_V3_FACTORY),
+    );
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::ConcentratedLiquidity);
+    assert_eq!(identity.variant.as_deref(), Some("sushiswap"));
+    assert_eq!(identity.persisted_kind, "sushiswap_v3");
+    assert_eq!(identity.species, Some("sushiswap_v3"));
+    assert_eq!(identity.factory, Some(SUSHISWAP_V3_FACTORY));
+}
+
+#[tokio::test]
+async fn identity_unknown_db_kind_refuses_never_falls_through() {
+    // A present kind the grammar cannot name refuses — falling through to the
+    // chain arms would silently re-classify the pool.
+    let fake = FakeRpc::new();
+    let io = io_with_db(fake, identity_db("nonexistent_kind", ADHOC_FACTORY));
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(
+        matches!(&err, PoolIdentityError::UnknownDbKind { kind } if kind == "nonexistent_kind"),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn identity_db_kind_contradicting_the_registered_factory_species_refuses() {
+    // The persisted kind and the factory's registered species are two facts
+    // about one pool: a family-level disagreement refuses, never a winner.
+    let io = io_with_db(
+        FakeRpc::new(),
+        identity_db("uniswap_v2", UNISWAP_V3_FACTORY),
+    );
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(
+        matches!(&err, PoolIdentityError::Contradictory { .. }),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn identity_db_read_failure_is_not_a_classification() {
+    // A DB transport failure refuses: letting the chain arms answer would make
+    // a transport failure the reason a family was chosen.
+    let io = io_with_db(
+        FakeRpc::new(),
+        FakeIdentityDb {
+            pool: None,
+            exchange: None,
+            fail: true,
+        },
+    );
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(matches!(err, PoolIdentityError::Db(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn identity_registered_species_answers_without_probes() {
+    // The registered species/factory arm: `factory()` matched against the
+    // species manifest is the identity — no probe runs.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(UNISWAP_V2_FACTORY));
+    let io = io_with_db(f, empty_identity_db());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::ConstantProduct);
+    assert_eq!(identity.variant, None);
+    assert_eq!(identity.persisted_kind, "uniswap_v2");
+    assert_eq!(identity.species, Some("uniswap_v2"));
+    assert_eq!(identity.factory, Some(UNISWAP_V2_FACTORY));
+}
+
+#[tokio::test]
+async fn identity_registered_deployment_row_answers_the_fork_variant() {
+    // A shipped deployment row the manifest family shares but the fork spells
+    // differently: the variant and the persisted kind come from the row.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(SUSHISWAP_V3_FACTORY));
+    let io = io_with_db(f, empty_identity_db());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::ConcentratedLiquidity);
+    assert_eq!(identity.variant.as_deref(), Some("sushiswap"));
+    assert_eq!(identity.persisted_kind, "sushiswap_v3");
+    assert_eq!(identity.factory, Some(SUSHISWAP_V3_FACTORY));
+}
+
+#[tokio::test]
+async fn identity_unregistered_factory_probes_concentrated_liquidity() {
+    // An unregistered factory defers to the positive probes; the factory
+    // evidence rides the answer.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(ADHOC_FACTORY));
+    f.set(
+        abi::selector(b"slot0()"),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    let io = io_with_db(f, empty_identity_db());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::ConcentratedLiquidity);
+    assert_eq!(identity.variant, None);
+    assert_eq!(identity.persisted_kind, "uniswap_v3");
+    assert_eq!(identity.factory, Some(ADHOC_FACTORY));
+}
+
+#[tokio::test]
+async fn identity_unregistered_factory_probes_constant_product() {
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(ADHOC_FACTORY));
+    f.set(abi::selector(b"getReserves()"), {
+        let mut v = U256::from(1u64).to_be_bytes::<32>().to_vec();
+        v.extend_from_slice(&U256::from(2u64).to_be_bytes::<32>());
+        v.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+        v
+    });
+    let io = io_with_db(f, empty_identity_db());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::ConstantProduct);
+    assert_eq!(identity.persisted_kind, "uniswap_v2");
+    assert_eq!(identity.factory, Some(ADHOC_FACTORY));
+}
+
+#[tokio::test]
+async fn identity_no_selector_answers_is_the_unknown_refusal() {
+    // Nothing positive names the pool: the typed refusal, never a family.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(ADHOC_FACTORY));
+    let io = io_with_db(f, empty_identity_db());
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(
+        matches!(&err, PoolIdentityError::UnknownIdentity { address } if *address == TO),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn identity_transport_failure_propagates_never_classifies() {
+    // A broken RPC must never read as "no factory" (which would let the
+    // fall-through arms classify) or as "no selector answered".
+    let mut f = FakeRpc::new();
+    f.set_error(
+        abi::selector(b"factory()"),
+        ProviderError::ConnectionFailed {
+            message: "blip".to_owned(),
+        },
+    );
+    let io = io_with_db(f, empty_identity_db());
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(matches!(err, PoolIdentityError::Io(_)), "got {err:?}");
+
+    // And a probe transport failure is the same refusal class.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(ADHOC_FACTORY));
+    f.set_error(
+        abi::selector(b"slot0()"),
+        ProviderError::ConnectionFailed {
+            message: "blip".to_owned(),
+        },
+    );
+    let io = io_with_db(f, empty_identity_db());
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(matches!(err, PoolIdentityError::Io(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn identity_balancer_membership_resolves_the_owning_factory() {
+    // A deployed Balancer pool has no `factory()`; `getPoolId()` + the
+    // sub-family probe name it, and `isPoolFromFactory` ownership supplies the
+    // factory evidence from the registered rows.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&POOL_ID));
+    f.set(
+        abi::selector(b"getNormalizedWeights()"),
+        u256_array_ret(&[500_000_000_000_000_000u64]),
+    );
+    f.set_for(
+        BALANCER_WEIGHTED_FACTORY,
+        abi::selector(b"isPoolFromFactory(address)"),
+        enc(DynSolValue::Bool(true)),
+    );
+    let io = io_with_db(f, empty_identity_db());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::Weighted);
+    assert_eq!(identity.variant.as_deref(), Some("balancer_weighted"));
+    assert_eq!(identity.persisted_kind, "balancer_weighted");
+    assert_eq!(identity.factory, Some(BALANCER_WEIGHTED_FACTORY));
+}
+
+#[tokio::test]
+async fn identity_balancer_stable_asks_only_stable_factory_rows() {
+    // Only the stable factory rows are asked about a stable pool: the
+    // membership walk's candidate set is the probed sub-family's registered
+    // rows, nothing else.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&POOL_ID));
+    f.set(
+        abi::selector(b"getAmplificationParameter()"),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(100u64), 256),
+            DynSolValue::Bool(false),
+            DynSolValue::Uint(U256::from(100u64), 256),
+        ])),
+    );
+    f.set_for(
+        BALANCER_STABLE_FACTORY,
+        abi::selector(b"isPoolFromFactory(address)"),
+        enc(DynSolValue::Bool(true)),
+    );
+    let f = std::sync::Arc::new(f);
+    let io = ConstructionIo::new(std::sync::Arc::new(empty_identity_db()), f.clone());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::Stableswap);
+    assert_eq!(identity.variant.as_deref(), Some("balancer_stable"));
+    assert_eq!(identity.factory, Some(BALANCER_STABLE_FACTORY));
+    // Only the stable factory rows are asked: the probed sub-family's
+    // registered rows are the whole candidate set.
+    let asked: Vec<Address> = f
+        .calls()
+        .into_iter()
+        .filter(|(_, data)| data[..4] == abi::selector(b"isPoolFromFactory(address)"))
+        .map(|(target, _)| target)
+        .collect();
+    assert!(
+        asked.contains(&BALANCER_STABLE_FACTORY),
+        "the membership walk must reach the owning row, got {asked:?}"
+    );
+    assert!(
+        asked.iter().all(|factory| {
+            pool_identity::registered_identity(1, *factory)
+                .is_some_and(|id| id.variant.as_deref() == Some("balancer_stable"))
+        }),
+        "a stable pool asks only stable factory rows, got {asked:?}"
+    );
+}
+
+#[tokio::test]
+async fn identity_balancer_without_a_family_probe_is_unmodeled_not_classified() {
+    // `getPoolId()` answered, neither sub-family probe did: a positively
+    // identified Balancer pool no construction arm models keeps its own name
+    // and reaches no factory claim (no membership walk) — it is never routed
+    // into another family's identity.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&POOL_ID));
+    let io = io_with_db(f, empty_identity_db());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::Unmodeled);
+    assert_eq!(identity.variant.as_deref(), Some("balancer_unmodeled"));
+    assert_eq!(identity.persisted_kind, "balancer_unmodeled");
+    assert_eq!(identity.factory, None);
+}
+
+#[tokio::test]
+async fn identity_factory_less_curve_identity_is_positive() {
+    // Discovery-only identity: no `factory()` getter, no DB row, no Balancer
+    // membership — and a supported Curve coin getter answers. Positive Curve
+    // identity, not a fallback.
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"coins(uint256)"),
+        addr_word(alloy::primitives::address!(
+            "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+        )),
+    );
+    let io = io_with_db(f, empty_identity_db());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::Stableswap);
+    assert_eq!(identity.variant, None);
+    assert_eq!(identity.persisted_kind, "stableswap");
+    assert_eq!(identity.factory, None);
+}
+
+#[tokio::test]
+async fn identity_curve_accepts_the_legacy_int128_coin_shape() {
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"coins(int128)"),
+        addr_word(alloy::primitives::address!(
+            "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+        )),
+    );
+    let io = io_with_db(f, empty_identity_db());
+    let identity = resolve_pool_identity(1, TO, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::Stableswap);
+    assert_eq!(identity.persisted_kind, "stableswap");
+}
+
+#[tokio::test]
+async fn identity_factory_less_v2_v3_answers_are_unsupported() {
+    // Every V2/V3-family deployment exposes `factory()`: a factory-less answer
+    // naming one is not a pool identity at all — refused under its own name,
+    // never classified (and never guessed as Curve).
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"slot0()"),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    let io = io_with_db(f, empty_identity_db());
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(
+        matches!(&err, PoolIdentityError::Unsupported { .. }),
+        "got {err:?}"
+    );
+
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"getReserves()"), {
+        let mut v = U256::from(1u64).to_be_bytes::<32>().to_vec();
+        v.extend_from_slice(&U256::from(2u64).to_be_bytes::<32>());
+        v.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+        v
+    });
+    let io = io_with_db(f, empty_identity_db());
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(
+        matches!(&err, PoolIdentityError::Unsupported { .. }),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn identity_empty_returndata_is_absence_not_an_identity() {
+    // A successful EMPTY return is the artifact a non-reverting fallback or an
+    // EOA produces — absence, never a family.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), Vec::new());
+    f.set(abi::selector(b"slot0()"), Vec::new());
+    f.set(abi::selector(b"getReserves()"), Vec::new());
+    f.set(abi::selector(b"getPoolId()"), Vec::new());
+    let io = io_with_db(f, empty_identity_db());
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(
+        matches!(err, PoolIdentityError::UnknownIdentity { .. }),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn identity_malformed_curve_answer_is_absence_not_curve() {
+    // An undecodable `coins(0)` answer is not Curve — an unverified contract
+    // is never silently classified as a stableswap.
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"coins(uint256)"), vec![0u8; 4]);
+    f.set(abi::selector(b"coins(int128)"), vec![0u8; 4]);
+    let io = io_with_db(f, empty_identity_db());
+    let err = resolve_pool_identity(1, TO, &io).await.unwrap_err();
+    assert!(
+        matches!(err, PoolIdentityError::UnknownIdentity { .. }),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn identity_kind_grammar_is_the_one_spelling_home() {
+    // The exact inverse of the persisted-kind derivation: family + variant +
+    // species for every spelling the engine models, `None` outside the
+    // grammar (the loud unknown-kind boundary).
+    let canonical = identity_for_kind("uniswap_v2").unwrap();
+    assert_eq!(canonical.family, PoolIdentityFamily::ConstantProduct);
+    assert_eq!(canonical.variant, None);
+    assert_eq!(canonical.species, Some("uniswap_v2"));
+    let fork = identity_for_kind("sushiswap_v3").unwrap();
+    assert_eq!(fork.family, PoolIdentityFamily::ConcentratedLiquidity);
+    assert_eq!(fork.variant.as_deref(), Some("sushiswap"));
+    assert_eq!(fork.species, Some("sushiswap_v3"));
+    let open_set = identity_for_kind("my_dex_v2").unwrap();
+    assert_eq!(open_set.family, PoolIdentityFamily::ConstantProduct);
+    assert_eq!(open_set.variant.as_deref(), Some("my_dex"));
+    assert_eq!(
+        open_set.species, None,
+        "no manifest species for a third-party fork"
+    );
+    let curve = identity_for_kind("stableswap").unwrap();
+    assert_eq!(curve.family, PoolIdentityFamily::Stableswap);
+    assert_eq!(curve.variant, None);
+    assert_eq!(curve.species, None, "the manifest carries no Curve species");
+    for kind in ["balancer_weighted", "balancer_stable", "balancer_unmodeled"] {
+        assert!(identity_for_kind(kind).is_some(), "{kind}");
+    }
+    for kind in ["nonexistent_kind", "", "_v2", "uniswap_v4"] {
+        assert!(identity_for_kind(kind).is_none(), "{kind:?} must refuse");
+    }
+}
+
+#[tokio::test]
+async fn construction_consumes_the_resolved_factory_with_no_second_read() {
+    // The resolve + construct flow reads `factory()` EXACTLY ONCE: the
+    // identity module's read is the only one, and the construction route's
+    // rung decision and the V3 build both consume the resolved identity
+    // instead of issuing their own reads.
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(ADHOC_FACTORY));
+    f.set(abi::selector(b"token0()"), addr_word(T0));
+    f.set(abi::selector(b"token1()"), addr_word(T1));
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        abi::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::selector(b"slot0()"),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::selector(b"liquidity()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    f.set(
+        abi::selector(b"tickBitmap(int16)"),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    let f = std::sync::Arc::new(f);
+    let io = ConstructionIo::new(std::sync::Arc::new(empty_identity_db()), f.clone());
+
+    let identity = resolve_pool_identity(1, pool, &io).await.unwrap();
+    assert_eq!(identity.family, PoolIdentityFamily::ConcentratedLiquidity);
+    assert_eq!(identity.factory, Some(ADHOC_FACTORY));
+
+    let bot = Bot::new(1);
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V3 {
+                address: pool,
+                factory: identity.factory,
+                db: None,
+                fetcher: None,
+                slot_layout: None,
+            },
+            &io,
+            Some(9_000_000),
+        )
+        .await;
+    assert!(
+        matches!(verdict, ConstructionVerdict::Constructed { .. }),
+        "got {verdict:?}"
+    );
+    assert_eq!(
+        factory_reads(&f.calls()),
+        1,
+        "resolve + construct must read factory() exactly once: {:?}",
+        f.calls()
+    );
+}
+
+#[tokio::test]
+async fn construction_refusal_taxonomy_is_unchanged_when_the_identity_is_fed() {
+    // Consuming the resolved factory changes NO refusal class: a factory no
+    // route rung serves is still the LOUD `UnsupportedFamily` abort (and the
+    // decision costs zero reads — the identity already carries the fact).
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    let f = std::sync::Arc::new(f);
+    let io = ConstructionIo::new(std::sync::Arc::new(empty_identity_db()), f.clone());
+    let bot = Bot::new(1);
+
+    let served: Address = alloy::primitives::address!("0x9999999999999999999999999999999999999999");
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute {
+                factories: vec![served],
+                generic: false,
+            },
+            PoolConstruction::V3 {
+                address: pool,
+                factory: Some(factory),
+                db: None,
+                fetcher: None,
+                slot_layout: None,
+            },
+            &io,
+            Some(9_000_000),
+        )
+        .await;
+    assert!(
+        matches!(
+            verdict,
+            ConstructionVerdict::Refused {
+                family: RegisteredPoolFamily::V3,
+                refusal: route::ConstructionRefusal::UnsupportedFamily { .. },
+            }
+        ),
+        "got {verdict:?}"
+    );
+    assert_eq!(
+        factory_reads(&f.calls()),
+        0,
+        "the fed identity is consumed, never re-read: {:?}",
+        f.calls()
     );
 }

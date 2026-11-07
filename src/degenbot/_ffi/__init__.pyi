@@ -776,34 +776,6 @@ class BalanceVectorView:
     def update_block(self, /) -> int: ...
 
 @final
-class BalancerFamily:
-    """
-    A Balancer V2 pool's sub-family — the FFI projection of the core
-    [`BalancerFamily`] that the `getNormalizedWeights()` /
-    `getAmplificationParameter()` probe resolves.
-
-    [`BalancerFamily`] (`degenbot_bot::bot_core::BalancerFamily`)
-    stays the semantic owner; this mirrors exactly its two discriminants, so a
-    builder call site compares an enum member instead of string-matching the
-    wire. [`balancer_family_to_py`]`s `match` is exhaustive over the core enum,
-    so a new core discriminant is a compile error here rather than a silently
-    wrong family.
-    """
-
-    Stable: Final[BalancerFamily]
-    """
-    Has `getAmplificationParameter()` (no weights) — a stable pool.
-    """
-    Weighted: Final[BalancerFamily]
-    """
-    Has `getNormalizedWeights()` — a weighted pool.
-    """
-    def __eq__(self, value: object, /) -> bool: ...
-    def __hash__(self, /) -> int: ...
-    def __int__(self, /) -> int: ...
-    def __ne__(self, value: object, /) -> bool: ...
-
-@final
 class BalancerStableView:
     """
     The Balancer-stable balance-vector arm of `Pool`, exposed to Python.
@@ -1933,31 +1905,6 @@ class BotIo:
 
         Errors propagate.
         """
-    def fetch_balancer_factory(
-        self, /, address: str, factories: SupportsGetItem[int, str], block: Any | None = None
-    ) -> str | None:
-        """
-        Find the Balancer V2 factory that owns `address`, by asking each
-        candidate factory's `isPoolFromFactory(address)`.
-
-        Balancer V2 has no enumerable pool registry and deployed pools carry no
-        `factory()` getter, so factory membership is the only on-chain ownership
-        answer — it is what `type_resolution.py` needs to resolve a Balancer
-        address to its registry row (family / variant / class).
-
-        Returns the owning factory as a lowercase `0x` hex string, or `None` when
-        no candidate owns the pool (a factory revision the registry does not
-        carry).
-        """
-    def fetch_balancer_pool_id(self, /, address: str, block: Any | None = None) -> Any:
-        """
-        Fetch a Balancer pool's `pool_id` via `getPoolId()`.
-
-        Mirrors `balancer_builder_base.py::_fetch_pool_id`. Returns the raw
-        32-byte `bytes32` value (no decode — bytes32 is already 32 bytes).
-
-        Errors propagate.
-        """
     def fetch_balancer_rate(self, /, provider_address: str, block: Any | None = None) -> Any:
         """
         Fetch a single Balancer rate provider's rate via `getRate()`.
@@ -2048,21 +1995,6 @@ class BotIo:
         Fetch an `exchanges` row by its FK id — hydrates the
         `pool.exchange` relationship (`factory` / `deployer`). `None` when absent
         or no path.
-        """
-    def fetch_factory_address(self, /, address: str) -> str | None:
-        """
-        Fetch the factory address for a V2-style pool, performing the full
-        encode -> call -> decode -> checksum choreography in Rust.
-
-        Mirrors `degenbot/builders/type_resolution.py::fetch_factory_from_chain`:
-        encode `factory()`, `eth_call` the pool, ABI-decode the right-aligned
-        20-byte `address`, EIP-55 checksum it. The RPC primitive (`call`)
-        still delegates to the held provider; the *choreography* lives in Rust,
-        called from Python via `PyBotIo`.
-
-        Returns `None` on any provider error, decode failure, or short result —
-        implements the `None`-on-failure contract: a pool whose `factory()`
-        reverts yields `None`, not an error.
         """
     def fetch_pool_row(self, /, chain_id: SupportsIndex, address: str) -> LiquidityPoolRow | None:
         """
@@ -2211,62 +2143,19 @@ class BotIo:
         `AlloyProvider.get_code(addr, block)`. Fallback: delegates to
         `provider.get_code(address, block=block)` (mirrors `SyncPoolIO`).
         """
-    def probe_balancer_pool_type(self, /, address: str, block: Any | None = None) -> BalancerFamily:
+    def resolve_pool_identity(self, /, chain_id: SupportsIndex, address: str) -> PoolIdentity:
         """
-        Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
-        `getAmplificationParameter()` in order. By the time this runs, the pool
-        is already known to be Balancer (via `probe_pool_type`, 14i); this
-        sub-probe distinguishes weighted vs stable.
-
-        Returns:
-        - `BalancerFamily.Weighted` — `getNormalizedWeights()` succeeded.
-        - `BalancerFamily.Stable` — `getAmplificationParameter()` succeeded (and
-          getNormalizedWeights reverted).
+        Resolve one pool's identity through the ONE core ladder — the Python
+        companion's projection seam. The structured answer (species, family,
+        variant, factory, persisted kind) is the same value the pure-Rust
+        consumer resolves; the companion keeps no ladder of its own.
 
         Errors:
-        - `PyValueError` — neither method responded (raises so the Python
-          identity probe can name the pool an unmodeled Balancer family; linear
-          pools unsupported).
-        """
-    def probe_pool_type(self, /, address: str, block: Any | None = None) -> int:
-        """
-        Probe a pool's type by trying method calls in order.
-
-        Mirrors `type_resolution.py::resolve_pool_type_by_probing`: V3
-        (`slot0()`), V2 (`getReserves()`), Balancer (`getPoolId()` +
-        `getNormalizedWeights()` sub-probe), then the typed Curve leg
-        (`coins(0)`, either supported coin-getter shape). A selector counts as
-        answered only with returndata — a revert or a successful empty return
-        (the artifact a non-reverting fallback, or an EOA's `eth_call`,
-        produces) is absence — so the raw presence arms cannot acquire a
-        family by artifact, and a non-Curve pool never pays a Curve probe.
-        Returns the code identifying which probe succeeded so the Python
-        caller can construct a `PoolTypeDescriptor` from the registry.
-
-        Returns the 1-based `u8` code of the
-        ``degenbot.types.pool_type.PoolProbe`` member (the `curve_math`
-        `try_from_u8` crossing convention):
-        - `PoolProbe.V2` (1) — V2 constant-product pool.
-        - `PoolProbe.V3` (2) — V3 concentrated-liquidity pool.
-        - `PoolProbe.BALANCER_WEIGHTED` (3) — Balancer weighted pool.
-        - `PoolProbe.BALANCER_STABLE` (4) — Balancer stable pool.
-        - `PoolProbe.STABLESWAP` (5) — Curve: a supported Curve coin getter
-          answered (`coins(uint256)`, or the legacy `coins(int128)`).
-
-        Keep the `match` below in lock-step with `PoolProbe`'s member order —
-        a new `PoolFamily` variant fails this match to compile until its wire
-        code is assigned on both sides.
-
-        Each probe is a fire-and-forget `call` — only whether it answered
-        with returndata, or (for `coins`) returned a decodable address,
-        matters. A revert or empty return advances to the next probe; a
-        garbage `coins` return is not Curve.
-
-        Errors:
-        - `PyValueError` — no identity selector answered
-          (`PoolBuilderError::UnknownPoolIdentity`); the Python caller wraps
-          this as `DegenbotValueError`.
-        - `PyRuntimeError` — a non-revert provider failure.
+        - `PyValueError` — a typed identity refusal (an unknown DB kind, an
+          unknown identity, an unsupported or contradictory identity); the
+          caller wraps as `DegenbotValueError`.
+        - `PyRuntimeError` / `DbError` — a transport or database failure,
+          which is never a classification.
         """
     def update_erc20_token_metadata(
         self,
@@ -3904,10 +3793,15 @@ class PoolConstructionRequest:
         """
     @staticmethod
     def aerodrome_v2(
-        address: str, *, block: SupportsIndex | None = None, db: bool = True
+        address: str,
+        *,
+        factory: str | None = None,
+        block: SupportsIndex | None = None,
+        db: bool = True,
     ) -> PoolConstructionRequest:
         """
-        An Aerodrome V2 (volatile/stable) pool.
+        An Aerodrome V2 (volatile/stable) pool (`factory` = the resolved
+        identity's factory, consumed instead of re-read).
         """
     @staticmethod
     def balancer_stable(
@@ -3927,11 +3821,14 @@ class PoolConstructionRequest:
         *,
         factories: SupportsGetItem[int, str] | None = None,
         invariant_version: SupportsIndex | None = None,
+        factory: str | None = None,
         block: SupportsIndex | None = None,
         db: bool = True,
     ) -> PoolConstructionRequest:
         """
-        A Uniswap V3 concentrated-liquidity pool.
+        A Uniswap V3 concentrated-liquidity pool (`factory` = the resolved
+        identity's factory, consumed by the route's rung decision and the
+        build instead of a second `factory()` read).
         """
     @staticmethod
     def curve(
@@ -3954,6 +3851,12 @@ class PoolConstructionRequest:
     def factories(self, /) -> list[str]:
         """
         V3 factory rungs for the address→identity derivation.
+        """
+    @property
+    def factory(self, /) -> str | None:
+        """
+        The resolved identity's factory — consumed by the route and the build
+        instead of a second `factory()` read (`None` = the route reads once).
         """
     @property
     def family(self, /) -> str:
@@ -4033,10 +3936,15 @@ class PoolConstructionRequest:
         """
     @staticmethod
     def v2(
-        address: str, *, block: SupportsIndex | None = None, db: bool = True
+        address: str,
+        *,
+        factory: str | None = None,
+        block: SupportsIndex | None = None,
+        db: bool = True,
     ) -> PoolConstructionRequest:
         """
-        A Uniswap-style V2 constant-product pool.
+        A Uniswap-style V2 constant-product pool (`factory` = the resolved
+        identity's factory, consumed instead of re-read).
         """
     @property
     def variant(self, /) -> str | None:
@@ -4055,6 +3963,44 @@ class PoolConstructionRequest:
         """
         A Balancer V2 weighted pool — `vault` is required, so it cannot be
         omitted at construction.
+        """
+
+@final
+class PoolIdentity:
+    """
+    The ONE resolved pool identity, projected for the Python companion —
+    structured facts (species, family, variant, factory, persisted kind),
+    never a Python class name. The core
+    ([`degenbot_bot::bot_core::ResolvedPoolIdentity`]) is the semantic owner;
+    this is its seam projection, and the companion's class selection reads it.
+    """
+    @property
+    def factory(self, /) -> str | None:
+        """
+        The factory evidence, EIP-55 checksummed; `None` for the factory-less
+        identities (Curve; a Balancer revision no registered factory claims).
+        """
+    @property
+    def family(self, /) -> str:
+        """
+        The family spelling (the Python `PoolFamily` values).
+        """
+    @property
+    def persisted_kind(self, /) -> str:
+        """
+        The persisted `pools.kind` discriminator this identity carries.
+        """
+    @property
+    def species(self, /) -> str | None:
+        """
+        The species-manifest spelling this identity's persisted kind names
+        (`"uniswap_v3"`, …), or `None` for a kind the manifest does not carry.
+        """
+    @property
+    def variant(self, /) -> str | None:
+        """
+        The fork spelling (`"sushiswap"`, `"aerodrome"`,
+        `"balancer_stable"`, …); `None` is the canonical Uniswap identity.
         """
 
 @final
@@ -5250,7 +5196,6 @@ def __getattr__(name: str) -> Incomplete: ...
 __all__ = [
     "ArbitrageEngine",
     "BalanceVectorView",
-    "BalancerFamily",
     "BalancerStableView",
     "BalancerWeightedView",
     "BootRefused",
@@ -5281,6 +5226,7 @@ __all__ = [
     "PoolBuildDecodeError",
     "PoolBuildRpcError",
     "PoolConstructionRequest",
+    "PoolIdentity",
     "PoolKind",
     "PoolRegistrationError",
     "PoolTickCoverage",

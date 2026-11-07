@@ -56,6 +56,16 @@ BROKEN_POOL = "0x753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB"
 
 _ONE = 10**18
 
+# The shipped chain-1 Balancer weighted factory rows (the membership walk's
+# candidate set).
+_BALANCER_WEIGHTED_FACTORIES = (
+    "0x8E9aa87E45e92bad84D5F8DD1bff34Fb92637dE9",
+    "0xcC508a455F5b0073973107Db6a878DdBDab957bC",
+    "0x5Dd94Da3644DDD055fcf6B3E1aa310Bb7801EB8b",
+    "0x897888115Ada5773E02aA29F775430BFB5F34c51",
+    "0xA5bf2ddF098bb0Ef6d120C98217dD6B141c74EE0",
+)
+
 
 def _selector(signature: str) -> str:
     """4-byte function selector (lowercase hex, ``0x``-prefixed)."""
@@ -93,6 +103,11 @@ def _blocks(
 ) -> dict[str, dict]:
     """One recorded block serving the reads a weighted-pool build makes."""
     calls = {
+        # The identity ladder's own reads (recorded like the real chain
+        # answers them for a Balancer pool): `factory()` reverts (a deployed
+        # Balancer pool carries no getter), and every registered Balancer
+        # factory answers `isPoolFromFactory` with a revert/false.
+        _call_key(pool, "factory()"): None,
         _call_key(pool, "getPoolId()"): POOL_ID,
         # A single dynamic return value encodes as an offset word plus the array.
         _call_key(pool, "getNormalizedWeights()"): (
@@ -105,6 +120,8 @@ def _blocks(
         _call_key(TOKEN0, "decimals()"): _word_uint(token0_decimals),
         _call_key(TOKEN1, "decimals()"): _word_uint(18),
     }
+    for factory in _BALANCER_WEIGHTED_FACTORIES:
+        calls[_call_key(factory, "isPoolFromFactory(address)", _word_address(pool))] = None
     if omit is not None:
         del calls[omit]
     return {str(BLOCK): {"timestamp": 1_700_000_000, "calls": calls, "code": {}}}

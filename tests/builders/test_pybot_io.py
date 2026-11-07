@@ -15,15 +15,16 @@ route a real builder through `BotIo`; that's the 14a follow-on (one builder's
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
-from degenbot.types.pool_type import PoolProbe
 from degenbot.utils.bytes import to_bytes
 from tests.helpers.seam import AlloyProvider as RustAlloyProvider
-from tests.helpers.seam import BalancerFamily, BotIo
+from tests.helpers.seam import BotIo
 
 # A minimal real offline provider (recorded JSON, no RPC) for tests that need a
 # valid `BotIo` provider but don't exercise specific RPC responses (DB handle
@@ -68,34 +69,90 @@ def test_pybot_io_satisfies_pool_io_protocol(method: str):
     assert hasattr(io, method), f"BotIo missing PoolIO method {method!r}"
 
 
-# === I/O choreography methods ===
+# === Pool identity resolution (the ONE core ladder) ===
 #
-# `fetch_factory_address` is the first Rust-owned choreography method on `BotIo`:
-# the multi-step (encode `factory()` selector -> `eth_call` -> ABI-decode
-# `address` -> EIP-55 checksum) work that `fetch_factory_from_chain` in
-# `type_resolution.py` would otherwise do in Python, now reachable as a single
-# method. The RPC primitive (`call`) still delegates to the held provider; the
-# *choreography* -- the orchestration of those 4 steps -- lives in Rust, so
-# builders call one method from Python via `BotIo`.
+# `resolve_pool_identity` is the Python companion's projection seam: the core
+# ladder (DB kind -> registered species/factory -> the positive V3/V2/Balancer/
+# Curve probes, with Balancer factory membership) answers a STRUCTURED
+# identity — species / family / variant / factory / persisted kind — and these
+# tests pin the typed projection crossing: never a Python class name, and a
+# refusal is a typed error, never a classification. The ladder's own arms are
+# core-side (`degenbot-bot`'s `pool_identity` tests).
+
+_FACTORY_SEL = function_selector("factory()").hex()
+_GET_RESERVES_SEL = function_selector("getReserves()").hex()
+_SLOT0_SEL = function_selector("slot0()").hex()
+_GET_POOL_ID_SEL = function_selector("getPoolId()").hex()
+_COINS_UINT_CALLDATA = (function_selector("coins(uint256)") + (0).to_bytes(32, "big")).hex()
+_COINS_INT128_CALLDATA = (function_selector("coins(int128)") + (0).to_bytes(32, "big")).hex()
 
 
-class _FactoryCallProvider:
-    """Provider double that returns an ABI-encoded factory address for `factory()`.
+def _identity_cassette(calls: dict[str, str | None]) -> RustAlloyProvider:
+    """An `OfflineProvider` cassette of identity-selector answers.
 
-    Mirrors ``AlloyProvider.call(*, to, data, block)`` (kw-only) so it stays
-    compatible with ``BotIo``'s kw-only forward contract.
+    A `None` value is the recorded-revert shape (selector absent); the
+    unrecorded call faults, so a cassette carries exactly the calls the ladder
+    must make. No Python double (O3).
     """
+    pool_addr = "aa" * 20
+    recorded = {f"0x{pool_addr}:0x{key}": value for key, value in calls.items()}
+    return RustAlloyProvider.offline_from_json_string(
+        json.dumps({
+            "chain_id": 1,
+            "block_number": 100,
+            "timestamp": 1_700_000_000,
+            "calls": recorded,
+            "code": {},
+        })
+    )
 
-    def __init__(self, factory_raw: str) -> None:
-        # factory_raw is the 40-hex-char lowercase address (no 0x prefix),
-        # ABI-encoded right-aligned in a 32-byte word -- what a real
-        # `factory()` call returns.
-        self._encoded = abi_encode(types=["address"], args=[factory_raw])
-        self.calls: list[tuple[str, bytes]] = []  # (to, data)
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
-        self.calls.append((to, data))
-        return to_bytes(self._encoded)
+def test_resolve_pool_identity_projects_the_registered_species_identity():
+    """A registered factory IS the identity: the structured answer crosses
+    typed (species/family/variant/factory/persisted kind) and the projection is
+    complete — the class selection reads it, and no class name crosses back."""
+    # SushiSwap V3 mainnet factory — a shipped species-manifest row.
+    factory = "bACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"
+    provider = _identity_cassette({_FACTORY_SEL: "00" * 12 + factory})
+    identity = BotIo(provider=provider).resolve_pool_identity(chain_id=1, address="0x" + "aa" * 20)
+    assert identity.species == "sushiswap_v3"
+    assert identity.family == "concentrated_liquidity"
+    assert identity.variant == "sushiswap"
+    assert identity.persisted_kind == "sushiswap_v3"
+    assert identity.factory == get_checksum_address("0x" + factory)
+
+
+def test_resolve_pool_identity_projects_the_factory_less_curve_identity():
+    """Discovery-only identity: no `factory()` getter and a positive Curve coin
+    getter — the generic Curve identity, typed."""
+    provider = _identity_cassette({
+        _FACTORY_SEL: None,
+        _GET_POOL_ID_SEL: None,
+        _SLOT0_SEL: None,
+        _GET_RESERVES_SEL: None,
+        _COINS_UINT_CALLDATA: "00" * 12 + "11" * 20,
+    })
+    identity = BotIo(provider=provider).resolve_pool_identity(chain_id=1, address="0x" + "aa" * 20)
+    assert identity.species is None
+    assert identity.family == "stableswap"
+    assert identity.variant is None
+    assert identity.persisted_kind == "stableswap"
+    assert identity.factory is None
+
+
+def test_resolve_pool_identity_refuses_an_unknown_identity():
+    """Nothing positive names the pool: the typed refusal crosses as an error,
+    never a family."""
+    provider = _identity_cassette({
+        _FACTORY_SEL: None,
+        _GET_POOL_ID_SEL: None,
+        _SLOT0_SEL: None,
+        _GET_RESERVES_SEL: None,
+        _COINS_UINT_CALLDATA: None,
+        _COINS_INT128_CALLDATA: None,
+    })
+    with pytest.raises(ValueError, match="no identity selector answered"):
+        BotIo(provider=provider).resolve_pool_identity(chain_id=1, address="0x" + "aa" * 20)
 
 
 class _Erc20MetadataProvider:
@@ -224,189 +281,6 @@ class _StringFieldProvider:
         return to_bytes(self._response)
 
 
-def _probe_offline_provider(
-    succeed: set[str],
-    *,
-    coins_answers: bool = False,
-    coins_int128_answers: bool = False,
-    raw_presence_empty: bool = False,
-    record_curve_calls: bool = True,
-) -> RustAlloyProvider:
-    """An `OfflineProvider` cassette modelling a probe contract.
-
-    Every identity selector is recorded explicitly: a `None` value (the
-    recorded-revert shape, mirroring a live selector-absent revert) unless it
-    is named in `succeed`. Both `coins(0)` getter shapes need their index word
-    in the calldata, so each is keyed by full calldata and recorded as a revert
-    unless its `*_answers` flag is set. With `record_curve_calls=False` the
-    coin-getter keys are omitted entirely: the offline provider faults on an
-    unrecorded call, so that omission is the tripwire proving a classification
-    never consults the Curve leg. No Python double (O3).
-    """
-    import json
-
-    pool_addr = "aa" * 20
-    # `raw_presence_empty` records the non-reverting-fallback shape: the raw
-    # presence probes "answer" with empty returndata (the same artifact an
-    # EOA's `eth_call` produces).
-    empty: str = "" if raw_presence_empty else "00" * 32
-    calls: dict[str, str | None] = {f"0x{pool_addr}:0x{sel}": None for sel in _PROBE_SELECTORS}
-    for sel in succeed:
-        calls[f"0x{pool_addr}:0x{sel}"] = empty
-    if record_curve_calls:
-        calls[f"0x{pool_addr}:0x{_COINS_UINT_CALLDATA}"] = (
-            "00" * 12 + "11" * 20 if coins_answers else None
-        )
-        calls[f"0x{pool_addr}:0x{_COINS_INT128_CALLDATA}"] = (
-            "00" * 12 + "22" * 20 if coins_int128_answers else None
-        )
-    return RustAlloyProvider.offline_from_json_string(
-        json.dumps({
-            "chain_id": 1,
-            "block_number": 100,
-            "timestamp": 1_700_000_000,
-            "calls": calls,
-            "code": {},
-        })
-    )
-
-
-_SLOT0 = function_selector("slot0()").hex()
-_GET_RESERVES = function_selector("getReserves()").hex()
-_GET_POOL_ID = function_selector("getPoolId()").hex()
-_GET_NORMALIZED_WEIGHTS = function_selector("getNormalizedWeights()").hex()
-
-_PROBE_SELECTORS = (_SLOT0, _GET_RESERVES, _GET_POOL_ID, _GET_NORMALIZED_WEIGHTS)
-# coins(uint256) with index 0 — the ABI decoder rejects a bare selector.
-_COINS_UINT_CALLDATA = (function_selector("coins(uint256)") + (0).to_bytes(32, "big")).hex()
-# coins(int128) with index 0 — the legacy coin-getter shape old registry pools
-# expose instead of `coins(uint256)`.
-_COINS_INT128_CALLDATA = (function_selector("coins(int128)") + (0).to_bytes(32, "big")).hex()
-
-
-def test_pybot_io_probe_pool_type_returns_slot0_for_v3():
-    """When slot0() succeeds, probe returns the V3 probe code."""
-    io = BotIo(provider=_probe_offline_provider({_SLOT0}))
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.V3
-
-
-def test_pybot_io_probe_pool_type_returns_getreserves_for_v2():
-    """When slot0() reverts but getReserves() succeeds, probe returns the V2 code."""
-    io = BotIo(provider=_probe_offline_provider({_GET_RESERVES}))
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.V2
-
-
-def test_pybot_io_probe_pool_type_returns_balancer_weighted():
-    """When getPoolId() + getNormalizedWeights() succeed, probe returns the weighted code."""
-    io = BotIo(provider=_probe_offline_provider({_GET_POOL_ID, _GET_NORMALIZED_WEIGHTS}))
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.BALANCER_WEIGHTED
-
-
-def test_pybot_io_probe_pool_type_returns_balancer_stable():
-    """getPoolId() succeeds, getNormalizedWeights() reverts → stable code."""
-    io = BotIo(provider=_probe_offline_provider({_GET_POOL_ID}))
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.BALANCER_STABLE
-
-
-def test_pybot_io_probe_pool_type_raises_for_unknown_identity():
-    """When no identity selector answers, probe raises (never a Curve tag)."""
-    io = BotIo(provider=_probe_offline_provider(set()))
-    with pytest.raises(ValueError, match="unknown pool identity"):
-        io.probe_pool_type("0x" + "aa" * 20)
-
-
-def test_pybot_io_probe_pool_type_returns_stableswap_when_coins_answers():
-    """coins(uint256) answering with an address → the positive Curve tag."""
-    io = BotIo(provider=_probe_offline_provider(set(), coins_answers=True))
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
-
-
-def test_pybot_io_probe_pool_type_returns_stableswap_for_the_legacy_int128_shape():
-    """The legacy Curve shape (`coins(int128)` only) is positive Curve identity.
-
-    Chain shape: mainnet Curve registry pool 4/49
-    0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27 at the registry sweep pin
-    (``tests/sweep_pin.py``) reverts on `coins(uint256)` and answers
-    `coins(int128)`. Both coin-getter shapes are
-    the supported Curve interface, so the probe answers STABLESWAP here —
-    never the unknown-identity refusal that would break this pool's
-    construction.
-    """
-    io = BotIo(provider=_probe_offline_provider(set(), coins_int128_answers=True))
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
-
-
-def test_pybot_io_probe_pool_type_curve_leg_decides_when_presence_arms_answer_empty():
-    """Empty presence answers decline; the Curve leg names the pool.
-
-    Chain shape: mainnet Curve registry pool 39/49
-    0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5 — a non-reverting fallback
-    answers `slot0()` / `getReserves()` / `getPoolId()` with empty returndata
-    (the same artifact an EOA's `eth_call` produces) while `coins(uint256)`
-    answers with a decodable address. Empty returndata is absence, so the
-    chain reaches the typed Curve leg: the probe answers STABLESWAP, never an
-    artifact family.
-    """
-    io = BotIo(
-        provider=_probe_offline_provider(
-            {_SLOT0, _GET_RESERVES, _GET_POOL_ID},
-            coins_answers=True,
-            raw_presence_empty=True,
-        )
-    )
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
-
-
-def test_pybot_io_probe_pool_type_empty_returndata_is_absence():
-    """A successful empty return is absence, never presence.
-
-    The EOA / non-reverting-fallback artifact in full: every raw selector
-    "answers" with empty returndata and no coin getter answers. Nothing
-    positive names a pool, so the probe must refuse — never hand an artifact
-    family to the caller.
-    """
-    io = BotIo(
-        provider=_probe_offline_provider(
-            {_SLOT0, _GET_RESERVES, _GET_POOL_ID},
-            raw_presence_empty=True,
-        )
-    )
-    with pytest.raises(ValueError, match="unknown pool identity"):
-        io.probe_pool_type("0x" + "aa" * 20)
-
-
-def test_pybot_io_probe_pool_type_classifies_v3_without_consulting_curve():
-    """A nonempty `slot0()` answer decides V3 with no Curve round trip.
-
-    The cassette records no coin-getter calls at all (the offline provider
-    faults on unrecorded calls), so this classification holds only if the
-    Curve leg is never consulted: a V3 build must not pay for — or risk —
-    Curve probes.
-    """
-    io = BotIo(provider=_probe_offline_provider({_SLOT0}, record_curve_calls=False))
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.V3
-
-
-def test_pybot_io_probe_pool_type_classifies_v2_without_consulting_curve():
-    """A nonempty `getReserves()` answer decides V2 with no Curve round trip.
-
-    The Camelot V2 shape: the cassette records no coin-getter calls (the
-    offline provider faults on unrecorded calls), so the V2 classification
-    proves the Curve leg was never consulted.
-    """
-    io = BotIo(provider=_probe_offline_provider({_GET_RESERVES}, record_curve_calls=False))
-    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.V2
-
-
-# === V3 tick bitmap + tick data RPCs ===
-#
-# `fetch_tick_bitmap` and `fetch_tick_data` own the two parameterized-call
-# sub-choreographies that `_fetch_v3` (tick_data_fetcher.py) would otherwise
-# run in Python.
-# New pattern: signed-integer argument encoding (int16 for word_position,
-# int24 for tick). The bitmap iteration + dict-building stays Python-side.
-
-
 class _TickDataProvider:
     """Provider returning canned tickBitmap + ticks responses."""
 
@@ -447,72 +321,6 @@ class _V4TickDataProvider:
             return to_bytes(abi_encode(types=["uint128", "int128"], args=[self._lg, self._ln]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
-
-
-class _BalancerOfflineProbeProvider:
-    """An `OfflineProvider` cassette answering the two Balancer sub-type probes.
-
-    `WEIGHTS_SEL` (`getNormalizedWeights()`) and `AMP_SEL`
-    (`getAmplificationParameter()`) map to either an ABI-encoded result hex or
-    `None` (revert), mirroring the real builder flow against the Rust
-    transport (no Python double, O3).
-    """
-
-    WEIGHTS_SEL = "0xf89f27ed"  # getNormalizedWeights()
-    AMP_SEL = "0x6daccffa"  # getAmplificationParameter()
-
-    @classmethod
-    def build(cls, pool_addr: str, weights_success, amp_success) -> RustAlloyProvider:
-        import json as _json
-
-        calls = {f"0x{pool_addr}:{cls.WEIGHTS_SEL}": weights_success}
-        calls[f"0x{pool_addr}:{cls.AMP_SEL}"] = amp_success
-        return RustAlloyProvider.offline_from_json_string(
-            _json.dumps({
-                "chain_id": 1,
-                "block_number": 100,
-                "timestamp": 1_700_000_000,
-                "calls": calls,
-                "code": {},
-            })
-        )
-
-
-def test_pybot_io_probe_balancer_pool_type_returns_weighted():
-    """When getNormalizedWeights() succeeds, probe answers Weighted."""
-    pool_addr = "aa" * 20
-    weights = [5 * 10**17, 5 * 10**17]
-    encoded = abi_encode(types=["uint256[]"], args=[weights]).hex()
-    provider = _BalancerOfflineProbeProvider.build(
-        pool_addr, weights_success=encoded, amp_success=None
-    )
-    assert (
-        BotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr)
-        is BalancerFamily.Weighted
-    )
-
-
-def test_pybot_io_probe_balancer_pool_type_returns_stable():
-    """When getNormalizedWeights() reverts but getAmplificationParameter()
-    succeeds, probe answers Stable."""
-    pool_addr = "aa" * 20
-    amp_payload = abi_encode(types=["uint256", "bool", "uint256"], args=[2_000, False, 1000]).hex()
-    provider = _BalancerOfflineProbeProvider.build(
-        pool_addr, weights_success=None, amp_success=amp_payload
-    )
-    assert (
-        BotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr) is BalancerFamily.Stable
-    )
-
-
-def test_pybot_io_probe_balancer_pool_type_raises_when_neither_works():
-    """When both probes revert, raise ValueError (surfaces as Python error)."""
-    pool_addr = "aa" * 20
-    provider = _BalancerOfflineProbeProvider.build(
-        pool_addr, weights_success=None, amp_success=None
-    )
-    with pytest.raises(ValueError):
-        BotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr)
 
 
 # === V4 slot0 + liquidity RPCs ===
@@ -621,21 +429,6 @@ def _recorded_factory_fixture() -> str:
     })
 
 
-def test_pybot_io_native_alloy_fetch_factory_address():
-    """Native alloy path: `fetch_factory_address` against a recorded
-    `OfflineProvider` (Rust transport) returns the EIP-55 checksum — no Python
-    provider round-trip (the offline shell holds the `PyAlloyProvider`)."""
-    from tests.helpers.seam import AlloyProvider as RustAlloyProvider
-
-    expected = "0x66f9664f97F2b50F62D13eA064982f936dE76657"
-    pool_address = "0x" + "ab" * 20
-
-    provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
-    io = BotIo(provider=provider)
-
-    assert io.fetch_factory_address(pool_address) == expected
-
-
 def test_pybot_io_native_alloy_poolio_surface():
     """Native alloy path: the `PoolIO` surface (`get_block_number`, `get_code`)
     runs against the Rust offline transport and returns the expected shapes."""
@@ -671,10 +464,11 @@ def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
         "chain_id": 1,
         "block_number": 100,
         "timestamp": 1_700_000_000,
-        # balanceOf(address) reverted (null); factory() still succeeds.
+        # balanceOf(address) reverted (null); factory() + slot0() still succeed.
         "calls": {
             f"0x{token_addr}:{reverting_balance_of}": None,
             f"0x{token_addr}:0xc45a0155": encoded,
+            f"0x{token_addr}:0x{_SLOT0_SEL}": "00" * 32,
         },
         "code": {f"0x{token_addr}": "60806040"},
     }
@@ -687,8 +481,10 @@ def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
 
     with pytest.raises(ContractLogicError):
         bot.fetch_token_balance(handle, "0x" + "ff" * 20)
-    # The factory() call still succeeds (not the reverted selector).
+    # The identity ladder still answers (the revert is selector-scoped, never a
+    # poisoned provider): `factory()` + `slot0()` both succeed and the resolved
+    # identity carries the factory evidence.
     io = BotIo(provider=provider)
-    assert (
-        io.fetch_factory_address("0x" + token_addr) == "0x66f9664f97F2b50F62D13eA064982f936dE76657"
-    )
+    identity = io.resolve_pool_identity(chain_id=1, address="0x" + token_addr)
+    assert identity.factory == "0x66f9664f97F2b50F62D13eA064982f936dE76657"
+    assert identity.family == "concentrated_liquidity"

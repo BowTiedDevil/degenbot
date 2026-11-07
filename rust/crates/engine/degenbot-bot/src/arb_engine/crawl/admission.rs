@@ -761,11 +761,21 @@ impl RegistrationAdmission {
     ) -> Result<u64, ConstructionRefusal> {
         let request = match hop {
             DiscoveredHop::V2 { address } => match self.reserve_pair_arm(*address, block).await? {
-                ReservePairArm::V2 => PoolConstruction::V2 { address: *address },
-                ReservePairArm::Aerodrome => PoolConstruction::AerodromeV2 { address: *address },
+                // The crawl resolves no identity, so no factory evidence
+                // rides the request: the route reads it once and the build
+                // consumes that read.
+                ReservePairArm::V2 => PoolConstruction::V2 {
+                    address: *address,
+                    factory: None,
+                },
+                ReservePairArm::Aerodrome => PoolConstruction::AerodromeV2 {
+                    address: *address,
+                    factory: None,
+                },
             },
             DiscoveredHop::V3 { address } => PoolConstruction::V3 {
                 address: *address,
+                factory: None,
                 db,
                 // The tick-word fetcher and the slot-layout override are driver
                 // values the crawl never supplies: the door attaches the core's

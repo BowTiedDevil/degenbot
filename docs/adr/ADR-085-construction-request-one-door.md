@@ -5,6 +5,51 @@
 re-suggest the family×verb matrix it deletes. Extends ADR-078's write door from
 registration to construction; applies ADR-082's rule one tier further out.
 
+> **Amendment (implementation): Pool identity resolution has one core home,
+> and the resolved identity feeds the request.** The Context's resolver —
+> `type_resolution.py`'s DB → registry → probe ladder plus the `u8`
+> `PoolProbe` wire code and the `BotIo` probe/factory/balancer choreography
+> methods — is DELETED (ADR-087). Pool identity resolution is one Rust core
+> module, `degenbot_bot::bot_core::pool_builder::pool_identity`, owning the
+> DB-kind lookup (one kind grammar, the exact inverse of the persisted-kind
+> derivation), the registered species/factory matching (the species manifest
+> and the shipped deployment rows), the ONE `factory()` read, the positive
+> V3/V2/Balancer/Curve probes, and the Balancer factory-membership walk.
+> Precedence is DB -> registered species/factory -> positive probes;
+> unknown/contradictory identities, transport failures, and a
+> present-but-unknown DB kind are typed refusals (`PoolIdentityError`), never
+> classifications and never a fall-through to on-chain re-classification. The
+> answer is the structured `ResolvedPoolIdentity` — species, family, variant,
+> factory, persisted kind — never a Python class name; the Python companion
+> receives its projection (`BotIo.resolve_pool_identity` -> `PoolIdentity`)
+> and keeps only its own companion-class decision
+> (`pool_class_for_descriptor`, tested separately).
+>
+> The resolved identity now FEEDS the construction request (this ADR's D1/D3
+> unchanged — the request stays the caller's family-tagged value): the
+> `PoolConstruction`/`PoolConstructionRequest` pair-family arms carry the
+> resolved `factory`, so the route's rung decision and the build consume it
+> instead of issuing a second `factory()` read. NativeToken's protocol-scoped
+> translations and distinct DB rows (ADR-097) are untouched.
+>
+> **Migration notes.** Deleted from the seam and the driver: `BotIo.probe_pool_type`
+> (the `u8` wire code), `BotIo.fetch_factory_address`,
+> `BotIo.fetch_balancer_pool_id`, `BotIo.probe_balancer_pool_type`,
+> `BotIo.fetch_balancer_factory`, the pyclass `BalancerFamily` and its
+> `degenbot.balancer.BalancerFamily` re-export; the Python ladder
+> (`type_resolution.resolve_pool_type` / `resolve_pool_type_by_probing` /
+> `resolve_balancer_descriptor` / `fetch_factory_from_chain`) and
+> `degenbot.types.pool_type.PoolProbe`. Kept: `Bot.resolve_pool_type` and the
+> `PoolTypeDescriptor` the companion binds. Changed:
+> `PoolConstructionRequest.{v2, aerodrome_v2, concentrated_liquidity}` gain the
+> `factory` hint (the resolved identity's factory), and the core
+> `fetch_v2/v3_immutable_data` take the resolved factory instead of re-reading
+> it. A third-party fork spelling resolves through the kind grammar
+> (`<variant>_v2` / `<variant>_v3`); a kind outside the grammar is the loud
+> unknown-kind refusal. The public standalone builders (`build_v2` /
+> `build_v3` / `build_v4` / `build_curve_pool` / `build_balancer_*` /
+> `build_aerodrome_v2`) keep their names, signatures, and disposition.
+
 ## Context
 
 The core owns construction policy — GLOSSARY's **Pool construction** assigns the

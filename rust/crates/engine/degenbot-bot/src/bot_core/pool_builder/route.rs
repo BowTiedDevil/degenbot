@@ -183,9 +183,12 @@ pub(crate) async fn construct_pool(
     block: Option<u64>,
 ) -> Result<ConstructedPool, ConstructionRefusal> {
     let constructed = match request {
-        PoolConstruction::V2 { address } => construct_v2(bot, *address, io, block).await?,
+        PoolConstruction::V2 { address, factory } => {
+            construct_v2(bot, *address, *factory, io, block).await?
+        }
         PoolConstruction::V3 {
             address,
+            factory,
             db,
             fetcher,
             slot_layout,
@@ -194,6 +197,7 @@ pub(crate) async fn construct_pool(
                 bot,
                 route,
                 *address,
+                *factory,
                 *db,
                 fetcher.as_ref(),
                 *slot_layout,
@@ -208,8 +212,8 @@ pub(crate) async fn construct_pool(
             overrides,
             db,
         } => construct_v4(bot, *pool_manager, *pool_id, overrides, *db, io, block).await?,
-        PoolConstruction::AerodromeV2 { address } => {
-            construct_aerodrome_v2(bot, *address, io, block).await?
+        PoolConstruction::AerodromeV2 { address, factory } => {
+            construct_aerodrome_v2(bot, *address, *factory, io, block).await?
         }
         PoolConstruction::Curve {
             address,
@@ -343,6 +347,7 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
 async fn construct_v2(
     bot: &Bot,
     address: Address,
+    factory: Option<Address>,
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<ConstructedPool, ConstructionRefusal> {
@@ -352,7 +357,9 @@ async fn construct_v2(
             built: None,
         });
     }
-    let params = builder::build_v2(bot.chain_id(), address, io, block)
+    // The build consumes the resolved identity's factory (`None` = the build
+    // reads it once) — never a second read beside the resolver's.
+    let params = builder::build_v2_with_factory(bot.chain_id(), address, factory, io, block)
         .await
         .map_err(|err| classify_builder_error(err, address))?;
     // The minted identity rides the fold; capture it before `params` moves
@@ -386,6 +393,7 @@ async fn construct_v3(
     bot: &Bot,
     route: &ConstructionRoute,
     address: Address,
+    factory: Option<Address>,
     db: Option<&dyn TickMapDb>,
     fetcher: Option<&Arc<dyn TickWordSource>>,
     slot_layout: Option<ConcentratedLiquiditySlotLayout>,
@@ -398,16 +406,23 @@ async fn construct_v3(
             built: None,
         });
     }
-    // The rung decision is ONE `factory()` read — a refusal costs one call,
-    // never the full immutable batch (and the decision is a TYPED policy
-    // answer, not an exception to swallow). A served rung proceeds to the
-    // full build, which reads the immutable batch itself.
-    let factory = io
-        .read(address, IPoolIdentity::factoryCall {}, block)
-        .await
-        .map_err(|err| {
-            ConstructionRefusal::Skipped(BuildFailure::Transient(format!("v3 factory read: {err}")))
-        })?;
+    // The rung decision consumes the RESOLVED identity's factory — the
+    // identity module's one `factory()` read, never a second one. A caller
+    // that resolved nothing gets the single fallback read here, whose answer
+    // the build then consumes. A refusal costs one call, never the full
+    // immutable batch (and the decision is a TYPED policy answer, not an
+    // exception to swallow).
+    let factory = match factory {
+        Some(factory) => factory,
+        None => io
+            .read(address, IPoolIdentity::factoryCall {}, block)
+            .await
+            .map_err(|err| {
+                ConstructionRefusal::Skipped(BuildFailure::Transient(format!(
+                    "v3 factory read: {err}"
+                )))
+            })?,
+    };
     if !route.serves(factory) {
         return Err(ConstructionRefusal::UnsupportedFamily {
             address,
@@ -418,9 +433,10 @@ async fn construct_v3(
             ),
         });
     }
-    let mut params = builder::build_v3(bot.chain_id(), address, db, io, block)
-        .await
-        .map_err(|err| classify_builder_error(err, address))?;
+    let mut params =
+        builder::build_v3_with_factory(bot.chain_id(), address, Some(factory), db, io, block)
+            .await
+            .map_err(|err| classify_builder_error(err, address))?;
     // The live-miss backfill source: the driver's fetcher when it supplies one
     // (the legacy Python path), else the core's own source bound to the identity
     // the build just resolved. A pure-Rust consumer supplies nothing and still
@@ -543,6 +559,7 @@ async fn construct_v4(
 async fn construct_aerodrome_v2(
     bot: &Bot,
     address: Address,
+    factory: Option<Address>,
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<ConstructedPool, ConstructionRefusal> {
@@ -553,9 +570,12 @@ async fn construct_aerodrome_v2(
             built: None,
         });
     }
-    let params = builder::build_aerodrome_v2(bot.chain_id(), address, io, block)
-        .await
-        .map_err(|err| classify_builder_error(err, address))?;
+    // The build consumes the resolved identity's factory (`None` = the build
+    // reads it once) — never a second read beside the resolver's.
+    let params =
+        builder::build_aerodrome_v2_with_factory(bot.chain_id(), address, factory, io, block)
+            .await
+            .map_err(|err| classify_builder_error(err, address))?;
     let minted = BuiltIdentity {
         address,
         tokens: vec![params.token0, params.token1],
