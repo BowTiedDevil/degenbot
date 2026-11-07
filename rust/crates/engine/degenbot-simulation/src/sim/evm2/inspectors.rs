@@ -78,7 +78,7 @@ impl Evm2SimInspector {
 
 /// The first 4 bytes of the calldata, zero-padded if shorter (`0x00000000`
 /// for value transfers with no calldata) — mirrors the revm-side selector.
-fn selector_of(input: &Bytes) -> [u8; 4] {
+fn selector_of(input: &[u8]) -> [u8; 4] {
     let mut s = [0u8; 4];
     let n = input.len().min(4);
     s[..n].copy_from_slice(&input[..n]);
@@ -142,7 +142,7 @@ impl Inspector<BaseEvmTypes> for Evm2SimInspector {
             target: message.destination,
             selector: selector_of(&message.input),
             gas_limit: message.gas_limit,
-            data: message.input.clone(),
+            data: message.input.to_bytes(),
             outcome: None,
         });
         None

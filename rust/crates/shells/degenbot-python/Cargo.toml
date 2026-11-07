@@ -53,7 +53,7 @@ degenbot-strategy = { workspace = true, optional = true }
 degenbot-simulation = { workspace = true, optional = true }
 # The engine (ADR-089 cutover) — the in-process probes drive the evm2
 # in-memory DB; optional, riding the `simulation` feature.
-evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, optional = true, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", default-features = false, optional = true, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
 degenbot-workers = { workspace = true, optional = true }
 degenbot-arbitrage = { workspace = true, optional = true, features = ["order-index"] }
 # The core batch executor: the batch assembly + payload-merge policies the

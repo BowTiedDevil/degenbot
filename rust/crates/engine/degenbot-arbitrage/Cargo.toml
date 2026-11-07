@@ -21,9 +21,10 @@ workspace = true
 # engine's.
 degenbot-simulation.workspace = true
 # The evm2 engine (ADR-089 cutover): THE engine — declared directly (not a
-# workspace dep) mirroring degenbot-simulation's declaration;
+# workspace dep) mirroring degenbot-simulation's declaration (same pinned
+# rev, same deliberate absence of a `version` key);
 # `default-features = false` keeps the same surface shape.
-evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = ["asm-keccak", "blst", "c-kzg", "secp256k1", "serde"] }
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", default-features = false, features = ["asm-keccak", "blst", "c-kzg", "secp256k1", "serde"] }
 degenbot-config.workspace = true
 # `BotState` (ADR-003 state owner) — the snapshot surface the dispatch
 # fan-out reads via `Evm2BlockSimHandle`.

@@ -10,7 +10,7 @@ failure class it prevents (with the incident where known), where the gate body
 lives, where its census/data file lives, how to add an entry, and how to run it
 locally.
 
-The eight ratchets:
+The nine ratchets:
 
 | Ratchet | Gate body | Census / data | Local command |
 | --- | --- | --- | --- |
@@ -22,6 +22,7 @@ The eight ratchets:
 | Lint-waiver census | `scripts/hooks/too_many_lines_waivers.py` | `scripts/hooks/too-many-lines-waiver-census.txt` | `just check-too-many-lines-waivers` |
 | Capability catalog | `rust/crates/facade/degenbot/tests/architecture_gates.rs::capability_catalog_covers_every_public_crate` | `docs/capabilities.md` (the catalog itself) | `just check-capability-catalog` |
 | Dependency charter | `rust/crates/facade/degenbot/tests/architecture_gates.rs::dependency_charter_is_respected` | `rust/crates/facade/degenbot/tests/dependency_charter.txt` | `just check-dependency-charter` |
+| Publish-blocked census | `scripts/publish_blocked.py` | `scripts/publish-blocked-census.txt` | `just check-publish-blocked` |
 
 ---
 
@@ -376,6 +377,91 @@ fails the leg with `uv: not found` before clippy starts.
 the real gate with `--root` pointed at a throwaway tree and requires the red path for a
 fresh site, both reason-drift directions, the stale row, the breached ceiling, and the
 fail-closed exits.
+
+---
+
+
+## 7. Publish-blocked census
+
+
+**Failure class.** `cargo publish` rewrites every path and git dependency at
+packaging: the source key is stripped and what remains is a version requirement
+that must resolve on crates.io. A member whose retained requirements cannot
+resolve there does not upload at all, and nothing watched which members those
+were. The publish oracle (`just publish-dry-run`) then died on the first one,
+taking the manifest and file-inclusion coverage of every later member down
+with it — a failure that names one dependency and hides the population. The
+instance behind this gate: the engine family (`evm2`, `evm2-jit`, and
+siblings) is declared at a pinned git rev with no `version` key (ADR-089
+clause 2), because the registry holds only upstream's name reservation —
+so every member carrying one is rejected at packaging outright, and the
+engine closure (`degenbot-simulation` and `degenbot-arbitrage` at the sites,
+plus every member whose retained requirements reach them) is withheld at
+this version.
+
+
+**Gate body.** `scripts/publish_blocked.py`, over the manifests `cargo
+metadata --no-deps` reports. A *site* is a dependency the published manifest
+retains in rewritten form: a version-less dev-dependency is the one shape
+cargo strips (so it blocks nothing); a version-less path or git dependency in
+any other slot is rejected outright; a version-keyed path or git dependency
+survives as that version requirement, which for a non-workspace package names
+a crates.io release of code developed elsewhere — the member is withheld until
+the dependency is declared as a registry dependency, which is also the only
+shape in which what was tested is what was published. A member whose retained
+requirement reaches a withheld member is withheld in turn, so the population
+is closed over dependents.
+
+The reconciliation is **bidirectional and fails closed**:
+
+- a withheld member with no census row fails — the population cannot grow in
+  silence, and the run cannot quietly lose coverage;
+- a row with no withheld member fails — a member that packages again deletes
+  its row in the same change;
+- a row's reason must equal the reason the manifests imply, both ways;
+- a missing census, an unparseable row, a workspace with no publishable
+  member, or a `cargo metadata` failure fails instead of certifying a tree it
+  did not examine.
+
+Exit codes: `0` reconciled, `1` findings, `2` refused to certify.
+
+
+**Census.** `scripts/publish-blocked-census.txt`, one row per withheld member:
+`<member>` then a TAB then that reason **verbatim** from `--rows` (the git and
+path dependencies the published form retains, then the withheld members those
+requirements reach). The census mirrors the manifests and never improves on
+them — that mirroring is what keeps the two from drifting. There is no
+reasonless-high-water line here, unlike section 6: a row's reason is computed,
+so no row can state less than the site it mirrors.
+
+
+**Adding an entry.** The population's destination is empty: when the withheld
+members' external dependencies become registry dependencies (the engine on
+crates.io, or the engine vendored as workspace members), the rows go with them
+and the publish oracle covers every member again. A member that can package
+deletes its row in the same change; a member entering the population lands
+only as a reviewed row carrying the reason the manifests imply.
+
+
+**Regenerating.** `just check-publish-blocked --rows` prints the rows the
+manifests imply (sorted, reasons included); paste them over the rows section.
+The header is maintained by hand.
+
+
+**Run it.** `just check-publish-blocked` — also a dependency of
+`lint-rust-check`, so `just test`, the pre-push `rust-clippy` gate and CI run
+it over a complete tree, and the `publish-blocked` pre-commit hook runs it
+when a commit touches a manifest, the census, or the gate's own script.
+`just publish-dry-run` reconciles the census first and then withholds exactly
+the recorded members from `cargo publish --dry-run`, keeping their
+file-inclusion coverage through `cargo package --list` (which enumerates what
+a member would ship without resolving a single dependency). The script imports
+nothing outside the standard library and drives only `cargo metadata --no-deps`,
+so a plain `python3` runs it — the same uv-free constraint as section 6.
+`tests/test_publish_blocked_gate.py` is the committed negative probe: it
+drives the real gate with `--root` pointed at a throwaway workspace and
+requires the red path for a fresh member, both reason-drift directions, the
+stale row, and the fail-closed exits.
 
 ---
 

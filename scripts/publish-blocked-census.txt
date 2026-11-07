@@ -1,0 +1,33 @@
+# publish-blocked census — the publish chain's unpackageable population
+#
+# Gate body: scripts/publish_blocked.py
+# Index: docs/gates.md section 7 "Publish-blocked census".
+#
+# What this file is. `cargo publish` rewrites every path and git dependency at
+# packaging: the source key is stripped and what remains is a version
+# requirement that must resolve on crates.io. A member whose retained
+# requirements cannot resolve there does not upload at all, so `just
+# publish-dry-run` withholds it from the run instead of failing on it — and this
+# census is the record of that withholding. A member is never dropped from the
+# publish oracle by silence: it leaves this file in the same change that lets it
+# package again, and it enters only as a reviewed row.
+#
+# Row format: "<member>" TAB "<reason>", the reason verbatim what
+# `scripts/publish_blocked.py --rows` computes from the manifests (the git/path
+# dependencies the published form retains, then the blocked members those
+# requirements reach). Rows are sorted; the header is maintained by hand.
+#
+# The population's destination is empty. When the withheld members' external
+# dependencies become registry dependencies (the engine on crates.io, or the
+# engine vendored as workspace members), the rows go with them and the publish
+# oracle covers every member again.
+#
+# Regenerate after a manifest change that moves members in or out:
+#
+#     just check-publish-blocked --rows
+#
+degenbot	depends on blocked degenbot-arbitrage, degenbot-batch-executor, degenbot-simulation, degenbot-strategy
+degenbot-arbitrage	git dep evm2 (version-less); depends on blocked degenbot-simulation
+degenbot-batch-executor	depends on blocked degenbot-arbitrage, degenbot-simulation
+degenbot-simulation	git dep evm2 (version-less), git dep evm2-jit (version-less), git dep evm2-jit-build (version-less), git dep evm2-jit-runtime (version-less)
+degenbot-strategy	depends on blocked degenbot-simulation

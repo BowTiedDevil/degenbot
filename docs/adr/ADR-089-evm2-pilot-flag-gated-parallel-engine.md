@@ -89,8 +89,13 @@ inside `degenbot-simulation`'s engine and the `degenbot-arbitrage` strategy's
 trait bounds, nowhere else in production. Two constraints shape the approach:
 
 - **Publish contract.** The workspace publishes crates; `cargo publish`
-  rejects git-only dependencies. An optional git dep carrying a `version`
-  key keeps packaging legal (cargo strips the git source at publish).
+  rewrites every path and git dependency at packaging into a registry
+  requirement that must resolve on crates.io. Measured at packaging
+  (2026-11-07): a `version` key becomes that requirement — `evm2 = "^0.1.0"`
+  against a registry holding only the name reservation — and a version-less
+  dependency outside the dev slots is rejected outright. The declaration
+  shape that follows from this is clause 2; the population it leaves
+  unpackageable is the publish-blocked census (docs/gates.md section 7).
 - **Truth-source risk.** The Tier-3 oracles assume the EVM is ground truth.
   Swapping the truth source without a differential gate would devalue every
   oracle that runs on it.
@@ -111,13 +116,17 @@ the flag.**
 1. One feature, one home: `degenbot-simulation/evm2` gates the
    `src/sim/evm2/` module and its test targets. No default lane enables it;
    no other crate gains an evm2 dependency during the pilot.
-2. The dependency tracks main HEAD (amended 2026-10-30; it initially
-   pinned reth 2.9.0's rev `f93318f`). The feature is opt-in and the
-   differential gate is the drift alarm, so tracking HEAD costs nothing a
-   lane would pay for and buys early warning on upstream API churn — each
-   `cargo update` is a deliberate, reviewed event (MSRV and API churn ride
-   along). `version = "0.1.0"` on the dependency lets `cargo publish`
-   strip the git source.
+2. The dependency is pinned at a commit, the way reth pins it (amended
+   2026-11-07; it initially pinned reth 2.9.0's rev `f93318f`, tracked main
+   HEAD from 2026-10-30, and carried `version = "0.1.0"`). Moving the pin
+   is a deliberate, reviewed event (MSRV and API churn ride along). No
+   `version` key, deliberately: `cargo publish` strips the git source at
+   packaging and keeps a `version` as a crates.io requirement that must
+   resolve, while a version-less dependency outside the dev slots cannot
+   package at all — either way the engine closure is unpackageable while
+   the registry holds only upstream's name reservation, so the publish
+   oracle withholds those members by name (the publish-blocked census,
+   docs/gates.md section 7).
 3. Only pure-Rust precompile backends are enabled (no GMP/MCL/aws-lc native
    builds), matching the revm dependency's backend shape and keeping the
    devcontainer build contract intact.

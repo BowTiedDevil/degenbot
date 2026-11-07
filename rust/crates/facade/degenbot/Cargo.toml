@@ -169,7 +169,7 @@ alloy = { version = "^2.5", features = ["full"] }
 # The engine (ADR-089 cutover) — the parity tests drive the evm2 in-memory DB.
 # No `version` key: `cargo publish` strips git-only dev-deps at packaging, while a
 # `version` becomes a registry requirement that must resolve on crates.io (ADR-089).
-evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", default-features = false, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", default-features = false, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }

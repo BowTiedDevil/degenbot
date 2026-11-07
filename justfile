@@ -488,13 +488,42 @@ check-aave-captures:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --example generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
 
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
-# verification-builds every publishable workspace member in dependency order.
-# ~20-40 min cold. CI's PR gate (check-publish) runs the clean-tree form.
+# verification-builds every workspace member that can package, in dependency
+# order, with the publish-blocked census reconciled FIRST (docs/gates.md
+# section 7). A member whose published manifest would require a dependency
+# crates.io cannot resolve is withheld by name -- never dropped by silence --
+# and keeps its file-inclusion coverage through `cargo package --list`, which
+# enumerates what it would ship without resolving anything. It re-enters the
+# run in the same change its census row goes. ~20-40 min cold with
+# verification; CI's PR gate runs the clean-tree `--no-verify` form.
 publish-dry-run *args:
     #!/usr/bin/env bash
     set -euo pipefail
     cd rust
-    cargo publish --locked --workspace --dry-run --allow-dirty {{ args }}
+    python3 ../scripts/publish_blocked.py --check
+    mapfile -t blocked < <(python3 ../scripts/publish_blocked.py --blocked)
+    excludes=()
+    for member in "${blocked[@]}"; do
+        excludes+=(--exclude "$member")
+        echo "publish-blocked $member: $(cargo package --list --allow-dirty -p "$member" | wc -l) files would package"
+    done
+    cargo publish --locked --workspace --dry-run --allow-dirty "${excludes[@]}" "$@"
+
+
+# The publish-blocked census on its own (docs/gates.md section 7): every member
+# `cargo publish` cannot upload is reconciled against
+# scripts/publish-blocked-census.txt in both directions, so the population the
+# publish oracle withholds is named in the tree and cannot move silently.
+# `--rows` prints the rows the manifests imply (the regeneration form);
+# `--blocked` prints the member names to withhold.
+#
+# Interpreter: a plain `python3`, deliberately NOT `{{ py_run }} python` (same
+# reason as check-too-many-lines-waivers): this gate rides the uv-free Rust
+# lint leg, and the script imports nothing outside the standard library.
+#
+# live-invariant gate (ADR-087 D2): watches the live workspace manifests and the dependency shapes their published forms retain against scripts/publish-blocked-census.txt; not tripwire precedent.
+check-publish-blocked *args:
+    python3 scripts/publish_blocked.py "$@"
 
 # Which publishable members are live on crates.io at the workspace version, and
 # which are not — the audit the release workflow's crates.io leg runs before every
@@ -519,7 +548,7 @@ crates-io-pending *args:
 # shipped crate root, so the lab keeps its `--deny warnings` coverage. The
 # feature-OFF production shape — every dependent compiling without either — is
 # `check-rust-default`'s claim.
-lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-too-many-lines-waivers check-capability-catalog check-dependency-charter check-profile-policy
+lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-too-many-lines-waivers check-capability-catalog check-dependency-charter check-publish-blocked check-profile-policy
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"

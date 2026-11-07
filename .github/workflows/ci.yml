@@ -313,13 +313,16 @@ jobs:
       - name: Build extension
         run: just build-rust-extension
 
-      # Former publish-dry-run job; its rust/ diff gate moved to the `changes`
-      # job. Catches manifest/file-inclusion regressions on every rust change,
-      # long before a tag. --no-verify keeps the PR gate fast (no isolated
-      # build); the verified publish itself is publish-to-crates-io.yml's
-      # pre-publish step plus the real `cargo publish` (always verified —
-      # release policy forbids --no-verify on publishes).
-      - name: Dry-run publish of all publishable members
+      # The publish oracle over every member that can package: catches
+      # manifest/file-inclusion regressions on every rust change, long before
+      # a tag. The members the publish chain cannot upload are withheld by name
+      # against the publish-blocked census (docs/gates.md section 7) and keep
+      # their file-inclusion coverage through `cargo package --list`.
+      # --no-verify keeps the PR gate fast (no isolated build); the verified
+      # publish itself is the release workflow's pre-publish step plus the real
+      # `cargo publish` (always verified — release policy forbids --no-verify
+      # on publishes).
+      - name: Dry-run publish of every member that can package
         run: just publish-dry-run --no-verify
 
   cli-no-python:
