@@ -64,12 +64,13 @@ from tests.golden.oracle import (
 )
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
+from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+    from tests.helpers.seam import Bot
 
 CURVE_PARITY_BLOCK = 24_407_242  # tip minus ~1M
 
@@ -136,9 +137,6 @@ class _DataProvider(FakeCurveDataProvider):
         return self._lp_token_total_supply
 
 
-_PYBOT = Bot()
-
-
 def _load_cassette(path: pathlib.Path) -> dict[str, Any]:
     return json.loads(path.read_bytes())
 
@@ -158,7 +156,7 @@ def _strategies_from_cassette(cassette: dict[str, Any]) -> PoolStrategies:
     )
 
 
-def _build_curve_io_free(cassette: dict[str, Any]) -> CurveStableswapPool:
+def _build_curve_io_free(cassette: dict[str, Any], py_bot: Bot) -> CurveStableswapPool:
     """Build a Curve pool I/O-free from a recorded cassette.
 
     Seeds a :class:`_DataProvider` with the captured virtual_price,
@@ -167,7 +165,7 @@ def _build_curve_io_free(cassette: dict[str, Any]) -> CurveStableswapPool:
     """
     tokens = [
         make_erc20(
-            _PYBOT,
+            py_bot,
             t["address"],
             name=t["name"],
             symbol=t["symbol"],
@@ -190,7 +188,7 @@ def _build_curve_io_free(cassette: dict[str, Any]) -> CurveStableswapPool:
     extra: dict[str, Any] = {}
     if "lp_token" in cassette:
         extra["lp_token"] = make_erc20(
-            _PYBOT,
+            py_bot,
             cassette["lp_token"]["address"],
             name=cassette["lp_token"]["name"],
             symbol=cassette["lp_token"]["symbol"],
@@ -386,7 +384,7 @@ def _build_metapool_io_free(
     the same ``BotState``. A fresh bot per call keeps each
     build isolated (the multiblock parity test rebuilds per block).
     """
-    bot = Bot()
+    bot = new_pool_bot()
     bc = imm["base_pool"]
     btoks = [
         make_erc20(
@@ -531,13 +529,14 @@ def _calc_token_amount_callable(
 
 
 def _run_get_dy_parity(
+    py_bot: Bot,
     golden_factory,
     cassette_path: pathlib.Path,
     get_dy_callable,
 ) -> None:
     golden = golden_factory(chain_id=1, block_number=CURVE_PARITY_BLOCK)
     cassette = _load_cassette(cassette_path)
-    lp = _build_curve_io_free(cassette)
+    lp = _build_curve_io_free(cassette, py_bot)
     n = len(lp.tokens)
 
     with _RecordFork(recording=golden.is_recording) as fork:
@@ -567,9 +566,10 @@ def _run_get_dy_parity(
 
 @pytest.mark.ethereum
 @pytest.mark.onchain_oracle
-def test_curve_tripool_get_dy(golden_factory) -> None:
+def test_curve_tripool_get_dy(golden_factory, py_bot) -> None:
     """Curve 3pool (DAI/USDC/USDT): local calc == golden(get_dy)."""
     _run_get_dy_parity(
+        py_bot,
         golden_factory,
         _TRIPOOL_CASSETTE,
         _get_dy_standard_callable,
@@ -578,9 +578,10 @@ def test_curve_tripool_get_dy(golden_factory) -> None:
 
 @pytest.mark.ethereum
 @pytest.mark.onchain_oracle
-def test_curve_tricrypto_get_dy(golden_factory) -> None:
+def test_curve_tricrypto_get_dy(golden_factory, py_bot) -> None:
     """Curve Tricrypto (WETH/WBTC/USDT): local calc == golden(get_dy uint256)."""
     _run_get_dy_parity(
+        py_bot,
         golden_factory,
         _TRICRYPTO_CASSETTE,
         _get_dy_uint256_callable,
@@ -589,7 +590,7 @@ def test_curve_tricrypto_get_dy(golden_factory) -> None:
 
 @pytest.mark.ethereum
 @pytest.mark.onchain_oracle
-def test_curve_tripool_calc_withdraw_and_token_amount(golden_factory) -> None:
+def test_curve_tripool_calc_withdraw_and_token_amount(golden_factory, py_bot) -> None:
     """Curve 3pool: calc_withdraw_one_coin + calc_token_amount == golden.
 
     Covers the ``test_base_pool`` parity (LP-token-math oracle calls) on the
@@ -598,7 +599,7 @@ def test_curve_tripool_calc_withdraw_and_token_amount(golden_factory) -> None:
     """
     golden = golden_factory(chain_id=1, block_number=CURVE_PARITY_BLOCK)
     cassette = _load_cassette(_TRIPOOL_CASSETTE)
-    lp = _build_curve_io_free(cassette)
+    lp = _build_curve_io_free(cassette, py_bot)
     n = len(lp.tokens)
 
     with _RecordFork(recording=golden.is_recording) as fork:

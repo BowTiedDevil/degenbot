@@ -59,7 +59,6 @@ from tests.golden.oracle import (
 )
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
 from tests.helpers.v4_pool_factory import make_v4_pool
 from tests.uniswap.v4.test_uniswap_v4_liquidity_pool import (
     UNISWAP_V4_QUOTER_ABI,
@@ -68,6 +67,7 @@ from tests.uniswap.v4.test_uniswap_v4_liquidity_pool import (
 
 if TYPE_CHECKING:
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+    from tests.helpers.seam import Bot
 
 UNISWAP_V4_PARITY_BLOCK = 24_407_242  # tip minus ~1M
 
@@ -106,20 +106,18 @@ _FIXED_AMOUNTS = (
     MAX_INT128,
 )
 
-_PYBOT = Bot()
-
 
 def _load_cassette() -> dict[str, Any]:
     return json.loads(_CASSETTE_PATH.read_bytes())
 
 
-def _build_eth_usdc_v4_io_free() -> UniswapV4Pool:
+def _build_eth_usdc_v4_io_free(py_bot: Bot) -> UniswapV4Pool:
     """Build the ETH/USDC V4 pool I/O-free from the full tick cassette."""
     cassette = _load_cassette()
     scalars = cassette["scalars"]
     tick_data = {int(tick): tuple(vals) for tick, vals in cassette["tick_data"].items()}
     eth = make_erc20(
-        _PYBOT,
+        py_bot,
         cassette["token0"]["address"],
         name=cassette["token0"]["name"],
         symbol=cassette["token0"]["symbol"],
@@ -127,7 +125,7 @@ def _build_eth_usdc_v4_io_free() -> UniswapV4Pool:
         chain_id=1,
     )
     usdc = make_erc20(
-        _PYBOT,
+        py_bot,
         cassette["token1"]["address"],
         name=cassette["token1"]["name"],
         symbol=cassette["token1"]["symbol"],
@@ -151,7 +149,7 @@ def _build_eth_usdc_v4_io_free() -> UniswapV4Pool:
         lp_fee=scalars["lp_fee"],
         tick_data=tick_data,
         state_block=cassette["block"],
-        py_bot=_PYBOT,
+        py_bot=py_bot,
     )
 
 
@@ -254,7 +252,7 @@ def _quote_callable(
 
 @pytest.mark.ethereum
 @pytest.mark.onchain_oracle
-def test_cached_calculations_v4_eth_usdc(golden_factory) -> None:
+def test_cached_calculations_v4_eth_usdc(golden_factory, py_bot) -> None:
     """Uniswap V4 ETH/USDC: local calc == golden(quoter), full curated range.
 
     Mirrors the original ``test_cached_calculations`` contract: both quoter
@@ -265,7 +263,7 @@ def test_cached_calculations_v4_eth_usdc(golden_factory) -> None:
     caught and its partial result asserted against the recorded quoter int.
     """
     golden = golden_factory(chain_id=1, block_number=UNISWAP_V4_PARITY_BLOCK)
-    lp = _build_eth_usdc_v4_io_free()
+    lp = _build_eth_usdc_v4_io_free(py_bot)
     cases = _parity_cases(lp)
     pool_key_tuple = dataclasses.astuple(lp.pool_key)
 
@@ -311,12 +309,15 @@ def test_cached_calculations_v4_eth_usdc(golden_factory) -> None:
 _PARITY_TEST_NAME = "test_cached_calculations_v4_eth_usdc"
 
 
-def test_golden_keys_exactly_match_the_oracle_surface(request: pytest.FixtureRequest) -> None:
+def test_golden_keys_exactly_match_the_oracle_surface(
+    request: pytest.FixtureRequest,
+    py_bot,
+) -> None:
     """The golden file holds exactly the keys this module's replay drives.
 
     Replay fails loud on a missing key but stays silent on a stale extra one —
     nothing looks it up. Set-equality against the recorded file closes that
     drift: a shrunken case list cannot leave orphaned oracle entries behind."""
-    lp = _build_eth_usdc_v4_io_free()
+    lp = _build_eth_usdc_v4_io_free(py_bot)
     expected = {key for _method, key, *_rest in _parity_cases(lp)}
     assert_golden_keys_exact(request, _PARITY_TEST_NAME, expected)

@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import pathlib
 from contextlib import AbstractContextManager
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
@@ -46,9 +46,11 @@ from tests.golden.oracle import (
 )
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
 from tests.helpers.swap_amount_multipliers import ONCHAIN_PARITY_TOKEN_AMOUNT_MULTIPLIERS
 from tests.helpers.v3_pool_factory import make_v3_pool
+
+if TYPE_CHECKING:
+    from tests.helpers.seam import Bot
 
 AERODROME_V3_PARITY_BLOCK = 46_875_151
 BASE_RPC_URI = "https://mainnet.base.org"
@@ -74,20 +76,17 @@ _CASSETTE_PATH = (
 )
 
 
-_PYBOT = Bot()
-
-
 def _load_cassette() -> dict[str, Any]:
     return json.loads(_CASSETTE_PATH.read_bytes())
 
 
-def _build_aerodrome_v3_cbeth_weth_io_free() -> AerodromeV3Pool:
+def _build_aerodrome_v3_cbeth_weth_io_free(py_bot: Bot) -> AerodromeV3Pool:
     """Build the Aerodrome V3 cbETH/WETH pool I/O-free from the tick cassette."""
     cassette = _load_cassette()
     scalars = cassette["scalars"]
     tick_data = {int(tick): tuple(vals) for tick, vals in cassette["tick_data"].items()}
     cbeth = make_erc20(
-        _PYBOT,
+        py_bot,
         _CBETH_ADDRESS,
         name="Coinbase Wrapped Staked ETH",
         symbol="cbETH",
@@ -95,7 +94,7 @@ def _build_aerodrome_v3_cbeth_weth_io_free() -> AerodromeV3Pool:
         chain_id=8453,
     )
     weth = make_erc20(
-        _PYBOT,
+        py_bot,
         _WETH_ADDRESS,
         name="Wrapped Ether",
         symbol="WETH",
@@ -218,11 +217,11 @@ def _quote_callable(
 
 
 @pytest.mark.onchain_oracle
-def test_aerodrome_v3_cbeth_weth_quote(golden_factory) -> None:
+def test_aerodrome_v3_cbeth_weth_quote(golden_factory, py_bot) -> None:
     """Aerodrome V3 cbETH/WETH: local calc == golden(quoteExactInputSingle)."""
     golden = golden_factory(chain_id=8453, block_number=AERODROME_V3_PARITY_BLOCK)
     cassette = _load_cassette()
-    lp = _build_aerodrome_v3_cbeth_weth_io_free()
+    lp = _build_aerodrome_v3_cbeth_weth_io_free(py_bot)
     cases = _parity_cases(lp, cassette)
 
     with _RecordFork(recording=golden.is_recording) as ctx:
@@ -253,12 +252,15 @@ def test_aerodrome_v3_cbeth_weth_quote(golden_factory) -> None:
             assert calc == oracle.value, f"{key}: helper={calc} quoter={oracle.value}"
 
 
-def test_golden_keys_exactly_match_the_oracle_surface(request: pytest.FixtureRequest) -> None:
+def test_golden_keys_exactly_match_the_oracle_surface(
+    request: pytest.FixtureRequest,
+    py_bot,
+) -> None:
     """The golden file holds exactly the keys this module's replay drives.
 
     Replay fails loud on a missing key but stays silent on a stale extra one —
     nothing looks it up. Set-equality against the recorded file closes that
     drift: a shrunken case list cannot leave orphaned oracle entries behind."""
-    lp = _build_aerodrome_v3_cbeth_weth_io_free()
+    lp = _build_aerodrome_v3_cbeth_weth_io_free(py_bot)
     expected = {key for key, *_rest in _parity_cases(lp, _load_cassette())}
     assert_golden_keys_exact(request, "test_aerodrome_v3_cbeth_weth_quote", expected)

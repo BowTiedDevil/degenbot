@@ -43,6 +43,7 @@ import logging.handlers
 import os
 import queue
 import sys
+from collections.abc import Callable
 from typing import Any, TextIO, cast
 
 """
@@ -204,15 +205,25 @@ class _ConsolePipeline:
     version.
     """
 
-    def __init__(self) -> None:
-        """Start unarmed; :meth:`start` is what installs the writer thread."""
+    def __init__(
+        self,
+        listener_factory: Callable[[], logging.handlers.QueueListener] | None = None,
+    ) -> None:
+        """Start unarmed; :meth:`start` is what installs the writer thread.
+
+        ``listener_factory`` builds the listener this pipeline arms — the
+        module's console listener by default. A test that exercises the arming
+        supplies its own listener over its own queue and handlers, so its
+        stop/start cycles cannot reach the console other tests log through.
+        """
         self.arm: _ConsoleArm = _ConsoleArm.STOPPED
+        self._listener = _LOG_LISTENER if listener_factory is None else listener_factory()
 
     def start(self) -> None:
         """Arm the console writer thread. A no-op while it is already armed."""
         if self.arm is _ConsoleArm.RUNNING:
             return
-        _LOG_LISTENER.start()
+        self._listener.start()
         self.arm = _ConsoleArm.RUNNING
 
     def stop(self) -> None:
@@ -225,7 +236,7 @@ class _ConsolePipeline:
         if self.arm is _ConsoleArm.STOPPED:
             return
         self.arm = _ConsoleArm.STOPPED
-        _LOG_LISTENER.stop()
+        self._listener.stop()
 
 
 _console_pipeline = _ConsolePipeline()

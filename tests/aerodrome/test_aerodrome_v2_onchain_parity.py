@@ -36,7 +36,7 @@ import json
 import pathlib
 from contextlib import AbstractContextManager
 from fractions import Fraction
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
@@ -51,8 +51,10 @@ from tests.golden.oracle import (
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
 from tests.helpers.swap_amount_multipliers import ONCHAIN_PARITY_TOKEN_AMOUNT_MULTIPLIERS
+
+if TYPE_CHECKING:
+    from tests.helpers.seam import Bot
 
 # Pinned well inside mainnet.base.org's keyless archive window (tip ~47.8M).
 AERODROME_V2_PARITY_BLOCK = 46_875_151
@@ -65,11 +67,6 @@ _CASSETTE_DIR = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "chai
 _VOLATILE_CASSETTE = _CASSETTE_DIR / "aerodrome_v2_tbtc_weth_volatile_block_46875151.json"
 _STABLE_CASSETTE = _CASSETTE_DIR / "aerodrome_v2_dola_usdbc_stable_block_46875151.json"
 
-# ONE shared bot serves both parity tests and the keys-diff test: registration
-# is get-or-register, so a repeated same-address + same-identity build answers
-# the EXISTING handle and the module is order-independent by construction.
-_PYBOT = Bot()
-
 # Same multiplier coverage as the live ``test_calculation_*`` loops.
 
 
@@ -77,7 +74,7 @@ def _load_cassette(path: pathlib.Path) -> dict[str, Any]:
     return json.loads(path.read_bytes())
 
 
-def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
+def _build_aerodrome_v2_io_free(cassette: dict[str, Any], py_bot: Bot) -> AerodromeV2Pool:
     """Build an Aerodrome V2 pool I/O-free (pure-Python companion, no Rust).
 
     Mirrors ``Bot.build_pool`` (the Aerodrome V2 builder constructs the
@@ -86,17 +83,13 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
     because its V2 calc rounds differently than Aerodrome's on-chain
     ``getAmountOut``.
 
-    All three tests (both parity tests + the keys-diff test) build through the
-    ONE shared module-level ``_PYBOT``: registration is get-or-register, so a
-    repeated same-address + same-identity build answers the EXISTING handle —
-    the suite is order-independent, no per-call bot and no duplicate-address
-    collision.
+    The caller owns the bot: each test passes its own, so registrations (pools
+    are mutable) never cross a test boundary.
     """
-    bot = _PYBOT
     t0 = cassette["token0"]
     t1 = cassette["token1"]
     tok0 = make_erc20(
-        bot,
+        py_bot,
         t0["address"],
         name=t0["name"],
         symbol=t0["symbol"],
@@ -104,7 +97,7 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
         chain_id=cassette["chain_id"],
     )
     tok1 = make_erc20(
-        bot,
+        py_bot,
         t1["address"],
         name=t1["name"],
         symbol=t1["symbol"],
@@ -124,7 +117,7 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
         reserves_token1=cassette["reserves_token1"],
         deployer_address=factory,
         state_block=cassette["block"],
-        py_bot=bot,
+        py_bot=py_bot,
     )
 
 
@@ -194,12 +187,13 @@ def _get_amount_out_callable(contract: Any, amount: int, token_in: str) -> Any:
 
 
 def _run_parity(
+    py_bot: Bot,
     golden_factory,
     cassette_path: pathlib.Path,
 ) -> None:
     golden = golden_factory(chain_id=8453, block_number=AERODROME_V2_PARITY_BLOCK)
     cassette = _load_cassette(cassette_path)
-    lp = _build_aerodrome_v2_io_free(cassette)
+    lp = _build_aerodrome_v2_io_free(cassette, py_bot)
     cases = _parity_cases(lp)
 
     with _RecordFork(recording=golden.is_recording) as ctx:
@@ -222,15 +216,15 @@ def _run_parity(
 
 
 @pytest.mark.onchain_oracle
-def test_aerodrome_v2_volatile_get_amount_out(golden_factory) -> None:
+def test_aerodrome_v2_volatile_get_amount_out(golden_factory, py_bot) -> None:
     """Aerodrome V2 volatile (tBTC v2/WETH): local calc == golden(getAmountOut)."""
-    _run_parity(golden_factory, _VOLATILE_CASSETTE)
+    _run_parity(py_bot, golden_factory, _VOLATILE_CASSETTE)
 
 
 @pytest.mark.onchain_oracle
-def test_aerodrome_v2_stable_get_amount_out(golden_factory) -> None:
+def test_aerodrome_v2_stable_get_amount_out(golden_factory, py_bot) -> None:
     """Aerodrome V2 stable (DOLA/USDbC): local calc == golden(getAmountOut)."""
-    _run_parity(golden_factory, _STABLE_CASSETTE)
+    _run_parity(py_bot, golden_factory, _STABLE_CASSETTE)
 
 
 @pytest.mark.parametrize(
@@ -242,6 +236,7 @@ def test_aerodrome_v2_stable_get_amount_out(golden_factory) -> None:
 )
 def test_golden_keys_exactly_match_the_oracle_surface(
     request: pytest.FixtureRequest,
+    py_bot,
     test_name: str,
     cassette_path: pathlib.Path,
 ) -> None:
@@ -250,6 +245,6 @@ def test_golden_keys_exactly_match_the_oracle_surface(
     Replay fails loud on a missing key but stays silent on a stale extra one —
     nothing looks it up. Set-equality against the recorded file closes that
     drift: a shrunken case list cannot leave orphaned oracle entries behind."""
-    lp = _build_aerodrome_v2_io_free(_load_cassette(cassette_path))
+    lp = _build_aerodrome_v2_io_free(_load_cassette(cassette_path), py_bot)
     expected = {key for key, *_rest in _parity_cases(lp)}
     assert_golden_keys_exact(request, test_name, expected)

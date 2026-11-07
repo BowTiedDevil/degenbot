@@ -58,13 +58,11 @@ _RESERVES_USDC = 66_259_753_282
 _AMOUNT_IN_USDC = 1000 * 10**6
 _ORACLE_KEY = f"{CAMELOT_WETH_USDC_LP_ADDRESS}|getAmountOut|USDC->WETH|{_AMOUNT_IN_USDC}"
 
-_PYBOT = Bot()
 
-
-def _build_camelot_weth_usdc_io_free() -> object:
+def _build_camelot_weth_usdc_io_free(py_bot: Bot) -> object:
     """Build the Camelot WETH/USDC pool I/O-free from the recorded reserves."""
     weth = make_erc20(
-        _PYBOT,
+        py_bot,
         _WETH_ADDRESS,
         name="Wrapped Ether",
         symbol="WETH",
@@ -72,7 +70,7 @@ def _build_camelot_weth_usdc_io_free() -> object:
         chain_id=42161,
     )
     usdc = make_erc20(
-        _PYBOT,
+        py_bot,
         _USDC_ADDRESS,
         name="USD Coin",
         symbol="USDC",
@@ -88,7 +86,7 @@ def _build_camelot_weth_usdc_io_free() -> object:
         reserves_token1=_RESERVES_USDC,
         chain_id=42161,
         state_block=CAMELOT_PARITY_BLOCK,
-        py_bot=_PYBOT,
+        py_bot=py_bot,
     )
 
 
@@ -120,14 +118,14 @@ def _record_get_amount_out() -> int:
 
 
 @pytest.mark.onchain_oracle
-def test_create_camelot_v2_pool(golden_factory) -> None:
+def test_create_camelot_v2_pool(golden_factory, py_bot) -> None:
     """Camelot volatile pool: local calc == golden(= on-chain getAmountOut).
 
     The pool is built I/O-free (no RPC in either mode). The on-chain truth is
     the pool contract's ``getAmountOut`` for 1000 USDC → WETH at the pinned
     block, recorded into the golden file; replay reads it with no fork.
     """
-    lp = _build_camelot_weth_usdc_io_free()
+    lp = _build_camelot_weth_usdc_io_free(py_bot)
     token_in = lp.token1  # USDC
 
     golden = golden_factory(chain_id=42161, block_number=CAMELOT_PARITY_BLOCK)

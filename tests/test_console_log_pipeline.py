@@ -12,6 +12,8 @@ atexit callback`` and leaves the exit status untouched.
 from __future__ import annotations
 
 import logging
+import logging.handlers
+import queue
 
 import degenbot.logging as dl
 from tests.helpers.verdict_probe import run
@@ -34,23 +36,35 @@ def test_second_stop_is_a_noop_and_start_rearms_delivery() -> None:
 
     That second stop is exactly what ``atexit`` performs: the session end
     already stopped this listener, through the listener's own unguarded stdlib
-    ``stop`` on 3.12.
+    ``stop`` on 3.12. The cycles run on an injected listener over its own queue
+    and handler, so nothing about the console the rest of the suite logs
+    through is touched.
     """
     probe = "degenbot.console_pipeline_probe"
     recorder = _Recorder()
-    dl._LOG_LISTENER.handlers = (*dl._LOG_LISTENER.handlers, recorder)
+    log_queue = queue.SimpleQueue()
+    listener = logging.handlers.QueueListener(log_queue, recorder, respect_handler_level=True)
+    pipeline = dl._ConsolePipeline(listener_factory=lambda: listener)
+    # Never registered (`logging.Logger`, not `getLogger`): the mutations
+    # below must stay off the global logging registry other tests use.
+    probe_logger = logging.Logger(  # ruff: ignore[direct-logger-instantiation]
+        "tests.console_log_pipeline",
+    )
+    probe_logger.setLevel(logging.DEBUG)
+    probe_logger.propagate = False
+    queued = logging.handlers.QueueHandler(log_queue)
+    probe_logger.addHandler(queued)
     try:
-        dl._console_pipeline.stop()
-        dl._console_pipeline.stop()  # the atexit call, after the session stop
-        dl._console_pipeline.start()
-        dl.logger.info(probe)
-        dl.flush_console_log()  # the stop inside it drains every destination
+        pipeline.start()
+        pipeline.stop()
+        pipeline.stop()  # the atexit call, after the session stop
+        pipeline.start()
+        probe_logger.info(probe)
+        pipeline.stop()  # the drain stop performs inside flush_console_log forwards it
         assert probe in {record.getMessage() for record in recorder.records}
     finally:
-        dl._LOG_LISTENER.handlers = tuple(
-            handler for handler in dl._LOG_LISTENER.handlers if handler is not recorder
-        )
-        dl._console_pipeline.start()
+        pipeline.stop()
+        probe_logger.removeHandler(queued)
 
 
 def test_exit_after_a_session_stop_prints_nothing_unraisable() -> None:

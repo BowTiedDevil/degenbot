@@ -21,8 +21,6 @@ from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot, BotIo
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-_TOKEN_BOT = Bot()
-
 _POOL_ADDRESS = "0x0000000000000000000000000000000000000001"
 _TOKEN0_ADDRESS = "0x0000000000000000000000000000000000000002"
 _TOKEN1_ADDRESS = "0x0000000000000000000000000000000000000003"
@@ -35,10 +33,10 @@ _BLOCK = 1
 _GET_RESERVES_SELECTOR = "0x0902f1ac"
 
 
-def _mock_token(address: str, *, symbol: str, decimals: int = 18) -> object:
+def _mock_token(py_bot: Bot, address: str, *, symbol: str, decimals: int = 18) -> object:
     """Build a real Erc20Token for refresh tests (needs real metadata for ADR-006)."""
     return make_erc20(
-        _TOKEN_BOT,
+        py_bot,
         address,
         chain_id=1,
         name=symbol,
@@ -71,12 +69,12 @@ def _reserves_provider(reserve0: int, reserve1: int, *, block: int = _BLOCK) -> 
 class TestPoolRefreshV2:
     """`refresh_via` drives the core V2 refresh: fetch, compare, apply."""
 
-    def _pool(self) -> object:
+    def _pool(self, py_bot: Bot) -> object:
         return make_v2_pool(
             address=_POOL_ADDRESS,
             chain_id=1,
-            token0=_mock_token(_TOKEN0_ADDRESS, symbol="TK0"),
-            token1=_mock_token(_TOKEN1_ADDRESS, symbol="TK1", decimals=6),
+            token0=_mock_token(py_bot, _TOKEN0_ADDRESS, symbol="TK0"),
+            token1=_mock_token(py_bot, _TOKEN1_ADDRESS, symbol="TK1", decimals=6),
             factory=_FACTORY_ADDRESS,
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
@@ -87,38 +85,38 @@ class TestPoolRefreshV2:
             init_hash=_INIT_HASH,
         )
 
-    def test_refresh_returns_true_and_applies_changed_reserves(self) -> None:
+    def test_refresh_returns_true_and_applies_changed_reserves(self, py_bot) -> None:
         io = BotIo(provider=_reserves_provider(5000, 6000))
-        pool = self._pool()
+        pool = self._pool(py_bot)
         assert pool.refresh_via(io, block_number=_BLOCK) is True
         assert pool.reserves_token0 == 5000
         assert pool.reserves_token1 == 6000
 
-    def test_refresh_returns_false_when_reserves_match(self) -> None:
+    def test_refresh_returns_false_when_reserves_match(self, py_bot) -> None:
         io = BotIo(provider=_reserves_provider(1000, 2000))
-        pool = self._pool()
+        pool = self._pool(py_bot)
         assert pool.refresh_via(io, block_number=_BLOCK) is False
         assert pool.reserves_token0 == 1000
         assert pool.reserves_token1 == 2000
 
-    def test_refresh_defaults_to_the_chain_head(self) -> None:
+    def test_refresh_defaults_to_the_chain_head(self, py_bot) -> None:
         """No explicit block: the core reads the head, which the recording serves."""
         io = BotIo(provider=_reserves_provider(5000, 6000))
-        pool = self._pool()
+        pool = self._pool(py_bot)
         assert pool.refresh_via(io) is True
         assert pool.reserves_token0 == 5000
 
-    def test_refresh_resolves_the_latest_tag_at_the_seam(self) -> None:
+    def test_refresh_resolves_the_latest_tag_at_the_seam(self, py_bot) -> None:
         """A block tag is a typed value: "latest" reads the recorded head (block 1)."""
         io = BotIo(provider=_reserves_provider(5000, 6000))
-        pool = self._pool()
+        pool = self._pool(py_bot)
         assert pool.refresh_via(io, block_number="latest") is True
         assert pool.reserves_token0 == 5000
 
-    def test_refresh_refuses_a_string_that_is_not_a_tag(self) -> None:
+    def test_refresh_refuses_a_string_that_is_not_a_tag(self, py_bot) -> None:
         """A decimal string is not a block tag — it is refused, not coerced to a number."""
         io = BotIo(provider=_reserves_provider(5000, 6000))
-        pool = self._pool()
+        pool = self._pool(py_bot)
         with pytest.raises(ValueError, match="unsupported block identifier"):
             pool.refresh_via(io, block_number="123")
 

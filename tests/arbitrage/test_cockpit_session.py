@@ -25,7 +25,7 @@ import signal
 import pytest
 
 from tests.fakes.engine import FakeEngineRegistry
-from tests.fakes.runner_pipelines import StubPipeline
+from tests.fakes.runner_pipelines import stub_pipeline_capture
 from tests.helpers.boot_actors import quiet_report_coro
 from tests.helpers.session import session_for_test
 from tests.helpers.session_drive import block_event, drive_session, session_with_real_clock
@@ -47,8 +47,11 @@ class TestSessionOwner:
             captured["consumer"] = consumer
             return quiet_report_coro()
 
-        StubPipeline.instances.clear()
-        session = session_for_test(consumer=capturing_consumer)
+        pipelines = stub_pipeline_capture()
+        session = session_for_test(
+            consumer=capturing_consumer,
+            pipeline_factory=pipelines.factory,
+        )
         async with session:
             await session.run()
 
@@ -57,19 +60,37 @@ class TestSessionOwner:
         assert loop.pipeline is session.sim_submit_pipeline  # type: ignore[attr-defined]
         # SIMPIPE: the "same owner" contract rides the pipeline seam — the
         # session built the pipeline over itself, and the consumer enqueues on it.
-        assert [stub.session for stub in StubPipeline.instances] == [session]
+        assert [stub.session for stub in pipelines.instances] == [session]
 
     async def test_the_drain_reads_the_session_pipeline(self) -> None:
-        StubPipeline.instances.clear()
-        session = session_for_test()
+        pipelines = stub_pipeline_capture()
+        session = session_for_test(pipeline_factory=pipelines.factory)
         await session.build_pipeline()
 
         loop = session.block_loop()
 
         assert loop.pipeline is session.sim_submit_pipeline
-        assert [stub.session for stub in StubPipeline.instances] == [session], (
+        assert [stub.session for stub in pipelines.instances] == [session], (
             "the dispatch pipeline did not receive the session owner"
         )
+
+    async def test_each_drive_reads_only_its_own_pipeline_capture(self) -> None:
+        """Two drives, two captures: one drive's stubs never show in the other's.
+
+        Each capture records exactly the stubs its own drive built, so these
+        assertions hold whatever the other tests did and in whatever order the
+        suite runs them.
+        """
+        first = stub_pipeline_capture()
+        first_session = session_for_test(pipeline_factory=first.factory)
+        await first_session.build_pipeline()
+
+        second = stub_pipeline_capture()
+        second_session = session_for_test(pipeline_factory=second.factory)
+        await second_session.build_pipeline()
+
+        assert [stub.session for stub in first.instances] == [first_session]
+        assert [stub.session for stub in second.instances] == [second_session]
 
     async def test_the_consumer_advances_the_session_block_clock(self) -> None:
         """The session's block clock is the dispatcher the consumer writes."""

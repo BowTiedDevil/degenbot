@@ -46,12 +46,12 @@ from tests.golden.oracle import (
 )
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot
 from tests.helpers.swap_amount_multipliers import ONCHAIN_PARITY_TOKEN_AMOUNT_MULTIPLIERS
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:
     from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+    from tests.helpers.seam import Bot
 
 PANCAKE_V2_PARITY_BLOCK = 46_875_151
 BASE_RPC_URI = "https://mainnet.base.org"
@@ -86,14 +86,11 @@ _ROUTER_ABI = [
 ]
 
 
-_PYBOT = Bot()
-
-
 def _load_cassette() -> dict[str, Any]:
     return json.loads(_CASSETTE_PATH.read_bytes())
 
 
-def _build_pancake_v2_io_free(cassette: dict[str, Any]) -> UniswapV2Pool:
+def _build_pancake_v2_io_free(cassette: dict[str, Any], py_bot: Bot) -> UniswapV2Pool:
     """Build the Pancake V2 pool I/O-free from the reserves cassette.
 
     Standard Uniswap V2 constant-product formula; fee passed explicitly
@@ -103,7 +100,7 @@ def _build_pancake_v2_io_free(cassette: dict[str, Any]) -> UniswapV2Pool:
     t0 = cassette["token0"]
     t1 = cassette["token1"]
     tok0 = make_erc20(
-        _PYBOT,
+        py_bot,
         t0["address"],
         name=t0["name"],
         symbol=t0["symbol"],
@@ -111,7 +108,7 @@ def _build_pancake_v2_io_free(cassette: dict[str, Any]) -> UniswapV2Pool:
         chain_id=cassette["chain_id"],
     )
     tok1 = make_erc20(
-        _PYBOT,
+        py_bot,
         t1["address"],
         name=t1["name"],
         symbol=t1["symbol"],
@@ -130,7 +127,7 @@ def _build_pancake_v2_io_free(cassette: dict[str, Any]) -> UniswapV2Pool:
         reserves_token1=cassette["reserves_token1"],
         chain_id=cassette["chain_id"],
         state_block=cassette["block"],
-        py_bot=_PYBOT,
+        py_bot=py_bot,
     )
 
 
@@ -208,11 +205,11 @@ def _get_amounts_out_callable(
 
 
 @pytest.mark.onchain_oracle
-def test_pancakeswap_v2_router_get_amounts_out(golden_factory) -> None:
+def test_pancakeswap_v2_router_get_amounts_out(golden_factory, py_bot) -> None:
     """PancakeSwap V2 router: local calc == golden(getAmountsOut[-1])."""
     golden = golden_factory(chain_id=8453, block_number=PANCAKE_V2_PARITY_BLOCK)
     cassette = _load_cassette()
-    lp = _build_pancake_v2_io_free(cassette)
+    lp = _build_pancake_v2_io_free(cassette, py_bot)
     cases = _parity_cases(lp)
 
     with _RecordFork(recording=golden.is_recording) as ctx:
@@ -238,12 +235,15 @@ def test_pancakeswap_v2_router_get_amounts_out(golden_factory) -> None:
             assert calc == oracle.value, f"{key}: helper={calc} router={oracle.value}"
 
 
-def test_golden_keys_exactly_match_the_oracle_surface(request: pytest.FixtureRequest) -> None:
+def test_golden_keys_exactly_match_the_oracle_surface(
+    request: pytest.FixtureRequest,
+    py_bot,
+) -> None:
     """The golden file holds exactly the keys this module's replay drives.
 
     Replay fails loud on a missing key but stays silent on a stale extra one —
     nothing looks it up. Set-equality against the recorded file closes that
     drift: a shrunken case list cannot leave orphaned oracle entries behind."""
-    lp = _build_pancake_v2_io_free(_load_cassette())
+    lp = _build_pancake_v2_io_free(_load_cassette(), py_bot)
     expected = {key for key, *_rest in _parity_cases(lp)}
     assert_golden_keys_exact(request, "test_pancakeswap_v2_router_get_amounts_out", expected)
