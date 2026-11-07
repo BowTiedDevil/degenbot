@@ -2,12 +2,13 @@
 
 A broken Curve V1 pool, a broken Balancer V2 pool, and a Balancer pool of a
 shape no construction arm models are all refused with the same exception type
-(``SpecViolationError``), so a caller can skip by type. The message carries the
-reason: "pool build refused: out of spec (curve broken pool)", "(balancer broken
-pool)", "(balancer unmodeled family)". A bare "pool build refused: out of spec"
-cannot tell a decommissioned Curve pool from a Balancer pool whose swaps are
-disabled at the contract — and a Balancer identity that fell through to the
-Curve arm named a family that never owned the pool.
+(``SpecViolationError``), so a caller can skip by type. The typed ``detail``
+data carries the reason — "curve broken pool", "balancer broken pool",
+"balancer unmodeled family" (the seam stamps ``kind`` / ``detail``; nothing
+reads the message). No reason can tell a decommissioned Curve pool from a
+Balancer pool whose swaps are disabled at the contract — and a Balancer
+identity that fell through to the Curve arm named a family that never owned
+the pool.
 
 The reason vocabulary is family-spanning (one refusal taxonomy), so this leg
 lives beside the Balancer suites but asserts one address per family.
@@ -15,7 +16,7 @@ lives beside the Balancer suites but asserts one address per family.
 
 import pytest
 
-from degenbot.exceptions import SpecViolationError
+from degenbot.exceptions import BuildFailureKind, SpecViolationError
 from degenbot.fork import AnvilFork
 from tests.sweep_pin import SWEEP_FORK_BLOCK, assert_fork_at_sweep_pin
 
@@ -49,12 +50,13 @@ def test_broken_pools_are_refused_with_distinct_named_reasons(
     with pytest.raises(SpecViolationError) as balancer_err:
         bot_mainnet_archive.build_pool(_BROKEN_BALANCER_POOL, state_block=SWEEP_FORK_BLOCK)
 
-    curve_message = str(curve_err.value)
-    balancer_message = str(balancer_err.value)
-
-    assert "curve broken pool" in curve_message, curve_message
-    assert "balancer broken pool" in balancer_message, balancer_message
-    assert curve_message != balancer_message, "the two families must not render one message"
+    assert curve_err.value.kind == BuildFailureKind.Spec
+    assert balancer_err.value.kind == BuildFailureKind.Spec
+    assert curve_err.value.detail == "curve broken pool", curve_err.value.detail
+    assert balancer_err.value.detail == "balancer broken pool", balancer_err.value.detail
+    assert curve_err.value.detail != balancer_err.value.detail, (
+        "the two families must not name one reason"
+    )
 
 
 @pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
@@ -75,6 +77,6 @@ def test_unmodeled_balancer_family_is_refused_by_its_own_name(
     with pytest.raises(SpecViolationError) as refusal:
         bot_mainnet_archive.build_pool(_BALANCER_LINEAR_POOL, state_block=SWEEP_FORK_BLOCK)
 
-    message = str(refusal.value)
-    assert message == "pool build refused: out of spec (balancer unmodeled family)", message
-    assert "curve" not in message, message
+    assert refusal.value.kind == BuildFailureKind.Spec
+    assert refusal.value.detail == "balancer unmodeled family", refusal.value.detail
+    assert "curve" not in refusal.value.detail, refusal.value.detail

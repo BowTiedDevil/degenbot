@@ -1,7 +1,10 @@
-"""The build-failure taxonomy is typed across the FFI: skip by type, not message.
+"""The build-failure taxonomy is typed across the FFI: classify by data, not prose.
 
-``Bot.build_pool`` can fail before admission is ever decided, and those
-pre-admission arms are now classifiable by exception TYPE:
+``Bot.build_pool`` can fail before admission is ever decided, and every
+pre-admission arm is classifiable by exception TYPE plus the typed ``kind`` /
+``detail`` data stamped on the instance by the PyO3 adapter (``kind`` is a
+``BuildFailureKind`` member — the closed arm vocabulary; ``detail`` is the
+refusal's structured source rendering):
 
 ``ValueError``
 └─ ``PoolRegistrationError``
@@ -11,7 +14,13 @@ pre-admission arms are now classifiable by exception TYPE:
                                     (permanent for that state: retry re-reads it)
 
 One ``except PoolRegistrationError:`` still covers the whole taxonomy; the
-three subclasses let a caller choose retry-vs-skip without string matching.
+three subclasses plus ``kind`` let a caller choose retry-vs-skip without
+parsing the message. The DB and transient arms map to ``PoolRegistrationError``
+itself with ``kind`` ``Db`` / ``Transient`` (never a plain ``RuntimeError``),
+and every arm — including those two — is pinned class/kind/detail/message by
+the Rust ``map_build_failure`` rendering table. The message is the FINAL text,
+rendered once upstream: nothing downstream strips a prefix or re-derives a
+classification from prose.
 
 The driver here is an ``OfflineProvider`` cassette for a Balancer V2 weighted
 pool: a Balancer pool carries no ``factory()`` getter, so the type resolver
@@ -38,7 +47,11 @@ from degenbot.exceptions import (
     SpecViolationError,
 )
 from degenbot.provider import OfflineProvider
-from tests.helpers.seam import PoolBuildDecodeError, PoolBuildRpcError
+from tests.helpers.seam import (
+    BuildFailureKind,
+    PoolBuildDecodeError,
+    PoolBuildRpcError,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -145,6 +158,7 @@ def test_build_failure_classes_are_exported_ffi_types_under_one_parent() -> None
     """Both new classes are the FFI pyclasses and ride the admission parent."""
     assert degenbot.exceptions.PoolBuildRpcError is PoolBuildRpcError
     assert degenbot.exceptions.PoolBuildDecodeError is PoolBuildDecodeError
+    assert degenbot.exceptions.BuildFailureKind is BuildFailureKind
     for exc_type in (PoolBuildRpcError, PoolBuildDecodeError):
         assert issubclass(exc_type, PoolRegistrationError), exc_type
         # `PoolRegistrationError` roots at ValueError, so the broad
@@ -161,17 +175,26 @@ def test_build_failure_classes_are_exported_ffi_types_under_one_parent() -> None
 # ---------------------------------------------------------------------------
 
 
+def _assert_stamps_the_data_interface(exc: BaseException) -> None:
+    """The seam stamps exactly the typed `kind` / `detail` data on the instance."""
+    assert set(vars(exc)) == {"kind", "detail"}, sorted(vars(exc))
+
+
 def test_transport_fault_raises_pool_build_rpc_error(tmp_path: pathlib.Path) -> None:
-    """An unreachable read is the retryable class, not a plain RuntimeError."""
+    """An unreachable read is the retryable class — classified by data, not prose."""
     bot = _bot(tmp_path, _blocks(omit=_call_key(POOL, "getSwapFeePercentage()")))
 
     with pytest.raises(PoolBuildRpcError) as exc_info:
         bot.build_pool(POOL, state_block=BLOCK)
 
-    message = str(exc_info.value)
-    assert message.startswith("pool build RPC error: "), message
-    assert "getSwapFeePercentage" not in message  # the selector is what surfaces
-    assert not isinstance(exc_info.value, PoolBuildDecodeError)
+    exc = exc_info.value
+    assert type(exc) is PoolBuildRpcError
+    _assert_stamps_the_data_interface(exc)
+    assert exc.kind == BuildFailureKind.Rpc
+    assert isinstance(exc.detail, str)
+    assert "getSwapFeePercentage" not in exc.detail  # the selector is what surfaces
+    assert str(exc) == exc.detail  # the reason is the whole final message
+    assert not isinstance(exc, PoolBuildDecodeError)
 
 
 def test_decode_fault_raises_pool_build_decode_error(tmp_path: pathlib.Path) -> None:
@@ -181,29 +204,41 @@ def test_decode_fault_raises_pool_build_decode_error(tmp_path: pathlib.Path) -> 
     with pytest.raises(PoolBuildDecodeError) as exc_info:
         bot.build_pool(POOL, state_block=BLOCK)
 
-    message = str(exc_info.value)
-    assert message.startswith("pool build decode failure: "), message
-    assert "has 20 decimals (> 18, unsupported)" in message, message
-    assert not isinstance(exc_info.value, PoolBuildRpcError)
+    exc = exc_info.value
+    assert type(exc) is PoolBuildDecodeError
+    _assert_stamps_the_data_interface(exc)
+    assert exc.kind == BuildFailureKind.Decoding
+    assert "has 20 decimals (> 18, unsupported)" in exc.detail, exc.detail
+    assert str(exc) == exc.detail  # the reason is the whole final message
+    assert not isinstance(exc, PoolBuildRpcError)
 
 
 def test_spec_refusal_still_raises_spec_violation_error(tmp_path: pathlib.Path) -> None:
-    """The spec arm is unchanged: a broken pool keeps its own class."""
+    """The spec arm keeps its class and names its reason as data."""
     bot = _bot(tmp_path, _blocks(pool=BROKEN_POOL))
 
     with pytest.raises(SpecViolationError) as exc_info:
         bot.build_pool(BROKEN_POOL, state_block=BLOCK)
 
-    assert "balancer broken pool" in str(exc_info.value)
-    assert not isinstance(exc_info.value, (PoolBuildRpcError, PoolBuildDecodeError))
+    exc = exc_info.value
+    assert type(exc) is SpecViolationError
+    _assert_stamps_the_data_interface(exc)
+    assert exc.kind == BuildFailureKind.Spec
+    assert exc.detail == "balancer broken pool"
+    assert str(exc) == f"pool build refused: out of spec ({exc.detail})"
+    assert not isinstance(exc, (PoolBuildRpcError, PoolBuildDecodeError))
 
 
 @pytest.mark.parametrize(
-    ("blocks", "pool"),
+    ("blocks", "pool", "expected_kind"),
     [
-        (_blocks(omit=_call_key(POOL, "getSwapFeePercentage()")), POOL),
-        (_blocks(token0_decimals=20), POOL),
-        (_blocks(pool=BROKEN_POOL), BROKEN_POOL),
+        (
+            _blocks(omit=_call_key(POOL, "getSwapFeePercentage()")),
+            POOL,
+            BuildFailureKind.Rpc,
+        ),
+        (_blocks(token0_decimals=20), POOL, BuildFailureKind.Decoding),
+        (_blocks(pool=BROKEN_POOL), BROKEN_POOL, BuildFailureKind.Spec),
     ],
     ids=["transport", "decode", "spec"],
 )
@@ -211,9 +246,13 @@ def test_one_except_covers_the_whole_build_taxonomy(
     tmp_path: pathlib.Path,
     blocks: dict[str, dict],
     pool: str,
+    expected_kind: BuildFailureKind,
 ) -> None:
     """One `except PoolRegistrationError:` still catches every build refusal."""
     bot = _bot(tmp_path, blocks)
 
-    with pytest.raises(PoolRegistrationError):
+    with pytest.raises(PoolRegistrationError) as exc_info:
         bot.build_pool(pool, state_block=BLOCK)
+
+    assert exc_info.value.kind == expected_kind
+    assert isinstance(exc_info.value.detail, str)

@@ -99,6 +99,10 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     (_EXCEPTIONS, "VerificationRpcError", _VERIF, "VerificationRpcError"),
     (_EXCEPTIONS, "VerificationMismatchError", _VERIF, "VerificationMismatchError"),
     (_EXCEPTIONS, "HookedPoolRejectedError", _ARBITRAGE, "HookedPoolRejectedError"),
+    # The build refusal's typed `kind` vocabulary: the closed arm
+    # classification, exported beside its exceptions so a driver reads the
+    # class AND the kind by stable companion names.
+    (_EXCEPTIONS, "BuildFailureKind", _FFI, "BuildFailureKind"),
     # The typed swap-calc refusals alias the seam root directly: the quoter's
     # catch must match the exact pyclass the Rust handle raises.
     (_EXCEPTIONS, "SwapMathOverflowError", _FFI, "SwapMathOverflowError"),

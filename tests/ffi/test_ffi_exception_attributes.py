@@ -2,7 +2,8 @@
 
 Every ``create_exception!`` island that stamps typed attributes does it in one
 builder (``bot::pool::swap_refused_err``, ``rpc::errors::chain_mismatch_to_pyerr``,
-``simulation::session::abort_error``), and the stubgen declaration manifest
+``simulation::session::abort_error``, ``bot::engine::errors::refusal_err``),
+and the stubgen declaration manifest
 (``rust/tools/stubgen/src/exception_manifest.rs``) declares those attributes so
 the generated class bodies spell ``name: <ty>``. This suite ties both ends: the
 declarations parsed from the generated ``src/degenbot/_ffi/*.pyi`` against
@@ -28,11 +29,18 @@ from degenbot.dispatch import (
     SessionConsumer,
     SessionConsumerError,
 )
+from degenbot.exceptions import HighFeePoolRejectedError, SpecViolationError
 from degenbot.provider import AlloyProvider
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot, ChainMismatchError, SwapRefusalKind, SwapRefused
+from tests.helpers.seam import (
+    Bot,
+    BuildFailureKind,
+    ChainMismatchError,
+    SwapRefusalKind,
+    SwapRefused,
+)
 from tests.helpers.session_drive import offline_executor
 from tests.helpers.v3_pool_factory import make_v3_pool
 
@@ -59,6 +67,46 @@ _DECLARED: dict[str, dict[str, str]] = {
         "word": "int | None",
         "amount": "int | None",
     },
+    # The build-refusal taxonomy's stamps (``bot::engine::errors::refusal_err``):
+    # ``kind`` is the closed ``BuildFailureKind`` arm (``None`` only where the
+    # refusal carries no build arm — the register-phase and seam-boundary spec
+    # refusals), ``detail`` the refusal's source rendering (``None`` on the
+    # unit arms). The full arm-by-arm tie lives in
+    # ``tests/builders/test_build_failure_exception_taxonomy.py`` (the cassette
+    # paths) and the Rust ``map_build_failure`` rendering table.
+    "degenbot._ffi.PoolRegistrationError": {
+        "kind": "BuildFailureKind",
+        "detail": "str",
+    },
+    "degenbot._ffi.HookedPoolRejectedError": {
+        "kind": "BuildFailureKind",
+        "detail": "str | None",
+    },
+    "degenbot._ffi.DynamicFeePoolRejectedError": {
+        "kind": "BuildFailureKind",
+        "detail": "str | None",
+    },
+    "degenbot._ffi.HighFeePoolRejectedError": {
+        "kind": "BuildFailureKind",
+        "detail": "str | None",
+    },
+    "degenbot._ffi.PoolAlreadyRegisteredError": {},
+    "degenbot._ffi.SpecViolationError": {
+        "kind": "BuildFailureKind | None",
+        "detail": "str",
+    },
+    "degenbot._ffi.PoolBuildRpcError": {
+        "kind": "BuildFailureKind",
+        "detail": "str",
+    },
+    "degenbot._ffi.PoolBuildDecodeError": {
+        "kind": "BuildFailureKind",
+        "detail": "str",
+    },
+    "degenbot._ffi.TickMapIntakeInconsistentError": {
+        "kind": "BuildFailureKind",
+        "detail": "str",
+    },
 }
 
 # The enum classes a stub annotation can reference, resolved through the
@@ -67,6 +115,7 @@ _DECLARED: dict[str, dict[str, str]] = {
 _ENUM_TYPES: dict[str, type] = {
     "ConsumerErrorKind": ConsumerErrorKind,
     "SwapRefusalKind": SwapRefusalKind,
+    "BuildFailureKind": BuildFailureKind,
 }
 
 
@@ -242,3 +291,90 @@ def test_chain_mismatch_stamps_the_declared_attributes(chain_node: _FakeChainNod
     _assert_stamps_the_declarations(
         refusal.value, ChainMismatchError, "degenbot._ffi.ChainMismatchError"
     )
+
+
+# Cross-checked mainnet V2/V3 vectors (see
+# tests/exceptions/test_pybot_admission_exceptions): the CREATE2-verify step
+# upstream of `register_vx_pool` passes for these, so the spec validators and
+# the seam boundary are what fire.
+_UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+_UNISWAP_V3_FACTORY = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+_WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+_DAI = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+_USDC = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"
+_V2_DAI_WETH_ADDR = "0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11"
+_V3_UNI_USDC_WETH_500_ADDR = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
+
+
+def test_spec_violation_refusals_stamp_the_declared_attributes() -> None:
+    """Every `SpecViolationError` raise site stamps `kind`/`detail` as declared.
+
+    The register-phase and seam-boundary spec refusals share the class with
+    the build arms but carry no `BuildFailure` arm, so `kind` is `None` and
+    `detail` is the refusal's own rendering.
+    """
+    bot = Bot(chain_id=1)
+    with pytest.raises(SpecViolationError) as seam_refusal:
+        # The V2 seam boundary's `uint112` narrowing refuses before the core
+        # validator ever runs.
+        bot.register_v2_pool(
+            address=_V2_DAI_WETH_ADDR,
+            token0=_WETH,
+            token1=_DAI,
+            reserve0=1 << 112,
+            reserve1=2,
+            gamma_numer0=997,
+            fee_denom0=1000,
+            gamma_numer1=997,
+            fee_denom1=1000,
+            factory=_UNISWAP_V2_FACTORY,
+        )
+    _assert_stamps_the_declarations(
+        seam_refusal.value, SpecViolationError, "degenbot._ffi.SpecViolationError"
+    )
+    assert seam_refusal.value.kind is None
+    assert isinstance(seam_refusal.value.detail, str)
+
+    core_bot = Bot(chain_id=1)
+    with pytest.raises(SpecViolationError) as core_refusal:
+        # The core's own sqrt-price validator refuses at registration.
+        core_bot.register_v3_pool(
+            address=_V3_UNI_USDC_WETH_500_ADDR,
+            token0=_USDC,
+            token1=_WETH,
+            fee=500,
+            tick_spacing=10,
+            factory=_UNISWAP_V3_FACTORY,
+            sqrt_price_x96=1,
+            liquidity=0,
+            tick=0,
+        )
+    _assert_stamps_the_declarations(
+        core_refusal.value, SpecViolationError, "degenbot._ffi.SpecViolationError"
+    )
+    assert core_refusal.value.kind is None
+    assert isinstance(core_refusal.value.detail, str)
+
+
+def test_high_fee_admission_stamps_the_declared_attributes() -> None:
+    """A V4 high-fee admission refusal carries its build arm's kind as declared."""
+    bot = Bot(chain_id=1)
+    with pytest.raises(HighFeePoolRejectedError) as refusal:
+        bot.register_v4_pool(
+            pool_manager="0x" + "44" * 20,
+            pool_id_hex="0x" + "e9" * 32,
+            currency0="0x" + "00" * 20,
+            currency1="0x" + "01" * 20,
+            fee=320_000,
+            tick_spacing=60,
+            hook_address=None,
+            sqrt_price_x96=1 << 96,
+            liquidity=1_000_000,
+            tick=0,
+            block=0,
+        )
+    _assert_stamps_the_declarations(
+        refusal.value, HighFeePoolRejectedError, "degenbot._ffi.HighFeePoolRejectedError"
+    )
+    assert refusal.value.kind == BuildFailureKind.HighFee
+    assert refusal.value.detail is None

@@ -106,15 +106,24 @@ class DynamicFeePoolRejectedError(PoolRegistrationError):
     A V4 pool with a dynamic fee was rejected at registration: the solver assumes a fixed fee.
     """
 
+    detail: str | None
+    kind: BuildFailureKind
+
 class HighFeePoolRejectedError(PoolRegistrationError):
     """
     A V4 pool whose static fee exceeds the cmd_executor's 2-byte encoding limit (fee > 65535) was rejected at registration: the executor encodes fee as u16 in both V4_SWAP_COMPACT and V4_SWAP_DYNAMIC, so such pools cannot be encoded. They are also unprofitable (32%+ per swap).
     """
 
+    detail: str | None
+    kind: BuildFailureKind
+
 class HookedPoolRejectedError(PoolRegistrationError):
     """
     A V4 pool with an amount-modifying hook was rejected at registration: the solver's concentrated-liquidity math assumes no hook intervention.
     """
+
+    detail: str | None
+    kind: BuildFailureKind
 
 class PathRegistryFullError(ValueError):
     """
@@ -131,15 +140,24 @@ class PoolBuildDecodeError(PoolRegistrationError):
     A pool build read chain data successfully but the returned values do not decode into a valid pool shape (e.g. a token reporting more than 18 decimals, a value that does not fit its field). Permanent for the observed state: re-reading the same data decodes the same way, so the pool is inadmissible rather than momentarily unreachable.
     """
 
+    detail: str
+    kind: BuildFailureKind
+
 class PoolBuildRpcError(PoolRegistrationError):
     """
     A pool build could not complete because a provider call failed (transport error, failed eth_call, unreachable endpoint). Transient and retry-worthy: the refusal says nothing about the pool's admissibility because its state was never read.
     """
 
+    detail: str
+    kind: BuildFailureKind
+
 class PoolRegistrationError(ValueError):
     """
     A pool was refused at registration (duplicate address, out-of-spec field, V4 amount-modifying hook, V4 dynamic fee, or V4 high static fee > 65535). Subclasses classify the specific admission reason so build_paths skips rejected pools by type, not string matching.
     """
+
+    detail: str
+    kind: BuildFailureKind
 
 class PossibleInaccurateResult(ValueError):
     """
@@ -150,6 +168,9 @@ class SpecViolationError(PoolRegistrationError):
     """
     A pool was refused as out of spec, either at registration (a field violates its on-chain Solidity bound: e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range) or at build (the pool is unbuildable, e.g. a known-broken pool, too few coins, an unreadable coin). The message identifies the offending field, its value, and the bound it violates; a build refusal names its reason in parentheses, e.g. `pool build refused: out of spec (curve broken pool)`.
     """
+
+    detail: str
+    kind: BuildFailureKind | None
 
 class StrategyHostError(RuntimeError):
     """
@@ -179,6 +200,9 @@ class TickMapIntakeInconsistentError(PoolRegistrationError):
     """
     A tracked pool was refused at intake: the database snapshot's tick rows and the chain word bits disagree. Stable for the session — the snapshot does not change under the crawl — so the refusal memoizes as a pool fact instead of being retried.
     """
+
+    detail: str
+    kind: BuildFailureKind
 
 class UnconfiguredStrategyError(StrategyHostError):
     """
@@ -2178,6 +2202,71 @@ class BotIo:
         `ValueError`. A no-row match is a benign no-op (the caller
         only reaches the write-back when the row was already fetched).
         """
+
+@final
+class BuildFailureKind:
+    """
+    The build-refusal taxonomy's typed `kind` vocabulary on the Python
+    surface — the core's closed [`BuildFailure`] arm set verbatim, so the
+    shell re-classifies nothing (the `bot::pool::PySwapRefusalKind` /
+    `ConsumerErrorKind` precedent: the classification crosses as data on the
+    exception instance, never as prose in the message).
+    """
+
+    Db: Final[BuildFailureKind]
+    """
+    A builder DB read failure.
+    """
+    Decoding: Final[BuildFailureKind]
+    """
+    A builder decode failure (permanent for the observed state).
+    """
+    DynamicFee: Final[BuildFailureKind]
+    """
+    The V4 dynamic-fee admission refusal.
+    """
+    Fee: Final[BuildFailureKind]
+    """
+    A fee refusal that is a stable pool fact.
+    """
+    HighFee: Final[BuildFailureKind]
+    """
+    A fee above the encoder's limit — a stable pool fact for every family.
+    """
+    HookedPool: Final[BuildFailureKind]
+    """
+    The V4 hooked-pool admission refusal.
+    """
+    MissingIdentity: Final[BuildFailureKind]
+    """
+    An incomplete V4 identity — an intake rejection.
+    """
+    Rpc: Final[BuildFailureKind]
+    """
+    A builder RPC / transport failure (retryable).
+    """
+    Spec: Final[BuildFailureKind]
+    """
+    The builder refused the pool as out of spec.
+    """
+    TickAssembly: Final[BuildFailureKind]
+    """
+    A tracked tick map the intake reconciliation rejected for a retryable
+    reason.
+    """
+    TickMapInconsistent: Final[BuildFailureKind]
+    """
+    A tracked tick map whose snapshot rows and chain word bits disagree at
+    intake (stable).
+    """
+    Transient: Final[BuildFailureKind]
+    """
+    Any other failure: transient, never memoized.
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __hash__(self, /) -> int: ...
+    def __int__(self, /) -> int: ...
+    def __ne__(self, value: object, /) -> bool: ...
 
 @final
 class ConcentratedLiquidityView:
@@ -5201,6 +5290,7 @@ __all__ = [
     "BootRefused",
     "Bot",
     "BotIo",
+    "BuildFailureKind",
     "ChainMismatchError",
     "ConcentratedLiquidityView",
     "ConfigSectionValues",

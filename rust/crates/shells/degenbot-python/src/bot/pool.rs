@@ -1867,8 +1867,13 @@ impl PyLiquidityPool {
         match outcome {
             Ok(RefreshOutcome::Changed) => Ok(true),
             Ok(RefreshOutcome::Unchanged) => Ok(false),
+            // A refresh-phase spec refusal shares the spec class with the
+            // build arms but carries no `BuildFailure` arm: `kind` stays
+            // `None`, `detail` is the refusal's own rendering.
             Err(RefreshError::Spec { message, .. }) => {
-                Err(crate::bot::engine::SpecViolationError::new_err(message))
+                Err(crate::bot::engine::refusal_err::<
+                    crate::bot::engine::SpecViolationError,
+                >(message.clone(), None, Some(&message)))
             }
             Err(RefreshError::Provider(e)) => Err(e.into()),
             Err(RefreshError::UnknownPool(_) | RefreshError::MissingIdentity { .. }) => {

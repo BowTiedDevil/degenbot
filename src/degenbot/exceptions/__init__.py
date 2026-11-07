@@ -7,6 +7,11 @@ of the ``degenbot._ffi`` pyclasses — never Python subclasses: Rust raises
 the pyclass instances, so ``except`` / ``isinstance`` matching requires the
 exact same class object. The identity contract is pinned by
 ``tests/ffi/test_companion_alias_identity.py``.
+
+Build refusals additionally cross as typed data on the raised instance:
+``kind`` is a :class:`BuildFailureKind` member (the closed build-failure arm
+vocabulary) and ``detail`` the refusal's structured source rendering — both
+stamped by the PyO3 adapter, never re-derived from the message.
 """
 
 from degenbot._ffi import (
@@ -14,6 +19,7 @@ from degenbot._ffi import (
     # aborts the host process on the boot-refusal arm; the binary maps
     # this exception to its loud named fail-fast exit.
     BootRefused,
+    BuildFailureKind,
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
     HookedPoolRejectedError,
@@ -92,6 +98,7 @@ __all__ = (
     "BackupExists",
     "BootRefused",
     "BrokenPool",
+    "BuildFailureKind",
     "ContractLogicError",
     "CurveError",
     "DegenbotError",

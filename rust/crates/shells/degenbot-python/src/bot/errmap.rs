@@ -14,6 +14,12 @@
 //! that delegates to it; the V4 family's refusals cross only as the one
 //! [`RefusalKind`] vocabulary (no typed-error mapper).
 //!
+//! Build refusals ([`BuildFailure`]) additionally cross as DATA: every raised
+//! instance carries the closed `kind` and structured `detail` attributes (the
+//! `bot::engine::PyBuildFailureKind` read of the core vocabulary), and the
+//! message is the FINAL text — rendered once, here. Nothing downstream
+//! strips a prefix or re-derives a classification from prose.
+//!
 //! Address parsing shares the same contract:
 //! [`degenbot_bot::bot_core::parse_address_str`] owns the
 //! `Invalid address '<input>': <source>` vocabulary; the shell only wraps
@@ -34,11 +40,11 @@ use degenbot_pools::RegisterV2PoolError;
 use degenbot_pools::RegisteredPoolFamily;
 
 use crate::bot::engine::{
-    DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
+    refusal_err, DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
     PathRegistryFullError, PoolAlreadyRegisteredError, PoolBuildDecodeError, PoolBuildRpcError,
-    SpecViolationError, SwapMathOverflowError, SwapNotComputableError,
-    TickMapIntakeInconsistentError, UnsupportedPoolFamilyError, VerificationMismatchError,
-    VerificationRpcError,
+    PoolRegistrationError, PyBuildFailureKind, SpecViolationError, SwapMathOverflowError,
+    SwapNotComputableError, TickMapIntakeInconsistentError, UnsupportedPoolFamilyError,
+    VerificationMismatchError, VerificationRpcError,
 };
 
 /// Map a `connect` refusal to a Python exception.
@@ -86,7 +92,7 @@ pub(crate) fn map_refusal(kind: RefusalKind) -> PyErr {
                 "pool build unknown identity at {address}: no identity selector answered"
             )),
         },
-        RefusalKind::BuildRefused { failure, .. } => map_build_failure(failure),
+        RefusalKind::BuildRefused { failure, .. } => map_build_failure(&failure),
         RefusalKind::RegisterRefused { family, reason, .. } => {
             map_register_refusal(family, reason)
         }
@@ -122,51 +128,83 @@ pub(crate) fn map_build_refusal(method: &'static str, kind: RefusalKind) -> PyEr
     map_refusal(kind)
 }
 
-/// The typed builder-failure vocabulary (the historical `map_builder_err`
-/// rendering, plus the construction route's taxonomy arms). The two I/O arms
-/// are TYPED, not text: `Rpc` (the read failed — retry-worthy) and `Decoding`
-/// (the read succeeded with a value no pool can hold — permanent for that
-/// state) ride their own `PoolRegistrationError` subclasses, so a caller can
-/// skip-by-type without parsing the message. Their message text is the
-/// historical rendering, unchanged.
-fn map_build_failure(failure: BuildFailure) -> PyErr {
+/// The typed builder-failure vocabulary's ONE Python renderer (the
+/// historical `map_builder_err` rendering, plus the construction route's
+/// taxonomy arms): the FINAL message is rendered HERE and nowhere else, and
+/// every instance carries the closed `kind` / structured `detail`
+/// attributes, so a caller reads the refusal as data instead of parsing
+/// prose.
+///
+/// The two I/O arms are TYPED, not text: `Rpc` (the read failed —
+/// retry-worthy) and `Decoding` (the read succeeded with a value no pool can
+/// hold — permanent for that state) ride their own `PoolRegistrationError`
+/// subclasses, so a caller can skip-by-type without parsing the message —
+/// and their reason is the whole caller-facing message (the historical
+/// `pool build RPC error:` / `pool build decode failure:` prefixes died with
+/// the Python strip step they existed for). The DB and transient arms map
+/// to [`PoolRegistrationError`] with distinct kinds — never a plain
+/// `RuntimeError`. Every other arm keeps its historical text unchanged.
+fn map_build_failure(failure: &BuildFailure) -> PyErr {
+    let (kind, detail) = PyBuildFailureKind::read(failure);
     match failure {
-        BuildFailure::HookedPool => {
-            HookedPoolRejectedError::new_err("pool refused: carries an amount-modifying hook")
-        }
-        BuildFailure::DynamicFee => {
-            DynamicFeePoolRejectedError::new_err("pool refused: dynamic fee")
-        }
-        BuildFailure::HighFee => HighFeePoolRejectedError::new_err(
-            "pool refused: static fee exceeds the cmd_executor's 2-byte encoding limit",
+        BuildFailure::HookedPool => refusal_err::<HookedPoolRejectedError>(
+            "pool refused: carries an amount-modifying hook".to_owned(),
+            Some(kind),
+            detail,
+        ),
+        BuildFailure::DynamicFee => refusal_err::<DynamicFeePoolRejectedError>(
+            "pool refused: dynamic fee".to_owned(),
+            Some(kind),
+            detail,
+        ),
+        BuildFailure::HighFee => refusal_err::<HighFeePoolRejectedError>(
+            "pool refused: static fee exceeds the cmd_executor's 2-byte encoding limit".to_owned(),
+            Some(kind),
+            detail,
         ),
         // A stable fee refusal is a permanent refusal: the pool is out of
         // spec, so it surfaces as the spec class a caller skips by type.
-        BuildFailure::Fee(detail) => {
-            SpecViolationError::new_err(format!("pool build refused: out of spec ({detail})"))
-        }
-        BuildFailure::Rpc(detail) => {
-            PoolBuildRpcError::new_err(format!("pool build RPC error: {detail}"))
-        }
-        BuildFailure::Spec(reason) => {
-            SpecViolationError::new_err(format!("pool build refused: out of spec ({reason})"))
-        }
-        BuildFailure::Decoding(message) => {
-            PoolBuildDecodeError::new_err(format!("pool build decode failure: {message}"))
-        }
-        BuildFailure::Db(detail) => {
-            PyRuntimeError::new_err(format!("pool build DB read failed: {detail}"))
-        }
-        BuildFailure::MissingIdentity(message) => {
-            PyValueError::new_err(format!("V4 identity incomplete: {message}"))
-        }
-        BuildFailure::TickAssembly(detail) => {
-            PyValueError::new_err(format!("Tracked tick map rejected at intake: {detail}"))
-        }
-        BuildFailure::TickMapInconsistent(detail) => TickMapIntakeInconsistentError::new_err(
-            format!("Tracked tick map rejected at intake: {detail}"),
+        BuildFailure::Fee(fee_detail) => refusal_err::<SpecViolationError>(
+            format!("pool build refused: out of spec ({fee_detail})"),
+            Some(kind),
+            detail,
         ),
-        BuildFailure::Transient(detail) => PyRuntimeError::new_err(detail),
+        BuildFailure::Rpc(reason) => {
+            refusal_err::<PoolBuildRpcError>(reason.to_owned(), Some(kind), detail)
+        }
+        BuildFailure::Spec(reason) => refusal_err::<SpecViolationError>(
+            format!("pool build refused: out of spec ({reason})"),
+            Some(kind),
+            detail,
+        ),
+        BuildFailure::Decoding(reason) => {
+            refusal_err::<PoolBuildDecodeError>(reason.to_owned(), Some(kind), detail)
+        }
+        BuildFailure::Db(db_detail) => refusal_err::<PoolRegistrationError>(
+            format!("pool build DB read failed: {db_detail}"),
+            Some(kind),
+            detail,
+        ),
+        BuildFailure::MissingIdentity(message) => refusal_err::<PyValueError>(
+            format!("V4 identity incomplete: {message}"),
+            Some(kind),
+            detail,
+        ),
+        BuildFailure::TickAssembly(tick_detail) => refusal_err::<PyValueError>(
+            format!("Tracked tick map rejected at intake: {tick_detail}"),
+            Some(kind),
+            detail,
+        ),
+        BuildFailure::TickMapInconsistent(tick_detail) => {
+            refusal_err::<TickMapIntakeInconsistentError>(
+                format!("Tracked tick map rejected at intake: {tick_detail}"),
+                Some(kind),
+                detail,
+            )
+        }
+        BuildFailure::Transient(reason) => {
+            refusal_err::<PoolRegistrationError>(reason.to_owned(), Some(kind), detail)
+        }
     }
 }
 
@@ -187,35 +225,53 @@ fn map_register_refusal(family: Option<RegisteredPoolFamily>, reason: RegisterRe
             )),
             (None, None) => PoolAlreadyRegisteredError::new_err("pool already registered"),
         },
-        RegisterRefusal::SpecViolation { detail } => SpecViolationError::new_err(format!(
-            "{} registration failed: {detail}",
-            family_subject(family)
-        )),
+        // A register-phase spec violation shares the spec class with the
+        // build arms but carries no `BuildFailure` arm of its own: `kind` is
+        // `None` (the core stamps no build classification here), `detail` is
+        // the refusal's own rendering.
+        RegisterRefusal::SpecViolation { detail } => refusal_err::<SpecViolationError>(
+            format!("{} registration failed: {detail}", family_subject(family)),
+            None,
+            Some(&detail),
+        ),
         RegisterRefusal::Admission {
             failure,
             hook_flags,
             fee,
-        } => map_admission(failure, hook_flags, fee),
+        } => map_admission(&failure, hook_flags, fee),
     }
 }
 
 /// The V4 admission refusals' Python surface (the historical register
 /// refusal's rendering, now the shared `map_refusal` path).
-fn map_admission(failure: BuildFailure, hook_flags: Option<u16>, fee: Option<u32>) -> PyErr {
+fn map_admission(failure: &BuildFailure, hook_flags: Option<u16>, fee: Option<u32>) -> PyErr {
+    let (kind, detail) = PyBuildFailureKind::read(failure);
     match failure {
-        BuildFailure::HookedPool => HookedPoolRejectedError::new_err(format!(
-            "V4 pool has amount-modifying hooks (flags=0x{:04X}, mask=0x{:04X}) — excluded from arbitrage",
-            hook_flags.unwrap_or_default(),
-            degenbot_pools::AMOUNT_MODIFYING_HOOK_MASK
-        )),
-        BuildFailure::DynamicFee => DynamicFeePoolRejectedError::new_err(format!(
-            "V4 pool has dynamic fee (fee=0x{:06X}) — excluded from arbitrage",
-            fee.unwrap_or_default()
-        )),
-        BuildFailure::HighFee => HighFeePoolRejectedError::new_err(format!(
-            "V4 pool fee (fee={}) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage",
-            fee.unwrap_or_default()
-        )),
+        BuildFailure::HookedPool => refusal_err::<HookedPoolRejectedError>(
+            format!(
+                "V4 pool has amount-modifying hooks (flags=0x{:04X}, mask=0x{:04X}) — excluded from arbitrage",
+                hook_flags.unwrap_or_default(),
+                degenbot_pools::AMOUNT_MODIFYING_HOOK_MASK
+            ),
+            Some(kind),
+            detail,
+        ),
+        BuildFailure::DynamicFee => refusal_err::<DynamicFeePoolRejectedError>(
+            format!(
+                "V4 pool has dynamic fee (fee=0x{:06X}) — excluded from arbitrage",
+                fee.unwrap_or_default()
+            ),
+            Some(kind),
+            detail,
+        ),
+        BuildFailure::HighFee => refusal_err::<HighFeePoolRejectedError>(
+            format!(
+                "V4 pool fee (fee={}) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage",
+                fee.unwrap_or_default()
+            ),
+            Some(kind),
+            detail,
+        ),
         other => map_build_failure(other),
     }
 }
@@ -454,6 +510,7 @@ mod tests {
     use degenbot_pools::RegisterV4PoolError;
     use degenbot_pools::SpecRefusal;
     use degenbot_pools::{SpecValue, SpecViolation};
+    use pyo3::PyTypeInfo;
 
     fn addr(s: &str) -> Address {
         s.parse().unwrap()
@@ -515,6 +572,21 @@ mod tests {
             err.to_string()
         });
         strip_class(rendered)
+    }
+
+    /// Exact class identity: the raise is THIS class, not a subclass.
+    fn exact<T: PyTypeInfo>(err: &PyErr) -> bool {
+        Python::attach(|py| err.value(py).get_type().is(py.get_type::<T>()))
+    }
+
+    /// The stamped `kind` / `detail` attributes off a raised refusal.
+    fn stamped(err: &PyErr) -> (PyBuildFailureKind, Option<String>) {
+        Python::attach(|py| {
+            let instance = err.value(py);
+            let kind = instance.getattr("kind").unwrap().extract().unwrap();
+            let detail = instance.getattr("detail").unwrap().extract().unwrap();
+            (kind, detail)
+        })
     }
 
     #[test]
@@ -741,6 +813,9 @@ mod tests {
                 degenbot_pools::AMOUNT_MODIFYING_HOOK_MASK
             )
         );
+        // The admission path is a mapped `BuildFailure` consumer too: the
+        // same closed kind / structured detail cross on its raises.
+        assert_eq!(stamped(&err), (PyBuildFailureKind::HookedPool, None));
 
         let err = map_refusal(kind(RegisterRefusal::Admission {
             failure: BuildFailure::DynamicFee,
@@ -751,6 +826,7 @@ mod tests {
             message(&err),
             "V4 pool has dynamic fee (fee=0x800000) — excluded from arbitrage"
         );
+        assert_eq!(stamped(&err), (PyBuildFailureKind::DynamicFee, None));
 
         let err = map_refusal(kind(RegisterRefusal::Admission {
             failure: BuildFailure::HighFee,
@@ -761,6 +837,7 @@ mod tests {
             message(&err),
             "V4 pool fee (fee=70000) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage"
         );
+        assert_eq!(stamped(&err), (PyBuildFailureKind::HighFee, None));
 
         let already = RegisterV4PoolError::AlreadyRegistered {
             pool_manager: addr("0x0303030303030303030303030303030303030303"),
@@ -880,7 +957,7 @@ mod tests {
             message(&mapped(&PoolBuilderError::Decoding {
                 message: "bad data".to_string(),
             })),
-            "pool build decode failure: bad data"
+            "bad data"
         );
         assert_eq!(
             message(&mapped(&PoolBuilderError::MissingIdentity {
@@ -892,7 +969,7 @@ mod tests {
             message(&mapped(&PoolBuilderError::Rpc(ProviderError::Timeout {
                 message: "blip".to_string(),
             }))),
-            "pool build RPC error: Request timeout: blip"
+            "Request timeout: blip"
         );
         let factory = addr("0x0404040404040404040404040404040404040404");
         assert_eq!(
@@ -1266,69 +1343,153 @@ mod tests {
         );
     }
 
-    /// The build taxonomy's I/O arms are typed: a transport hiccup (retry-worthy)
-    /// and a permanent decode bug are distinguishable by exception type, and
-    /// both stay under `PoolRegistrationError` so ONE `except` still covers the
-    /// whole build/admission taxonomy. Messages are the historical text,
-    /// unchanged.
+    type Row = (
+        BuildFailure,
+        fn(&PyErr) -> bool,
+        PyBuildFailureKind,
+        Option<&'static str>,
+        &'static str,
+    );
+
+    /// The ONE final-message rendering table over the whole build taxonomy:
+    /// every [`BuildFailure`] arm's exact Python class, its closed `kind`, its
+    /// structured `detail`, and its FINAL message — rendered once in
+    /// [`map_build_failure`] and consumed downstream as data, never re-read
+    /// from prose.
+    fn build_failure_rendering_rows() -> Vec<Row> {
+        use crate::bot::engine::{PoolRegistrationError, PyBuildFailureKind as Kind};
+
+        vec![
+            (
+                BuildFailure::HookedPool,
+                exact::<HookedPoolRejectedError>,
+                Kind::HookedPool,
+                None,
+                "pool refused: carries an amount-modifying hook",
+            ),
+            (
+                BuildFailure::DynamicFee,
+                exact::<DynamicFeePoolRejectedError>,
+                Kind::DynamicFee,
+                None,
+                "pool refused: dynamic fee",
+            ),
+            (
+                BuildFailure::HighFee,
+                exact::<HighFeePoolRejectedError>,
+                Kind::HighFee,
+                None,
+                "pool refused: static fee exceeds the cmd_executor's 2-byte encoding limit",
+            ),
+            (
+                BuildFailure::Fee("Aerodrome pool answered an unusable getFee".to_owned()),
+                exact::<SpecViolationError>,
+                Kind::Fee,
+                Some("Aerodrome pool answered an unusable getFee"),
+                "pool build refused: out of spec (Aerodrome pool answered an unusable getFee)",
+            ),
+            (
+                BuildFailure::Rpc("Request timeout: blip".to_owned()),
+                exact::<PoolBuildRpcError>,
+                Kind::Rpc,
+                Some("Request timeout: blip"),
+                "Request timeout: blip",
+            ),
+            (
+                BuildFailure::Spec(SpecRefusal::CurveBrokenPool),
+                exact::<SpecViolationError>,
+                Kind::Spec,
+                Some("curve broken pool"),
+                "pool build refused: out of spec (curve broken pool)",
+            ),
+            (
+                BuildFailure::Decoding("bad bytes".to_owned()),
+                exact::<PoolBuildDecodeError>,
+                Kind::Decoding,
+                Some("bad bytes"),
+                "bad bytes",
+            ),
+            (
+                BuildFailure::Db("disk gone".to_owned()),
+                exact::<PoolRegistrationError>,
+                Kind::Db,
+                Some("disk gone"),
+                "pool build DB read failed: disk gone",
+            ),
+            (
+                BuildFailure::MissingIdentity("no ticks".to_owned()),
+                exact::<PyValueError>,
+                Kind::MissingIdentity,
+                Some("no ticks"),
+                "V4 identity incomplete: no ticks",
+            ),
+            (
+                BuildFailure::TickAssembly("chain word fetch failed".to_owned()),
+                exact::<PyValueError>,
+                Kind::TickAssembly,
+                Some("chain word fetch failed"),
+                "Tracked tick map rejected at intake: chain word fetch failed",
+            ),
+            (
+                BuildFailure::TickMapInconsistent("rows vs words disagree".to_owned()),
+                exact::<TickMapIntakeInconsistentError>,
+                Kind::TickMapInconsistent,
+                Some("rows vs words disagree"),
+                "Tracked tick map rejected at intake: rows vs words disagree",
+            ),
+            (
+                BuildFailure::Transient("flaky".to_owned()),
+                exact::<PoolRegistrationError>,
+                Kind::Transient,
+                Some("flaky"),
+                "flaky",
+            ),
+        ]
+    }
+
     #[test]
-    fn build_io_failures_raise_their_typed_class() {
+    fn build_failure_arms_pin_class_kind_detail_and_final_message() {
+        let rows = build_failure_rendering_rows();
+        for (failure, class, kind, detail, final_message) in &rows {
+            let err = map_build_failure(failure);
+            assert!(class(&err), "wrong class for {failure:?}: {err}");
+            assert_eq!(
+                stamped(&err),
+                (*kind, detail.map(str::to_owned)),
+                "{failure:?}"
+            );
+            assert_eq!(
+                message(&err),
+                *final_message,
+                "final message for {failure:?}"
+            );
+        }
+    }
+
+    /// The DB and transient arms map to the admission parent with DISTINCT
+    /// kinds — never a plain `RuntimeError`.
+    #[test]
+    fn db_and_transient_failures_map_to_the_admission_parent_with_distinct_kinds() {
         use crate::bot::engine::PoolRegistrationError;
 
-        let refused = |failure: BuildFailure| {
-            map_refusal(RefusalKind::BuildRefused {
-                family: None,
-                phase: RegistrationPhase::Build,
-                failure,
-            })
-        };
-
-        let rpc = refused(BuildFailure::Rpc("Request timeout: blip".to_string()));
+        let db = map_build_failure(&BuildFailure::Db("disk gone".to_owned()));
+        let transient = map_build_failure(&BuildFailure::Transient("flaky".to_owned()));
         Python::attach(|py| {
-            assert!(
-                rpc.is_instance_of::<PoolBuildRpcError>(py),
-                "a transport failure must surface as the retryable PoolBuildRpcError, got: {rpc}"
-            );
-            assert!(
-                rpc.is_instance_of::<PoolRegistrationError>(py),
-                "the typed build errors stay under the one admission parent"
-            );
-            assert!(
-                !rpc.is_instance_of::<PoolBuildDecodeError>(py),
-                "a transport failure is NOT a decode failure (distinct types)"
-            );
+            for err in [&db, &transient] {
+                assert!(
+                    err.is_instance_of::<PoolRegistrationError>(py),
+                    "DB/transient build failures ride the admission parent, got: {err}"
+                );
+                assert!(
+                    !err.is_instance_of::<PyRuntimeError>(py),
+                    "DB/transient build failures are NOT plain RuntimeErrors, got: {err}"
+                );
+            }
         });
-        assert_eq!(message(&rpc), "pool build RPC error: Request timeout: blip");
-
-        let decode = refused(BuildFailure::Decoding("bad bytes".to_string()));
-        Python::attach(|py| {
-            assert!(
-                decode.is_instance_of::<PoolBuildDecodeError>(py),
-                "a decoded-value bug must surface as PoolBuildDecodeError, got: {decode}"
-            );
-            assert!(
-                decode.is_instance_of::<PoolRegistrationError>(py),
-                "the typed build errors stay under the one admission parent"
-            );
-            assert!(
-                !decode.is_instance_of::<PoolBuildRpcError>(py),
-                "a decode failure is NOT a transport failure (distinct types)"
-            );
-        });
-        assert_eq!(message(&decode), "pool build decode failure: bad bytes");
-
-        // The Spec arm is unchanged: a typed spec refusal keeps its own class.
-        let spec = refused(BuildFailure::Spec(SpecRefusal::CurveBrokenPool));
-        Python::attach(|py| {
-            assert!(
-                spec.is_instance_of::<SpecViolationError>(py),
-                "the spec arm keeps its class (no regression), got: {spec}"
-            );
-            assert!(spec.is_instance_of::<PoolRegistrationError>(py));
-        });
-        assert_eq!(
-            message(&spec),
-            "pool build refused: out of spec (curve broken pool)"
-        );
+        let (db_kind, _) = stamped(&db);
+        let (transient_kind, _) = stamped(&transient);
+        assert_eq!(db_kind, PyBuildFailureKind::Db);
+        assert_eq!(transient_kind, PyBuildFailureKind::Transient);
+        assert_ne!(db_kind, transient_kind, "the two arms carry distinct kinds");
     }
 }

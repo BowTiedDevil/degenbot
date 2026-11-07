@@ -121,16 +121,19 @@ class Erc20Builder:
         except (PoolRegistrationError, RuntimeError) as exc:
             # Preserve the documented DegenbotValueError contract. The binding
             # raises the typed build-failure taxonomy for a build that fails
-            # before admission — `PoolBuildRpcError` (the read failed) and
-            # `PoolBuildDecodeError` (the read answered an impossible value) —
-            # and every arm hangs off `PoolRegistrationError`, so catching the
-            # parent is what keeps this call's contract whole. That parent is a
-            # ValueError, not a RuntimeError, so a RuntimeError-only arm let a
-            # typed refusal escape. RuntimeError stays as the belt-and-braces
-            # arm for the still-flattened DB refusal and any plain seam
-            # failure; `__cause__` carries the typed refusal for a caller that
-            # classifies by type instead of message.
-            raise DegenbotValueError(message=_build_failure_message(exc)) from exc
+            # before admission — `PoolBuildRpcError` (the read failed),
+            # `PoolBuildDecodeError` (the read answered an impossible value),
+            # and the DB/transient arms (`PoolRegistrationError` itself) — and
+            # every arm hangs off `PoolRegistrationError`, so catching the
+            # parent is what keeps this call's contract whole. That parent is
+            # a ValueError, not a RuntimeError, so a RuntimeError-only arm let
+            # a typed refusal escape; RuntimeError stays as the belt-and-
+            # braces arm for plain seam failures outside the taxonomy. The
+            # message is the seam's FINAL text passed through verbatim (one
+            # renderer, upstream) and `__cause__` carries the typed refusal
+            # with its `kind` / `detail` for a caller that classifies by data
+            # instead of message.
+            raise DegenbotValueError(message=str(exc)) from exc
         token = Erc20Token.from_handle(py_token)
 
         # Register idempotently: a concurrent worker may have
@@ -343,28 +346,3 @@ class Erc20Builder:
                 self.build_native(chain_id=chain_id)._py_native, address, block_identifier
             ),
         )
-
-
-# --- Build-failure message rendering ---
-
-# The seam renders a build refusal as "pool build <arm>: <reason>". The two
-# I/O arms' reason is the whole caller-facing message, so their prefix is
-# stripped here; the DB arm keeps its historical text unchanged.
-_BUILD_FAILURE_PREFIXES = (
-    "pool build decode failure: ",
-    "pool build RPC error: ",
-)
-
-
-def _build_failure_message(exc: BaseException) -> str:
-    """Render a build refusal without the seam's I/O-arm prefix.
-
-    Returns:
-        The rendered message.
-
-    """
-    message = str(exc)
-    for prefix in _BUILD_FAILURE_PREFIXES:
-        if message.startswith(prefix):
-            return message.removeprefix(prefix)
-    return message

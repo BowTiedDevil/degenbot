@@ -61,6 +61,8 @@ pub(crate) enum AttributeType {
     Int,
     /// `str`.
     Str,
+    /// `str | None`.
+    OptionalStr,
     /// `int | None`.
     OptionalInt,
     /// `dict[str, Any]` — the typed consumer report the loop hands back.
@@ -78,6 +80,7 @@ impl AttributeType {
         match self {
             Self::Int => "int".to_owned(),
             Self::Str => "str".to_owned(),
+            Self::OptionalStr => "str | None".to_owned(),
             Self::OptionalInt => "int | None".to_owned(),
             Self::AnyDict => "dict[str, Any]".to_owned(),
             Self::ClassRef(name) => (*name).to_owned(),
@@ -93,6 +96,7 @@ impl AttributeType {
             Self::AnyDict => Some(("Any", "from typing import Any")),
             Self::Int
             | Self::Str
+            | Self::OptionalStr
             | Self::OptionalInt
             | Self::ClassRef(_)
             | Self::OptionalClassRef(_) => None,
@@ -103,7 +107,7 @@ impl AttributeType {
     pub(crate) fn class_ref(self) -> Option<&'static str> {
         match self {
             Self::ClassRef(name) | Self::OptionalClassRef(name) => Some(name),
-            Self::Int | Self::Str | Self::OptionalInt | Self::AnyDict => None,
+            Self::Int | Self::Str | Self::OptionalStr | Self::OptionalInt | Self::AnyDict => None,
         }
     }
 }
@@ -161,7 +165,16 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PoolRegistrationError",
-        attributes: &[],
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("BuildFailureKind"),
+            },
+            ExceptionAttribute {
+                name: "detail",
+                ty: AttributeType::Str,
+            },
+        ],
         base: "ValueError",
         message: "A pool was refused at registration (duplicate address, out-of-spec field, V4 amount-modifying hook, V4 dynamic fee, or V4 high static fee > 65535). Subclasses classify the specific admission reason so build_paths skips rejected pools by type, not string matching.",
     },
@@ -169,7 +182,16 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "HookedPoolRejectedError",
-        attributes: &[],
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("BuildFailureKind"),
+            },
+            ExceptionAttribute {
+                name: "detail",
+                ty: AttributeType::OptionalStr,
+            },
+        ],
         base: "PoolRegistrationError",
         message: "A V4 pool with an amount-modifying hook was rejected at registration: the solver's concentrated-liquidity math assumes no hook intervention.",
     },
@@ -177,7 +199,16 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "DynamicFeePoolRejectedError",
-        attributes: &[],
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("BuildFailureKind"),
+            },
+            ExceptionAttribute {
+                name: "detail",
+                ty: AttributeType::OptionalStr,
+            },
+        ],
         base: "PoolRegistrationError",
         message: "A V4 pool with a dynamic fee was rejected at registration: the solver assumes a fixed fee.",
     },
@@ -185,7 +216,16 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "HighFeePoolRejectedError",
-        attributes: &[],
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("BuildFailureKind"),
+            },
+            ExceptionAttribute {
+                name: "detail",
+                ty: AttributeType::OptionalStr,
+            },
+        ],
         base: "PoolRegistrationError",
         message: "A V4 pool whose static fee exceeds the cmd_executor's 2-byte encoding limit (fee > 65535) was rejected at registration: the executor encodes fee as u16 in both V4_SWAP_COMPACT and V4_SWAP_DYNAMIC, so such pools cannot be encoded. They are also unprofitable (32%+ per swap).",
     },
@@ -201,7 +241,16 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "SpecViolationError",
-        attributes: &[],
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::OptionalClassRef("BuildFailureKind"),
+            },
+            ExceptionAttribute {
+                name: "detail",
+                ty: AttributeType::Str,
+            },
+        ],
         base: "PoolRegistrationError",
         message: "A pool was refused as out of spec, either at registration (a field violates its on-chain Solidity bound: e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range) or at build (the pool is unbuildable, e.g. a known-broken pool, too few coins, an unreadable coin). The message identifies the offending field, its value, and the bound it violates; a build refusal names its reason in parentheses, e.g. `pool build refused: out of spec (curve broken pool)`.",
     },
@@ -209,7 +258,16 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PoolBuildRpcError",
-        attributes: &[],
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("BuildFailureKind"),
+            },
+            ExceptionAttribute {
+                name: "detail",
+                ty: AttributeType::Str,
+            },
+        ],
         base: "PoolRegistrationError",
         message: "A pool build could not complete because a provider call failed (transport error, failed eth_call, unreachable endpoint). Transient and retry-worthy: the refusal says nothing about the pool's admissibility because its state was never read.",
     },
@@ -217,7 +275,16 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "PoolBuildDecodeError",
-        attributes: &[],
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("BuildFailureKind"),
+            },
+            ExceptionAttribute {
+                name: "detail",
+                ty: AttributeType::Str,
+            },
+        ],
         base: "PoolRegistrationError",
         message: "A pool build read chain data successfully but the returned values do not decode into a valid pool shape (e.g. a token reporting more than 18 decimals, a value that does not fit its field). Permanent for the observed state: re-reading the same data decodes the same way, so the pool is inadmissible rather than momentarily unreachable.",
     },
@@ -225,7 +292,16 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
         name: "TickMapIntakeInconsistentError",
-        attributes: &[],
+        attributes: &[
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("BuildFailureKind"),
+            },
+            ExceptionAttribute {
+                name: "detail",
+                ty: AttributeType::Str,
+            },
+        ],
         base: "PoolRegistrationError",
         message: "A tracked pool was refused at intake: the database snapshot's tick rows and the chain word bits disagree. Stable for the session — the snapshot does not change under the crawl — so the refusal memoizes as a pool fact instead of being retried.",
     },
@@ -679,6 +755,7 @@ mod tests {
     fn attribute_types_render_their_stub_spellings() {
         assert_eq!(AttributeType::Int.render(), "int");
         assert_eq!(AttributeType::Str.render(), "str");
+        assert_eq!(AttributeType::OptionalStr.render(), "str | None");
         assert_eq!(AttributeType::OptionalInt.render(), "int | None");
         assert_eq!(AttributeType::AnyDict.render(), "dict[str, Any]");
         assert_eq!(
@@ -957,6 +1034,46 @@ mod tests {
                 ("ChainMismatchError", "actual", "int".to_owned()),
                 ("ChainMismatchError", "endpoint", "str".to_owned()),
                 ("ChainMismatchError", "expected", "int".to_owned()),
+                (
+                    "DynamicFeePoolRejectedError",
+                    "detail",
+                    "str | None".to_owned(),
+                ),
+                (
+                    "DynamicFeePoolRejectedError",
+                    "kind",
+                    "BuildFailureKind".to_owned(),
+                ),
+                (
+                    "HighFeePoolRejectedError",
+                    "detail",
+                    "str | None".to_owned(),
+                ),
+                (
+                    "HighFeePoolRejectedError",
+                    "kind",
+                    "BuildFailureKind".to_owned(),
+                ),
+                ("HookedPoolRejectedError", "detail", "str | None".to_owned(),),
+                (
+                    "HookedPoolRejectedError",
+                    "kind",
+                    "BuildFailureKind".to_owned(),
+                ),
+                ("PoolBuildDecodeError", "detail", "str".to_owned()),
+                (
+                    "PoolBuildDecodeError",
+                    "kind",
+                    "BuildFailureKind".to_owned(),
+                ),
+                ("PoolBuildRpcError", "detail", "str".to_owned()),
+                ("PoolBuildRpcError", "kind", "BuildFailureKind".to_owned()),
+                ("PoolRegistrationError", "detail", "str".to_owned()),
+                (
+                    "PoolRegistrationError",
+                    "kind",
+                    "BuildFailureKind".to_owned(),
+                ),
                 ("SessionConsumerError", "batch_index", "int".to_owned()),
                 (
                     "SessionConsumerError",
@@ -968,9 +1085,21 @@ mod tests {
                     "report",
                     "dict[str, Any]".to_owned()
                 ),
+                ("SpecViolationError", "detail", "str".to_owned()),
+                (
+                    "SpecViolationError",
+                    "kind",
+                    "BuildFailureKind | None".to_owned(),
+                ),
                 ("SwapRefused", "amount", "int | None".to_owned()),
                 ("SwapRefused", "kind", "SwapRefusalKind".to_owned()),
                 ("SwapRefused", "word", "int | None".to_owned()),
+                ("TickMapIntakeInconsistentError", "detail", "str".to_owned()),
+                (
+                    "TickMapIntakeInconsistentError",
+                    "kind",
+                    "BuildFailureKind".to_owned(),
+                ),
             ]
         );
     }

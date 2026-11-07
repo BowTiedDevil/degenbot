@@ -6,6 +6,11 @@ A build that fails before admission raises the typed build-failure taxonomy
 ``RuntimeError``, so the builder's translation must catch the admission parent;
 catching ``RuntimeError`` alone lets a decode refusal escape the documented
 contract.
+
+The translation re-derives NOTHING: the message is the seam's FINAL text
+(rendered once, in the PyO3 adapter) passed through verbatim, and ``__cause__``
+carries the typed refusal with its ``kind`` / ``detail``. There is no prefix
+stripping and no downstream reclassification.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ import json
 
 import pytest
 
-from degenbot.builders.erc20_builder import Erc20Builder, _build_failure_message
+from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import (
     DegenbotValueError,
@@ -25,6 +30,7 @@ from degenbot.exceptions import (
 from degenbot.registry import TokenRegistry
 from tests.helpers.seam import AlloyProvider as RustAlloyProvider
 from tests.helpers.seam import Bot as _Engine
+from tests.helpers.seam import BuildFailureKind
 
 # A random address no cassette entry deploys code for.
 NO_CODE_ADDRESS = get_checksum_address("0x1234567890123456789012345678901234567890")
@@ -62,30 +68,14 @@ def test_no_contract_build_raises_degenbot_value_error() -> None:
     with pytest.raises(DegenbotValueError) as exc_info:
         erc20.build(NO_CODE_ADDRESS, chain_id=1, silent=True)
 
-    # The seam prefix is stripped; the typed refusal survives as the cause.
+    # The final text passes through verbatim — one renderer, upstream — and
+    # the typed refusal survives as the cause with its typed data.
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, PoolBuildDecodeError)
+    assert exc_info.value.message == str(cause)
     assert exc_info.value.message == "No contract deployed at this address"
-    assert isinstance(exc_info.value.__cause__, PoolBuildDecodeError)
-
-
-@pytest.mark.parametrize(
-    ("refusal", "expected"),
-    [
-        (PoolBuildDecodeError("pool build decode failure: bad bytes"), "bad bytes"),
-        (
-            PoolBuildRpcError("pool build RPC error: Request timeout: blip"),
-            "Request timeout: blip",
-        ),
-        # The DB arm keeps its historical text (no prefix stripping).
-        (
-            RuntimeError("pool build DB read failed: disk gone"),
-            "pool build DB read failed: disk gone",
-        ),
-    ],
-    ids=["decode", "rpc", "db"],
-)
-def test_build_failure_message_strips_the_io_arm_prefix(
-    refusal: BaseException,
-    expected: str,
-) -> None:
-    """Both I/O arms lose their `pool build ...` prefix; other arms are untouched."""
-    assert _build_failure_message(refusal) == expected
+    assert cause.kind == BuildFailureKind.Decoding
+    assert cause.detail == "No contract deployed at this address"
+    # Nothing downstream re-classifies: the wrapper's message carries no
+    # edited form of the refusal's text.
+    assert set(vars(cause)) == {"kind", "detail"}

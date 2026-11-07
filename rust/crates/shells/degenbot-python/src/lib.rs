@@ -378,7 +378,7 @@ mod _ffi {
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::engine::{
-        session_phase_next, PyArbEngine, PyCrawlReceiptStream, PyCrawlSession,
+        session_phase_next, PyArbEngine, PyBuildFailureKind, PyCrawlReceiptStream, PyCrawlSession,
     };
 
     // The core Session-end ranking over the stable fact spellings: the Python

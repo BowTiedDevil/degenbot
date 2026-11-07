@@ -33,6 +33,32 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **Typed build refusals cross the PyO3 seam as data — one final renderer, no
+  Python prefix stripping.** Every `BuildFailure` arm raises its historical
+  exception class now carrying a closed `kind` attribute (a
+  `degenbot._ffi.BuildFailureKind` member — the core's arm vocabulary verbatim,
+  also exported as `degenbot.exceptions.BuildFailureKind`) and a structured
+  `detail` attribute (the refusal's source rendering, `None` on the unit
+  arms), stamped by the one `bot::engine::errors::refusal_err` builder (the
+  `SwapRefused` / `SessionConsumerError` instance-construction precedent). The
+  message is the FINAL text, rendered once in the adapter — the two I/O arms'
+  reason is the whole caller-facing message, every other arm keeps its
+  historical text. Python's `_build_failure_message` / `_BUILD_FAILURE_PREFIXES`
+  are deleted; `Erc20Builder.build` passes the seam's message through verbatim
+  into its documented `DegenbotValueError` (the typed refusal rides
+  `__cause__`). The core `BuildFailure` / `RefusalKind` vocabulary is
+  unchanged — the adapter reads it and never invents a second classification.
+  The migration rows:
+
+  | Was | Is |
+  | --- | --- |
+  | `BuildFailure::Db` raised a plain `RuntimeError` (`pool build DB read failed: …`) | `PoolRegistrationError` with `kind=BuildFailureKind.Db`; message unchanged |
+  | `BuildFailure::Transient` raised a plain `RuntimeError` (the bare detail) | `PoolRegistrationError` with `kind=BuildFailureKind.Transient`; message unchanged |
+  | `PoolBuildRpcError` message `pool build RPC error: <reason>` | message `<reason>` (the whole caller-facing message); `kind=BuildFailureKind.Rpc`, `detail=<reason>` |
+  | `PoolBuildDecodeError` message `pool build decode failure: <reason>` | message `<reason>`; `kind=BuildFailureKind.Decoding`, `detail=<reason>` |
+  | build-refusal exceptions carried only prose | every `BuildFailure` arm stamps `kind` (closed `BuildFailureKind`) + `detail` (`str` / `None`) on the instance; `SpecViolationError` raises outside the build taxonomy (register-phase, seam boundary) stamp `kind=None` |
+  | `Erc20Builder` stripped the I/O-arm prefixes via `_build_failure_message` | deleted — the `DegenbotValueError` message is the seam's final text verbatim |
+
 - **`PoolConstruction` is the one construction request from `Bot::construct_pool`
   through route dispatch — a breaking cut of the `bot_core::V3RouteInputs`
   re-export (ADR-085).** The door hands its family-tagged request to

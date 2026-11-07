@@ -84,7 +84,6 @@ _NAMED_SPEC_REFUSALS = frozenset({
     "no-code coin",
 })
 
-_SPEC_MESSAGE_PREFIX = "pool build refused: out of spec"
 
 # The built pool's class must match the corpus family: a weighted pool that
 # builds as a stable pool (or vice versa) is a misclassification, not a build.
@@ -168,17 +167,15 @@ def _corpus_shape_violations(corpus: dict) -> list[str]:
 def _named_refusal_reason(exc: SpecViolationError) -> str:
     """The refusal's named reason, asserted to be a known one.
 
-    The FFI renders a refusal as ``pool build refused: out of spec (<reason>)``
-    (`errmap.rs::map_build_failure`), so the reason is the parenthesized suffix.
+    The reason crosses the seam as typed data — the ``detail`` attribute
+    (`errmap.rs::map_build_failure` stamps it) — so nothing parses the
+    message.
     """
-    message = str(exc)
-    assert message.startswith(_SPEC_MESSAGE_PREFIX), message
-    suffix = message[len(_SPEC_MESSAGE_PREFIX) :].strip()
-    assert suffix.startswith("(") and suffix.endswith(")"), message
-    reason = suffix[1:-1]
+    reason = exc.detail
+    assert isinstance(reason, str), reason
     assert reason in _NAMED_SPEC_REFUSALS, (
         f"unnamed spec refusal {reason!r} — the Rust SpecRefusal vocabulary and "
-        f"this test's _NAMED_SPEC_REFUSALS are out of lock-step ({message})"
+        f"this test's _NAMED_SPEC_REFUSALS are out of lock-step ({exc!r})"
     )
     return reason
 

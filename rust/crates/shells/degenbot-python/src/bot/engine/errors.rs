@@ -5,7 +5,10 @@
 //! `#[pymodule]`
 //! and the sibling concern files reference them as `crate::bot::engine::*`.
 
-use pyo3::{create_exception, PyErr};
+use crate::prelude::*;
+use degenbot_pools::BuildFailure;
+use pyo3::types::PyAny;
+use pyo3::{create_exception, PyErr, PyTypeInfo};
 
 // Distinct Python exception types for the two verification failure
 // categories. Both subclass `RuntimeError` so existing
@@ -301,3 +304,118 @@ create_exception!(
     crate::bot::engine::StrategyHostError,
     "The named strategy is registered but unconfigured: no config facet with its required keys was booted, so it cannot be enabled."
 );
+
+/// The build-refusal taxonomy's typed `kind` vocabulary on the Python
+/// surface — the core's closed [`BuildFailure`] arm set verbatim, so the
+/// shell re-classifies nothing (the `bot::pool::PySwapRefusalKind` /
+/// `ConsumerErrorKind` precedent: the classification crosses as data on the
+/// exception instance, never as prose in the message).
+///
+// `hash` rides with `eq`: a kind crosses as a VALUE (`==`/`in`), never as a
+// class-attribute singleton — the seam builds a fresh instance per refusal,
+// so identity comparison silently answers "not this kind".
+#[pyclass(
+    name = "BuildFailureKind",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    from_py_object,
+    module = "degenbot._ffi"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PyBuildFailureKind {
+    /// The V4 hooked-pool admission refusal.
+    HookedPool,
+    /// The V4 dynamic-fee admission refusal.
+    DynamicFee,
+    /// A fee above the encoder's limit — a stable pool fact for every family.
+    HighFee,
+    /// A fee refusal that is a stable pool fact.
+    Fee,
+    /// A builder RPC / transport failure (retryable).
+    Rpc,
+    /// The builder refused the pool as out of spec.
+    Spec,
+    /// A builder decode failure (permanent for the observed state).
+    Decoding,
+    /// A builder DB read failure.
+    Db,
+    /// An incomplete V4 identity — an intake rejection.
+    MissingIdentity,
+    /// A tracked tick map the intake reconciliation rejected for a retryable
+    /// reason.
+    TickAssembly,
+    /// A tracked tick map whose snapshot rows and chain word bits disagree at
+    /// intake (stable).
+    TickMapInconsistent,
+    /// Any other failure: transient, never memoized.
+    Transient,
+}
+
+impl PyBuildFailureKind {
+    /// The ONE read of the core's closed [`BuildFailure`] vocabulary: the
+    /// arm's `kind` and its structured `detail` — the payload arm's source
+    /// rendering, the spec arm's reason label, and nothing on the unit arms,
+    /// exactly `RefusalKind::detail()`'s read of the same vocabulary.
+    ///
+    /// Exhaustive by construction: a new core arm fails this match until it
+    /// names its kind here.
+    #[must_use]
+    pub fn read(failure: &BuildFailure) -> (Self, Option<&str>) {
+        match failure {
+            BuildFailure::HookedPool => (Self::HookedPool, None),
+            BuildFailure::DynamicFee => (Self::DynamicFee, None),
+            BuildFailure::HighFee => (Self::HighFee, None),
+            BuildFailure::Fee(detail) => (Self::Fee, Some(detail)),
+            BuildFailure::Rpc(detail) => (Self::Rpc, Some(detail)),
+            BuildFailure::Spec(reason) => (Self::Spec, Some(reason.as_str())),
+            BuildFailure::Decoding(detail) => (Self::Decoding, Some(detail)),
+            BuildFailure::Db(detail) => (Self::Db, Some(detail)),
+            BuildFailure::MissingIdentity(detail) => (Self::MissingIdentity, Some(detail)),
+            BuildFailure::TickAssembly(detail) => (Self::TickAssembly, Some(detail)),
+            BuildFailure::TickMapInconsistent(detail) => (Self::TickMapInconsistent, Some(detail)),
+            BuildFailure::Transient(detail) => (Self::Transient, Some(detail)),
+        }
+    }
+}
+
+/// The ONE stamped-construction builder for refusal exceptions that carry the
+/// typed `kind` / `detail` attributes (the `swap_refused_err` /
+/// `simulation::session::abort_error` instance-construction precedent): the
+/// attributes are the contract, so a consumer reads the refusal instead of
+/// parsing the message.
+///
+/// `kind` is `None` only where the refusal carries no [`BuildFailure`] arm —
+/// the register-phase and seam-boundary spec refusals that share an exception
+/// class with build arms (the `ConsumerErrorKind` precedent: `None` where the
+/// core stamps no classification). `detail` follows
+/// [`PyBuildFailureKind::read`]: the refusal's source rendering, `None` on
+/// the arms that carry no payload.
+pub(crate) fn refusal_err<T: PyTypeInfo>(
+    message: String,
+    kind: Option<PyBuildFailureKind>,
+    detail: Option<&str>,
+) -> PyErr {
+    Python::attach(|py| {
+        let built = (|| -> pyo3::PyResult<PyErr> {
+            let instance = T::type_object(py).call1((message.clone(),))?;
+            let kind_arg: Bound<'_, PyAny> = match kind {
+                Some(kind) => Bound::new(py, kind)?.into_any(),
+                None => py.None().into_bound(py),
+            };
+            instance.setattr("kind", kind_arg)?;
+            let detail_arg: Bound<'_, PyAny> = match detail {
+                // `&str::into_pyobject` is infallible; the arm documents that.
+                Some(detail) => match detail.into_pyobject(py) {
+                    Ok(rendered) => rendered.into_any(),
+                    Err(error) => match error {},
+                },
+                None => py.None().into_bound(py),
+            };
+            instance.setattr("detail", detail_arg)?;
+            Ok(PyErr::from_value(instance))
+        })();
+        built.unwrap_or_else(|_error| PyErr::new::<T, _>(message))
+    })
+}

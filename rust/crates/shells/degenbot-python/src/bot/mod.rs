@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 
-use crate::bot::engine::{hex_string_to_pool_id, SpecViolationError};
+use crate::bot::engine::{hex_string_to_pool_id, refusal_err, SpecViolationError};
 use crate::bot::errmap::{
     map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err, map_connect_err,
     map_no_construction_io, map_refusal, map_register_v2_err,
@@ -44,8 +44,13 @@ fn narrow_reserve(
     value: alloy::primitives::U256,
     field: &'static str,
 ) -> PyResult<alloy::primitives::aliases::U112> {
-    degenbot_pools::narrow_v2_reserve(value, field)
-        .map_err(|sv| SpecViolationError::new_err(format!("{sv}")))
+    degenbot_pools::narrow_v2_reserve(value, field).map_err(|sv| {
+        // A seam-boundary spec refusal shares the spec class with the build
+        // arms but carries no `BuildFailure` arm: `kind` stays `None`,
+        // `detail` is the refusal's own rendering.
+        let rendered = format!("{sv}");
+        refusal_err::<SpecViolationError>(rendered.clone(), None, Some(&rendered))
+    })
 }
 pub use crate::bot::pool::PyLiquidityPool;
 use crate::bot::pool::TickData;
