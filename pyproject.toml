@@ -185,9 +185,11 @@ allow-star-arg-any = true
 ]
 
 [tool.pytest.ini_options]
-# Serial by design: xdist dropped — 16-way parallel anvil forks outran the RPC
-# tier (spawn timeouts), and wall-clock speed is no longer the binding constraint.
+# Four workers keep local-node forks below the resource and RPC pressure that
+# made unbounded parallelism flaky. Live and recording lanes override this with -n0.
 addopts = [
+    "--numprocesses", "4",
+    "--dist", "loadgroup",
     "--import-mode", "importlib",
     "-m", "not slow and not base and not online_rpc and not stub_drift",
 ]
@@ -234,6 +236,7 @@ dev = [
     "pytest-randomly",
     "pytest-timeout",
     "pytest",
+    "pytest-xdist",
     "python-dotenv",
     "sybil",
     "tomlkit",

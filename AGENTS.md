@@ -88,12 +88,12 @@ Rust validation is split into named lanes, not one `--all-features` gate; each r
 
 - `just lint-rust-check` / `just check-rust-default` — default features, no `--all-features`.
 - `just check-rust-consumer` — the pure-Rust umbrella and its examples, without the PyO3 binding crate.
-- `just check-rust-binding-default` — `degenbot_rs`'s broad default domain surface, without `extension-module`.
+- `just check-rust-binding-default` — focused `degenbot_rs` default-domain diagnostic; the workspace default lint already covers this shape.
 - `just check-rust-dev-features` — the canonical `dev-features` alias, intentionally outside package defaults.
 - `just check-rust-extension-release` / `just build-rust-extension` — the release-equivalent extension set.
-- `just check-rust-all-features` — diagnostic only, never the default gate.
+- `just check-rust-all-features` — on-demand diagnostic only, never a required local or CI gate.
 
-CI runs the default, consumer, binding-default, dev-only, and release checks before the all-features diagnostic.
+CI runs the default, consumer, dev-only, and release checks. Binding-default is covered by the default workspace lint; the all-features diagnostic runs on demand.
 
 ## Rust test scope
 

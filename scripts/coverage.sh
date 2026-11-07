@@ -151,7 +151,7 @@ run_pyo3_arm() {
         "$ROOT/scripts/build_extension.sh" coverage
 
     LLVM_PROFILE_FILE="$raw/pyo3-%p-%m.profraw" \
-        uv run --no-sync pytest -q --no-header ${COV_PYTEST_ARGS:-} "$@"
+        uv run --no-sync pytest -n0 -q --no-header ${COV_PYTEST_ARGS:-} "$@"
 
     [ -n "$(find "$raw" -name '*.profraw' -print -quit)" ] \
         || { echo "ERROR: pytest wrote no profraw files — the instrumented cdylib may not have been loaded" >&2; exit 1; }

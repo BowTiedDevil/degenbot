@@ -139,15 +139,15 @@ def test_the_commitlint_script_entry_is_wiring_checked(tmp_path: Path) -> None:
 
 
 def test_a_recipe_dropped_from_the_push_gate_manifest_fails(tmp_path: Path) -> None:
-    dropped = '  { id = "stub-drift", name = "Stub drift gate", language = "system", '
-    dropped += 'entry = "just lint-stub-drift", stages = ["pre-push"], always_run = true, '
+    dropped = '  { id = "cli-no-python", name = "CLI no-Python gate", language = "system", '
+    dropped += 'entry = "just ci-no-python-cli-gate", stages = ["pre-push"], always_run = true, '
     dropped += "pass_filenames = false, fail_fast = true },\n"
     mutated = _mutate(tmp_path, PREK_TOML, dropped, "")
 
     result = _run_ci_parity(PREK=str(mutated))
 
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "lint-stub-drift" in result.stderr
+    assert "ci-no-python-cli-gate" in result.stderr
 
 
 def test_a_ci_job_without_a_manifest_line_fails(tmp_path: Path) -> None:

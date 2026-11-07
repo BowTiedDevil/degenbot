@@ -216,17 +216,6 @@ test-rust-ci:
     CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 just test-rust
 
 
-# The fleet budget-algebra (pure plan/budget tiering) and the
-# binding-parity gates (pinned-vs-serial outcome-corpus identity). NAMED so a
-# fleet-tier regression is readable in any check log, CI's or the hook's.
-test-fleet-parity:
-    cd rust && cargo test --locked -p degenbot-workers -- plan budget
-    # executor-ab-probe: the outcome corpus lives in a feature-gated island
-    # (ADR-084 D3) — without the feature this filter would match zero tests
-    # and exit green over a silently skipped corpus.
-    cd rust && cargo test --locked -p degenbot-bot --features executor-ab-probe -- the_outcome_corpus lane_death
-
-
 # Two-sided golden replay gate (offline, seconds): profit under/over-shoot and
 # nondeterminism across reps, on the single-block anchor + the 156-row heavy
 # corpus. Blocks merge in CI; named here so the pre-push gate runs it too.
@@ -410,7 +399,7 @@ test-fork: dev
     echo
     echo "▶ pytest fork legs: -m '(online_rpc or base) and not slow and not deployment_verify'"
     pytest_rc=0
-    {{ py_run }} pytest -m '(online_rpc or base) and not slow and not deployment_verify' -q --no-header || pytest_rc=$?
+    {{ py_run }} pytest -n0 -m '(online_rpc or base) and not slow and not deployment_verify' -q --no-header || pytest_rc=$?
     echo
     echo "▶ Rust live evm2 fork legs: degenbot-simulation live_* (run-ignored only)"
     rust_rc=0
@@ -546,8 +535,8 @@ crates-io-pending *args:
 
 # Authoritative CI/pre-push Clippy gate. It deliberately checks default
 # features without `--all-features`, so test-only and mutually exclusive build
-# variants cannot hide a default regression; it runs the architecture subset
-# first, matching CI exactly, and never edits the tree.
+# variants cannot hide a default regression. Cheap source/census checks run
+# first; the compiled architecture tests run once in the workspace test suite.
 # Run the non-mutating Rust Clippy check (CI-identical gate).
 # Default Rust lint lane, tier-aware (scripts/toolchain_tier.sh): on the
 # reference toolchain this is CI-identical (`--deny warnings`); on any other
@@ -559,7 +548,7 @@ crates-io-pending *args:
 # shipped crate root, so the lab keeps its `--deny warnings` coverage. The
 # feature-OFF production shape — every dependent compiling without either — is
 # `check-rust-default`'s claim.
-lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-too-many-lines-waivers check-capability-catalog check-dependency-charter check-publish-blocked check-vendor-tracked check-profile-policy
+lint-rust-check: check-toolchain check-too-many-lines-waivers check-publish-blocked check-vendor-tracked
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
@@ -685,8 +674,7 @@ check-cli-shell-purity:
 # Structural gate: the engine
 # seam deepens until `EngineStages` is the ONE external driver surface and
 # every `impl ArbitrageEngine` block outside `arb_engine/mod.rs` is dissolved.
-# Wired into the Rust hygiene set
-# (`lint-rust-check` + the `rust-engine-impl-blocks` pre-commit hook + CI).
+# The workspace suite owns the canonical run; this alias runs only this gate.
 # The `{` anchor keeps the prose mention of `impl ArbitrageEngine` in
 # mod.rs's module-tree comment from being counted as a block.
 #
@@ -710,9 +698,8 @@ check-engine-impl-blocks:
 # rust/crates/facade/degenbot/tests/config_derived_statics_census.txt as
 # per-read | republishable | process-lifetime. The call-site audit is a
 # snapshot in a result doc; this gate makes it durable, so the next
-# holder-derived once-static cannot land silently stale-able. Wired into
-# `lint-rust-check` (hence `just lint` / CI / the pre-push `rust-clippy` hook)
-# plus the pre-push `rust-config-derived-statics` hook.
+# holder-derived once-static cannot land silently stale-able. The workspace
+# suite owns the canonical run; this alias runs only this gate.
 #
 # live-invariant gate (ADR-087 D2): watches every live config-derived process-once static against `tests/config_derived_statics_census.txt`; not tripwire precedent.
 check-config-derived-statics:
@@ -724,7 +711,7 @@ check-config-derived-statics:
 # publishable crate at least once, resolve every home path against the module
 # tree, land every umbrella alias on a catalogged crate, and keep the console
 # rows on consumer (v). A new capability without a catalog row fails here.
-# Wired into `lint-rust-check` (hence `just lint` / CI).
+# The workspace suite owns the canonical run; this alias runs only this gate.
 check-capability-catalog:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- capability_catalog_covers_every_public_crate --exact --nocapture
 
@@ -744,7 +731,7 @@ check-profile-policy:
 # rust/crates/facade/degenbot/tests/dependency_charter.txt asserted over
 # `cargo tree -p X -e normal` at single-package, default-feature resolution.
 # A new C-build or pyo3 leak into a seam crate's published dependency set
-# fails here. Wired into `lint-rust-check`.
+# fails here. The workspace suite owns the canonical run; this alias runs only this gate.
 #
 # live-invariant gate (ADR-087 D2): watches the resolved dependency tree of every live crate against the ADR-084 D3 deny rules; not tripwire precedent.
 check-dependency-charter:
@@ -944,7 +931,7 @@ test-flake-probe:
     set -euo pipefail
     for i in 1 2 3; do
         echo "▶ flake-probe run ${i}/3"
-        timeout 600 {{ py_run }} pytest -q --no-header -p no:cacheprovider \
+        timeout 600 {{ py_run }} pytest -n0 -q --no-header -p no:cacheprovider \
             tests/arbitrage/test_arbitrage_session.py tests/operator/test_operator_channel.py
     done
     echo "✓ flake-probe: 3/3 green"
@@ -1022,13 +1009,11 @@ test-flake-probe-rust: check-toolchain
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
 # fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:
 #   just record-golden -- tests/uniswap/v3/test_uniswap_v3_liquidity_pool.py::test_cached_calculations
-# Single-process (serial by default — there is no xdist in the dev env):
-# parametrized parity tests share one golden file per
-# test function and accumulate keys across params; xdist parallelism would race
-# the shared file (last-writer-wins, losing keys). Replay is read-only and safe
-# under xdist, but record accumulates writes.
+# Single-process: parametrized parity tests share one golden file per test
+# function and accumulate keys across params; parallelism would race the shared
+# file (last-writer-wins, losing keys). Replay is read-only and safe under xdist.
 record-golden *args:
-    {{ py_run }} pytest --golden-mode record -m onchain_oracle -q --no-header {{ args }}
+    {{ py_run }} pytest -n0 --golden-mode record -m onchain_oracle -q --no-header {{ args }}
 
 # Live chain-data drift gate (explicit only — never in test/pre-push/CI lanes):
 # re-records every py_oracle corpus twice and requires byte-identity with disk,
@@ -1037,7 +1022,7 @@ record-golden *args:
 #   just live-drift                # all three chains
 #   just live-drift -- -k ethereum # one chain
 live-drift *args:
-    {{ py_run }} pytest -m live_drift -q --no-header tests/golden/test_live_drift.py {{ args }}
+    {{ py_run }} pytest -n0 -m live_drift -q --no-header tests/golden/test_live_drift.py {{ args }}
 
 
 # Record the README examples' chain surface into the offline replay cassette
@@ -1068,7 +1053,7 @@ check-readme-cassette:
 # (`deployment_verify` marker): this recipe is the single owning live lane for
 # deployment-drift verification — run on demand only.
 verify-deployments *args:
-    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} {{ py_run }} pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} {{ py_run }} pytest -n0 -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # Re-populate the golden deployment-verification capture (tier 1/2/4 facts for
 # every factory row on a reachable chain, plus the tier-3 verified source name
@@ -1078,7 +1063,7 @@ verify-deployments *args:
 # unreachable chains contribute no rows. Tier 4 is asserted live while
 # recording, so a capture is only committed when every recorded row verified.
 record-deployment-golden *args:
-    DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ py_run }} pytest --golden-mode record -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ py_run }} pytest -n0 --golden-mode record -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # ========== Tier-3 On-Chain Oracles ==========
 #

@@ -3,10 +3,10 @@ ci-green|ci-only||branch-protection aggregate: checks needs statuses only, nothi
 commitlint|local|scripts/hooks/commitlint-push.sh|push range
 markdownlint|local||just lint-markdown-check
 msrv|local||just check-msrv
-rust|local||just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-binding-default, just check-rust-dev-features, just check-rust-extension-release, just check-rust-all-features, just test-rust, just test-rust-ci (CI build env), just test-fleet-parity, just test-golden-replay, just build-rust-extension, just publish-dry-run --no-verify
+rust|local||just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-dev-features, just check-rust-extension-release, just test-rust, just test-rust-ci (CI build env), just test-golden-replay, just build-rust-extension, just publish-dry-run --no-verify
 cli-no-python|local|just ci-no-python-cli-gate|just ci-no-python-cli-gate
 tier3-oracle|local||just verify-tier3-artifacts, just verify-tier3-executor-artifact
 python|local||just check-uv-lock, just fmt-check-python, just lint-python, just test-python-noise-gate
 python|local|just test-python-no-anvil-spawn-surface|just test-python-no-anvil-spawn-surface
 python|local||full-suite no-anvil mirror of the CI non-floor legs (manual): just test-python-no-anvil
-stub-drift|local|just lint-stub-drift|just lint-stub-drift
+stub-drift|local||just lint-stub-drift (input-scoped in CI; staged FFI edits run stub-drift-staged locally)

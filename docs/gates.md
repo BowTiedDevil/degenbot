@@ -170,9 +170,8 @@ change).
 Then append the census line with a one-line justification. Stop deriving the
 static from the holder if none of the three classes is honest.
 
-**Run it.** `just check-config-derived-statics` (the
-`rust-config-derived-statics` pre-push hook; also a dependency of
-`lint-rust-check`, so `just lint` and CI run it). The recipe body is
+**Run it.** The full Rust workspace suite executes it once. While diagnosing
+a failure, `just check-config-derived-statics` runs only this filter:
 `cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test
 architecture_gates -- config_derived_statics_are_classified --exact --nocapture`.
 
@@ -242,9 +241,9 @@ stale while the report said otherwise.
   `test_config_projection_stubs_are_typed` stay in the default suite (cheap,
   committed-tree-only). `test_committed_stubs_match_generator_output` (which
   shells out to `just gen-stubs --check`) is compile-coupled and carries the
-  `stub_drift` marker, so the default pytest selection excludes it; it runs once
-  as the dedicated CI `stub-drift` job and as the pre-push `stub-drift` gate. For
-  a direct local run it probes cargo's debug build lock
+  `stub_drift` marker, so the default pytest selection excludes it; it runs in
+  the input-scoped CI `stub-drift` job when the binding, generator, stubs, or
+  generation configuration changes. For a direct local run it probes cargo's debug build lock
   (`rust/target/debug/.cargo-build-lock`) and fails with a distinct message when
   another lane is mid-build.
 
@@ -258,10 +257,10 @@ stale while the report said otherwise.
 **Run it.** `just lint-stub-drift` (an alias of `just gen-stubs --check`) — it
 cargo-builds the cdylib with the temporary `experimental-inspect` feature, so
 run it with exclusive use of the build graph — a concurrent `just dev`/`cargo
-build` can relink the `.so`. It runs once per CI run as the dedicated
-`stub-drift` job and as the `stub-drift` pre-push gate; the default pytest
-selection excludes the pytest face via the `stub_drift` marker (run it directly
-with `pytest -m stub_drift`). `REGEN_STUBS=1 just gen-stubs --check` opts into
+build` can relink the `.so`. CI runs it when its inputs change; locally, the
+staged FFI hook covers relevant commits and this recipe covers manual or
+`--no-verify` workflows. The default pytest selection excludes the pytest face
+via the `stub_drift` marker (run it directly with `pytest -m stub_drift`). `REGEN_STUBS=1 just gen-stubs --check` opts into
 writing, mirroring the `REGEN_*` pattern of `docs/rust-config-keys.md`.
 
 ---
@@ -495,9 +494,10 @@ current gates:
 - `dependency_charter_is_respected` (ratchet #7 — cataloged in the table above)
 - `role_edge_direction_is_enforced` (ADR-084 D4 — upward role edges over `tests/role_edge_direction_census.txt`, allowlist empty at the W4 landing)
 
-Several are aliased as `check-*` recipes (`check-no-inner-allow`,
+Several have focused `check-*` aliases (`check-no-inner-allow`,
 `check-engine-impl-blocks`, `check-cli-shell-purity`,
-`check-config-derived-statics`), which `lint-rust-check` runs before clippy.
+`check-config-derived-statics`). The full workspace suite is their canonical
+gate; the aliases are for fast diagnosis, not additional mandatory executions.
 
 ---
 
@@ -520,7 +520,8 @@ possible; `pass_filenames = false` only when it must sweep the tree).
 `#[test]` to `architecture_gates.rs` that scans the workspace (derive crates
 from `cargo metadata`), and a sibling `<name>_census.txt` whose header states
 the detector, the classes, the format, and the documented blind spots. Make the
-gate **bidirectional** (unlisted hit fails; stale listed entry fails). Alias it
-as a `check-*` recipe and add that recipe to `lint-rust-check`, plus a
-`prek.toml` pre-push hook. Use the `REGEN_*` opt-in pattern for any gate that
-regenerates an artifact (`just gen-stubs`, `REGEN_CONFIG_DOCS=1`).
+gate **bidirectional** (unlisted hit fails; stale listed entry fails). The
+workspace suite runs it; add a focused `check-*` alias when that aids diagnosis,
+without adding a duplicate pre-push execution. Use the `REGEN_*` opt-in pattern
+for any gate that regenerates an artifact (`just gen-stubs`,
+`REGEN_CONFIG_DOCS=1`).

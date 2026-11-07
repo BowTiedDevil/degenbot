@@ -344,7 +344,7 @@ samples, and `--workspace` when a command must cover every member.
 | Exhaustive diagnostic only | `just check-rust-all-features` |
 | Build the extension with release-equivalent features | `just build-rust-extension` |
 | Build/install the development Python extension | `just dev` |
-| Authoritative default-feature lint and architecture subset | `just lint-rust-check` |
+| Authoritative default-feature lint and source/census checks | `just lint-rust-check` |
 | Check Rust formatting | `cargo fmt --manifest-path rust/Cargo.toml --all -- --check` or `just fmt-check` |
 | Standalone consumer plus full workspace tests | `just test-rust` |
 | Verify publishability | `just publish-dry-run` |
@@ -370,9 +370,10 @@ The recipes make the following rules executable:
 | `just check-engine-impl-blocks` | The engine has one implementation block and the PyO3 shell has only the compatibility name string. |
 | `just check-no-inner-allow` | Rust sources do not use file-level inner `allow` attributes. |
 
-`just lint-rust-check` runs the applicable architecture subset before the
-workspace default-feature Clippy gate. `just lint-rust` is the default,
-CI-identical, non-mutating alias of it; `just lint-rust-fix` is the opt-in
+The full workspace test suite runs every architecture gate once; the recipes
+above are focused aliases for diagnosis. `just lint-rust-check` runs the cheap
+source/census checks and workspace default-feature Clippy gate. `just lint-rust`
+is its CI-identical, non-mutating alias; `just lint-rust-fix` is the opt-in
 `clippy --fix` variant, which mutates the tree and is never part of a default
 gate. The feature lanes above must remain separate so an exhaustive diagnostic
 cannot hide a default or release regression.

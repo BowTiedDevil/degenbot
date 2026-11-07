@@ -16,6 +16,7 @@ values are plain dicts (``{path_type, hops: [hop_dict, …]}``), not the retired
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ import pytest
 
 from degenbot.diagnostics import FailureAction, failure_action
 from degenbot.exceptions.base import DegenbotValueError
+from degenbot.logging import logger as bot_logger
 from degenbot.runner import _render
 from degenbot.runner._render import (
     MergedOutcome,
@@ -33,6 +35,16 @@ from degenbot.runner._render import (
 from tests.helpers import verdict_probe as probe
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _capture_renderer_logs(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
+    bot_logger.addHandler(caplog.handler)
+    try:
+        yield
+    finally:
+        bot_logger.removeHandler(caplog.handler)
+
 
 #: One failure in the bucket the ignore-set tests name.
 _EMPTY_FAILURE: dict[str, Any] = {

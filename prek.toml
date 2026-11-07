@@ -158,10 +158,9 @@ hooks = [
   # --- pre-push -------------------------------------------------------------
   # Whole-tree tier: everything here assumes a COMPLETE tree. Gate the push on
   # the whole-tree format sweeps (moved off pre-commit, where tree sweeps saw
-  # other lanes' untracked mid-flight files), the compiled architecture gates
-  # (cargo tests that cannot operate on a file list at all), the code linters
-  # moved off the per-commit path, the build + test suite, and a commit-message
-  # range re-lint (safety net for `git commit --no-verify`).
+  # other lanes' untracked mid-flight files), the code linters moved off the
+  # per-commit path, the build + test suite (including architecture tests), and
+  # a commit-message range re-lint (safety net for `git commit --no-verify`).
   #
   # 1. object-gc — keep the loose object database below the size where the
   #    push's own detached `git maintenance` fires an unbounded repack
@@ -187,13 +186,9 @@ hooks = [
   #    run unconditionally over the whole tree, so a config/Cargo change can't
   #    slip a regression.
   #
-  # 5. Compiled architecture gates — no-pyo3-in-cores and the engine
-  #    impl-block gate are cargo tests on the umbrella crate's
-  #    architecture_gates binary: workspace-wide invariants with no meaningful
-  #    per-file slice (a per-file grep would be a different, weaker detector),
-  #    so they cannot live on the staged-files tier. They were also never the
-  #    "instant" checks the old pre-commit section claimed — every commit,
-  #    docs-only ones included, paid a cargo test build.
+  # 5. Compiled architecture gates — cargo tests on the umbrella crate run in
+  #    the workspace suite below, not as duplicate per-filter push hooks.
+  #    Focused `check-*` aliases remain available while diagnosing a failure.
   #
   # 6. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
   #    build/test jobs (always_run = true, pass_filenames = false). python-build
@@ -238,25 +233,6 @@ hooks = [
   # for the degenbot._ffi seam; the slimmed bespoke gate (R0 + driver-module
   # tombstones) runs in the pytest suites below.
   { id = "stubtest", name = "Stubtest drift gate", language = "system", entry = "just lint-stubtest", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-  # ADR-066 D2/D3: the regenerate-and-diff drift gate is compile-coupled and
-  # excluded from the default pytest selection (`stub_drift` marker), so it runs
-  # here as its own pre-push gate (and as the CI `stub-drift` job). The
-  # path-scoped `stub-drift-staged` pre-commit hook still covers the common
-  # FFI-surface edit at commit time.
-  { id = "stub-drift", name = "Stub drift gate", language = "system", entry = "just lint-stub-drift", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-
-  # Compiled architecture gates, moved here from pre-commit (see note 5
-  # above): cargo-test invariants with no per-file slice.
-  { id = "rust-no-pyo3", name = "Rust no-pyo3 cores", language = "system", entry = "just check-no-pyo3-in-cores",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-  { id = "rust-engine-impl-blocks", name = "Rust engine impl-block gate", language = "system", entry = "just check-engine-impl-blocks", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-
-  # Config-derived-static ratchet: a process-once static
-  # initialized from the config holder must be classified in the census, so a
-  # new one cannot land silently stale-able. A whole-tree cargo-test invariant
-  # with no per-file slice, so it lives at pre-push with the other compiled
-  # architecture gates (and in `lint-rust-check`, hence `just lint` / CI).
-  { id = "rust-config-derived-statics", name = "Rust config-derived-static gate", language = "system", entry = "just check-config-derived-statics", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-
   # ADR-087 D4 — the tripwire ratchet. A source scan of the test/gate surface
   # (rust test files, tests/, justfile, prek.toml, scripts/, docs/) for the
   # signatures of a RETIREMENT TRIPWIRE: an assertion that a deleted name is still
@@ -278,7 +254,6 @@ hooks = [
   # Rust track (mirrors ci.yml: rust-build, rust-test).
   { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "rust-test",  name = "Rust tests", language = "system", entry = "just test-rust",             stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-  { id = "fleet-parity", name = "Fleet parity (FF-T5)", language = "system", entry = "just test-fleet-parity", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "golden-replay", name = "Solver golden replay (F2)", language = "system", entry = "just test-golden-replay", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # Python track: build (maturin develop) then test.

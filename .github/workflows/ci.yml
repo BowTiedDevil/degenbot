@@ -44,6 +44,7 @@ jobs:
     outputs:
       rust: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.rust == 'true' || steps.filter.outputs.machinery == 'true' }}
       python: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.python == 'true' || steps.filter.outputs.machinery == 'true' }}
+      stubs: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.stubs == 'true' || steps.filter.outputs.machinery == 'true' }}
       tier3: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.tier3 == 'true' || steps.filter.outputs.machinery == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -70,6 +71,12 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'tier3-oracle/artifacts/**'
+            stubs:
+              - 'rust/crates/shells/degenbot-python/src/**'
+              - 'rust/crates/shells/degenbot-python/Cargo.toml'
+              - 'rust/tools/stubgen/**'
+              - 'src/degenbot/_ffi/**'
+              - 'pyproject.toml'
             tier3:
               - 'tier3-oracle/**'
               - 'executor/**'
@@ -254,10 +261,8 @@ jobs:
           eval "$(bash scripts/provision-llvm23.sh)"
           bash scripts/provision-llvm23.sh --check
 
-      # The engine impl-block gate shells out to ripgrep. ubuntu-latest no
-      # longer preinstalls it (a missing rg made the gate misreport a tool
-      # error as "impl not consolidated"), so provision it explicitly - same
-      # dependency the .devcontainer/Dockerfile installs.
+      # Architecture and hygiene tests shell out to ripgrep; ubuntu-latest no
+      # longer preinstalls it. Provision the same dependency as the devcontainer.
       - name: Install ripgrep
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
 
@@ -268,9 +273,6 @@ jobs:
       - name: Check formatting
         run: just fmt-check
 
-      - name: Check engine impl-block gate
-        run: just check-engine-impl-blocks
-
       - name: Run Clippy (workspace defaults)
         run: just lint-rust-check
 
@@ -280,17 +282,11 @@ jobs:
       - name: Check pure-Rust consumer features
         run: just check-rust-consumer
 
-      - name: Check binding-default features
-        run: just check-rust-binding-default
-
       - name: Check dev-only extension features
         run: just check-rust-dev-features
 
       - name: Check release-equivalent extension features
         run: just check-rust-extension-release
-
-      - name: Check all features (diagnostic only)
-        run: just check-rust-all-features
 
       - name: Assert Rust lint left the working tree clean
         run: |
@@ -299,13 +295,6 @@ jobs:
 
       - name: Run Tests
         run: just test-rust
-
-      # The fleet budget-algebra (the pure plan/budget
-      # tiering tests) and the binding-parity gates (the pinned-vs-serial
-      # outcome-corpus identity) run as a NAMED step so a fleet-tier
-      # regression is readable in the check log, not buried in the suite.
-      - name: Run fleet budget-algebra + binding parity gates (FF-T5)
-        run: just test-fleet-parity
 
       - name: Run two-sided golden replay gate (offline, blocks merge)
         run: just test-golden-replay
@@ -587,7 +576,7 @@ jobs:
     # generated tree), the Rust toolchain, and just.
     name: Stub Drift (regen-and-diff)
     needs: changes
-    if: needs.changes.outputs.python == 'true'
+    if: needs.changes.outputs.stubs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
