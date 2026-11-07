@@ -77,9 +77,9 @@ hex = "^0.4"
 # byte-for-byte. A dev-dep only — does NOT pull evm2 into the core lib build
 # (cargo tree on default features excludes dev-deps), so the
 # no-pyo3-in-cores invariant is unaffected.
-# No `version` key: `cargo publish` strips git-only dev-deps at packaging, while a
-# `version` becomes a registry requirement that must resolve on crates.io (ADR-089).
-evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", default-features = false, features = [
+# From the vendored fork (rust/vendor/, ADR-096) — test-only, never part of the
+# shipped dependency set.
+evm2 = { workspace = true, features = [
     "asm-keccak",
     "blst",
     "c-kzg",

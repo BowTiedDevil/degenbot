@@ -75,12 +75,12 @@ degenbot-rpc = { workspace = true, features = ["test-utils"] }
 # adapter (`BlockingAsyncDb` over `AlloyAsyncDb`) as the async read surface a
 # driver's ambient runtime polls.
 # Version-less on purpose: a `version` key would make `cargo publish` require
-# degenbot-simulation on crates.io at packaging (same rule as the evm2 dev-dep).
+# degenbot-simulation on crates.io at packaging.
 degenbot-simulation = { path = "../degenbot-simulation" }
 # The adapter's `Database` trait (the read the ambient-runtime contract drives).
-# No `version` key: `cargo publish` strips git-only dev-deps at packaging, while a
-# `version` becomes a registry requirement that must resolve on crates.io (ADR-089).
-evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", default-features = false, features = [
+# From the vendored fork (rust/vendor/, ADR-096) — test-only, never part of the
+# shipped dependency set.
+evm2 = { workspace = true, features = [
     "async",
     "std",
 ] }

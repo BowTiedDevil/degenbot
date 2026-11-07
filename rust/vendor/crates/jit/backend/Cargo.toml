@@ -1,0 +1,24 @@
+# Vendored from alloy-rs/evm2 @ baf0d38f3b4f971e59b4aeb51de65e44d868d703; source
+# verbatim, manifest rewritten (see rust/vendor/README.md). Upstream name: evm2-jit-backend.
+
+[package]
+name = "degenbot-evm2-jit-backend"
+description = "EVM bytecode compiler backend abstraction"
+
+version = "0.6.0-alpha.19"
+authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+categories = ["cryptography::cryptocurrencies", "development-tools", "no-std"]
+keywords = ["bytecode", "ethereum", "evm", "execution", "interpreter"]
+repository = "https://github.com/BowTiedDevil/degenbot"
+exclude = [".github/", "benches/", "fuzz/", "tests/"]
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+ruint = { version = "1.21.1", default-features = false, features = ["std"] }
+eyre = { version = "0.6" }

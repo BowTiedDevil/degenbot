@@ -125,6 +125,7 @@ hits="$(rg -n --no-heading -e "$pat" \
   -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.sol' \
   -g 'justfile' \
   -g '!executor/**' \
+  -g '!rust/vendor/**' \
   -g '!tier3-oracle/src*/**' \
   2>/dev/null || true)"
 if [ -n "$hits" ]; then
@@ -246,6 +247,7 @@ rg -n -o --no-heading -i -P \
   -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.sol' \
   -g 'justfile' \
   -g '!executor/**' \
+  -g '!rust/vendor/**' \
   -g '!tier3-oracle/src*/**' \
   -g '!scripts/hooks/comment-hygiene*' \
   -e "$d3" >"$d3_tmp" 2>/dev/null || true

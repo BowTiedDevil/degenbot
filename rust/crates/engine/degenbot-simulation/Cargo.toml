@@ -17,16 +17,13 @@ workspace = true
 # umbrella's `DynProvider`/`Provider`/`Ethereum` back the RPC-side cold-fetch
 # seam. `full` brings the RPC types + provider-http.
 alloy = { version = "^2.5", features = ["full"] }
-# evm2 — THE engine (ADR-089 cutover; ADR-091 retired revm). Pinned at a
-# commit the way reth pins it, and deliberately version-less: a `version`
-# key would have `cargo publish` rewrite this into a crates.io requirement,
-# where only upstream's name reservation exists — so this member cannot
-# package at all and is named in the publish-blocked census instead
-# (docs/gates.md section 7). Features are the pure-Rust precompile backends
-# (no GMP/MCL/aws-lc native builds).
+# evm2 — THE engine (ADR-089 cutover; ADR-091 retired revm), through the
+# vendored fork (rust/vendor/, ADR-096): imported as `evm2`, published as
+# `degenbot-evm2` because upstream's crate is unpublished. Features are the
+# pure-Rust precompile backends (no GMP/MCL/aws-lc native builds).
 # `async` enables the AsyncDatabase coroutine seam — the coroutine
 # replacement for the sync `BlockingAsyncDb` adapter; corosensei is pure Rust.
-evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", default-features = false, features = [
+evm2 = { workspace = true, features = [
     "asm-keccak",
     "async",
     "blst",
@@ -37,17 +34,17 @@ evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4ae
     "secp256k1",
     "std",
 ] }
-# evm2-jit — the JIT interpreter runner (ADR-089). Same pinned rev as
-# evm2.
+# evm2-jit — the JIT interpreter runner (ADR-089), from the same vendored
+# fork as evm2.
 # `llvm` compiles against LLVM 23 (`llvm-config`/`llvm-config-23`; the F45
 # devcontainer's `llvm-devel`).
-evm2-jit = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", default-features = false, optional = true, features = [
+evm2-jit = { workspace = true, optional = true, features = [
     "asm-keccak",
     "llvm",
 ] }
 # Named for the OptimizationLevel enum (the tuning knobs' type), which evm2-jit's
 # curated root re-export does not surface.
-evm2-jit-runtime = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", optional = true }
+evm2-jit-runtime = { workspace = true, optional = true }
 # Tick-map fixtures mirror the pools hashbrown maps.
 hashbrown.workspace = true
 degenbot-core.workspace = true
@@ -99,8 +96,8 @@ tokio = { version = "^1.54", features = ["rt"] }
 
 [build-dependencies]
 # build.rs's builtins-symbol export — optional, enabled by the evm2-jit
-# feature (the same pinned rev as evm2).
-evm2-jit-build = { git = "https://github.com/alloy-rs/evm2", rev = "baf0d38f3b4f971e59b4aeb51de65e44d868d703", optional = true }
+# feature (the same vendored fork as evm2).
+evm2-jit-build = { workspace = true, optional = true }
 
 # The phase-6 offline engine benchmark: all four modes need
 # the JIT runner, so the example builds only with the `evm2-jit` feature.
@@ -153,7 +150,7 @@ default = []
 # The evm2 engine is THE engine (ADR-089 cutover): the dep is
 # non-optional and the feature alias is gone; the JIT stays opt-in.
 # evm2-jit-build is the build.rs's builtins-symbol export (the README's
-# required wiring), at the same pinned rev as evm2.
+# required wiring), from the same vendored fork as evm2.
 evm2-jit = ["dep:evm2-jit", "dep:evm2-jit-build", "dep:evm2-jit-runtime"]
 # The executor-grammar harness (`src/harness/`) is an investigation/oracle lab
 # with no production consumer: the shipped crate root is the engine (`sim`), the

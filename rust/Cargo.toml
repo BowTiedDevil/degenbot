@@ -121,6 +121,22 @@ degenbot-submission = { version = "0.6.0-alpha.19", path = "crates/engine/degenb
 degenbot-substrate = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-substrate" }
 degenbot-uniswap = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-uniswap" }
 degenbot-workers = { version = "0.6.0-alpha.19", path = "crates/engine/degenbot-workers" }
+
+# The vendored evm2 family (rust/vendor/, upstream baf0d38f — see its README).
+# The keys are upstream's names, so every `use evm2::...` and `X.workspace = true`
+# keeps working; the `package` renames are what make the family publishable under
+# names we own. To retire the fork: point these entries at the registry release,
+# delete rust/vendor, done (ADR-096).
+evm2 = { package = "degenbot-evm2", path = "vendor/crates/evm2", version = "0.6.0-alpha.19", default-features = false }
+evm2-macros = { package = "degenbot-evm2-macros", path = "vendor/crates/macros", version = "0.6.0-alpha.19" }
+evm2-jit = { package = "degenbot-evm2-jit", path = "vendor/crates/jit", version = "0.6.0-alpha.19", default-features = false }
+evm2-jit-backend = { package = "degenbot-evm2-jit-backend", path = "vendor/crates/jit/backend", version = "0.6.0-alpha.19", default-features = false }
+evm2-jit-build = { package = "degenbot-evm2-jit-build", path = "vendor/crates/jit/build", version = "0.6.0-alpha.19", default-features = false }
+evm2-jit-builtins = { package = "degenbot-evm2-jit-builtins", path = "vendor/crates/jit/builtins", version = "0.6.0-alpha.19", default-features = false }
+evm2-jit-codegen = { package = "degenbot-evm2-jit-codegen", path = "vendor/crates/jit/codegen", version = "0.6.0-alpha.19", default-features = false }
+evm2-jit-context = { package = "degenbot-evm2-jit-context", path = "vendor/crates/jit/context", version = "0.6.0-alpha.19", default-features = false }
+evm2-jit-llvm = { package = "degenbot-evm2-jit-llvm", path = "vendor/crates/jit/llvm", version = "0.6.0-alpha.19", default-features = false }
+evm2-jit-runtime = { package = "degenbot-evm2-jit-runtime", path = "vendor/crates/jit/runtime", version = "0.6.0-alpha.19" }
 # hashbrown: foldhash-based HashMap/HashSet for the hot maps (small int/string
 # keys generated in-process — no DoS surface). 0.17.1 + foldhash 0.2.0 already
 # resolve transitively (indexmap 2.14 / lru 0.18), so this direct dependency
@@ -183,6 +199,20 @@ members = [
     # out-of-workspace `cargo add degenbot` user.
     "examples/settlement_bot",
     "tools/stubgen",
+
+    # The vendored evm2 family (rust/vendor/ — see its README): upstream
+    # code at a pinned rev, published under names we own. Temporary: these
+    # paths go away the day upstream publishes (ADR-096).
+    "vendor/crates/evm2",
+    "vendor/crates/macros",
+    "vendor/crates/jit",
+    "vendor/crates/jit/backend",
+    "vendor/crates/jit/build",
+    "vendor/crates/jit/builtins",
+    "vendor/crates/jit/codegen",
+    "vendor/crates/jit/context",
+    "vendor/crates/jit/llvm",
+    "vendor/crates/jit/runtime",
 ]
 # Keep unqualified Cargo commands focused on the two first-class pure-Rust
 # entry points. The PyO3 binding and non-publishable samples remain workspace

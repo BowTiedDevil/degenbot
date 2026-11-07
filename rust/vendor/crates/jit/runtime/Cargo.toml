@@ -1,0 +1,52 @@
+# Vendored from alloy-rs/evm2 @ baf0d38f3b4f971e59b4aeb51de65e44d868d703; source
+# verbatim, manifest rewritten (see rust/vendor/README.md). Upstream name: evm2-jit-runtime.
+
+[package]
+name = "degenbot-evm2-jit-runtime"
+description = "Runtime JIT backend for evm2-jit"
+
+version = "0.6.0-alpha.19"
+authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+categories = ["cryptography::cryptocurrencies", "development-tools", "no-std"]
+keywords = ["bytecode", "ethereum", "evm", "execution", "interpreter"]
+repository = "https://github.com/BowTiedDevil/degenbot"
+exclude = [".github/", "benches/", "fuzz/", "tests/"]
+
+[package.metadata.docs.rs]
+no-default-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+evm2 = { workspace = true, features = ["std", "wincode"] }
+evm2-jit-backend.workspace = true
+evm2-jit-codegen.workspace = true
+evm2-jit-context.workspace = true
+evm2-jit-llvm = { workspace = true, optional = true }
+evm2-jit-builtins = { workspace = true, features = ["ir"] }
+
+alloy-primitives = { version = "1.5.7", default-features = false, features = ["std", "map-fxhash"] }
+
+crossbeam-channel = { version = "0.5" }
+crossbeam-queue = { version = "0.3" }
+dashmap = "6"
+derive_more = { version = "2", default-features = false, features = ["debug"] }
+eyre = { version = "0.6" }
+libc = { version = "0.2" }
+tempfile = "3.10"
+quanta = { version = "0.13" }
+rayon = { version = "1.10" }
+tracing = { version = "0.1" }
+wait-timeout = { version = "0.2" }
+wincode = { version = "0.6.0", default-features = false, features = ["derive", "std"] }
+
+[features]
+default = ["llvm"]
+llvm = ["evm2-jit-codegen/llvm", "dep:evm2-jit-llvm"]
+asm-keccak = ["evm2-jit-codegen/asm-keccak", "alloy-primitives/asm-keccak"]

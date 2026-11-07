@@ -1,0 +1,4 @@
+# Vendored upstream source (rust/vendor/): formatted by upstream's own
+# toolchain, not ours — rustfmt must leave these files byte-identical so
+# re-syncs against upstream stay trivial. Deleted with the tree (ADR-096).
+disable_all_formatting = true

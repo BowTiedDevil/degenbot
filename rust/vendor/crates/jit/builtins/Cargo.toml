@@ -1,0 +1,35 @@
+# Vendored from alloy-rs/evm2 @ baf0d38f3b4f971e59b4aeb51de65e44d868d703; source
+# verbatim, manifest rewritten (see rust/vendor/README.md). Upstream name: evm2-jit-builtins.
+
+[package]
+name = "degenbot-evm2-jit-builtins"
+description = "EVM bytecode compiler builtins"
+
+version = "0.6.0-alpha.19"
+authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+categories = ["cryptography::cryptocurrencies", "development-tools", "no-std"]
+keywords = ["bytecode", "ethereum", "evm", "execution", "interpreter"]
+repository = "https://github.com/BowTiedDevil/degenbot"
+exclude = [".github/", "benches/", "fuzz/", "tests/"]
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+evm2.workspace = true
+evm2-jit-context.workspace = true
+
+alloy-primitives = { version = "1.5.7", default-features = false }
+paste = { version = "1.0", default-features = false }
+
+evm2-jit-backend = { workspace = true, optional = true }
+tracing = { version = "0.1", optional = true }
+
+[features]
+default = ["std", "ir"]
+std = ["evm2/std", "evm2-jit-context/std", "alloy-primitives/std"]
+ir = ["std", "dep:tracing", "dep:evm2-jit-backend"]

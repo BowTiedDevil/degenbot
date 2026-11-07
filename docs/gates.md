@@ -392,12 +392,13 @@ were. The publish oracle (`just publish-dry-run`) then died on the first one,
 taking the manifest and file-inclusion coverage of every later member down
 with it — a failure that names one dependency and hides the population. The
 instance behind this gate: the engine family (`evm2`, `evm2-jit`, and
-siblings) is declared at a pinned git rev with no `version` key (ADR-089
-clause 2), because the registry holds only upstream's name reservation —
-so every member carrying one is rejected at packaging outright, and the
-engine closure (`degenbot-simulation` and `degenbot-arbitrage` at the sites,
-plus every member whose retained requirements reach them) is withheld at
-this version.
+siblings) is vendored under names we own (`rust/vendor/`, ADR-096) because
+crates.io holds only upstream's name reservation. The git-declaration shape
+this gate watches is exactly what held the engine closure
+(`degenbot-simulation`, `degenbot-arbitrage`, and every member whose retained
+requirements reach them) out of the publish chain; with the family vendored
+the population is empty, and this gate is what keeps a git-only dependency
+from silently re-entering a publishable member's manifest.
 
 
 **Gate body.** `scripts/publish_blocked.py`, over the manifests `cargo

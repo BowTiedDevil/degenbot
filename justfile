@@ -553,9 +553,9 @@ lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks c
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
     if [ "$tier" = "strict" ]; then
-        cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml --features degenbot-simulation/test-harness,degenbot-pools/cache-lab -- --deny warnings
+        cargo clippy --locked --workspace --all-targets $(scripts/vendor_members.sh) --manifest-path rust/Cargo.toml --features degenbot-simulation/test-harness,degenbot-pools/cache-lab -- --deny warnings
     else
-        cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml --features degenbot-simulation/test-harness,degenbot-pools/cache-lab
+        cargo clippy --locked --workspace --all-targets $(scripts/vendor_members.sh) --manifest-path rust/Cargo.toml --features degenbot-simulation/test-harness,degenbot-pools/cache-lab
     fi
 
 # Default Rust lint lane: a CI-identical, non-mutating alias of
@@ -566,7 +566,7 @@ lint-rust: lint-rust-check
 # Check every workspace member with its declared default features. This is the
 # independent default-feature check; it is not an all-features build.
 check-rust-default:
-    cargo check --locked --workspace --all-targets --manifest-path rust/Cargo.toml
+    cargo check --locked --workspace --all-targets $(scripts/vendor_members.sh) --manifest-path rust/Cargo.toml
 
 # Check the pure-Rust umbrella consumer surface, including its standalone
 # examples, without selecting the PyO3 binding crate.
@@ -594,7 +594,7 @@ check-rust-extension-release:
 # default gate. It intentionally includes test-only and mutually exclusive
 # variants and must never be used to validate default or release behavior.
 check-rust-all-features:
-    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$(scripts/build_extension.sh rustflags)" cargo check --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$(scripts/build_extension.sh rustflags)" cargo check --locked --workspace --all-targets --all-features $(scripts/vendor_members.sh) --manifest-path rust/Cargo.toml
 
 # Hotpath test lane. Tokio's full RuntimeMetrics getters sit behind the
 # unstable API and there is no global rustflag, so any direct hotpath
@@ -621,7 +621,7 @@ check-msrv:
         echo "this cargo does not accept +toolchain directives. CI's msrv job runs this check." >&2
         exit 1
     fi
-    cargo +1.97.0 check --manifest-path rust/Cargo.toml --workspace --all-targets --locked
+    cargo +1.97.0 check --manifest-path rust/Cargo.toml --workspace --all-targets --locked $(scripts/vendor_members.sh)
 
 
 # live-invariant gate (ADR-087 D2): watches the live `rust/crates` sources for inner `#![allow]` attributes; not tripwire precedent.
@@ -1228,7 +1228,7 @@ coverage *args:
 
 # Lint Markdown files
 lint-markdown:
-    npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**"
+    npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**"
 
 # Lint Python files
 lint-python:

@@ -26,8 +26,3 @@
 #
 #     just check-publish-blocked --rows
 #
-degenbot	depends on blocked degenbot-arbitrage, degenbot-batch-executor, degenbot-simulation, degenbot-strategy
-degenbot-arbitrage	git dep evm2 (version-less); depends on blocked degenbot-simulation
-degenbot-batch-executor	depends on blocked degenbot-arbitrage, degenbot-simulation
-degenbot-simulation	git dep evm2 (version-less), git dep evm2-jit (version-less), git dep evm2-jit-build (version-less), git dep evm2-jit-runtime (version-less)
-degenbot-strategy	depends on blocked degenbot-simulation

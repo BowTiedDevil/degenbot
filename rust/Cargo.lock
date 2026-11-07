@@ -96,6 +96,7 @@ dependencies = [
  "alloy-serde",
  "alloy-trie",
  "alloy-tx-macros",
+ "arbitrary",
  "auto_impl",
  "borsh",
  "c-kzg",
@@ -188,7 +189,9 @@ checksum = "741bdd7499908b3aa0b159bba11e71c8cddd009a2c2eb7a06e825f1ec87900a5"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "arbitrary",
  "crc",
+ "rand 0.8.8",
  "serde",
  "thiserror",
 ]
@@ -201,7 +204,9 @@ checksum = "e64579d931b3f8eacc7c9ab0b220e87e9c4816e5c724ede1947b55c2f8e92ae5"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "arbitrary",
  "borsh",
+ "rand 0.8.8",
  "serde",
 ]
 
@@ -213,8 +218,10 @@ checksum = "2919c5a56a1007492da313e7a3b6d45ef5edc5d33416fdec63c0d7a2702a0d20"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "arbitrary",
  "borsh",
  "k256 0.13.4",
+ "rand 0.8.8",
  "serde",
  "thiserror",
 ]
@@ -227,6 +234,7 @@ checksum = "6a12e1dc70236cfb8e79b96dd8544aed47c39e2f45dc6b51c3703e969e052faa"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "arbitrary",
  "borsh",
  "once_cell",
  "serde",
@@ -241,6 +249,7 @@ checksum = "36422c14bd57dcd638e276c8c9d7ac09eb16598e3a9dbd34e4b55267d4565b5e"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "arbitrary",
  "borsh",
  "serde",
  "thiserror",
@@ -260,6 +269,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
+ "arbitrary",
  "auto_impl",
  "borsh",
  "c-kzg",
@@ -421,6 +431,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5e9dbd49258ac3ab893a481d46be29b58be7f734dcac46cd80b6b13ee36566c"
 dependencies = [
  "alloy-rlp",
+ "arbitrary",
  "bytes",
  "cfg-if",
  "const-hex",
@@ -434,6 +445,7 @@ dependencies = [
  "keccak-asm",
  "paste",
  "proptest",
+ "proptest-derive 0.8.0",
  "rand 0.9.5",
  "rapidhash",
  "ruint",
@@ -690,6 +702,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f44f297d3b9e3ca2c3039e3c0ed69acde9b35edda15381cf78f725b7263fbe2"
 dependencies = [
  "alloy-primitives",
+ "arbitrary",
  "serde",
  "serde_json",
 ]
@@ -886,8 +899,12 @@ checksum = "70c7c04b6e5a7a2325f53d38c319a47d01c3609b44845ac2801bac9643fe26b9"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "arbitrary",
+ "derive_arbitrary",
  "derive_more",
  "nybbles",
+ "proptest",
+ "proptest-derive 0.7.0",
  "serde",
  "smallvec",
  "thiserror",
@@ -984,6 +1001,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
 dependencies = [
  "object 0.39.1",
+]
+
+[[package]]
+name = "arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
+dependencies = [
+ "derive_arbitrary",
 ]
 
 [[package]]
@@ -1687,6 +1713,7 @@ version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38d04308254695569fdb9bfe3bacc1c91837a670d0806605eb82d63748fbd3a6"
 dependencies = [
+ "arbitrary",
  "blst",
  "cc",
  "glob",
@@ -2295,6 +2322,7 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-eventhub",
+ "degenbot-evm2",
  "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",
@@ -2314,7 +2342,6 @@ dependencies = [
  "degenbot-substrate",
  "degenbot-uniswap",
  "degenbot-workers",
- "evm2",
  "hashbrown 0.17.1",
  "rusqlite",
  "serde",
@@ -2363,6 +2390,7 @@ dependencies = [
  "degenbot-config",
  "degenbot-core",
  "degenbot-decoders",
+ "degenbot-evm2",
  "degenbot-executor",
  "degenbot-order-index",
  "degenbot-pools",
@@ -2370,7 +2398,6 @@ dependencies = [
  "degenbot-simulation",
  "degenbot-submission",
  "degenbot-substrate",
- "evm2",
  "parking_lot 0.13.0",
  "serde_json",
  "tokio",
@@ -2551,6 +2578,164 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-evm2"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eip7928",
+ "alloy-eips",
+ "alloy-hardforks 0.4.11",
+ "alloy-primitives",
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.6.0",
+ "ark-serialize 0.6.0",
+ "arrayref",
+ "aurora-engine-modexp",
+ "auto_impl",
+ "aws-lc-rs",
+ "bitflags 2.13.2",
+ "blst",
+ "c-kzg",
+ "corosensei",
+ "degenbot-evm2-macros",
+ "derive-where",
+ "gmp-mpfr-sys",
+ "k256 0.14.0",
+ "mcl_rust",
+ "once_cell",
+ "p256",
+ "paste",
+ "phf",
+ "ripemd",
+ "ruint",
+ "secp256k1 0.33.1",
+ "serde",
+ "sha2 0.11.1",
+ "substrate-bn",
+ "thiserror",
+ "triomphe",
+ "typeid",
+ "wincode",
+]
+
+[[package]]
+name = "degenbot-evm2-jit"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "degenbot-evm2",
+ "degenbot-evm2-jit-backend",
+ "degenbot-evm2-jit-build",
+ "degenbot-evm2-jit-builtins",
+ "degenbot-evm2-jit-codegen",
+ "degenbot-evm2-jit-context",
+ "degenbot-evm2-jit-llvm",
+ "degenbot-evm2-jit-runtime",
+]
+
+[[package]]
+name = "degenbot-evm2-jit-backend"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "eyre",
+ "ruint",
+]
+
+[[package]]
+name = "degenbot-evm2-jit-build"
+version = "0.6.0-alpha.19"
+
+[[package]]
+name = "degenbot-evm2-jit-builtins"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "alloy-primitives",
+ "degenbot-evm2",
+ "degenbot-evm2-jit-backend",
+ "degenbot-evm2-jit-context",
+ "paste",
+ "tracing",
+]
+
+[[package]]
+name = "degenbot-evm2-jit-codegen"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "alloy-primitives",
+ "bitflags 2.13.2",
+ "bitvec",
+ "degenbot-evm2",
+ "degenbot-evm2-jit-backend",
+ "degenbot-evm2-jit-build",
+ "degenbot-evm2-jit-builtins",
+ "degenbot-evm2-jit-context",
+ "degenbot-evm2-jit-llvm",
+ "derive_more",
+ "either",
+ "indexmap 2.14.2",
+ "oxc_index",
+ "smallvec",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "degenbot-evm2-jit-context"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "alloy-primitives",
+ "degenbot-evm2",
+ "ruint",
+]
+
+[[package]]
+name = "degenbot-evm2-jit-llvm"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "alloy-primitives",
+ "cc",
+ "degenbot-evm2-jit-backend",
+ "llvm-sys",
+ "object 0.40.0",
+ "tracing",
+]
+
+[[package]]
+name = "degenbot-evm2-jit-runtime"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "alloy-primitives",
+ "crossbeam-channel",
+ "crossbeam-queue",
+ "dashmap",
+ "degenbot-evm2",
+ "degenbot-evm2-jit-backend",
+ "degenbot-evm2-jit-builtins",
+ "degenbot-evm2-jit-codegen",
+ "degenbot-evm2-jit-context",
+ "degenbot-evm2-jit-llvm",
+ "derive_more",
+ "eyre",
+ "libc",
+ "quanta 0.13.0",
+ "rayon",
+ "tempfile",
+ "tracing",
+ "wait-timeout",
+ "wincode",
+]
+
+[[package]]
+name = "degenbot-evm2-macros"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "degenbot-execution"
 version = "0.6.0-alpha.19"
 dependencies = [
@@ -2614,7 +2799,7 @@ dependencies = [
  "alloy",
  "criterion",
  "degenbot-core",
- "evm2",
+ "degenbot-evm2",
  "hashbrown 0.17.1",
  "proptest",
  "serde_json",
@@ -2662,9 +2847,9 @@ dependencies = [
  "criterion",
  "degenbot-core",
  "degenbot-decoders",
+ "degenbot-evm2",
  "degenbot-math",
  "degenbot-uniswap",
- "evm2",
  "hashbrown 0.17.1",
  "hex",
  "hotpath",
@@ -2757,16 +2942,16 @@ dependencies = [
  "degenbot-config",
  "degenbot-core",
  "degenbot-decoders",
+ "degenbot-evm2",
+ "degenbot-evm2-jit",
+ "degenbot-evm2-jit-build",
+ "degenbot-evm2-jit-runtime",
  "degenbot-executor",
  "degenbot-math",
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-substrate",
  "degenbot-uniswap",
- "evm2",
- "evm2-jit",
- "evm2-jit-build",
- "evm2-jit-runtime",
  "hashbrown 0.17.1",
  "hex",
  "parking_lot 0.13.0",
@@ -2791,6 +2976,7 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-eventhub",
+ "degenbot-evm2",
  "degenbot-execution",
  "degenbot-executor",
  "degenbot-math",
@@ -2801,7 +2987,6 @@ dependencies = [
  "degenbot-simulation",
  "degenbot-submission",
  "degenbot-substrate",
- "evm2",
  "hashbrown 0.17.1",
  "parking_lot 0.13.0",
  "proptest",
@@ -2831,11 +3016,11 @@ dependencies = [
  "degenbot-bot",
  "degenbot-core",
  "degenbot-eventhub",
+ "degenbot-evm2",
  "degenbot-rpc",
  "degenbot-runs",
  "degenbot-simulation",
  "degenbot-substrate",
- "evm2",
  "futures-util",
  "parking_lot 0.13.0",
  "proptest",
@@ -2923,6 +3108,7 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-eventhub",
+ "degenbot-evm2",
  "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",
@@ -2939,7 +3125,6 @@ dependencies = [
  "degenbot-substrate",
  "degenbot-uniswap",
  "degenbot-workers",
- "evm2",
  "hashbrown 0.17.1",
  "log",
  "mimalloc",
@@ -3000,6 +3185,17 @@ name = "derive-where"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e2b94854e8576378ccda7c8de8a66ed8b4e8acbd2c50ec3418ea6c8aaf4b567"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "derive_arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b034bd7d5f032402a2479444dcc6f74e36a03f31854d41680fb240ef682a1ac"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3224,171 +3420,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "evm2"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "alloy-consensus",
- "alloy-eip7928",
- "alloy-eips",
- "alloy-hardforks 0.4.11",
- "alloy-primitives",
- "ark-bls12-381",
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.6.0",
- "ark-serialize 0.6.0",
- "arrayref",
- "aurora-engine-modexp",
- "auto_impl",
- "bitflags 2.13.2",
- "blst",
- "c-kzg",
- "corosensei",
- "derive-where",
- "evm2-macros",
- "k256 0.14.0",
- "once_cell",
- "p256",
- "paste",
- "phf",
- "ripemd",
- "ruint",
- "secp256k1 0.33.1",
- "serde",
- "sha2 0.11.1",
- "substrate-bn",
- "thiserror",
- "triomphe",
- "typeid",
- "wincode",
-]
-
-[[package]]
-name = "evm2-jit"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "evm2",
- "evm2-jit-backend",
- "evm2-jit-build",
- "evm2-jit-builtins",
- "evm2-jit-codegen",
- "evm2-jit-context",
- "evm2-jit-llvm",
- "evm2-jit-runtime",
-]
-
-[[package]]
-name = "evm2-jit-backend"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "eyre",
- "ruint",
-]
-
-[[package]]
-name = "evm2-jit-build"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-
-[[package]]
-name = "evm2-jit-builtins"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "alloy-primitives",
- "evm2",
- "evm2-jit-backend",
- "evm2-jit-context",
- "paste",
- "tracing",
-]
-
-[[package]]
-name = "evm2-jit-codegen"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "alloy-primitives",
- "bitflags 2.13.2",
- "bitvec",
- "derive_more",
- "either",
- "evm2",
- "evm2-jit-backend",
- "evm2-jit-build",
- "evm2-jit-builtins",
- "evm2-jit-context",
- "evm2-jit-llvm",
- "indexmap 2.14.2",
- "oxc_index",
- "smallvec",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "evm2-jit-context"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "alloy-primitives",
- "evm2",
- "ruint",
-]
-
-[[package]]
-name = "evm2-jit-llvm"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "alloy-primitives",
- "cc",
- "evm2-jit-backend",
- "llvm-sys",
- "object 0.40.0",
- "tracing",
-]
-
-[[package]]
-name = "evm2-jit-runtime"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "alloy-primitives",
- "crossbeam-channel",
- "crossbeam-queue",
- "dashmap",
- "derive_more",
- "evm2",
- "evm2-jit-backend",
- "evm2-jit-builtins",
- "evm2-jit-codegen",
- "evm2-jit-context",
- "evm2-jit-llvm",
- "eyre",
- "libc",
- "quanta 0.13.0",
- "rayon",
- "tempfile",
- "tracing",
- "wait-timeout",
- "wincode",
-]
-
-[[package]]
-name = "evm2-macros"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=baf0d38f3b4f971e59b4aeb51de65e44d868d703#baf0d38f3b4f971e59b4aeb51de65e44d868d703"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
 ]
 
 [[package]]
@@ -3695,6 +3726,16 @@ name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
+
+[[package]]
+name = "gmp-mpfr-sys"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7db155b537cb791b133341f99f68371d86ee7fa4c79aacfbc376d72d23c70531"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "goblin"
@@ -4205,6 +4246,7 @@ version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
+ "arbitrary",
  "equivalent",
  "hashbrown 0.17.1",
  "serde",
@@ -4525,6 +4567,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "link-cplusplus"
+version = "1.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "link-section"
 version = "0.19.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4628,6 +4679,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "mcl_rust"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88499fcb43004fcd168d24b108c003a54d8f53d72f31bb3d1910df33138e59fb"
+dependencies = [
+ "cmake",
+ "getrandom 0.2.17",
+ "link-cplusplus",
 ]
 
 [[package]]
@@ -4814,6 +4876,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90e56dd5826c98a5ab882323e4f4fe062892e0e794e9a5c8254e00c666f3f932"
 dependencies = [
  "alloy-rlp",
+ "arbitrary",
  "cfg-if",
  "proptest",
  "ruint",
@@ -5370,6 +5433,28 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "proptest-derive"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb6dc647500e84a25a85b100e76c85b8ace114c209432dc174f20aac11d4ed6c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "proptest-derive"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c57924a81864dddafba92e1bf92f9bf82f97096c44489548a60e888e1547549b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -5930,6 +6015,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0de3fa9b4dac39cc2bd65679bacf9f531899d933605e2963b40c2129cdb55f2"
 dependencies = [
  "alloy-rlp",
+ "arbitrary",
  "ark-ff 0.3.0",
  "ark-ff 0.4.2",
  "ark-ff 0.5.0",
@@ -6595,6 +6681,7 @@ version = "1.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 dependencies = [
+ "arbitrary",
  "serde",
 ]
 

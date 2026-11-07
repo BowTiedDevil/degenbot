@@ -1,0 +1,23 @@
+# Vendored from alloy-rs/evm2 @ baf0d38f3b4f971e59b4aeb51de65e44d868d703; source
+# verbatim, manifest rewritten (see rust/vendor/README.md). Upstream name: evm2-macros.
+
+[package]
+name = "degenbot-evm2-macros"
+description = "Procedural macros for evm2."
+
+version = "0.6.0-alpha.19"
+edition = "2024"
+rust-version = "1.97"
+authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/BowTiedDevil/degenbot"
+
+[lib]
+test = false
+doctest = false
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { version = "1.0" }
+quote = { version = "1.0" }
+syn = { version = "3.0", features = ["full"] }

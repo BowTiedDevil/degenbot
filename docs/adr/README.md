@@ -125,6 +125,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [093](ADR-093-session-lifecycle-and-consumer.md) | The settlement session — a lifecycle-only Driver seam, one ordered Session event stream, one Session consumer | accepted / implemented (§6.7's slices landed; §6.8 pairs each with its commit) |
 | [094](ADR-094-subscription-lifecycle-one-authority.md) | The subscription lifecycle — one Rust state machine, transient reconnect, retained startup, typed drain notices | accepted |
 | [095](ADR-095-explicit-lifecycle-state.md) | Explicit lifecycle state — one named state machine per lifecycle: nonce occupancy, sim-submit lane, hosted sources, ingestion handshake (subscription cross-links ADR-094) | accepted |
+| [096](ADR-096-vendor-evm2-until-upstream-publishes.md) | Vendor the evm2 family under `degenbot-evm2*` until upstream publishes it — switch to the registry dependency and delete `rust/vendor` | implemented |
 
 ## Historical — provenance only
 

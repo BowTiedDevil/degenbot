@@ -208,12 +208,16 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
             //     included);
             //   - `autoresearch/` is the gitignored agent-harness scratch tree
             //     holding full repo snapshots (same sources at an older
-            //     revision), which would otherwise double-report every hit.
+            //     revision), which would otherwise double-report every hit;
+            //   - `vendor/` is the vendored upstream tree (rust/vendor,
+            //     ADR-096): upstream's code with upstream's env reads, not
+            //     this project's env discipline.
             let fname = entry.file_name();
             let name = fname.to_str().unwrap_or("");
             if name == "target"
                 || name == "autoresearch"
                 || name == "node_modules"
+                || name == "vendor"
                 || name.starts_with('.')
             {
                 continue;

@@ -55,6 +55,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Orderbook index** | `degenbot_order_index` | Rust-only | crate root | production: orderbook consumers | one minimal default-features-off dep |
 | **The umbrella capability map** | `degenbot` | `degenbot` (the Python package) | the 56 `pub use degenbot_*` aliases + curated items | (i) `cargo add degenbot`; (iii) Python driver probe: `just check-consumer-probes` (`test_solve_surface_probe.py`) | aliases only; no new logic |
 | **The console** | `degenbot_cli` + `degenbot_cli_core` | `degenbot` console shim (`uv run degenbot`) / native binary | `Command` tree, `config show --resolved` | (v) `degenbot config show --resolved` — asserted in `just check-consumer-probes` | the CLI is a thin caller of `degenbot_cli_core::run_args` |
+| **EVM engine (vendored evm2 fork)** | `degenbot-evm2`, `degenbot-evm2-jit`, `degenbot-evm2-jit-runtime`, `degenbot-evm2-jit-build`, `degenbot-evm2-macros`, `degenbot-evm2-jit-backend`, `degenbot-evm2-jit-builtins`, `degenbot-evm2-jit-codegen`, `degenbot-evm2-jit-context`, `degenbot-evm2-jit-llvm` | Rust-only | through `degenbot-simulation`, imported as `evm2` | (i) `cargo add degenbot` — the engine under the umbrella | no pyo3; no native precompile backends (gmp/mcl/aws-lc) |
 
 ## Notes
 

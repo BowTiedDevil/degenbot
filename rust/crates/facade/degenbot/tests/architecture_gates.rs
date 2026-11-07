@@ -194,7 +194,7 @@ fn python_phrases(line: &str) -> Vec<(String, String, String)> {
 
 #[test]
 fn workspace_membership_is_exact_and_role_grouped() {
-    const EXPECTED_NAMES: [&str; 36] = [
+    const EXPECTED_NAMES: [&str; 46] = [
         "degenbot",
         "degenbot-aave",
         "degenbot-abi",
@@ -208,6 +208,16 @@ fn workspace_membership_is_exact_and_role_grouped() {
         "degenbot-db",
         "degenbot-decoders",
         "degenbot-eventhub",
+        "degenbot-evm2",
+        "degenbot-evm2-jit",
+        "degenbot-evm2-jit-backend",
+        "degenbot-evm2-jit-build",
+        "degenbot-evm2-jit-builtins",
+        "degenbot-evm2-jit-codegen",
+        "degenbot-evm2-jit-context",
+        "degenbot-evm2-jit-llvm",
+        "degenbot-evm2-jit-runtime",
+        "degenbot-evm2-macros",
         "degenbot-execution",
         "degenbot-execution-sample",
         "degenbot-executor",
@@ -255,13 +265,17 @@ fn workspace_membership_is_exact_and_role_grouped() {
                 path.display()
             );
         } else {
-            // Non-role packages live in one of the two tool/sample homes;
-            // membership itself stays pinned by the exact EXPECTED_NAMES list.
+            // Non-role packages live in the tool/sample homes or the vendored
+            // upstream tree (rust/vendor, ADR-096); membership itself stays
+            // pinned by the exact EXPECTED_NAMES list.
             let examples_root = workspace_root().join("examples");
             let tools_root = workspace_root().join("tools");
+            let vendor_root = workspace_root().join("vendor");
             assert!(
-                path.starts_with(&examples_root) || path.starts_with(&tools_root),
-                "non-role package escaped the examples or tools directories: {}",
+                path.starts_with(&examples_root)
+                    || path.starts_with(&tools_root)
+                    || path.starts_with(&vendor_root),
+                "non-role package escaped the examples, tools, or vendor directories: {}",
                 path.display()
             );
         }

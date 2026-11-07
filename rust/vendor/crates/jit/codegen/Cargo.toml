@@ -1,0 +1,54 @@
+# Vendored from alloy-rs/evm2 @ baf0d38f3b4f971e59b4aeb51de65e44d868d703; source
+# verbatim, manifest rewritten (see rust/vendor/README.md). Upstream name: evm2-jit-codegen.
+
+[package]
+name = "degenbot-evm2-jit-codegen"
+description = "EVM bytecode compiler code generation"
+
+version = "0.6.0-alpha.19"
+authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+categories = ["cryptography::cryptocurrencies", "development-tools", "no-std"]
+keywords = ["bytecode", "ethereum", "evm", "execution", "interpreter"]
+repository = "https://github.com/BowTiedDevil/degenbot"
+exclude = [".github/", "benches/", "fuzz/", "tests/"]
+
+[package.metadata.docs.rs]
+no-default-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+evm2 = { workspace = true, features = ["parse"] }
+evm2-jit-backend.workspace = true
+evm2-jit-builtins = { workspace = true, features = ["ir"] }
+evm2-jit-context.workspace = true
+evm2-jit-llvm = { workspace = true, optional = true }
+
+alloy-primitives = { version = "1.5.7", default-features = false, features = ["std", "map-fxhash"] }
+
+bitflags = "2.5"
+derive_more = { version = "2", default-features = false, features = ["debug"] }
+bitvec = "1.0"
+either = "1.13"
+tempfile = "3.10"
+tracing = { version = "0.1" }
+
+smallvec = "1.15.1"
+oxc_index = { version = "5.0.0", features = ["nonmax"] }
+indexmap = "2.13.0"
+
+[build-dependencies]
+evm2-jit-build.workspace = true
+
+[features]
+default = ["llvm"]
+llvm = ["dep:evm2-jit-llvm"]
+
+asm-keccak = ["alloy-primitives/asm-keccak"]
+
