@@ -37,7 +37,8 @@ resolve. Vendoring the family under names we own fixes both today.
   in test modules resolve inside this tree (`rust/vendor/data/` holds the two
   fixtures they read).
 - `rustfmt.toml` here sets `disable_all_formatting`, so the source stays
-  byte-identical to upstream's.
+  byte-identical to upstream's, and `just check-vendor-tracked` asserts every
+  file here is in the git index (the copy is only verbatim if it is complete).
 
 ## The switch (this tree is temporary)
 

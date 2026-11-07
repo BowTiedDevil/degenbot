@@ -510,6 +510,17 @@ publish-dry-run *args:
     cargo publish --locked --workspace --dry-run --allow-dirty "${excludes[@]}" "$@"
 
 
+# Every file the vendored evm2 family carries (rust/vendor/, ADR-096) is tracked
+# by git: the tree is a byte-for-byte source copy, and a silently untracked
+# vendored file builds locally while breaking every clean checkout and every
+# publish. Wired into `lint-rust-check`, so `just test`, CI and the pre-push
+# rust-clippy gate run it over a complete tree.
+#
+# live-invariant gate (ADR-087 D2): watches the vendored source tree under rust/vendor/ against the git index; not tripwire precedent.
+check-vendor-tracked:
+    scripts/vendor_tracked.sh
+
+
 # The publish-blocked census on its own (docs/gates.md section 7): every member
 # `cargo publish` cannot upload is reconciled against
 # scripts/publish-blocked-census.txt in both directions, so the population the
@@ -548,7 +559,7 @@ crates-io-pending *args:
 # shipped crate root, so the lab keeps its `--deny warnings` coverage. The
 # feature-OFF production shape — every dependent compiling without either — is
 # `check-rust-default`'s claim.
-lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-too-many-lines-waivers check-capability-catalog check-dependency-charter check-publish-blocked check-profile-policy
+lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-too-many-lines-waivers check-capability-catalog check-dependency-charter check-publish-blocked check-vendor-tracked check-profile-policy
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
