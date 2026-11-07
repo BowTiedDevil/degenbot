@@ -166,13 +166,12 @@ def test_erc20token_without_price_feed(weth: Erc20Token):
         _ = weth.price
 
 
-@pytest.mark.online_rpc
-def test_ether_placeholder(fork_mainnet_full: AnvilFork, py_bot):
+def test_ether_placeholder(standalone_anvil: AnvilFork, py_bot):
     ether = make_ether_placeholder(py_bot, ZERO_ADDRESS)
 
     fake_balance = 69_420_000
-    current_block = fork_mainnet_full.provider.get_block_number()
-    balance_actual = fork_mainnet_full.provider.get_balance(VITALIK_ADDRESS)
+    current_block = standalone_anvil.provider.get_block_number()
+    balance_actual = standalone_anvil.provider.get_balance(VITALIK_ADDRESS)
     ether.set_cached_balance(VITALIK_ADDRESS, current_block, fake_balance)
     balance_from_cache = ether.get_cached_balance(VITALIK_ADDRESS, current_block)
     assert balance_from_cache == fake_balance

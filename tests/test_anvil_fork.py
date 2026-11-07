@@ -9,7 +9,6 @@ from degenbot.utils.bytes import to_bytes
 from tests.standalone_anvil import seed as seed_catalog
 
 from .conftest import (
-    TEST_BASE_FULL_NODE_HTTP_URI,
     TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
     TEST_ETHEREUM_FULL_NODE_HTTP_URI,
     AnvilFactory,
@@ -166,16 +165,24 @@ def test_reset_and_set_next_block_base_fee(anvil_factory: AnvilFactory):
     assert fork.provider.get_block(starting_block - 9)["base_fee_per_gas"] == base_fee_override
 
 
-@pytest.mark.base
 def test_reset_to_new_endpoint(anvil_factory: AnvilFactory):
+    source_chain = anvil_factory(
+        launch=ForkLaunchConfig(chain_id=1),
+    )
     fork = anvil_factory(
-        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=source_chain.http_url,
         launch=ForkLaunchConfig(storage_caching=False),
     )
     assert fork.provider.get_chain_id() == 1
 
-    fork.reset(fork_url=TEST_BASE_FULL_NODE_HTTP_URI)
-    assert fork.provider.get_chain_id() == 8453
+    target_chain = anvil_factory(
+        launch=ForkLaunchConfig(chain_id=seed_catalog.CHAIN_ID),
+    )
+    target_chain_id = target_chain.provider.get_chain_id()
+    assert target_chain_id == seed_catalog.CHAIN_ID
+
+    fork.reset(fork_url=target_chain.http_url)
+    assert fork.provider.get_chain_id() == target_chain_id
 
 
 @pytest.mark.online_rpc
