@@ -77,7 +77,6 @@ rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/backfill.rs::ws_ge
 rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/quiesce.rs::reorg_window_span_lifecycle_enter_restore_close
 rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/scenarios.rs::bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles	fuzz-bounded: FUZZ_POOL_COUNT=3 and seed<=48 so these casts cannot truncate/wrap
 rust/crates/engine/degenbot-bot/src/bot_core/pool_builder/builder.rs::build_curve_pool
-rust/crates/engine/degenbot-bot/src/bot_core/pool_builder/tests.rs::construction_door_v4_matches_the_route_interior	the door/interior parity + the V4 ownership pins read as one walk
 rust/crates/engine/degenbot-bot/src/instruments.rs::apply	the dispatch IS one flat 1:1 table over the closed census vocabulary; hiding rows in helpers would obscure the event→instrument map
 rust/crates/engine/degenbot-bot/src/instruments.rs::new	one instrument per block; splitting hides the inventory
 rust/crates/engine/degenbot-simulation/examples/cold_miss_fanout_probe.rs::main	the probe's leg sequence reads top-down

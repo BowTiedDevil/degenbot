@@ -414,6 +414,32 @@ with their consumers.
 _Avoid_: per-consumer selector or decode implementations; folding database write-back
 or UNKNOWN sentinels into the chain read.
 
+**ERC-20 account read**:
+A block-pinned observation of an ERC-20 balance, allowance, or total supply,
+available to both first-class consumers. It is chain evidence, not intrinsic token
+identity.
+_Avoid_: per-consumer call or decode contracts.
+
+## Native token identity
+
+**NativeToken**:
+The conceptual chain-native token a caller can supply wherever the chain's native asset
+is accepted. It is chain-scoped and has no protocol address of its own; Curve and V4
+translate it into their distinct sentinel conventions at the call site.
+_Avoid_: requiring callers to supply protocol sentinel addresses; treating either
+translated sentinel as a cross-protocol alias.
+
+**Curve ether placeholder**:
+The `0xEeee…` convention by which Curve construction and coin reads encode
+**NativeToken** onchain. It is an internal protocol translation, not caller input.
+_Avoid_: exposing it as a V4 encoding or a universal token alias.
+
+**V4 native currency**:
+The `address(0)` convention by which a Uniswap V4 PoolManager encodes
+**NativeToken** in a PoolKey. It is an internal protocol translation, not caller
+input.
+_Avoid_: exposing it as a Curve encoding or a universal token alias.
+
 ## Pool construction
 
 **Pool construction**:
@@ -425,6 +451,12 @@ loudly under the loud-abort rule, a transient one keeps skip semantics. The cock
 supplies resolved policy values, never construction code.
 _Avoid_: a driver-side construction fallback chain; bare except-and-continue over
 construction failures.
+
+**Pool identity resolution**:
+The determination of a pool's species, family, variant, factory, and persisted kind
+from stored identity and positive chain evidence. It supplies identity to Pool
+construction; companion-class selection is a separate projection.
+_Avoid_: integer probe codes as identity; a driver-owned classification ladder.
 
 **Construction request**:
 The one family-tagged value a caller hands the construction entry: the pool's identity,

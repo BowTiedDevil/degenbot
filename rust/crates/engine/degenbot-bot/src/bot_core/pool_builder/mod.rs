@@ -27,8 +27,8 @@
 //!   ledger's build-refusal taxonomy).
 //! - [`construction_door`] — the construction door: the ONE
 //!   [`PoolConstruction`](construction_door::PoolConstruction) request and
-//!   [`ConstructionVerdict`](construction_door::ConstructionVerdict) outcome,
-//!   dispatching INTO [`route`]'s interior (ADR-078 D2).
+//!   [`ConstructionVerdict`](construction_door::ConstructionVerdict) outcome;
+//!   the request is [`route`]'s own dispatch value (ADR-078 D2, ADR-085 D1).
 //!
 //! Note: `build_curve_pool` / `build_balancer_*` are not yet re-exported from
 //! the `degenbot` umbrella nor exposed on `PyBot` (see ADR-023/D4);

@@ -70,6 +70,10 @@ struct FakeRpc {
     // Selector-keyed hard provider failures (transport/timeout), distinct from
     // the no-response revert: checked before `responses`.
     errors: HashMap<[u8; 4], ProviderError>,
+    // Yield to the executor before answering a call: the admission-race test
+    // needs two concurrent constructions interleaved between their
+    // get-or-register pre-checks and the one registration.
+    yielding: bool,
 }
 
 impl FakeRpc {
@@ -79,6 +83,7 @@ impl FakeRpc {
             responses_full: HashMap::new(),
             code: Bytes::new(),
             errors: HashMap::new(),
+            yielding: false,
         }
     }
     fn set(&mut self, sel: [u8; 4], bytes: Vec<u8>) {
@@ -93,6 +98,10 @@ impl FakeRpc {
 
     fn set_error(&mut self, sel: [u8; 4], error: ProviderError) {
         self.errors.insert(sel, error);
+    }
+
+    fn set_yielding(&mut self) {
+        self.yielding = true;
     }
 }
 
@@ -122,6 +131,9 @@ impl RpcConstruction for FakeRpc {
         data: Bytes,
         _block: Option<u64>,
     ) -> Result<Bytes, ProviderError> {
+        if self.yielding {
+            tokio::task::yield_now().await;
+        }
         // A configured hard failure wins over any response: this models an
         // RPC/transport fault, not an EVM revert.
         if let Some(e) = self.errors.get(&data[..4]) {
@@ -2874,16 +2886,17 @@ async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
     );
 }
 
-// ── Construction route: route order + get-or-register + typed refusals ──
+// ── Construction through the door: route order + get-or-register + typed refusals ──
+//
+// Every observation below crosses the ONE door verb (`Bot::construct_pool`)
+// over a family-tagged `PoolConstruction` request — the same value the route
+// dispatches on, so the verdict fold is exercised wherever route behavior is.
 
+use crate::bot_core::pool_builder::construction_door::{ConstructionVerdict, PoolConstruction};
 use crate::bot_core::pool_builder::route;
 use crate::bot_core::Bot;
 use degenbot_pools::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::LockSite;
-
-fn v3_route() -> route::V3RouteInputs<'static> {
-    route::V3RouteInputs::default()
-}
 
 /// The V3 construction fixture: the whole immutable batch a served rung reads
 /// (fee 3000 / tick spacing 60 / one-word tick map), so a route test answers
@@ -2917,7 +2930,7 @@ fn v3_route_fake(factory: Address, token0: Address, token1: Address) -> FakeRpc 
 }
 
 #[tokio::test]
-async fn route_transient_rpc_failure_is_a_counted_skip() {
+async fn construction_door_v3_transient_rpc_failure_is_a_counted_skip() {
     // A transient RPC failure ENDS the route — it is a typed skip, never a
     // bare exception swallowed into the next rung (the retired driver chain's
     // bug re-ran a full build per surviving rung).
@@ -2932,29 +2945,35 @@ async fn route_transient_rpc_failure_is_a_counted_skip() {
     let io = io_with(f);
     let bot = Bot::new(1);
 
-    let err = route::construct_pool(
-        &bot,
-        &route::ConstructionRoute::generic_only(),
-        &route::RequestedPool::V3 { address: pool },
-        &io,
-        v3_route(),
-        Some(9_000_000),
-    )
-    .await
-    .expect_err("an RPC blip is a skip, never a build");
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V3 {
+                address: pool,
+                db: None,
+                fetcher: None,
+                slot_layout: None,
+            },
+            &io,
+            Some(9_000_000),
+        )
+        .await;
     assert!(
         matches!(
-            &err,
-            route::ConstructionRefusal::Skipped(
-                crate::bot_core::registration_ledger::BuildFailure::Transient(_)
-            )
+            verdict,
+            ConstructionVerdict::Refused {
+                family: RegisteredPoolFamily::V3,
+                refusal: route::ConstructionRefusal::Skipped(
+                    crate::bot_core::registration_ledger::BuildFailure::Transient(_)
+                ),
+            }
         ),
-        "transient RPC classifies as a counted skip, got {err:?}"
+        "transient RPC classifies as a counted skip, got {verdict:?}"
     );
 }
 
 #[tokio::test]
-async fn route_unserved_factory_refuses_loud() {
+async fn construction_door_v3_unserved_factory_refuses_loud() {
     // ADR-055 D4: a factory no route rung serves is a family-level stable
     // refusal — the LOUD typed abort, never a silent skip.
     let factory: Address =
@@ -2966,27 +2985,36 @@ async fn route_unserved_factory_refuses_loud() {
     let bot = Bot::new(1);
 
     let served: Address = alloy::primitives::address!("0x9999999999999999999999999999999999999999");
-    let err = route::construct_pool(
-        &bot,
-        &route::ConstructionRoute {
-            factories: vec![served],
-            generic: false,
-        },
-        &route::RequestedPool::V3 { address: pool },
-        &io,
-        v3_route(),
-        Some(9_000_000),
-    )
-    .await
-    .expect_err("an unserved factory aborts loudly");
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute {
+                factories: vec![served],
+                generic: false,
+            },
+            PoolConstruction::V3 {
+                address: pool,
+                db: None,
+                fetcher: None,
+                slot_layout: None,
+            },
+            &io,
+            Some(9_000_000),
+        )
+        .await;
     assert!(
-        matches!(err, route::ConstructionRefusal::UnsupportedFamily { .. }),
-        "unserved factory is the loud-abort class, got {err:?}"
+        matches!(
+            verdict,
+            ConstructionVerdict::Refused {
+                family: RegisteredPoolFamily::V3,
+                refusal: route::ConstructionRefusal::UnsupportedFamily { .. },
+            }
+        ),
+        "unserved factory is the loud-abort class, got {verdict:?}"
     );
 }
 
 #[tokio::test]
-async fn route_matched_rung_builds_and_registers() {
+async fn construction_door_v3_matched_rung_builds_and_registers() {
     // The route walk answers a served factory with a CONSTRUCTED, REGISTERED
     // pool: one immutable batch, the seeded build, one registration.
     let factory: Address =
@@ -2998,16 +3026,23 @@ async fn route_matched_rung_builds_and_registers() {
     let io = io_with(v3_route_fake(factory, tok0, tok1));
     let bot = Bot::new(1);
 
-    let built = route::construct_pool(
-        &bot,
-        &route::ConstructionRoute::generic_only(),
-        &route::RequestedPool::V3 { address: pool },
-        &io,
-        v3_route(),
-        Some(9_000_000),
-    )
-    .await
-    .expect("a served factory constructs and registers");
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V3 {
+                address: pool,
+                db: None,
+                fetcher: None,
+                slot_layout: None,
+            },
+            &io,
+            Some(9_000_000),
+        )
+        .await;
+    assert_eq!(verdict.family(), RegisteredPoolFamily::V3);
+    let built = verdict
+        .into_result()
+        .expect("a served factory constructs and registers");
     let identity = built.built.expect("a fresh build carries its identity");
     assert_eq!(identity.address, pool);
     assert_eq!(identity.pair(), Some((tok0, tok1)));
@@ -3044,16 +3079,21 @@ async fn route_matched_rung_builds_and_registers() {
     // Get-or-register: a second request answers from the registry with NO
     // I/O — an all-erroring transport still succeeds with the same pool id.
     let io_down = io_with(FakeRpc::new());
-    let again = route::construct_pool(
-        &bot,
-        &route::ConstructionRoute::generic_only(),
-        &route::RequestedPool::V3 { address: pool },
-        &io_down,
-        v3_route(),
-        Some(9_000_000),
-    )
-    .await
-    .expect("a registered pool answers from the registry");
+    let again = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V3 {
+                address: pool,
+                db: None,
+                fetcher: None,
+                slot_layout: None,
+            },
+            &io_down,
+            Some(9_000_000),
+        )
+        .await
+        .into_result()
+        .expect("a registered pool answers from the registry");
     assert_eq!(again.pool_id, built.pool_id);
     assert!(again.built.is_none(), "the GET half re-derives no identity");
     // A reused registration is never re-seeded: the first registrant's anchor
@@ -3069,7 +3109,7 @@ async fn route_matched_rung_builds_and_registers() {
 }
 
 #[tokio::test]
-async fn route_construction_seeds_the_anchor_only_from_a_positive_block() {
+async fn construction_door_v3_seeds_the_anchor_only_from_a_positive_block() {
     // The seed mirrors the driver's `block is not None and block > 0` gate: a
     // construction with no block (or at genesis) has nothing to anchor to, so
     // the journal stays empty instead of carrying a delta at a made-up block.
@@ -3090,16 +3130,21 @@ async fn route_construction_seeds_the_anchor_only_from_a_positive_block() {
             Some(0),
         ),
     ] {
-        let built = route::construct_pool(
-            &bot,
-            &route::ConstructionRoute::generic_only(),
-            &route::RequestedPool::V3 { address: pool },
-            &io,
-            v3_route(),
-            block,
-        )
-        .await
-        .expect("a served factory constructs and registers without an anchor");
+        let built = bot
+            .construct_pool(
+                &route::ConstructionRoute::generic_only(),
+                PoolConstruction::V3 {
+                    address: pool,
+                    db: None,
+                    fetcher: None,
+                    slot_layout: None,
+                },
+                &io,
+                block,
+            )
+            .await
+            .into_result()
+            .expect("a served factory constructs and registers without an anchor");
         assert_eq!(
             bot.state_arc()
                 .read_at(LockSite::Core)
@@ -3151,16 +3196,21 @@ async fn construction_identity_parity_guard_reads_registered_identity_and_refuse
     let io = io_with(f);
     let bot = Bot::new(1);
 
-    let built = route::construct_pool(
-        &bot,
-        &route::ConstructionRoute::generic_only(),
-        &route::RequestedPool::V3 { address: pool },
-        &io,
-        v3_route(),
-        Some(9_000_000),
-    )
-    .await
-    .expect("a served factory constructs and registers");
+    let built = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V3 {
+                address: pool,
+                db: None,
+                fetcher: None,
+                slot_layout: None,
+            },
+            &io,
+            Some(9_000_000),
+        )
+        .await
+        .into_result()
+        .expect("a served factory constructs and registers");
 
     let registered = parity::registered_address_identity(&bot, built.pool_id)
         .expect("the registered pool carries its identity");
@@ -3191,16 +3241,13 @@ async fn construction_identity_parity_guard_reads_registered_identity_and_refuse
     }
 }
 
-// ── Construction door (ADR-078 D2): family-as-data parity with the route ──
+// ── The construction door (ADR-078 D2 / ADR-085 D1): every family through the one request ──
 //
-// The door verb (`Bot::construct_pool`) dispatches INTO `route::construct_pool`
-// — route.rs keeps every piece of depth (get-or-register, identity resolution,
-// the route walk, the race fold, refusal classification). These tests drive
-// each family through BOTH surfaces on identical fixtures and assert the
-// outcomes agree, so the door is a translation, never a second construction
-// path.
-
-use crate::bot_core::pool_builder::construction_door::{ConstructionVerdict, PoolConstruction};
+// `Bot::construct_pool` hands its family-tagged `PoolConstruction` straight to
+// `route::construct_pool` — route.rs keeps every piece of depth
+// (get-or-register, identity resolution, the route walk, the race fold,
+// refusal classification). Each family's request variant is exercised through
+// the door on its own fixture: one request definition, one route arm.
 
 #[test]
 fn construction_door_requests_name_their_family() {
@@ -3231,7 +3278,7 @@ fn construction_door_requests_name_their_family() {
 }
 
 #[tokio::test]
-async fn construction_door_v2_matches_the_route_interior() {
+async fn construction_door_v2_constructs_registers_and_reuses() {
     use degenbot_uniswap::create2::compute_v2_address;
     use degenbot_uniswap::dex_identity::UNISWAP_V2;
 
@@ -3254,8 +3301,8 @@ async fn construction_door_v2_matches_the_route_interior() {
     let io = io_with(f);
 
     let plan = route::ConstructionRoute::generic_only();
-    let door_bot = Bot::new(1);
-    let door = door_bot
+    let bot = Bot::new(1);
+    let door = bot
         .construct_pool(
             &plan,
             PoolConstruction::V2 { address: pool },
@@ -3264,38 +3311,23 @@ async fn construction_door_v2_matches_the_route_interior() {
         )
         .await;
 
-    let direct_bot = Bot::new(1);
-    let direct = route::construct_pool(
-        &direct_bot,
-        &plan,
-        &route::RequestedPool::V2 { address: pool },
-        &io,
-        v3_route(),
-        Some(18_000_000),
-    )
-    .await
-    .expect("the V2 interior arm constructs and registers");
-
     assert_eq!(door.family(), RegisteredPoolFamily::V2);
+    let built = door
+        .clone()
+        .into_result()
+        .expect("a constructed V2 verdict carries its pool");
     assert_eq!(
-        door.clone()
-            .into_result()
-            .expect("a constructed V2 verdict carries its pool"),
-        direct
-    );
-    assert_eq!(
-        direct_bot
-            .state_arc()
+        bot.state_arc()
             .read_at(LockSite::Core)
             .registered_pool_by_address(&pool),
-        Some((direct.pool_id, RegisteredPoolFamily::V2)),
+        Some((built.pool_id, RegisteredPoolFamily::V2)),
         "the door registers into session state"
     );
 
     // Get-or-register through the door: the registry GET answers with NO I/O
     // (an all-erroring transport still succeeds with the same pool id).
     let io_down = io_with(FakeRpc::new());
-    let again = door_bot
+    let again = bot
         .construct_pool(
             &plan,
             PoolConstruction::V2 { address: pool },
@@ -3310,108 +3342,9 @@ async fn construction_door_v2_matches_the_route_interior() {
     );
 }
 
-#[tokio::test]
-async fn construction_door_v3_matches_the_route_interior() {
-    let factory: Address =
-        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
-    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
-
-    let mut f = FakeRpc::new();
-    f.set(abi::selector(b"factory()"), addr_word(factory));
-    f.set(abi::selector(b"token0()"), addr_word(tok0));
-    f.set(abi::selector(b"token1()"), addr_word(tok1));
-    f.set(
-        abi::selector(b"fee()"),
-        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
-    );
-    f.set(
-        abi::selector(b"tickSpacing()"),
-        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
-    );
-    f.set(
-        abi::selector(b"slot0()"),
-        slot0_ret(U256::from(1u128 << 96), 0),
-    );
-    f.set(
-        abi::selector(b"liquidity()"),
-        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
-    );
-    f.set(
-        abi::selector(b"tickBitmap(int16)"),
-        enc(DynSolValue::Uint(U256::ZERO, 256)),
-    );
-    let io = io_with(f);
-
-    let plan = route::ConstructionRoute::generic_only();
-    let door_bot = Bot::new(1);
-    let door = door_bot
-        .construct_pool(
-            &plan,
-            PoolConstruction::V3 {
-                address: pool,
-                db: None,
-                fetcher: None,
-                slot_layout: None,
-            },
-            &io,
-            Some(9_000_000),
-        )
-        .await;
-
-    let direct_bot = Bot::new(1);
-    let direct = route::construct_pool(
-        &direct_bot,
-        &plan,
-        &route::RequestedPool::V3 { address: pool },
-        &io,
-        v3_route(),
-        Some(9_000_000),
-    )
-    .await
-    .expect("the V3 interior arm constructs and registers");
-
-    assert_eq!(door.family(), RegisteredPoolFamily::V3);
-    assert_eq!(
-        door.clone()
-            .into_result()
-            .expect("a constructed V3 verdict carries its pool"),
-        direct
-    );
-    assert_eq!(
-        direct_bot
-            .state_arc()
-            .read_at(LockSite::Core)
-            .registered_pool_by_address(&pool),
-        Some((direct.pool_id, RegisteredPoolFamily::V3)),
-    );
-
-    // The door's get-or-register half: the registry answers without I/O.
-    let io_down = io_with(FakeRpc::new());
-    let again = door_bot
-        .construct_pool(
-            &plan,
-            PoolConstruction::V3 {
-                address: pool,
-                db: None,
-                fetcher: None,
-                slot_layout: None,
-            },
-            &io_down,
-            Some(9_000_000),
-        )
-        .await;
-    assert_eq!(again.pool_id(), door.pool_id());
-    assert!(matches!(again, ConstructionVerdict::Constructed { pool, .. } if pool.built.is_none()));
-}
-
-#[tokio::test]
-#[expect(clippy::too_many_lines)] // the door/interior parity + the V4 ownership pins read as one walk
-async fn construction_door_v4_matches_the_route_interior() {
-    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
-    let pid: [u8; 32] = [0xcd; 32];
-
+/// The V4 door fixture: the `StateView` reads a served `(manager, id)` pair
+/// builds through.
+fn v4_door_fake() -> FakeRpc {
     let mut f = FakeRpc::new();
     f.set(
         abi::selector(b"getSlot0(bytes32)"),
@@ -3430,26 +3363,37 @@ async fn construction_door_v4_matches_the_route_interior() {
         abi::selector(b"getTickBitmap(bytes32,int16)"),
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
-    let io = io_with(f);
+    f
+}
 
-    let overrides = builder::V4PoolBuildOverrides {
+/// The caller-supplied V4 identity overrides filling every gap (the shape the
+/// DB-resolution fallback leaves to the caller).
+fn v4_full_overrides(pm: Address) -> builder::V4PoolBuildOverrides {
+    builder::V4PoolBuildOverrides {
         currency0: Some(TO),
         currency1: Some(SV),
         fee: Some(500),
         tick_spacing: Some(1),
         hook_address: Some(Address::ZERO),
         state_view: Some(pm),
-    };
+    }
+}
+
+#[tokio::test]
+async fn construction_door_v4_constructs_registers_and_reuses() {
+    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
+    let pid: [u8; 32] = [0xcd; 32];
+    let io = io_with(v4_door_fake());
 
     let plan = route::ConstructionRoute::generic_only();
-    let door_bot = Bot::new(1);
-    let door = door_bot
+    let bot = Bot::new(1);
+    let door = bot
         .construct_pool(
             &plan,
             PoolConstruction::V4 {
                 pool_manager: pm,
                 pool_id: pid,
-                overrides,
+                overrides: v4_full_overrides(pm),
                 db: None,
             },
             &io,
@@ -3457,72 +3401,31 @@ async fn construction_door_v4_matches_the_route_interior() {
         )
         .await;
 
-    let direct_bot = Bot::new(1);
-    let direct = route::construct_pool(
-        &direct_bot,
-        &plan,
-        &route::RequestedPool::V4 {
-            pool_manager: pm,
-            pool_id: pid,
-            overrides,
-            db: None,
-        },
-        &io,
-        v3_route(),
-        Some(11_000_000),
-    )
-    .await
-    .expect("the V4 interior arm constructs and registers");
-
     assert_eq!(door.family(), RegisteredPoolFamily::V4);
+    let built = door
+        .clone()
+        .into_result()
+        .expect("a constructed V4 verdict carries its pool");
+    let identity = built.built.expect("a fresh V4 build carries its identity");
+    assert_eq!(identity.v4_pool_id, Some(pid));
+    assert_eq!(identity.address, pm);
     assert_eq!(
-        door.clone()
-            .into_result()
-            .expect("a constructed V4 verdict carries its pool"),
-        direct
-    );
-    assert_eq!(
-        direct
-            .built
-            .expect("a fresh V4 build carries its identity")
-            .v4_pool_id,
-        Some(pid)
-    );
-    assert_eq!(
-        door_bot
-            .state_arc()
+        bot.state_arc()
             .read_at(LockSite::Core)
             .try_registered(pm, &pid)
             .map(|registered| registered.pool_id),
-        Some(direct.pool_id),
+        Some(built.pool_id),
     );
-
-    // The door owns the StateView registration (the solver-state gate's
-    // registry) and the sparse-backfill tick-word source — both
-    // driver-side responsibilities under the retired verb.
-    assert_eq!(
-        door_bot
-            .state_arc()
-            .read_at(LockSite::Core)
-            .state_view_for_pool(direct.pool_id),
-        Some(pm),
-    );
-    let fetcher_attached = door_bot
-        .state_arc()
-        .read_at(LockSite::Core)
-        .pool_slice::<degenbot_pools::V4PoolState>(direct.pool_id)
-        .is_some_and(|state| state.fetcher.is_some());
-    assert!(fetcher_attached, "the door attaches the tick-word source");
 
     // The door's `(manager, pool_id)`-keyed get half answers without I/O.
     let io_down = io_with(FakeRpc::new());
-    let again = door_bot
+    let again = bot
         .construct_pool(
             &plan,
             PoolConstruction::V4 {
                 pool_manager: pm,
                 pool_id: pid,
-                overrides,
+                overrides: v4_full_overrides(pm),
                 db: None,
             },
             &io_down,
@@ -3530,113 +3433,54 @@ async fn construction_door_v4_matches_the_route_interior() {
         )
         .await;
     assert_eq!(again.pool_id(), door.pool_id());
-    assert!(matches!(again, ConstructionVerdict::Constructed { pool, .. } if pool.built.is_none()));
+    assert!(
+        matches!(again, ConstructionVerdict::Constructed { pool, .. } if pool.built.is_none()),
+        "the keyed GET half re-derives no identity"
+    );
 }
 
 #[tokio::test]
-async fn construction_door_refusals_match_the_route_interior() {
-    use crate::bot_core::registration_ledger::BuildFailure;
+async fn construction_door_v4_registers_the_state_view_and_tick_word_source() {
+    // The door owns the StateView registration (the solver-state gate's
+    // registry) and the sparse-backfill tick-word source — both
+    // driver-side responsibilities under the retired verb.
+    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
+    let pid: [u8; 32] = [0xcd; 32];
+    let io = io_with(v4_door_fake());
+    let bot = Bot::new(1);
 
-    let factory: Address =
-        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
-    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
-    let served: Address = alloy::primitives::address!("0x9999999999999999999999999999999999999999");
-
-    // An unserved factory: the interior's loud-abort class, folded into the
-    // door's typed refusal.
-    let mut f = FakeRpc::new();
-    f.set(abi::selector(b"factory()"), addr_word(factory));
-    let io = io_with(f);
-    let plan = route::ConstructionRoute {
-        factories: vec![served],
-        generic: false,
-    };
-
-    let door_bot = Bot::new(1);
-    let door = door_bot
+    let verdict = bot
         .construct_pool(
-            &plan,
-            PoolConstruction::V3 {
-                address: pool,
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V4 {
+                pool_manager: pm,
+                pool_id: pid,
+                overrides: v4_full_overrides(pm),
                 db: None,
-                fetcher: None,
-                slot_layout: None,
             },
             &io,
-            Some(9_000_000),
+            Some(11_000_000),
         )
         .await;
-    let direct = route::construct_pool(
-        &Bot::new(1),
-        &plan,
-        &route::RequestedPool::V3 { address: pool },
-        &io,
-        v3_route(),
-        Some(9_000_000),
-    )
-    .await
-    .expect_err("an unserved factory aborts loudly");
-    assert_eq!(
-        door,
-        ConstructionVerdict::refused(RegisteredPoolFamily::V3, direct)
-    );
-    assert!(matches!(
-        door,
-        ConstructionVerdict::Refused {
-            refusal: route::ConstructionRefusal::UnsupportedFamily { .. },
-            ..
-        }
-    ));
+    let pool_id = verdict.pool_id().expect("the V4 arm constructs");
 
-    // A transient transport failure: the interior's counted skip.
-    let mut down = FakeRpc::new();
-    down.set_error(
-        abi::selector(b"factory()"),
-        ProviderError::ConnectionFailed {
-            message: "blip".to_owned(),
-        },
-    );
-    let io_down = io_with(down);
-    let door = door_bot
-        .construct_pool(
-            &plan,
-            PoolConstruction::V3 {
-                address: pool,
-                db: None,
-                fetcher: None,
-                slot_layout: None,
-            },
-            &io_down,
-            Some(9_000_000),
-        )
-        .await;
-    let direct = route::construct_pool(
-        &Bot::new(1),
-        &plan,
-        &route::RequestedPool::V3 { address: pool },
-        &io_down,
-        v3_route(),
-        Some(9_000_000),
-    )
-    .await
-    .expect_err("an RPC blip is a skip, never a build");
+    let session = bot.state_arc();
+    let core = session.read_at(LockSite::Core);
     assert_eq!(
-        door,
-        ConstructionVerdict::refused(RegisteredPoolFamily::V3, direct)
+        core.state_view_for_pool(pool_id),
+        Some(pm),
+        "the door registers the StateView for the solver-state gate"
     );
-    assert!(matches!(
-        door,
-        ConstructionVerdict::Refused {
-            refusal: route::ConstructionRefusal::Skipped(BuildFailure::Transient(_)),
-            ..
-        }
-    ));
+    let fetcher_attached = core
+        .pool_slice::<degenbot_pools::V4PoolState>(pool_id)
+        .is_some_and(|state| state.fetcher.is_some());
+    assert!(fetcher_attached, "the door attaches the tick-word source");
 }
 
 // --- The construction door's family arms (ADR-085 D1) ---
 
 #[tokio::test]
-async fn the_curve_door_arm_constructs_registers_and_reuses() {
+async fn construction_door_curve_constructs_registers_and_reuses() {
     let mut f = FakeRpc::new();
     let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000001");
     let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000002");
@@ -3681,12 +3525,14 @@ async fn the_curve_door_arm_constructs_registers_and_reuses() {
     let io = io_with(f);
     let bot = Bot::new(1);
     let plan = route::ConstructionRoute::generic_only();
-    let request = || route::RequestedPool::Curve {
+    let request = || PoolConstruction::Curve {
         address: TO,
         registries: vec![REGISTRY],
     };
-    let first = route::construct_pool(&bot, &plan, &request(), &io, v3_route(), Some(123))
+    let first = bot
+        .construct_pool(&plan, request(), &io, Some(123))
         .await
+        .into_result()
         .expect("the curve arm constructs and registers");
     let built = first.built.expect("a fresh build carries its identity");
     assert_eq!(built.tokens, vec![coin0, coin1]);
@@ -3695,11 +3541,380 @@ async fn the_curve_door_arm_constructs_registers_and_reuses() {
     // Get-or-register: the second attempt answers the winner's id with no
     // rebuild (`built: None`) — the door's contract, never the direct
     // entries' rebuild-then-refuse race.
-    let second = route::construct_pool(&bot, &plan, &request(), &io, v3_route(), Some(123))
+    let second = bot
+        .construct_pool(&plan, request(), &io, Some(123))
         .await
+        .into_result()
         .expect("the door reuses the registered pool");
     assert_eq!(second.pool_id, first.pool_id);
     assert!(second.built.is_none());
+}
+
+// --- Every remaining family through the Construction door (ADR-085 D1) ---
+
+#[tokio::test]
+async fn construction_door_aerodrome_v2_constructs_registers_and_reuses() {
+    // The fixture is the on-chain Base AERO/WETH volatile pair, so the
+    // EIP-1167 CREATE2 verification must agree with the shipped deployment row.
+    let factory: Address =
+        alloy::primitives::address!("0x420DD381b31aEf6683db6B902084cB0FFECe40Da");
+    let tok0: Address = alloy::primitives::address!("0x4200000000000000000000000000000000000006");
+    let tok1: Address = alloy::primitives::address!("0x940181a94a35a4569e4529a3cdfb74e38fd98631");
+    let pool: Address = alloy::primitives::address!("0x7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6");
+
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        abi::selector(b"getReserves()"),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(123_456_789u64), 112),
+            DynSolValue::Uint(U256::from(987_654_321u64), 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    f.set(abi::selector(b"stable()"), enc(DynSolValue::Bool(false)));
+    f.set(
+        abi::selector(b"getFee(address,bool)"),
+        enc(DynSolValue::Uint(U256::from(30u64), 256)),
+    );
+    f.set(
+        abi::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(18), 256)),
+    );
+    let io = io_with(f);
+
+    let plan = route::ConstructionRoute::generic_only();
+    let bot = Bot::new(8453);
+    let door = bot
+        .construct_pool(
+            &plan,
+            PoolConstruction::AerodromeV2 { address: pool },
+            &io,
+            Some(123),
+        )
+        .await;
+
+    assert_eq!(door.family(), RegisteredPoolFamily::AerodromeV2);
+    let built = door
+        .clone()
+        .into_result()
+        .expect("the Aerodrome arm constructs and registers");
+    let identity = built.built.expect("a fresh build carries its identity");
+    assert_eq!(identity.tokens, vec![tok0, tok1]);
+    assert_eq!(identity.variant, "aerodrome");
+    assert_eq!(identity.factory, Some(factory));
+    assert_eq!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .registered_pool_by_address(&pool),
+        Some((built.pool_id, RegisteredPoolFamily::AerodromeV2)),
+    );
+
+    // Get-or-register: the second attempt answers the winner's id with no
+    // rebuild (`built: None`).
+    let io_down = io_with(FakeRpc::new());
+    let again = bot
+        .construct_pool(
+            &plan,
+            PoolConstruction::AerodromeV2 { address: pool },
+            &io_down,
+            Some(123),
+        )
+        .await;
+    assert_eq!(again.pool_id(), door.pool_id());
+    assert!(
+        matches!(again, ConstructionVerdict::Constructed { pool, .. } if pool.built.is_none()),
+        "the door's GET half re-derives no identity"
+    );
+}
+
+#[tokio::test]
+async fn construction_door_balancer_weighted_constructs_registers_and_reuses() {
+    let pool_id_bytes = [0xcd; 32];
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&pool_id_bytes));
+    f.set(
+        abi::selector(b"getPoolTokens(bytes32)"),
+        pool_tokens_ret(&[T0, T1], &[U256::from(1_000u64), U256::from(2_000u64)]),
+    );
+    f.set(
+        abi::selector(b"getSwapFeePercentage()"),
+        enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
+    );
+    f.set(
+        abi::selector(b"getNormalizedWeights()"),
+        u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
+    );
+    f.set(
+        abi::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(18), 256)),
+    );
+    let io = io_with(f);
+
+    let plan = route::ConstructionRoute::generic_only();
+    let bot = Bot::new(1);
+    let door = bot
+        .construct_pool(
+            &plan,
+            PoolConstruction::BalancerWeighted {
+                vault: VAULT,
+                address: TO,
+            },
+            &io,
+            Some(123),
+        )
+        .await;
+
+    assert_eq!(door.family(), RegisteredPoolFamily::BalancerWeighted);
+    let built = door
+        .clone()
+        .into_result()
+        .expect("the weighted arm constructs and registers");
+    let identity = built.built.expect("a fresh build carries its identity");
+    assert_eq!(identity.tokens, vec![T0, T1]);
+    assert_eq!(identity.variant, "balancer_weighted");
+    assert_eq!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .registered_pool_by_address(&TO),
+        Some((built.pool_id, RegisteredPoolFamily::BalancerWeighted)),
+    );
+
+    // Get-or-register: the second attempt answers the winner's id with no
+    // rebuild (`built: None`).
+    let io_down = io_with(FakeRpc::new());
+    let again = bot
+        .construct_pool(
+            &plan,
+            PoolConstruction::BalancerWeighted {
+                vault: VAULT,
+                address: TO,
+            },
+            &io_down,
+            Some(123),
+        )
+        .await;
+    assert_eq!(again.pool_id(), door.pool_id());
+    assert!(
+        matches!(again, ConstructionVerdict::Constructed { pool, .. } if pool.built.is_none()),
+        "the door's GET half re-derives no identity"
+    );
+}
+
+#[tokio::test]
+async fn construction_door_balancer_stable_constructs_registers_and_reuses() {
+    let io = io_with(balancer_stable_fakes(&[T0, T1]));
+    let plan = route::ConstructionRoute::generic_only();
+    let bot = Bot::new(1);
+    let request = || PoolConstruction::BalancerStable {
+        vault: VAULT,
+        address: TO,
+        invariant_version: Some(1),
+    };
+    let door = bot.construct_pool(&plan, request(), &io, Some(123)).await;
+
+    assert_eq!(door.family(), RegisteredPoolFamily::BalancerStable);
+    let built = door
+        .clone()
+        .into_result()
+        .expect("the stable arm constructs and registers");
+    let identity = built.built.expect("a fresh build carries its identity");
+    assert_eq!(identity.tokens, vec![T0, T1]);
+    assert_eq!(identity.variant, "balancer_stable");
+    // The override rides the request variant and outranks the shape-derived
+    // version (the shape here would derive V2).
+    assert_eq!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .pool_slice::<degenbot_pools::BalancerStablePoolIdentity>(built.pool_id)
+            .map(|identity| identity.invariant_version),
+        Some(1),
+    );
+
+    // Get-or-register: the second attempt answers the winner's id with no
+    // rebuild (`built: None`).
+    let io_down = io_with(FakeRpc::new());
+    let again = bot
+        .construct_pool(&plan, request(), &io_down, Some(123))
+        .await;
+    assert_eq!(again.pool_id(), door.pool_id());
+    assert!(
+        matches!(again, ConstructionVerdict::Constructed { pool, .. } if pool.built.is_none()),
+        "the door's GET half re-derives no identity"
+    );
+}
+
+/// A tick-word source stub answering nothing — the V3 family-inputs test only
+/// asserts WHICH fetcher the door stored, never a fetch.
+#[derive(Debug)]
+struct NeverWordSource;
+
+impl degenbot_pools::TickWordSource for NeverWordSource {
+    fn fetch_tick_word(
+        &self,
+        _key: &degenbot_pools::TickWordKey,
+        _word: i32,
+        _block: u64,
+    ) -> Result<Option<degenbot_pools::FetchedTickWord>, degenbot_pools::TickWordFetchError> {
+        Err(degenbot_pools::TickWordFetchError::FetchFailed)
+    }
+}
+
+#[tokio::test]
+async fn construction_door_v3_rides_its_family_only_inputs() {
+    // The V3 request variant carries the handles only the V3 arm reads: the
+    // DB tick-map (a hit seeds `Tracked`), the caller's tick-word fetcher, and
+    // the fork slot-layout override. All three must land on the registered
+    // pool — no side request value survives the dispatch.
+    use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
+
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        abi::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::selector(b"slot0()"),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::selector(b"liquidity()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    // The chain-truth intake gate reads word 0 from chain: bit 1 (tick 60 at
+    // spacing 60) must agree with the DB row below.
+    f.set(
+        abi::selector(b"tickBitmap(int16)"),
+        enc(DynSolValue::Uint(U256::from(1u64) << 1, 256)),
+    );
+    let io = io_with(f);
+
+    let db = FakeTickMapDb(
+        LiquidityMap {
+            tick_data: HashMap::from([(
+                60,
+                LiquidityAtTick {
+                    liquidity_gross: U256::from(100u64),
+                    liquidity_net: 100i128,
+                },
+            )]),
+        },
+        None,
+    );
+    let fetcher: std::sync::Arc<dyn degenbot_pools::TickWordSource> =
+        std::sync::Arc::new(NeverWordSource);
+
+    let bot = Bot::new(1);
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V3 {
+                address: pool,
+                db: Some(&db),
+                fetcher: Some(std::sync::Arc::clone(&fetcher)),
+                slot_layout: Some(degenbot_pools::ConcentratedLiquiditySlotLayout::PancakeV3),
+            },
+            &io,
+            Some(9_000_000),
+        )
+        .await;
+    let pool_id = verdict
+        .pool_id()
+        .expect("the V3 arm constructs with its family inputs");
+
+    let session = bot.state_arc();
+    let core = session.read_at(LockSite::Core);
+    let state = core
+        .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
+        .expect("the registered V3 pool carries its state");
+    assert!(
+        state.snapshot_seed.is_some(),
+        "the DB hit seeds a Tracked pool"
+    );
+    assert_eq!(state.tick_data.len(), 1, "the DB rows seed the tick map");
+    assert!(
+        std::sync::Arc::ptr_eq(
+            state.fetcher.as_ref().expect("the door stores a fetcher"),
+            &fetcher
+        ),
+        "the caller's tick-word fetcher is the stored one"
+    );
+    assert_eq!(
+        core.pool_slice::<degenbot_pools::V3PoolIdentity>(pool_id)
+            .map(|identity| identity.slot_layout),
+        Some(degenbot_pools::ConcentratedLiquiditySlotLayout::PancakeV3),
+        "the slot-layout override lands on the registered identity"
+    );
+}
+
+#[tokio::test]
+async fn construction_door_folds_an_admission_race_to_the_winners_pool_id() {
+    // Two concurrent constructions of one pool both pass the
+    // get-or-register pre-check before either registers (the fake yields at
+    // every call): the loser's write-door `AlreadyRegistered` is a race
+    // artifact, so it folds to the winner's pool id — never a second pool,
+    // never a refusal. Only the winner seeds the genesis anchor.
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+
+    let mut f = v3_route_fake(factory, tok0, tok1);
+    f.set_yielding();
+    let io = io_with(f);
+    let bot = Bot::new(1);
+    let plan = route::ConstructionRoute::generic_only();
+    let request = || PoolConstruction::V3 {
+        address: pool,
+        db: None,
+        fetcher: None,
+        slot_layout: None,
+    };
+    let (first, second) = tokio::join!(
+        bot.construct_pool(&plan, request(), &io, Some(9_000_000)),
+        bot.construct_pool(&plan, request(), &io, Some(9_000_000)),
+    );
+    for verdict in [&first, &second] {
+        assert!(
+            matches!(
+                verdict,
+                ConstructionVerdict::Constructed {
+                    family: RegisteredPoolFamily::V3,
+                    ..
+                }
+            ),
+            "the race fold is never a refusal, got {verdict:?}"
+        );
+    }
+    assert_eq!(
+        first.pool_id(),
+        second.pool_id(),
+        "the loser folds to the winner's pool id"
+    );
+    let winner = first.pool_id().expect("the winner carries its pool id");
+    assert_eq!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .pool_journal_len(winner),
+        Some(1),
+        "the loser's fold seeds no second anchor"
+    );
 }
 
 // --- The Tick-word source (GLOSSARY): the live-miss backfill is core-owned ---

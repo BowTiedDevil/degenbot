@@ -13,11 +13,11 @@
 //! side is [`Bot`].
 //!
 //! This module only dispatches: it names the family as data (each family's
-//! inputs ride its request variant), translates the request into the
-//! interior's `(RequestedPool, V3RouteInputs)` pair, and folds the interior's
-//! typed result into one [`ConstructionVerdict`]. The interior is
-//! `pub(crate)`: [`route::construct_pool`] is reachable only through this door,
-//! so no consumer bypasses the verdict fold.
+//! inputs ride its request variant), hands that ONE request to the interior —
+//! which dispatches over the same value, no translation in between — and folds
+//! the interior's typed result into one [`ConstructionVerdict`]. The interior
+//! is `pub(crate)`: [`route::construct_pool`] is reachable only through this
+//! door, so no consumer bypasses the verdict fold.
 
 use std::sync::Arc;
 
@@ -27,9 +27,7 @@ use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::TickWordSource;
 
 use super::builder::V4PoolBuildOverrides;
-use super::route::{
-    self, ConstructedPool, ConstructionRefusal, ConstructionRoute, RequestedPool, V3RouteInputs,
-};
+use super::route::{self, ConstructedPool, ConstructionRefusal, ConstructionRoute};
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::pool_builder::parity;
 use crate::bot_core::Bot;
@@ -37,8 +35,8 @@ use degenbot_pools::RegisteredPoolFamily;
 
 /// The ONE construction-request vocabulary — every structural family's
 /// construction, keyed by family, with that family's inputs riding its
-/// variant. A caller builds one value and the door dispatches; a new family
-/// adds a variant, never a method.
+/// variant. A caller builds one value and the route dispatches over it; a new
+/// family adds one variant and one route arm, never a method.
 ///
 /// The per-family inputs are the ones the construction interior consumes: the
 /// V3 tick-map handles are meaningless to the V2/V4 arms, so they ride the V3
@@ -125,75 +123,6 @@ impl PoolConstruction<'_> {
             Self::Curve { .. } => RegisteredPoolFamily::Curve,
             Self::BalancerWeighted { .. } => RegisteredPoolFamily::BalancerWeighted,
             Self::BalancerStable { .. } => RegisteredPoolFamily::BalancerStable,
-        }
-    }
-}
-
-impl<'a> PoolConstruction<'a> {
-    /// Split the door request into the interior's `(RequestedPool,
-    /// V3RouteInputs)` pair — the door's ONLY translation. Each family's
-    /// handles ride its own request variant; `V3RouteInputs` carries only the
-    /// V3 arm's, so every other arm pairs with its default.
-    fn into_route_request(self) -> (RequestedPool<'a>, V3RouteInputs<'a>) {
-        match self {
-            Self::V2 { address } => (RequestedPool::V2 { address }, V3RouteInputs::default()),
-            Self::V3 {
-                address,
-                db,
-                fetcher,
-                slot_layout,
-            } => (
-                RequestedPool::V3 { address },
-                V3RouteInputs {
-                    db,
-                    fetcher,
-                    slot_layout,
-                },
-            ),
-            Self::V4 {
-                pool_manager,
-                pool_id,
-                overrides,
-                db,
-            } => (
-                RequestedPool::V4 {
-                    pool_manager,
-                    pool_id,
-                    overrides,
-                    db,
-                },
-                V3RouteInputs::default(),
-            ),
-            Self::AerodromeV2 { address } => (
-                RequestedPool::AerodromeV2 { address },
-                V3RouteInputs::default(),
-            ),
-            Self::Curve {
-                address,
-                registries,
-            } => (
-                RequestedPool::Curve {
-                    address,
-                    registries,
-                },
-                V3RouteInputs::default(),
-            ),
-            Self::BalancerWeighted { vault, address } => (
-                RequestedPool::BalancerWeighted { vault, address },
-                V3RouteInputs::default(),
-            ),
-            Self::BalancerStable {
-                vault,
-                address,
-                invariant_version,
-            } => (
-                RequestedPool::BalancerStable {
-                    vault,
-                    address,
-                    invariant_version,
-                },
-                V3RouteInputs::default(),
-            ),
         }
     }
 }
@@ -342,11 +271,11 @@ impl Bot {
     /// Construct and register one pool through the one construction door
     /// (ADR-078 D2).
     ///
-    /// Dispatches into [`route::construct_pool`] and folds its typed result
-    /// into the one [`ConstructionVerdict`]: the get-or-register half, the
-    /// route walk, identity resolution, the `AlreadyRegistered` race fold, and
-    /// the refusal classification all stay in the interior. This method is
-    /// additive — no existing entry is rewired onto it.
+    /// Hands the [`PoolConstruction`] request to [`route::construct_pool`]
+    /// (which dispatches over the same value) and folds its typed result into
+    /// the one [`ConstructionVerdict`]: the get-or-register half, the route
+    /// walk, identity resolution, the `AlreadyRegistered` race fold, and the
+    /// refusal classification all stay in the interior.
     #[must_use]
     pub async fn construct_pool(
         &self,
@@ -356,8 +285,7 @@ impl Bot {
         block: Option<u64>,
     ) -> ConstructionVerdict {
         let family = request.family();
-        let (requested, v3) = request.into_route_request();
-        match route::construct_pool(self, plan, &requested, io, v3, block).await {
+        match route::construct_pool(self, plan, &request, io, block).await {
             Ok(pool) => {
                 if let Some(built) = &pool.built {
                     // Mint-site parity guard: the identity the build minted

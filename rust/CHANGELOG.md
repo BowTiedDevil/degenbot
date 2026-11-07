@@ -33,6 +33,22 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **`PoolConstruction` is the one construction request from `Bot::construct_pool`
+  through route dispatch — a breaking cut of the `bot_core::V3RouteInputs`
+  re-export (ADR-085).** The door hands its family-tagged request to
+  `route::construct_pool` unchanged, and the route dispatches over that same
+  value: a family variant change touches one request definition and one route
+  arm, not two enum definitions and a translation match. The V3 family's DB,
+  tick-word source, and slot-layout values ride `PoolConstruction::V3` as
+  before; no side request value survives. The migration rows:
+
+  | Was | Is |
+  | --- | --- |
+  | `PoolConstruction::into_route_request` split the door request into a `(RequestedPool, V3RouteInputs)` pair the route re-matched | `route::construct_pool` takes `&PoolConstruction` and matches its family variants directly |
+  | `RequestedPool` — the route's own copy of the family vocabulary | deleted — `PoolConstruction` is the walk's request |
+  | `V3RouteInputs` — the V3-only side request (`db`, `fetcher`, `slot_layout`) | deleted — those values ride `PoolConstruction::V3` |
+  | `degenbot_bot::bot_core::V3RouteInputs` (public re-export) | deleted — construction is `Bot::construct_pool` over `PoolConstruction` |
+
 - **Non-consuming consumer attach refusal: the second-attach legality rule is
   the core's.** `degenbot_batch_executor::session::SessionConsumer::attach` is
   now a typed move returning `Result<(), AttachRefusal>`: while a session is

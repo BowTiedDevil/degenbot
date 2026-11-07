@@ -202,7 +202,7 @@ pub use pool_builder::construction_door::{ConstructionVerdict, PoolConstruction}
 pub use pool_builder::curve_choreography::fetch_curve_balances;
 pub use pool_builder::parity::IdentityDivergence;
 pub use pool_builder::route::{
-    BuiltIdentity, ConstructedPool, ConstructionRefusal, ConstructionRoute, V3RouteInputs,
+    BuiltIdentity, ConstructedPool, ConstructionRefusal, ConstructionRoute,
 };
 
 /// The pool-refresh entry: the update path's one fetch/compare/apply

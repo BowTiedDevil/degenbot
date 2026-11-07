@@ -39,6 +39,7 @@ use degenbot_pools::TickWordSource;
 use degenbot_rpc::abi::{ContractRead, IPoolIdentity};
 
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
+use super::construction_door::PoolConstruction;
 use super::tick_source;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::{tick_assembly_failure, BuildFailure};
@@ -82,116 +83,6 @@ impl ConstructionRoute {
     pub fn serves(&self, factory: Address) -> bool {
         self.generic || self.factories.contains(&factory)
     }
-}
-
-/// One requested pool — the family, the identity that names it, and the handle
-/// that family's construction arm reads (a family's inputs ride its own variant,
-/// never another family's).
-#[derive(Clone)]
-pub enum RequestedPool<'a> {
-    /// A single-address V2 pair.
-    V2 { address: Address },
-    /// A single-address V3 pool (the construction route's walk arm).
-    V3 { address: Address },
-    /// A V4 pool keyed by the `(PoolManager, pool_id)` pair; the DB two-step
-    /// resolves identity first, the caller-supplied overrides fill the gaps.
-    V4 {
-        pool_manager: Address,
-        pool_id: [u8; 32],
-        overrides: V4PoolBuildOverrides,
-        /// The DB tick-map handle for the `Tracked` arm; `None` seeds
-        /// `Sparse` via the chain arm.
-        db: Option<&'a dyn TickMapDb>,
-    },
-    /// An Aerodrome V2 (Solidly) pair.
-    AerodromeV2 { address: Address },
-    /// A Curve `StableSwap` pool — the registry/factory addresses the
-    /// LP-token and metapool lookups consult (driver values, like the V3
-    /// route's factory rungs).
-    Curve {
-        address: Address,
-        registries: Vec<Address>,
-    },
-    /// A Balancer V2 weighted pool keyed by its singleton Vault.
-    BalancerWeighted { vault: Address, address: Address },
-    /// A Balancer V2 stable pool keyed by its singleton Vault.
-    BalancerStable {
-        vault: Address,
-        address: Address,
-        /// `None` = the shape-derived invariant version wins.
-        invariant_version: Option<u8>,
-    },
-}
-
-impl std::fmt::Debug for RequestedPool<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The tick-map handle and the V4 overrides are not `Debug` (the former
-        // is a trait object); the request's identity is what a log line needs.
-        match self {
-            Self::V2 { address } => f
-                .debug_struct("RequestedPool::V2")
-                .field("address", address)
-                .finish(),
-            Self::V3 { address } => f
-                .debug_struct("RequestedPool::V3")
-                .field("address", address)
-                .finish(),
-            Self::V4 {
-                pool_manager,
-                pool_id,
-                ..
-            } => f
-                .debug_struct("RequestedPool::V4")
-                .field("pool_manager", pool_manager)
-                .field("pool_id", pool_id)
-                .finish(),
-            Self::AerodromeV2 { address } => f
-                .debug_struct("RequestedPool::AerodromeV2")
-                .field("address", address)
-                .finish(),
-            Self::Curve {
-                address,
-                registries,
-            } => f
-                .debug_struct("RequestedPool::Curve")
-                .field("address", address)
-                .field("registries", registries)
-                .finish(),
-            Self::BalancerWeighted { vault, address } => f
-                .debug_struct("RequestedPool::BalancerWeighted")
-                .field("vault", vault)
-                .field("address", address)
-                .finish(),
-            Self::BalancerStable {
-                vault,
-                address,
-                invariant_version,
-            } => f
-                .debug_struct("RequestedPool::BalancerStable")
-                .field("vault", vault)
-                .field("address", address)
-                .field("invariant_version", invariant_version)
-                .finish(),
-        }
-    }
-}
-
-/// The V3-only construction inputs — read by the V3 arm alone, so every other
-/// [`RequestedPool`] variant pairs with [`Default`] (the Python driver threads
-/// a lazy tick-word fetcher and a fork slot-layout hint; the pure Rust consumer
-/// passes `None`).
-#[derive(Default)]
-pub struct V3RouteInputs<'a> {
-    /// The DB tick-map handle (Tracked arm); `None` seeds Sparse via the
-    /// chain arm.
-    pub db: Option<&'a dyn TickMapDb>,
-    /// The lazy tick-word fetcher stored on the registered V3 pool for
-    /// swap-time boundary detection.
-    pub fetcher: Option<Arc<dyn TickWordSource>>,
-    /// Explicit concentrated liquidity slot-layout override (a non-JSON fork deployment the
-    /// caller resolved from the DB descriptor); `None` = the builder's
-    /// deployment-table resolution wins.
-    pub slot_layout: Option<ConcentratedLiquiditySlotLayout>,
 }
 
 /// The typed refusal of one construction attempt.
@@ -275,8 +166,9 @@ pub struct ConstructedPool {
     pub built: Option<BuiltIdentity>,
 }
 
-/// Construct and register one requested pool — the interior the construction
-/// door wraps.
+/// Construct and register one [`PoolConstruction`] request — the interior the
+/// construction door wraps. The door's request IS this walk's request: one
+/// family variant, one route arm.
 ///
 /// # Errors
 ///
@@ -286,31 +178,47 @@ pub struct ConstructedPool {
 pub(crate) async fn construct_pool(
     bot: &Bot,
     route: &ConstructionRoute,
-    request: &RequestedPool<'_>,
+    request: &PoolConstruction<'_>,
     io: &ConstructionIo,
-    v3: V3RouteInputs<'_>,
     block: Option<u64>,
 ) -> Result<ConstructedPool, ConstructionRefusal> {
     let constructed = match request {
-        RequestedPool::V2 { address } => construct_v2(bot, *address, io, block).await?,
-        RequestedPool::V3 { address } => construct_v3(bot, route, *address, io, &v3, block).await?,
-        RequestedPool::V4 {
+        PoolConstruction::V2 { address } => construct_v2(bot, *address, io, block).await?,
+        PoolConstruction::V3 {
+            address,
+            db,
+            fetcher,
+            slot_layout,
+        } => {
+            construct_v3(
+                bot,
+                route,
+                *address,
+                *db,
+                fetcher.as_ref(),
+                *slot_layout,
+                io,
+                block,
+            )
+            .await?
+        }
+        PoolConstruction::V4 {
             pool_manager,
             pool_id,
             overrides,
             db,
         } => construct_v4(bot, *pool_manager, *pool_id, overrides, *db, io, block).await?,
-        RequestedPool::AerodromeV2 { address } => {
+        PoolConstruction::AerodromeV2 { address } => {
             construct_aerodrome_v2(bot, *address, io, block).await?
         }
-        RequestedPool::Curve {
+        PoolConstruction::Curve {
             address,
             registries,
         } => construct_curve(bot, *address, registries, io, block).await?,
-        RequestedPool::BalancerWeighted { vault, address } => {
+        PoolConstruction::BalancerWeighted { vault, address } => {
             construct_balancer_weighted(bot, *vault, *address, io, block).await?
         }
-        RequestedPool::BalancerStable {
+        PoolConstruction::BalancerStable {
             vault,
             address,
             invariant_version,
@@ -473,12 +381,15 @@ async fn construct_v2(
 /// rung decision AND the build (the retired driver chain re-ran a full build
 /// per rung); an unmatched factory on a generic-armed route builds ad-hoc,
 /// and on a generic-less route refuses loudly.
+#[expect(clippy::too_many_arguments)] // the V3 family-only inputs ride their own parameters
 async fn construct_v3(
     bot: &Bot,
     route: &ConstructionRoute,
     address: Address,
+    db: Option<&dyn TickMapDb>,
+    fetcher: Option<&Arc<dyn TickWordSource>>,
+    slot_layout: Option<ConcentratedLiquiditySlotLayout>,
     io: &ConstructionIo,
-    v3: &V3RouteInputs<'_>,
     block: Option<u64>,
 ) -> Result<ConstructedPool, ConstructionRefusal> {
     if let Some(pool_id) = registered_address_pool(bot, address, RegisteredPoolFamily::V3) {
@@ -507,18 +418,18 @@ async fn construct_v3(
             ),
         });
     }
-    let mut params = builder::build_v3(bot.chain_id(), address, v3.db, io, block)
+    let mut params = builder::build_v3(bot.chain_id(), address, db, io, block)
         .await
         .map_err(|err| classify_builder_error(err, address))?;
     // The live-miss backfill source: the driver's fetcher when it supplies one
     // (the legacy Python path), else the core's own source bound to the identity
     // the build just resolved. A pure-Rust consumer supplies nothing and still
     // gets sparse-map backfill.
-    params.fetcher = match &v3.fetcher {
+    params.fetcher = match fetcher {
         Some(source) => Some(Arc::clone(source)),
         None => Some(tick_source::attached(io)),
     };
-    if let Some(slot_layout) = v3.slot_layout {
+    if let Some(slot_layout) = slot_layout {
         params.slot_layout = slot_layout;
     }
     // The minted identity rides the fold; capture it before `params` moves
