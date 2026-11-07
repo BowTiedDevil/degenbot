@@ -840,6 +840,7 @@ class Session:
         actors = self.actors
         assert actors is not None, "the watchdog runs on a started session"
         cause = await actors.engine_registry.engine.session_end_future()
+        assert isinstance(cause, str), "the core session-end fact is a cause name"
         bot_logger.warning(
             f"[shutdown] core session-end fact {cause} outside stop() — "
             "the session watch cancels the idling consumer for a graceful teardown"
