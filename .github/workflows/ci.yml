@@ -151,7 +151,7 @@ jobs:
         # No --fix: an auto-fixable violation would be corrected on the runner
         # and discarded, going green while the repository stays dirty. Fail on
         # the violation instead. Pinned for the same reason as commitlint.
-        run: npx --yes markdownlint-cli2@0.24.0 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**"
+        run: just lint-markdown-check
 
   msrv:
     name: MSRV (Rust 1.97)

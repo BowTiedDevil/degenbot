@@ -1,7 +1,7 @@
 changes|ci-only||dorny/paths-filter decides which downstream jobs run; nothing to execute
 ci-green|ci-only||branch-protection aggregate: checks needs statuses only, nothing to execute
 commitlint|local|scripts/hooks/commitlint-push.sh|push range
-markdownlint|local||just lint-markdown
+markdownlint|local||just lint-markdown-check
 msrv|local||just check-msrv
 rust|local||just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-binding-default, just check-rust-dev-features, just check-rust-extension-release, just check-rust-all-features, just test-rust, just test-rust-ci (CI build env), just test-fleet-parity, just test-golden-replay, just build-rust-extension, just publish-dry-run --no-verify
 cli-no-python|local|just ci-no-python-cli-gate|just ci-no-python-cli-gate

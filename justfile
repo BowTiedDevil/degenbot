@@ -1237,9 +1237,17 @@ coverage *args:
 
 # ========== Code Quality ==========
 
-# Lint Markdown files
+# Lint Markdown files (fix mode). `lint-markdown-check` is the non-mutating
+# twin CI runs — the same glob list spelled in both, the shape
+# lint-python / lint-python-check already set. rust/vendor/ carries
+# upstream's docs verbatim (ADR-096) and keeps upstream's conventions.
 lint-markdown:
     npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**"
+
+
+# Lint Markdown (check-only; non-mutating). Mirrors CI's pinned step.
+lint-markdown-check:
+    npx --yes markdownlint-cli2@0.24.0 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**"
 
 # Lint Python files
 lint-python:
