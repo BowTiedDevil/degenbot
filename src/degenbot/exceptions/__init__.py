@@ -23,6 +23,8 @@ from degenbot._ffi import (
     PoolBuildRpcError,
     PoolRegistrationError,
     SpecViolationError,
+    SwapMathOverflowError,
+    SwapNotComputableError,
     TickMapIntakeInconsistentError,
     UnsupportedPoolFamilyError,
 )
@@ -133,6 +135,8 @@ __all__ = (
     "RpcError",
     "SpecViolationError",
     "StaleRateResult",
+    "SwapMathOverflowError",
+    "SwapNotComputableError",
     "TickMapIntakeInconsistentError",
     "TokenDenylistedError",
     "TransactionNotFound",

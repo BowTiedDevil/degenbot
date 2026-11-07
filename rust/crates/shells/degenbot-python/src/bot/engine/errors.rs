@@ -175,6 +175,35 @@ create_exception!(
     "The simulated swap crosses a pool whose amount-modifying hook may have invalidated the result; the attached amounts are the standard-math approximation."
 );
 
+// The swap-calc refusal taxonomy: two distinct `ValueError` subclasses so a
+// caller classifies a calc refusal by TYPE instead of matching the message.
+// Both subclass `ValueError` so existing `except ValueError` handlers keep
+// catching them; the distinction lets a quoter translate only the class it
+// owns and let the rest propagate.
+//
+// - `SwapMathOverflowError`: the on-chain `getAmountOut`/`getAmountIn`
+//   `SafeMath` revert parity — a request amount that did not fit the signed
+//   delta or a constant-product `uint256` intermediate overflow. On the
+//   exact-input ops this is the whole not-computable surface (one historical
+//   text, two typed causes); on exact-output it is the request-amount overflow
+//   alone.
+// - `SwapNotComputableError`: a swap the sim ran but could not compute on the
+//   exact-output op (an overdraw of the output reserve, an exhausted range, or
+//   a non-computable invariant) — distinct from the request-amount overflow so
+//   a reserve-pair quoter reads it as its overdraw verdict and nothing else.
+create_exception!(
+    degenbot._ffi,
+    SwapMathOverflowError,
+    pyo3::exceptions::PyValueError,
+    "The swap math overflowed a uint256 intermediate (the on-chain getAmountOut/getAmountIn SafeMath revert)."
+);
+create_exception!(
+    degenbot._ffi,
+    SwapNotComputableError,
+    pyo3::exceptions::PyValueError,
+    "The exact-output swap is not computable: an overdraw of the output reserve, an exhausted range, or a non-computable invariant."
+);
+
 // PRG-4: the registered-path cap refusal. A BENIGN stop signal, not
 // an error: the crawl catches it and stops discovery (it replaces the Python
 // DiscoveryCrawlComplete pre-count unwind). Deliberately NOT under

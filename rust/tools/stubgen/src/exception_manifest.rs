@@ -279,6 +279,22 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
     },
     ExceptionIsland {
         python_module: "degenbot._ffi",
+        rust_path: "bot::engine::errors",
+        name: "SwapMathOverflowError",
+        attributes: &[],
+        base: "ValueError",
+        message: "The swap math overflowed a uint256 intermediate (the on-chain getAmountOut/getAmountIn SafeMath revert).",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
+        rust_path: "bot::engine::errors",
+        name: "SwapNotComputableError",
+        attributes: &[],
+        base: "ValueError",
+        message: "The exact-output swap is not computable: an overdraw of the output reserve, an exhausted range, or a non-computable invariant.",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
         rust_path: "rpc::errors",
         name: "ChainMismatchError",
         attributes: &[

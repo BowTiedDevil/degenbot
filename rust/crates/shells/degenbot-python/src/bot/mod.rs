@@ -1903,10 +1903,13 @@ impl PyBot {
 
     /// Calculate the output token amount for a given input amount.
     ///
-    /// Raises `ValueError` when the swap math overflows a `uint256` intermediate
-    /// (mirrors on-chain `getAmountOut` `SafeMath` revert — cdbc03bb). A V3/V4
-    /// sparse-map miss is still mapped to 0; callers needing the miss surfaced
-    /// use `calculate_tokens_out_with_fetch` on the pool handle.
+    /// Raises `ValueError` when the request cannot be priced — the swap-math
+    /// overflow / not-computable on-chain-revert class, an unregistered pool,
+    /// an unsupported family, or a sparse-map miss whose word recovery failed or
+    /// was exhausted. Only a successfully computed zero returns `0`; a failing
+    /// pool cannot masquerade as a zero quote. Callers wanting the missing word
+    /// fetched and the read retried use `calculate_tokens_out_with_fetch` on the
+    /// pool handle.
     #[pyo3(signature = (pool_id, zero_for_one, amount_in))]
     fn calculate_tokens_out(
         &self,
@@ -1917,13 +1920,13 @@ impl PyBot {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         // The request assembly (sign convention), the write guard (the
-        // sparse-miss recovery fills words), the SwapRead classification, and
-        // the legacy 0-on-miss contract are core-owned
-        // ([`Bot::calculate_tokens_out`]); the GIL is released across it
-        // (inversion class).
+        // sparse-miss recovery fills words), and the SwapRead→result
+        // classification (every non-computed read a typed refusal) are
+        // core-owned ([`Bot::calculate_tokens_out`]); the GIL is released across
+        // it (inversion class).
         let out = py
             .detach(|| self.bot.calculate_tokens_out(pool_id, zero_for_one, amount))
-            .map_err(|e| map_calc_tokens_out_err(&e))?;
+            .map_err(|e| map_calc_tokens_out_err("calculate_tokens_out", &e))?;
         let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
     }
@@ -1998,12 +2001,12 @@ impl PyBot {
         // ADR-037: the exact-output request assembly (positive
         // user-perspective; the required input rides back as the consumed
         // magnitude), the write guard, and the SwapRead→result classification
-        // (legacy 0-on-miss, typed family gap) are core-owned
+        // (every non-computed read a typed refusal) are core-owned
         // ([`Bot::calculate_tokens_in`]); the GIL is released across it
         // (inversion class).
         let result = py
             .detach(|| self.bot.calculate_tokens_in(pool_id, zero_for_one, amount))
-            .map_err(|e| map_calc_tokens_in_err(&e))?;
+            .map_err(|e| map_calc_tokens_in_err("calculate_tokens_in", &e))?;
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }

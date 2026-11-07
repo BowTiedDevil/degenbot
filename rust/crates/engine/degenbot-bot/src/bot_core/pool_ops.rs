@@ -32,10 +32,10 @@ use degenbot_uniswap::v2_encoding::EncodedCall;
 /// byte-identical historical Python surface (`bot::errmap`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwapOpError {
-    /// The request amount did not fit the signed user-perspective delta, or
-    /// the constant-product math overflowed a `uint256` intermediate — one
-    /// historical `ValueError` surface (the on-chain `getAmountOut` `SafeMath`
-    /// revert parity).
+    /// The request amount did not fit the signed user-perspective delta — one
+    /// historical `ValueError` surface with [`SwapOpError::NotComputable`] on
+    /// the exact-input ops (the on-chain `getAmountOut` `SafeMath` revert
+    /// parity).
     AmountOverflow,
     /// The pool id is not registered.
     UnknownPool {
@@ -48,6 +48,23 @@ pub enum SwapOpError {
         pool_id: u64,
         /// The registered family tag.
         family: &'static str,
+    },
+    /// The sim ran but the swap was not computable: a `uint256` intermediate
+    /// overflow, an exact-output request the family door refuses (overdraw,
+    /// vanishing denominator), or a walk that cannot meet the request. The
+    /// exact-input ops render the same historical `ValueError` surface as
+    /// [`SwapOpError::AmountOverflow`]; the exact-output op names the class.
+    NotComputable,
+    /// Miss recovery ran but the fetch itself failed for `word`.
+    FetchFailed {
+        /// The bitmap word whose fetch failed.
+        word: i32,
+    },
+    /// Miss recovery was impossible or exhausted for `word` (no fetcher
+    /// registered, or the same word missed again after a merge).
+    FetchExhausted {
+        /// The bitmap word whose recovery was exhausted.
+        word: i32,
     },
 }
 
@@ -141,38 +158,48 @@ pub fn curve_data_provider(
 /// short write, fetch lock-free (no state lock held; the stored fetcher
 /// re-enters Python itself), install under short writes with the fingerprint
 /// re-check. A raced install (the pump wrote this pool mid-batch) retries the
-/// whole pass. Returns `false` when the id is not registered or the retries
-/// are exhausted; `true` when the sim body can run with miss recovery
-/// disarmed.
-#[must_use]
+/// whole pass. The refusal is typed per word — an unregistered id, a fetch
+/// that itself failed, or a recovery that was impossible or exhausted — so a
+/// caller surfaces which word stalled instead of folding every failure into
+/// one answer.
+///
+/// # Errors
+/// [`SwapOpError::UnknownPool`] when the id is not registered,
+/// [`SwapOpError::FetchFailed`] when the fetch itself failed for a word, and
+/// [`SwapOpError::FetchExhausted`] when recovery is impossible (no stored
+/// read handle) or the passes raced out.
 pub fn stage_missing_words(
     state: &StateLock<BotState>,
     pool_id: u64,
     block: u64,
     request: &SwapRequest,
-) -> bool {
+) -> Result<(), SwapOpError> {
+    let mut last_missing_word = 0i32;
     for pass in 0..3u8 {
         let Some(missing) = state
             .read_at(LockSite::Orchestrator)
             .swap_missing_words(block, pool_id, request)
         else {
             // Not registered: the sim body's disarm contract never fetches.
-            return false;
+            return Err(SwapOpError::UnknownPool { pool_id });
         };
         if missing.is_empty() {
-            return true;
+            return Ok(());
         }
+        last_missing_word = missing.first().copied().unwrap_or(0);
         // Stage the whole batch under ONE short write (the per-word
         // fingerprints gate the installs individually).
         let staged = {
             let guard = state.write_at(LockSite::Orchestrator);
-            let Some(staged) = missing
-                .iter()
-                .map(|word| guard.stage_word_fetch_by_pool_id(pool_id, *word, block, pass > 0))
-                .collect::<Option<Vec<_>>>()
-            else {
-                return false;
-            };
+            let mut staged = Vec::with_capacity(missing.len());
+            for word in &missing {
+                match guard.stage_word_fetch_by_pool_id(pool_id, *word, block, pass > 0) {
+                    Some(staged_word) => staged.push(staged_word),
+                    // No stored read handle (or the pool cannot receive a
+                    // word): recovery is impossible for this word.
+                    None => return Err(SwapOpError::FetchExhausted { word: *word }),
+                }
+            }
             staged
         };
         // Fetches: NO state lock held.
@@ -180,7 +207,11 @@ pub fn stage_missing_words(
         for staged_word in &staged {
             match staged_word.fetch() {
                 Ok(f) => fetched.push(f),
-                Err(_) => return false,
+                Err(_) => {
+                    return Err(SwapOpError::FetchFailed {
+                        word: staged_word.word(),
+                    })
+                }
             }
         }
         // Installs: short writes, fingerprint-gated. Any Raced means the
@@ -198,17 +229,100 @@ pub fn stage_missing_words(
                 })
         };
         if !raced {
-            return true;
+            return Ok(());
         }
     }
-    false
+    // Three passes raced out under the pump: recovery exhausted for the word
+    // still missing.
+    Err(SwapOpError::FetchExhausted {
+        word: last_missing_word,
+    })
+}
+
+/// Assemble the exact-input request (the shell's sign-conversion shape): the
+/// request amount is negated per the user-perspective delta convention.
+/// Shared by every exact-input calc op (the disarmed, recovering, and facade
+/// doors) so the request logic cannot diverge.
+///
+/// # Errors
+/// [`SwapOpError::AmountOverflow`] when the amount does not fit the signed delta.
+pub fn make_exact_in_request(
+    zero_for_one: bool,
+    amount_in: U256,
+) -> Result<SwapRequest, SwapOpError> {
+    Ok(SwapRequest {
+        zero_for_one,
+        amount_specified: -I256::try_from(amount_in).map_err(|_| SwapOpError::AmountOverflow)?,
+        sqrt_price_limit: None,
+    })
+}
+
+/// Assemble the exact-output request (ADR-037: positive user-perspective; the
+/// required input rides back as the consumed magnitude). Shared by every
+/// exact-output calc op.
+///
+/// # Errors
+/// [`SwapOpError::AmountOverflow`] when the amount does not fit the signed delta.
+pub fn make_exact_out_request(
+    zero_for_one: bool,
+    amount_out: U256,
+) -> Result<SwapRequest, SwapOpError> {
+    Ok(SwapRequest {
+        zero_for_one,
+        amount_specified: I256::try_from(amount_out).map_err(|_| SwapOpError::AmountOverflow)?,
+        sqrt_price_limit: None,
+    })
+}
+
+/// The ONE `SwapRead`→result classification every exact-input calc op shares:
+/// the computed delivered output, or the typed refusal. Only a successfully
+/// computed zero returns `Ok(U256::ZERO)`, so a failing pool cannot masquerade
+/// as a zero quote.
+///
+/// # Errors
+/// [`SwapOpError`] per the typed failure vocabulary.
+pub fn tokens_out_from_read(read: SwapRead) -> Result<U256, SwapOpError> {
+    match read {
+        SwapRead::Computed(outcome) => Ok(outcome.delivered_unsigned()),
+        SwapRead::NotComputable => Err(SwapOpError::NotComputable),
+        SwapRead::UnknownPool { pool_id } => Err(SwapOpError::UnknownPool { pool_id }),
+        SwapRead::UnsupportedFamily { pool_id, family } => {
+            Err(SwapOpError::UnsupportedFamily { pool_id, family })
+        }
+        SwapRead::FetchFailed { word } => Err(SwapOpError::FetchFailed { word }),
+        SwapRead::FetchExhausted { word } => Err(SwapOpError::FetchExhausted { word }),
+    }
+}
+
+/// The ONE `SwapRead`→result classification every exact-output calc op shares:
+/// the required input = |consumed|, or the typed refusal. Only a successfully
+/// computed zero returns `Ok(U256::ZERO)`.
+///
+/// # Errors
+/// [`SwapOpError`] per the typed failure vocabulary.
+pub fn tokens_in_from_read(read: SwapRead) -> Result<U256, SwapOpError> {
+    match read {
+        SwapRead::Computed(outcome) => {
+            let consumed = match &outcome {
+                SwapOutcome::V2(o) => o.consumed,
+                SwapOutcome::V3(o) | SwapOutcome::V4(o) => o.consumed,
+            };
+            Ok((-consumed).into_raw())
+        }
+        SwapRead::NotComputable => Err(SwapOpError::NotComputable),
+        SwapRead::UnknownPool { pool_id } => Err(SwapOpError::UnknownPool { pool_id }),
+        SwapRead::UnsupportedFamily { pool_id, family } => {
+            Err(SwapOpError::UnsupportedFamily { pool_id, family })
+        }
+        SwapRead::FetchFailed { word } => Err(SwapOpError::FetchFailed { word }),
+        SwapRead::FetchExhausted { word } => Err(SwapOpError::FetchExhausted { word }),
+    }
 }
 
 /// Exact-input `calculate_tokens_out` — the disarmed sim at the legacy block
-/// sentinel `0` with the two error classes kept distinct: a constant-product
-/// `uint256` intermediate overflow is [`SwapOpError::AmountOverflow`] (the
-/// on-chain-revert parity `ValueError`), while a sparse-map miss recovery
-/// failure stays the no-raise zero contract.
+/// sentinel `0`, surfacing every non-computed read as its typed refusal. Only
+/// a successfully computed zero returns `Ok(U256::ZERO)`, so a failing pool
+/// cannot masquerade as a zero quote.
 ///
 /// # Errors
 /// [`SwapOpError`] per the typed failure vocabulary.
@@ -218,72 +332,39 @@ pub fn calculate_tokens_out(
     zero_for_one: bool,
     amount_in: U256,
 ) -> Result<U256, SwapOpError> {
-    let amount_specified = -I256::try_from(amount_in).map_err(|_| SwapOpError::AmountOverflow)?;
-    let request = SwapRequest {
-        zero_for_one,
-        amount_specified,
-        sqrt_price_limit: None,
-    };
+    let request = make_exact_in_request(zero_for_one, amount_in)?;
     let read = state
         .write_at(LockSite::Orchestrator)
         .swap_simulation_disarmed(0, pool_id, &request);
-    match read {
-        SwapRead::Computed(outcome) => Ok(outcome.delivered_unsigned()),
-        SwapRead::NotComputable => Err(SwapOpError::AmountOverflow),
-        SwapRead::UnknownPool { pool_id } => Err(SwapOpError::UnknownPool { pool_id }),
-        SwapRead::UnsupportedFamily { pool_id, family } => {
-            Err(SwapOpError::UnsupportedFamily { pool_id, family })
-        }
-        // Miss recovery failed: the no-raise contract keeps the zero.
-        SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => Ok(U256::ZERO),
-    }
+    tokens_out_from_read(read)
 }
 
-/// Exact-output `calculate_tokens_in` — required input = |consumed|. The
-/// legacy silent-0 contract holds for every non-computed read except the
-/// typed family gap (a registered family with no exact-output path).
+/// Exact-output `calculate_tokens_in` — required input = |consumed|, as
+/// explicit as [`calculate_tokens_out`]: every non-computed read is a typed
+/// refusal, and `Ok(U256::ZERO)` is only the computed zero.
 ///
 /// # Errors
-/// [`SwapOpError::AmountOverflow`] on the request sign conversion,
-/// [`SwapOpError::UnsupportedFamily`] for the family gap.
+/// [`SwapOpError`] per the typed failure vocabulary.
 pub fn calculate_tokens_in(
     state: &StateLock<BotState>,
     pool_id: u64,
     zero_for_one: bool,
     amount_out: U256,
 ) -> Result<U256, SwapOpError> {
-    let request = SwapRequest {
-        zero_for_one,
-        amount_specified: I256::try_from(amount_out).map_err(|_| SwapOpError::AmountOverflow)?,
-        sqrt_price_limit: None,
-    };
+    let request = make_exact_out_request(zero_for_one, amount_out)?;
     let read = state
         .write_at(LockSite::Orchestrator)
         .swap_simulation_disarmed(0, pool_id, &request);
-    match read {
-        SwapRead::Computed(outcome) => {
-            let consumed = match &outcome {
-                SwapOutcome::V2(o) => o.consumed,
-                SwapOutcome::V3(o) | SwapOutcome::V4(o) => o.consumed,
-            };
-            Ok((-consumed).into_raw())
-        }
-        SwapRead::UnsupportedFamily { pool_id, family } => {
-            Err(SwapOpError::UnsupportedFamily { pool_id, family })
-        }
-        // Legacy silent-0: zero amount, unknown pool, not-computable, and
-        // miss-recovery failures all keep the zero sentinel (ADR-037 note:
-        // preserved until the Python tail task).
-        _ => Ok(U256::ZERO),
-    }
+    tokens_in_from_read(read)
 }
 
 /// Fetch+retry exact-input `calculate_tokens_out` — stages the missing words
 /// first (bounded passes), then runs the disarmed sim at `block`. Every
-/// non-computed outcome keeps the legacy zero sentinel.
+/// non-computed outcome is a typed refusal (the staging verdict included);
+/// `Ok(U256::ZERO)` is only the computed zero.
 ///
 /// # Errors
-/// [`SwapOpError::AmountOverflow`] on the request sign conversion.
+/// [`SwapOpError`] per the typed failure vocabulary.
 pub fn calculate_tokens_out_with_fetch(
     state: &StateLock<BotState>,
     pool_id: u64,
@@ -291,22 +372,12 @@ pub fn calculate_tokens_out_with_fetch(
     amount_in: U256,
     block: u64,
 ) -> Result<U256, SwapOpError> {
-    let amount_specified = -I256::try_from(amount_in).map_err(|_| SwapOpError::AmountOverflow)?;
-    let request = SwapRequest {
-        zero_for_one,
-        amount_specified,
-        sqrt_price_limit: None,
-    };
-    if !stage_missing_words(state, pool_id, block, &request) {
-        return Ok(U256::ZERO);
-    }
+    let request = make_exact_in_request(zero_for_one, amount_in)?;
+    stage_missing_words(state, pool_id, block, &request)?;
     let read = state
         .write_at(LockSite::Orchestrator)
         .swap_simulation_disarmed(block, pool_id, &request);
-    Ok(match read {
-        SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
-        _ => U256::ZERO,
-    })
+    tokens_out_from_read(read)
 }
 
 /// Exact-input swap over an explicit token pair (N-token weighted pools).
@@ -372,7 +443,7 @@ pub fn simulate_swap_with_fetch(
     request: &SwapRequest,
     block: u64,
 ) -> StagedSwapOutcome {
-    if !stage_missing_words(state, pool_id, block, request) {
+    if stage_missing_words(state, pool_id, block, request).is_err() {
         return StagedSwapOutcome::NotComputable;
     }
     let read = state
@@ -420,10 +491,21 @@ pub fn simulate_mainline(
     else {
         return SwapRead::UnknownPool { pool_id };
     };
-    if !missing.is_empty() && !stage_missing_words(state, pool_id, block, request) {
-        return SwapRead::FetchExhausted {
-            word: missing.first().copied().unwrap_or(0),
-        };
+    if !missing.is_empty() {
+        match stage_missing_words(state, pool_id, block, request) {
+            Ok(()) => {}
+            Err(SwapOpError::UnknownPool { pool_id }) => return SwapRead::UnknownPool { pool_id },
+            Err(SwapOpError::FetchFailed { word }) => return SwapRead::FetchFailed { word },
+            Err(SwapOpError::FetchExhausted { word }) => return SwapRead::FetchExhausted { word },
+            // Staging speaks only the three verdicts above; the calc-op
+            // refusals cannot arise here, and a read that could not be armed
+            // cannot proceed.
+            Err(
+                SwapOpError::AmountOverflow
+                | SwapOpError::NotComputable
+                | SwapOpError::UnsupportedFamily { .. },
+            ) => return SwapRead::NotComputable,
+        }
     }
     state
         .write_at(LockSite::Orchestrator)
@@ -513,8 +595,8 @@ mod tests {
     use super::*;
     use alloy::primitives::aliases::U112;
     use degenbot_pools::{
-        DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
-        YDVariant, YVariant,
+        DVariant, FetchedTickWord, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle,
+        SwapStyle, TickWordFetchError, TickWordKey, TickWordSource, YDVariant, YVariant,
     };
     use degenbot_substrate::RegisterV2PoolParams;
     use hashbrown::HashMap;
@@ -631,6 +713,50 @@ mod tests {
         }
     }
 
+    /// A sparse concentrated liquidity pool (empty tick data — the walk
+    /// misses the starting bitmap word) with the stored word source the
+    /// recovery leg needs. Returns the state and the assigned pool id.
+    fn sparse_v3_state(fetcher: Option<Arc<dyn TickWordSource>>) -> (StateLock<BotState>, u64) {
+        let state = StateLock::new(BotState::new());
+        let pool_id = {
+            let mut guard = state.write_at(LockSite::Core);
+            guard
+                .register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
+                    address: Address::from([0xddu8; 20]),
+                    token0: Address::from([0xa0u8; 20]),
+                    token1: Address::from([0xa1u8; 20]),
+                    fee: 3000,
+                    tick_spacing: 60,
+                    factory: Address::from([0xf0u8; 20]),
+                    sqrt_price_x96: U256::from(1u128) << 96,
+                    liquidity: 1_000_010_000_000,
+                    tick: 0,
+                    tick_data: HashMap::new(),
+                    update_block: 100,
+                    coverage: degenbot_pools::PoolTickCoverage::Sparse,
+                    fetcher,
+                    ..Default::default()
+                })
+                .expect("sparse v3 registration")
+        };
+        (state, pool_id)
+    }
+
+    /// A stored word source whose fetch always fails.
+    #[derive(Debug)]
+    struct FailingWordSource;
+
+    impl TickWordSource for FailingWordSource {
+        fn fetch_tick_word(
+            &self,
+            _key: &TickWordKey,
+            _word: i32,
+            _block: u64,
+        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
+            Err(TickWordFetchError::FetchFailed)
+        }
+    }
+
     #[test]
     fn pool_family_resolves_registered_tags_and_none_for_unknown() {
         let state = fixture();
@@ -685,57 +811,107 @@ mod tests {
         let inp = calculate_tokens_in(&state, V2_ID, true, U256::from(181u64))
             .expect("v2 exact-output computes");
         assert_eq!(inp, U256::from(100u64));
-        // Unknown pool keeps the legacy silent-0 contract.
+    }
+
+    #[test]
+    fn calculate_tokens_in_types_every_refusal_and_keeps_computed_zero() {
+        let state = fixture();
+        // The zero request is the row's computed 0 -> 0: a computed zero is
+        // the one zero that stays a success.
+        assert_eq!(
+            calculate_tokens_in(&state, V2_ID, true, U256::ZERO),
+            Ok(U256::ZERO)
+        );
+        // The exact-output overdraw (amount_out >= the output reserve) is a
+        // typed refusal — never a zero quote.
+        assert_eq!(
+            calculate_tokens_in(&state, V2_ID, true, U256::from(2_000u64)),
+            Err(SwapOpError::NotComputable)
+        );
+        // An unknown pool refuses in the exact-output direction too.
         assert_eq!(
             calculate_tokens_in(&state, 999, true, U256::from(1u64)),
+            Err(SwapOpError::UnknownPool { pool_id: 999 })
+        );
+    }
+
+    #[test]
+    fn calculate_tokens_out_types_miss_refusals_and_keeps_computed_zero() {
+        let state = fixture();
+        // The zero request is the row's computed 0 -> 0.
+        assert_eq!(
+            calculate_tokens_out(&state, V2_ID, true, U256::ZERO),
             Ok(U256::ZERO)
+        );
+        // 2**250 fits the signed request but overflows the constant-product
+        // multiply: the not-computable class, not a zero quote.
+        assert_eq!(
+            calculate_tokens_out(&state, V2_ID, true, U256::from(1u8) << 250),
+            Err(SwapOpError::NotComputable)
+        );
+        // A sparse miss with no fetcher is an exhausted recovery, never 0.
+        let (state, pool_id) = sparse_v3_state(None);
+        assert_eq!(
+            calculate_tokens_out(&state, pool_id, true, U256::from(1_000u64)),
+            Err(SwapOpError::FetchExhausted { word: 0 })
         );
     }
 
     #[test]
     fn stage_missing_words_contracts() {
         let state = fixture();
-        // Unregistered: nothing can be staged.
-        assert!(!stage_missing_words(
-            &state,
-            999,
-            100,
-            &exact_in_request(true)
-        ));
+        // Unregistered: the typed unknown-pool refusal.
+        assert_eq!(
+            stage_missing_words(&state, 999, 100, &exact_in_request(true)),
+            Err(SwapOpError::UnknownPool { pool_id: 999 })
+        );
         // Non-concentrated-liquidity family: nothing to stage.
-        assert!(stage_missing_words(
-            &state,
-            V2_ID,
-            100,
-            &exact_in_request(true)
-        ));
+        assert_eq!(
+            stage_missing_words(&state, V2_ID, 100, &exact_in_request(true)),
+            Ok(())
+        );
         // concentrated liquidity pool with complete tracked coverage: nothing missing.
-        assert!(stage_missing_words(
-            &state,
-            V3_ID,
-            100,
-            &exact_in_request(true)
-        ));
+        assert_eq!(
+            stage_missing_words(&state, V3_ID, 100, &exact_in_request(true)),
+            Ok(())
+        );
     }
 
     #[test]
-    fn calculate_tokens_out_with_fetch_keeps_zero_contracts() {
+    fn calculate_tokens_out_with_fetch_types_refusals_and_keeps_computed_zero() {
         let state = fixture();
         // V2 computes identically (nothing to stage).
         assert_eq!(
             calculate_tokens_out_with_fetch(&state, V2_ID, true, U256::from(100u64), 100),
             Ok(U256::from(181u64))
         );
-        // Unregistered pool: staging fails -> the legacy zero sentinel.
+        // The zero request is the row's computed 0 -> 0.
+        assert_eq!(
+            calculate_tokens_out_with_fetch(&state, V2_ID, true, U256::ZERO, 100),
+            Ok(U256::ZERO)
+        );
+        // Unregistered pool: staging refuses with the typed verdict.
         assert_eq!(
             calculate_tokens_out_with_fetch(&state, 999, true, U256::from(100u64), 100),
-            Ok(U256::ZERO)
+            Err(SwapOpError::UnknownPool { pool_id: 999 })
         );
         // Sign overflow stays typed.
         let huge = U256::from(1u8) << 255;
         assert_eq!(
             calculate_tokens_out_with_fetch(&state, V2_ID, true, huge, 100),
             Err(SwapOpError::AmountOverflow)
+        );
+        // Sparse with no fetcher: recovery is impossible for the missed word.
+        let (state, pool_id) = sparse_v3_state(None);
+        assert_eq!(
+            calculate_tokens_out_with_fetch(&state, pool_id, true, U256::from(1_000u64), 100),
+            Err(SwapOpError::FetchExhausted { word: 0 })
+        );
+        // Sparse with a failing fetcher: the fetch itself failed for the word.
+        let (state, pool_id) = sparse_v3_state(Some(Arc::new(FailingWordSource)));
+        assert_eq!(
+            calculate_tokens_out_with_fetch(&state, pool_id, true, U256::from(1_000u64), 100),
+            Err(SwapOpError::FetchFailed { word: 0 })
         );
     }
 

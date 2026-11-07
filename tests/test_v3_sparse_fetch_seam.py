@@ -4,7 +4,8 @@ End-to-end gate for the Rust→PyO3→Python fetcher bridge:
 
 * registering a V3 pool via ``Bot`` always creates a *sparse* pool (empty
   ``tick_data`` → no tick-bitmap words known), so the very first
-  ``calculate_tokens_out`` must miss on the starting word and return ``0``;
+  ``calculate_tokens_out`` must miss on the starting word and REFUSE — the
+  typed miss verdict, never a zero quote;
 * ``Pool.calculate_tokens_out_with_fetch`` drives the Rust
   fetch+retry loop: on the miss it calls the injected Python fetcher
   ``fetcher(word, block) -> dict | None`` for the missing word, merges the
@@ -13,7 +14,7 @@ End-to-end gate for the Rust→PyO3→Python fetcher bridge:
   must return the same amount as the fetch+retry path (the merge persisted the
   word as known);
 * a fetcher that cannot satisfy the miss (returns an error / missing data) must
-  give up with ``0`` rather than panic or spin.
+  refuse with the typed fetch-failure verdict rather than panic or spin.
 
 This proves the FFI seam works (GIL + Python dict → ``FetchedTickWord`` → Rust
 loop). The V3/V4 companions' non-override calc routes through this seam; the
@@ -53,14 +54,16 @@ def _register_sparse_v3_pool(bot: Bot, *, tick_data_fetcher=None) -> int:
     )
 
 
-def test_sparse_pool_misses_without_fetcher() -> None:
+def test_sparse_pool_miss_without_fetcher_refuses() -> None:
     bot = Bot(chain_id=1)
     pool_id = _register_sparse_v3_pool(bot)
     pool = bot.get_pool(pool_id)
 
-    # No fetcher: the starting word is unknown → miss → 0 (the no-fetch
-    # sentinel). This is the precondition the fetch seam exists to recover.
-    assert int(pool.calculate_tokens_out(zero_for_one=True, amount_in=1000)) == 0
+    # No fetcher: the starting word is unknown → the miss refuses as an
+    # exhausted recovery, never a zero quote. This is the precondition the
+    # fetch seam exists to recover.
+    with pytest.raises(ValueError, match=r"recovery exhausted"):
+        pool.calculate_tokens_out(zero_for_one=True, amount_in=1000)
 
 
 def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
@@ -94,7 +97,7 @@ def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
     assert int(pool.calculate_tokens_out(zero_for_one=True, amount_in=1000)) == amount
 
 
-def test_calculate_tokens_out_with_fetch_failing_fetcher_returns_zero() -> None:
+def test_calculate_tokens_out_with_fetch_failing_fetcher_refuses() -> None:
     bot = Bot(chain_id=1)
 
     def failing_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
@@ -103,17 +106,14 @@ def test_calculate_tokens_out_with_fetch_failing_fetcher_returns_zero() -> None:
     pool_id = _register_sparse_v3_pool(bot, tick_data_fetcher=failing_fetcher)
     pool = bot.get_pool(pool_id)
 
-    # A failing fetcher must give up with 0 rather than panic or propagate.
-    assert (
-        int(
-            pool.calculate_tokens_out_with_fetch(
-                zero_for_one=True,
-                amount_in=1000,
-                block=0,
-            ),
+    # A failing fetcher refuses with the typed fetch-failure verdict rather
+    # than panicking, spinning, or answering a zero quote.
+    with pytest.raises(ValueError, match=r"fetch failed"):
+        pool.calculate_tokens_out_with_fetch(
+            zero_for_one=True,
+            amount_in=1000,
+            block=0,
         )
-        == 0
-    )
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, NoReturn, Protocol, cast
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
 )
-from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions import DegenbotValueError, SwapMathOverflowError, SwapNotComputableError
 from degenbot.exceptions.pool import InvalidSwapInputAmount, LiquidityPoolError
 from degenbot.uniswap.swap_quote import (
     DoorSwapQuoter,
@@ -171,7 +171,7 @@ class UniswapV2SwapQuoter(DoorSwapQuoter):
                         amount_in=quantity,
                     ),
                 )
-            except ValueError as e:
+            except SwapMathOverflowError as e:
                 raise LiquidityPoolError(message=overflow_message(quantity)) from e
         # The door read's signed deltas ARE the answer: the output side is the
         # negative of the token that left the pool.
@@ -204,15 +204,22 @@ class UniswapV2SwapQuoter(DoorSwapQuoter):
             raise InvalidSwapInputAmount
         zero_for_one = self._direction_out(token)
         if override_state is None:
-            # The registered read answers 0 on an overdraw (amount_out >=
-            # reserve_out); that sentinel is the pool's overdraw verdict.
-            result: int = self._handle.calculate_tokens_in(
-                zero_for_one=zero_for_one,
-                amount_out=quantity,
-            )
-            if result == 0:
-                raise LiquidityPoolError(message=overdraw_message(quantity))
-            return result
+            # The registered read refuses an overdraw (amount_out >=
+            # reserve_out) with the typed not-computable error — the same
+            # overdraw verdict the door's refusal policy renders. Only that
+            # class is the overdraw: a request-amount overflow and any
+            # unrelated / fetch / family / unknown failure propagate as their
+            # own error, never relabeled an overdraw.
+            try:
+                return cast(
+                    "int",
+                    self._handle.calculate_tokens_in(
+                        zero_for_one=zero_for_one,
+                        amount_out=quantity,
+                    ),
+                )
+            except SwapNotComputableError as e:
+                raise LiquidityPoolError(message=overdraw_message(quantity)) from e
         read = self.read(
             SwapRequest(
                 zero_for_one=zero_for_one,

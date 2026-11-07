@@ -156,6 +156,16 @@ class StrategyHostError(RuntimeError):
     A strategy-host operator verb was refused (a lifecycle transition the FSM does not allow).
     """
 
+class SwapMathOverflowError(ValueError):
+    """
+    The swap math overflowed a uint256 intermediate (the on-chain getAmountOut/getAmountIn SafeMath revert).
+    """
+
+class SwapNotComputableError(ValueError):
+    """
+    The exact-output swap is not computable: an overdraw of the output reserve, an exhausted range, or a non-computable invariant.
+    """
+
 class SwapRefused(Exception):
     """
     The swap-simulation seam refused the read (ADR-037). Typed attributes: `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere; `amount` is the signed request the read could not meet (negative = exact input, positive = exact output), `None` on the fetch arms, which never got to answer for an amount.
@@ -1062,10 +1072,13 @@ class Bot:
         """
         Calculate the output token amount for a given input amount.
 
-        Raises `ValueError` when the swap math overflows a `uint256` intermediate
-        (mirrors on-chain `getAmountOut` `SafeMath` revert — cdbc03bb). A V3/V4
-        sparse-map miss is still mapped to 0; callers needing the miss surfaced
-        use `calculate_tokens_out_with_fetch` on the pool handle.
+        Raises `ValueError` when the request cannot be priced — the swap-math
+        overflow / not-computable on-chain-revert class, an unregistered pool,
+        an unsupported family, or a sparse-map miss whose word recovery failed or
+        was exhausted. Only a successfully computed zero returns `0`; a failing
+        pool cannot masquerade as a zero quote. Callers wanting the missing word
+        fetched and the read retried use `calculate_tokens_out_with_fetch` on the
+        pool handle.
         """
     @property
     def chain_id(self, /) -> int:
@@ -3431,6 +3444,13 @@ class Pool:
     def calculate_tokens_in(self, /, zero_for_one: bool, amount_out: Any) -> Any:
         """
         Calculate the required input token amount for a given output amount.
+        Every failure raises: only a successfully computed zero returns `0`.
+        Raises:
+            `ValueError`: If the request cannot be priced — the request-amount
+                overflow, the not-computable class (overdraw, exhausted range,
+                or a non-computable invariant), an unregistered pool, the
+                exact-output family gap, or a sparse-map miss whose word
+                recovery failed or was exhausted.
         """
     def calculate_tokens_in_for_pair(
         self,
@@ -3458,10 +3478,15 @@ class Pool:
         product / concentrated liquidity swap math overflows a `uint256` intermediate (mirroring
         on-chain `getAmountOut` `SafeMath` revert), this raises `ValueError` so the
         Python companion can translate it to a domain `LiquidityPoolError`.
-        A V3/V4 sparse-map miss is still mapped to 0 — callers needing the miss
-        surfaced use [`calculate_tokens_out_with_fetch`][Self::calculate_tokens_out_with_fetch].
+        Every failure raises: only a successfully computed zero returns `0`, so
+        a V3/V4 sparse-map miss is a typed refusal, not a zero quote. Callers
+        wanting the missing word fetched and the read retried use
+        [`calculate_tokens_out_with_fetch`][Self::calculate_tokens_out_with_fetch].
         Raises:
-            `ValueError`: If the swap math overflows `uint256` (on-chain revert).
+            `ValueError`: If the request cannot be priced — the swap-math
+                overflow / not-computable on-chain-revert class, an unregistered
+                pool, an unsupported family, or a sparse-map miss whose word
+                recovery failed or was exhausted.
         """
     def calculate_tokens_out_for_pair(
         self,
@@ -3491,8 +3516,8 @@ class Pool:
         Like [`calculate_tokens_out`][Self::calculate_tokens_out], but on a
         sparse tick-map miss it calls `fetcher(word, block)` to fetch the
         missing word's tick data, merges it, and retries (dedup-protected — a
-        repeated miss on a word gives up with `0`) — the missing-liquidity-data
-        loop, driven from the Rust calc path.
+        repeated miss on a word refuses) — the missing-liquidity-data loop,
+        driven from the Rust calc path.
         `fetcher` is a Python callable
         `fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]] | None`.
         It MUST return the fetched tick data mapping tick →
@@ -3501,6 +3526,11 @@ class Pool:
         The fetcher MUST NOT write back into the pool (the Rust loop merges the
         returned data itself) — doing so would re-enter the `BotState` write
         lock this call holds and deadlock.
+        Raises:
+            `ValueError`: If the request cannot be priced — the swap-math
+                overflow / not-computable on-chain-revert class, an unregistered
+                pool, an unsupported family, or a word recovery that failed or
+                was exhausted. Only a successfully computed zero returns `0`.
         """
     def concentrated_liquidity(self, /) -> ConcentratedLiquidityView:
         """
@@ -5158,6 +5188,8 @@ __all__ = [
     "SpecViolationError",
     "StrategyHostError",
     "StrategyReadinessView",
+    "SwapMathOverflowError",
+    "SwapNotComputableError",
     "SwapRead",
     "SwapReadFamily",
     "SwapRefusalKind",

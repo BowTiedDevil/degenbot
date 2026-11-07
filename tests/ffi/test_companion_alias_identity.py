@@ -23,7 +23,7 @@ each verified to compare symbols from two different modules.
 Pinned by this table:
 - ``degenbot.dispatch`` (dispatch/sim/submission seams)
 - ``degenbot.updater`` (updater/cancel/db seams)
-- ``degenbot.exceptions`` (verification/arbitrage exception seams)
+- ``degenbot.exceptions`` (verification/arbitrage/swap-refusal exception seams)
 - ``degenbot.types`` (dex-identity seam)
 - ``degenbot.chainlink`` / ``degenbot.aave`` (price seam)
 - ``degenbot.uniswap.math`` / ``degenbot.aerodrome.math`` (v2-math re-export seam)
@@ -47,6 +47,7 @@ _UPDATER = "degenbot.updater"
 _CANCEL = "degenbot._ffi.cancel"
 _DB = "degenbot._ffi.db"
 _EXCEPTIONS = "degenbot.exceptions"
+_FFI = "degenbot._ffi"
 _VERIF = "degenbot.exceptions.verification"
 _ARBITRAGE = "degenbot.exceptions.arbitrage"
 _TYPES = "degenbot.types"
@@ -98,6 +99,10 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     (_EXCEPTIONS, "VerificationRpcError", _VERIF, "VerificationRpcError"),
     (_EXCEPTIONS, "VerificationMismatchError", _VERIF, "VerificationMismatchError"),
     (_EXCEPTIONS, "HookedPoolRejectedError", _ARBITRAGE, "HookedPoolRejectedError"),
+    # The typed swap-calc refusals alias the seam root directly: the quoter's
+    # catch must match the exact pyclass the Rust handle raises.
+    (_EXCEPTIONS, "SwapMathOverflowError", _FFI, "SwapMathOverflowError"),
+    (_EXCEPTIONS, "SwapNotComputableError", _FFI, "SwapNotComputableError"),
     (_EXCEPTIONS, "DynamicFeePoolRejectedError", _ARBITRAGE, "DynamicFeePoolRejectedError"),
     # degenbot.types — dex identity
     (_TYPES, "DexIdentity", _DEX_ID, "DexIdentity"),

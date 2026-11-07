@@ -27,7 +27,12 @@ from degenbot.exceptions.pool import (
 from degenbot.uniswap.v2_pool_quoter import UniswapV2SwapQuoter
 from degenbot.uniswap.v3_pool_quoter import UniswapV3SwapQuoter
 from degenbot.uniswap.v4_pool_quoter import UniswapV4SwapQuoter
-from tests.helpers.seam import SwapRefusalKind, SwapRefused
+from tests.helpers.seam import (
+    SwapMathOverflowError,
+    SwapNotComputableError,
+    SwapRefusalKind,
+    SwapRefused,
+)
 
 
 class FakeToken:
@@ -268,3 +273,93 @@ def test_the_refusal_policy_sees_the_requests_signed_side() -> None:
         quoter.exact_in(host.tokens[0], 1_000, override_state=FakeState())
 
     assert "overflows uint256 swap math" in (excinfo.value.message or "")
+
+
+class FakeRegisteredRead:
+    """A registered-read handle whose calc verb raises a preselected error.
+
+    The ``override_state is None`` arm drives the handle's calc verb directly,
+    never the door, so this is the seam a reserve-pair quoter translates.
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    def calculate_tokens_in(self, *, zero_for_one: bool, amount_out: int) -> int:
+        raise self._error
+
+    def calculate_tokens_out(self, *, zero_for_one: bool, amount_in: int) -> int:
+        raise self._error
+
+
+def _v2_registered_quoter(host: FakeHost, handle: FakeRegisteredRead) -> UniswapV2SwapQuoter:
+    return UniswapV2SwapQuoter(
+        host,  # ty: ignore[invalid-argument-type]
+        handle,  # ty: ignore[invalid-argument-type]
+        fee_token0=Fraction(3, 1000),
+        fee_token1=Fraction(3, 1000),
+    )
+
+
+def test_registered_read_overdraw_is_the_typed_not_computable_class() -> None:
+    """A not-computable overdraw keeps its historical ``LiquidityPoolError``."""
+    host = FakeHost()
+    handle = FakeRegisteredRead(
+        SwapNotComputableError("calculate_tokens_in: swap is not computable"),
+    )
+    quoter = _v2_registered_quoter(host, handle)
+
+    with pytest.raises(LiquidityPoolError) as excinfo:
+        quoter.exact_out(host.tokens[1], 1_000)
+
+    assert ">= pool reserves" in (excinfo.value.message or "")
+
+
+def test_registered_read_amount_overflow_propagates_not_an_overdraw() -> None:
+    """A request-amount overflow is not the overdraw: it propagates distinctly."""
+    host = FakeHost()
+    handle = FakeRegisteredRead(
+        SwapMathOverflowError("Pool swap math overflowed uint256 intermediate"),
+    )
+    quoter = _v2_registered_quoter(host, handle)
+
+    with pytest.raises(SwapMathOverflowError):
+        quoter.exact_out(host.tokens[1], 1_000)
+
+
+def test_registered_read_unrelated_value_error_propagates_not_an_overdraw() -> None:
+    """An unrelated ``ValueError`` is never relabeled the overdraw."""
+    host = FakeHost()
+    handle = FakeRegisteredRead(ValueError("boom"))
+    quoter = _v2_registered_quoter(host, handle)
+
+    with pytest.raises(ValueError, match="boom") as excinfo:
+        quoter.exact_out(host.tokens[1], 1_000)
+
+    assert not isinstance(excinfo.value, LiquidityPoolError)
+
+
+def test_registered_read_overflow_is_the_exact_input_verdict() -> None:
+    """Exact input reads the typed overflow as the on-chain-revert verdict."""
+    host = FakeHost()
+    handle = FakeRegisteredRead(
+        SwapMathOverflowError("Pool swap math overflowed uint256 intermediate"),
+    )
+    quoter = _v2_registered_quoter(host, handle)
+
+    with pytest.raises(LiquidityPoolError) as excinfo:
+        quoter.exact_in(host.tokens[0], 1_000)
+
+    assert "overflows uint256 swap math" in (excinfo.value.message or "")
+
+
+def test_registered_read_unrelated_error_propagates_not_an_overflow() -> None:
+    """Exact input does not swallow an unrelated error into its overflow verdict."""
+    host = FakeHost()
+    handle = FakeRegisteredRead(ValueError("boom"))
+    quoter = _v2_registered_quoter(host, handle)
+
+    with pytest.raises(ValueError, match="boom") as excinfo:
+        quoter.exact_in(host.tokens[0], 1_000)
+
+    assert not isinstance(excinfo.value, LiquidityPoolError)

@@ -209,7 +209,7 @@ class TestV2CalcDelegation:
         )
 
     def test_calculate_tokens_in_raises_on_overdraw_via_rust(self, py_bot: _Engine) -> None:
-        """Non-override overdraw: Rust returns 0, Python raises LiquidityPoolError."""
+        """Non-override overdraw: Rust refuses, Python raises LiquidityPoolError."""
         pool = _v2_pool(py_bot)
         usdc = pool.token1
         spy = _DelegateSpy(pool._py_pool)

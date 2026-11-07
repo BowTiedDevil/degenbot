@@ -748,6 +748,17 @@ mod _ffi {
                 "PossibleInaccurateResult",
                 py.get_type::<crate::bot::engine::PossibleInaccurateResult>(),
             )?;
+            // Typed swap-calc refusals: distinct `ValueError` subclasses so a
+            // quoter classifies a calc refusal by type (overdraw vs overflow)
+            // instead of matching the message.
+            m.add(
+                "SwapMathOverflowError",
+                py.get_type::<crate::bot::engine::SwapMathOverflowError>(),
+            )?;
+            m.add(
+                "SwapNotComputableError",
+                py.get_type::<crate::bot::engine::SwapNotComputableError>(),
+            )?;
             m.add(
                 "HighFeePoolRejectedError",
                 py.get_type::<crate::bot::engine::HighFeePoolRejectedError>(),

@@ -36,8 +36,9 @@ use degenbot_pools::RegisteredPoolFamily;
 use crate::bot::engine::{
     DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
     PathRegistryFullError, PoolAlreadyRegisteredError, PoolBuildDecodeError, PoolBuildRpcError,
-    SpecViolationError, TickMapIntakeInconsistentError, UnsupportedPoolFamilyError,
-    VerificationMismatchError, VerificationRpcError,
+    SpecViolationError, SwapMathOverflowError, SwapNotComputableError,
+    TickMapIntakeInconsistentError, UnsupportedPoolFamilyError, VerificationMismatchError,
+    VerificationRpcError,
 };
 
 /// Map a `connect` refusal to a Python exception.
@@ -292,48 +293,48 @@ pub(crate) fn map_no_construction_io(method: &'static str) -> pyo3::PyErr {
 
 // --- Swap calculation ---
 
-/// Map a core `CalcTokensOutError` to the shell's historical surfaces: the
-/// `ValueError` for the overflow/on-chain-revert class, the
-/// unknown-pool and unsupported-family `ValueError`s, and the legacy `0`
-/// mapping for unrecovered sparse-map misses (done core-side).
+/// Map a core [`SwapOpError`] from an exact-input calc op to its historical
+/// Python surface (`op` is the pymethod name the fetch/mislabel surfaces
+/// name). The overflow/on-chain-revert class is the typed
+/// [`SwapMathOverflowError`]; the unknown-pool, unsupported-family, and
+/// miss-recovery refusals keep their `ValueError` vocabulary. Every arm is
+/// typed — no non-computed read folds to a zero quote.
 pub(crate) fn map_calc_tokens_out_err(
-    err: &degenbot_bot::bot_core::CalcTokensOutError,
+    op: &'static str,
+    err: &degenbot_bot::bot_core::SwapOpError,
 ) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::CalcTokensOutError;
+    use degenbot_bot::bot_core::SwapOpError;
     match err {
-        CalcTokensOutError::Overflow | CalcTokensOutError::NotComputable => {
-            PyValueError::new_err(
-                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-            )
-        }
-        CalcTokensOutError::UnknownPool { pool_id } => {
-            PyValueError::new_err(format!(
-                "swap_simulation: pool {pool_id} is not registered"
-            ))
-        }
-        CalcTokensOutError::UnsupportedFamily { pool_id, family } => {
-            PyValueError::new_err(format!(
-                "swap_simulation: pool {pool_id} family {family} is not supported for this operation"
-            ))
-        }
+        // The exact-input not-computable surface IS the overflow (one text, two
+        // typed causes) — the on-chain `getAmountOut` revert class.
+        SwapOpError::AmountOverflow | SwapOpError::NotComputable => swap_math_overflow(),
+        SwapOpError::UnknownPool { pool_id } => swap_unknown_pool(*pool_id),
+        SwapOpError::UnsupportedFamily { pool_id, family } => swap_family_gap(*pool_id, family),
+        SwapOpError::FetchFailed { word } => swap_fetch_failed(op, *word),
+        SwapOpError::FetchExhausted { word } => swap_fetch_exhausted(op, *word),
     }
 }
 
-/// Map a core `CalcTokensInError` to the shell's historical surfaces: the
-/// overflow `ValueError` and the typed exact-output family gap.
+/// Map a core [`SwapOpError`] from an exact-output calc op to its historical
+/// Python surface (`op` is the pymethod name the surfaces name). The
+/// request-amount overflow keeps the overflow text while the not-computable
+/// overdraw is named its own class ([`SwapNotComputableError`]); the
+/// unknown-pool, exact-output family gap, and miss-recovery refusals keep
+/// their `ValueError` vocabulary. Every arm is typed.
 pub(crate) fn map_calc_tokens_in_err(
-    err: &degenbot_bot::bot_core::CalcTokensInError,
+    op: &'static str,
+    err: &degenbot_bot::bot_core::SwapOpError,
 ) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::CalcTokensInError;
+    use degenbot_bot::bot_core::SwapOpError;
     match err {
-        CalcTokensInError::Overflow => PyValueError::new_err(
-            "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-        ),
-        CalcTokensInError::UnsupportedFamily { pool_id, family } => {
-            PyValueError::new_err(format!(
-                "calculate_tokens_in: pool {pool_id} family {family} has no exact-output path"
-            ))
+        SwapOpError::AmountOverflow => swap_math_overflow(),
+        SwapOpError::NotComputable => swap_not_computable(op),
+        SwapOpError::UnknownPool { pool_id } => swap_unknown_pool(*pool_id),
+        SwapOpError::UnsupportedFamily { pool_id, family } => {
+            exact_output_family_gap(op, *pool_id, family)
         }
+        SwapOpError::FetchFailed { word } => swap_fetch_failed(op, *word),
+        SwapOpError::FetchExhausted { word } => swap_fetch_exhausted(op, *word),
     }
 }
 
@@ -346,7 +347,7 @@ pub(crate) fn map_calc_tokens_in_err(
 /// user-perspective delta and a constant-product `uint256` intermediate
 /// overflow (byte-identical historical text).
 pub(crate) fn swap_math_overflow() -> PyErr {
-    PyValueError::new_err(
+    SwapMathOverflowError::new_err(
         "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
     )
 }
@@ -376,6 +377,30 @@ pub(crate) fn swap_family_gap(pool_id: u64, family: &str) -> PyErr {
 pub(crate) fn exact_output_family_gap(op: &str, pool_id: u64, family: &str) -> PyErr {
     PyValueError::new_err(format!(
         "{op}: pool {pool_id} family {family} has no exact-output path"
+    ))
+}
+
+/// `ValueError` for a swap read the sim ran but could not compute (`op` is
+/// the pymethod name the surface names) — the overdraw / exhausted-range /
+/// non-computable-invariant class, distinct from the request-amount overflow
+/// and from the miss-recovery refusals.
+pub(crate) fn swap_not_computable(op: &str) -> PyErr {
+    SwapNotComputableError::new_err(format!(
+        "{op}: swap is not computable (overdraw, exhausted range, or a non-computable invariant)"
+    ))
+}
+
+/// `ValueError` for a sparse-map miss whose word fetch itself failed (`op` is
+/// the pymethod name the surface names).
+pub(crate) fn swap_fetch_failed(op: &str, word: i32) -> PyErr {
+    PyValueError::new_err(format!("{op}: sparse tick word {word} fetch failed"))
+}
+
+/// `ValueError` for a sparse-map miss whose word recovery was impossible or
+/// exhausted (`op` is the pymethod name the surface names).
+pub(crate) fn swap_fetch_exhausted(op: &str, word: i32) -> PyErr {
+    PyValueError::new_err(format!(
+        "{op}: sparse tick word {word} recovery exhausted (no fetcher, or a repeated miss)"
     ))
 }
 
@@ -922,43 +947,83 @@ mod tests {
 
     #[test]
     fn calc_tokens_out_err_pins_the_vocabulary() {
-        use degenbot_bot::bot_core::CalcTokensOutError;
+        use degenbot_bot::bot_core::SwapOpError;
         let overflow = "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)";
         assert_eq!(
-            value_error(&map_calc_tokens_out_err(&CalcTokensOutError::Overflow)),
+            value_error(&map_calc_tokens_out_err(
+                "calculate_tokens_out",
+                &SwapOpError::AmountOverflow
+            )),
             overflow
         );
         assert_eq!(
-            value_error(&map_calc_tokens_out_err(&CalcTokensOutError::NotComputable)),
+            value_error(&map_calc_tokens_out_err(
+                "calculate_tokens_out",
+                &SwapOpError::NotComputable
+            )),
             overflow
         );
         assert_eq!(
-            value_error(&map_calc_tokens_out_err(&CalcTokensOutError::UnknownPool {
-                pool_id: 5
-            })),
+            value_error(&map_calc_tokens_out_err(
+                "calculate_tokens_out",
+                &SwapOpError::UnknownPool { pool_id: 5 }
+            )),
             "swap_simulation: pool 5 is not registered"
         );
         assert_eq!(
             value_error(&map_calc_tokens_out_err(
-                &CalcTokensOutError::UnsupportedFamily {
+                "calculate_tokens_out",
+                &SwapOpError::UnsupportedFamily {
                     pool_id: 5,
                     family: "v9",
                 }
             )),
             "swap_simulation: pool 5 family v9 is not supported for this operation"
         );
+        assert_eq!(
+            value_error(&map_calc_tokens_out_err(
+                "calculate_tokens_out_with_fetch",
+                &SwapOpError::FetchFailed { word: -7 }
+            )),
+            "calculate_tokens_out_with_fetch: sparse tick word -7 fetch failed"
+        );
+        assert_eq!(
+            value_error(&map_calc_tokens_out_err(
+                "calculate_tokens_out",
+                &SwapOpError::FetchExhausted { word: 3 }
+            )),
+            "calculate_tokens_out: sparse tick word 3 recovery exhausted (no fetcher, or a repeated miss)"
+        );
     }
 
     #[test]
     fn calc_tokens_in_err_pins_the_vocabulary() {
-        use degenbot_bot::bot_core::CalcTokensInError;
+        use degenbot_bot::bot_core::SwapOpError;
         assert_eq!(
-            value_error(&map_calc_tokens_in_err(&CalcTokensInError::Overflow)),
+            value_error(&map_calc_tokens_in_err(
+                "calculate_tokens_in",
+                &SwapOpError::AmountOverflow
+            )),
             "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)"
         );
         assert_eq!(
             value_error(&map_calc_tokens_in_err(
-                &CalcTokensInError::UnsupportedFamily {
+                "calculate_tokens_in",
+                &SwapOpError::NotComputable
+            )),
+            "calculate_tokens_in: swap is not computable (overdraw, exhausted range, or a non-computable invariant)"
+        );
+        assert_eq!(
+            value_error(&map_calc_tokens_in_err(
+                "calculate_tokens_in",
+                &SwapOpError::UnknownPool { pool_id: 5 }
+            )),
+            "swap_simulation: pool 5 is not registered"
+        );
+        assert_eq!(
+            value_error(&map_calc_tokens_in_err(
+                "calculate_tokens_in",
+                &SwapOpError::UnsupportedFamily {
                     pool_id: 5,
                     family: "v9",
                 }
@@ -1097,6 +1162,22 @@ mod tests {
                 "balancer-stable"
             )),
             "simulate_exact_output_swap_with_fetch: pool 9 family balancer-stable has no exact-output path"
+        );
+    }
+
+    #[test]
+    fn pool_swap_refusal_surfaces_pin_their_vocabulary() {
+        assert_eq!(
+            value_error(&swap_not_computable("calculate_tokens_in")),
+            "calculate_tokens_in: swap is not computable (overdraw, exhausted range, or a non-computable invariant)"
+        );
+        assert_eq!(
+            value_error(&swap_fetch_failed("calculate_tokens_out_with_fetch", -7)),
+            "calculate_tokens_out_with_fetch: sparse tick word -7 fetch failed"
+        );
+        assert_eq!(
+            value_error(&swap_fetch_exhausted("calculate_tokens_out", 3)),
+            "calculate_tokens_out: sparse tick word 3 recovery exhausted (no fetcher, or a repeated miss)"
         );
     }
 

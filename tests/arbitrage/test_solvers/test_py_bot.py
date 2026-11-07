@@ -999,3 +999,87 @@ class TestDexIdentityPresets:
                 fee_token1=(1, 2),
                 variant="nonexistent-dex",
             )
+
+
+class TestPyBotCalcRefusals:
+    """Every non-computed read refuses through the Bot facade — never a zero quote.
+
+    The PyBot facade (``Bot.calculate_tokens_out``/``calculate_tokens_in``)
+    shares the pool-handle cluster's typed refusals, so a failing pool cannot
+    masquerade as a valid zero quote at this surface either. Only a
+    successfully computed zero returns ``0``.
+    """
+
+    TOKEN0 = "0x" + "a" * 40
+    TOKEN1 = "0x" + "b" * 40
+
+    def _v2(self, core: Bot, *, reserve0: int = 1000, reserve1: int = 2000) -> int:
+        return core.register_v2_pool(
+            address="0x" + "1" * 40,
+            token0=self.TOKEN0,
+            token1=self.TOKEN1,
+            reserve0=reserve0,
+            reserve1=reserve1,
+            gamma_numer0=997,
+            fee_denom0=1000,
+            gamma_numer1=997,
+            fee_denom1=1000,
+            factory="0x" + "2" * 40,
+        )
+
+    def _sparse_v3(self, core: Bot, *, tick_data_fetcher=None) -> int:
+        return core.register_v3_pool(
+            address="0x" + "c" * 40,
+            token0=self.TOKEN0,
+            token1=self.TOKEN1,
+            fee=3000,
+            tick_spacing=60,
+            factory="0x" + "d" * 40,
+            sqrt_price_x96=1 << 96,
+            liquidity=1_000_010_000_000,
+            tick=0,
+            tick_data_fetcher=tick_data_fetcher,
+        )
+
+    def test_unknown_pool_refuses_in_both_directions(self):
+        core = Bot()
+        for refused in (
+            lambda: core.calculate_tokens_out(999, zero_for_one=True, amount_in=100),
+            lambda: core.calculate_tokens_in(999, zero_for_one=True, amount_out=100),
+        ):
+            with pytest.raises(ValueError, match=r"is not registered"):
+                refused()
+
+    def test_overdraw_refuses_not_zero(self):
+        core = Bot()
+        pool_id = self._v2(core)
+        # amount_out == reserve1 (the output reserve for zero_for_one=True).
+        with pytest.raises(ValueError, match=r"not computable"):
+            core.calculate_tokens_in(pool_id, zero_for_one=True, amount_out=2000)
+
+    def test_math_overflow_refuses_not_zero(self):
+        core = Bot()
+        pool_id = self._v2(core)
+        with pytest.raises(ValueError, match=r"overflowed uint256"):
+            core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=2**250)
+
+    def test_computed_zero_succeeds(self):
+        core = Bot()
+        pool_id = self._v2(core)
+        assert int(core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=0)) == 0
+        assert int(core.calculate_tokens_in(pool_id, zero_for_one=True, amount_out=0)) == 0
+
+    def test_fetch_exhausted_refuses(self):
+        core = Bot()
+        pool_id = self._sparse_v3(core)
+        with pytest.raises(ValueError, match=r"recovery exhausted"):
+            core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=1000)
+
+    def test_fetch_failed_refuses(self):
+        def failing_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
+            raise RuntimeError
+
+        core = Bot()
+        pool_id = self._sparse_v3(core, tick_data_fetcher=failing_fetcher)
+        with pytest.raises(ValueError, match=r"fetch failed"):
+            core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=1000)

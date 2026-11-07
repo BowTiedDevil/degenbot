@@ -21,47 +21,28 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, U256};
 use degenbot_substrate::state_lock::LockSite;
-use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 
 use super::bot::Bot;
 use super::construction_io::ConstructionIo;
 use super::pool_builder::builder;
 use super::pool_builder::construction_door::PoolConstruction;
 use super::pool_builder::route;
+use super::pool_ops::{
+    make_exact_in_request, make_exact_out_request, tokens_in_from_read, tokens_out_from_read,
+    SwapOpError,
+};
 use super::registration_ledger::{RefusalKind, RegistrationPhase};
 #[cfg(test)]
 use degenbot_core::fee::fee_ratio;
 use degenbot_pools::RegisteredPoolFamily;
 
-/// The `calculate_tokens_out` refusal (the legacy Python surface: a
-/// `ValueError` for the overflow/on-chain-revert and unknown-pool classes,
-/// `0` for the unrecovered sparse-map misses).
-#[derive(Debug)]
-pub enum CalcTokensOutError {
-    /// The request overflowed a `uint256` intermediate (on-chain
-    /// `getAmountOut` `SafeMath` revert — cdbc03bb).
-    Overflow,
-    /// Non-computable arithmetic/invariant (same Python `ValueError`
-    /// message as [`CalcTokensOutError::Overflow`]).
-    NotComputable,
-    /// The `pool_id` is not registered.
-    UnknownPool { pool_id: u64 },
-    /// The registered family has no exact-input path for this operation.
-    UnsupportedFamily { pool_id: u64, family: &'static str },
-}
-
-/// The `calculate_tokens_in` refusal: the legacy contract flattens every
-/// non-computed outcome to `0` EXCEPT the typed family gap.
-#[derive(Debug)]
-pub enum CalcTokensInError {
-    /// The request overflowed a `uint256` intermediate.
-    Overflow,
-    /// The registered family has no exact-output path (a typed gap, not the
-    /// legacy silent-0 contract).
-    UnsupportedFamily { pool_id: u64, family: &'static str },
-}
+// The facade calc ops share the pool-handle cluster's typed failure
+// ([`SwapOpError`]) and its request/`SwapRead`→result logic, so the facade and
+// a `PyLiquidityPool` handle cannot diverge on which read outcomes are
+// refusals versus a computed zero. There is no separate facade error
+// vocabulary.
 
 /// The build-and-register return payload: `(pool_id, identity)` with the
 /// core-computed identity `(token0, token1, address, variant)` — the
@@ -161,83 +142,48 @@ impl Bot {
     /// Simulate an exact-input swap (`getAmountOut` semantics — the request
     /// amount is negated per the sign convention) against current registered
     /// pool state under ONE core write guard (the sparse-miss recovery fills
-    /// words). Legacy numeric contract preserved: unrecovered sparse-map
-    /// misses flatten to `0`; the overflow and unknown-pool classes surface
-    /// as typed errors.
+    /// words). Every non-computed read is a typed refusal — a failing pool
+    /// cannot masquerade as a zero quote — and `Ok(U256::ZERO)` is only the
+    /// computed zero.
     ///
     /// # Errors
-    /// [`CalcTokensOutError::Overflow`] on a `uint256` intermediate overflow,
-    /// [`CalcTokensOutError::NotComputable`] (same Python message as the
-    /// overflow — on-chain revert class), [`CalcTokensOutError::UnknownPool`],
-    /// [`CalcTokensOutError::UnsupportedFamily`].
+    /// [`SwapOpError`] per the typed failure vocabulary shared with the
+    /// pool-handle ops.
     pub fn calculate_tokens_out(
         &self,
         pool_id: u64,
         zero_for_one: bool,
         amount_in: U256,
-    ) -> Result<U256, CalcTokensOutError> {
-        let request = SwapRequest {
-            zero_for_one,
-            amount_specified: -I256::try_from(amount_in)
-                .map_err(|_| CalcTokensOutError::Overflow)?,
-            sqrt_price_limit: None,
-        };
-        let result = self
+    ) -> Result<U256, SwapOpError> {
+        let request = make_exact_in_request(zero_for_one, amount_in)?;
+        let read = self
             .state_arc()
             .write_at(LockSite::Orchestrator)
             .swap_simulation(0, pool_id, request);
-        // cdbc03bb: surface `NotComputable` (uint256 overflow = on-chain
-        // revert) as a typed error; keep unrecovered sparse-map misses mapped
-        // to 0 so callers that haven't opted into the fetch-retry path keep
-        // the legacy no-raise-on-miss contract.
-        match result {
-            SwapRead::Computed(outcome) => Ok(outcome.delivered_unsigned()),
-            SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => Ok(U256::ZERO),
-            SwapRead::NotComputable => Err(CalcTokensOutError::NotComputable),
-            SwapRead::UnknownPool { pool_id } => Err(CalcTokensOutError::UnknownPool { pool_id }),
-            SwapRead::UnsupportedFamily { pool_id, family } => {
-                Err(CalcTokensOutError::UnsupportedFamily { pool_id, family })
-            }
-        }
+        tokens_out_from_read(read)
     }
 
     /// Simulate an exact-output swap (ADR-037: positive user-perspective
     /// request; the required input rides back as the consumed magnitude)
-    /// under ONE core write guard. Legacy numeric contract preserved at this
-    /// seam: any non-computed outcome flattens to `0` EXCEPT the typed family
-    /// gap.
+    /// under ONE core write guard. Every non-computed read is a typed refusal —
+    /// as explicit as [`Self::calculate_tokens_out`] — and `Ok(U256::ZERO)` is
+    /// only the computed zero.
     ///
     /// # Errors
-    /// [`CalcTokensInError::Overflow`],
-    /// [`CalcTokensInError::UnsupportedFamily`].
+    /// [`SwapOpError`] per the typed failure vocabulary shared with the
+    /// pool-handle ops.
     pub fn calculate_tokens_in(
         &self,
         pool_id: u64,
         zero_for_one: bool,
         amount_out: U256,
-    ) -> Result<U256, CalcTokensInError> {
-        let request = SwapRequest {
-            zero_for_one,
-            amount_specified: I256::try_from(amount_out)
-                .map_err(|_| CalcTokensInError::Overflow)?,
-            sqrt_price_limit: None,
-        };
+    ) -> Result<U256, SwapOpError> {
+        let request = make_exact_out_request(zero_for_one, amount_out)?;
         let read = self
             .state_arc()
             .write_at(LockSite::Orchestrator)
             .swap_simulation(0, pool_id, request);
-        match read {
-            SwapRead::Computed(outcome) => Ok(match &outcome {
-                SwapOutcome::V2(o) => (-o.consumed).into_raw(),
-                SwapOutcome::V3(o) | SwapOutcome::V4(o) => (-o.consumed).into_raw(),
-            }),
-            // A registered family with no exact-output path is a typed gap,
-            // not the legacy silent-0 contract.
-            SwapRead::UnsupportedFamily { pool_id, family } => {
-                Err(CalcTokensInError::UnsupportedFamily { pool_id, family })
-            }
-            _ => Ok(U256::ZERO),
-        }
+        tokens_in_from_read(read)
     }
 
     /// The raw stableswap `get_dy` for a Curve pool — the read guard is
@@ -384,9 +330,10 @@ mod tests {
     }
 
     /// `calculate_tokens_out` through the facade matches the on-chain
-    /// `getAmountOut` arithmetic against the registered reserves, and the
-    /// typed refusals carry the legacy classes (unknown pool; the uint256
-    /// overflow the on-chain `SafeMath` revert models).
+    /// `getAmountOut` arithmetic against the registered reserves, and every
+    /// non-computed read is a typed refusal (unknown pool, request-amount
+    /// overflow, and the not-computable `uint256` overflow) — a failing pool
+    /// never masquerades as a zero quote.
     #[test]
     fn calculate_tokens_out_through_the_facade() {
         let bot = Bot::new(1);
@@ -400,23 +347,37 @@ mod tests {
             .expect("exact-input computes");
         assert_eq!(out, U256::from(998u64));
 
-        // Unknown pool: the typed refusal (the shell's `ValueError`).
+        // The zero request is the computed 0 -> 0: the one zero that is a
+        // success.
+        assert_eq!(
+            bot.calculate_tokens_out(pool_id, true, U256::ZERO),
+            Ok(U256::ZERO)
+        );
+
+        // Unknown pool: the typed refusal, never a zero quote.
         assert!(matches!(
             bot.calculate_tokens_out(9_999, true, U256::from(1u64)),
-            Err(CalcTokensOutError::UnknownPool { pool_id: 9_999 })
+            Err(SwapOpError::UnknownPool { pool_id: 9_999 })
         ));
 
-        // A `uint256`-overflowing intermediate is the on-chain revert class.
+        // A request that does not fit the signed delta is the typed overflow.
         assert!(matches!(
             bot.calculate_tokens_out(pool_id, true, U256::MAX),
-            Err(CalcTokensOutError::Overflow)
+            Err(SwapOpError::AmountOverflow)
+        ));
+
+        // 2**250 fits the signed request but overflows the constant-product
+        // multiply: the not-computable class, never a zero quote.
+        assert!(matches!(
+            bot.calculate_tokens_out(pool_id, true, U256::from(1u8) << 250),
+            Err(SwapOpError::NotComputable)
         ));
     }
 
-    /// `calculate_tokens_in` through the facade: the required input feeds
-    /// `calculate_tokens_out` back to exactly the requested output; the
-    /// legacy silent-0 contract holds for unknown pools; the overflow class
-    /// is the typed refusal.
+    /// `calculate_tokens_in` through the facade is as explicit as
+    /// `calculate_tokens_out`: the required input feeds `calculate_tokens_out`
+    /// back to exactly the requested output, and every non-computed read is a
+    /// typed refusal (unknown, request overflow, and the exact-output overdraw).
     #[test]
     fn calculate_tokens_in_through_the_facade() {
         let bot = Bot::new(1);
@@ -431,17 +392,49 @@ mod tests {
             .expect("round-trip computes");
         assert_eq!(delivered, U256::from(998u64), "exact-output inverts");
 
-        // Unknown pool flattens to 0 (the legacy no-raise contract).
+        // The zero request is the computed 0 -> 0: success, not a refusal.
         assert_eq!(
-            bot.calculate_tokens_in(9_999, true, U256::from(1u64))
-                .expect("unknown pool flattens"),
-            U256::ZERO
+            bot.calculate_tokens_in(pool_id, true, U256::ZERO),
+            Ok(U256::ZERO)
         );
+
+        // Unknown pool refuses, never a zero quote.
+        assert!(matches!(
+            bot.calculate_tokens_in(9_999, true, U256::from(1u64)),
+            Err(SwapOpError::UnknownPool { pool_id: 9_999 })
+        ));
 
         // Overflowing request: the typed overflow.
         assert!(matches!(
             bot.calculate_tokens_in(pool_id, true, U256::MAX),
-            Err(CalcTokensInError::Overflow)
+            Err(SwapOpError::AmountOverflow)
+        ));
+
+        // amount_out == the output reserve: the exact-output overdraw is the
+        // typed not-computable refusal, never a zero quote.
+        assert!(matches!(
+            bot.calculate_tokens_in(pool_id, true, U256::from(2000u64)),
+            Err(SwapOpError::NotComputable)
+        ));
+    }
+
+    /// A sparse concentrated-liquidity pool whose word recovery is impossible
+    /// (no fetcher) refuses through the facade with the typed exhausted
+    /// recovery — never a zero quote.
+    #[test]
+    fn calculate_tokens_out_through_the_facade_types_an_exhausted_recovery() {
+        let bot = Bot::new(1);
+        let addr = Address::from([0x22u8; 20]);
+        let pool_id = bot
+            .register(PoolRegistration::V3(Box::new(RegisterV3PoolParams {
+                address: addr,
+                factory: adhoc_factory(),
+                ..v3_fixture_params()
+            })))
+            .expect("test setup: sparse V3 registration");
+        assert!(matches!(
+            bot.calculate_tokens_out(pool_id, true, U256::from(1000u64)),
+            Err(SwapOpError::FetchExhausted { .. })
         ));
     }
 

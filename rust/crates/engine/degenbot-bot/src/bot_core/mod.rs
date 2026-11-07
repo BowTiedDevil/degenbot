@@ -168,10 +168,6 @@ pub use rpc_log::build_rpc_log;
 // one surface.
 // ---------------------------------------------------------------------------
 
-/// The build-and-register swap-calc rejections the shell maps onto its typed
-/// exceptions.
-pub use build_register::{CalcTokensInError, CalcTokensOutError};
-
 /// The construction I/O seam: the handle, the two adapters, the pacing types,
 /// and the read traits the construction door's dispatch runs over.
 pub use construction_io::{

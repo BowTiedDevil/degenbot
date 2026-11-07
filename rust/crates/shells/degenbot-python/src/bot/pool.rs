@@ -22,7 +22,8 @@ use pyo3::types::{PyDict, PyList, PySet, PyTuple};
 
 use crate::bot::errmap::{
     encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, pool_unregistered,
-    swap_family_gap, swap_math_in_overflow, swap_math_overflow, swap_unknown_pool,
+    swap_family_gap, swap_fetch_exhausted, swap_fetch_failed, swap_math_in_overflow,
+    swap_math_overflow, swap_not_computable, swap_unknown_pool,
 };
 use degenbot_bot::bot_core::{
     calculate_tokens_in, calculate_tokens_in_for_pair, calculate_tokens_out,
@@ -728,10 +729,15 @@ impl PyLiquidityPool {
     /// product / concentrated liquidity swap math overflows a `uint256` intermediate (mirroring
     /// on-chain `getAmountOut` `SafeMath` revert), this raises `ValueError` so the
     /// Python companion can translate it to a domain `LiquidityPoolError`.
-    /// A V3/V4 sparse-map miss is still mapped to 0 — callers needing the miss
-    /// surfaced use [`calculate_tokens_out_with_fetch`][Self::calculate_tokens_out_with_fetch].
+    /// Every failure raises: only a successfully computed zero returns `0`, so
+    /// a V3/V4 sparse-map miss is a typed refusal, not a zero quote. Callers
+    /// wanting the missing word fetched and the read retried use
+    /// [`calculate_tokens_out_with_fetch`][Self::calculate_tokens_out_with_fetch].
     /// Raises:
-    ///     `ValueError`: If the swap math overflows `uint256` (on-chain revert).
+    ///     `ValueError`: If the request cannot be priced — the swap-math
+    ///         overflow / not-computable on-chain-revert class, an unregistered
+    ///         pool, an unsupported family, or a sparse-map miss whose word
+    ///         recovery failed or was exhausted.
     #[pyo3(signature = (zero_for_one, amount_in))]
     fn calculate_tokens_out(
         &self,
@@ -748,10 +754,20 @@ impl PyLiquidityPool {
                 let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
                 Ok(bound.unbind())
             }
-            Err(SwapOpError::AmountOverflow) => Err(swap_math_overflow()),
+            // The not-computable class keeps its historical overflow surface
+            // on the exact-input ops (one `ValueError` text, two typed causes).
+            Err(SwapOpError::AmountOverflow | SwapOpError::NotComputable) => {
+                Err(swap_math_overflow())
+            }
             Err(SwapOpError::UnknownPool { pool_id }) => Err(swap_unknown_pool(pool_id)),
             Err(SwapOpError::UnsupportedFamily { pool_id, family }) => {
                 Err(swap_family_gap(pool_id, family))
+            }
+            Err(SwapOpError::FetchFailed { word }) => {
+                Err(swap_fetch_failed("calculate_tokens_out", word))
+            }
+            Err(SwapOpError::FetchExhausted { word }) => {
+                Err(swap_fetch_exhausted("calculate_tokens_out", word))
             }
         }
     }
@@ -879,6 +895,13 @@ impl PyLiquidityPool {
     }
 
     /// Calculate the required input token amount for a given output amount.
+    /// Every failure raises: only a successfully computed zero returns `0`.
+    /// Raises:
+    ///     `ValueError`: If the request cannot be priced — the request-amount
+    ///         overflow, the not-computable class (overdraw, exhausted range,
+    ///         or a non-computable invariant), an unregistered pool, the
+    ///         exact-output family gap, or a sparse-map miss whose word
+    ///         recovery failed or was exhausted.
     #[pyo3(signature = (zero_for_one, amount_out))]
     fn calculate_tokens_in(
         &self,
@@ -890,32 +913,33 @@ impl PyLiquidityPool {
         let core = self.core.clone();
         let result =
             py.detach(move || calculate_tokens_in(&core, self.pool_id, zero_for_one, amount));
-        let result = match result {
-            Ok(v) => v,
-            Err(SwapOpError::AmountOverflow) => return Err(swap_math_overflow()),
-            // A registered family with no exact-output path is a typed gap,
-            // not the legacy silent-0 contract.
-            Err(SwapOpError::UnsupportedFamily { pool_id, family }) => {
-                return Err(exact_output_family_gap(
-                    "calculate_tokens_in",
-                    pool_id,
-                    family,
-                ));
+        match result {
+            Ok(out) => {
+                let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+                Ok(bound.unbind())
             }
-            // Legacy silent-0: unknown pool, not-computable, and miss-recovery
-            // failures keep the zero sentinel (ADR-037).
-            Err(SwapOpError::UnknownPool { .. }) => U256::ZERO,
-        };
-        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
-        Ok(bound.unbind())
+            Err(SwapOpError::AmountOverflow) => Err(swap_math_overflow()),
+            Err(SwapOpError::NotComputable) => Err(swap_not_computable("calculate_tokens_in")),
+            Err(SwapOpError::UnknownPool { pool_id }) => Err(swap_unknown_pool(pool_id)),
+            // A registered family with no exact-output path is a typed gap.
+            Err(SwapOpError::UnsupportedFamily { pool_id, family }) => Err(
+                exact_output_family_gap("calculate_tokens_in", pool_id, family),
+            ),
+            Err(SwapOpError::FetchFailed { word }) => {
+                Err(swap_fetch_failed("calculate_tokens_in", word))
+            }
+            Err(SwapOpError::FetchExhausted { word }) => {
+                Err(swap_fetch_exhausted("calculate_tokens_in", word))
+            }
+        }
     }
 
     /// Fetch+retry exact-input swap for sparse V3/V4 pools.
     /// Like [`calculate_tokens_out`][Self::calculate_tokens_out], but on a
     /// sparse tick-map miss it calls `fetcher(word, block)` to fetch the
     /// missing word's tick data, merges it, and retries (dedup-protected — a
-    /// repeated miss on a word gives up with `0`) — the missing-liquidity-data
-    /// loop, driven from the Rust calc path.
+    /// repeated miss on a word refuses) — the missing-liquidity-data loop,
+    /// driven from the Rust calc path.
     /// `fetcher` is a Python callable
     /// `fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]] | None`.
     /// It MUST return the fetched tick data mapping tick →
@@ -924,6 +948,11 @@ impl PyLiquidityPool {
     /// The fetcher MUST NOT write back into the pool (the Rust loop merges the
     /// returned data itself) — doing so would re-enter the `BotState` write
     /// lock this call holds and deadlock.
+    /// Raises:
+    ///     `ValueError`: If the request cannot be priced — the swap-math
+    ///         overflow / not-computable on-chain-revert class, an unregistered
+    ///         pool, an unsupported family, or a word recovery that failed or
+    ///         was exhausted. Only a successfully computed zero returns `0`.
     #[pyo3(signature = (zero_for_one, amount_in, block))]
     fn calculate_tokens_out_with_fetch(
         &self,
@@ -942,12 +971,22 @@ impl PyLiquidityPool {
                 let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
                 Ok(bound.unbind())
             }
-            Err(SwapOpError::AmountOverflow) => Err(swap_math_overflow()),
-            // Staging failures keep the legacy zero sentinel.
-            Err(_) => {
-                let bound = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
-                Ok(bound.unbind())
+            // The not-computable class keeps its historical overflow surface
+            // on the exact-input ops (one `ValueError` text, two typed causes).
+            Err(SwapOpError::AmountOverflow | SwapOpError::NotComputable) => {
+                Err(swap_math_overflow())
             }
+            Err(SwapOpError::UnknownPool { pool_id }) => Err(swap_unknown_pool(pool_id)),
+            Err(SwapOpError::UnsupportedFamily { pool_id, family }) => {
+                Err(swap_family_gap(pool_id, family))
+            }
+            Err(SwapOpError::FetchFailed { word }) => {
+                Err(swap_fetch_failed("calculate_tokens_out_with_fetch", word))
+            }
+            Err(SwapOpError::FetchExhausted { word }) => Err(swap_fetch_exhausted(
+                "calculate_tokens_out_with_fetch",
+                word,
+            )),
         }
     }
 
@@ -2527,6 +2566,55 @@ mod tests {
         let weighted = PyLiquidityPool::new(Arc::clone(&core), weighted_id, 1);
         let stable = PyLiquidityPool::new(core, stable_id, 1);
         (weighted, stable)
+    }
+
+    /// The calc pymethods refuse with a typed `ValueError` — a failing pool
+    /// never answers a zero quote — and the computed zero still returns `0`.
+    #[test]
+    fn calc_pymethods_type_refusals_and_keep_only_the_computed_zero() {
+        Python::attach(|py| {
+            let amount = |v: u64| crate::conversion::alloy::u256_to_py(py, &U256::from(v)).unwrap();
+            let zero = crate::conversion::alloy::u256_to_py(py, &U256::ZERO).unwrap();
+
+            // Unknown pool: the typed refusal in both directions and through
+            // the fetch path — never a zero.
+            let unknown = handle_for(BotState::new(), 999);
+            for refused in [
+                unknown.calculate_tokens_out(py, true, &amount(100)),
+                unknown.calculate_tokens_in(py, true, &amount(100)),
+                unknown.calculate_tokens_out_with_fetch(py, true, &amount(100), 100),
+            ] {
+                let err = refused.expect_err("an unregistered pool refuses");
+                assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+                assert_eq!(
+                    err.to_string(),
+                    "ValueError: swap_simulation: pool 999 is not registered"
+                );
+            }
+
+            // The exact-output overdraw refuses as the named typed class.
+            let err = v2_handle()
+                .calculate_tokens_in(py, true, &amount(2_000_000))
+                .expect_err("the overdraw refuses");
+            assert!(err.is_instance_of::<crate::bot::engine::SwapNotComputableError>(py));
+            assert_eq!(
+                err.to_string(),
+                "SwapNotComputableError: calculate_tokens_in: swap is not computable (overdraw, exhausted range, or a non-computable invariant)"
+            );
+
+            // A computed zero is the only zero a calc returns.
+            for computed in [
+                v2_handle().calculate_tokens_out(py, true, &zero),
+                v2_handle().calculate_tokens_in(py, true, &zero),
+                v2_handle().calculate_tokens_out_with_fetch(py, true, &zero, 100),
+            ] {
+                let answer = computed.expect("the zero request computes");
+                assert_eq!(
+                    crate::conversion::alloy::extract_python_u256(answer.bind(py)).unwrap(),
+                    U256::ZERO
+                );
+            }
+        });
     }
 
     /// A wrong-family handle is the arm accessor's typed `ValueError` refusal —
