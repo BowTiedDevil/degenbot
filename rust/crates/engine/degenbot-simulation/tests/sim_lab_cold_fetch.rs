@@ -10,6 +10,12 @@
 //! `CacheDB<WarmCodeCache<BotStateDb<MockCold>>>`. `WarmCodeCache` is the
 //! `CacheDB`-miss seam (the deleted revm call site), so the mock sees exactly
 //! the reads the RPC leaf would.
+//!
+//! Bucket routing (FAST vs SLOW) is a function of measured fetch latency,
+//! so a zero-duration in-process read lands wherever the scheduler puts it:
+//! those scenarios assert the forwards across both buckets. The
+//! RPC-latency scenario really spends 500 µs per read, so its forwards land
+//! SLOW by construction.
 
 #![expect(clippy::expect_used)]
 
@@ -172,14 +178,17 @@ fn forwarded_total(d: &SimLabSnapshot) -> u64 {
 #[test]
 fn cold_sims_record_forwards_and_warm_sims_record_none() {
     let inner = WarmCodeCacheInner::shared_default();
-    an_in_process_cold_leaf_records_fast_forwards_and_a_rerun_records_none(&inner);
+    an_in_process_cold_leaf_records_forwards_and_a_rerun_records_none(&inner);
     an_rpc_latency_leaf_records_the_slow_bucket();
     the_cross_block_warm_cache_records_a_hit_not_a_cold_fetch(&inner);
 }
 
-/// A cold sim whose leaf answers in µs lands in the FAST buckets, and the
-/// same run again (the per-block `CacheDB` now warm) forwards nothing.
-fn an_in_process_cold_leaf_records_fast_forwards_and_a_rerun_records_none(
+/// A cold sim whose leaf serves in-process with zero delay records the
+/// basic and storage forwards across the FAST+SLOW totals — a zero-duration
+/// read's measured latency is the scheduler's, so either bucket counts —
+/// and the same run again (the per-block `CacheDB` now warm) forwards
+/// nothing.
+fn an_in_process_cold_leaf_records_forwards_and_a_rerun_records_none(
     inner: &Arc<RwLock<WarmCodeCacheInner>>,
 ) {
     let cold = MockCold::new(Duration::ZERO);
@@ -194,22 +203,16 @@ fn an_in_process_cold_leaf_records_fast_forwards_and_a_rerun_records_none(
         "the contract's account read reached the cold leaf"
     );
     assert!(
-        cold_delta.cold_basic_fast >= 1,
+        forwarded_total(&cold_delta) >= 2,
+        "the cold run forwarded both reads: {cold_delta:?}"
+    );
+    assert!(
+        cold_delta.cold_basic_fast + cold_delta.cold_basic_slow >= 1,
         "an account forward is counted: {cold_delta:?}"
     );
     assert!(
-        cold_delta.cold_storage_fast >= 1,
+        cold_delta.cold_storage_fast + cold_delta.cold_storage_slow >= 1,
         "the SLOAD forward is counted: {cold_delta:?}"
-    );
-    assert_eq!(
-        (cold_delta.cold_basic_slow, cold_delta.cold_storage_slow),
-        (0, 0),
-        "a sub-100 µs serve lands in the FAST bucket: {cold_delta:?}"
-    );
-    assert_eq!(
-        sim_metrics::slow_total_ns(&cold_delta),
-        0,
-        "no RPC-reached latency was recorded"
     );
     assert_eq!(
         cold_delta.basic_warm_hits, 0,
@@ -233,8 +236,10 @@ fn an_in_process_cold_leaf_records_fast_forwards_and_a_rerun_records_none(
     );
 }
 
-/// A leaf that spends RPC-scale wall time per read lands in the SLOW buckets
-/// with its latency, so the lab line's `slow_ms` column moves.
+/// A leaf that spends RPC-scale wall time per read lands in the SLOW
+/// buckets with that latency, so the lab line's `slow_ms` column moves:
+/// every read really spends `SLOW_READ`, so the route is exact by
+/// construction.
 fn an_rpc_latency_leaf_records_the_slow_bucket() {
     let cold = MockCold::new(SLOW_READ);
     let reads = Arc::clone(&cold.reads);
@@ -246,9 +251,10 @@ fn an_rpc_latency_leaf_records_the_slow_bucket() {
         slow_delta.cold_basic_slow >= 1,
         "a 500 µs serve lands in the SLOW bucket: {slow_delta:?}"
     );
+    let slow_ns_per_forward = u64::try_from(SLOW_READ.as_nanos()).expect("SLOW_READ fits u64");
     assert!(
-        slow_delta.cold_basic_slow_ns >= slow_delta.cold_basic_slow * 500_000,
-        "the SLOW bucket carries the forward's wall latency: {slow_delta:?}"
+        slow_delta.cold_basic_slow_ns >= slow_delta.cold_basic_slow * slow_ns_per_forward,
+        "the SLOW bucket carries at least the spent latency per forward: {slow_delta:?}"
     );
     assert!(
         sim_metrics::slow_total_ns(&slow_delta) > 0,
@@ -286,7 +292,7 @@ fn the_cross_block_warm_cache_records_a_hit_not_a_cold_fetch(
         "the contract's account read never reached the cold leaf: {accounts:?}"
     );
     assert!(
-        warm_delta.cold_storage_fast >= 1,
+        warm_delta.cold_storage_fast + warm_delta.cold_storage_slow >= 1,
         "storage is mutable-per-block and always forwards: {warm_delta:?}"
     );
 }

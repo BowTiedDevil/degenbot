@@ -88,6 +88,10 @@ serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 proptest = "^1.12"
+# Test-only: tokio's paused-clock test runtime (`start_paused`), so the
+# lifecycle tests can await runtime quiescence instead of guessing at
+# wall-clock sleeps for "nothing else will run".
+tokio = { version = "^1.54", features = ["test-util"] }
 
 [features]
 default = []

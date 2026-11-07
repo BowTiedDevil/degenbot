@@ -599,6 +599,26 @@ impl<T> StateLock<T> {
             }
         })
     }
+
+    /// Try to acquire a read guard without blocking (`None` when contended).
+    /// Mirrors `parking_lot::RwLock::try_read` for callers that only probe.
+    #[track_caller]
+    pub fn try_read_at(&self, site: LockSite) -> Option<StateReadGuard<'_, T>> {
+        self.inner.try_read().map(|guard| {
+            let key = self.key_of();
+            let mut seq = 0;
+            if diag_enabled() {
+                seq = register_read(key, Location::caller());
+            }
+            StateReadGuard {
+                inner: guard,
+                key,
+                seq,
+                site,
+                acquired: Instant::now(),
+            }
+        })
+    }
 }
 
 impl<T> Default for StateLock<T>

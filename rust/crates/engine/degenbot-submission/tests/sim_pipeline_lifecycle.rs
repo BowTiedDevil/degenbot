@@ -129,6 +129,16 @@ async fn await_failure(pipeline: &SimSubmitPipeline<TestWork, u64>) -> PipelineF
     }
 }
 
+/// Resolve when the runtime has nothing left to run. "A decline spawns no
+/// work" is a claim about every later schedule, which no finite sleep can
+/// witness: with the clock paused (`start_paused`), time only advances when
+/// no task is runnable, so this resolves strictly after every task spawned
+/// before it has been polled. Work a decline spawned shows up here; nothing
+/// that never existed can show up late.
+async fn await_quiescence() {
+    tokio::time::sleep(Duration::from_millis(1)).await;
+}
+
 /// A submit leaf that holds the ordered lane inside one submit until the test
 /// releases it, counting the submits that actually ran.
 struct GatedSubmit {
@@ -153,7 +163,7 @@ impl SubmitLeaf<TestWork, u64> for GatedSubmit {
 
 // ── a shutdown lane declines, side-effect free ──
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn enqueue_after_shutdown_is_declined_and_has_no_side_effects() {
     let sim = counting_sim(&[]);
     let calls = Arc::clone(&sim.calls);
@@ -172,8 +182,10 @@ async fn enqueue_after_shutdown_is_declined_and_has_no_side_effects() {
         pipeline.enqueue(work(2, 0)),
         EnqueueOutcome::Declined(EnqueueDecline::Closed)
     );
-    // Give any stray spawned sim a chance to run (there must be none).
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // The decline must leave nothing for any schedule to run later: observe
+    // the "no work" claim at runtime quiescence, never at an arbitrary
+    // instant after a sleep.
+    await_quiescence().await;
 
     assert_eq!(pipeline.enqueued(), enqueued, "the decline counted nothing");
     assert_eq!(pipeline.submitted(), submitted);
@@ -188,7 +200,7 @@ async fn enqueue_after_shutdown_is_declined_and_has_no_side_effects() {
 
 // ── a failed lane declines, and the FIRST failure stays authoritative ──
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn enqueue_after_a_leaf_failure_is_declined_and_the_first_failure_is_kept() {
     let sim = counting_sim(&[3]);
     let calls = Arc::clone(&sim.calls);
@@ -204,7 +216,9 @@ async fn enqueue_after_a_leaf_failure_is_declined_and_the_first_failure_is_kept(
         pipeline.enqueue(work(4, 0)),
         EnqueueOutcome::Declined(EnqueueDecline::Failed)
     );
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // Same contract on the failed lane: the decline's "no work" is observed
+    // at runtime quiescence, not guessed at with a sleep.
+    await_quiescence().await;
 
     assert_eq!(pipeline.enqueued(), enqueued, "the decline counted nothing");
     assert_eq!(

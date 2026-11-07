@@ -340,16 +340,91 @@ mod tests {
         }
     }
 
+    /// Independent per-category expectations: what `classify` must return
+    /// for one input of each category, and the label that variant must
+    /// render. Both sides are written out from the parity-gate contract by
+    /// hand — neither is computed through the other — so a misfiled variant,
+    /// a swapped label arm, or a drifted format fails here.
     #[test]
-    fn classify_structural_matches_label_every_category() {
-        // The structured enum and the rendered label classify every category
-        // consistently: classify(data).label() == classify_revert(data).
-        for (hex_str, _) in parity_fixtures() {
+    fn every_category_classifies_to_its_variant_and_renders_its_label() {
+        let z = |n: usize| "0".repeat(n * 2);
+        let cases: Vec<(String, RevertClass, &str)> = vec![
+            (String::new(), RevertClass::Empty, "empty"),
+            (
+                "de".to_string(),
+                RevertClass::Short("de".to_string()),
+                "short:de",
+            ),
+            (
+                "4e487b71".to_string(),
+                RevertClass::Panic(U256::ZERO),
+                "Panic(0x0)",
+            ),
+            (
+                format!("4e487b71{}11", z(31)),
+                RevertClass::Panic(U256::from(0x11)),
+                "Panic(0x11)",
+            ),
+            (
+                "08c379a0".to_string(),
+                RevertClass::ErrorStringUndecodable,
+                "Error(string:undecodable)",
+            ),
+            (
+                format!(
+                    "08c379a0{}0000000000000000000000000000000000000000000000000000000000000000",
+                    z(32)
+                ),
+                RevertClass::ErrorStringEmpty,
+                "Error(string:empty)",
+            ),
+            (
+                format!(
+                    "08c379a0{}000000000000000000000000000000000000000000000000000000000000000568656c6c6f{}",
+                    z(32),
+                    z(21)
+                ),
+                RevertClass::ErrorString("hello".to_string()),
+                "hello",
+            ),
+            (
+                "5212cba1".to_string(),
+                RevertClass::V4Error("CurrencyNotSettled"),
+                "CurrencyNotSettled",
+            ),
+            (
+                format!("486aa307{}", z(32)),
+                RevertClass::V4Error("PoolNotInitialized"),
+                "PoolNotInitialized",
+            ),
+            (
+                "4b9dfc58".to_string(),
+                RevertClass::ExecutorError("!OWNER"),
+                "!OWNER",
+            ),
+            (
+                format!("4e88422a{}", z(64)),
+                RevertClass::ExecutorError("InsufficientProfit"),
+                "InsufficientProfit",
+            ),
+            (z(32), RevertClass::NumericRevert, "numeric-revert"),
+            (
+                format!("deadbeef{}", z(32)),
+                RevertClass::Unknown([0xde, 0xad, 0xbe, 0xef]),
+                "unknown:0xdeadbeef",
+            ),
+        ];
+        for (hex_str, expected_variant, expected_label) in cases {
             let bytes = hex::decode(&hex_str).unwrap_or_default();
+            let variant = RevertClass::classify(&bytes);
             assert_eq!(
-                RevertClass::classify(&bytes).label(),
-                classify_revert(&bytes),
-                "label() must agree with classify_revert for {hex_str}"
+                variant, expected_variant,
+                "classify(0x{hex_str}) must yield {expected_variant:?}"
+            );
+            assert_eq!(
+                variant.label(),
+                expected_label,
+                "{expected_variant:?} must render {expected_label:?}"
             );
         }
     }

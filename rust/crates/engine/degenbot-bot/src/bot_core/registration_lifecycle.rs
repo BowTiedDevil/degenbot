@@ -803,60 +803,116 @@ mod tests {
         assert_eq!(lifecycle_v3(&c, pid), RegistrationLifecycle::Live);
     }
 
-    /// The soak-2026-08-22 cycle, modelled on the same `StateLock<BotState>`
-    /// type: read#1 held while a second `read_at(Registration)` is
-    /// requested, with a writer queued in between. `parking_lot` parks a new
-    /// read behind a waiting writer, and the writer waits on read#1 — a
-    /// cycle. The fused accessors take one guard and cannot form it; this
-    /// test pins the hazard that motivated the fusion, on the real lock type.
+    /// The nested-read lock cycle on the real lock type: read#1 held while a
+    /// second `read_at(Registration)` is requested, with a writer queued in
+    /// between. `parking_lot` parks a new read behind a queued writer, and the
+    /// writer waits on read#1 — a cycle. The fused accessors take one guard
+    /// and cannot form it; this test pins the hazard that motivated the
+    /// fusion.
     ///
-    /// Design note: the old call-site shape held read#1 as an expression
-    /// temporary in the SAME thread as read#2, which cannot be interrupted
-    /// for cleanup — reproducing it here would hang the test harness.
-    /// `parking_lot`'s `read()` does not distinguish reader threads (a read
-    /// blocks whenever a writer is queued), so the cycle is identical with
-    /// read#1 held here and read#2 on a sibling thread, and dropping read#1
-    /// breaks it cleanly (no leaked threads).
+    /// The scenario is established by events, never by waiting: the writer's
+    /// QUEUE is proven by a probe read failing (a queuing writer owns the
+    /// writer bit while it drains readers, so `try_read` fails exactly while a
+    /// writer is queued or holding), and read#2's attempt is a channel
+    /// barrier. read#1 lives on its own thread apart from read#2 so dropping
+    /// it can break the cycle cleanly — the original same-thread shape held
+    /// read#1 as an expression temporary and could not be interrupted.
     #[test]
     fn nested_read_with_queued_writer_is_a_lock_cycle() {
+        // A deadlock guard only: the ordering evidence is every channel event
+        // and recorded instant below, never this bound.
+        let join_guard = std::time::Duration::from_secs(30);
+
         let core = new_core();
         let read1 = core.read_at(LockSite::Registration); // read#1
 
         let (writer_started_tx, writer_started_rx) = std::sync::mpsc::channel::<()>();
+        let (writer_acquired_tx, writer_acquired_rx) = std::sync::mpsc::channel::<()>();
+        let (release_writer_tx, release_writer_rx) = std::sync::mpsc::channel::<()>();
+        let (writer_done_tx, writer_done_rx) = std::sync::mpsc::channel::<()>();
         let writer_core = Arc::clone(&core);
-        let writer = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             writer_started_tx.send(()).expect("signal writer start");
-            writer_core
-                .write_at(LockSite::Registration)
+            let mut guard = writer_core.write_at(LockSite::Registration);
+            writer_acquired_tx
+                .send(())
+                .expect("signal writer acquisition");
+            // The hold window is the only place where read#2 being stuck
+            // behind the writer is observable exactly, so the test owns it.
+            release_writer_rx.recv().expect("release the writer's hold");
+            guard
                 .concentrated_liquidity_mut()
                 .advance_pump_complete_cutoff(1);
+            drop(guard);
+            writer_done_tx.send(()).expect("signal writer completion");
         });
-        writer_started_rx.recv().expect("writer thread started");
-        // parking_lot exposes no "writer queued" signal, so give the writer
-        // time to actually park in `write_at`; the read#2 observation below
-        // is the assertion that it did.
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        writer_started_rx
+            .recv_timeout(join_guard)
+            .expect("writer thread started");
 
+        // The writer's QUEUE is the load-bearing fact. A queuing writer owns
+        // the writer bit while it waits for readers, and a reader can never
+        // hold that bit — so a probe read failing while read#1 is held IS the
+        // queued-writer signal. The bound only guards a deadlock.
+        let probe_deadline = std::time::Instant::now() + join_guard;
+        while core.try_read_at(LockSite::Registration).is_some() {
+            assert!(
+                std::time::Instant::now() < probe_deadline,
+                "the writer never queued behind read#1"
+            );
+            std::thread::yield_now();
+        }
+
+        let (reader_started_tx, reader_started_rx) = std::sync::mpsc::channel::<()>();
+        let (read2_done_tx, read2_done_rx) =
+            std::sync::mpsc::channel::<(std::time::Duration, std::time::Instant)>();
         let reader_core = Arc::clone(&core);
-        // read#2 returns (held, acquired_at): both stamps are monotonic, so
-        // comparing them across threads is exact. The assertion below pins the
-        // ORDER rather than a knife-edge duration (the old `blocked >= 500ms`
-        // measured ~498.6ms against a 500ms hold and flaked under load).
+        // read#2 reports (blocked, acquired_at): both stamps are monotonic,
+        // so comparing them across threads is exact. The assertions pin the
+        // ORDER, never a duration.
         let read2 = std::thread::spawn(move || {
+            reader_started_tx.send(()).expect("signal read#2 attempt");
             let t0 = std::time::Instant::now();
             let _g = reader_core.read_at(LockSite::Registration); // read#2
-            (t0.elapsed(), std::time::Instant::now())
+            read2_done_tx
+                .send((t0.elapsed(), std::time::Instant::now()))
+                .expect("deliver read#2's stamps");
         });
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        reader_started_rx
+            .recv_timeout(join_guard)
+            .expect("read#2 thread started its attempt");
+
+        // With the writer queued and read#1 held, read#2 cannot acquire — it
+        // parks behind the writer: the nested-read cycle the fused accessors
+        // remove.
         assert!(
             !read2.is_finished(),
-            "read#2 must park behind the queued writer while read#1 is held —              the nested-read cycle the fused accessors remove"
+            "read#2 must park behind the queued writer while read#1 is held"
         );
 
         let dropped_at = std::time::Instant::now();
-        drop(read1); // breaks the cycle
-        let (blocked, acquired_at) = read2.join().expect("read#2 completes once read#1 drops");
-        writer.join().expect("writer completes");
+        drop(read1); // breaks the cycle: the queued writer runs first
+
+        // The queued writer takes the lock ahead of read#2, and while it
+        // holds, read#2 still cannot finish — the cycle's writer link is
+        // read#2 waiting on the writer, not merely on read#1's guard.
+        writer_acquired_rx
+            .recv_timeout(join_guard)
+            .expect("the queued writer acquired once read#1 dropped");
+        assert!(
+            !read2.is_finished(),
+            "read#2 must still be parked behind the writer's hold"
+        );
+
+        release_writer_tx
+            .send(())
+            .expect("release the writer's hold");
+        let (blocked, acquired_at) = read2_done_rx
+            .recv_timeout(join_guard)
+            .expect("read#2 completes once the writer releases");
+        writer_done_rx
+            .recv_timeout(join_guard)
+            .expect("the writer completes");
         assert!(
             acquired_at >= dropped_at,
             "read#2 only advanced after read#1 dropped ({blocked:?}) — that is the cycle"
