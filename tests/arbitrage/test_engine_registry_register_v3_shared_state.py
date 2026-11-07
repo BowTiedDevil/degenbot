@@ -7,7 +7,7 @@ so the registry must NOT re-register the pool with the engine. Unlike V4
 (which raises a catchable ``ValueError`` on duplicate), V3 re-registration
 **panics** the Rust core (``BotCore::register_v3_pool`` panics on duplicate
 address) — taking the whole process down. This is the identical bug class the
-V2 path already handles (``register_v2_pool`` reads ``pool._py_pool.pool_id``
+V2 path already handles (``register_v2_pool`` reads ``pool._py_pool.engine_pool_id``
 instead of calling ``engine.register_v2_pool``).
 """
 
@@ -62,7 +62,7 @@ def test_register_v3_pool_resolves_shared_state_key_without_re_registering() -> 
 
     Without the fix, ``engine.register_v3_pool`` panics the Rust core on the
     duplicate address (``pool already registered: …``). The registry must read
-    the shared ``pool._py_pool.pool_id`` like the V2 path.
+    the shared ``pool._py_pool.engine_pool_id`` like the V2 path.
     """
     py_bot = Bot()
     pool = _build_shared_v3_pool(py_bot)
@@ -71,7 +71,7 @@ def test_register_v3_pool_resolves_shared_state_key_without_re_registering() -> 
 
     key = asyncio.run(registry.register_v3_pool(pool))
 
-    assert key == pool._py_pool.pool_id
+    assert key == pool._py_pool.engine_pool_id
     # The identity is answered by the shared core on demand — the registry
     # keeps no address → id map of its own.
     assert registry.engine.pool_id_for_pool("v3", pool.address) == key

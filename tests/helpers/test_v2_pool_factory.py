@@ -62,12 +62,12 @@ def test_make_v2_pool_with_py_bot_registers_against_that_bot(py_bot) -> None:
     )
 
     # The supplied bot holds the pool — pool_id resolves there.
-    assert py_bot.get_pool(pool._py_pool.pool_id) is not None
+    assert py_bot.get_pool(pool._py_pool.engine_pool_id) is not None
 
     # A different, fresh Bot does NOT — proving the registration is scoped to
     # the supplied bot, mirroring Bot.build_pool's shared-core wiring.
     other = new_pool_bot()
-    assert other.get_pool(pool._py_pool.pool_id) is None
+    assert other.get_pool(pool._py_pool.engine_pool_id) is None
 
 
 def test_same_pool_address_on_two_bots_keeps_each_its_own_state(py_bot) -> None:

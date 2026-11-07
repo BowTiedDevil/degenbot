@@ -95,7 +95,7 @@ class BalancerV2Pool(AbstractLiquidityPool):
             raise DegenbotValueError(message=msg) from exc
 
         self.address = get_checksum_address(arm.address)
-        self.pool_id = bytes.fromhex(arm.pool_id_hex.removeprefix("0x"))
+        self.pool_id = arm.pool_id
         self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
         self.vault = get_checksum_address(arm.vault)
 

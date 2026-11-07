@@ -244,7 +244,7 @@ class UniswapV4Pool(
             raise DegenbotValueError(message=msg)
 
         # Identity — all read off the handle (no shadow kwargs).
-        self._pool_id = bytes.fromhex(py_pool.pool_id_hex.removeprefix("0x"))
+        self._pool_id = py_pool.pool_id
         self._pool_manager_address = get_checksum_address(py_pool.pool_manager_address)
         raw_hook = py_pool.hook_address
         self.hook_address = get_checksum_address(raw_hook) if raw_hook else ZERO_ADDRESS

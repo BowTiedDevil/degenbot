@@ -32,10 +32,10 @@ class AbstractLiquidityPool(AddressComparable, ABC):
         read this instead of reaching through the handle themselves.
 
         Returns:
-            The core ``pool_id`` this pool is registered under.
+            The core ``engine_pool_id`` this pool is registered under.
 
         """
-        return self._py_pool.pool_id
+        return self._py_pool.engine_pool_id
 
     @property
     def engine_family(self) -> str:

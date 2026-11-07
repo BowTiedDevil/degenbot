@@ -7,7 +7,7 @@ BotState at build time (``py_bot.register_v4_pool`` in the V4 builder /
 ``make_v4_pool``). So a subsequent ``register_v4_pool`` from the registry must
 NOT re-register the pool with the engine — it must resolve the existing
 shared-core key, mirroring the V2 path (``register_v2_pool`` reads
-``pool._py_pool.pool_id``).
+``pool._py_pool.engine_pool_id``).
 
 Regression (the production settlement-arbitrage bot,
 ``examples/eth_settlement_arbitrage_v2_v3_v4_rust.py``):
@@ -82,7 +82,7 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
 
     ``register_v4_pool`` must NOT call ``engine.register_v4_pool`` (which would
     raise ``ValueError("v4 pool already registered")``); it reads the shared
-    ``pool._py_pool.pool_id`` like the V2 path.
+    ``pool._py_pool.engine_pool_id`` like the V2 path.
     """
     py_bot = Bot()
     _weth, _usdc, pool = _build_shared_v4_pool(py_bot)
@@ -94,7 +94,7 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
     # shared-core pool_id.
     key = asyncio.run(registry.register_v4_pool(pool))
 
-    assert key == pool._py_pool.pool_id
+    assert key == pool._py_pool.engine_pool_id
     # The identity is answered by the shared core on demand — the registry
     # keeps no pool_id → key map of its own.
     assert registry.engine.pool_id_for_v4_pool(pool.address, to_0x_hex(pool.pool_id)) == key
@@ -111,4 +111,4 @@ def test_register_v4_pool_idempotent_across_paths() -> None:
     first = asyncio.run(registry.register_v4_pool(pool))
     second = asyncio.run(registry.register_v4_pool(pool))
 
-    assert first == second == pool._py_pool.pool_id
+    assert first == second == pool._py_pool.engine_pool_id

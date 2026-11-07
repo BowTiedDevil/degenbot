@@ -212,7 +212,7 @@ class TestPoolHandle:
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
-        assert pool.pool_id == pool_id
+        assert pool.engine_pool_id == pool_id
 
     def test_get_pool_unknown_returns_none(self):
         """get_pool() returns None for unknown pool ID."""

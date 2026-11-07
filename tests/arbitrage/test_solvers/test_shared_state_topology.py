@@ -250,7 +250,7 @@ class TestSharedStateTopologyV3:
         # for a V3 pool_id the same way it does for V2.
         handle = core.get_pool(pool_id)
         assert handle is not None
-        assert handle.pool_id == pool_id
+        assert handle.engine_pool_id == pool_id
 
         # V3 scalar getters read the shared BotState — not a Python-side state mgr.
         assert handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE

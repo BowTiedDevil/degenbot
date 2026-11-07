@@ -18,7 +18,7 @@ use degenbot_pools::{PoolEntry, RegisteredPoolFamily};
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-use pyo3::types::{PyDict, PyList, PySet, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PySet, PyTuple};
 
 use crate::bot::errmap::{
     encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, pool_unregistered,
@@ -638,7 +638,7 @@ impl PyLiquidityPool {
         })
     }
 
-    /// The pool ID this handle references.
+    /// The engine registration index this handle references.
     #[must_use]
     pub const fn id(&self) -> u64 {
         self.pool_id
@@ -647,10 +647,11 @@ impl PyLiquidityPool {
 
 #[pymethods]
 impl PyLiquidityPool {
-    /// The pool ID this handle references.
+    /// The engine's own identifier for this pool — the registration index
+    /// this handle references.
     #[getter]
     #[expect(clippy::missing_const_for_fn)]
-    fn pool_id(&self) -> u64 {
+    fn engine_pool_id(&self) -> u64 {
         self.pool_id
     }
 
@@ -1503,16 +1504,19 @@ impl PyLiquidityPool {
         })
     }
 
-    /// On-chain V4 pool ID (32-byte hex, ``0x``-prefixed). Empty string if not
-    /// a V4 pool.
+    /// On-chain V4 pool ID (validated 32 bytes).
+    ///
+    /// Raises:
+    ///     `ValueError`: If the handle is not a registered V4 pool.
     #[getter]
-    fn pool_id_hex(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            match core.pool_slice::<degenbot_pools::V4PoolIdentity>(self.pool_id) {
-                Some(i) => alloy::hex::encode_prefixed(i.pool_id),
-                None => String::new(),
-            }
-        })
+    fn pool_id<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let pool_id = self.with_state(py, |core| {
+            core.pool_slice::<degenbot_pools::V4PoolIdentity>(self.pool_id)
+                .map(|identity| identity.pool_id)
+        });
+        pool_id
+            .map(|pool_id| PyBytes::new(py, &pool_id))
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("pool is not a v4 pool"))
     }
 
     /// Hook contract address (EIP-55 checksummed hex). Empty string if not a
@@ -2718,6 +2722,71 @@ mod tests {
             assert!(stable.balancer_weighted(py).map(|_| ()).is_err());
         });
     }
+
+    /// A registered V4 pool — the family whose domain identity is its
+    /// 32-byte pool ID.
+    fn v4_handle() -> PyLiquidityPool {
+        let mut state = BotState::new();
+        let pool_id = state
+            .register_v4_pool(&degenbot_pools::RegisterV4PoolParams {
+                pool_manager: Address::repeat_byte(0x44),
+                pool_id: [0x5au8; 32],
+                pool_key: degenbot_pools::V4PoolKey {
+                    currency0: Address::repeat_byte(0x01),
+                    currency1: Address::repeat_byte(0x02),
+                    fee: 3000,
+                    tick_spacing: 60,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(2u64).pow(U256::from(96u64)),
+                liquidity: 1_000_000,
+                tick: 0,
+                update_block: 9,
+                ..Default::default()
+            })
+            .expect("v4 registration");
+        handle_for(state, pool_id)
+    }
+
+    /// The pool-ID getters answer the exact registered 32 bytes — the byte
+    /// shape crosses the FFI; hex lives only at text/JSON boundaries.
+    #[test]
+    fn pool_id_getters_round_trip_the_registered_32_bytes() {
+        Python::attach(|py| {
+            let (weighted, stable) = balancer_handles();
+            let weighted_id = weighted
+                .balancer_weighted(py)
+                .expect("a weighted handle narrows to its arm")
+                .pool_id(py)
+                .expect("the weighted arm carries its pool ID");
+            assert_eq!(weighted_id.as_bytes(), &[0x07u8; 32]);
+            let stable_id = stable
+                .balancer_stable(py)
+                .expect("a stable handle narrows to its arm")
+                .pool_id(py)
+                .expect("the stable arm carries its pool ID");
+            assert_eq!(stable_id.as_bytes(), &[0x08u8; 32]);
+
+            let v4 = v4_handle();
+            let v4_id = v4.pool_id(py).expect("a V4 handle carries its pool ID");
+            assert_eq!(v4_id.as_bytes(), &[0x5au8; 32]);
+        });
+    }
+
+    /// The handle's pool-ID read refuses a registered family with no 32-byte
+    /// pool ID — never a sentinel.
+    #[test]
+    fn handle_pool_id_refuses_a_foreign_family() {
+        Python::attach(|py| {
+            let err = v2_handle()
+                .pool_id(py)
+                .expect_err("a V2 handle carries no 32-byte pool ID");
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert_eq!(err.to_string(), "ValueError: pool is not a v4 pool");
+        });
+    }
 }
 
 /// Read-only reserve-pair view exposed to Python.
@@ -3628,10 +3697,11 @@ impl PyBalancerWeightedView {
         })
     }
 
-    /// Balancer V2 pool ID (32-byte hex, ``0x``-prefixed).
+    /// Balancer V2 pool ID (validated 32 bytes).
     #[getter]
-    fn pool_id_hex(&self, py: Python<'_>) -> PyResult<String> {
-        self.identity(py, |id| alloy::hex::encode_prefixed(id.pool_id))
+    fn pool_id<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let pool_id = self.identity(py, |id| id.pool_id)?;
+        Ok(PyBytes::new(py, &pool_id))
     }
 
     /// Balancer weighted denormalized weights (one `U256` per token).
@@ -3739,10 +3809,11 @@ impl PyBalancerStableView {
         })
     }
 
-    /// Balancer V2 stable pool ID (32-byte hex, ``0x``-prefixed).
+    /// Balancer V2 stable pool ID (validated 32 bytes).
     #[getter]
-    fn pool_id_hex(&self, py: Python<'_>) -> PyResult<String> {
-        self.identity(py, |id| alloy::hex::encode_prefixed(id.pool_id))
+    fn pool_id<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let pool_id = self.identity(py, |id| id.pool_id)?;
+        Ok(PyBytes::new(py, &pool_id))
     }
 
     /// Balancer stable scaling factors (one ``U256`` per token,

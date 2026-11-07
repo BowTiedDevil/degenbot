@@ -69,7 +69,7 @@ class _CountingFakeEngine:
 class _PoolHandle:
     """The Rust pool-handle slice the registry reads: the engine pool id."""
 
-    pool_id: int
+    engine_pool_id: int
 
 
 @dataclass
@@ -82,7 +82,7 @@ class _FakeV3Pool:
     @property
     def engine_pool_id(self) -> int:
         """The engine id the companion's public read answers."""
-        return self._py_pool.pool_id
+        return self._py_pool.engine_pool_id
 
 
 @dataclass
@@ -96,18 +96,18 @@ class _FakeV4Pool:
     @property
     def engine_pool_id(self) -> int:
         """The engine id the companion's public read answers."""
-        return self._py_pool.pool_id
+        return self._py_pool.engine_pool_id
 
 
 def _fake_v3_pool(pool_id: int) -> _FakeV3Pool:
-    return _FakeV3Pool(address=V3_ADDR, _py_pool=_PoolHandle(pool_id=pool_id))
+    return _FakeV3Pool(address=V3_ADDR, _py_pool=_PoolHandle(engine_pool_id=pool_id))
 
 
 def _fake_v4_pool(pool_id: int) -> _FakeV4Pool:
     return _FakeV4Pool(
         address=V4_MANAGER,
         pool_id=to_bytes(b"\x01" * 32),
-        _py_pool=_PoolHandle(pool_id=pool_id),
+        _py_pool=_PoolHandle(engine_pool_id=pool_id),
     )
 
 

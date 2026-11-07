@@ -844,9 +844,9 @@ class BalancerStableView:
         systematic-1-wei-error guard.
         """
     @property
-    def pool_id_hex(self, /) -> str:
+    def pool_id(self, /) -> bytes:
         """
-        Balancer V2 stable pool ID (32-byte hex, ``0x``-prefixed).
+        Balancer V2 stable pool ID (validated 32 bytes).
         """
     @property
     def rate_provider_is_static(self, /) -> bool:
@@ -890,9 +890,9 @@ class BalancerWeightedView:
         pre-registers them via `Bot.register_token`).
         """
     @property
-    def pool_id_hex(self, /) -> str:
+    def pool_id(self, /) -> bytes:
         """
-        Balancer V2 pool ID (32-byte hex, ``0x``-prefixed).
+        Balancer V2 pool ID (validated 32 bytes).
         """
     @property
     def pow_version(self, /) -> int:
@@ -3572,6 +3572,12 @@ class Pool:
         self, /, zero_for_one: bool, amount_out: Any, recipient: str
     ) -> tuple[str, str, int] | None: ...
     @property
+    def engine_pool_id(self, /) -> int:
+        """
+        The engine's own identifier for this pool — the registration index
+        this handle references.
+        """
+    @property
     def factory(self, /) -> str:
         """
         Factory contract address (EIP-55 checksummed hex). Empty string when the
@@ -3651,15 +3657,12 @@ class Pool:
         `variant`, which is V2-only and returns `""` for non-V2).
         """
     @property
-    def pool_id(self, /) -> int:
+    def pool_id(self, /) -> bytes:
         """
-        The pool ID this handle references.
-        """
-    @property
-    def pool_id_hex(self, /) -> str:
-        """
-        On-chain V4 pool ID (32-byte hex, ``0x``-prefixed). Empty string if not
-        a V4 pool.
+        On-chain V4 pool ID (validated 32 bytes).
+
+        Raises:
+            `ValueError`: If the handle is not a registered V4 pool.
         """
     @property
     def pool_manager_address(self, /) -> str:

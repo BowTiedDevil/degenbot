@@ -207,7 +207,7 @@ def test_register_path_dispatches_aerodrome_key(py_bot) -> None:
     )
     # The pool's shared-core id, read off its core handle.
     aero_key = registry.register_aerodrome_pool(aero)
-    assert aero_key == aero._py_pool.pool_id
+    assert aero_key == aero._py_pool.engine_pool_id
     # The core resolves it back by the aerodrome family identity.
     fake.register_identity("aerodrome-v2", aero.address, aero_key)
 

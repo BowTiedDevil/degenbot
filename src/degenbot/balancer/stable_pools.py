@@ -195,8 +195,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         # in the pool_id. Resolve the pool address off the pool_id.
         self.vault = get_checksum_address(arm.vault)
 
-        pool_id_hex = arm.pool_id_hex.removeprefix("0x")
-        self.pool_id = bytes.fromhex(pool_id_hex)
+        self.pool_id = arm.pool_id
         self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
         # Pool address = first 20 bytes of the pool_id.
         self.address = get_checksum_address("0x" + self.pool_id[:20].hex())
