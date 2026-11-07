@@ -62,6 +62,14 @@ expect_used = "deny"
 panic = "deny"
 panic_in_result_fn = "deny"
 
+# Assert semantics - a debug_assert! expression is evaluated only when
+# debug_assertions are on, so a mutation parked inside it runs under dev tests
+# and vanishes from the shipped release profile. The assertion inspects the
+# result of a hoisted mutation, never performs it. Enforcement is partial: the
+# lint sees mutation through local bindings, not `self.field.method(..)`-shaped
+# side effects, so the release-profile test leg stays the whole-class backstop.
+debug_assert_with_mut_call = "deny"
+
 # The "no cheating" rule
 # NOTE: allow_attributes_without_reason would ALSO demand a reason on every #[expect]
 # (882 expects, only 19 reasoned) - too costly. keep allow_attributes (outer) + a CI rg guard for inner #![allow].

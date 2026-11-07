@@ -148,15 +148,21 @@ test-standalone:
 # CI and the pre-push hook still address the language tracks directly
 # (`test-rust` / `test-python`) so the python-version matrix and job
 # partitioning keep working. Deliberately excluded from `test` (run on demand):
-# toolchain-gated Tier-3 harness rebuilds (`test-tier3` / `verify-tier3-*`) and
-# net-gated suites (`test-fork`, `record-golden`, `verify-deployments`).
+# toolchain-gated Tier-3 harness rebuilds (`test-tier3` / `verify-tier3-*`),
+# net-gated suites (`test-fork`, `record-golden`, `verify-deployments`), and the
+# release-profile leg (`test-rust-release`), which keeps its place at the
+# push/CI boundary (`test-rust`: every push and CI run) and comes out of the dev
+# loop. Its bug class, a mutation inside a conditionally-evaluated
+# `debug_assert!` expression, is denied as a lint at dev speed where the lint
+# can see it (`debug_assert_with_mut_call`); the leg stays the whole-class
+# backstop at the boundary.
 
 # Default gate: workspace lint (fails fast) + the retirement-tripwire ratchet +
-# standalone smoke + cargo workspace + the release-profile leg + full pytest. The
+# standalone smoke + cargo workspace + full pytest. The
 # ratchet is a ~1s source scan (ADR-087 D4), so it rides here as well as at
 # pre-push: a tripwire introduced while iterating fails at `just test`, not only
 # at the push that follows.
-test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-rust-release test-python check-consumer-probes
+test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-python check-consumer-probes
 
 # Run the pre-push gates before `git push`. prek.toml's
 # `stages = ["pre-push"]` entries are the single owner of the gate list (the
@@ -203,8 +209,10 @@ test-rust: check-toolchain test-standalone
     cargo test --locked --manifest-path rust/Cargo.toml --workspace --features degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness
     # The release profile is the one that ships (debug_assertions off). CI's rust
     # job and the push hook's `rust-test` entry call `test-rust`, not `test`, so
-    # the release leg rides here as well: wiring only the aggregator would leave
-    # the shipped-profile check out of every CI run and every push.
+    # the release leg rides here, and only here: `test` skips the compile and
+    # leans on `debug_assert_with_mut_call` at lint speed for the shapes the
+    # lint can see. Wiring only the aggregator would leave the shipped-profile
+    # check out of every CI run and every push.
     just test-rust-release
 
 # Reproduce CI's test-binary build exactly (ci.yml sets these two globally):
@@ -319,8 +327,8 @@ test-rust-nextest *args: check-toolchain
 # effect parked inside a `debug_assert!` *vanishes* there. `PoolTable::allocate`
 # shipped its map insert exactly that way (4afecc9cf): every dev-profile test
 # passed while the release profile left the pool table empty. This leg runs the
-# state-layer suites under the release profile, so that class of bug fails the
-# default gate instead of shipping.
+# state-layer suites under the release profile, so that class of bug fails at
+# the push/CI boundary (`test-rust`) instead of shipping.
 #
 # Scope (audit-driven, re-run it before widening): `degenbot-substrate` is the
 # incident crate (PoolTable, BotState) and `degenbot-simulation` is the state/
