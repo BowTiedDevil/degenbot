@@ -1,10 +1,10 @@
 """Aerodrome V3 on-chain parity — golden record/replay (T7).
 
-Golden conversion of the Aerodrome V3 ``quoteExactInputSingle`` exact-equality
-parity (``test_aerodrome_v3_pool_calculation`` in ``test_aerodrome_pools.py``).
-One representative pool (cbETH/WETH, 0.01%) with the full 13-multiplier x
-both-directions loop, minus the one input the tick-state cassette cannot
-verify; the broad live loop stays as a live discovery gate.
+Representative offline replay coverage of the Aerodrome V3
+``quoteExactInputSingle`` exact-equality parity: one representative pool
+(cbETH/WETH, 0.01%) with the full 13-multiplier x both-directions loop, minus
+the one input the tick-state cassette cannot verify. ``--golden-mode=record``
+is the on-demand live parity/discovery path.
 
 Unlike the V2 tracers (reserves-only), a V3 (concentrated-liquidity) pool
 needs tick state to simulate a swap, so the pool is built I/O-free (ADR-005)

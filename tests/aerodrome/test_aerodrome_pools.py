@@ -3,14 +3,11 @@ from collections.abc import Generator
 import pydantic_core
 import pytest
 
-from degenbot.aerodrome.functions import generate_aerodrome_v2_pool_address
 from degenbot.aerodrome.types import AerodromeV3PoolState
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork, ForkLaunchConfig
-from degenbot.uniswap.math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.conftest import TEST_BASE_FULL_NODE_HTTP_URI, _require_live_node
 from tests.helpers.bot_factory import make_bot_with_provider
-from tests.helpers.contract_compat import make_contract
 
 WETH_CONTRACT_ADDRESS = get_checksum_address(
     "0x4200000000000000000000000000000000000006",
@@ -22,15 +19,9 @@ CBETH_CONTRACT_ADDRESS = get_checksum_address(
 AERODROME_V2_FACTORY_ADDRESS = get_checksum_address(
     "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
 )
-AERODROME_V2_POOL_IMPLEMENTATION_ADDRESS = get_checksum_address(
-    "0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7",
-)
 
 AERODROME_V3_FACTORY_ADDRESS = get_checksum_address(
     "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A",
-)
-AERODROME_V3_QUOTER_ADDRESS = get_checksum_address(
-    "0x254cF9E1E6e233aa1AC962CB9B05b2cfeAaE15b0",
 )
 AERODROME_V3_TBTC_USDBC_POOL_ADDRESS = get_checksum_address(
     "0x723AEf6543aecE026a15662Be4D3fb3424D502A9",
@@ -71,24 +62,6 @@ def fork_base_full() -> Generator[AnvilFork, None, None]:
     fork.close()
 
 
-def test_aerodrome_v2_address_generator():
-    # Should generate address for Aerodrome V2 tBTC/USDBc pool
-    # factory ref: https://basescan.org/address/0x420dd381b31aef6683db6b902084cb0ffece40da
-    # pool ref: https://basescan.org/address/0x723AEf6543aecE026a15662Be4D3fb3424D502A9
-    assert (
-        generate_aerodrome_v2_pool_address(
-            deployer_address=AERODROME_V2_FACTORY_ADDRESS,
-            token_addresses=[
-                "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
-                "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
-            ],
-            implementation_address=AERODROME_V2_POOL_IMPLEMENTATION_ADDRESS,
-            stable=False,
-        )
-        == AERODROME_V3_TBTC_USDBC_POOL_ADDRESS
-    )
-
-
 def test_create_pool(fork_base_full: AnvilFork):
 
     bot = make_bot_with_provider(fork_base_full.provider)
@@ -98,79 +71,8 @@ def test_create_pool(fork_base_full: AnvilFork):
     assert lp.deployer_address == AERODROME_V2_FACTORY_ADDRESS
 
 
-def test_aerodrome_v3_pool_creation(fork_base_full: AnvilFork) -> None:
-
-    bot = make_bot_with_provider(fork_base_full.provider)
-    bot.build_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
-
-
 def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
 
     bot = make_bot_with_provider(fork_base_full.provider)
     lp = bot.build_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
     assert isinstance(lp.state, AerodromeV3PoolState), f"{type(lp.state)=}"
-
-
-def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
-
-    quoter = make_contract(
-        fork_base_full.http_url, AERODROME_V3_QUOTER_ADDRESS, AERODROME_V3_QUOTER_ABI
-    )
-    bot = make_bot_with_provider(fork_base_full.provider)
-    lp = bot.build_pool("0x98c7A2338336d2d354663246F64676009c7bDa97")
-
-    max_reserves_token0 = bot.get_token_balance(lp.token0, lp.address)
-    max_reserves_token1 = bot.get_token_balance(lp.token1, lp.address)
-
-    token_amount_multipliers = [
-        0.000000001,
-        0.00000001,
-        0.0000001,
-        0.000001,
-        0.00001,
-        0.0001,
-        0.001,
-        0.01,
-        0.1,
-        0.125,
-        0.25,
-        0.5,
-        0.75,
-    ]
-
-    for token_mult in token_amount_multipliers:
-        token_in_amount = int(token_mult * max_reserves_token0)
-        if token_in_amount == 0:
-            continue
-
-        helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-            token_in=lp.token0,
-            token_in_quantity=token_in_amount,
-        )
-        quoter_amount_out, *_ = quoter.functions.quoteExactInputSingle([
-            lp.token0.address,  # tokenIn
-            lp.token1.address,  # tokenOut
-            token_in_amount,  # amountIn
-            lp.tick_spacing,  # tickSpacing
-            MIN_SQRT_RATIO + 1,  # sqrtPriceLimitX96
-        ]).call()
-
-        assert helper_amount_out == quoter_amount_out
-
-        token_in_amount = int(token_mult * max_reserves_token1)
-        if token_in_amount == 0:
-            continue
-
-        helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-            token_in=lp.token1,
-            token_in_quantity=token_in_amount,
-        )
-        quoter_amount_out, *_ = quoter.functions.quoteExactInputSingle([
-            lp.token1.address,  # tokenIn
-            lp.token0.address,  # tokenOut
-            token_in_amount,  # amountIn
-            lp.tick_spacing,  # tickSpacing
-            MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
-        ]).call()
-
-        assert helper_amount_out == quoter_amount_out

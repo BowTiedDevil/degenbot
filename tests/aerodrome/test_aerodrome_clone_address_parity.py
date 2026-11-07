@@ -38,6 +38,8 @@ BASE_WETH = "0x4200000000000000000000000000000000000006"
 BASE_AERO = "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
 BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA20429"
 BASE_DAI = "0x50c5725949A6F0c72E6C4a641F24049A9Ee73273"
+BASE_TBTC = "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b"
+BASE_USDBC = "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA"
 
 
 V2_CASES: list[tuple[str, str, bool]] = [
@@ -47,6 +49,7 @@ V2_CASES: list[tuple[str, str, bool]] = [
     (BASE_DAI, BASE_USDC, True),  # stable reversed
     (BASE_USDC, BASE_WETH, False),
     (BASE_USDC, BASE_WETH, True),
+    (BASE_TBTC, BASE_USDBC, False),  # the on-chain volatile tBTC/USDBc pool
 ]
 
 
@@ -107,6 +110,19 @@ def test_v2_known_onchain_address() -> None:
             implementation_address=AERODROME_V2_IMPLEMENTATION,
         )
         == "0x7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6"
+    )
+
+
+def test_v2_known_onchain_address_tbtc_usdbc() -> None:
+    # Pins the real on-chain Base tBTC/USDBc V2 volatile pool.
+    assert (
+        generate_aerodrome_v2_pool_address(
+            deployer_address=AERODROME_V2_DEPLOYER,
+            token_addresses=(BASE_TBTC, BASE_USDBC),
+            implementation_address=AERODROME_V2_IMPLEMENTATION,
+            stable=False,
+        )
+        == "0x723AEf6543aecE026a15662Be4D3fb3424D502A9"
     )
 
 

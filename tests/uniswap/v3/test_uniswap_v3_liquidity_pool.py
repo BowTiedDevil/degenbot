@@ -15,12 +15,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
 )
 from degenbot.fork import AnvilFork
-from degenbot.types.chain import ChainId
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.deployments import (
-    UniswapFactoryDeployment,
-    UniswapV3ExchangeDeployment,
-)
 from degenbot.uniswap.math import (
     MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
@@ -46,23 +41,6 @@ WBTC_CONTRACT_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C19
 DAI_CONTRACT_ADDRESS = get_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
 UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
 UNISWAP_V3_QUOTER_ADDRESS = get_checksum_address("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
-BASE_CBETH_WETH_V3_POOL_ADDRESS = get_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
-BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = get_checksum_address(
-    "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
-)
-BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = get_checksum_address(
-    "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
-)
-BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
-    name="PancakeSwap V3",
-    chain_id=ChainId.BASE,
-    factory=UniswapFactoryDeployment(
-        address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
-        deployer=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
-        pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
-    ),
-)
-
 UNISWAP_V3_QUOTER_ABI = pydantic_core.from_json(
     """
     [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountOut","type":"uint256"}],"name":"quoteExactOutput","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactOutputSingle","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"int256","name":"amount0Delta","type":"int256"},{"internalType":"int256","name":"amount1Delta","type":"int256"},{"internalType":"bytes","name":"path","type":"bytes"}],"name":"uniswapV3SwapCallback","outputs":[],"stateMutability":"view","type":"function"}]
@@ -213,12 +191,6 @@ def test_built_pool_identity_matches_deployment_truth(fork_base_full: AnvilFork)
     assert pool.pool_type.variant == "pancakeswap"
     with pytest.raises(AttributeError):
         pool.pool_type = pool.pool_type  # type: ignore[misc]
-
-
-@pytest.mark.base
-def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
-    bot = make_bot_with_provider(fork_base_full.provider)
-    bot.build_pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
 @pytest.mark.online_rpc
@@ -552,7 +524,6 @@ def test_zero_swaps(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:
         )
 
 
-@pytest.mark.online_rpc
 def test_swap_for_all(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:
     # Runs against the full-range recorded golden (the tick map carries the
     # pool's walk to MIN/MAX_TICK), fully offline. The pool's range
@@ -573,12 +544,3 @@ def test_swap_for_all(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> Non
             token_out=wbtc_weth_v3_lp_at_historical_block.token1,
             token_out_quantity=1_000_000 * 10**wbtc_weth_v3_lp_at_historical_block.token1.decimals,
         )
-
-
-@pytest.mark.base
-def test_base_pancakeswap_v3(fork_base_full: AnvilFork):
-    bot = make_bot_with_provider(fork_base_full.provider)
-
-    # Build a PancakeSwap V3 pool, which extends UniswapV3Pool
-    lp = bot.build_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)
-    assert lp is not None
