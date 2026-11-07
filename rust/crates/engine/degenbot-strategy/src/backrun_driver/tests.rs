@@ -10,14 +10,16 @@ use crate::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{ParkRecord, QuarantineJournal};
 use alloy::primitives::{Address, B256};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
-use std::sync::Arc;
+use degenbot_submission::dispatcher::Dispatcher;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use super::driver_loop::{
-    decode_predecessor, journal_reentry_outcome, nonce_lane_evidence, outcome_for,
-    park_blocked_frame, pool_known_gap_for_tick, predecessor_hash, quarantine_journal_path,
-    record_gap_park, reentry_outcome, route_failed_hydration, route_unhydratable_hydration,
-    run_frame, DriverHandle, FrameOutcome, GapParkMemo, LoopDecline, LoopPhase, LoopShared,
-    ReentryOutcome, FEED_PREFIX,
+    advance_priced_head, decode_predecessor, journal_reentry_outcome, nonce_lane_evidence,
+    outcome_for, park_blocked_frame, pool_known_gap_for_tick, predecessor_hash,
+    quarantine_journal_path, record_gap_park, reentry_outcome, route_failed_hydration,
+    route_unhydratable_hydration, run_frame, DriverHandle, FrameOutcome, GapParkMemo, LoopDecline,
+    LoopPhase, LoopShared, ReentryOutcome, FEED_PREFIX,
 };
 use super::node_capability::NodeCapability;
 use crate::frame_pipeline::{bid_submission_target, build_broadcast_relays};
@@ -1628,4 +1630,260 @@ async fn an_undialable_sim_endpoint_is_a_typed_refusal() {
         error.contains("sim.local/fast"),
         "the refusal names the sim endpoint it could not dial: {error}"
     );
+}
+
+// ── The wallet gas-price policy ─────────────────────────────────────────
+//
+// The bid's wallet cost prices NOTHING on a failed read: transport
+// refusals and absent blocks propagate through the driver's error channel,
+// and only a block the chain proves pre-EIP-1559 prices at the explicit
+// legacy policy. Every failure class is producible from a scripted
+// reader, never a live node.
+
+use super::driver_policy::{
+    initial_wallet_gas_cost, wallet_gas_cost_at, BaseFeeAnswer, BlockFeeFuture, BlockFeeReader,
+};
+
+/// A scripted block/fee reader: each read answers from a canned result and
+/// records the block number the fee read was asked for, so a test can prove
+/// which head the policy priced without a live HTTP service.
+struct FakeFeeReader {
+    head: Result<u64, String>,
+    fee: Result<BaseFeeAnswer, String>,
+    asked: std::sync::Mutex<Option<u64>>,
+}
+
+impl FakeFeeReader {
+    fn new(head: Result<u64, String>, fee: Result<BaseFeeAnswer, String>) -> Self {
+        Self {
+            head,
+            fee,
+            asked: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn asked(&self) -> Option<u64> {
+        *self
+            .asked
+            .lock()
+            .expect("the scripted lock is not poisoned")
+    }
+}
+
+impl BlockFeeReader for FakeFeeReader {
+    fn head_number(&self) -> BlockFeeFuture<'_, Result<u64, String>> {
+        let head = self.head.clone();
+        Box::pin(async move { head })
+    }
+
+    fn base_fee_wei(&self, block: u64) -> BlockFeeFuture<'_, Result<BaseFeeAnswer, String>> {
+        *self
+            .asked
+            .lock()
+            .expect("the scripted lock is not poisoned") = Some(block);
+        let fee = self.fee.clone();
+        Box::pin(async move { fee })
+    }
+}
+
+/// The pricing inputs every expected value below is hand-computed from:
+/// `bundle_gas_est` `300_000` at `priority_fee_gwei` 2.
+fn pricing_cfg() -> crate::backrun::BackrunConfig {
+    crate::backrun::BackrunConfig {
+        feed_url: String::new(),
+        rpc_url: String::from("http://mock-node.local"),
+        key_file: None,
+        bid_mode: true,
+        budget_wei: alloy::primitives::U256::from(1_000_000_000_000_000_000u64),
+        max_bundle_wei: alloy::primitives::U256::from(1_000_000_000_000_000_000u64),
+        stop_file: std::path::PathBuf::from("/nonexistent/degenbot-stop"),
+        dry_run: false,
+        bribe_bips: 0,
+        bundle_gas_est: 300_000,
+        gas_floor_wei: 0,
+        verify_ticks: degenbot_substrate::pool_ingress::VerifyLevel::default(),
+        priority_fee_gwei: 2,
+        sim_url: None,
+        rank_evidence: false,
+        connectors: 8,
+        cycle_max_hops: 4,
+        fixture_head: None,
+        executor: String::from("0x00000000000000000000000000000000000000e1"),
+        operator: String::from("0x00000000000000000000000000000000000000e0"),
+        dry_run_jsonl: None,
+        submission: SubmissionSlot::PublicFanOut { relays: Vec::new() },
+    }
+}
+
+/// A transport refusal prices nothing and carries the transport's own
+/// message: no 30-gwei default can stand in for a read that never happened.
+#[tokio::test]
+async fn rpc_failure_is_no_price_never_the_legacy_default() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(7), Err(String::from("rpc timeout")));
+
+    let priced = wallet_gas_cost_at(&reader, 7, &cfg).await;
+    let error = priced.expect_err("a refused read prices nothing");
+
+    assert!(
+        matches!(error, super::BackrunBootError::WalletGasPriceTransport(_)),
+        "a transport refusal is its own class, not a missing block: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("rpc timeout"),
+        "the refusal carries the transport's own message: {error}"
+    );
+}
+
+/// A missing block prices nothing and is never priced as block zero: the
+/// refusal names the number the node did not have.
+#[tokio::test]
+async fn missing_block_is_no_price_never_block_zero() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(7), Ok(BaseFeeAnswer::MissingBlock));
+
+    let priced = wallet_gas_cost_at(&reader, 7, &cfg).await;
+    let error = priced.expect_err("a block the node does not have prices nothing");
+
+    assert_eq!(
+        error,
+        super::BackrunBootError::WalletGasPriceMissingBlock(7)
+    );
+}
+
+/// A block that carries no base fee proves itself pre-EIP-1559 (a
+/// post-London header always carries one) and prices ONLY at the explicit
+/// legacy policy: `300_000` gas x (30 gwei next base fee + 2 gwei priority).
+#[tokio::test]
+async fn missing_base_fee_prices_the_explicit_legacy_policy_only() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(7), Ok(BaseFeeAnswer::MissingBaseFee));
+
+    let priced = wallet_gas_cost_at(&reader, 7, &cfg).await;
+    let cost = priced.expect("a proven legacy block prices at the explicit policy");
+
+    assert_eq!(cost, 9_600_000_000_000_000);
+}
+
+/// A fresh base fee prices the wallet cost at its next-base-fee derivation:
+/// `300_000` gas x (10 gwei x 1.2 next base fee + 2 gwei priority).
+#[tokio::test]
+async fn fresh_base_fee_prices_the_wallet_cost() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(42), Ok(BaseFeeAnswer::Fee(10_000_000_000)));
+
+    let priced = wallet_gas_cost_at(&reader, 42, &cfg).await;
+    let cost = priced.expect("a fresh base fee prices");
+
+    assert_eq!(cost, 4_200_000_000_000_000);
+}
+
+/// The initial price rides the head the node reports, never block zero.
+#[tokio::test]
+async fn initial_wallet_gas_cost_prices_at_the_fetched_head_never_zero() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(42), Ok(BaseFeeAnswer::Fee(10_000_000_000)));
+
+    let priced = initial_wallet_gas_cost(&reader, &cfg).await;
+    let cost = priced.expect("a fresh base fee prices");
+
+    assert_eq!(cost, 4_200_000_000_000_000);
+    assert_eq!(
+        reader.asked(),
+        Some(42),
+        "the fee read rides the fetched head"
+    );
+}
+
+/// A failed head read is no head: the initial price propagates the refusal
+/// and prices nothing, rather than pricing block zero.
+#[tokio::test]
+async fn head_read_failure_is_no_price_never_block_zero() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(
+        Err(String::from("connection refused")),
+        Ok(BaseFeeAnswer::Fee(10_000_000_000)),
+    );
+
+    let priced = initial_wallet_gas_cost(&reader, &cfg).await;
+    let error = priced.expect_err("a head that never arrived prices nothing");
+
+    assert!(
+        matches!(error, super::BackrunBootError::WalletGasPriceTransport(_)),
+        "the head read fails at the transport: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("connection refused"),
+        "the refusal carries the transport's own message: {error}"
+    );
+    assert_eq!(
+        reader.asked(),
+        None,
+        "no fee read rides a head that never arrived"
+    );
+}
+
+// ── The head-advance price gate ─────────────────────────────────────────
+
+/// A failed refresh at a head prices NOTHING at it: the head stays
+/// unhandled, so no compose or frame pass at that head can ride the
+/// previous cost and no state claims a head the gate could not price was
+/// handled.
+#[tokio::test]
+async fn a_failed_gas_price_refresh_leaves_the_head_unhandled() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(42), Err(String::from("rpc timeout")));
+    let gate = AtomicU64::new(777);
+    let dispatcher = Mutex::new(Dispatcher::for_block(5));
+    let mut cursor = 5;
+
+    let advanced = advance_priced_head(&reader, 42, &cfg, &gate, &dispatcher, &mut cursor).await;
+    let error = advanced.expect_err("a refused refresh never handles the head");
+
+    assert!(
+        matches!(error, super::BackrunBootError::WalletGasPriceTransport(_)),
+        "the refusal is the transport's own class: {error:?}"
+    );
+    assert_eq!(
+        dispatcher
+            .lock()
+            .expect("the test lock is not poisoned")
+            .current_block(),
+        5,
+        "the dispatcher never claims a head the gate could not price"
+    );
+    assert_eq!(cursor, 5, "the loop cursor never claims that head");
+    assert_eq!(
+        gate.load(Ordering::Relaxed),
+        777,
+        "the compose gate is never committed a price the refresh did not prove"
+    );
+}
+
+/// A fresh refresh keeps normal head processing: the gate commits the
+/// freshly derived cost and the head becomes handled.
+#[tokio::test]
+async fn a_fresh_gas_price_refresh_advances_the_head_and_the_gate() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(42), Ok(BaseFeeAnswer::Fee(10_000_000_000)));
+    let gate = AtomicU64::new(777);
+    let dispatcher = Mutex::new(Dispatcher::for_block(5));
+    let mut cursor = 5;
+
+    let advanced = advance_priced_head(&reader, 42, &cfg, &gate, &dispatcher, &mut cursor).await;
+    advanced.expect("a fresh price handles the head");
+
+    assert_eq!(
+        gate.load(Ordering::Relaxed),
+        4_200_000_000_000_000,
+        "the gate commits the fresh cost: 300_000 gas x (10 gwei x 1.2 + 2 gwei)"
+    );
+    assert_eq!(
+        dispatcher
+            .lock()
+            .expect("the test lock is not poisoned")
+            .current_block(),
+        42
+    );
+    assert_eq!(cursor, 42);
 }

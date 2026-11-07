@@ -16,7 +16,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -44,7 +44,7 @@ use degenbot_submission::submission_ledger::SubmissionLedger;
 use degenbot_substrate::nonce::NonceLane;
 
 use super::driver_boot::{BackrunBootError, BackrunStrategyBoot};
-use super::driver_policy::{initial_wallet_gas_cost, wallet_gas_cost_at};
+use super::driver_policy::{initial_wallet_gas_cost, wallet_gas_cost_at, BlockFeeReader};
 use super::node_capability::NodeCapability;
 
 /// How long the live loop waits on the head watch before servicing the frame
@@ -1095,6 +1095,11 @@ impl BackrunDriver {
     /// host can report and act on, not a panic: a socket path or a
     /// scheme-spelled node is a valid answer here, and a `localhost:8545`
     /// typo is an operator error with a typed refusal.
+    ///
+    /// [`BackrunBootError::WalletGasPriceTransport`] or
+    /// [`BackrunBootError::WalletGasPriceMissingBlock`] when the initial
+    /// wallet gas-price read fails: the boot refuses rather than pricing the
+    /// wallet cost from a default.
     pub async fn start(
         strategy: BackrunStrategyBoot,
         hub: Arc<Hub>,
@@ -1168,7 +1173,8 @@ impl BackrunDriver {
             .parse()
             .expect("the facet's operator is a valid address");
         let wallet_gas_cost_wei = Arc::new(std::sync::atomic::AtomicU64::new(
-            u64::try_from(initial_wallet_gas_cost(&provider, &cfg).await).unwrap_or(u64::MAX),
+            u64::try_from(initial_wallet_gas_cost(provider.as_ref(), &cfg).await?)
+                .unwrap_or(u64::MAX),
         ));
         let pl = PipelineConfig {
             execution,
@@ -1256,6 +1262,32 @@ async fn bundle_sim_provider(
         .request_provider(&endpoint, chain_id)
         .await
         .map_err(|reason| BackrunBootError::SimEndpoint { endpoint, reason })
+}
+
+/// The head-advance price gate: `head` becomes handled - dispatcher
+/// advanced, the loop's cursor moved, the compose gate committed - only
+/// when its wallet cost priced fresh. A failed refresh hands the typed
+/// refusal back with nothing touched, so the caller skips that head and
+/// nothing at it composes at the previous cost.
+pub(super) async fn advance_priced_head<R: BlockFeeReader + ?Sized>(
+    reader: &R,
+    head: u64,
+    cfg: &BackrunConfig,
+    wallet_gas_cost_wei: &AtomicU64,
+    dispatcher: &Mutex<Dispatcher>,
+    current_block: &mut u64,
+) -> Result<(), BackrunBootError> {
+    let wallet_gas_cost = wallet_gas_cost_at(reader, head, cfg).await?;
+    wallet_gas_cost_wei.store(
+        u64::try_from(wallet_gas_cost).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
+    dispatcher
+        .lock()
+        .expect("dispatcher mutex poisoned")
+        .advance_block(head);
+    *current_block = head;
+    Ok(())
 }
 
 /// The driver loop. Everything here is loop-local: the replay handle borrows
@@ -1401,16 +1433,22 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
 
         if let Some(head) = next_head {
             if head > current_block {
-                dispatcher
-                    .lock()
-                    .expect("dispatcher mutex poisoned")
-                    .advance_block(head);
-                current_block = head;
-                pl.wallet_gas_cost_wei.store(
-                    u64::try_from(wallet_gas_cost_at(&provider, head, &cfg).await)
-                        .unwrap_or(u64::MAX),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                // A failed gas-price refresh is no price evidence: the head
+                // is skipped unprocessed, so nothing at it composes at the
+                // previous cost and no state claims it was handled.
+                if let Err(error) = advance_priced_head(
+                    provider.as_ref(),
+                    head,
+                    &cfg,
+                    &pl.wallet_gas_cost_wei,
+                    &dispatcher,
+                    &mut current_block,
+                )
+                .await
+                {
+                    tracing::warn!("gas-price refresh failed - head {head} skipped: {error}");
+                    continue;
+                }
                 match build_block_handle(&provider, head, &execution, &runtime.warm_cache, oracle)
                     .await
                 {

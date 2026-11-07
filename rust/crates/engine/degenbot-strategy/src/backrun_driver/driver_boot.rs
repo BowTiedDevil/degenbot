@@ -147,6 +147,18 @@ pub enum BackrunBootError {
         /// Why that database cannot serve the chain.
         reason: String,
     },
+
+    /// A wallet gas-price read failed at the transport: the node answered
+    /// nothing about the chain, so nothing is priced. The message names the
+    /// read that failed and carries the transport's own refusal.
+    #[error("wallet gas-price transport read failed: {0}")]
+    WalletGasPriceTransport(String),
+
+    /// The wallet gas-price read reached the node and it has no block at the
+    /// number the pricing needed. A missing block prices nothing: it is
+    /// never priced as block zero.
+    #[error("wallet gas-price read found no block at {0}")]
+    WalletGasPriceMissingBlock(u64),
 }
 
 /// The driver's node join: the resolved chain-node HTTP endpoint and the provider
