@@ -4,14 +4,20 @@ These tests use the OfflineProvider to run without requiring a live RPC connecti
 They test deterministic V3 pool operations that don't need real-time chain data.
 """
 
+from pathlib import Path
+
 import pytest
 
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import LiquidityPoolError
+from degenbot.provider import OfflineProvider
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from tests.golden.oracle import replay_makes_no_network_calls  # ruff: ignore[unused-import]
+from tests.helpers.bot_factory import make_bot_with_provider
 
 
 class TestV3PoolCalculations:
@@ -237,3 +243,32 @@ class TestV3PoolProperties:
         # Prices should be positive
         assert price0 > 0
         assert price1 > 0
+
+
+_PANCAKE_V3_WETH_CBETH_CORPUS = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "chain_data"
+    / "8453"
+    / "construction_pancake_v3_weth_cbeth_block46875151.json"
+)
+
+PANCAKESWAP_V3_WETH_CBETH_POOL = get_checksum_address("0x257FCbAE4Ac6B26A02E4FC5e1a11e4174B5ce395")
+PANCAKESWAP_V3_FACTORY = get_checksum_address("0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865")
+PANCAKESWAP_V3_DEPLOYER = get_checksum_address("0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9")
+PANCAKESWAP_V3_INIT_HASH = "0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2"
+BASE_CBETH_ADDRESS = get_checksum_address("0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22")
+BASE_WETH_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
+
+
+def test_pancake_v3_weth_cbeth_construction_vector() -> None:
+    """The WETH/cbETH Pancake V3 vector builds with its deployment identity."""
+
+    bot = make_bot_with_provider(OfflineProvider.from_json_file(_PANCAKE_V3_WETH_CBETH_CORPUS))
+    lp = bot.build_pool(PANCAKESWAP_V3_WETH_CBETH_POOL)
+    assert lp.address == PANCAKESWAP_V3_WETH_CBETH_POOL
+    assert lp.factory == PANCAKESWAP_V3_FACTORY
+    assert lp.deployer_address == PANCAKESWAP_V3_DEPLOYER
+    assert lp.init_hash == PANCAKESWAP_V3_INIT_HASH
+    assert lp.fee == 100
+    assert {lp.token0.address, lp.token1.address} == {BASE_CBETH_ADDRESS, BASE_WETH_ADDRESS}

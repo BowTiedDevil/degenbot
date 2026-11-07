@@ -42,8 +42,9 @@ shape and its agreement with the parity goldens.
 
 - Recorded-pool cassettes spell the pin `block_<N>`
   (`aerodrome_v3_cbeth_weth_block_46875151.json`).
-- py_oracle corpora spell it `block<N>`
-  (`py_oracle_uniswap_v3_quoter_block24407242.json`).
+- py_oracle corpora and construction corpora spell it `block<N>`
+  (`py_oracle_uniswap_v3_quoter_block24407242.json`,
+  `construction_camelot_v2_mim_usdc_block477785000.json`).
 - Both spellings are historical; do not rename either.
 
 ### Regenerating the corpora
@@ -80,3 +81,32 @@ corpora on disk (exit 1 on drift). Endpoint notes:
 
 The live drift gate (`just live-drift`, i.e. `pytest -m live_drift`) runs
 `--check` per chain on demand.
+
+## Construction corpora (per-block `OfflineProvider` input)
+
+`construction_<scenario>_block<N>.json` holds one pinned block's recorded
+construction surface — the `Bot.build_pool` fetch seam plus the recorded
+`getAmountOut` quotes the Camelot construction tests compare their local calc
+against. Same wire shape as the py_oracle corpora (the v1 `format` marker,
+`chain_id`, `block_number`, `timestamp`, `calls`, `code`). Consumers: the
+construction replay suites (`tests/aerodrome/test_aerodrome_pools.py`,
+`tests/uniswap/v2/test_camelot_v2_offline.py`,
+`tests/uniswap/v3/test_v3_offline.py`), which rebuild the pools through
+`OfflineProvider` with zero RPC.
+
+### Regenerating the construction corpora
+
+Machine-emitted only — never hand-edit the JSON:
+
+```sh
+uv run --no-sync python scripts/record_construction_cassettes.py            # write
+uv run --no-sync python scripts/record_construction_cassettes.py --check    # drift gate
+```
+
+The recorder drives each suite's exact `build_pool` surface through a
+head-pinned recording proxy, records every scenario twice and requires the two
+passes byte-identical. Endpoint notes: Base (`https://mainnet.base.org`)
+rate-limits bursts — the recorder paces its requests (`--pace-ms`); Arbitrum
+needs `https://arbitrum-one.public.blastapi.io` (the official
+`arb1.arbitrum.io/rpc` rejects historical state at the camelot pin). One-time
+recording only; replay never touches a node.

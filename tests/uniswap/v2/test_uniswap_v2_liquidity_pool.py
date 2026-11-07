@@ -3,8 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from degenbot.bot import Bot
-from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
@@ -13,7 +11,6 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
-from degenbot.fork import AnvilFork
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
@@ -21,8 +18,6 @@ from degenbot.uniswap.v2_types import (
 )
 from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import load_pool
-from tests.helpers.bot_factory import make_bot_with_provider
-from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
@@ -36,16 +31,7 @@ DAI_CONTRACT_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
 WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_CONTRACT_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
-CAMELOT_WETH_USDC_LP_ADDRESS = get_checksum_address("0x84652bb2539513BAf36e225c930Fdd8eaa63CE27")
-CAMELOT_MIM_USDC_LP_ADDRESS = get_checksum_address("0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F")
-
 HISTORICAL_BLOCK = 17_600_000
-
-
-def _make_bot(fork: AnvilFork) -> Bot:
-    """Create a Bot with the fork's provider registered."""
-    provider = fork.provider
-    return make_bot_with_provider(provider)
 
 
 _V2_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v2/wbtc_weth/17600000.json")
@@ -133,68 +119,6 @@ def test_nominal_price_scaled_by_decimals(
             10**token.decimals,
             10**other_token.decimals,
         )
-
-
-@pytest.mark.online_rpc
-def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
-    bot = _make_bot(fork_arbitrum_full)
-    lp = bot.build_pool(CAMELOT_MIM_USDC_LP_ADDRESS)
-    # There is no CamelotLiquidityPool subclass; Camelot pools are canonical
-    # UniswapV2Pool instances whose DexIdentity variant tags them as Camelot.
-    # The stable pair resolves to the ``camelot-v2-stable`` preset.
-    assert isinstance(lp, UniswapV2Pool)
-    assert lp.dex.variant == "camelot-v2-stable"
-    # The fee is per-pool state, not the preset's: the pool's
-    # `getReserves()[2..4]` answers (40, 40) over `FEE_DENOMINATOR()` = 100000,
-    # i.e. 0.04%. Pin the built pair positively — a pool carrying the preset's
-    # `(0, denom)` "read the pool" marker would charge 100% and quote zero for
-    # every input, which is the defect this test's on-chain comparison caught.
-    assert lp.fee_token0 == Fraction(40, 100_000)
-    assert lp.fee_token1 == Fraction(40, 100_000)
-    assert lp.fee_denominator == 100_000
-
-    token_in = lp.token0  # MIM token
-    amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
-
-    # Test that the swap output from the pool contract matches the off-chain calculation
-    contract_compat = make_contract(
-        fork_arbitrum_full.http_url, CAMELOT_MIM_USDC_LP_ADDRESS, CAMELOT_POOL_ABI
-    )
-
-    contract_amount = contract_compat.functions.getAmountOut(
-        amountIn=amount_in,
-        tokenIn=token_in.address,
-    ).call()
-    assert contract_amount > 0
-    assert contract_amount == lp.calculate_tokens_out_from_tokens_in(
-        token_in=token_in,
-        token_in_quantity=amount_in,
-    )
-
-
-@pytest.mark.online_rpc
-def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
-    bot = _make_bot(fork_arbitrum_full)
-    lp = bot.build_pool(CAMELOT_WETH_USDC_LP_ADDRESS)
-    # There is no CamelotLiquidityPool subclass; Camelot pools are canonical
-    # UniswapV2Pool instances whose DexIdentity variant tags them as Camelot.
-    # The volatile pair resolves to the ``camelot-v2-volatile`` preset.
-    assert isinstance(lp, UniswapV2Pool)
-    assert lp.dex.variant == "camelot-v2-volatile"
-
-    token_in = lp.token1
-    amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
-
-    contract_compat = make_contract(
-        fork_arbitrum_full.http_url, CAMELOT_WETH_USDC_LP_ADDRESS, CAMELOT_POOL_ABI
-    )
-    assert contract_compat.functions.getAmountOut(
-        amountIn=amount_in,
-        tokenIn=token_in.address,
-    ).call() == lp.calculate_tokens_out_from_tokens_in(
-        token_in=token_in,
-        token_in_quantity=amount_in,
-    )
 
 
 def test_dunder_methods(
