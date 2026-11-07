@@ -39,7 +39,9 @@ use super::build_discount_snapshot;
 use super::dispatch_config_events;
 use super::revision::{match_proxy_id, ProxyCreationResolution};
 use super::revision_selector;
-use super::{encode_no_arg_call, eth_calls_batched_or_direct, word0_to_u256, ConfigDispatchError};
+use super::{
+    encode_no_arg_call, eth_calls_batched_or_direct, require_word0_u256, ConfigDispatchError,
+};
 
 // ── the revision memo ──────────────────────────────────────────────────────
 
@@ -387,7 +389,7 @@ impl<'span> ChunkContext<'span> {
             match slot {
                 BatchRead::Revision { target, sig } => {
                     let selector = revision_selector(sig);
-                    let v = word0_to_u256(ret).unwrap_or(U256::ZERO);
+                    let v = require_word0_u256(ret, sig, target)?;
                     self.memo.insert(target, selector, block_number, v);
                     results[i] = Some(BatchReadResult::Revision(v));
                 }
@@ -574,5 +576,5 @@ async fn read_uint256_return(
     let ret = provider
         .eth_call(target, calldata, Some(block_number))
         .await?;
-    Ok(word0_to_u256(&ret).unwrap_or(U256::ZERO))
+    require_word0_u256(&ret, sig, target)
 }

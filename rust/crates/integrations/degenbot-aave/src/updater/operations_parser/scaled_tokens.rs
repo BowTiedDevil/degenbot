@@ -1,8 +1,8 @@
 use super::{
     addr_to_hex, log_idx_value, AaveV3Erc20TransferEvent, AaveV3ScaledTokenBalanceTransferEvent,
     AaveV3ScaledTokenBurnEvent, AaveV3ScaledTokenMintEvent, Address, Log, OptionalExtension,
-    ScaledTokenEvent, ScaledTokenEventData, ScaledTokenEventType, TransactionOperationsParser,
-    U256,
+    ParseError, ScaledTokenEvent, ScaledTokenEventData, ScaledTokenEventType,
+    TransactionOperationsParser, U256,
 };
 
 impl<'a> TransactionOperationsParser<'a, '_> {
@@ -16,10 +16,10 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         &mut self,
         log: &'a Log,
         ev: &AaveV3ScaledTokenMintEvent,
-    ) -> ScaledTokenEvent<'a> {
+    ) -> Result<ScaledTokenEvent<'a>, ParseError> {
         let token_address = ev.token_address;
-        let event_type = self.classify_mint_burn(token_address, "mint");
-        ScaledTokenEvent {
+        let event_type = self.classify_mint_burn(token_address, "mint")?;
+        Ok(ScaledTokenEvent {
             log,
             decoded: ScaledTokenEventData::Mint {
                 caller: ev.caller,
@@ -38,7 +38,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             balance_increase: Some(ev.balance_increase),
             index: Some(ev.index),
             log_index: log_idx_value(log),
-        }
+        })
     }
 
     /// Decodes a `ScaledTokenBurn` log +
@@ -47,10 +47,10 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         &mut self,
         log: &'a Log,
         ev: &AaveV3ScaledTokenBurnEvent,
-    ) -> ScaledTokenEvent<'a> {
+    ) -> Result<ScaledTokenEvent<'a>, ParseError> {
         let token_address = ev.token_address;
-        let event_type = self.classify_mint_burn(token_address, "burn");
-        ScaledTokenEvent {
+        let event_type = self.classify_mint_burn(token_address, "burn")?;
+        Ok(ScaledTokenEvent {
             log,
             decoded: ScaledTokenEventData::Burn {
                 from: ev.from,
@@ -69,7 +69,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             balance_increase: Some(ev.balance_increase),
             index: Some(ev.index),
             log_index: log_idx_value(log),
-        }
+        })
     }
 
     /// Decodes a
@@ -82,11 +82,11 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         &mut self,
         log: &'a Log,
         ev: &AaveV3ScaledTokenBalanceTransferEvent,
-    ) -> ScaledTokenEvent<'a> {
+    ) -> Result<ScaledTokenEvent<'a>, ParseError> {
         let token_address = ev.token_address;
-        let event_type = self.classify_transfer(token_address);
+        let event_type = self.classify_transfer(token_address)?;
         // BalanceTransfer has balance_increase = 0.
-        ScaledTokenEvent {
+        Ok(ScaledTokenEvent {
             log,
             decoded: ScaledTokenEventData::BalanceTransfer {
                 from: ev.from,
@@ -104,26 +104,30 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             balance_increase: Some(U256::ZERO),
             index: Some(ev.index),
             log_index: log_idx_value(log),
-        }
+        })
     }
 
     /// Decodes a plain ERC20 `Transfer`
     /// + classifies: GHO vToken → `GhoDebtTransfer`; aToken →
     ///   `Erc20CollateralTransfer`; vToken → `Erc20DebtTransfer`;
-    ///   the GHO-discount-token → `DiscountTransfer`; otherwise `None` (the log is
-    ///   for an unrelated contract — the parser skips it).
+    ///   the GHO-discount-token → `DiscountTransfer`; otherwise `Ok(None)` (the
+    ///   log is for an unrelated contract — the parser skips it). `Err` is a
+    ///   failed classification lookup: the parse aborts, never a silent skip.
     pub(super) fn decode_transfer_event(
         &mut self,
         log: &'a Log,
         ev: &AaveV3Erc20TransferEvent,
-    ) -> Option<ScaledTokenEvent<'a>> {
+    ) -> Result<Option<ScaledTokenEvent<'a>>, ParseError> {
         let token_address = ev.token_address;
         let event_type = if self.gho_vtoken_address == Some(token_address) {
             ScaledTokenEventType::GhoDebtTransfer
         } else {
-            self.classify_token_type(token_address)?
+            let Some(event_type) = self.classify_token_type(token_address)? else {
+                return Ok(None);
+            };
+            event_type
         };
-        Some(ScaledTokenEvent {
+        Ok(Some(ScaledTokenEvent {
             log,
             decoded: ScaledTokenEventData::Transfer {
                 from: ev.from,
@@ -140,7 +144,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             balance_increase: None,
             index: None,
             log_index: log_idx_value(log),
-        })
+        }))
     }
 
     /// Classify a Mint/Burn event's emitter token address. Returns the matching
@@ -152,24 +156,25 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// Panics if the emitter is neither GHO-vToken, a known aToken, nor a
     /// known vToken for this market. The caller should pre-filter via
     /// `classify_token_type` if a non-panic is needed.
+    #[expect(clippy::panic_in_result_fn)] // the invariant-break panic is the documented contract
     fn classify_mint_burn(
         &mut self,
         token_address: Address,
         event_category: &str,
-    ) -> ScaledTokenEventType {
+    ) -> Result<ScaledTokenEventType, ParseError> {
         if self.gho_vtoken_address == Some(token_address) {
-            return match event_category {
+            return Ok(match event_category {
                 "mint" => ScaledTokenEventType::GhoDebtMint,
                 "burn" => ScaledTokenEventType::GhoDebtBurn,
                 _ => unreachable!("event_category is mint|burn"),
-            };
+            });
         }
         let market_id = self.market_id;
         #[expect(clippy::panic)] // unexpected token = invariant break; fail loudly (documented)
-        let token_type = self.classify_token_type(token_address).unwrap_or_else(|| {
+        let token_type = self.classify_token_type(token_address)?.unwrap_or_else(|| {
             panic!("unexpected token at {token_address} for market {market_id}")
         });
-        match (token_type, event_category) {
+        Ok(match (token_type, event_category) {
             (
                 ScaledTokenEventType::CollateralMint
                 | ScaledTokenEventType::CollateralTransfer
@@ -205,61 +210,68 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                     )
                 }
             }
-        }
+        })
     }
 
     /// Classify a `BalanceTransfer` event's emitter → `CollateralTransfer` /
     /// `DebtTransfer` / `GhoDebtTransfer`.
-    fn classify_transfer(&mut self, token_address: Address) -> ScaledTokenEventType {
+    #[expect(clippy::panic_in_result_fn)] // the invariant-break panic is the documented contract
+    fn classify_transfer(
+        &mut self,
+        token_address: Address,
+    ) -> Result<ScaledTokenEventType, ParseError> {
         if self.gho_vtoken_address == Some(token_address) {
-            return ScaledTokenEventType::GhoDebtTransfer;
+            return Ok(ScaledTokenEventType::GhoDebtTransfer);
         }
         let market_id = self.market_id;
         #[expect(clippy::panic)] // unexpected token = invariant break; fail loudly (documented)
-        let token_type = self.classify_token_type(token_address).unwrap_or_else(|| {
+        let token_type = self.classify_token_type(token_address)?.unwrap_or_else(|| {
             panic!("unexpected token at {token_address} for market {market_id}")
         });
         // classify_token_type returned a transfer variant — re-derive.
-        match token_type {
+        Ok(match token_type {
             ScaledTokenEventType::DebtTransfer | ScaledTokenEventType::Erc20DebtTransfer => {
                 ScaledTokenEventType::DebtTransfer
             }
             _ => ScaledTokenEventType::CollateralTransfer,
-        }
+        })
     }
 
     /// Classify a token-address by which asset-table column matches (aToken /
-    /// vToken / GHO-discount-token). Returns `None`
-    /// if the address isn't any of those (the parser skips the log).
+    /// vToken / GHO-discount-token). `Ok(None)` only after every lookup
+    /// succeeds and proves the address isn't any of those (the parser skips
+    /// the log); a failed lookup is `Err` — the parse aborts loudly, never a
+    /// silent skip.
     ///
     /// Returns a [`ScaledTokenEventType`] *transfer variant* as the
     /// discriminator (the caller's match-arm maps mint/burn variants as
     /// needed). This is a slight overloading of the enum but matches the
     /// Python's three-way classification surface.
-    fn classify_token_type(&mut self, token_address: Address) -> Option<ScaledTokenEventType> {
+    fn classify_token_type(
+        &mut self,
+        token_address: Address,
+    ) -> Result<Option<ScaledTokenEventType>, ParseError> {
         let addr_hex = addr_to_hex(token_address);
         // Try aToken first.
         if self
             .substrate
             .lookup_asset_id(self.conn, self.market_id, "a_token", &addr_hex)
-            .ok()
-            .flatten()
+            .map_err(|e| ParseError::Substrate(format!("a_token lookup for {addr_hex}: {e}")))?
             .is_some()
         {
-            return Some(ScaledTokenEventType::Erc20CollateralTransfer);
+            return Ok(Some(ScaledTokenEventType::Erc20CollateralTransfer));
         }
         if self
             .substrate
             .lookup_asset_id(self.conn, self.market_id, "v_token", &addr_hex)
-            .ok()
-            .flatten()
+            .map_err(|e| ParseError::Substrate(format!("v_token lookup for {addr_hex}: {e}")))?
             .is_some()
         {
-            return Some(ScaledTokenEventType::Erc20DebtTransfer);
+            return Ok(Some(ScaledTokenEventType::Erc20DebtTransfer));
         }
         // GHO-discount-token check (the v_gho_discount_token column on
         // aave_gho_tokens; only set if the discount mechanism is active).
-        if self
+        let discount_token_row: Option<Option<String>> = self
             .conn
             .query_row(
                 "SELECT g.v_gho_discount_token FROM aave_gho_tokens g
@@ -269,13 +281,15 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 |r| r.get::<_, Option<String>>(0),
             )
             .optional()
-            .ok()
-            .flatten()
+            .map_err(|e| {
+                ParseError::Substrate(format!("discount-token lookup for {addr_hex}: {e}"))
+            })?;
+        if discount_token_row
             .flatten()
             .is_some_and(|s| s.eq_ignore_ascii_case(&addr_hex))
         {
-            return Some(ScaledTokenEventType::DiscountTransfer);
+            return Ok(Some(ScaledTokenEventType::DiscountTransfer));
         }
-        None
+        Ok(None)
     }
 }

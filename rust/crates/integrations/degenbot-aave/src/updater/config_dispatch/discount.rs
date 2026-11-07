@@ -33,7 +33,7 @@ use rusqlite::{Connection, OptionalExtension as _};
 use super::context::ChunkContext;
 use super::{
     checksum, discount_to_i64, encode_single_address_call, eth_calls_batched_or_direct,
-    word0_to_u256, ConfigDispatchError, GHO_DISCOUNT_DEPRECATION_REVISION,
+    require_word0_u256, ConfigDispatchError, GHO_DISCOUNT_DEPRECATION_REVISION,
 };
 
 /// `DiscountPercentUpdated(user, old, new)` →
@@ -215,7 +215,11 @@ async fn backfill_user_stk_aave_balance_if_none(
             Some(block_number.saturating_sub(1)),
         )
         .await?;
-    let balance = word0_to_u256(&ret).unwrap_or(alloy::primitives::U256::ZERO);
+    let balance = require_word0_u256(
+        &ret,
+        &format!("balanceOf(address) for user {addr_str}"),
+        &discount_token,
+    )?;
     DegenbotDb::set_user_stk_aave_balance_on_conn(conn, user_id, balance)?;
     Ok(())
 }
@@ -380,7 +384,11 @@ pub(super) async fn build_discount_snapshot(
         .collect();
     let rets = eth_calls_batched_or_direct(provider, &calldatas, block_number).await?;
     for (user, ret) in rpc_users.iter().zip(rets) {
-        let discount = word0_to_u256(&ret).unwrap_or(U256::ZERO);
+        let discount = require_word0_u256(
+            &ret,
+            &format!("getDiscountPercent(address) for user {}", checksum(user)),
+            &vtoken_addr,
+        )?;
         snapshot.insert(*user, discount);
     }
     Ok(snapshot)
@@ -453,7 +461,11 @@ pub(crate) async fn refresh_gho_discount(
                 Some(block_number.saturating_sub(1)),
             )
             .await?;
-        let balance = word0_to_u256(&ret).unwrap_or(U256::ZERO);
+        let balance = require_word0_u256(
+            &ret,
+            &format!("balanceOf(address) for user {}", ctx.user_address),
+            &discount_token,
+        )?;
         DegenbotDb::set_user_stk_aave_balance_on_conn(conn, ctx.user_id, balance)?;
         balance
     };

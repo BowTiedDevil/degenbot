@@ -481,6 +481,23 @@ fn word0_to_u256(ret: &[u8]) -> Option<U256> {
     Some(U256::from_be_bytes::<32>(buf))
 }
 
+/// The strict [`word0_to_u256`]: a successful response carrying short return
+/// data is malformed for a `uint256` read, never a zero value — the error
+/// names the read + target so the abort is diagnosable.
+fn require_word0_u256(
+    ret: &[u8],
+    read: &str,
+    target: &Address,
+) -> Result<U256, ConfigDispatchError> {
+    word0_to_u256(ret).ok_or_else(|| {
+        ConfigDispatchError::DecodeShape(format!(
+            "{read} on {}: short return data ({} bytes, expected at least 32)",
+            checksum(target),
+            ret.len()
+        ))
+    })
+}
+
 /// Decode an `eth_call` return as an `address` (the low 20 bytes of the first
 /// 32-byte word). Returns `None` when the return is < 32 bytes (shouldn't
 /// happen for a well-formed `getSourceOfAsset` / oracle return).
@@ -523,6 +540,7 @@ fn strip_trailing_nulls_from_ascii(id: &alloy::primitives::B256) -> String {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::asset_config::EIP_1967_IMPLEMENTATION_SLOT;
+    use super::context::BatchRead;
     use super::revision::{POOL_CONFIGURATOR_PROXY_ID, POOL_PROXY_ID};
     use super::*;
     use crate::updater::run::substrate::ChunkSubstrate;
@@ -531,7 +549,8 @@ mod tests {
     use degenbot_db::connection::DegenbotDb;
     use degenbot_decoders::aave_event_decoder::{
         AaveV3AddressSetEvent, AaveV3DiscountRateStrategyUpdatedEvent,
-        AaveV3DiscountTokenUpdatedEvent, AaveV3ProxyCreatedEvent, AaveV3ReserveInitializedEvent,
+        AaveV3DiscountTokenUpdatedEvent, AaveV3Erc20TransferEvent, AaveV3ProxyCreatedEvent,
+        AaveV3ReserveInitializedEvent,
     };
     use rusqlite::{params, Connection};
     use std::path::Path;
@@ -783,6 +802,182 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.get(&fresh_user), Some(&U256::ZERO));
         drop(conn);
+    }
+
+    /// Path #2's `getDiscountPercent` return carrying a short word is
+    /// malformed — the snapshot build must abort naming the read + target,
+    /// never record a zero discount.
+    #[test]
+    fn build_discount_snapshot_short_discount_return_aborts_naming_read_and_target() {
+        let (db, _seed) = db_seeded();
+        let conn = db.lock();
+        let vtoken_addr =
+            Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]);
+        let fresh_user = Address::repeat_byte(0x77);
+        let mint_topic = degenbot_decoders::aave_event_decoder::AAVE_MINT_TOPIC;
+        let inner = AlloyLog::new_unchecked(
+            vtoken_addr,
+            vec![mint_topic, B256::ZERO, pad_address(&fresh_user)],
+            Bytes::new(),
+        );
+        let log = Log {
+            inner,
+            block_hash: None,
+            block_number: Some(100),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: Some(0),
+            removed: false,
+        };
+        let key = eth_call_key(
+            &address_arg_input("getDiscountPercent(address)", &fresh_user),
+            &format!("0x{}", alloy::hex::encode(vtoken_addr)),
+            100,
+        );
+        let transport =
+            CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
+        let provider = transport.as_alloy_provider();
+        let err = degenbot_core::runtime::get_runtime()
+            .block_on(build_discount_snapshot(
+                &provider,
+                &[&log],
+                100,
+                Some(vtoken_addr),
+                Some(2),
+                1,
+                &conn,
+            ))
+            .expect_err("a short getDiscountPercent return must abort, never record zero");
+        match err {
+            ConfigDispatchError::DecodeShape(msg) => {
+                assert!(msg.contains("getDiscountPercent"), "names the read: {msg}");
+                assert!(
+                    msg.contains(&checksum(&vtoken_addr)),
+                    "names the target: {msg}"
+                );
+            }
+            other => panic!("expected DecodeShape, got {other:?}"),
+        }
+    }
+
+    /// A stkAAVE `Transfer` whose NULL-balance backfill reads a short
+    /// `balanceOf` word must abort the dispatch (the event never applies),
+    /// never backfill a zero balance.
+    #[test]
+    fn stk_aave_transfer_short_balance_return_aborts_naming_read_and_target() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let gho_vtoken = Address::from([0xa0; 20]);
+        let discount_token = Address::from([0xd1; 20]);
+        let from_user = Address::repeat_byte(0x51);
+        let to_user = Address::repeat_byte(0x52);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'm', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            seed_gho_row(&conn, Some(gho_vtoken));
+            conn.execute(
+                "UPDATE aave_gho_tokens SET v_gho_discount_token = ?1 WHERE id = 1",
+                params![checksum(&discount_token)],
+            )
+            .unwrap();
+        }
+        let conn = db.lock();
+        let key = eth_call_key(
+            &address_arg_input("balanceOf(address)", &from_user),
+            &format!("0x{}", alloy::hex::encode(discount_token)),
+            99,
+        );
+        let transport =
+            CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(Address::repeat_byte(0x99)),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let ev = AaveV3Erc20TransferEvent {
+            token_address: discount_token,
+            from: from_user,
+            to: to_user,
+            value: U256::from(5),
+        };
+        let err = degenbot_core::runtime::get_runtime()
+            .block_on(dispatch_stk_aave_transfer(&mut ctx, &ev))
+            .expect_err("a short balanceOf return must abort the dispatch, never backfill zero");
+        match err {
+            ConfigDispatchError::DecodeShape(msg) => {
+                assert!(msg.contains("balanceOf"), "names the read: {msg}");
+                assert!(
+                    msg.contains(&checksum(&discount_token)),
+                    "names the target: {msg}"
+                );
+            }
+            other => panic!("expected DecodeShape, got {other:?}"),
+        }
+    }
+
+    /// The post-apply discount refresh's `balanceOf` read has the same
+    /// contract: a short return word aborts the refresh, never caches a zero
+    /// stkAAVE balance.
+    #[test]
+    fn refresh_gho_discount_short_balance_return_aborts_naming_read_and_target() {
+        let (db, _seed) = db_seeded();
+        let discount_token = Address::from([0xd1; 20]);
+        let user_addr = Address::repeat_byte(0x42);
+        let conn = db.lock();
+        let user_id: i64 = conn
+            .query_row(
+                "SELECT id FROM aave_v3_users WHERE address = ?1",
+                params![checksum(&user_addr)],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) \
+             VALUES (?1, 1, '1000', '1000000000000000000000000000')",
+            params![user_id],
+        )
+        .unwrap();
+        let position_id = conn.last_insert_rowid();
+        let key = eth_call_key(
+            &address_arg_input("balanceOf(address)", &user_addr),
+            &format!("0x{}", alloy::hex::encode(discount_token)),
+            99,
+        );
+        let transport =
+            CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
+        let provider = transport.as_alloy_provider();
+        let err = degenbot_core::runtime::get_runtime()
+            .block_on(refresh_gho_discount(
+                &provider,
+                &conn,
+                1,
+                position_id,
+                100,
+                Some(discount_token),
+            ))
+            .expect_err("a short balanceOf return must abort the refresh, never cache zero");
+        match err {
+            ConfigDispatchError::DecodeShape(msg) => {
+                assert!(msg.contains("balanceOf"), "names the read: {msg}");
+                assert!(
+                    msg.contains(&checksum(&discount_token)),
+                    "names the target: {msg}"
+                );
+            }
+            other => panic!("expected DecodeShape, got {other:?}"),
+        }
     }
 
     /// A dummy `AlloyProvider` pointing at a dead URL. Used for path #1 / #3
@@ -1880,6 +2075,86 @@ mod tests {
             );
             assert_eq!(snap.served, 2, "both direct entries served");
         });
+    }
+
+    /// A revision read whose successful response carries a short return word
+    /// is malformed data for a `uint256` read — it must abort naming the read
+    /// + target, never decode as zero.
+    #[test]
+    fn read_revision_short_return_aborts_naming_read_and_target() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let target = Address::repeat_byte(0x11);
+        let key = eth_call_key(
+            &canonical_selector_input("ATOKEN_REVISION()"),
+            &format!("0x{}", alloy::hex::encode(target)),
+            100,
+        );
+        let transport =
+            CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(Address::repeat_byte(0x99)),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let err = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.read_revision(&target, "ATOKEN_REVISION()", 100))
+            .expect_err("a short revision return must abort, never decode as zero");
+        match err {
+            ConfigDispatchError::DecodeShape(msg) => {
+                assert!(msg.contains("ATOKEN_REVISION()"), "names the read: {msg}");
+                assert!(msg.contains(&checksum(&target)), "names the target: {msg}");
+            }
+            other => panic!("expected DecodeShape, got {other:?}"),
+        }
+    }
+
+    /// The batched revision seam has the same contract: a short return word
+    /// aborts naming the read + target, never memoizes a zero revision.
+    #[test]
+    fn read_revision_batch_short_return_aborts_naming_read_and_target() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let target = Address::repeat_byte(0x11);
+        let key = eth_call_key(
+            &canonical_selector_input("ATOKEN_REVISION()"),
+            &format!("0x{}", alloy::hex::encode(target)),
+            100,
+        );
+        let transport =
+            CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(Address::repeat_byte(0x99)),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let err = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.read_revision_batch(&[BatchRead::Revision {
+                target,
+                sig: "ATOKEN_REVISION()",
+            }]))
+            .expect_err("a short revision return must abort, never decode as zero");
+        match err {
+            ConfigDispatchError::DecodeShape(msg) => {
+                assert!(msg.contains("ATOKEN_REVISION()"), "names the read: {msg}");
+                assert!(msg.contains(&checksum(&target)), "names the target: {msg}");
+            }
+            other => panic!("expected DecodeShape, got {other:?}"),
+        }
     }
 
     // ── the `ReserveInitialized` token-metadata burst (row 9's erc20 rows) ──

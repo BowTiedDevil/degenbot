@@ -276,16 +276,16 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
             if let Some(decoded) = aave_event_decoder::decode_aave_log(ev) {
                 match decoded {
                     DecodedAaveEvent::ScaledTokenMint(m) => {
-                        scaled_events.push(self.decode_mint_event(ev, &m));
+                        scaled_events.push(self.decode_mint_event(ev, &m)?);
                     }
                     DecodedAaveEvent::ScaledTokenBurn(b) => {
-                        scaled_events.push(self.decode_burn_event(ev, &b));
+                        scaled_events.push(self.decode_burn_event(ev, &b)?);
                     }
                     DecodedAaveEvent::ScaledTokenBalanceTransfer(bt) => {
-                        scaled_events.push(self.decode_balance_transfer_event(ev, &bt));
+                        scaled_events.push(self.decode_balance_transfer_event(ev, &bt)?);
                     }
                     DecodedAaveEvent::Erc20Transfer(t) => {
-                        if let Some(s) = self.decode_transfer_event(ev, &t) {
+                        if let Some(s) = self.decode_transfer_event(ev, &t)? {
                             scaled_events.push(s);
                         }
                     }

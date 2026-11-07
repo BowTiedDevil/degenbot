@@ -107,6 +107,123 @@ fn test_log(idx: u64, topic0: &alloy::primitives::B256, _data: &[u8]) -> Log {
     }
 }
 
+/// A standard ERC20 `Transfer` log (emitter = the token contract) — the
+/// classification seam's input shape.
+fn erc20_transfer_log(idx: u64, token: Address, from: Address, to: Address, value: U256) -> Log {
+    use alloy::primitives::{Bytes, Log as AlloyLog, B256};
+    let topics = vec![
+        aave_event_decoder::ERC20_TRANSFER_TOPIC,
+        B256::left_padding_from(from.as_slice()),
+        B256::left_padding_from(to.as_slice()),
+    ];
+    let mut data = vec![0u8; 32];
+    value
+        .to_be_bytes::<32>()
+        .iter()
+        .enumerate()
+        .for_each(|(i, b)| data[i] = *b);
+    let inner = AlloyLog::new_unchecked(token, topics, Bytes::from(data));
+    Log {
+        inner,
+        block_hash: None,
+        block_number: Some(100),
+        block_timestamp: None,
+        transaction_hash: None,
+        transaction_index: None,
+        log_index: Some(idx),
+        removed: false,
+    }
+}
+
+/// A market + POOL contract row — the minimum the parser's constructor
+/// resolves (`pool_revision`) before any classification lookup runs.
+fn fresh_db_for_classification() -> degenbot_db::DegenbotDb {
+    use degenbot_db::DegenbotDb;
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    let conn = db.lock();
+    conn.execute(
+        "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+         VALUES (1, 1, 'm', 1, NULL)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+         VALUES (1, 'POOL', '0xpool', 9)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    db
+}
+
+/// The `Ok(None)` contract: the transfer is skipped ONLY after every
+/// classification lookup succeeds and proves the emitter unrelated.
+#[test]
+fn unrelated_transfer_skips_only_after_successful_classification() {
+    let db = fresh_db_for_classification();
+    let conn = db.lock();
+    let log = erc20_transfer_log(
+        0,
+        Address::repeat_byte(0x77),
+        Address::repeat_byte(0x01),
+        Address::repeat_byte(0x02),
+        U256::from(5),
+    );
+    let events = vec![&log];
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser = TransactionOperationsParser::new(
+        1,
+        1,
+        Address::repeat_byte(0x99),
+        None,
+        None,
+        None,
+        &conn,
+        &mut substrate,
+    )
+    .unwrap();
+    let parsed = parser.parse(&events, [0u8; 32]).unwrap();
+    assert!(
+        parsed.operations.is_empty(),
+        "a proven-unrelated transfer is skipped, never parsed into an operation"
+    );
+}
+
+/// A DB failure inside the classification lookups must abort the whole parse
+/// (the chunk rolls back) — never degrade into the unrelated-token skip and
+/// silently drop the transfer.
+#[test]
+fn parse_aborts_when_classification_db_lookup_fails() {
+    let db = fresh_db_for_classification();
+    let conn = db.lock();
+    conn.execute("DROP TABLE aave_gho_tokens", []).unwrap();
+    let log = erc20_transfer_log(
+        0,
+        Address::repeat_byte(0x77),
+        Address::repeat_byte(0x01),
+        Address::repeat_byte(0x02),
+        U256::from(5),
+    );
+    let events = vec![&log];
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser = TransactionOperationsParser::new(
+        1,
+        1,
+        Address::repeat_byte(0x99),
+        None,
+        None,
+        None,
+        &conn,
+        &mut substrate,
+    )
+    .unwrap();
+    let Err(err) = parser.parse(&events, [0u8; 32]) else {
+        panic!("a DB failure during classification must fail the parse, never skip the event")
+    };
+    assert!(matches!(err, ParseError::Substrate(_)), "got {err:?}");
+}
+
 // ── liquidation engine tests (parity-gate zero-drift surface) ──────────────
 //
 // The static pattern-detection fns (`analyze_user_liquidation_count`,
