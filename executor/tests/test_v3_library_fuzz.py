@@ -4,14 +4,29 @@ Cross-implementation fuzz tests: Vyper port vs original Solidity.
 Deploys both the Vyper test_harness and the Solidity SolReference on the
 same Anvil instance, then uses Hypothesis to compare outputs across a wide
 range of inputs. Any disagreement is a bug in the Vyper port.
+
+Success and revert parity both go through _expect_parity: a case agrees
+when both sides return equal values, or both revert with the same exposed
+revert identity.
 """
 
 import json
 from pathlib import Path
 
-import pytest
+from ape.exceptions import ApeAttributeError
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+import pytest
+
+from .conftest_shared import (
+    NO_REVERT_DATA,
+    capture_revert,
+    raise_custom_error,
+    raise_harness_error,
+    raise_revert,
+    revert_id,
+    reverts_match,
+)
 
 # Committed solc 0.7.6 artifact (see scripts/build-sol-reference-artifact.sh):
 # the original Solidity V3-math libraries, deployed next to the Vyper
@@ -70,9 +85,32 @@ def sol_ref(accounts):
     return container.deploy(sender=accounts[0])
 
 
-def _compare_vy_sol(vy_result, sol_result, context):
-    """Compare Vyper and Solidity results, with helpful error message."""
-    assert vy_result == sol_result, f"{context}:\n  Vyper = {vy_result}\n  Sol   = {sol_result}"
+def _expect_parity(vy_call, sol_call, context):
+    """Assert one fuzz case reaches the same verdict on both implementations.
+
+    Both sides must return equal values, or both must revert at the contract
+    with matching exposed revert identity (conftest_shared.reverts_match).
+    Anything else — one side reverting, exposed reverts that disagree, or any
+    non-revert exception such as a missing method or a fixture failure —
+    fails the test.
+    """
+    vy_value, vy_revert = capture_revert(vy_call)
+    sol_value, sol_revert = capture_revert(sol_call)
+
+    if vy_revert is None and sol_revert is None:
+        assert vy_value == sol_value, (
+            f"{context}: results disagree:\n  Vyper = {vy_value}\n  Sol   = {sol_value}"
+        )
+        return
+
+    vy_verdict = revert_id(vy_revert) if vy_revert is not None else f"returned {vy_value}"
+    sol_verdict = revert_id(sol_revert) if sol_revert is not None else f"returned {sol_value}"
+    assert vy_revert is not None and sol_revert is not None, (
+        f"{context}: verdicts disagree:\n  Vyper = {vy_verdict}\n  Sol   = {sol_verdict}"
+    )
+    assert reverts_match(vy_revert, sol_revert), (
+        f"{context}: reverts disagree:\n  Vyper = {vy_verdict}\n  Sol   = {sol_verdict}"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -86,38 +124,20 @@ class TestFullMathFuzz:
     @given(a=uint256, b=uint256, d=st.integers(min_value=1, max_value=2**256 - 1))
     @settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
     def test_mul_div(self, harness, sol_ref, a, b, d):
-        try:
-            vy = harness.test_mul_div(a, b, d)
-        except Exception:
-            with pytest.raises(Exception):
-                sol_ref.test_mul_div(a, b, d)
-            return
-
-        try:
-            sol = sol_ref.test_mul_div(a, b, d)
-        except Exception:
-            pytest.fail(f"Solidity reverted but Vyper returned {vy} for mul_div({a}, {b}, {d})")
-
-        assert vy == sol, f"mul_div({a}, {b}, {d}): Vyper={vy}, Sol={sol}"
+        _expect_parity(
+            lambda: harness.test_mul_div(a, b, d),
+            lambda: sol_ref.test_mul_div(a, b, d),
+            f"mul_div({a}, {b}, {d})",
+        )
 
     @given(a=uint256, b=uint256, d=st.integers(min_value=1, max_value=2**256 - 1))
     @settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
     def test_mul_div_rounding_up(self, harness, sol_ref, a, b, d):
-        try:
-            vy = harness.test_mul_div_rounding_up(a, b, d)
-        except Exception:
-            with pytest.raises(Exception):
-                sol_ref.test_mul_div_rounding_up(a, b, d)
-            return
-
-        try:
-            sol = sol_ref.test_mul_div_rounding_up(a, b, d)
-        except Exception:
-            pytest.fail(
-                f"Solidity reverted but Vyper returned {vy} for mul_div_rounding_up({a}, {b}, {d})"
-            )
-
-        assert vy == sol, f"mul_div_rounding_up({a}, {b}, {d}): Vyper={vy}, Sol={sol}"
+        _expect_parity(
+            lambda: harness.test_mul_div_rounding_up(a, b, d),
+            lambda: sol_ref.test_mul_div_rounding_up(a, b, d),
+            f"mul_div_rounding_up({a}, {b}, {d})",
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -141,26 +161,14 @@ class TestSqrtPriceMathFuzz:
         sqrt_p_u160 = min(sqrt_p, 2**160 - 1)
         liquidity_u128 = min(liquidity, 2**128 - 1)
 
-        try:
-            vy = harness.test_get_next_sqrt_price_from_input(
+        _expect_parity(
+            lambda: harness.test_get_next_sqrt_price_from_input(
                 sqrt_p_u160, liquidity_u128, amount, zero_for_one
-            )
-        except Exception:
-            with pytest.raises(Exception):
-                sol_ref.test_get_next_sqrt_price_from_input(
-                    sqrt_p_u160, liquidity_u128, amount, zero_for_one
-                )
-            return
-
-        try:
-            sol = sol_ref.test_get_next_sqrt_price_from_input(
+            ),
+            lambda: sol_ref.test_get_next_sqrt_price_from_input(
                 sqrt_p_u160, liquidity_u128, amount, zero_for_one
-            )
-        except Exception:
-            pytest.fail(f"Solidity reverted but Vyper returned {vy}")
-
-        assert vy == sol, (
-            f"from_input({sqrt_p_u160}, {liquidity_u128}, {amount}, {zero_for_one}): Vyper={vy}, Sol={sol}"
+            ),
+            f"from_input({sqrt_p_u160}, {liquidity_u128}, {amount}, {zero_for_one})",
         )
 
     @given(
@@ -176,26 +184,14 @@ class TestSqrtPriceMathFuzz:
         sqrt_p_u160 = min(sqrt_p, 2**160 - 1)
         liquidity_u128 = min(liquidity, 2**128 - 1)
 
-        try:
-            vy = harness.test_get_next_sqrt_price_from_output(
+        _expect_parity(
+            lambda: harness.test_get_next_sqrt_price_from_output(
                 sqrt_p_u160, liquidity_u128, amount, zero_for_one
-            )
-        except Exception:
-            with pytest.raises(Exception):
-                sol_ref.test_get_next_sqrt_price_from_output(
-                    sqrt_p_u160, liquidity_u128, amount, zero_for_one
-                )
-            return
-
-        try:
-            sol = sol_ref.test_get_next_sqrt_price_from_output(
+            ),
+            lambda: sol_ref.test_get_next_sqrt_price_from_output(
                 sqrt_p_u160, liquidity_u128, amount, zero_for_one
-            )
-        except Exception:
-            pytest.fail(f"Solidity reverted but Vyper returned {vy}")
-
-        assert vy == sol, (
-            f"from_output({sqrt_p_u160}, {liquidity_u128}, {amount}, {zero_for_one}): Vyper={vy}, Sol={sol}"
+            ),
+            f"from_output({sqrt_p_u160}, {liquidity_u128}, {amount}, {zero_for_one})",
         )
 
     @given(
@@ -210,20 +206,14 @@ class TestSqrtPriceMathFuzz:
         sqrt_b_u160 = min(sqrt_b, 2**160 - 1)
         liquidity_u128 = min(liquidity, 2**128 - 1)
 
-        try:
-            vy = harness.test_get_amount0_delta(sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up)
-        except Exception:
-            with pytest.raises(Exception):
-                sol_ref.test_get_amount0_delta(sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up)
-            return
-
-        try:
-            sol = sol_ref.test_get_amount0_delta(sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up)
-        except Exception:
-            pytest.fail(f"Solidity reverted but Vyper returned {vy}")
-
-        assert vy == sol, (
-            f"amount0({sqrt_a_u160}, {sqrt_b_u160}, {liquidity_u128}, {round_up}): Vyper={vy}, Sol={sol}"
+        _expect_parity(
+            lambda: harness.test_get_amount0_delta(
+                sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up
+            ),
+            lambda: sol_ref.test_get_amount0_delta(
+                sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up
+            ),
+            f"amount0({sqrt_a_u160}, {sqrt_b_u160}, {liquidity_u128}, {round_up})",
         )
 
     @given(
@@ -238,20 +228,14 @@ class TestSqrtPriceMathFuzz:
         sqrt_b_u160 = min(sqrt_b, 2**160 - 1)
         liquidity_u128 = min(liquidity, 2**128 - 1)
 
-        try:
-            vy = harness.test_get_amount1_delta(sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up)
-        except Exception:
-            with pytest.raises(Exception):
-                sol_ref.test_get_amount1_delta(sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up)
-            return
-
-        try:
-            sol = sol_ref.test_get_amount1_delta(sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up)
-        except Exception:
-            pytest.fail(f"Solidity reverted but Vyper returned {vy}")
-
-        assert vy == sol, (
-            f"amount1({sqrt_a_u160}, {sqrt_b_u160}, {liquidity_u128}, {round_up}): Vyper={vy}, Sol={sol}"
+        _expect_parity(
+            lambda: harness.test_get_amount1_delta(
+                sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up
+            ),
+            lambda: sol_ref.test_get_amount1_delta(
+                sqrt_a_u160, sqrt_b_u160, liquidity_u128, round_up
+            ),
+            f"amount1({sqrt_a_u160}, {sqrt_b_u160}, {liquidity_u128}, {round_up})",
         )
 
 
@@ -275,19 +259,11 @@ class TestTickMathFuzz:
     def test_get_tick_at_sqrt_ratio(self, harness, sol_ref, sqrt_price):
         sqrt_u160 = min(sqrt_price, 2**160 - 1)
 
-        try:
-            vy = harness.test_get_tick_at_sqrt_ratio(sqrt_u160)
-        except Exception:
-            with pytest.raises(Exception):
-                sol_ref.test_get_tick_at_sqrt_ratio(sqrt_u160)
-            return
-
-        try:
-            sol = sol_ref.test_get_tick_at_sqrt_ratio(sqrt_u160)
-        except Exception:
-            pytest.fail(f"Solidity reverted but Vyper returned {vy}")
-
-        assert vy == sol, f"get_tick_at_sqrt_ratio({sqrt_u160}): Vyper={vy}, Sol={sol}"
+        _expect_parity(
+            lambda: harness.test_get_tick_at_sqrt_ratio(sqrt_u160),
+            lambda: sol_ref.test_get_tick_at_sqrt_ratio(sqrt_u160),
+            f"get_tick_at_sqrt_ratio({sqrt_u160})",
+        )
 
     @given(tick=st.integers(min_value=-887271, max_value=887271))
     @settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
@@ -321,29 +297,97 @@ class TestSwapMathFuzz:
         sqrt_target_u160 = min(sqrt_target, 2**160 - 1)
         liquidity_u128 = min(liquidity, 2**128 - 1)
 
-        try:
-            vy = harness.test_compute_swap_step(
+        _expect_parity(
+            lambda: harness.test_compute_swap_step(
                 sqrt_current_u160, sqrt_target_u160, liquidity_u128, amount_remaining, fee_pips
-            )
-        except Exception:
-            with pytest.raises(Exception):
-                sol_ref.test_compute_swap_step(
-                    sqrt_current_u160, sqrt_target_u160, liquidity_u128, amount_remaining, fee_pips
-                )
-            return
-
-        try:
-            sol = sol_ref.test_compute_swap_step(
+            ),
+            lambda: sol_ref.test_compute_swap_step(
                 sqrt_current_u160, sqrt_target_u160, liquidity_u128, amount_remaining, fee_pips
-            )
-        except Exception:
-            pytest.fail(
-                f"Solidity reverted but Vyper returned {vy} for compute_swap_step({sqrt_current_u160}, {sqrt_target_u160}, {liquidity_u128}, {amount_remaining}, {fee_pips})"
-            )
-
-        assert vy == sol, (
+            ),
             f"compute_swap_step({sqrt_current_u160}, {sqrt_target_u160}, "
-            f"{liquidity_u128}, {amount_remaining}, {fee_pips}):\n"
-            f"Vyper=({vy[0]}, {vy[1]}, {vy[2]}, {vy[3]})\n"
-            f"Sol=({sol[0]}, {sol[1]}, {sol[2]}, {sol[3]})"
+            f"{liquidity_u128}, {amount_remaining}, {fee_pips})",
         )
+
+
+# ── Meta-tests: the parity helper itself ──
+
+
+def _raise_missing_method():
+    msg = "'test_harness' has no attribute 'no_such_method'"
+    raise ApeAttributeError(msg)
+
+
+class TestRevertParityHelpers:
+    """_expect_parity counts only matching contract reverts as parity.
+
+    Chain-free: the callables are stubs, so these pin the failure modes a
+    catch-all ``except`` destroys without deploying anything.
+    """
+
+    def test_equal_results_are_parity(self):
+        _expect_parity(lambda: 7, lambda: 7, "ctx")
+
+    def test_result_mismatch_fails(self):
+        with pytest.raises(AssertionError, match="results disagree"):
+            _expect_parity(lambda: 7, lambda: 8, "ctx")
+
+    def test_result_vs_revert_fails(self):
+        with pytest.raises(AssertionError, match="verdicts disagree"):
+            _expect_parity(lambda: 7, raise_revert(NO_REVERT_DATA), "ctx")
+
+    def test_revert_vs_result_fails(self):
+        with pytest.raises(AssertionError, match="verdicts disagree"):
+            _expect_parity(raise_revert(NO_REVERT_DATA), lambda: 7, "ctx")
+
+    def test_matching_revert_messages_are_parity(self):
+        _expect_parity(
+            raise_revert("FullMath: overflow"), raise_revert("FullMath: overflow"), "ctx"
+        )
+
+    def test_bare_reverts_are_parity(self):
+        _expect_parity(raise_revert(NO_REVERT_DATA), raise_revert(NO_REVERT_DATA), "ctx")
+
+    def test_annotated_revert_matches_bare_revert(self):
+        """A revert that exposes no identity cannot disagree: the Vyper port
+        annotates guards the Solidity original leaves bare (`assert ...,
+        "FullMath: overflow"` vs bare `require`)."""
+        _expect_parity(raise_revert("FullMath: overflow"), raise_revert(NO_REVERT_DATA), "ctx")
+
+    def test_different_revert_messages_fail(self):
+        with pytest.raises(AssertionError, match="reverts disagree"):
+            _expect_parity(raise_revert("T"), raise_revert("R"), "ctx")
+
+    def test_matching_custom_errors_are_parity(self):
+        _expect_parity(
+            raise_custom_error("InvalidCommand", opcode=32),
+            raise_custom_error("InvalidCommand", opcode=32),
+            "ctx",
+        )
+
+    def test_different_custom_error_fields_fail(self):
+        with pytest.raises(AssertionError, match="reverts disagree"):
+            _expect_parity(
+                raise_custom_error("InvalidCommand", opcode=7),
+                raise_custom_error("InvalidCommand", opcode=32),
+                "ctx",
+            )
+
+    def test_different_custom_error_names_fail(self):
+        with pytest.raises(AssertionError, match="reverts disagree"):
+            _expect_parity(
+                raise_custom_error("InvalidCommand", opcode=32),
+                raise_custom_error("ManagerLocked", opcode=32),
+                "ctx",
+            )
+
+    def test_unrelated_exception_on_vyper_side_propagates(self):
+        with pytest.raises(RuntimeError, match="harness exploded"):
+            _expect_parity(raise_harness_error, lambda: 7, "ctx")
+
+    def test_unrelated_exception_on_solidity_side_propagates(self):
+        with pytest.raises(RuntimeError, match="harness exploded"):
+            _expect_parity(lambda: 7, raise_harness_error, "ctx")
+
+    def test_missing_method_propagates(self):
+        with pytest.raises(ApeAttributeError, match="no_such_method"):
+            _expect_parity(_raise_missing_method, lambda: 7, "ctx")

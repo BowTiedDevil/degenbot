@@ -15,17 +15,23 @@ and on unrelated harness errors (proven by TestRevertHelpers).
 from typing import NamedTuple
 
 import pytest
-from ape.exceptions import ContractLogicError, CustomError, TransactionError
-from ethpm_types.abi import ABIType, ErrorABI
+from ape.exceptions import CustomError
 
 from .conftest_shared import (
+    NO_REVERT_DATA,
     AddressTable,
+    capture_revert,
     enc_preamble,
     enc_v4_settle_delta,
     enc_v4_swap_compact,
     enc_v4_swap_dynamic,
     enc_v4_take_delta,
     enc_v4_unlock,
+    raise_custom_error,
+    raise_harness_error,
+    raise_revert,
+    revert_id,
+    revert_is,
 )
 
 # Sentinel bytes (must match contract constants).
@@ -33,27 +39,6 @@ V4_WETH_SENTINEL = 0xFE
 V4_SELF_SENTINEL = 0xFD
 V4_PM_SENTINEL = 0xFC
 V4_NATIVE_SENTINEL = 0xFF
-
-# A revert with empty returndata surfaces in Ape as its default message: the
-# shape of the t_addresses sentinel bounds check, which is a bare Vyper
-# assert (no custom error, no revert data to decode).
-_NO_REVERT_DATA = TransactionError.DEFAULT_MESSAGE
-
-
-def _revert_id(err):
-    """Name the revert an Ape exception carries, for assertion messages."""
-    if isinstance(err, CustomError):
-        fields = ", ".join(f"{k}={v}" for k, v in sorted(err.inputs.items()))
-        return f"{err.name}({fields})"
-    return repr(err.revert_message)
-
-
-def _revert_is(err, name):
-    """Whether the revert identifies `name`: a decoded custom error of that
-    name, or a bubbled revert message equal to it."""
-    if isinstance(err, CustomError):
-        return err.name == name
-    return err.revert_message == name
 
 
 def _expect_revert(callable_, *, custom_error=None, opcode=None, message=None):
@@ -68,28 +53,23 @@ def _expect_revert(callable_, *, custom_error=None, opcode=None, message=None):
     assert (custom_error is None) != (message is None), "pin exactly one revert identity"
     # Capture the outcome first, assert afterwards: every assertion runs
     # outside any except block, so none of them can be swallowed.
-    try:
-        tx = callable_()
-        revert = None
-    except ContractLogicError as err:
-        tx = None
-        revert = err
+    tx, revert = capture_revert(callable_)
     if revert is not None:
         if custom_error is not None:
             assert isinstance(revert, CustomError), (
-                f"expected custom error {custom_error}, got {_revert_id(revert)}"
+                f"expected custom error {custom_error}, got {revert_id(revert)}"
             )
-            assert revert.name == custom_error, f"expected {custom_error}, got {_revert_id(revert)}"
+            assert revert.name == custom_error, f"expected {custom_error}, got {revert_id(revert)}"
             if opcode is not None:
                 assert revert.inputs.get("opcode") == opcode, (
                     f"{custom_error} opcode: expected {opcode}, got {revert.inputs}"
                 )
         else:
             assert not isinstance(revert, CustomError), (
-                f"expected the empty-data revert {message!r}, got {_revert_id(revert)}"
+                f"expected the empty-data revert {message!r}, got {revert_id(revert)}"
             )
             assert revert.revert_message == message, (
-                f"expected the empty-data revert {message!r}, got {_revert_id(revert)}"
+                f"expected the empty-data revert {message!r}, got {revert_id(revert)}"
             )
         return
     assert tx.status == 0, "expected revert, transaction succeeded"
@@ -107,16 +87,11 @@ def _expect_accepted(callable_, *, downstream=None):
     """
     # Capture the outcome first, assert afterwards: every assertion runs
     # outside any except block, so none of them can be swallowed.
-    try:
-        tx = callable_()
-        revert = None
-    except ContractLogicError as err:
-        tx = None
-        revert = err
+    tx, revert = capture_revert(callable_)
     if revert is not None:
-        assert downstream is not None, f"expected the guard to pass, got {_revert_id(revert)}"
-        assert _revert_is(revert, downstream), (
-            f"expected success or the {downstream} revert, got {_revert_id(revert)}"
+        assert downstream is not None, f"expected the guard to pass, got {revert_id(revert)}"
+        assert revert_is(revert, downstream), (
+            f"expected success or the {downstream} revert, got {revert_id(revert)}"
         )
         return
     assert tx.status == 1, "expected the guard to pass, transaction reverted"
@@ -157,7 +132,7 @@ class TestM6HookSentinelFailClosed:
         commands = enc_v4_swap_compact(weth_idx, usdc_idx, 3000, 60, V4_PM_SENTINEL, True, 10**18)
         _expect_revert(
             lambda: executor.execute(enc_preamble(at) + commands, sender=owner_account),
-            message=_NO_REVERT_DATA,
+            message=NO_REVERT_DATA,
         )
 
     def test_v4_swap_compact_weth_hook_sentinel_reverts(
@@ -170,7 +145,7 @@ class TestM6HookSentinelFailClosed:
         commands = enc_v4_swap_compact(weth_idx, usdc_idx, 3000, 60, V4_WETH_SENTINEL, True, 10**18)
         _expect_revert(
             lambda: executor.execute(enc_preamble(at) + commands, sender=owner_account),
-            message=_NO_REVERT_DATA,
+            message=NO_REVERT_DATA,
         )
 
     def test_v4_swap_dynamic_self_hook_sentinel_reverts(
@@ -184,7 +159,7 @@ class TestM6HookSentinelFailClosed:
         commands = enc_v4_swap_dynamic(weth_idx, usdc_idx, 3000, 60, V4_SELF_SENTINEL, True)
         _expect_revert(
             lambda: executor.execute(enc_preamble(at) + commands, sender=owner_account),
-            message=_NO_REVERT_DATA,
+            message=NO_REVERT_DATA,
         )
 
     def test_v4_swap_compact_native_hook_sentinel_allowed(
@@ -287,28 +262,6 @@ class _FakeReceipt(NamedTuple):
     status: int
 
 
-def _raise_harness_error():
-    msg = "harness exploded"
-    raise RuntimeError(msg)
-
-
-def _raise_revert(message):
-    def _raise():
-        raise ContractLogicError(revert_message=message)
-
-    return _raise
-
-
-def _raise_custom_error(name, **fields):
-    def _raise():
-        raise CustomError(
-            abi=ErrorABI(name=name, inputs=[ABIType(name=k, type="uint256") for k in fields]),
-            inputs=dict(fields),
-        )
-
-    return _raise
-
-
 class TestRevertHelpers:
     """The revert helpers must fail on success and let unrelated harness
     errors through — the behaviors a catch-all ``except`` destroys."""
@@ -323,38 +276,38 @@ class TestRevertHelpers:
 
     def test_expect_revert_propagates_unrelated_exception(self):
         with pytest.raises(RuntimeError, match="harness exploded"):
-            _expect_revert(_raise_harness_error, custom_error="InvalidCommand", opcode=32)
+            _expect_revert(raise_harness_error, custom_error="InvalidCommand", opcode=32)
 
     def test_expect_revert_fails_on_wrong_error(self):
         with pytest.raises(AssertionError, match="expected custom error"):
-            _expect_revert(_raise_revert(_NO_REVERT_DATA), custom_error="InvalidCommand", opcode=32)
+            _expect_revert(raise_revert(NO_REVERT_DATA), custom_error="InvalidCommand", opcode=32)
 
     def test_expect_revert_fails_on_wrong_opcode(self):
         with pytest.raises(AssertionError, match="opcode"):
             _expect_revert(
-                _raise_custom_error("InvalidCommand", opcode=7),
+                raise_custom_error("InvalidCommand", opcode=7),
                 custom_error="InvalidCommand",
                 opcode=32,
             )
 
     def test_expect_revert_fails_on_wrong_message(self):
         with pytest.raises(AssertionError, match="expected the empty-data revert"):
-            _expect_revert(_raise_revert("ManagerLocked"), message=_NO_REVERT_DATA)
+            _expect_revert(raise_revert("ManagerLocked"), message=NO_REVERT_DATA)
 
     def test_expect_accepted_fails_on_guard_revert(self):
         with pytest.raises(AssertionError, match="expected the guard to pass"):
-            _expect_accepted(_raise_custom_error("InvalidCommand", opcode=32))
+            _expect_accepted(raise_custom_error("InvalidCommand", opcode=32))
 
     def test_expect_accepted_fails_on_unidentified_revert(self):
         with pytest.raises(AssertionError, match="ManagerLocked"):
-            _expect_accepted(_raise_revert(_NO_REVERT_DATA), downstream="ManagerLocked")
+            _expect_accepted(raise_revert(NO_REVERT_DATA), downstream="ManagerLocked")
 
     def test_expect_accepted_propagates_unrelated_exception(self):
         with pytest.raises(RuntimeError, match="harness exploded"):
-            _expect_accepted(_raise_harness_error, downstream="ManagerLocked")
+            _expect_accepted(raise_harness_error, downstream="ManagerLocked")
 
     def test_expect_accepted_accepts_success(self):
         _expect_accepted(lambda: _FakeReceipt(status=1), downstream="ManagerLocked")
 
     def test_expect_accepted_accepts_identified_downstream(self):
-        _expect_accepted(_raise_revert("ManagerLocked"), downstream="ManagerLocked")
+        _expect_accepted(raise_revert("ManagerLocked"), downstream="ManagerLocked")

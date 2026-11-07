@@ -1,9 +1,12 @@
 """
-Shared encoding helpers and constants for cmd_executor tests.
+Shared encoding helpers, constants, and revert identity vocabulary for cmd_executor tests.
 """
 
 from eth_utils.address import to_checksum_address
 from pathlib import Path
+
+from ape.exceptions import ContractLogicError, CustomError, TransactionError
+from ethpm_types.abi import ABIType, ErrorABI
 
 NATIVE_ADDRESS = to_checksum_address("0x0000000000000000000000000000000000000000")
 ZERO_ADDRESS = to_checksum_address("0x0000000000000000000000000000000000000000")
@@ -694,3 +697,92 @@ def record_gas(label: str, gas_used: int) -> None:
     line = f"GAS {label} {gas_used}\n"
     with open(_GAS_RESULTS_PATH, "a") as f:
         f.write(line)
+
+
+# ── Revert identity and capture (shared revert assertions) ──
+
+NO_REVERT_DATA = TransactionError.DEFAULT_MESSAGE
+
+
+def capture_revert(callable_):
+    """Run `callable_`, returning (result, None) on success or (None, revert)
+    on a contract revert.
+
+    Only Ape's contract-revert exceptions are handled. Anything else — a
+    missing method, a fixture failure, an unrelated Python error —
+    propagates and fails the test instead of passing as a revert.
+    """
+    try:
+        return callable_(), None
+    except ContractLogicError as err:
+        return None, err
+
+
+def revert_id(err):
+    """Name the revert an Ape exception carries, for assertion messages."""
+    if isinstance(err, CustomError):
+        fields = ", ".join(f"{k}={v}" for k, v in sorted(err.inputs.items()))
+        return f"{err.name}({fields})"
+    return repr(err.revert_message)
+
+
+def revert_is(err, name):
+    """Whether the revert identifies `name`: a decoded custom error of that
+    name, or a bubbled revert message equal to it."""
+    if isinstance(err, CustomError):
+        return err.name == name
+    return err.revert_message == name
+
+
+def revert_identity(err):
+    """The identity a contract revert exposes, or None when it carries no
+    data to expose.
+
+    Custom errors expose their decoded name and fields; a revert reason
+    string exposes its message. A bare assert/require carries no returndata
+    and surfaces in Ape as its default message.
+    """
+    if isinstance(err, CustomError):
+        return ("custom", err.name, tuple(sorted(err.inputs.items())))
+    if err.revert_message == NO_REVERT_DATA:
+        return None
+    return ("message", err.revert_message)
+
+
+def reverts_match(left, right):
+    """Whether two contract reverts agree on the identity they expose.
+
+    A revert that exposes nothing (bare assert/require) cannot disagree with
+    anything: the Vyper port annotates guards the Solidity original leaves
+    bare, so only identities both sides expose are compared.
+    """
+    left_identity = revert_identity(left)
+    right_identity = revert_identity(right)
+    return left_identity is None or right_identity is None or left_identity == right_identity
+
+
+def raise_harness_error():
+    """Fake call raising an unrelated Python error, never a revert."""
+    msg = "harness exploded"
+    raise RuntimeError(msg)
+
+
+def raise_revert(message):
+    """Fake call raising a contract revert carrying `message`."""
+
+    def _raise():
+        raise ContractLogicError(revert_message=message)
+
+    return _raise
+
+
+def raise_custom_error(name, **fields):
+    """Fake call raising a decoded custom error with `name` and `fields`."""
+
+    def _raise():
+        raise CustomError(
+            abi=ErrorABI(name=name, inputs=[ABIType(name=k, type="uint256") for k in fields]),
+            inputs=dict(fields),
+        )
+
+    return _raise
