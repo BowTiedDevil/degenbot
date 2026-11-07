@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.provider._rust import RustAlloyProvider
-from degenbot.types.rpc_types import BlockTag
+from degenbot.provider.block_helpers import resolve_block_tag
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
@@ -164,24 +164,24 @@ class _OfflineDataMixin(_OfflineBacked):
         self,
         block_identifier: int | str,
     ) -> BlockData | None:
-        """Get a block by number or identifier.
+        """Get a block by number or tag.
 
         Args:
-            block_identifier: Block number or "latest"
+            block_identifier: Block number, or one of 'latest', 'earliest', 'pending'.
 
         Returns:
             Block data dict (including ``number`` and ``timestamp``), or
             ``None`` if the block is not recorded.
 
+        An unsupported tag string raises ``ValueError`` (:meth:`BlockTag.parse`).
+
         """
-        if block_identifier == BlockTag.LATEST:
-            block_num = self._alloy.get_block_number()
-        else:
-            try:
-                block_num = int(block_identifier)
-            except (ValueError, TypeError):
-                return None
-        return cast("BlockData | None", self._alloy.get_block(block_num))
+        return cast(
+            "BlockData | None",
+            self._alloy.get_block(
+                resolve_block_tag(block_identifier, self._alloy.get_block_number())
+            ),
+        )
 
     def get_balance(
         self,
