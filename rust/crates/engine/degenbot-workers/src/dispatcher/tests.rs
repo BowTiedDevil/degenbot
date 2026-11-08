@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 use crate::posture::{FleetPosture, PostureOwner, PosturePolicy};
+use parking_lot::{Mutex, MutexGuard};
 
 fn policy() -> PosturePolicy {
     PosturePolicy {
@@ -24,6 +25,21 @@ fn policy() -> PosturePolicy {
 /// gets its own owner, never the process global (isolation).
 fn hermetic_owner() -> &'static PostureOwner {
     std::boxed::Box::leak(std::boxed::Box::new(PostureOwner::new(policy())))
+}
+
+/// The worker census is process-wide and upserts by resource id, while every
+/// host boot registers its budget-derived rows (`register_census`) — so under
+/// cargo's in-process parallel tests, a boot with a different budget can
+/// overwrite the rows another test is reading (the census contract is
+/// per-boot). One exclusivity lock: `host()` and every direct boot hold it
+/// across the boot, and the census-reading tests hold it across their whole
+/// read window. The `hermetic_owner` precedent serialized instead of
+/// injected: the census is the process's observability surface, not a
+/// swappable dependency.
+static CENSUS_EXCLUSIVITY: Mutex<()> = Mutex::new(());
+
+fn census_exclusivity() -> MutexGuard<'static, ()> {
+    CENSUS_EXCLUSIVITY.lock()
 }
 
 fn boot() -> FleetBoot {
@@ -47,11 +63,14 @@ fn boot_with_owner(owner: &'static PostureOwner) -> FleetBoot {
 }
 
 fn host() -> FleetHost {
+    // Census registration is a boot side effect — see CENSUS_EXCLUSIVITY.
+    let _census = census_exclusivity();
     FleetHost::boot(boot()).expect("8-core boot")
 }
 
 #[test]
 fn boot_fails_loudly_on_an_unhostable_quota() {
+    let _census = census_exclusivity();
     // The 2-5-core tier BOOTS the serial plan — the
     // loud refusal moved below the serial floor (HOST_FLOOR_CORES: a
     // 1.5-core host cannot host ANY tier).
@@ -77,7 +96,9 @@ fn boot_fails_loudly_on_an_unhostable_quota() {
 
 #[test]
 fn boot_pins_exactly_one_merge_and_registers_the_census() {
-    let host = host();
+    // Held across the boot AND the read window — see CENSUS_EXCLUSIVITY.
+    let _census = census_exclusivity();
+    let host = FleetHost::boot(boot()).expect("8-core boot");
     assert_eq!(host.budget().declared_sum(), host.budget().quota_floor);
     let merge = host.merge_slot();
     assert_eq!(
@@ -274,6 +295,7 @@ fn slot_layout_pins_the_merge_sidecar_to_the_last_index() {
 /// every other hosted range intact and merge last.
 #[test]
 fn slot_layout_of_accepts_the_one_bin_edge() {
+    let _census = census_exclusivity();
     let host = FleetHost::boot(FleetBoot {
         profile: degenbot_config::FleetProfile::Auto,
         quota_cpus: 6.0,
@@ -299,6 +321,7 @@ fn slot_layout_of_accepts_the_one_bin_edge() {
 /// station.
 #[test]
 fn a_dead_station_boot_is_a_loud_invariant() {
+    let _census = census_exclusivity();
     for (name, overrides) in [
         (
             "pool_state_updater_slots = 0",
@@ -608,6 +631,7 @@ fn gauge_rows_and_the_dashboard_hook_see_the_fleet() {
 
 #[test]
 fn the_stranded_pipe_trips_the_loud_abort_path() {
+    let _census = census_exclusivity();
     let tripped = std::sync::Arc::new(AtomicUsize::new(0));
     let observer = std::sync::Arc::clone(&tripped);
     let host = FleetHost::boot(boot())
@@ -637,7 +661,9 @@ fn the_stranded_pipe_trips_the_loud_abort_path() {
 
 #[test]
 fn the_intake_station_is_booted_and_census_registered() {
-    let host = host();
+    // Held across the boot AND the read window — see CENSUS_EXCLUSIVITY.
+    let _census = census_exclusivity();
+    let host = FleetHost::boot(boot()).expect("8-core boot");
     let slots = host.budget().pool_state_updater_slots;
     assert!(slots >= 1, "the station hosts at least one slot by default");
     // The merge pin is still structurally the LAST slot.
@@ -776,6 +802,7 @@ fn the_seatdone_of_a_shed_running_unit_lands_on_t8() {
 /// units promptly (they always complete, T8; pins/merge never shed).
 #[test]
 fn the_t7_shed_is_driven_by_the_shared_owner_transition_feed() {
+    let _census = census_exclusivity();
     let owner = hermetic_owner();
     let mut host = FleetHost::boot(boot_with_owner(owner)).expect("8-core boot");
     let slot = idle_intake_slot(&host);
