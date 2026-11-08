@@ -156,16 +156,16 @@ class TestPayloadSeamArms:
             EXECUTOR,
         )
         # Two submits (both paths), one below-threshold, one failure row.
-        assert sorted(c.path_id for c in out.candidates) == sorted([v2_pid, v4v2_pid])
+        assert sorted(c.candidate_id.path_id for c in out.candidates) == sorted([v2_pid, v4v2_pid])
         assert out.unprofitable_count == 1
         assert len(out.failures) == 1
         rec = out.failures[0]
-        assert rec["path_id"] == v2_pid
+        assert rec["candidate"] == {"path_id": v2_pid, "deployment_id": 1}
         assert rec["bucket"] == "inline-fail"  # the Rust default bucket
         assert rec["fail_index"] == 1
         assert rec["revert_data"] == ""
         # Verdicts carry the Rust categorization as kind strings.
-        kinds = {(v.path_id, v.kind) for v in out.verdicts}
+        kinds = {(v.candidate_id.path_id, v.kind) for v in out.verdicts}
         assert (v2_pid, "submit") in kinds
         assert (v4v2_pid, "submit") in kinds
         assert (v2_pid, "unprofitable") in kinds
@@ -188,7 +188,30 @@ class TestPayloadSeamArms:
         )
         assert {v.kind for v in out.verdicts} == {"submit", "unprofitable"}
         assert out.unprofitable_count == 1
-        assert [c.path_id for c in out.candidates] == [v2_pid]
+        assert [c.candidate_id.path_id for c in out.candidates] == [v2_pid]
+
+    def test_foreign_deployment_payload_is_refused(self, mixed_engine_and_paths) -> None:
+        """A payload minted by another deployment never joins this lane.
+
+        The merge's expected identity is the session's built-in deployment,
+        propagated Rust-side — Python cannot pass or override it. A row that
+        carries deployment 2 would otherwise be stamped with this executor and
+        join its calldata into the built-in submit lane, so the crate merge
+        refuses it and the refusal reaches Python as ``ValueError``.
+        """
+        engine, v2_pid, _v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
+        foreign = inline_sim_payload(v2_pid, deployment_id=2)
+        # Mixed with a same-deployment row: the batch still aborts, so no
+        # cross-target join can be committed from a partially-valid payload set.
+        with pytest.raises(ValueError, match="carries deployment 2"):
+            merge_payload_results_py(
+                [inline_sim_payload(v2_pid), foreign],
+                engine,
+                EXECUTOR,
+            )
+        # Control: the same path at the built-in deployment merges normally.
+        out = merge_payload_results_py([inline_sim_payload(v2_pid)], engine, EXECUTOR)
+        assert [c.candidate_id.path_id for c in out.candidates] == [v2_pid]
 
 
 # ── THE PARITY GATE: one rule, byte-identical on both arms ───────
@@ -208,7 +231,7 @@ class TestPathPoolsParityAcrossEntryArms:
             engine,
             EXECUTOR,
         )
-        by_pid = {c.path_id: c for c in out.candidates}
+        by_pid = {c.candidate_id.path_id: c for c in out.candidates}
         # The V2 path: checksummed-address keys (checksummed V2 addresses).
         assert by_pid[v2_pid].path_pools == v2_pools
         # The V4-V2 path: the V4 pool_id_hex + the checksummed V2 address.
@@ -227,7 +250,7 @@ class TestPathPoolsParityAcrossEntryArms:
         out = merge_payload_results_py([inline_sim_payload(v4v2_pid)], engine, EXECUTOR)
         join_map_hops = engine.payload_path_info(v4v2_pid)
         assert join_map_hops is not None
-        row = next(c for c in out.candidates if c.path_id == v4v2_pid)
+        row = next(c for c in out.candidates if c.candidate_id.path_id == v4v2_pid)
         assert row.path_pools == {_pool_key(h) for h in join_map_hops["hops"]}
         assert row.path_pools == v4v2_pools
         assert V4_POOL_ID in row.path_pools  # the V4 key is the salted id
@@ -245,7 +268,7 @@ class TestPathPoolsParityAcrossEntryArms:
             EXECUTOR,
         )
         dispatcher = Dispatcher.for_block(100)
-        rows_by_pid = {c.path_id: c for c in out.candidates}
+        rows_by_pid = {c.candidate_id.path_id: c for c in out.candidates}
         v2_pools = rows_by_pid[v2_pid].path_pools
         v4v2_pools = rows_by_pid[v4v2_pid].path_pools
 

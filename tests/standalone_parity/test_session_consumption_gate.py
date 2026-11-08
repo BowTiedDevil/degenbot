@@ -89,7 +89,7 @@ def _executor(engine: Any) -> BatchExecutor:
 def _payload(path_id: int, sim: dict[str, Any]) -> dict[str, Any]:
     """One inline-sim payload in the engine's result-channel field set."""
     return {
-        "path_id": path_id,
+        "candidate": {"path_id": path_id, "deployment_id": 1},
         "gross_profit": sim["gross_profit"],
         "net_profit": sim["net_profit"],
         "gas_used": sim["gas_used"],
@@ -175,7 +175,7 @@ async def _run_scenario(scenario: dict[str, Any], path_a: int) -> dict[str, Any]
             break
         records.append([
             {
-                "path": "path_a" if record.path_id == path_a else "path_missing",
+                "path": "path_a" if record.candidate_id.path_id == path_a else "path_missing",
                 "block": record.block,
                 "assembly": record.assembly_label,
                 "simulate": "none" if record.simulate is None else record.simulate.kind(),

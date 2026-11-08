@@ -50,6 +50,7 @@ use degenbot_bot::arb_engine::{
     HookedLegReQuote, InlineSimFailure, InlineSimRequest, InlineSimulator, InlineSwapFamily,
     SimulatedPathResult,
 };
+use degenbot_execution::CandidateId;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::capture::SwapFamily;
 use degenbot_simulation::WarmCodeCacheInner;
@@ -133,6 +134,18 @@ fn captured_swap_rows(swaps: &[degenbot_arbitrage::CapturedSwap]) -> Vec<Capture
             tick: s.tick,
         })
         .collect()
+}
+
+/// The candidate identity of one inline-sim request.
+///
+/// The engine request is path-keyed (the engine knows no deployment); the inline
+/// simulator IS the session's built-in deployment, so the candidate's identity
+/// is that deployment's (ADR-098 D4).
+fn candidate_id(req: &InlineSimRequest) -> CandidateId {
+    CandidateId::new(
+        req.path_id,
+        degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+    )
 }
 
 fn outputs_vec(req: &InlineSimRequest) -> Vec<u128> {
@@ -484,7 +497,7 @@ impl InlineSimulator for InlineSimHook {
             })
             .collect();
         let sim_path = SimulatePath {
-            path_id: req.path_id,
+            candidate_id: candidate_id(&req),
             optimal_input,
             steps: steps.into_boxed_slice(),
             path_info,
@@ -632,7 +645,7 @@ impl InlineSimulator for InlineSimHook {
                             // tally `rpc-failed` (mirrors the FFI build-failure arm).
                             let mut buckets = FailBuckets::new();
                             buckets.record(
-                                req.path_id,
+                                candidate_id(&req),
                                 "rpc-failed",
                                 None,
                                 Bytes::new(),
@@ -660,7 +673,7 @@ impl InlineSimulator for InlineSimHook {
                     // The sim task panicked — the FFI fan-out's exception class.
                     let mut buckets = FailBuckets::new();
                     buckets.record(
-                        req.path_id,
+                        candidate_id(&req),
                         "exception",
                         None,
                         Bytes::new(),

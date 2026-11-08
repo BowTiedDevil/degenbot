@@ -334,7 +334,10 @@ mod tests {
 
     fn failure(captured_swaps: Vec<CapturedSwap>, hop_outputs: Vec<u128>) -> SimFailure {
         SimFailure {
-            path_id: 1,
+            candidate_id: degenbot_execution::CandidateId::new(
+                1,
+                degenbot_execution::DeploymentId::new(1),
+            ),
             bucket: "0x CurrencyNotSettled".to_string(),
             fail_index: Some(3),
             revert_data: alloy::primitives::Bytes::default(),

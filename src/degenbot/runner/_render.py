@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Any
 
 from degenbot.dispatch import (
     AssemblyVerdict,
+    CandidateId,
     SimulateVerdict,
+    candidate_id_from_mapping,
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import FAMILY_TAG_TO_POOL_KIND, POOL_KIND_LABEL, PoolKind
@@ -80,11 +82,21 @@ class _RenderCandidate:
     payload).
     """
 
-    path_id: int
+    candidate: CandidateId
     gross_profit: int
     net_profit: int
     gas_used: int
     priority_fee: int
+
+    @property
+    def path_id(self) -> int:
+        """The candidate's solver path (the pre-target half)."""
+        return self.candidate.path_id
+
+    @property
+    def deployment_id(self) -> int:
+        """The deployment that executed this candidate."""
+        return self.candidate.deployment_id
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -151,7 +163,9 @@ class MergedOutcome:
         for rec in records:
             match rec.assembly:
                 case AssemblyVerdict.SkipEmptyHops:
-                    bot_logger.debug(f"[sim-none] path={rec.path_id}: empty hop_outputs")
+                    bot_logger.debug(
+                        f"[sim-none] path={rec.candidate_id.path_id}: empty hop_outputs"
+                    )
                     continue
                 case (
                     AssemblyVerdict.SkipResolveMiss
@@ -167,12 +181,12 @@ class MergedOutcome:
                 case _:
                     pass
             # Assembled: the display context + the sim verdict fold.
-            path_infos[rec.path_id] = rec.path_info_dict()
+            path_infos[rec.candidate_id.path_id] = rec.path_info_dict()
             match rec.simulate:
                 case SimulateVerdict.Profitable(receipt=receipt):
                     gas_profitable.append(
                         _RenderCandidate(
-                            path_id=rec.path_id,
+                            candidate=_candidate_of(rec),
                             gross_profit=int(receipt.gross_profit),
                             net_profit=int(receipt.net_profit),
                             gas_used=receipt.gas_used,
@@ -193,7 +207,7 @@ class MergedOutcome:
                     # Post-assembly drop (the solve-snapshot staleness gate /
                     # the per-batch cap) — the same drain-invisible drop the
                     # pre-cut-over outcome applied.
-                    path_infos.pop(rec.path_id, None)
+                    path_infos.pop(rec.candidate_id.path_id, None)
         return cls(
             gas_profitable=gas_profitable,
             gas_unprofitable_count=gas_unprofitable_count,
@@ -488,13 +502,33 @@ def _hex_amounts(values: object) -> str:
     return "[" + ", ".join(f"0x{int(v):x}" for v in values) + "]"
 
 
+def _candidate_of(rec: Any) -> CandidateId:
+    """Project one batch outcome record's composite candidate identity.
+
+    The record exposes it as ONE value (``candidate_id`` — a path plus the
+    deployment that executed it); the render view carries that same value, never
+    a bare path id.
+
+    Args:
+        rec: One drained Batch outcome record.
+
+    Returns:
+        The candidate identity the record carries.
+
+    """
+    return CandidateId(
+        path_id=rec.candidate_id.path_id,
+        deployment_id=rec.candidate_id.deployment_id,
+    )
+
+
 def _dump_failure_fixture(
     rec: dict[str, Any],
     path_info: dict[str, Any] | None,
     current_block: int,
 ) -> None:
     """Dump the full hop detail for a failing candidate — the sim-failure trap."""
-    path_id = rec["path_id"]
+    path_id = candidate_id_from_mapping(rec["candidate"]).path_id
 
     captured = rec.get("captured_swaps") or []
 
@@ -603,7 +637,7 @@ def _render_one_failure(
     current_block: int,
 ) -> None:
     """Render the always-on ``[sim-fail]`` + ``[sim-diag]`` pair for one record."""
-    path_id = rec["path_id"]
+    path_id = candidate_id_from_mapping(rec["candidate"]).path_id
     bucket = rec["bucket"]
     fail_idx = rec["fail_index"]
     revert_hex = rec["revert_data"]
@@ -628,7 +662,10 @@ def _render_one_failure(
     bot_logger.debug(
         format_sim_diag_line(
             rec,
-            path_id=path_id,
+            candidate=CandidateId(
+                path_id=path_id,
+                deployment_id=rec["candidate"]["deployment_id"],
+            ),
             path_type=path_type,
             window=SimDiagWindow(solve_block=current_block, block=current_block, age=0),
         )
@@ -689,7 +726,11 @@ def _enforce_sim_failure_policy(  # ruff:ignore[too-many-arguments]
     if not trap_failures:
         return
     first = trap_failures[0]
-    _dump_failure_fixture(first, path_infos.get(first["path_id"]), current_block)
+    _dump_failure_fixture(
+        first,
+        path_infos.get(candidate_id_from_mapping(first["candidate"]).path_id),
+        current_block,
+    )
     # ADR-040: the PER-BUCKET policy decides what happens next — the
     # Rust core owns the closed bucket matrix (single source of truth);
     # Python only consults it. A sim failure's effective action is the
@@ -765,7 +806,7 @@ class SimDiagWindow:
 def format_sim_diag_line(
     failure: dict[str, object],
     *,
-    path_id: int,
+    candidate: CandidateId,
     path_type: str,
     window: SimDiagWindow,
 ) -> str:
@@ -786,7 +827,8 @@ def format_sim_diag_line(
 
     The line is one compact, machine-parseable JSON object (``json.loads`` on
 
-    the text after the ``[sim-diag] `` prefix) carrying: ``path_id``,
+    the text after the ``[sim-diag] `` prefix) carrying: ``candidate`` (the
+    path + the deployment that executed it),
 
     ``path_type``, ``solve_block``, ``block``, ``age``, ``revert_info``
 
@@ -813,7 +855,10 @@ def format_sim_diag_line(
 
     """
     payload = {
-        "path_id": path_id,
+        "candidate": {
+            "path_id": candidate.path_id,
+            "deployment_id": candidate.deployment_id,
+        },
         "path_type": path_type,
         "solve_block": window.solve_block,
         "block": window.block,

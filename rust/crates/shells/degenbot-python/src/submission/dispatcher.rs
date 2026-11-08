@@ -16,8 +16,9 @@
 //! the `Dispatcher` arc, so the sim fan-out can lock suppression WITHOUT
 //! locking the `Dispatcher` (which the
 //! submission monitor tasks contend for). The `Dispatcher` never touches
-//! suppression; the 5 suppression accessors below delegate to the suppression
-//! arc.
+//! suppression: the batch executor is wired with the suppression arc here, and
+//! the ledger itself has no Python-facing per-entry accessor (it is
+//! candidate-keyed, and its mutators are the Rust pipeline's).
 //!
 //! # GIL discipline
 //!
@@ -344,51 +345,13 @@ impl PyDispatcher {
         }
     }
 
-    // ── PathSuppression delegation ────────────────────────────────
-    // Delegated to the standalone `Arc<Mutex<PathSuppression>>`, NOT
-    // the `Dispatcher` arc — the sim seam locks the same arc directly, and the
-    // `Dispatcher` lock stays uncontended by suppression bookkeeping.
-    /// Record a successful simulation for `path_id` (clears its fail streak).
-    fn record_success(&self, path_id: u64) {
-        self.suppression
-            .lock()
-            .expect("suppression mutex poisoned")
-            .record_success(path_id);
-    }
-
-    /// Record a failed simulation for `path_id` (bumps its fail streak;
-    /// suppresses after `PATH_SUPPRESS_THRESHOLD` consecutive failures).
-    fn record_failure(&self, path_id: u64) {
-        self.suppression
-            .lock()
-            .expect("suppression mutex poisoned")
-            .record_failure(path_id);
-    }
-
-    /// True iff `path_id` is currently suppressed (retried every
-    /// `PATH_SUPPRESS_RETRY_INTERVAL` blocks).
-    fn is_suppressed(&self, path_id: u64, current_block: u64) -> bool {
-        self.suppression
-            .lock()
-            .expect("suppression mutex poisoned")
-            .is_suppressed(path_id, current_block)
-    }
-
-    /// Count of paths currently in the suppressed set.
-    fn total_suppressed(&self) -> u64 {
-        self.suppression
-            .lock()
-            .expect("suppression mutex poisoned")
-            .total_suppressed()
-    }
-
-    /// Discard a path from suppression tracking (the result-batch `removed` set).
-    fn discard_path(&self, path_id: u64) {
-        self.suppression
-            .lock()
-            .expect("suppression mutex poisoned")
-            .discard(path_id);
-    }
+    // ── PathSuppression ──────────────────────────────────────────
+    // The ledger is keyed by `CandidateId` (path + deployment), so it has no
+    // Python-facing per-entry surface: the sim fan-out records outcomes, the
+    // assembly reads the skip projection, and the session discards a removed
+    // path's entries — all inside Rust. The arc below is what the batch
+    // executor is wired with; the `Dispatcher` lock stays uncontended by
+    // suppression bookkeeping.
 
     // ── PoolDivergence delegation ─────────────────────────
     // Delegated to the standalone `Arc<Mutex<PoolDivergence>>`, NOT the

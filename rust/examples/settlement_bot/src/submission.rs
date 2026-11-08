@@ -96,7 +96,7 @@ pub async fn submit_batch(
         };
         if blocked {
             decisions.push(SubmitRecord::Skipped {
-                path_id: candidate.path_id,
+                candidate_id: candidate.candidate_id,
                 reason: SkipReason::PoolsClaimed,
             });
             continue;
@@ -107,7 +107,7 @@ pub async fn submit_batch(
             // seam.
             committed_pools.extend(path_pools);
             decisions.push(SubmitRecord::Skipped {
-                path_id: candidate.path_id,
+                candidate_id: candidate.candidate_id,
                 reason: SkipReason::DryRun,
             });
             continue;
@@ -115,7 +115,7 @@ pub async fn submit_batch(
         if inject_code {
             committed_pools.extend(path_pools);
             decisions.push(SubmitRecord::Skipped {
-                path_id: candidate.path_id,
+                candidate_id: candidate.candidate_id,
                 reason: SkipReason::InjectCode,
             });
             continue;
@@ -258,7 +258,10 @@ mod tests {
 
     fn candidate(path_id: u64, net_profit: u64, pools: &[&str]) -> SubmitCandidate {
         SubmitCandidate {
-            path_id,
+            candidate_id: degenbot::execution::CandidateId::new(
+                path_id,
+                degenbot::execution::DeploymentId::new(1),
+            ),
             gross_profit: U256::from(net_profit + 1),
             net_profit: U256::from(net_profit),
             gas_used: 100_000,
@@ -287,7 +290,7 @@ mod tests {
             Box::pin(async move {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(SubmitRecord::Submitted {
-                    path_id: candidate.path_id,
+                    candidate_id: candidate.candidate_id,
                     tx_hash: B256::ZERO,
                     nonce: 0,
                 })

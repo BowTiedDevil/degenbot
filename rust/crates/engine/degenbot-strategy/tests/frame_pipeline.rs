@@ -1467,6 +1467,7 @@ use alloy::primitives::Bytes;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
+use degenbot_execution::{CandidateId, DeploymentId};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_strategy::backrun::{BackrunConfig, Decision, SubmissionSlot};
@@ -1756,17 +1757,25 @@ fn mined_receipt(hash: B256) -> serde_json::Value {
     })
 }
 
+/// The backrun lane's one deployment identity (its own composition boundary).
+fn backrun_candidate_id(path_id: u64) -> CandidateId {
+    CandidateId::new(path_id, DeploymentId::new(1))
+}
+
 /// Only nonce contention parks a bid: the blocked verdict is the park's whole
 /// licence, so every other submit outcome must stay terminal.
 #[test]
 fn only_nonce_contention_parks_a_bid() {
     let submitted = SubmitRecord::Submitted {
-        path_id: 1,
+        candidate_id: backrun_candidate_id(1),
         tx_hash: B256::repeat_byte(0x11),
         nonce: 7,
     };
     let skipped = |path_id: u64, reason: SkipReason| SubmitOutcome {
-        records: vec![SubmitRecord::Skipped { path_id, reason }],
+        records: vec![SubmitRecord::Skipped {
+            candidate_id: backrun_candidate_id(path_id),
+            reason,
+        }],
     };
 
     assert!(
@@ -1800,11 +1809,11 @@ fn only_nonce_contention_parks_a_bid() {
             records: vec![
                 submitted,
                 SubmitRecord::Skipped {
-                    path_id: 2,
+                    candidate_id: backrun_candidate_id(2),
                     reason: SkipReason::NonceContended,
                 },
                 SubmitRecord::Skipped {
-                    path_id: 3,
+                    candidate_id: backrun_candidate_id(3),
                     reason: SkipReason::NonceContended,
                 },
             ],

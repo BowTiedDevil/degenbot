@@ -36,6 +36,7 @@ use std::sync::Arc;
 use crate::bot::engine::PyArbEngine;
 use crate::prelude::*;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
+use crate::simulation::identity::{candidate_id_to_dict, PyCandidateId};
 use crate::simulation::render::{path_info_to_py_dict, sim_failure_to_dict};
 use crate::submission::dispatcher::PyDispatcher;
 use crate::submission::signer::PyTxSigner;
@@ -123,10 +124,10 @@ pub struct PyFailureDetail {
 
 #[pymethods]
 impl PyFailureDetail {
-    /// The path that failed.
+    /// The candidate that failed (path + the deployment that simulated it).
     #[getter]
-    fn path_id(&self) -> u64 {
-        self.inner.path_id
+    fn candidate_id(&self) -> PyCandidateId {
+        PyCandidateId::wrap(self.inner.candidate_id)
     }
 
     /// The failure-bucket label — the Rust
@@ -290,10 +291,11 @@ pub struct PyBatchOutcome {
 
 #[pymethods]
 impl PyBatchOutcome {
-    /// The candidate's arb path id.
+    /// The candidate identity — the solver path bound to the deployment that
+    /// executed it.
     #[getter]
-    fn path_id(&self) -> u64 {
-        self.inner.path_id
+    fn candidate_id(&self) -> PyCandidateId {
+        PyCandidateId::wrap(self.inner.candidate_id)
     }
 
     /// The block the batch was consumed at (the liveness heartbeat).
@@ -385,18 +387,21 @@ impl PyBatchOutcomeSet {
             let dict = PyDict::new(py);
             match record {
                 degenbot_submission::SubmitRecord::Submitted {
-                    path_id,
+                    candidate_id,
                     tx_hash,
                     nonce,
                 } => {
                     dict.set_item("kind", "submitted")?;
-                    dict.set_item("path_id", path_id)?;
+                    dict.set_item("candidate", candidate_id_to_dict(py, candidate_id)?)?;
                     dict.set_item("tx_hash", format!("{tx_hash:?}"))?;
                     dict.set_item("nonce", nonce)?;
                 }
-                degenbot_submission::SubmitRecord::Skipped { path_id, reason } => {
+                degenbot_submission::SubmitRecord::Skipped {
+                    candidate_id,
+                    reason,
+                } => {
                     dict.set_item("kind", "skipped")?;
-                    dict.set_item("path_id", path_id)?;
+                    dict.set_item("candidate", candidate_id_to_dict(py, candidate_id)?)?;
                     let (reason_label, detail) = skip_reason_to_py(reason);
                     dict.set_item("reason", reason_label)?;
                     if let Some(detail) = detail {

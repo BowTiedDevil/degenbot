@@ -186,13 +186,13 @@ class TestSessionDrainProduct:
         assert batch is not None
         # The drained records: one payload row through the payload arm
         # (profitable — its submit rows join the ordered lane).
-        assert [rec.path_id for rec in batch.records] == [path_id]
+        assert [rec.candidate_id.path_id for rec in batch.records] == [path_id]
         assert batch.records[0].assembly is AssemblyVerdict.Assembled
         assert isinstance(batch.records[0].simulate, SimulateVerdict.Profitable)
 
         # The raw submit-lane records: the dry-run skip, typed decode intact.
         records = [typed_submit_record(raw) for raw in batch.submit_records]
-        assert records[0].path_id == path_id
+        assert records[0].candidate.path_id == path_id
         assert records[0].reason is SubmitSkipReason.DRY_RUN
 
         # The render fold: counters arrive as folds over the records.

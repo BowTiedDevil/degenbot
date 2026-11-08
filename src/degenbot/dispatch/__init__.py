@@ -58,6 +58,7 @@ from degenbot._ffi.simulation import (
     SimulateVerdict,
     SubmitVerdict,
 )
+from degenbot._ffi.simulation import CandidateId as CandidateId
 from degenbot._ffi.simulation import build_batch_executor_py as build_batch_executor
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
 from degenbot._ffi.submission import (
@@ -74,6 +75,7 @@ from degenbot.dispatch.records import (
     SubmitRecord,
     SubmitSkipReason,
     SubmittedRecord,
+    candidate_id_from_mapping,
     typed_submit_record,
 )
 
@@ -148,6 +150,7 @@ __all__ = [
     "BatchExecutor",
     "BatchOutcome",
     "BatchOutcomeSet",
+    "CandidateId",
     "ConsumerErrorKind",
     "Dispatcher",
     "EnqueueDecline",
@@ -170,6 +173,7 @@ __all__ = [
     "SubmittedRecord",
     "TxSigner",
     "build_batch_executor",
+    "candidate_id_from_mapping",
     "dispatch_and_submit",
     "fetch_fee_history",
     "merge_payload_results",

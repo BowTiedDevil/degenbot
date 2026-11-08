@@ -11,13 +11,15 @@
 
 use alloy::primitives::U256;
 use degenbot_arbitrage::SimFailure;
-use degenbot_execution::{HopInfo, PathInfo};
+use degenbot_execution::{CandidateId, HopInfo, PathInfo};
 
 /// The typed result of one candidate's ordered pass through the pipeline.
 #[derive(Debug, Clone)]
 pub struct BatchOutcome {
-    /// Keys every stage; read by all four Python renderers.
-    pub path_id: u64,
+    /// The candidate identity — keys every stage; read by all four Python
+    /// renderers. The solver path alone cannot key this record: two deployments
+    /// simulating the same path are two candidates.
+    pub candidate_id: CandidateId,
     /// Block the batch was consumed at (the Rust drain's only read today —
     /// the liveness heartbeat).
     pub block: u64,
@@ -45,7 +47,7 @@ pub enum AssemblyVerdict {
     Assembled,
     /// `hop_outputs` was empty — not an encodable path (the `[sim-none]` skip).
     SkipEmptyHops,
-    /// The row's `path_id` did not resolve to a registered `PathInfo`.
+    /// The row's path did not resolve to a registered `PathInfo`.
     ///
     /// Decision: the two consumers disagreed — the `PyO3` seam
     /// raised `ValueError`, the settlement bot folded the miss into

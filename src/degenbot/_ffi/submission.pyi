@@ -14,6 +14,7 @@ from typing import Any, Final, SupportsFloat, SupportsIndex, final
 from _typeshed import SupportsGetItem
 
 from .provider import AsyncAlloyProvider
+from .simulation import CandidateId
 
 __all__ = [
     "Dispatcher",
@@ -88,10 +89,6 @@ class Dispatcher:
         """
         The current block (the by-reference block clock).
         """
-    def discard_path(self, /, path_id: SupportsIndex) -> None:
-        """
-        Discard a path from suppression tracking (the result-batch `removed` set).
-        """
     def divergent_pools(self, /, current_block: SupportsIndex) -> list[DivergentPool]:
         """
         The current divergent-pool set — `list[dict]`, one per pool flagged
@@ -125,11 +122,6 @@ class Dispatcher:
         """
         True iff any path pool is already locked (pending) or committed this batch.
         """
-    def is_suppressed(self, /, path_id: SupportsIndex, current_block: SupportsIndex) -> bool:
-        """
-        True iff `path_id` is currently suppressed (retried every
-        `PATH_SUPPRESS_RETRY_INTERVAL` blocks).
-        """
     def latest_priority_fees(self, /) -> dict[int, int]:
         """
         The most-recently recorded per-block percentile fees (`{p: wei}`).
@@ -149,11 +141,6 @@ class Dispatcher:
         """
         Record a `(block, timestamp)` pair into the block-time ring (maxlen 60).
         """
-    def record_failure(self, /, path_id: SupportsIndex) -> None:
-        """
-        Record a failed simulation for `path_id` (bumps its fail streak;
-        suppresses after `PATH_SUPPRESS_THRESHOLD` consecutive failures).
-        """
     def record_priority_fees(
         self, /, block: SupportsIndex, fees: dict[SupportsIndex, SupportsIndex]
     ) -> None:
@@ -163,10 +150,6 @@ class Dispatcher:
         Args:
             `block`: The block the fees are for.
             `fees`: A `{percentile: wei}` dict (e.g. `{50: 1_000_000_000}`).
-        """
-    def record_success(self, /, path_id: SupportsIndex) -> None:
-        """
-        Record a successful simulation for `path_id` (clears its fail streak).
         """
     def release_pools(self, /, pools: set[str]) -> None:
         """
@@ -185,10 +168,6 @@ class Dispatcher:
     def total_fot_dropped(self, /) -> int:
         """
         The lifetime-total paths dropped via the `FoT` skip.
-        """
-    def total_suppressed(self, /) -> int:
-        """
-        Count of paths currently in the suppressed set.
         """
 
 @final
@@ -321,7 +300,9 @@ class SubmitCandidate:
     [`dispatch_and_submit_py`].
 
     Fields mirror [`SubmitCandidate`] 1:1. Python passes:
-     * `path_id`, `gas_used`: `int`
+     * `candidate_id`: the [`PyCandidateId`] the sim record carries (path +
+       deployment — the composite identity, never a bare path id)
+     * `gas_used`: `int`
      * `gross_profit`, `net_profit`: `int` (wei)
      * `priority_fee`, `base_fee_next`: `int` (wei)
      * `execute_calldata`: `bytes`
@@ -332,7 +313,7 @@ class SubmitCandidate:
     def __new__(
         cls,
         /,
-        path_id: SupportsIndex,
+        candidate_id: CandidateId,
         gross_profit: Any,
         net_profit: Any,
         gas_used: SupportsIndex,
@@ -351,6 +332,8 @@ class SubmitCandidate:
         + passed IN).
         """
     @property
+    def candidate_id(self, /) -> CandidateId: ...
+    @property
     def execute_calldata(self, /) -> bytes:
         """
         The composed `execute(bytes, uint256)` calldata (the exact bytes the
@@ -363,8 +346,6 @@ class SubmitCandidate:
     def gross_profit(self, /) -> Any: ...
     @property
     def net_profit(self, /) -> Any: ...
-    @property
-    def path_id(self, /) -> int: ...
     @property
     def path_pools(self, /) -> set[str]:
         """

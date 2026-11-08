@@ -868,11 +868,11 @@ impl SessionConsumer {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 for path_id in &batch.removed {
-                    suppression.discard(*path_id);
+                    suppression.discard_path(*path_id);
                 }
             }
         }
-        let mut work = batch_work(batch, &self.clock);
+        let mut work = batch_work(batch, &self.clock, self.executor.deployment_id());
         work.block_priority_fees = self.priority_fees();
         match self.executor.enqueue(work) {
             EnqueueOutcome::Accepted => {
@@ -970,9 +970,12 @@ pub fn raw_row(path_id: u64, result: &SolvePathResult, solve_block: u64) -> RawR
 /// A payload row's resolve miss is the assembly stage's loud-abort arm, so this
 /// extraction never fabricates a path.
 #[must_use]
-pub fn payload_row(sim: &SimulatedPathResult) -> PayloadRow {
+pub fn payload_row(
+    sim: &SimulatedPathResult,
+    deployment_id: degenbot_execution::DeploymentId,
+) -> PayloadRow {
     PayloadRow {
-        path_id: sim.path_id,
+        candidate_id: degenbot_execution::CandidateId::new(sim.path_id, deployment_id),
         gross_profit: sim.gross_profit,
         net_profit: sim.net_profit,
         gas_used: sim.gas_used,
@@ -1041,7 +1044,7 @@ fn captured_swap(row: &CapturedSwapRow) -> CapturedSwap {
 #[must_use]
 pub fn simulated_path(row: &PayloadRow, hop_count: usize) -> SimulatedPathResult {
     SimulatedPathResult {
-        path_id: row.path_id,
+        path_id: row.candidate_id.path_id(),
         gross_profit: row.gross_profit,
         net_profit: row.net_profit,
         gas_used: row.gas_used,
@@ -1108,7 +1111,11 @@ fn inline_sim_failure(failure: &PayloadFailure) -> InlineSimFailure {
 /// assembly reads — per-entry presence decides, so a mixed batch only degrades
 /// the payload-less entries.
 #[must_use]
-pub fn batch_work(batch: &ResultBatch, clock: &BlockClock) -> BatchWork {
+pub fn batch_work(
+    batch: &ResultBatch,
+    clock: &BlockClock,
+    deployment_id: degenbot_execution::DeploymentId,
+) -> BatchWork {
     let rows: Vec<RawResult> = batch
         .fresh
         .iter()
@@ -1119,7 +1126,12 @@ pub fn batch_work(batch: &ResultBatch, clock: &BlockClock) -> BatchWork {
     payload_ids.sort_unstable();
     let payloads = payload_ids
         .iter()
-        .filter_map(|id| batch.payloads.get(id).map(payload_row))
+        .filter_map(|id| {
+            batch
+                .payloads
+                .get(id)
+                .map(|sim| payload_row(sim, deployment_id))
+        })
         .collect();
     BatchWork {
         rows,
@@ -1235,10 +1247,16 @@ mod tests {
         }
     }
 
+    /// The session tests' one deployment identity.
+    fn deployment_id() -> degenbot_execution::DeploymentId {
+        degenbot_execution::DeploymentId::new(1)
+    }
+
     fn fake_executor(fail_on: Option<u64>, passed: Arc<tokio::sync::Notify>) -> Arc<BatchExecutor> {
         let (tx, rx) = mpsc::unbounded_channel();
         Arc::new(BatchExecutor::from_leaves(
             1,
+            deployment_id(),
             Arc::new(SignallingSim { fail_on, passed }),
             Arc::new(NoopSubmit),
             tx,
@@ -1336,8 +1354,8 @@ mod tests {
     #[test]
     fn payload_row_projects_the_inline_sim_row() {
         let sim = inline_sim_result();
-        let row = payload_row(&sim);
-        assert_eq!(row.path_id, 4);
+        let row = payload_row(&sim, deployment_id());
+        assert_eq!(row.candidate_id.path_id(), 4);
         assert_eq!(row.net_profit, alloy::primitives::U256::from(900_u64));
         assert_eq!(row.gas_used, 300_000);
         assert_eq!(row.base_fee_next, 7);
@@ -1369,7 +1387,7 @@ mod tests {
             access_list: None,
             ..sim
         };
-        let row = payload_row(&healthy);
+        let row = payload_row(&healthy, deployment_id());
         assert!(row.failure.is_none());
         assert!(row.access_list.is_none());
     }
@@ -1382,7 +1400,10 @@ mod tests {
     #[test]
     fn the_payload_row_and_the_simulated_path_are_inverse() {
         let sim = inline_sim_result();
-        assert_eq!(simulated_path(&payload_row(&sim), sim.hop_count), sim);
+        assert_eq!(
+            simulated_path(&payload_row(&sim, deployment_id()), sim.hop_count),
+            sim
+        );
     }
 
     /// The batch's work: `fresh` and `updated` join in stream order, the
@@ -1421,14 +1442,17 @@ mod tests {
             block_timestamp: 1_700_000_101,
             base_fee_next: 1_041_666_666,
         };
-        let work = batch_work(&batch, &clock);
+        let work = batch_work(&batch, &clock, deployment_id());
         assert_eq!(
             work.rows.iter().map(|r| r.path_id).collect::<Vec<_>>(),
             vec![1, 2],
             "fresh then updated, in stream order"
         );
         assert_eq!(
-            work.payloads.iter().map(|p| p.path_id).collect::<Vec<_>>(),
+            work.payloads
+                .iter()
+                .map(|p| p.candidate_id.path_id())
+                .collect::<Vec<_>>(),
             vec![5, 20],
             "payloads join in path-id order"
         );
@@ -1445,8 +1469,8 @@ mod tests {
         let suppression = Arc::new(Mutex::new(degenbot_submission::PathSuppression::new()));
         {
             let mut registry = suppression.lock().unwrap();
-            registry.record_failure(7);
-            registry.record_failure(7);
+            registry.record_failure(degenbot_execution::CandidateId::new(7, deployment_id()));
+            registry.record_failure(degenbot_execution::CandidateId::new(7, deployment_id()));
         }
         let heartbeat = Heartbeat::new();
         let executor = fake_executor(None, Arc::new(tokio::sync::Notify::new()));

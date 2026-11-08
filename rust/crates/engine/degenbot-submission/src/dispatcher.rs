@@ -41,6 +41,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
+use degenbot_execution::CandidateId;
+
 /// Maximum number of per-block priority-fee percentile samples retained in
 /// [`Dispatcher::block_priority_fees`]: ten blocks of `eth_feeHistory` — the
 /// window the p10/p50 fee bounds are drawn from. On overflow the oldest block
@@ -127,14 +129,20 @@ impl CommittedTx {
 // PathSuppression
 // ============================================================================
 
-/// Track per-path simulation failures and suppress consistently failing paths.
+/// Track per-candidate simulation failures and suppress consistently failing
+/// candidates.
 ///
-/// After a path fails simulation `PATH_SUPPRESS_THRESHOLD` consecutive times
-/// it is suppressed — excluded from the simulation candidate list. Suppressed
-/// paths are retried every `PATH_SUPPRESS_RETRY_INTERVAL` blocks; if a retry
-/// succeeds the path is permanently un-suppressed.
+/// After a candidate fails simulation `PATH_SUPPRESS_THRESHOLD` consecutive
+/// times it is suppressed — excluded from the simulation candidate list.
+/// Suppressed candidates are retried every `PATH_SUPPRESS_RETRY_INTERVAL`
+/// blocks; if a retry succeeds the candidate is permanently un-suppressed.
 ///
-/// The path-suppression ledger: which paths are benched, and until when.
+/// The key is the [`CandidateId`], not the solver path id: one path evaluated
+/// at two deployments is two candidates, and a failure at one deployment says
+/// nothing about the other (ADR-098 D4). A path leaving the registry is the one
+/// path-scoped event, handled by [`PathSuppression::discard_path`].
+///
+/// The path-suppression ledger: which candidates are benched, and until when.
 ///
 /// # Ownership
 ///
@@ -143,17 +151,18 @@ impl CommittedTx {
 /// `Dispatcher` arc) so the simulation seam (`dispatch_profitable_results`)
 /// can lock it directly without locking the `Dispatcher` (which the
 /// submission monitor tasks contend for). The `Dispatcher` never touches
-/// `PathSuppression` — the `record_success`/`record_failure`/`is_suppressed`/
-/// `total_suppressed`/`discard_path` accessors live on `PyDispatcher` (the
-/// `PyO3` seam), delegating to the suppression arc.
+/// `PathSuppression`: the ledger's mutators are the pipeline's own (the sim
+/// fan-out records outcomes, the assembly reads the skip projection, and the
+/// session discards a removed path's entries), and only the cumulative tally
+/// crosses the `PyO3` seam for a driver to render.
 #[derive(Debug, Default)]
 pub struct PathSuppression {
-    /// `path_id` → consecutive failure count.
-    fail_counts: BTreeMap<u64, u32>,
-    /// `path_id` → block number when the path was last retried.
-    last_retry_block: BTreeMap<u64, u64>,
-    /// `path_id` set currently suppressed.
-    suppressed: HashSet<u64>,
+    /// `candidate_id` → consecutive failure count.
+    fail_counts: BTreeMap<CandidateId, u32>,
+    /// `candidate_id` → block number when the candidate was last retried.
+    last_retry_block: BTreeMap<CandidateId, u64>,
+    /// `candidate_id` set currently suppressed.
+    suppressed: HashSet<CandidateId>,
     /// Total paths suppressed (for logging parity with `total_suppressed`).
     total_suppressed: u64,
 }
@@ -165,40 +174,44 @@ impl PathSuppression {
         Self::default()
     }
 
-    /// A path succeeded at simulation — reset its failure counter (and
+    /// A candidate succeeded at simulation — reset its failure counter (and
     /// permanently un-suppress if it was suppressed).
-    pub fn record_success(&mut self, path_id: u64) {
-        self.fail_counts.remove(&path_id);
-        if self.suppressed.remove(&path_id) {
+    pub fn record_success(&mut self, candidate_id: CandidateId) {
+        self.fail_counts.remove(&candidate_id);
+        if self.suppressed.remove(&candidate_id) {
             // matches the Python debug log path; no observable behavior.
         }
     }
 
-    /// A path failed simulation — increment its counter, maybe suppress.
-    pub fn record_failure(&mut self, path_id: u64) {
-        let count = self.fail_counts.get(&path_id).copied().unwrap_or(0) + 1;
-        self.fail_counts.insert(path_id, count);
+    /// A candidate failed simulation — increment its counter, maybe suppress.
+    pub fn record_failure(&mut self, candidate_id: CandidateId) {
+        let count = self.fail_counts.get(&candidate_id).copied().unwrap_or(0) + 1;
+        self.fail_counts.insert(candidate_id, count);
 
-        if count >= PATH_SUPPRESS_THRESHOLD && !self.suppressed.contains(&path_id) {
-            self.suppressed.insert(path_id);
+        if count >= PATH_SUPPRESS_THRESHOLD && !self.suppressed.contains(&candidate_id) {
+            self.suppressed.insert(candidate_id);
             self.total_suppressed += 1;
         }
     }
 
-    /// Check if a path is currently suppressed (with retry logic).
+    /// Check if a candidate is currently suppressed (with retry logic).
     ///
-    /// Returns `true` if the path should be skipped. Returns `false` if the
-    /// path is due for a retry — the caller should simulate it (and the retry
-    /// block is recorded so the next `is_suppressed` within the same interval
+    /// Returns `true` if the candidate should be skipped. Returns `false` if it
+    /// is due for a retry — the caller should simulate it (and the retry block
+    /// is recorded so the next `is_suppressed` within the same interval
     /// suppresses).
-    pub fn is_suppressed(&mut self, path_id: u64, current_block: u64) -> bool {
-        if !self.suppressed.contains(&path_id) {
+    pub fn is_suppressed(&mut self, candidate_id: CandidateId, current_block: u64) -> bool {
+        if !self.suppressed.contains(&candidate_id) {
             return false;
         }
 
-        let last_retry = self.last_retry_block.get(&path_id).copied().unwrap_or(0);
+        let last_retry = self
+            .last_retry_block
+            .get(&candidate_id)
+            .copied()
+            .unwrap_or(0);
         if current_block.saturating_sub(last_retry) >= PATH_SUPPRESS_RETRY_INTERVAL {
-            self.last_retry_block.insert(path_id, current_block);
+            self.last_retry_block.insert(candidate_id, current_block);
             return false;
         }
 
@@ -212,21 +225,33 @@ impl PathSuppression {
         self.total_suppressed
     }
 
-    /// Permanently discard suppression tracking for a de-registered path.
-    pub fn discard(&mut self, path_id: u64) {
-        self.fail_counts.remove(&path_id);
-        self.suppressed.remove(&path_id);
-        self.last_retry_block.remove(&path_id);
+    /// Permanently discard suppression tracking for one candidate.
+    pub fn discard(&mut self, candidate_id: CandidateId) {
+        self.fail_counts.remove(&candidate_id);
+        self.suppressed.remove(&candidate_id);
+        self.last_retry_block.remove(&candidate_id);
     }
 
-    /// Whether `path_id` is in the suppressed set (read-only; does NOT apply
-    /// retry logic — for inspection/logging parity only).
+    /// Permanently discard every candidate's tracking for a de-registered path.
+    ///
+    /// The engine registers and removes PATHS, not candidates: a path leaving
+    /// the registry retires the path at every deployment that could have
+    /// executed it.
+    pub fn discard_path(&mut self, path_id: u64) {
+        self.fail_counts.retain(|id, _| id.path_id() != path_id);
+        self.suppressed.retain(|id| id.path_id() != path_id);
+        self.last_retry_block
+            .retain(|id, _| id.path_id() != path_id);
+    }
+
+    /// Whether `candidate_id` is in the suppressed set (read-only; does NOT
+    /// apply retry logic — for inspection/logging parity only).
     #[must_use]
-    pub fn is_in_suppressed_set(&self, path_id: u64) -> bool {
-        self.suppressed.contains(&path_id)
+    pub fn is_in_suppressed_set(&self, candidate_id: CandidateId) -> bool {
+        self.suppressed.contains(&candidate_id)
     }
 
-    /// Whether the path is suppressed AND not due for a retry this block —
+    /// Whether the candidate is suppressed AND not due for a retry this block —
     /// the read-only projection of [`Self::is_suppressed`] WITHOUT the retry
     /// stamp.
     ///
@@ -237,11 +262,19 @@ impl PathSuppression {
     /// AND by the fan-out's stamping read — the Python retry semantics, with
     /// no double-read re-suppression.
     #[must_use]
-    pub fn is_suppressed_without_stamp(&self, path_id: u64, current_block: u64) -> bool {
-        if !self.suppressed.contains(&path_id) {
+    pub fn is_suppressed_without_stamp(
+        &self,
+        candidate_id: CandidateId,
+        current_block: u64,
+    ) -> bool {
+        if !self.suppressed.contains(&candidate_id) {
             return false;
         }
-        let last_retry = self.last_retry_block.get(&path_id).copied().unwrap_or(0);
+        let last_retry = self
+            .last_retry_block
+            .get(&candidate_id)
+            .copied()
+            .unwrap_or(0);
         current_block.saturating_sub(last_retry) < PATH_SUPPRESS_RETRY_INTERVAL
     }
 }
@@ -510,14 +543,13 @@ impl Dispatcher {
     }
 
     // ── PathSuppression ───────────────────────────────────────────────────
-    // `PathSuppression` is no longer composed into
-    // `Dispatcher`. The `record_success`/`record_failure`/`is_suppressed`/
-    // `total_suppressed`/`discard_path` accessors live on `PyDispatcher` (the
-    // PyO3 seam), delegating to the standalone `Arc<Mutex<PathSuppression>>`.
-    // The simulation seam takes that arc directly; `Dispatcher` never touches
-    // suppression. This keeps the `Dispatcher` lock uncontended during the
-    // simulation fan-out (the submission monitor tasks that contend for the
-    // `Dispatcher` lock never block on suppression bookkeeping).
+    // `PathSuppression` is not composed into `Dispatcher`: the simulation
+    // fan-out takes the standalone `Arc<Mutex<PathSuppression>>` directly and
+    // `Dispatcher` never touches it, so the `Dispatcher` lock stays
+    // uncontended during the simulation fan-out (the submission monitor tasks
+    // that contend for the `Dispatcher` lock never block on suppression
+    // bookkeeping). The ledger's per-candidate mutators are reachable only from
+    // that pipeline; the `PyO3` seam exposes the cumulative tally.
 
     // ── inspection (test + monitor parity) ──────────────────────────────
 
@@ -613,6 +645,7 @@ mod tests {
         fn prop_suppression_state_machine(
             path_id in 0u64..10,
         ) {
+            let path_id = CandidateId::new(path_id, degenbot_execution::DeploymentId::new(1));
             let mut s = PathSuppression::new();
             // not suppressed initially
             proptest::prop_assert!(!s.is_suppressed(path_id, 0));
@@ -689,16 +722,61 @@ mod tests {
         assert_eq!(d.current_block(), 12345);
     }
 
+    /// Suppression is per CANDIDATE: the same solver path simulated at two
+    /// deployments carries two failure ledgers, so a failure at one deployment
+    /// never benches the other (ADR-098 D4).
+    #[test]
+    fn suppression_entries_never_collapse_same_path_candidates() {
+        let built_in = CandidateId::new(7, degenbot_execution::DeploymentId::new(1));
+        let foreign = CandidateId::new(7, degenbot_execution::DeploymentId::new(2));
+        let mut s = PathSuppression::new();
+
+        for _ in 0..PATH_SUPPRESS_THRESHOLD {
+            s.record_failure(built_in);
+        }
+
+        assert!(
+            s.is_suppressed(built_in, 0),
+            "the failing deployment is benched"
+        );
+        assert!(
+            !s.is_suppressed(foreign, 0),
+            "the same path at another deployment was never simulated here"
+        );
+        assert!(s.is_in_suppressed_set(built_in));
+        assert!(!s.is_in_suppressed_set(foreign));
+
+        // Success at the other deployment clears nothing the failing one still
+        // owes, and vice versa: the two ledgers move independently.
+        s.record_success(foreign);
+        assert!(s.is_suppressed(built_in, PATH_SUPPRESS_RETRY_INTERVAL - 1));
+
+        s.record_success(built_in);
+        assert!(!s.is_suppressed(built_in, PATH_SUPPRESS_RETRY_INTERVAL - 1));
+    }
+
     #[test]
     fn discard_path_clears_all_tracking() {
+        let built_in = CandidateId::new(5, degenbot_execution::DeploymentId::new(1));
+        let foreign = CandidateId::new(5, degenbot_execution::DeploymentId::new(2));
         let mut s = PathSuppression::new();
         for _ in 0..PATH_SUPPRESS_THRESHOLD {
-            s.record_failure(5);
+            s.record_failure(built_in);
+            s.record_failure(foreign);
         }
-        assert!(s.is_suppressed(5, 0));
-        s.discard(5);
-        assert!(!s.is_suppressed(5, 0));
-        assert_eq!(s.total_suppressed(), 1); // cumulative, not decremented
+        assert!(s.is_suppressed(built_in, 0));
+        assert!(s.is_suppressed(foreign, 0));
+
+        // Discarding one candidate leaves its same-path sibling alone.
+        s.discard(built_in);
+        assert!(!s.is_suppressed(built_in, 0));
+        assert!(s.is_suppressed(foreign, 0));
+
+        // The engine removes a PATH: every deployment's candidate goes.
+        s.discard_path(5);
+        assert!(!s.is_suppressed(foreign, 0));
+
+        assert_eq!(s.total_suppressed(), 2); // cumulative, not decremented
     }
 
     #[tokio::test]

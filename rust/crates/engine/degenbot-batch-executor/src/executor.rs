@@ -21,7 +21,7 @@ use degenbot_arbitrage::{
     candidate_is_stale, dispatch_profitable_results, DispatchOutcome, FeeOnTransferRegistry,
     PoolDivergence, SimulateContext, SimulationBlock, SimulationDeployment,
 };
-use degenbot_execution::PathInfo;
+use degenbot_execution::{CandidateId, PathInfo};
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::{
@@ -106,6 +106,15 @@ pub struct ExecutorConfig {
 }
 
 impl ExecutorConfig {
+    /// The one configured deployment's operator-assigned identity.
+    ///
+    /// The session composes exactly ONE [`SimulationDeployment`], so the
+    /// configuration boundary names it here and every candidate the executor
+    /// assembles carries it. A session that composes several deployments names
+    /// each of them at this same boundary, never downstream of it.
+    pub const BUILTIN_DEPLOYMENT_ID: degenbot_execution::DeploymentId =
+        degenbot_execution::DeploymentId::new(1);
+
     /// The ONE construction boundary: `verdict` (the resolved values,
     /// `degenbot_config::BotConfig`) names every policy value — converted
     /// through [`ExecutorPolicy::from`], which owns every default and clamp
@@ -147,13 +156,17 @@ impl ExecutorConfig {
                     );
                     #[expect(clippy::expect_used)] // the declared address must be the executor's
                     let deployment = binding
-                        .injected(address, runtime.runtime_bytecode)
+                        .injected(
+                            Self::BUILTIN_DEPLOYMENT_ID,
+                            address,
+                            runtime.runtime_bytecode,
+                        )
                         .expect(
                             "the declared injection address must be the executor address the                              adapter encodes to",
                         );
                     deployment
                 } else {
-                    binding.deployment()
+                    binding.deployment(Self::BUILTIN_DEPLOYMENT_ID)
                 })
             },
             resolver: runtime.resolver,
@@ -236,7 +249,7 @@ impl EngineLeaves {
     )]
     fn run_stages_1_2(&self, work: &BatchWork) -> Result<SimStageOutput, String> {
         let cfg = &self.config;
-        let served: HashSet<u64> = work.payloads.iter().map(|p| p.path_id).collect();
+        let served: HashSet<CandidateId> = work.payloads.iter().map(|p| p.candidate_id).collect();
 
         // Stage 1 — assembly. The policy locks are held ONLY across this
         // synchronous span (the fan-out re-locks the same arcs at its own
@@ -258,6 +271,7 @@ impl EngineLeaves {
                 min_profit_margin_bps: cfg.min_profit_margin_bps,
                 max_candidates: cfg.max_candidates,
                 executor_address: cfg.executor_address,
+                deployment_id: cfg.deployment.deployment_id(),
             })
             .map_err(|e: AssemblyError| e.to_string())?
         };
@@ -270,20 +284,22 @@ impl EngineLeaves {
         // them). The fan-out's re-check is a no-op: this span holds no
         // `.await` between the check and the call, so no state can advance.
         if let Some(arc) = &cfg.bot_state {
-            let stale_ids: Vec<u64> = {
+            let stale_ids: Vec<CandidateId> = {
                 let guard = arc.read_at(LockSite::Sim);
                 batch
                     .candidates
                     .iter()
                     .filter(|c| candidate_is_stale(&guard, c))
-                    .map(|c| c.path_id)
+                    .map(|c| c.candidate_id)
                     .collect()
             };
             if !stale_ids.is_empty() {
-                batch.candidates.retain(|c| !stale_ids.contains(&c.path_id));
+                batch
+                    .candidates
+                    .retain(|c| !stale_ids.contains(&c.candidate_id));
                 batch
                     .outcomes
-                    .retain(|o| !(o.simulate.is_none() && stale_ids.contains(&o.path_id)));
+                    .retain(|o| !(o.simulate.is_none() && stale_ids.contains(&o.candidate_id)));
             }
         }
 
@@ -325,20 +341,20 @@ impl EngineLeaves {
 
         // Attribution — per-candidate simulate verdicts in candidate order
         // (the records for skipped rows were already emitted by stage 1).
-        let profitable: HashMap<u64, degenbot_arbitrage::SimResult> = outcome
+        let profitable: HashMap<CandidateId, degenbot_arbitrage::SimResult> = outcome
             .gas_profitable
             .iter()
-            .map(|r| (r.path_id, r.clone()))
+            .map(|r| (r.candidate_id, r.clone()))
             .collect();
-        let unprofitable: HashMap<u64, degenbot_arbitrage::SimResult> = outcome
+        let unprofitable: HashMap<CandidateId, degenbot_arbitrage::SimResult> = outcome
             .gas_unprofitable
             .iter()
-            .map(|r| (r.path_id, r.clone()))
+            .map(|r| (r.candidate_id, r.clone()))
             .collect();
-        let failures: HashMap<u64, degenbot_arbitrage::SimFailure> = outcome
+        let failures: HashMap<CandidateId, degenbot_arbitrage::SimFailure> = outcome
             .failures
             .iter()
-            .map(|f| (f.path_id, f.clone()))
+            .map(|f| (f.candidate_id, f.clone()))
             .collect();
 
         let mut submit_candidates: Vec<degenbot_submission::SubmitCandidate> = Vec::new();
@@ -347,8 +363,8 @@ impl EngineLeaves {
             // The lookup always hits: the core only re-emits path ids it was
             // handed (the join's `None`/empty fall-through keeps isolation —
             // an empty mutual-exclusion set — without fabricating hops).
-            let path_info = batch.path_info_by_id.get(&c.path_id);
-            let simulate = if let Some(r) = profitable.get(&c.path_id) {
+            let path_info = batch.path_info_by_id.get(&c.candidate_id.path_id());
+            let simulate = if let Some(r) = profitable.get(&c.candidate_id) {
                 submit_candidates.push(join_sim_result(r, path_info, cfg.executor_address));
                 Some(SimulateVerdict::Profitable(crate::record::SimReceipt {
                     gross_profit: r.gross_profit,
@@ -356,7 +372,7 @@ impl EngineLeaves {
                     gas_used: r.gas_used,
                     priority_fee: r.priority_fee,
                 }))
-            } else if let Some(r) = unprofitable.get(&c.path_id) {
+            } else if let Some(r) = unprofitable.get(&c.candidate_id) {
                 Some(SimulateVerdict::GasUnprofitable(
                     crate::record::SimReceipt {
                         gross_profit: r.gross_profit,
@@ -365,7 +381,7 @@ impl EngineLeaves {
                         priority_fee: r.priority_fee,
                     },
                 ))
-            } else if let Some(f) = failures.get(&c.path_id) {
+            } else if let Some(f) = failures.get(&c.candidate_id) {
                 Some(SimulateVerdict::Failed(Box::new(f.clone())))
             } else {
                 // Accounted by neither bucket nor a failure record: the
@@ -374,7 +390,7 @@ impl EngineLeaves {
                 Some(SimulateVerdict::Exception)
             };
             batch.outcomes.push(BatchOutcome {
-                path_id: c.path_id,
+                candidate_id: c.candidate_id,
                 block: work.current_block,
                 assembly: AssemblyVerdict::Assembled,
                 simulate,
@@ -409,8 +425,9 @@ fn log_submit_arm(candidates: &[degenbot_submission::SubmitCandidate], solve_blo
     for c in candidates {
         degenbot_core::op_info!(
             domain = exec,
-            "path={} solve_block={} net_wei={} gas={} calldata={}",
-            c.path_id,
+            "path={} deployment={} solve_block={} net_wei={} gas={} calldata={}",
+            c.candidate_id.path_id(),
+            c.candidate_id.deployment_id(),
             solve_block,
             c.net_profit,
             c.gas_used,
@@ -459,16 +476,21 @@ impl SubmitLeaf<BatchWork, SimStageOutput> for EngineLeaves {
 
             let mut stamped = outcomes;
             for record in &submit_outcome.records {
-                let (path_id, verdict) = match record {
-                    SubmitRecord::Submitted { path_id, .. } => (*path_id, SubmitVerdict::Submitted),
-                    SubmitRecord::Skipped { path_id, reason } => (
-                        *path_id,
+                let (candidate_id, verdict) = match record {
+                    SubmitRecord::Submitted { candidate_id, .. } => {
+                        (*candidate_id, SubmitVerdict::Submitted)
+                    }
+                    SubmitRecord::Skipped {
+                        candidate_id,
+                        reason,
+                    } => (
+                        *candidate_id,
                         SubmitVerdict::Failed(crate::record::FailureKind::from_skip_reason(reason)),
                     ),
                 };
                 if let Some(slot) = stamped
                     .iter_mut()
-                    .find(|o| o.path_id == path_id && o.submit.is_none())
+                    .find(|o| o.candidate_id == candidate_id && o.submit.is_none())
                 {
                     slot.submit = Some(verdict);
                 }
@@ -529,6 +551,9 @@ impl BatchDrain {
 
 /// The core batch executor.
 pub struct BatchExecutor {
+    /// The session deployment's operator-assigned identity — the half of every
+    /// [`CandidateId`] this executor's assembly stamps on a raw solver row.
+    deployment_id: degenbot_execution::DeploymentId,
     pipeline: SimSubmitPipeline<BatchWork, SimStageOutput>,
     /// The record channel's strong half, behind interior mutability so
     /// `shutdown` takes `&self` (the shared-consumer seam drives the
@@ -552,6 +577,7 @@ impl BatchExecutor {
         });
         Self::from_leaves(
             config.sim_concurrency,
+            config.deployment.deployment_id(),
             Arc::clone(&leaves) as Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
             Arc::clone(&leaves) as Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,
             outcome_tx,
@@ -575,6 +601,7 @@ impl BatchExecutor {
     /// leaves receive a weak downgrade of it.
     pub(crate) fn from_leaves(
         concurrency: usize,
+        deployment_id: degenbot_execution::DeploymentId,
         sim: Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
         submit: Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,
         outcome_tx: mpsc::UnboundedSender<BatchOutcomeSet>,
@@ -582,10 +609,18 @@ impl BatchExecutor {
     ) -> Self {
         let pipeline = SimSubmitPipeline::new(concurrency, sim, submit);
         Self {
+            deployment_id,
             pipeline,
             outcome_tx: std::sync::Mutex::new(Some(outcome_tx)),
             outcome_rx: Arc::new(tokio::sync::Mutex::new(outcome_rx)),
         }
+    }
+
+    /// The session deployment's operator-assigned identity — the deployment
+    /// every candidate this executor assembles targets.
+    #[must_use]
+    pub const fn deployment_id(&self) -> degenbot_execution::DeploymentId {
+        self.deployment_id
     }
 
     /// Enqueue one batch: its rows enter the ordered lane (assembly, sim,
@@ -727,6 +762,11 @@ mod tests {
     /// The fake leaves tag batches by their block (one batch per block).
     const BASE_BLOCK: u64 = 100;
 
+    /// The fixtures' one deployment identity.
+    fn test_deployment_id() -> degenbot_execution::DeploymentId {
+        degenbot_execution::DeploymentId::new(1)
+    }
+
     fn work(block: u64) -> BatchWork {
         BatchWork {
             rows: Vec::new(),
@@ -764,7 +804,7 @@ mod tests {
                     return Err(format!("sim leaf failed at block {}", work.current_block));
                 }
                 let outcome = BatchOutcome {
-                    path_id: batch,
+                    candidate_id: CandidateId::new(batch, test_deployment_id()),
                     block: work.current_block,
                     assembly: AssemblyVerdict::Assembled,
                     simulate: Some(SimulateVerdict::Profitable(receipt())),
@@ -827,6 +867,7 @@ mod tests {
         // shape, so the drain-to-completion loop terminates.
         BatchExecutor::from_leaves(
             4,
+            test_deployment_id(),
             Arc::new(sim),
             Arc::new(StampingSubmit {
                 order,
@@ -983,7 +1024,7 @@ mod tests {
                         }),
                     ]));
                     let failure = FailureDetail {
-                        path_id: 3,
+                        candidate_id: CandidateId::new(3, test_deployment_id()),
                         bucket: "no-profit".to_string(),
                         fail_index: None,
                         revert_data: alloy::primitives::Bytes::new(),
@@ -997,7 +1038,7 @@ mod tests {
                     };
                     let outcomes = vec![
                         BatchOutcome {
-                            path_id: 1,
+                            candidate_id: CandidateId::new(1, test_deployment_id()),
                             block: work.current_block,
                             assembly: AssemblyVerdict::Assembled,
                             simulate: Some(SimulateVerdict::Profitable(receipt())),
@@ -1005,7 +1046,7 @@ mod tests {
                             path_info: view.clone(),
                         },
                         BatchOutcome {
-                            path_id: 2,
+                            candidate_id: CandidateId::new(2, test_deployment_id()),
                             block: work.current_block,
                             assembly: AssemblyVerdict::SkipSuppressed,
                             simulate: None,
@@ -1013,7 +1054,7 @@ mod tests {
                             path_info: PathInfoView::empty(),
                         },
                         BatchOutcome {
-                            path_id: 3,
+                            candidate_id: CandidateId::new(3, test_deployment_id()),
                             block: work.current_block,
                             assembly: AssemblyVerdict::Assembled,
                             simulate: Some(SimulateVerdict::Failed(Box::new(failure))),
@@ -1021,7 +1062,7 @@ mod tests {
                             path_info: view.clone(),
                         },
                         BatchOutcome {
-                            path_id: 4,
+                            candidate_id: CandidateId::new(4, test_deployment_id()),
                             block: work.current_block,
                             assembly: AssemblyVerdict::Assembled,
                             simulate: Some(SimulateVerdict::GasUnprofitable(receipt())),
@@ -1052,7 +1093,7 @@ mod tests {
                 let mut records = outcome.outcomes.clone();
                 Box::pin(async move {
                     for record in &mut records {
-                        record.submit = match record.path_id {
+                        record.submit = match record.candidate_id.path_id() {
                             1 => Some(SubmitVerdict::Submitted),
                             4 => Some(SubmitVerdict::Failed(crate::record::FailureKind::RpcFailed)),
                             _ => None,
@@ -1072,6 +1113,7 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         let executor = BatchExecutor::from_leaves(
             1,
+            test_deployment_id(),
             Arc::new(MixedSim),
             Arc::new(PartialSubmit { tx: tx.downgrade() }),
             tx,
@@ -1083,8 +1125,10 @@ mod tests {
         // ── The renderer-shaped drain: every stage + path_info ──
         let mut records = executor.next_outcome().await.expect("one batch").records;
         assert_eq!(records.len(), 4);
-        let by_id: std::collections::HashMap<u64, BatchOutcome> =
-            records.drain(..).map(|r| (r.path_id, r)).collect();
+        let by_id: std::collections::HashMap<u64, BatchOutcome> = records
+            .drain(..)
+            .map(|r| (r.candidate_id.path_id(), r))
+            .collect();
 
         let profitable = &by_id[&1];
         assert_eq!(profitable.assembly.label(), "assembled");
@@ -1125,7 +1169,7 @@ mod tests {
         calldata: &[u8],
     ) -> degenbot_submission::SubmitCandidate {
         degenbot_submission::SubmitCandidate {
-            path_id,
+            candidate_id: CandidateId::new(path_id, test_deployment_id()),
             gross_profit: alloy::primitives::U256::from(net_profit + 1_000_000_000_u128),
             net_profit: alloy::primitives::U256::from(net_profit),
             gas_used: 200_000,
@@ -1167,9 +1211,9 @@ mod tests {
     }
 
     /// The submit-arm forensic emission: one INFO line per gate-clearing
-    /// candidate BEFORE broadcast, carrying the fork-replay fields (path,
-    /// solve block, net wei, gas, raw calldata hex) under the closed `exec`
-    /// domain target.
+    /// candidate BEFORE broadcast, carrying the fork-replay fields (path, the
+    /// deployment that would execute it, solve block, net wei, gas, raw
+    /// calldata hex) under the closed `exec` domain target.
     #[test]
     fn submit_arm_forensic_line_captures_calldata_and_economics_per_candidate() {
         let lines = Arc::new(Mutex::new(Vec::new()));
@@ -1192,14 +1236,16 @@ mod tests {
             lines[0],
             (
                 "degenbot::exec".to_string(),
-                "path=7 solve_block=4242 net_wei=123 gas=200000 calldata=dead".to_string()
+                "path=7 deployment=1 solve_block=4242 net_wei=123 gas=200000 calldata=dead"
+                    .to_string()
             )
         );
         assert_eq!(
             lines[1],
             (
                 "degenbot::exec".to_string(),
-                "path=9 solve_block=4242 net_wei=456 gas=200000 calldata=beef".to_string()
+                "path=9 deployment=1 solve_block=4242 net_wei=456 gas=200000 calldata=beef"
+                    .to_string()
             )
         );
     }

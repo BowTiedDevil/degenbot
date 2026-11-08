@@ -39,6 +39,7 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::TransactionRequest;
 use serde_json::json;
 
+use degenbot_execution::CandidateId;
 use degenbot_rpc::provider::AlloyProvider;
 
 use crate::delivery::{classify_delivery_failure, DeliveryFailureClass, DeliveryVerdict};
@@ -67,13 +68,16 @@ use degenbot_substrate::nonce::{DeclineKind, HeldFees, NonceLane, NonceLease};
 /// (resolving the `path_pools` from `path_info.hops` — `pool_id_hex` for V4,
 /// `pool_address` for V2/V3).
 ///
-/// The dispatch fan-out's `gas_profitable` row `(path_id, gross, net, gas,
+/// The dispatch fan-out's `gas_profitable` row `(candidate_id, gross, net, gas,
 /// tx_params, path_info)` — the record the submit loop iterates.
 #[derive(Debug, Clone)]
 pub struct SubmitCandidate {
-    /// `path_id` — the unique arb path identifier.
-    pub path_id: u64,
-    /// Gross on-chain profit (wei) — `(weth+eth+erc6909)_after - _before`.
+    /// The candidate identity — the solver path bound to the deployment that
+    /// produced this result and will send this transaction.
+    pub candidate_id: CandidateId,
+    /// Gross profit before gas (wei), as the deployment's Assess priced it: the
+    /// built-in reports the retained figure the `execute` receipt measures
+    /// (`gross_profit − bribe_paid`), and a foreign adapter reports its own.
     pub gross_profit: U256,
     /// Net profit = `gross - gas*(base_fee_next + priority_fee)` (wei).
     pub net_profit: U256,
@@ -179,12 +183,17 @@ pub enum SkipReason {
 pub enum SubmitRecord {
     /// The tx was broadcast — the resulting `tx_hash` + claimed `nonce`.
     Submitted {
-        path_id: u64,
+        /// The candidate whose transaction was broadcast.
+        candidate_id: CandidateId,
         tx_hash: B256,
         nonce: u64,
     },
     /// The candidate was skipped — the typed reason.
-    Skipped { path_id: u64, reason: SkipReason },
+    Skipped {
+        /// The candidate that did not broadcast.
+        candidate_id: CandidateId,
+        reason: SkipReason,
+    },
 }
 
 /// The dispatch+submit outcome — the per-candidate records (ports the loop's
@@ -657,12 +666,16 @@ impl SubmitBatch<'_> {
             Err(e) => {
                 degenbot_bot::telemetry::record_exception(
                     degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
-                    format_args!("path {} mevblocker bundle rejected: {e}", candidate.path_id),
+                    format_args!(
+                        "candidate {} mevblocker bundle rejected: {e}",
+                        candidate.candidate_id
+                    ),
                 );
                 crate::bundle::trace_wire_jsonl(
                     "bundle_wire_error",
                     &json!({
-                        "path_id": candidate.path_id,
+                        "path_id": candidate.candidate_id.path_id(),
+                        "deployment_id": candidate.candidate_id.deployment_id().value(),
                         "target": format!("0x{}", bundle_target.target_tx_hash),
                         "block": bundle_target.block_number,
                         "error": format!("{e}"),
@@ -729,7 +742,10 @@ impl SubmitBatch<'_> {
             Err(e) => {
                 degenbot_bot::telemetry::record_exception(
                     degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
-                    format_args!("path {} relay signature failed: {e}", candidate.path_id),
+                    format_args!(
+                        "candidate {} relay signature failed: {e}",
+                        candidate.candidate_id
+                    ),
                 );
                 // No relay ever saw a bundle, so nothing was admitted for the
                 // pinned block: definitive non-liveness.
@@ -758,8 +774,8 @@ impl SubmitBatch<'_> {
         degenbot_bot::telemetry::record_exception(
             degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
             format_args!(
-                "path {} every builder relay rejected the bundle",
-                candidate.path_id
+                "candidate {} every builder relay rejected the bundle",
+                candidate.candidate_id
             ),
         );
         // Every relay refused to admit the bundle for its pinned block: the
@@ -818,7 +834,10 @@ impl SubmitBatch<'_> {
                 Err(e) => {
                     degenbot_bot::telemetry::record_exception(
                         degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
-                        format_args!("path {} relay broadcast failed: {e}", candidate.path_id),
+                        format_args!(
+                            "candidate {} relay broadcast failed: {e}",
+                            candidate.candidate_id
+                        ),
                     );
                     // Every attempt's class is evidence: one relay answering
                     // "already known" or one transport failure decides the
@@ -1191,7 +1210,7 @@ pub async fn dispatch_and_submit(
                     StepVerdict::Continue(payload) => payload,
                     StepVerdict::Skip(reason) => {
                         outcome.records.push(SubmitRecord::Skipped {
-                            path_id: candidate.path_id,
+                            candidate_id: candidate.candidate_id,
                             reason,
                         });
                         continue;
@@ -1201,7 +1220,7 @@ pub async fn dispatch_and_submit(
                         // a stopped batch reports each one, in submit order.
                         for blocked in &candidates[index..] {
                             outcome.records.push(SubmitRecord::Skipped {
-                                path_id: blocked.path_id,
+                                candidate_id: blocked.candidate_id,
                                 reason: reason.clone(),
                             });
                         }
@@ -1240,7 +1259,7 @@ pub async fn dispatch_and_submit(
             secs: batch_start.elapsed().as_secs_f64(),
         });
         outcome.records.push(SubmitRecord::Submitted {
-            path_id: candidate.path_id,
+            candidate_id: candidate.candidate_id,
             tx_hash,
             nonce,
         });
@@ -1459,9 +1478,14 @@ mod tests {
         )
     }
 
+    /// The submit tests' deployment identity.
+    fn deployment_id() -> degenbot_execution::DeploymentId {
+        degenbot_execution::DeploymentId::new(1)
+    }
+
     fn candidate(path_id: u64, net_profit: u128, pools: &[&str]) -> SubmitCandidate {
         SubmitCandidate {
-            path_id,
+            candidate_id: CandidateId::new(path_id, deployment_id()),
             gross_profit: U256::from(net_profit + 1_000_000_000u128),
             net_profit: U256::from(net_profit),
             gas_used: 200_000,
@@ -1520,14 +1544,14 @@ mod tests {
         assert_eq!(
             outcome.records[0],
             SubmitRecord::Skipped {
-                path_id: 2,
+                candidate_id: CandidateId::new(2, deployment_id()),
                 reason: SkipReason::DryRun
             }
         );
         assert_eq!(
             outcome.records[1],
             SubmitRecord::Skipped {
-                path_id: 1,
+                candidate_id: CandidateId::new(1, deployment_id()),
                 reason: SkipReason::DryRun
             }
         );
@@ -1540,12 +1564,12 @@ mod tests {
         let outcome = SubmitOutcome {
             records: vec![
                 SubmitRecord::Submitted {
-                    path_id: 1,
+                    candidate_id: CandidateId::new(1, deployment_id()),
                     tx_hash: B256::ZERO,
                     nonce: 7,
                 },
                 SubmitRecord::Skipped {
-                    path_id: 2,
+                    candidate_id: CandidateId::new(2, deployment_id()),
                     reason: SkipReason::DryRun,
                 },
             ],
@@ -1597,7 +1621,7 @@ mod tests {
         assert_eq!(
             outcome.records[1],
             SubmitRecord::Skipped {
-                path_id: 2,
+                candidate_id: CandidateId::new(2, deployment_id()),
                 reason: SkipReason::PoolsClaimed
             }
         );
@@ -1636,7 +1660,7 @@ mod tests {
         assert_eq!(
             outcome.records[0],
             SubmitRecord::Skipped {
-                path_id: 1,
+                candidate_id: CandidateId::new(1, deployment_id()),
                 reason: SkipReason::PoolsClaimed
             }
         );
@@ -1700,7 +1724,7 @@ mod tests {
         assert_eq!(
             outcome.records[0],
             SubmitRecord::Skipped {
-                path_id: 1,
+                candidate_id: CandidateId::new(1, deployment_id()),
                 reason: SkipReason::InjectCode
             }
         );
@@ -1744,14 +1768,15 @@ mod tests {
         assert_eq!(outcome.submitted_count(), 1);
         assert_eq!(outcome.skipped_count(), 0);
         let SubmitRecord::Submitted {
-            path_id,
+            candidate_id,
             tx_hash,
             nonce,
         } = &outcome.records[0]
         else {
             panic!("expected Submitted, got {:?}", outcome.records[0]);
         };
-        assert_eq!(*path_id, 1);
+        assert_eq!(candidate_id.path_id(), 1);
+        assert_eq!(candidate_id.deployment_id(), deployment_id());
         assert_eq!(*nonce, 42);
         assert_eq!(*tx_hash, fake_hash);
 
@@ -1865,12 +1890,12 @@ mod tests {
         let SubmitRecord::Submitted {
             tx_hash,
             nonce,
-            path_id,
+            candidate_id,
         } = &outcome.records[0]
         else {
             panic!("expected Submitted, got {:?}", outcome.records[0]);
         };
-        assert_eq!((*path_id, *nonce), (1, 7));
+        assert_eq!((candidate_id.path_id(), *nonce), (1, 7));
         let record = ledger.record_of(&strategy, 7).expect("ledger record");
         assert_eq!(
             *tx_hash,
@@ -2013,11 +2038,11 @@ mod tests {
             outcome.records,
             vec![
                 SubmitRecord::Skipped {
-                    path_id: 1,
+                    candidate_id: CandidateId::new(1, deployment_id()),
                     reason: SkipReason::NonceContended,
                 },
                 SubmitRecord::Skipped {
-                    path_id: 2,
+                    candidate_id: CandidateId::new(2, deployment_id()),
                     reason: SkipReason::NonceContended,
                 },
             ]
@@ -2084,11 +2109,11 @@ mod tests {
             outcome.records,
             vec![
                 SubmitRecord::Skipped {
-                    path_id: 1,
+                    candidate_id: CandidateId::new(1, deployment_id()),
                     reason: SkipReason::NonceContended,
                 },
                 SubmitRecord::Skipped {
-                    path_id: 2,
+                    candidate_id: CandidateId::new(2, deployment_id()),
                     reason: SkipReason::NonceContended,
                 },
             ],
@@ -2566,7 +2591,7 @@ mod tests {
         assert_eq!(
             outcome.records,
             vec![SubmitRecord::Submitted {
-                path_id: 7,
+                candidate_id: CandidateId::new(7, deployment_id()),
                 tx_hash: alloy::hex::FromHex::from_hex(
                     "0x164d7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41"
                 )
@@ -2625,9 +2650,10 @@ mod tests {
 
         match outcome.records.as_slice() {
             [SubmitRecord::Skipped {
-                path_id: 9,
+                candidate_id,
                 reason: SkipReason::BroadcastFailed(msg),
             }] => {
+                assert_eq!(candidate_id.path_id(), 9);
                 assert!(msg.contains("mevblocker bundle"), "attribution: {msg}");
             }
             other => panic!("expected typed broadcast-failure skip, got {other:?}"),
@@ -2685,7 +2711,7 @@ mod tests {
         assert_eq!(
             outcome.records,
             vec![SubmitRecord::Skipped {
-                path_id: 4,
+                candidate_id: CandidateId::new(4, deployment_id()),
                 reason: SkipReason::BroadcastFailed(
                     "every builder relay rejected the bundle".to_string()
                 ),

@@ -68,7 +68,10 @@ impl PySimulateContext {
     ///
     /// `inject_code` selects the declared-code override (the artifact installed
     /// at `injected_address`); otherwise the deployment simulates the code the
-    /// chain holds at the executor address.
+    /// chain holds at the executor address. Either way the deployment carries
+    /// the session's one configured identity
+    /// ([`degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID`]) —
+    /// this context and the batch executor are the same deployment.
     #[expect(clippy::expect_used)] // the constructor holds injected == executor
     pub(crate) fn deployment(&self, opts: EncodeOptions) -> Arc<SimulationDeployment> {
         let binding = self.binding.with_opts(opts);
@@ -77,9 +80,13 @@ impl PySimulateContext {
             // the executor, so this override installs at the very address the
             // built-in adapter encodes its transaction to.
             (true, Some(address)) => binding
-                .injected(address, self.runtime_bytecode.clone())
+                .injected(
+                    degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+                    address,
+                    self.runtime_bytecode.clone(),
+                )
                 .expect("the constructor validated injected_address == executor_address"),
-            _ => binding.deployment(),
+            _ => binding.deployment(degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID),
         })
     }
 }

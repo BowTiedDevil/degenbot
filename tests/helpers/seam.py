@@ -145,6 +145,7 @@ from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider, is_local_r
 
 # simulation: the batch executor and dispatch surface.
 from degenbot._ffi.simulation import (
+    CandidateId,
     SimulateContext,
     build_batch_executor_py,
     executor_policy_py,
@@ -171,6 +172,7 @@ REGISTRATION_SURFACE = _registration_surface
 
 __all__ = [
     "MAX_SQRT_RATIO",
+    "CandidateId",
     "MAX_TICK",
     "MIN_SQRT_RATIO",
     "MIN_TICK",

@@ -128,7 +128,11 @@ fn smoke_binding() -> degenbot_arbitrage::CmdExecutorBinding {
 #[expect(clippy::expect_used)] // the declared override names the executor
 fn smoke_deployment(runtime: alloy::primitives::Bytes) -> degenbot_arbitrage::SimulationDeployment {
     smoke_binding()
-        .injected(SMOKE_EXECUTOR, runtime)
+        .injected(
+            degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+            SMOKE_EXECUTOR,
+            runtime,
+        )
         .expect("the declared override names the executor")
 }
 
@@ -145,7 +149,10 @@ fn smoke_block(provider: &AlloyProvider) -> degenbot_arbitrage::SimulationBlock<
 
 fn smoke_v2_path(path_id: u64) -> SimulatePath {
     SimulatePath {
-        path_id,
+        candidate_id: degenbot_execution::CandidateId::new(
+            path_id,
+            degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+        ),
         optimal_input: SMOKE_OPTIMAL_INPUT,
         steps: Box::new([
             SolveStep {
@@ -192,7 +199,8 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
 ///   - `result` (`None`) — the in-process path returns `None` for reverts
 ///     + non-profitable outcomes (the revert is tallied in `failures`).
 ///   - `failures` (`list[dict]`) — one entry per failed candidate, each
-///     carrying `path_id`, `bucket`, `fail_index`, `revert_data`,
+///     carrying `candidate` (the nested `path_id` + `deployment_id` identity),
+///     `bucket`, `fail_index`, `revert_data`,
 ///     `reverting_frame`, `captured_swaps`, `optimal_input`, `hop_outputs`
 ///     (the same shape the batch seam's `FailureDetail.record()` emits).
 ///   - `fail_buckets` (`dict[str, int]`) — the bucket tally.
@@ -250,7 +258,10 @@ pub fn simulate_in_process_revert_probe<'py>(
     let failures_list = PyList::empty(py);
     for f in buckets.failures() {
         let fdict = PyDict::new(py);
-        fdict.set_item("path_id", f.path_id)?;
+        fdict.set_item(
+            "candidate",
+            crate::simulation::identity::candidate_id_to_dict(py, &f.candidate_id)?,
+        )?;
         fdict.set_item("bucket", &f.bucket)?;
         match f.fail_index {
             Some(idx) => fdict.set_item("fail_index", idx)?,
@@ -398,7 +409,10 @@ pub fn simulate_in_process_success_probe(
 
     // 6. Wrap the SimResult as a dict.
     let result_dict = PyDict::new(py);
-    result_dict.set_item("path_id", sim.path_id)?;
+    result_dict.set_item(
+        "candidate",
+        crate::simulation::identity::candidate_id_to_dict(py, &sim.candidate_id)?,
+    )?;
     result_dict.set_item("gross_profit", u256_to_py(py, &sim.gross_profit)?)?;
     result_dict.set_item("net_profit", u256_to_py(py, &sim.net_profit)?)?;
     result_dict.set_item("gas_used", sim.gas_used)?;

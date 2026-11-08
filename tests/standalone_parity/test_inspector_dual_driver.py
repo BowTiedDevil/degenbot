@@ -74,7 +74,8 @@ def test_inspector_dual_driver_parity_cafebabe_revert() -> None:
     assert len(actual_failures) == len(expected_failures), "one failure recorded"
     af = actual_failures[0]
     ef = expected_failures[0]
-    assert af["path_id"] == ef["path_id"], "path_id round-trips"
+    assert af["candidate"]["path_id"] == ef["path_id"], "path_id round-trips"
+    assert af["candidate"]["deployment_id"] == 1, "the probe's deployment identity"
     assert af["bucket"] == ef["bucket"], "bucket label matches"
     assert af["fail_index"] == ef["fail_index"], "fail_index matches"
     # revert_data: fixture is "0xcafebabe", actual is "0x"-prefixed hex.

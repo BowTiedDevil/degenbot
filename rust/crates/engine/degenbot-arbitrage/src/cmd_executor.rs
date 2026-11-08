@@ -36,8 +36,8 @@ use alloy::primitives::{Address, Bytes, U256};
 
 use degenbot_core::op_info;
 use degenbot_execution::{
-    AssessError, ComposeError, ComposerInputs, ExecutionAdapter, ExecutionObservation,
-    ExecutionResult, FeePolicy, PathInfo, ProbeSpecs, TransactionRequest,
+    AssessError, ComposeError, ComposerInputs, DeploymentId, ExecutionAdapter,
+    ExecutionObservation, ExecutionResult, FeePolicy, PathInfo, ProbeSpecs, TransactionRequest,
 };
 use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions,
@@ -119,9 +119,13 @@ impl CmdExecutorBinding {
     /// The deployment of the ACTUAL deployed contract: production sims the code
     /// the chain holds at [`Self::executor`], and the state overrides declare no
     /// code.
+    ///
+    /// `deployment_id` is the operator-assigned identity the configuration
+    /// boundary names; the built-in adapter keeps no identity of its own
+    /// (ADR-098 D4).
     #[must_use]
-    pub fn deployment(&self) -> SimulationDeployment {
-        self.build_deployment(None, None)
+    pub fn deployment(&self, deployment_id: DeploymentId) -> SimulationDeployment {
+        self.build_deployment(deployment_id, None, None)
     }
 
     /// The deployment of a DECLARED build: `runtime` is installed at `address`
@@ -138,6 +142,7 @@ impl CmdExecutorBinding {
     /// [`InjectionAddressMismatch`] when `address` is not [`Self::executor`].
     pub fn injected(
         &self,
+        deployment_id: DeploymentId,
         address: Address,
         runtime: Bytes,
     ) -> Result<SimulationDeployment, InjectionAddressMismatch> {
@@ -147,7 +152,7 @@ impl CmdExecutorBinding {
                 executor: self.executor,
             });
         }
-        Ok(self.build_deployment(Some(address), Some(runtime)))
+        Ok(self.build_deployment(deployment_id, Some(address), Some(runtime)))
     }
 
     /// Resolve + load the executor runtime artifact for a declared build.
@@ -176,6 +181,7 @@ impl CmdExecutorBinding {
 
     fn build_deployment(
         &self,
+        deployment_id: DeploymentId,
         injected: Option<Address>,
         runtime: Option<Bytes>,
     ) -> SimulationDeployment {
@@ -193,6 +199,7 @@ impl CmdExecutorBinding {
             _ => None,
         };
         SimulationDeployment::new(
+            deployment_id,
             Arc::new(self.adapter()),
             self.owner,
             crate::simulator::execute_gas_limit(),

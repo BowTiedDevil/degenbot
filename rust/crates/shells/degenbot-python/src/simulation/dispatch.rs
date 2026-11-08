@@ -19,7 +19,7 @@ use degenbot_arbitrage::CapturedSwap;
 use degenbot_batch_executor::assembly::{merge_payload_results, PayloadArm};
 use degenbot_batch_executor::row::{PayloadFailure, PayloadRow};
 use degenbot_batch_executor::PathResolver;
-use degenbot_execution::PathInfo;
+use degenbot_execution::{CandidateId, PathInfo};
 use degenbot_pools::RegisteredPoolFamily;
 use degenbot_simulation::sim::capture::SwapFamily;
 use degenbot_submission::SubmitCandidate;
@@ -91,8 +91,10 @@ impl PathResolver for ResolvedPaths<'_> {
 /// # Errors
 ///
 /// `ValueError`: a payload dict is missing a required field, the calldata is
-/// not bytes, or a `path_id` is not registered in the engine (the pool-key
-/// derivation needs the typed hops).
+/// not bytes, a `path_id` is not registered in the engine (the pool-key
+/// derivation needs the typed hops), or a payload's `deployment_id` is not
+/// this session's built-in deployment — a foreign payload would carry another
+/// deployment's calldata into the built-in submit lane.
 #[pyfunction]
 #[pyo3(signature = (payloads, engine, executor_address))]
 pub fn merge_payload_results_py(
@@ -119,32 +121,40 @@ pub fn merge_payload_results_py(
         .collect::<PyResult<Vec<_>>>()?;
 
     // Resolve phase (GIL-held): one registered PathInfo per DISTINCT payload
-    // path_id through the engine projection. A resolve miss here is decision
+    // path id through the engine projection. A resolve miss here is decision
     // (a)'s loud-abort arm — a payload row is engine-born (the engine
     // simulated the path inline), so a miss evidences batch/registry
     // divergence and aborts — surfacing as the legacy `ValueError` (the
     // pre-cut-over driver's contract), with the crate merge's message.
     let mut resolved: HashMap<u64, PathInfo> = HashMap::with_capacity(rows.len());
     for row in &rows {
-        if resolved.contains_key(&row.path_id) {
+        if resolved.contains_key(&row.candidate_id.path_id()) {
             continue;
         }
         let info = engine
-            .path_info_for_core(py, row.path_id)
+            .path_info_for_core(py, row.candidate_id.path_id())
             .and_then(std::result::Result::ok)
             .ok_or_else(|| {
                 PyValueError::new_err(format!(
                     "path_id {} is not registered in this engine; \
                      the payload pool keys cannot be derived",
-                    row.path_id
+                    row.candidate_id.path_id()
                 ))
             })?;
-        resolved.insert(row.path_id, info);
+        resolved.insert(row.candidate_id.path_id(), info);
     }
 
-    // The join + categorization run crate-side over the resolved map.
-    let merged = merge_payload_results(&rows, &ResolvedPaths { map: &resolved }, executor)
-        .map_err(|e| PyValueError::new_err(e.detail))?;
+    // The join + categorization run crate-side over the resolved map. The
+    // expected identity is the session's built-in deployment — the caller never
+    // supplies it, so a payload minted by another deployment cannot ride this
+    // seam into the built-in submit lane (the crate merge refuses the mismatch).
+    let merged = merge_payload_results(
+        &rows,
+        &ResolvedPaths { map: &resolved },
+        executor,
+        degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+    )
+    .map_err(|e| PyValueError::new_err(e.detail))?;
 
     // The [profit]-render path_info dicts — the ONE serializer shape
     // (`path_info_to_py_dict`) both outcomes' path_infos emit, in
@@ -159,12 +169,12 @@ pub fn merge_payload_results_py(
     let verdicts = merged
         .verdicts
         .iter()
-        .map(|(path_id, arm)| {
+        .map(|(candidate_id, arm)| {
             let kind = match arm {
                 PayloadArm::Submit => "submit",
                 PayloadArm::Unprofitable => "unprofitable",
             };
-            PyPayloadVerdict::wrap(py, *path_id, kind)
+            PyPayloadVerdict::wrap(py, *candidate_id, kind)
         })
         .collect();
 
@@ -175,6 +185,31 @@ pub fn merge_payload_results_py(
         path_info_dicts,
         verdicts,
     })
+}
+
+/// Extract the composite candidate identity from a record dict's nested
+/// `{"path_id", "deployment_id"}` mapping (seam helper).
+///
+/// The identity is ONE value, so a record that carries only a bare path id —
+/// the retired wire shape — is refused here rather than guessed at: a payload
+/// row is engine-born, and an unnamed deployment cannot be joined to a
+/// deployment's submit lane.
+fn required_candidate_id(entry: &Bound<'_, PyDict>, key: &str) -> PyResult<CandidateId> {
+    let mapping = entry
+        .get_item(key)?
+        .ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "payload dict missing '{key}' (the composite candidate identity: path_id + deployment_id)"
+            ))
+        })?
+        .cast_into::<PyDict>()
+        .map_err(|_| PyValueError::new_err(format!("payload field '{key}' must be a dict")))?;
+    let path_id = required_u64(&mapping, "path_id")?;
+    let deployment_id = required_u64(&mapping, "deployment_id")?;
+    Ok(CandidateId::new(
+        path_id,
+        degenbot_execution::DeploymentId::new(deployment_id),
+    ))
 }
 
 /// Extract a required u64 field off one payload dict (seam helper).
@@ -192,7 +227,7 @@ fn required_u64(entry: &Bound<'_, PyDict>, key: &str) -> PyResult<u64> {
 /// alloy `AccessList` so the crate join stamps the row exactly like the FFI
 /// batch survivor.
 pub(crate) fn payload_row_from_dict(entry: &Bound<'_, PyDict>) -> PyResult<PayloadRow> {
-    let path_id = required_u64(entry, "path_id")?;
+    let candidate_id = required_candidate_id(entry, "candidate")?;
     let gross_obj = entry
         .get_item("gross_profit")?
         .ok_or_else(|| PyValueError::new_err("payload dict missing 'gross_profit'"))?;
@@ -227,7 +262,7 @@ pub(crate) fn payload_row_from_dict(entry: &Bound<'_, PyDict>) -> PyResult<Paylo
     };
 
     Ok(PayloadRow {
-        path_id,
+        candidate_id,
         gross_profit,
         net_profit,
         gas_used: required_u64(entry, "gas_used")?,
@@ -418,26 +453,26 @@ fn payload_failure_from_dict(failure: &Bound<'_, PyDict>) -> PyResult<PayloadFai
 /// branch on kind and reads nothing else. (submit / unprofitable; failure
 /// entries surface through the failures rows, not a verdict.)
 impl PyPayloadVerdict {
-    fn wrap(py: Python<'_>, path_id: u64, kind: &'static str) -> Py<PyPayloadVerdict> {
+    fn wrap(py: Python<'_>, candidate_id: CandidateId, kind: &'static str) -> Py<PyPayloadVerdict> {
         #[expect(clippy::unwrap_used)] // PyResult from Bound::new for a plain
         // pyclass cannot fail (no __new__ override, no GC-tracked fields).
-        Py::new(py, PyPayloadVerdict { path_id, kind }).unwrap()
+        Py::new(py, PyPayloadVerdict { candidate_id, kind }).unwrap()
     }
 }
 #[pyclass(name = "PayloadVerdict", module = "degenbot._ffi.simulation")]
 pub struct PyPayloadVerdict {
-    /// The payload's path id.
-    pub(crate) path_id: u64,
+    /// The payload's candidate identity.
+    pub(crate) candidate_id: CandidateId,
     /// "submit" | "unprofitable".
     pub(crate) kind: &'static str,
 }
 
 #[pymethods]
 impl PyPayloadVerdict {
-    /// The path id the verdict belongs to.
+    /// The candidate the verdict belongs to.
     #[getter]
-    fn path_id(&self) -> u64 {
-        self.path_id
+    fn candidate_id(&self) -> crate::simulation::identity::PyCandidateId {
+        crate::simulation::identity::PyCandidateId::wrap(self.candidate_id)
     }
 
     /// "submit" | "unprofitable" — the arm tag (the threshold comparison ran
@@ -459,10 +494,10 @@ pub struct PyPayloadOutcome {
     /// Valid sims below the threshold (Rust-categorized).
     pub(crate) unprofitable_count: usize,
     /// The [sim-fail] rows (FFI failures-row shape).
-    pub(crate) failures: Vec<(u64, PayloadFailure)>,
+    pub(crate) failures: Vec<(CandidateId, PayloadFailure)>,
     /// The [profit]-render `path_info` dicts (`path_info_to_py_dict` shape).
     pub(crate) path_info_dicts: Vec<(u64, Py<PyDict>)>,
-    /// The per-entry arm verdicts (`path_id` + `kind`).
+    /// The per-entry arm verdicts (`candidate_id` + `kind`).
     pub(crate) verdicts: Vec<Py<PyPayloadVerdict>>,
 }
 
@@ -491,13 +526,16 @@ impl PyPayloadOutcome {
     }
 
     /// The [sim-fail] rows — list[dict] with the FFI failures row keys
-    /// (`path_id` / `bucket` / `fail_index` / `revert_data`).
+    /// (`candidate` / `bucket` / `fail_index` / `revert_data`).
     #[getter]
     fn failures<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let list = PyList::empty(py);
-        for (path_id, failure) in &self.failures {
+        for (candidate_id, failure) in &self.failures {
             let dict = PyDict::new(py);
-            dict.set_item("path_id", path_id)?;
+            dict.set_item(
+                "candidate",
+                crate::simulation::identity::candidate_id_to_dict(py, candidate_id)?,
+            )?;
             dict.set_item("bucket", &failure.bucket)?;
             match failure.fail_index {
                 Some(idx) => dict.set_item("fail_index", idx)?,
@@ -515,7 +553,9 @@ impl PyPayloadOutcome {
     }
 
     /// `{path_id: path_info dict}` — the [profit]-render source (the SAME
-    /// one-serializer shape the batch seam's `path_info_dict()` emits).
+    /// one-serializer shape the batch seam's `path_info_dict()` emits). The key
+    /// is the PATH id: a path-info lookup precedes target selection and is
+    /// shared by every deployment's candidate for that path.
     #[getter]
     fn path_infos<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);

@@ -54,8 +54,8 @@ use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_core::fee_percentiles::{P10_INDEX, P50_INDEX, PRIORITY_FEE_PERCENTILES};
 use degenbot_execution::{
-    ComposeError, ComposeOptions, ComposerInputs, ExecutionObservation, ExecutionResult, FeePolicy,
-    HopInfo, PathInfo, ProbeSpec, V2HopInfo, V4HopInfo,
+    CandidateId, ComposeError, ComposeOptions, ComposerInputs, ExecutionObservation,
+    ExecutionResult, FeePolicy, HopInfo, PathInfo, ProbeSpec, V2HopInfo, V4HopInfo,
 };
 use degenbot_rpc::fees::BlockPriorityFees;
 // The engine types the strategy drives: the production leaf (the
@@ -176,8 +176,10 @@ pub fn fits_int128(value: u128) -> bool {
 /// assessment stays a visible diagnostic row and never reaches submission.
 #[derive(Debug, Clone)]
 pub struct SimResult {
-    /// The path id (`path_id`).
-    pub path_id: u64,
+    /// The candidate this result belongs to — the solver path bound to the
+    /// deployment that produced it, so two deployments simulating the same path
+    /// stay distinct rows.
+    pub candidate_id: CandidateId,
     /// The deployment's assessed gross profit (wei) before gas pricing — for the
     /// built-in executor the contract's own retained figure
     /// (`gross_profit − bribe_paid`, after the bribe and before gas), for a
@@ -264,8 +266,8 @@ impl SimResult {
 /// balance-decode branch (no inspection ran on the failing call).
 #[derive(Debug, Clone)]
 pub struct SimFailure {
-    /// The path id (mirror of `SimulatePath::path_id`).
-    pub path_id: u64,
+    /// The candidate that failed (mirror of `SimulatePath::candidate_id`).
+    pub candidate_id: CandidateId,
     /// The bucket label — the `classify_revert` output for reverts, else the
     /// orchestration-only bucket string.
     pub bucket: String,
@@ -446,7 +448,7 @@ impl FailBuckets {
     /// sim-failed bucket, and stays `tally`-less).
     pub fn record(
         &mut self,
-        path_id: u64,
+        candidate_id: CandidateId,
         bucket: &str,
         fail_index: Option<usize>,
         revert_data: alloy::primitives::Bytes,
@@ -459,10 +461,10 @@ impl FailBuckets {
         // the `degenbot.bundle.simulate` span, so path context rides along.
         degenbot_bot::telemetry::record_exception(
             degenbot_bot::telemetry::error_kind::SIM_FAILURE,
-            format_args!("path {path_id} bucket {bucket} fail_index {fail_index:?}"),
+            format_args!("path {candidate_id} bucket {bucket} fail_index {fail_index:?}"),
         );
         self.failures.push(SimFailure {
-            path_id,
+            candidate_id,
             bucket: bucket.to_string(),
             fail_index,
             revert_data,
@@ -491,7 +493,7 @@ impl FailBuckets {
     #[expect(clippy::too_many_arguments)] // path attribution + swap/trace detail
     pub fn record_no_profit(
         &mut self,
-        path_id: u64,
+        candidate_id: CandidateId,
         captured_swaps: Vec<CapturedSwap>,
         reverted_swaps: Vec<CapturedSwap>,
         log_full_count: usize,
@@ -502,7 +504,7 @@ impl FailBuckets {
         let bucket = NoProfitShape::of(&captured_swaps, &reverted_swaps).bucket();
         self.tally(bucket);
         self.failures.push(SimFailure {
-            path_id,
+            candidate_id,
             bucket: bucket.to_string(),
             fail_index: None,
             revert_data: alloy::primitives::Bytes::new(),
@@ -523,7 +525,7 @@ impl FailBuckets {
     #[expect(clippy::too_many_arguments)]
     pub fn record_revert(
         &mut self,
-        path_id: u64,
+        candidate_id: CandidateId,
         bucket: &str,
         fail_index: Option<usize>,
         reverting_frame: RevertingFrame,
@@ -533,7 +535,7 @@ impl FailBuckets {
     ) {
         self.tally(bucket);
         self.failures.push(SimFailure {
-            path_id,
+            candidate_id,
             bucket: bucket.to_string(),
             fail_index,
             revert_data: reverting_frame.revert_data.clone(),
@@ -764,8 +766,9 @@ fn scan_for_v4_v2_boundary_bridge(hops: &[HopInfo], weth_address: Address) -> Op
 /// owns it), so a candidate never carries a second copy of it.
 #[derive(Debug, Clone)]
 pub struct SimulatePath {
-    /// The path id.
-    pub path_id: u64,
+    /// The candidate identity: the solver path bound to the deployment that
+    /// executes it.
+    pub candidate_id: CandidateId,
     /// The arb's optimal input (`optimal_input`).
     pub optimal_input: u128,
     /// Per-hop rows (output / executable input / solve-time nonce) — one
@@ -948,7 +951,7 @@ pub fn simulate_path_on_evm(
 ) -> ProviderResult<Option<SimResult>> {
     let span = tracing::info_span!(
         "degenbot.bundle.simulate",
-        path_id = path.path_id,
+        path_id = path.candidate_id.path_id(),
         simulate.verdict = tracing::field::Empty,
         simulate.expected_profit = tracing::field::Empty,
         simulate.error_reason = tracing::field::Empty,
@@ -1015,7 +1018,7 @@ fn simulate_path_on_evm_seam(
             let output_amount = path.steps[i].output;
             if !fits_int128(amount_specified) || !fits_int128(output_amount) {
                 fail_buckets.record(
-                    path.path_id,
+                    path.candidate_id,
                     "int128-overflow",
                     None,
                     alloy::primitives::Bytes::new(),
@@ -1035,7 +1038,7 @@ fn simulate_path_on_evm_seam(
             if let Some(desc) =
                 scan_for_v4_v2_boundary_bridge(&path.path_info.hops, settlement.weth_address)
             {
-                op_info!(domain = sim, path_id = path.path_id,
+                op_info!(domain = sim, path_id = path.candidate_id.path_id(),
                     desc = %desc,
                     "V4 native to V2 WETH boundary; 3-hop composer does not encode this"
                 );
@@ -1058,7 +1061,7 @@ fn simulate_path_on_evm_seam(
         Err(ComposeError::Unsupported(_decline)) => {
             // A routine encode decline is a bucket, never an exception.
             fail_buckets.record(
-                path.path_id,
+                path.candidate_id,
                 "encode-failed",
                 None,
                 alloy::primitives::Bytes::new(),
@@ -1103,7 +1106,7 @@ fn simulate_path_on_evm_seam(
             }) => (*observation, *capture, None),
             Err(ProductionSimError::Engine(err)) => {
                 fail_buckets.record(
-                    path.path_id,
+                    path.candidate_id,
                     "rpc-failed",
                     err.step_index(),
                     alloy::primitives::Bytes::new(),
@@ -1136,7 +1139,7 @@ fn simulate_path_on_evm_seam(
     // adapter declared one; otherwise the bucket alone carries the verdict.
     let Some(assessment) = assessment else {
         fail_buckets.record(
-            path.path_id,
+            path.candidate_id,
             "balance-decode",
             absent_probe_reading(&observation),
             alloy::primitives::Bytes::new(),
@@ -1171,7 +1174,7 @@ fn simulate_path_on_evm_seam(
     let profit_i128 = i128::try_from(priced.net_profit).unwrap_or(i128::from(i64::MAX));
     guard.profit = Some(i64::try_from(profit_i128).unwrap_or(i64::MAX));
     Ok(Some(SimResult {
-        path_id: path.path_id,
+        candidate_id: path.candidate_id,
         gross_profit: priced.gross_profit,
         net_profit: priced.net_profit,
         gas_used: priced.gas_used,
@@ -1295,14 +1298,14 @@ fn record_failed_step(
     let bucket = degenbot_decoders::revert::classify_revert(&revert_data);
 
     log_reverted_swaps_vs_hop_outputs(
-        path.path_id,
+        path.candidate_id.path_id(),
         &capture.reverted_swaps,
         &path.path_info.hops,
         path.expected_outputs_vec().as_slice(),
     );
 
     if let Some(frame) = capture.trace.failing_frame() {
-        diag_trace!(domain = sim, path_id = path.path_id, first_fail_call = fail_idx,
+        diag_trace!(domain = sim, path_id = path.candidate_id.path_id(), first_fail_call = fail_idx,
             full_call_trace = %capture.trace.render_debug(),
             "[sim-trace]"
         );
@@ -1312,7 +1315,7 @@ fn record_failed_step(
         };
         let frame_label = degenbot_decoders::revert::classify_revert(&frame_revert_data);
         fail_buckets.record_revert(
-            path.path_id,
+            path.candidate_id,
             &frame_label.clone(),
             Some(fail_idx),
             RevertingFrame {
@@ -1346,7 +1349,7 @@ fn record_failed_step(
     // STEP's own identity — a declared read or the opportunity's transaction.
     let (target, selector) = step_identity(probes, observation, fail_idx);
     fail_buckets.record_revert(
-        path.path_id,
+        path.candidate_id,
         &bucket.clone(),
         Some(fail_idx),
         RevertingFrame {
@@ -1404,7 +1407,7 @@ fn record_no_profit(
         .collect();
 
     fail_buckets.record_no_profit(
-        path.path_id,
+        path.candidate_id,
         capture.swaps.clone(),
         capture.reverted_swaps.clone(),
         capture.log_count,
@@ -1913,6 +1916,14 @@ mod tests {
 
     use crate::cmd_executor::CmdExecutorBinding;
     use crate::deployment::{SimulationBlock, SimulationDeployment};
+    use degenbot_execution::DeploymentId;
+
+    /// The smoke fixtures' one deployment identity.
+    const SMOKE_DEPLOYMENT_ID: u64 = 1;
+
+    fn smoke_deployment_id() -> DeploymentId {
+        DeploymentId::new(SMOKE_DEPLOYMENT_ID)
+    }
 
     const SMOKE_OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e");
     const SMOKE_EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -1961,7 +1972,7 @@ mod tests {
     #[expect(clippy::expect_used)] // the declared override names the executor
     fn smoke_deployment(runtime: Bytes) -> SimulationDeployment {
         smoke_binding()
-            .injected(SMOKE_EXECUTOR, runtime)
+            .injected(smoke_deployment_id(), SMOKE_EXECUTOR, runtime)
             .expect("the declared override names the executor")
     }
 
@@ -1987,7 +1998,7 @@ mod tests {
 
     fn smoke_v2_path(path_id: u64) -> SimulatePath {
         SimulatePath {
-            path_id,
+            candidate_id: CandidateId::new(path_id, smoke_deployment_id()),
             optimal_input: 1_000_000_000_000_000_000u128,
             steps: Box::new([
                 SolveStep {
@@ -2067,7 +2078,7 @@ mod tests {
             let failures = buckets.failures();
             assert_eq!(failures.len(), 1);
             let failure = &failures[0];
-            assert_eq!(failure.path_id, path_id);
+            assert_eq!(failure.candidate_id.path_id(), path_id);
             assert_eq!(
                 failure.fail_index,
                 Some(0),
@@ -2117,7 +2128,7 @@ mod tests {
         assert_eq!(buckets.get("no-profit"), 0, "not an economic no-profit");
         let failures = buckets.failures();
         assert_eq!(failures.len(), 1);
-        assert_eq!(failures[0].path_id, 11);
+        assert_eq!(failures[0].candidate_id.path_id(), 11);
         assert_eq!(failures[0].bucket, "execute-no-op");
         assert!(failures[0].fail_index.is_none(), "no call reverted");
         // Empty-bytecode executor emits no Swap events; record_no_profit
@@ -2149,7 +2160,7 @@ mod tests {
         assert_eq!(buckets.get("execute-no-op"), 0, "not a measured zero");
         let failures = buckets.failures();
         assert_eq!(failures.len(), 1);
-        assert_eq!(failures[0].path_id, 12);
+        assert_eq!(failures[0].candidate_id.path_id(), 12);
         assert!(failures[0].fail_index.is_none(), "no read or call to name");
     }
 
@@ -2194,7 +2205,15 @@ mod tests {
             ),
         ] {
             let mut buckets = FailBuckets::new();
-            buckets.record_no_profit(3, captured, reverted, 0, 1_000, vec![990], Vec::new());
+            buckets.record_no_profit(
+                CandidateId::new(3, smoke_deployment_id()),
+                captured,
+                reverted,
+                0,
+                1_000,
+                vec![990],
+                Vec::new(),
+            );
             assert_eq!(buckets.get(bucket), 1, "tallied under its own shape");
             let failures = buckets.failures();
             assert_eq!(failures[0].bucket, bucket);
@@ -2677,7 +2696,7 @@ mod tests {
         let executor = address!("DeAd0000000000000000000000000000000000Be");
 
         let path = SimulatePath {
-            path_id: 5000,
+            candidate_id: degenbot_execution::CandidateId::new(5000, DeploymentId::new(1)),
             optimal_input: 1_000_000_000_000_000_000u128,
             // V2 out = 2e9, V4 out = 2_001e15, V3 out = 2_001e6.
             // The concentrated liquidity clamp: V4 (idx 1) swap-in is ONE BELOW its forward.

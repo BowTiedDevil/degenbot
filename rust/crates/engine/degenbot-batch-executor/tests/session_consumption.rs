@@ -347,7 +347,7 @@ async fn run_scenario(scenario: &Value) -> Trace {
             set.records
                 .iter()
                 .map(|record| RecordRow {
-                    path: symbolic(record.path_id),
+                    path: symbolic(record.candidate_id.path_id()),
                     block: record.block,
                     assembly: record.assembly.label().to_string(),
                     simulate: record

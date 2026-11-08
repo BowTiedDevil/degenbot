@@ -8,7 +8,8 @@
 //!   provider the cold-miss fallback reads through, the block environment, and
 //!   the fee samples. Every candidate in a fan-out shares these.
 //! - [`SimulationDeployment`] — the facts ONE execution deployment contributes:
-//!   its [`degenbot_execution::ExecutionAdapter`] (Encode / Probe / Assess), the
+//!   its operator-assigned [`degenbot_execution::DeploymentId`], its
+//!   [`degenbot_execution::ExecutionAdapter`] (Encode / Probe / Assess), the
 //!   account whose key sends the opportunity's transaction, the gas limit that
 //!   transaction may burn, any declared code override, and the settlement
 //!   warmup it declares.
@@ -44,7 +45,7 @@
 use std::sync::Arc;
 
 use alloy::primitives::Address;
-use degenbot_execution::ExecutionAdapter;
+use degenbot_execution::{DeploymentId, ExecutionAdapter};
 use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::{DeclaredCode, SettlementWarmup, SimulationOverrideParams};
@@ -83,6 +84,7 @@ impl std::fmt::Debug for SimulationBlock<'_> {
 /// One execution deployment: the injected adapter plus the deployment facts the
 /// engine's state overrides and the opportunity's transaction need.
 pub struct SimulationDeployment {
+    deployment_id: DeploymentId,
     adapter: Arc<dyn ExecutionAdapter + Send + Sync>,
     owner: Address,
     gas_limit: u64,
@@ -118,6 +120,7 @@ impl std::fmt::Debug for SimulationDeployment {
         // The adapter is user code with no `Debug` bound, so the derived fields
         // are named explicitly and the adapter is summarized by name.
         f.debug_struct("SimulationDeployment")
+            .field("deployment_id", &self.deployment_id)
             .field("adapter", &"<ExecutionAdapter>")
             .field("owner", &self.owner)
             .field("gas_limit", &self.gas_limit)
@@ -129,7 +132,12 @@ impl std::fmt::Debug for SimulationDeployment {
 }
 
 impl SimulationDeployment {
-    /// Compose a deployment from its adapter and its declared facts.
+    /// Compose a deployment from its operator-assigned identity, its adapter,
+    /// and its declared facts.
+    ///
+    /// `deployment_id` is required: a deployment has no unnamed form, because
+    /// every candidate it executes is keyed by that identity (ADR-098 D4). The
+    /// caller that composes the session names it — degenbot never invents one.
     ///
     /// `code` is the deployment's declared development override (see the module
     /// doc); `settlement` is what the deployment declares for WETH/PoolManager
@@ -140,6 +148,7 @@ impl SimulationDeployment {
     /// market-aware re-pricing with [`Self::with_fee_sizing`].
     #[must_use]
     pub fn new(
+        deployment_id: DeploymentId,
         adapter: Arc<dyn ExecutionAdapter + Send + Sync>,
         owner: Address,
         gas_limit: u64,
@@ -147,6 +156,7 @@ impl SimulationDeployment {
         settlement: Option<SettlementWarmup>,
     ) -> Self {
         Self {
+            deployment_id,
             adapter,
             owner,
             gas_limit,
@@ -161,6 +171,13 @@ impl SimulationDeployment {
     pub const fn with_fee_sizing(mut self, fee_sizing: FeeSizing) -> Self {
         self.fee_sizing = fee_sizing;
         self
+    }
+
+    /// This deployment's operator-assigned identity — the half of every
+    /// [`degenbot_execution::CandidateId`] it executes.
+    #[must_use]
+    pub const fn deployment_id(&self) -> DeploymentId {
+        self.deployment_id
     }
 
     /// How this deployment turns the assessed gross figure into net profit.

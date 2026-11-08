@@ -97,9 +97,10 @@ class BatchOutcome:
         The block the batch was consumed at (the liveness heartbeat).
         """
     @property
-    def path_id(self, /) -> int:
+    def candidate_id(self, /) -> CandidateId:
         """
-        The candidate's arb path id.
+        The candidate identity — the solver path bound to the deployment that
+        executed it.
         """
     def path_info_dict(self, /) -> dict:
         """
@@ -142,6 +143,37 @@ class BatchOutcomeSet:
         """
         The submit-lane records as the FFI wire dicts (the
         `dispatch_and_submit` shape — `typed_submit_record` decodes them).
+        """
+
+@final
+class CandidateId:
+    """
+    The composite candidate identity, exposed as one Python value.
+
+    `path_id` is the solver's own path number (preserved verbatim);
+    `deployment_id` is the operator-assigned identity of the deployment that
+    encodes and submits this candidate.
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __hash__(self, /) -> int: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /, path_id: SupportsIndex, deployment_id: SupportsIndex) -> CandidateId:
+        """
+        Build a composite identity from its two halves.
+
+        Python constructs one to pair with a record it composes itself (a test
+        fixture, or a driver building a candidate from its own bookkeeping); the
+        pipeline's own records always hand one back, never two loose keys.
+        """
+    @property
+    def deployment_id(self, /) -> int:
+        """
+        The deployment this candidate targets.
+        """
+    @property
+    def path_id(self, /) -> int:
+        """
+        The solver path this candidate came from.
         """
 
 @final
@@ -225,9 +257,9 @@ class FailureDetail:
         orchestration-only tag.
         """
     @property
-    def path_id(self, /) -> int:
+    def candidate_id(self, /) -> CandidateId:
         """
-        The path that failed.
+        The candidate that failed (path + the deployment that simulated it).
         """
     def record(self, /) -> dict:
         """
@@ -266,13 +298,15 @@ class PayloadOutcome:
     def failures(self, /) -> list:
         """
         The [sim-fail] rows — list[dict] with the FFI failures row keys
-        (`path_id` / `bucket` / `fail_index` / `revert_data`).
+        (`candidate` / `bucket` / `fail_index` / `revert_data`).
         """
     @property
     def path_infos(self, /) -> dict:
         """
         `{path_id: path_info dict}` — the [profit]-render source (the SAME
-        one-serializer shape the batch seam's `path_info_dict()` emits).
+        one-serializer shape the batch seam's `path_info_dict()` emits). The key
+        is the PATH id: a path-info lookup precedes target selection and is
+        shared by every deployment's candidate for that path.
         """
     @property
     def unprofitable_count(self, /) -> int:
@@ -289,15 +323,15 @@ class PayloadOutcome:
 @final
 class PayloadVerdict:
     @property
+    def candidate_id(self, /) -> CandidateId:
+        """
+        The candidate the verdict belongs to.
+        """
+    @property
     def kind(self, /) -> str:
         """
         "submit" | "unprofitable" — the arm tag (the threshold comparison ran
         Rust-side; Python renders the branch, it does not re-apply the rule).
-        """
-    @property
-    def path_id(self, /) -> int:
-        """
-        The path id the verdict belongs to.
         """
 
 @final
@@ -719,8 +753,10 @@ def merge_payload_results_py(
     # Errors
 
     `ValueError`: a payload dict is missing a required field, the calldata is
-    not bytes, or a `path_id` is not registered in the engine (the pool-key
-    derivation needs the typed hops).
+    not bytes, a `path_id` is not registered in the engine (the pool-key
+    derivation needs the typed hops), or a payload's `deployment_id` is not
+    this session's built-in deployment — a foreign payload would carry another
+    deployment's calldata into the built-in submit lane.
     """
 
 def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: bytes) -> dict:
@@ -738,7 +774,8 @@ def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: b
       - `result` (`None`) — the in-process path returns `None` for reverts
         + non-profitable outcomes (the revert is tallied in `failures`).
       - `failures` (`list[dict]`) — one entry per failed candidate, each
-        carrying `path_id`, `bucket`, `fail_index`, `revert_data`,
+        carrying `candidate` (the nested `path_id` + `deployment_id` identity),
+        `bucket`, `fail_index`, `revert_data`,
         `reverting_frame`, `captured_swaps`, `optimal_input`, `hop_outputs`
         (the same shape the batch seam's `FailureDetail.record()` emits).
       - `fail_buckets` (`dict[str, int]`) — the bucket tally.
@@ -792,6 +829,7 @@ __all__ = [
     "BatchExecutor",
     "BatchOutcome",
     "BatchOutcomeSet",
+    "CandidateId",
     "ConsumerErrorKind",
     "ExecutorPolicyValues",
     "FailureDetail",

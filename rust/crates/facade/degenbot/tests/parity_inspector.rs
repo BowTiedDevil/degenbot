@@ -142,7 +142,10 @@ fn mock_no_rpc_provider() -> AlloyProvider {
 
 fn smoke_v2_path(path_id: u64) -> SimulatePath {
     SimulatePath {
-        path_id,
+        candidate_id: degenbot::execution::CandidateId::new(
+            path_id,
+            degenbot::execution::DeploymentId::new(1),
+        ),
         optimal_input: SMOKE_OPTIMAL_INPUT,
         steps: Box::new([
             SolveStep {
@@ -205,6 +208,7 @@ fn inspector_dual_driver_parity_cafebabe_revert() {
         EncodeOptions::default(),
     )
     .injected(
+        degenbot::execution::DeploymentId::new(1),
         SMOKE_EXECUTOR,
         alloy::primitives::Bytes::from(runtime_bytecode),
     )
@@ -251,7 +255,7 @@ fn inspector_dual_driver_parity_cafebabe_revert() {
     );
     let f = &failures[0];
     let ef = &fx.expected.failures[0];
-    assert_eq!(f.path_id, ef.path_id, "path_id round-trips");
+    assert_eq!(f.candidate_id.path_id(), ef.path_id, "path_id round-trips");
     assert_eq!(f.bucket, ef.bucket, "bucket label matches");
     assert_eq!(
         f.fail_index.map(|i| i as u64),

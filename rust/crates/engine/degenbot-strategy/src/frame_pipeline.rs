@@ -76,6 +76,7 @@ use crate::backrun_engine::BackrunSolver;
 use crate::backrun_engine::PathReject;
 use crate::backrun_strategy::SolveStats;
 use alloy::primitives::{Address, Bytes, B256, U256};
+use degenbot_execution::{CandidateId, DeploymentId};
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
@@ -408,6 +409,14 @@ fn solve_trace_payload(trace_tx: &str, t: &SolveTrace) -> serde_json::Value {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+
+/// The backrun lane's one execution deployment identity.
+///
+/// This lane composes ONE deployment (its [`ExecutionContext`]), so the lane
+/// names that deployment here, once, and every candidate it submits carries the
+/// identity (ADR-098 D4). A lane that fans out across several deployments names
+/// each of them at its own composition boundary.
+const BACKRUN_DEPLOYMENT_ID: DeploymentId = DeploymentId::new(1);
 
 /// The per-frame strategy configuration the bin owns (session deployment,
 /// owner identity, and economics).
@@ -1084,7 +1093,10 @@ pub async fn dispatch_frame(
                     clippy::expect_used,
                     reason = "a frame hash is 32 bytes; the first 8 always split into u64"
                 )]
-                path_id: u64::from_be_bytes(ev.hash.0[0..8].try_into().expect("8 bytes")),
+                candidate_id: CandidateId::new(
+                    u64::from_be_bytes(ev.hash.0[0..8].try_into().expect("8 bytes")),
+                    BACKRUN_DEPLOYMENT_ID,
+                ),
                 gross_profit,
                 net_profit,
                 gas_used: cfg.bundle_gas_est,

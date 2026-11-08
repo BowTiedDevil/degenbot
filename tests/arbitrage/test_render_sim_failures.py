@@ -48,7 +48,7 @@ def _capture_renderer_logs(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
 
 #: One failure in the bucket the ignore-set tests name.
 _EMPTY_FAILURE: dict[str, Any] = {
-    "path_id": 1,
+    "candidate": {"path_id": 1, "deployment_id": 1},
     "bucket": "empty",
     "fail_index": 3,
     "revert_data": "0x",
@@ -135,13 +135,13 @@ def test_no_failures_emits_nothing(caplog: pytest.LogCaptureFixture) -> None:
 def test_each_failure_emits_one_line_with_attribution(caplog: pytest.LogCaptureFixture) -> None:
     failures = [
         {
-            "path_id": 1,
+            "candidate": {"path_id": 1, "deployment_id": 1},
             "bucket": "Panic(0x11)",
             "fail_index": 3,
             "revert_data": "0x4e487b71" + "0" * 56 + "11",
         },
         {
-            "path_id": 2,
+            "candidate": {"path_id": 2, "deployment_id": 1},
             "bucket": "CurrencyNotSettled",
             "fail_index": None,
             "revert_data": "0x5212cba1",
@@ -167,7 +167,14 @@ def test_each_failure_emits_one_line_with_attribution(caplog: pytest.LogCaptureF
 
 def test_missing_path_info_falls_back_gracefully(caplog: pytest.LogCaptureFixture) -> None:
     # path_id 99 isn't in path_infos → renderer must not crash, emits "(path_info missing)".
-    failures = [{"path_id": 777, "bucket": "rpc-failed", "fail_index": None, "revert_data": "0x"}]
+    failures = [
+        {
+            "candidate": {"path_id": 777, "deployment_id": 1},
+            "bucket": "rpc-failed",
+            "fail_index": None,
+            "revert_data": "0x",
+        }
+    ]
     with caplog.at_level("INFO", logger="degenbot"):
         _render(_outcome(failures))
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
@@ -183,7 +190,12 @@ def test_missing_path_info_falls_back_gracefully(caplog: pytest.LogCaptureFixtur
 def test_overflow_emits_summary_trailing_line(caplog: pytest.LogCaptureFixture) -> None:
     # 30 failures over the cap (25) → 25 lines + 1 "… (+5 more)" trailing line.
     failures = [
-        {"path_id": i, "bucket": "no-profit", "fail_index": None, "revert_data": "0x"}
+        {
+            "candidate": {"path_id": i, "deployment_id": 1},
+            "bucket": "no-profit",
+            "fail_index": None,
+            "revert_data": "0x",
+        }
         for i in range(30)
     ]
     with caplog.at_level("INFO", logger="degenbot"):
@@ -202,7 +214,7 @@ def test_reverting_frame_surfaces_deep_attribution(caplog: pytest.LogCaptureFixt
     # classify_revert label. Plus the swaps captured before the revert.
     failures = [
         {
-            "path_id": 1,
+            "candidate": {"path_id": 1, "deployment_id": 1},
             "bucket": "unknown:0xcafebabe",
             "fail_index": 3,
             "revert_data": "0xcafebabe",
@@ -350,7 +362,7 @@ def test_the_fixture_dump_prints_the_solver_amounts_in_hex(
     """
     failures = [
         {
-            "path_id": 1,
+            "candidate": {"path_id": 1, "deployment_id": 1},
             "bucket": "no-profit",
             "fail_index": None,
             "revert_data": "0x",
@@ -391,7 +403,7 @@ def test_the_fixture_dump_shows_an_empty_swap_set_as_the_no_op_shape(
     """
     failures = [
         {
-            "path_id": 1,
+            "candidate": {"path_id": 1, "deployment_id": 1},
             "bucket": "execute-no-op",
             "fail_index": None,
             "revert_data": "0x",
@@ -414,7 +426,14 @@ def test_a_record_without_solver_figures_renders_unset_not_zero(
 ) -> None:
     """A record that genuinely carries no figures renders ``unset`` — a
     missing value must not masquerade as a measured ``0x0``."""
-    failures = [{"path_id": 1, "bucket": "rpc-failed", "fail_index": None, "revert_data": "0x"}]
+    failures = [
+        {
+            "candidate": {"path_id": 1, "deployment_id": 1},
+            "bucket": "rpc-failed",
+            "fail_index": None,
+            "revert_data": "0x",
+        }
+    ]
     with pytest.raises(SystemExit), caplog.at_level("ERROR", logger="degenbot"):
         _render(_outcome(failures), armed=True, action=FailureAction.EXIT)
 
@@ -434,7 +453,14 @@ def test_sim_failures_continue_by_default(caplog: pytest.LogCaptureFixture) -> N
     per-bucket operator override (``[failure_policy]`` in config.toml), not an
     implicit default.
     """
-    failures = [{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}]
+    failures = [
+        {
+            "candidate": {"path_id": 1, "deployment_id": 1},
+            "bucket": "empty",
+            "fail_index": 3,
+            "revert_data": "0x",
+        }
+    ]
     with caplog.at_level("INFO", logger="degenbot"):
         _render(_outcome(failures), armed=True)
     # No exit: the trap logs the loud continuing event instead.
@@ -484,7 +510,12 @@ def test_operator_exit_override_still_traps(
     process-global Rust state.
     """
     failures = [
-        {"path_id": 1, "bucket": "Error(string)", "fail_index": 3, "revert_data": "0x08c379a0"}
+        {
+            "candidate": {"path_id": 1, "deployment_id": 1},
+            "bucket": "Error(string)",
+            "fail_index": 3,
+            "revert_data": "0x08c379a0",
+        }
     ]
     with pytest.raises(SystemExit) as ei, caplog.at_level("INFO", logger="degenbot"):
         _render(_outcome(failures), armed=True, action=FailureAction.EXIT)

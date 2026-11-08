@@ -37,7 +37,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
-use degenbot_execution::{HopInfo, PathInfo};
+use degenbot_execution::{CandidateId, HopInfo, PathInfo};
 use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
@@ -109,7 +109,8 @@ fn v2_calc_trace_body<S: V2ReservesReader>(session: &mut S, sim_path: &SimulateP
             let reserves = match session.read_v2_reserves(v2.pool_address) {
                 Ok(reserves) => reserves,
                 Err(e) => {
-                    diag!(domain = sim, path_id = sim_path.path_id,
+                    diag!(domain = sim, path_id = sim_path.candidate_id.path_id(),
+                        deployment_id = sim_path.candidate_id.deployment_id().value(),
                         pair = ?v2.pool_address,
                         %e,
                         "pair reserves read failed"
@@ -117,7 +118,8 @@ fn v2_calc_trace_body<S: V2ReservesReader>(session: &mut S, sim_path: &SimulateP
                     break;
                 }
             };
-            diag!(domain = sim, path_id = sim_path.path_id,
+            diag!(domain = sim, path_id = sim_path.candidate_id.path_id(),
+                deployment_id = sim_path.candidate_id.deployment_id().value(),
                 pair = ?v2.pool_address,
                 token0 = ?v2.token0_address,
                 token1 = ?v2.token1_address,
@@ -250,8 +252,10 @@ pub struct SolveStep {
 
 #[derive(Debug, Clone)]
 pub struct DispatchCandidate {
-    /// `path_id` — the unique arb path identifier.
-    pub path_id: u64,
+    /// The candidate identity — the solver path bound to the deployment that
+    /// will encode and submit it. Two deployments on one path are two
+    /// candidates.
+    pub candidate_id: CandidateId,
     /// `optimal_input` — the solver's optimal swap input.
     pub optimal_input: u128,
     /// `engine_profit` — the solver's expected gross profit (used for sorting
@@ -280,7 +284,7 @@ impl DispatchCandidate {
     #[must_use]
     fn to_simulate_path(&self) -> SimulatePath {
         SimulatePath {
-            path_id: self.path_id,
+            candidate_id: self.candidate_id,
             optimal_input: self.optimal_input,
             steps: self.steps.clone(),
             path_info: self.path_info.clone(),
@@ -436,22 +440,22 @@ impl DispatchOutcome {
 #[cfg(feature = "order-index")]
 fn order_index_top_selection(candidates: &mut [DispatchCandidate]) {
     use degenbot_order_index::{EnvelopeIndex, OrderIndex};
-    let mut idx = EnvelopeIndex::<u64>::new();
+    let mut idx = EnvelopeIndex::<CandidateId>::new();
     for c in candidates.iter() {
-        idx.insert(c.path_id, U256::ZERO, U256::from(c.engine_profit));
+        idx.insert(c.candidate_id, U256::ZERO, U256::from(c.engine_profit));
     }
     let ranked = idx.top_k(U256::ZERO, candidates.len());
     // `ranked` is every id in (net desc, id asc) order. Safe-guard: only enforce
-    // when it covers every candidate (candidate path_ids are expected unique).
+    // when it covers every candidate (candidate ids are unique by construction).
     if ranked.len() != candidates.len() {
         return;
     }
-    let pos: HashMap<u64, usize> = ranked
+    let pos: HashMap<CandidateId, usize> = ranked
         .into_iter()
         .enumerate()
         .map(|(i, id)| (id, i))
         .collect();
-    candidates.sort_by_key(|c| pos.get(&c.path_id).copied().unwrap_or(usize::MAX));
+    candidates.sort_by_key(|c| pos.get(&c.candidate_id).copied().unwrap_or(usize::MAX));
 }
 
 #[expect(
@@ -531,7 +535,7 @@ pub fn dispatch_profitable_results(
     //    `Dispatcher` arc the monitor tasks lock.
     {
         let mut s = path_suppression.lock().expect("suppression mutex poisoned");
-        candidates.retain(|c| !s.is_suppressed(c.path_id, current_block));
+        candidates.retain(|c| !s.is_suppressed(c.candidate_id, current_block));
     }
     outcome.suppressed_count = pre_filter_count - candidates.len();
 
@@ -546,7 +550,7 @@ pub fn dispatch_profitable_results(
     //    shared PoolManager, useless for per-pool attribution).
     let path_info_by_id: HashMap<u64, PathInfo> = candidates
         .iter()
-        .map(|c| (c.path_id, c.path_info.clone()))
+        .map(|c| (c.candidate_id.path_id(), c.path_info.clone()))
         .collect();
     let divergent_before = candidates.len();
     {
@@ -648,247 +652,254 @@ pub fn dispatch_profitable_results(
     //    `tokio::spawn`, neither borrows `'static` — the closure borrows
     //    `ctx` for its lifetime, and we collect within this fn (no task
     //    outlives the call).
-    let candidate_path_ids: Vec<u64> = candidates.iter().map(|c| c.path_id).collect();
+    let candidate_ids: Vec<CandidateId> = candidates.iter().map(|c| c.candidate_id).collect();
     // SIMPIPE T1 lab baseline: snapshot BEFORE the fan-out so the exit log
     // carries this fan-out's cold-fetch/build/sim deltas.
     let lab_before = degenbot_simulation::sim::sim_metrics::snapshot();
     let lab_fanout_started = std::time::Instant::now();
     let fanout_candidate_count = candidates.len();
-    let sim_results: Vec<(u64, FailBuckets, Result<Option<SimResult>, String>)> = match bot_state {
-        // In-process evm2 path (Tier 1): build ONE per-block EVM
-        // (`Evm2BlockSimHandle`) and simulate each candidate SERIALLY on the
-        // shared `&mut evm`. The shared `CacheDB` captures the ~50× latency
-        // win (benchmark `examples/rpc_cache_fanout.rs` config B vs A): the
-        // trigger path pays the cold RPCs, the fan-out hits the warmed cache
-        // at ~1 µs p50. Serial (not `buffer_unordered`) because a shared
-        // `&mut evm` can't be held across `'static`+`Send` futures — the
-        // per-path RPC cold-miss dwarfs the per-path EVM execution, so
-        // serial-warm beats parallel-cold. Per-path isolation is the engine's
-        // `finalize()` (execute() SSTOREs live in the per-path `State`, never
-        // committed to the shared `CacheDB`). `parking_lot`'s read guard is
-        // held for the serial loop's duration.
-        Some(arc) => {
-            // Incident 2026-08-20 #1 root fix: snapshot the sim
-            // anchor under a SHORT read and drop the guard BEFORE any
-            // provider I/O. Pre-fix this read guard was held across
-            // `Evm2BlockSimHandle::build` + the whole serial sim loop — every
-            // cold-miss fetch parked a `BotState` writer behind it for the
-            // transport delay (minutes on a stalled RPC pre-F2). The
-            // snapshot is O(pools) scalar words; see
-            // `bot_core::SimAnchorState` for the audited surface.
-            //
-            // ADR-039: since T5 the snapshot is an ENUMERATED
-            // per-family projection (`project_sim_anchor_scalars`), never an
-            // arbitrary-key probe — this guard scope paid a ~2.7s hold per
-            // block through the V3 tick-descent + V4 O(V^2) keccak paths.
-            // DO NOT re-point the projection at the arbitrary-key probe, and
-            // do not extend this guard across anything below it.
-            let anchor = {
-                let guard = arc.read_at(degenbot_substrate::state_lock::LockSite::Sim);
-                degenbot_substrate::SimAnchorState::snapshot(&guard)
-            };
-            // The engine `Evm2BlockSimHandle` build takes the block-env primitives
-            // + the override params projected from this strategy's
-            // `SimulateContext` (ADR-019 D7, decision R — the engine stays
-            // generic over strategy config; it never names `SimulateContext`).
-            // The shared-EVM sim anchor: the pump pre-promotes
-            // `active_block = max(drain_block, pool_state_head)` and threads it
-            // as each candidate's `solve_block`, so every candidate in the
-            // batch carries the SAME promoted block (the pool-state head). This
-            // `max` over `solve_block` is therefore a defensive no-op that
-            // returns that shared promoted block — kept as an invariant
-            // assertion, not a re-anchor. Simulating at the lagging Python
-            // clock fetched PRE-update state (state-ahead-of-clock desync) and
-            // mismatched the solver's head math; one
-            // head-anchored shared EVM reproduces every candidate exactly.
-            let sim_block = candidates
-                .iter()
-                .map(|c| c.solve_block)
-                .max()
-                .unwrap_or(ctx.block.current_block);
-            // The engine fan-out (ADR-089 cutover — the revm arm retired):
-            // `Evm2BlockSimHandle` + the seam drive every candidate. The
-            // warm-cache owner wires at the bot level; until then this uses
-            // a per-call cache — the same degrade contract as the retired
-            // `unwrap_or_else`.
-            // The warm-code cache arc; degrade to a fresh per-call cache if
-            // the caller wired `bot_state` without one (safe — no
-            // cross-block persistence, no panic).
-            let fanout = {
-                // Bound before the match: a scrutinee temporary would
-                // otherwise extend the anchor borrow past the arm.
-                let evm2_warm_cache = warm_cache.unwrap_or_else(
+    let sim_results: Vec<(CandidateId, FailBuckets, Result<Option<SimResult>, String>)> =
+        match bot_state {
+            // In-process evm2 path (Tier 1): build ONE per-block EVM
+            // (`Evm2BlockSimHandle`) and simulate each candidate SERIALLY on the
+            // shared `&mut evm`. The shared `CacheDB` captures the ~50× latency
+            // win (benchmark `examples/rpc_cache_fanout.rs` config B vs A): the
+            // trigger path pays the cold RPCs, the fan-out hits the warmed cache
+            // at ~1 µs p50. Serial (not `buffer_unordered`) because a shared
+            // `&mut evm` can't be held across `'static`+`Send` futures — the
+            // per-path RPC cold-miss dwarfs the per-path EVM execution, so
+            // serial-warm beats parallel-cold. Per-path isolation is the engine's
+            // `finalize()` (execute() SSTOREs live in the per-path `State`, never
+            // committed to the shared `CacheDB`). `parking_lot`'s read guard is
+            // held for the serial loop's duration.
+            Some(arc) => {
+                // Incident 2026-08-20 #1 root fix: snapshot the sim
+                // anchor under a SHORT read and drop the guard BEFORE any
+                // provider I/O. Pre-fix this read guard was held across
+                // `Evm2BlockSimHandle::build` + the whole serial sim loop — every
+                // cold-miss fetch parked a `BotState` writer behind it for the
+                // transport delay (minutes on a stalled RPC pre-F2). The
+                // snapshot is O(pools) scalar words; see
+                // `bot_core::SimAnchorState` for the audited surface.
+                //
+                // ADR-039: since T5 the snapshot is an ENUMERATED
+                // per-family projection (`project_sim_anchor_scalars`), never an
+                // arbitrary-key probe — this guard scope paid a ~2.7s hold per
+                // block through the V3 tick-descent + V4 O(V^2) keccak paths.
+                // DO NOT re-point the projection at the arbitrary-key probe, and
+                // do not extend this guard across anything below it.
+                let anchor = {
+                    let guard = arc.read_at(degenbot_substrate::state_lock::LockSite::Sim);
+                    degenbot_substrate::SimAnchorState::snapshot(&guard)
+                };
+                // The engine `Evm2BlockSimHandle` build takes the block-env primitives
+                // + the override params projected from this strategy's
+                // `SimulateContext` (ADR-019 D7, decision R — the engine stays
+                // generic over strategy config; it never names `SimulateContext`).
+                // The shared-EVM sim anchor: the pump pre-promotes
+                // `active_block = max(drain_block, pool_state_head)` and threads it
+                // as each candidate's `solve_block`, so every candidate in the
+                // batch carries the SAME promoted block (the pool-state head). This
+                // `max` over `solve_block` is therefore a defensive no-op that
+                // returns that shared promoted block — kept as an invariant
+                // assertion, not a re-anchor. Simulating at the lagging Python
+                // clock fetched PRE-update state (state-ahead-of-clock desync) and
+                // mismatched the solver's head math; one
+                // head-anchored shared EVM reproduces every candidate exactly.
+                let sim_block = candidates
+                    .iter()
+                    .map(|c| c.solve_block)
+                    .max()
+                    .unwrap_or(ctx.block.current_block);
+                // The engine fan-out (ADR-089 cutover — the revm arm retired):
+                // `Evm2BlockSimHandle` + the seam drive every candidate. The
+                // warm-cache owner wires at the bot level; until then this uses
+                // a per-call cache — the same degrade contract as the retired
+                // `unwrap_or_else`.
+                // The warm-code cache arc; degrade to a fresh per-call cache if
+                // the caller wired `bot_state` without one (safe — no
+                // cross-block persistence, no panic).
+                let fanout = {
+                    // Bound before the match: a scrutinee temporary would
+                    // otherwise extend the anchor borrow past the arm.
+                    let evm2_warm_cache = warm_cache.unwrap_or_else(
                     degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner::shared_default,
                 );
-                // SIMPIPE2 M2, cross-fan-out: the storage memo is scoped to the
-                // read anchor (`sim_block` — the block the fallback tags every
-                // RPC read with), not to this fan-out. Every dispatch at this
-                // anchor shares one memo, so a block's fan-outs pay the cold
-                // chain once; the session-owned slot retires it (and every
-                // value it cached) the moment the anchor moves, incl. a reorg
-                // rewind. The degrade path above mints a per-call cache, hence
-                // a fresh slot — the old per-fan-out scope, unchanged.
-                //
-                // The anchor is a BLOCK, not a height: its hash rides the key
-                // (`ReadAnchor`), so a same-height reorg — the anchor number
-                // unchanged, the canonical block replaced — mints a fresh memo
-                // instead of serving the abandoned block's words. The identity
-                // is resolved HERE, one `eth_getBlockByNumber` per fan-out
-                // against the cold storage chain the memo saves on this
-                // anchor's later fan-outs, and BEFORE any guard is taken
-                // (never across provider I/O). A failed read degrades to the
-                // number-only anchor — the pre-fence scope, never a wrong one.
-                let read_anchor =
-                    degenbot_simulation::sim::resolve_read_anchor(ctx.block.provider, sim_block);
-                // The per-anchor memo, the session's cross-block hot-slot
-                // store, and the durable per-hook slot-set store are all owned
-                // by the warm-cache owner; taken together under one short read
-                // guard so none of them rides it across provider I/O.
-                let (storage_memo, hot_slots, hook_slots) = {
-                    let cache = evm2_warm_cache.read();
-                    (
-                        cache.storage_memo_for(read_anchor),
-                        cache.hot_slots(),
-                        cache.hook_slots(),
-                    )
+                    // SIMPIPE2 M2, cross-fan-out: the storage memo is scoped to the
+                    // read anchor (`sim_block` — the block the fallback tags every
+                    // RPC read with), not to this fan-out. Every dispatch at this
+                    // anchor shares one memo, so a block's fan-outs pay the cold
+                    // chain once; the session-owned slot retires it (and every
+                    // value it cached) the moment the anchor moves, incl. a reorg
+                    // rewind. The degrade path above mints a per-call cache, hence
+                    // a fresh slot — the old per-fan-out scope, unchanged.
+                    //
+                    // The anchor is a BLOCK, not a height: its hash rides the key
+                    // (`ReadAnchor`), so a same-height reorg — the anchor number
+                    // unchanged, the canonical block replaced — mints a fresh memo
+                    // instead of serving the abandoned block's words. The identity
+                    // is resolved HERE, one `eth_getBlockByNumber` per fan-out
+                    // against the cold storage chain the memo saves on this
+                    // anchor's later fan-outs, and BEFORE any guard is taken
+                    // (never across provider I/O). A failed read degrades to the
+                    // number-only anchor — the pre-fence scope, never a wrong one.
+                    let read_anchor = degenbot_simulation::sim::resolve_read_anchor(
+                        ctx.block.provider,
+                        sim_block,
+                    );
+                    // The per-anchor memo, the session's cross-block hot-slot
+                    // store, and the durable per-hook slot-set store are all owned
+                    // by the warm-cache owner; taken together under one short read
+                    // guard so none of them rides it across provider I/O.
+                    let (storage_memo, hot_slots, hook_slots) = {
+                        let cache = evm2_warm_cache.read();
+                        (
+                            cache.storage_memo_for(read_anchor),
+                            cache.hot_slots(),
+                            cache.hook_slots(),
+                        )
+                    };
+                    // Path-derived prefetch: the candidates name their pools before
+                    // the sim runs, so the slots the frame is guaranteed to read
+                    // (V2 token identities + reserves, V3 slot0/liquidity, V4 pool
+                    // state words, the executor's fixed slots) are computable HERE
+                    // and readable in ONE batch round trip at the fallback's own
+                    // anchor. Seeded into the anchor's memo BEFORE the first
+                    // candidate, the frame's serial cold chain finds the entries
+                    // memoized instead of paying one round trip per slot.
+                    //
+                    // The lane never fails the fan-out: no ambient runtime or a
+                    // failed batch leaves the memo as it was, and the frame runs the
+                    // un-prefetched path (see `sim::prefetch`'s degrade contract).
+                    // A warm memo — every derived entry already known — dispatches
+                    // nothing, so the anchor's second fan-out pays no batch.
+                    //
+                    // The batch is the DERIVATION PLUS the capture-learned
+                    // complement (`prewarm_plan`): the slots this session's earlier
+                    // captures touched under the batch's own named addresses
+                    // (arbitrary ERC20 `balanceOf` bases, per-pool drift words) ride
+                    // the SAME batch — never a second round trip — and their values
+                    // are read from the node at this anchor like every other member.
+                    // The learning side is the handle's own: `session()` hands each
+                    // candidate the store, so a completed capture's access list
+                    // teaches the next anchor's prewarm.
+                    //
+                    // The learned HOOK sets ride the same batch: a hooked V4 pool's
+                    // hook storage has no derivation (arbitrary bytecode owns it),
+                    // so the black-box quoter learns each hook's touched-slot set
+                    // once (`sim::evm2::hook_slots`) and the plan joins it at the
+                    // hook's own address. A session without the store — or a hook no
+                    // quote has learned yet — joins nothing, which is the cold start
+                    // this lane pays down.
+                    let prefetch = degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
+                        ctx.block.provider,
+                        sim_block,
+                        candidates.iter().map(|c| &c.path_info),
+                        &degenbot_simulation::sim::prefetch::FamilySlotLayout::PRODUCTION,
+                        // The deployment declares its own settlement identities (the
+                        // built-in executor's WETH + PoolManager); a foreign
+                        // deployment declares none and derives only path words.
+                        &degenbot_simulation::sim::prefetch::PrefetchFacts {
+                            settlement: ctx.deployment.settlement(),
+                        },
+                        degenbot_simulation::sim::LearnedSets {
+                            hot: &hot_slots,
+                            hooks: hook_slots.as_deref(),
+                        },
+                        &storage_memo,
+                    );
+                    diag!(
+                        domain = sim,
+                        current_block,
+                        anchor = sim_block,
+                        anchor_fenced = read_anchor.hash.is_some(),
+                        derived = prefetch.derived,
+                        learned = prefetch.learned,
+                        hook = prefetch.hook,
+                        requested = prefetch.requested,
+                        seeded = prefetch.seeded,
+                        skipped = ?prefetch.skipped,
+                        "storage prefetch"
+                    );
+                    // The diag above is debug-level and invisible at the default
+                    // log level; the same report lands on the metrics surface so a
+                    // cold lane, a warm lane and a degraded lane are distinguishable
+                    // from a scrape.
+                    degenbot_bot::instruments::record(
+                        degenbot_bot::instruments::CensusEvent::StoragePrefetch {
+                            derived: u64::try_from(prefetch.derived).unwrap_or(u64::MAX),
+                            learned: u64::try_from(prefetch.learned).unwrap_or(u64::MAX),
+                            requested: u64::try_from(prefetch.requested).unwrap_or(u64::MAX),
+                            seeded: u64::try_from(prefetch.seeded).unwrap_or(u64::MAX),
+                            skipped: prefetch
+                                .skipped
+                                .map(degenbot_simulation::sim::prefetch::PrefetchSkip::label),
+                        },
+                    );
+                    match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build(
+                        ctx.block.provider,
+                        ctx.block.base_fee_next,
+                        sim_block,
+                        ctx.block.block_timestamp,
+                        &ctx.deployment.override_params(),
+                        &anchor,
+                        &evm2_warm_cache,
+                        Some(&storage_memo),
+                        false,
+                        None,
+                        degenbot_simulation::sim::evm2::jit::shared_runner(),
+                    ) {
+                        Some(mut handle) => candidates
+                            .into_iter()
+                            .map(|c| {
+                                let cid = c.candidate_id;
+                                let sim_path = c.to_simulate_path();
+                                v2_calc_trace(&mut handle, &sim_path);
+                                let mut buckets = FailBuckets::new();
+                                let mut session = handle.session();
+                                let result = simulate_path_on_evm(
+                                    &mut session,
+                                    ctx,
+                                    &sim_path,
+                                    &mut buckets,
+                                )
+                                .map_err(|e| format!("{e}"));
+                                (cid, buckets, result)
+                            })
+                            .collect(),
+                        None => candidates
+                            .into_iter()
+                            .map(|c| {
+                                let mut buckets = FailBuckets::new();
+                                buckets.record(
+                                    c.candidate_id,
+                                    "rpc-failed",
+                                    None,
+                                    alloy::primitives::Bytes::new(),
+                                    c.optimal_input,
+                                    c.expected_outputs_vec(),
+                                );
+                                (c.candidate_id, buckets, Ok(None))
+                            })
+                            .collect(),
+                    }
                 };
-                // Path-derived prefetch: the candidates name their pools before
-                // the sim runs, so the slots the frame is guaranteed to read
-                // (V2 token identities + reserves, V3 slot0/liquidity, V4 pool
-                // state words, the executor's fixed slots) are computable HERE
-                // and readable in ONE batch round trip at the fallback's own
-                // anchor. Seeded into the anchor's memo BEFORE the first
-                // candidate, the frame's serial cold chain finds the entries
-                // memoized instead of paying one round trip per slot.
-                //
-                // The lane never fails the fan-out: no ambient runtime or a
-                // failed batch leaves the memo as it was, and the frame runs the
-                // un-prefetched path (see `sim::prefetch`'s degrade contract).
-                // A warm memo — every derived entry already known — dispatches
-                // nothing, so the anchor's second fan-out pays no batch.
-                //
-                // The batch is the DERIVATION PLUS the capture-learned
-                // complement (`prewarm_plan`): the slots this session's earlier
-                // captures touched under the batch's own named addresses
-                // (arbitrary ERC20 `balanceOf` bases, per-pool drift words) ride
-                // the SAME batch — never a second round trip — and their values
-                // are read from the node at this anchor like every other member.
-                // The learning side is the handle's own: `session()` hands each
-                // candidate the store, so a completed capture's access list
-                // teaches the next anchor's prewarm.
-                //
-                // The learned HOOK sets ride the same batch: a hooked V4 pool's
-                // hook storage has no derivation (arbitrary bytecode owns it),
-                // so the black-box quoter learns each hook's touched-slot set
-                // once (`sim::evm2::hook_slots`) and the plan joins it at the
-                // hook's own address. A session without the store — or a hook no
-                // quote has learned yet — joins nothing, which is the cold start
-                // this lane pays down.
-                let prefetch = degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
-                    ctx.block.provider,
-                    sim_block,
-                    candidates.iter().map(|c| &c.path_info),
-                    &degenbot_simulation::sim::prefetch::FamilySlotLayout::PRODUCTION,
-                    // The deployment declares its own settlement identities (the
-                    // built-in executor's WETH + PoolManager); a foreign
-                    // deployment declares none and derives only path words.
-                    &degenbot_simulation::sim::prefetch::PrefetchFacts {
-                        settlement: ctx.deployment.settlement(),
-                    },
-                    degenbot_simulation::sim::LearnedSets {
-                        hot: &hot_slots,
-                        hooks: hook_slots.as_deref(),
-                    },
-                    &storage_memo,
-                );
-                diag!(
-                    domain = sim,
-                    current_block,
-                    anchor = sim_block,
-                    anchor_fenced = read_anchor.hash.is_some(),
-                    derived = prefetch.derived,
-                    learned = prefetch.learned,
-                    hook = prefetch.hook,
-                    requested = prefetch.requested,
-                    seeded = prefetch.seeded,
-                    skipped = ?prefetch.skipped,
-                    "storage prefetch"
-                );
-                // The diag above is debug-level and invisible at the default
-                // log level; the same report lands on the metrics surface so a
-                // cold lane, a warm lane and a degraded lane are distinguishable
-                // from a scrape.
-                degenbot_bot::instruments::record(
-                    degenbot_bot::instruments::CensusEvent::StoragePrefetch {
-                        derived: u64::try_from(prefetch.derived).unwrap_or(u64::MAX),
-                        learned: u64::try_from(prefetch.learned).unwrap_or(u64::MAX),
-                        requested: u64::try_from(prefetch.requested).unwrap_or(u64::MAX),
-                        seeded: u64::try_from(prefetch.seeded).unwrap_or(u64::MAX),
-                        skipped: prefetch
-                            .skipped
-                            .map(degenbot_simulation::sim::prefetch::PrefetchSkip::label),
-                    },
-                );
-                match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build(
-                    ctx.block.provider,
-                    ctx.block.base_fee_next,
-                    sim_block,
-                    ctx.block.block_timestamp,
-                    &ctx.deployment.override_params(),
-                    &anchor,
-                    &evm2_warm_cache,
-                    Some(&storage_memo),
-                    false,
-                    None,
-                    degenbot_simulation::sim::evm2::jit::shared_runner(),
-                ) {
-                    Some(mut handle) => candidates
-                        .into_iter()
-                        .map(|c| {
-                            let pid = c.path_id;
-                            let sim_path = c.to_simulate_path();
-                            v2_calc_trace(&mut handle, &sim_path);
-                            let mut buckets = FailBuckets::new();
-                            let mut session = handle.session();
-                            let result =
-                                simulate_path_on_evm(&mut session, ctx, &sim_path, &mut buckets)
-                                    .map_err(|e| format!("{e}"));
-                            (pid, buckets, result)
-                        })
-                        .collect(),
-                    None => candidates
-                        .into_iter()
-                        .map(|c| {
-                            let mut buckets = FailBuckets::new();
-                            buckets.record(
-                                c.path_id,
-                                "rpc-failed",
-                                None,
-                                alloy::primitives::Bytes::new(),
-                                c.optimal_input,
-                                c.expected_outputs_vec(),
-                            );
-                            (c.path_id, buckets, Ok(None))
-                        })
-                        .collect(),
-                }
-            };
-            fanout
-        }
-        // ADR-019 D1 — the legacy RPC `eth_simulateV1` path retired; the
-        // in-process evm2 path (the `Some` arm above) is the sole executor.
-        // This arm is unreachable in production: the FFI seam always sources a
-        // `BotState` from the engine, and empty / pre-filtered-to-empty input
-        // short-circuits at step 4 above before the `match` is reached. The
-        // `Option` (rather than a required arg) is preserved so that
-        // empty-input callers (the seam's offline empty-candidate tests) need
-        // not construct an engine.
-        None => {
-            unreachable!(
+                fanout
+            }
+            // ADR-019 D1 — the legacy RPC `eth_simulateV1` path retired; the
+            // in-process evm2 path (the `Some` arm above) is the sole executor.
+            // This arm is unreachable in production: the FFI seam always sources a
+            // `BotState` from the engine, and empty / pre-filtered-to-empty input
+            // short-circuits at step 4 above before the `match` is reached. The
+            // `Option` (rather than a required arg) is preserved so that
+            // empty-input callers (the seam's offline empty-candidate tests) need
+            // not construct an engine.
+            None => {
+                unreachable!(
                 "dispatch_profitable_results: the legacy RPC sim path retired (ADR-019 D1); supply a BotState"
             )
-        }
-    };
+            }
+        };
     // SIMPIPE T1 lab: this fan-out's delta — the per-dispatch cold-fetch and
     // handle-build profile that decides the M1 handle-pool default.
     {
@@ -910,8 +921,8 @@ pub fn dispatch_profitable_results(
     //    paths; `Ok(None)` for revert/no-profit/overflow (tallied into
     //    `buckets`); `Err(_)` for an unrecoverable RPC failure (counted as an
     //    exception — one broken path must not sink a batch).
-    let mut succeeded_path_ids: HashSet<u64> = HashSet::new();
-    for (pid, buckets, result) in sim_results {
+    let mut succeeded_candidate_ids: HashSet<CandidateId> = HashSet::new();
+    for (cid, buckets, result) in sim_results {
         // Merge the per-path buckets into the outcome tally first.
         for (bucket, count) in buckets.buckets() {
             let entry = outcome
@@ -930,7 +941,7 @@ pub fn dispatch_profitable_results(
         outcome.failures.extend(buckets.into_failures());
         match result {
             Ok(Some(r)) => {
-                succeeded_path_ids.insert(pid);
+                succeeded_candidate_ids.insert(cid);
                 if r.is_submittable() {
                     outcome.gas_profitable.push(r);
                 } else {
@@ -969,7 +980,7 @@ pub fn dispatch_profitable_results(
             // A path dropped by a PRE-sim filter never reaches sim, so its
             // failures aren't in `outcome.failures`; the lookup always hits
             // for a SolverCalc-classified failure (it was simulated).
-            if let Some(path_info) = path_info_by_id.get(&f.path_id) {
+            if let Some(path_info) = path_info_by_id.get(&f.candidate_id.path_id()) {
                 for key in diverging_pool_keys(f, &path_info.hops) {
                     pd.record_divergence(key, current_block);
                 }
@@ -989,7 +1000,7 @@ pub fn dispatch_profitable_results(
     {
         let mut fr = fot_registry.lock().expect("fot_registry mutex poisoned");
         for f in &outcome.failures {
-            if let Some(path_info) = path_info_by_id.get(&f.path_id) {
+            if let Some(path_info) = path_info_by_id.get(&f.candidate_id.path_id()) {
                 if let Some((token, pool_key)) = fot_suspected_token(f, &path_info.hops) {
                     fr.record_suspicion(token, pool_key, current_block);
                 }
@@ -1004,11 +1015,11 @@ pub fn dispatch_profitable_results(
     //    `.await`; there is no `.await` in this synchronous loop anyway).
     {
         let mut s = path_suppression.lock().expect("suppression mutex poisoned");
-        for &pid in &candidate_path_ids {
-            if succeeded_path_ids.contains(&pid) {
-                s.record_success(pid);
+        for &cid in &candidate_ids {
+            if succeeded_candidate_ids.contains(&cid) {
+                s.record_success(cid);
             } else {
-                s.record_failure(pid);
+                s.record_failure(cid);
             }
         }
     }
@@ -1027,11 +1038,11 @@ pub fn dispatch_profitable_results(
     //      not "was it profitable". Failed paths are NOT recorded here (a FoT
     //      token's failures are recorded as suspicions in step 7.5; a
     //      stale-state failure is neither a success nor a FoT suspicion).
-    if !succeeded_path_ids.is_empty() {
+    if !succeeded_candidate_ids.is_empty() {
         let mut fr = fot_registry.lock().expect("fot_registry mutex poisoned");
-        for &pid in &candidate_path_ids {
-            if succeeded_path_ids.contains(&pid) {
-                if let Some(path_info) = path_info_by_id.get(&pid) {
+        for &cid in &candidate_ids {
+            if succeeded_candidate_ids.contains(&cid) {
+                if let Some(path_info) = path_info_by_id.get(&cid.path_id()) {
                     for hop in &path_info.hops {
                         fr.record_success(hop_input_token(hop), current_block);
                         fr.record_success(hop_output_token(hop), current_block);
@@ -1113,7 +1124,7 @@ mod tests {
     use alloy::providers::{Provider, ProviderBuilder};
     use alloy::rpc::client::ClientBuilder;
     use alloy::transports::mock::{Asserter, MockTransport};
-    use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
+    use degenbot_execution::{DeploymentId, HopInfo, PathInfo, V2HopInfo};
     use degenbot_executor::composers::EncodeOptions;
     use degenbot_rpc::provider::AlloyProvider;
 
@@ -1149,12 +1160,17 @@ mod tests {
         )
     }
 
+    /// The fan-out tests' one deployment identity.
+    fn deployment_id() -> DeploymentId {
+        DeploymentId::new(1)
+    }
+
     /// The built-in deployment with `runtime` installed at the executor address
     /// (the tests' declared code override).
     #[expect(clippy::expect_used)] // the declared override names the executor
     fn deployment(runtime: Bytes) -> SimulationDeployment {
         binding()
-            .injected(EXECUTOR, runtime)
+            .injected(deployment_id(), EXECUTOR, runtime)
             .expect("the declared override names the executor")
     }
 
@@ -1212,7 +1228,7 @@ mod tests {
 
     fn candidate_through_pool(path_id: u64, pool: Address) -> DispatchCandidate {
         DispatchCandidate {
-            path_id,
+            candidate_id: CandidateId::new(path_id, deployment_id()),
             optimal_input: 1_000_000_000_000_000_000u128,
             engine_profit: 1_000,
             steps: Box::new([SolveStep {
@@ -1227,7 +1243,7 @@ mod tests {
 
     fn candidate(path_id: u64, opt_input: u128, profit: u128) -> DispatchCandidate {
         DispatchCandidate {
-            path_id,
+            candidate_id: CandidateId::new(path_id, deployment_id()),
             optimal_input: opt_input,
             engine_profit: profit,
             steps: Box::new([
@@ -1339,10 +1355,72 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert_eq!(dropped, 1);
         // The dropped one is the sub-0.5% path 1.
-        let kept_ids: Vec<u64> = kept.iter().map(|c| c.path_id).collect();
+        let kept_ids: Vec<u64> = kept.iter().map(|c| c.candidate_id.path_id()).collect();
         assert!(!kept_ids.contains(&1));
         assert!(kept_ids.contains(&2));
         assert!(kept_ids.contains(&3));
+    }
+
+    /// The SAME solver path twice — once per deployment — is two candidates.
+    ///
+    /// The pre-sim filters key on the candidate identity, so a filter pass can
+    /// never fold two deployments' candidates at one path into one row (the
+    /// collapse a path-only key produces).
+    #[test]
+    fn same_path_candidates_at_two_deployments_both_survive_the_pre_filters() {
+        let at = |deployment: u64| DispatchCandidate {
+            candidate_id: CandidateId::new(7, DeploymentId::new(deployment)),
+            optimal_input: 1_000_000,
+            engine_profit: 50_000,
+            steps: Box::new([]),
+            solve_block: 100,
+            path_info: two_v2_hops(),
+        };
+
+        // A 0-bps floor keeps everything: two rows in, two rows out.
+        let (kept, dropped) = filter_thin_margin_results(vec![at(1), at(2)], 0);
+        assert_eq!(dropped, 0);
+        assert_eq!(kept.len(), 2, "both deployments' candidates survive");
+        let ids: Vec<CandidateId> = kept.iter().map(|c| c.candidate_id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                CandidateId::new(7, DeploymentId::new(1)),
+                CandidateId::new(7, DeploymentId::new(2)),
+            ]
+        );
+
+        // A floor that drops the marginal row drops BOTH of its deployments'
+        // rows (the same economics), never one because the other was seen
+        // first.
+        let (kept, dropped) = filter_thin_margin_results(vec![at(1), at(2)], 1_000);
+        assert_eq!(dropped, 2);
+        assert!(kept.is_empty());
+    }
+
+    /// Per-candidate failure attribution keeps the deployment half: two
+    /// deployments failing the same path are two `[sim-fail]` records, not one
+    /// overwritten row.
+    #[test]
+    fn failure_records_keep_same_path_candidates_apart() {
+        let mut buckets = FailBuckets::new();
+        for deployment in [1_u64, 2] {
+            buckets.record(
+                CandidateId::new(7, DeploymentId::new(deployment)),
+                "rpc-failed",
+                None,
+                alloy::primitives::Bytes::new(),
+                1_000,
+                vec![1_100],
+            );
+        }
+
+        let failures = buckets.into_failures();
+        assert_eq!(failures.len(), 2, "one record per candidate");
+        let ids: HashSet<CandidateId> = failures.iter().map(|f| f.candidate_id).collect();
+        assert_eq!(ids.len(), 2, "the records are distinct identities");
+        assert!(ids.contains(&CandidateId::new(7, DeploymentId::new(1))));
+        assert!(ids.contains(&CandidateId::new(7, DeploymentId::new(2))));
     }
 
     #[test]
@@ -1361,7 +1439,7 @@ mod tests {
         let (kept, dropped) = filter_thin_margin_results(cands, 99);
         assert_eq!(kept.len(), 1);
         assert_eq!(dropped, 1);
-        assert_eq!(kept[0].path_id, 2);
+        assert_eq!(kept[0].candidate_id.path_id(), 2);
     }
 
     /// The dispatch floor has one home: `is_gas_profitable` is the single
@@ -2131,7 +2209,11 @@ mod tests {
         assert_eq!(outcome.fail_buckets.get("rpc-failed"), 2);
         // One SimFailure per candidate, each carrying its own path_id.
         assert_eq!(outcome.failures.len(), 2);
-        let ids: Vec<u64> = outcome.failures.iter().map(|f| f.path_id).collect();
+        let ids: Vec<u64> = outcome
+            .failures
+            .iter()
+            .map(|f| f.candidate_id.path_id())
+            .collect();
         assert!(ids.contains(&40), "path 40 must be surfaced, got {ids:?}");
         assert!(ids.contains(&41), "path 41 must be surfaced, got {ids:?}");
         for f in &outcome.failures {
@@ -2203,7 +2285,11 @@ mod tests {
         );
         // The dropped candidate's path_id is NOT in the failures (it never
         // simulated).
-        let simmed_ids: Vec<u64> = outcome.failures.iter().map(|f| f.path_id).collect();
+        let simmed_ids: Vec<u64> = outcome
+            .failures
+            .iter()
+            .map(|f| f.candidate_id.path_id())
+            .collect();
         assert!(simmed_ids.contains(&51), "clean candidate simmed");
         assert!(
             !simmed_ids.contains(&50),
@@ -2264,7 +2350,7 @@ mod tests {
     fn order_index_top_selection_is_deterministic() {
         let path = two_v2_hops();
         let mk = |id: u64, profit: u128| DispatchCandidate {
-            path_id: id,
+            candidate_id: CandidateId::new(id, deployment_id()),
             optimal_input: 0,
             engine_profit: profit,
             steps: Box::new([]),
@@ -2274,7 +2360,10 @@ mod tests {
         // Deliberately passed in a non-sorted order, with a profit tie (100).
         let mut cands = vec![mk(10, 100), mk(5, 500), mk(9, 100), mk(20, 300)];
         order_index_top_selection(&mut cands);
-        let order: Vec<(u64, u128)> = cands.iter().map(|c| (c.path_id, c.engine_profit)).collect();
+        let order: Vec<(u64, u128)> = cands
+            .iter()
+            .map(|c| (c.candidate_id.path_id(), c.engine_profit))
+            .collect();
         // profit descending, then id ascending on the 100-tie.
         assert_eq!(order, vec![(5, 500), (20, 300), (9, 100), (10, 100)]);
     }

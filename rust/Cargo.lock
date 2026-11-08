@@ -3020,6 +3020,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-eventhub",
  "degenbot-evm2",
+ "degenbot-execution",
  "degenbot-rpc",
  "degenbot-runs",
  "degenbot-simulation",

@@ -9,7 +9,7 @@
 use crate::record::FailureDetail;
 use alloy::primitives::U256;
 use degenbot_arbitrage::{CapturedSwap, DispatchCandidate, SimResult, SolveStep};
-use degenbot_execution::PathInfo;
+use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
 
 /// One raw engine-result row — the solver's result for one path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,13 +38,23 @@ impl RawResult {
         !self.hop_outputs.is_empty()
     }
 
-    /// Build the pre-sim candidate from the row + its resolved path.
+    /// Build the pre-sim candidate from the row + its resolved path, bound to
+    /// the deployment that will execute it.
     ///
     /// The per-hop rows truncate to the shortest of the three parallel lists
     /// (a length mismatch against the RESOLVED hop count is the loud-abort
     /// shape check the assembly stage applies BEFORE this builder runs).
+    ///
+    /// `deployment_id` is the session deployment's own identity: the row is
+    /// path-keyed (the solver has no deployment in view), so the candidate's
+    /// [`CandidateId`] is minted HERE, at the one place a row becomes a
+    /// target-bound candidate.
     #[must_use]
-    pub fn to_candidate(&self, path_info: PathInfo) -> DispatchCandidate {
+    pub fn to_candidate(
+        &self,
+        path_info: PathInfo,
+        deployment_id: DeploymentId,
+    ) -> DispatchCandidate {
         let count = self
             .hop_outputs
             .len()
@@ -58,7 +68,7 @@ impl RawResult {
             })
             .collect();
         DispatchCandidate {
-            path_id: self.path_id,
+            candidate_id: CandidateId::new(self.path_id, deployment_id),
             optimal_input: self.optimal_input,
             engine_profit: self.profit,
             steps: steps.into_boxed_slice(),
@@ -73,8 +83,9 @@ impl RawResult {
 /// submit-lane shape.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PayloadRow {
-    /// The unique arb path identifier.
-    pub path_id: u64,
+    /// The candidate the engine simulated inline: the path bound to the
+    /// deployment that encoded and simulated it.
+    pub candidate_id: CandidateId,
     /// Gross on-chain profit (wei).
     pub gross_profit: U256,
     /// Net profit = gross − gas cost (wei).
@@ -106,7 +117,8 @@ pub struct PayloadRow {
 pub struct PayloadFailure {
     /// The bucket label (`classify_revert` output or the inline-fail tag).
     pub bucket: String,
-    /// The failing call's index in the 7-call vector, when attributable.
+    /// The failing call's index in the adapter-declared sequence, when
+    /// attributable.
     pub fail_index: Option<usize>,
     /// The raw revert bytes.
     pub revert_data: alloy::primitives::Bytes,
@@ -118,7 +130,7 @@ impl PayloadRow {
     #[must_use]
     pub fn sim_result(&self) -> SimResult {
         SimResult {
-            path_id: self.path_id,
+            candidate_id: self.candidate_id,
             gross_profit: self.gross_profit,
             net_profit: self.net_profit,
             gas_used: self.gas_used,
@@ -147,8 +159,8 @@ impl PayloadRow {
     /// which a retried or expired candidate has already left.
     ///
     /// The captured swaps come from the payload itself (the sim's own capture),
-    /// and the EVM-diagnostic extras (reverting frame, call trace, balance
-    /// legs) stay empty: the inline sim keeps no inspector trace, so those are
+    /// and the EVM-diagnostic extras (reverting frame, reverted swaps, call
+    /// trace) stay empty: the inline sim keeps no inspector trace, so those are
     /// `[sim-diag]`-class fields the FFI arm fills.
     ///
     /// A missing request row (`None`) yields `optimal_input: 0` /
@@ -159,7 +171,7 @@ impl PayloadRow {
     #[must_use]
     pub fn failure_detail(&self, request: Option<&RawResult>) -> Option<FailureDetail> {
         self.failure.as_ref().map(|f| FailureDetail {
-            path_id: self.path_id,
+            candidate_id: self.candidate_id,
             bucket: f.bucket.clone(),
             fail_index: f.fail_index,
             revert_data: f.revert_data.clone(),

@@ -543,7 +543,10 @@ mod tests {
 
     fn failure_no_captures(label: &str, target: Address) -> SimFailure {
         SimFailure {
-            path_id: 1,
+            candidate_id: degenbot_execution::CandidateId::new(
+                1,
+                degenbot_execution::DeploymentId::new(1),
+            ),
             bucket: label.to_string(),
             fail_index: Some(3),
             revert_data: Bytes::default(),
@@ -688,7 +691,10 @@ mod tests {
         hop_outputs: Vec<u128>,
     ) -> SimFailure {
         SimFailure {
-            path_id: 1,
+            candidate_id: degenbot_execution::CandidateId::new(
+                1,
+                degenbot_execution::DeploymentId::new(1),
+            ),
             bucket: "solver-calc-mismatch".to_string(),
             fail_index: Some(3),
             revert_data: Bytes::default(),

@@ -125,21 +125,50 @@ exactly, and the golden fixtures pin them:
 | `SimResult { …, net_profit, … }` with no verdict | `SimResult { …, passed, … }` + `SimResult::is_submittable()`; `DispatchOutcome::gas_profitable` holds only submittable results | the deployment's assessment verdict survives to dispatch/submission instead of being re-derived from the net |
 | `CmdExecutorBinding::injected(address, runtime) -> SimulationDeployment` | `CmdExecutorBinding::injected(address, runtime) -> Result<SimulationDeployment, InjectionAddressMismatch>` | the built-in adapter encodes to its executor, so a declared override at any other address would simulate code the transaction never runs; the Python `SimulateContext` refuses a mismatch with `ValueError` |
 | `degenbot_arbitrage::SimulateContext` constructed by `ExecutorRuntime` flat fields | `ExecutorRuntime.binding` + `ExecutorConfig.deployment` | the batch executor injects one deployment per session |
+| `SimulationDeployment::new(adapter, owner, gas_limit, code, settlement)` | `SimulationDeployment::new(deployment_id, adapter, owner, gas_limit, code, settlement)`; `CmdExecutorBinding::{deployment, injected}` take the same `DeploymentId` first | a deployment has no unnamed form: every candidate it executes is keyed by its operator-assigned identity (ADR-098 D4). A single-deployment session names it once at `ExecutorConfig::BUILTIN_DEPLOYMENT_ID` (`1`) |
+| `DispatchCandidate.path_id`, `SimulatePath.path_id`, `SimResult.path_id`, `SimFailure.path_id`, `PayloadRow.path_id`, `BatchOutcome.path_id`, `SubmitCandidate.path_id`, `SubmitRecord::{Submitted, Skipped}.path_id` (`u64`) | `.candidate_id: degenbot_execution::CandidateId { path_id, deployment_id }` (`Copy + Hash + Ord`; `.path_id()` / `.deployment_id()`; `Display` = `path@deployment`) | one solver path evaluated at two deployments is two candidates; a record keyed by the path alone collapses them. The solver's own path numbering is preserved inside the composite |
+| post-target joins, failure/staleness attribution, and the suppression ledger keyed by `path_id` | the same joins keyed by `CandidateId`; `PathSuppression::{record_success, record_failure, is_suppressed, is_in_suppressed_set, discard}` take a `CandidateId`, and `discard_path(path_id)` is the one path-scoped operation (the engine removes paths, not candidates) | a failure at one deployment says nothing about another, and a staleness/failure record must name WHICH deployment it attributed |
+| `PayloadRow::to_candidate` / `RawResult::to_candidate(path_info)` | `RawResult::to_candidate(path_info, deployment_id)`; `AssemblyInputs.deployment_id` | a raw solver row is path-keyed (the solver has no deployment in view), so the candidate identity is minted where the row is bound to the session's deployment |
+| `merge_payload_results(payloads, resolver, executor_address)` | `merge_payload_results(payloads, resolver, executor_address, deployment_id)`; the Python seam passes `ExecutorConfig::BUILTIN_DEPLOYMENT_ID` itself and gains no new argument | the standalone merge joins rows into ONE deployment's submit lane, so a payload carrying another deployment's identity is refused BEFORE the resolve/join with the same `AssemblyError` `assemble_batch` raises (actual + expected deployment named, `path_id` preserved) instead of being re-stamped onto the built-in executor |
+| Python `SubmitCandidate(path_id=42, …)` | `SubmitCandidate(candidate_id=CandidateId(path_id=42, deployment_id=1), …)`; a bare `path_id=` keyword raises `TypeError` | the constructor takes the composite identity the sim record carries, never a bare path that cannot name its deployment |
+| Python sub-records: failure render dicts, inline-sim payload dicts, payload verdicts, submit-record wire dicts, and the `[sim-diag]` JSON line carried a top-level `path_id` | each carries ONE nested `candidate: {"path_id", "deployment_id"}` mapping; `typed_submit_record` and the payload parser raise `DegenbotValueError`/`ValueError` on the retired path-only shape | a wire record that names only a path cannot be joined back to a deployment's submit lane; the identity is one value, not two keys that can disagree |
+| Python `BatchOutcome.path_id` / `FailureDetail.path_id` / `PayloadVerdict.path_id` | `BatchOutcome.candidate_id` / `FailureDetail.candidate_id` / `PayloadVerdict.candidate_id` (the FFI `CandidateId` pyclass, with `.path_id` / `.deployment_id`) | the typed accessor exposes the composite; a renderer that needs the path id reads the path half |
+| Python `Dispatcher.{record_success, record_failure, is_suppressed, discard_path, total_suppressed}` (`path_id: int`) | gone from the Python surface; the batch executor is wired with the ledger's `Arc` instead | the ledger is candidate-keyed and the pipeline owns its mutators (the sim fan-out records outcomes, the assembly reads the skip projection, the session discards a removed path's entries); a Python caller could only have passed a path id, which no longer identifies an entry |
+| Rust `RawResult`, `PathResolver`, `path_info_by_id` / `path_infos`, path registration/discovery/crawl receipts | unchanged — still keyed by the solver `path_id` | these name an OPPORTUNITY before any deployment is chosen; minting a deployment identity there would invent the target selection this chunk does not perform |
 | `SimFailure { weth_before, weth_after, eth_before, eth_after, erc6909_before, erc6909_after }`; `FailBuckets::record_no_profit(..., weth_before, weth_after, eth_before, eth_after, erc6909_before, erc6909_after)` | the same records without the balance legs: bucket, `fail_index`, revert data, reverting frame, captured/reverted swaps, call trace | nothing measures those legs once the built-in declares no probes; a field no producer can fill is a fabricated zero, and the receipt's `gross_profit` is the measurement that replaced them |
 | the Python failure-detail dict keys `weth_before` / `weth_after` / `eth_before` / `eth_after` / `erc6909_before` / `erc6909_after`, and the `[sim-bals]` debug line rendered from them | no balance keys and no `[sim-bals]` line; `[sim-trace]`, `[sim-logfull]`, and `[sim-revswaps]` are unchanged | the keys had no producer left, so the renderer would print a delta over fabricated zeros |
 | `execute(bytes,uint256)` simulated at sequence step 3, bracketed by the WETH / ETH / ERC6909 reads at steps 0-2 and 4-6 | step 0 — the transaction is the sequence's only step, so an `execute` revert reports `fail_index = 0` (`tests/standalone_parity/fixtures/inspector_cafebabe_revert.json`), and a custom adapter's transaction sits at its own declared read count (`SimulationCapture::failing_step`) | no probe read brackets the built-in transaction; positions come from the adapter's declaration, which for the built-in is empty |
 
 The Python `SimulateContext` pyclass builds the built-in binding and loads the
-artifact through it: `multicall3_address` and the failure record's balance keys
-are the only retired Python inputs, and no Python name is added. The retired
-keyword is refused at construction (`TypeError`); the rest of the constructor's
-order is unchanged.
+artifact through it: `multicall3_address` is refused at construction
+(`TypeError`), and the rest of the constructor's order is unchanged. The other
+retired Python inputs fail at the boundary they cross, never silently:
+
+- the failure record's six balance keys and the retired **path-only wire
+  shape** (a top-level `path_id` on the failure, inline-sim payload, verdict,
+  and submit-record dicts) — the record parsers read the nested `candidate`
+  mapping instead (`DegenbotValueError` from `candidate_id_from_mapping`; the
+  inline-sim payload parser raises `ValueError`), so a record that names only a
+  path is an error rather than a guessed deployment. The `[sim-diag]` line
+  carries the same nested mapping;
+- the `Dispatcher` mutators `record_success` / `record_failure` /
+  `is_suppressed` / `discard_path` / `total_suppressed` — absent from the class,
+  so a caller that reaches for one fails with `AttributeError` instead of
+  passing a path id the candidate-keyed ledger can no longer resolve.
+
+One Python name IS added: the `CandidateId` pyclass (`path_id` +
+`deployment_id`, `Display` = `path@deployment`) that the record accessors
+return and the submit constructor takes.
 
 ## Out of scope here
 
-Deployment identity / multi-target fan-out and version-capability policy are not
-part of the receipt cutover: `executor_address` on the batch-executor config is
-still the single-target join stamp.
+Deployment identity propagation is part of this record set: every post-target
+record carries `CandidateId`, and the standalone payload merge validates the
+expected deployment. What remains outside it is heterogeneous execution — the
+deployment registry, multi-target fan-out, and first-compatible selection — and
+version-capability policy. A session still constructs exactly one deployment,
+and `executor_address` on the batch-executor config remains its single-target
+join stamp.
 
 ## Evidence honesty note
 

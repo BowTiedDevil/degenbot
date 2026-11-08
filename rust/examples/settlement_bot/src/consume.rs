@@ -263,7 +263,12 @@ mod tests {
         let mut drained: Vec<Vec<u64>> = Vec::new();
         let mut assembly = Vec::new();
         while let Some(set) = executor.next_outcome().await {
-            drained.push(set.records.iter().map(|r| r.path_id).collect());
+            drained.push(
+                set.records
+                    .iter()
+                    .map(|r| r.candidate_id.path_id())
+                    .collect(),
+            );
             assembly.extend(set.records.iter().map(|r| r.assembly.label()));
         }
         assert_eq!(drained, vec![vec![1], vec![2]]);

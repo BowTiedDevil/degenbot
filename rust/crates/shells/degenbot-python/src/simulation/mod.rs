@@ -45,6 +45,7 @@ use pyo3::prelude::*;
 pub mod batch;
 pub mod context;
 pub mod dispatch;
+pub mod identity;
 pub mod in_process_probe;
 mod inline_hook;
 pub mod render;
@@ -68,6 +69,9 @@ pub mod simulation {
         PyBatchExecutor, PyBatchOutcome, PyBatchOutcomeSet, PyFailureDetail, PyFailureKind,
         PySimReceipt, PySimulateVerdict, PySubmitVerdict,
     };
+
+    #[pymodule_export]
+    use super::identity::PyCandidateId;
 
     #[pymodule_export]
     use super::dispatch::{merge_payload_results_py, PyPayloadOutcome, PyPayloadVerdict};

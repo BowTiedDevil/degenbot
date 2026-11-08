@@ -165,7 +165,11 @@ fn evm_sim_success_path_dual_driver_parity() {
         SMOKE_PM,
         EncodeOptions::default(),
     )
-    .injected(SMOKE_EXECUTOR, Bytes::from(executor_bc))
+    .injected(
+        degenbot::execution::DeploymentId::new(1),
+        SMOKE_EXECUTOR,
+        Bytes::from(executor_bc),
+    )
     .expect("the declared override names the executor");
     let ctx = SimulateContext {
         block: SimulationBlock {
@@ -194,7 +198,10 @@ fn evm_sim_success_path_dual_driver_parity() {
     );
 
     let path = SimulatePath {
-        path_id: fx.fixture.path_id,
+        candidate_id: degenbot::execution::CandidateId::new(
+            fx.fixture.path_id,
+            degenbot::execution::DeploymentId::new(1),
+        ),
         optimal_input: SMOKE_OPTIMAL_INPUT,
         steps: Box::new([
             SolveStep {

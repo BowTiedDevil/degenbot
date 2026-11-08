@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use crate::record::PathInfoView;
 
 use degenbot_arbitrage::{DispatchCandidate, FeeOnTransferRegistry, PoolDivergence};
-use degenbot_execution::PathInfo;
+use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
 use degenbot_submission::{PoolKey, SubmitCandidate};
 
 use crate::record::{AssemblyVerdict, BatchOutcome, SimReceipt, SimulateVerdict};
@@ -56,6 +56,19 @@ impl std::fmt::Display for AssemblyError {
 
 impl std::error::Error for AssemblyError {}
 
+/// The identity disagreement between an engine-born payload row and the
+/// deployment whose submit lane would receive it — one home for the message
+/// both payload arms raise (stage-1 assembly and the standalone merge).
+fn payload_deployment_mismatch(candidate_id: CandidateId, expected: DeploymentId) -> AssemblyError {
+    AssemblyError {
+        path_id: candidate_id.path_id(),
+        detail: format!(
+            "payload row carries deployment {}, but this batch executes deployment {expected}",
+            candidate_id.deployment_id()
+        ),
+    }
+}
+
 /// The stage-1 inputs — every policy value, injected.
 pub struct AssemblyInputs<'a> {
     /// The raw solver rows.
@@ -67,7 +80,7 @@ pub struct AssemblyInputs<'a> {
     /// The encode options stamped onto every candidate.
     /// The batch-local payload-served set (decision b: THIS batch's already-
     /// simulated paths — an idempotency/dedup rule with no state of its own).
-    pub payload_served: &'a HashSet<u64>,
+    pub payload_served: &'a HashSet<CandidateId>,
     /// The cross-block suppression registry (decision b: persistent feedback
     /// state, read exactly once per batch — the retry stamp is a side effect).
     pub suppression: &'a mut degenbot_submission::PathSuppression,
@@ -86,6 +99,10 @@ pub struct AssemblyInputs<'a> {
     /// The session executor contract address — the join stamps it identically
     /// on every payload row (the `execute()` target).
     pub executor_address: alloy::primitives::Address,
+    /// The session deployment's operator-assigned identity. A raw solver row is
+    /// path-keyed, so this is the deployment half the assembly binds it to when
+    /// the row becomes a candidate.
+    pub deployment_id: DeploymentId,
 }
 
 /// The stage-1 product: the batch's records so far (assembly verdicts +
@@ -129,6 +146,8 @@ pub struct AssembledBatch {
 )]
 pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, AssemblyError> {
     let mut batch = AssembledBatch::default();
+    // Every raw row this session assembles targets the session deployment.
+    let candidate_id = |path_id: u64| CandidateId::new(path_id, inputs.deployment_id);
     let mut path_info_by_id: HashMap<u64, PathInfo> = HashMap::new();
     // The solver request row per path — the figures the inline sim was issued
     // from. A payload row carries only its verdict, so a payload FAILURE's dump
@@ -146,10 +165,10 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
     for row in inputs.rows {
         // The pre-resolve skip predicates — one home shared with the PyO3
         // assembly delegate ([`classify_raw_row`]).
-        match classify_raw_row(row, inputs.payload_served) {
+        match classify_raw_row(row, inputs.payload_served, inputs.deployment_id) {
             RawRowClass::Skip(verdict) => {
                 batch.outcomes.push(BatchOutcome {
-                    path_id: row.path_id,
+                    candidate_id: candidate_id(row.path_id),
                     block: inputs.current_block,
                     assembly: verdict,
                     simulate: None,
@@ -162,7 +181,7 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
         }
         let Some(path_info) = inputs.resolver.resolve(row.path_id) else {
             batch.outcomes.push(BatchOutcome {
-                path_id: row.path_id,
+                candidate_id: candidate_id(row.path_id),
                 block: inputs.current_block,
                 assembly: AssemblyVerdict::SkipResolveMiss,
                 simulate: None,
@@ -173,7 +192,7 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
         };
         // The loud-abort shape guard + the candidate construction — one home
         // shared with the PyO3 assembly delegate ([`build_raw_candidate`]).
-        let candidate = build_raw_candidate(row, &path_info)?;
+        let candidate = build_raw_candidate(row, &path_info, inputs.deployment_id)?;
         path_info_by_id.insert(row.path_id, path_info.clone());
         batch.candidates.push(candidate);
     }
@@ -199,16 +218,18 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
     for c in batch.candidates.drain(..) {
         if inputs
             .suppression
-            .is_suppressed_without_stamp(c.path_id, inputs.current_block)
+            .is_suppressed_without_stamp(c.candidate_id, inputs.current_block)
         {
             batch.outcomes.push(BatchOutcome {
-                path_id: c.path_id,
+                candidate_id: c.candidate_id,
                 block: inputs.current_block,
                 assembly: AssemblyVerdict::SkipSuppressed,
                 simulate: None,
                 submit: None,
                 path_info: PathInfoView::from(
-                    path_info_by_id.get(&c.path_id).expect("resolved above"),
+                    path_info_by_id
+                        .get(&c.candidate_id.path_id())
+                        .expect("resolved above"),
                 ),
             });
         } else {
@@ -230,13 +251,15 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
         if divergent {
             divergence.record_dropped();
             batch.outcomes.push(BatchOutcome {
-                path_id: c.path_id,
+                candidate_id: c.candidate_id,
                 block: inputs.current_block,
                 assembly: AssemblyVerdict::SkipDivergentPool,
                 simulate: None,
                 submit: None,
                 path_info: PathInfoView::from(
-                    path_info_by_id.get(&c.path_id).expect("resolved above"),
+                    path_info_by_id
+                        .get(&c.candidate_id.path_id())
+                        .expect("resolved above"),
                 ),
             });
         } else {
@@ -257,13 +280,15 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
         if is_fot {
             fot.record_dropped();
             batch.outcomes.push(BatchOutcome {
-                path_id: c.path_id,
+                candidate_id: c.candidate_id,
                 block: inputs.current_block,
                 assembly: AssemblyVerdict::SkipFeeOnTransfer,
                 simulate: None,
                 submit: None,
                 path_info: PathInfoView::from(
-                    path_info_by_id.get(&c.path_id).expect("resolved above"),
+                    path_info_by_id
+                        .get(&c.candidate_id.path_id())
+                        .expect("resolved above"),
                 ),
             });
         } else {
@@ -278,17 +303,19 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
         post_fot.clone(),
         inputs.min_profit_margin_bps,
     );
-    let kept_ids: HashSet<u64> = kept.iter().map(|c| c.path_id).collect();
+    let kept_ids: HashSet<CandidateId> = kept.iter().map(|c| c.candidate_id).collect();
     for c in &post_fot {
-        if !kept_ids.contains(&c.path_id) {
+        if !kept_ids.contains(&c.candidate_id) {
             batch.outcomes.push(BatchOutcome {
-                path_id: c.path_id,
+                candidate_id: c.candidate_id,
                 block: inputs.current_block,
                 assembly: AssemblyVerdict::SkipThinMargin,
                 simulate: None,
                 submit: None,
                 path_info: PathInfoView::from(
-                    path_info_by_id.get(&c.path_id).expect("resolved above"),
+                    path_info_by_id
+                        .get(&c.candidate_id.path_id())
+                        .expect("resolved above"),
                 ),
             });
         }
@@ -312,20 +339,32 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
     // the engine simulated the path inline — so a miss evidences
     // batch/registry divergence, and the pool keys could never be derived.
     for p in inputs.payloads {
-        let Some(path_info) = inputs.resolver.resolve(p.path_id) else {
+        // A payload row is engine-born, so its identity is the engine's: a
+        // deployment other than this batch's would carry another deployment's
+        // calldata into this session's submit lane. Refuse rather than
+        // re-stamp — an identity disagreement is a wiring bug, not data.
+        if p.candidate_id.deployment_id() != inputs.deployment_id {
+            return Err(payload_deployment_mismatch(
+                p.candidate_id,
+                inputs.deployment_id,
+            ));
+        }
+        let Some(path_info) = inputs.resolver.resolve(p.candidate_id.path_id()) else {
             return Err(AssemblyError {
-                path_id: p.path_id,
+                path_id: p.candidate_id.path_id(),
                 detail: format!(
                     "path_id {} is not registered in this engine; \
                      the payload pool keys cannot be derived",
-                    p.path_id
+                    p.candidate_id.path_id()
                 ),
             });
         };
         let view = PathInfoView::from(&path_info);
-        if let Some(detail) = p.failure_detail(request_by_path.get(&p.path_id).copied()) {
+        if let Some(detail) =
+            p.failure_detail(request_by_path.get(&p.candidate_id.path_id()).copied())
+        {
             batch.outcomes.push(BatchOutcome {
-                path_id: p.path_id,
+                candidate_id: p.candidate_id,
                 block: inputs.current_block,
                 assembly: AssemblyVerdict::Assembled,
                 simulate: Some(SimulateVerdict::Failed(Box::new(detail))),
@@ -347,7 +386,7 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
                 inputs.executor_address,
             ));
             batch.outcomes.push(BatchOutcome {
-                path_id: p.path_id,
+                candidate_id: p.candidate_id,
                 block: inputs.current_block,
                 assembly: AssemblyVerdict::Assembled,
                 simulate: Some(SimulateVerdict::Profitable(receipt)),
@@ -356,7 +395,7 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
             });
         } else {
             batch.outcomes.push(BatchOutcome {
-                path_id: p.path_id,
+                candidate_id: p.candidate_id,
                 block: inputs.current_block,
                 assembly: AssemblyVerdict::Assembled,
                 simulate: Some(SimulateVerdict::GasUnprofitable(receipt)),
@@ -389,7 +428,7 @@ pub fn join_sim_result(
         .map(|p| derive_path_pools(&p.hops))
         .unwrap_or_default();
     SubmitCandidate {
-        path_id: r.path_id,
+        candidate_id: r.candidate_id,
         gross_profit: r.gross_profit,
         net_profit: r.net_profit,
         gas_used: r.gas_used, // UN-inflated (1.5× applied at submit time).
@@ -431,14 +470,15 @@ pub enum RawRowClass {
 #[must_use]
 pub fn classify_raw_row<S: std::hash::BuildHasher>(
     row: &RawResult,
-    payload_served: &HashSet<u64, S>,
+    payload_served: &HashSet<CandidateId, S>,
+    deployment_id: DeploymentId,
 ) -> RawRowClass {
     if !row.has_hops() {
         return RawRowClass::Skip(AssemblyVerdict::SkipEmptyHops);
     }
     // Already simulated inline by the engine; its record comes from the
     // payload arm, not the sim batch.
-    if payload_served.contains(&row.path_id) {
+    if payload_served.contains(&CandidateId::new(row.path_id, deployment_id)) {
         return RawRowClass::Skip(AssemblyVerdict::SkipPayloadServed);
     }
     RawRowClass::Build
@@ -457,6 +497,7 @@ pub fn classify_raw_row<S: std::hash::BuildHasher>(
 pub fn build_raw_candidate(
     row: &RawResult,
     path_info: &PathInfo,
+    deployment_id: DeploymentId,
 ) -> Result<DispatchCandidate, AssemblyError> {
     let hops = path_info.hops.len();
     if row.hop_outputs.len() != hops {
@@ -489,7 +530,7 @@ pub fn build_raw_candidate(
             ),
         });
     }
-    Ok(row.to_candidate(path_info.clone()))
+    Ok(row.to_candidate(path_info.clone(), deployment_id))
 }
 
 /// The payload arm's per-entry categorization verdict (the driver seam
@@ -513,10 +554,10 @@ pub struct MergedPayloadOutcome {
     pub submits: Vec<SubmitCandidate>,
     /// Valid sims below the net threshold.
     pub unprofitable_count: usize,
-    /// The failure rows (path id + the crate failure record).
-    pub failures: Vec<(u64, PayloadFailure)>,
+    /// The failure rows (candidate id + the crate failure record).
+    pub failures: Vec<(CandidateId, PayloadFailure)>,
     /// Per-entry verdicts (non-failure entries, in entry order).
-    pub verdicts: Vec<(u64, PayloadArm)>,
+    pub verdicts: Vec<(CandidateId, PayloadArm)>,
     /// The resolved path infos, first-appearance over distinct path ids.
     pub path_infos: Vec<(u64, PathInfo)>,
 }
@@ -526,6 +567,13 @@ pub struct MergedPayloadOutcome {
 /// [`join_sim_result`], and categorize with the core's `is_gas_profitable`
 /// predicate — the ONE rule both entry arms share.
 ///
+/// `deployment_id` is the deployment whose submit lane receives these rows,
+/// and the join stamps `executor_address` onto every row it produces: a row
+/// minted by another deployment would carry that deployment's calldata into
+/// this executor's lane. The identity is therefore checked BEFORE the resolve,
+/// so a foreign row is refused rather than re-stamped — the same rule
+/// [`assemble_batch`] applies to its own payload arm.
+///
 /// Decision (a), payload arm: a resolve miss here is the LOUD-ABORT arm, not
 /// the raw-row typed skip — a payload row is engine-born (the engine
 /// simulated the path inline), so a miss evidences batch/registry divergence,
@@ -533,42 +581,51 @@ pub struct MergedPayloadOutcome {
 ///
 /// # Errors
 ///
-/// [`AssemblyError`] when a payload's `path_id` is not registered (the
-/// corruption arm above).
+/// [`AssemblyError`] when a payload's `deployment_id` differs from
+/// `deployment_id`, or its `path_id` is not registered (the corruption arm
+/// above).
 pub fn merge_payload_results(
     payloads: &[PayloadRow],
     resolver: &dyn PathResolver,
     executor_address: alloy::primitives::Address,
+    deployment_id: DeploymentId,
 ) -> Result<MergedPayloadOutcome, AssemblyError> {
     let mut merged = MergedPayloadOutcome::default();
     let mut seen: HashSet<u64> = HashSet::with_capacity(payloads.len());
     for p in payloads {
-        let Some(path_info) = resolver.resolve(p.path_id) else {
+        if p.candidate_id.deployment_id() != deployment_id {
+            return Err(payload_deployment_mismatch(p.candidate_id, deployment_id));
+        }
+        let Some(path_info) = resolver.resolve(p.candidate_id.path_id()) else {
             return Err(AssemblyError {
-                path_id: p.path_id,
+                path_id: p.candidate_id.path_id(),
                 detail: format!(
                     "path_id {} is not registered in this engine; \
                      the payload pool keys cannot be derived",
-                    p.path_id
+                    p.candidate_id.path_id()
                 ),
             });
         };
         // One resolve per DISTINCT path id (multiple entries may share a
         // path), in first-appearance order.
-        if seen.insert(p.path_id) {
-            merged.path_infos.push((p.path_id, path_info.clone()));
+        if seen.insert(p.candidate_id.path_id()) {
+            merged
+                .path_infos
+                .push((p.candidate_id.path_id(), path_info.clone()));
         }
         if let Some(failure) = &p.failure {
-            merged.failures.push((p.path_id, failure.clone()));
+            merged.failures.push((p.candidate_id, failure.clone()));
             continue;
         }
         let joined = join_sim_result(&p.sim_result(), Some(&path_info), executor_address);
         if degenbot_arbitrage::is_gas_profitable(p.net_profit) {
             merged.submits.push(joined);
-            merged.verdicts.push((p.path_id, PayloadArm::Submit));
+            merged.verdicts.push((p.candidate_id, PayloadArm::Submit));
         } else {
             merged.unprofitable_count += 1;
-            merged.verdicts.push((p.path_id, PayloadArm::Unprofitable));
+            merged
+                .verdicts
+                .push((p.candidate_id, PayloadArm::Unprofitable));
         }
     }
     Ok(merged)
@@ -613,6 +670,11 @@ mod tests {
         }
     }
 
+    /// The assembly tests' one deployment identity.
+    fn deployment_id() -> DeploymentId {
+        DeploymentId::new(1)
+    }
+
     fn resolver(paths: &[u64]) -> MapResolver {
         MapResolver(paths.iter().map(|&p| (p, v2_path())).collect())
     }
@@ -653,7 +715,7 @@ mod tests {
         res: &MapResolver,
         p: &Policy,
     ) -> Result<AssembledBatch, AssemblyError> {
-        let served: HashSet<u64> = payloads.iter().map(|x| x.path_id).collect();
+        let served: HashSet<CandidateId> = payloads.iter().map(|x| x.candidate_id).collect();
         let mut suppression = p.suppression.lock().unwrap();
         assemble_batch(&AssemblyInputs {
             rows,
@@ -667,6 +729,7 @@ mod tests {
             min_profit_margin_bps: 0,
             max_candidates: 50,
             executor_address: EXECUTOR,
+            deployment_id: deployment_id(),
         })
     }
 
@@ -713,7 +776,7 @@ mod tests {
         let res = resolver(&[7]);
         let p = Policy::fresh();
         let payload = PayloadRow {
-            path_id: 7,
+            candidate_id: CandidateId::new(7, deployment_id()),
             gross_profit: alloy::primitives::U256::from(600_u64),
             net_profit: alloy::primitives::U256::from(500_u64),
             gas_used: 300_000,
@@ -729,7 +792,7 @@ mod tests {
         assert!(verdicts.contains(&AssemblyVerdict::SkipPayloadServed));
         // The payload arm produced the joined submit row.
         assert_eq!(batch.payload_submits.len(), 1);
-        assert_eq!(batch.payload_submits[0].path_id, 7);
+        assert_eq!(batch.payload_submits[0].candidate_id.path_id(), 7);
         // Its pool keys derive from the resolved hops.
         assert!(!batch.payload_submits[0].path_pools.is_empty());
         // And its record carries the profitable receipt.
@@ -749,7 +812,10 @@ mod tests {
         let res = resolver(&[5]);
         let p = Policy::fresh();
         for _ in 0..degenbot_submission::PATH_SUPPRESS_THRESHOLD {
-            p.suppression.lock().unwrap().record_failure(5);
+            p.suppression
+                .lock()
+                .unwrap()
+                .record_failure(CandidateId::new(5, deployment_id()));
         }
         // Due for a retry at the interval boundary: the single read stamps the
         // retry and ADMITS the candidate (Python retry semantics) — a second
@@ -767,7 +833,7 @@ mod tests {
         // no-stamp, a LATER batch at the due block still admits the retry.
         // Only the suppression lock is held here (assemble_batch locks the
         // divergence/FoT registries itself — pre-locking them deadlocks).
-        let served: HashSet<u64> = HashSet::new();
+        let served: HashSet<CandidateId> = HashSet::new();
         {
             let mut suppression = p.suppression.lock().unwrap();
             let batch = assemble_batch(&AssemblyInputs {
@@ -782,6 +848,7 @@ mod tests {
                 min_profit_margin_bps: 0,
                 max_candidates: 50,
                 executor_address: EXECUTOR,
+                deployment_id: deployment_id(),
             })
             .unwrap();
             assert_eq!(batch.outcomes[0].assembly, AssemblyVerdict::SkipSuppressed);
@@ -799,7 +866,7 @@ mod tests {
         // 100/1_000_000 = 1 bps → dropped at a 50 bps floor; 10_000/1_000_000
         // = 100 bps → kept.
         let rows = [row(1, 1_000_000, 100), row(2, 1_000_000, 10_000)];
-        let served: HashSet<u64> = HashSet::new();
+        let served: HashSet<CandidateId> = HashSet::new();
         let mut suppression = p.suppression.lock().unwrap();
         let batch = assemble_batch(&AssemblyInputs {
             rows: &rows,
@@ -813,19 +880,20 @@ mod tests {
             min_profit_margin_bps: 50,
             max_candidates: 50,
             executor_address: EXECUTOR,
+            deployment_id: deployment_id(),
         })
         .unwrap();
         let by_id: std::collections::HashMap<u64, AssemblyVerdict> = batch
             .outcomes
             .iter()
-            .map(|o| (o.path_id, o.assembly))
+            .map(|o| (o.candidate_id.path_id(), o.assembly))
             .collect();
         assert_eq!(by_id[&1], AssemblyVerdict::SkipThinMargin);
         // The KEPT row emits no record at stage 1 (its simulate/submit
         // verdicts arrive only after the fan-out) — drain-invisible here.
         assert!(!by_id.contains_key(&2));
         assert_eq!(batch.candidates.len(), 1);
-        assert_eq!(batch.candidates[0].path_id, 2);
+        assert_eq!(batch.candidates[0].candidate_id.path_id(), 2);
     }
 
     #[test]
@@ -837,7 +905,7 @@ mod tests {
             row(2, 1_000_000, 10_000),
             row(3, 1_000_000, 10_000),
         ];
-        let served: HashSet<u64> = HashSet::new();
+        let served: HashSet<CandidateId> = HashSet::new();
         let mut suppression = p.suppression.lock().unwrap();
         let batch = assemble_batch(&AssemblyInputs {
             rows: &rows,
@@ -851,6 +919,7 @@ mod tests {
             min_profit_margin_bps: 0,
             max_candidates: 2,
             executor_address: EXECUTOR,
+            deployment_id: deployment_id(),
         })
         .unwrap();
         assert_eq!(batch.candidates.len(), 2);
@@ -859,12 +928,82 @@ mod tests {
         assert!(batch.outcomes.is_empty());
     }
 
+    /// A payload row is ENGINE-BORN: it carries the identity of the deployment
+    /// that simulated it. A row whose deployment is not this batch's would send
+    /// another deployment's calldata down this session's submit lane, so the
+    /// assembly refuses it instead of re-stamping the identity.
+    #[test]
+    fn a_payload_from_another_deployment_is_refused() {
+        let res = resolver(&[7]);
+        let p = Policy::fresh();
+        let payload = PayloadRow {
+            candidate_id: CandidateId::new(7, DeploymentId::new(2)),
+            gross_profit: alloy::primitives::U256::from(600_u64),
+            net_profit: alloy::primitives::U256::from(500_u64),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
+            access_list: None,
+            failure: None,
+            captured_swaps: Vec::new(),
+        };
+
+        let err = assemble(&[], &[payload], &res, &p).unwrap_err();
+        assert_eq!(err.path_id, 7);
+        assert!(
+            err.detail.contains("deployment 2") && err.detail.contains("deployment 1"),
+            "the refusal names both deployments: {}",
+            err.detail
+        );
+    }
+
+    /// Two payload rows for the SAME path at the same deployment stay two
+    /// rows: identity keys the payload arm, so neither dedup nor attribution
+    /// folds them.
+    #[test]
+    fn same_path_payload_rows_keep_their_composite_identity() {
+        let res = resolver(&[7]);
+        let p = Policy::fresh();
+        let row = |net: u64| PayloadRow {
+            candidate_id: CandidateId::new(7, deployment_id()),
+            gross_profit: alloy::primitives::U256::from(net + 100),
+            net_profit: alloy::primitives::U256::from(net),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
+            access_list: None,
+            failure: None,
+            captured_swaps: Vec::new(),
+        };
+
+        let batch = assemble(&[], &[row(500), row(0)], &res, &p).unwrap();
+        assert_eq!(batch.outcomes.len(), 2);
+        for outcome in &batch.outcomes {
+            assert_eq!(
+                outcome.candidate_id,
+                CandidateId::new(7, deployment_id()),
+                "the record exposes the composite identity"
+            );
+        }
+        // One profitable, one below the floor — the identity rides each row.
+        assert!(matches!(
+            batch.outcomes[0].simulate,
+            Some(SimulateVerdict::Profitable(_))
+        ));
+        assert!(matches!(
+            batch.outcomes[1].simulate,
+            Some(SimulateVerdict::GasUnprofitable(_))
+        ));
+    }
+
     #[test]
     fn payload_failure_row_yields_a_failed_record() {
         let res = resolver(&[9]);
         let p = Policy::fresh();
         let payload = PayloadRow {
-            path_id: 9,
+            candidate_id: CandidateId::new(9, deployment_id()),
             gross_profit: alloy::primitives::U256::ZERO,
             net_profit: alloy::primitives::U256::ZERO,
             gas_used: 0,
@@ -912,7 +1051,7 @@ mod tests {
             tick: 0,
         };
         let payload = PayloadRow {
-            path_id: 9,
+            candidate_id: CandidateId::new(9, deployment_id()),
             gross_profit: alloy::primitives::U256::ZERO,
             net_profit: alloy::primitives::U256::ZERO,
             gas_used: 0,
@@ -967,7 +1106,7 @@ mod tests {
             tick: 0,
         };
         let payload = PayloadRow {
-            path_id: 9,
+            candidate_id: CandidateId::new(9, deployment_id()),
             gross_profit: alloy::primitives::U256::ZERO,
             net_profit: alloy::primitives::U256::ZERO,
             gas_used: 0,
@@ -1078,7 +1217,7 @@ mod tests {
             v2_hop("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
         ]);
         let sim = degenbot_arbitrage::SimResult {
-            path_id: 7,
+            candidate_id: CandidateId::new(7, deployment_id()),
             gross_profit: alloy::primitives::U256::from(600_000_000_000_u64),
             net_profit: alloy::primitives::U256::from(500_000_000_000_u64),
             gas_used: 300_000,
@@ -1123,7 +1262,7 @@ mod tests {
         let _ = p;
         let payloads = [
             PayloadRow {
-                path_id: 7,
+                candidate_id: CandidateId::new(7, deployment_id()),
                 gross_profit: alloy::primitives::U256::from(600_u64),
                 net_profit: alloy::primitives::U256::from(500_u64),
                 gas_used: 300_000,
@@ -1135,7 +1274,7 @@ mod tests {
                 captured_swaps: Vec::new(),
             },
             PayloadRow {
-                path_id: 8,
+                candidate_id: CandidateId::new(8, deployment_id()),
                 gross_profit: alloy::primitives::U256::from(600_u64),
                 net_profit: alloy::primitives::U256::ZERO,
                 gas_used: 300_000,
@@ -1147,7 +1286,7 @@ mod tests {
                 captured_swaps: Vec::new(),
             },
             PayloadRow {
-                path_id: 9,
+                candidate_id: CandidateId::new(9, deployment_id()),
                 gross_profit: alloy::primitives::U256::ZERO,
                 net_profit: alloy::primitives::U256::ZERO,
                 gas_used: 0,
@@ -1163,18 +1302,27 @@ mod tests {
                 captured_swaps: Vec::new(),
             },
         ];
-        let merged = merge_payload_results(&payloads, &res, EXECUTOR).unwrap();
+        let merged = merge_payload_results(&payloads, &res, EXECUTOR, deployment_id()).unwrap();
         // The profitable row joined (pool keys derived from the resolved hops).
         assert_eq!(merged.submits.len(), 1);
-        assert_eq!(merged.submits[0].path_id, 7);
+        assert_eq!(merged.submits[0].candidate_id.path_id(), 7);
         assert!(!merged.submits[0].path_pools.is_empty());
         // The zero-profit row counted unprofitable; the failure row surfaced.
         assert_eq!(merged.unprofitable_count, 1);
         assert_eq!(merged.verdicts.len(), 2);
-        assert_eq!(merged.verdicts[0], (7, PayloadArm::Submit));
-        assert_eq!(merged.verdicts[1], (8, PayloadArm::Unprofitable));
+        assert_eq!(
+            merged.verdicts[0],
+            (CandidateId::new(7, deployment_id()), PayloadArm::Submit)
+        );
+        assert_eq!(
+            merged.verdicts[1],
+            (
+                CandidateId::new(8, deployment_id()),
+                PayloadArm::Unprofitable
+            )
+        );
         assert_eq!(merged.failures.len(), 1);
-        assert_eq!(merged.failures[0].0, 9);
+        assert_eq!(merged.failures[0].0.path_id(), 9);
         // Path infos in first-appearance order over DISTINCT ids (including
         // the failure row's — the render source covers it).
         let ids: Vec<u64> = merged.path_infos.iter().map(|(id, _)| *id).collect();
@@ -1188,7 +1336,7 @@ mod tests {
     fn merge_payload_resolve_miss_is_a_loud_abort() {
         let res = resolver(&[]);
         let payloads = [PayloadRow {
-            path_id: 11,
+            candidate_id: CandidateId::new(11, deployment_id()),
             gross_profit: alloy::primitives::U256::from(600_u64),
             net_profit: alloy::primitives::U256::from(500_u64),
             gas_used: 300_000,
@@ -1199,8 +1347,43 @@ mod tests {
             failure: None,
             captured_swaps: Vec::new(),
         }];
-        let err = merge_payload_results(&payloads, &res, EXECUTOR).unwrap_err();
+        let err = merge_payload_results(&payloads, &res, EXECUTOR, deployment_id()).unwrap_err();
         assert_eq!(err.path_id, 11);
         assert!(err.detail.contains("not registered in this engine"));
+    }
+
+    /// The standalone merge refuses a row minted by another deployment BEFORE
+    /// the resolve: the join would otherwise stamp this executor onto foreign
+    /// calldata and hand it to this deployment's submit lane.
+    #[test]
+    fn merge_payload_refuses_a_foreign_deployment_before_the_join() {
+        // The path is deliberately unregistered too: the identity check must
+        // fire FIRST, so the error names the mismatch, not a resolve miss.
+        let res = resolver(&[]);
+        let payloads = [PayloadRow {
+            candidate_id: CandidateId::new(7, DeploymentId::new(2)),
+            gross_profit: alloy::primitives::U256::from(600_u64),
+            net_profit: alloy::primitives::U256::from(500_u64),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
+            access_list: None,
+            failure: None,
+            captured_swaps: Vec::new(),
+        }];
+        let err = merge_payload_results(&payloads, &res, EXECUTOR, deployment_id()).unwrap_err();
+        // The path id survives, and both identities are named.
+        assert_eq!(err.path_id, 7);
+        assert!(
+            err.detail.contains("carries deployment 2"),
+            "detail must name the actual deployment: {}",
+            err.detail
+        );
+        assert!(
+            err.detail.contains("deployment 1"),
+            "detail must name the expected deployment: {}",
+            err.detail
+        );
     }
 }

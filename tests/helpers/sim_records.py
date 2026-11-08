@@ -12,11 +12,19 @@ from typing import Any
 
 
 def inline_sim_payload(
-    pid: int, *, net: int = 500_000_000_000, failure: dict[str, Any] | None = None
+    pid: int,
+    *,
+    net: int = 500_000_000_000,
+    failure: dict[str, Any] | None = None,
+    deployment_id: int = 1,
 ) -> dict[str, Any]:
-    """One inline-sim payload row (the engine's result-channel field set)."""
+    """One inline-sim payload row (the engine's result-channel field set).
+
+    ``deployment_id`` defaults to the built-in deployment a production session
+    simulates at; a test overrides it to mint a foreign-deployment row.
+    """
     return {
-        "path_id": pid,
+        "candidate": {"path_id": pid, "deployment_id": deployment_id},
         "gross_profit": 600_000_000_000,
         "net_profit": net,
         "gas_used": 300_000,
@@ -33,7 +41,7 @@ def inline_sim_payload(
 def failure_record(**overrides: object) -> dict[str, object]:
     """A minimal failure-record dict (the shape ``outcome.failures()`` emits)."""
     base: dict[str, object] = {
-        "path_id": 7,
+        "candidate": {"path_id": 7, "deployment_id": 1},
         "bucket": "unknown:0xcafebabe",
         "fail_index": 3,
         "revert_data": "0xcafebabe",

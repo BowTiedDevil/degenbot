@@ -37,7 +37,7 @@ use degenbot_arbitrage::{
     MIN_PROFIT_NET,
 };
 use degenbot_execution::{
-    AssessError, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter,
+    AssessError, ComposeError, ComposeOptions, ComposerInputs, DeploymentId, ExecutionAdapter,
     ExecutionObservation, ExecutionResult, FeePolicy, PathInfo, ProbeSpec, ProbeSpecs,
     TransactionRequest, V2HopInfo,
 };
@@ -51,6 +51,11 @@ use degenbot_substrate::BotState;
 use serde_json::value::{to_raw_value, RawValue};
 
 const OWNER: Address = address!("0x1111111111111111111111111111111111111111");
+
+/// The fixture deployments' operator-assigned identity.
+fn test_deployment_id() -> DeploymentId {
+    DeploymentId::new(1)
+}
 const FOREIGN: Address = address!("0x2222222222222222222222222222222222222222");
 const WETH: Address = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const POOL_MANAGER: Address = address!("0x000000000004444c5dc75cb358380d2e3de08a90");
@@ -329,7 +334,7 @@ fn two_v2_hops() -> PathInfo {
 
 fn candidate() -> DispatchCandidate {
     DispatchCandidate {
-        path_id: 7,
+        candidate_id: degenbot_execution::CandidateId::new(7, test_deployment_id()),
         optimal_input: PREPAY_U128,
         engine_profit: 1,
         steps: Box::new([
@@ -358,6 +363,7 @@ fn foreign_deployment() -> SimulationDeployment {
 /// The same foreign deployment over an adapter with its own pricing policy.
 fn foreign_deployment_with(adapter: ForeignAdapter) -> SimulationDeployment {
     SimulationDeployment::new(
+        test_deployment_id(),
         Arc::new(adapter),
         OWNER,
         GAS_LIMIT,
@@ -464,7 +470,12 @@ fn the_canonical_fanout_simulates_a_foreign_deployment_through_its_own_adapter()
         FeePolicy::default().priority_fee(),
         "the priority fee is the foreign adapter's own Fee decision"
     );
-    assert_eq!(result.path_id, 7);
+    assert_eq!(result.candidate_id.path_id(), 7);
+    assert_eq!(
+        result.candidate_id.deployment_id(),
+        test_deployment_id(),
+        "the result carries the deployment that produced it"
+    );
 
     // Its own transaction: target + calldata + native value.
     assert_eq!(result.execute_calldata.len(), 4 + 32);
@@ -663,7 +674,7 @@ fn the_builtin_binding_injects_code_only_when_declared() {
         POOL_MANAGER,
         EncodeOptions::default(),
     );
-    let deployed = binding.deployment();
+    let deployed = binding.deployment(test_deployment_id());
     assert!(deployed.code().is_none(), "production uses deployed code");
     assert_eq!(deployed.owner(), OWNER);
     let settlement = deployed
@@ -673,7 +684,7 @@ fn the_builtin_binding_injects_code_only_when_declared() {
     assert_eq!(settlement.pool_manager_address, Some(POOL_MANAGER));
 
     let injected = binding
-        .injected(EXECUTOR, Bytes::from_static(&[0xfe]))
+        .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
         .expect("the declared override names the executor");
     let code = injected.code().expect("the declared override is explicit");
     assert_eq!(code.address, EXECUTOR);
@@ -696,7 +707,7 @@ fn a_builtin_declared_override_must_name_the_executor() {
     let elsewhere = address!("0xdddddddddddddddddddddddddddddddddddddddd");
 
     let mismatch = binding
-        .injected(elsewhere, Bytes::from_static(&[0xfe]))
+        .injected(test_deployment_id(), elsewhere, Bytes::from_static(&[0xfe]))
         .expect_err("an override at a foreign address is refused");
     assert_eq!(mismatch.address, elsewhere);
     assert_eq!(mismatch.executor, EXECUTOR);
@@ -706,7 +717,7 @@ fn a_builtin_declared_override_must_name_the_executor() {
     );
 
     let valid = binding
-        .injected(EXECUTOR, Bytes::from_static(&[0xfe]))
+        .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
         .expect("the executor's own address is the valid injection");
     assert_eq!(valid.code().map(|code| code.address), Some(EXECUTOR));
 }

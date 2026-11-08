@@ -15,6 +15,7 @@ import dataclasses
 
 from degenbot.runner import _dispatch as dispatch_module
 from degenbot.runner._render import DisplayPolicy, MergedOutcome
+from tests.helpers.seam import CandidateId
 
 #: A drained batch that carried nothing at all (the falsy render view).
 _EMPTY_BATCH = MergedOutcome(
@@ -56,7 +57,7 @@ class _CapturingLogger:
 
 def test_broadcast_failure_renders_at_warning() -> None:
     rec = dispatch_module.SkippedRecord(
-        path_id=7,
+        candidate=CandidateId(path_id=7, deployment_id=1),
         reason=dispatch_module.SubmitSkipReason.BROADCAST_FAILED,
         detail="relay unreachable",
     )
@@ -86,7 +87,8 @@ def test_silent_veto_streak_warns_once() -> None:
     captured = _CapturingLogger()
 
     skip = dispatch_module.SkippedRecord(
-        path_id=7, reason=dispatch_module.SubmitSkipReason.POOLS_CLAIMED
+        candidate=CandidateId(path_id=7, deployment_id=1),
+        reason=dispatch_module.SubmitSkipReason.POOLS_CLAIMED,
     )
     smoke = dispatch_module.SubmissionSmoke()
     outcome = _outcome_with_candidate()
@@ -100,7 +102,11 @@ def test_silent_veto_streak_warns_once() -> None:
     stall_warnings = [m for lvl, m in captured.calls if lvl == "warning" and "no submissions" in m]
     assert len(stall_warnings) == 1, f"expected one throttled stall warn, got {captured.calls}"
 
-    real_submitted = dispatch_module.SubmittedRecord(path_id=7, tx_hash="0xabc", nonce=3)
+    real_submitted = dispatch_module.SubmittedRecord(
+        candidate=CandidateId(path_id=7, deployment_id=1),
+        tx_hash="0xabc",
+        nonce=3,
+    )
     dispatch_module.track_submission_smoke(
         smoke, outcome, [real_submitted], policy=policy, logger=captured
     )

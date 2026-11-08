@@ -57,7 +57,9 @@ use alloy::rpc::types::AccessList as AlloyAccessList;
 /// [`dispatch_and_submit_py`].
 ///
 /// Fields mirror [`SubmitCandidate`] 1:1. Python passes:
-///  * `path_id`, `gas_used`: `int`
+///  * `candidate_id`: the [`PyCandidateId`] the sim record carries (path +
+///    deployment — the composite identity, never a bare path id)
+///  * `gas_used`: `int`
 ///  * `gross_profit`, `net_profit`: `int` (wei)
 ///  * `priority_fee`, `base_fee_next`: `int` (wei)
 ///  * `execute_calldata`: `bytes`
@@ -78,14 +80,14 @@ impl PySubmitCandidate {
     /// + passed IN).
     #[new]
     #[pyo3(signature = (
-        path_id, gross_profit, net_profit, gas_used, priority_fee,
+        candidate_id, gross_profit, net_profit, gas_used, priority_fee,
         base_fee_next, execute_calldata, executor_address,
         access_list=None, path_pools=None,
     ))]
     #[expect(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
-        path_id: u64,
+        candidate_id: &crate::simulation::identity::PyCandidateId,
         gross_profit: &Bound<'_, PyAny>,
         net_profit: &Bound<'_, PyAny>,
         gas_used: u64,
@@ -117,7 +119,7 @@ impl PySubmitCandidate {
         };
 
         let inner = SubmitCandidate {
-            path_id,
+            candidate_id: candidate_id.inner(),
             gross_profit: gross,
             net_profit: net,
             gas_used,
@@ -134,8 +136,8 @@ impl PySubmitCandidate {
     // ── read-only getters (the rewired `[dispatch]` per-path log reads these
     //    from each survivor — A5). --------------------------------------------
     #[getter]
-    fn path_id(&self) -> u64 {
-        self.inner.path_id
+    fn candidate_id(&self) -> crate::simulation::identity::PyCandidateId {
+        crate::simulation::identity::PyCandidateId::wrap(self.inner.candidate_id)
     }
 
     #[getter]
@@ -406,18 +408,27 @@ pub fn dispatch_and_submit_py<'py>(
                 let dict = PyDict::new(py);
                 match record {
                     SubmitRecord::Submitted {
-                        path_id,
+                        candidate_id,
                         tx_hash,
                         nonce,
                     } => {
                         dict.set_item("kind", "submitted")?;
-                        dict.set_item("path_id", *path_id)?;
+                        dict.set_item(
+                            "candidate",
+                            crate::simulation::identity::candidate_id_to_dict(py, candidate_id)?,
+                        )?;
                         dict.set_item("tx_hash", format!("{tx_hash:#x}"))?;
                         dict.set_item("nonce", *nonce)?;
                     }
-                    SubmitRecord::Skipped { path_id, reason } => {
+                    SubmitRecord::Skipped {
+                        candidate_id,
+                        reason,
+                    } => {
                         dict.set_item("kind", "skipped")?;
-                        dict.set_item("path_id", *path_id)?;
+                        dict.set_item(
+                            "candidate",
+                            crate::simulation::identity::candidate_id_to_dict(py, candidate_id)?,
+                        )?;
                         let (reason_str, detail) = skip_reason_to_py(reason);
                         dict.set_item("reason", reason_str)?;
                         if let Some(d) = detail {

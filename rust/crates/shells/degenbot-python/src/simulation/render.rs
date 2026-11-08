@@ -98,7 +98,10 @@ pub(crate) fn sim_failure_to_dict<'py>(
     f: &SimFailure,
 ) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
-    dict.set_item("path_id", f.path_id)?;
+    dict.set_item(
+        "candidate",
+        crate::simulation::identity::candidate_id_to_dict(py, &f.candidate_id)?,
+    )?;
     dict.set_item("bucket", &f.bucket)?;
     match f.fail_index {
         Some(idx) => dict.set_item("fail_index", idx)?,

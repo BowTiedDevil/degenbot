@@ -54,6 +54,7 @@
 
 pub mod adapter;
 pub mod gate;
+pub mod identity;
 pub mod observation;
 pub mod path;
 pub mod payload;
@@ -64,6 +65,7 @@ pub use adapter::ExecutionAdapter;
 pub use gate::{
     AssessError, AssessOptions, AssessRule, ExecutionResult, FeePolicy, ProbeSpec, ProbeSpecs,
 };
+pub use identity::{CandidateId, DeploymentId};
 pub use observation::{CapturedEvent, ExecutionObservation, ExecutionStatus, ProbeReading};
 pub use path::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 pub use payload::{ComposeError, ComposeOptions, ComposerInputs, PayloadAdapter, PayloadComposer};

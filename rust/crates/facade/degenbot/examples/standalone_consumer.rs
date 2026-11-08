@@ -823,7 +823,11 @@ fn in_process_sim_standalone_slice() {
         Arc::new(dyn_provider) as Arc<dyn Provider<Ethereum>>
     );
     let deployment = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, PM, EncodeOptions::default())
-        .injected(EXECUTOR, Bytes::from(executor_bc))
+        .injected(
+            degenbot::execution::DeploymentId::new(1),
+            EXECUTOR,
+            Bytes::from(executor_bc),
+        )
         .expect("the declared override names the executor");
     let ctx = SimulateContext {
         block: SimulationBlock {
@@ -846,7 +850,10 @@ fn in_process_sim_standalone_slice() {
             .with_code(Bytecode::new_raw(Bytes::from(GIFT_BYTECODE.to_vec()))),
     );
     let path = SimulatePath {
-        path_id: 42,
+        candidate_id: degenbot::execution::CandidateId::new(
+            42,
+            degenbot::execution::DeploymentId::new(1),
+        ),
         optimal_input: 1_000_000_000_000_000_000u128,
         steps: Box::new([
             SolveStep {
