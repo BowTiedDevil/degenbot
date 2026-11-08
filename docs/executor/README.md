@@ -113,11 +113,13 @@ There is no `0xFE` stream prefix: preprocessing runs unconditionally from offset
 
 Every deployment declares its own release through four pure getters —
 `release_id()`, `protocol_major()`, `call_encoding_version()`, and
-`capabilities()`. They are compile-time constants (no storage, no constructor
-argument, no proxy), and they are the on-chain half of a description whose other
-half is the committed release manifest. A deployment that predates them answers
-nothing, and naming it requires an explicit operator legacy mapping — never a
-guess at "latest".
+`capabilities_hash()`. They are compile-time constants (no storage, no
+constructor argument, no proxy), and they are the on-chain half of a description
+whose other half is the committed release manifest: the fourth getter answers one
+`bytes32` commitment to the manifest's whole capability ID list, so the chain
+states agreement with a document it never has to grow for. A deployment that
+predates them answers nothing, and naming it requires an explicit operator legacy
+mapping — never a guess at "latest".
 
 See [`releases.md`](releases.md) for the current release, the manifest schema,
 the strict decoding rules, and the versioning policy.

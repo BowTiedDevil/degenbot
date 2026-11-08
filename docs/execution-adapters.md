@@ -29,7 +29,7 @@ Pick the path that matches what you run:
 
 Your own contract needs **none** of degenbot's built-in machinery: no command
 grammar, no `release_id()`/`protocol_major()`/`call_encoding_version()`/
-`capabilities()` getters, no release manifest, and no entry in the release
+`capabilities_hash()` getter, no release manifest, and no entry in the release
 registry. All of that exists for the bundled `cmd_executor` alone.
 
 ## One opportunity, one transaction
@@ -435,10 +435,10 @@ contract declares four constants, each one `eth_call`:
 
 | Getter | Answers |
 |---|---|
-| `release_id()` | the release tag, e.g. `cmd_executor/1` |
+| `release_id()` | the release tag, e.g. `cmd_executor/2` |
 | `protocol_major()` | the command-protocol generation: majors mean incompatible command streams, so a build that does not know a major cannot encode for it |
 | `call_encoding_version()` | the version of the whole call encoding — stream, packed config, and `execute` ABI together |
-| `capabilities()` | the capability IDs it supports |
+| `capabilities_hash()` | the commitment to the capability ID list it supports (the list itself is in the release manifest) |
 
 Discovery is opt-in and explicit about both halves — the bounded registry of
 releases *this build* dispatches, and (for a getterless contract) the operator's
@@ -470,7 +470,7 @@ use degenbot_arbitrage::release::{LegacyReleaseEntry, LegacyReleaseMapping, Rele
 
 let legacy = LegacyReleaseMapping::new(&[LegacyReleaseEntry {
     address: executor,
-    release: ReleaseId::from_ascii_tag("cmd_executor/1")?,
+    release: ReleaseId::from_ascii_tag("cmd_executor/2")?,
 }]);
 
 let bound = BoundCmdExecutor::discover(binding, &provider, Some(&legacy), &registry).await?;
@@ -492,7 +492,7 @@ newest release**:
 | no getter answered, and no legacy entry names the address | `BindingError::Unknown` |
 | the declared (or mapped) tag is not in this build's registry | `BindingError::UnknownRelease { tag, registered }` |
 | only some getters answered, or an answer is malformed | `BindingError::Decode` |
-| the declaration disagrees with its own manifest (major, encoding version, capability set) | `BindingError::Mismatch` |
+| the declaration disagrees with its own manifest (major, encoding version, capability commitment) | `BindingError::Mismatch` |
 
 Discovery is a Rust binding decision. Neither Python nor session configuration
 performs it: there is no config key for it, and the built-in session deployment

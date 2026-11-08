@@ -200,19 +200,20 @@ Every deployment declares its own release through four pure getters, so a client
 never has to infer which encoder matches a contract:
 
 ```python
-executor.release_id()                # bytes32: NUL-padded ASCII tag, "cmd_executor/1"
+executor.release_id()                # bytes32: NUL-padded ASCII tag, "cmd_executor/2"
 executor.protocol_major()            # uint32:  the bounded dispatch unit
 executor.call_encoding_version()     # uint32:  versions the WHOLE call encoding
-executor.capabilities()              # uint32[]: stable capability IDs, ascending
+executor.capabilities_hash()         # bytes32: commitment to the declared capability IDs
 ```
 
 They return compile-time constants: no storage read, no constructor argument, no
-proxy. A capability ID you do not recognize is kept verbatim rather than
-rejected — the names live in the off-chain release manifest, which also
-describes the command grammar, the packed `config` layout, the `execute` ABI,
-and the runtime artifact. A deployment compiled before these getters answers
-nothing, and naming it requires an explicit operator legacy mapping; silence is
-never read as "latest".
+proxy. The capability getter answers one word — `keccak256` over a scheme tag
+and the ABI encoding of the capability ID list — and the list itself (with each
+ID's name, description, and the opcodes it covers) lives in the off-chain
+release manifest, which also describes the command grammar, the packed `config`
+layout, the `execute` ABI, and the runtime artifact. A deployment compiled before
+these getters answers nothing, and naming it requires an explicit operator legacy
+mapping; silence is never read as "latest".
 
 See [`releases.md`](releases.md) for the current release, the manifest schema,
 and the migration policy.

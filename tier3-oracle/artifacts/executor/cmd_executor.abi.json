@@ -152,12 +152,12 @@
 {
 "stateMutability": "view",
 "type": "function",
-"name": "capabilities",
+"name": "capabilities_hash",
 "inputs": [],
 "outputs": [
 {
 "name": "",
-"type": "uint32[]"
+"type": "bytes32"
 }
 ]
 },

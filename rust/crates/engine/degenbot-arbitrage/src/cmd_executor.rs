@@ -109,7 +109,7 @@ impl CmdExecutorBinding {
     }
 
     /// The built-in adapter over this build's explicit current release
-    /// (`cmd_executor/1`), with no release-capability planning.
+    /// (`cmd_executor/2`), with no release-capability planning.
     ///
     /// This is the offline/current consumer's mapping: the session already
     /// names the release by construction, so nothing is discovered and no

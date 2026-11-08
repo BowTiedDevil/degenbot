@@ -24,7 +24,7 @@
 //!   [`release_registry::ReleaseEncoding`] per release (stream + config +
 //!   `execute` ABI together), the release set this build dispatches, and the
 //!   capability planning that declines a path a release cannot run.
-//! - **The receipt** ([`receipt`]): the `cmd_executor/1` `execute` return
+//! - **The receipt** ([`receipt`]): the `cmd_executor` `execute` return
 //!   values (`gross_profit`, `bribe_paid`), declared by the manifest's
 //!   `execute_abi.returns` and decoded with the strictness that shape needs.
 //! - **The warmup-slot math** ([`WarmupSlots`] /

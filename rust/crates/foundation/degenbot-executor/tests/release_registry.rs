@@ -20,21 +20,21 @@ use degenbot_execution::{PathInfo, V2HopInfo, V4HopInfo};
 use degenbot_executor::composers::{resolve_axes, EncodeOptions};
 use degenbot_executor::discovery::{classify_getter, GetterAnswers, GetterCall, METADATA_GETTERS};
 use degenbot_executor::release::{
-    capability, CapabilityId, GetterOutcome, ManifestError, ReleaseManifest, RELEASE_ID_TAG,
-    RELEASE_MANIFEST_V1, SUPPORTED_PROTOCOL_MAJORS,
+    capability, CapabilityId, GetterOutcome, ManifestError, ReleaseManifest, METADATA_GETTER_NAMES,
+    RELEASE_ID_TAG, RELEASE_MANIFEST_V2, SUPPORTED_PROTOCOL_MAJORS,
 };
 use degenbot_executor::release_registry::{
     required_capabilities, CmdStreamV1Encoding, Release, ReleaseEncoding, ReleaseError,
     ReleaseRegistry,
 };
 
-fn v1_manifest() -> ReleaseManifest {
-    ReleaseManifest::parse(RELEASE_MANIFEST_V1).expect("the committed manifest validates")
+fn committed_manifest() -> ReleaseManifest {
+    ReleaseManifest::parse(RELEASE_MANIFEST_V2).expect("the committed manifest validates")
 }
 
 fn production_release() -> Release {
     Release::new(
-        v1_manifest(),
+        committed_manifest(),
         SUPPORTED_PROTOCOL_MAJORS,
         Arc::new(CmdStreamV1Encoding),
         None,
@@ -43,18 +43,19 @@ fn production_release() -> Release {
 }
 
 #[test]
-fn production_ships_exactly_the_validated_v1_release() {
+fn production_ships_exactly_the_validated_release() {
     let registry = ReleaseRegistry::production().expect("production builds");
     assert_eq!(registry.len(), 1);
     assert_eq!(registry.tags().collect::<Vec<_>>(), vec![RELEASE_ID_TAG]);
     assert_eq!(registry.majors(), vec![1]);
 
-    let release = registry.get(RELEASE_ID_TAG).expect("v1 is registered");
+    let release = registry
+        .get(RELEASE_ID_TAG)
+        .expect("the current release is registered");
     assert_eq!(release.protocol_major(), 1);
     assert_eq!(release.call_encoding_version(), 1);
     assert_eq!(release.encoding().release_id(), RELEASE_ID_TAG);
     assert!(release.development_runtime().is_none());
-    assert!(registry.get("cmd_executor/2").is_none());
 }
 
 #[test]
@@ -62,8 +63,8 @@ fn the_capability_catalog_names_every_declared_capability() {
     // The catalog is release-independent (an ID never changes meaning), so the
     // committed manifest's names must agree with it or diagnostics about a
     // MISSING capability would disagree with the release that declares it.
-    let manifest = v1_manifest();
-    for declared in &manifest.capabilities {
+    let manifest = committed_manifest();
+    for declared in &manifest.capabilities.ids {
         assert_eq!(
             capability::name(CapabilityId::new(declared.id)),
             declared.name,
@@ -79,7 +80,7 @@ fn an_injected_major_enters_only_a_registry_that_declares_it() {
     // A manifest declaring a major production does not dispatch is refused by
     // the production bound... (the tag still matches the production encoding, so
     // the ONLY difference is the major)
-    let mut manifest = v1_manifest();
+    let mut manifest = committed_manifest();
     manifest.protocol.major = 2;
     let unvalidated = manifest.validate();
     assert_eq!(
@@ -110,7 +111,7 @@ fn one_tag_names_one_release() {
     let registry = ReleaseRegistry::with_releases(vec![production_release()]);
     assert_eq!(registry.expect("one release").len(), 1);
 
-    let mut duplicate = v1_manifest();
+    let mut duplicate = committed_manifest();
     duplicate.call_encoding.version = 2;
     let second = Release::new(
         duplicate,
@@ -236,14 +237,38 @@ fn the_requirement_set_follows_the_path_and_the_axes() {
 }
 
 #[test]
-fn the_getter_classification_keeps_absence_and_failure_apart() {
+fn the_metadata_getter_selectors_match_their_signatures() {
+    // The table is what an `eth_call` carries, so each selector must be the
+    // first four bytes of keccak256 over the canonical signature — including
+    // the cutover's `capabilities_hash()`.
+    let declared: Vec<&str> = METADATA_GETTERS.iter().map(|getter| getter.name).collect();
+    assert_eq!(declared, METADATA_GETTER_NAMES.to_vec());
+
     for getter in &METADATA_GETTERS {
         let digest = alloy::primitives::keccak256(getter.signature.as_bytes());
         assert_eq!(
             getter.selector,
-            [digest[0], digest[1], digest[2], digest[3]]
+            [digest[0], digest[1], digest[2], digest[3]],
+            "{} selector",
+            getter.name
         );
+        assert_eq!(
+            getter.signature,
+            format!("{}()", getter.name),
+            "a getter's signature is its zero-argument form"
+        );
+    }
 
+    let capability_getter = METADATA_GETTERS
+        .iter()
+        .find(|getter| getter.name == "capabilities_hash")
+        .expect("the capability getter is declared");
+    assert_eq!(capability_getter.selector, [0xb8, 0xca, 0x45, 0x9e]);
+}
+
+#[test]
+fn the_getter_classification_keeps_absence_and_failure_apart() {
+    for getter in &METADATA_GETTERS {
         // Data is an answer.
         assert_eq!(
             classify_getter(getter.name, GetterCall::Returned(&[1, 2, 3])).expect("answered"),
@@ -286,5 +311,5 @@ fn getter_answers_preserve_what_the_transport_returned() {
     let one = GetterAnswers::from_parts(Some(Bytes::from_static(&[7])), None, None, None);
     assert_eq!(one.answered_count(), 1);
     assert_eq!(one.observations().release_id, GetterOutcome::Answered(&[7]));
-    assert_eq!(one.observations().capabilities, GetterOutcome::Absent);
+    assert_eq!(one.observations().capabilities_hash, GetterOutcome::Absent);
 }

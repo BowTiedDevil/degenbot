@@ -4,7 +4,9 @@
 //! the implementation it was compiled from. This module is what turns the
 //! deployment's own declaration — the four metadata getters — into that
 //! binding, and what refuses the deployment when the declaration does not name
-//! a release this build dispatches.
+//! a release this build dispatches. The capability getter answers one
+//! commitment word, so a disagreement is one word comparison against the
+//! release manifest's derived commitment (ADR-099 D6).
 //!
 //! # The binding path
 //!
@@ -21,7 +23,7 @@
 //!    ([`degenbot_executor::release::ReleaseManifest::check_metadata_within`]),
 //!    bounded by the majors the registry actually dispatches. A deployment that
 //!    disagrees with its own manifest — a different major, encoding version, or
-//!    capability set — is refused here, before anything is encoded.
+//!    capability commitment — is refused here, before anything is encoded.
 //!
 //! Nothing defaults. There is no path from "no answer", "an unknown tag", or "a
 //! disagreeing answer" to a working encoder.
@@ -103,7 +105,11 @@ pub enum BindingError {
         /// The release tag it named.
         release: String,
         /// The first disagreement.
-        mismatch: ReleaseMismatch,
+        ///
+        /// Boxed to keep every `Result` in this module inside the
+        /// `result_large_err` budget (repo convention: box the payload, keep
+        /// the `Result` small).
+        mismatch: Box<ReleaseMismatch>,
     },
     /// The answers are not a usable identity declaration (partial, short,
     /// malformed, or self-contradictory).
@@ -328,7 +334,7 @@ impl BoundCmdExecutor {
                 .map_err(|mismatch| BindingError::Mismatch {
                     address,
                     release: tag,
-                    mismatch,
+                    mismatch: Box::new(mismatch),
                 })?;
         }
 
@@ -383,7 +389,8 @@ impl BoundCmdExecutor {
     }
 
     /// The deployment's adapter: the release's complete encoding, planning
-    /// against the release's declared capabilities.
+    /// against the release's declared capability list (compared as the one
+    /// commitment word the deployment answers).
     #[must_use]
     pub fn adapter(&self) -> CmdExecutorSimAdapter {
         CmdExecutorSimAdapter::new(

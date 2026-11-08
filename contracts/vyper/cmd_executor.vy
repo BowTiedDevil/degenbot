@@ -145,15 +145,22 @@ MAX_V4_BATCH_SWAPS: constant(uint256) = 8
 # to the runtime artifact location. Version the WHOLE call encoding with
 # CALL_ENCODING_VERSION: a stream, config, or execute-ABI change is one release
 # bump, never three independent ones.
-RELEASE_ID: constant(bytes32) = 0x636d645f6578656375746f722f31000000000000000000000000000000000000  # "cmd_executor/1"
+RELEASE_ID: constant(bytes32) = 0x636d645f6578656375746f722f32000000000000000000000000000000000000  # "cmd_executor/2"
 PROTOCOL_MAJOR: constant(uint32) = 1
 CALL_ENCODING_VERSION: constant(uint32) = 1
-MAX_CAPABILITY_IDS: constant(uint256) = 32
+
+# The commitment to the capability ID list declared by the CAPABILITY_* constants
+# below (ADR-099 D2). Derivation, reproducible with standard tools:
+#   keccak256(ascii("degenbot/cmd_executor/capabilities/v1") ++ abi.encode(uint32[] ids))
+# The list itself lives in the release manifest, which recomputes this value from
+# its own IDs and refuses a manifest that disagrees.
+CAPABILITIES_HASH: constant(bytes32) = 0x9cce6a2d69dbea3b4023e117492ff11aadc2e3feadb28a83faa172fc0823bcbf
 
 # Capability IDs. Stable, never reused: a capability that disappears leaves a
-# gap, so an ID always names the same feature. The names live off-chain in the
-# release manifest; the contract declares only the IDs, so an off-chain reader
-# that does not know an ID keeps it verbatim instead of rejecting it.
+# gap, so an ID always names the same feature. These constants are the source's
+# human-auditable declaration of the set: they emit no code (the on-chain answer
+# is CAPABILITIES_HASH), and the release manifest's own ID list must agree with
+# them, which is what keeps the auditable list and the commitment honest.
 CAPABILITY_ADDRESS_TABLE: constant(uint32) = 1
 CAPABILITY_V2_SWAPS: constant(uint32) = 2
 CAPABILITY_V2_SWAP_CALC: constant(uint32) = 3
@@ -544,25 +551,9 @@ def call_encoding_version() -> uint32:
 
 @external
 @view
-def capabilities() -> DynArray[uint32, MAX_CAPABILITY_IDS]:
-    """The declared capability IDs, ascending and unique."""
-    return [
-        CAPABILITY_ADDRESS_TABLE,
-        CAPABILITY_V2_SWAPS,
-        CAPABILITY_V2_SWAP_CALC,
-        CAPABILITY_V3_SWAPS,
-        CAPABILITY_V3_DYNAMIC_AMOUNTS,
-        CAPABILITY_V4_SWAPS,
-        CAPABILITY_V4_BATCH,
-        CAPABILITY_V4_BATCH_OPEN_WETH,
-        CAPABILITY_V4_DYNAMIC_DELTAS,
-        CAPABILITY_ERC6909_CLAIMS,
-        CAPABILITY_WETH_WRAP_UNWRAP,
-        CAPABILITY_NATIVE_TRANSFERS,
-        CAPABILITY_CONFIG_BRIBE,
-        CAPABILITY_CONFIG_MIN_PROFIT,
-        CAPABILITY_EXECUTION_RECEIPT,
-    ]
+def capabilities_hash() -> bytes32:
+    """The commitment to the declared capability ID list (see the release manifest)."""
+    return CAPABILITIES_HASH
 
 
 @internal

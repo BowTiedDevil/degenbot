@@ -16,9 +16,10 @@
 //! execute, so the three never travel apart.
 //!
 //! [`CmdStreamV1Encoding`] is the production encoding — the current
-//! `cmd_executor/1` release. A future major adds one manifest plus one encoding
-//! and lands in [`ReleaseRegistry::with_releases`]; no generic crate changes
-//! (ADR-098 D4/D5). A test may inject its own release for the same reason, and
+//! `cmd_executor/2` release, whose command stream, packed config, and `execute`
+//! ABI are the v1 encoding unchanged. A future major adds one manifest plus one
+//! encoding and lands in [`ReleaseRegistry::with_releases`]; no generic crate
+//! changes (ADR-098 D4/D5). A test may inject its own release for the same reason, and
 //! the registry will not tell it apart from a shipped one: the registry is the
 //! bound, not a flag.
 //!
@@ -32,9 +33,11 @@
 //! that cannot run it. Declining is per-candidate, so one target's refusal
 //! never suppresses another target's execution (ADR-098 D4).
 //!
-//! Capability IDs are opaque: an ID this build cannot name is still preserved
-//! by [`crate::release::CapabilitySet`] and still compared here, so an unknown
-//! ID can never be mistaken for support.
+//! Capability IDs are opaque: an ID this build cannot name is still declared by
+//! the manifest's list and still compared here, so an unknown ID can never be
+//! mistaken for support. Planning reads only that list — the deployment's
+//! capability commitment is a binding-time verification fact, never a planning
+//! input.
 
 use std::sync::Arc;
 
@@ -49,7 +52,7 @@ use crate::composers::{
 use crate::grammar_ledger::{Bribe, ProfitCapture};
 use crate::receipt::ExecutionReceipt;
 use crate::release::{
-    capability, CapabilityId, ManifestError, ReleaseManifest, RELEASE_ID_TAG, RELEASE_MANIFEST_V1,
+    capability, CapabilityId, ManifestError, ReleaseManifest, RELEASE_ID_TAG, RELEASE_MANIFEST_V2,
     SUPPORTED_PROTOCOL_MAJORS,
 };
 
@@ -115,7 +118,11 @@ pub trait ReleaseEncoding: Send + Sync + std::fmt::Debug {
     ) -> Result<ExecutionReceipt, degenbot_execution::AssessError>;
 }
 
-/// The production encoding: the `cmd_executor/1` command stream.
+/// The production encoding: the `cmd_executor` command stream.
+///
+/// The name keeps its v1 because the call encoding did not move in the ADR-099
+/// cutover: `call_encoding_version()` is still 1 and `execute` produces the same
+/// bytes for the same path.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CmdStreamV1Encoding;
 
@@ -152,7 +159,7 @@ impl ReleaseEncoding for CmdStreamV1Encoding {
     }
 }
 
-/// The capability IDs a solved path's `cmd_executor/1` call needs.
+/// The capability IDs a solved path's `cmd_executor` call needs.
 ///
 /// The requirement set is derived from what the encoder will actually emit, so
 /// a release that does not declare one of these declines the path instead of
@@ -324,12 +331,15 @@ impl Release {
     }
 
     /// The capability IDs this release declares.
+    ///
+    /// Planning reads the manifest's list, never the deployment's commitment:
+    /// binding already proved the deployment's word names this list, so the
+    /// commitment stays a verification fact rather than a planning input.
     #[must_use]
     pub fn declared_capabilities(&self) -> Vec<CapabilityId> {
         self.manifest
-            .capabilities
-            .iter()
-            .map(|declared| CapabilityId::new(declared.id))
+            .capability_ids()
+            .map(CapabilityId::new)
             .collect()
     }
 
@@ -390,7 +400,7 @@ impl ReleaseRegistry {
     /// [`ReleaseError::Manifest`] when an embedded manifest no longer validates
     /// — a build defect, surfaced rather than swallowed.
     pub fn production() -> Result<Self, ReleaseError> {
-        let manifest = ReleaseManifest::parse(RELEASE_MANIFEST_V1)?;
+        let manifest = ReleaseManifest::parse(RELEASE_MANIFEST_V2)?;
         let release = Release::new(
             manifest,
             SUPPORTED_PROTOCOL_MAJORS,

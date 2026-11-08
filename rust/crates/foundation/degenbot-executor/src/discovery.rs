@@ -64,9 +64,9 @@ pub const METADATA_GETTERS: [MetadataGetter; 4] = [
         selector: [0x76, 0xc4, 0x34, 0x5b],
     },
     MetadataGetter {
-        name: "capabilities",
-        signature: "capabilities()",
-        selector: [0x34, 0xa1, 0x8f, 0xc3],
+        name: "capabilities_hash",
+        signature: "capabilities_hash()",
+        selector: [0xb8, 0xca, 0x45, 0x9e],
     },
 ];
 
@@ -132,7 +132,7 @@ pub struct GetterAnswers {
     release_id: Option<Bytes>,
     protocol_major: Option<Bytes>,
     call_encoding_version: Option<Bytes>,
-    capabilities: Option<Bytes>,
+    capabilities_hash: Option<Bytes>,
 }
 
 impl GetterAnswers {
@@ -148,13 +148,13 @@ impl GetterAnswers {
         release_id: Option<Bytes>,
         protocol_major: Option<Bytes>,
         call_encoding_version: Option<Bytes>,
-        capabilities: Option<Bytes>,
+        capabilities_hash: Option<Bytes>,
     ) -> Self {
         Self {
             release_id,
             protocol_major,
             call_encoding_version,
-            capabilities,
+            capabilities_hash,
         }
     }
 
@@ -168,7 +168,7 @@ impl GetterAnswers {
             "release_id" => self.release_id = data,
             "protocol_major" => self.protocol_major = data,
             "call_encoding_version" => self.call_encoding_version = data,
-            "capabilities" => self.capabilities = data,
+            "capabilities_hash" => self.capabilities_hash = data,
             _ => {}
         }
     }
@@ -180,7 +180,7 @@ impl GetterAnswers {
             self.release_id.as_deref().map(|data| &**data),
             self.protocol_major.as_deref().map(|data| &**data),
             self.call_encoding_version.as_deref().map(|data| &**data),
-            self.capabilities.as_deref().map(|data| &**data),
+            self.capabilities_hash.as_deref().map(|data| &**data),
         )
     }
 

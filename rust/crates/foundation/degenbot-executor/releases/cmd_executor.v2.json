@@ -1,13 +1,15 @@
 {
-  "schema_version": 1,
-  "release_id": "cmd_executor/1",
-  "protocol": {
-    "major": 1,
-    "minor": 0
+  "artifact": {
+    "abi": "tier3-oracle/artifacts/executor/cmd_executor.abi.json",
+    "creation_code": "tier3-oracle/artifacts/executor/cmd_executor.creation.hex",
+    "deployment_form": "creation_code ++ abi_encode(weth, pool_manager, usdc, usdt); the owner is the deployer and the two V4 delta slots are computed in __init__",
+    "error_map": "tier3-oracle/artifacts/executor/cmd_executor.error_map.json",
+    "immutables": "tier3-oracle/artifacts/executor/cmd_executor.immutables.json",
+    "method_identifiers": "tier3-oracle/artifacts/executor/cmd_executor.method_identifiers.json",
+    "provenance": "tier3-oracle/artifacts/executor/manifest.json",
+    "runtime_code": "tier3-oracle/artifacts/executor/cmd_executor.runtime.hex"
   },
   "call_encoding": {
-    "version": 1,
-    "max_stream_length": 288,
     "address_resolution": {
       "max_table_entries": 32,
       "sentinels": [
@@ -40,20 +42,36 @@
     "command_stream": {
       "opcodes": [
         {
-          "opcode": "0x00",
-          "name": "SET_ADDRESS",
-          "kind": "preprocess",
           "fields": [
             {
               "name": "address",
               "type": "address"
             }
-          ]
+          ],
+          "kind": "preprocess",
+          "name": "SET_ADDRESS",
+          "opcode": "0x00"
         },
         {
-          "opcode": "0x10",
+          "fields": [
+            {
+              "name": "token_idx",
+              "type": "uint8"
+            },
+            {
+              "name": "recipient_idx",
+              "type": "uint8"
+            },
+            {
+              "name": "amount",
+              "type": "uint96"
+            }
+          ],
+          "kind": "execute",
           "name": "ERC20_TRANSFER",
-          "kind": "execute",
+          "opcode": "0x10"
+        },
+        {
           "fields": [
             {
               "name": "token_idx",
@@ -62,66 +80,47 @@
             {
               "name": "recipient_idx",
               "type": "uint8"
-            },
-            {
-              "name": "amount",
-              "type": "uint96"
             }
-          ]
-        },
-        {
-          "opcode": "0x11",
+          ],
+          "kind": "execute",
           "name": "ERC20_XFER_BALANCE",
-          "kind": "execute",
-          "fields": [
-            {
-              "name": "token_idx",
-              "type": "uint8"
-            },
-            {
-              "name": "recipient_idx",
-              "type": "uint8"
-            }
-          ]
+          "opcode": "0x11"
         },
         {
-          "opcode": "0x12",
+          "fields": [
+            {
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "kind": "execute",
           "name": "WETH_DEPOSIT",
-          "kind": "execute",
+          "opcode": "0x12"
+        },
+        {
           "fields": [
             {
               "name": "amount",
               "type": "uint256"
             }
-          ]
-        },
-        {
-          "opcode": "0x13",
+          ],
+          "kind": "execute",
           "name": "WETH_WITHDRAW",
-          "kind": "execute",
-          "fields": [
-            {
-              "name": "amount",
-              "type": "uint256"
-            }
-          ]
+          "opcode": "0x13"
         },
         {
-          "opcode": "0x14",
+          "fields": [],
+          "kind": "execute",
           "name": "WETH_DEPOSIT_ALL",
-          "kind": "execute",
-          "fields": []
+          "opcode": "0x14"
         },
         {
-          "opcode": "0x15",
+          "fields": [],
+          "kind": "execute",
           "name": "WETH_WITHDRAW_ALL",
-          "kind": "execute",
-          "fields": []
+          "opcode": "0x15"
         },
         {
-          "opcode": "0x16",
-          "name": "SEND_ETH",
-          "kind": "execute",
           "fields": [
             {
               "name": "recipient_idx",
@@ -131,23 +130,62 @@
               "name": "amount",
               "type": "uint96"
             }
-          ]
+          ],
+          "kind": "execute",
+          "name": "SEND_ETH",
+          "opcode": "0x16"
         },
         {
-          "opcode": "0x17",
+          "fields": [
+            {
+              "name": "recipient_idx",
+              "type": "uint8"
+            }
+          ],
+          "kind": "execute",
           "name": "SEND_ETH_ALL",
-          "kind": "execute",
+          "opcode": "0x17"
+        },
+        {
           "fields": [
+            {
+              "name": "pool_idx",
+              "type": "uint8"
+            },
+            {
+              "name": "zero_for_one",
+              "type": "uint8"
+            },
+            {
+              "name": "amount_out",
+              "type": "uint96"
+            },
             {
               "name": "recipient_idx",
               "type": "uint8"
+            },
+            {
+              "name": "fee",
+              "type": "uint16"
+            },
+            {
+              "name": "forward_len",
+              "type": "uint8"
+            },
+            {
+              "name": "forward_data",
+              "type": "bytes"
             }
-          ]
-        },
-        {
-          "opcode": "0x20",
+          ],
+          "kind": "execute",
           "name": "V2_SWAP_COMPACT",
-          "kind": "execute",
+          "opcode": "0x20",
+          "variable_tail": {
+            "data_field": "forward_data",
+            "length_field": "forward_len"
+          }
+        },
+        {
           "fields": [
             {
               "name": "pool_idx",
@@ -158,58 +196,19 @@
               "type": "uint8"
             },
             {
-              "name": "amount_out",
-              "type": "uint96"
-            },
-            {
               "name": "recipient_idx",
               "type": "uint8"
             },
             {
               "name": "fee",
               "type": "uint16"
-            },
-            {
-              "name": "forward_len",
-              "type": "uint8"
-            },
-            {
-              "name": "forward_data",
-              "type": "bytes"
             }
           ],
-          "variable_tail": {
-            "length_field": "forward_len",
-            "data_field": "forward_data"
-          }
-        },
-        {
-          "opcode": "0x21",
+          "kind": "execute",
           "name": "V2_SWAP_CALC",
-          "kind": "execute",
-          "fields": [
-            {
-              "name": "pool_idx",
-              "type": "uint8"
-            },
-            {
-              "name": "zero_for_one",
-              "type": "uint8"
-            },
-            {
-              "name": "recipient_idx",
-              "type": "uint8"
-            },
-            {
-              "name": "fee",
-              "type": "uint16"
-            }
-          ]
+          "opcode": "0x21"
         },
         {
-          "opcode": "0x22",
-          "name": "V2_SWAP_DIRECT",
-          "kind": "execute",
           "fields": [
             {
               "name": "pool_idx",
@@ -227,12 +226,47 @@
               "name": "recipient_idx",
               "type": "uint8"
             }
-          ]
+          ],
+          "kind": "execute",
+          "name": "V2_SWAP_DIRECT",
+          "opcode": "0x22"
         },
         {
-          "opcode": "0x30",
+          "fields": [
+            {
+              "name": "pool_idx",
+              "type": "uint8"
+            },
+            {
+              "name": "zero_for_one",
+              "type": "uint8"
+            },
+            {
+              "name": "amount_specified",
+              "type": "uint96"
+            },
+            {
+              "name": "recipient_idx",
+              "type": "uint8"
+            },
+            {
+              "name": "forward_len",
+              "type": "uint8"
+            },
+            {
+              "name": "forward_data",
+              "type": "bytes"
+            }
+          ],
+          "kind": "execute",
           "name": "V3_SWAP_COMPACT",
-          "kind": "execute",
+          "opcode": "0x30",
+          "variable_tail": {
+            "data_field": "forward_data",
+            "length_field": "forward_len"
+          }
+        },
+        {
           "fields": [
             {
               "name": "pool_idx",
@@ -243,50 +277,46 @@
               "type": "uint8"
             },
             {
-              "name": "amount_specified",
-              "type": "uint96"
-            },
-            {
               "name": "recipient_idx",
               "type": "uint8"
-            },
-            {
-              "name": "forward_len",
-              "type": "uint8"
-            },
-            {
-              "name": "forward_data",
-              "type": "bytes"
             }
           ],
-          "variable_tail": {
-            "length_field": "forward_len",
-            "data_field": "forward_data"
-          }
-        },
-        {
-          "opcode": "0x31",
+          "kind": "execute",
           "name": "V3_SWAP_DELTA",
-          "kind": "execute",
+          "opcode": "0x31"
+        },
+        {
           "fields": [
             {
               "name": "pool_idx",
               "type": "uint8"
             },
             {
-              "name": "zero_for_one",
-              "type": "uint8"
+              "name": "amount_specified",
+              "type": "uint96"
             },
             {
               "name": "recipient_idx",
               "type": "uint8"
+            },
+            {
+              "name": "forward_len",
+              "type": "uint8"
+            },
+            {
+              "name": "forward_data",
+              "type": "bytes"
             }
-          ]
-        },
-        {
-          "opcode": "0x33",
+          ],
+          "kind": "execute",
           "name": "V3_SWAP_ONE_FOR_ZERO",
-          "kind": "execute",
+          "opcode": "0x33",
+          "variable_tail": {
+            "data_field": "forward_data",
+            "length_field": "forward_len"
+          }
+        },
+        {
           "fields": [
             {
               "name": "pool_idx",
@@ -309,46 +339,15 @@
               "type": "bytes"
             }
           ],
-          "variable_tail": {
-            "length_field": "forward_len",
-            "data_field": "forward_data"
-          }
-        },
-        {
-          "opcode": "0x34",
+          "kind": "execute",
           "name": "V3_SWAP_ZERO_FOR_ONE",
-          "kind": "execute",
-          "fields": [
-            {
-              "name": "pool_idx",
-              "type": "uint8"
-            },
-            {
-              "name": "amount_specified",
-              "type": "uint96"
-            },
-            {
-              "name": "recipient_idx",
-              "type": "uint8"
-            },
-            {
-              "name": "forward_len",
-              "type": "uint8"
-            },
-            {
-              "name": "forward_data",
-              "type": "bytes"
-            }
-          ],
+          "opcode": "0x34",
           "variable_tail": {
-            "length_field": "forward_len",
-            "data_field": "forward_data"
+            "data_field": "forward_data",
+            "length_field": "forward_len"
           }
         },
         {
-          "opcode": "0x40",
-          "name": "V4_SWAP_COMPACT",
-          "kind": "execute",
           "fields": [
             {
               "name": "currency0_idx",
@@ -378,12 +377,12 @@
               "name": "amount_specified",
               "type": "uint96"
             }
-          ]
+          ],
+          "kind": "execute",
+          "name": "V4_SWAP_COMPACT",
+          "opcode": "0x40"
         },
         {
-          "opcode": "0x41",
-          "name": "V4_SWAP_DYNAMIC",
-          "kind": "execute",
           "fields": [
             {
               "name": "currency0_idx",
@@ -409,21 +408,23 @@
               "name": "zero_for_one",
               "type": "uint8"
             }
-          ]
+          ],
+          "kind": "execute",
+          "name": "V4_SWAP_DYNAMIC",
+          "opcode": "0x41"
         },
         {
-          "opcode": "0x42",
+          "fields": [
+            {
+              "name": "num_swaps",
+              "type": "uint8"
+            }
+          ],
+          "kind": "execute",
           "name": "V4_BATCH",
-          "kind": "execute",
-          "fields": [
-            {
-              "name": "num_swaps",
-              "type": "uint8"
-            }
-          ],
+          "opcode": "0x42",
           "repeat": {
             "count_field": "num_swaps",
-            "max_count": 8,
             "entry": {
               "fields": [
                 {
@@ -455,22 +456,22 @@
                   "type": "uint96"
                 }
               ]
-            }
+            },
+            "max_count": 8
           }
         },
         {
-          "opcode": "0x43",
+          "fields": [
+            {
+              "name": "num_swaps",
+              "type": "uint8"
+            }
+          ],
+          "kind": "execute",
           "name": "V4_BATCH_OPEN_WETH",
-          "kind": "execute",
-          "fields": [
-            {
-              "name": "num_swaps",
-              "type": "uint8"
-            }
-          ],
+          "opcode": "0x43",
           "repeat": {
             "count_field": "num_swaps",
-            "max_count": 8,
             "entry": {
               "fields": [
                 {
@@ -502,13 +503,11 @@
                   "type": "uint96"
                 }
               ]
-            }
+            },
+            "max_count": 8
           }
         },
         {
-          "opcode": "0x50",
-          "name": "V4_UNLOCK",
-          "kind": "execute",
           "fields": [
             {
               "name": "len",
@@ -519,15 +518,15 @@
               "type": "bytes"
             }
           ],
+          "kind": "execute",
+          "name": "V4_UNLOCK",
+          "opcode": "0x50",
           "variable_tail": {
-            "length_field": "len",
-            "data_field": "payload"
+            "data_field": "payload",
+            "length_field": "len"
           }
         },
         {
-          "opcode": "0x51",
-          "name": "V4_TAKE",
-          "kind": "execute",
           "fields": [
             {
               "name": "currency_idx",
@@ -541,12 +540,31 @@
               "name": "amount",
               "type": "uint256"
             }
-          ]
+          ],
+          "kind": "execute",
+          "name": "V4_TAKE",
+          "opcode": "0x51"
         },
         {
-          "opcode": "0x52",
+          "fields": [
+            {
+              "name": "currency_idx",
+              "type": "uint8"
+            },
+            {
+              "name": "recipient_idx",
+              "type": "uint8"
+            },
+            {
+              "name": "amount",
+              "type": "uint96"
+            }
+          ],
+          "kind": "execute",
           "name": "V4_TAKE_COMPACT",
-          "kind": "execute",
+          "opcode": "0x52"
+        },
+        {
           "fields": [
             {
               "name": "currency_idx",
@@ -555,66 +573,47 @@
             {
               "name": "recipient_idx",
               "type": "uint8"
-            },
-            {
-              "name": "amount",
-              "type": "uint96"
             }
-          ]
-        },
-        {
-          "opcode": "0x53",
+          ],
+          "kind": "execute",
           "name": "V4_TAKE_DELTA",
-          "kind": "execute",
+          "opcode": "0x53"
+        },
+        {
           "fields": [
             {
               "name": "currency_idx",
               "type": "uint8"
-            },
-            {
-              "name": "recipient_idx",
-              "type": "uint8"
             }
-          ]
-        },
-        {
-          "opcode": "0x54",
+          ],
+          "kind": "execute",
           "name": "V4_SYNC",
-          "kind": "execute",
-          "fields": [
-            {
-              "name": "currency_idx",
-              "type": "uint8"
-            }
-          ]
+          "opcode": "0x54"
         },
         {
-          "opcode": "0x55",
+          "fields": [],
+          "kind": "execute",
           "name": "V4_SETTLE",
-          "kind": "execute",
-          "fields": []
+          "opcode": "0x55"
         },
         {
-          "opcode": "0x56",
-          "name": "V4_SETTLE_DELTA",
-          "kind": "execute",
           "fields": [
             {
               "name": "currency_idx",
               "type": "uint8"
             }
-          ]
+          ],
+          "kind": "execute",
+          "name": "V4_SETTLE_DELTA",
+          "opcode": "0x56"
         },
         {
-          "opcode": "0x57",
+          "fields": [],
+          "kind": "execute",
           "name": "V4_SETTLE_ALL",
-          "kind": "execute",
-          "fields": []
+          "opcode": "0x57"
         },
         {
-          "opcode": "0x58",
-          "name": "V4_MINT_COMPACT",
-          "kind": "execute",
           "fields": [
             {
               "name": "currency_idx",
@@ -628,12 +627,12 @@
               "name": "amount",
               "type": "uint96"
             }
-          ]
+          ],
+          "kind": "execute",
+          "name": "V4_MINT_COMPACT",
+          "opcode": "0x58"
         },
         {
-          "opcode": "0x59",
-          "name": "V4_BURN_COMPACT",
-          "kind": "execute",
           "fields": [
             {
               "name": "currency_idx",
@@ -643,37 +642,39 @@
               "name": "amount",
               "type": "uint96"
             }
-          ]
+          ],
+          "kind": "execute",
+          "name": "V4_BURN_COMPACT",
+          "opcode": "0x59"
         },
         {
-          "opcode": "0xff",
-          "name": "BEGIN_EXECUTION",
+          "fields": [],
           "kind": "separator",
-          "fields": []
+          "name": "BEGIN_EXECUTION",
+          "opcode": "0xff"
         }
       ]
     },
     "config": {
-      "type": "uint256",
       "fields": [
         {
-          "name": "profit_mode",
-          "bits": [
-            0,
-            7
-          ],
           "allowed": [
             1,
             2
           ],
+          "bits": [
+            0,
+            7
+          ],
+          "name": "profit_mode",
           "semantics": "measured balance domain: 1 = physical WETH + native ETH, 2 = PoolManager ERC6909 WETH claims; any other value reverts InvalidProfitMode"
         },
         {
-          "name": "bribe_bips",
           "bits": [
             8,
             23
           ],
+          "name": "bribe_bips",
           "range": [
             0,
             10000
@@ -681,11 +682,11 @@
           "semantics": "bribe as basis points of gross profit, paid after measurement; 0 disables the bribe"
         },
         {
-          "name": "bribe_recipient_idx",
           "bits": [
             24,
             31
           ],
+          "name": "bribe_recipient_idx",
           "range": [
             0,
             31
@@ -693,187 +694,190 @@
           "semantics": "0 = block.coinbase, 1-31 = address-table entry; sentinel indices are refused"
         },
         {
-          "name": "min_profit",
           "bits": [
             32,
             255
           ],
+          "name": "min_profit",
           "semantics": "gross-profit floor in the selected mode; a smaller measurement reverts InsufficientProfit"
         }
-      ]
+      ],
+      "type": "uint256"
     },
     "execute_abi": {
       "function": "execute",
-      "signature": "execute(bytes,uint256)",
-      "selector": "0xab5898e8",
-      "state_mutability": "payable",
       "inputs": [
         {
-          "name": "commands",
-          "type": "bytes",
           "max_length": 288,
-          "semantics": "command stream: [SET_ADDRESS...][0xFF][execution commands], at most max_stream_length bytes"
+          "name": "commands",
+          "semantics": "command stream: [SET_ADDRESS...][0xFF][execution commands], at most max_stream_length bytes",
+          "type": "bytes"
         },
         {
-          "name": "config",
-          "type": "uint256",
           "default": "1",
-          "semantics": "packed config word (see config.fields); the ABI default-argument overload execute(bytes) supplies 1"
+          "name": "config",
+          "semantics": "packed config word (see config.fields); the ABI default-argument overload execute(bytes) supplies 1",
+          "type": "uint256"
         }
       ],
       "returns": {
-        "type": "ExecutionReceipt",
         "fields": [
           {
             "name": "gross_profit",
-            "type": "uint256",
-            "semantics": "selected balance-domain increase after all commands and before bribe payment"
+            "semantics": "selected balance-domain increase after all commands and before bribe payment",
+            "type": "uint256"
           },
           {
             "name": "bribe_paid",
-            "type": "uint256",
-            "semantics": "native ETH actually transferred to the bribe recipient after the available-balance cap"
+            "semantics": "native ETH actually transferred to the bribe recipient after the available-balance cap",
+            "type": "uint256"
           }
-        ]
-      }
-    }
+        ],
+        "type": "ExecutionReceipt"
+      },
+      "selector": "0xab5898e8",
+      "signature": "execute(bytes,uint256)",
+      "state_mutability": "payable"
+    },
+    "max_stream_length": 288,
+    "version": 1
   },
-  "capabilities": [
-    {
-      "id": 1,
-      "name": "address_table",
-      "description": "The preprocessing address table plus the protocol sentinel indices.",
-      "provides": [
-        "SET_ADDRESS"
-      ]
-    },
-    {
-      "id": 2,
-      "name": "v2_swaps",
-      "description": "V2 swap commands: compact (with per-swap fee) and direct (explicit amount, no callback).",
-      "provides": [
-        "V2_SWAP_COMPACT",
-        "V2_SWAP_DIRECT"
-      ]
-    },
-    {
-      "id": 3,
-      "name": "v2_swap_calc",
-      "description": "V2 swap whose output is computed on-chain from the pair reserves and the excess balance.",
-      "provides": [
-        "V2_SWAP_CALC"
-      ]
-    },
-    {
-      "id": 4,
-      "name": "v3_swaps",
-      "description": "V3 swap commands, including the direction-baked one-for-zero/zero-for-one variants.",
-      "provides": [
-        "V3_SWAP_COMPACT",
-        "V3_SWAP_DELTA",
-        "V3_SWAP_ONE_FOR_ZERO",
-        "V3_SWAP_ZERO_FOR_ONE"
-      ]
-    },
-    {
-      "id": 5,
-      "name": "v3_dynamic_amounts",
-      "description": "V3 swap whose amount is read from the PoolManager delta instead of the stream.",
-      "provides": [
-        "V3_SWAP_DELTA"
-      ]
-    },
-    {
-      "id": 6,
-      "name": "v4_swaps",
-      "description": "V4 swap commands against the deployment-configured PoolManager.",
-      "provides": [
-        "V4_SWAP_COMPACT",
-        "V4_SWAP_DYNAMIC"
-      ]
-    },
-    {
-      "id": 7,
-      "name": "v4_batch",
-      "description": "Multi-swap V4 batch with a trailing WETH/native auto-settle.",
-      "provides": [
-        "V4_BATCH"
-      ]
-    },
-    {
-      "id": 8,
-      "name": "v4_batch_open_weth",
-      "description": "Multi-swap V4 batch that leaves a positive WETH delta open for a trailing ERC6909 mint.",
-      "provides": [
-        "V4_BATCH_OPEN_WETH"
-      ]
-    },
-    {
-      "id": 9,
-      "name": "v4_dynamic_deltas",
-      "description": "V4 take/settle amounts derived from the PoolManager's own delta storage.",
-      "provides": [
-        "V4_TAKE_DELTA",
-        "V4_SETTLE_DELTA",
-        "V4_SETTLE_ALL"
-      ]
-    },
-    {
-      "id": 10,
-      "name": "erc6909_claims",
-      "description": "ERC6909 claim mint/burn inside the PoolManager.",
-      "provides": [
-        "V4_MINT_COMPACT",
-        "V4_BURN_COMPACT"
-      ]
-    },
-    {
-      "id": 11,
-      "name": "weth_wrap_unwrap",
-      "description": "WETH deposit/withdraw commands, explicit and whole-balance.",
-      "provides": [
-        "WETH_DEPOSIT",
-        "WETH_WITHDRAW",
-        "WETH_DEPOSIT_ALL",
-        "WETH_WITHDRAW_ALL"
-      ]
-    },
-    {
-      "id": 12,
-      "name": "native_transfers",
-      "description": "Native ETH transfer commands, explicit and whole-balance.",
-      "provides": [
-        "SEND_ETH",
-        "SEND_ETH_ALL"
-      ]
-    },
-    {
-      "id": 13,
-      "name": "config_bribe",
-      "description": "The packed config carries a bribe rate and recipient; the contract pays it after measurement.",
-      "provides": []
-    },
-    {
-      "id": 14,
-      "name": "config_min_profit",
-      "description": "The packed config carries a gross-profit floor the contract enforces on-chain.",
-      "provides": []
-    },
-    {
-      "id": 15,
-      "name": "execution_receipt",
-      "description": "execute() returns ExecutionReceipt{gross_profit,bribe_paid} instead of an unchecked scalar.",
-      "provides": []
-    }
-  ],
-  "artifact": {
-    "abi": "tier3-oracle/artifacts/executor/cmd_executor.abi.json",
-    "creation_code": "tier3-oracle/artifacts/executor/cmd_executor.creation.hex",
-    "runtime_code": "tier3-oracle/artifacts/executor/cmd_executor.runtime.hex",
-    "immutables": "tier3-oracle/artifacts/executor/cmd_executor.immutables.json",
-    "error_map": "tier3-oracle/artifacts/executor/cmd_executor.error_map.json",
-    "method_identifiers": "tier3-oracle/artifacts/executor/cmd_executor.method_identifiers.json",
-    "provenance": "tier3-oracle/artifacts/executor/manifest.json",
-    "deployment_form": "creation_code ++ abi_encode(weth, pool_manager, usdc, usdt); the owner is the deployer and the two V4 delta slots are computed in __init__"
-  }
+  "capabilities": {
+    "commitment": "0x9cce6a2d69dbea3b4023e117492ff11aadc2e3feadb28a83faa172fc0823bcbf",
+    "ids": [
+      {
+        "description": "The preprocessing address table plus the protocol sentinel indices.",
+        "id": 1,
+        "name": "address_table",
+        "provides": [
+          "SET_ADDRESS"
+        ]
+      },
+      {
+        "description": "V2 swap commands: compact (with per-swap fee) and direct (explicit amount, no callback).",
+        "id": 2,
+        "name": "v2_swaps",
+        "provides": [
+          "V2_SWAP_COMPACT",
+          "V2_SWAP_DIRECT"
+        ]
+      },
+      {
+        "description": "V2 swap whose output is computed on-chain from the pair reserves and the excess balance.",
+        "id": 3,
+        "name": "v2_swap_calc",
+        "provides": [
+          "V2_SWAP_CALC"
+        ]
+      },
+      {
+        "description": "V3 swap commands, including the direction-baked one-for-zero/zero-for-one variants.",
+        "id": 4,
+        "name": "v3_swaps",
+        "provides": [
+          "V3_SWAP_COMPACT",
+          "V3_SWAP_DELTA",
+          "V3_SWAP_ONE_FOR_ZERO",
+          "V3_SWAP_ZERO_FOR_ONE"
+        ]
+      },
+      {
+        "description": "V3 swap whose amount is read from the PoolManager delta instead of the stream.",
+        "id": 5,
+        "name": "v3_dynamic_amounts",
+        "provides": [
+          "V3_SWAP_DELTA"
+        ]
+      },
+      {
+        "description": "V4 swap commands against the deployment-configured PoolManager.",
+        "id": 6,
+        "name": "v4_swaps",
+        "provides": [
+          "V4_SWAP_COMPACT",
+          "V4_SWAP_DYNAMIC"
+        ]
+      },
+      {
+        "description": "Multi-swap V4 batch with a trailing WETH/native auto-settle.",
+        "id": 7,
+        "name": "v4_batch",
+        "provides": [
+          "V4_BATCH"
+        ]
+      },
+      {
+        "description": "Multi-swap V4 batch that leaves a positive WETH delta open for a trailing ERC6909 mint.",
+        "id": 8,
+        "name": "v4_batch_open_weth",
+        "provides": [
+          "V4_BATCH_OPEN_WETH"
+        ]
+      },
+      {
+        "description": "V4 take/settle amounts derived from the PoolManager's own delta storage.",
+        "id": 9,
+        "name": "v4_dynamic_deltas",
+        "provides": [
+          "V4_TAKE_DELTA",
+          "V4_SETTLE_DELTA",
+          "V4_SETTLE_ALL"
+        ]
+      },
+      {
+        "description": "ERC6909 claim mint/burn inside the PoolManager.",
+        "id": 10,
+        "name": "erc6909_claims",
+        "provides": [
+          "V4_MINT_COMPACT",
+          "V4_BURN_COMPACT"
+        ]
+      },
+      {
+        "description": "WETH deposit/withdraw commands, explicit and whole-balance.",
+        "id": 11,
+        "name": "weth_wrap_unwrap",
+        "provides": [
+          "WETH_DEPOSIT",
+          "WETH_WITHDRAW",
+          "WETH_DEPOSIT_ALL",
+          "WETH_WITHDRAW_ALL"
+        ]
+      },
+      {
+        "description": "Native ETH transfer commands, explicit and whole-balance.",
+        "id": 12,
+        "name": "native_transfers",
+        "provides": [
+          "SEND_ETH",
+          "SEND_ETH_ALL"
+        ]
+      },
+      {
+        "description": "The packed config carries a bribe rate and recipient; the contract pays it after measurement.",
+        "id": 13,
+        "name": "config_bribe",
+        "provides": []
+      },
+      {
+        "description": "The packed config carries a gross-profit floor the contract enforces on-chain.",
+        "id": 14,
+        "name": "config_min_profit",
+        "provides": []
+      },
+      {
+        "description": "execute() returns ExecutionReceipt{gross_profit,bribe_paid} instead of an unchecked scalar.",
+        "id": 15,
+        "name": "execution_receipt",
+        "provides": []
+      }
+    ],
+    "scheme": "degenbot/cmd_executor/capabilities/v1"
+  },
+  "protocol": {
+    "major": 1,
+    "minor": 0
+  },
+  "release_id": "cmd_executor/2",
+  "schema_version": 2
 }

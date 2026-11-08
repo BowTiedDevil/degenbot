@@ -144,10 +144,10 @@ def execute(commands: Bytes[288], config: uint256 = 1) -> ExecutionReceipt
 def sweep(destination: address)
 
 # Release metadata — pure constant returns, no storage, no constructor argument
-def release_id() -> bytes32              # NUL-padded ASCII tag: "cmd_executor/1"
+def release_id() -> bytes32              # NUL-padded ASCII tag: "cmd_executor/2"
 def protocol_major() -> uint32           # bounded dispatch unit
 def call_encoding_version() -> uint32    # versions stream + config + execute ABI together
-def capabilities() -> DynArray[uint32, 32]
+def capabilities_hash() -> bytes32       # commitment to the declared capability ID list
 ```
 
 `config = (min_profit << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | profit_mode`.

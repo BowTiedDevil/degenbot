@@ -9,7 +9,7 @@
 //!
 //! - **On-chain**: the deployed contract answers four pure getters —
 //!   `release_id()`, `protocol_major()`, `call_encoding_version()`, and
-//!   `capabilities()`. They return compile-time constants, so a deployment
+//!   `capabilities_hash()`. They return compile-time constants, so a deployment
 //!   declares its release without a proxy, an upgrade path, or an extra
 //!   constructor argument. The decoders in this module are strict: an absent,
 //!   short, malformed, or self-contradictory answer is an error, never a
@@ -26,7 +26,7 @@
 //!
 //! # Release identity is not artifact integrity
 //!
-//! A release is named by its declared tag (`"cmd_executor/1"`), never by a
+//! A release is named by its declared tag (`"cmd_executor/2"`), never by a
 //! whole-bytecode hash: Vyper immutables (owner, WETH, PoolManager, USDC, USDT,
 //! and the two precomputed V4 delta slots) differ per deployment, so two
 //! faithful deployments of one release have different runtime code. Artifact
@@ -34,12 +34,18 @@
 //! `tier3-oracle/artifacts/executor/manifest.json`, which the release manifest
 //! *references* (`artifact.provenance`) rather than absorbs.
 //!
-//! # Unknown capability IDs survive
+//! # The capability set is one commitment on chain, one list off chain
 //!
-//! [`CapabilityId`] is an opaque `u32`. An ID this build does not know decodes
-//! verbatim and stays in the [`CapabilitySet`]; only the manifest can name it.
-//! Collapsing the set to a boolean, or to an enum that rejects future IDs,
-//! would make every new capability a breaking change for every reader.
+//! The deployment answers one `bytes32` ([`CapabilityCommitment`]) instead of a
+//! `uint32[]`: the chain states only that it agrees with a whole set, and the
+//! manifest carries the set itself. The commitment is derived, never trusted —
+//! [`ReleaseManifest::validate`] recomputes it from the manifest's own IDs and
+//! refuses a manifest whose two halves disagree, and binding compares the word
+//! the deployment answered against the manifest ([`ReleaseMismatch`]).
+//!
+//! A commitment is `bytes32`, so every well-formed word decodes: syntax and
+//! agreement are separate decisions, which is what keeps a wrong declaration a
+//! refusal at binding rather than a decode error here.
 //!
 //! # Getterless deployments
 //!
@@ -48,14 +54,29 @@
 //! names such a deployment only through an operator-provided
 //! [`LegacyReleaseMapping`], and otherwise reports [`DeploymentRelease::Unknown`].
 
-use alloy::primitives::{keccak256, Address};
+use alloy::primitives::{keccak256, Address, U256};
 use serde::Deserialize;
 
-/// The current release's ASCII tag (`cmd_executor/1`), as declared on-chain.
-pub const RELEASE_ID_TAG: &str = "cmd_executor/1";
+/// The current release's ASCII tag (`cmd_executor/2`), as declared on-chain.
+///
+/// The tag moved with the capability getter (ADR-099 D5): the metadata ABI is
+/// part of what a deployment declares, so replacing `capabilities()` with
+/// `capabilities_hash()` is a release change. The protocol major and the call
+/// encoding version did not move, because the wire did not.
+pub const RELEASE_ID_TAG: &str = "cmd_executor/2";
 
 /// The committed release manifest for [`RELEASE_ID_TAG`].
-pub const RELEASE_MANIFEST_V1: &str = include_str!("../releases/cmd_executor.v1.json");
+pub const RELEASE_MANIFEST_V2: &str = include_str!("../releases/cmd_executor.v2.json");
+
+/// The preimage prefix of a [`CapabilityCommitment`], verbatim.
+///
+/// A manifest's capability block names this string and nothing else: the scheme
+/// is a constant of the format, not a free-text note, so validation refuses any
+/// other value.
+pub const CAPABILITY_COMMITMENT_SCHEME: &str = "degenbot/cmd_executor/capabilities/v1";
+
+/// The manifest schema version this build understands.
+pub const MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 /// The protocol majors this build can dispatch, in ascending order.
 ///
@@ -63,10 +84,6 @@ pub const RELEASE_MANIFEST_V1: &str = include_str!("../releases/cmd_executor.v1.
 /// the newest encoder. Multi-major support grows this set and adds one manifest
 /// per major — no generic crate changes (ADR-098 D4/D5).
 pub const SUPPORTED_PROTOCOL_MAJORS: &[u32] = &[1];
-
-/// The largest capability-ID list the contract can return
-/// (`MAX_CAPABILITY_IDS` in `cmd_executor.vy`).
-pub const MAX_CAPABILITY_IDS: usize = 32;
 
 // ── Identity primitives ────────────────────────────────────────────────────
 
@@ -223,6 +240,94 @@ impl CallEncodingVersion {
     }
 }
 
+/// A commitment to one release's declared capability ID list.
+///
+/// One `bytes32`, derived off chain and declared verbatim on chain (ADR-099):
+///
+/// ```text
+/// commitment = keccak256( ascii("degenbot/cmd_executor/capabilities/v1")
+///                         ++ abi.encode(uint32[] ids) )
+/// ```
+///
+/// The preimage is the exact byte sequence the retired `capabilities()` getter
+/// answered, which makes the cutover auditable, and it is self-delimiting (the
+/// ABI length word fixes the element count) and injective over the declared
+/// list. The type carries no arithmetic, no ordering, and no default: it is a
+/// claim to compare, never a number to compute with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CapabilityCommitment([u8; 32]);
+
+impl CapabilityCommitment {
+    /// Read a commitment verbatim from an on-chain `bytes32` word.
+    ///
+    /// Every 32-byte word is syntactically a commitment: whether it names the
+    /// release at hand is [`ReleaseManifest::check_metadata`]'s decision, not
+    /// the decoder's.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Derive the commitment for a declared ID list.
+    ///
+    /// `ids` is the declared list in ascending, unique, non-zero order — the
+    /// order manifest validation already enforces, so a manifest whose array is
+    /// unsorted is refused rather than silently re-canonicalized here.
+    #[must_use]
+    pub fn derive(ids: &[u32]) -> Self {
+        let mut preimage =
+            Vec::with_capacity(CAPABILITY_COMMITMENT_SCHEME.len() + 64 + 32 * ids.len());
+        preimage.extend_from_slice(CAPABILITY_COMMITMENT_SCHEME.as_bytes());
+        // The canonical ABI encoding of a `uint32[]`: one offset word, one
+        // length word, then one zero-padded big-endian word per ID.
+        preimage.extend_from_slice(&U256::from(32u64).to_be_bytes::<32>());
+        let count = u64::try_from(ids.len()).unwrap_or(u64::MAX);
+        preimage.extend_from_slice(&U256::from(count).to_be_bytes::<32>());
+        for id in ids {
+            preimage.extend_from_slice(&U256::from(*id).to_be_bytes::<32>());
+        }
+        Self(keccak256(preimage).0)
+    }
+
+    /// The raw `bytes32` word, exactly as the contract returns it.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Whether the word is all zeros — the shape no release can declare, since
+    /// the ID list is never empty.
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        self.0.iter().all(|byte| *byte == 0)
+    }
+}
+
+impl std::fmt::Display for CapabilityCommitment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "0x{}", alloy::hex::encode(self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for CapabilityCommitment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        let body = raw.strip_prefix("0x").ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "capability commitment {raw:?} is not 0x-prefixed hex"
+            ))
+        })?;
+        let bytes = alloy::hex::decode(body).map_err(serde::de::Error::custom)?;
+        let word: [u8; 32] = bytes.try_into().map_err(|_| {
+            serde::de::Error::custom(format!("capability commitment {raw:?} is not 32 bytes"))
+        })?;
+        Ok(Self(word))
+    }
+}
+
 /// An opaque capability identifier declared by a deployment.
 ///
 /// Deliberately not an enum: an ID this build does not know must survive
@@ -322,41 +427,6 @@ pub mod capability {
     }
 }
 
-/// An ordered capability-ID list as the deployment declares it.
-///
-/// Order is preserved and duplicates are preserved by construction; the strict
-/// decoder rejects duplicates and non-ascending order, so a set that came off
-/// chain is a faithful copy of the declaration.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CapabilitySet {
-    ids: Vec<CapabilityId>,
-}
-
-impl CapabilitySet {
-    /// Build a set from declared IDs, preserving order and duplicates.
-    #[must_use]
-    pub fn from_ids(ids: &[CapabilityId]) -> Self {
-        Self { ids: ids.to_vec() }
-    }
-
-    /// The declared IDs, in declaration order.
-    #[must_use]
-    pub fn ids(&self) -> &[CapabilityId] {
-        &self.ids
-    }
-
-    /// Whether the deployment declared this ID.
-    #[must_use]
-    pub fn contains(&self, id: CapabilityId) -> bool {
-        self.ids.contains(&id)
-    }
-
-    /// The declared IDs as raw values.
-    pub fn raw_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.ids.iter().map(|id| id.0)
-    }
-}
-
 // ── On-chain metadata ──────────────────────────────────────────────────────
 
 /// What a deployment declared through its metadata getters.
@@ -368,8 +438,11 @@ pub struct ExecutorMetadata {
     pub protocol_major: ProtocolMajor,
     /// The declared version of the whole call encoding.
     pub call_encoding_version: CallEncodingVersion,
-    /// The declared capability IDs, including any this build cannot name.
-    pub capabilities: CapabilitySet,
+    /// The commitment to the declared capability ID list.
+    ///
+    /// The list itself lives in the release manifest; this word is the
+    /// deployment's whole-set claim about it.
+    pub capabilities_commitment: CapabilityCommitment,
 }
 
 /// One metadata getter's raw `eth_call` outcome.
@@ -395,6 +468,18 @@ impl GetterOutcome<'_> {
     }
 }
 
+/// The four getter names, in declaration order.
+///
+/// [`degenbot_executor::discovery`](crate::discovery)'s getter table carries the
+/// matching signatures and selectors; the names are shared so a partially
+/// declaring deployment can name the getters that stayed silent.
+pub const METADATA_GETTER_NAMES: [&str; 4] = [
+    "release_id",
+    "protocol_major",
+    "call_encoding_version",
+    "capabilities_hash",
+];
+
 /// The four getter outcomes for one deployment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GetterObservations<'a> {
@@ -404,8 +489,8 @@ pub struct GetterObservations<'a> {
     pub protocol_major: GetterOutcome<'a>,
     /// `call_encoding_version()` return data.
     pub call_encoding_version: GetterOutcome<'a>,
-    /// `capabilities()` return data.
-    pub capabilities: GetterOutcome<'a>,
+    /// `capabilities_hash()` return data.
+    pub capabilities_hash: GetterOutcome<'a>,
 }
 
 impl<'a> GetterObservations<'a> {
@@ -416,7 +501,7 @@ impl<'a> GetterObservations<'a> {
             release_id: GetterOutcome::Absent,
             protocol_major: GetterOutcome::Absent,
             call_encoding_version: GetterOutcome::Absent,
-            capabilities: GetterOutcome::Absent,
+            capabilities_hash: GetterOutcome::Absent,
         }
     }
 
@@ -426,13 +511,13 @@ impl<'a> GetterObservations<'a> {
         release_id: Option<&'a [u8]>,
         protocol_major: Option<&'a [u8]>,
         call_encoding_version: Option<&'a [u8]>,
-        capabilities: Option<&'a [u8]>,
+        capabilities_hash: Option<&'a [u8]>,
     ) -> Self {
         Self {
             release_id: answered(release_id),
             protocol_major: answered(protocol_major),
             call_encoding_version: answered(call_encoding_version),
-            capabilities: answered(capabilities),
+            capabilities_hash: answered(capabilities_hash),
         }
     }
 
@@ -449,10 +534,40 @@ impl<'a> GetterObservations<'a> {
         if self.call_encoding_version.data().is_some() {
             answered += 1;
         }
-        if self.capabilities.data().is_some() {
+        if self.capabilities_hash.data().is_some() {
             answered += 1;
         }
         answered
+    }
+
+    /// The getters that stayed silent, in declaration order.
+    ///
+    /// A partial declaration names what it is missing: `capabilities_hash()`
+    /// absent is the signature of a deployment built before the cutover, and
+    /// saying so is what makes the refusal diagnosable.
+    #[must_use]
+    pub fn absent_getters(&self) -> Vec<&'static str> {
+        let outcomes = [
+            self.release_id,
+            self.protocol_major,
+            self.call_encoding_version,
+            self.capabilities_hash,
+        ];
+        METADATA_GETTER_NAMES
+            .iter()
+            .zip(outcomes)
+            .filter(|(_, outcome)| outcome.data().is_none())
+            .map(|(name, _)| *name)
+            .collect()
+    }
+
+    /// The partial-answer refusal for this observation set.
+    #[must_use]
+    pub fn partial_answers(&self) -> MetadataDecodeError {
+        MetadataDecodeError::PartialAnswers {
+            answered: self.answered_count(),
+            absent: self.absent_getters(),
+        }
     }
 }
 
@@ -499,29 +614,20 @@ pub enum MetadataDecodeError {
         /// The getter that declared zero.
         getter: &'static str,
     },
-    /// More capability IDs than the contract can return.
-    #[error("capabilities() declared {count} IDs, above the {max} the contract can return")]
-    TooManyCapabilities {
-        /// The declared count.
-        count: usize,
-        /// The contract's ABI bound.
-        max: usize,
-    },
-    /// Duplicate or descending capability IDs.
-    #[error(
-        "capabilities() declared ID {id} after {previous}: the list must be ascending and unique"
-    )]
-    UnorderedCapabilities {
-        /// The ID of the preceding element.
-        previous: u32,
-        /// The out-of-order ID.
-        id: u32,
-    },
     /// Some getters answered and some did not.
-    #[error("only {answered} of 4 metadata getters answered; a deployment that declares a partial identity is neither declared nor getterless")]
+    ///
+    /// The absent names are part of the diagnostic: a deployment that answers
+    /// three of four getters is a contradiction to investigate, and which one
+    /// stayed silent is what identifies it.
+    #[error(
+        "only {answered} of 4 metadata getters answered (absent: {absent:?}); a deployment that \
+         declares a partial identity is neither declared nor getterless"
+    )]
     PartialAnswers {
         /// How many getters answered.
         answered: usize,
+        /// The getters that stayed silent, in declaration order.
+        absent: Vec<&'static str>,
     },
 }
 
@@ -573,70 +679,26 @@ pub fn decode_call_encoding_version(
     Ok(CallEncodingVersion::new(raw))
 }
 
-/// Decode `capabilities()` return data: a canonical ABI `uint32[]`.
+/// Decode `capabilities_hash()` return data: one ABI `bytes32`.
 ///
-/// The decode is exact: one offset word of 32, one length word, `length`
-/// element words, and nothing else. Unknown IDs are preserved verbatim.
+/// Every 32-byte word is syntactically a commitment, so there is no range check
+/// and no high-byte check. Agreement is the release's decision
+/// ([`ReleaseManifest::check_metadata`]), not the decoder's: a well-formed word
+/// that names a different list is a mismatch at binding, never a decode error.
 ///
 /// # Errors
 ///
-/// Returns [`MetadataDecodeError::Length`] for short data, non-canonical
-/// trailing data, or a length that disagrees with the payload;
-/// [`MetadataDecodeError::OutOfRange`] for a non-canonical head or an element
-/// above `u32`; [`MetadataDecodeError::TooManyCapabilities`] above the contract
-/// bound; [`MetadataDecodeError::Zero`] for an empty list or a zero ID; and
-/// [`MetadataDecodeError::UnorderedCapabilities`] for a duplicate or descending
-/// ID.
-pub fn decode_capabilities(data: &[u8]) -> Result<CapabilitySet, MetadataDecodeError> {
-    const GETTER: &str = "capabilities";
-    if data.len() < 64 {
-        return Err(MetadataDecodeError::Length {
-            getter: GETTER,
-            expected: 64,
-            actual: data.len(),
-        });
-    }
-    let offset = element_u32(GETTER, &data[..32], "the dynamic-array offset")?;
-    if offset != 32 {
-        return Err(MetadataDecodeError::OutOfRange {
-            getter: GETTER,
-            detail: format!("the dynamic-array offset is {offset}, expected 32"),
-        });
-    }
-    let count = element_u32(GETTER, &data[32..64], "the array length")? as usize;
-    if count == 0 {
+/// Returns [`MetadataDecodeError::Length`] unless the data is exactly one ABI
+/// word, and [`MetadataDecodeError::Zero`] for a zero word — no release declares
+/// an empty capability list, so no valid commitment is zero.
+pub fn decode_capabilities_hash(data: &[u8]) -> Result<CapabilityCommitment, MetadataDecodeError> {
+    const GETTER: &str = "capabilities_hash";
+    let word = abi_word(GETTER, data)?;
+    let commitment = CapabilityCommitment::from_bytes(word);
+    if commitment.is_zero() {
         return Err(MetadataDecodeError::Zero { getter: GETTER });
     }
-    if count > MAX_CAPABILITY_IDS {
-        return Err(MetadataDecodeError::TooManyCapabilities {
-            count,
-            max: MAX_CAPABILITY_IDS,
-        });
-    }
-    let expected = 64 + 32 * count;
-    if data.len() != expected {
-        return Err(MetadataDecodeError::Length {
-            getter: GETTER,
-            expected,
-            actual: data.len(),
-        });
-    }
-    let mut ids = Vec::with_capacity(count);
-    for element in data[64..].as_chunks::<32>().0 {
-        let id = element_u32(GETTER, element, "a capability ID")?;
-        if id == 0 {
-            return Err(MetadataDecodeError::Zero { getter: GETTER });
-        }
-        if let Some(previous) = ids.last().copied() {
-            if id <= previous {
-                return Err(MetadataDecodeError::UnorderedCapabilities { previous, id });
-            }
-        }
-        ids.push(id);
-    }
-    Ok(CapabilitySet::from_ids(
-        &ids.into_iter().map(CapabilityId::new).collect::<Vec<_>>(),
-    ))
+    Ok(commitment)
 }
 
 /// Decode all four getter outcomes into one identity declaration.
@@ -651,27 +713,27 @@ pub fn decode_metadata(
 ) -> Result<ExecutorMetadata, MetadataDecodeError> {
     let answered = observations.answered_count();
     if answered != 4 {
-        return Err(MetadataDecodeError::PartialAnswers { answered });
+        return Err(observations.partial_answers());
     }
     let (
         GetterOutcome::Answered(release_id),
         GetterOutcome::Answered(protocol_major),
         GetterOutcome::Answered(call_encoding_version),
-        GetterOutcome::Answered(capabilities),
+        GetterOutcome::Answered(capabilities_hash),
     ) = (
         observations.release_id,
         observations.protocol_major,
         observations.call_encoding_version,
-        observations.capabilities,
+        observations.capabilities_hash,
     )
     else {
-        return Err(MetadataDecodeError::PartialAnswers { answered });
+        return Err(observations.partial_answers());
     };
     Ok(ExecutorMetadata {
         release: decode_release_id(release_id)?,
         protocol_major: decode_protocol_major(protocol_major)?,
         call_encoding_version: decode_call_encoding_version(call_encoding_version)?,
-        capabilities: decode_capabilities(capabilities)?,
+        capabilities_commitment: decode_capabilities_hash(capabilities_hash)?,
     })
 }
 
@@ -802,7 +864,7 @@ pub fn classify_deployment(
                 None => DeploymentRelease::Unknown,
             },
         ),
-        answered => Err(MetadataDecodeError::PartialAnswers { answered }),
+        _ => Err(observations.partial_answers()),
     }
 }
 
@@ -819,7 +881,7 @@ pub fn classify_deployment(
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseManifest {
-    /// Manifest schema version (this build understands 1).
+    /// Manifest schema version (this build understands 2).
     pub schema_version: u32,
     /// The declared release tag, matching `release_id()`.
     pub release_id: String,
@@ -827,10 +889,29 @@ pub struct ReleaseManifest {
     pub protocol: ProtocolDeclaration,
     /// The complete call encoding.
     pub call_encoding: CallEncoding,
-    /// The capability names behind the on-chain IDs.
-    pub capabilities: Vec<CapabilityDeclaration>,
+    /// The complete capability set: its scheme, its commitment, and its IDs.
+    pub capabilities: CapabilitiesDeclaration,
     /// Where the runtime artifact and its provenance live.
     pub artifact: ArtifactDeclaration,
+}
+
+/// The manifest's capability block: the derivation, the expected on-chain word,
+/// and the complete declared list.
+///
+/// The manifest owns the list — unbounded, and the only place a capability
+/// ceiling could ever have applied — while the deployment answers one word. The
+/// two halves check each other: validation recomputes `commitment` from `ids`
+/// and refuses a manifest that disagrees, so a hand edit of either one is
+/// refused instead of shipped.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilitiesDeclaration {
+    /// The preimage prefix this commitment was derived under, verbatim.
+    pub scheme: String,
+    /// The expected on-chain word, recomputed from `ids` at validation.
+    pub commitment: CapabilityCommitment,
+    /// Every declared capability, ascending and unique.
+    pub ids: Vec<CapabilityDeclaration>,
 }
 
 /// The protocol block of a release manifest.
@@ -1093,7 +1174,7 @@ pub enum ManifestError {
     #[error("release manifest is not valid against the schema: {0}")]
     Json(String),
     /// The schema version is not this build's.
-    #[error("release manifest schema_version {0} is not the supported version 1")]
+    #[error("release manifest schema_version {0} is not the schema this build understands")]
     UnsupportedSchemaVersion(u32),
     /// The release tag is not a NUL-padded printable-ASCII tag.
     #[error("release manifest release_id {0:?} is not a NUL-padded printable-ASCII tag")]
@@ -1190,6 +1271,25 @@ pub enum ManifestError {
         /// The offending ID.
         id: u32,
     },
+    /// The capability block names a derivation this format does not use.
+    #[error("capability scheme {declared:?} is not the format's preimage prefix {expected:?}")]
+    CapabilityScheme {
+        /// The declared scheme string.
+        declared: String,
+        /// The one scheme a commitment is derived under.
+        expected: &'static str,
+    },
+    /// The declared commitment disagrees with the manifest's own ID list.
+    #[error(
+        "capability commitment {declared} is not the commitment {derived} that this manifest's own \
+         ids derive: the word and the list must agree"
+    )]
+    CapabilityCommitment {
+        /// The word the manifest declares.
+        declared: CapabilityCommitment,
+        /// The word the manifest's declared IDs derive.
+        derived: CapabilityCommitment,
+    },
     /// A capability names an opcode the grammar does not declare.
     #[error("capability {name:?} names {provided:?}, which the command stream does not declare")]
     UnknownCapabilityOpcode {
@@ -1256,7 +1356,7 @@ impl ReleaseManifest {
     /// including [`ManifestError::UnsupportedProtocolMajor`] when the declared
     /// major is outside `supported_majors`.
     pub fn validate_within(&self, supported_majors: &[u32]) -> Result<(), ManifestError> {
-        if self.schema_version != 1 {
+        if self.schema_version != MANIFEST_SCHEMA_VERSION {
             return Err(ManifestError::UnsupportedSchemaVersion(self.schema_version));
         }
         ReleaseId::from_ascii_tag(&self.release_id)
@@ -1470,22 +1570,21 @@ impl ReleaseManifest {
     }
 
     fn validate_capabilities(&self, opcode_names: &[&str]) -> Result<(), ManifestError> {
-        if self.capabilities.is_empty() {
+        let block = &self.capabilities;
+        if block.scheme != CAPABILITY_COMMITMENT_SCHEME {
+            return Err(ManifestError::CapabilityScheme {
+                declared: block.scheme.clone(),
+                expected: CAPABILITY_COMMITMENT_SCHEME,
+            });
+        }
+        if block.ids.is_empty() {
             return Err(ManifestError::ConfigLayout {
                 detail: "the manifest declares no capabilities".to_owned(),
             });
         }
-        if self.capabilities.len() > MAX_CAPABILITY_IDS {
-            return Err(ManifestError::ConfigLayout {
-                detail: format!(
-                    "{} capabilities declared, above the on-chain bound {MAX_CAPABILITY_IDS}",
-                    self.capabilities.len()
-                ),
-            });
-        }
         let mut previous: Option<u32> = None;
-        let mut names: Vec<&str> = Vec::with_capacity(self.capabilities.len());
-        for capability in &self.capabilities {
+        let mut names: Vec<&str> = Vec::with_capacity(block.ids.len());
+        for capability in &block.ids {
             if capability.id == 0 || previous.is_some_and(|previous| capability.id <= previous) {
                 return Err(ManifestError::UnorderedCapabilities {
                     previous,
@@ -1522,6 +1621,16 @@ impl ReleaseManifest {
                 }
             }
         }
+        // The declared word must be the one its own list derives. A commitment
+        // that agreed with nothing would let a manifest ship an ID list the
+        // chain never declared.
+        let derived = CapabilityCommitment::derive(&self.capability_ids().collect::<Vec<_>>());
+        if derived != block.commitment {
+            return Err(ManifestError::CapabilityCommitment {
+                declared: block.commitment,
+                derived,
+            });
+        }
         Ok(())
     }
 
@@ -1557,8 +1666,23 @@ impl ReleaseManifest {
     #[must_use]
     pub fn capability(&self, id: CapabilityId) -> Option<&CapabilityDeclaration> {
         self.capabilities
+            .ids
             .iter()
             .find(|capability| capability.id == id.get())
+    }
+
+    /// Every declared capability ID, in declaration order.
+    pub fn capability_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.capabilities.ids.iter().map(|declared| declared.id)
+    }
+
+    /// The commitment the manifest declares.
+    ///
+    /// Validated against [`Self::capability_ids`] when the manifest was parsed,
+    /// so the two can never be read as disagreeing.
+    #[must_use]
+    pub const fn capability_commitment(&self) -> CapabilityCommitment {
+        self.capabilities.commitment
     }
 
     /// The declared opcode, if this manifest declares it.
@@ -1603,13 +1727,7 @@ impl ReleaseManifest {
                 .map_err(|_| ManifestError::MalformedReleaseId(self.release_id.clone()))?,
             protocol_major: ProtocolMajor::new(self.protocol.major),
             call_encoding_version: CallEncodingVersion::new(self.call_encoding.version),
-            capabilities: CapabilitySet::from_ids(
-                &self
-                    .capabilities
-                    .iter()
-                    .map(|capability| CapabilityId::new(capability.id))
-                    .collect::<Vec<_>>(),
-            ),
+            capabilities_commitment: self.capability_commitment(),
         })
     }
 
@@ -1663,15 +1781,11 @@ impl ReleaseManifest {
                 observed: observed.call_encoding_version.get(),
             });
         }
-        let declared: Vec<CapabilityId> = self
-            .capabilities
-            .iter()
-            .map(|capability| CapabilityId::new(capability.id))
-            .collect();
-        if observed.capabilities.ids() != declared.as_slice() {
-            return Err(ReleaseMismatch::Capabilities {
-                declared,
-                observed: observed.capabilities.ids().to_vec(),
+        if observed.capabilities_commitment != self.capability_commitment() {
+            return Err(ReleaseMismatch::CapabilityCommitment {
+                release: self.release_id.clone(),
+                declared: self.capability_commitment(),
+                observed: observed.capabilities_commitment,
             });
         }
         Ok(())
@@ -1714,19 +1828,31 @@ pub enum ReleaseMismatch {
         /// The deployment's version.
         observed: u32,
     },
-    /// The capability sets differ.
-    #[error("deployment declares capabilities {observed:?}, manifest describes {declared:?}")]
-    Capabilities {
-        /// The manifest's IDs.
-        declared: Vec<CapabilityId>,
-        /// The deployment's IDs.
-        observed: Vec<CapabilityId>,
+    /// The capability commitments differ.
+    ///
+    /// A mismatch is dispositive: the deployment declared a set other than the
+    /// one `release`'s manifest lists. Its ID list lives in that manifest
+    /// (`capabilities.ids`), since the chain no longer answers one; a superset
+    /// declaration (one extra ID) and a subset (one missing ID) are the same
+    /// refusal.
+    #[error(
+        "deployment declares capability commitment {observed}, but release {release:?}'s manifest \
+         derives {declared} from its capabilities.ids: diff the deployment's declared ID list \
+         against that manifest"
+    )]
+    CapabilityCommitment {
+        /// The release the deployment named.
+        release: String,
+        /// The commitment the manifest's declared IDs derive.
+        declared: CapabilityCommitment,
+        /// The commitment the deployment answered.
+        observed: CapabilityCommitment,
     },
 }
 
 /// Every built-in release manifest source, in declaration order.
 pub fn built_in_release_sources() -> impl Iterator<Item = &'static str> {
-    [RELEASE_MANIFEST_V1].into_iter()
+    [RELEASE_MANIFEST_V2].into_iter()
 }
 
 /// Look up a built-in release manifest by its declared tag.
@@ -1934,8 +2060,16 @@ mod tests {
     /// in `tests/executor/test_release_metadata.py` cross-check instead.
     const CONTRACT_ONLY_OPCODES: &[&str] = &["V3_SWAP_ONE_FOR_ZERO", "V3_SWAP_ZERO_FOR_ONE"];
 
+    /// The commitment the shipped release declares, pinned as a golden.
+    ///
+    /// Derived from `ids = 1..=15` with the ADR-099 preimage; the manifest, the
+    /// Vyper source's `CAPABILITIES_HASH`, and the deployed getter all agree on
+    /// it.
+    const CURRENT_COMMITMENT: &str =
+        "0x9cce6a2d69dbea3b4023e117492ff11aadc2e3feadb28a83faa172fc0823bcbf";
+
     fn current_manifest() -> ReleaseManifest {
-        ReleaseManifest::parse(RELEASE_MANIFEST_V1).expect("committed release manifest validates")
+        ReleaseManifest::parse(RELEASE_MANIFEST_V2).expect("committed release manifest validates")
     }
 
     /// One ABI word holding `value`.
@@ -1947,13 +2081,35 @@ mod tests {
         ReleaseId::from_ascii_tag(tag).unwrap().as_bytes().to_vec()
     }
 
-    fn capabilities_array(ids: &[u32]) -> Vec<u8> {
-        let mut out = word(32);
-        out.extend(word(u64::try_from(ids.len()).unwrap()));
-        for id in ids {
-            out.extend(word(u64::from(*id)));
-        }
-        out
+    fn commitment_word(commitment: &CapabilityCommitment) -> Vec<u8> {
+        commitment.as_bytes().to_vec()
+    }
+
+    /// A manifest derived from the committed one, mutated and re-parsed.
+    fn mutate_manifest(mutate: impl FnOnce(&mut Value)) -> Result<ReleaseManifest, ManifestError> {
+        let mut value: Value = serde_json::from_str(RELEASE_MANIFEST_V2).unwrap();
+        mutate(&mut value);
+        ReleaseManifest::parse(&value.to_string())
+    }
+
+    /// A manifest declaring `ids` (a complete capability list) with its
+    /// commitment re-derived, so validation reaches the rules under test.
+    fn manifest_with_ids(ids: &[u32]) -> ReleaseManifest {
+        let mut value: Value = serde_json::from_str(RELEASE_MANIFEST_V2).unwrap();
+        let declared: Vec<Value> = ids
+            .iter()
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "name": format!("capability_{id}"),
+                    "description": format!("declared capability {id}"),
+                    "provides": [],
+                })
+            })
+            .collect();
+        value["capabilities"]["ids"] = Value::Array(declared);
+        value["capabilities"]["commitment"] = json!(CapabilityCommitment::derive(ids).to_string());
+        ReleaseManifest::parse(&value.to_string()).expect("the derived manifest validates")
     }
 
     /// The four getter answers a faithful deployment of the current release
@@ -1962,7 +2118,7 @@ mod tests {
         release_id: Vec<u8>,
         protocol_major: Vec<u8>,
         call_encoding_version: Vec<u8>,
-        capabilities: Vec<u8>,
+        capabilities_hash: Vec<u8>,
     }
 
     impl Answers {
@@ -1972,13 +2128,7 @@ mod tests {
                 release_id: tag_word(&manifest.release_id),
                 protocol_major: word(u64::from(manifest.protocol.major)),
                 call_encoding_version: word(u64::from(manifest.call_encoding.version)),
-                capabilities: capabilities_array(
-                    &manifest
-                        .capabilities
-                        .iter()
-                        .map(|capability| capability.id)
-                        .collect::<Vec<_>>(),
-                ),
+                capabilities_hash: commitment_word(&manifest.capability_commitment()),
             }
         }
 
@@ -1987,7 +2137,7 @@ mod tests {
                 Some(&self.release_id),
                 Some(&self.protocol_major),
                 Some(&self.call_encoding_version),
-                Some(&self.capabilities),
+                Some(&self.capabilities_hash),
             )
         }
     }
@@ -2005,8 +2155,8 @@ mod tests {
         assert_eq!(decoded.protocol_major.get(), 1);
         assert_eq!(decoded.call_encoding_version.get(), 1);
         assert_eq!(
-            decoded.capabilities.raw_ids().collect::<Vec<_>>(),
-            (1..=15).collect::<Vec<_>>()
+            decoded.capabilities_commitment.to_string(),
+            CURRENT_COMMITMENT
         );
         // The manifest describes exactly what the getters declared.
         manifest.check_metadata(&decoded).unwrap();
@@ -2054,14 +2204,46 @@ mod tests {
     fn absent_getters_are_never_a_declaration() {
         assert_eq!(
             decode_metadata(GetterObservations::all_absent()).unwrap_err(),
-            MetadataDecodeError::PartialAnswers { answered: 0 }
+            MetadataDecodeError::PartialAnswers {
+                answered: 0,
+                absent: METADATA_GETTER_NAMES.to_vec(),
+            }
         );
         let answers = Answers::declared();
         let partial =
             GetterObservations::from_parts(None, Some(&answers.protocol_major), None, None);
         assert_eq!(
             decode_metadata(partial).unwrap_err(),
-            MetadataDecodeError::PartialAnswers { answered: 1 }
+            MetadataDecodeError::PartialAnswers {
+                answered: 1,
+                absent: vec!["release_id", "call_encoding_version", "capabilities_hash"],
+            }
+        );
+    }
+
+    #[test]
+    fn partial_answers_name_the_getters_that_stayed_silent() {
+        // The pre-cutover shape: a deployment built before ADR-099 answers the
+        // three unchanged getters and has no `capabilities_hash()`.
+        let answers = Answers::declared();
+        let pre_cutover = GetterObservations::from_parts(
+            Some(&answers.release_id),
+            Some(&answers.protocol_major),
+            Some(&answers.call_encoding_version),
+            None,
+        );
+
+        let error = decode_metadata(pre_cutover).unwrap_err();
+        assert_eq!(
+            error,
+            MetadataDecodeError::PartialAnswers {
+                answered: 3,
+                absent: vec!["capabilities_hash"],
+            }
+        );
+        assert!(
+            error.to_string().contains("capabilities_hash"),
+            "the refusal must name the absent getter: {error}"
         );
     }
 
@@ -2091,24 +2273,6 @@ mod tests {
                 getter: "protocol_major",
                 expected: 32,
                 actual: 0,
-            }
-        );
-        assert_eq!(
-            decode_capabilities(&word(32)).unwrap_err(),
-            MetadataDecodeError::Length {
-                getter: "capabilities",
-                expected: 64,
-                actual: 32,
-            }
-        );
-        let mut trailing = capabilities_array(&[1, 2]);
-        trailing.push(0);
-        assert_eq!(
-            decode_capabilities(&trailing).unwrap_err(),
-            MetadataDecodeError::Length {
-                getter: "capabilities",
-                expected: 128,
-                actual: 129,
             }
         );
     }
@@ -2144,76 +2308,63 @@ mod tests {
     }
 
     #[test]
-    fn capability_array_shape_is_strict() {
-        // Non-canonical head offset.
-        let mut shifted = capabilities_array(&[1]);
-        shifted[..32].copy_from_slice(&word(64));
-        assert!(matches!(
-            decode_capabilities(&shifted),
-            Err(MetadataDecodeError::OutOfRange { .. })
-        ));
+    fn decode_capabilities_hash_rejects_short_long_and_zero_words() {
+        let commitment = current_manifest().capability_commitment();
 
-        // Above the contract's ABI bound.
-        let over_bound = capabilities_array(&(1..=33).collect::<Vec<_>>());
+        // Exactly 32 bytes decodes verbatim.
         assert_eq!(
-            decode_capabilities(&over_bound).unwrap_err(),
-            MetadataDecodeError::TooManyCapabilities {
-                count: 33,
-                max: MAX_CAPABILITY_IDS,
+            decode_capabilities_hash(commitment.as_bytes()).unwrap(),
+            commitment
+        );
+
+        // 31 and 33 bytes are not a `bytes32`.
+        assert_eq!(
+            decode_capabilities_hash(&commitment.as_bytes()[..31]).unwrap_err(),
+            MetadataDecodeError::Length {
+                getter: "capabilities_hash",
+                expected: 32,
+                actual: 31,
+            }
+        );
+        let mut trailing = commitment.as_bytes().to_vec();
+        trailing.push(0);
+        assert_eq!(
+            decode_capabilities_hash(&trailing).unwrap_err(),
+            MetadataDecodeError::Length {
+                getter: "capabilities_hash",
+                expected: 32,
+                actual: 33,
             }
         );
 
-        // An empty declaration names nothing.
+        // A zero word names no list: every release declares at least one ID, so
+        // no valid commitment is zero.
         assert_eq!(
-            decode_capabilities(&capabilities_array(&[])).unwrap_err(),
+            decode_capabilities_hash(&[0u8; 32]).unwrap_err(),
             MetadataDecodeError::Zero {
-                getter: "capabilities"
+                getter: "capabilities_hash"
             }
         );
-
-        // Duplicate and descending IDs both break the declared order.
-        assert_eq!(
-            decode_capabilities(&capabilities_array(&[1, 1])).unwrap_err(),
-            MetadataDecodeError::UnorderedCapabilities { previous: 1, id: 1 }
-        );
-        assert_eq!(
-            decode_capabilities(&capabilities_array(&[2, 1])).unwrap_err(),
-            MetadataDecodeError::UnorderedCapabilities { previous: 2, id: 1 }
-        );
-
-        // A zero ID names no capability.
-        assert_eq!(
-            decode_capabilities(&capabilities_array(&[0])).unwrap_err(),
-            MetadataDecodeError::Zero {
-                getter: "capabilities"
-            }
-        );
-
-        // A non-canonical element word.
-        let mut dirty = capabilities_array(&[1]);
-        dirty[64] = 1;
-        assert!(matches!(
-            decode_capabilities(&dirty),
-            Err(MetadataDecodeError::OutOfRange { .. })
-        ));
     }
 
     #[test]
-    fn unknown_capability_ids_survive_verbatim() {
-        let declared = [1, 4242, u32::MAX];
-        let set = decode_capabilities(&capabilities_array(&declared)).unwrap();
+    fn a_well_formed_but_wrong_commitment_is_a_mismatch_not_a_decode_error() {
+        // Any 32-byte word is syntactically a commitment: the decoder keeps it
+        // verbatim, and agreement is the release's check.
+        let other = CapabilityCommitment::derive(&[1, 2, 3]);
+        assert_eq!(decode_capabilities_hash(other.as_bytes()).unwrap(), other);
 
-        assert_eq!(set.raw_ids().collect::<Vec<_>>(), declared);
-        assert!(set.contains(CapabilityId::new(4242)));
-        assert_eq!(CapabilityId::new(u32::MAX).get(), u32::MAX);
-
-        // The manifest names a capability only when it knows the ID; an unknown
-        // ID is preserved, not refused.
         let manifest = current_manifest();
-        assert!(manifest.capability(CapabilityId::new(4242)).is_none());
+        let declared = manifest.declared_metadata().unwrap();
+        let mut wrong = declared.clone();
+        wrong.capabilities_commitment = other;
         assert_eq!(
-            manifest.capability(CapabilityId::new(1)).unwrap().name,
-            "address_table"
+            manifest.check_metadata(&wrong).unwrap_err(),
+            ReleaseMismatch::CapabilityCommitment {
+                release: RELEASE_ID_TAG.to_owned(),
+                declared: manifest.capability_commitment(),
+                observed: other,
+            }
         );
     }
 
@@ -2269,7 +2420,10 @@ mod tests {
         );
         assert_eq!(
             classify_deployment(deployment, partial, Some(&mapping)).unwrap_err(),
-            MetadataDecodeError::PartialAnswers { answered: 3 }
+            MetadataDecodeError::PartialAnswers {
+                answered: 3,
+                absent: vec!["capabilities_hash"],
+            }
         );
     }
 
@@ -2279,7 +2433,7 @@ mod tests {
     fn manifest_validates_the_complete_call_encoding() {
         let manifest = current_manifest();
 
-        assert_eq!(manifest.schema_version, 1);
+        assert_eq!(manifest.schema_version, MANIFEST_SCHEMA_VERSION);
         assert_eq!(manifest.release_id, RELEASE_ID_TAG);
         assert_eq!(manifest.protocol.major, 1);
         assert_eq!(manifest.call_encoding.version, 1);
@@ -2330,6 +2484,18 @@ mod tests {
             ["gross_profit", "bribe_paid"]
         );
 
+        // The capability block states its derivation, its word, and its list.
+        assert_eq!(manifest.capabilities.scheme, CAPABILITY_COMMITMENT_SCHEME);
+        assert_eq!(
+            manifest.capability_ids().collect::<Vec<_>>(),
+            (1..=15).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            manifest.capability(CapabilityId::new(1)).unwrap().name,
+            "address_table"
+        );
+        assert!(manifest.capability(CapabilityId::new(4242)).is_none());
+
         // Artifact location is named; integrity lives in the provenance file.
         assert!(manifest
             .artifact
@@ -2338,12 +2504,157 @@ mod tests {
         assert_ne!(manifest.artifact.provenance, manifest.artifact.runtime_code);
     }
 
+    // ── The capability commitment ──────────────────────────────────────────
+
+    #[test]
+    fn the_manifest_commitment_is_derived_from_the_declared_ids() {
+        let manifest = current_manifest();
+        let ids: Vec<u32> = manifest.capability_ids().collect();
+
+        assert_eq!(ids, (1..=15).collect::<Vec<_>>());
+        assert_eq!(
+            CapabilityCommitment::derive(&ids).to_string(),
+            CURRENT_COMMITMENT
+        );
+        assert_eq!(
+            manifest.capability_commitment().to_string(),
+            CURRENT_COMMITMENT
+        );
+        // The manifest states the word an operator compares against the chain.
+        assert_eq!(
+            format!("{}", manifest.capability_commitment()),
+            CURRENT_COMMITMENT
+        );
+    }
+
+    #[test]
+    fn a_manifest_commitment_that_disagrees_with_its_ids_is_refused() {
+        // A hand-edited word no list derives.
+        assert_eq!(
+            mutate_manifest(|manifest| {
+                manifest["capabilities"]["commitment"] =
+                    json!("0x1111111111111111111111111111111111111111111111111111111111111111");
+            })
+            .unwrap_err(),
+            ManifestError::CapabilityCommitment {
+                declared: CapabilityCommitment::from_bytes([0x11; 32]),
+                derived: current_manifest().capability_commitment(),
+            }
+        );
+
+        // A hand-edited ID list under the committed word: the other half of the
+        // same refusal.
+        assert_eq!(
+            mutate_manifest(|manifest| {
+                let ids = manifest["capabilities"]["ids"].as_array_mut().unwrap();
+                ids.pop();
+            })
+            .unwrap_err(),
+            ManifestError::CapabilityCommitment {
+                declared: current_manifest().capability_commitment(),
+                derived: CapabilityCommitment::derive(&(1..=14).collect::<Vec<_>>()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_capability_list_above_the_retired_bound_validates() {
+        let ids: Vec<u32> = (1..=48).collect();
+        let manifest = manifest_with_ids(&ids);
+
+        assert_eq!(manifest.capability_ids().collect::<Vec<_>>(), ids);
+        // The "more than 32" golden: the manifest is unbounded, the on-chain
+        // answer is still one word.
+        assert_eq!(
+            manifest.capability_commitment().to_string(),
+            "0xbd17dd15fa96f3e11b9115d7b2103cb5157d7f46937fd698225b2644e85ca12b"
+        );
+        // A restatement of the map, not a reimplementation of it: the release
+        // really does declare more than the retired ceiling.
+        assert!(manifest.declared_metadata().is_ok());
+    }
+
+    #[test]
+    fn the_commitment_is_order_sensitive_and_refuses_an_unsorted_declaration() {
+        // An unsorted or duplicated manifest array is refused, never silently
+        // re-canonicalized.
+        assert_eq!(
+            mutate_manifest(|manifest| {
+                let ids = manifest["capabilities"]["ids"].as_array_mut().unwrap();
+                ids.swap(0, 2);
+                manifest["capabilities"]["commitment"] =
+                    json!(CapabilityCommitment::derive(&(1..=15).collect::<Vec<_>>()).to_string());
+            })
+            .unwrap_err(),
+            ManifestError::UnorderedCapabilities {
+                previous: Some(3),
+                id: 2,
+            }
+        );
+        assert_eq!(
+            mutate_manifest(|manifest| {
+                let ids = manifest["capabilities"]["ids"].as_array_mut().unwrap();
+                ids[2] = json!({
+                    "id": 2,
+                    "name": "duplicated",
+                    "description": "declared twice",
+                    "provides": [],
+                });
+            })
+            .unwrap_err(),
+            ManifestError::UnorderedCapabilities {
+                previous: Some(2),
+                id: 2,
+            }
+        );
+
+        // Adding, removing, or replacing one ID changes the commitment: the
+        // three committed goldens.
+        let current = CapabilityCommitment::derive(&(1..=15).collect::<Vec<_>>());
+        let longer = CapabilityCommitment::derive(&(1..=48).collect::<Vec<_>>());
+        let shorter = CapabilityCommitment::derive(&(1..=14).collect::<Vec<_>>());
+        let replaced =
+            CapabilityCommitment::derive(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]);
+        assert_eq!(current.to_string(), CURRENT_COMMITMENT);
+        assert_eq!(
+            longer.to_string(),
+            "0xbd17dd15fa96f3e11b9115d7b2103cb5157d7f46937fd698225b2644e85ca12b"
+        );
+        assert_eq!(
+            shorter.to_string(),
+            "0x2bcf4f84999f182f49be5ae72cb0cb28adc521846426870a7e0de0587666d10c"
+        );
+        for other in [longer, shorter, replaced] {
+            assert_ne!(other, current, "one ID's change must change the word");
+        }
+    }
+
+    #[test]
+    fn the_capability_scheme_is_the_declared_preimage_prefix() {
+        assert_eq!(CAPABILITY_COMMITMENT_SCHEME.len(), 37);
+        assert_eq!(
+            mutate_manifest(|manifest| {
+                manifest["capabilities"]["scheme"] = json!("degenbot/cmd_executor/capabilities/v2");
+            })
+            .unwrap_err(),
+            ManifestError::CapabilityScheme {
+                declared: "degenbot/cmd_executor/capabilities/v2".to_owned(),
+                expected: CAPABILITY_COMMITMENT_SCHEME,
+            }
+        );
+        // The derivation names the scheme in its own preimage, so the constant
+        // and the committed manifest can never drift apart.
+        assert_eq!(
+            current_manifest().capabilities.scheme,
+            CAPABILITY_COMMITMENT_SCHEME
+        );
+        assert!(CAPABILITY_COMMITMENT_SCHEME.starts_with("degenbot/cmd_executor/"));
+    }
+
     #[test]
     fn manifest_rejects_contradictory_declarations() {
         fn revalidate(mutate: impl FnOnce(&mut Value)) -> ManifestError {
-            let mut value: Value = serde_json::from_str(RELEASE_MANIFEST_V1).unwrap();
-            mutate(&mut value);
-            ReleaseManifest::parse(&value.to_string()).unwrap_err()
+            mutate_manifest(mutate).unwrap_err()
         }
 
         // Unknown keys are hard errors, in any section.
@@ -2410,20 +2721,6 @@ mod tests {
             }),
             ManifestError::SelectorMismatch { .. }
         ));
-        // A capability claiming an opcode the grammar does not declare.
-        assert!(matches!(
-            revalidate(|manifest| {
-                manifest["capabilities"][0]["provides"] = json!(["NOT_AN_OPCODE"]);
-            }),
-            ManifestError::UnknownCapabilityOpcode { .. }
-        ));
-        // A capability ID that breaks the ascending, unique order.
-        assert!(matches!(
-            revalidate(|manifest| {
-                manifest["capabilities"][1]["id"] = json!(1);
-            }),
-            ManifestError::UnorderedCapabilities { id: 1, .. }
-        ));
         // A variable tail that does not reference a declared field.
         assert!(matches!(
             revalidate(|manifest| {
@@ -2438,6 +2735,61 @@ mod tests {
                 manifest["artifact"]["runtime_code"] = json!("/etc/passwd");
             }),
             ManifestError::ArtifactPath { .. }
+        ));
+    }
+
+    #[test]
+    fn manifest_rejects_contradictory_capability_declarations() {
+        // A capability claiming an opcode the grammar does not declare.
+        assert!(matches!(
+            mutate_manifest(|manifest| {
+                manifest["capabilities"]["ids"][0]["provides"] = json!(["NOT_AN_OPCODE"]);
+            })
+            .unwrap_err(),
+            ManifestError::UnknownCapabilityOpcode { .. }
+        ));
+        // A capability ID that breaks the ascending, unique order.
+        assert!(matches!(
+            mutate_manifest(|manifest| {
+                manifest["capabilities"]["ids"][1]["id"] = json!(1);
+            })
+            .unwrap_err(),
+            ManifestError::UnorderedCapabilities { id: 1, .. }
+        ));
+        // A zero capability ID names nothing.
+        assert_eq!(
+            mutate_manifest(|manifest| {
+                manifest["capabilities"]["ids"][0]["id"] = json!(0);
+            })
+            .unwrap_err(),
+            ManifestError::UnorderedCapabilities {
+                previous: None,
+                id: 0,
+            }
+        );
+        // A capability block with no list declares nothing.
+        assert!(matches!(
+            mutate_manifest(|manifest| {
+                manifest["capabilities"]["ids"] = json!([]);
+            })
+            .unwrap_err(),
+            ManifestError::ConfigLayout { .. }
+        ));
+        // An unknown key inside the capability block is refused like any other.
+        assert!(matches!(
+            mutate_manifest(|manifest| {
+                manifest["capabilities"]["ceilings"] = json!(32);
+            })
+            .unwrap_err(),
+            ManifestError::Json(_)
+        ));
+        // A commitment that is not 32 bytes of hex is not a commitment.
+        assert!(matches!(
+            mutate_manifest(|manifest| {
+                manifest["capabilities"]["commitment"] = json!("0x9cce");
+            })
+            .unwrap_err(),
+            ManifestError::Json(_)
         ));
     }
 
@@ -2458,7 +2810,7 @@ mod tests {
         );
 
         let mut other_release = declared.clone();
-        other_release.release = ReleaseId::from_ascii_tag("cmd_executor/2").unwrap();
+        other_release.release = ReleaseId::from_ascii_tag("cmd_executor/3").unwrap();
         assert!(matches!(
             manifest.check_metadata(&other_release),
             Err(ReleaseMismatch::ReleaseId { .. })
@@ -2472,10 +2824,10 @@ mod tests {
         ));
 
         let mut other_capabilities = declared.clone();
-        other_capabilities.capabilities = CapabilitySet::from_ids(&[CapabilityId::new(1)]);
+        other_capabilities.capabilities_commitment = CapabilityCommitment::derive(&[1]);
         assert!(matches!(
             manifest.check_metadata(&other_capabilities),
-            Err(ReleaseMismatch::Capabilities { .. })
+            Err(ReleaseMismatch::CapabilityCommitment { .. })
         ));
 
         manifest.check_metadata(&declared).unwrap();

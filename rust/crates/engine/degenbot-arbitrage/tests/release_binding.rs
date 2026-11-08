@@ -13,7 +13,7 @@
 //!
 //! | release | major | selector | config (defaults) | receipt |
 //! |---------|-------|----------|-------------------|---------|
-//! | `cmd_executor/1` (production) | 1 | `0xab5898e8` | `0x1` | 2 words |
+//! | `cmd_executor/2` (production) | 1 | `0xab5898e8` | `0x1` | 2 words |
 //! | `test_executor/2` (injected) | 2 | `0x368c4e9c` | `0x01…` (mode at bit 248) | 1 word |
 //! | `test_executor/3` (injected) | 3 | `execute3(bytes,uint256)` | `0x1…` (mode at bit 24) | 3 words |
 //!
@@ -51,9 +51,9 @@ use degenbot_executor::grammar_ledger::{Bribe, ProfitCapture};
 use degenbot_executor::receipt::ExecutionReceipt;
 use degenbot_executor::release::GetterOutcome;
 use degenbot_executor::release::{
-    capability, AbiReturnFieldDeclaration, ConfigFieldDeclaration, LegacyReleaseEntry,
-    LegacyReleaseMapping, ManifestError, MetadataDecodeError, ReleaseId, ReleaseManifest,
-    ReleaseMismatch, RELEASE_ID_TAG, RELEASE_MANIFEST_V1,
+    capability, AbiReturnFieldDeclaration, CapabilityCommitment, ConfigFieldDeclaration,
+    LegacyReleaseEntry, LegacyReleaseMapping, ManifestError, MetadataDecodeError, ReleaseId,
+    ReleaseManifest, ReleaseMismatch, RELEASE_ID_TAG, RELEASE_MANIFEST_V2,
 };
 use degenbot_executor::release_registry::{
     required_capabilities, CmdStreamV1Encoding, Release, ReleaseEncoding, ReleaseError,
@@ -78,6 +78,12 @@ const BLOCK: u64 = 100;
 const BASE_FEE: u128 = 1_000_000_000;
 const GAS_LIMIT: u64 = 1_000_000;
 const OPTIMAL_INPUT: u128 = 1_000_000_000_000_000_000;
+
+/// The exact `execute(bytes,uint256)` calldata the production release encodes
+/// for `two_v2_hops()` with default options: `0xab5898e8` (selector), `0x1`
+/// (packed config), and the v1 command stream. Pinned so the metadata cutover
+/// cannot move an encoder byte.
+const CUTOVER_CALL_DATA: &str = "0xab5898e800000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000007700bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00cccccccccccccccccccccccccccccccccccccccc00a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48ff200001000000000de0b6b3a7640000fd001e24100201000000000de0b6b3a7640000210101fd001e10fe00000000000de0b6b3a7640000000000000000000000";
 
 const GROSS_2: u64 = 2_000_000_000_000_000;
 const GROSS_3: u64 = 3_000_000_000_000_000;
@@ -137,34 +143,28 @@ fn tag_word(tag: &str) -> Bytes {
     )
 }
 
-fn capabilities_array(ids: &[u32]) -> Bytes {
-    let mut out = Vec::with_capacity(64 + 32 * ids.len());
-    out.extend_from_slice(&U256::from(32u64).to_be_bytes::<32>());
-    out.extend_from_slice(&U256::from(u64::try_from(ids.len()).expect("fits")).to_be_bytes::<32>());
-    for id in ids {
-        out.extend_from_slice(&U256::from(*id).to_be_bytes::<32>());
-    }
-    Bytes::from(out)
+fn commitment_word(commitment: CapabilityCommitment) -> Bytes {
+    Bytes::copy_from_slice(commitment.as_bytes())
 }
 
 fn declared_answers(manifest: &ReleaseManifest) -> GetterAnswers {
-    let ids: Vec<u32> = manifest
-        .capabilities
-        .iter()
-        .map(|declared| declared.id)
-        .collect();
     GetterAnswers::from_parts(
         Some(tag_word(&manifest.release_id)),
         Some(word(u64::from(manifest.protocol.major))),
         Some(word(u64::from(manifest.call_encoding.version))),
-        Some(capabilities_array(&ids)),
+        Some(commitment_word(manifest.capability_commitment())),
     )
+}
+
+/// The ID list a deployment declaring `observed` IDs would commit to.
+fn commitment_of(ids: &[u32]) -> Bytes {
+    commitment_word(CapabilityCommitment::derive(ids))
 }
 
 // ── manifests and releases ───────────────────────────────────────────────
 
-fn v1_manifest() -> ReleaseManifest {
-    ReleaseManifest::parse(RELEASE_MANIFEST_V1).expect("the committed manifest validates")
+fn committed_manifest() -> ReleaseManifest {
+    ReleaseManifest::parse(RELEASE_MANIFEST_V2).expect("the committed manifest validates")
 }
 
 /// The injected releases' config layout: `(name, bits, allowed, range)`.
@@ -232,7 +232,7 @@ fn alternate_manifest(
     receipt: &[&str],
     drop_capability: Option<u32>,
 ) -> ReleaseManifest {
-    let mut manifest = v1_manifest();
+    let mut manifest = committed_manifest();
     let signature = format!("{function}(bytes,uint256)");
     let digest = keccak256(signature.as_bytes());
     let selector = format!(
@@ -252,7 +252,15 @@ fn alternate_manifest(
     manifest.artifact.runtime_code = format!("tests/fixtures/{function}.runtime.hex");
     manifest.artifact.provenance = format!("tests/fixtures/{function}.manifest.json");
     if let Some(id) = drop_capability {
-        manifest.capabilities.retain(|declared| declared.id != id);
+        manifest
+            .capabilities
+            .ids
+            .retain(|declared| declared.id != id);
+        // Dropping an ID changes the declared set, so the release's commitment
+        // must change with it: a manifest whose word disagreed with its own list
+        // is refused at validation.
+        let ids: Vec<u32> = manifest.capability_ids().collect();
+        manifest.capabilities.commitment = CapabilityCommitment::derive(&ids);
     }
     // The manifest must validate against the fixture's bounded major set: an
     // injected release is a decision, not an escape from validation.
@@ -380,7 +388,7 @@ fn receipt_stub(words: &[U256]) -> Bytes {
 
 fn production_release() -> Release {
     Release::new(
-        v1_manifest(),
+        committed_manifest(),
         FIXTURE_MAJORS,
         Arc::new(CmdStreamV1Encoding),
         None,
@@ -553,7 +561,7 @@ fn a_declaring_deployment_binds_to_the_release_the_registry_validates() {
     let registry = registry_production();
     let bound = BoundCmdExecutor::bind(
         binding(EXECUTOR_V1),
-        &declared_answers(&v1_manifest()),
+        &declared_answers(&committed_manifest()),
         None,
         &registry,
     )
@@ -573,12 +581,8 @@ fn an_unknown_release_tag_is_refused_not_defaulted_to_the_newest_encoder() {
         Some(tag_word("cmd_executor/7")),
         Some(word(1)),
         Some(word(1)),
-        Some(capabilities_array(
-            &v1_manifest()
-                .capabilities
-                .iter()
-                .map(|c| c.id)
-                .collect::<Vec<_>>(),
+        Some(commitment_word(
+            committed_manifest().capability_commitment(),
         )),
     );
 
@@ -633,8 +637,8 @@ fn a_getterless_deployment_needs_the_operators_legacy_mapping() {
 #[test]
 fn partial_metadata_is_neither_declared_nor_getterless() {
     let registry = registry_production();
-    let full = declared_answers(&v1_manifest());
-    // Drop the capabilities answer.
+    let full = declared_answers(&committed_manifest());
+    // Drop the capability getter's answer: the pre-cutover deployment's shape.
     let partial = GetterAnswers::from_parts(
         Some(tag_word(RELEASE_ID_TAG)),
         Some(word(1)),
@@ -650,7 +654,10 @@ fn partial_metadata_is_neither_declared_nor_getterless() {
     assert_eq!(
         BoundCmdExecutor::bind(binding(EXECUTOR_V1), &partial, Some(&mapped), &registry)
             .expect_err("a half-declaring deployment cannot bind"),
-        BindingError::Decode(MetadataDecodeError::PartialAnswers { answered: 3 })
+        BindingError::Decode(MetadataDecodeError::PartialAnswers {
+            answered: 3,
+            absent: vec!["capabilities_hash"],
+        })
     );
     assert!(BoundCmdExecutor::bind(binding(EXECUTOR_V1), &full, None, &registry).is_ok());
 }
@@ -659,17 +666,13 @@ fn partial_metadata_is_neither_declared_nor_getterless() {
 fn a_declaration_that_disagrees_with_its_manifest_is_refused() {
     let registry = registry_all();
 
-    // A v1 tag claiming a v1 encoding version it does not have.
+    // The current tag claiming an encoding version it does not have.
     let wrong_version = GetterAnswers::from_parts(
         Some(tag_word(RELEASE_ID_TAG)),
         Some(word(1)),
         Some(word(9)),
-        Some(capabilities_array(
-            &v1_manifest()
-                .capabilities
-                .iter()
-                .map(|c| c.id)
-                .collect::<Vec<_>>(),
+        Some(commitment_word(
+            committed_manifest().capability_commitment(),
         )),
     );
     assert_eq!(
@@ -678,29 +681,53 @@ fn a_declaration_that_disagrees_with_its_manifest_is_refused() {
         BindingError::Mismatch {
             address: EXECUTOR_V1,
             release: RELEASE_ID_TAG.to_owned(),
-            mismatch: ReleaseMismatch::CallEncodingVersion {
+            mismatch: Box::new(ReleaseMismatch::CallEncodingVersion {
                 declared: 1,
                 observed: 9
-            }
+            })
         }
     );
 
-    // A v1 tag claiming a capability set its manifest does not declare.
-    let mut ids: Vec<u32> = v1_manifest().capabilities.iter().map(|c| c.id).collect();
-    ids.extend([4242]); // an unknown ID is preserved, and is NOT support
-    let extra_capability = GetterAnswers::from_parts(
-        Some(tag_word(RELEASE_ID_TAG)),
-        Some(word(1)),
-        Some(word(1)),
-        Some(capabilities_array(&ids)),
-    );
-    assert!(matches!(
-        BoundCmdExecutor::bind(binding(EXECUTOR_V1), &extra_capability, None, &registry),
-        Err(BindingError::Mismatch {
-            mismatch: ReleaseMismatch::Capabilities { .. },
-            ..
-        })
-    ));
+    // A superset declaration — the release's own list plus one extra ID — is a
+    // commitment the manifest does not derive.
+    let mut superset: Vec<u32> = committed_manifest().capability_ids().collect();
+    superset.push(4242);
+    let mut subset: Vec<u32> = committed_manifest().capability_ids().collect();
+    subset.pop();
+    for ids in [superset, subset] {
+        let answers = GetterAnswers::from_parts(
+            Some(tag_word(RELEASE_ID_TAG)),
+            Some(word(1)),
+            Some(word(1)),
+            Some(commitment_of(&ids)),
+        );
+        match BoundCmdExecutor::bind(binding(EXECUTOR_V1), &answers, None, &registry)
+            .expect_err("a disagreeing ID list cannot bind")
+        {
+            BindingError::Mismatch {
+                mismatch,
+                address,
+                release,
+            } => {
+                assert_eq!(address, EXECUTOR_V1);
+                assert_eq!(release, RELEASE_ID_TAG);
+                match *mismatch {
+                    ReleaseMismatch::CapabilityCommitment {
+                        release,
+                        declared,
+                        observed,
+                    } => {
+                        assert_eq!(release, RELEASE_ID_TAG);
+                        assert_eq!(declared, committed_manifest().capability_commitment());
+                        assert_eq!(observed, CapabilityCommitment::derive(&ids));
+                        assert_ne!(declared, observed);
+                    }
+                    other => panic!("expected a capability commitment mismatch, got {other:?}"),
+                }
+            }
+            other => panic!("expected a mismatch, got {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -716,12 +743,8 @@ fn a_major_outside_the_registrys_bounded_set_is_refused() {
         Some(tag_word(TAG_2)),
         Some(word(4)),
         Some(word(2)),
-        Some(capabilities_array(
-            &release_2(Bytes::new())
-                .declared_capabilities()
-                .iter()
-                .map(|id| id.get())
-                .collect::<Vec<_>>(),
+        Some(commitment_word(
+            release_2(Bytes::new()).manifest().capability_commitment(),
         )),
     );
     assert_eq!(
@@ -730,10 +753,10 @@ fn a_major_outside_the_registrys_bounded_set_is_refused() {
         BindingError::Mismatch {
             address: EXECUTOR_2,
             release: TAG_2.to_owned(),
-            mismatch: ReleaseMismatch::UnsupportedProtocolMajor {
+            mismatch: Box::new(ReleaseMismatch::UnsupportedProtocolMajor {
                 observed: 4,
                 supported: vec![2, 3]
-            }
+            })
         }
     );
 
@@ -781,11 +804,70 @@ fn a_registry_refuses_two_releases_that_claim_one_tag_or_a_mismatched_encoding()
 // ── per-release goldens ───────────────────────────────────────────────────
 
 #[test]
+fn the_metadata_cutover_moved_no_encoder_byte() {
+    // ADR-099 moved the metadata ABI (a new tag, a new getter) and nothing
+    // else: the call encoding version, the command stream, the packed config,
+    // and the `execute` ABI — receipt included — are byte-identical.
+    let registry = registry_production();
+    let bound = BoundCmdExecutor::bind(
+        binding(EXECUTOR_V1),
+        &declared_answers(&committed_manifest()),
+        None,
+        &registry,
+    )
+    .expect("the cutover deployment binds");
+
+    assert_eq!(bound.release().release_id(), RELEASE_ID_TAG);
+    assert_eq!(bound.release().protocol_major(), 1, "the wire did not move");
+    assert_eq!(
+        bound.release().call_encoding_version(),
+        1,
+        "the wire did not move"
+    );
+
+    let path = two_v2_hops();
+    let outputs = [OPTIMAL_INPUT, OPTIMAL_INPUT];
+    let consumed = [OPTIMAL_INPUT - 1, OPTIMAL_INPUT - 1];
+    let inputs = combo_inputs(&outputs, &consumed);
+    let tx = bound
+        .adapter()
+        .encode(&path, &inputs)
+        .expect("the cutover release encodes the path");
+
+    assert_eq!(tx.to, EXECUTOR_V1);
+    assert_eq!(tx.value, U256::ZERO);
+    assert_eq!(
+        format!("0x{}", alloy::hex::encode(&tx.data)),
+        CUTOVER_CALL_DATA,
+        "the metadata cutover changed no calldata byte"
+    );
+
+    // The receipt shape is still the two-word `ExecutionReceipt`.
+    let receipt = registry
+        .get(RELEASE_ID_TAG)
+        .expect("the current release is registered")
+        .encoding()
+        .decode_receipt(Some(&abi_words(&[
+            U256::from(1_000u64),
+            U256::from(400u64),
+        ])))
+        .expect("two words decode");
+    assert_eq!(receipt.gross_profit, U256::from(1_000u64));
+    assert_eq!(receipt.bribe_paid, U256::from(400u64));
+    assert!(registry
+        .get(RELEASE_ID_TAG)
+        .expect("the current release is registered")
+        .encoding()
+        .decode_receipt(Some(&abi_words(&[U256::from(1_000u64)])))
+        .is_err());
+}
+
+#[test]
 fn each_release_encodes_its_own_exact_call() {
     let registry = registry_all();
     let bound_1 = BoundCmdExecutor::bind(
         binding(EXECUTOR_V1),
-        &declared_answers(&v1_manifest()),
+        &declared_answers(&committed_manifest()),
         None,
         &registry,
     )
@@ -918,7 +1000,7 @@ fn the_adapter_assesses_with_the_releases_own_receipt_decoder() {
     // shape is part of the release, not an adapter-wide convention.
     let bound_1 = BoundCmdExecutor::bind(
         binding(EXECUTOR_V1),
-        &declared_answers(&v1_manifest()),
+        &declared_answers(&committed_manifest()),
         None,
         &registry,
     )
@@ -979,11 +1061,38 @@ fn a_declared_build_installs_the_releases_own_artifact() {
 }
 
 #[test]
+fn an_artifact_from_another_release_is_refused_for_injection() {
+    // A matching metadata declaration must never smuggle different code in for
+    // simulation: the injected build is the release's OWN artifact or nothing.
+    let registry = registry_all();
+    let bound = BoundCmdExecutor::bind(
+        binding(EXECUTOR_V1),
+        &declared_answers(&committed_manifest()),
+        None,
+        &registry,
+    )
+    .expect("the current release binds");
+
+    let other_release_runtime = receipt_stub(&[U256::from(GROSS_2)]);
+    match bound
+        .injected_with_runtime(deployment_id_v1(), other_release_runtime)
+        .expect_err("another release's artifact cannot stand in")
+    {
+        degenbot_arbitrage::BoundRuntimeError::Mismatch { release, .. } => {
+            assert_eq!(release, RELEASE_ID_TAG);
+        }
+        other @ degenbot_arbitrage::BoundRuntimeError::Artifact(_) => {
+            panic!("expected an artifact mismatch, got {other}")
+        }
+    }
+}
+
+#[test]
 fn the_production_release_loads_its_committed_artifact() {
     let registry = registry_production();
     let bound = BoundCmdExecutor::bind(
         binding(EXECUTOR_V1),
-        &declared_answers(&v1_manifest()),
+        &declared_answers(&committed_manifest()),
         None,
         &registry,
     )
@@ -1067,7 +1176,7 @@ fn a_missing_capability_declines_only_the_release_that_lacks_it() {
     // And production v1 declares it too (the current release loses nothing).
     let bound_1 = BoundCmdExecutor::bind(
         binding_with(EXECUTOR_V1, opts),
-        &declared_answers(&v1_manifest()),
+        &declared_answers(&committed_manifest()),
         None,
         &registry,
     )
@@ -1399,6 +1508,46 @@ fn run_fanout(
     .expect("every candidate names a registered deployment")
 }
 
+#[test]
+fn a_metadata_free_foreign_contract_still_binds_and_encodes() {
+    // The generic-seam exclusion proof: a foreign contract exposes no
+    // `release_id()`, `protocol_major()`, `call_encoding_version()`,
+    // `capabilities_hash()`, WETH, or PoolManager, takes part in no manifest,
+    // no commitment, and no release registry, and still encodes through the
+    // same production path it always did.
+    let deployment = foreign_deployment();
+    let path = two_v2_hops();
+    let outputs = [OPTIMAL_INPUT, OPTIMAL_INPUT];
+    let consumed = [OPTIMAL_INPUT - 1, OPTIMAL_INPUT - 1];
+    let inputs = combo_inputs(&outputs, &consumed);
+
+    let tx = deployment
+        .adapter()
+        .encode(&path, &inputs)
+        .expect("the foreign contract encodes its own call");
+    assert_eq!(tx.to, FOREIGN);
+    assert_eq!(&tx.data[..4], &[0xf0, 0x0d, 0xba, 0xbe]);
+    assert_eq!(
+        tx.data.len(),
+        4 + 32,
+        "the foreign call is not a cmd_executor call"
+    );
+    assert_eq!(tx.value, U256::ZERO);
+    assert_eq!(deployment.target(), FOREIGN);
+
+    // Its silence is a classification, not a release: no registry entry names
+    // it, and no capability policy reaches it.
+    assert_eq!(
+        degenbot_executor::release::classify_deployment(
+            FOREIGN,
+            GetterAnswers::all_absent().observations(),
+            None,
+        )
+        .expect("a getterless contract classifies"),
+        degenbot_executor::release::DeploymentRelease::Unknown
+    );
+}
+
 /// Two `cmd_executor` releases and one metadata-free foreign contract, one
 /// solved path: each target selects its OWN encoder, artifact, and receipt
 /// through the same generic interface, and no target's outcome touches
@@ -1662,7 +1811,7 @@ fn a_single_bound_deployment_keeps_the_single_target_behavior() {
     let registry = registry_production();
     let bound = BoundCmdExecutor::bind(
         binding(EXECUTOR_V1),
-        &declared_answers(&v1_manifest()),
+        &declared_answers(&committed_manifest()),
         None,
         &registry,
     )
