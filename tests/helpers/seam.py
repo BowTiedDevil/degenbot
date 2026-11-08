@@ -140,8 +140,9 @@ from degenbot._ffi.deployments import (
 )
 from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 
-# execution: the Python-authored Encode binding a foreign deployment carries.
-from degenbot._ffi.execution import PayloadAdapter
+# execution: the Python-authored Encode binding a foreign deployment carries,
+# and the calldata builder a declared probe read spells its call with.
+from degenbot._ffi.execution import PayloadAdapter, abi_encode_call
 
 # provider: the transport the offline harnesses stub.
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider, is_local_rpc_url
@@ -221,6 +222,7 @@ __all__ = [
     "UnknownStrategyError",
     "V3PoolRowInput",
     "VerificationRpcError",
+    "abi_encode_call",
     "activate_aave_market",
     "build_batch_executor_py",
     "build_path_graph",

@@ -528,6 +528,11 @@ Detailed material behind this guide:
 - Rust sample: `rust/examples/degenbot-execution-sample` (a foreign
   `SimpleExecutor` strategy, with its own recorded payload corpus)
 - Python sample: `examples/execution_strategy_foreign.py`
+- Compiled-contract certification:
+  `tests/dispatch/test_custom_executor_contract.py` compiles
+  `contracts/vyper/custom_executor_probe.vy`, installs it as a foreign
+  deployment's declared runtime, and proves which of its functions ran by
+  reading its own public getters as the verdict's evidence
 
 The design rationale for a generic execution interface with adapter-owned
 versioning is [ADR-098](adr/ADR-098-executor-agnostic-production-execution.md).
