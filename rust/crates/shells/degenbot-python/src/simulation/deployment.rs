@@ -40,8 +40,9 @@
 //!
 //! The declared structure of a deployment survives verbatim into the core value
 //! (the deployment id, target, owner, gas limit, and code override are copies);
-//! what the fan-out does with it — one candidate per solved path per registered
-//! deployment, partition by `CandidateId`, per-target submit rows — is
+//! what the fan-out does with it — which deployments a solved path is offered to
+//! ([`degenbot_arbitrage::TargetSelection`]), the candidate each examined target
+//! produces, partition by `CandidateId`, per-target submit rows — is
 //! [`degenbot_arbitrage::dispatch_across_deployments`]'s, not Python's.
 
 use std::sync::Arc;
@@ -60,9 +61,11 @@ use crate::prelude::*;
 ///
 /// Construct once per foreign contract, then hand the list to
 /// [`crate::simulation::batch::build_batch_executor_py`]'s `deployments`
-/// argument: every solved path becomes one candidate per registered deployment,
-/// in registration order, after the built-in settlement deployment (whose
-/// identity is [`builtin_deployment_id`]).
+/// argument, in registration order, after the built-in settlement deployment
+/// (whose identity is [`builtin_deployment_id`]). Which of them each solved path
+/// is offered to is that function's `target_selection` policy: the default
+/// ordered walk stops at the first deployment whose composition accepts the
+/// path, and the explicit all-target fan-out offers every path to every entry.
 ///
 /// The adapter is an existing [`crate::execution::PyPayloadAdapter`] — the
 /// Python-authored Encode callable bound to the transaction it executes. This

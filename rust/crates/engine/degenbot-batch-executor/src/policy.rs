@@ -103,6 +103,16 @@ pub struct ExecutorRuntime {
     /// be distinct (never the built-in id) and every owner must be the account
     /// the configured signer holds, or construction panics.
     pub additional_deployments: Vec<Arc<degenbot_arbitrage::SimulationDeployment>>,
+    /// How a solved path chooses among those deployments
+    /// ([`degenbot_arbitrage::TargetSelection`]).
+    ///
+    /// A driver's choice, not a declared verdict key: `FirstCompatible` (the
+    /// value's default) offers each path the registry in order and executes at
+    /// the first deployment that accepts composition; `AllTargets` offers every
+    /// path to every deployment. A one-entry registry — the built-in session —
+    /// selects the same deployment under either, so nothing changes for a
+    /// driver that names no additional deployment.
+    pub target_selection: degenbot_arbitrage::TargetSelection,
     /// The declared-code override address (used when the inject stance is on).
     ///
     /// Must be the executor address the built-in adapter encodes its
@@ -244,6 +254,7 @@ mod tests {
                 degenbot_executor::composers::EncodeOptions::default(),
             ),
             additional_deployments: additional,
+            target_selection: degenbot_arbitrage::TargetSelection::default(),
             injected_address: None,
             runtime_bytecode: alloy::primitives::Bytes::new(),
             bot_state: None,
@@ -296,6 +307,27 @@ mod tests {
                 .map(|deployment| deployment.target()),
             Some(BUILTIN_EXECUTOR),
             "the built-in deployment executes at the executor it encodes to"
+        );
+    }
+
+    /// The target-selection policy rides the runtime verbatim into the config:
+    /// the default is the ordered first-compatible walk, and a driver's explicit
+    /// fan-out reaches the fan-out unchanged.
+    #[tokio::test]
+    async fn the_target_selection_policy_reaches_the_config_verbatim() {
+        let verdict = degenbot_config::BotConfig::default();
+        let mut runtime = runtime(Vec::new()).await;
+        assert_eq!(
+            runtime.target_selection,
+            degenbot_arbitrage::TargetSelection::FirstCompatible,
+            "the fixture takes the default"
+        );
+        runtime.target_selection = degenbot_arbitrage::TargetSelection::AllTargets;
+        let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime)
+            .expect("the built-in session composes a one-entry registry");
+        assert_eq!(
+            config.target_selection,
+            degenbot_arbitrage::TargetSelection::AllTargets
         );
     }
 

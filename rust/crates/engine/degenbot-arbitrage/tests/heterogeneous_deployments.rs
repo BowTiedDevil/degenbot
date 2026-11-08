@@ -22,7 +22,7 @@ use alloy::transports::{TransportError, TransportFut};
 use degenbot_arbitrage::{
     dispatch_across_deployments, dispatch_profitable_results, DeploymentRegistry,
     DeploymentRegistryError, DispatchCandidate, SimulateContext, SimulationBlock,
-    SimulationDeployment, SolveStep,
+    SimulationDeployment, SolveStep, TargetSelection,
 };
 use degenbot_execution::{
     AssessError, CandidateId, ComposeError, ComposerInputs, DeploymentId, ExecutionAdapter,
@@ -91,6 +91,7 @@ fn candidate(deployment: DeploymentId) -> DispatchCandidate {
         }]),
         solve_block: BLOCK,
         path_info: v2_path(),
+        prepared: None,
     }
 }
 
@@ -277,11 +278,23 @@ fn block(provider: &AlloyProvider) -> SimulationBlock<'_> {
     }
 }
 
-/// Run one registry fan-out on a dedicated multi-thread runtime (the engine's
-/// sync DB bridge requires the ambient runtime).
+/// Run one registry fan-out under the explicit all-target policy (the fan-out
+/// fixture's own).
 fn run_fanout(
     registry: &DeploymentRegistry,
     candidates: Vec<DispatchCandidate>,
+) -> Result<degenbot_arbitrage::DeploymentFanOutOutcome, degenbot_arbitrage::DeploymentFanOutError>
+{
+    run_fanout_with(registry, candidates, TargetSelection::AllTargets)
+}
+
+/// Run one registry fan-out under a named target-selection policy, on a
+/// dedicated multi-thread runtime (the engine's sync DB bridge requires the
+/// ambient runtime).
+fn run_fanout_with(
+    registry: &DeploymentRegistry,
+    candidates: Vec<DispatchCandidate>,
+    selection: TargetSelection,
 ) -> Result<degenbot_arbitrage::DeploymentFanOutOutcome, degenbot_arbitrage::DeploymentFanOutError>
 {
     let provider = mock_provider();
@@ -304,6 +317,7 @@ fn run_fanout(
                         candidates,
                         &block,
                         registry,
+                        selection,
                         &suppression,
                         BLOCK,
                         0,
@@ -555,6 +569,7 @@ fn a_one_entry_registry_matches_the_single_deployment_leaf() {
                         vec![candidate(deployment_a())],
                         &block,
                         &registry,
+                        TargetSelection::AllTargets,
                         &suppression,
                         BLOCK,
                         0,
@@ -674,5 +689,737 @@ fn an_owner_the_signer_cannot_sign_for_is_refused() {
     assert!(
         registry.validate_signing_authority(OWNER).is_ok(),
         "the owner that signed is the account the session holds"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Target selection: ordered first-compatible beside the explicit fan-out
+// ─────────────────────────────────────────────────────────────────────────
+
+/// How a fixture target answers one compose call.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ComposeAnswer {
+    /// Accept, stamping the CALL NUMBER into the calldata.
+    Accept,
+    /// Refuse for want of capability — the routine decline a first-compatible
+    /// walk advances past.
+    Unsupported,
+    /// Fail a primitive encoding step.
+    HardEncode,
+}
+
+/// A target whose compose callback is COUNTED.
+///
+/// Every `encode` call increments the shared counter, and an accepted
+/// transaction carries the number of the call that produced it — so a second
+/// composition of the same candidate shows up in the simulated bytes, not only
+/// in the counter.
+struct CountedAdapter {
+    target: Address,
+    selector: [u8; 4],
+    value: U256,
+    gross: U256,
+    answer: ComposeAnswer,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl CountedAdapter {
+    fn new(
+        target: Address,
+        selector: [u8; 4],
+        value: U256,
+        gross: U256,
+        answer: ComposeAnswer,
+        calls: &Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Self {
+        Self {
+            target,
+            selector,
+            value,
+            gross,
+            answer,
+            calls: Arc::clone(calls),
+        }
+    }
+}
+
+impl ExecutionAdapter for CountedAdapter {
+    fn encode(
+        &self,
+        _path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Result<TransactionRequest, ComposeError> {
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        match self.answer {
+            ComposeAnswer::Unsupported => Err(ComposeError::unsupported(
+                "this contract has no producer for this path",
+            )),
+            ComposeAnswer::HardEncode => {
+                Err(ComposeError::encode("optimal_input does not fit int128"))
+            }
+            ComposeAnswer::Accept => {
+                let mut data = Vec::with_capacity(68);
+                data.extend_from_slice(&self.selector);
+                data.extend_from_slice(&U256::from(call).to_be_bytes::<32>());
+                data.extend_from_slice(&U256::from(inputs.optimal_input).to_be_bytes::<32>());
+                Ok(TransactionRequest::new(
+                    self.target,
+                    Bytes::from(data),
+                    self.value,
+                ))
+            }
+        }
+    }
+
+    fn probe_spec(&self) -> &ProbeSpecs {
+        static NO_PROBES: ProbeSpecs = Vec::new();
+        &NO_PROBES
+    }
+
+    fn assess(&self, observation: &ExecutionObservation) -> Result<ExecutionResult, AssessError> {
+        Ok(ExecutionResult::price(
+            self.gross,
+            Vec::new(),
+            observation,
+            U256::ZERO,
+            &TargetAdapter::fee_policy(),
+        ))
+    }
+}
+
+/// Compose one counted target's registry entry (no settlement identity, no
+/// declared code: the simulated block executes the code the chain holds).
+fn counted_deployment(id: DeploymentId, adapter: CountedAdapter) -> Arc<SimulationDeployment> {
+    let target = adapter.target;
+    Arc::new(SimulationDeployment::new(
+        id,
+        Arc::new(adapter),
+        OWNER,
+        target,
+        GAS_LIMIT,
+        None,
+        None,
+    ))
+}
+
+/// One fixture target's compose-call count.
+fn compositions(calls: &Arc<std::sync::atomic::AtomicUsize>) -> usize {
+    calls.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+fn calls_arc() -> Arc<std::sync::atomic::AtomicUsize> {
+    Arc::new(std::sync::atomic::AtomicUsize::new(0))
+}
+
+fn word(bytes: &[u8]) -> U256 {
+    U256::from_be_slice(bytes)
+}
+
+fn survivor_ids(outcome: &degenbot_arbitrage::DeploymentFanOutOutcome) -> Vec<CandidateId> {
+    outcome
+        .lanes
+        .iter()
+        .flat_map(|lane| {
+            lane.outcome
+                .gas_profitable
+                .iter()
+                .map(|result| result.candidate_id)
+        })
+        .collect()
+}
+
+/// Ordered first-compatible: the first accepting target is composed ONCE and
+/// simulated with exactly the transaction it accepted, and no later target is
+/// composed at all.
+#[test]
+fn the_first_compatible_policy_selects_only_the_first_accepting_target() {
+    let calls_a = calls_arc();
+    let calls_b = calls_arc();
+    let registry = DeploymentRegistry::new(vec![
+        counted_deployment(
+            deployment_a(),
+            CountedAdapter::new(
+                TARGET_A,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::Accept,
+                &calls_a,
+            ),
+        ),
+        counted_deployment(
+            deployment_b(),
+            CountedAdapter::new(
+                TARGET_B,
+                settle_selector(),
+                U256::ZERO,
+                GROSS_B,
+                ComposeAnswer::Accept,
+                &calls_b,
+            ),
+        ),
+    ])
+    .expect("two distinct identities compose a valid registry");
+
+    let outcome = run_fanout_with(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::FirstCompatible,
+    )
+    .expect("every candidate names a registered deployment");
+
+    assert_eq!(
+        compositions(&calls_a),
+        1,
+        "the selected target composed once"
+    );
+    assert_eq!(
+        compositions(&calls_b),
+        0,
+        "a later compatible target is never composed"
+    );
+
+    let lane_a = outcome.lane(deployment_a()).expect("lane A");
+    let lane_b = outcome.lane(deployment_b()).expect("lane B");
+    assert_eq!(lane_a.gas_profitable.len(), 1);
+    assert!(
+        lane_b.gas_profitable.is_empty(),
+        "the unexamined target simulated nothing: buckets {:?}",
+        lane_b.fail_buckets.buckets()
+    );
+    assert_eq!(
+        lane_b.candidate_count, 0,
+        "no candidate reached the later lane"
+    );
+    assert_eq!(
+        lane_b.fail_count, 0,
+        "an unexamined target reports no failure of its own"
+    );
+
+    let result = &lane_a.gas_profitable[0];
+    assert_eq!(result.candidate_id, CandidateId::new(7, deployment_a()));
+    assert_eq!(
+        result.gross_profit, GROSS_A,
+        "the selected adapter assessed"
+    );
+    assert_eq!(result.value, PREPAY_A, "its own native value rode along");
+    assert_eq!(&result.execute_calldata[..4], &prepay_selector());
+    assert_eq!(
+        word(&result.execute_calldata[4..36]),
+        U256::from(1),
+        "the simulated bytes are the FIRST (and only) compose's"
+    );
+    assert_eq!(
+        word(&result.execute_calldata[36..68]),
+        U256::from(OPTIMAL_INPUT)
+    );
+    assert_eq!(
+        outcome.retired,
+        vec![CandidateId::new(7, deployment_b())],
+        "the target the walk never reached is retired unexamined"
+    );
+}
+
+/// An early capability refusal advances the walk: exactly one composition per
+/// examined target, the accepting target's own request simulated verbatim, and
+/// the refusal left on the refusing target's own record.
+#[test]
+fn a_capability_decline_advances_and_the_accepted_request_is_simulated_once() {
+    let calls_a = calls_arc();
+    let calls_b = calls_arc();
+    let registry = DeploymentRegistry::new(vec![
+        counted_deployment(
+            deployment_a(),
+            CountedAdapter::new(
+                TARGET_A,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::Unsupported,
+                &calls_a,
+            ),
+        ),
+        counted_deployment(
+            deployment_b(),
+            CountedAdapter::new(
+                TARGET_B,
+                settle_selector(),
+                U256::ZERO,
+                GROSS_B,
+                ComposeAnswer::Accept,
+                &calls_b,
+            ),
+        ),
+    ])
+    .expect("two distinct identities compose a valid registry");
+
+    let outcome = run_fanout_with(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::FirstCompatible,
+    )
+    .expect("every candidate names a registered deployment");
+
+    assert_eq!(
+        compositions(&calls_a),
+        1,
+        "the declined target composed once"
+    );
+    assert_eq!(
+        compositions(&calls_b),
+        1,
+        "the accepting target composed once"
+    );
+    assert!(
+        outcome.retired.is_empty(),
+        "the walk examined both targets: {:?}",
+        outcome.retired
+    );
+
+    let lane_a = outcome.lane(deployment_a()).expect("lane A");
+    assert!(lane_a.gas_profitable.is_empty());
+    assert_eq!(lane_a.fail_count, 1, "the refusal is counted, not raised");
+    assert_eq!(lane_a.exception_count, 0);
+    assert_eq!(
+        lane_a.fail_buckets.buckets().get("encode-failed").copied(),
+        Some(1),
+        "a capability refusal is the routine bucket: {:?}",
+        lane_a.fail_buckets.buckets()
+    );
+    assert_eq!(lane_a.failures.len(), 1);
+    assert_eq!(
+        lane_a.failures[0].candidate_id,
+        CandidateId::new(7, deployment_a()),
+        "the refusal stays on the refusing target's own candidate"
+    );
+
+    let lane_b = outcome.lane(deployment_b()).expect("lane B");
+    assert_eq!(lane_b.gas_profitable.len(), 1);
+    let result = &lane_b.gas_profitable[0];
+    assert_eq!(result.candidate_id, CandidateId::new(7, deployment_b()));
+    assert_eq!(&result.execute_calldata[..4], &settle_selector());
+    assert_eq!(
+        word(&result.execute_calldata[4..36]),
+        U256::from(1),
+        "the accepted transaction is reused, never composed again for the sim"
+    );
+    assert_eq!(
+        word(&result.execute_calldata[36..68]),
+        U256::from(OPTIMAL_INPUT),
+        "to/data/value are the accepted request's"
+    );
+    assert_eq!(result.value, U256::ZERO);
+    assert_eq!(result.gross_profit, GROSS_B);
+}
+
+/// Every target declining selects nothing: no lane reports a success, and each
+/// examined candidate keeps its own honest refusal.
+#[test]
+fn every_target_declining_selects_nothing_and_keeps_each_refusal() {
+    let calls_a = calls_arc();
+    let calls_b = calls_arc();
+    let registry = DeploymentRegistry::new(vec![
+        counted_deployment(
+            deployment_a(),
+            CountedAdapter::new(
+                TARGET_A,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::Unsupported,
+                &calls_a,
+            ),
+        ),
+        counted_deployment(
+            deployment_b(),
+            CountedAdapter::new(
+                TARGET_B,
+                settle_selector(),
+                U256::ZERO,
+                GROSS_B,
+                ComposeAnswer::Unsupported,
+                &calls_b,
+            ),
+        ),
+    ])
+    .expect("two distinct identities compose a valid registry");
+
+    let outcome = run_fanout_with(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::FirstCompatible,
+    )
+    .expect("every candidate names a registered deployment");
+
+    assert_eq!(
+        (compositions(&calls_a), compositions(&calls_b)),
+        (1, 1),
+        "one composition per examined target"
+    );
+    assert!(survivor_ids(&outcome).is_empty(), "no selected success");
+    assert!(outcome.retired.is_empty(), "all targets were examined");
+
+    for deployment in [deployment_a(), deployment_b()] {
+        let lane = outcome
+            .lane(deployment)
+            .expect("each deployment has a lane");
+        assert!(lane.gas_profitable.is_empty());
+        assert_eq!(lane.exception_count, 0, "a refusal is not an exception");
+        assert_eq!(lane.fail_count, 1);
+        assert_eq!(
+            lane.fail_buckets.buckets().get("encode-failed").copied(),
+            Some(1)
+        );
+        assert_eq!(
+            lane.failures
+                .iter()
+                .map(|failure| failure.candidate_id)
+                .collect::<Vec<_>>(),
+            vec![CandidateId::new(7, deployment)],
+            "each refusal is attributed to its own candidate"
+        );
+    }
+}
+
+/// The two policies differ ONLY by which targets are examined: the winning
+/// lane's result is the same, and the explicit fan-out is the one that composes
+/// (and simulates) both.
+#[test]
+fn the_policies_differ_only_by_which_targets_are_examined() {
+    let build = || {
+        let calls_a = calls_arc();
+        let calls_b = calls_arc();
+        let registry = DeploymentRegistry::new(vec![
+            counted_deployment(
+                deployment_a(),
+                CountedAdapter::new(
+                    TARGET_A,
+                    prepay_selector(),
+                    PREPAY_A,
+                    GROSS_A,
+                    ComposeAnswer::Accept,
+                    &calls_a,
+                ),
+            ),
+            counted_deployment(
+                deployment_b(),
+                CountedAdapter::new(
+                    TARGET_B,
+                    settle_selector(),
+                    U256::ZERO,
+                    GROSS_B,
+                    ComposeAnswer::Accept,
+                    &calls_b,
+                ),
+            ),
+        ])
+        .expect("two distinct identities compose a valid registry");
+        (registry, calls_a, calls_b)
+    };
+
+    let (registry, calls_a, calls_b) = build();
+    let all = run_fanout_with(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::AllTargets,
+    )
+    .expect("every candidate names a registered deployment");
+    assert_eq!(
+        (compositions(&calls_a), compositions(&calls_b)),
+        (1, 1),
+        "each deployment composes its own candidate"
+    );
+    assert_eq!(
+        survivor_ids(&all),
+        vec![
+            CandidateId::new(7, deployment_a()),
+            CandidateId::new(7, deployment_b())
+        ],
+        "the explicit fan-out keeps two independent candidates"
+    );
+    assert!(
+        all.retired.is_empty(),
+        "nothing is retired under all-targets"
+    );
+
+    let (registry, calls_a, calls_b) = build();
+    let first = run_fanout_with(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::FirstCompatible,
+    )
+    .expect("every candidate names a registered deployment");
+    assert_eq!(
+        (compositions(&calls_a), compositions(&calls_b)),
+        (1, 0),
+        "only the first target is examined"
+    );
+    assert_eq!(
+        survivor_ids(&first),
+        vec![CandidateId::new(7, deployment_a())]
+    );
+
+    let all_result = &all.lane(deployment_a()).expect("lane A").gas_profitable[0];
+    let first_result = &first.lane(deployment_a()).expect("lane A").gas_profitable[0];
+    assert_eq!(first_result.candidate_id, all_result.candidate_id);
+    assert_eq!(first_result.gross_profit, all_result.gross_profit);
+    assert_eq!(first_result.net_profit, all_result.net_profit);
+    assert_eq!(first_result.value, all_result.value);
+    assert_eq!(
+        first_result.execute_calldata, all_result.execute_calldata,
+        "the winning lane's transaction is its target's either way"
+    );
+}
+
+/// A hard Encode failure is NOT a capability decline: it ends the walk as that
+/// candidate's own exception, and no later target is composed.
+#[test]
+fn a_hard_encode_failure_is_not_a_capability_decline() {
+    let calls_a = calls_arc();
+    let calls_b = calls_arc();
+    let registry = DeploymentRegistry::new(vec![
+        counted_deployment(
+            deployment_a(),
+            CountedAdapter::new(
+                TARGET_A,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::HardEncode,
+                &calls_a,
+            ),
+        ),
+        counted_deployment(
+            deployment_b(),
+            CountedAdapter::new(
+                TARGET_B,
+                settle_selector(),
+                U256::ZERO,
+                GROSS_B,
+                ComposeAnswer::Accept,
+                &calls_b,
+            ),
+        ),
+    ])
+    .expect("two distinct identities compose a valid registry");
+
+    let outcome = run_fanout_with(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::FirstCompatible,
+    )
+    .expect("every candidate names a registered deployment");
+
+    assert_eq!(
+        compositions(&calls_a),
+        1,
+        "the failing target composed once"
+    );
+    assert_eq!(
+        compositions(&calls_b),
+        0,
+        "a primitive encode failure is not evidence the next target fares better"
+    );
+
+    let lane_a = outcome.lane(deployment_a()).expect("lane A");
+    assert!(lane_a.gas_profitable.is_empty());
+    assert_eq!(
+        lane_a.exception_count,
+        1,
+        "a hard encode error is this candidate's exception: buckets {:?}",
+        lane_a.fail_buckets.buckets()
+    );
+    assert_eq!(
+        lane_a.fail_buckets.buckets().get("encode-failed").copied(),
+        None,
+        "the exception is never folded into the routine refusal bucket"
+    );
+
+    let lane_b = outcome.lane(deployment_b()).expect("lane B");
+    assert_eq!(lane_b.candidate_count, 0);
+    assert!(lane_b.gas_profitable.is_empty());
+    assert_eq!(outcome.retired, vec![CandidateId::new(7, deployment_b())]);
+}
+
+/// A transaction aimed away from the deployment's declared target is that
+/// candidate's refusal, not a capability decline: the walk stops there and the
+/// later target is never composed.
+#[test]
+fn a_target_mismatch_is_not_a_capability_decline() {
+    let calls_a = calls_arc();
+    let calls_b = calls_arc();
+    // This target's adapter encodes TARGET_B while its deployment declares
+    // TARGET_A: a mismatch the engine refuses per candidate.
+    let registry = DeploymentRegistry::new(vec![
+        Arc::new(SimulationDeployment::new(
+            deployment_a(),
+            Arc::new(CountedAdapter::new(
+                TARGET_B,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::Accept,
+                &calls_a,
+            )),
+            OWNER,
+            TARGET_A,
+            GAS_LIMIT,
+            None,
+            None,
+        )),
+        counted_deployment(
+            deployment_b(),
+            CountedAdapter::new(
+                TARGET_B,
+                settle_selector(),
+                U256::ZERO,
+                GROSS_B,
+                ComposeAnswer::Accept,
+                &calls_b,
+            ),
+        ),
+    ])
+    .expect("two distinct identities compose a valid registry");
+
+    let outcome = run_fanout_with(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::FirstCompatible,
+    )
+    .expect("every candidate names a registered deployment");
+
+    assert_eq!(compositions(&calls_a), 1);
+    assert_eq!(
+        compositions(&calls_b),
+        0,
+        "a mismatched target does not advance the walk"
+    );
+
+    let lane_a = outcome.lane(deployment_a()).expect("lane A");
+    assert!(lane_a.gas_profitable.is_empty());
+    assert_eq!(lane_a.exception_count, 0);
+    assert_eq!(
+        lane_a
+            .fail_buckets
+            .buckets()
+            .get("target-mismatch")
+            .copied(),
+        Some(1),
+        "the refusal is the target-mismatch bucket: {:?}",
+        lane_a.fail_buckets.buckets()
+    );
+    assert_eq!(outcome.retired, vec![CandidateId::new(7, deployment_b())]);
+}
+
+/// Two deployments MAY run the same implementation: distinct identities are what
+/// the registry requires, and the first-compatible walk picks the first identity
+/// in registry order.
+#[test]
+fn deployments_sharing_one_implementation_keep_distinct_identities() {
+    let calls_a = calls_arc();
+    let calls_b = calls_arc();
+    let registry = DeploymentRegistry::new(vec![
+        counted_deployment(
+            deployment_a(),
+            CountedAdapter::new(
+                TARGET_A,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::Accept,
+                &calls_a,
+            ),
+        ),
+        counted_deployment(
+            deployment_b(),
+            CountedAdapter::new(
+                TARGET_B,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::Accept,
+                &calls_b,
+            ),
+        ),
+    ])
+    .expect("one implementation at two addresses is two identities");
+
+    assert_ne!(deployment_a(), deployment_b());
+    let outcome = run_fanout_with(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::FirstCompatible,
+    )
+    .expect("every candidate names a registered deployment");
+
+    assert_eq!((compositions(&calls_a), compositions(&calls_b)), (1, 0));
+    assert_eq!(
+        survivor_ids(&outcome),
+        vec![CandidateId::new(7, deployment_a())]
+    );
+    assert_eq!(
+        outcome.retired,
+        vec![CandidateId::new(7, deployment_b())],
+        "the same implementation at a later address is retired, not merged"
+    );
+}
+
+/// A one-entry registry is unaffected by the policy: one deployment, one
+/// composition, one candidate.
+#[test]
+fn a_one_entry_registry_selects_the_same_deployment_under_either_policy() {
+    for policy in [
+        TargetSelection::FirstCompatible,
+        TargetSelection::AllTargets,
+    ] {
+        let calls = calls_arc();
+        let registry = DeploymentRegistry::new(vec![counted_deployment(
+            deployment_a(),
+            CountedAdapter::new(
+                TARGET_A,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::Accept,
+                &calls,
+            ),
+        )])
+        .expect("one entry is a valid registry");
+
+        let outcome = run_fanout_with(&registry, vec![candidate(deployment_a())], policy)
+            .expect("the candidate names the registered deployment");
+
+        assert_eq!(compositions(&calls), 1, "{policy:?}: one composition");
+        assert_eq!(outcome.lanes.len(), 1);
+        assert_eq!(
+            survivor_ids(&outcome),
+            vec![CandidateId::new(7, deployment_a())]
+        );
+        assert!(outcome.retired.is_empty(), "{policy:?}: nothing to retire");
+        let result = &outcome.lane(deployment_a()).expect("lane A").gas_profitable[0];
+        assert_eq!(result.gross_profit, GROSS_A);
+        assert_eq!(result.value, PREPAY_A);
+    }
+}
+
+/// The policy spellings are closed: a configuration name selects its policy, and
+/// an unknown name selects none, so its caller reports it instead of defaulting.
+#[test]
+fn the_policy_spellings_are_closed() {
+    assert_eq!(
+        TargetSelection::from_name("first_compatible"),
+        Some(TargetSelection::FirstCompatible)
+    );
+    assert_eq!(
+        TargetSelection::from_name("all_targets"),
+        Some(TargetSelection::AllTargets)
+    );
+    assert_eq!(TargetSelection::from_name("all_target"), None);
+    assert_eq!(TargetSelection::from_name(""), None);
+    assert_eq!(TargetSelection::default(), TargetSelection::FirstCompatible);
+    assert_eq!(
+        TargetSelection::default().name(),
+        "first_compatible",
+        "the default multi-target policy is ordered first-compatible"
     );
 }

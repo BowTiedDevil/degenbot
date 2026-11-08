@@ -67,6 +67,12 @@ class ExecutorInputs:
     #: the identity/authority checks, and the per-target joins stay in the Rust
     #: core.
     deployments: tuple[SimulationDeployment, ...] = ()
+    #: Which deployments each solved path is offered to: ``"first_compatible"``
+    #: (the default) walks the registry in order and executes at the first
+    #: deployment whose composition accepts the path, or ``"all_targets"`` for
+    #: the explicit fan-out to every registered deployment. The walk itself is
+    #: the Rust core's; this field only names the policy.
+    target_selection: str = "first_compatible"
 
     @classmethod
     def from_session(cls, session: Session) -> ExecutorInputs:
@@ -163,6 +169,7 @@ async def build_batch_executor(
         dry_run=inputs.cfg.dry_run,
         broadcast_providers=broadcast_providers,
         deployments=list(inputs.deployments) or None,
+        target_selection=inputs.target_selection,
     )
 
 

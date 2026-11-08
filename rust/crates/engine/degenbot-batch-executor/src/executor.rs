@@ -80,6 +80,11 @@ pub struct ExecutorConfig {
     /// path becomes one candidate per entry, and each candidate's submit row
     /// carries its own deployment's target.
     pub(crate) deployments: Arc<DeploymentRegistry>,
+    /// Which of those deployments each solved path is offered to
+    /// ([`degenbot_arbitrage::TargetSelection`]): the default
+    /// ordered-first-compatible walk, or the explicit all-target fan-out. A
+    /// one-entry registry selects the same single deployment either way.
+    pub(crate) target_selection: degenbot_arbitrage::TargetSelection,
     /// The engine's shared state owner (the staleness gate + the per-block
     /// EVM anchor). `None` only for empty-input callers.
     pub(crate) bot_state: Option<Arc<StateLock<BotState>>>,
@@ -200,6 +205,7 @@ impl ExecutorConfig {
                 registry.validate_signing_authority(authority)?;
                 Arc::new(registry)
             },
+            target_selection: runtime.target_selection,
             resolver: runtime.resolver,
             suppression: runtime.suppression,
             divergence: runtime.divergence,
@@ -411,6 +417,7 @@ impl EngineLeaves {
             std::mem::take(&mut batch.candidates),
             &block,
             &cfg.deployments,
+            cfg.target_selection,
             &cfg.suppression,
             work.current_block,
             cfg.min_profit_margin_bps,
@@ -424,6 +431,11 @@ impl EngineLeaves {
         // Attribution — per-candidate simulate verdicts, deployment-major (the
         // order the lanes and their assemblies produced). Every map keys on
         // `CandidateId`, so two targets on one path stay two rows.
+        // The candidates the selection policy never examined (a path whose
+        // earlier target accepted composition). They were never composed or
+        // simulated, so they earn no record and no submit row: this batch's
+        // record set names exactly the candidates that entered execution.
+        let retired: HashSet<CandidateId> = fanout.retired.iter().copied().collect();
         let mut profitable: HashMap<CandidateId, degenbot_arbitrage::SimResult> = HashMap::new();
         let mut unprofitable: HashMap<CandidateId, degenbot_arbitrage::SimResult> = HashMap::new();
         let mut failures: HashMap<CandidateId, degenbot_arbitrage::SimFailure> = HashMap::new();
@@ -451,6 +463,9 @@ impl EngineLeaves {
         let mut submit_candidates: Vec<degenbot_submission::SubmitCandidate> = Vec::new();
         let empty_path = PathInfo::new(Vec::new());
         for (candidate_id, target) in entered {
+            if retired.contains(&candidate_id) {
+                continue;
+            }
             // The lookup always hits: the core only re-emits path ids it was
             // handed (the join's `None`/empty fall-through keeps isolation —
             // an empty mutual-exclusion set — without fabricating hops).

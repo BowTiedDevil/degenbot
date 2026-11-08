@@ -1158,13 +1158,25 @@ session-global executor address as the transaction target.
 
 **Explicit all-target fan-out**:
 
-The target policy that binds every solved path to EVERY registered deployment, producing
-one candidate per deployment with its own identity, simulation, outcome, and submission
-row. A refusal at one target is that candidate's verdict alone and never suppresses
-another target's candidate.
+One of the two target-selection policies: every solved path is offered EVERY registered
+deployment, producing one candidate per deployment with its own identity, simulation,
+outcome, and submission row. A refusal at one target is that candidate's verdict alone
+and never suppresses another target's candidate.
 
-_Avoid_: "first compatible" selection, a default one-target policy, or collapsing
+_Avoid_: treating it as the default policy, a one-target policy, or collapsing
 post-target rows by path id.
+
+**Ordered first-compatible selection**:
+
+The default target-selection policy: a solved path is offered the deployment registry in
+order and executes at the first deployment whose composition accepts it. A capability
+decline (`ComposeError::Unsupported`) advances to the next target without suppressing or
+failing anything; a target the walk never reached is never composed or simulated. A hard
+encode error, a target mismatch, a revert, or a failed assessment is that candidate's own
+verdict and never advances the walk.
+
+_Avoid_: calling it a fallback or a per-path retry loop, and putting capability policy
+inside an encoder.
 
 ## Executor command layer
 

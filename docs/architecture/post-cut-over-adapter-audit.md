@@ -32,7 +32,7 @@ shell, hand-written (see "Consolidated" below).
 | File | Its share after the cut-over |
 |---|---|
 | `runner/_consume.py` | `consume_result_batches` (`:70`) runs the consumer and renders the report; `_drain_batch_outcomes` (`:113`) folds each drained `BatchOutcomeSet` into the render view and the silent-veto smoke FSM. Both read typed records; neither derives work. |
-| `runner/_sim_submit.py` | The construction boundary only: `ExecutorInputs` (`:49`) resolves the runtime handles, `build_batch_executor` hands them to the FFI (which owns every policy default and clamp), `build_session_consumer` (`:173`) attaches the engine's hand-off. Declares no policy value. |
+| `runner/_sim_submit.py` | The construction boundary only: `ExecutorInputs` (`:49`) resolves the runtime handles, `build_batch_executor` hands them to the FFI (which owns every policy default and clamp), `build_session_consumer` (`:173`) attaches the engine's hand-off. It carries the target-selection policy NAME (`target_selection`) and no policy value: the walk, its order, and its refusal taxonomy are the core's. |
 | `runner/session.py` | The run ritual's wiring: `build_consumer` calls the session's consumer factory, `block_loop` assembles the drain's collaborators. The block clock is `current_block` reading the core's dispatcher — no Python mirror. |
 | `dispatch/__init__.py`, `dispatch/records.py` | The FFI alias facade plus `typed_submit_record` (`records.py:57`), the typed decode of the wire submit-record dicts. |
 | `runner/_render.py` | The render fold (`MergedOutcome.from_records`) — display, `stays-python` by design. |

@@ -74,6 +74,7 @@ impl RawResult {
             steps: steps.into_boxed_slice(),
             solve_block: self.solve_block,
             path_info,
+            prepared: None,
         }
     }
 }

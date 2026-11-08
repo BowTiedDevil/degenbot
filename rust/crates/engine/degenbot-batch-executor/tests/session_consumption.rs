@@ -187,6 +187,7 @@ async fn offline_executor() -> Arc<BatchExecutor> {
             degenbot_executor::composers::EncodeOptions::default(),
         ),
         additional_deployments: Vec::new(),
+        target_selection: degenbot_arbitrage::TargetSelection::FirstCompatible,
         injected_address: None,
         runtime_bytecode: Bytes::new(),
         bot_state: None,

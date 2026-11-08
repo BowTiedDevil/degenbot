@@ -47,9 +47,13 @@ pub mod cmd_executor;
 /// execution deployment, and the session's ordered deployment registry.
 pub mod deployment;
 
-/// The registry fan-out: explicit all-target simulation, one lane per
-/// registered deployment.
+/// The registry fan-out: one simulation lane per registered deployment, under
+/// either target-selection policy.
 pub mod fanout;
+
+/// The target-selection policy above the registry: which deployments a solved
+/// path is offered to, and the ordered first-compatible walk.
+pub mod selection;
 
 /// The executor-runtime bytecode artifact: the engine's resolution precedence
 /// + the validated `0x`-hex read. Every consumer that injects executor code
@@ -114,10 +118,12 @@ pub use pool_divergence::{
     diverging_pool_keys, hop_pool_key, is_solver_calc_failure, PoolDivergence, PoolDivergenceKey,
     POOL_DIVERGENCE_DECAY_BLOCKS,
 };
+pub use selection::{PreparedEncoding, SelectedCandidates, TargetSelection};
 pub use simulator::{
-    compute_priority_fee, execute_gas_limit, fits_int128, simulate_in_process_with_db,
-    simulate_path_on_evm, simulate_path_on_evm_in_span, FailBuckets, NoProfitShape, RevertingFrame,
-    SimFailure, SimResult, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_GAS_ENV, GAS_SAFETY_MARGIN,
+    compose_transaction, compute_priority_fee, execute_gas_limit, fits_int128,
+    simulate_in_process_with_db, simulate_path_on_evm, simulate_path_on_evm_in_span,
+    simulate_path_on_evm_prepared, FailBuckets, NoProfitShape, RevertingFrame, SimFailure,
+    SimResult, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_GAS_ENV, GAS_SAFETY_MARGIN,
     INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
     MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };

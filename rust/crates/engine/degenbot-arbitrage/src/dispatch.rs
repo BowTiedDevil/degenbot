@@ -43,7 +43,7 @@ use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
-use crate::simulate_path_on_evm;
+use crate::simulate_path_on_evm_prepared;
 use crate::{
     diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token, hop_pool_key,
     is_solver_calc_failure, FailBuckets, FeeOnTransferRegistry, PoolDivergence, SimFailure,
@@ -269,6 +269,14 @@ pub struct DispatchCandidate {
     pub solve_block: u64,
     /// `path_info` — the resolved path hops the deployment's Encode part encodes.
     pub path_info: PathInfo,
+    /// The Encode decision a target-selection walk already took for this
+    /// candidate ([`crate::selection::PreparedEncoding`]).
+    ///
+    /// `Some` means the deployment's `encode` callback has ALREADY run on this
+    /// candidate's path, so simulation reuses that exact transaction instead of
+    /// composing a second time. `None` is the explicit all-target fan-out's
+    /// shape: the simulation leaf composes for its own deployment.
+    pub prepared: Option<crate::selection::PreparedEncoding>,
 }
 
 impl DispatchCandidate {
@@ -282,7 +290,7 @@ impl DispatchCandidate {
 
     /// Build the [`SimulatePath`] the fan-out hands to [`simulate_path_on_evm`].
     #[must_use]
-    fn to_simulate_path(&self) -> SimulatePath {
+    pub(crate) fn to_simulate_path(&self) -> SimulatePath {
         SimulatePath {
             candidate_id: self.candidate_id,
             optimal_input: self.optimal_input,
@@ -857,10 +865,15 @@ pub fn dispatch_profitable_results(
                                 v2_calc_trace(&mut handle, &sim_path);
                                 let mut buckets = FailBuckets::new();
                                 let mut session = handle.session();
-                                let result = simulate_path_on_evm(
+                                // A target the selection walk already composed
+                                // hands its accepted transaction down, so the
+                                // adapter's callback never runs twice.
+                                let prepared = c.prepared.as_ref();
+                                let result = simulate_path_on_evm_prepared(
                                     &mut session,
                                     ctx,
                                     &sim_path,
+                                    prepared,
                                     &mut buckets,
                                 )
                                 .map_err(|e| format!("{e}"));
@@ -1238,6 +1251,7 @@ mod tests {
             }]),
             solve_block: 100,
             path_info: single_v2_hop(pool),
+            prepared: None,
         }
     }
 
@@ -1260,6 +1274,7 @@ mod tests {
             ]),
             solve_block: 100,
             path_info: two_v2_hops(),
+            prepared: None,
         }
     }
 
@@ -1375,6 +1390,7 @@ mod tests {
             steps: Box::new([]),
             solve_block: 100,
             path_info: two_v2_hops(),
+            prepared: None,
         };
 
         // A 0-bps floor keeps everything: two rows in, two rows out.
@@ -2356,6 +2372,7 @@ mod tests {
             steps: Box::new([]),
             solve_block: 100,
             path_info: path.clone(),
+            prepared: None,
         };
         // Deliberately passed in a non-sorted order, with a profit tie (100).
         let mut cands = vec![mk(10, 100), mk(5, 500), mk(9, 100), mk(20, 300)];

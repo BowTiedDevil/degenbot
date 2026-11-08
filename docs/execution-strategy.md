@@ -481,13 +481,14 @@ Every consumer-visible transition, Rust and Python:
 
 ## Boundaries this chunk does not cross
 
-- **Target SELECTION and version policy.** Deployment identity and explicit
-  all-target fan-out are here (`DeploymentId`/`CandidateId`, the ordered
-  `DeploymentRegistry`, `dispatch_across_deployments`); _choosing_ one target
-  from several (ordered / first-compatible selection) is its own policy, as is
-  `cmd_executor` protocol-version/release policy. The generic seam carries no
-  capability, version, or release metadata, and an adapter keeps any such state
-  private to itself.
+- **Version policy.** Deployment identity, target selection, and the registry
+  fan-out are here (`DeploymentId`/`CandidateId`, the ordered
+  `DeploymentRegistry`, `TargetSelection`, `dispatch_across_deployments`): the
+  default policy walks the registry in order and executes at the first
+  deployment whose composition accepts a path, and the explicit all-target
+  fan-out is one keyword away. `cmd_executor` protocol-version/release policy
+  stays outside: the generic seam carries no capability, version, or release
+  metadata, and an adapter keeps any such state private to itself.
 
 ## Yes, this works for the top two DEs
 

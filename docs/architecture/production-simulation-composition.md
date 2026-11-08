@@ -207,14 +207,63 @@ One Python name IS added: the `CandidateId` pyclass (`path_id` +
 `deployment_id`, `Display` = `path@deployment`) that the record accessors
 return and the submit constructor takes.
 
-## Explicit all-target fan-out
+## Target selection
+
+Which deployments a solved path is offered to is its own policy value,
+`degenbot_arbitrage::TargetSelection`, at the fan-out boundary: a driver names it
+on `ExecutorRuntime::target_selection` (or `build_batch_executor_py`'s
+`target_selection` keyword) and nothing else changes. The policy never lives
+inside an encoder — the walk only ever asks each deployment's own `encode`
+callback, so an adapter keeps every capability opinion it has.
+
+### Ordered first-compatible (the default)
+
+Each solved path is offered the registry IN ORDER and executes at the first
+deployment whose composition accepts it:
+
+- **Composition decides.** `ComposeError::Unsupported` is the routine capability
+  decline: the walk advances to the next target and nothing is suppressed,
+  failed, or reclassified. A path every target declines has no selected
+  deployment — each examined candidate keeps its own `encode-failed` refusal.
+- **Composed once.** The accepted `TransactionRequest` travels to simulation on
+  the candidate (`PreparedEncoding::Accepted`), so an adapter's `encode` callback
+  runs exactly once per examined target — never once for selection and again for
+  simulation. The simulated `to`/`data`/`value` are the accepted request's, and
+  they are what the submit join stamps.
+- **Later targets stay untouched.** A target the walk never reached is neither
+  composed nor simulated: its candidates are `DeploymentFanOutOutcome::retired`,
+  produce no record, and contribute no submit row.
+- **Not every failure is a capability decline.** A `ComposeError::Encode` failure
+  ends the walk as that candidate's own exception, and a transaction aimed away
+  from the deployment's declared target is that candidate's `target-mismatch`
+  refusal; neither advances, because a hard error is not evidence the next
+  target would fare better. Reverts, unprofitable results, and failed
+  assessments are simulation verdicts — the walk is already over by then, so
+  none of them can select a later target.
+
+The one-deployment leaf (`dispatch_profitable_results`) is unchanged and is
+exactly what a one-entry registry runs under either policy: one entry offers one
+target, so single-target callers keep their behavior verbatim.
+
+Pinned by `degenbot-arbitrage/tests/heterogeneous_deployments.rs`
+(`the_first_compatible_policy_selects_only_the_first_accepting_target`,
+`a_capability_decline_advances_and_the_accepted_request_is_simulated_once`,
+`every_target_declining_selects_nothing_and_keeps_each_refusal`,
+`a_hard_encode_failure_is_not_a_capability_decline`,
+`a_target_mismatch_is_not_a_capability_decline`,
+`the_policies_differ_only_by_which_targets_are_examined`), by
+`degenbot-batch-executor/tests/heterogeneous_fanout.rs`
+(`the_default_policy_executes_only_at_the_first_compatible_deployment`), and by
+`tests/dispatch/test_heterogeneous_deployment_fanout.py::TestTargetSelection` on
+the Python side.
+
+### Explicit all-target fan-out
 
 Every solved path is bound to EVERY registered deployment, in registry order: the
 assembly mints one `DispatchCandidate` per deployment, and
 `degenbot_arbitrage::dispatch_across_deployments` runs one lane per registry
 entry, simulating each candidate only against the deployment its `CandidateId`
-names. The one-deployment leaf (`dispatch_profitable_results`) is unchanged and
-is exactly what a one-entry registry runs.
+names (each lane composes its own candidate, and nothing is retired).
 
 Deterministic merge semantics:
 
@@ -246,20 +295,22 @@ Deterministic merge semantics:
 
 ## Out of scope here
 
-_Naming_ a target from several is its own policy: ordered/first-compatible
-selection and `cmd_executor` protocol-version/release metadata stay outside this
-seam. This chunk offers explicit all-target fan-out only, and a session that
-names no additional deployment is the one-entry built-in case with unchanged
-behavior.
+`cmd_executor` protocol-version/release metadata stays outside this seam: an
+adapter discovers and validates its own versions, and the generic selection
+policy reads only the adapter's composition result. A session that names no
+additional deployment is the one-entry built-in case with unchanged behavior
+under either policy.
 
 The Python shell configures the SAME seam, not a second one: the
 `SimulationDeployment` pyclass projects a declaration (deployment id, the Python
 `PayloadAdapter`, owner, execution target, gas limit, optional declared runtime)
 onto `degenbot_arbitrage::SimulationDeployment`, and `build_batch_executor_py`'s
-`deployments` argument fills `ExecutorRuntime::additional_deployments`. The
-registry, the fan-out, the `CandidateId` keying, and the per-target join all stay
-core-side; Python adds no fan-out, join, assessment, or target-selection
-implementation. The core registry's composition refusals (a duplicate identity,
+`deployments` argument fills `ExecutorRuntime::additional_deployments`, and its
+`target_selection` keyword (`"first_compatible"` by default, `"all_targets"`
+for the explicit fan-out) names the policy — an unknown spelling is a
+`ValueError`, never a silent default. The registry, the selection walk, the
+fan-out, the `CandidateId` keying, and the per-target join all stay core-side;
+Python adds no fan-out, join, assessment, or target-selection algorithm. The core registry's composition refusals (a duplicate identity,
 an owner the signer does not hold) are mapped to `ValueError` at that boundary
 rather than surfacing `ExecutorConfig::from_verdict`'s error as a panic across
 the FFI.

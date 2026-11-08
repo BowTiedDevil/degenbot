@@ -144,6 +144,7 @@ mod tests {
                     degenbot::cmd_executor::composers::EncodeOptions::default(),
                 ),
                 additional_deployments: Vec::new(),
+                target_selection: degenbot::arbitrage::TargetSelection::FirstCompatible,
                 injected_address: None,
                 runtime_bytecode: Bytes::new(),
                 bot_state: None,

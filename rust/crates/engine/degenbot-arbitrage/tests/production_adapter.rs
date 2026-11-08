@@ -351,6 +351,7 @@ fn candidate() -> DispatchCandidate {
         ]),
         solve_block: BLOCK,
         path_info: two_v2_hops(),
+        prepared: None,
     }
 }
 

@@ -1213,6 +1213,7 @@ fn build_batch_executor(
             // This runner composes ONE execution deployment (the built-in
             // settlement one); a heterogeneous session registers more.
             additional_deployments: Vec::new(),
+            target_selection: degenbot::arbitrage::TargetSelection::FirstCompatible,
             injected_address: cfg
                 .inject_executor_code
                 .then(|| degenbot::core::address_utils::parse_address(&cfg.injected_address))

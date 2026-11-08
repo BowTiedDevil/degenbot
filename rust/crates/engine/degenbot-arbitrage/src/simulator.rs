@@ -55,7 +55,8 @@ use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_core::fee_percentiles::{P10_INDEX, P50_INDEX, PRIORITY_FEE_PERCENTILES};
 use degenbot_execution::{
     CandidateId, ComposeError, ComposeOptions, ComposerInputs, ExecutionObservation,
-    ExecutionResult, FeePolicy, HopInfo, PathInfo, ProbeSpec, V2HopInfo, V4HopInfo,
+    ExecutionResult, FeePolicy, HopInfo, PathInfo, ProbeSpec, TransactionRequest, V2HopInfo,
+    V4HopInfo,
 };
 use degenbot_rpc::fees::BlockPriorityFees;
 // The engine types the strategy drives: the production leaf (the
@@ -63,8 +64,9 @@ use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_simulation::sim::production::{simulate_transaction, SimulationCapture};
 use degenbot_simulation::{CapturedSwap, ProductionSimContext, ProductionSimError};
 
-use crate::deployment::{FeeSizing, SimulateContext};
+use crate::deployment::{FeeSizing, SimulateContext, SimulationDeployment};
 use crate::dispatch::SolveStep;
+use crate::selection::PreparedEncoding;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Fee-sizing + gas constants
@@ -966,6 +968,34 @@ pub fn simulate_path_on_evm(
     simulate_path_on_evm_in_span(session, ctx, path, fail_buckets, &span)
 }
 
+/// Simulate a candidate whose deployment already took its Encode decision.
+///
+/// `prepared` is the selection walk's answer for THIS candidate (see
+/// [`crate::selection`]): an accepted transaction is simulated exactly as
+/// composed — the adapter's `encode` callback does not run again — and a
+/// recorded decline or failure is categorised without calling it at all.
+/// `None` composes here, the explicit all-target fan-out's shape.
+///
+/// # Errors
+///
+/// Same contract as the revm seam.
+pub fn simulate_path_on_evm_prepared(
+    session: &mut degenbot_simulation::sim::evm2::session::Evm2SimSession<'_, '_>,
+    ctx: &SimulateContext<'_>,
+    path: &SimulatePath,
+    prepared: Option<&PreparedEncoding>,
+    fail_buckets: &mut FailBuckets,
+) -> ProviderResult<Option<SimResult>> {
+    let span = tracing::info_span!(
+        "degenbot.bundle.simulate",
+        path_id = path.candidate_id.path_id(),
+        simulate.verdict = tracing::field::Empty,
+        simulate.expected_profit = tracing::field::Empty,
+        simulate.error_reason = tracing::field::Empty,
+    );
+    simulate_path_on_evm_in_span_prepared(session, ctx, path, prepared, fail_buckets, &span)
+}
+
 /// The caller-held-span form (mirrors `simulate_path_on_evm_in_span`).
 ///
 /// # Errors
@@ -978,11 +1008,50 @@ pub fn simulate_path_on_evm_in_span(
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
 ) -> ProviderResult<Option<SimResult>> {
+    simulate_path_on_evm_in_span_prepared(session, ctx, path, None, fail_buckets, span)
+}
+
+/// The span-taking body both public entries share.
+fn simulate_path_on_evm_in_span_prepared(
+    session: &mut degenbot_simulation::sim::evm2::session::Evm2SimSession<'_, '_>,
+    ctx: &SimulateContext<'_>,
+    path: &SimulatePath,
+    prepared: Option<&PreparedEncoding>,
+    fail_buckets: &mut FailBuckets,
+    span: &tracing::Span,
+) -> ProviderResult<Option<SimResult>> {
     let (result, sim_dur) = degenbot_simulation::sim::sim_metrics::timed(|| {
-        simulate_path_on_evm_seam(session, ctx, path, fail_buckets, span)
+        simulate_path_on_evm_seam(session, ctx, path, prepared, fail_buckets, span)
     });
     degenbot_simulation::sim::sim_metrics::record_sim(sim_dur);
     result
+}
+
+/// The deployment's Encode decision for one path: ONE complete transaction
+/// (ADR-098 D2), built from the same neutral [`ComposerInputs`] whoever asks.
+///
+/// The target-selection walk ([`crate::selection`]) and this seam both call it,
+/// so an adapter's `encode` callback can never see two spellings of one solve
+/// result — and a caller holding an accepted request never needs to ask twice.
+///
+/// # Errors
+///
+/// The adapter's own [`ComposeError`]: [`ComposeError::Unsupported`] when the
+/// path is outside the contract's capability, [`ComposeError::Encode`] when a
+/// primitive encoding step failed.
+pub fn compose_transaction(
+    deployment: &SimulationDeployment,
+    path: &SimulatePath,
+) -> Result<TransactionRequest, ComposeError> {
+    let hop_outputs = path.expected_outputs_vec();
+    let consumed_inputs = path.consumed_inputs_vec();
+    let inputs = ComposerInputs {
+        optimal_input: path.optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed_inputs,
+        opts: ComposeOptions,
+    };
+    deployment.adapter().encode(&path.path_info, &inputs)
 }
 
 /// The production simulation seam: the deployment's Encode, the engine's
@@ -1000,6 +1069,7 @@ fn simulate_path_on_evm_seam(
     session: &mut degenbot_simulation::sim::evm2::session::Evm2SimSession<'_, '_>,
     ctx: &SimulateContext<'_>,
     path: &SimulatePath,
+    prepared: Option<&crate::selection::PreparedEncoding>,
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
 ) -> ProviderResult<Option<SimResult>> {
@@ -1054,16 +1124,16 @@ fn simulate_path_on_evm_seam(
     }
 
     // The deployment's Encode part: ONE complete transaction for this
-    // opportunity (ADR-098 D2).
-    let hop_outputs = path.expected_outputs_vec();
-    let consumed_inputs = path.consumed_inputs_vec();
-    let inputs = ComposerInputs {
-        optimal_input: path.optimal_input,
-        hop_outputs: &hop_outputs,
-        consumed_inputs: &consumed_inputs,
-        opts: ComposeOptions,
+    // opportunity (ADR-098 D2). A target the selection walk already composed
+    // re-enters its recorded decision, so the adapter's callback runs once per
+    // examined target, never once for selection and again here.
+    let encoding = match prepared {
+        Some(PreparedEncoding::Accepted(transaction)) => Ok(transaction.clone()),
+        Some(PreparedEncoding::Declined(detail)) => Err(ComposeError::Unsupported(detail.clone())),
+        Some(PreparedEncoding::Failed(detail)) => Err(ComposeError::Encode(detail.clone())),
+        None => compose_transaction(ctx.deployment, path),
     };
-    let transaction = match ctx.deployment.adapter().encode(&path.path_info, &inputs) {
+    let transaction = match encoding {
         Ok(transaction) => transaction,
         Err(ComposeError::Unsupported(_decline)) => {
             // A routine encode decline is a bucket, never an exception.

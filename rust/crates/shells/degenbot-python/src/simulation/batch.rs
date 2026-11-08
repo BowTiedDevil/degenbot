@@ -509,15 +509,25 @@ impl PyBatchExecutor {
 ///     `deployments`: the session's ADDITIONAL execution deployments (foreign
 ///         contracts), registered after the built-in settlement deployment in
 ///         the order given. `None`/empty is the one-entry built-in session with
-///         unchanged behavior; with entries present, every solved path becomes
-///         one candidate per registered deployment and each candidate's submit
-///         row carries its own deployment's target (the core's explicit
-///         all-target fan-out, ADR-098 D4).
+///         unchanged behavior; with entries present, which targets each solved
+///         path is offered to is `target_selection`'s decision, and each
+///         candidate's submit row carries its own deployment's target
+///         (ADR-098 D4).
+///     `target_selection`: which deployments each solved path is offered to —
+///         `"first_compatible"` (the default) or `"all_targets"`
+///         ([`degenbot_arbitrage::TargetSelection`]). The default walks the
+///         registry in order and executes at the first deployment whose
+///         composition accepts the path; a capability refusal advances to the
+///         next target, and later targets are never composed. `"all_targets"`
+///         is the explicit fan-out: every registered deployment is offered
+///         every path. One registered deployment selects the same target either
+///         way.
 ///
 /// # Errors
 ///
-/// `ValueError` on malformed addresses/args, or when the composed registry is
-/// refused: a deployment reusing an existing identity (including the built-in
+/// `ValueError` on malformed addresses/args, an unknown `target_selection`
+/// value, or when the composed registry is refused: a deployment reusing an
+/// existing identity (including the built-in
 /// [`crate::simulation::deployment::builtin_deployment_id`]) makes every
 /// post-target row ambiguous, and a deployment whose owner is not the session
 /// signer's account could not be signed for. Both are the core
@@ -534,6 +544,7 @@ impl PyBatchExecutor {
     dry_run,
     broadcast_providers = None,
     deployments = None,
+    target_selection = None,
 ))]
 #[expect(
     clippy::too_many_arguments,
@@ -550,9 +561,22 @@ pub fn build_batch_executor_py(
     dry_run: bool,
     broadcast_providers: Option<Vec<PyRef<'_, PyAsyncAlloyProvider>>>,
     deployments: Option<Vec<PyRef<'_, PySimulationDeployment>>>,
+    target_selection: Option<&str>,
 ) -> PyResult<PyBatchExecutor> {
     crate::ambient_runtime::ensure_async_runtime_bound();
     let suppression = dispatcher.suppression_arc();
+    // The target-selection policy is the operator's choice; an unknown spelling
+    // is refused here rather than silently defaulting to a policy the caller did
+    // not name.
+    let target_selection = match target_selection {
+        None => degenbot_arbitrage::TargetSelection::default(),
+        Some(name) => degenbot_arbitrage::TargetSelection::from_name(name).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown target_selection {name:?}: expected one of {}",
+                degenbot_arbitrage::TargetSelection::NAMES.join(", ")
+            ))
+        })?,
+    };
     let runtime = ExecutorRuntime {
         // `0` = no cap: the cockpit never carried a per-batch cap (the
         // fan-out's own `MAX_SIMULATE_CONCURRENT` bound always applied).
@@ -579,6 +603,7 @@ pub fn build_batch_executor_py(
             .iter()
             .map(|deployment| deployment.deployment_arc())
             .collect(),
+        target_selection,
         injected_address: context.injected_address,
         runtime_bytecode: context.runtime_bytecode.clone(),
         bot_state: Some(engine.bot_state_arc()),

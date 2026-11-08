@@ -627,9 +627,11 @@ class SimulationDeployment:
 
     Construct once per foreign contract, then hand the list to
     [`crate::simulation::batch::build_batch_executor_py`]'s `deployments`
-    argument: every solved path becomes one candidate per registered deployment,
-    in registration order, after the built-in settlement deployment (whose
-    identity is [`builtin_deployment_id`]).
+    argument, in registration order, after the built-in settlement deployment
+    (whose identity is [`builtin_deployment_id`]). Which of them each solved path
+    is offered to is that function's `target_selection` policy: the default
+    ordered walk stops at the first deployment whose composition accepts the
+    path, and the explicit all-target fan-out offers every path to every entry.
 
     The adapter is an existing [`crate::execution::PyPayloadAdapter`] — the
     Python-authored Encode callable bound to the transaction it executes. This
@@ -763,6 +765,7 @@ def build_batch_executor_py(
     dry_run: bool,
     broadcast_providers: SupportsGetItem[int, AsyncAlloyProvider] | None = None,
     deployments: SupportsGetItem[int, SimulationDeployment] | None = None,
+    target_selection: str | None = None,
 ) -> BatchExecutor:
     """
     Construct the session executor: the core's value-configured module over
@@ -793,15 +796,25 @@ def build_batch_executor_py(
         `deployments`: the session's ADDITIONAL execution deployments (foreign
             contracts), registered after the built-in settlement deployment in
             the order given. `None`/empty is the one-entry built-in session with
-            unchanged behavior; with entries present, every solved path becomes
-            one candidate per registered deployment and each candidate's submit
-            row carries its own deployment's target (the core's explicit
-            all-target fan-out, ADR-098 D4).
+            unchanged behavior; with entries present, which targets each solved
+            path is offered to is `target_selection`'s decision, and each
+            candidate's submit row carries its own deployment's target
+            (ADR-098 D4).
+        `target_selection`: which deployments each solved path is offered to —
+            `"first_compatible"` (the default) or `"all_targets"`
+            ([`degenbot_arbitrage::TargetSelection`]). The default walks the
+            registry in order and executes at the first deployment whose
+            composition accepts the path; a capability refusal advances to the
+            next target, and later targets are never composed. `"all_targets"`
+            is the explicit fan-out: every registered deployment is offered
+            every path. One registered deployment selects the same target either
+            way.
 
     # Errors
 
-    `ValueError` on malformed addresses/args, or when the composed registry is
-    refused: a deployment reusing an existing identity (including the built-in
+    `ValueError` on malformed addresses/args, an unknown `target_selection`
+    value, or when the composed registry is refused: a deployment reusing an
+    existing identity (including the built-in
     [`crate::simulation::deployment::builtin_deployment_id`]) makes every
     post-target row ambiguous, and a deployment whose owner is not the session
     signer's account could not be signed for. Both are the core

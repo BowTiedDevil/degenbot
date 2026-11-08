@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import fields
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 
@@ -49,6 +50,7 @@ from degenbot.dispatch import (
     builtin_deployment_id,
     typed_submit_record,
 )
+from degenbot.runner._sim_submit import ExecutorInputs
 from tests.helpers.seam import (
     AlloyProvider,
     AsyncAlloyProvider,
@@ -204,6 +206,7 @@ def _executor(
     deployments: list[SimulationDeployment] | None = None,
     dry_run: bool = True,
     rpc_url: str = _RPC_URL,
+    target_selection: str | None = None,
 ) -> BatchExecutor:
     """Build the session executor over the offline fixture engine."""
     return build_batch_executor_py(
@@ -216,6 +219,7 @@ def _executor(
         dry_run=dry_run,
         broadcast_providers=None,
         deployments=deployments,
+        target_selection=target_selection,
     )
 
 
@@ -333,6 +337,9 @@ class TestSingleEntryParity:
         executor = _executor(
             engine,
             deployments=[_deployment(2, target=TARGET_A, code=b"\x00")],
+            # The claim is about registry order across every candidate, so the
+            # session asks for the explicit fan-out.
+            target_selection="all_targets",
         )
         batch = await _one_batch(executor, path_id=path_id)
         assert [rec.candidate_id.deployment_id for rec in batch.records] == [
@@ -480,6 +487,8 @@ class TestHeterogeneousFanOut:
             engine,
             deployments=[deployment_a, deployment_b],
             rpc_url=canned_chain.url,
+            # The explicit fan-out: every registered target is offered the path.
+            target_selection="all_targets",
         )
         batch = await _one_batch(executor, path_id=path_id)
 
@@ -524,3 +533,91 @@ class TestHeterogeneousFanOut:
         assert [record.candidate.deployment_id for record in submitted] == [2]
         assert submitted[0].candidate.path_id == path_id
         assert submitted[0].reason is SubmitSkipReason.DRY_RUN
+
+
+class TestTargetSelection:
+    """The target-selection policy: ordered first-compatible by default, and the
+    explicit all-target fan-out on request.
+
+    The walk is the Rust core's; Python names the policy and nothing else. A
+    Python adapter that a policy never examines is never called — the compose
+    callable is the observable side of that claim.
+    """
+
+    def test_the_default_policy_is_ordered_first_compatible(self) -> None:
+        default = {field.name: field for field in fields(ExecutorInputs)}[
+            "target_selection"
+        ].default
+        assert default == "first_compatible", "a driver that names no policy gets the ordered walk"
+
+    def test_an_unknown_policy_is_a_value_error(
+        self, nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int]
+    ) -> None:
+        engine, _path_id = nxm2bf_v2_engine_and_path
+        with pytest.raises(ValueError, match="unknown target_selection"):
+            _executor(
+                engine,
+                deployments=[_deployment(2, target=TARGET_A)],
+                target_selection="first_compat",
+            )
+
+    async def test_a_named_all_targets_policy_reaches_the_core(
+        self, nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int]
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
+        composed: list[int] = []
+
+        def compose(_result: object) -> bytes:
+            composed.append(len(composed) + 1)
+            return b"\xa1\xa2\xa3\xa4"
+
+        deployment = SimulationDeployment(
+            2,
+            PayloadAdapter(compose, to=TARGET_A),
+            OWNER,
+            TARGET_A,
+            _GAS_LIMIT,
+            code=b"\x00",
+        )
+        executor = _executor(
+            engine,
+            deployments=[deployment],
+            target_selection="all_targets",
+        )
+        batch = await _one_batch(executor, path_id=path_id)
+
+        assert composed == [1], "the explicit fan-out composes every target"
+        assert [rec.candidate_id.deployment_id for rec in batch.records] == [
+            builtin_deployment_id(),
+            2,
+        ], "one candidate per registered deployment, in registry order"
+
+    async def test_the_default_policy_never_calls_a_later_deployment(
+        self, nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int]
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
+        composed: list[int] = []
+
+        def compose(_result: object) -> bytes:
+            composed.append(len(composed) + 1)
+            return b"\xa1\xa2\xa3\xa4"
+
+        deployment = SimulationDeployment(
+            2,
+            PayloadAdapter(compose, to=TARGET_A),
+            OWNER,
+            TARGET_A,
+            _GAS_LIMIT,
+            code=b"\x00",
+        )
+        executor = _executor(engine, deployments=[deployment])
+        batch = await _one_batch(executor, path_id=path_id)
+
+        assert composed == [], (
+            "the built-in deployment accepts composition first, so the foreign "
+            "adapter is never invoked"
+        )
+        assert [rec.candidate_id.deployment_id for rec in batch.records] == [
+            builtin_deployment_id()
+        ], "only the first-compatible deployment produced a record"
+        assert path_id in {rec.candidate_id.path_id for rec in batch.records}

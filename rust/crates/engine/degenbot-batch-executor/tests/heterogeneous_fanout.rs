@@ -34,7 +34,7 @@ use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
     CmdExecutorBinding, DeploymentRegistry, FeeOnTransferRegistry, PoolDivergence, SimulationBlock,
-    SimulationDeployment,
+    SimulationDeployment, TargetSelection,
 };
 use degenbot_batch_executor::{
     join_sim_result, BatchExecutor, BatchOutcome, BatchWork, ExecutorConfig, ExecutorRuntime,
@@ -357,6 +357,14 @@ impl ReceiptProbe for NoopProbe {
 /// orchestration plans, orders, and arbitrates every candidate, then skips the
 /// broadcast.
 fn executor(additional: Vec<Arc<SimulationDeployment>>) -> BatchExecutor {
+    executor_with(additional, TargetSelection::AllTargets)
+}
+
+/// The same executor under a named target-selection policy.
+fn executor_with(
+    additional: Vec<Arc<SimulationDeployment>>,
+    selection: TargetSelection,
+) -> BatchExecutor {
     let provider = Arc::new(mock_provider());
     let mut verdict = degenbot_config::BotConfig::default();
     // The built-in target runs a DECLARED build in this fixture: its `execute`
@@ -380,6 +388,7 @@ fn executor(additional: Vec<Arc<SimulationDeployment>>) -> BatchExecutor {
             EncodeOptions::default(),
         ),
         additional_deployments: additional,
+        target_selection: selection,
         injected_address: Some(EXECUTOR),
         runtime_bytecode: receipt_stub(BUILTIN_GROSS),
         bot_state: Some(Arc::new(StateLock::new(BotState::new()))),
@@ -446,6 +455,7 @@ fn the_submit_plan_carries_each_targets_own_transaction() {
                         vec![candidate(deployment_a()), candidate(deployment_b())],
                         &block,
                         &registry,
+                        degenbot_arbitrage::TargetSelection::AllTargets,
                         &suppression,
                         BLOCK,
                         0,
@@ -613,6 +623,93 @@ async fn one_path_becomes_one_candidate_per_registered_deployment() {
         Some(SubmitVerdict::Failed(
             degenbot_batch_executor::FailureKind::from_skip_reason(&SkipReason::DryRun)
         ))
+    );
+}
+
+/// A foreign adapter whose compose callback is COUNTED: the proof that a
+/// default-policy session never reaches a later target is that this counter
+/// stays zero.
+struct UncomposedAdapter(Arc<std::sync::atomic::AtomicUsize>);
+
+impl ExecutionAdapter for UncomposedAdapter {
+    fn encode(
+        &self,
+        _path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Result<TransactionRequest, ComposeError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(TransactionRequest::new(
+            TARGET_A,
+            Bytes::from(
+                U256::from(inputs.optimal_input)
+                    .to_be_bytes::<32>()
+                    .to_vec(),
+            ),
+            U256::ZERO,
+        ))
+    }
+
+    fn probe_spec(&self) -> &ProbeSpecs {
+        static NO_PROBES: ProbeSpecs = Vec::new();
+        &NO_PROBES
+    }
+
+    fn assess(&self, observation: &ExecutionObservation) -> Result<ExecutionResult, AssessError> {
+        Ok(ExecutionResult::price(
+            GROSS_A,
+            Vec::new(),
+            observation,
+            U256::ZERO,
+            &FeePolicy {
+                market_percentile: false,
+                override_priority_fee: 0,
+            },
+        ))
+    }
+}
+
+/// The DEFAULT policy executes at the first compatible deployment: the built-in
+/// one leads the registry, so an additionally registered foreign target is never
+/// composed, never simulated, and earns neither a record nor a submit row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_default_policy_executes_only_at_the_first_compatible_deployment() {
+    let compositions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let foreign = Arc::new(SimulationDeployment::new(
+        deployment_a(),
+        Arc::new(UncomposedAdapter(Arc::clone(&compositions))),
+        owner(),
+        TARGET_A,
+        1_000_000,
+        None,
+        None,
+    ));
+    let executor = executor_with(vec![foreign], TargetSelection::FirstCompatible);
+    let (records, submit_records) = run_batch(&executor).await;
+
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.candidate_id)
+            .collect::<Vec<_>>(),
+        vec![CandidateId::new(
+            PATH_ID,
+            ExecutorConfig::BUILTIN_DEPLOYMENT_ID
+        )],
+        "only the first-compatible deployment produced a record"
+    );
+    let Some(SimulateVerdict::Profitable(builtin)) = &records[0].simulate else {
+        panic!("the built-in target must report its own profitable receipt")
+    };
+    assert_eq!(builtin.gross_profit, BUILTIN_GROSS);
+    assert_eq!(
+        submit_records.len(),
+        1,
+        "the retired target contributes no submit row"
+    );
+    assert_eq!(
+        compositions.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the default policy never composes a target after the first acceptance"
     );
 }
 
