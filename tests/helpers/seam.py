@@ -140,6 +140,9 @@ from degenbot._ffi.deployments import (
 )
 from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 
+# execution: the Python-authored Encode binding a foreign deployment carries.
+from degenbot._ffi.execution import PayloadAdapter
+
 # provider: the transport the offline harnesses stub.
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider, is_local_rpc_url
 
@@ -147,7 +150,9 @@ from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider, is_local_r
 from degenbot._ffi.simulation import (
     CandidateId,
     SimulateContext,
+    SimulationDeployment,
     build_batch_executor_py,
+    builtin_deployment_id,
     executor_policy_py,
     merge_payload_results_py,
     simulate_in_process_revert_probe,
@@ -172,7 +177,6 @@ REGISTRATION_SURFACE = _registration_surface
 
 __all__ = [
     "MAX_SQRT_RATIO",
-    "CandidateId",
     "MAX_TICK",
     "MIN_SQRT_RATIO",
     "MIN_TICK",
@@ -184,6 +188,7 @@ __all__ = [
     "BotIo",
     "BuildFailureKind",
     "CancelHandle",
+    "CandidateId",
     "ChainMismatchError",
     "DexIdentity",
     "Dispatcher",
@@ -192,6 +197,7 @@ __all__ = [
     "Erc20TokenRow",
     "LiquidityUpdateEvent",
     "PathGraph",
+    "PayloadAdapter",
     "Pool",
     "PoolBuildDecodeError",
     "PoolBuildRpcError",
@@ -202,6 +208,7 @@ __all__ = [
     "ResolvedConfig",
     "RetryPolicy",
     "SimulateContext",
+    "SimulationDeployment",
     "StrategyHostError",
     "SubmitCandidate",
     "SwapMathOverflowError",
@@ -217,6 +224,7 @@ __all__ = [
     "activate_aave_market",
     "build_batch_executor_py",
     "build_path_graph",
+    "builtin_deployment_id",
     "calc_exact_in_v2",
     "calc_exact_out_v2",
     "calculate_dy",

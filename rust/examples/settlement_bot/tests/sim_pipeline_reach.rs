@@ -156,7 +156,8 @@ async fn offline_executor(resolver: HashMap<u64, degenbot::execution::PathInfo>)
             extra_broadcast: Vec::new(),
             target: SubmissionTarget::Public,
         },
-    );
+    )
+    .expect("the fixture's one-entry deployment registry is valid");
     BatchExecutor::new(config)
 }
 

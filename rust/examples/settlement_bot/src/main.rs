@@ -1241,7 +1241,8 @@ fn build_batch_executor(
             extra_broadcast: Vec::new(),
             target: degenbot::submission::SubmissionTarget::Public,
         },
-    );
+    )
+    .map_err(|error| format!("session execution deployments: {error}"))?;
     Ok((
         std::sync::Arc::new(degenbot::batch_executor::BatchExecutor::new(config)),
         dispatcher,

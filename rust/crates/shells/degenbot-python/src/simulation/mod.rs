@@ -44,6 +44,7 @@ use pyo3::prelude::*;
 
 pub mod batch;
 pub mod context;
+pub mod deployment;
 pub mod dispatch;
 pub mod identity;
 pub mod in_process_probe;
@@ -69,6 +70,9 @@ pub mod simulation {
         PyBatchExecutor, PyBatchOutcome, PyBatchOutcomeSet, PyFailureDetail, PyFailureKind,
         PySimReceipt, PySimulateVerdict, PySubmitVerdict,
     };
+
+    #[pymodule_export]
+    use super::deployment::{builtin_deployment_id, PySimulationDeployment};
 
     #[pymodule_export]
     use super::identity::PyCandidateId;

@@ -395,7 +395,10 @@ fn executor(additional: Vec<Arc<SimulationDeployment>>) -> BatchExecutor {
         extra_broadcast: Vec::new(),
         target: SubmissionTarget::Public,
     };
-    BatchExecutor::new(ExecutorConfig::from_verdict(&verdict, runtime))
+    BatchExecutor::new(
+        ExecutorConfig::from_verdict(&verdict, runtime)
+            .expect("the fixture's three distinct deployments compose a valid registry"),
+    )
 }
 
 fn work() -> BatchWork {

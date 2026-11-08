@@ -165,7 +165,8 @@ mod tests {
                 extra_broadcast: Vec::new(),
                 target: SubmissionTarget::Public,
             },
-        );
+        )
+        .expect("the fixture's one-entry deployment registry is valid");
         Arc::new(BatchExecutor::new(config))
     }
 

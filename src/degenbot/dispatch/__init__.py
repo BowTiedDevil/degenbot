@@ -31,6 +31,8 @@ Symbol map (FFI name → stable companion name):
 - SimulateContext → SimulateContext
 - TxSigner → TxSigner
 - build_batch_executor_py → build_batch_executor
+- SimulationDeployment → SimulationDeployment
+- builtin_deployment_id → builtin_deployment_id
 - merge_payload_results_py → merge_payload_results
 - dispatch_and_submit_py → dispatch_and_submit (wrapper: dict → typed records)
 - fetch_fee_history_py → fetch_fee_history
@@ -56,7 +58,9 @@ from degenbot._ffi.simulation import (
     SimReceipt,
     SimulateContext,
     SimulateVerdict,
+    SimulationDeployment,
     SubmitVerdict,
+    builtin_deployment_id,
 )
 from degenbot._ffi.simulation import CandidateId as CandidateId
 from degenbot._ffi.simulation import build_batch_executor_py as build_batch_executor
@@ -164,6 +168,7 @@ __all__ = [
     "SimSubmitPipeline",
     "SimulateContext",
     "SimulateVerdict",
+    "SimulationDeployment",
     "SkippedRecord",
     "SubmitCandidate",
     "SubmitContext",
@@ -173,6 +178,7 @@ __all__ = [
     "SubmittedRecord",
     "TxSigner",
     "build_batch_executor",
+    "builtin_deployment_id",
     "candidate_id_from_mapping",
     "dispatch_and_submit",
     "fetch_fee_history",

@@ -535,6 +535,44 @@ impl PyPayloadAdapter {
     }
 }
 
+impl PyPayloadAdapter {
+    /// A binding the seam's own tests compose directly (the Python constructor
+    /// path is the production door).
+    #[cfg(test)]
+    #[expect(clippy::expect_used, reason = "the test target is a literal address")]
+    pub(crate) fn test_binding(callback: Py<PyAny>, to: &str) -> Self {
+        Self {
+            callback,
+            to: crate::address_utils::parse_address(to)
+                .expect("the test target is a valid address"),
+            value: U256::ZERO,
+            probes: Vec::new(),
+            min_net_profit: U256::ZERO,
+        }
+    }
+
+    /// Lift this binding into the production adapter handle a core
+    /// `degenbot_arbitrage::SimulationDeployment` carries.
+    ///
+    /// The lift copies the declared data (the bound target, native value, probe
+    /// reads, and minimum net profit) and takes a new reference to the held
+    /// Python callable — no clone of the callable's behaviour, no second
+    /// adapter framework: the lifted value IS this binding, used as the core
+    /// `ExecutionAdapter`.
+    pub(crate) fn adapter_arc(
+        &self,
+        py: Python<'_>,
+    ) -> std::sync::Arc<dyn ExecutionAdapter + Send + Sync> {
+        std::sync::Arc::new(Self {
+            callback: self.callback.clone_ref(py),
+            to: self.to,
+            value: self.value,
+            probes: self.probes.clone(),
+            min_net_profit: self.min_net_profit,
+        })
+    }
+}
+
 impl ExecutionAdapter for PyPayloadAdapter {
     fn encode(
         &self,

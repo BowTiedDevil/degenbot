@@ -369,6 +369,81 @@ That's it in the common case: a payload function, its target (and value), and
 optionally a probe list — the gate and the fee default to the market-shaped
 behavior.
 
+### Python — putting that adapter in a session (heterogeneous deployments)
+
+A session that executes at more than one contract declares each additional
+deployment and hands the list to the batch executor's one construction
+boundary. The fan-out itself is the Rust core's: every solved path becomes one
+candidate per registered deployment, in registration order, each with its own
+`CandidateId` (path, deployment), its own assessment, and its own submit row.
+
+```python
+from degenbot.dispatch import (
+    SimulationDeployment,
+    build_batch_executor,
+    builtin_deployment_id,          # the built-in settlement deployment's id
+)
+
+my_deployment = SimulationDeployment(
+    2,                              # operator-assigned deployment id
+    adapter,                        # the PayloadAdapter above
+    "0x19E7…f2A",                   # owner / `from` — the session signer's account
+    "0x7777…7777",                  # execution target: the `to` your adapter encodes
+    1_000_000,                      # gas limit for the opportunity's transaction
+    # code=b"\x60\x00…",           # optional declared runtime (an undeployed build)
+)
+
+executor = build_batch_executor(
+    context=sim_ctx,
+    dispatcher=dispatcher,
+    engine=engine,
+    signer=signer,
+    submit_provider=provider,
+    operator_nonce=nonce,
+    dry_run=True,
+    deployments=[my_deployment],    # None / [] is the built-in one-entry session
+)
+```
+
+The six declared facts are the whole Python surface:
+
+| Fact | Meaning |
+| --- | --- |
+| `deployment_id` | the operator-assigned identity; the deployment half of every `CandidateId` it executes. It must be distinct from every other deployment — including `builtin_deployment_id()` |
+| `adapter` | the existing `PayloadAdapter` (Encode + declared Probe + assessed minimum net profit). Not a second adapter framework |
+| owner | the transaction's `from`; must be the account the session signer holds |
+| target | the `to` of the transaction the adapter encodes — the address the submit join stamps |
+| `gas_limit` | the top-level gas limit the transaction may burn |
+| `code` | an optional declared runtime installed at `target` in the simulated block (explicit development data for an undeployed build); omitted means "simulate the deployed contract" |
+
+A Python deployment deliberately declares **no** settlement warmup (a foreign
+contract has no WETH or PoolManager identity, so the engine derives only the
+words its paths name) and **keeps adapter-owned fee sizing**: the adapter's own
+`ExecutionResult` — priority fee, net, threshold, verdict — reaches the caller
+unchanged. Market-aware re-pricing belongs to the built-in settlement binding
+only; it is not a second Python strategy.
+
+Composition refusals are the core's, and they arrive as ordinary Python
+exceptions — never a `PanicException`, never a Rust abort:
+
+- a **duplicate identity** (`ValueError`: "deployment … is registered twice"),
+  including a deployment reusing `builtin_deployment_id()`;
+- an **owner the session signer does not hold** (`ValueError`: "… cannot sign
+  for …");
+- a malformed declaration (`ValueError` for an unparseable address, an empty
+  declared runtime, or a zero gas limit; `TypeError` for a non-adapter).
+
+Per-candidate refusals stay per candidate: an adapter that encodes a target other
+than its deployment's declared `target` is refused as `target-mismatch` on that
+one record, and a revert or failed assessment stays that target's row. No
+target's verdict suppresses another's.
+
+Driver path: a session that names its deployments on
+`degenbot.runner._sim_submit.ExecutorInputs.deployments` passes them through the
+same constructor; a session that names none keeps the one-entry built-in
+behavior unchanged.
+
+
 ## What is NOT on offer
 
 - **Re-deriving degenbot's canonical bundle in Python.** The `cmd_executor`
@@ -425,7 +500,10 @@ Concrete, green, golden-pinned references ship in this repo:
   `degenbot._ffi.execution` + `abi_encode_call`, bound with `PayloadAdapter`).
 
 Both produce the **same** recorded foreign payload byte-for-byte (cross-layer
-parity oracle) and never touch the canonical `dispatch_profitable_*` fan-out.
+parity oracle). The Python example is the seam lift alone; registering that
+adapter in a live session is the deployment configuration above
+(`SimulationDeployment`), which rides the same canonical fan-out the Rust
+consumer drives — one fan-out implementation, two shells.
 
 ## See also
 

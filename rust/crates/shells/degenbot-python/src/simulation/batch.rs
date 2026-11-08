@@ -36,6 +36,7 @@ use std::sync::Arc;
 use crate::bot::engine::PyArbEngine;
 use crate::prelude::*;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
+use crate::simulation::deployment::{registry_error_to_py, PySimulationDeployment};
 use crate::simulation::identity::{candidate_id_to_dict, PyCandidateId};
 use crate::simulation::render::{path_info_to_py_dict, sim_failure_to_dict};
 use crate::submission::dispatcher::PyDispatcher;
@@ -505,10 +506,22 @@ impl PyBatchExecutor {
 ///     `broadcast_providers`: the relay fan-out (the `RelayPosture` value's
 ///         endpoints); `None`/empty = the public mempool (read provider
 ///         only).
+///     `deployments`: the session's ADDITIONAL execution deployments (foreign
+///         contracts), registered after the built-in settlement deployment in
+///         the order given. `None`/empty is the one-entry built-in session with
+///         unchanged behavior; with entries present, every solved path becomes
+///         one candidate per registered deployment and each candidate's submit
+///         row carries its own deployment's target (the core's explicit
+///         all-target fan-out, ADR-098 D4).
 ///
 /// # Errors
 ///
-/// `ValueError` on malformed addresses/args.
+/// `ValueError` on malformed addresses/args, or when the composed registry is
+/// refused: a deployment reusing an existing identity (including the built-in
+/// [`crate::simulation::deployment::builtin_deployment_id`]) makes every
+/// post-target row ambiguous, and a deployment whose owner is not the session
+/// signer's account could not be signed for. Both are the core
+/// [`degenbot_arbitrage::DeploymentRegistry`]'s refusals, mapped here.
 #[pyfunction]
 #[pyo3(signature = (
     context,
@@ -520,6 +533,7 @@ impl PyBatchExecutor {
     *,
     dry_run,
     broadcast_providers = None,
+    deployments = None,
 ))]
 #[expect(
     clippy::too_many_arguments,
@@ -535,6 +549,7 @@ pub fn build_batch_executor_py(
     operator_nonce: u64,
     dry_run: bool,
     broadcast_providers: Option<Vec<PyRef<'_, PyAsyncAlloyProvider>>>,
+    deployments: Option<Vec<PyRef<'_, PySimulationDeployment>>>,
 ) -> PyResult<PyBatchExecutor> {
     crate::ambient_runtime::ensure_async_runtime_bound();
     let suppression = dispatcher.suppression_arc();
@@ -557,8 +572,13 @@ pub fn build_batch_executor_py(
         provider: submit_provider.provider_arc(),
         binding: context.binding,
         // The cockpit composes ONE execution deployment (the built-in
-        // settlement one); a heterogeneous session registers more.
-        additional_deployments: Vec::new(),
+        // settlement one) unless the session named foreign deployments, which
+        // the core registers after it in this order.
+        additional_deployments: deployments
+            .unwrap_or_default()
+            .iter()
+            .map(|deployment| deployment.deployment_arc())
+            .collect(),
         injected_address: context.injected_address,
         runtime_bytecode: context.runtime_bytecode.clone(),
         bot_state: Some(engine.bot_state_arc()),
@@ -582,7 +602,11 @@ pub fn build_batch_executor_py(
     // The policy values convert from the INSTALLED verdict — the same load
     // `resolved_config().values` projects — so the executor cannot disagree
     // with the verdict Python reads.
-    let config = ExecutorConfig::from_verdict(crate::config::installed_bot_config(), runtime);
+    // The registry composition (non-empty, distinct identities, every owner
+    // signed by the session signer) is the core's check; its refusal surfaces
+    // as the driver's `ValueError`, never as a Rust panic across the FFI.
+    let config = ExecutorConfig::from_verdict(crate::config::installed_bot_config(), runtime)
+        .map_err(|error| registry_error_to_py(&error))?;
     // The core constructor spawns the ordered submit loop, so it must run
     // inside the shared ambient runtime (the Python event-loop thread is not
     // itself in a tokio context).

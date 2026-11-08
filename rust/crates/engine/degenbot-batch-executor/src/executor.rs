@@ -127,23 +127,30 @@ impl ExecutorConfig {
     /// to live at the Python and FFI construction sites died with this
     /// boundary.
     ///
+    /// # Errors
+    ///
+    /// [`degenbot_arbitrage::DeploymentRegistryError`] when the composed
+    /// registry is empty or holds two deployments with one identity
+    /// ([`DeploymentRegistry::new`]), or when a deployment's owner is not the
+    /// account the configured signer holds
+    /// ([`DeploymentRegistry::validate_signing_authority`]). Each is a
+    /// composition error: an empty registry has no target to encode against, a
+    /// duplicate identity makes every post-target row ambiguous, and an owner
+    /// the signer does not hold would be simulated from — and submitted as — an
+    /// account the session cannot sign for. The caller that assembled the
+    /// configuration names it to its own consumer (the `PyO3` boundary raises
+    /// `ValueError`).
+    ///
     /// # Panics
     ///
     /// When the resolved verdict declares `simulation.inject_executor_code` but
     /// the injected runtime names no `injected_address`, or names an address
     /// other than the executor the built-in adapter encodes to — the declared
     /// override must name the very contract its transaction targets.
-    ///
-    /// When the composed registry is empty or holds two deployments with one
-    /// identity ([`DeploymentRegistry::new`]), or when a deployment's owner is
-    /// not the account the configured signer holds
-    /// ([`DeploymentRegistry::validate_signing_authority`]). Each is a
-    /// composition error: an empty registry has no target to encode against, a
-    /// duplicate identity makes every post-target row ambiguous, and an owner
-    /// the signer does not hold would be simulated from — and submitted as — an
-    /// account the session cannot sign for.
-    #[must_use]
-    pub fn from_verdict(verdict: &degenbot_config::BotConfig, runtime: ExecutorRuntime) -> Self {
+    pub fn from_verdict(
+        verdict: &degenbot_config::BotConfig,
+        runtime: ExecutorRuntime,
+    ) -> Result<Self, degenbot_arbitrage::DeploymentRegistryError> {
         let policy = ExecutorPolicy::from(verdict);
         let max_candidates = if runtime.max_candidates == 0 {
             usize::MAX
@@ -153,7 +160,7 @@ impl ExecutorConfig {
         // The signer's account is the one authority every deployment must name
         // as its owner; read before the signer handle moves into the config.
         let authority = runtime.signer.address();
-        Self {
+        Ok(Self {
             sim_concurrency: policy.sim_concurrency,
             max_candidates,
             min_profit_margin_bps: policy.min_profit_margin_bps,
@@ -189,15 +196,8 @@ impl ExecutorConfig {
                 let mut entries = Vec::with_capacity(1 + runtime.additional_deployments.len());
                 entries.push(Arc::new(builtin));
                 entries.extend(runtime.additional_deployments);
-                #[expect(clippy::expect_used)] // an invalid registry is a composition error
-                let registry = DeploymentRegistry::new(entries)
-                    .map_err(|error| error.to_string())
-                    .expect("the session's execution deployment registry must be valid");
-                #[expect(clippy::expect_used)] // a foreign owner cannot be signed for
-                registry
-                    .validate_signing_authority(authority)
-                    .map_err(|error| error.to_string())
-                    .expect("every deployment's owner must be the configured signing account");
+                let registry = DeploymentRegistry::new(entries)?;
+                registry.validate_signing_authority(authority)?;
                 Arc::new(registry)
             },
             resolver: runtime.resolver,
@@ -215,7 +215,7 @@ impl ExecutorConfig {
             inject_code_guard: policy.inject_code_guard,
             extra_broadcast: runtime.extra_broadcast,
             target: runtime.target,
-        }
+        })
     }
 }
 

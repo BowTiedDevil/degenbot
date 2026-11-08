@@ -6,6 +6,18 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Added
 
+- **Heterogeneous deployments on the Python seam (ADR-098 D3/D4).**
+  `degenbot._ffi.simulation.SimulationDeployment` projects a Python declaration —
+  deployment id, the existing `PayloadAdapter`, owner, execution target, gas
+  limit, and an optional declared runtime — onto
+  `degenbot_arbitrage::SimulationDeployment`, and `build_batch_executor_py`
+  gained a keyword-only `deployments` argument that fills
+  `ExecutorRuntime::additional_deployments`. The registry, the explicit
+  all-target fan-out, the `CandidateId` keying, and the per-target submit join
+  stay core-side; `builtin_deployment_id()` exposes the identity the built-in
+  settlement deployment is registered under. A Python deployment declares no
+  settlement warmup and keeps adapter-owned fee sizing.
+
 - **One ERC-20 metadata read: `degenbot_rpc::erc20`.** `name()` / `symbol()` /
   `decimals()` now have a single chain-read home over the `ContractRead` seam:
   `read` (one token, with a `FieldMask` for Pool construction's partial
@@ -32,6 +44,12 @@ All notable changes to the Rust workspace crates are recorded here.
   | Aave `config_dispatch::fetch_erc20_metadata` / `fetch_erc20_metadata_batched` / `decode_dynamic_string` / `string_field_from_batch` / `decimals_from_batch` | deleted — `degenbot_rpc::erc20::read` / `read_batch` (`LowerUpperStopOnCallError`); the market-id read decodes through `degenbot_rpc::erc20::decode_string_return` |
 
 ### Changed
+
+- **`ExecutorConfig::from_verdict` reports registry composition errors instead
+  of panicking.** It returns `Result<Self, DeploymentRegistryError>`: an empty
+  registry, a duplicate deployment identity, and an owner the configured signer
+  does not hold are now the caller's to surface (the `PyO3` boundary raises
+  `ValueError`). The injected-code stance's panics are unchanged.
 
 - **A declared probe is a neutral executable declaration, not a selector
   (ADR-098 D2).** `ProbeSpec` is now an enum of two forms: `ProbeSpec::Call {

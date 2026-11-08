@@ -14,6 +14,7 @@ from _typeshed import Incomplete, SupportsGetItem
 from typing_extensions import disjoint_base
 
 from . import ArbitrageEngine, ConfigValues
+from .execution import PayloadAdapter
 from .provider import AsyncAlloyProvider
 from .submission import Dispatcher, TxSigner
 
@@ -619,6 +620,106 @@ class SimulateVerdict:
             The renderer-read receipt.
             """
 
+@final
+class SimulationDeployment:
+    """
+    One execution deployment a session fans its solved paths out to.
+
+    Construct once per foreign contract, then hand the list to
+    [`crate::simulation::batch::build_batch_executor_py`]'s `deployments`
+    argument: every solved path becomes one candidate per registered deployment,
+    in registration order, after the built-in settlement deployment (whose
+    identity is [`builtin_deployment_id`]).
+
+    The adapter is an existing [`crate::execution::PyPayloadAdapter`] — the
+    Python-authored Encode callable bound to the transaction it executes. This
+    class adds the deployment facts calldata cannot carry (identity, owner,
+    target, gas limit, optional declared runtime); it is not a second adapter
+    framework and it invents no economics.
+    """
+    def __new__(
+        cls,
+        /,
+        deployment_id: SupportsIndex,
+        adapter: PayloadAdapter,
+        owner: str,
+        target: str,
+        gas_limit: SupportsIndex,
+        *,
+        code: SupportsGetItem[int, SupportsIndex] | None = None,
+    ) -> SimulationDeployment:
+        """
+        Compose one execution deployment from its adapter and declared facts.
+
+        Args:
+            `deployment_id`: the operator-assigned identity (a plain count). It
+                must differ from every other deployment in the session — including
+                the built-in settlement deployment's
+                [`builtin_deployment_id`] — because every post-target row keys on
+                `(path, deployment)`. Duplicates are refused at executor
+                construction, not here.
+            `adapter`: the Python execution adapter
+                ([`crate::execution::PyPayloadAdapter`]) that encodes this
+                contract's transaction and declares its probe reads and minimum
+                net profit.
+            `owner`: the account whose key sends the opportunity's transaction
+                (the `from` of the simulated and submitted transaction). It must
+                be the session signer's account; a foreign owner is refused at
+                executor construction.
+            `target`: the deployment's EXECUTION TARGET — the `to` of the
+                transaction its adapter encodes. The submit join stamps this
+                address, so a heterogeneous session routes each candidate to its
+                own contract.
+            `gas_limit`: the top-level gas limit the opportunity's transaction
+                may burn.
+            `code`: an optional declared runtime (bytecode) installed at THIS
+                deployment's `target` in the simulated block — explicit
+                development data for an undeployed build. The override installs
+                only at the one address the adapter's transaction targets, so it
+                can never simulate code the transaction does not run. `None`
+                executes the code the chain holds at `target`.
+
+        The deployment declares no settlement warmup (a foreign contract has no
+        WETH or `PoolManager` identity) and keeps adapter-owned fee sizing (the
+        adapter's own verdict, never the built-in market-aware re-pricing).
+
+        # Errors
+
+        `ValueError` when `owner`/`target` is not a valid EIP-55 address, when
+        `code` is an empty runtime, or when `gas_limit` is zero (a deployment
+        that may burn no gas has no opportunity to execute).
+        """
+    @property
+    def declared_code(self, /) -> bytes | None:
+        """
+        The declared runtime installed at [`Self::target`] in the simulated
+        block, or `None` when the deployment simulates the deployed contract.
+        """
+    @property
+    def deployment_id(self, /) -> int:
+        """
+        The operator-assigned deployment identity (the deployment half of every
+        [`crate::simulation::identity::PyCandidateId`] this deployment
+        executes).
+        """
+    @property
+    def gas_limit(self, /) -> int:
+        """
+        The top-level gas limit the opportunity's transaction may burn.
+        """
+    @property
+    def owner(self, /) -> str:
+        """
+        The account whose key sends this deployment's transactions (the `from`;
+        EIP-55 checksummed).
+        """
+    @property
+    def target(self, /) -> str:
+        """
+        The deployment's execution target — the `to` its adapter encodes
+        (EIP-55 checksummed).
+        """
+
 @disjoint_base
 class SubmitVerdict:
     """
@@ -661,6 +762,7 @@ def build_batch_executor_py(
     *,
     dry_run: bool,
     broadcast_providers: SupportsGetItem[int, AsyncAlloyProvider] | None = None,
+    deployments: SupportsGetItem[int, SimulationDeployment] | None = None,
 ) -> BatchExecutor:
     """
     Construct the session executor: the core's value-configured module over
@@ -688,10 +790,34 @@ def build_batch_executor_py(
         `broadcast_providers`: the relay fan-out (the `RelayPosture` value's
             endpoints); `None`/empty = the public mempool (read provider
             only).
+        `deployments`: the session's ADDITIONAL execution deployments (foreign
+            contracts), registered after the built-in settlement deployment in
+            the order given. `None`/empty is the one-entry built-in session with
+            unchanged behavior; with entries present, every solved path becomes
+            one candidate per registered deployment and each candidate's submit
+            row carries its own deployment's target (the core's explicit
+            all-target fan-out, ADR-098 D4).
 
     # Errors
 
-    `ValueError` on malformed addresses/args.
+    `ValueError` on malformed addresses/args, or when the composed registry is
+    refused: a deployment reusing an existing identity (including the built-in
+    [`crate::simulation::deployment::builtin_deployment_id`]) makes every
+    post-target row ambiguous, and a deployment whose owner is not the session
+    signer's account could not be signed for. Both are the core
+    [`degenbot_arbitrage::DeploymentRegistry`]'s refusals, mapped here.
+    """
+
+def builtin_deployment_id() -> int:
+    """
+    The identity the built-in settlement deployment is registered under.
+
+    [`ExecutorConfig::from_verdict`] registers it as the FIRST entry of every
+    session's deployment registry, so a session that names no additional
+    deployment is that one entry. A Python deployment that reused this number
+    would make every post-target row ambiguous, so the executor constructor
+    refuses it — the number itself is the core's to name, which is why it is
+    read here rather than restated in Python.
     """
 
 def executor_policy_py(values: ConfigValues) -> ExecutorPolicyValues:
@@ -841,8 +967,10 @@ __all__ = [
     "SimReceipt",
     "SimulateContext",
     "SimulateVerdict",
+    "SimulationDeployment",
     "SubmitVerdict",
     "build_batch_executor_py",
+    "builtin_deployment_id",
     "executor_policy_py",
     "merge_payload_results_py",
     "simulate_in_process_revert_probe",

@@ -247,10 +247,22 @@ Deterministic merge semantics:
 ## Out of scope here
 
 _Naming_ a target from several is its own policy: ordered/first-compatible
-selection, a Python heterogeneous configuration surface, and `cmd_executor`
-protocol-version/release metadata all stay outside this seam. This chunk offers
-explicit all-target fan-out only, and a session that names no additional
-deployment is the one-entry built-in case with unchanged behavior.
+selection and `cmd_executor` protocol-version/release metadata stay outside this
+seam. This chunk offers explicit all-target fan-out only, and a session that
+names no additional deployment is the one-entry built-in case with unchanged
+behavior.
+
+The Python shell configures the SAME seam, not a second one: the
+`SimulationDeployment` pyclass projects a declaration (deployment id, the Python
+`PayloadAdapter`, owner, execution target, gas limit, optional declared runtime)
+onto `degenbot_arbitrage::SimulationDeployment`, and `build_batch_executor_py`'s
+`deployments` argument fills `ExecutorRuntime::additional_deployments`. The
+registry, the fan-out, the `CandidateId` keying, and the per-target join all stay
+core-side; Python adds no fan-out, join, assessment, or target-selection
+implementation. The core registry's composition refusals (a duplicate identity,
+an owner the signer does not hold) are mapped to `ValueError` at that boundary
+rather than surfacing `ExecutorConfig::from_verdict`'s error as a panic across
+the FFI.
 
 ## Evidence honesty note
 

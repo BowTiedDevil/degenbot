@@ -274,7 +274,8 @@ mod tests {
     async fn from_verdict_composes_policy_and_runtime() {
         let verdict = degenbot_config::BotConfig::default();
         let config =
-            crate::executor::ExecutorConfig::from_verdict(&verdict, runtime(Vec::new()).await);
+            crate::executor::ExecutorConfig::from_verdict(&verdict, runtime(Vec::new()).await)
+                .expect("the built-in session composes a one-entry registry");
         assert_eq!(config.sim_concurrency, 8);
         assert_eq!(config.max_candidates, usize::MAX, "0 = uncapped");
         assert_eq!(config.min_profit_margin_bps, 0);
@@ -319,7 +320,8 @@ mod tests {
             Arc::new(binding.deployment(first)),
             Arc::new(binding.deployment(second)),
         ];
-        let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime);
+        let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime)
+            .expect("distinct identities compose a three-entry registry");
         assert_eq!(
             config.deployments.ids().collect::<Vec<_>>(),
             vec![
@@ -350,17 +352,17 @@ mod tests {
         runtime.additional_deployments = vec![Arc::new(
             binding.deployment(degenbot_execution::DeploymentId::new(2)),
         )];
-        let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime);
+        let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime)
+            .expect("both deployments name the session's signing account");
         assert_eq!(config.deployments.len(), 2);
         assert!(config.deployments.validate_signing_authority(owner).is_ok());
     }
 
-    /// A deployment reusing the built-in identity is refused LOUDLY at
-    /// composition: `from_verdict` panics rather than registering two rows that
-    /// one `CandidateId` cannot tell apart.
+    /// A deployment reusing the built-in identity is refused at composition:
+    /// `from_verdict` returns the typed registry error rather than registering
+    /// two rows that one `CandidateId` cannot tell apart.
     #[tokio::test]
-    #[should_panic(expected = "must be valid")]
-    async fn a_duplicate_identity_panics_at_composition() {
+    async fn a_duplicate_identity_is_refused_at_composition() {
         let runtime = runtime(Vec::new()).await;
         let owner = runtime.signer.address();
         let binding = degenbot_arbitrage::CmdExecutorBinding::new(
@@ -374,18 +376,25 @@ mod tests {
         runtime.additional_deployments = vec![Arc::new(
             binding.deployment(crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID),
         )];
-        let _ = crate::executor::ExecutorConfig::from_verdict(
+        let error = crate::executor::ExecutorConfig::from_verdict(
             &degenbot_config::BotConfig::default(),
             runtime,
+        )
+        .err()
+        .expect("two deployments cannot share one identity");
+        assert_eq!(
+            error,
+            degenbot_arbitrage::DeploymentRegistryError::DuplicateId {
+                deployment_id: crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+            }
         );
     }
 
-    /// A deployment whose owner is not the signing account is refused LOUDLY at
+    /// A deployment whose owner is not the signing account is refused at
     /// composition: the session cannot sign a transaction from an account it
     /// does not hold.
     #[tokio::test]
-    #[should_panic(expected = "must be the configured signing account")]
-    async fn a_foreign_owner_panics_at_composition() {
+    async fn a_foreign_owner_is_refused_at_composition() {
         let stranger = alloy::primitives::Address::repeat_byte(0x11);
         let binding = degenbot_arbitrage::CmdExecutorBinding::new(
             stranger,
@@ -398,9 +407,20 @@ mod tests {
         runtime.additional_deployments = vec![Arc::new(
             binding.deployment(degenbot_execution::DeploymentId::new(2)),
         )];
-        let _ = crate::executor::ExecutorConfig::from_verdict(
+        let authority = runtime.signer.address();
+        let error = crate::executor::ExecutorConfig::from_verdict(
             &degenbot_config::BotConfig::default(),
             runtime,
+        )
+        .err()
+        .expect("a foreign owner cannot be signed for");
+        assert_eq!(
+            error,
+            degenbot_arbitrage::DeploymentRegistryError::OwnerNotSigner {
+                deployment_id: degenbot_execution::DeploymentId::new(2),
+                owner: stranger,
+                authority,
+            }
         );
     }
 

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
 
-    from degenbot.dispatch import Dispatcher, SimulateContext
+    from degenbot.dispatch import Dispatcher, SimulateContext, SimulationDeployment
     from degenbot.provider import AsyncAlloyProvider
     from degenbot.runner._relay_posture import RelayPosture
     from degenbot.runner.config import ArbitrageConfig
@@ -59,6 +59,14 @@ class ExecutorInputs:
     provider: AsyncAlloyProvider
     cfg: ArbitrageConfig
     relay_posture: RelayPosture | None = None
+    #: The session's ADDITIONAL execution deployments (foreign contracts),
+    #: registered after the built-in settlement deployment in this order. Empty
+    #: is the one-entry built-in session (:meth:`from_session` leaves it empty:
+    #: no verdict key declares a foreign deployment yet), so a driver that has
+    #: some names them in its own pipeline factory. The fan-out choreography,
+    #: the identity/authority checks, and the per-target joins stay in the Rust
+    #: core.
+    deployments: tuple[SimulationDeployment, ...] = ()
 
     @classmethod
     def from_session(cls, session: Session) -> ExecutorInputs:
@@ -154,6 +162,7 @@ async def build_batch_executor(
         operator_nonce=operator_nonce,
         dry_run=inputs.cfg.dry_run,
         broadcast_providers=broadcast_providers,
+        deployments=list(inputs.deployments) or None,
     )
 
 

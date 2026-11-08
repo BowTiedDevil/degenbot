@@ -158,7 +158,10 @@ def test_dispatch_all_pins_public_surface() -> None:
     gained its classification attribute. ``EnqueueDecline`` joined with the
     ordered lane's explicit lifecycle: an enqueue answers with the pipeline's
     state when it refuses, so a driver handles the refusal instead of assuming
-    the batch was counted.
+    the batch was counted. ``SimulationDeployment`` and the core's
+    ``builtin_deployment_id`` joined with the heterogeneous deployment registry:
+    a driver declares foreign execution deployments here and hands them to the
+    same executor constructor.
     """
 
     d = degenbot.dispatch
@@ -181,6 +184,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "SimSubmitPipeline",
         "SimulateContext",
         "SimulateVerdict",
+        "SimulationDeployment",
         "SkippedRecord",
         "SubmitCandidate",
         "SubmitContext",
@@ -190,6 +194,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "SubmittedRecord",
         "TxSigner",
         "build_batch_executor",
+        "builtin_deployment_id",
         "candidate_id_from_mapping",
         "dispatch_and_submit",
         "fetch_fee_history",
