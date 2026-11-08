@@ -10,7 +10,7 @@ use alloy::primitives::{address, Address};
 use degenbot_execution::solve_result::{HopDescriptor, HopFamily};
 use degenbot_execution::{
     ComposeError, ComposerInputs, ExecutionAdapter, HopInfo, PathInfo, ProbeSpecs, SolveResult,
-    V2HopInfo, V3HopInfo, V4HopInfo,
+    TransactionRequest, V2HopInfo, V3HopInfo, V4HopInfo,
 };
 use degenbot_pools::solve::SolvePathResult;
 
@@ -89,8 +89,12 @@ fn execution_adapter_names_the_neutral_path() {
             &self,
             _path: &PathInfo,
             _inputs: &ComposerInputs<'_>,
-        ) -> Result<alloy::primitives::Bytes, ComposeError> {
-            Ok(alloy::primitives::Bytes::new())
+        ) -> Result<TransactionRequest, ComposeError> {
+            Ok(TransactionRequest::new(
+                alloy::primitives::Address::ZERO,
+                alloy::primitives::Bytes::new(),
+                alloy::primitives::U256::ZERO,
+            ))
         }
 
         fn probe_spec(&self) -> &ProbeSpecs {

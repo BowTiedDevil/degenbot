@@ -8,14 +8,18 @@
 //!
 //! - **Encode** — [`SimpleExecutorComposer`] turns a solved path into the ABI
 //!   `execute(uint256,uint256,uint256[])` calldata for the sample's own
-//!   contract. The payload shape (a plain ABI call with `(optimal_input,
-//!   final_output, hop_outputs[])`) is **structurally distinct** from the
-//!   default adapter's yul-command stream — the distinct-payload doctrine
-//!   that proves a foreign strategy is a genuinely different path,
-//!   never a re-derivation of `cmd_executor`.
+//!   contract, and [`SimpleExecutorStrategy::encode`] returns the complete
+//!   transaction around it: `to` = the sample contract, `value` = the
+//!   strategy's configured native value. The payload shape (a plain ABI call
+//!   with `(optimal_input, final_output, hop_outputs[])`) is **structurally
+//!   distinct** from the default adapter's yul-command stream — the
+//!   distinct-payload doctrine that proves a foreign strategy is a genuinely
+//!   different path, never a re-derivation of `cmd_executor`.
 //! - **Probe** — [`SimpleExecutorStrategy::probes`]: declared pre/post
 //!   read-calls (`WETH.balanceOf`) the engine snapshots (declared data).
-//! - **Assess** — the built-in gate (sum-of-deltas + `min_net_profit`).
+//! - **Assess** — the built-in gate over the engine's typed
+//!   [`ExecutionObservation`] (sum-of-deltas + `min_net_profit`), or the
+//!   strategy's own override.
 //! - **Fee** — the defaulted pricing half of Assess (built-in
 //!   market-percentile policy).
 //!
@@ -33,8 +37,9 @@ use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_execution::solve_result::SolveResult;
 use degenbot_execution::PathInfo;
 use degenbot_execution::{
-    AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter, ExecutionResult,
-    FeePolicy, PayloadComposer, ProbeSpec, ProbeSpecs,
+    AssessOptions, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter,
+    ExecutionObservation, ExecutionResult, FeePolicy, PayloadComposer, ProbeSpec, ProbeSpecs,
+    TransactionRequest,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -128,9 +133,8 @@ impl PayloadComposer for SimpleExecutorComposer {
 // ExecutionAdapter — the full four-part seam (ADR-025 D2)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// The full foreign `ExecutionAdapter` — wires all four parts explicitly
-/// (rather than the `PayloadComposer` blanket default) to demonstrate a
-/// searcher owning its Encode + declared Probe + Assess + Fee.
+/// The full foreign `ExecutionAdapter` — wires all four parts explicitly to
+/// demonstrate a searcher owning its Encode + declared Probe + Assess + Fee.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimpleExecutorStrategy {
     /// The Encode part.
@@ -138,12 +142,14 @@ pub struct SimpleExecutorStrategy {
     /// Declared pre/post read-calls the engine snapshots (Probe — declared
     /// data, not code).
     pub probes: ProbeSpecs,
-    /// The built-in gate shape + min-net-profit threshold (Assess).
-    pub assess_rule: AssessRule,
-    /// Minimum net profit (wei) for a pass.
-    pub min_net_profit: U256,
+    /// The built-in assessment shape + min-net-profit threshold (Assess).
+    pub assess_options: AssessOptions,
     /// The pricing policy (Fee — the defaulted half of Assess).
     pub fee_policy: FeePolicy,
+    /// The native value (wei) the sample contract is called with. The sample
+    /// executor is flash-funded, so this defaults to zero, but the value rides
+    /// the transaction for a contract whose funding model needs it.
+    pub value: U256,
 }
 
 impl Default for SimpleExecutorStrategy {
@@ -153,9 +159,9 @@ impl Default for SimpleExecutorStrategy {
                 executor: Address::ZERO,
             },
             probes: Vec::new(),
-            assess_rule: AssessRule::SumOfDeltas,
-            min_net_profit: U256::ZERO,
+            assess_options: AssessOptions::default(),
             fee_policy: FeePolicy::default(),
+            value: U256::ZERO,
         }
     }
 }
@@ -179,14 +185,17 @@ impl SimpleExecutorStrategy {
         }
     }
 
-    /// Convenience entry point: a sealed [`SolveResult`] -> payload `bytes`
-    /// for the foreign contract (the ADR-025 `compose_view` path most foreign
-    /// strategies use).
+    /// Convenience entry point: a sealed [`SolveResult`] -> ONE complete
+    /// transaction for the foreign contract (the ADR-025 `compose_view` path
+    /// most foreign strategies use), carrying the strategy's target + value.
     ///
     /// # Errors
     ///
     /// Returns [`ComposeError`] when the path/amounts cannot be encoded.
-    pub fn compose_solution(&self, result: &SolveResult) -> Result<Bytes, ComposeError> {
+    pub fn encode_solution(
+        &self,
+        result: &SolveResult,
+    ) -> Result<TransactionRequest, ComposeError> {
         // Reconstruct the seam's borrowed `ComposerInputs` over the view's
         // u128-narrowed amounts (mirrors the seam's own `compose_view`
         // default) and run the Encode part directly.
@@ -216,34 +225,51 @@ impl SimpleExecutorStrategy {
         };
         // Build a PathInfo-less call — the foreign composer doesn't read hops.
         let empty = PathInfo::new(Vec::new());
-        PayloadComposer::compose(&self.composer, &empty, &inputs)
+        let data = PayloadComposer::compose(&self.composer, &empty, &inputs)?;
+        Ok(TransactionRequest::new(
+            self.composer.executor,
+            data,
+            self.value,
+        ))
     }
 
-    /// Run the gate over probe deltas with the configured Ass/Cee/Fee — the
-    /// seam's engine-free built-in assessor (ADR-019): `gross = Σ deltas`,
+    /// Assess the engine's typed observation with the configured Assess/Fee —
+    /// the seam's engine-free default gate (ADR-019): `gross = Σ deltas`,
     /// `net = gross − gas×(base_fee_next + priority_fee)`,
     /// `passed = net ≥ min_net_profit`.
-    #[must_use]
-    pub fn assess(&self, deltas: &[i128], gas_used: u64, base_fee_next: u128) -> ExecutionResult {
-        ExecutionAdapter::assess(self, deltas, gas_used, base_fee_next)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`degenbot_execution::AssessError`] when the observation lacks
+    /// the evidence this assessment needs.
+    pub fn assess(
+        &self,
+        observation: &ExecutionObservation,
+    ) -> Result<ExecutionResult, degenbot_execution::AssessError> {
+        ExecutionAdapter::assess(self, observation)
     }
 }
 
 impl ExecutionAdapter for SimpleExecutorStrategy {
-    fn encode(&self, path: &PathInfo, inputs: &ComposerInputs<'_>) -> Result<Bytes, ComposeError> {
-        PayloadComposer::compose(&self.composer, path, inputs)
+    fn encode(
+        &self,
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Result<TransactionRequest, ComposeError> {
+        let data = PayloadComposer::compose(&self.composer, path, inputs)?;
+        Ok(TransactionRequest::new(
+            self.composer.executor,
+            data,
+            self.value,
+        ))
     }
 
     fn probe_spec(&self) -> &ProbeSpecs {
         &self.probes
     }
 
-    fn assess_rule(&self) -> Option<AssessRule> {
-        Some(self.assess_rule)
-    }
-
-    fn min_net_profit(&self) -> U256 {
-        self.min_net_profit
+    fn assess_options(&self) -> AssessOptions {
+        self.assess_options.clone()
     }
 
     fn fee_policy(&self) -> FeePolicy {
@@ -260,6 +286,7 @@ impl ExecutionAdapter for SimpleExecutorStrategy {
 mod tests {
     use super::*;
     use degenbot_execution::solve_result::{HopDescriptor, HopFamily};
+    use degenbot_execution::ProbeReading;
 
     const EXECUTOR: Address =
         alloy::primitives::address!("7777777777777777777777777777777777777777");
@@ -357,7 +384,8 @@ mod tests {
 
     /// The full four-part seam wires Probe (declared reads), Assess (gate
     /// rule + min), Fee (pricing): the strategy reports them and the built-in
-    /// assessor resolves gross → net → pass.
+    /// assessor resolves a typed observation's readings into gross → net →
+    /// pass.
     #[test]
     fn four_part_wiring_and_builtin_assess() {
         let strat = SimpleExecutorStrategy::for_executor(EXECUTOR);
@@ -366,26 +394,83 @@ mod tests {
         assert_eq!(strat.probes[0].label, "WETH");
         assert_eq!(strat.probes[0].selector, [0x70, 0xa0, 0x82, 0x31]);
         // Assess — built-in sum-of-deltas + zero min threshold.
-        assert_eq!(strat.assess_rule, AssessRule::SumOfDeltas);
+        assert_eq!(strat.assess_options, AssessOptions::default());
         // Fee — built-in market-percentile default.
         assert!(strat.fee_policy.market_percentile);
 
         // Built-in assess: gross = Σ deltas, net = gross − gas×fee.
-        // gas_cost = 100_000 × (1e9 + 1e9) = 2e14; gross 4e15 clears it.
-        let deltas = vec![4_000_000_000_000_000i128, -1_000_000_000_000_000i128];
-        let result = strat.assess(&deltas, 100_000, 1_000_000_000);
+        // gas_cost = 100_000 × (1e9 + 1e9) = 2e14; gross 3e15 clears it.
+        let spec = ProbeSpec::new("WETH".to_string(), None, [0x70, 0xa0, 0x82, 0x31]);
+        let observation = ExecutionObservation::new(
+            TransactionRequest::new(EXECUTOR, Bytes::new(), U256::ZERO),
+            degenbot_execution::ExecutionStatus::Success,
+            100_000,
+            1_000_000_000,
+        )
+        .with_probe_reads(vec![
+            ProbeReading::new(
+                spec.clone(),
+                Some(U256::from(0u64)),
+                Some(U256::from(4_000_000_000_000_000u64)),
+            ),
+            ProbeReading::new(
+                spec,
+                Some(U256::from(1_000_000_000_000_000u64)),
+                Some(U256::from(0u64)),
+            ),
+        ]);
+        let result = strat.assess(&observation).unwrap();
         assert_eq!(result.gross_profit, U256::from(3_000_000_000_000_000u64));
         assert!(result.passed);
+
         // A genuine loss (gross < gas cost) is a FAIL, not a zero pass.
-        let loss = strat.assess(&[-10_000i128], 100_000, 1_000_000_000);
-        assert!(!loss.passed);
+        let loss = ExecutionObservation::new(
+            TransactionRequest::new(EXECUTOR, Bytes::new(), U256::ZERO),
+            degenbot_execution::ExecutionStatus::Success,
+            100_000,
+            1_000_000_000,
+        )
+        .with_probe_reads(vec![ProbeReading::new(
+            ProbeSpec::new("WETH".to_string(), None, [0x70, 0xa0, 0x82, 0x31]),
+            Some(U256::from(0u64)),
+            Some(U256::from(10_000u64)),
+        )]);
+        assert!(!strat.assess(&loss).unwrap().passed);
     }
 
-    /// The sealed-view entry (`compose_solution`) projects a real
-    /// `SolveResult` (via `from_solve_path`) and produces the same foreign
-    /// calldata — the `(path, SolveResult) -> bytes` user path.
+    /// Encode returns a complete transaction: the sample contract as the
+    /// target, its ABI calldata, and the strategy's native value — zero for
+    /// the flash-funded sample executor, preserved when configured.
     #[test]
-    fn compose_solution_projects_solve_result_view() {
+    fn encode_returns_the_complete_transaction_for_the_sample_contract() {
+        let strat = SimpleExecutorStrategy::for_executor(EXECUTOR);
+        let (hop_outputs, consumed) = sample_inputs();
+        let inputs = ComposerInputs {
+            optimal_input: hop_outputs[0],
+            hop_outputs: &hop_outputs,
+            consumed_inputs: &consumed,
+            opts: ComposeOptions,
+        };
+        let path = PathInfo::new(Vec::new());
+
+        let transaction = ExecutionAdapter::encode(&strat, &path, &inputs).unwrap();
+        assert_eq!(transaction.to, EXECUTOR);
+        assert_eq!(transaction.value, U256::ZERO);
+        assert_eq!(&transaction.data[..4], &simple_executor_selector());
+
+        let funded = SimpleExecutorStrategy {
+            value: U256::from(5_000_000_000_000_000u64),
+            ..SimpleExecutorStrategy::for_executor(EXECUTOR)
+        };
+        let transaction = ExecutionAdapter::encode(&funded, &path, &inputs).unwrap();
+        assert_eq!(transaction.value, U256::from(5_000_000_000_000_000u64));
+    }
+
+    /// The sealed-view entry (`encode_solution`) projects a real
+    /// `SolveResult` (via `from_solve_path`) and produces the same foreign
+    /// transaction — the `(path, SolveResult) -> transaction` user path.
+    #[test]
+    fn encode_solution_projects_solve_result_view() {
         use degenbot_pools::solve::SolvePathResult;
         let (hop_outputs, consumed) = sample_inputs();
         let result = SolvePathResult {
@@ -412,8 +497,10 @@ mod tests {
             }],
         };
         let strat = SimpleExecutorStrategy::for_executor(EXECUTOR);
-        let bytes = strat.compose_solution(&view).unwrap();
-        assert_eq!(&bytes[..4], &simple_executor_selector());
-        assert_eq!(bytes.len(), 4 + 4 * 32 + 2 * 32);
+        let transaction = strat.encode_solution(&view).unwrap();
+        assert_eq!(transaction.to, EXECUTOR);
+        assert_eq!(transaction.value, U256::ZERO);
+        assert_eq!(&transaction.data[..4], &simple_executor_selector());
+        assert_eq!(transaction.data.len(), 4 + 4 * 32 + 2 * 32);
     }
 }

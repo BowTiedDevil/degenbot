@@ -18,13 +18,90 @@ from typing import Any, final
 
 from typing_extensions import disjoint_base
 
-__all__ = ["PayloadComposer", "SolveResult", "abi_encode_call"]
+__all__ = ["PayloadAdapter", "PayloadComposer", "SolveResult", "abi_encode_call"]
+
+@disjoint_base
+class PayloadAdapter:
+    """
+    `PayloadAdapter` — a Python-composed foreign execution adapter: the Encode
+    callable bound to the transaction it executes.
+
+    The production seam's Encode result is one complete transaction
+    (`to` + `data` + native `value`). A Python consumer supplies the calldata
+    callable plus the binding calldata cannot carry:
+
+    ```python
+    adapter = PayloadAdapter(
+        compose_simple_executor,  # result -> bytes
+        "0x7777…7777",  # the contract the call targets
+        value=0,  # native value sent with the call (wei)
+        probes=[("WETH", "0xC02a…Cc2", b"\\x70\\xa0\\x82\\x31")],
+        min_net_profit=0,
+    )
+    ```
+
+    It implements the full core `ExecutionAdapter`: Encode returns the bound
+    transaction, Probe is the declared read list, and Assess is the seam's
+    default `sum_of_deltas` gate over those readings with the declared minimum
+    net profit and the defaulted market-percentile fee. A custom assessment
+    interpreter is a Rust-side override — Python states policy data, it does not
+    run a second assessment engine.
+    """
+    def __new__(
+        cls,
+        /,
+        callback: Any,
+        to: str,
+        value: Any | None = None,
+        probes: Any | None = None,
+        min_net_profit: Any | None = None,
+    ) -> PayloadAdapter:
+        """
+        Construct from a calldata callable plus its transaction binding.
+
+        `to` is the contract the call targets; `value` is the native value sent
+        with it (wei, zero for a flash-funded contract); `probes` is the declared
+        pre/post read list as `(label, address | None, selector)` triples;
+        `min_net_profit` is the gate threshold in wei.
+
+        # Errors
+
+        `TypeError` when `callback` is not callable; `ValueError` for an
+        unparseable address, a malformed probe entry, or a negative value.
+        """
+    @property
+    def min_net_profit(self, /) -> Any:
+        """
+        The minimum net profit (wei) the default assessment requires to pass
+        (uint256 integer).
+        """
+    @property
+    def probes(self, /) -> Any:
+        """
+        The declared pre/post read list, as `(label, address | None, selector)`
+        triples.
+        """
+    @property
+    def to(self, /) -> str:
+        """
+        The contract the composed call targets (EIP-55 checksummed).
+        """
+    @property
+    def value(self, /) -> Any:
+        """
+        The native value sent with the call, in wei (uint256 integer).
+        """
 
 @disjoint_base
 class PayloadComposer:
     """
     `PyPayloadComposer` — wrap an arbitrary Python callable
     (`result: PySolveResult -> bytes`) into the core [`PayloadComposer`] seam.
+
+    This is the **encoding-only** route: it produces calldata and nothing else,
+    so it carries no target and no native value. Use
+    [`PyPayloadAdapter`] when the transaction needs a target (and possibly a
+    `value`), which is what the production seam carries.
 
     Construct with a Python callable:
 
@@ -36,14 +113,11 @@ class PayloadComposer:
     ```
 
     Rust drives `compose` (under the GIL it builds the [`SolveResult`] view,
-    calls the Python callable, and takes back the payload `bytes`). Because the
-    seam provides a blanket `PayloadComposer -> ExecutionAdapter` impl, a
-    `PyPayloadComposer` is a full `ExecutionAdapter` (built-in Probe/Assess/Fee
-    defaults) that a foreign searcher can adopt directly. Nothing here is wired
-    into the canonical `dispatch_profitable_*` fan-out (ADR-025 D3).
+    calls the Python callable, and takes back the payload `bytes`). Nothing here
+    is wired into the canonical `dispatch_profitable_*` fan-out (ADR-025 D3).
 
-    The callable's return must be `bytes`/`bytearray` (the payload to submit to
-    the composer's own contract).
+    The callable's return must be `bytes`/`bytearray` (the calldata for its
+    own contract).
     """
     def __new__(cls, /, callback: Any) -> PayloadComposer:
         """
@@ -63,8 +137,8 @@ class SolveResult:
     Carries the path id, hop count, the integer fixed-point amounts
     (`optimal_input` / `hop_outputs` / `consumed_inputs` / `net_profit`,
     all u256 integers — never floats), and the per-hop descriptors. Constructed
-    by [`PyPayloadComposer`] from the core seam's inputs; a Python callable
-    reads it (attribute access) to build calldata for its own contract.
+    by the Encode lift from the core seam's inputs; a Python callable reads it
+    (attribute access) to build calldata for its own contract.
     """
     @property
     def consumed_inputs(self, /) -> Any:
@@ -128,6 +202,7 @@ def abi_encode_call(signature: str, values: Any) -> bytes:
     """
 
 __all__ = [
+    "PayloadAdapter",
     "PayloadComposer",
     "SolveResult",
     "abi_encode_call",

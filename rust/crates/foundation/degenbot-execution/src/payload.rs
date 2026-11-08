@@ -1,9 +1,18 @@
 //! The **Encode** part of an `ExecutionAdapter` (ADR-025 D2) — the
-//! `PayloadComposer` seam.
+//! `PayloadComposer` seam, plus the [`PayloadAdapter`] binding that turns bare
+//! calldata into a complete transaction.
 //!
 //! A solver result becomes payload `bytes` for ONE execution contract. Rust
 //! users implement [`PayloadComposer`] directly; Python users supply a callable
-//! that `degenbot-python` lifts into this same trait (`PyPayloadComposer`).
+//! that `degenbot-python` lifts into this same trait.
+//!
+//! **Bytes alone do not carry a target or a value.** The production boundary is
+//! [`crate::TransactionRequest`] (`to` + `data` + native `value`), so an
+//! encoding-only composer is bound to its target explicitly with
+//! [`PayloadAdapter`] — the binding supplies `to` / `value` / probes /
+//! assessment defaults, and the adapter it produces is a full
+//! `ExecutionAdapter`. A composer that needs to pick a target or a value per
+//! opportunity implements `ExecutionAdapter::encode` itself.
 //!
 //! **Decoupling note (ADR-025-a).** The built-in `cmd_executor` adapter is a
 //! concrete production composition in `degenbot-strategy`; it captures the
@@ -14,10 +23,11 @@
 //! user's Encode part names its own contract; the built-in adapter keeps its
 //! command-specific policy on the other side of the seam.
 
-use alloy::primitives::{Bytes, U256};
+use alloy::primitives::{Address, Bytes, U256};
 
 use thiserror::Error;
 
+use crate::gate::{AssessOptions, FeePolicy, ProbeSpecs};
 use crate::path::PathInfo;
 
 /// Generic, adapter-agnostic encode knobs (ADR-025 D2/D5).
@@ -108,6 +118,109 @@ impl<T: PayloadComposer + ?Sized> PayloadComposer for &T {
     #[inline]
     fn compose(&self, path: &PathInfo, inputs: &ComposerInputs<'_>) -> Result<Bytes, ComposeError> {
         (*self).compose(path, inputs)
+    }
+}
+
+/// An encoding-only [`PayloadComposer`] bound to the transaction it executes.
+///
+/// The binding is explicit by construction: a composer produces calldata, and
+/// this value supplies the pieces calldata cannot carry — the target contract,
+/// the native `value`, the declared probe reads, and the assessment defaults.
+/// The result satisfies the full [`crate::ExecutionAdapter`] seam, so an
+/// encoding-only consumer still meets the production interface; it does not
+/// become a second simulation implementation.
+///
+/// A composer whose target or value varies per opportunity (a multi-deployment
+/// operator, a contract that sizes `msg.value` from the solution) implements
+/// `ExecutionAdapter::encode` directly instead of binding a constant here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PayloadAdapter<C> {
+    composer: C,
+    to: Address,
+    value: U256,
+    probes: ProbeSpecs,
+    options: AssessOptions,
+    fee: FeePolicy,
+}
+
+impl<C> PayloadAdapter<C> {
+    /// Bind a composer to its target contract; the value starts at zero and the
+    /// probe/assessment halves at their defaults.
+    #[must_use]
+    pub fn new(composer: C, to: Address) -> Self {
+        Self {
+            composer,
+            to,
+            value: U256::ZERO,
+            probes: Vec::new(),
+            options: AssessOptions::default(),
+            fee: FeePolicy::default(),
+        }
+    }
+
+    /// Set the native value (wei) sent with every transaction this binding
+    /// produces.
+    #[must_use]
+    pub const fn with_value(mut self, value: U256) -> Self {
+        self.value = value;
+        self
+    }
+
+    /// Declare the pre/post read-calls the engine snapshots.
+    #[must_use]
+    pub fn with_probes(mut self, probes: ProbeSpecs) -> Self {
+        self.probes = probes;
+        self
+    }
+
+    /// Select the built-in assessment shape and minimum net profit.
+    #[must_use]
+    pub fn with_assess_options(mut self, options: AssessOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Override the defaulted pricing half of Assess.
+    #[must_use]
+    pub const fn with_fee_policy(mut self, fee: FeePolicy) -> Self {
+        self.fee = fee;
+        self
+    }
+
+    /// The bound composer.
+    #[must_use]
+    pub const fn composer(&self) -> &C {
+        &self.composer
+    }
+
+    /// The bound target contract.
+    #[must_use]
+    pub const fn to(&self) -> Address {
+        self.to
+    }
+
+    /// The bound native value (wei).
+    #[must_use]
+    pub const fn value(&self) -> U256 {
+        self.value
+    }
+
+    /// The declared probe reads.
+    #[must_use]
+    pub fn probes(&self) -> &ProbeSpecs {
+        &self.probes
+    }
+
+    /// The assessment defaults this binding reports.
+    #[must_use]
+    pub const fn options(&self) -> &AssessOptions {
+        &self.options
+    }
+
+    /// The pricing policy this binding reports.
+    #[must_use]
+    pub const fn fee(&self) -> FeePolicy {
+        self.fee
     }
 }
 

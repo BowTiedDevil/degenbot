@@ -1,14 +1,32 @@
 # degenbot-execution
 
-`degenbot-execution` is the generic foreign-adapter seam (ADR-025): a pyo3-free,
-foundation-layer crate owning `ExecutionAdapter`, `PayloadComposer`, the
-solve-result view, the probe/assess/fee value types used to build a payload for
-a user-defined execution contract, and the neutral opportunity descriptors
+`degenbot-execution` is the generic foreign-adapter seam (ADR-025, ADR-098
+D2): a pyo3-free, foundation-layer crate owning `ExecutionAdapter`, the Encode
+seams (`PayloadComposer` for calldata, `PayloadAdapter` for binding it to a
+target and native value), the complete `TransactionRequest { to, data, value }`,
+the engine's typed `ExecutionObservation`, the solve-result view, the
+probe/assess/fee value types used to decide whether a simulated transaction was
+profitable, and the neutral opportunity descriptors
 (`path::{PathInfo, HopInfo, V2HopInfo, V3HopInfo, V4HopInfo}`). The built-in
 `degenbot-executor` depends on this seam, never the reverse (ADR-098 D1).
+
+One solved opportunity is exactly one transaction. The engine owns simulation
+mechanics and hands Assess a typed observation (`status`, `gas_used`,
+`base_fee_next`, `return_data` when captured, per-probe `before`/`after`
+readings, and captured events). The built-in assessment shapes (`sum_of_deltas`
+over probe readings, `return_data` over the first return word) are defaults; a
+contract that reports profit its own way overrides `assess` and reuses
+`ExecutionResult::price` for the defaulted fee half — which also pins the
+terminal-status invariant: a reverted observation is always a zero-gross,
+`passed = false` decline, even when a custom decoder read profitable-looking
+return data or events. An absent observation
+(e.g. a failed probe read) is `AssessError::Evidence`, never a fabricated zero;
+`Ok(passed = false)` is an economic decline.
+
 Its `ComposerInputs` intentionally carries only solver-driven amounts and
 adapter-agnostic options; it does not carry `cmd_executor` addresses or
-command-encoding options.
+command-encoding options, and the seam carries no capability, version, or
+release metadata — that state stays private to an adapter (ADR-098 D4/D5).
 
 The concrete built-in production adapter lives in `degenbot-strategy`, where
 `CmdExecutorAdapter` owns the canonical `cmd_executor` path. It captures one

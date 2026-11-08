@@ -1,6 +1,6 @@
 """DelegateSpy test (ADR-025): prove the execution-strategy PyO3 lift
-(``PayloadComposer`` / ``SolveResult`` / ``abi_encode_call``) is exposed on
-the Rust seam ``degenbot._ffi.execution``.
+(``PayloadComposer`` / ``PayloadAdapter`` / ``SolveResult`` / ``abi_encode_call``)
+is exposed on the Rust seam ``degenbot._ffi.execution``.
 
 The lift adapts an arbitrary Python callable (``SolveResult -> bytes``) into the
 core ``PayloadComposer`` / ``ExecutionAdapter`` seam (Polars ``map_elements``
@@ -9,9 +9,11 @@ foreign-contract path: nothing here is wired into the canonical
 ``dispatch_profitable_*`` fan-out (ADR-025 D3) — this test only pins the seam
 surface + the thin-translate contract, not any strategy logic.
 
-The functional encode round-trip (compose → Python callable → payload bytes) is
-proven Rust-side in ``crates/shells/degenbot-python/src/execution/mod.rs`` unit tests
-(``cargo test -p degenbot_rs``).
+``PayloadAdapter`` is the production-intended route: the Encode callable bound to
+the complete transaction the seam carries (``to`` + native ``value``) with its
+declared probe reads and minimum net profit. The functional encode round-trip
+(compose → Python callable → complete transaction) is proven Rust-side in
+``crates/shells/degenbot-python/src/execution/mod.rs`` unit tests.
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ class TestRustSeamPresent:
     def test_symbols_present(self) -> None:
         execution = _ffi_execution()
         assert hasattr(execution, "PayloadComposer")
+        assert hasattr(execution, "PayloadAdapter")
         assert hasattr(execution, "SolveResult")
         assert hasattr(execution, "abi_encode_call")
 
@@ -76,7 +79,7 @@ class TestRustSeamPresent:
 
 
 class TestPyPayloadComposerConstruction:
-    """The lift wraps a Python callable; non-callables are rejected early."""
+    """The encoding-only lift wraps a Python callable; non-callables are rejected."""
 
     def test_accepts_callable(self) -> None:
         composer = _ffi_execution().PayloadComposer(lambda result: b"\x00")
@@ -85,6 +88,46 @@ class TestPyPayloadComposerConstruction:
     def test_rejects_non_callable(self) -> None:
         with pytest.raises(TypeError, match="callable"):
             _ffi_execution().PayloadComposer(42)
+
+
+class TestPyPayloadAdapterBinding:
+    """The production lift binds calldata to a complete transaction."""
+
+    TO = "0x7777777777777777777777777777777777777777"
+    WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+    BALANCE_OF = bytes([0x70, 0xA0, 0x82, 0x31])
+
+    def test_binds_target_and_preserves_nonzero_value(self) -> None:
+        adapter = _ffi_execution().PayloadAdapter(
+            lambda result: b"\x01\x02",
+            to=self.TO,
+            value=5_000_000_000_000_000,
+        )
+        assert adapter.to.lower() == self.TO
+        assert adapter.value == 5_000_000_000_000_000, "native value survives the lift"
+        assert adapter.min_net_profit == 0
+
+    def test_declares_probes_and_minimum_profit(self) -> None:
+        adapter = _ffi_execution().PayloadAdapter(
+            lambda result: b"",
+            to=self.TO,
+            probes=[("WETH", self.WETH, self.BALANCE_OF)],
+            min_net_profit=1_000_000_000_000_000,
+        )
+        assert adapter.probes == [("WETH", self.WETH, self.BALANCE_OF)]
+        assert adapter.min_net_profit == 1_000_000_000_000_000
+
+    def test_rejects_non_callable(self) -> None:
+        with pytest.raises(TypeError, match="callable"):
+            _ffi_execution().PayloadAdapter(42, to=self.TO)
+
+    def test_rejects_malformed_probe(self) -> None:
+        with pytest.raises(ValueError, match="4 bytes"):
+            _ffi_execution().PayloadAdapter(
+                lambda result: b"",
+                to=self.TO,
+                probes=[("WETH", self.WETH, b"\x01\x02\x03")],
+            )
 
 
 class TestAbiEncodeCallHelper:
@@ -129,11 +172,19 @@ class TestPythonForeignStrategySample:
             == "execute(uint256,uint256,uint256[])"
         )
 
-    def test_python_strategy_wraps_in_payload_composer(
+    def test_python_strategy_binds_a_complete_transaction(
         self, foreign_strategy_example: ModuleType
     ) -> None:
-        composer = foreign_strategy_example.build_strategy()
-        assert composer is not None
+        strategy = foreign_strategy_example.build_strategy()
+        assert strategy.to.lower() == foreign_strategy_example.SIMPLE_EXECUTOR.lower()
+        assert strategy.value == 0, "the sample executor is flash-funded"
+        assert strategy.probes == [
+            (
+                "WETH",
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                bytes([0x70, 0xA0, 0x82, 0x31]),
+            )
+        ]
 
     def test_cross_layer_oracle_matches_recorded_corpus(
         self, foreign_strategy_example: ModuleType

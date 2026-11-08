@@ -14,31 +14,39 @@
 //!   descriptors (family + addresses + direction). A Python compose callable
 //!   reads these to build calldata.
 //! - [`PyPayloadComposer`] — wraps a `result -> bytes` callable into a core
-//!   [`PayloadComposer`] (which, via the seam's blanket impl, is also an
-//!   [`ExecutionAdapter`]). When `compose` runs, Rust builds the
-//!   [`SolveResult`] view, calls the Python callable under the GIL, and takes
-//!   back the payload `bytes`.
+//!   [`PayloadComposer`] (encoding only: calldata, no target or value).
+//! - [`PyPayloadAdapter`] — binds that callable to the complete transaction the
+//!   production seam carries: `to`, an optional native `value`, declared probe
+//!   reads, and a minimum net profit. It is a full core
+//!   [`ExecutionAdapter`], so a Python consumer authors the same
+//!   `{ to, data, value }` transaction a foreign Rust adapter does.
 //! - [`abi_encode_call`] — a thin `degenbot.abi`-backed helper so a Python user
 //!   can ABI-encode a single call against their own contract from inside their
 //!   compose callable.
 //!
-//! **Guardrails** (ADR-025): pyo3 lives ONLY here (in `degenbot-python` —
-//! `just check-no-pyo3-in-cores` stays green); this is a *thin translate*, no
-//! strategy logic core-side; nothing is threaded into the canonical
-//! `dispatch_profitable_*` fan-out (the wall, D3) — `PyPayloadComposer` is the
-//! foreign-contract path, adopted by a user directly, never used to re-derive
-//! the canonical `cmd_executor` bundle.
+//! **Guardrails** (ADR-025, ADR-098 D3): pyo3 lives ONLY here (in
+//! `degenbot-python` — `just check-no-pyo3-in-cores` stays green); this is a
+//! *thin translate*, no strategy logic core-side; nothing is threaded into the
+//! canonical `dispatch_profitable_*` fan-out (the wall, D3). Python declares
+//! the encoding, the target/value binding, the probe reads, and the minimum
+//! profit — it does not acquire a simulation implementation, an assessment
+//! interpreter, or a Python mirror of the built-in command composer. The
+//! engine's typed `ExecutionObservation` and the custom-Assess hook stay Rust
+//! types: Python states *policy data*, and the Rust seam interprets.
 
-use alloy::primitives::{Bytes, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use degenbot_execution::solve_result::{HopDescriptor, HopFamily};
 use degenbot_execution::PathInfo;
-use degenbot_execution::{ComposeError, ComposerInputs, PayloadComposer, SolveResult};
+use degenbot_execution::{
+    AssessOptions, AssessRule, ComposeError, ComposerInputs, ExecutionAdapter, FeePolicy,
+    PayloadComposer, ProbeSpec, ProbeSpecs, SolveResult, TransactionRequest,
+};
 
-use crate::conversion::alloy::u256_to_py;
+use crate::conversion::alloy::{extract_python_u256, u256_to_py};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PySolveResult — the solve-result view (ADR-025 D4)
@@ -50,8 +58,8 @@ use crate::conversion::alloy::u256_to_py;
 /// Carries the path id, hop count, the integer fixed-point amounts
 /// (`optimal_input` / `hop_outputs` / `consumed_inputs` / `net_profit`,
 /// all u256 integers — never floats), and the per-hop descriptors. Constructed
-/// by [`PyPayloadComposer`] from the core seam's inputs; a Python callable
-/// reads it (attribute access) to build calldata for its own contract.
+/// by the Encode lift from the core seam's inputs; a Python callable reads it
+/// (attribute access) to build calldata for its own contract.
 #[pyclass(name = "SolveResult", module = "degenbot._ffi.execution")]
 pub struct PySolveResult {
     inner: SolveResult,
@@ -176,77 +184,48 @@ fn hop_descriptor_to_dict<'py>(py: Python<'py>, d: &HopDescriptor) -> PyResult<B
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PyPayloadComposer — lift a Python callable into the PayloadComposer seam
+// Encode lift — the shared Python-callable invocation
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// `PyPayloadComposer` — wrap an arbitrary Python callable
-/// (`result: PySolveResult -> bytes`) into the core [`PayloadComposer`] seam.
+/// Wrap a held Python callable and require it to be callable at construction.
 ///
-/// Construct with a Python callable:
+/// # Errors
 ///
-/// ```python
-/// def my_composer(result):
-///     return abi_encode_call("(bytes32,uint256)", ["0x…", result.optimal_input])
-///
-/// composer = PyPayloadComposer(my_composer)
-/// ```
-///
-/// Rust drives `compose` (under the GIL it builds the [`SolveResult`] view,
-/// calls the Python callable, and takes back the payload `bytes`). Because the
-/// seam provides a blanket `PayloadComposer -> ExecutionAdapter` impl, a
-/// `PyPayloadComposer` is a full `ExecutionAdapter` (built-in Probe/Assess/Fee
-/// defaults) that a foreign searcher can adopt directly. Nothing here is wired
-/// into the canonical `dispatch_profitable_*` fan-out (ADR-025 D3).
-///
-/// The callable's return must be `bytes`/`bytearray` (the payload to submit to
-/// the composer's own contract).
-#[pyclass(name = "PayloadComposer", module = "degenbot._ffi.execution", subclass)]
-#[derive(Debug)]
-pub struct PyPayloadComposer {
-    /// The held Python callable. Rust re-enters the GIL (`Python::attach`)
-    /// to invoke it with a [`PySolveResult`], mirroring the existing
-    /// GIL-held-callable patterns in this crate (`PyBotIo` / subscriber
-    /// callbacks).
-    callback: Py<PyAny>,
-}
-
-#[pymethods]
-impl PyPayloadComposer {
-    /// Construct from a Python callable `result -> bytes`.
-    ///
-    /// # Errors
-    ///
-    /// `TypeError` when `callback` is not callable.
-    #[new]
-    fn new(callback: Py<PyAny>) -> PyResult<Self> {
-        // Reject non-callables early (clearer than failing inside `compose`).
-        Python::attach(|py| {
-            if !callback.bind(py).is_callable() {
-                return Err(PyTypeError::new_err(
-                    "PayloadComposer expects a callable `result -> bytes`",
-                ));
-            }
+/// `TypeError` when `callback` is not callable.
+fn require_callable(callback: &Py<PyAny>, expected: &str) -> PyResult<()> {
+    Python::attach(|py| {
+        if callback.bind(py).is_callable() {
             Ok(())
-        })?;
-        Ok(Self { callback })
-    }
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "{expected} expects a callable `result -> bytes`"
+            )))
+        }
+    })
 }
 
-impl PayloadComposer for PyPayloadComposer {
-    fn compose(&self, path: &PathInfo, inputs: &ComposerInputs<'_>) -> Result<Bytes, ComposeError> {
-        let result = solve_result_from_path_inputs(path, inputs);
-        Python::attach(|py| {
-            let view = PySolveResult::wrap(py, result)?;
-            let returned = self.callback.bind(py).call1((view,))?;
-            let vec: Vec<u8> = returned.extract().map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "compose callback must return bytes/bytearray (payload for the contract)",
-                )
-            })?;
-            Ok(Bytes::from(vec))
-        })
-        .map_err(|err: PyErr| ComposeError::encode(err.to_string()))
-    }
+/// Call the held Python callable with the typed solve-result view and take back
+/// the calldata bytes.
+///
+/// The view is projected from the seam's `(path, inputs)` intake; the callback's
+/// return is the payload for the composer's own contract.
+fn compose_with_callable(
+    callback: &Py<PyAny>,
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Result<Bytes, ComposeError> {
+    let result = solve_result_from_path_inputs(path, inputs);
+    Python::attach(|py| {
+        let view = PySolveResult::wrap(py, result)?;
+        let returned = callback.bind(py).call1((view,))?;
+        let vec: Vec<u8> = returned.extract().map_err(|_| {
+            PyValueError::new_err(
+                "compose callback must return bytes/bytearray (calldata for the contract)",
+            )
+        })?;
+        Ok(Bytes::from(vec))
+    })
+    .map_err(|err: PyErr| ComposeError::encode(err.to_string()))
 }
 
 /// Build a [`SolveResult`] view from the seam's `(path, inputs)` intake.
@@ -273,6 +252,237 @@ fn solve_result_from_path_inputs(path: &PathInfo, inputs: &ComposerInputs<'_>) -
             .collect(),
         net_profit: U256::from(net_profit),
         hop_descriptors: path.hops.iter().map(HopDescriptor::from_hop_info).collect(),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PyPayloadComposer — lift a Python callable into the PayloadComposer seam
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `PyPayloadComposer` — wrap an arbitrary Python callable
+/// (`result: PySolveResult -> bytes`) into the core [`PayloadComposer`] seam.
+///
+/// This is the **encoding-only** route: it produces calldata and nothing else,
+/// so it carries no target and no native value. Use
+/// [`PyPayloadAdapter`] when the transaction needs a target (and possibly a
+/// `value`), which is what the production seam carries.
+///
+/// Construct with a Python callable:
+///
+/// ```python
+/// def my_composer(result):
+///     return abi_encode_call("(bytes32,uint256)", ["0x…", result.optimal_input])
+///
+/// composer = PyPayloadComposer(my_composer)
+/// ```
+///
+/// Rust drives `compose` (under the GIL it builds the [`SolveResult`] view,
+/// calls the Python callable, and takes back the payload `bytes`). Nothing here
+/// is wired into the canonical `dispatch_profitable_*` fan-out (ADR-025 D3).
+///
+/// The callable's return must be `bytes`/`bytearray` (the calldata for its
+/// own contract).
+#[pyclass(name = "PayloadComposer", module = "degenbot._ffi.execution", subclass)]
+#[derive(Debug)]
+pub struct PyPayloadComposer {
+    /// The held Python callable. Rust re-enters the GIL (`Python::attach`)
+    /// to invoke it with a [`PySolveResult`], mirroring the existing
+    /// GIL-held-callable patterns in this crate (`PyBotIo` / subscriber
+    /// callbacks).
+    callback: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyPayloadComposer {
+    /// Construct from a Python callable `result -> bytes`.
+    ///
+    /// # Errors
+    ///
+    /// `TypeError` when `callback` is not callable.
+    #[new]
+    fn new(callback: Py<PyAny>) -> PyResult<Self> {
+        require_callable(&callback, "PayloadComposer")?;
+        Ok(Self { callback })
+    }
+}
+
+impl PayloadComposer for PyPayloadComposer {
+    fn compose(&self, path: &PathInfo, inputs: &ComposerInputs<'_>) -> Result<Bytes, ComposeError> {
+        compose_with_callable(&self.callback, path, inputs)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PyPayloadAdapter — the complete transaction a Python consumer authors
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `PayloadAdapter` — a Python-composed foreign execution adapter: the Encode
+/// callable bound to the transaction it executes.
+///
+/// The production seam's Encode result is one complete transaction
+/// (`to` + `data` + native `value`). A Python consumer supplies the calldata
+/// callable plus the binding calldata cannot carry:
+///
+/// ```python
+/// adapter = PayloadAdapter(
+///     compose_simple_executor,            # result -> bytes
+///     "0x7777…7777",                      # the contract the call targets
+///     value=0,                            # native value sent with the call (wei)
+///     probes=[("WETH", "0xC02a…Cc2", b"\x70\xa0\x82\x31")],
+///     min_net_profit=0,
+/// )
+/// ```
+///
+/// It implements the full core `ExecutionAdapter`: Encode returns the bound
+/// transaction, Probe is the declared read list, and Assess is the seam's
+/// default `sum_of_deltas` gate over those readings with the declared minimum
+/// net profit and the defaulted market-percentile fee. A custom assessment
+/// interpreter is a Rust-side override — Python states policy data, it does not
+/// run a second assessment engine.
+#[pyclass(name = "PayloadAdapter", module = "degenbot._ffi.execution", subclass)]
+#[derive(Debug)]
+pub struct PyPayloadAdapter {
+    callback: Py<PyAny>,
+    to: Address,
+    value: U256,
+    probes: ProbeSpecs,
+    min_net_profit: U256,
+}
+
+/// Parse the declared probe list: `[(label, address_or_None, selector_bytes)]`.
+///
+/// # Errors
+///
+/// `ValueError` when a probe entry is not a `(str, str|None, bytes)` triple with
+/// a 4-byte selector, or the address cannot be parsed.
+fn parse_probes(probes: Option<&Bound<'_, PyAny>>) -> PyResult<ProbeSpecs> {
+    let Some(probes) = probes else {
+        return Ok(Vec::new());
+    };
+    if probes.is_none() {
+        return Ok(Vec::new());
+    }
+    let mut specs = Vec::new();
+    for entry in probes.try_iter()? {
+        let entry = entry?;
+        let (label, address, selector): (String, Option<String>, Vec<u8>) =
+            entry.extract().map_err(|_| {
+                PyValueError::new_err(
+                    "each probe must be a (label: str, address: str | None, selector: bytes) triple",
+                )
+            })?;
+        let address = address
+            .map(|address| {
+                crate::address_utils::parse_address(&address)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))
+            })
+            .transpose()?;
+        let selector: [u8; 4] = selector
+            .try_into()
+            .map_err(|_| PyValueError::new_err("a probe selector must be exactly 4 bytes"))?;
+        specs.push(ProbeSpec::new(label, address, selector));
+    }
+    Ok(specs)
+}
+
+#[pymethods]
+impl PyPayloadAdapter {
+    /// Construct from a calldata callable plus its transaction binding.
+    ///
+    /// `to` is the contract the call targets; `value` is the native value sent
+    /// with it (wei, zero for a flash-funded contract); `probes` is the declared
+    /// pre/post read list as `(label, address | None, selector)` triples;
+    /// `min_net_profit` is the gate threshold in wei.
+    ///
+    /// # Errors
+    ///
+    /// `TypeError` when `callback` is not callable; `ValueError` for an
+    /// unparseable address, a malformed probe entry, or a negative value.
+    #[new]
+    #[pyo3(signature = (callback, to, value = None, probes = None, min_net_profit = None))]
+    fn new(
+        callback: Py<PyAny>,
+        to: &str,
+        value: Option<&Bound<'_, PyAny>>,
+        probes: Option<&Bound<'_, PyAny>>,
+        min_net_profit: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        require_callable(&callback, "PayloadAdapter")?;
+        let to = crate::address_utils::parse_address(to)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(Self {
+            callback,
+            to,
+            value: value.map_or(Ok(U256::ZERO), extract_python_u256)?,
+            probes: parse_probes(probes)?,
+            min_net_profit: min_net_profit.map_or(Ok(U256::ZERO), extract_python_u256)?,
+        })
+    }
+
+    /// The contract the composed call targets (EIP-55 checksummed).
+    #[getter]
+    fn to(&self) -> String {
+        self.to.to_checksum(None)
+    }
+
+    /// The native value sent with the call, in wei (uint256 integer).
+    #[getter]
+    fn value<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        u256_to_py(py, &self.value)
+    }
+
+    /// The declared pre/post read list, as `(label, address | None, selector)`
+    /// triples.
+    #[getter]
+    fn probes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let list = PyList::empty(py);
+        for spec in &self.probes {
+            let label = spec.label.clone();
+            let address = spec.address.map(|address| address.to_checksum(None));
+            let selector = PyBytes::new(py, &spec.selector);
+            list.append(PyTuple::new(
+                py,
+                [
+                    label.into_pyobject(py)?.into_any(),
+                    address.into_pyobject(py)?.into_any(),
+                    selector.into_any(),
+                ],
+            )?)?;
+        }
+        Ok(list.into_any())
+    }
+
+    /// The minimum net profit (wei) the default assessment requires to pass
+    /// (uint256 integer).
+    #[getter]
+    fn min_net_profit<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        u256_to_py(py, &self.min_net_profit)
+    }
+}
+
+impl ExecutionAdapter for PyPayloadAdapter {
+    fn encode(
+        &self,
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Result<TransactionRequest, ComposeError> {
+        let data = compose_with_callable(&self.callback, path, inputs)?;
+        Ok(TransactionRequest::new(self.to, data, self.value))
+    }
+
+    fn probe_spec(&self) -> &ProbeSpecs {
+        &self.probes
+    }
+
+    fn assess_options(&self) -> AssessOptions {
+        AssessOptions {
+            rule: AssessRule::SumOfDeltas,
+            min_net_profit: self.min_net_profit,
+        }
+    }
+
+    fn fee_policy(&self) -> FeePolicy {
+        FeePolicy::default()
     }
 }
 
@@ -349,7 +559,7 @@ fn abi_encode_call<'py>(
 #[pyo3(module = "degenbot._ffi")]
 pub mod execution {
     #[pymodule_export]
-    use super::{abi_encode_call, PyPayloadComposer, PySolveResult};
+    use super::{abi_encode_call, PyPayloadAdapter, PyPayloadComposer, PySolveResult};
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -360,11 +570,12 @@ pub mod execution {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use alloy::primitives::Address;
     use degenbot_execution::{HopInfo, V2HopInfo};
 
     const WETH: Address = alloy::primitives::address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     const USDC: Address = alloy::primitives::address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    const EXECUTOR: Address =
+        alloy::primitives::address!("7777777777777777777777777777777777777777");
 
     fn sample_path() -> PathInfo {
         PathInfo::new(vec![
@@ -389,6 +600,13 @@ mod tests {
         ])
     }
 
+    fn sample_amounts() -> ([u128; 2], [u128; 2]) {
+        (
+            [1_000_000_000_000_000_000u128, 1_000_000_000_000_000_001u128],
+            [1_000_000_000_000_000_000u128, 1_000_000_000_000_000_000u128],
+        )
+    }
+
     #[test]
     fn compose_calls_python_callable_with_view_and_takes_bytes() {
         Python::attach(|py| {
@@ -404,8 +622,7 @@ mod tests {
                 .unwrap();
             let composer = PyPayloadComposer::new(callback.unbind()).unwrap();
             let path = sample_path();
-            let outputs = [1_000_000_000_000_000_000u128, 1_000_000_000_000_000_001u128];
-            let consumed = [1_000_000_000_000_000_000u128, 1_000_000_000_000_000_000u128];
+            let (outputs, consumed) = sample_amounts();
             let inputs = ComposerInputs {
                 optimal_input: outputs[0],
                 hop_outputs: &outputs,
@@ -458,6 +675,74 @@ mod tests {
             let non_callable = py.eval(c"42", None, None).unwrap().unbind();
             let err = PyPayloadComposer::new(non_callable).unwrap_err();
             assert!(err.to_string().contains("callable"));
+        });
+    }
+
+    #[test]
+    fn payload_adapter_encodes_a_complete_transaction_with_its_value() {
+        Python::attach(|py| {
+            let callback = py
+                .eval(c"lambda result: bytes([0xAB, 0xCD])", None, None)
+                .unwrap();
+            let five_ether = U256::from(5_000_000_000_000_000_000u64);
+            let value = u256_to_py(py, &five_ether).unwrap();
+            let adapter = PyPayloadAdapter::new(
+                callback.unbind(),
+                "0x7777777777777777777777777777777777777777",
+                Some(&value),
+                None,
+                None,
+            )
+            .unwrap();
+
+            let path = sample_path();
+            let outputs = [1u128, 2u128];
+            let consumed = [1u128, 1u128];
+            let inputs = ComposerInputs {
+                optimal_input: 1,
+                hop_outputs: &outputs,
+                consumed_inputs: &consumed,
+                opts: degenbot_execution::ComposeOptions,
+            };
+            let transaction = ExecutionAdapter::encode(&adapter, &path, &inputs)
+                .expect("encode through the lift");
+
+            assert_eq!(transaction.to, EXECUTOR);
+            assert_eq!(transaction.value, five_ether);
+            assert_eq!(transaction.data.to_vec(), vec![0xAB, 0xCD]);
+        });
+    }
+
+    #[test]
+    fn payload_adapter_declares_probes_and_minimum_profit() {
+        Python::attach(|py| {
+            let callback = py.eval(c"lambda result: b''", None, None).unwrap();
+            let probes = py
+                .eval(
+                    c"[('WETH', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', bytes([0x70, 0xA0, 0x82, 0x31]))]",
+                    None,
+                    None,
+                )
+                .unwrap();
+            let min_net_profit = u256_to_py(py, &U256::from(1_000_000_000_000_000u64)).unwrap();
+            let adapter = PyPayloadAdapter::new(
+                callback.unbind(),
+                "0x7777777777777777777777777777777777777777",
+                None,
+                Some(&probes),
+                Some(&min_net_profit),
+            )
+            .unwrap();
+
+            let declared = adapter.probe_spec();
+            assert_eq!(declared.len(), 1);
+            assert_eq!(declared[0].label, "WETH");
+            assert_eq!(declared[0].address, Some(WETH));
+            assert_eq!(declared[0].selector, [0x70, 0xA0, 0x82, 0x31]);
+            let options = adapter.assess_options();
+            assert_eq!(options.rule, AssessRule::SumOfDeltas);
+            assert_eq!(options.min_net_profit, U256::from(1_000_000_000_000_000u64));
+            assert_eq!(adapter.fee_policy(), FeePolicy::default());
         });
     }
 

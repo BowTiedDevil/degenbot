@@ -33,6 +33,47 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **The execution seam carries one complete transaction and one typed
+  observation (ADR-098 D2).** `ExecutionAdapter::encode` returns a
+  `TransactionRequest { to, data, value }` instead of bare `Bytes`, so a foreign
+  contract's target and native `value` are part of the neutral request and are
+  preserved through simulation/submission; the new `PayloadAdapter` binding
+  (`PayloadAdapter::new(composer, to).with_value(..)`) is the explicit route for
+  an encoding-only `PayloadComposer`, which by itself carries neither. The
+  engine-owned simulation now hands Assess a typed `ExecutionObservation`
+  (`transaction`, `status`, `gas_used`, `base_fee_next`, `return_data` when
+  captured, one `probe_reads` entry per declared `ProbeSpec` with `before`/
+  `after` absent when a read failed, and captured `events`), and
+  `ExecutionAdapter::assess(&ExecutionObservation)` replaces the delta-only
+  signature. Assess is adapter-owned: the built-in shapes
+  (`AssessRule::SumOfDeltas`, `AssessRule::ReturnData`) are defaults, and
+  `ExecutionResult::price(..)` lets a custom interpretation reuse the defaulted
+  fee half. Failure is typed: `AssessError::{Evidence, Decode}` means no verdict
+  was reached, while `Ok(passed = false)` is an economic decline. A reverted
+  observation declines with a zero gross and its observed gas/base fee,
+  enforced by `ExecutionResult::price` for every assessment — a custom decoder
+  that finds profitable-looking return data or events still cannot pass a
+  revert. One
+  solved opportunity is still exactly one transaction — no multi-transaction
+  choreography, no consumer simulation loop, and no capability/version/release
+  metadata in the generic types. The foreign sample and the Python lift move to
+  the same interface with their recorded calldata corpus unchanged; the PyO3
+  surface gains `PayloadAdapter(callable, to, value, probes, min_net_profit)`.
+  Production simulator routing, built-in receipt assessment, deployment identity,
+  and `cmd_executor` version policy remain out of this change. Migration rows:
+
+  | Was | Is |
+  | --- | --- |
+  | `ExecutionAdapter::encode` / the `PayloadComposer` blanket `ExecutionAdapter` impl returned `Result<Bytes, ComposeError>` | `ExecutionAdapter::encode` returns `Result<TransactionRequest, ComposeError>`; a `PayloadComposer` binds its target/value with `PayloadAdapter` |
+  | `ExecutionAdapter::compose_view(..) -> Result<Bytes, _>` | `-> Result<TransactionRequest, _>` |
+  | `ExecutionAdapter::assess(deltas, gas_used, base_fee_next) -> ExecutionResult` | `assess(&ExecutionObservation) -> Result<ExecutionResult, AssessError>` |
+  | `assess_rule() -> Option<AssessRule>` + `min_net_profit() -> U256` | `assess_options() -> AssessOptions` (`rule: AssessRule`, `min_net_profit: U256`) |
+  | `AssessOptions { rule: Option<AssessRule>, .. }` | `AssessOptions { rule: AssessRule, .. }`; override `assess` for a custom interpreter |
+  | `AssessRule::ReturnValue` (probe read value) | `AssessRule::ReturnData` (transaction's first 32-byte return word) |
+  | no assessment failure type | `AssessError::{Evidence, Decode}`; `ExecutionResult::price(..)` for a custom `assess` |
+  | `degenbot-execution-sample::SimpleExecutorStrategy::compose_solution(..) -> Bytes` | `encode_solution(..) -> TransactionRequest` |
+  | Python `PayloadComposer(callable)` implied a full adapter | `PayloadComposer(callable)` stays encoding-only; `PayloadAdapter(callable, to, value=0, probes=None, min_net_profit=0)` is the full adapter |
+
 - **`degenbot-execution` is a foundation crate and owns the neutral opportunity
   descriptors (ADR-098 D1).** `PathInfo`, `HopInfo`, and the `V2HopInfo` /
   `V3HopInfo` / `V4HopInfo` family payloads leave

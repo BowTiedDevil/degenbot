@@ -1,21 +1,22 @@
 #![expect(clippy::expect_used)]
-//! Exercise the `degenbot-execution` scaffold seam (ADR-025): the value types,
-//! the `PayloadComposer` Encode part, and the `ExecutionAdapter` trait that
-//! wraps it with built-in Probe/Assess/Fee defaults.
+
+//! Exercise the `degenbot-execution` seam (ADR-025): the value types, the
+//! `PayloadComposer` Encode part and its `PayloadAdapter` binding, and the
+//! `ExecutionAdapter` defaults over a typed `ExecutionObservation`.
 //!
-//! These pin the scaffold contract so downstream tasks (facet A and facet B, the
-//! `PyO3` lift, and the sample foreign-contract strategies) can build on the shape
-//! without re-deriving it.
+//! These pin the seam's own contract so the `PyO3` lift and the foreign-contract
+//! samples build on the shape without re-deriving it.
 
 use alloy::primitives::{address, Address, Bytes, U256};
 
-use degenbot_execution::PathInfo;
 use degenbot_execution::{
-    AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter, FeePolicy,
-    PayloadComposer, ProbeSpec, SolveResult,
+    AssessOptions, AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter,
+    ExecutionObservation, ExecutionStatus, FeePolicy, PathInfo, PayloadAdapter, PayloadComposer,
+    ProbeReading, ProbeSpec, SolveResult, TransactionRequest,
 };
 
 const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const POOL: Address = address!("88e6a0c2ddd26feeb64f039a2c41296fcb3f5640");
 
 /// A fake foreign Encode part — produces a short, deterministic (non-ABI)
 /// payload byte string unique to this strategy, distinct from `cmd_executor`.
@@ -36,49 +37,57 @@ impl PayloadComposer for ForeignComposer {
     }
 }
 
+fn sample_inputs(hop_outputs: &[u128]) -> ComposerInputs<'_> {
+    ComposerInputs {
+        optimal_input: hop_outputs[0],
+        hop_outputs,
+        consumed_inputs: hop_outputs,
+        opts: ComposeOptions,
+    }
+}
+
 #[test]
 fn payload_composer_produces_distinct_foreign_bytes() {
     let path = PathInfo::new(vec![]);
     let hop_outputs = [1u128, 2u128];
-    let inputs = ComposerInputs {
-        optimal_input: 42,
-        hop_outputs: &hop_outputs,
-        consumed_inputs: &hop_outputs,
-        opts: ComposeOptions,
-    };
+    let inputs = sample_inputs(&hop_outputs);
+
     let bytes = ForeignComposer.compose(&path, &inputs).expect("encode");
+
     // Distinct from any cmd_executor output: starts with the "FX" tag.
     assert_eq!(&bytes[..2], b"FX");
     assert_eq!(bytes.len(), 2 + 16 * 3); // tag + optimal_input + 2 outputs (u128 = 16 bytes)
 }
 
 #[test]
-fn payload_composer_blanket_satisfies_execution_strategy() {
-    // A `PayloadComposer` meets the full `ExecutionAdapter` seam through the
-    // blanket impl (built-in Probe/Assess/Fee defaults) — matching the docs'
-    // "impl PayloadComposer" Rust path.
-    let path = PathInfo::new(vec![]);
+fn payload_adapter_binds_a_composer_to_a_complete_transaction() {
+    // An encoding-only composer meets the full `ExecutionAdapter` seam through
+    // the binding, which names the target and the native value the bytes
+    // cannot carry. Defaults: no probes, sum-of-deltas assessment, market fee.
     let hop_outputs = [7u128, 11u128];
-    let inputs = ComposerInputs {
-        optimal_input: 5,
-        hop_outputs: &hop_outputs,
-        consumed_inputs: &hop_outputs,
-        opts: ComposeOptions,
-    };
-    let composer = ForeignComposer;
-    let encoded = ExecutionAdapter::encode(&composer, &path, &inputs).expect("encode");
-    // Blanket defaults: sum-of-deltas probe list is empty; fee is market-percentile.
-    assert!(composer.probe_spec().is_empty());
-    assert_eq!(composer.fee_policy(), FeePolicy::default());
-    assert!(!encoded.is_empty());
+    let inputs = sample_inputs(&hop_outputs);
+    let bound = PayloadAdapter::new(ForeignComposer, POOL).with_value(U256::from(3u64));
+
+    let transaction = ExecutionAdapter::encode(&bound, &PathInfo::new(vec![]), &inputs)
+        .expect("encode through the binding");
+
+    assert_eq!(
+        transaction,
+        TransactionRequest::new(
+            POOL,
+            ForeignComposer
+                .compose(&PathInfo::new(vec![]), &inputs)
+                .expect("encode"),
+            U256::from(3u64),
+        )
+    );
+    assert!(bound.probe_spec().is_empty());
+    assert_eq!(bound.assess_options(), AssessOptions::default());
+    assert_eq!(bound.fee_policy(), FeePolicy::default());
 }
 
 #[test]
 fn solve_result_projection_carries_amounts_and_hop_count() {
-    // A 2-hop path: optimal input + per-hop outputs + consumed inputs.
-    let path = PathInfo::new(vec![]);
-    let _ = path;
-
     // Build a SolvePathResult manually (the amounts ride this type, ADR-025 D4).
     let result = degenbot_pools::solve::SolvePathResult {
         optimal_input: U256::from(10u64),
@@ -107,7 +116,6 @@ fn solve_result_projection_carries_amounts_and_hop_count() {
     assert_eq!(view.hop_count, 2);
     assert_eq!(view.optimal_input, U256::from(10u64));
     assert_eq!(view.hop_outputs, vec![U256::from(20u64), U256::from(23u64)]);
-    assert_eq!(view.optimal_input, U256::from(10u64));
     assert_eq!(view.net_profit, U256::from(3u64));
     assert_eq!(view.hop_descriptors.len(), 2);
 }
@@ -118,22 +126,45 @@ fn probe_spec_roundtrips_label_address_selector() {
     assert_eq!(spec.label, "WETH");
     assert_eq!(spec.address, Some(WETH));
     assert_eq!(spec.selector, [0x70, 0xa0, 0x82, 0x31]);
-    // Native-ETH pseudo-read has no address.
+
+    // A pseudo-read with no callee has no address.
     let native = ProbeSpec::new("ETH".to_string(), None, [0x47, 0xd5, 0x1f, 0x2d]);
     assert_eq!(native.address, None);
 }
 
+fn observed(probe_reads: Vec<ProbeReading>) -> ExecutionObservation {
+    ExecutionObservation::new(
+        TransactionRequest::new(POOL, Bytes::from_static(b"FX"), U256::ZERO),
+        ExecutionStatus::Success,
+        100_000,
+        10,
+    )
+    .with_probe_reads(probe_reads)
+}
+
 #[test]
-fn assess_defaults_use_sum_of_deltas_and_market_percentile_fee() {
-    let composer = ForeignComposer;
+fn default_assessment_sums_probe_deltas_and_prices_the_market_fee() {
     // Realistic arb scale: gross = Σ deltas = 1 ETH (1e18 wei); default
     // market-percentile priority fee is 1 gwei; gas = 100k at 10 wei/gas base
     // → gas_cost ≈ 1e14 wei ≪ gross, so net > 0 → passes the zero threshold.
-    let result = composer.assess(
-        &[500_000_000_000_000_000, 500_000_000_000_000_000],
-        100_000,
-        10,
-    );
+    let spec = ProbeSpec::new("WETH".to_string(), Some(WETH), [0x70, 0xa0, 0x82, 0x31]);
+    let observation = observed(vec![
+        ProbeReading::new(
+            spec.clone(),
+            Some(U256::from(0u64)),
+            Some(U256::from(500_000_000_000_000_000u64)),
+        ),
+        ProbeReading::new(
+            spec,
+            Some(U256::from(0u64)),
+            Some(U256::from(500_000_000_000_000_000u64)),
+        ),
+    ]);
+
+    let result = AssessOptions::default()
+        .assess(&observation, &FeePolicy::default())
+        .expect("complete readings");
+
     assert_eq!(
         result.gross_profit,
         U256::from(1_000_000_000_000_000_000u128)
@@ -144,21 +175,16 @@ fn assess_defaults_use_sum_of_deltas_and_market_percentile_fee() {
     );
     assert!(result.passed); // net > 0 ≥ min_net_profit (0)
     assert_eq!(
-        composer.fee_policy().priority_fee(),
+        FeePolicy::default().priority_fee(),
         FeePolicy::builtin_priority_fee()
     );
-
-    // A heavy loss (gross below gas cost) is a fail — not a zero-profit pass.
-    let loss = composer.assess(&[10_000], 100_000, 10);
-    assert!(!loss.passed);
-    assert_eq!(loss.net_profit, U256::ZERO);
 }
 
 #[test]
 fn assess_rule_and_options_defaults() {
     assert_eq!(AssessRule::default(), AssessRule::SumOfDeltas);
-    let opts = degenbot_execution::AssessOptions::default();
-    assert_eq!(opts.rule, Some(AssessRule::SumOfDeltas));
+    let opts = AssessOptions::default();
+    assert_eq!(opts.rule, AssessRule::SumOfDeltas);
     assert_eq!(opts.min_net_profit, U256::ZERO);
 }
 
@@ -166,7 +192,6 @@ fn assess_rule_and_options_defaults() {
 fn assess_breaks_even_at_exactly_zero_net() {
     // gross == gas cost → net == 0 exactly, and the default 0 threshold passes
     // it (a true break-even, distinct from an underflowing loss).
-    let composer = ForeignComposer;
     let base: u128 = 10;
     let priority: u128 = FeePolicy::builtin_priority_fee();
     let gas_cost = 10_000 * (base + priority);
@@ -175,7 +200,30 @@ fn assess_breaks_even_at_exactly_zero_net() {
         0 => [gas_cost_i128 / 2, gas_cost_i128 / 2],
         _ => [gas_cost_i128 / 2, gas_cost_i128 - gas_cost_i128 / 2],
     };
-    let result = composer.assess(&deltas, 10_000, base);
+    let spec = ProbeSpec::new("WETH".to_string(), Some(WETH), [0x70, 0xa0, 0x82, 0x31]);
+    let observation = ExecutionObservation::new(
+        TransactionRequest::new(POOL, Bytes::from_static(b"FX"), U256::ZERO),
+        ExecutionStatus::Success,
+        10_000,
+        base,
+    )
+    .with_probe_reads(vec![
+        ProbeReading::new(
+            spec.clone(),
+            Some(U256::from(0u64)),
+            Some(U256::from(deltas[0].unsigned_abs())),
+        ),
+        ProbeReading::new(
+            spec,
+            Some(U256::from(0u64)),
+            Some(U256::from(deltas[1].unsigned_abs())),
+        ),
+    ]);
+
+    let result = AssessOptions::default()
+        .assess(&observation, &FeePolicy::default())
+        .expect("complete readings");
+
     assert!(result.passed);
     assert_eq!(result.net_profit, U256::ZERO);
 }

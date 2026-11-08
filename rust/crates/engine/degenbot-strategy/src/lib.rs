@@ -33,18 +33,22 @@
 //! ## Capability seams
 //!
 //! From [`degenbot_execution`], the adapter seam: the [`ExecutionAdapter`]
-//! trait, its Encode part ([`PayloadComposer`] + [`ComposerInputs`] +
-//! [`ComposeError`]), the gate value types ([`ProbeSpecs`] + [`AssessRule`] +
-//! [`FeePolicy`]), the gate verdict ([`ExecutionResult`]), and the solve-result
-//! view ([`SolveResult`]).
+//! trait, its Encode parts ([`PayloadComposer`] + [`ComposerInputs`] +
+//! [`ComposeError`], bound to a target/value by [`PayloadAdapter`]) producing a
+//! complete [`TransactionRequest`], the gate value types ([`ProbeSpecs`] +
+//! [`AssessRule`] + [`AssessOptions`] + [`FeePolicy`]), the engine's typed
+//! observation ([`ExecutionObservation`]), the gate verdict
+//! ([`ExecutionResult`] / [`AssessError`]), and the solve-result view
+//! ([`SolveResult`]).
 //!
 //! From [`degenbot_submission`], the submission surface: the candidate
 //! ([`SubmitCandidate`]), the typed channel ([`SubmissionTarget`]), the result
 //! ([`SubmitOutcome`]), and the decline reason ([`SkipReason`]).
 
 pub use degenbot_execution::{
-    AssessRule, ComposeError, ComposerInputs, ExecutionAdapter, ExecutionResult, FeePolicy,
-    PayloadComposer, ProbeSpecs, SolveResult,
+    AssessError, AssessOptions, AssessRule, ComposeError, ComposerInputs, ExecutionAdapter,
+    ExecutionObservation, ExecutionResult, FeePolicy, PayloadAdapter, PayloadComposer, ProbeSpecs,
+    SolveResult, TransactionRequest,
 };
 pub use degenbot_submission::{SkipReason, SubmissionTarget, SubmitCandidate, SubmitOutcome};
 

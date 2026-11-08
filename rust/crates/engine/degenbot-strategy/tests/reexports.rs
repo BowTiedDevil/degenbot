@@ -3,9 +3,10 @@
 
 use degenbot_strategy::backrun_driver::{AnyRequestTransport, NodeCapability};
 use degenbot_strategy::{
-    AssessRule, ComposeError, ComposerInputs, DiscoveryHandles, ExecutionAdapter, ExecutionResult,
-    FeePolicy, PayloadComposer, ProbeSpecs, ProvisionCell, SkipReason, SolveResult, StrategyCell,
-    StrategyKit, SubmissionTarget, SubmitCandidate, SubmitOutcome,
+    AssessError, AssessOptions, AssessRule, ComposeError, ComposerInputs, DiscoveryHandles,
+    ExecutionAdapter, ExecutionObservation, ExecutionResult, FeePolicy, PayloadAdapter,
+    PayloadComposer, ProbeSpecs, ProvisionCell, SkipReason, SolveResult, StrategyCell, StrategyKit,
+    SubmissionTarget, SubmitCandidate, SubmitOutcome, TransactionRequest,
 };
 
 #[test]
@@ -15,6 +16,10 @@ fn capability_seams_are_reexported() {
         std::any::type_name::<AssessRule>(),
         std::any::type_name::<FeePolicy>(),
         std::any::type_name::<ExecutionResult>(),
+        std::any::type_name::<AssessError>(),
+        std::any::type_name::<AssessOptions>(),
+        std::any::type_name::<ExecutionObservation>(),
+        std::any::type_name::<TransactionRequest>(),
         std::any::type_name::<ComposerInputs<'static>>(),
         std::any::type_name::<SolveResult>(),
         std::any::type_name::<ComposeError>(),
@@ -27,6 +32,7 @@ fn capability_seams_are_reexported() {
         std::any::type_name::<SubmitOutcome>(),
         std::any::type_name::<SkipReason>(),
         std::any::type_name::<&dyn ExecutionAdapter>(),
+        std::any::type_name::<PayloadAdapter<()>>(),
         std::any::type_name::<&dyn PayloadComposer>(),
         std::any::type_name::<&dyn NodeCapability>(),
         std::any::type_name::<AnyRequestTransport>(),
