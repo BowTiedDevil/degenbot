@@ -1145,6 +1145,27 @@ The executor-neutral identity of one configured contract instance, distinct from
 implementation release running there and from other deployments of that same release.
 _Avoid_: using an implementation release ID or contract address alone as the candidate key.
 
+**Deployment registry**:
+
+The session's ordered set of one or more execution deployments, each carrying its own
+adapter, owner, execution target, code stance, and gas/fee policy. The order is the
+fan-out order and therefore the merge order of every post-target record set. It is never
+empty and never holds two entries with one identity, and every owner must be the account
+the session signer holds.
+
+_Avoid_: treating the built-in settlement deployment as the session's only target, or a
+session-global executor address as the transaction target.
+
+**Explicit all-target fan-out**:
+
+The target policy that binds every solved path to EVERY registered deployment, producing
+one candidate per deployment with its own identity, simulation, outcome, and submission
+row. A refusal at one target is that candidate's verdict alone and never suppresses
+another target's candidate.
+
+_Avoid_: "first compatible" selection, a default one-target policy, or collapsing
+post-target rows by path id.
+
 ## Executor command layer
 
 The layer turning a solver result into the bytes passed to the on-chain executor's

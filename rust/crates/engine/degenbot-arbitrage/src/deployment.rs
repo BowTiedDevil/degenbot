@@ -10,8 +10,9 @@
 //! - [`SimulationDeployment`] — the facts ONE execution deployment contributes:
 //!   its operator-assigned [`degenbot_execution::DeploymentId`], its
 //!   [`degenbot_execution::ExecutionAdapter`] (Encode / Probe / Assess), the
-//!   account whose key sends the opportunity's transaction, the gas limit that
-//!   transaction may burn, any declared code override, and the settlement
+//!   account whose key sends the opportunity's transaction, its EXECUTION
+//!   TARGET (the `to` of the transaction the adapter encodes), the gas limit
+//!   that transaction may burn, any declared code override, and the settlement
 //!   warmup it declares.
 //!
 //! Nothing here names a `cmd_executor`, a settlement token, a PoolManager, or a
@@ -20,6 +21,19 @@
 //! the exact same simulation path as the built-in one (ADR-098 D6). The
 //! built-in binding lives in [`crate::cmd_executor`] — on the built-in side of
 //! the seam, never underneath it.
+//!
+//! # A session holds one or more deployments, in order
+//!
+//! [`DeploymentRegistry`] is the session's ordered set of deployments: one
+//! built-in settlement deployment is a one-entry registry, and a heterogeneous
+//! session registers more. The order is the fan-out order and therefore the
+//! order every post-target record set merges in
+//! ([`crate::dispatch_across_deployments`]).
+//!
+//! The target is a DEPLOYMENT fact, not a session-global stamp: the post-target
+//! submit join reads the address off [`SimulationDeployment::target`], i.e. off
+//! the deployment that encoded the transaction, so a foreign contract's `to` is
+//! never overwritten by the settlement executor's.
 //!
 //! # Actual deployed code is the production authority
 //!
@@ -42,6 +56,7 @@
 //! that does (ADR-098 D7 keeps operator fee policy above the seam, and the
 //! built-in path is where that policy applies).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use alloy::primitives::Address;
@@ -87,6 +102,7 @@ pub struct SimulationDeployment {
     deployment_id: DeploymentId,
     adapter: Arc<dyn ExecutionAdapter + Send + Sync>,
     owner: Address,
+    target: Address,
     gas_limit: u64,
     code: Option<DeclaredCode>,
     settlement: Option<SettlementWarmup>,
@@ -123,6 +139,7 @@ impl std::fmt::Debug for SimulationDeployment {
             .field("deployment_id", &self.deployment_id)
             .field("adapter", &"<ExecutionAdapter>")
             .field("owner", &self.owner)
+            .field("target", &self.target)
             .field("gas_limit", &self.gas_limit)
             .field("code", &self.code)
             .field("settlement", &self.settlement)
@@ -139,6 +156,11 @@ impl SimulationDeployment {
     /// every candidate it executes is keyed by that identity (ADR-098 D4). The
     /// caller that composes the session names it — degenbot never invents one.
     ///
+    /// `target` is the deployment's execution target — the `to` of the
+    /// transaction its adapter encodes. It is a deployment fact, so a
+    /// heterogeneous fan-out stamps each target's own address instead of one
+    /// session-global executor.
+    ///
     /// `code` is the deployment's declared development override (see the module
     /// doc); `settlement` is what the deployment declares for WETH/PoolManager
     /// warmup — `None` for a contract with neither identity.
@@ -151,6 +173,7 @@ impl SimulationDeployment {
         deployment_id: DeploymentId,
         adapter: Arc<dyn ExecutionAdapter + Send + Sync>,
         owner: Address,
+        target: Address,
         gas_limit: u64,
         code: Option<DeclaredCode>,
         settlement: Option<SettlementWarmup>,
@@ -159,6 +182,7 @@ impl SimulationDeployment {
             deployment_id,
             adapter,
             owner,
+            target,
             gas_limit,
             code,
             settlement,
@@ -197,6 +221,17 @@ impl SimulationDeployment {
     #[must_use]
     pub const fn owner(&self) -> Address {
         self.owner
+    }
+
+    /// The deployment's execution target: the `to` of the transaction its
+    /// adapter encodes.
+    ///
+    /// The post-target join stamps THIS address onto the submit row. Reading it
+    /// off the deployment (not off a session-global executor stamp) is what
+    /// makes a heterogeneous fan-out route each candidate to its own contract.
+    #[must_use]
+    pub const fn target(&self) -> Address {
+        self.target
     }
 
     /// The top-level gas limit the opportunity's transaction may burn.
@@ -240,4 +275,163 @@ pub struct SimulateContext<'a> {
     pub block: SimulationBlock<'a>,
     /// The injected execution deployment.
     pub deployment: &'a SimulationDeployment,
+}
+
+/// One session's ordered execution deployments: one or more, each named by a
+/// distinct [`DeploymentId`].
+///
+/// Explicit all-target fan-out iterates this registry in order (ADR-098 D4):
+/// every solved path becomes one candidate per entry, so the order is both the
+/// fan-out order and the merge order of every post-target record set
+/// ([`crate::dispatch_across_deployments`]).
+///
+/// Two facts are composition errors, refused where the session's configuration
+/// is assembled rather than discovered per block:
+///
+/// - **empty** — a session with no deployment has no target to encode against
+///   and no join to stamp;
+/// - **duplicate identity** — two entries claiming one [`DeploymentId`] make
+///   every post-target row ambiguous, so the registry cannot be truthful about
+///   which deployment produced it.
+///
+/// The signer/owner check ([`Self::validate_signing_authority`]) is the third
+/// composition error: a deployment whose owner is not the account the session's
+/// signer holds would be simulated from — and submitted as — an address the
+/// session cannot sign for.
+#[derive(Debug)]
+pub struct DeploymentRegistry {
+    entries: Vec<Arc<SimulationDeployment>>,
+}
+
+/// Why a session's deployment registry was refused at composition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeploymentRegistryError {
+    /// No entry: a session with nothing to execute has no target to encode
+    /// against and no join to stamp.
+    Empty,
+    /// Two entries claim one operator-assigned identity.
+    DuplicateId {
+        /// The identity that appears twice.
+        deployment_id: DeploymentId,
+    },
+    /// A deployment's owner is not the session signer's account.
+    OwnerNotSigner {
+        /// The deployment whose owner disagrees with the signer.
+        deployment_id: DeploymentId,
+        /// The owner the deployment declares (the transaction's `from`).
+        owner: Address,
+        /// The account the session's signer holds.
+        authority: Address,
+    },
+}
+
+impl std::fmt::Display for DeploymentRegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str(
+                "the execution deployment registry is empty: a session executes at one or more \
+                 deployments",
+            ),
+            Self::DuplicateId { deployment_id } => write!(
+                f,
+                "deployment {deployment_id} is registered twice: a post-target row keys on \
+                 (path, deployment), so two entries with one identity cannot be told apart"
+            ),
+            Self::OwnerNotSigner {
+                deployment_id,
+                owner,
+                authority,
+            } => write!(
+                f,
+                "deployment {deployment_id} declares owner {owner}, but the session signer holds \
+                 {authority}: the session cannot sign for an account it does not hold"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DeploymentRegistryError {}
+
+impl DeploymentRegistry {
+    /// Register the session's deployments, in fan-out order.
+    ///
+    /// # Errors
+    ///
+    /// [`DeploymentRegistryError::Empty`] when `entries` is empty;
+    /// [`DeploymentRegistryError::DuplicateId`] when two entries name one
+    /// identity.
+    pub fn new(entries: Vec<Arc<SimulationDeployment>>) -> Result<Self, DeploymentRegistryError> {
+        if entries.is_empty() {
+            return Err(DeploymentRegistryError::Empty);
+        }
+        let mut seen: HashSet<DeploymentId> = HashSet::with_capacity(entries.len());
+        for entry in &entries {
+            if !seen.insert(entry.deployment_id()) {
+                return Err(DeploymentRegistryError::DuplicateId {
+                    deployment_id: entry.deployment_id(),
+                });
+            }
+        }
+        Ok(Self { entries })
+    }
+
+    /// Every registered deployment, in fan-out order.
+    #[must_use]
+    pub fn entries(&self) -> &[Arc<SimulationDeployment>] {
+        &self.entries
+    }
+
+    /// How many deployments the session executes at (never zero by
+    /// construction, so there is no `is_empty` predicate to mirror it).
+    #[must_use]
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "a registry refuses an empty entry set at construction, so `is_empty` would be a constant"
+    )]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Every registered identity, in fan-out order.
+    pub fn ids(&self) -> impl Iterator<Item = DeploymentId> + '_ {
+        self.entries.iter().map(|entry| entry.deployment_id())
+    }
+
+    /// The deployment registered under `deployment_id`, if any.
+    #[must_use]
+    pub fn get(&self, deployment_id: DeploymentId) -> Option<&Arc<SimulationDeployment>> {
+        self.entries
+            .iter()
+            .find(|entry| entry.deployment_id() == deployment_id)
+    }
+
+    /// Refuse a registry that declares an owner the session's signer cannot
+    /// sign for.
+    ///
+    /// The transaction's `from` is the deployment's owner and the bytes are
+    /// signed with the session signer's key, so the two must be the same
+    /// account. A heterogeneous session where two deployments share the
+    /// operator account satisfies this; one that names a foreign account does
+    /// not, and is refused at composition instead of simulated and submitted
+    /// incorrectly.
+    ///
+    /// # Errors
+    ///
+    /// [`DeploymentRegistryError::OwnerNotSigner`] naming the first deployment
+    /// whose owner disagrees, in registry order.
+    pub fn validate_signing_authority(
+        &self,
+        authority: Address,
+    ) -> Result<(), DeploymentRegistryError> {
+        for entry in &self.entries {
+            if entry.owner() != authority {
+                return Err(DeploymentRegistryError::OwnerNotSigner {
+                    deployment_id: entry.deployment_id(),
+                    owner: entry.owner(),
+                    authority,
+                });
+            }
+        }
+        Ok(())
+    }
 }

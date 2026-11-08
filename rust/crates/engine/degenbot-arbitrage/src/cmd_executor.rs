@@ -202,6 +202,10 @@ impl CmdExecutorBinding {
             deployment_id,
             Arc::new(self.adapter()),
             self.owner,
+            // The built-in adapter encodes every transaction to the executor,
+            // so the deployment's execution target IS that address (a declared
+            // override must name it too — see `injected`).
+            self.executor,
             crate::simulator::execute_gas_limit(),
             code,
             Some(settlement),

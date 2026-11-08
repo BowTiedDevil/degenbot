@@ -1210,7 +1210,9 @@ fn build_batch_executor(
                     .map_err(|e| format!("V4 PoolManager address: {e}"))?,
                 degenbot::cmd_executor::composers::EncodeOptions::default(),
             ),
-            executor_address,
+            // This runner composes ONE execution deployment (the built-in
+            // settlement one); a heterogeneous session registers more.
+            additional_deployments: Vec::new(),
             injected_address: cfg
                 .inject_executor_code
                 .then(|| degenbot::core::address_utils::parse_address(&cfg.injected_address))

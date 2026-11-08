@@ -16,7 +16,9 @@
 //!   int128 guard) + the composition boundary ([`deployment::SimulateContext`]:
 //!   block facts beside the injected [`deployment::SimulationDeployment`]),
 //! - `dispatch_profitable_results` (the in-process fan-out) + its thin-margin /
-//!   suppression / categorization policy.
+//!   suppression / categorization policy, and `dispatch_across_deployments`
+//!   (the explicit all-target fan-out over an ordered
+//!   [`deployment::DeploymentRegistry`]).
 //!
 //! The engine (evm2 executor, `Evm2BlockSimHandle`, `apply_simulation_overrides`,
 //! AL Inspector, `WarmCodeCache`) stays thin + generic in
@@ -42,8 +44,12 @@
 pub mod cmd_executor;
 
 /// The simulation composition boundary: block-wide facts beside the injected
-/// execution deployment.
+/// execution deployment, and the session's ordered deployment registry.
 pub mod deployment;
+
+/// The registry fan-out: explicit all-target simulation, one lane per
+/// registered deployment.
+pub mod fanout;
 
 /// The executor-runtime bytecode artifact: the engine's resolution precedence
 /// + the validated `0x`-hex read. Every consumer that injects executor code
@@ -81,7 +87,10 @@ pub use cmd_executor::{
 /// the strategy's `SimulateContext` + `compute_priority_fee` consumers reach
 /// it through the surface they already use.
 pub use degenbot_rpc::BlockPriorityFees;
-pub use deployment::{FeeSizing, SimulateContext, SimulationBlock, SimulationDeployment};
+pub use deployment::{
+    DeploymentRegistry, DeploymentRegistryError, FeeSizing, SimulateContext, SimulationBlock,
+    SimulationDeployment,
+};
 pub use dispatch::{
     candidate_is_stale, dispatch_profitable_results, filter_thin_margin_results, is_gas_profitable,
     DispatchCandidate, DispatchOutcome, SolveStep, BPS_DENOM, MAX_SIMULATE_CONCURRENT,
@@ -92,6 +101,9 @@ pub use dispatch::{
 pub use executor_runtime::{
     load_executor_runtime, resolve_executor_runtime_path, ExecutorRuntime, ExecutorRuntimeError,
     EXECUTOR_RUNTIME_FILE,
+};
+pub use fanout::{
+    dispatch_across_deployments, DeploymentFanOutError, DeploymentFanOutOutcome, DeploymentLane,
 };
 pub use fot_registry::{
     fot_suspected_token, fot_suspected_token_from_reverting_frame,

@@ -96,9 +96,11 @@ pub struct AssemblyInputs<'a> {
     /// the fan-out's own `MAX_SIMULATE_CONCURRENT` so the cap is applied once,
     /// here, where the dropped rows are known).
     pub max_candidates: usize,
-    /// The session executor contract address — the join stamps it identically
-    /// on every payload row (the `execute()` target).
-    pub executor_address: alloy::primitives::Address,
+    /// This lane's execution target — the deployment's own `to`, which the join
+    /// stamps on every payload row the lane produces. It is a DEPLOYMENT fact:
+    /// one session-global executor stamp could not route a heterogeneous
+    /// fan-out, so nothing above this field may assume a single target.
+    pub target: alloy::primitives::Address,
     /// The session deployment's operator-assigned identity. A raw solver row is
     /// path-keyed, so this is the deployment half the assembly binds it to when
     /// the row becomes a candidate.
@@ -383,7 +385,7 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
             batch.payload_submits.push(join_sim_result(
                 &p.sim_result(),
                 Some(&path_info),
-                inputs.executor_address,
+                inputs.target,
             ));
             batch.outcomes.push(BatchOutcome {
                 candidate_id: p.candidate_id,
@@ -419,7 +421,7 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
 pub fn join_sim_result(
     r: &degenbot_arbitrage::SimResult,
     path_info: Option<&PathInfo>,
-    executor_address: alloy::primitives::Address,
+    target: alloy::primitives::Address,
 ) -> SubmitCandidate {
     // `None` = the originating path could not be recovered (the core only
     // re-emits path ids it was handed) — a degenerate but safe fall-through:
@@ -435,7 +437,9 @@ pub fn join_sim_result(
         priority_fee: r.priority_fee,
         base_fee_next: r.base_fee_next,
         execute_calldata: r.execute_calldata.clone(),
-        executor_address,
+        // The encoded transaction's native value travels with the calldata.
+        value: r.value,
+        execution_target: target,
         access_list: r.access_list.clone(),
         path_pools,
     }
@@ -568,8 +572,8 @@ pub struct MergedPayloadOutcome {
 /// predicate — the ONE rule both entry arms share.
 ///
 /// `deployment_id` is the deployment whose submit lane receives these rows,
-/// and the join stamps `executor_address` onto every row it produces: a row
-/// minted by another deployment would carry that deployment's calldata into
+/// and the join stamps that deployment's `target` onto every row it produces: a
+/// row minted by another deployment would carry that deployment's calldata into
 /// this executor's lane. The identity is therefore checked BEFORE the resolve,
 /// so a foreign row is refused rather than re-stamped — the same rule
 /// [`assemble_batch`] applies to its own payload arm.
@@ -587,7 +591,7 @@ pub struct MergedPayloadOutcome {
 pub fn merge_payload_results(
     payloads: &[PayloadRow],
     resolver: &dyn PathResolver,
-    executor_address: alloy::primitives::Address,
+    target: alloy::primitives::Address,
     deployment_id: DeploymentId,
 ) -> Result<MergedPayloadOutcome, AssemblyError> {
     let mut merged = MergedPayloadOutcome::default();
@@ -617,7 +621,7 @@ pub fn merge_payload_results(
             merged.failures.push((p.candidate_id, failure.clone()));
             continue;
         }
-        let joined = join_sim_result(&p.sim_result(), Some(&path_info), executor_address);
+        let joined = join_sim_result(&p.sim_result(), Some(&path_info), target);
         if degenbot_arbitrage::is_gas_profitable(p.net_profit) {
             merged.submits.push(joined);
             merged.verdicts.push((p.candidate_id, PayloadArm::Submit));
@@ -728,7 +732,7 @@ mod tests {
             current_block: 100,
             min_profit_margin_bps: 0,
             max_candidates: 50,
-            executor_address: EXECUTOR,
+            target: EXECUTOR,
             deployment_id: deployment_id(),
         })
     }
@@ -847,7 +851,7 @@ mod tests {
                 current_block: 50,
                 min_profit_margin_bps: 0,
                 max_candidates: 50,
-                executor_address: EXECUTOR,
+                target: EXECUTOR,
                 deployment_id: deployment_id(),
             })
             .unwrap();
@@ -879,7 +883,7 @@ mod tests {
             current_block: 100,
             min_profit_margin_bps: 50,
             max_candidates: 50,
-            executor_address: EXECUTOR,
+            target: EXECUTOR,
             deployment_id: deployment_id(),
         })
         .unwrap();
@@ -918,7 +922,7 @@ mod tests {
             current_block: 100,
             min_profit_margin_bps: 0,
             max_candidates: 2,
-            executor_address: EXECUTOR,
+            target: EXECUTOR,
             deployment_id: deployment_id(),
         })
         .unwrap();
@@ -1224,6 +1228,7 @@ mod tests {
             priority_fee: 2,
             base_fee_next: 30,
             execute_calldata: alloy::primitives::Bytes::from(vec![0xab, 0x58, 0x98, 0xe8, 0x01]),
+            value: alloy::primitives::U256::ZERO,
             access_list: None,
             captured_swaps: Vec::new(),
             passed: true,

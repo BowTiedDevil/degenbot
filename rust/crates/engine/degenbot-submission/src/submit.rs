@@ -89,8 +89,16 @@ pub struct SubmitCandidate {
     pub base_fee_next: u128,
     /// The `execute()` calldata (selector + ABI-wrapped `(bytes, uint256)`).
     pub execute_calldata: Bytes,
-    /// The `to` address (the executor contract).
-    pub executor_address: Address,
+    /// The native value (wei) sent with the transaction — the deployment's
+    /// Encode part decided it: a contract funded from its own balance sends
+    /// none, one that prepays sends its `msg.value`. It travels beside the
+    /// calldata because the encoded transaction is one fact.
+    pub value: U256,
+    /// The transaction's `to`: the execution target of the deployment that
+    /// encoded it. A heterogeneous session routes each candidate to its own
+    /// contract, so the join stamps the DEPLOYMENT's target here — never a
+    /// session-global executor address.
+    pub execution_target: Address,
     /// The pre-sim access list (the V2/V3 slot reads warmup). Re-computed by
     /// the submit orchestration with the updated nonce/fees for accuracy —
     /// if that re-computation fails, this list is kept: a failed refresh must
@@ -480,11 +488,14 @@ impl SubmitBatch<'_> {
         )]
         let gas_limit = (candidate.gas_used as f64 * GAS_SAFETY_MARGIN) as u64;
         let mut tx_params = TxParams::new(
-            candidate.executor_address,
+            candidate.execution_target,
             candidate.execute_calldata.clone(),
             gas_limit,
             nonce,
         );
+        // The deployment's Encode part sized the call's native value; the
+        // signed transaction carries it verbatim.
+        tx_params.value = candidate.value;
         if let Some(access_list) = &candidate.access_list {
             tx_params.access_list = access_list.clone();
         }
@@ -1492,7 +1503,8 @@ mod tests {
             priority_fee: 1_000_000_000u128,
             base_fee_next: 1_000_000_000u128,
             execute_calldata: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            executor_address: EXECUTOR,
+            value: U256::ZERO,
+            execution_target: EXECUTOR,
             access_list: None,
             path_pools: pools.iter().map(|s| PoolKey::new(*s)).collect(),
         }
@@ -1728,6 +1740,42 @@ mod tests {
                 reason: SkipReason::InjectCode
             }
         );
+    }
+
+    // ── the encoded native value reaches the signed transaction ───────────
+
+    /// The deployment's encoded native value rides the submission unit
+    /// verbatim: [`SubmitBatch::build_tx_params`] stamps the candidate's own
+    /// `value` onto the carrier, and the request the access-list pass sends
+    /// carries it as `Some(value)`. A zero-value candidate (the built-in
+    /// settlement call) stays zero.
+    #[test]
+    fn build_tx_params_carries_the_candidate_native_value() {
+        let prepay = U256::from(5_000_000_000_000_000u64);
+        let mut prepaying = candidate(1, 5_000_000_000u128, &[POOL_A]);
+        prepaying.value = prepay;
+
+        let StepVerdict::Continue(params) =
+            SubmitBatch::build_tx_params(&prepaying, 7).expect("fees fit the field widths")
+        else {
+            panic!("a live candidate builds its params");
+        };
+        assert_eq!(params.value, prepay, "the exact native value, unrounded");
+        assert_eq!(params.to, EXECUTOR, "the target is the deployment's own");
+        assert_eq!(
+            build_transaction_request(&params).value,
+            Some(prepay),
+            "the access-list request carries the same value"
+        );
+
+        let builtin = candidate(2, 5_000_000_000u128, &[POOL_B]);
+        let StepVerdict::Continue(params) =
+            SubmitBatch::build_tx_params(&builtin, 8).expect("fees fit the field widths")
+        else {
+            panic!("a live candidate builds its params");
+        };
+        assert_eq!(params.value, U256::ZERO, "the built-in call sends none");
+        assert_eq!(build_transaction_request(&params).value, Some(U256::ZERO));
     }
 
     // ── N6: the nonce→fee→access-list→sign→broadcast sequence ──────────────

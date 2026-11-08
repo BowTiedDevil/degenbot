@@ -268,7 +268,8 @@ mod tests {
             priority_fee: 1,
             base_fee_next: 1,
             execute_calldata: Bytes::new(),
-            executor_address: Address::ZERO,
+            value: U256::ZERO,
+            execution_target: Address::ZERO,
             access_list: None,
             path_pools: pools.iter().map(|p| PoolKey::new(*p)).collect(),
         }

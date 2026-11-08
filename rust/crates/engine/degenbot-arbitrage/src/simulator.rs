@@ -204,6 +204,13 @@ pub struct SimResult {
     pub passed: bool,
     /// The `execute()` calldata (selector + ABI-wrapped `(bytes, uint256)`).
     pub execute_calldata: alloy::primitives::Bytes,
+    /// The native value (wei) the deployment's Encode part attached to the
+    /// transaction: zero for a contract that funds itself from its own balance,
+    /// the prepayment for one that does not. The encoded transaction is ONE
+    /// fact — `to` from the deployment's target
+    /// ([`crate::SimulationDeployment::target`]), `data` and `value` from here —
+    /// so the post-target join carries all three to submission.
+    pub value: U256,
     /// The EIP-2930 access list computed for the `execute()` call, if any.
     pub access_list: Option<AccessList>,
     /// The swap events (`Sync`/`Swap`) the composite `Evm2SimInspector`'s
@@ -1083,6 +1090,25 @@ fn simulate_path_on_evm_seam(
         }
     };
 
+    // The deployment's declared target is the address its adapter must encode
+    // to. The engine executes the transaction's OWN `to`, so an adapter that
+    // encodes elsewhere would leave the submit join announcing a target whose
+    // code never ran — a per-candidate refusal, not a silent re-target.
+    if transaction.to != ctx.deployment.target() {
+        fail_buckets.record(
+            path.candidate_id,
+            "target-mismatch",
+            None,
+            alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.expected_outputs_vec(),
+        );
+        return Ok(None);
+    }
+
+    // The native value rides the encoded transaction to submission.
+    let value = transaction.value;
+
     // The engine's mechanics: the adapter's declared probes bracket exactly that
     // transaction inside one journaled sequence, and the adapter assesses the
     // observed evidence.
@@ -1182,6 +1208,7 @@ fn simulate_path_on_evm_seam(
         base_fee_next: priced.base_fee_next,
         passed: priced.passed,
         execute_calldata: observation.transaction.data.clone(),
+        value,
         access_list: Some(capture.access_list),
         captured_swaps: capture.swaps,
         hop_count: path.hop_count(),

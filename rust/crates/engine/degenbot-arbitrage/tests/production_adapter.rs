@@ -366,6 +366,7 @@ fn foreign_deployment_with(adapter: ForeignAdapter) -> SimulationDeployment {
         test_deployment_id(),
         Arc::new(adapter),
         OWNER,
+        FOREIGN,
         GAS_LIMIT,
         Some(degenbot_simulation::DeclaredCode {
             address: FOREIGN,

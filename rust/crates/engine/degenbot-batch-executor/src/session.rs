@@ -872,7 +872,7 @@ impl SessionConsumer {
                 }
             }
         }
-        let mut work = batch_work(batch, &self.clock, self.executor.deployment_id());
+        let mut work = batch_work(batch, &self.clock, self.executor.inline_deployment_id());
         work.block_priority_fees = self.priority_fees();
         match self.executor.enqueue(work) {
             EnqueueOutcome::Accepted => {

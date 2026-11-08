@@ -1103,7 +1103,10 @@ pub async fn dispatch_frame(
                 priority_fee,
                 base_fee_next,
                 execute_calldata: cd,
-                executor_address: pl.execution.executor(),
+                // A backrun transaction funds nothing: the pending target pays
+                // its own gas and the backrun call sends no native value.
+                value: U256::ZERO,
+                execution_target: pl.execution.executor(),
                 access_list: None,
                 path_pools: HashSet::new(),
             };

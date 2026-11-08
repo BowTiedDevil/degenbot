@@ -132,7 +132,7 @@ async fn offline_executor(resolver: HashMap<u64, degenbot::execution::PathInfo>)
                 alloy::primitives::Address::ZERO,
                 degenbot::cmd_executor::composers::EncodeOptions::default(),
             ),
-            executor_address,
+            additional_deployments: Vec::new(),
             injected_address: None,
             runtime_bytecode: alloy::primitives::Bytes::new(),
             bot_state: None,

@@ -556,7 +556,9 @@ pub fn build_batch_executor_py(
         fot: dispatcher.fot_registry_arc(),
         provider: submit_provider.provider_arc(),
         binding: context.binding,
-        executor_address: context.executor_address,
+        // The cockpit composes ONE execution deployment (the built-in
+        // settlement one); a heterogeneous session registers more.
+        additional_deployments: Vec::new(),
         injected_address: context.injected_address,
         runtime_bytecode: context.runtime_bytecode.clone(),
         bot_state: Some(engine.bot_state_arc()),

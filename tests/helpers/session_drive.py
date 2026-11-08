@@ -40,7 +40,9 @@ if TYPE_CHECKING:
 #: A dead port: alloy's transport is lazy, and a block-only script dials nothing.
 _RPC_URL = "http://127.0.0.1:1"
 
-_OWNER = "0x9c56a29c7231974c269e24f9fb3c29203039089e"
+# The operator account the fixture signer holds (key ``0x11..11``). The batch
+# composition refuses a deployment whose owner is not the signing account.
+_OWNER = "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
 _EXECUTOR = "0x" + "aa" * 20
 _WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 _POOL_MANAGER = "0x000000000004444C5DC75cB358380d2e3dE08a90"

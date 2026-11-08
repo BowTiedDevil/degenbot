@@ -143,7 +143,7 @@ mod tests {
                     alloy::primitives::Address::ZERO,
                     degenbot::cmd_executor::composers::EncodeOptions::default(),
                 ),
-                executor_address,
+                additional_deployments: Vec::new(),
                 injected_address: None,
                 runtime_bytecode: Bytes::new(),
                 bot_state: None,

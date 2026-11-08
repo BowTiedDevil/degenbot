@@ -178,7 +178,7 @@ class TestSubmitCandidateGetters:
                 priority_fee=1,
                 base_fee_next=1,
                 execute_calldata=b"\xde\xad",
-                executor_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                execution_target="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             )
 
     def test_money_and_gas_getters_round_trip(self) -> None:
@@ -190,7 +190,7 @@ class TestSubmitCandidateGetters:
             priority_fee=2_000_000_000,
             base_fee_next=1_000_000_000,
             execute_calldata=b"\xde\xad",
-            executor_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            execution_target="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         )
         assert cand.candidate_id.path_id == 42
         assert cand.candidate_id.deployment_id == 1
@@ -198,3 +198,41 @@ class TestSubmitCandidateGetters:
         assert cand.net_profit == 1_500_000_000_000_000_000
         assert cand.gas_used == 200_000
         assert cand.priority_fee == 2_000_000_000
+
+
+class TestSubmitCandidateRetiredKeywords:
+    """The retired constructor keyword fails at the boundary, loudly.
+
+    The target is a deployment fact passed as ``execution_target``;
+    ``executor_address`` is not a keyword of the constructor, so a caller still
+    passing it gets a ``TypeError`` rather than a candidate whose target is
+    ignored.
+    """
+
+    def test_the_retired_executor_address_keyword_is_a_type_error(self) -> None:
+        with pytest.raises(TypeError, match="executor_address"):
+            SubmitCandidate(
+                candidate_id=CandidateId(path_id=42, deployment_id=1),
+                gross_profit=1,
+                net_profit=1,
+                gas_used=1,
+                priority_fee=1,
+                base_fee_next=1,
+                execute_calldata=b"\xde\xad",
+                execution_target="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                executor_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+
+    def test_an_omitted_value_is_the_builtin_zero(self) -> None:
+        cand = SubmitCandidate(
+            candidate_id=CandidateId(path_id=42, deployment_id=1),
+            gross_profit=1,
+            net_profit=1,
+            gas_used=1,
+            priority_fee=1,
+            base_fee_next=1,
+            execute_calldata=b"\xde\xad",
+            execution_target="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        assert cand.candidate_id.path_id == 42
+        assert cand.candidate_id.deployment_id == 1

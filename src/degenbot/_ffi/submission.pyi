@@ -306,9 +306,12 @@ class SubmitCandidate:
      * `gross_profit`, `net_profit`: `int` (wei)
      * `priority_fee`, `base_fee_next`: `int` (wei)
      * `execute_calldata`: `bytes`
-     * `executor_address`: hex string
+     * `execution_target`: hex string — the `to` of the encoded transaction
+       (the deployment's target, not a session-global executor)
      * `access_list`: web3-shape list (optional; `None` to skip)
      * `path_pools`: `set[str]` (V4 `pool_id_hex` / V2-V3 `pool_address`)
+     * `value`: `int` wei (optional; the encoded transaction's native value,
+       `0` — the built-in settlement call — when omitted)
     """
     def __new__(
         cls,
@@ -320,9 +323,10 @@ class SubmitCandidate:
         priority_fee: SupportsIndex,
         base_fee_next: SupportsIndex,
         execute_calldata: bytes,
-        executor_address: str,
+        execution_target: str,
         access_list: list | None = None,
         path_pools: Any | None = None,
+        value: Any | None = None,
     ) -> SubmitCandidate:
         """
         Build a submit candidate from the dispatch fan-out's per-path fields.

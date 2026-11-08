@@ -186,7 +186,7 @@ async fn offline_executor() -> Arc<BatchExecutor> {
             alloy::primitives::Address::ZERO,
             degenbot_executor::composers::EncodeOptions::default(),
         ),
-        executor_address,
+        additional_deployments: Vec::new(),
         injected_address: None,
         runtime_bytecode: Bytes::new(),
         bot_state: None,

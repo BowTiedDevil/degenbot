@@ -63,9 +63,12 @@ use alloy::rpc::types::AccessList as AlloyAccessList;
 ///  * `gross_profit`, `net_profit`: `int` (wei)
 ///  * `priority_fee`, `base_fee_next`: `int` (wei)
 ///  * `execute_calldata`: `bytes`
-///  * `executor_address`: hex string
+///  * `execution_target`: hex string — the `to` of the encoded transaction
+///    (the deployment's target, not a session-global executor)
 ///  * `access_list`: web3-shape list (optional; `None` to skip)
 ///  * `path_pools`: `set[str]` (V4 `pool_id_hex` / V2-V3 `pool_address`)
+///  * `value`: `int` wei (optional; the encoded transaction's native value,
+///    `0` — the built-in settlement call — when omitted)
 #[pyclass(name = "SubmitCandidate", module = "degenbot._ffi.submission")]
 pub struct PySubmitCandidate {
     pub(crate) inner: SubmitCandidate,
@@ -81,8 +84,8 @@ impl PySubmitCandidate {
     #[new]
     #[pyo3(signature = (
         candidate_id, gross_profit, net_profit, gas_used, priority_fee,
-        base_fee_next, execute_calldata, executor_address,
-        access_list=None, path_pools=None,
+        base_fee_next, execute_calldata, execution_target,
+        access_list=None, path_pools=None, value=None,
     ))]
     #[expect(clippy::too_many_arguments)]
     fn new(
@@ -94,14 +97,19 @@ impl PySubmitCandidate {
         priority_fee: u128,
         base_fee_next: u128,
         execute_calldata: &Bound<'_, PyBytes>,
-        executor_address: &str,
+        execution_target: &str,
         access_list: Option<Bound<'_, PyList>>,
         path_pools: Option<Bound<'_, PyAny>>,
+        value: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let gross = int_to_u256(py, gross_profit)?;
         let net = int_to_u256(py, net_profit)?;
-        let executor = crate::address_utils::parse_address(executor_address)
-            .map_err(|e| PyValueError::new_err(format!("Invalid executor address: {e}")))?;
+        let value = match value {
+            Some(raw) => int_to_u256(py, &raw)?,
+            None => U256::ZERO,
+        };
+        let target = crate::address_utils::parse_address(execution_target)
+            .map_err(|e| PyValueError::new_err(format!("Invalid execution target: {e}")))?;
         let calldata = execute_calldata.as_bytes().to_vec();
 
         let access_list: Option<AlloyAccessList> =
@@ -126,7 +134,8 @@ impl PySubmitCandidate {
             priority_fee,
             base_fee_next,
             execute_calldata: calldata.into(),
-            executor_address: executor,
+            value,
+            execution_target: target,
             access_list,
             path_pools,
         };

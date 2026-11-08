@@ -137,6 +137,12 @@ impl PayloadRow {
             priority_fee: self.priority_fee,
             base_fee_next: self.base_fee_next,
             execute_calldata: self.execute_calldata.clone(),
+            // The inline arm's compressed record carries no native value: the
+            // engine simulates inline at the built-in settlement deployment,
+            // whose `execute` call sends none. A deployment that prepays is
+            // reached through the batch fan-out (whose `SimResult` carries the
+            // encoded value), not through this payload arm.
+            value: U256::ZERO,
             access_list: self.access_list.clone(),
             captured_swaps: self.captured_swaps.clone(),
             // The payload arm carries a deployment the engine already assessed.

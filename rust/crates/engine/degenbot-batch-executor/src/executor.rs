@@ -18,10 +18,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use degenbot_arbitrage::{
-    candidate_is_stale, dispatch_profitable_results, DispatchOutcome, FeeOnTransferRegistry,
-    PoolDivergence, SimulateContext, SimulationBlock, SimulationDeployment,
+    candidate_is_stale, DeploymentRegistry, FeeOnTransferRegistry, PoolDivergence, SimulationBlock,
 };
-use degenbot_execution::{CandidateId, PathInfo};
+use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::{
@@ -35,7 +34,7 @@ use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
 use crate::assembly::{
-    assemble_batch, join_sim_result, AssemblyError, AssemblyInputs, PathResolver,
+    assemble_batch, join_sim_result, AssembledBatch, AssemblyError, AssemblyInputs, PathResolver,
 };
 use crate::policy::{ExecutorPolicy, ExecutorRuntime};
 use crate::record::{AssemblyVerdict, BatchOutcome, SimulateVerdict, SubmitVerdict};
@@ -56,6 +55,10 @@ pub struct ExecutorConfig {
     pub(crate) sim_concurrency: usize,
     /// The per-batch sim cap (a plain count; `0` = uncapped, clamped at the
     /// boundary so the drop happens once, where the dropped rows are known).
+    ///
+    /// The cap bounds EACH registered deployment's lane, not the batch: a
+    /// two-target session simulates at most `2 x cap` candidates, so one
+    /// target's candidate volume can never starve another's.
     pub(crate) max_candidates: usize,
     /// The thin-margin floor in bps (0 disables;
     /// `dispatch.min_profit_margin_bps`).
@@ -72,12 +75,11 @@ pub struct ExecutorConfig {
     // ── Simulate-stage session values (the `SimulateContext` projection) ──
     /// The typed RPC provider (cold-miss fallback DB).
     pub(crate) provider: Arc<AlloyProvider>,
-    /// The injected execution deployment: its Encode / Probe / Assess adapter
-    /// plus the deployment facts the engine's overrides and transaction need.
-    pub(crate) deployment: Arc<SimulationDeployment>,
-    /// The `cmd_executor` contract address: the single-target join stamp that
-    /// stands in for a generic deployment identity.
-    pub(crate) executor_address: alloy::primitives::Address,
+    /// The session's execution deployments, in fan-out order: ONE entry for the
+    /// built-in settlement session, more for a heterogeneous one. Every solved
+    /// path becomes one candidate per entry, and each candidate's submit row
+    /// carries its own deployment's target.
+    pub(crate) deployments: Arc<DeploymentRegistry>,
     /// The engine's shared state owner (the staleness gate + the per-block
     /// EVM anchor). `None` only for empty-input callers.
     pub(crate) bot_state: Option<Arc<StateLock<BotState>>>,
@@ -106,12 +108,13 @@ pub struct ExecutorConfig {
 }
 
 impl ExecutorConfig {
-    /// The one configured deployment's operator-assigned identity.
+    /// The built-in settlement deployment's operator-assigned identity.
     ///
-    /// The session composes exactly ONE [`SimulationDeployment`], so the
-    /// configuration boundary names it here and every candidate the executor
-    /// assembles carries it. A session that composes several deployments names
-    /// each of them at this same boundary, never downstream of it.
+    /// [`ExecutorConfig::from_verdict`] registers it as the FIRST entry of the
+    /// session's registry, so a session that names no additional deployment is
+    /// the one-entry case with unchanged behavior. Additional deployments follow
+    /// it in the order the runtime supplies, never downstream of this
+    /// boundary.
     pub const BUILTIN_DEPLOYMENT_ID: degenbot_execution::DeploymentId =
         degenbot_execution::DeploymentId::new(1);
 
@@ -130,6 +133,15 @@ impl ExecutorConfig {
     /// the injected runtime names no `injected_address`, or names an address
     /// other than the executor the built-in adapter encodes to — the declared
     /// override must name the very contract its transaction targets.
+    ///
+    /// When the composed registry is empty or holds two deployments with one
+    /// identity ([`DeploymentRegistry::new`]), or when a deployment's owner is
+    /// not the account the configured signer holds
+    /// ([`DeploymentRegistry::validate_signing_authority`]). Each is a
+    /// composition error: an empty registry has no target to encode against, a
+    /// duplicate identity makes every post-target row ambiguous, and an owner
+    /// the signer does not hold would be simulated from — and submitted as — an
+    /// account the session cannot sign for.
     #[must_use]
     pub fn from_verdict(verdict: &degenbot_config::BotConfig, runtime: ExecutorRuntime) -> Self {
         let policy = ExecutorPolicy::from(verdict);
@@ -138,18 +150,21 @@ impl ExecutorConfig {
         } else {
             runtime.max_candidates
         };
+        // The signer's account is the one authority every deployment must name
+        // as its owner; read before the signer handle moves into the config.
+        let authority = runtime.signer.address();
         Self {
             sim_concurrency: policy.sim_concurrency,
             max_candidates,
             min_profit_margin_bps: policy.min_profit_margin_bps,
-            deployment: {
+            deployments: {
                 let opts = EncodeOptions {
                     erc6909_profit: policy.erc6909_profit,
                     use_v4_batch: runtime.use_v4_batch,
                     ..EncodeOptions::default()
                 };
                 let binding = runtime.binding.with_opts(opts);
-                Arc::new(if policy.inject_code {
+                let builtin = if policy.inject_code {
                     #[expect(clippy::expect_used)] // the declared inject stance names its address
                     let address = runtime.injected_address.expect(
                         "inject_code is true but injected_address is None — supply the injection address",
@@ -167,14 +182,29 @@ impl ExecutorConfig {
                     deployment
                 } else {
                     binding.deployment(Self::BUILTIN_DEPLOYMENT_ID)
-                })
+                };
+                // The built-in deployment is the first entry; a heterogeneous
+                // session appends its own deployments after it, in the order the
+                // runtime names them. That order is the fan-out order.
+                let mut entries = Vec::with_capacity(1 + runtime.additional_deployments.len());
+                entries.push(Arc::new(builtin));
+                entries.extend(runtime.additional_deployments);
+                #[expect(clippy::expect_used)] // an invalid registry is a composition error
+                let registry = DeploymentRegistry::new(entries)
+                    .map_err(|error| error.to_string())
+                    .expect("the session's execution deployment registry must be valid");
+                #[expect(clippy::expect_used)] // a foreign owner cannot be signed for
+                registry
+                    .validate_signing_authority(authority)
+                    .map_err(|error| error.to_string())
+                    .expect("every deployment's owner must be the configured signing account");
+                Arc::new(registry)
             },
             resolver: runtime.resolver,
             suppression: runtime.suppression,
             divergence: runtime.divergence,
             fot: runtime.fot,
             provider: runtime.provider,
-            executor_address: runtime.executor_address,
             bot_state: runtime.bot_state,
             warm_cache: runtime.warm_cache,
             dispatcher: runtime.dispatcher,
@@ -247,132 +277,195 @@ impl EngineLeaves {
         clippy::too_many_lines,
         reason = "the leaf reads best as one ordered stage pass"
     )]
+    #[expect(
+        clippy::expect_used,
+        reason = "the assembly mints candidates only for registered deployments"
+    )]
     fn run_stages_1_2(&self, work: &BatchWork) -> Result<SimStageOutput, String> {
         let cfg = &self.config;
+        // The batch-local payload-served set. `CandidateId` keys it, so a path
+        // the engine simulated inline at ONE target skips only that target's raw
+        // row: the same path at another deployment is a different candidate and
+        // still needs its own simulation.
         let served: HashSet<CandidateId> = work.payloads.iter().map(|p| p.candidate_id).collect();
 
-        // Stage 1 — assembly. The policy locks are held ONLY across this
-        // synchronous span (the fan-out re-locks the same arcs at its own
-        // bookends); guards drop before any later stage.
-        let mut batch = {
-            let mut suppression = cfg
-                .suppression
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            assemble_batch(&AssemblyInputs {
-                rows: &work.rows,
-                payloads: &work.payloads,
-                resolver: cfg.resolver.as_ref(),
-                payload_served: &served,
-                suppression: &mut suppression,
-                divergence: &cfg.divergence,
-                fot: &cfg.fot,
-                current_block: work.current_block,
-                min_profit_margin_bps: cfg.min_profit_margin_bps,
-                max_candidates: cfg.max_candidates,
-                executor_address: cfg.executor_address,
-                deployment_id: cfg.deployment.deployment_id(),
-            })
-            .map_err(|e: AssemblyError| e.to_string())?
-        };
-
-        // Staleness gate at SIM time (as close to the fan-out as the core's
-        // own step 3.5 sits): drop candidates whose any hop's state nonce
-        // advanced past the solve snapshot. Their records are dropped too —
-        // the same drain-invisible drop today's outcome applies (the Python
-        // `MergedOutcome` carries no stale count; `candidate_count` excludes
-        // them). The fan-out's re-check is a no-op: this span holds no
-        // `.await` between the check and the call, so no state can advance.
-        if let Some(arc) = &cfg.bot_state {
-            let stale_ids: Vec<CandidateId> = {
-                let guard = arc.read_at(LockSite::Sim);
-                batch
-                    .candidates
-                    .iter()
-                    .filter(|c| candidate_is_stale(&guard, c))
-                    .map(|c| c.candidate_id)
-                    .collect()
-            };
-            if !stale_ids.is_empty() {
-                batch
-                    .candidates
-                    .retain(|c| !stale_ids.contains(&c.candidate_id));
-                batch
-                    .outcomes
-                    .retain(|o| !(o.simulate.is_none() && stale_ids.contains(&o.candidate_id)));
+        // Payload rows are engine-born, so each names the deployment that
+        // simulated it inline. A row naming an unregistered deployment has no
+        // lane to join — refused before any lane runs, and never folded into
+        // another target's lane.
+        let mut payloads_by_deployment: HashMap<DeploymentId, Vec<PayloadRow>> =
+            HashMap::with_capacity(cfg.deployments.len());
+        for payload in &work.payloads {
+            let deployment_id = payload.candidate_id.deployment_id();
+            if cfg.deployments.get(deployment_id).is_none() {
+                return Err(format!(
+                    "payload row for path {} names deployment {deployment_id}, which this session \
+                     does not execute",
+                    payload.candidate_id.path_id()
+                ));
             }
+            payloads_by_deployment
+                .entry(deployment_id)
+                .or_default()
+                .push(payload.clone());
         }
 
-        // Stage 2 — the core fan-out. Its own pre-filters (suppression,
-        // divergence, FoT, thin margin) are no-ops on the survivors: the
-        // assembly applied each exactly once over the same registries within
-        // this same no-await span, and the cap is already applied.
-        let provider = Arc::clone(&cfg.provider);
-        let ctx = SimulateContext {
-            block: SimulationBlock {
-                provider: &provider,
-                base_fee_next: work.base_fee_next,
-                current_block: work.current_block,
-                block_timestamp: work.block_timestamp,
-                block_priority_fees: work.block_priority_fees.clone(),
-            },
-            deployment: &cfg.deployment,
-        };
-        let outcome: DispatchOutcome = {
-            // ONE Jaeger span per simulate fan-out (ADR-043), entered only
-            // across the synchronous fan-out call.
-            let span = degenbot_bot::telemetry::simulate_dispatch_span(
-                work.current_block,
-                batch.candidates.len(),
-            );
-            let _guard = span.enter();
-            dispatch_profitable_results(
-                std::mem::take(&mut batch.candidates),
-                &ctx,
-                &cfg.suppression,
-                work.current_block,
-                cfg.min_profit_margin_bps,
-                &cfg.divergence,
-                &cfg.fot,
-                cfg.bot_state.clone(),
-                cfg.warm_cache.clone(),
-            )
-        };
+        // Stage 1 — ONE assembly lane per registered deployment, in registry
+        // order. Every raw solver row is bound to EVERY deployment, so the
+        // candidate set is `paths x deployments`, the per-batch cap bounds each
+        // lane rather than the batch, and every pre-sim policy applies once per
+        // lane against that lane's candidates. The policy locks are held ONLY
+        // across this synchronous span (the fan-out re-locks the same arcs at
+        // its own bookends); guards drop before any later stage.
+        let mut batch = AssembledBatch::default();
+        for deployment in cfg.deployments.entries() {
+            let lane_payloads = payloads_by_deployment
+                .get(&deployment.deployment_id())
+                .map_or(&[][..], Vec::as_slice);
+            let mut lane = {
+                let mut suppression = cfg
+                    .suppression
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                assemble_batch(&AssemblyInputs {
+                    rows: &work.rows,
+                    payloads: lane_payloads,
+                    resolver: cfg.resolver.as_ref(),
+                    payload_served: &served,
+                    suppression: &mut suppression,
+                    divergence: &cfg.divergence,
+                    fot: &cfg.fot,
+                    current_block: work.current_block,
+                    min_profit_margin_bps: cfg.min_profit_margin_bps,
+                    max_candidates: cfg.max_candidates,
+                    deployment_id: deployment.deployment_id(),
+                    target: deployment.target(),
+                })
+                .map_err(|e: AssemblyError| e.to_string())?
+            };
 
-        // Attribution — per-candidate simulate verdicts in candidate order
-        // (the records for skipped rows were already emitted by stage 1).
-        let profitable: HashMap<CandidateId, degenbot_arbitrage::SimResult> = outcome
-            .gas_profitable
+            // Staleness gate at SIM time (as close to the fan-out as the core's
+            // own step 3.5 sits): drop candidates whose any hop's state nonce
+            // advanced past the solve snapshot. Their records are dropped too —
+            // the same drain-invisible drop today's outcome applies (the Python
+            // `MergedOutcome` carries no stale count; `candidate_count` excludes
+            // them). The fan-out's re-check is a no-op: this span holds no
+            // `.await` between the check and the call, so no state can advance.
+            if let Some(arc) = &cfg.bot_state {
+                let stale_ids: Vec<CandidateId> = {
+                    let guard = arc.read_at(LockSite::Sim);
+                    lane.candidates
+                        .iter()
+                        .filter(|c| candidate_is_stale(&guard, c))
+                        .map(|c| c.candidate_id)
+                        .collect()
+                };
+                if !stale_ids.is_empty() {
+                    lane.candidates
+                        .retain(|c| !stale_ids.contains(&c.candidate_id));
+                    lane.outcomes
+                        .retain(|o| !(o.simulate.is_none() && stale_ids.contains(&o.candidate_id)));
+                }
+            }
+
+            // Deployment-major merge: a lane's records, candidates, resolved
+            // paths, and payload joins append in registry order, and that order
+            // is what the whole batch's record set (and every submit row)
+            // reports in.
+            batch.outcomes.append(&mut lane.outcomes);
+            batch.payload_submits.append(&mut lane.payload_submits);
+            batch.candidates.append(&mut lane.candidates);
+            batch.path_info_by_id.extend(lane.path_info_by_id);
+        }
+
+        // Stage 2 — the registry fan-out: one lane per registered deployment, in
+        // registry order, and each candidate simulated ONLY against the
+        // deployment its identity names. The leaf's own pre-filters (suppression,
+        // divergence, FoT, thin margin) are no-ops on the survivors: this same
+        // no-await span already applied each exactly once over the same
+        // registries, and the cap is already applied.
+        //
+        // The pre-fan-out identities are kept beside the fan-out's results: a
+        // candidate the leaf counted as a per-path exception is re-emitted by
+        // neither bucket nor failure list, and its record must still appear.
+        let entered: Vec<(CandidateId, alloy::primitives::Address)> = batch
+            .candidates
             .iter()
-            .map(|r| (r.candidate_id, r.clone()))
+            .map(|c| {
+                let deployment = cfg
+                    .deployments
+                    .get(c.candidate_id.deployment_id())
+                    .expect("assembly mints candidates only for registered deployments");
+                (c.candidate_id, deployment.target())
+            })
             .collect();
-        let unprofitable: HashMap<CandidateId, degenbot_arbitrage::SimResult> = outcome
-            .gas_unprofitable
-            .iter()
-            .map(|r| (r.candidate_id, r.clone()))
-            .collect();
-        let failures: HashMap<CandidateId, degenbot_arbitrage::SimFailure> = outcome
-            .failures
-            .iter()
-            .map(|f| (f.candidate_id, f.clone()))
-            .collect();
+        let provider = Arc::clone(&cfg.provider);
+        let block = SimulationBlock {
+            provider: &provider,
+            base_fee_next: work.base_fee_next,
+            current_block: work.current_block,
+            block_timestamp: work.block_timestamp,
+            block_priority_fees: work.block_priority_fees.clone(),
+        };
+        let fanout = degenbot_arbitrage::dispatch_across_deployments(
+            std::mem::take(&mut batch.candidates),
+            &block,
+            &cfg.deployments,
+            &cfg.suppression,
+            work.current_block,
+            cfg.min_profit_margin_bps,
+            &cfg.divergence,
+            &cfg.fot,
+            cfg.bot_state.as_ref(),
+            cfg.warm_cache.as_ref(),
+        )
+        .map_err(|error| error.to_string())?;
+
+        // Attribution — per-candidate simulate verdicts, deployment-major (the
+        // order the lanes and their assemblies produced). Every map keys on
+        // `CandidateId`, so two targets on one path stay two rows.
+        let mut profitable: HashMap<CandidateId, degenbot_arbitrage::SimResult> = HashMap::new();
+        let mut unprofitable: HashMap<CandidateId, degenbot_arbitrage::SimResult> = HashMap::new();
+        let mut failures: HashMap<CandidateId, degenbot_arbitrage::SimFailure> = HashMap::new();
+        for lane in fanout.lanes {
+            profitable.extend(
+                lane.outcome
+                    .gas_profitable
+                    .into_iter()
+                    .map(|r| (r.candidate_id, r)),
+            );
+            unprofitable.extend(
+                lane.outcome
+                    .gas_unprofitable
+                    .into_iter()
+                    .map(|r| (r.candidate_id, r)),
+            );
+            failures.extend(
+                lane.outcome
+                    .failures
+                    .into_iter()
+                    .map(|f| (f.candidate_id, f)),
+            );
+        }
 
         let mut submit_candidates: Vec<degenbot_submission::SubmitCandidate> = Vec::new();
         let empty_path = PathInfo::new(Vec::new());
-        for c in std::mem::take(&mut batch.candidates) {
+        for (candidate_id, target) in entered {
             // The lookup always hits: the core only re-emits path ids it was
             // handed (the join's `None`/empty fall-through keeps isolation —
             // an empty mutual-exclusion set — without fabricating hops).
-            let path_info = batch.path_info_by_id.get(&c.candidate_id.path_id());
-            let simulate = if let Some(r) = profitable.get(&c.candidate_id) {
-                submit_candidates.push(join_sim_result(r, path_info, cfg.executor_address));
+            let path_info = batch.path_info_by_id.get(&candidate_id.path_id());
+            let simulate = if let Some(r) = profitable.get(&candidate_id) {
+                // The transaction's `to` is the DEPLOYMENT's target, so a
+                // heterogeneous fan-out routes each row to its own contract.
+                submit_candidates.push(join_sim_result(r, path_info, target));
                 Some(SimulateVerdict::Profitable(crate::record::SimReceipt {
                     gross_profit: r.gross_profit,
                     net_profit: r.net_profit,
                     gas_used: r.gas_used,
                     priority_fee: r.priority_fee,
                 }))
-            } else if let Some(r) = unprofitable.get(&c.candidate_id) {
+            } else if let Some(r) = unprofitable.get(&candidate_id) {
                 Some(SimulateVerdict::GasUnprofitable(
                     crate::record::SimReceipt {
                         gross_profit: r.gross_profit,
@@ -381,7 +474,7 @@ impl EngineLeaves {
                         priority_fee: r.priority_fee,
                     },
                 ))
-            } else if let Some(f) = failures.get(&c.candidate_id) {
+            } else if let Some(f) = failures.get(&candidate_id) {
                 Some(SimulateVerdict::Failed(Box::new(f.clone())))
             } else {
                 // Accounted by neither bucket nor a failure record: the
@@ -390,7 +483,7 @@ impl EngineLeaves {
                 Some(SimulateVerdict::Exception)
             };
             batch.outcomes.push(BatchOutcome {
-                candidate_id: c.candidate_id,
+                candidate_id,
                 block: work.current_block,
                 assembly: AssemblyVerdict::Assembled,
                 simulate,
@@ -551,9 +644,12 @@ impl BatchDrain {
 
 /// The core batch executor.
 pub struct BatchExecutor {
-    /// The session deployment's operator-assigned identity — the half of every
-    /// [`CandidateId`] this executor's assembly stamps on a raw solver row.
-    deployment_id: degenbot_execution::DeploymentId,
+    /// The deployment the session's ENGINE-BORN rows name — the built-in
+    /// settlement deployment, whose inline sim produces the payload rows a
+    /// batch carries. A heterogeneous session fans the batch's raw rows out to
+    /// every registered deployment instead; this identity is the inline arm's,
+    /// not the fan-out's.
+    inline_deployment_id: DeploymentId,
     pipeline: SimSubmitPipeline<BatchWork, SimStageOutput>,
     /// The record channel's strong half, behind interior mutability so
     /// `shutdown` takes `&self` (the shared-consumer seam drives the
@@ -577,7 +673,7 @@ impl BatchExecutor {
         });
         Self::from_leaves(
             config.sim_concurrency,
-            config.deployment.deployment_id(),
+            ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
             Arc::clone(&leaves) as Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
             Arc::clone(&leaves) as Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,
             outcome_tx,
@@ -601,7 +697,7 @@ impl BatchExecutor {
     /// leaves receive a weak downgrade of it.
     pub(crate) fn from_leaves(
         concurrency: usize,
-        deployment_id: degenbot_execution::DeploymentId,
+        inline_deployment_id: DeploymentId,
         sim: Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
         submit: Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,
         outcome_tx: mpsc::UnboundedSender<BatchOutcomeSet>,
@@ -609,18 +705,22 @@ impl BatchExecutor {
     ) -> Self {
         let pipeline = SimSubmitPipeline::new(concurrency, sim, submit);
         Self {
-            deployment_id,
+            inline_deployment_id,
             pipeline,
             outcome_tx: std::sync::Mutex::new(Some(outcome_tx)),
             outcome_rx: Arc::new(tokio::sync::Mutex::new(outcome_rx)),
         }
     }
 
-    /// The session deployment's operator-assigned identity — the deployment
-    /// every candidate this executor assembles targets.
+    /// The deployment the session's engine-born rows name — the built-in
+    /// settlement deployment whose inline sim produces a batch's payload rows.
+    ///
+    /// The session consumer stamps this identity on each payload row it
+    /// derives; a raw solver row carries no deployment and is bound to EVERY
+    /// registered deployment by the assembly instead.
     #[must_use]
-    pub const fn deployment_id(&self) -> degenbot_execution::DeploymentId {
-        self.deployment_id
+    pub const fn inline_deployment_id(&self) -> DeploymentId {
+        self.inline_deployment_id
     }
 
     /// Enqueue one batch: its rows enter the ordered lane (assembly, sim,
@@ -1176,7 +1276,8 @@ mod tests {
             priority_fee: 1_000_000_000_u128,
             base_fee_next: 1_000_000_000_u128,
             execute_calldata: alloy::primitives::Bytes::copy_from_slice(calldata),
-            executor_address: degenbot_core::address_utils::parse_address(
+            value: alloy::primitives::U256::ZERO,
+            execution_target: degenbot_core::address_utils::parse_address(
                 "0x1111111111111111111111111111111111111111",
             )
             .unwrap(),

@@ -62,4 +62,7 @@ tracing-subscriber = { version = "^0.3", default-features = false, features = [
     "std",
     "registry",
 ] }
+# The offline RPC transport the heterogeneous fan-out test drives the real
+# execute → simulate → submit path over (no node, no broadcast).
+tower = { version = "^0.5", default-features = false }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros", "time"] }

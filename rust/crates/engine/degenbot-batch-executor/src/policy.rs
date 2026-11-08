@@ -85,11 +85,24 @@ pub struct ExecutorRuntime {
     /// The typed RPC provider (the sim leaf's cold-miss fallback DB).
     pub provider: Arc<AlloyProvider>,
     /// The built-in settlement deployment binding: the executor / WETH /
-    /// `PoolManager` / Multicall3 identities, the owner, and the encode policy.
-    /// The warmup math and the runtime-artifact selection are the binding's.
+    /// `PoolManager` identities, the owner, and the encode policy. The warmup
+    /// math, the runtime-artifact selection, and the execution target are the
+    /// binding's.
     pub binding: degenbot_arbitrage::CmdExecutorBinding,
-    /// The `cmd_executor` contract address (the join stamp).
-    pub executor_address: alloy::primitives::Address,
+    /// The session's ADDITIONAL execution deployments, registered after the
+    /// built-in one and in this order.
+    ///
+    /// Empty is the one-entry session every existing driver composes: the
+    /// built-in settlement deployment alone, with unchanged behavior. A
+    /// heterogeneous session names its other deployments here — each one a
+    /// frozen [`degenbot_arbitrage::SimulationDeployment`] carrying its own
+    /// adapter, owner, execution target, and code stance — and every solved
+    /// path is then bound to all of them (explicit all-target fan-out).
+    ///
+    /// The composition boundary validates the whole registry: identities must
+    /// be distinct (never the built-in id) and every owner must be the account
+    /// the configured signer holds, or construction panics.
+    pub additional_deployments: Vec<Arc<degenbot_arbitrage::SimulationDeployment>>,
     /// The declared-code override address (used when the inject stance is on).
     ///
     /// Must be the executor address the built-in adapter encodes its
@@ -199,19 +212,18 @@ mod tests {
         );
     }
 
-    /// `from_verdict` composes the policy conversion with the runtime: the
-    /// uncapped sentinel and the injected stances land where the boundary
-    /// owns them.
-    #[tokio::test]
-    async fn from_verdict_composes_policy_and_runtime() {
-        let verdict = degenbot_config::BotConfig::default();
-        let provider = Arc::new(
-            AlloyProvider::new("http://127.0.0.1:1", 0)
-                .await
-                .expect("a lazy provider constructs offline"),
-        );
-        let executor_address = alloy::primitives::Address::ZERO;
-        let runtime = ExecutorRuntime {
+    /// The fixture operator key: one account is both the session signer and the
+    /// deployments' owner, which is what the composition boundary requires.
+    const ANVIL_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    /// A runtime over the built-in settlement deployment (plus `additional`),
+    /// signed by the fixture account and pointed at the built-in executor.
+    async fn runtime(
+        additional: Vec<Arc<degenbot_arbitrage::SimulationDeployment>>,
+    ) -> ExecutorRuntime {
+        let signer = TxSigner::from_key_hex(ANVIL_KEY, 1).expect("the anvil key is valid");
+        let owner = signer.address();
+        ExecutorRuntime {
             max_candidates: 0,
             use_v4_batch: false,
             dry_run: false,
@@ -219,27 +231,25 @@ mod tests {
             suppression: Arc::new(Mutex::new(PathSuppression::new())),
             divergence: Arc::new(Mutex::new(PoolDivergence::new())),
             fot: Arc::new(Mutex::new(FeeOnTransferRegistry::new())),
-            provider,
+            provider: Arc::new(
+                AlloyProvider::new("http://127.0.0.1:1", 0)
+                    .await
+                    .expect("a lazy provider constructs offline"),
+            ),
             binding: degenbot_arbitrage::CmdExecutorBinding::new(
-                alloy::primitives::Address::ZERO,
-                executor_address,
+                owner,
+                BUILTIN_EXECUTOR,
                 alloy::primitives::Address::ZERO,
                 alloy::primitives::Address::ZERO,
                 degenbot_executor::composers::EncodeOptions::default(),
             ),
-            executor_address,
+            additional_deployments: additional,
             injected_address: None,
             runtime_bytecode: alloy::primitives::Bytes::new(),
             bot_state: None,
             warm_cache: None,
             dispatcher: Arc::new(Mutex::new(Dispatcher::for_block(0))),
-            signer: Arc::new(
-                TxSigner::from_key_hex(
-                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-                    1,
-                )
-                .expect("the anvil key is valid"),
-            ),
+            signer: Arc::new(signer),
             probe: Arc::new(NoopProbe),
             nonce_lane: Arc::new(
                 Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)).mint_lane(
@@ -250,11 +260,215 @@ mod tests {
             ),
             extra_broadcast: Vec::new(),
             target: SubmissionTarget::Public,
-        };
-        let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime);
+        }
+    }
+
+    /// The built-in fixture executor address (the deployment's target).
+    const BUILTIN_EXECUTOR: alloy::primitives::Address =
+        alloy::primitives::Address::repeat_byte(0xEE);
+
+    /// `from_verdict` composes the policy conversion with the runtime: the
+    /// uncapped sentinel and the injected stances land where the boundary
+    /// owns them.
+    #[tokio::test]
+    async fn from_verdict_composes_policy_and_runtime() {
+        let verdict = degenbot_config::BotConfig::default();
+        let config =
+            crate::executor::ExecutorConfig::from_verdict(&verdict, runtime(Vec::new()).await);
         assert_eq!(config.sim_concurrency, 8);
         assert_eq!(config.max_candidates, usize::MAX, "0 = uncapped");
         assert_eq!(config.min_profit_margin_bps, 0);
         assert!(!config.dry_run);
+        assert_eq!(
+            config.deployments.len(),
+            1,
+            "the built-in session is the one-entry registry"
+        );
+        assert_eq!(
+            config.deployments.ids().collect::<Vec<_>>(),
+            vec![crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID]
+        );
+        assert_eq!(
+            config
+                .deployments
+                .get(crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID)
+                .map(|deployment| deployment.target()),
+            Some(BUILTIN_EXECUTOR),
+            "the built-in deployment executes at the executor it encodes to"
+        );
+    }
+
+    /// A heterogeneous session appends its own deployments AFTER the built-in
+    /// one, and that order is the fan-out order.
+    #[tokio::test]
+    async fn additional_deployments_follow_the_builtin_in_order() {
+        let verdict = degenbot_config::BotConfig::default();
+        let runtime = runtime(Vec::new()).await;
+        let owner = runtime.signer.address();
+        let binding = degenbot_arbitrage::CmdExecutorBinding::new(
+            owner,
+            BUILTIN_EXECUTOR,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            degenbot_executor::composers::EncodeOptions::default(),
+        );
+        let first = degenbot_execution::DeploymentId::new(7);
+        let second = degenbot_execution::DeploymentId::new(9);
+        let mut runtime = runtime;
+        runtime.additional_deployments = vec![
+            Arc::new(binding.deployment(first)),
+            Arc::new(binding.deployment(second)),
+        ];
+        let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime);
+        assert_eq!(
+            config.deployments.ids().collect::<Vec<_>>(),
+            vec![
+                crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+                first,
+                second
+            ],
+            "the built-in deployment leads, then the runtime's order"
+        );
+    }
+
+    /// Two registered deployments MAY share one signing account (the supported
+    /// heterogeneous case): the authority check is about the account, not about
+    /// distinctness.
+    #[tokio::test]
+    async fn same_author_deployments_compose() {
+        let verdict = degenbot_config::BotConfig::default();
+        let runtime = runtime(Vec::new()).await;
+        let owner = runtime.signer.address();
+        let binding = degenbot_arbitrage::CmdExecutorBinding::new(
+            owner,
+            BUILTIN_EXECUTOR,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            degenbot_executor::composers::EncodeOptions::default(),
+        );
+        let mut runtime = runtime;
+        runtime.additional_deployments = vec![Arc::new(
+            binding.deployment(degenbot_execution::DeploymentId::new(2)),
+        )];
+        let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime);
+        assert_eq!(config.deployments.len(), 2);
+        assert!(config.deployments.validate_signing_authority(owner).is_ok());
+    }
+
+    /// A deployment reusing the built-in identity is refused LOUDLY at
+    /// composition: `from_verdict` panics rather than registering two rows that
+    /// one `CandidateId` cannot tell apart.
+    #[tokio::test]
+    #[should_panic(expected = "must be valid")]
+    async fn a_duplicate_identity_panics_at_composition() {
+        let runtime = runtime(Vec::new()).await;
+        let owner = runtime.signer.address();
+        let binding = degenbot_arbitrage::CmdExecutorBinding::new(
+            owner,
+            BUILTIN_EXECUTOR,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            degenbot_executor::composers::EncodeOptions::default(),
+        );
+        let mut runtime = runtime;
+        runtime.additional_deployments = vec![Arc::new(
+            binding.deployment(crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID),
+        )];
+        let _ = crate::executor::ExecutorConfig::from_verdict(
+            &degenbot_config::BotConfig::default(),
+            runtime,
+        );
+    }
+
+    /// A deployment whose owner is not the signing account is refused LOUDLY at
+    /// composition: the session cannot sign a transaction from an account it
+    /// does not hold.
+    #[tokio::test]
+    #[should_panic(expected = "must be the configured signing account")]
+    async fn a_foreign_owner_panics_at_composition() {
+        let stranger = alloy::primitives::Address::repeat_byte(0x11);
+        let binding = degenbot_arbitrage::CmdExecutorBinding::new(
+            stranger,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            degenbot_executor::composers::EncodeOptions::default(),
+        );
+        let mut runtime = runtime(Vec::new()).await;
+        runtime.additional_deployments = vec![Arc::new(
+            binding.deployment(degenbot_execution::DeploymentId::new(2)),
+        )];
+        let _ = crate::executor::ExecutorConfig::from_verdict(
+            &degenbot_config::BotConfig::default(),
+            runtime,
+        );
+    }
+
+    /// The composition boundary refuses an empty registry loudly — a session
+    /// with nothing to execute has no target to encode against.
+    #[test]
+    fn an_empty_registry_is_refused() {
+        let error = degenbot_arbitrage::DeploymentRegistry::new(Vec::new())
+            .expect_err("an empty registry has no lane to run");
+        assert_eq!(error, degenbot_arbitrage::DeploymentRegistryError::Empty);
+    }
+
+    /// The composition boundary refuses a duplicate identity loudly: two
+    /// entries with one `DeploymentId` make every post-target row ambiguous.
+    #[test]
+    fn a_duplicate_identity_is_refused() {
+        let binding = degenbot_arbitrage::CmdExecutorBinding::new(
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            degenbot_executor::composers::EncodeOptions::default(),
+        );
+        let id = crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID;
+        let error = degenbot_arbitrage::DeploymentRegistry::new(vec![
+            Arc::new(binding.deployment(id)),
+            Arc::new(binding.deployment(id)),
+        ])
+        .expect_err("two deployments cannot share one identity");
+        assert_eq!(
+            error,
+            degenbot_arbitrage::DeploymentRegistryError::DuplicateId { deployment_id: id }
+        );
+    }
+
+    /// The composition boundary refuses an owner the session signer does not
+    /// hold: the transaction would be simulated from — and submitted as — an
+    /// account the session cannot sign for.
+    #[test]
+    fn an_owner_the_signer_cannot_sign_for_is_refused() {
+        let signer = TxSigner::from_key_hex(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            1,
+        )
+        .expect("the anvil key is valid");
+        let owner = signer.address();
+        let stranger = alloy::primitives::Address::repeat_byte(0x11);
+        let binding = degenbot_arbitrage::CmdExecutorBinding::new(
+            stranger,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            degenbot_executor::composers::EncodeOptions::default(),
+        );
+        let registry = degenbot_arbitrage::DeploymentRegistry::new(vec![Arc::new(
+            binding.deployment(crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID),
+        )])
+        .expect("one entry is a valid registry");
+        let error = registry
+            .validate_signing_authority(owner)
+            .expect_err("a foreign owner cannot be signed for");
+        assert_eq!(
+            error,
+            degenbot_arbitrage::DeploymentRegistryError::OwnerNotSigner {
+                deployment_id: crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+                owner: stranger,
+                authority: owner,
+            }
+        );
     }
 }
