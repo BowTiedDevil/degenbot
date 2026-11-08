@@ -72,6 +72,16 @@
 "type": "error"
 },
 {
+"name": "InvalidProfitMode",
+"inputs": [
+{
+"name": "mode",
+"type": "uint256"
+}
+],
+"type": "error"
+},
+{
 "name": "BipsTooHigh",
 "inputs": [
 {
@@ -120,6 +130,18 @@
 "outputs": []
 },
 {
+"stateMutability": "nonpayable",
+"type": "function",
+"name": "sweep",
+"inputs": [
+{
+"name": "destination",
+"type": "address"
+}
+],
+"outputs": []
+},
+{
 "stateMutability": "payable",
 "type": "function",
 "name": "execute",
@@ -132,7 +154,17 @@
 "outputs": [
 {
 "name": "",
+"type": "tuple",
+"components": [
+{
+"name": "gross_profit",
 "type": "uint256"
+},
+{
+"name": "bribe_paid",
+"type": "uint256"
+}
+]
 }
 ]
 },
@@ -153,7 +185,17 @@
 "outputs": [
 {
 "name": "",
+"type": "tuple",
+"components": [
+{
+"name": "gross_profit",
 "type": "uint256"
+},
+{
+"name": "bribe_paid",
+"type": "uint256"
+}
+]
 }
 ]
 },

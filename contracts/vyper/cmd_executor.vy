@@ -333,6 +333,11 @@ V4_BATCH_ENTRY_AMOUNT_OFFSET: constant(uint256) = 8
 # ── Custom errors ──
 # Zero-arg errors where the condition is self-explanatory;
 # parameterized errors for diagnostics on the failure path only.
+struct ExecutionReceipt:
+    gross_profit: uint256
+    bribe_paid: uint256
+
+
 error Unauthorized:
     caller: address
 
@@ -358,6 +363,9 @@ error InsufficientMintDelta:
 
 error InvalidCommand:
     opcode: uint256
+
+error InvalidProfitMode:
+    mode: uint256
 
 error BipsTooHigh:
     bips: uint256
@@ -1941,35 +1949,33 @@ def withdraw(amount: uint256, destination: address):
     )
 
 
+@external
+def sweep(destination: address):
+    """Send all physical WETH and native ETH to an owner-chosen destination."""
+    assert msg.sender == OWNER_ADDR, Unauthorized(caller=msg.sender)
+    assert destination != empty(address)
+
+    weth_balance: uint256 = staticcall IERC20(WETH_ADDR).balanceOf(self)
+    if weth_balance > 0:
+        extcall IWETH(WETH_ADDR).withdraw(weth_balance, skip_contract_check=True)
+    raw_call(destination, b"", value=self.balance)
+
+
 @internal
-def _combined_balance(check_mode: uint256) -> uint256:
-    """Read the executor's combined WETH+ETH (or ERC6909 WETH) balance.
-
-    Used at BOTH the start (combined_before) and end (combined_after) of the
-    execute() slow path so the profit assert and bribe compute on the TRUE
-    delta — never on an operator-supplied `expected_value` that may be
-    misconfigured (the U3WVLL defect: `expected_value=0` silently skipped the
-    profit check and over-bribed). Reading the on-chain balance at the start
-    costs one cold balanceOf (~2600 gas) the first time; the end read is warm
-    (the stream touches WETH/ERC6909) at ~100 gas.
-
-    Flash paths start at 0 (no-prefund architecture) so combined_before=0 —
-    the assert `combined_after >= 0` is trivially true (no regression vs the
-    M1 retraction); self-fund paths start >0 so the assert is the active
-    protection (a money-losing self-fund tx reverts).
-    """
-    if check_mode == 2:
+def _combined_balance(profit_mode: uint256) -> uint256:
+    """Read the balance in the receipt's selected WETH-equivalent domain."""
+    if profit_mode == 2:
         # ERC6909 WETH held in the PoolManager.
         return staticcall IERC6909Claims(POOL_MANAGER_ADDR).balanceOf(
             self, convert(convert(WETH_ADDR, uint160), uint256)
         )
-    # WETH + ETH combined (check_mode == 1).
+    # WETH + native ETH combined (profit_mode == 1).
     return unsafe_add(staticcall IERC20(WETH_ADDR).balanceOf(self), self.balance)
 
 
 @external
 @payable
-def execute(commands: Bytes[MAX_COMMANDS_LENGTH], config: uint256 = 0) -> uint256:
+def execute(commands: Bytes[MAX_COMMANDS_LENGTH], config: uint256 = 1) -> ExecutionReceipt:
     """
     Execute a command stream for arbitrage.
 
@@ -1985,165 +1991,54 @@ def execute(commands: Bytes[MAX_COMMANDS_LENGTH], config: uint256 = 0) -> uint25
       0x00  SET_ADDRESS  [address:20]  Append address to lookup table
       0xFF  BEGIN_EXECUTION            End preprocessing / start execution
 
-    All other configuration (profit check, bribes) is packed into the
-    ABI config parameter — decoded for free without command-stream overhead:
+    Configuration is packed into the ABI config parameter:
 
-      bits 0-7:    check_mode
-                    0 = skip (no balance check)
-                    1 = check WETH + ETH combined balance
-                    2 = check ERC6909 WETH balance (PM.balanceOf(self, weth_id));
-                        intended for pure-V4 paths that end with V4_MINT_COMPACT
-                        profit capture (the ERC6909 slot is warm from the MINT,
-                        ~3,500 gas cheaper than a cold WETH.balanceOf).
-                        NOTE (L8): mode-2 reads the ERC6909 balance — the command
-                        stream MUST mint the profit to self via V4_MINT_COMPACT
-                        (or already hold ERC6909 WETH) for the check to be
-                        meaningful. Reading mode-2 on a path that ends with
-                        physical WETH TAKE will see a stale/zero ERC6909 balance
-                        and fail. Mode-1 is the default for mixed V2/V3/V4 paths.
-                        Mode-3 = SWEEP (defeat the profit assert for the rare
-                        'send accumulated profit to another address' case; the
-                        sweep is done in-stream by the operator's command stream).
-                        Mode-3 is the ONLY way to defeat the U3WVLL profit assert.
-      bits 8-23:   bribe_bips (0 = no bribe, 1-10000 = basis points; >10000 reverts BipsTooHigh)
-      bits 24-31:  bribe_recipient_idx (0 = block.coinbase / builder, 1-31 = address table index)
-      bits 32-255: expected_value (IGNORED — kept for config-ABI compatibility;
-                   the contract reads its own combined balance at start+end)
+      bits 0-7:    profit_mode (1 = physical WETH + native ETH;
+                   2 = PoolManager ERC6909 WETH claims; all others revert)
+      bits 8-23:   bribe_bips (0-10000)
+      bits 24-31:  bribe_recipient_idx (0 = block.coinbase, 1-31 = address table)
+      bits 32-255: min_profit (minimum gross WETH-equivalent balance increase)
 
-    Note on the profit check (U3WVLL defect fix): the contract reads its OWN
-    combined balance at the start (combined_before) and end (combined_after)
-    of the slow path — NOT an operator-supplied `expected_value`. The profit
-    assert `combined_after >= combined_before` is UNCONDITIONAL (no
-    `expected_value > 0` guard): a money-losing self-fund tx reverts to
-    protect the operator. For flash paths combined_before=0 (no-prefund
-    architecture) so the assert is trivially true; a losing flash path reverts
-    at the protocol layer (flash-loan repayment) before reaching the check.
-    Bribes compute on the TRUE profit (combined_after - combined_before),
-    eliminating the `expected_value=0` over-bribe footgun. The rare "sweep
-    accumulated profit to another address" case (which requires the assert
-    defeated) is an explicit opt-in (check_mode=3), NOT `expected_value=0`.
-
-    Examples:
-      0                                              → fast path: skip check, no bribe
-      1                                              → WETH+ETH profit check, no bribe (default)
-      (500 << 8) | 2                                 → ERC6909 check, 5% coinbase bribe
-      (500 << 8) | (3 << 24) | 1                     → WETH+ETH check, 5% bribe to addr[3]
-      (10000 << 8) | (3 << 24) | 3                   → SWEEP: defeat assert, send 100% to addr[3]
-
-    Owner-only. Returns the profit (balance increase).
+    gross_profit is measured after all commands and before the bribe. A balance
+    decrease or gross_profit below min_profit reverts. bribe_paid is the actual
+    native ETH transferred after any available-balance cap, so retained profit
+    before transaction fees is gross_profit - bribe_paid. Owner-only.
     """
     assert msg.sender == OWNER_ADDR, Unauthorized(caller=msg.sender)
 
-    # Unpack config: ABI decoding is free — no slice/convert/dispatch overhead.
-    # check_mode: 0=skip, 1=WETH+ETH, 2=ERC6909 WETH, 3=SWEEP (defeat the
-    # profit assert — the rare 'send accumulated profit to another address'
-    # case; the sweep is done in-stream by the operator's command stream).
-    check_mode: uint256 = config & 255
+    profit_mode: uint256 = config & 255
+    assert profit_mode == 1 or profit_mode == 2, InvalidProfitMode(mode=profit_mode)
 
     offset: uint256 = self._preprocess(commands)
-
-    # Fast path: when no balance check needed AND no bribe, avoid all
-    # balanceOf reads and post-processing. check_mode=0 and bips=0 means
-    # operator confirms starting balance externally (no on-chain check).
+    bribe_paid: uint256 = 0
     bribe_bips: uint256 = (config >> 8) & 65535
-    if check_mode == 0 and bribe_bips == 0:
-        for _: uint256 in range(MAX_COMMANDS_LENGTH):
-            offset = self._execute_command_at(commands, offset)
-            if offset >= len(commands):
-                break
-        return 0
 
-    # SWEEP mode (check_mode == 3): the rare 'send accumulated profit to
-    # another address' case. The profit assert is DEFEATED (a sweep sends the
-    # balance away, so combined_after < combined_before is expected and not a
-    # loss). combined_before is treated as 0 (an honest bribe on a sweep would
-    # be 100% to the recipient via bribe_bips=10000 + recipient_idx); the
-    # operator is trusted to have requested the sweep explicitly. This is the
-    # ONLY way to defeat the U3WVLL profit assert — NOT expected_value=0.
-    if check_mode == 3:
-        combined_before: uint256 = 0
-        for _: uint256 in range(MAX_COMMANDS_LENGTH):
-            offset = self._execute_command_at(commands, offset)
-            if offset >= len(commands):
-                break
-        combined_after: uint256 = self._combined_balance(1)  # WETH+ETH after the sweep
-        # Bribes (if requested) compute on combined_after (no assert) — a
-        # 100% sweep uses bribe_bips=10000 + recipient to send the full balance.
-        if bribe_bips > 0 and combined_after > 0:
-            # Reuse the bribe block below by falling through with the
-            # SWEEP-computed combined_before/after. (Vyper has no goto; inline.)
-            pass
-        else:
-            return combined_after
-        # Fall-through to the bribe block with SWEEP values (combined_before=0).
-        profit: uint256 = combined_after
-        bribe_amount: uint256 = unsafe_mul(bribe_bips, profit) // 10_000
-        if bribe_amount > 0:
-            bribe_recipient_idx: uint256 = (config >> 24) & 255
-            assert bribe_recipient_idx < MAX_INDEXED_ADDRESSES, InvalidCommand(opcode=bribe_recipient_idx)
-            bribe_recipient: address = block.coinbase
-            if bribe_recipient_idx > 0:
-                bribe_recipient = self.t_addresses[bribe_recipient_idx]
-            if bribe_amount > self.balance:
-                weth_available: uint256 = staticcall IERC20(WETH_ADDR).balanceOf(self)
-                if weth_available > 0:
-                    extcall IWETH(WETH_ADDR).withdraw(
-                        min(weth_available, unsafe_sub(bribe_amount, self.balance)),
-                        skip_contract_check=True,
-                    )
-            if bribe_amount > self.balance:
-                bribe_amount = self.balance
-            if bribe_amount > 0:
-                raw_call(bribe_recipient, b"", value=bribe_amount)
-        return combined_after
-
-    # Slow path: balance check or bribe needed.
-    # (Fast path already returned when check_mode==0 and bribe_bips==0.)
-    # U3WVLL defect fix: the contract reads its OWN combined balance at the
-    # start (combined_before) and end (combined_after) of the slow path, so
-    # the profit assert + bribe compute on the TRUE delta. The operator's
-    # `expected_value` (config bits 32+) is IGNORED — it was the footgun
-    # (expected_value=0 silently skipped the assert and over-bribed; the
-    # contract couldn't distinguish a 0-balance flash path from a
-    # misconfigured 0). For flash paths combined_before=0 (no-prefund
-    # architecture); for self-fund paths combined_before>0 (the funded entry
-    # capital) so the assert is the active money-loss protection. A losing
-    # flash path reverts at the protocol layer (flash-loan repayment) before
-    # reaching here. See the retired .auto_archived/m1-profit-guard-retraction.md (the M1
-    # retraction opposed forcing expected_value>0, which broke flash paths;
-    # reading on-chain instead does NOT break them — combined_before=0 is
-    # correct for flash paths).
-    combined_before: uint256 = self._combined_balance(check_mode)
+    # The receipt always describes the selected balance-domain delta. Bribes
+    # are paid after this measurement and never reduce reported gross profit.
+    combined_before: uint256 = self._combined_balance(profit_mode)
     for _: uint256 in range(MAX_COMMANDS_LENGTH):
         offset = self._execute_command_at(commands, offset)
         if offset >= len(commands):
             break
-    combined_after: uint256 = self._combined_balance(check_mode)
-    # Unconditional assert (no `if expected_value > 0` guard): a money-losing
-    # tx reverts to protect the operator. For flash paths (combined_before=0)
-    # this is `combined_after >= 0` (trivially true for uint); for self-fund
-    # paths it is the active floor. The rare "send accumulated profit to
-    # another address" sweep case needs this defeated — that is an explicit
-    # opt-in (see the deferred sweep mode, not `expected_value=0`).
+    combined_after: uint256 = self._combined_balance(profit_mode)
+    # Reject a decrease, then apply the operator's gross-profit floor.
     assert combined_after >= combined_before, InsufficientProfit(actual=combined_after, expected=combined_before)
-    
+    gross_profit: uint256 = unsafe_sub(combined_after, combined_before)
+    min_profit: uint256 = config >> 32
+    assert gross_profit >= min_profit, InsufficientProfit(actual=gross_profit, expected=min_profit)
+
     # Bribes send a portion of this transaction's profit: profit * bips / 10000.
     # If the executor's ETH balance is insufficient, withdraws WETH (up to
     # current WETH balance) to cover the shortfall. If total ETH+WETH still
     # doesn't cover the desired bribe, sends whatever is available (never reverts).
     if bribe_bips > 0:
-        # Bound bribe_bips: only matters when a bribe was actually requested.
-        # Without this, bribe_bips > 10000 would compute bribe_amount = bips*profit/10000
-        # > profit, over-bribing (draining more than the actual profit).
+        # A bribe can never exceed gross profit.
         assert bribe_bips <= 10_000, BipsTooHigh(bips=bribe_bips)
         # Resolve bribe recipient: idx=0 = block.coinbase (builder bribe),
         # idx>0 = address table lookup. TLOAD is 100 gas (warm) — t_addresses
         # was just populated by _preprocess.
-        # Field is 8 bits but only 0..31 are valid (0=coinbase, 1..31=table);
-        # bytes 32..255 (incl. sentinels 0xFC..0xFF) are not meaningful bribe
-        # targets and would otherwise bounds-revert opaquely. Fail closed here.
-        # (M2: idx=0 previously sent ETH to address(0) — a burn, NOT a builder
-        # bribe. block.coinbase pays the actual block builder.)
+        # Only 0..31 are valid: 0=coinbase, 1..31=table. Sentinel values are
+        # not meaningful bribe targets and would bounds-revert opaquely.
         bribe_recipient_idx: uint256 = (config >> 24) & 255
         assert bribe_recipient_idx < MAX_INDEXED_ADDRESSES, InvalidCommand(opcode=bribe_recipient_idx)
         bribe_recipient: address = block.coinbase
@@ -2151,12 +2046,8 @@ def execute(commands: Bytes[MAX_COMMANDS_LENGTH], config: uint256 = 0) -> uint25
             bribe_recipient = self.t_addresses[bribe_recipient_idx]
         # idx=0 → bribe_recipient stays block.coinbase → raw_call pays the builder
 
-        profit: uint256 = 0
-        if combined_after >= combined_before:
-            profit = unsafe_sub(combined_after, combined_before)
-
-        if profit > 0:
-            bribe_amount: uint256 = unsafe_mul(bribe_bips, profit) // 10_000
+        if gross_profit > 0:
+            bribe_amount: uint256 = unsafe_mul(bribe_bips, gross_profit) // 10_000
             if bribe_amount > 0:
                 if bribe_amount > self.balance:
                     weth_available: uint256 = staticcall IERC20(WETH_ADDR).balanceOf(self)
@@ -2169,12 +2060,16 @@ def execute(commands: Bytes[MAX_COMMANDS_LENGTH], config: uint256 = 0) -> uint25
                     bribe_amount = self.balance
                 if bribe_amount > 0:
                     raw_call(
-                        bribe_recipient, 
-                        b"", 
+                        bribe_recipient,
+                        b"",
                         value=bribe_amount,
                     )
+                    bribe_paid = bribe_amount
 
-    return unsafe_sub(combined_after, combined_before)
+    return ExecutionReceipt({
+        gross_profit: gross_profit,
+        bribe_paid: bribe_paid,
+    })
 
 
 @external

@@ -346,14 +346,14 @@ async fn frame_pipeline_replay_staging_bids_with_composed_calldata() {
 
     // The bribe share rides the composed config exactly once (check mode 1
     // = WETH+ETH true-delta seatbelt, recipient 0 = coinbase).
-    let (check_mode, bips, recipient, expected_value) = composed_config(&cd);
-    assert_eq!(check_mode, 1);
+    let (profit_mode, bips, recipient, min_profit) = composed_config(&cd);
+    assert_eq!(profit_mode, 1);
     assert_eq!(
         bips, BRIBE_BIPS,
         "the on-chain bribe share matches the ladder"
     );
     assert_eq!(recipient, 0, "coinbase bribe");
-    assert!(expected_value.is_zero());
+    assert!(min_profit.is_zero());
     println!("bid ladder: profit {profit} wei -> bid {bid_wei} wei");
 }
 

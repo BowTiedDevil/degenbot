@@ -37,9 +37,7 @@ from .conftest_shared import (
 @pytest.fixture
 def v2_pair(project, owner_account, usdc, weth):
     token0, token1 = sorted([usdc.address, weth.address], key=lambda addr: addr.lower())
-    return project.fake_uniswap_v2_pair.deploy(
-        token0, token1, 0, 30, sender=owner_account
-    )
+    return project.fake_uniswap_v2_pair.deploy(token0, token1, 0, 30, sender=owner_account)
 
 
 AMOUNT_WETH = 1 * 10**18
@@ -50,9 +48,7 @@ SWAP_INPUT = 1 * 10**18
 class TestV2DirectExcess:
     """V2 direct swap using V2_SWAP_CALC with excess balance."""
 
-    def test_v2_direct_excess_balance(
-        self, usdc, weth, owner_account, executor, v2_pair
-    ):
+    def test_v2_direct_excess_balance(self, usdc, weth, owner_account, executor, v2_pair):
         """Pre-fund V2 pair with WETH, then V2_SWAP_CALC reads excess and swaps."""
         v2_zfo = v2_pair.token0() == weth.address
 
@@ -73,9 +69,7 @@ class TestV2DirectExcess:
         v2_idx = at.add(v2_pair.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=30
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=30)
 
         executor.execute(commands, sender=owner_account)
         assert usdc.balanceOf(executor.address) >= expected_out
@@ -95,16 +89,12 @@ class TestV2DirectExcess:
         v2_idx = at.add(v2_pair.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=30
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=30)
 
         tx = executor.execute(commands, sender=owner_account, raise_on_revert=False)
         assert tx.status == 0, "Should revert — no excess balance"
 
-    def test_v2_direct_no_callback_fires(
-        self, usdc, weth, owner_account, executor, v2_pair
-    ):
+    def test_v2_direct_no_callback_fires(self, usdc, weth, owner_account, executor, v2_pair):
         """V2_SWAP_CALC with excess balance calls swap() with data=b'' (no callback)."""
         v2_zfo = v2_pair.token0() == weth.address
 
@@ -127,9 +117,7 @@ class TestV2DirectExcess:
         v2_idx = at.add(v2_pair.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=30
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=30)
 
         executor.execute(commands, sender=owner_account)
 
@@ -140,9 +128,7 @@ class TestV2DirectExcess:
 class TestV4ToV2DirectCustody:
     """V4→V2 with direct custody — V4_TAKE sends USDC to V2 pair directly."""
 
-    def test_v4_v2_direct_custody_take(
-        self, usdc, weth, owner_account, executor, v4_pm, v2_pair
-    ):
+    def test_v4_v2_direct_custody_take(self, usdc, weth, owner_account, executor, v4_pm, v2_pair):
         """V4_TAKE sends USDC to V2 pair → V2_SWAP_CALC reads excess."""
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
         pool_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
@@ -185,7 +171,8 @@ class TestV4ToV2DirectCustody:
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
             # V2 custody test; executor holds tokens for V2 without profit
-            enc_preamble(at, skip_profit=True) + commands,
+            enc_preamble(at) + commands,
+            2,
             sender=owner_account,
             raise_on_revert=False,
         )
@@ -238,7 +225,8 @@ class TestV4ToV2DirectCustody:
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
             # V2 custody test; executor holds tokens for V2 without profit
-            enc_preamble(at, skip_profit=True) + commands,
+            enc_preamble(at) + commands,
+            2,
             sender=owner_account,
             raise_on_revert=False,
         )
@@ -250,15 +238,11 @@ class TestV4ToV2DirectCustody:
 class TestV2ToV2DirectCustody:
     """V2→V2 chain — first swap sends output directly to second pair."""
 
-    def test_v2_v2_direct_custody(
-        self, project, usdc, weth, owner_account, executor, v2_pair
-    ):
+    def test_v2_v2_direct_custody(self, project, usdc, weth, owner_account, executor, v2_pair):
         """V2→V2: First swap sends USDC to second V2 pair, V2_SWAP_CALC reads excess."""
         # Deploy a second V2 pair
         token0, token1 = sorted([usdc.address, weth.address], key=lambda a: a.lower())
-        v2_pair_2 = project.fake_uniswap_v2_pair.deploy(
-            token0, token1, 0, 30, sender=owner_account
-        )
+        v2_pair_2 = project.fake_uniswap_v2_pair.deploy(token0, token1, 0, 30, sender=owner_account)
 
         # Setup first pair: sell WETH → USDC
         v2_1_zfo = v2_pair.token0() == weth.address
@@ -296,9 +280,7 @@ class TestV2ToV2DirectCustody:
 class TestExcessBalanceWithMultipleDeposits:
     """V2_SWAP_CALC correctly reads total excess when multiple deposits create it."""
 
-    def test_multiple_deposits_create_excess(
-        self, usdc, weth, owner_account, executor, v2_pair
-    ):
+    def test_multiple_deposits_create_excess(self, usdc, weth, owner_account, executor, v2_pair):
         """Two separate deposits to V2 pair are both counted in excess balance."""
         v2_zfo = v2_pair.token0() == weth.address
 
@@ -324,9 +306,7 @@ class TestExcessBalanceWithMultipleDeposits:
         v2_idx = at.add(v2_pair.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=30
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=30)
 
         executor.execute(commands, sender=owner_account)
         assert usdc.balanceOf(executor.address) >= expected_out

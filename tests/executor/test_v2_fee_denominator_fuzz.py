@@ -137,13 +137,9 @@ class TestUniswapV2Fee30:
         balance1 = reserve_out - amount_out
 
         # Old K-check: fee_subtracted=3, denominator=1000
-        passes_old = k_check(
-            balance0, balance1, reserve_in, reserve_out, amount_in, 0, 3, 1000
-        )
+        passes_old = k_check(balance0, balance1, reserve_in, reserve_out, amount_in, 0, 3, 1000)
         # New K-check: fee_subtracted=30, denominator=10000
-        passes_new = k_check(
-            balance0, balance1, reserve_in, reserve_out, amount_in, 0, 30, 10000
-        )
+        passes_new = k_check(balance0, balance1, reserve_in, reserve_out, amount_in, 0, 30, 10000)
 
         assert passes_old == passes_new, (
             f"K-check differs: old={passes_old}, new={passes_new}, "
@@ -211,13 +207,9 @@ class TestPancakeSwapFee25:
         balance1 = reserve_out - amount_out
 
         # New K-check: fee_subtracted=25, denominator=10000
-        passes_new = k_check(
-            balance0, balance1, reserve_in, reserve_out, amount_in, 0, 25, 10000
-        )
+        passes_new = k_check(balance0, balance1, reserve_in, reserve_out, amount_in, 0, 25, 10000)
         # Old K-check: fee_subtracted=2, denominator=1000
-        passes_old = k_check(
-            balance0, balance1, reserve_in, reserve_out, amount_in, 0, 2, 1000
-        )
+        passes_old = k_check(balance0, balance1, reserve_in, reserve_out, amount_in, 0, 2, 1000)
 
         if passes_new:
             assert passes_old, (
@@ -248,28 +240,18 @@ class TestSubOnePercentFees:
     @settings(suppress_health_check=[HealthCheck.too_slow])
     @example(amount_in=10**18, reserve_in=10**24, reserve_out=10**24, fee=1)
     @example(amount_in=10**18, reserve_in=10**24, reserve_out=10**24, fee=9)
-    def test_old_charges_zero_fee_sub10bps(
-        self, amount_in, reserve_in, reserve_out, fee
-    ):
+    def test_old_charges_zero_fee_sub10bps(self, amount_in, reserve_in, reserve_out, fee):
         """For fees 1-9 (sub-10bps), old formula = zero-fee output (no-fee swap)."""
         assume(amount_in * (10000 - fee) * reserve_out <= UINT256_MAX)
         assume(amount_in * 1000 * reserve_out <= UINT256_MAX)
 
         old_fee_multiplier = 1000 - fee // 10  # 1000 - 0 = 1000
-        assert old_fee_multiplier == 1000, (
-            f"Fee {fee}: old should give zero-fee multiplier"
-        )
+        assert old_fee_multiplier == 1000, f"Fee {fee}: old should give zero-fee multiplier"
 
         zero_fee_result = get_amount_out(amount_in, reserve_in, reserve_out, 1000, 1000)
-        old_result = get_amount_out(
-            amount_in, reserve_in, reserve_out, old_fee_multiplier, 1000
-        )
-        new_result = get_amount_out(
-            amount_in, reserve_in, reserve_out, 10000 - fee, 10000
-        )
+        old_result = get_amount_out(amount_in, reserve_in, reserve_out, old_fee_multiplier, 1000)
+        new_result = get_amount_out(amount_in, reserve_in, reserve_out, 10000 - fee, 10000)
 
         # Old = zero-fee output (more than new)
         assert old_result == zero_fee_result
         assert old_result >= new_result
-
-

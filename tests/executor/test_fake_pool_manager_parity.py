@@ -29,18 +29,12 @@ from eth_utils.address import to_checksum_address
 REAL_PM_ADDRESS = to_checksum_address("0x000000000004444c5dc75cB358380D2e3dE08A90")
 
 # V4 transient storage slot constants
-LOCK_SLOT = bytes.fromhex(
-    "c090fc4683624cfc3884e9d8de5eca132f2d0ec062aff75d43c0465d5ceeab23"
-)
+LOCK_SLOT = bytes.fromhex("c090fc4683624cfc3884e9d8de5eca132f2d0ec062aff75d43c0465d5ceeab23")
 NONZERO_DELTA_COUNT_SLOT = bytes.fromhex(
     "7d4b3164c6e45b97e7d87b7125a44c5828d005af88f9d751cfd78729c5d99a0b"
 )
-CURRENCY_SLOT = bytes.fromhex(
-    "27e098c505d44ec3574004bca052aabf76bd35004c182099d8c575fb238593b9"
-)
-RESERVES_OF_SLOT = bytes.fromhex(
-    "1e0745a7db1623981f0b2a5d4232364c00787266eb75ad546f190e6cebe9bd95"
-)
+CURRENCY_SLOT = bytes.fromhex("27e098c505d44ec3574004bca052aabf76bd35004c182099d8c575fb238593b9")
+RESERVES_OF_SLOT = bytes.fromhex("1e0745a7db1623981f0b2a5d4232364c00787266eb75ad546f190e6cebe9bd95")
 
 pytestmark = pytest.mark.mainnet_fork
 
@@ -131,9 +125,7 @@ class TestExttloadTransientSlots:
         assert int.from_bytes(real_lock, "big") == 1, "Lock should be 1 inside unlock"
 
         assert real_count == fake_count, "NonzeroDeltaCount mismatch"
-        assert int.from_bytes(real_count, "big") == 1, (
-            "NonzeroDeltaCount should be 1 after take"
-        )
+        assert int.from_bytes(real_count, "big") == 1, "NonzeroDeltaCount should be 1 after take"
 
         assert real_delta == fake_delta, "Delta slot mismatch"
         assert int.from_bytes(real_delta, "big", signed=True) == -(10**18)

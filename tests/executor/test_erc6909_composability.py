@@ -77,9 +77,7 @@ WARMUP_WEI = 1  # 1 wei ERC6909 minted by initialize() to warm the slot
 def _v4_swap(at, pool_key, zfo, amount, zero_idx):
     c0_idx = at.add(pool_key[0])
     c1_idx = at.add(pool_key[1])
-    return enc_v4_swap_compact(
-        c0_idx, c1_idx, pool_key[2], pool_key[3], zero_idx, zfo, amount
-    )
+    return enc_v4_swap_compact(c0_idx, c1_idx, pool_key[2], pool_key[3], zero_idx, zfo, amount)
 
 
 # ── Fixtures ──
@@ -121,12 +119,11 @@ class TestERC6909MintProfitV4V4V4:
     subsequent V4 operation (V4_BURN, 0 transfers).
     """
 
+    @pytest.mark.parametrize("bribe_bips", [0, 5000])
     def test_mint_profit_zero_transfer(
-        self, weth, usdc, wbtc, owner_account, executor, v4_pm
+        self, weth, usdc, wbtc, owner_account, executor, v4_pm, accounts, bribe_bips
     ):
-        pool_key_a = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_key_a = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         zfo_a = pool_key_a[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -138,9 +135,7 @@ class TestERC6909MintProfitV4V4V4:
             output_token=usdc,
         )
 
-        pool_key_b = _make_pool_key(
-            usdc.address, wbtc.address, fee=500, tick_spacing=10
-        )
+        pool_key_b = _make_pool_key(usdc.address, wbtc.address, fee=500, tick_spacing=10)
         zfo_b = pool_key_b[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -152,9 +147,7 @@ class TestERC6909MintProfitV4V4V4:
             output_token=wbtc,
         )
 
-        pool_key_c = _make_pool_key(
-            wbtc.address, weth.address, fee=10000, tick_spacing=200
-        )
+        pool_key_c = _make_pool_key(wbtc.address, weth.address, fee=10000, tick_spacing=200)
         zfo_c = pool_key_c[0] == wbtc.address
         _setup_v4_swap(
             v4_pm,
@@ -172,6 +165,7 @@ class TestERC6909MintProfitV4V4V4:
         wbtc_idx = at.add(wbtc.address)
         executor_idx = at.add(executor.address)
         zero_idx = at.add(ZERO_ADDRESS)
+        bribe_recipient_idx = at.add(accounts[1].address)
 
         inner = _v4_swap(at, pool_key_a, zfo_a, AMOUNT_WETH, zero_idx)
         inner += _v4_swap(at, pool_key_b, zfo_b, AMOUNT_USDC, zero_idx)
@@ -180,13 +174,25 @@ class TestERC6909MintProfitV4V4V4:
         inner += enc_v4_mint_compact(weth_idx, executor_idx, NET_PROFIT)
 
         commands = enc_v4_unlock(inner)
-        tx = executor.execute(enc_preamble(at) + commands, sender=owner_account)
+        stream = enc_preamble(at) + commands
+        config = (bribe_bips << 8) | (bribe_recipient_idx << 24) | 2
+        physical_before = weth.balanceOf(executor) + executor.balance
+        expected_bribe = min(NET_PROFIT * bribe_bips // 10_000, physical_before)
+        claims_before = v4_pm.balanceOf(executor.address, int(weth.address, 16))
+        recipient_before = accounts[1].balance
+
+        receipt = executor.execute.call(stream, config, sender=owner_account, gas=5_000_000)
+        assert receipt == (NET_PROFIT, expected_bribe)
+
+        tx = executor.execute(stream, config, sender=owner_account)
         assert tx.status == 1
 
         # Verify: profit is stored as ERC6909, not additional physical WETH
         # (executor may already hold WETH from deployment — just check the delta)
         weth_id = int(weth.address, 16)
         erc6909_bal = v4_pm.balanceOf(executor.address, weth_id)
+        assert erc6909_bal - claims_before == NET_PROFIT
+        assert accounts[1].balance - recipient_before == expected_bribe
         assert erc6909_bal == NET_PROFIT + WARMUP_WEI, (
             f"ERC6909 WETH balance should be {NET_PROFIT + WARMUP_WEI}, got {erc6909_bal}"
         )
@@ -194,9 +200,7 @@ class TestERC6909MintProfitV4V4V4:
         # V4_MINT does NOT produce a physical WETH transfer out of PM
         # (the existing WETH at executor is from deployment, not the arb)
 
-        print(
-            f"\n  ✅ V4-V4-V4 with V4_MINT: 0 ERC20 transfers, {NET_PROFIT} WETH as ERC6909"
-        )
+        print(f"\n  ✅ V4-V4-V4 with V4_MINT: 0 ERC20 transfers, {NET_PROFIT} WETH as ERC6909")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -224,9 +228,7 @@ class TestERC6909MultiTxComposability:
         self, weth, usdc, wbtc, owner_account, executor, v4_pm
     ):
         # ── TX1: Mint profit as ERC6909 ──
-        pool_key_a = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_key_a = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         zfo_a = pool_key_a[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -238,9 +240,7 @@ class TestERC6909MultiTxComposability:
             output_token=usdc,
         )
 
-        pool_key_b = _make_pool_key(
-            usdc.address, wbtc.address, fee=500, tick_spacing=10
-        )
+        pool_key_b = _make_pool_key(usdc.address, wbtc.address, fee=500, tick_spacing=10)
         zfo_b = pool_key_b[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -252,9 +252,7 @@ class TestERC6909MultiTxComposability:
             output_token=wbtc,
         )
 
-        pool_key_c = _make_pool_key(
-            wbtc.address, weth.address, fee=10000, tick_spacing=200
-        )
+        pool_key_c = _make_pool_key(wbtc.address, weth.address, fee=10000, tick_spacing=200)
         zfo_c = pool_key_c[0] == wbtc.address
         _setup_v4_swap(
             v4_pm,
@@ -365,9 +363,7 @@ class TestERC6909MultiTxComposability:
             f"  TX3: V4_BURN + V4_TAKE — withdrew {total_erc6909} WETH (1 ERC20 transfer, the take)"
         )
 
-    def test_burn_settles_weth_debit(
-        self, weth, usdc, wbtc, owner_account, executor, v4_pm
-    ):
+    def test_burn_settles_weth_debit(self, weth, usdc, wbtc, owner_account, executor, v4_pm):
         """V4_BURN replaces sync+transfer+settle when executor holds ERC6909.
 
         TX1: V4-V4-V4 with V4_MINT profit → executor holds NET_PROFIT WETH as ERC6909.
@@ -388,9 +384,7 @@ class TestERC6909MultiTxComposability:
         subsequent V4 operation without physical transfers.
         """
         # ── TX1: V4-V4-V4, mint profit as ERC6909 ──
-        pool_key_a = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_key_a = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         zfo_a = pool_key_a[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -402,9 +396,7 @@ class TestERC6909MultiTxComposability:
             output_token=usdc,
         )
 
-        pool_key_b = _make_pool_key(
-            usdc.address, wbtc.address, fee=500, tick_spacing=10
-        )
+        pool_key_b = _make_pool_key(usdc.address, wbtc.address, fee=500, tick_spacing=10)
         zfo_b = pool_key_b[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -416,9 +408,7 @@ class TestERC6909MultiTxComposability:
             output_token=wbtc,
         )
 
-        pool_key_c = _make_pool_key(
-            wbtc.address, weth.address, fee=10000, tick_spacing=200
-        )
+        pool_key_c = _make_pool_key(wbtc.address, weth.address, fee=10000, tick_spacing=200)
         zfo_c = pool_key_c[0] == wbtc.address
         _setup_v4_swap(
             v4_pm,
@@ -536,9 +526,7 @@ class TestERC6909MintProfitMixedPaths:
     for V4 settlement in a subsequent operation (V4_BURN, 0 xfers).
     """
 
-    def test_v2_v4_v4_mint_profit(
-        self, weth, usdc, wbtc, owner_account, executor, v4_pm, v2_a
-    ):
+    def test_v2_v4_v4_mint_profit(self, weth, usdc, wbtc, owner_account, executor, v4_pm, v2_a):
         """V2-V4-V4 with V4_MINT profit: 3 ERC20 transfers → 2.
 
         Replaces the V4_TAKE WETH→executor (profit extraction) with
@@ -549,9 +537,7 @@ class TestERC6909MintProfitMixedPaths:
         v2a_zfo = v2_a.token0() == weth.address
         a_out = AMOUNT_USDC  # from set_next_swap
 
-        pool_key_b = _make_pool_key(
-            usdc.address, wbtc.address, fee=500, tick_spacing=10
-        )
+        pool_key_b = _make_pool_key(usdc.address, wbtc.address, fee=500, tick_spacing=10)
         zfo_b = pool_key_b[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -563,9 +549,7 @@ class TestERC6909MintProfitMixedPaths:
             output_token=wbtc,
         )
 
-        pool_key_c = _make_pool_key(
-            wbtc.address, weth.address, fee=10000, tick_spacing=200
-        )
+        pool_key_c = _make_pool_key(wbtc.address, weth.address, fee=10000, tick_spacing=200)
         zfo_c = pool_key_c[0] == wbtc.address
         _setup_v4_swap(
             v4_pm,
@@ -599,9 +583,7 @@ class TestERC6909MintProfitMixedPaths:
             at.add(v2_a.address), v2a_zfo, a_out, executor_idx, forward_data=a_fwd
         )
         # ERC6909/WETHDeposit changes token representation
-        tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands, sender=owner_account
-        )
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx.status == 1
 
         # Profit as ERC6909
@@ -612,9 +594,7 @@ class TestERC6909MintProfitMixedPaths:
             f"\n  ✅ V2-V4-V4 with V4_MINT: {AMOUNT_WETH_PROFIT} WETH as ERC6909 (2 ERC20 transfers, was 3)"
         )
 
-    def test_v3_v4_v4_mint_profit(
-        self, weth, usdc, wbtc, owner_account, executor, v4_pm, v3_a
-    ):
+    def test_v3_v4_v4_mint_profit(self, weth, usdc, wbtc, owner_account, executor, v4_pm, v3_a):
         """V3-V4-V4 with V4_MINT profit: 3 ERC20 transfers → 2.
 
         V3a→PM USDC (1), V4_TAKE WETH→V3a for IIA (1), V4_MINT profit (0 xfers).
@@ -623,9 +603,7 @@ class TestERC6909MintProfitMixedPaths:
         """
         a_zfo, a_usdc_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
 
-        pool_key_b = _make_pool_key(
-            usdc.address, wbtc.address, fee=500, tick_spacing=10
-        )
+        pool_key_b = _make_pool_key(usdc.address, wbtc.address, fee=500, tick_spacing=10)
         zfo_b = pool_key_b[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -637,9 +615,7 @@ class TestERC6909MintProfitMixedPaths:
             output_token=wbtc,
         )
 
-        pool_key_c = _make_pool_key(
-            wbtc.address, weth.address, fee=10000, tick_spacing=200
-        )
+        pool_key_c = _make_pool_key(wbtc.address, weth.address, fee=10000, tick_spacing=200)
         zfo_c = pool_key_c[0] == wbtc.address
         _setup_v4_swap(
             v4_pm,
@@ -670,11 +646,9 @@ class TestERC6909MintProfitMixedPaths:
         a_fwd = enc_v4_unlock(v4_inner)
 
         commands = enc_v4_sync(usdc_idx)
-        commands += enc_v3_swap_compact(
-            v3a_idx, a_zfo, AMOUNT_WETH, pm_idx, forward_data=a_fwd
-        )
+        commands += enc_v3_swap_compact(v3a_idx, a_zfo, AMOUNT_WETH, pm_idx, forward_data=a_fwd)
 
-        tx = executor.execute(enc_preamble(at) + commands, sender=owner_account)
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx.status == 1
 
         # Profit as ERC6909
@@ -706,9 +680,7 @@ class TestETHFundedSettlement:
     ERC20 transfer count.
     """
 
-    def test_v4_v4_v4_with_weth_deposit(
-        self, weth, usdc, wbtc, owner_account, executor, v4_pm
-    ):
+    def test_v4_v4_v4_with_weth_deposit(self, weth, usdc, wbtc, owner_account, executor, v4_pm):
         """V4-V4-V4 with WETH_DEPOSIT funding + V4_MINT profit.
 
         WETH_DEPOSIT wraps native ETH → WETH (0 ERC20 xfers when counted
@@ -720,9 +692,7 @@ class TestETHFundedSettlement:
         The savings come from NOT needing to source WETH from external pools.
         """
         executor.balance += AMOUNT_WETH
-        pool_key_a = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_key_a = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         zfo_a = pool_key_a[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -734,9 +704,7 @@ class TestETHFundedSettlement:
             output_token=usdc,
         )
 
-        pool_key_b = _make_pool_key(
-            usdc.address, wbtc.address, fee=500, tick_spacing=10
-        )
+        pool_key_b = _make_pool_key(usdc.address, wbtc.address, fee=500, tick_spacing=10)
         zfo_b = pool_key_b[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -748,9 +716,7 @@ class TestETHFundedSettlement:
             output_token=wbtc,
         )
 
-        pool_key_c = _make_pool_key(
-            wbtc.address, weth.address, fee=10000, tick_spacing=200
-        )
+        pool_key_c = _make_pool_key(wbtc.address, weth.address, fee=10000, tick_spacing=200)
         zfo_c = pool_key_c[0] == wbtc.address
         _setup_v4_swap(
             v4_pm,
@@ -783,9 +749,7 @@ class TestETHFundedSettlement:
 
         commands = enc_v4_unlock(inner)
         # ERC6909/WETHDeposit changes token representation
-        tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands, sender=owner_account
-        )
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx.status == 1
 
         # ERC6909 = AMOUNT_WETH_PROFIT (2 WETH = 1 principal from ETH + 1 profit from arb)
@@ -793,9 +757,7 @@ class TestETHFundedSettlement:
         erc6909_bal = v4_pm.balanceOf(executor.address, weth_id)
         assert erc6909_bal == AMOUNT_WETH_PROFIT + WARMUP_WEI
 
-        print(
-            f"\n  ✅ V4-V4-V4 with WETH_DEPOSIT + V4_MINT: {AMOUNT_WETH_PROFIT} WETH as ERC6909"
-        )
+        print(f"\n  ✅ V4-V4-V4 with WETH_DEPOSIT + V4_MINT: {AMOUNT_WETH_PROFIT} WETH as ERC6909")
         print("     Executor invested 1 ETH (via WETH_DEPOSIT), arb profit 1 WETH")
         print("     Total ERC6909 = 2 WETH (1 principal + 1 profit)")
         print("     Net profit after V4_BURN+V4_TAKE withdrawal: 1 WETH")

@@ -271,7 +271,7 @@ pub(crate) fn emit_currency_bridge(
 /// rows declare `{funding}`); every other family derives it (`InPathFlash`).
 /// `capture` is branched only by the pure-V4 families `v4_v4` / `v4_v4_v4`
 /// (their rows declare `{capture}`); V2/V3-only and V4-involving-but-not-
-/// pure-V4 streams reach `capture` only via the on-chain `check_mode` config
+/// pure-V4 streams reach `capture` only via the on-chain `profit_mode` config
 /// (a different seam), NOT the stream bytes. `bribe` is branched by no family
 /// (it rides `pack_config`, never the stream). Spreading an axis across more
 /// families is separate follow-up work, not this surface's claim. The legacy
@@ -281,7 +281,7 @@ pub(crate) fn emit_currency_bridge(
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EncodeOptions {
     /// If `true`, use `V4_MINT_COMPACT` instead of `V4_TAKE_DELTA` for profit
-    /// capture on pure-V4 paths (saves ~20K gas; needs `check_mode=2`).
+    /// capture on pure-V4 paths (saves ~20K gas; needs `profit_mode=2`).
     /// Legacy alias for `capture = ProfitCapture::Erc6909` (see [`resolve_axes`]).
     pub erc6909_profit: bool,
     /// If `true`, use `V4_BATCH` instead of individual `V4_SWAP_COMPACT`/`_DYNAMIC`
@@ -527,8 +527,8 @@ pub struct EncodedCall {
 /// Build the `execute(bytes,uint256)` `config` uint256 matching an
 /// [`EncodeOptions`] (the axis-aware config builder). Reads the full
 /// per-path axis set:
-///   - `capture` → `check_mode`: `Erc6909` = 2 (verify via PM.balanceOf),
-///     `SweepToAddress` = 3 (SWEEP — defeats the assert), every other capture
+///   - `capture` → `profit_mode`: `Erc6909` = 2 (verify via PM.balanceOf),
+///     every other capture
 ///     (`Custody`/`Native`/`Owner`/`BalancerVault`) = 1 (WETH+ETH combined
 ///     balance assert — active by default). Resolved through
 ///     [`resolve_axes`] so the legacy `erc6909_profit` bool is collapsed into
@@ -536,37 +536,28 @@ pub struct EncodedCall {
 ///     `Erc6909`).
 ///   - `bribe` → `bribe_bips` + `bribe_recipient_idx`: `None` = (0, 0) (no bribe);
 ///     `Some{bips, recipient_idx}` is forwarded (recipient_idx 0 = block.coinbase).
-///   - `expected_value` is IGNORED (kept in the signature for ABI compat; the
-///     contract fix made the executor read its OWN combined balance at
-///     start+end, so the operator no longer supplies the pre-tx balance).
+///   - `min_profit` is packed into bits 32–255 and enforced against gross
+///     balance-domain growth before bribe payment.
 ///
 /// This is the single axis-aware config builder. Production
 /// (`degenbot-arbitrage`'s `simulate_path_on_evm`) packs every
 /// `execute(bytes, uint256)` call through it, and the declarative harness
 /// (`run_path_with_*`) mirrors it — so the on-chain profit check
-/// (check_mode 1/2/3) runs under production exactly as it runs under tests.
-/// Only the offline calldata-dump examples use the raw zero config.
+/// (profit_mode 1/2) runs under production exactly as it runs under tests.
 ///
 /// # Errors
 ///
 /// Returns [`crate::encoders::EncoderError`] if the resolved
 /// `bribe` axis is out of range (`bips > 10_000` or `recipient_idx >= 32`);
-/// `check_mode` is always in range (statically resolved from `ProfitCapture`).
+/// `profit_mode` is always in range (statically resolved from `ProfitCapture`).
 pub fn config_for_options(
     opts: EncodeOptions,
-    expected_value: U256,
+    min_profit: U256,
 ) -> Result<U256, crate::config::ConfigError> {
-    let _ = expected_value; // ignored — the contract reads its own balance.
     let (_, capture, bribe) = resolve_axes(opts);
-    // Defect fix: the profit assert is active by default. Non-erc6909
-    // captures use check_mode=1 (WETH+ETH combined balance assert — the
-    // on-chain money-loss protection the operator wants active "nearly
-    // always"); Erc6909 uses check_mode=2 (ERC6909 WETH). check_mode=0 (fast
-    // path, no assert) is no longer the default — it was the footgun that
-    // silently skipped the profit check.
-    let check_mode = match capture {
+    // Physical captures use WETH+ETH accounting; ERC6909 captures use claims.
+    let profit_mode = match capture {
         crate::grammar_ledger::ProfitCapture::Erc6909 => 2u8,
-        crate::grammar_ledger::ProfitCapture::SweepToAddress => 3u8,
         _ => 1u8,
     };
     let (bribe_bips, bribe_recipient_idx) = match bribe {
@@ -576,14 +567,14 @@ pub fn config_for_options(
             recipient_idx,
         } => (bips, recipient_idx),
     };
-    crate::config::pack_config(check_mode, U256::ZERO, bribe_bips, bribe_recipient_idx)
+    crate::config::pack_config(profit_mode, min_profit, bribe_bips, bribe_recipient_idx)
 }
 
 /// Wrap a command-stream `commands` payload in the `execute(bytes, uint256)`
 /// ABI call to the `cmd_executor` contract.
 ///
 /// `config` is the packed `execute()` config uint256 (see
-/// [`config::pack_config`]); `0` = skip profit check, no bribe.
+/// [`config::pack_config`]).
 #[must_use]
 pub fn encode_execute_call(
     executor_address: Address,
@@ -1075,8 +1066,8 @@ fn resolve_axes_funding_passes_through() {
 
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
-fn config_for_options_default_is_check_mode_1() {
-    // Defect fix: default (Custody, no bribe) → check_mode=1 (WETH+ETH
+fn config_for_options_default_is_profit_mode_1() {
+    // Defect fix: default (Custody, no bribe) → profit_mode=1 (WETH+ETH
     // profit assert active). The contract reads its own combined balance at
     // start+end and asserts combined_after >= combined_before. This is the
     // "profit assert active nearly always" protection the operator wants.
@@ -1084,7 +1075,7 @@ fn config_for_options_default_is_check_mode_1() {
     assert_eq!(
         cfg & U256::from(255u64),
         U256::from(1u64),
-        "default → check_mode=1"
+        "default → profit_mode=1"
     );
     assert_eq!(
         (cfg >> 8) & U256::from(65535u64),
@@ -1095,7 +1086,7 @@ fn config_for_options_default_is_check_mode_1() {
 
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
-fn config_for_options_capture_erc6909_sets_check_mode_2() {
+fn config_for_options_capture_erc6909_sets_profit_mode_2() {
     let opts = EncodeOptions {
         capture: crate::grammar_ledger::ProfitCapture::Erc6909,
         ..Default::default()
@@ -1104,14 +1095,14 @@ fn config_for_options_capture_erc6909_sets_check_mode_2() {
     assert_eq!(
         cfg & U256::from(255u64),
         U256::from(2u64),
-        "Erc6909 → check_mode=2"
+        "Erc6909 → profit_mode=2"
     );
 }
 
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
-fn config_for_options_capture_native_is_check_mode_1() {
-    // Native capture also uses check_mode=1 (WETH+ETH combined assert;
+fn config_for_options_capture_native_is_profit_mode_1() {
+    // Native capture also uses profit_mode=1 (WETH+ETH combined assert;
     // the in-stream WETH_WITHDRAW leaves the profit as ETH, still counted in
     // the combined balance). The profit assert is active for Native capture too.
     let opts = EncodeOptions {
@@ -1122,15 +1113,15 @@ fn config_for_options_capture_native_is_check_mode_1() {
     assert_eq!(
         cfg & U256::from(255u64),
         U256::from(1u64),
-        "Native → check_mode=1 (assert active)"
+        "Native → profit_mode=1 (assert active)"
     );
 }
 
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
-fn config_for_options_legacy_erc6909_bool_forces_check_mode_2() {
+fn config_for_options_legacy_erc6909_bool_forces_profit_mode_2() {
     // Backwards-compat: the legacy `erc6909_profit: true` bool forces
-    // Erc6909 (via resolve_axes precedence) → check_mode=2.
+    // Erc6909 (via resolve_axes precedence) → profit_mode=2.
     let opts = EncodeOptions {
         erc6909_profit: true,
         capture: crate::grammar_ledger::ProfitCapture::Custody, // overridden
@@ -1140,7 +1131,7 @@ fn config_for_options_legacy_erc6909_bool_forces_check_mode_2() {
     assert_eq!(
         cfg & U256::from(255u64),
         U256::from(2u64),
-        "legacy bool forces check_mode=2"
+        "legacy bool forces profit_mode=2"
     );
 }
 
@@ -1163,17 +1154,10 @@ fn config_for_options_bribe_packs_bips_and_recipient() {
 
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
-fn config_for_options_expected_value_is_ignored() {
-    // expected_value is IGNORED (the contract reads its own combined
-    // balance at start+end). The high bits are always 0 regardless of the
-    // operator-supplied expected_value.
-    let ev = U256::from(0xBEEFu64);
-    let cfg = config_for_options(EncodeOptions::default(), ev).unwrap();
-    assert_eq!(
-        cfg >> 32,
-        U256::ZERO,
-        "expected_value ignored by the builder"
-    );
+fn config_for_options_packs_min_profit() {
+    let min_profit = U256::from(0xBEEFu64);
+    let cfg = config_for_options(EncodeOptions::default(), min_profit).unwrap();
+    assert_eq!(cfg >> 32, min_profit);
 }
 
 #[test]
@@ -1189,25 +1173,8 @@ fn config_for_options_combines_all_axes() {
         ..Default::default()
     };
     let cfg = config_for_options(opts, U256::from(1_000_000u64)).unwrap();
-    assert_eq!(cfg & U256::from(255u64), U256::from(2u64)); // check_mode=2
+    assert_eq!(cfg & U256::from(255u64), U256::from(2u64)); // profit_mode=2
     assert_eq!((cfg >> 8) & U256::from(65535u64), U256::from(500u64)); // bips
     assert_eq!((cfg >> 24) & U256::from(255u64), U256::ZERO); // recipient=0 (coinbase)
-    assert_eq!(cfg >> 32, U256::ZERO); // expected_value ignored
-}
-
-#[test]
-#[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
-fn config_for_options_capture_sweep_to_address_sets_check_mode_3() {
-    // follow-up: ProfitCapture::SweepToAddress routes to
-    // check_mode=3 (SWEEP) — the only way to defeat the profit assert.
-    let opts = EncodeOptions {
-        capture: crate::grammar_ledger::ProfitCapture::SweepToAddress,
-        ..Default::default()
-    };
-    let cfg = config_for_options(opts, U256::ZERO).unwrap();
-    assert_eq!(
-        cfg & U256::from(255u64),
-        U256::from(3u64),
-        "SweepToAddress → check_mode=3 (SWEEP)"
-    );
+    assert_eq!(cfg >> 32, U256::from(1_000_000u64));
 }

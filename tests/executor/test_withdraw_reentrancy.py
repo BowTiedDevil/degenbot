@@ -66,15 +66,11 @@ class TestWithdrawReentrancyGuard:
         # Post-conditions: executor's WETH untouched (tx reverted).
         assert weth.balanceOf(executor.address) == AMOUNT_WETH
         # Attacker got nothing.
-        assert (
-            weth.balanceOf(attacker_dest.address) == 0
-        )
+        assert weth.balanceOf(attacker_dest.address) == 0
         # No extra WETH left the executor beyond the attempted amount (it didn't even leave).
         assert weth.balanceOf(owner_account) == owner_weth_before
 
-    def test_withdraw_honest_path_unaffected(
-        self, weth, owner_account, executor, accounts
-    ):
+    def test_withdraw_honest_path_unaffected(self, weth, owner_account, executor, accounts):
         """
         Sanity: an honest destination (a plain EOA) can still withdraw.
         This guards against a fix that over-restricts the honest path.

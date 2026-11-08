@@ -121,11 +121,8 @@ pub fn execute_gas_limit() -> u64 {
         .unwrap_or(INITIAL_EXECUTE_GAS)
 }
 
-// NOTE: the former `EXECUTE_CONFIG = U256::ZERO` constant
-// (raw config=0, no on-chain profit check) was deleted with the one-shot
-// calldata-dump examples it existed for. Production always builds `config`
-// via the axis-aware `config_for_options` (active profit assert by
-// default, `check_mode=2` under `erc6909_profit`).
+// Production builds `config` through the axis-aware `config_for_options`
+// (physical mode by default, ERC6909 mode under `erc6909_profit`).
 
 /// The int128 range bounds (ports `INT128_MIN`/`INT128_MAX` from
 /// `degenbot.arbitrage.encoding`, L19–L20).

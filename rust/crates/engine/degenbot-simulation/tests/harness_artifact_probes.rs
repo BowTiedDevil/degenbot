@@ -19,7 +19,7 @@
 //! (0x42→0x43 plan step) and the driver-bytecode resync must preserve,
 //! independent of the encoder itself:
 //!
-//! - (A) open batch + trailing WETH mint EXECUTES with the `check_mode=2`
+//! - (A) open batch + trailing WETH mint EXECUTES with the `profit_mode=2`
 //!   floor armed, and the profit lands in the ERC6909 vault (positive
 //!   `PM.balanceOf(executor, weth)` delta — the oracle half of the
 //!   on-chain floor).
@@ -204,8 +204,7 @@ struct ProbeResult {
     predicted: i128,
 }
 
-/// Like `Harness::run_raw_payload` but with an explicit `execute()` `config`
-/// (the `check_mode` axis) — `run_raw_payload` hardwires `config=0`.
+/// Run an explicit payload with a selected measured balance domain.
 fn run_raw_config(
     h: &mut Harness,
     hops: &[Hop],
@@ -285,7 +284,7 @@ fn reference_nonbatch_capture_stream_still_executes_with_mode2_floor() {
 }
 
 /// `(A)` an open-weth batch (0x43) + trailing WETH mint executes with the
-/// `check_mode=2` floor armed and lands the profit in the ERC6909 vault.
+/// `profit_mode=2` floor armed and lands the profit in the ERC6909 vault.
 #[test]
 fn probe_open_weth_batch_plus_mint_executes_with_mode2_floor_and_capture() {
     let (mut h, hops, hop_outputs, preamble, s1, s2, mint, _ref) = probe_setup();
@@ -384,7 +383,7 @@ fn probe_open_batch_without_mint_reverts_unsettled_at_unlock() {
     let mut payload = preamble.clone();
     payload.extend(enc_v4_unlock(&inner).unwrap());
 
-    let res = run_raw_config(&mut h, &hops, &hop_outputs, &payload, U256::ZERO)
+    let res = run_raw_config(&mut h, &hops, &hop_outputs, &payload, U256::from(2u32))
         .unwrap_or_else(|e| panic!("run: {e}"));
     let ExecOutcome::Reverted { raw, .. } = &res.outcome else {
         panic!("expected a revert, got {:?}", res.outcome);

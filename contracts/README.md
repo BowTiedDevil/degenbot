@@ -134,14 +134,24 @@ Full documentation: `docs/executor/README.md`
 ### Interface
 
 ```vyper
+struct ExecutionReceipt:
+    gross_profit: uint256
+    bribe_paid: uint256
+
 @payable
-def execute(commands: Bytes[288], config: uint256 = 0) -> uint256
+def execute(commands: Bytes[288], config: uint256 = 1) -> ExecutionReceipt
+
+def sweep(destination: address)
 ```
 
-Single entry point. `config` packs profit-check mode, bribe bips/recipient,
-and expected pre-tx balance (see `pack_config()` in `contracts.cmd_stream`):
-`config = (expected_value << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | check_mode`.
-`config=0` skips the on-chain profit check and sends no bribe.
+`config = (min_profit << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | profit_mode`.
+Mode 1 measures physical WETH + native ETH; mode 2 measures PoolManager
+ERC6909 WETH claims. Other modes revert. `gross_profit` is the selected
+balance-domain increase after all commands and before bribe payment;
+`bribe_paid` is the actual native ETH paid after any available-balance cap.
+A decrease or `gross_profit < min_profit` reverts. `sweep()` is a separate
+owner-only administrative transfer of all physical WETH + native ETH and has
+no profit or bribe semantics.
 
 The command stream format:
 
@@ -217,7 +227,7 @@ SKIP_PROFIT_CHECK / BRIBE behavior they used to encode moved into `config`.
 | `AddressTable` | Track addresses for compact index-based referencing |
 | `enc_v4_swap_compact()`, `enc_v4_take()`, etc. | Individual command encoders |
 | `enc_preamble()` | Build preprocessing section (SET_ADDRESS commands + `0xFF`) |
-| `pack_config()` | Pack the `execute()` `config` param (check_mode + bribe bips/recipient + expected_value) |
+| `pack_config()` | Pack the `execute()` `config` param (profit_mode + bribe bips/recipient + min_profit) |
 | `V4V4ArbitragePayload` | Build V4→V4 2-pool command stream |
 | `V4V3ArbitragePayload` | Build V4→V3 2-pool command stream |
 | `CmdExecutorComposer` | `PayloadComposer` impl — composes `SwapAmounts` → command stream |
@@ -233,7 +243,7 @@ SKIP_PROFIT_CHECK / BRIBE behavior they used to encode moved into `config`.
 7. **V2_SWAP_CALC excess balance** — Reads `balanceOf(pair) - reserves` for input amount from tokens deposited via V4_TAKE directly to V2 pair.
 8. **Address table index hygiene** — `AddressTable` deduplicates by checksummed address. In list comprehensions building `pool_indices`, the iteration variable **must** match the attribute access variable (e.g., `at.add(h.pool_address) for h in hops`, not `at.add(hop.pool_address) for h in hops`). A mismatch silently references an outer-scope variable from a prior loop, causing all pool addresses to resolve to the same deduplicated index. The resulting command stream calls the wrong pool for every V2_SWAP_CALC/V2_SWAP_COMPACT, producing `V2_SWAP_CALC: no excess balance` reverts.
 9. **Protocol sentinels only** — Only 4 address indices are sentinels: `0xFC`=PM, `0xFD`=self, `0xFE`=WETH, `0xFF`=NATIVE. Per-path tokens (USDC, WBTC, ...) are NOT baked into the contract --- they go through `t_addresses` via SET_ADDRESS. The old `USER0`/`USER1` sentinels were removed to avoid benchmark-overfitting and silent mis-resolution.
-10. **Config in ABI param, not the stream** — Profit check mode, bribe bips/recipient, and expected pre-tx balance are packed into the `config` uint256 argument of `execute()` (see `pack_config()`). The old stream opcodes `0x01`–`0x03` (SKIP_PROFIT_CHECK / BRIBE_COINBASE / BRIBE_ADDRESS) are reserved --- emitting them reverts.
+10. **Config in ABI param, not the stream** — Profit check mode, bribe bips/recipient, and minimum gross profit are packed into the `config` uint256 argument of `execute()` (see `pack_config()`). The old stream opcodes `0x01`–`0x03` (SKIP_PROFIT_CHECK / BRIBE_COINBASE / BRIBE_ADDRESS) are reserved --- emitting them reverts.
 11. **Function extraction for Venom** — Dispatch split into 21+ `@internal` `_cmd_*` functions, enabling Venom's `ConcretizeMemLocPass` to reclaim memory across handlers. Memory: 22,976 → 8,544 (−62.8%).
 
 ### V3 vs V4 amountSpecified Sign Convention

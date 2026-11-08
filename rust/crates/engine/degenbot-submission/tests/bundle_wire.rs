@@ -105,7 +105,7 @@ fn t05_config_word_bribe_recipient_table_index() {
 }
 
 #[test]
-fn t06_expected_value_occupies_upper_bits() {
+fn t06_min_profit_occupies_upper_bits() {
     let ev = U256::from(0xdead_beefu64) * U256::from(1_000_000u64);
     let cfg = encode_config_word(1, 0, 0, ev);
     let (_, _, _, got) = decode_config_word(cfg);

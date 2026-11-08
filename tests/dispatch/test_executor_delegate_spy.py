@@ -154,6 +154,13 @@ class TestDelegateSpyEncodeCall:
             "builtin_function",
         )
 
+    def test_pack_config_uses_profit_mode_and_min_profit(self) -> None:
+        from tests.helpers.seam import executor as _ffi_executor
+
+        assert _ffi_executor.pack_config(1, 0xBEEF) == (0xBEEF << 32) | 1
+        with pytest.raises(ValueError, match="profit_mode"):
+            _ffi_executor.pack_config(0, 0)
+
     def test_mapping_slot_is_rust_bound(self) -> None:
         from tests.helpers.seam import executor as _ffi_executor
 

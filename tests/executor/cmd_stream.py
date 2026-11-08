@@ -149,8 +149,9 @@ def parse_commands(data: bytes, recurse_unlock: bool = True) -> list[dict]:
             exec_start = offset + 1
         else:
             raise ValueError(
-                f"Expected 0xFF execution separator at offset {offset}, "
-                f"got 0x{data[offset]:02x}" if offset < len(data) else "EOF"
+                f"Expected 0xFF execution separator at offset {offset}, got 0x{data[offset]:02x}"
+                if offset < len(data)
+                else "EOF"
             )
 
     commands = _parse_command_list(data, exec_start, len(data), recurse_unlock)
@@ -169,7 +170,7 @@ def _parse_command_list(data: bytes, start: int, end: int, recurse_unlock: bool)
             # [opcode:1][len:2][payload:len]
             if offset + 3 > end:
                 break
-            length = int.from_bytes(data[offset + 1: offset + 3], "big")
+            length = int.from_bytes(data[offset + 1 : offset + 3], "big")
             cmd_size = 3 + length
         elif opcode in LATE_LENGTH_OPCODES:
             # V2/V3 swap compact: forward_len field appears at a fixed offset
@@ -186,14 +187,12 @@ def _parse_command_list(data: bytes, start: int, end: int, recurse_unlock: bool)
                 header_size = 22
             if fwd_len_off + 2 > end:
                 break
-            fwd_len = int.from_bytes(data[fwd_len_off:fwd_len_off + 2], "big")
+            fwd_len = int.from_bytes(data[fwd_len_off : fwd_len_off + 2], "big")
             cmd_size = header_size + fwd_len
         elif opcode in FIXED_SIZES:
             cmd_size = FIXED_SIZES[opcode]
         else:
-            raise ValueError(
-                f"Unknown opcode 0x{opcode:02x} at offset {offset}"
-            )
+            raise ValueError(f"Unknown opcode 0x{opcode:02x} at offset {offset}")
 
         entry = {"opcode": opcode, "offset": offset, "size": cmd_size, "inner": None}
 
@@ -201,9 +200,7 @@ def _parse_command_list(data: bytes, start: int, end: int, recurse_unlock: bool)
         if recurse_unlock and opcode == CMD_V4_UNLOCK:
             payload_start = offset + 3  # skip [0x50][len:2]
             payload_end = offset + cmd_size
-            entry["inner"] = _parse_command_list(
-                data, payload_start, payload_end, recurse_unlock
-            )
+            entry["inner"] = _parse_command_list(data, payload_start, payload_end, recurse_unlock)
 
         # Recurse into V2/V3 SWAP_COMPACT forward_data
         # V2_SWAP_COMPACT: [0x20][pool:1][zfo:1][amount:16][recipient:1][fee:2][fwd_len:2][fwd:N]
@@ -216,13 +213,11 @@ def _parse_command_list(data: bytes, start: int, end: int, recurse_unlock: bool)
             else:
                 fwd_len_offset = offset + 20
             if fwd_len_offset + 2 <= offset + cmd_size:
-                fwd_len = int.from_bytes(data[fwd_len_offset:fwd_len_offset + 2], "big")
+                fwd_len = int.from_bytes(data[fwd_len_offset : fwd_len_offset + 2], "big")
                 fwd_start = fwd_len_offset + 2
                 fwd_end = fwd_start + fwd_len
                 if fwd_end <= offset + cmd_size and fwd_len > 0:
-                    entry["inner"] = _parse_command_list(
-                        data, fwd_start, fwd_end, recurse_unlock
-                    )
+                    entry["inner"] = _parse_command_list(data, fwd_start, fwd_end, recurse_unlock)
 
         commands.append(entry)
         offset += cmd_size

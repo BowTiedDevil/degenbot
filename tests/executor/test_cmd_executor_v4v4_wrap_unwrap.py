@@ -56,14 +56,10 @@ AMOUNT_ETH = 1 * 10**18
 class TestV4WethToV4Eth:
     """V4 (WETH output) → WETH_WITHDRAW → V4 (ETH input)."""
 
-    def test_v4_weth_to_v4_eth_with_inline_unwrap(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_v4_weth_to_v4_eth_with_inline_unwrap(self, usdc, weth, owner_account, executor, v4_pm):
         """V4 (sell USDC, buy WETH) → WETH_WITHDRAW → V4 (sell ETH, buy USDC)."""
         # Pool A: WETH/USDC — sell USDC, buy WETH
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -76,9 +72,7 @@ class TestV4WethToV4Eth:
         )
 
         # Pool B: NATIVE_ADDRESS/USDC — sell ETH, buy USDC
-        pool_b_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_b_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10)
         pool_b_zfo = pool_b_key[0] == NATIVE_ADDRESS
         _setup_v4_swap(
             v4_pm,
@@ -134,9 +128,7 @@ class TestV4WethToV4Eth:
         self, usdc, weth, owner_account, executor, v4_pm
     ):
         """Same but using WETH_WITHDRAW_ALL."""
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -148,9 +140,7 @@ class TestV4WethToV4Eth:
             output_token=weth,
         )
 
-        pool_b_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_b_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10)
         pool_b_zfo = pool_b_key[0] == NATIVE_ADDRESS
         _setup_v4_swap(
             v4_pm,
@@ -215,14 +205,10 @@ class TestV4WethToV4Eth:
 class TestV4EthToV4Weth:
     """V4 (ETH output) → WETH_DEPOSIT → V4 (WETH input)."""
 
-    def test_v4_eth_to_v4_weth_with_inline_wrap(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_v4_eth_to_v4_weth_with_inline_wrap(self, usdc, weth, owner_account, executor, v4_pm):
         """V4 (sell USDC, buy ETH) → WETH_DEPOSIT → V4 (sell WETH, buy USDC)."""
         # Pool A: NATIVE_ADDRESS/USDC — sell USDC, buy ETH
-        pool_a_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -235,9 +221,7 @@ class TestV4EthToV4Weth:
         )
 
         # Pool B: WETH/USDC — sell WETH, buy USDC
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=500, tick_spacing=10)
         pool_b_zfo = pool_b_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -293,9 +277,7 @@ class TestV4EthToV4Weth:
         self, usdc, weth, owner_account, executor, v4_pm
     ):
         """Same but using WETH_DEPOSIT_ALL."""
-        pool_a_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -307,9 +289,7 @@ class TestV4EthToV4Weth:
             fund_eth=True,
         )
 
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=500, tick_spacing=10)
         pool_b_zfo = pool_b_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,

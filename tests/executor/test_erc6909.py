@@ -61,9 +61,7 @@ class TestERC6909ViewFunctions:
 class TestERC6909Mint:
     """Test V4_MINT_COMPACT converts positive delta into ERC6909 balance."""
 
-    def test_mint_creates_erc6909_balance(
-        self, usdc, weth, owner_account, v4_pm, executor
-    ):
+    def test_mint_creates_erc6909_balance(self, usdc, weth, owner_account, v4_pm, executor):
         """
         V4 WETH→USDC swap, then mint USDC as ERC6909 instead of take.
 
@@ -116,9 +114,7 @@ class TestERC6909Mint:
         commands = enc_v4_unlock(inner)
 
         # ERC6909 mint/burn converts ETH/WETH to ERC6909, reducing combined balance
-        tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands, sender=owner_account
-        )
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx.status == 1
 
         erc6909_bal = pm.balanceOf(executor.address, usdc_id)
@@ -135,9 +131,7 @@ class TestERC6909Mint:
 class TestERC6909Burn:
     """Test V4_BURN_COMPACT converts ERC6909 balance into a payable delta."""
 
-    def test_burn_settles_from_erc6909(
-        self, usdc, weth, owner_account, v4_pm, executor
-    ):
+    def test_burn_settles_from_erc6909(self, usdc, weth, owner_account, v4_pm, executor):
         """
         Two-phase flow using cmd_executor:
         1. Swap WETH→USDC, mint USDC as ERC6909, settle WETH debt
@@ -155,9 +149,7 @@ class TestERC6909Burn:
         zero_idx = at.add(ZERO_ADDRESS)
 
         # ── Phase 1: WETH→USDC swap, mint USDC as ERC6909 ──
-        pool_key_a = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_key_a = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         zfo_a = pool_key_a[0] == weth.address
         _setup_v4_swap(
             pm,
@@ -187,16 +179,12 @@ class TestERC6909Burn:
         commands_1 = enc_v4_unlock(inner_1)
 
         # ERC6909 mint/burn converts ETH/WETH to ERC6909, reducing combined balance
-        tx1 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
         assert pm.balanceOf(executor.address, usdc_id) == AMOUNT_USDC
 
         # ── Phase 2: USDC→WETH swap, burn ERC6909 USDC to pay ──
-        pool_key_b = _make_pool_key(
-            usdc.address, weth.address, fee=3000, tick_spacing=60
-        )
+        pool_key_b = _make_pool_key(usdc.address, weth.address, fee=3000, tick_spacing=60)
         zfo_b = pool_key_b[0] == usdc.address
         _setup_v4_swap(
             pm,
@@ -226,17 +214,13 @@ class TestERC6909Burn:
         commands_2 = enc_v4_unlock(inner_2)
 
         # ERC6909 mint/burn converts ETH/WETH to ERC6909, reducing combined balance
-        tx2 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_2, sender=owner_account
-        )
+        tx2 = executor.execute(enc_preamble(at) + commands_2, 2, sender=owner_account)
         assert tx2.status == 1
 
         assert pm.balanceOf(executor.address, usdc_id) == 0
         assert weth.balanceOf(executor.address) >= AMOUNT_WETH_PROFIT
 
-        print(
-            "\n  ✅ burn() settled USDC debt from ERC6909 balance (no physical transfer)"
-        )
+        print("\n  ✅ burn() settled USDC debt from ERC6909 balance (no physical transfer)")
         print(f"     Executor received {AMOUNT_WETH_PROFIT} WETH via take()")
 
 
@@ -309,7 +293,8 @@ class TestERC6909GasSavings:
 
         tx_take = executor.execute(
             # ERC6909 mint/burn converts ETH/WETH to ERC6909, reducing combined balance
-            enc_preamble(at, skip_profit=True) + commands_take,
+            enc_preamble(at) + commands_take,
+            2,
             sender=owner_account,
         )
         take_gas = tx_take.gas_used
@@ -348,7 +333,8 @@ class TestERC6909GasSavings:
 
         tx_mint = executor.execute(
             # ERC6909 mint/burn converts ETH/WETH to ERC6909, reducing combined balance
-            enc_preamble(at, skip_profit=True) + commands_mint,
+            enc_preamble(at) + commands_mint,
+            2,
             sender=owner_account,
         )
         mint_gas = tx_mint.gas_used
@@ -363,6 +349,4 @@ class TestERC6909GasSavings:
         )
 
         # Mint should save gas because it avoids the ERC-20 transfer
-        assert mint_gas < take_gas, (
-            "mint should be cheaper than take (no ERC-20 transfer)"
-        )
+        assert mint_gas < take_gas, "mint should be cheaper than take (no ERC-20 transfer)"

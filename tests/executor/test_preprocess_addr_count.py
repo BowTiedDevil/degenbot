@@ -39,11 +39,10 @@ class TestL4PreprocessAddrCount:
         that fit; the addr_count guard is architectural (robust to future
         multi-byte preprocessing opcodes) plus a fail-closed assert."""
         from .conftest_shared import enc_weth_deposit_all
+
         n = 13  # floor(288-2 / 21) = 13 fit
         commands = (
-            b"".join(enc_set_address(_addr(i)) for i in range(n))
-            + b"\xff"
-            + enc_weth_deposit_all()
+            b"".join(enc_set_address(_addr(i)) for i in range(n)) + b"\xff" + enc_weth_deposit_all()
         )
         tx = executor.execute(commands, sender=owner_account)
         assert tx.status == 1

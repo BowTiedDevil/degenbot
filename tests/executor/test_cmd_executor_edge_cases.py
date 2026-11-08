@@ -23,9 +23,7 @@ from .conftest_shared import (
 @pytest.fixture
 def v2_pair(project, owner_account, usdc, weth):
     token0, token1 = sorted([usdc.address, weth.address], key=lambda addr: addr.lower())
-    return project.fake_uniswap_v2_pair.deploy(
-        token0, token1, 0, 30, sender=owner_account
-    )
+    return project.fake_uniswap_v2_pair.deploy(token0, token1, 0, 30, sender=owner_account)
 
 
 AMOUNT_WETH = AMOUNT_ETH = 1 * 10**18
@@ -42,9 +40,7 @@ class TestV4NativeEthSettlement:
         V4_SETTLE_DELTA handles native ETH by calling settle(value=owed).
         """
         executor.balance += AMOUNT_ETH
-        pool_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10)
         # NATIVE:ETH is always token0 (0x0000 sorts lowest), so zfo=True = sell ETH for USDC
         zfo = True
         _setup_v4_swap(
@@ -80,7 +76,8 @@ class TestV4NativeEthSettlement:
         commands = enc_v4_unlock(inner)
         # test verifies mechanics, not profitability
         tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands,
+            enc_preamble(at) + commands,
+            2,
             sender=owner_account,
             raise_on_revert=False,
         )
@@ -90,18 +87,14 @@ class TestV4NativeEthSettlement:
 
 
 class TestV2DirectSwapNoCallback:
-    def test_v2_direct_swap_no_callback(
-        self, usdc, weth, owner_account, executor, v2_pair
-    ):
+    def test_v2_direct_swap_no_callback(self, usdc, weth, owner_account, executor, v2_pair):
         """V2 swap without flash borrow (no callback, empty forward_data).
 
         Must pre-fund the V2 pair with input tokens (WETH) before calling swap,
         since the pair checks balances after the swap.
         """
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
-        v2_zfo, v2_amount_out = _setup_v2_pair(
-            v2_pair, weth, usdc, owner_account, AMOUNT_WETH
-        )
+        v2_zfo, v2_amount_out = _setup_v2_pair(v2_pair, weth, usdc, owner_account, AMOUNT_WETH)
 
         at = AddressTable()
         weth_idx = at.add(weth.address)
@@ -115,7 +108,8 @@ class TestV2DirectSwapNoCallback:
 
         # test verifies mechanics, not profitability
         tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands,
+            enc_preamble(at) + commands,
+            2,
             sender=owner_account,
             raise_on_revert=False,
         )

@@ -1263,7 +1263,7 @@ mod tests {
         // production projection — DispatchCandidate → `to_simulate_path` →
         // `encode_request` (the ADR-033 intake) — resolving through
         // `resolve_axes` to the `Erc6909` capture axis and packing
-        // `check_mode=2` (the on-chain ERC6909 WETH floor the profit assert
+        // `profit_mode=2` (the on-chain ERC6909 WETH floor the profit assert
         // runs under). This pins the chain end-to-end so the ADR-033
         // reshape cannot silently drop the knob.
         let cand = DispatchCandidate {
@@ -1305,13 +1305,13 @@ mod tests {
             ),
             "erc6909_profit must resolve to the Erc6909 capture axis"
         );
-        // → the axis-aware packed config: check_mode=2 (Erc6909 WETH assert).
+        // → the axis-aware packed config: profit_mode=2 (Erc6909 WETH assert).
         let cfg = degenbot_executor::composers::config_for_options(req.opts, U256::ZERO)
             .expect("axes in range");
         assert_eq!(
             cfg & U256::from(255u64),
             U256::from(2u64),
-            "check_mode must be 2 for Erc6909 capture"
+            "profit_mode must be 2 for Erc6909 capture"
         );
     }
 
@@ -1319,7 +1319,7 @@ mod tests {
     #[expect(clippy::expect_used)] // in-range axes; a fail-closed panic is the test contract
     fn custody_candidate_defaults_to_mode1_assert() {
         // Control: the default (no operator toggle) runs the ACTIVE
-        // WETH+ETH profit assert, not the old check_mode=0 fast path.
+        // WETH+ETH profit assert, not the old profit_mode=0 fast path.
         let cand = candidate(43, 1_000, 100);
         let path = cand.to_simulate_path();
         let req = path.encode_request();
@@ -1328,7 +1328,7 @@ mod tests {
         assert_eq!(
             cfg & U256::from(255u64),
             U256::from(1u64),
-            "default capture must pack check_mode=1 (active assert)"
+            "default capture must pack profit_mode=1 (active assert)"
         );
     }
 

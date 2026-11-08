@@ -125,40 +125,40 @@ pub fn replacement_uuid_for(target: B256, block: u64) -> String {
 }
 
 /// Packed `execute()` config word, single-sourced with `cmd_executor.vy`:
-/// `(expected_value << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8)
-/// | check_mode`.
+/// `(min_profit << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8)
+/// | profit_mode`.
 ///
-/// - bits 0-7: check mode (non-zero keeps the seatbelt: the on-chain profit
-///   check bounds a landed tx's worst case to gas — `S6` policy),
+/// - bits 0-7: measured balance domain (1 = physical WETH+ETH, 2 = ERC6909),
 /// - bits 8-23: bribe bips over the pool-index-`bribe_recipient_idx`
 ///   recipient (0 = `block.coinbase` = the bundle fee recipient),
-/// - bits 32-255: expected pre-tx balance for the configured check mode.
+/// - bits 32-255: minimum gross increase in the configured balance domain.
 #[must_use]
 pub fn encode_config_word(
-    check_mode: u8,
+    profit_mode: u8,
     bribe_bips: u16,
     bribe_recipient_idx: u8,
-    expected_value: U256,
+    min_profit: U256,
 ) -> U256 {
-    (expected_value << 32)
+    (min_profit << 32)
         | (U256::from(bribe_recipient_idx) << 24)
         | (U256::from(bribe_bips) << 8)
-        | U256::from(check_mode)
+        | U256::from(profit_mode)
 }
 
 /// Decode helper for round-trip tests (and the telemetry logger).
 #[must_use]
 pub fn decode_config_word(config: U256) -> (u8, u16, u8, U256) {
     let mode_word = config & U256::from(0xff_u64);
-    let check_mode = u8::try_from(u64::try_from(mode_word).unwrap_or_default()).unwrap_or_default();
+    let profit_mode =
+        u8::try_from(u64::try_from(mode_word).unwrap_or_default()).unwrap_or_default();
     let bips_word = (config >> 8) & U256::from(0xff_ff_u64);
     let bribe_bips =
         u16::try_from(u64::try_from(bips_word).unwrap_or_default()).unwrap_or_default();
     let idx_word = (config >> 24) & U256::from(0xff_u64);
     let bribe_recipient_idx =
         u8::try_from(u64::try_from(idx_word).unwrap_or_default()).unwrap_or_default();
-    let expected_value = config >> 32;
-    (check_mode, bribe_bips, bribe_recipient_idx, expected_value)
+    let min_profit = config >> 32;
+    (profit_mode, bribe_bips, bribe_recipient_idx, min_profit)
 }
 
 /// Offline-review capture (env-gated): append one JSON line describing a

@@ -152,7 +152,7 @@ pub struct ChainResult {
     /// `erc6909_profit` capture mints the profit
     /// ([`assert_erc6909_capture`] is its assertion). 0 for
     /// streams the capture axis does not branch (every non-pure-V4 family:
-    /// they reach the vault only via the on-chain `check_mode` config, never
+    /// they reach the vault only via the on-chain `profit_mode` config, never
     /// the stream bytes).
     pub erc6909_delta: i128,
 }
@@ -370,6 +370,18 @@ impl Harness {
         optimal_input: u128,
         gas: u64,
     ) -> Result<ChainResult, String> {
+        self.run_raw_payload_config(hops, payload, optimal_input, gas, U256::from(1u8))
+    }
+
+    /// Run an explicit payload with a caller-selected measured balance domain.
+    pub fn run_raw_payload_config(
+        &mut self,
+        hops: &[Hop],
+        payload: &[u8],
+        optimal_input: u128,
+        gas: u64,
+        config: U256,
+    ) -> Result<ChainResult, String> {
         let n = hops.len();
         if n < 1 {
             return Err("run_raw_payload needs >=1 hops".to_string());
@@ -401,7 +413,7 @@ impl Harness {
 
         let before = self.balance_of(self.weth, self.executor)?.to::<u128>();
         let erc6909_before = self.pm_balance_of(self.executor, self.weth)?.to::<u128>();
-        let outcome = self.execute_payload(payload, gas)?;
+        let outcome = self.execute_payload_config(payload, gas, config)?;
         let after = self.balance_of(self.weth, self.executor)?.to::<u128>();
         let erc6909_after = self.pm_balance_of(self.executor, self.weth)?.to::<u128>();
         let actual_weth_delta = after as i128 - before as i128;
@@ -455,7 +467,7 @@ pub fn assert_profitable(result: &ChainResult, expected_swaps: usize, label: &st
 /// also remain in the executor's custody WETH (a capture that regressed to
 /// custody, or a double count, would leave the WETH delta ≈ the profit).
 ///
-/// This is the oracle half of the `check_mode=2` on-chain assert: the
+/// This is the oracle half of the `profit_mode=2` on-chain assert: the
 /// contract floors `PM.balanceOf` across `execute` (`after >= before`), and
 /// this assert pins the **magnitude** the floor alone cannot see.
 #[track_caller]

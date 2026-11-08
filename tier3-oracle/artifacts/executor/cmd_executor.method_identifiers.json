@@ -1,6 +1,7 @@
 {
 "initialize()": "0x8129fc1c",
 "withdraw(uint256,address)": "0xf714ce",
+"sweep(address)": "0x1681a62",
 "execute(bytes)": "0x9c5eabe",
 "execute(bytes,uint256)": "0xab5898e8",
 "uniswapV2Call(address,uint256,uint256,bytes)": "0x10d1e85c",

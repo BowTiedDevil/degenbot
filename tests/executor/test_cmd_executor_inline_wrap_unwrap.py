@@ -66,9 +66,7 @@ def v3_pool(project, owner_account, usdc, weth):
 @pytest.fixture
 def v2_pair(project, owner_account, usdc, weth):
     token0, token1 = sorted([usdc.address, weth.address], key=lambda addr: addr.lower())
-    return project.fake_uniswap_v2_pair.deploy(
-        token0, token1, 0, 30, sender=owner_account
-    )
+    return project.fake_uniswap_v2_pair.deploy(token0, token1, 0, 30, sender=owner_account)
 
 
 AMOUNT_WETH = 1 * 10**18
@@ -111,16 +109,12 @@ class TestV4ToV2InlineWrap:
         v2_zfo = v2_pair.token0() == weth.address
         v2_reserve_in = weth.balanceOf(v2_pair.address)
         v2_reserve_out = usdc.balanceOf(v2_pair.address)
-        v2_amount_out = v2_get_amount_out(
-            AMOUNT_WETH, v2_reserve_in, v2_reserve_out, fee=30
-        )
+        v2_amount_out = v2_get_amount_out(AMOUNT_WETH, v2_reserve_in, v2_reserve_out, fee=30)
 
         # ── V4 pool: NATIVE_ADDRESS/USDC — sell USDC, buy ETH ──
         # Size V4's USDC demand to match V2's net output (after fee).
         # The arb profit is in ETH/WETH, not USDC.
-        pool_v4_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_v4_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_v4_key[0] == usdc.address  # False: sell currency1 (USDC)
         _setup_v4_swap(
             v4_pm,
@@ -165,7 +159,7 @@ class TestV4ToV2InlineWrap:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -182,13 +176,9 @@ class TestV4ToV2InlineWrap:
         v2_zfo = v2_pair.token0() == weth.address
         v2_reserve_in = weth.balanceOf(v2_pair.address)
         v2_reserve_out = usdc.balanceOf(v2_pair.address)
-        v2_amount_out = v2_get_amount_out(
-            AMOUNT_WETH, v2_reserve_in, v2_reserve_out, fee=30
-        )
+        v2_amount_out = v2_get_amount_out(AMOUNT_WETH, v2_reserve_in, v2_reserve_out, fee=30)
 
-        pool_v4_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_v4_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_v4_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -229,7 +219,7 @@ class TestV4ToV2InlineWrap:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -264,9 +254,7 @@ class TestV4ToV3InlineWrap:
         V3 produces more USDC than V4 demands, leaving USDC profit.
         """
         # ── V4 pool: NATIVE_ADDRESS/USDC — sell USDC, buy ETH ──
-        pool_v4_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_v4_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_v4_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -310,7 +298,7 @@ class TestV4ToV3InlineWrap:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -323,9 +311,7 @@ class TestV4ToV3InlineWrap:
         self, usdc, weth, owner_account, executor, v4_pm, v3_pool
     ):
         """Same as above but using WETH_DEPOSIT_ALL."""
-        pool_v4_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_v4_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_v4_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -363,7 +349,7 @@ class TestV4ToV3InlineWrap:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -410,14 +396,10 @@ class TestV2ToV4InlineUnwrap:
         v2_zfo = v2_pair.token0() == usdc.address
         v2_reserve_in = usdc.balanceOf(v2_pair.address)
         v2_reserve_out = weth.balanceOf(v2_pair.address)
-        v2_amount_out = v2_get_amount_out(
-            AMOUNT_USDC, v2_reserve_in, v2_reserve_out, fee=30
-        )
+        v2_amount_out = v2_get_amount_out(AMOUNT_USDC, v2_reserve_in, v2_reserve_out, fee=30)
 
         # ── V4 pool: NATIVE_ADDRESS/USDC — sell ETH, buy USDC ──
-        pool_v4_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_v4_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_v4_key[0] == NATIVE_ADDRESS  # True: sell currency0 (ETH)
         # V4 gives more USDC than V2 demands for its USDC input.
         # The arb profit is the difference in WETH/ETH.
@@ -469,7 +451,8 @@ class TestV2ToV4InlineUnwrap:
 
         tx = executor.execute(
             # WETH_WITHDRAW converts WETH balance to ETH; combined balance unchanged but internal accounting affected
-            enc_preamble(at, skip_profit=True) + commands,
+            enc_preamble(at) + commands,
+            2,
             sender=owner_account,
             raise_on_revert=False,
         )
@@ -497,13 +480,9 @@ class TestV2ToV4InlineUnwrap:
         v2_zfo = v2_pair.token0() == usdc.address
         v2_reserve_in = usdc.balanceOf(v2_pair.address)
         v2_reserve_out = weth.balanceOf(v2_pair.address)
-        v2_amount_out = v2_get_amount_out(
-            AMOUNT_USDC, v2_reserve_in, v2_reserve_out, fee=30
-        )
+        v2_amount_out = v2_get_amount_out(AMOUNT_USDC, v2_reserve_in, v2_reserve_out, fee=30)
 
-        pool_v4_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_v4_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_v4_key[0] == NATIVE_ADDRESS
         _setup_v4_swap(
             v4_pm,
@@ -544,7 +523,8 @@ class TestV2ToV4InlineUnwrap:
 
         tx = executor.execute(
             # WETH_WITHDRAW converts WETH balance to ETH; combined balance unchanged but internal accounting affected
-            enc_preamble(at, skip_profit=True) + commands,
+            enc_preamble(at) + commands,
+            2,
             sender=owner_account,
             raise_on_revert=False,
         )
@@ -583,12 +563,12 @@ class TestV3ToV4InlineUnwrap:
         unwrap WETH→ETH, V4 swap for USDC, pay USDC to V3 pool.
         """
         # ── V3 pool: WETH/USDC — sell USDC, buy WETH ──
-        v3_zfo, v3_weth_out = _setup_v3(v3_pool, usdc, weth, AMOUNT_USDC, AMOUNT_WETH, owner_account)
+        v3_zfo, v3_weth_out = _setup_v3(
+            v3_pool, usdc, weth, AMOUNT_USDC, AMOUNT_WETH, owner_account
+        )
 
         # ── V4 pool: NATIVE_ADDRESS/USDC — sell ETH, buy USDC ──
-        pool_v4_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_v4_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_v4_key[0] == NATIVE_ADDRESS
         # V4 gives more USDC than V3 demands, ensuring arb profit
         _setup_v4_swap(
@@ -635,7 +615,7 @@ class TestV3ToV4InlineUnwrap:
         )
 
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -653,11 +633,11 @@ class TestV3ToV4InlineUnwrap:
         (deployment wrap + V3 output). The executor then uses the
         unwrapped ETH for V4 settlement and receives USDC profit.
         """
-        v3_zfo, v3_weth_out = _setup_v3(v3_pool, usdc, weth, AMOUNT_USDC, AMOUNT_WETH, owner_account)
-
-        pool_v4_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60
+        v3_zfo, v3_weth_out = _setup_v3(
+            v3_pool, usdc, weth, AMOUNT_USDC, AMOUNT_WETH, owner_account
         )
+
+        pool_v4_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_v4_key[0] == NATIVE_ADDRESS
         _setup_v4_swap(
             v4_pm,
@@ -698,7 +678,7 @@ class TestV3ToV4InlineUnwrap:
         )
 
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()

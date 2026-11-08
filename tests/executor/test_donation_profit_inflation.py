@@ -26,9 +26,7 @@ DONATION = 5 * 10**18
 class TestDonationProfitInflation:
     """An external ETH donation must NOT be able to reach the executor's balance."""
 
-    def test_plain_eth_donation_reverts(
-        self, weth, owner_account, executor, accounts
-    ):
+    def test_plain_eth_donation_reverts(self, weth, owner_account, executor, accounts):
         """
         Attacker (anyone) attempts to donate ETH via a plain value-transfer
         CALL to the executor (triggers __default__).
@@ -59,13 +57,11 @@ class TestDonationProfitInflation:
         )
 
         # Executor balance untainted.
-        assert (
-            weth.balanceOf(executor.address) + executor.balance == pre_balance
-        ), "Executor balance changed despite donation rejection"
+        assert weth.balanceOf(executor.address) + executor.balance == pre_balance, (
+            "Executor balance changed despite donation rejection"
+        )
 
-    def test_pm_native_take_still_delivers_eth(
-        self, weth, owner_account, executor, v4_pm
-    ):
+    def test_pm_native_take_still_delivers_eth(self, weth, owner_account, executor, v4_pm):
         """
         Regression: PM's native-take path (take(NATIVE, executor, amount))
         delivers ETH via raw_call(executor) → must still be accepted. This is

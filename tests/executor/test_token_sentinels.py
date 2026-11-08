@@ -31,9 +31,7 @@ def test_settle_all_includes_stablecoin_sentinels(
     amount_out = 2_000_000_000
     pool_key = _make_pool_key(weth.address, token.address, fee=3000, tick_spacing=60)
     zfo = pool_key[0] == weth.address
-    _setup_v4_swap(
-        v4_pm, owner_account, pool_key, amount_in, amount_out, zfo, output_token=token
-    )
+    _setup_v4_swap(v4_pm, owner_account, pool_key, amount_in, amount_out, zfo, output_token=token)
     weth.mint(executor.address, amount_in, sender=owner_account)
 
     at = AddressTable(user0_addr=usdc.address, user1_addr=wbtc.address)
@@ -43,11 +41,15 @@ def test_settle_all_includes_stablecoin_sentinels(
     inner = enc_v4_swap_compact(
         weth_idx if pool_key[0] == weth.address else token_idx,
         token_idx if pool_key[1] == token.address else weth_idx,
-        pool_key[2], pool_key[3], hooks_idx, zfo, amount_in,
+        pool_key[2],
+        pool_key[3],
+        hooks_idx,
+        zfo,
+        amount_in,
     )
     inner += enc_v4_settle_all()
 
-    tx = executor.execute(enc_preamble(at) + enc_v4_unlock(inner), sender=owner_account)
+    tx = executor.execute(enc_preamble(at) + enc_v4_unlock(inner), 2, sender=owner_account)
     assert tx.status == 1
     assert token.balanceOf(executor.address) == amount_out
 

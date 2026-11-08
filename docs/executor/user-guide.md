@@ -195,9 +195,13 @@ calculations — it's purely a gas optimization.
 ## 4. The `execute()` Entry Point
 
 ```vyper
+struct ExecutionReceipt:
+    gross_profit: uint256
+    bribe_paid: uint256
+
 @external
 @payable
-def execute(commands: Bytes[288], config: uint256 = 0) -> uint256
+def execute(commands: Bytes[288], config: uint256 = 1) -> ExecutionReceipt
 ```
 
 ### Parameters
@@ -205,12 +209,14 @@ def execute(commands: Bytes[288], config: uint256 = 0) -> uint256
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `commands` | `Bytes[288]` | The binary command stream (SET_ADDRESS preprocessing + execution) |
-| `config` | `uint256` | Packed check_mode + bribe_bips + bribe_recipient_idx + expected_value (see §14) |
+| `config` | `uint256` | Packed profit_mode + bribe_bips + bribe_recipient_idx + min_profit (see §14) |
 
 ### Return Value
 
-Returns the executor's profit in wei (combined WETH + ETH balance increase, or
-ERC6909 balance increase for mode 2).
+`gross_profit` is the selected WETH-equivalent balance-domain increase after
+all commands and before bribe payment. `bribe_paid` is the actual native ETH
+transferred to the bribe recipient after any available-balance cap. Retained
+profit before transaction fees is `gross_profit - bribe_paid`.
 
 ### Access Control
 
@@ -221,16 +227,18 @@ ERC6909 balance increase for mode 2).
 ```
 1. _preprocess()        — parse SET_ADDRESS commands until 0xFF or non-preprocessing opcode
 2. Command loop        — iterate _execute_command_at() until stream exhausted
-3. Profit check         — verify WETH+ETH or ERC6909 balance ≥ expected (if check_mode ≠ 0)
-4. Bribe                — if bribe_bips > 0, send profit × bips / 10000 ETH
-5. Return profit
+3. Measure profit       — require non-negative domain delta and gross_profit ≥ min_profit
+4. Bribe                — if bribe_bips > 0, send gross_profit × bips / 10000 ETH (capped)
+5. Return receipt       — (gross_profit, actual bribe_paid)
 ```
 
-### Fast Path vs. Slow Path
+### Administrative Sweep
 
-When `check_mode == 0` AND `bribe_bips == 0`, the executor skips all balance
-reads and bribe logic entirely (the "fast path"). This saves ~300 gas on paths
-where the operator verifies profitability off-chain.
+`execute()` always measures and reports. Modes 0 and 3 are invalid, so there is
+no unchecked execution or sweep disguised as a zero/balance return value.
+`owner` calls `sweep(destination)` to unwrap and transfer all physical WETH and
+native ETH without profit or bribe semantics. Partial physical withdrawals use
+`withdraw(amount, destination)`.
 
 ---
 
@@ -2002,47 +2010,40 @@ Over N transactions: **1 transfer total** (vs N transfers with V4_TAKE each time
 
 ### 14.1 The `config` Parameter
 
-The `config` parameter packs **check mode**, **bribe bips**, **bribe recipient**, and an **expected value**
-into a single `uint256`:
+The `config` parameter packs **profit mode**, **bribe bips**, **bribe recipient**, and a **minimum gross profit** into a single `uint256`:
 
 ```
-config = (expected_value << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | check_mode
+config = (min_profit << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | profit_mode
 ```
 
 | Bits | Field | Values |
 |------|-------|--------|
-| 0–7 | `check_mode` | 0=skip, 1=WETH+ETH, 2=ERC6909 |
+| 0–7 | `profit_mode` | 1=WETH+ETH, 2=ERC6909 WETH; all others revert |
 | 8–23 | `bribe_bips` | 0–10000 (0=no bribe) |
 | 24–31 | `bribe_recipient_idx` | 0=coinbase, 1–31=address table index |
-| 32–255 | `expected_value` | Pre-tx balance for the selected mode |
+| 32–255 | `min_profit` | Minimum gross increase in the selected domain |
 
-| `check_mode` | Check Performed | Use Case |
+| `profit_mode` | Balance Domain | Use Case |
 |--------------|----------------|----------|
-| 0 | Skip (no check) | `config=0` — off-chain verification only |
-| 1 | `WETH.balanceOf(self) + self.balance >= value` | Default for V2/V3/V4+other paths (WETH warm from transfers) |
-| 2 | `PM.balanceOf(self, weth_id) >= value` | V4V4V4 with V4_MINT_COMPACT profit (ERC6909 slot warm from MINT) |
+| 1 | Physical WETH + native ETH | Default for physical V2/V3/V4 capture |
+| 2 | PoolManager ERC6909 WETH claims | V4 paths with V4_MINT_COMPACT WETH profit |
 
 ### 14.2 Constructing `config`
 
 In your off-chain code:
 
 ```python
-# Mode 1: WETH + ETH combined balance check (standard)
-pre_tx_weth_eth = weth.balanceOf(executor) + executor.balance
-config = (pre_tx_weth_eth << 32) | 1
+# Physical WETH + ETH, requiring at least 0.1 WETH gross profit.
+config = (10**17 << 32) | 1
 
-# Mode 2: ERC6909 WETH balance check (V4V4V4 with MINT)
-pre_tx_erc6909_weth = pm.balanceOf(executor, weth_id)
-config = (pre_tx_erc6909_weth << 32) | 2
+# ERC6909 WETH claims, with no minimum beyond the non-decrease guard.
+config = 2
 
-# Mode 0: Skip check (off-chain verification)
-config = 0
+# Physical mode with a 5% coinbase bribe and the same minimum.
+config = (10**17 << 32) | (500 << 8) | 1
 
-# With 5% coinbase bribe:
-config = (pre_tx_weth_eth << 32) | (500 << 8) | 1
-
-# With 10% bribe to address table entry 3:
-config = (pre_tx_weth_eth << 32) | (1000 << 8) | (3 << 24) | 1
+# Add a 10% bribe to address table entry 3.
+config = (10**17 << 32) | (1000 << 8) | (3 << 24) | 1
 ```
 
 ### 14.3 Mode Selection Guide
@@ -2052,16 +2053,15 @@ config = (pre_tx_weth_eth << 32) | (1000 << 8) | (3 << 24) | 1
 | V4-V4-V4 with V4_MINT profit | 2 | ERC6909 slot is warm (~100 gas); `WETH.balanceOf` is cold (~4,700 gas) |
 | All V4-including paths with V4_TAKE | 1 | WETH is warm from V4_TAKE's `transfer()` |
 | V2/V3-only paths | 1 | WETH is warm from swap callbacks |
-| Any path with `config=0` | 0 | Operator verifies profitability off-chain (fast path) |
 
 ### 14.4 Safety
 
-When `check_mode > 0`, the executor asserts `combined_after >=
-expected_value` at the end of execution, reverting with `InsufficientProfit(actual, expected)`
-if the arbitrage was not profitable (or the command stream is incorrect).
+Execution measures the selected balance before and after all commands. A
+decrease reverts. The increase must also satisfy `gross_profit >= min_profit`;
+a shortfall reverts with `InsufficientProfit(actual, expected)`.
 
-This is the main protection against unprofitable execution and command stream
-errors. **Always use a non-zero `check_mode` in production** (mode 1 or 2).
+The on-chain minimum is gross and does not include transaction gas or other
+off-chain fees. Apply those in the operator's assessment policy.
 
 ---
 
@@ -2078,19 +2078,20 @@ eliminating the slice/convert/dispatch overhead in `_preprocess`.
   increase), not the total amount moved.
 - **Auto-wraps**: If the executor has insufficient ETH but holds WETH, it
   automatically unwraps WETH to cover the shortfall.
-- **Never reverts**: If the executor can't afford the full bribe, it sends
-  whatever is available. The transaction always succeeds.
-- **Max bips**: 10,000 (= 100% of profit). No on-chain enforcement since the
-  command-stream branch was removed; the operator is responsible for valid bips.
+- **Available-balance cap**: If the executor can't afford the full bribe, it
+  sends whatever physical WETH + native ETH is available. The cap itself does
+  not revert; `bribe_paid` reports the actual amount.
+- **Max bips**: 10,000 (= 100% of gross profit). Larger values revert with
+  `BipsTooHigh`.
 
 ### 15.2 Example
 
 ```python
-# Send 5% of profit to coinbase
-config = (pre_tx_balance << 32) | (500 << 8) | 1  # 500 bips = 5%
+# Send 5% of gross profit to coinbase, requiring 0.1 WETH gross.
+config = (10**17 << 32) | (500 << 8) | 1  # 500 bips = 5%
 
-# Send 10% of profit to a specific address (idx 3 in address table)
-config = (pre_tx_balance << 32) | (1000 << 8) | (3 << 24) | 1  # 1000 bips = 10%
+# Send 10% to a specific address (idx 3 in the address table).
+config = (10**17 << 32) | (1000 << 8) | (3 << 24) | 1  # 1000 bips = 10%
 ```
 
 ---
@@ -2105,7 +2106,7 @@ config = (pre_tx_balance << 32) | (1000 << 8) | (3 << 24) | 1  # 1000 bips = 10%
 3. Populate the address table (minimize SET_ADDRESS commands via sentinels)
 4. Encode preprocessing section (SET_ADDRESS + 0xFF)
 5. Encode execution commands (swaps, transfers, settlement)
-6. Compute config from pre-tx balance + check mode + bribe settings
+6. Compute config from min_profit + profit mode + bribe settings
 7. Call execute(commands, config)
 ```
 

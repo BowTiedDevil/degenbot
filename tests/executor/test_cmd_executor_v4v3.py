@@ -38,17 +38,13 @@ AMOUNT_USDC = 2000 * 10**6
 class TestV4ToV3:
     """V4→V3: V4 swap first, take intermediate, V3 swap in callback, settle after."""
 
-    def test_v4_v3_usdc_to_weth(
-        self, usdc, weth, owner_account, executor, v4_pm, v3_pool
-    ):
+    def test_v4_v3_usdc_to_weth(self, usdc, weth, owner_account, executor, v4_pm, v3_pool):
         """V4→V3 with explicit forward_data for V3 callback."""
         # Executor needs starting WETH to cover V4 settlement
         # (V3 output is slightly less than AMOUNT_WETH due to 0.3% fee)
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
 
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -60,7 +56,9 @@ class TestV4ToV3:
             output_token=usdc,
         )
 
-        v3_zfo, v3_weth_out = _setup_v3(v3_pool, usdc, weth, AMOUNT_USDC, AMOUNT_WETH, owner_account)
+        v3_zfo, v3_weth_out = _setup_v3(
+            v3_pool, usdc, weth, AMOUNT_USDC, AMOUNT_WETH, owner_account
+        )
 
         at = AddressTable()
         pm_idx = at.add(v4_pm.address)
@@ -93,7 +91,7 @@ class TestV4ToV3:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -103,17 +101,13 @@ class TestV4ToV3:
 class TestV4ToV3AutoPay:
     """V4→V3 using auto-pay (empty forward_data in V3 callback)."""
 
-    def test_v4_v3_auto_pay_usdc_to_weth(
-        self, usdc, weth, owner_account, executor, v4_pm, v3_pool
-    ):
+    def test_v4_v3_auto_pay_usdc_to_weth(self, usdc, weth, owner_account, executor, v4_pm, v3_pool):
         """V4→V3 with auto-pay — no forward_data needed."""
         # Executor needs starting WETH to cover V4 settlement
         # (V3 output is slightly less than AMOUNT_WETH due to 0.3% fee)
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
 
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -125,7 +119,9 @@ class TestV4ToV3AutoPay:
             output_token=usdc,
         )
 
-        v3_zfo, v3_weth_out = _setup_v3(v3_pool, usdc, weth, AMOUNT_USDC, AMOUNT_WETH, owner_account)
+        v3_zfo, v3_weth_out = _setup_v3(
+            v3_pool, usdc, weth, AMOUNT_USDC, AMOUNT_WETH, owner_account
+        )
 
         at = AddressTable()
         pm_idx = at.add(v4_pm.address)
@@ -151,7 +147,7 @@ class TestV4ToV3AutoPay:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -161,17 +157,15 @@ class TestV4ToV3AutoPay:
 class TestV3ToV4AutoPay:
     """V3→V4 with auto-pay in V3 callback."""
 
-    def test_v3_v4_auto_pay_weth_to_usdc(
-        self, usdc, weth, owner_account, executor, v4_pm, v3_pool
-    ):
+    def test_v3_v4_auto_pay_weth_to_usdc(self, usdc, weth, owner_account, executor, v4_pm, v3_pool):
         """V3→V4: V3 swap with auto-pay callback, then V4 swap."""
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
 
-        v3_zfo, v3_usdc_out = _setup_v3(v3_pool, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
-
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
+        v3_zfo, v3_usdc_out = _setup_v3(
+            v3_pool, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account
         )
+
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -210,9 +204,7 @@ class TestV3ToV4AutoPay:
         inner += enc_v4_take_delta(weth_idx, executor_idx)
 
         outer += enc_v4_unlock(inner)
-        tx = executor.execute(
-            enc_preamble(at) + outer, sender=owner_account, raise_on_revert=False
-        )
+        tx = executor.execute(enc_preamble(at) + outer, sender=owner_account, raise_on_revert=False)
         if tx.status == 0:
             tx.show_trace()
             raise ValueError("Transaction reverted")

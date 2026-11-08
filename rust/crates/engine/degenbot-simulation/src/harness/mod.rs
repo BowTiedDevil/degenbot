@@ -423,16 +423,15 @@ impl Harness {
         self.call(to, data, gas)
     }
 
-    /// Execute an encoded payload with `config=0` (skip profit check, no
-    /// bribe) and classify the outcome.
+    /// Execute an encoded payload with physical WETH+ETH accounting and no bribe.
     pub fn execute_payload(&mut self, payload: &[u8], gas: u64) -> Result<ExecOutcome, String> {
-        self.execute_payload_config(payload, gas, U256::ZERO)
+        self.execute_payload_config(payload, gas, U256::from(1u8))
     }
 
     /// Execute an encoded payload with an explicit `execute()` `config` uint256
-    /// (packed `check_mode`/bribe/expected_value — see [`execute_data_config`])
+    /// (packed `profit_mode`/bribe/min_profit — see [`execute_data_config`])
     /// and classify the outcome. Enables runtime proof of the `erc6909_profit`
-    /// (`check_mode=2`) and bribe config axes.
+    /// (`profit_mode=2`) and bribe config axes.
     pub fn execute_payload_config(
         &mut self,
         payload: &[u8],
@@ -477,7 +476,7 @@ impl Harness {
 
     /// Read `PM.balanceOf(account, uint160(currency))` — the executor's
     /// ERC6909 WETH balance held inside the PoolManager (the `erc6909_profit`
-    /// capture destination and the value `check_mode=2` verifies).
+    /// capture destination and the value `profit_mode=2` verifies).
     pub fn pm_balance_of(&mut self, account: Address, currency: Address) -> Result<U256, String> {
         let out = self.call(
             self.pool_manager,
@@ -553,7 +552,7 @@ impl Harness {
     /// Executes under the **production axis-aware config** (the same
     /// `config_for_options(opts, 0)` the arbitrage strategy packs):
     /// the on-chain profit check runs exactly like production (default
-    /// Custody → `check_mode=1` active assert; `erc6909_profit` → `check_mode=2`).
+    /// Custody → `profit_mode=1` active assert; `erc6909_profit` → `profit_mode=2`).
     pub fn run_path_with_opts(
         &mut self,
         path: &degenbot_executor::composers::PathInfo,
@@ -682,8 +681,7 @@ impl Harness {
 
 /// The production axis-aware `execute()` config — the single point where the
 /// harness meets the strategy's config expression
-/// (Custody → `check_mode=1`, Erc6909 → `check_mode=2`, SweepToAddress →
-/// `check_mode=3`).
+/// (Custody → `profit_mode=1`, Erc6909 → `profit_mode=2`).
 fn production_config(opts: degenbot_executor::composers::EncodeOptions) -> Result<U256, String> {
     degenbot_executor::composers::config_for_options(opts, U256::ZERO)
         .map_err(|e| format!("config_for_options: {e}"))
@@ -786,13 +784,13 @@ fn pm_balance_of_data(account: Address, currency: Address) -> Vec<u8> {
     }
     .abi_encode()
 }
-/// The `execute(bytes,uint256)` call: selector + (bytes, config=0) ABI encoding.
+/// The `execute(bytes,uint256)` call with physical WETH+ETH accounting.
 #[must_use]
 pub fn execute_data(payload: &[u8]) -> Bytes {
-    execute_data_config(payload, U256::ZERO)
+    execute_data_config(payload, U256::from(1u8))
 }
 /// The `execute(bytes,uint256)` call: selector + (bytes, config) ABI encoding,
-/// where `config` is the packed execute config (check_mode/bribe/expected_value).
+/// where `config` is the packed execute config (profit_mode/bribe/min_profit).
 ///
 /// Delegates to the production [`degenbot_executor::composers::encode_execute_call`]
 /// (uses the proper `encode_rust` ABI encoder) so the config
@@ -800,7 +798,7 @@ pub fn execute_data(payload: &[u8]) -> Bytes {
 /// `config` at the END of the calldata (after the bytes tail), so the contract
 /// read `config = payload.len()` (a silent no-op config); the bug was latent
 /// because the erc6909 capture mint is in the command stream (not config-gated)
-/// and `check_mode=2`'s verification is skipped when `expected_value=0`. The
+/// and `profit_mode=2`'s verification is skipped when `min_profit=0`. The
 /// first test requiring the config to reach the contract (the bribe) exposed
 /// it.
 #[must_use]

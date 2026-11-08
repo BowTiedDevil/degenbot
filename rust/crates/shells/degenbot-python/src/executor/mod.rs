@@ -137,23 +137,23 @@ fn compute_simulation_warmup_slots<'py>(
     Ok(dict)
 }
 
-/// `degenbot._ffi.executor.pack_config(check_mode=0, expected_value=0, bribe_bips=0,
+/// `degenbot._ffi.executor.pack_config(profit_mode, min_profit, *, bribe_bips=0,
 /// bribe_recipient_idx=0) -> int`
 ///
 /// Pack the `execute(commands, config)` ABI `config` `uint256`. Thin wrapper
 /// over [`config::pack_config`].
 #[pyfunction]
-#[pyo3(signature = (check_mode, expected_value, *, bribe_bips=0, bribe_recipient_idx=0))]
+#[pyo3(signature = (profit_mode, min_profit, *, bribe_bips=0, bribe_recipient_idx=0))]
 fn pack_config<'py>(
     py: Python<'py>,
-    check_mode: u8,
-    expected_value: &Bound<'_, PyAny>,
+    profit_mode: u8,
+    min_profit: &Bound<'_, PyAny>,
     bribe_bips: u16,
     bribe_recipient_idx: u8,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let ev = extract_u256(expected_value)?;
+    let min_profit = extract_u256(min_profit)?;
     let result = py
-        .detach(|| config::pack_config(check_mode, ev, bribe_bips, bribe_recipient_idx))
+        .detach(|| config::pack_config(profit_mode, min_profit, bribe_bips, bribe_recipient_idx))
         .map_err(config_err_to_py)?;
     u256_to_py(py, &result)
 }

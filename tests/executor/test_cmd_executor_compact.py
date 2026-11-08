@@ -29,13 +29,9 @@ AMOUNT_USDC = 2000 * 10**6
 
 
 class TestV4SwapCompact:
-    def test_v4_swap_compact_weth_usdc(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_v4_swap_compact_weth_usdc(self, usdc, weth, owner_account, executor, v4_pm):
         """V4→V4 using V4_SWAP_COMPACT (uint128 amount + default sqrt)."""
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -47,9 +43,7 @@ class TestV4SwapCompact:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=120
-        )
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=120)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -90,7 +84,7 @@ class TestV4SwapCompact:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -98,13 +92,9 @@ class TestV4SwapCompact:
 
 
 class TestErc20XferBalance:
-    def test_xfer_balance_after_v4_take(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_xfer_balance_after_v4_take(self, usdc, weth, owner_account, executor, v4_pm):
         """ERC20_XFER_BALANCE after V4 take."""
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -116,9 +106,7 @@ class TestErc20XferBalance:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=120
-        )
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=120)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -163,7 +151,7 @@ class TestErc20XferBalance:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -207,9 +195,7 @@ class TestV4TakeCompact:
         commands = enc_v4_unlock(inner)
 
         # fake pool parameters don't guarantee profit in ETH+WETH terms
-        tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands, sender=owner_account
-        )
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert usdc.balanceOf(executor) == AMOUNT_USDC
 
 
@@ -217,9 +203,7 @@ class TestWethDepositAll:
     def test_deposit_all_eth(self, usdc, weth, owner_account, executor, v4_pm):
         """WETH_DEPOSIT_ALL wraps all ETH."""
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -231,9 +215,7 @@ class TestWethDepositAll:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_b_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -277,7 +259,7 @@ class TestWethDepositAll:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -288,9 +270,7 @@ class TestWethWithdrawAll:
     def test_withdraw_all_weth(self, usdc, weth, owner_account, executor, v4_pm):
         """WETH_WITHDRAW_ALL unwraps all WETH."""
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -302,9 +282,7 @@ class TestWethWithdrawAll:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_b_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -349,7 +327,7 @@ class TestWethWithdrawAll:
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()

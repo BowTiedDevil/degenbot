@@ -135,55 +135,16 @@ def executor(project, owner_account, weth, v4_pm, usdc, wbtc) -> ContractInstanc
 
 
 @pytest.fixture
-def run_executor(weth, executor, v4_pm):
-    """Fixture that returns a callable to execute command streams with profit checks.
+def run_executor(executor):
+    """Execute a command stream with the selected measured balance domain.
 
-    By default, packs expected_value = pre-tx WETH+ETH balance into the config
-    parameter so the contract asserts the executor doesn't lose value. This is
-    the steady-state operating mode — production searchers always verify
-    profitability.
-
-    Usage::
-
-        tx = run_executor(at, commands, owner)  # WETH+ETH profit check
-        tx = run_executor(at, commands, owner, check_mode=2)  # ERC6909 profit check
-        tx = run_executor(at, commands, owner, skip_profit=True)  # no check
-
-    Args:
-        at: AddressTable instance
-        commands: Encoded command bytes (without preamble)
-        owner: Transaction sender account
-        check_mode: Profit check mode (default=1).
-            1 = check WETH + ETH combined balance (default for most paths)
-            2 = check ERC6909 WETH balance (V4→V4→V4 with MINT, saves ~4,900 gas)
-        skip_profit: If True, pass config=0 (no on-chain check).
-                     Use ONLY when the test legitimately reduces combined
-                     WETH+ETH balance (bribes, withdrawals, ERC6909 mint,
-                     V2 callbacks that pay more than received, etc.).
-        expected_balance: Override the auto-computed pre-tx balance.
-                         When provided, used as expected_value in the config word.
-        **kwargs: Additional kwargs passed to executor.execute().
-
-    Returns:
-        ReceiptApi of the transaction.
+    ``profit_mode=1`` measures physical WETH + native ETH; ``profit_mode=2``
+    measures PoolManager ERC6909 WETH claims. Other keyword arguments forward
+    to ``executor.execute``.
     """
 
-    def _run(
-        at, commands, owner, *, skip_profit=False, check_mode=1, expected_balance=None, **kwargs
-    ):
-        if skip_profit:
-            config = 0
-        elif expected_balance is not None:
-            config = make_config(check_mode=check_mode, expected_value=expected_balance)
-        else:
-            if check_mode == 2:
-                # ERC6909 WETH: read PM.balanceOf(executor, weth_id)
-                weth_id = int(weth.address, 16)
-                value = v4_pm.balanceOf(executor.address, weth_id)
-            else:
-                # WETH + ETH combined
-                value = weth.balanceOf(executor) + executor.balance
-            config = make_config(check_mode=check_mode, expected_value=value)
+    def _run(at, commands, owner, *, profit_mode=1, **kwargs):
+        config = make_config(profit_mode=profit_mode)
 
         raise_on_revert = kwargs.pop("raise_on_revert", True)
         tx = executor.execute(

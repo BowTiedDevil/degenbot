@@ -104,6 +104,7 @@ def snapshot_balances(tokens, accounts, track_eth=True):
             # For contract accounts, read .balance (ETH held by the contract).
             # For EOA accounts, this is the account's ETH balance.
             from ape import chain
+
             balances[(NATIVE_ADDRESS, addr)] = chain.provider.get_balance(addr)
     return balances
 

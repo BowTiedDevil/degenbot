@@ -69,19 +69,11 @@ pub enum ProfitCapture {
     Owner,
     /// Held as native ETH.
     Native,
-    /// Minted as an ERC-6909 claim (needs `check_mode=2`).
+    /// Minted as an ERC-6909 claim (needs `profit_mode=2`).
     Erc6909,
     /// (Balancer) captured into the external Vault ledger — modeled, not yet
     /// executable by the current executor.
     BalancerVault,
-    /// follow-up: the rare 'send accumulated profit to
-    /// another address' case. Defeats the profit assert (the sweep sends the
-    /// balance away, so combined_after < combined_before is expected). Routes
-    /// to the contract's `check_mode=3` (SWEEP) — the ONLY way to defeat the
-    /// profit assert. The recipient is an address-table entry the operator
-    /// populates (`SET_ADDRESS`) and passes as `bribe_recipient_idx` with
-    /// `bribe_bips=10000` for a full sweep.
-    SweepToAddress,
 }
 
 /// Whether and how the stream pays a **builder bribe** (ADR-029 Q3 — a **live**
@@ -109,7 +101,7 @@ pub struct ShapeClass {
 
 /// The stream-varying D1 output axes (candidate 4) — the axes a
 /// family's builder may **branch on in the produced STREAM**, as opposed to
-/// the runtime `check_mode`/`pack_config` config seam.
+/// the runtime `profit_mode`/`pack_config` config seam.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Axis {
     /// `FundingSource` (InPathFlash vs SelfFund) branches the stream.
@@ -127,7 +119,7 @@ pub enum Axis {
 /// so a caller reads a family's honored axes off the declaration instead of
 /// reverse-engineering the builder body. **Declaration, not behavior:** a
 /// family whose row leaves an axis off derives it implicitly (InPathFlash
-/// funding) or reaches it only via the on-chain `check_mode` config, never a
+/// funding) or reaches it only via the on-chain `profit_mode` config, never a
 /// stream byte.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct AxisSupport {

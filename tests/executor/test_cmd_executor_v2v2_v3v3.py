@@ -32,17 +32,13 @@ def v3b(project, owner_account, usdc, weth):
 @pytest.fixture
 def v2a(project, owner_account, usdc, weth):
     token0, token1 = sorted([usdc.address, weth.address], key=lambda addr: addr.lower())
-    return project.fake_uniswap_v2_pair.deploy(
-        token0, token1, 0, 30, sender=owner_account
-    )
+    return project.fake_uniswap_v2_pair.deploy(token0, token1, 0, 30, sender=owner_account)
 
 
 @pytest.fixture
 def v2b(project, owner_account, usdc, weth):
     token0, token1 = sorted([usdc.address, weth.address], key=lambda addr: addr.lower())
-    return project.fake_uniswap_v2_pair.deploy(
-        token0, token1, 0, 30, sender=owner_account
-    )
+    return project.fake_uniswap_v2_pair.deploy(token0, token1, 0, 30, sender=owner_account)
 
 
 AMOUNT_WETH = 1 * 10**18
@@ -76,16 +72,14 @@ class TestV3V3:
 
         # V3a callback: pay WETH to V3a, then V3b swap (auto-pay)
         v3a_callback_cmds = enc_erc20_transfer(weth_idx, v3a_idx, AMOUNT_WETH)
-        v3a_callback_cmds += enc_v3_swap_compact(
-            v3b_idx, v3b_zfo, v3a_usdc_out, executor_idx
-        )
+        v3a_callback_cmds += enc_v3_swap_compact(v3b_idx, v3b_zfo, v3a_usdc_out, executor_idx)
 
         commands = enc_v3_swap_compact(
             v3a_idx, v3a_zfo, AMOUNT_WETH, executor_idx, forward_data=v3a_callback_cmds
         )
 
         tx = executor.execute(
-            enc_preamble(at) + commands, sender=owner_account, raise_on_revert=False
+            enc_preamble(at) + commands, 2, sender=owner_account, raise_on_revert=False
         )
         if tx.status == 0:
             tx.show_trace()
@@ -108,9 +102,7 @@ class TestV2V2:
         v2a_zfo = v2a.token0() == weth.address
         v2a_reserve_in = weth.balanceOf(v2a.address)
         v2a_reserve_out = usdc.balanceOf(v2a.address)
-        v2a_amount_out = v2_get_amount_out(
-            AMOUNT_WETH, v2a_reserve_in, v2a_reserve_out, fee=30
-        )
+        v2a_amount_out = v2_get_amount_out(AMOUNT_WETH, v2a_reserve_in, v2a_reserve_out, fee=30)
 
         # V2b: USDC→WETH (input=USDC, zfo=input==token0)
         usdc.mint(v2b.address, V2_LIQUIDITY_USDC, sender=owner_account)
@@ -120,9 +112,7 @@ class TestV2V2:
         v2b_zfo = v2b.token0() == usdc.address
         v2b_reserve_in = usdc.balanceOf(v2b.address)
         v2b_reserve_out = weth.balanceOf(v2b.address)
-        v2b_amount_out = v2_get_amount_out(
-            v2a_amount_out, v2b_reserve_in, v2b_reserve_out, fee=30
-        )
+        v2b_amount_out = v2_get_amount_out(v2a_amount_out, v2b_reserve_in, v2b_reserve_out, fee=30)
 
         at = AddressTable()
         weth_idx = at.add(weth.address)
@@ -136,9 +126,7 @@ class TestV2V2:
         # 2. V2b swap (no callback) — sends WETH to executor
         # 3. Pay WETH to V2a (flash repayment)
         v2a_callback_cmds = enc_erc20_transfer(usdc_idx, v2b_idx, v2a_amount_out)
-        v2a_callback_cmds += enc_v2_swap_compact(
-            v2b_idx, v2b_zfo, v2b_amount_out, executor_idx
-        )
+        v2a_callback_cmds += enc_v2_swap_compact(v2b_idx, v2b_zfo, v2b_amount_out, executor_idx)
         v2a_callback_cmds += enc_erc20_transfer(weth_idx, v2a_idx, AMOUNT_WETH)
 
         commands = enc_v2_swap_compact(
@@ -151,7 +139,8 @@ class TestV2V2:
 
         tx = executor.execute(
             # V2-V2 path; fake pool params don't guarantee profit in ETH+WETH terms
-            enc_preamble(at, skip_profit=True) + commands,
+            enc_preamble(at) + commands,
+            2,
             sender=owner_account,
             raise_on_revert=False,
         )

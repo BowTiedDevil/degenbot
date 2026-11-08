@@ -69,6 +69,7 @@ def _v3s(at, pool, zfo, amt, recp, fwd=b""):
 def _setup_v3(pool, inp, out, ain, aout, owner, liquidity_factor=100):
     """Set up a V3 pool."""
     from .conftest_shared import _setup_v3 as _shared_setup_v3
+
     return _shared_setup_v3(pool, inp, out, ain, aout, owner, liquidity_factor)
 
 
@@ -154,9 +155,7 @@ class TestPMBankV2V2V2:
         inner += _v2sc(at, v2c, cz, pi)
         inner += enc_v4_settle()
         inner += (
-            enc_v4_mint_compact(wi, ei, profit)
-            if mode == "mint"
-            else enc_v4_take_delta(wi, ei)
+            enc_v4_mint_compact(wi, ei, profit) if mode == "mint" else enc_v4_take_delta(wi, ei)
         )
         return enc_v4_unlock(inner)
 
@@ -165,14 +164,10 @@ class TestPMBankV2V2V2:
     ):
         az = _setup_v2c(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
         bz = _setup_v2c(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
-        cz = _setup_v2c(
-            v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT
-        )
+        cz = _setup_v2c(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
         _fund(weth, v4_pm, owner_account)
 
-        a = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
         b = v2_get_amount_out(a, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
         c = v2_get_amount_out(b, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
         profit = c - AMOUNT_WETH
@@ -180,9 +175,7 @@ class TestPMBankV2V2V2:
         at = AddressTable()
         tx = run_executor(
             at,
-            self._b(
-                at, weth, executor, v4_pm, v2_a, v2_b, v2_c, az, bz, cz, "mint", profit
-            ),
+            self._b(at, weth, executor, v4_pm, v2_a, v2_b, v2_c, az, bz, cz, "mint", profit),
             owner_account,
         )
         assert tx.status == 1
@@ -195,9 +188,7 @@ class TestPMBankV2V2V2:
     ):
         az = _setup_v2c(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
         bz = _setup_v2c(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
-        cz = _setup_v2c(
-            v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT
-        )
+        cz = _setup_v2c(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
         _fund(weth, v4_pm, owner_account)
         at = AddressTable()
         tx = run_executor(
@@ -226,11 +217,7 @@ class TestPMBankV3V2V2:
         fwd += _v2sc(at, v2b, bz, at.add(v2c.address))
         fwd += _v2sc(at, v2c, cz, pi)
         fwd += enc_v4_settle()
-        fwd += (
-            enc_v4_mint_compact(wi, ei, profit)
-            if mode == "mint"
-            else enc_v4_take_delta(wi, ei)
-        )
+        fwd += enc_v4_mint_compact(wi, ei, profit) if mode == "mint" else enc_v4_take_delta(wi, ei)
 
         inner = _v3s(at, v3a, az, AMOUNT_WETH, at.add(v2b.address), fwd)
         return enc_v4_unlock(inner)
@@ -240,23 +227,17 @@ class TestPMBankV3V2V2:
     ):
         az, a_usdc_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
         bz = _setup_v2c(v2_b, usdc, wbtc, owner_account, a_usdc_out, AMOUNT_WBTC)
-        cz = _setup_v2c(
-            v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT
-        )
+        cz = _setup_v2c(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
         _fund(weth, v4_pm, owner_account)
 
-        b = v2_get_amount_out(
-            a_usdc_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        b = v2_get_amount_out(a_usdc_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
         c = v2_get_amount_out(b, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
         profit = c - AMOUNT_WETH
 
         at = AddressTable()
         tx = run_executor(
             at,
-            self._b(
-                at, weth, executor, v4_pm, v3_a, v2_b, v2_c, az, bz, cz, "mint", profit
-            ),
+            self._b(at, weth, executor, v4_pm, v3_a, v2_b, v2_c, az, bz, cz, "mint", profit),
             owner_account,
         )
         assert tx.status == 1
@@ -269,23 +250,17 @@ class TestPMBankV3V2V2:
     ):
         az, a_usdc_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
         bz = _setup_v2c(v2_b, usdc, wbtc, owner_account, a_usdc_out, AMOUNT_WBTC)
-        cz = _setup_v2c(
-            v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT
-        )
+        cz = _setup_v2c(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
         _fund(weth, v4_pm, owner_account)
 
-        b = v2_get_amount_out(
-            a_usdc_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        b = v2_get_amount_out(a_usdc_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
         c = v2_get_amount_out(b, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
         profit = c - AMOUNT_WETH
 
         at = AddressTable()
         tx = run_executor(
             at,
-            self._b(
-                at, weth, executor, v4_pm, v3_a, v2_b, v2_c, az, bz, cz, "take", profit
-            ),
+            self._b(at, weth, executor, v4_pm, v3_a, v2_b, v2_c, az, bz, cz, "take", profit),
             owner_account,
         )
         assert tx.status == 1
@@ -319,9 +294,7 @@ class TestPMBankV2V3V2:
         inner += _v2sc(at, v2c, cz, pi)
         inner += enc_v4_settle()
         inner += (
-            enc_v4_mint_compact(wi, ei, profit)
-            if mode == "mint"
-            else enc_v4_take_delta(wi, ei)
+            enc_v4_mint_compact(wi, ei, profit) if mode == "mint" else enc_v4_take_delta(wi, ei)
         )
         return enc_v4_unlock(inner)
 
@@ -329,18 +302,12 @@ class TestPMBankV2V3V2:
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v4_pm, v2_a, v3_b, v2_c
     ):
         az = _setup_v2c(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
         bz, b_out = _setup_v3(v3_b, usdc, wbtc, a_out, AMOUNT_WBTC, owner_account)
-        cz = _setup_v2c(
-            v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT
-        )
+        cz = _setup_v2c(v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT)
         _fund(weth, v4_pm, owner_account)
 
-        c = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
         profit = c - AMOUNT_WETH
 
         at = AddressTable()
@@ -372,18 +339,12 @@ class TestPMBankV2V3V2:
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v4_pm, v2_a, v3_b, v2_c
     ):
         az = _setup_v2c(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
         bz, b_out = _setup_v3(v3_b, usdc, wbtc, a_out, AMOUNT_WBTC, owner_account)
-        cz = _setup_v2c(
-            v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT
-        )
+        cz = _setup_v2c(v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT)
         _fund(weth, v4_pm, owner_account)
 
-        c = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
         profit = c - AMOUNT_WETH
 
         at = AddressTable()
@@ -456,9 +417,7 @@ class TestPMBankV2V2V3:
         """V3-ending paths can't use V4_MINT for profit — profit is physical WETH."""
         az = _setup_v2c(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
         bz = _setup_v2c(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
-        a = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
         b = v2_get_amount_out(a, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
         cz, _ = _setup_v3(v3_c, wbtc, weth, b, AMOUNT_WETH_PROFIT, owner_account)
         _fund(weth, v4_pm, owner_account)
@@ -466,9 +425,7 @@ class TestPMBankV2V2V3:
         at = AddressTable()
         tx = executor.execute(
             enc_preamble(at)
-            + self._b(
-                at, weth, executor, v4_pm, v2_a, v2_b, v3_c, az, bz, cz, b, "mint"
-            ),
+            + self._b(at, weth, executor, v4_pm, v2_a, v2_b, v3_c, az, bz, cz, b, "mint"),
             sender=owner_account,
             raise_on_revert=False,
         )
@@ -483,9 +440,7 @@ class TestPMBankV2V2V3:
         """V3-ending path: profit is physical WETH at executor, 5 transfers."""
         az = _setup_v2c(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
         bz = _setup_v2c(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
-        a = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
         b = v2_get_amount_out(a, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
         cz, _ = _setup_v3(v3_c, wbtc, weth, b, AMOUNT_WETH_PROFIT, owner_account)
         _fund(weth, v4_pm, owner_account)
@@ -540,9 +495,7 @@ class TestPMBankV3V3V2:
 
         inner = _v3s(at, v3b, bz, a_usdc_out, at.add(v2c.address), b_fwd)
         inner += (
-            enc_v4_mint_compact(wi, ei, profit)
-            if mode == "mint"
-            else enc_v4_take_delta(wi, ei)
+            enc_v4_mint_compact(wi, ei, profit) if mode == "mint" else enc_v4_take_delta(wi, ei)
         )
         return enc_v4_unlock(inner)
 
@@ -551,14 +504,10 @@ class TestPMBankV3V3V2:
     ):
         az, a_usdc_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
         bz, b_wbtc_out = _setup_v3(v3_b, usdc, wbtc, a_usdc_out, AMOUNT_WBTC, owner_account)
-        cz = _setup_v2c(
-            v2_c, wbtc, weth, owner_account, b_wbtc_out, AMOUNT_WETH_PROFIT
-        )
+        cz = _setup_v2c(v2_c, wbtc, weth, owner_account, b_wbtc_out, AMOUNT_WETH_PROFIT)
         _fund(weth, v4_pm, owner_account)
 
-        c = v2_get_amount_out(
-            b_wbtc_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c = v2_get_amount_out(b_wbtc_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
         profit = c - AMOUNT_WETH
 
         at = AddressTable()
@@ -579,14 +528,10 @@ class TestPMBankV3V3V2:
     ):
         az, a_usdc_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
         bz, b_wbtc_out = _setup_v3(v3_b, usdc, wbtc, a_usdc_out, AMOUNT_WBTC, owner_account)
-        cz = _setup_v2c(
-            v2_c, wbtc, weth, owner_account, b_wbtc_out, AMOUNT_WETH_PROFIT
-        )
+        cz = _setup_v2c(v2_c, wbtc, weth, owner_account, b_wbtc_out, AMOUNT_WETH_PROFIT)
         _fund(weth, v4_pm, owner_account)
 
-        c = v2_get_amount_out(
-            b_wbtc_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c = v2_get_amount_out(b_wbtc_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
         profit = c - AMOUNT_WETH
 
         at = AddressTable()

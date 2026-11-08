@@ -56,9 +56,7 @@ def _deploy_executor(project, weth, v2_pair, owner_account):
     return contract
 
 
-def _setup_pair_and_swap(
-    v2, usdc, weth, owner_account, fee, zfo, swap_input=SWAP_INPUT
-):
+def _setup_pair_and_swap(v2, usdc, weth, owner_account, fee, zfo, swap_input=SWAP_INPUT):
     """Fund a V2 pair with liquidity, then deposit input tokens to create
     excess balance. The pair enforces K-invariant at runtime (no
     set_next_swap needed).
@@ -100,17 +98,13 @@ class TestUniswapV2Fee:
         executor = _deploy_executor(project, weth, v2, owner_account)
 
         v2_zfo = v2.token0() == weth.address
-        expected_out = _setup_pair_and_swap(
-            v2, usdc, weth, owner_account, fee=30, zfo=v2_zfo
-        )
+        expected_out = _setup_pair_and_swap(v2, usdc, weth, owner_account, fee=30, zfo=v2_zfo)
 
         at = AddressTable()
         v2_idx = at.add(v2.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=30
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=30)
 
         executor.execute(commands, sender=owner_account)
         assert usdc.balanceOf(executor.address) >= expected_out
@@ -124,17 +118,13 @@ class TestPancakeSwapV2Fee:
         executor = _deploy_executor(project, weth, v2, owner_account)
 
         v2_zfo = v2.token0() == weth.address
-        expected_out = _setup_pair_and_swap(
-            v2, usdc, weth, owner_account, fee=25, zfo=v2_zfo
-        )
+        expected_out = _setup_pair_and_swap(v2, usdc, weth, owner_account, fee=25, zfo=v2_zfo)
 
         at = AddressTable()
         v2_idx = at.add(v2.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=25
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=25)
 
         executor.execute(commands, sender=owner_account)
         assert usdc.balanceOf(executor.address) >= expected_out
@@ -149,17 +139,13 @@ class TestLowFees:
         executor = _deploy_executor(project, weth, v2, owner_account)
 
         v2_zfo = v2.token0() == weth.address
-        expected_out = _setup_pair_and_swap(
-            v2, usdc, weth, owner_account, fee=10, zfo=v2_zfo
-        )
+        expected_out = _setup_pair_and_swap(v2, usdc, weth, owner_account, fee=10, zfo=v2_zfo)
 
         at = AddressTable()
         v2_idx = at.add(v2.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=10
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=10)
 
         executor.execute(commands, sender=owner_account)
         assert usdc.balanceOf(executor.address) >= expected_out
@@ -170,17 +156,13 @@ class TestLowFees:
         executor = _deploy_executor(project, weth, v2, owner_account)
 
         v2_zfo = v2.token0() == weth.address
-        expected_out = _setup_pair_and_swap(
-            v2, usdc, weth, owner_account, fee=50, zfo=v2_zfo
-        )
+        expected_out = _setup_pair_and_swap(v2, usdc, weth, owner_account, fee=50, zfo=v2_zfo)
 
         at = AddressTable()
         v2_idx = at.add(v2.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=50
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=50)
 
         executor.execute(commands, sender=owner_account)
         assert usdc.balanceOf(executor.address) >= expected_out
@@ -191,17 +173,13 @@ class TestLowFees:
         executor = _deploy_executor(project, weth, v2, owner_account)
 
         v2_zfo = v2.token0() == weth.address
-        expected_out = _setup_pair_and_swap(
-            v2, usdc, weth, owner_account, fee=99, zfo=v2_zfo
-        )
+        expected_out = _setup_pair_and_swap(v2, usdc, weth, owner_account, fee=99, zfo=v2_zfo)
 
         at = AddressTable()
         v2_idx = at.add(v2.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=99
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=99)
 
         executor.execute(commands, sender=owner_account)
         assert usdc.balanceOf(executor.address) >= expected_out
@@ -275,17 +253,13 @@ class TestPancakeCallback:
         executor = _deploy_executor(project, weth, v2, owner_account)
 
         v2_zfo = v2.token0() == weth.address
-        expected_out = _setup_pair_and_swap(
-            v2, usdc, weth, owner_account, fee=25, zfo=v2_zfo
-        )
+        expected_out = _setup_pair_and_swap(v2, usdc, weth, owner_account, fee=25, zfo=v2_zfo)
 
         at = AddressTable()
         v2_idx = at.add(v2.address)
         executor_idx = at.add(executor.address)
 
-        commands = enc_preamble(at) + enc_v2_swap_calc(
-            v2_idx, v2_zfo, executor_idx, fee=25
-        )
+        commands = enc_preamble(at) + enc_v2_swap_calc(v2_idx, v2_zfo, executor_idx, fee=25)
 
         executor.execute(commands, sender=owner_account)
         assert usdc.balanceOf(executor.address) >= expected_out

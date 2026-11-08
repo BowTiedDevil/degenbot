@@ -24,18 +24,14 @@ from .conftest_shared import (
 
 
 class TestV4TakeDelta:
-    def test_v4_take_delta_weth_profit(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_v4_take_delta_weth_profit(self, usdc, weth, owner_account, executor, v4_pm):
         """V4→V4 same-currency using V4_TAKE_DELTA instead of V4_TAKE."""
         pool_a_amount_in = 1 * 10**18
         pool_a_amount_out = 2000 * 10**6
         pool_b_amount_in = 2000 * 10**6
         pool_b_amount_out = 2 * 10**18
 
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -47,9 +43,7 @@ class TestV4TakeDelta:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=120
-        )
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=120)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -106,9 +100,7 @@ class TestV4SettleDelta:
         pool_b_amount_in = 2000 * 10**6
         pool_b_amount_out = 2 * 10**18
 
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -120,9 +112,7 @@ class TestV4SettleDelta:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=120
-        )
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=120)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -172,18 +162,14 @@ class TestV4SettleDelta:
 
 
 class TestV4SettleAll:
-    def test_v4_settle_all_v4v4_cross_currency(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_v4_settle_all_v4v4_cross_currency(self, usdc, weth, owner_account, executor, v4_pm):
         """V4→V4 cross-currency using V4_SETTLE_ALL."""
         pool_a_amount_in = 1 * 10**18
         pool_a_amount_out = 2000 * 10**6
         pool_b_amount_in = 2000 * 10**6
         pool_b_amount_out = 2 * 10**18
 
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -195,9 +181,7 @@ class TestV4SettleAll:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_b_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -255,9 +239,7 @@ class TestV4SwapDynamic:
         pool_b_amount_in = 2000 * 10**6
         pool_b_amount_out = 2 * 10**18
 
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -269,9 +251,7 @@ class TestV4SwapDynamic:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=120
-        )
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=120)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -322,18 +302,14 @@ class TestV4SwapDynamic:
 
 
 class TestMixedExplicitDynamic:
-    def test_mixed_v4_take_and_take_delta(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_mixed_v4_take_and_take_delta(self, usdc, weth, owner_account, executor, v4_pm):
         """Mix explicit and dynamic commands."""
         pool_a_amount_in = 1 * 10**18
         pool_a_amount_out = 2000 * 10**6
         pool_b_amount_in = 2000 * 10**6
         pool_b_amount_out = 2 * 10**18
 
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -345,9 +321,7 @@ class TestMixedExplicitDynamic:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=120
-        )
+        pool_b_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=120)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,
@@ -403,9 +377,7 @@ class TestMixedExplicitDynamic:
         pool_b_amount_in = 2000 * 10**6
         pool_b_amount_out = 2 * 10**18
 
-        pool_a_key = _make_pool_key(
-            weth.address, usdc.address, fee=3000, tick_spacing=60
-        )
+        pool_a_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         pool_a_zfo = pool_a_key[0] == weth.address
         _setup_v4_swap(
             v4_pm,
@@ -417,9 +389,7 @@ class TestMixedExplicitDynamic:
             output_token=usdc,
         )
 
-        pool_b_key = _make_pool_key(
-            NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10
-        )
+        pool_b_key = _make_pool_key(NATIVE_ADDRESS, usdc.address, fee=500, tick_spacing=10)
         pool_b_zfo = pool_b_key[0] == usdc.address
         _setup_v4_swap(
             v4_pm,

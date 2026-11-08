@@ -1,5 +1,7 @@
 # ADR-034: ERC6909-vault profit capture — production wiring + the batch×capture decline
 
+> **Refinement (ADR-098).** `execute` now returns `ExecutionReceipt { gross_profit, bribe_paid }`. The high config field is `min_profit`, not an ignored pre-balance; only profit modes 1 and 2 are valid. Administrative sweeping is a separate owner-only entrypoint. References below to raw zero configs, mode-3 sweeps, and ignored high bits describe the superseded interface.
+
 **Status: accepted.** Decided during ergo task `SMOZG3` (2026-08-18, epic
 `4GHYBP`), on top of `NSOFR2` (ADR-033 encode intake).
 

@@ -30,9 +30,7 @@ MAX_COMMANDS_LENGTH = 288
 
 
 class TestStreamTruncationBound:
-    def test_max_length_stream_of_single_byte_commands_fits_loop_cap(
-        self, owner_account, executor
-    ):
+    def test_max_length_stream_of_single_byte_commands_fits_loop_cap(self, owner_account, executor):
         """
         288 bytes of 0x55 (V4_SETTLE). The loop's 288 iterations exactly
         suffice to consume every byte; no silent truncation. The call reverts

@@ -343,7 +343,7 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
 /// `FundingSource`); the pure-V4 families `v4_v4`/`v4_v4_v4` → `{capture}`
 /// (V4 terminal capture); every V4-involving-but-not-pure-V4 family and all
 /// V2/V3-only families → `{}` (all axes derived; `ProfitCapture`/`Bribe` reach
-/// those streams only via the on-chain `check_mode`/`pack_config` config, never
+/// those streams only via the on-chain `profit_mode`/`pack_config` config, never
 /// a stream byte).
 #[must_use]
 pub fn family_axis_support(path: &PathInfo) -> Option<AxisSupport> {
@@ -941,7 +941,7 @@ mod tests {
             AxisSupport::capture()
         );
         // V4-involving but NOT pure-V4: capture is NOT varied in the stream
-        // (physical take only; `check_mode` is config) — the surfaced
+        // (physical take only; `profit_mode` is config) — the surfaced
         // asymmetry the declaration makes explicit.
         assert_eq!(
             family_axis_support(&axis_path(&[Prot::V2, Prot::V2, Prot::V4])).unwrap(),

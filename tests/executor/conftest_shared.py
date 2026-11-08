@@ -403,22 +403,22 @@ def enc_set_addresses(address_table):
     return result
 
 
-def make_config(check_mode=0, bribe_bips=0, bribe_recipient_idx=0, expected_value=0):
+def make_config(profit_mode=1, bribe_bips=0, bribe_recipient_idx=0, min_profit=0):
     """Pack configuration into a single uint256 for the ABI config parameter.
 
     Layout:
-      bits 0-7:    check_mode (0=skip, 1=WETH+ETH, 2=ERC6909)
+      bits 0-7:    profit_mode (1=WETH+ETH, 2=ERC6909 WETH)
       bits 8-23:   bribe_bips (0=no bribe, 1-10000=basis points)
       bits 24-31:  bribe_recipient_idx (0=coinbase, 1-31=address table index)
-      bits 32-255: expected_value (pre-tx balance for the selected mode)
+      bits 32-255: min_profit (minimum gross increase in the selected domain)
     """
-    assert 0 <= check_mode <= 2
+    assert profit_mode in (1, 2)
     assert 0 <= bribe_bips <= 10000
     assert 0 <= bribe_recipient_idx <= 31
-    return (expected_value << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | check_mode
+    return (min_profit << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | profit_mode
 
 
-def enc_preamble(address_table, skip_profit=False):
+def enc_preamble(address_table):
     """Encode the preprocessing section (just SET_ADDRESS commands) + separator.
 
     Builds: [SET_ADDRESS commands][0xFF]
@@ -427,9 +427,7 @@ def enc_preamble(address_table, skip_profit=False):
     goes in the ABI config parameter.
 
     Args:
-        address_table:    AddressTable instance with all needed addresses
-        skip_profit:      Ignored (kept for API compatibility). Profit check
-                          is now controlled by the config parameter.
+        address_table: AddressTable instance with all needed addresses.
     """
     # NOTE: 0xFE (BEGIN_PREPROCESSING) prefix is omitted — _preprocess
     # unconditionally starts at offset 0, reading SET_ADDRESS commands directly.

@@ -6,7 +6,7 @@ parameter of execute(), not in the command stream. The actual bribe is
 executed by execute() after the profit check, sending profit * bips / 10000
 ETH to the recipient.
 
-Any slow-path tx (check_mode != 0, or bribe requested) asserts
+Any slow-path tx (profit_mode != 0, or bribe requested) asserts
 combined-after >= combined-before on the on-chain WETH+ETH balance. A
 self-funded bribe tx must therefore end with MORE WETH+ETH than it started.
 The bribe flows below are 2-hop WETH→USDC→WETH routes whose terminal profit
@@ -112,7 +112,7 @@ class TestBribeCoinbase:
         combined_before = executor.balance + weth.balanceOf(executor.address)
         tx = executor.execute(
             enc_preamble(at) + commands,
-            make_config(check_mode=1, bribe_bips=5000),  # recipient_idx=0 → coinbase
+            make_config(profit_mode=1, bribe_bips=5000),  # recipient_idx=0 → coinbase
             sender=owner_account,
         )
         combined_after = executor.balance + weth.balanceOf(executor.address)
@@ -161,7 +161,7 @@ class TestBribeCoinbase:
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
         tx = executor.execute(
             enc_preamble(at) + commands,
-            make_config(bribe_bips=0),  # 0 bips = no bribe
+            make_config(profit_mode=2, bribe_bips=0),  # 0 bips = no bribe
             sender=owner_account,
         )
 
@@ -209,7 +209,7 @@ class TestBribeAddress:
         combined_before = executor.balance + weth.balanceOf(executor.address)
         tx = executor.execute(
             enc_preamble(at) + commands,
-            make_config(check_mode=1, bribe_bips=1000, bribe_recipient_idx=bribe_recipient_idx),
+            make_config(profit_mode=1, bribe_bips=1000, bribe_recipient_idx=bribe_recipient_idx),
             sender=owner_account,
         )
         combined_after = executor.balance + weth.balanceOf(executor.address)
@@ -246,8 +246,7 @@ class TestBribeAddress:
                 OUT_WETH,
             )
 
-        # Baseline: no bribe → config=0 fast path (no balance reads, no
-        # assert, no payment).
+        # Baseline: measured physical execution with no bribe payment.
         setup()
         weth.mint(executor.address, IN_WETH, sender=owner_account)
         tx_baseline = executor.execute(
@@ -261,7 +260,7 @@ class TestBribeAddress:
         weth.mint(executor.address, IN_WETH, sender=owner_account)
         tx_bribe = executor.execute(
             enc_preamble(at) + enc_v4_unlock(setup()),
-            make_config(check_mode=1, bribe_bips=1000, bribe_recipient_idx=bribe_recipient_idx),
+            make_config(profit_mode=1, bribe_bips=1000, bribe_recipient_idx=bribe_recipient_idx),
             sender=owner_account,
         )
 

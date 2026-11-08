@@ -947,9 +947,7 @@ class TestPancakeV3Callback:
 class TestGasComparison:
     """Print gas usage for different V3 three-hop approaches."""
 
-    def test_nested_callbacks_gas(
-        self, weth, usdc, wbtc, owner_account, executor, v3a, v3b, v3c
-    ):
+    def test_nested_callbacks_gas(self, weth, usdc, wbtc, owner_account, executor, v3a, v3b, v3c):
         v3a_zfo, v3b_zfo, v3c_zfo, v3a_usdc_out, v3b_wbtc_out, v3c_weth_out = _setup_v3_pools(
             v3a, v3b, v3c, weth, usdc, wbtc, owner_account
         )
@@ -993,9 +991,7 @@ class TestGasComparison:
         assert tx.status == 1
         print(f"\n    V3 nested callbacks (3 COMPACT):  {tx.gas_used:>8,} gas")
 
-    def test_double_auto_pay_gas(
-        self, weth, usdc, wbtc, owner_account, executor, v3a, v3b, v3c
-    ):
+    def test_double_auto_pay_gas(self, weth, usdc, wbtc, owner_account, executor, v3a, v3b, v3c):
         v3a_zfo, v3b_zfo, v3c_zfo, v3a_usdc_out, v3b_wbtc_out, v3c_weth_out = _setup_v3_pools(
             v3a, v3b, v3c, weth, usdc, wbtc, owner_account
         )
@@ -1035,9 +1031,7 @@ class TestGasComparison:
         assert tx.status == 1
         print(f"    V3 double auto-pay:              {tx.gas_used:>8,} gas")
 
-    def test_v4_v3_v3_gas(
-        self, usdc, weth, wbtc, owner_account, executor, v4_pm, v3b, v3c
-    ):
+    def test_v4_v3_v3_gas(self, usdc, weth, wbtc, owner_account, executor, v4_pm, v3b, v3c):
         pool_key = _make_pool_key(weth.address, usdc.address, fee=3000, tick_spacing=60)
         v4_zfo = pool_key[0] == weth.address
         _setup_v4_swap(
@@ -1081,15 +1075,11 @@ class TestGasComparison:
         inner += enc_v3_swap_compact(idx["v3c"], v3c_zfo, v3b_wbtc_out, idx["executor"])
         inner += enc_v4_settle_delta(idx["weth"])
 
-        tx = executor.execute(
-            enc_preamble(at) + enc_v4_unlock(inner), sender=owner_account
-        )
+        tx = executor.execute(enc_preamble(at) + enc_v4_unlock(inner), sender=owner_account)
         assert tx.status == 1
         print(f"    V4->V3->V3 (TAKE + 2 COMPACT):   {tx.gas_used:>8,} gas")
 
-    def test_v3_v3_v4_gas(
-        self, usdc, weth, wbtc, owner_account, executor, v4_pm, v3a, v3b
-    ):
+    def test_v3_v3_v4_gas(self, usdc, weth, wbtc, owner_account, executor, v4_pm, v3a, v3b):
         v3a_zfo, v3a_usdc_out = _setup_v3(v3a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
 
         v3b_zfo, v3b_wbtc_out = _setup_v3(v3b, usdc, wbtc, v3a_usdc_out, AMOUNT_WBTC, owner_account)

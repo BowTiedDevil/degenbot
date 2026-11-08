@@ -90,27 +90,21 @@ let execute_config = config_for_options(path.opts, U256::ZERO);
 
 `config_for_options` reads the full axis set:
 
-- `capture` → `check_mode` (ADR-029, U3WVLL):
-  - `Custody`/`Native`/`Owner`/`BalancerVault` → `check_mode=1` (WETH+ETH
-    combined-balance assert — **active by default**, the on-chain money-loss
-    protection).
-  - `Erc6909` → `check_mode=2` (ERC6909 WETH claim).
-  - `SweepToAddress` → `check_mode=3` (SWEEP — defeats the assert for the rare
-    "send accumulated profit to another address" case).
+- `capture` → `profit_mode`:
+  - `Custody`/`Native`/`Owner`/`BalancerVault` → 1 (physical WETH+ETH).
+  - `Erc6909` → 2 (PoolManager ERC6909 WETH claims).
 - `bribe` → `bribe_bips` + `bribe_recipient_idx` (`None` = (0, 0); `Some{bips,
   recipient_idx}` is forwarded — `recipient_idx 0` = `block.coinbase`).
-- `expected_value` is **IGNORED** (kept in the signature for ABI compat): the
-  U3WVLL contract fix made the executor read its **own** combined balance at
-  start+end, so the operator no longer supplies the pre-tx balance.
+- `min_profit` is packed into bits 32–255 and enforced against the gross
+  balance-domain increase before bribe payment. Gas and off-chain fees remain
+  separate assessment policy.
 
-> **Defect history (U3WVLL).** The old default was `check_mode=0` — the profit
-> assert was *skipped by default*, a footgun that let a money-losing tx execute
-> silently. `config_for_options` makes `check_mode=1` the default; a
-> money-losing production path now reverts on-chain. The sweep opt-in
-> (`check_mode=3`, task `767TN5`) is the sole explicit defeat path.
+`config_for_options` selects physical WETH+ETH accounting (1) by default and
+ERC6909 WETH claims (2) for ERC6909 capture. Other selectors are invalid;
+administrative sweeping is a separate owner-only contract entrypoint.
 
-For low-level packing (or to bypass the axis builder), see
-`degenbot_executor::encoders::pack_config(check_mode, expected_value,
+For low-level packing, see
+`degenbot_executor::encoders::pack_config(profit_mode, min_profit,
 bribe_bips, bribe_recipient_idx)` in `config.rs`.
 
 ## The ABI wrap: `encode_execute_call`

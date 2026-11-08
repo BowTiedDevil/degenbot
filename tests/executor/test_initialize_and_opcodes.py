@@ -32,9 +32,7 @@ class TestL1SendEthDocstrings:
 class TestL2Initialize:
     """initialize() requires exactly 1 wei and owner-only."""
 
-    def test_initialize_rejects_non_owner(
-        self, project, weth, v4_pm, accounts
-    ):
+    def test_initialize_rejects_non_owner(self, project, weth, v4_pm, accounts):
         """A non-owner calling initialize reverts (Unauthorized)."""
         executor = project.cmd_executor.deploy(
             weth.address, v4_pm.address, weth.address, weth.address, sender=accounts[0]
@@ -44,9 +42,7 @@ class TestL2Initialize:
         with pytest.raises(Exception):
             executor.initialize(value=1, sender=attacker)
 
-    def test_initialize_rejects_wrong_value(
-        self, project, weth, v4_pm, owner_account
-    ):
+    def test_initialize_rejects_wrong_value(self, project, weth, v4_pm, owner_account):
         """msg.value == 2 (the old amount) now reverts (InvalidMsgValue)."""
         executor = project.cmd_executor.deploy(
             weth.address, v4_pm.address, weth.address, weth.address, sender=owner_account

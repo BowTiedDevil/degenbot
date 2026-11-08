@@ -106,27 +106,21 @@ AMOUNT_WETH_IN = 1 * 10**18  # 1 WETH
 def pool_a(project, owner_account, weth, usdc):
     """WETH/USDC pool — sell WETH for USDC."""
     token0, token1 = sorted([weth.address, usdc.address], key=lambda a: a.lower())
-    return project.fake_uniswap_v2_pair.deploy(
-        token0, token1, 0, FEE, sender=owner_account
-    )
+    return project.fake_uniswap_v2_pair.deploy(token0, token1, 0, FEE, sender=owner_account)
 
 
 @pytest.fixture
 def pool_b(project, owner_account, usdc, wbtc):
     """USDC/WBTC pool — sell USDC for WBTC."""
     token0, token1 = sorted([usdc.address, wbtc.address], key=lambda a: a.lower())
-    return project.fake_uniswap_v2_pair.deploy(
-        token0, token1, 0, FEE, sender=owner_account
-    )
+    return project.fake_uniswap_v2_pair.deploy(token0, token1, 0, FEE, sender=owner_account)
 
 
 @pytest.fixture
 def pool_c(project, owner_account, wbtc, weth):
     """WBTC/WETH pool — sell WBTC for WETH."""
     token0, token1 = sorted([wbtc.address, weth.address], key=lambda a: a.lower())
-    return project.fake_uniswap_v2_pair.deploy(
-        token0, token1, 0, FEE, sender=owner_account
-    )
+    return project.fake_uniswap_v2_pair.deploy(token0, token1, 0, FEE, sender=owner_account)
 
 
 def _fund_pools(pool_a, pool_b, pool_c, weth, usdc, wbtc, owner):
@@ -225,8 +219,8 @@ class TestApproach1AllV2SwapCompact:
         weth.mint(executor.address, AMOUNT_WETH_IN, sender=owner_account)
 
         _fund_pools(pool_a, pool_b, pool_c, weth, usdc, wbtc, owner_account)
-        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = (
-            _compute_amounts(pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN)
+        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = _compute_amounts(
+            pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN
         )
 
         at = AddressTable()
@@ -328,8 +322,8 @@ class TestApproach2FlashPlusSwapCalc:
         self, weth, usdc, wbtc, owner_account, executor, pool_a, pool_b, pool_c
     ):
         _fund_pools(pool_a, pool_b, pool_c, weth, usdc, wbtc, owner_account)
-        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = (
-            _compute_amounts(pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN)
+        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = _compute_amounts(
+            pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN
         )
 
         at = AddressTable()
@@ -455,8 +449,8 @@ class TestGasComparison:
         self, weth, usdc, wbtc, owner_account, executor, pool_a, pool_b, pool_c
     ):
         _fund_pools(pool_a, pool_b, pool_c, weth, usdc, wbtc, owner_account)
-        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = (
-            _compute_amounts(pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN)
+        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = _compute_amounts(
+            pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN
         )
 
         at = AddressTable()
@@ -495,16 +489,14 @@ class TestGasComparison:
 
         tx = executor.execute(enc_preamble(at) + commands, sender=owner_account)
         assert tx.status == 1
-        print(
-            f"\n    Approach 1 (3× COMPACT, nested callbacks):   {tx.gas_used:>8,} gas"
-        )
+        print(f"\n    Approach 1 (3× COMPACT, nested callbacks):   {tx.gas_used:>8,} gas")
 
     def test_approach_2_gas(
         self, weth, usdc, wbtc, owner_account, executor, pool_a, pool_b, pool_c
     ):
         _fund_pools(pool_a, pool_b, pool_c, weth, usdc, wbtc, owner_account)
-        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = (
-            _compute_amounts(pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN)
+        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = _compute_amounts(
+            pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN
         )
 
         at = AddressTable()
@@ -583,8 +575,8 @@ class TestEconomicEquivalence:
     ):
         """Run a single approach and return executor's WETH profit."""
         _fund_pools(pool_a, pool_b, pool_c, weth, usdc, wbtc, owner_account)
-        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = (
-            _compute_amounts(pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN)
+        amount_usdc, amount_wbtc, amount_weth_out, zfo_a, zfo_b, zfo_c = _compute_amounts(
+            pool_a, pool_b, pool_c, weth, usdc, wbtc, AMOUNT_WETH_IN
         )
 
         if approach == 3:
@@ -628,9 +620,7 @@ class TestEconomicEquivalence:
         elif approach == 2:
             pool_a_callback = enc_erc20_transfer(usdc_idx, pool_b_idx, amount_usdc)
             pool_a_callback += enc_v2_swap_calc(pool_b_idx, zfo_b, pool_c_idx, fee=FEE)
-            pool_a_callback += enc_v2_swap_calc(
-                pool_c_idx, zfo_c, executor_idx, fee=FEE
-            )
+            pool_a_callback += enc_v2_swap_calc(pool_c_idx, zfo_c, executor_idx, fee=FEE)
             pool_a_callback += enc_erc20_transfer(weth_idx, pool_a_idx, AMOUNT_WETH_IN)
             commands = enc_v2_swap_compact(
                 pool_a_idx,

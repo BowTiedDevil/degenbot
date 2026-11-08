@@ -49,14 +49,14 @@ def nested_mapping_slot(base_slot: Any, key1: Any, key2: Any) -> Any:
     """
 
 def pack_config(
-    check_mode: SupportsIndex,
-    expected_value: Any,
+    profit_mode: SupportsIndex,
+    min_profit: Any,
     *,
     bribe_bips: SupportsIndex = 0,
     bribe_recipient_idx: SupportsIndex = 0,
 ) -> Any:
     """
-    `degenbot._ffi.executor.pack_config(check_mode=0, expected_value=0, bribe_bips=0,
+    `degenbot._ffi.executor.pack_config(profit_mode, min_profit, *, bribe_bips=0,
     bribe_recipient_idx=0) -> int`
 
     Pack the `execute(commands, config)` ABI `config` `uint256`. Thin wrapper

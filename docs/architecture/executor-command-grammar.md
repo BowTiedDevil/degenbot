@@ -76,7 +76,7 @@ independent dimensions:
 |------|------|-------------|------------------------|
 | **hop-protocol sequence** | `Vec<Prot>` (V2/V3/V4) | the solver (path) | all 2/3-hop Uniswap combinations + all-V2 any-N |
 | **funding source** | `FundingSource` | strategy/operator, **per-path, runtime** | `InPathFlash` (default), `SelfFund`, `PmLedger` (pure-V4), modeled: `ExternalLender`, `Erc6909BurnToSettle` |
-| **profit capture** | `ProfitCapture` | strategy/operator, **per-path, runtime** | `Custody` (default), `Erc6909`, `Native`, `SweepToAddress`; modeled: `Owner`, `BalancerVault` |
+| **profit capture** | `ProfitCapture` | strategy/operator, **per-path, runtime** | `Custody` (default), `Erc6909`, `Native`; modeled: `Owner`, `BalancerVault` |
 | **builder bribe** | `Bribe` | strategy/operator, **per-path, runtime** | `None` (default), `Some { bips, recipient_idx }` |
 
 **Funding source is an economic knob**, not a build-time constant. Self-fund =

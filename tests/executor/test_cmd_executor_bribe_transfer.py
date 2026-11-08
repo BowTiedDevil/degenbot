@@ -48,9 +48,7 @@ def bribe_recipient(accounts):
     return accounts[5]
 
 
-def _setup_and_mint_native_eth(
-    v4_pm, weth, owner_account, executor, at, amount=AMOUNT_WETH
-):
+def _setup_and_mint_native_eth(v4_pm, weth, owner_account, executor, at, amount=AMOUNT_WETH):
     pool_key = _make_pool_key(NATIVE_ADDRESS, weth.address, fee=500, tick_spacing=10)
     zfo = pool_key[0] == weth.address  # False (NATIVE_ADDRESS < WETH)
 
@@ -66,7 +64,11 @@ def _setup_and_mint_native_eth(
         enc_v4_swap_compact(
             native_idx if pool_key[0] == NATIVE_ADDRESS else weth_idx,
             weth_idx if pool_key[1] == weth.address else native_idx,
-            pool_key[2], pool_key[3], zero_idx, zfo, amount,
+            pool_key[2],
+            pool_key[3],
+            zero_idx,
+            zfo,
+            amount,
         )
         + enc_v4_mint_compact(native_idx, executor_idx, amount)
         + enc_v4_settle_delta(weth_idx)
@@ -78,9 +80,7 @@ def _build_burn_and_take_native_eth(v4_pm, weth, executor, at, amount=AMOUNT_WET
     native_idx = at.add(NATIVE_ADDRESS)
     executor_idx = at.add(executor.address)
 
-    inner = enc_v4_burn_compact(native_idx, amount) + enc_v4_take_delta(
-        native_idx, executor_idx
-    )
+    inner = enc_v4_burn_compact(native_idx, amount) + enc_v4_take_delta(native_idx, executor_idx)
     return enc_v4_unlock(inner)
 
 
@@ -97,13 +97,9 @@ class TestBribeTransferBalances:
 
         at = AddressTable()
 
-        commands_1 = _setup_and_mint_native_eth(
-            v4_pm, weth, owner_account, executor, at
-        )
+        commands_1 = _setup_and_mint_native_eth(v4_pm, weth, owner_account, executor, at)
         weth.mint(executor.address, PROFIT_ETH, sender=owner_account)
-        tx1 = executor.execute(
-            enc_preamble(at) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
 
         assert v4_pm.balanceOf(executor.address, NATIVE_ID) == PROFIT_ETH
@@ -126,29 +122,21 @@ class TestBribeTransferBalances:
         profit = (combined_after - combined_before) + actual_bribe
         expected_bribe = profit * BIPS // 10000
 
-        assert profit == PROFIT_ETH, (
-            f"profit should be exactly {PROFIT_ETH}, got {profit}"
-        )
+        assert profit == PROFIT_ETH, f"profit should be exactly {PROFIT_ETH}, got {profit}"
         assert actual_bribe == expected_bribe, (
             f"recipient received {actual_bribe} wei, expected {expected_bribe} wei"
         )
 
-    def test_bribe_coinbase_sends_eth(
-        self, usdc, weth, owner_account, executor, v4_pm, chain
-    ):
+    def test_bribe_coinbase_sends_eth(self, usdc, weth, owner_account, executor, v4_pm, chain):
         """Bribe 50% to coinbase via config param."""
         PROFIT_ETH = AMOUNT_WETH
         BIPS = 5000
 
         at = AddressTable()
 
-        commands_1 = _setup_and_mint_native_eth(
-            v4_pm, weth, owner_account, executor, at
-        )
+        commands_1 = _setup_and_mint_native_eth(v4_pm, weth, owner_account, executor, at)
         weth.mint(executor.address, PROFIT_ETH, sender=owner_account)
-        tx1 = executor.execute(
-            enc_preamble(at) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
 
         commands_2 = _build_burn_and_take_native_eth(v4_pm, weth, executor, at)
@@ -177,13 +165,9 @@ class TestBribeTransferBalances:
 
         at = AddressTable()
 
-        commands_1 = _setup_and_mint_native_eth(
-            v4_pm, weth, owner_account, executor, at
-        )
+        commands_1 = _setup_and_mint_native_eth(v4_pm, weth, owner_account, executor, at)
         weth.mint(executor.address, PROFIT_ETH, sender=owner_account)
-        tx1 = executor.execute(
-            enc_preamble(at) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
 
         commands_2 = _build_burn_and_take_native_eth(v4_pm, weth, executor, at)
@@ -210,13 +194,9 @@ class TestBribeTransferBalances:
 
         at = AddressTable()
 
-        commands_1 = _setup_and_mint_native_eth(
-            v4_pm, weth, owner_account, executor, at
-        )
+        commands_1 = _setup_and_mint_native_eth(v4_pm, weth, owner_account, executor, at)
         weth.mint(executor.address, PROFIT_ETH, sender=owner_account)
-        tx1 = executor.execute(
-            enc_preamble(at) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
 
         recipient_idx = at.add(bribe_recipient.address)

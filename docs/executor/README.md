@@ -310,7 +310,6 @@ After extensive optimization, the 27 three-hop permutations total **4,947,078 ga
 | Sentinel address resolution | −67,786 | WETH/NATIVE/SELF/PM sentinels skip TLOAD + SET_ADDRESS |
 | Dispatch reorder by frequency | −11,625 | Most common opcodes first in if/elif chain |
 | Inline _lookup_address in hot handlers | −3,452 | Avoids function call overhead for sentinel resolution |
-| Conditional balance reads | −24,986 | Skip balanceOf when skip_profit_check + no bribe |
 | Preprocess reorder | −1,854 | SET_ADDRESS before BEGIN_EXECUTION in preprocessing |
 | Remove forward_data variables | −3,368 | Eliminate intermediary Bytes vars used once |
 | Single t_callback variable | −3,027 | Replace HashMap with one transient variable |
@@ -528,7 +527,7 @@ This replaces the old ABI-encoded parameters:
 | Old ABI parameter | New in-stream | Saved |
 |-------------------|---------------|-------|
 | `addresses: DynArray[address, 32]` | SET_ADDRESS commands | 12 padding bytes per address + DynArray overhead |
-| `expected_balance: uint256` → `config: uint256` | Packed check_mode + bips + recipient + value | Eliminates bribe commands from stream + 2 elif branches |
+| `expected_balance: uint256` → `config: uint256` | Packed profit_mode + bips + recipient + value | Eliminates bribe commands from stream + 2 elif branches |
 
 **Calldata savings** (excluding 4-byte function selector):
 
@@ -544,33 +543,38 @@ This replaces the old ABI-encoded parameters:
 
 Built-in MEV bribe support: the executor can bribe block builders or arbitrary addresses with a percentage of the arbitrage profit. Bribe configuration is packed into the `config` ABI parameter (bits 8–23 = bribe_bips, bits 24–31 = bribe_recipient_idx).
 
-- **Coinbase bribe**: `config = (pre_tx_balance << 32) | (bips << 8) | check_mode` — sends to `block.coinbase`. `bips=5000` = 50%, `bips=1000` = 10%.
-- **Address bribe**: `config = (pre_tx_balance << 32) | (bips << 8) | (recipient_idx << 24) | check_mode` — sends to an address from the address table. `recipient_idx=0` = coinbase.
+- **Coinbase bribe**: `config = (min_profit << 32) | (bips << 8) | profit_mode` — sends to `block.coinbase`. `bips=5000` = 50%, `bips=1000` = 10%.
+- **Address bribe**: `config = (min_profit << 32) | (bips << 8) | (recipient_idx << 24) | profit_mode` — sends to an address from the address table. `recipient_idx=0` = coinbase.
 
 The bribe amount is `profit * bips / 10000`, auto-withdrawing WETH if ETH is insufficient, and capped at available balance (never reverts).
 
 Moving bribe config from the command stream to the ABI parameter saved −1,424 gas total (−53 gas per path) by eliminating 2 elif branches in `_preprocess` and the slice/convert/dispatch overhead per field.
 
-## Profit Check Modes
+## Execution Receipt & Profit Configuration
 
-The `config` parameter of `execute()` is packed: `(expected_value << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | check_mode`.
+`execute(commands, config=1)` returns
+`ExecutionReceipt { gross_profit, bribe_paid }`. The config word is
+`(min_profit << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | profit_mode`.
 
-| check_mode | Check Performed | When to Use |
-|------------|----------------|-------------|
-| 0 | Skip (no check) | `config=0` — off-chain verification only |
-| 1 | `WETH.balanceOf(self) + self.balance >= value` | Default for V2/V3/V4+other paths (WETH warm from transfers) |
-| 2 | `PM.balanceOf(self, weth_id) >= value` | V4V4V4 with `V4_MINT_COMPACT` profit capture |
-| 3 | **SWEEP — assert defeated** | Operator withdrawal: move accumulated profit out (e.g. `SEND_ETH_ALL` / `ERC20_XFER_BALANCE` to a recipient index). A sweep intentionally makes `combined_after < combined_before`, which mode 1 would flag as a loss, so mode 3 treats `combined_before` as 0. It is the *only* legitimate assert-defeat — do not approximate it with `expected_value=0` under mode 1, which would also zero the bribe base. Bribes in mode 3 compute on the post-sweep balance: `(10000 << 8) | (recipient_idx << 24) | 3` pays 100% of it to the recipient. |
+| `profit_mode` | Measured Balance Domain | When to Use |
+|---------------|-------------------------|-------------|
+| 1 | Physical WETH + native ETH | Physical V2/V3/V4 profit capture (default) |
+| 2 | PoolManager ERC6909 WETH claims | V4 paths with `V4_MINT_COMPACT` WETH profit |
 
-**Why mode 2 exists**: On pure V4 paths (V4V4V4), the `WETH.balanceOf(self)` SLOAD is cold (~2,600 gas) because V4 operations use delta accounting — no physical WETH transfers. But after `V4_MINT_COMPACT` writes to the ERC6909 slot, reading `PM.balanceOf(self, weth_id)` is warm (~100 gas). Mode 2 saves ~3,500 gas on V4V4V4 by reading the warm ERC6909 slot instead of cold WETH.
+All other modes revert. Every execution measures the selected balance before
+and after the command stream. A decrease or `gross_profit < min_profit`
+reverts. Gross is measured before bribe payment; `bribe_paid` is the actual
+native ETH transferred after any available-balance cap. Retained profit before
+transaction fees is `gross_profit - bribe_paid`.
 
-The operator constructs:
-- Mode 1: `(pre_tx_weth_eth_balance << 32) | 1`
-- Mode 2: `(2 << 248) | (pre_tx_erc6909_weth_balance)`
-- Mode 3 (sweep): `3` — plus `(bips << 8) | (recipient_idx << 24)` to route the payout
-- Skip: `0`
+Mode 2 reads the ERC6909 slot warmed by `V4_MINT_COMPACT`, avoiding a cold
+physical WETH `balanceOf` read on pure-V4 claim-capture paths. Gas and other
+off-chain fees are enforced by operator policy, not by `min_profit`.
 
-2^248 ≈ 3.4×10^74 wei — far exceeds any real token balance, so the top 8 bits are always zero and safe to use for the mode flag.
+Administrative transfers are separate: `sweep(destination)` unwraps and sends
+all physical WETH + native ETH to an owner-chosen address without execution
+receipt, profit, or bribe semantics. `withdraw(amount, destination)` remains
+available for partial physical withdrawals.
 
 ## `#pragma experimental-codegen` (Venom Backend) — Recommended
 

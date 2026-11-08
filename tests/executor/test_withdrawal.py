@@ -46,9 +46,7 @@ AMOUNT_WETH_PROFIT = 2 * 10**18
 class TestWithdrawERC6909USDC:
     """Withdraw USDC held as ERC6909 inside the PoolManager."""
 
-    def test_withdraw_erc6909_usdc_two_tx(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_withdraw_erc6909_usdc_two_tx(self, usdc, weth, owner_account, executor, v4_pm):
         """
         Two-transaction flow:
           Tx 1: V4 swap WETH→USDC, mint USDC as ERC6909 (stays inside PM)
@@ -96,9 +94,7 @@ class TestWithdrawERC6909USDC:
         )
         commands_1 = enc_v4_unlock(inner_1)
         # withdrawal intentionally moves value out of executor
-        tx1 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
 
         # Verify ERC6909 balance exists
@@ -117,9 +113,7 @@ class TestWithdrawERC6909USDC:
             + enc_erc20_xfer_balance(usdc_idx, owner_idx)
         )
         # withdrawal intentionally moves value out of executor
-        tx2 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_2, sender=owner_account
-        )
+        tx2 = executor.execute(enc_preamble(at) + commands_2, 2, sender=owner_account)
         assert tx2.status == 1
 
         # Verify withdrawal
@@ -127,9 +121,7 @@ class TestWithdrawERC6909USDC:
         assert usdc.balanceOf(executor.address) == 0
         assert usdc.balanceOf(owner_account.address) >= AMOUNT_USDC
 
-    def test_withdraw_erc6909_usdc_single_tx(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_withdraw_erc6909_usdc_single_tx(self, usdc, weth, owner_account, executor, v4_pm):
         """
         Single-transaction flow: mint + burn + take + transfer, all in one call.
         This tests that burn+take works side-by-side with the original swap.
@@ -181,9 +173,7 @@ class TestWithdrawERC6909USDC:
         commands = enc_v4_unlock(inner) + enc_erc20_xfer_balance(usdc_idx, owner_idx)
 
         # withdrawal intentionally moves value out of executor
-        tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands, sender=owner_account
-        )
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx.status == 1
 
         # ERC6909 balance should be 0 (minted then burned)
@@ -202,9 +192,7 @@ class TestWithdrawERC6909USDC:
 class TestWithdrawERC6909NativeETH:
     """Withdraw native ETH held as ERC6909 inside the PoolManager."""
 
-    def test_withdraw_erc6909_native_eth(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_withdraw_erc6909_native_eth(self, usdc, weth, owner_account, executor, v4_pm):
         """
         Two-phase: swap WETH→native ETH, mint as ERC6909, then burn+take+send_eth_all.
         Uses a pool with native ETH as one of the currencies.
@@ -224,13 +212,9 @@ class TestWithdrawERC6909NativeETH:
 
         # ── Tx 1: Swap WETH→native ETH, mint ETH as ERC6909 ──
         # Pool: NATIVE_ADDRESS/WETH. zfo=True means WETH is input (sell WETH, buy native ETH).
-        pool_key = _make_pool_key(
-            NATIVE_ADDRESS, weth.address, fee=500, tick_spacing=10
-        )
+        pool_key = _make_pool_key(NATIVE_ADDRESS, weth.address, fee=500, tick_spacing=10)
         zfo = pool_key[0] == weth.address  # False (NATIVE < WETH)
-        _setup_v4_swap(
-            pm, owner_account, pool_key, AMOUNT_WETH, AMOUNT_WETH, zfo, fund_eth=True
-        )
+        _setup_v4_swap(pm, owner_account, pool_key, AMOUNT_WETH, AMOUNT_WETH, zfo, fund_eth=True)
 
         inner_1 = (
             enc_v4_swap_compact(
@@ -249,9 +233,7 @@ class TestWithdrawERC6909NativeETH:
         )
         commands_1 = enc_v4_unlock(inner_1)
         # withdrawal intentionally moves value out of executor
-        tx1 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
 
         # Verify ERC6909 balance for native ETH
@@ -264,9 +246,7 @@ class TestWithdrawERC6909NativeETH:
         commands_2 = enc_v4_unlock(inner_2) + enc_send_eth_all(owner_idx)
 
         # withdrawal intentionally moves value out of executor
-        tx2 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_2, sender=owner_account
-        )
+        tx2 = executor.execute(enc_preamble(at) + commands_2, 2, sender=owner_account)
         assert tx2.status == 1
 
         # Verify ERC6909 balance is 0
@@ -283,9 +263,7 @@ class TestWithdrawERC6909NativeETH:
 class TestWithdrawERC20:
     """Withdraw ERC20 tokens held by the executor."""
 
-    def test_withdraw_erc20_xfer_balance(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_withdraw_erc20_xfer_balance(self, usdc, weth, owner_account, executor, v4_pm):
         """
         After a V4 swap that sends USDC to executor, withdraw all USDC
         to owner via ERC20_XFER_BALANCE.
@@ -330,9 +308,7 @@ class TestWithdrawERC20:
         commands = enc_v4_unlock(inner)
 
         # withdrawal intentionally moves value out of executor
-        tx1 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx1.status == 1
         assert usdc.balanceOf(executor.address) == AMOUNT_USDC
 
@@ -340,17 +316,13 @@ class TestWithdrawERC20:
         usdc_before = usdc.balanceOf(owner_account.address)
         commands_withdraw = enc_erc20_xfer_balance(usdc_idx, owner_idx)
         # withdrawal intentionally moves value out of executor
-        tx2 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_withdraw, sender=owner_account
-        )
+        tx2 = executor.execute(enc_preamble(at) + commands_withdraw, sender=owner_account)
         assert tx2.status == 1
 
         assert usdc.balanceOf(executor.address) == 0
         assert usdc.balanceOf(owner_account.address) == usdc_before + AMOUNT_USDC
 
-    def test_withdraw_erc20_transfer_specific_amount(
-        self, usdc, weth, owner_account, executor
-    ):
+    def test_withdraw_erc20_transfer_specific_amount(self, usdc, weth, owner_account, executor):
         """
         Transfer a specific ERC20 amount (not full balance) from executor.
         Uses ERC20_TRANSFER, not ERC20_XFER_BALANCE.
@@ -365,7 +337,7 @@ class TestWithdrawERC20:
 
         # Transfer only 1x AMOUNT_USDC (leaving 2x behind)
         commands = enc_erc20_transfer(usdc_idx, owner_idx, AMOUNT_USDC)
-        tx = executor.execute(enc_preamble(at) + commands, sender=owner_account)
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx.status == 1
 
         assert usdc.balanceOf(executor.address) == AMOUNT_USDC * 2
@@ -391,9 +363,7 @@ class TestWithdrawETH:
         owner_eth_before = owner_account.balance
         commands = enc_send_eth(owner_idx, eth_amount)
         # withdrawal intentionally moves value out of executor
-        tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands, sender=owner_account
-        )
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx.status == 1
 
         # Owner received the ETH (minus gas costs from the tx)
@@ -410,9 +380,7 @@ class TestWithdrawETH:
         owner_eth_before = owner_account.balance
         commands = enc_send_eth_all(owner_idx)
         # withdrawal intentionally moves value out of executor
-        tx = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands, sender=owner_account
-        )
+        tx = executor.execute(enc_preamble(at) + commands, 2, sender=owner_account)
         assert tx.status == 1
 
         # Executor should have near-zero ETH (just gas residue)
@@ -432,9 +400,7 @@ class TestFullRoundTrip:
     all accumulated balances (ERC6909 tokens + ETH + WETH).
     """
 
-    def test_full_round_trip_usdc_via_erc6909(
-        self, usdc, weth, owner_account, executor, v4_pm
-    ):
+    def test_full_round_trip_usdc_via_erc6909(self, usdc, weth, owner_account, executor, v4_pm):
         """
         1. V4 swap: WETH→USDC (profitable)
         2. V4_MINT_COMPACT: USDC as ERC6909 inside PM
@@ -485,9 +451,7 @@ class TestFullRoundTrip:
         )
         commands_1 = enc_v4_unlock(inner)
         # withdrawal intentionally moves value out of executor
-        tx1 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
         assert pm.balanceOf(executor.address, usdc_id) == AMOUNT_USDC
 
@@ -504,9 +468,7 @@ class TestFullRoundTrip:
             + enc_send_eth_all(owner_idx)
         )
         # withdrawal intentionally moves value out of executor
-        tx2 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_2, sender=owner_account
-        )
+        tx2 = executor.execute(enc_preamble(at) + commands_2, 2, sender=owner_account)
         assert tx2.status == 1
 
         # Verify clean state
@@ -539,13 +501,9 @@ class TestFullRoundTrip:
         owner_idx = at.add(owner_account.address)
 
         # ── Phase 1: Swap WETH→native ETH, mint as ERC6909 ──
-        pool_key = _make_pool_key(
-            NATIVE_ADDRESS, weth.address, fee=500, tick_spacing=10
-        )
+        pool_key = _make_pool_key(NATIVE_ADDRESS, weth.address, fee=500, tick_spacing=10)
         zfo = pool_key[0] == weth.address
-        _setup_v4_swap(
-            pm, owner_account, pool_key, AMOUNT_WETH, AMOUNT_WETH, zfo, fund_eth=True
-        )
+        _setup_v4_swap(pm, owner_account, pool_key, AMOUNT_WETH, AMOUNT_WETH, zfo, fund_eth=True)
 
         inner_1 = (
             enc_v4_swap_compact(
@@ -562,9 +520,7 @@ class TestFullRoundTrip:
         )
         commands_1 = enc_v4_unlock(inner_1)
         # withdrawal intentionally moves value out of executor
-        tx1 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_1, sender=owner_account
-        )
+        tx1 = executor.execute(enc_preamble(at) + commands_1, 2, sender=owner_account)
         assert tx1.status == 1
         assert pm.balanceOf(executor.address, native_id) == AMOUNT_WETH
 
@@ -575,9 +531,7 @@ class TestFullRoundTrip:
         commands_2 = enc_v4_unlock(inner_2) + enc_send_eth_all(owner_idx)
 
         # withdrawal intentionally moves value out of executor
-        tx2 = executor.execute(
-            enc_preamble(at, skip_profit=True) + commands_2, sender=owner_account
-        )
+        tx2 = executor.execute(enc_preamble(at) + commands_2, 2, sender=owner_account)
         assert tx2.status == 1
 
         # Verify clean state

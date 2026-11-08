@@ -70,14 +70,10 @@ V2_FEE = 30
 def _v4_swap(at, pool_key, zfo, amount, zero_idx):
     c0_idx = at.add(pool_key[0])
     c1_idx = at.add(pool_key[1])
-    return enc_v4_swap_compact(
-        c0_idx, c1_idx, pool_key[2], pool_key[3], zero_idx, zfo, amount
-    )
+    return enc_v4_swap_compact(c0_idx, c1_idx, pool_key[2], pool_key[3], zero_idx, zfo, amount)
 
 
-def _verify_conservation(
-    label, tokens, accounts, before, executor, expected_weth_delta=None
-):
+def _verify_conservation(label, tokens, accounts, before, executor, expected_weth_delta=None):
     """Assert that balance changes satisfy arbitrage invariants.
 
     Simplified copy of _verify_conservation from the three-hop test file.
@@ -157,9 +153,7 @@ def _setup_v4_pool(
 ):
     pool_key = _make_pool_key(c0, c1, fee=fee, tick_spacing=tick_spacing)
     zfo = pool_key[0] == c0
-    _setup_v4_swap(
-        pm, owner, pool_key, amount_in, amount_out, zfo, output_token=output_token
-    )
+    _setup_v4_swap(pm, owner, pool_key, amount_in, amount_out, zfo, output_token=output_token)
     return pool_key, zfo
 
 
@@ -425,9 +419,7 @@ class TestConservationPassesButProfitCheckFails:
         assert tx.status == 1
 
         # Conservation PASSES (tokens went to a tracked account)
-        _verify_conservation(
-            "V4TakeToTracked", [weth, usdc, wbtc], accounts, before, executor
-        )
+        _verify_conservation("V4TakeToTracked", [weth, usdc, wbtc], accounts, before, executor)
 
         # But the NET_PROFIT CHECK fails — executor didn't get its profit
         with pytest.raises(AssertionError, match="executor WETH\\+ETH profit mismatch"):
@@ -470,25 +462,13 @@ class TestConservationCatchesStrayTransferInCallback:
         Since the executor holds WETH profit from V2c's flash swap, the stray
         transfer has enough balance to succeed. Conservation catches the leak.
         """
-        a_zfo = _setup_v2_for_calc(
-            v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC
-        )
-        b_zfo = _setup_v2_for_calc(
-            v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC
-        )
-        c_zfo = _setup_v2_for_calc(
-            v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT
-        )
+        a_zfo = _setup_v2_for_calc(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
+        b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
+        c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
 
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
-        b_out = v2_get_amount_out(
-            a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
-        c_out = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
+        b_out = v2_get_amount_out(a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
+        c_out = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
         at = AddressTable()
         weth_idx = at.add(weth.address)
@@ -528,9 +508,7 @@ class TestConservationCatchesStrayTransferInCallback:
             )
 
 
-def _setup_v2_for_calc(
-    pool, input_token, output_token, owner, amount_in, amount_out, fee=V2_FEE
-):
+def _setup_v2_for_calc(pool, input_token, output_token, owner, amount_in, amount_out, fee=V2_FEE):
     """Set up a V2 pair with ample liquidity at the correct price for V2_SWAP_CALC."""
     input_token.mint(pool.address, amount_in * 100, sender=owner)
     output_token.mint(pool.address, amount_out * 100, sender=owner)

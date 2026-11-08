@@ -942,7 +942,9 @@ fn native_wrap_v4_v2_executes_with_terminal_delta() {
         h.executor_approve_pair(*p).unwrap();
     }
     let t_before = h.balance_of(t, h.executor).unwrap().to::<u128>() as i128;
-    let outcome = h.execute_payload(&derived, gas).unwrap();
+    let outcome = h
+        .execute_payload_config(&derived, gas, U256::from(2u8))
+        .unwrap();
     assert!(
         outcome.executed(2),
         "wrap v4_v2 must execute through both pools: {outcome:?}"
@@ -1233,7 +1235,7 @@ fn native_v4v4v4_derived_executes_with_exact_native_delta() {
 //   * `use_v4_batch=true`  → single `V4_BATCH` PM extcall; profit is physical
 //     WETH on the executor (measured via `balance_of`).
 //   * `erc6909_profit=true` → `V4_MINT_COMPACT` mints profit as an ERC6909
-//     claim held on the PM; the execute `config` must set `check_mode=2`
+//     claim held on the PM; the execute `config` must set `profit_mode=2`
 //     (see `config_for_options`) and profit is measured via `pm_balance_of`.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1452,7 +1454,7 @@ fn v4v4_tok_batch_executes_and_captures_tok_profit() {
     let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("derive v4_v4 tok-batch None"));
     let result = h
-        .run_raw_payload(&hops, &derived, optimal_input, gas)
+        .run_raw_payload_config(&hops, &derived, optimal_input, gas, U256::from(2u8))
         .unwrap_or_else(|e| panic!("run v4_v4 tok-batch: {e}"));
     assert!(
         result.outcome.executed(2),
@@ -1498,7 +1500,7 @@ fn v4v4v4_batch_executes_with_exact_delta() {
 }
 
 /// v4_v4 with `erc6909_profit=true`: profit is minted as an ERC6909 WETH claim
-/// on the PM, and the execute `config` is wired to `check_mode=2` so the
+/// on the PM, and the execute `config` is wired to `profit_mode=2` so the
 /// profit-check settles. Assert Accepted + the ERC6909 balance equals the exact
 /// predicted profit.
 #[test]
@@ -1529,7 +1531,7 @@ fn v4v4_erc6909_executes_with_exact_profit() {
     assert_eq!(
         config & U256::from(255u64),
         U256::from(2u64),
-        "check_mode=2 wired"
+        "profit_mode=2 wired"
     );
 
     let before = h.pm_balance_of(h.executor, h.weth).unwrap().to::<u128>() as i128;
@@ -1553,7 +1555,7 @@ fn v4v4_erc6909_executes_with_exact_profit() {
     );
 }
 
-/// v4_v4_v4 with `erc6909_profit=true` + `check_mode=2`: 3-hop mint capture.
+/// v4_v4_v4 with `erc6909_profit=true` + `profit_mode=2`: 3-hop mint capture.
 #[test]
 fn v4v4v4_erc6909_executes_with_exact_profit() {
     let mut h = Harness::new().unwrap();
@@ -1604,8 +1606,8 @@ fn v4v4v4_erc6909_executes_with_exact_profit() {
 /// WE45KC inc.2 runtime proof: `ProfitCapture::Native` on a WETH-terminal v4_v4
 /// path. The WETH profit is taken to custody then `WETH_WITHDRAW`n to native —
 /// the executor's native delta equals the predicted profit (and WETH delta ≈ 0,
-/// since the profit left WETH). check_mode=0 (default) skips profit
-/// verification, so native-capture executes clean without a check_mode change.
+/// since the profit left WETH). profit_mode=0 (default) skips profit
+/// verification, so native-capture executes clean without a profit_mode change.
 #[test]
 fn v4v4_native_capture_executes_with_exact_native_delta() {
     use degenbot_executor::grammar_ledger::ProfitCapture;
@@ -1994,10 +1996,10 @@ fn all_v2_self_fund_executes_with_exact_delta_and_differs_from_flash() {
 
 /// builder bribe via `config` (ADR-029 D1 / Q3). The first bribe matrix
 /// row — closes the "no bribe tests exist" gap. An in-path-flash all-V2 path
-/// ends with `profit` WETH at the executor. With `check_mode=0` (no on-chain
+/// ends with `profit` WETH at the executor. With `profit_mode=0` (no on-chain
 /// profit check) + `bribe_bips=500` (5%) + `recipient_idx=0` (block.coinbase),
-/// the executor's slow path computes `profit = combined_after - expected_value`
-/// (= profit, since expected_value=0 and the flash path starts at ~0) and pays
+/// the executor's slow path computes `profit = combined_after - min_profit`
+/// (= profit, since min_profit=0 and the flash path starts at ~0) and pays
 /// `profit/20` to the builder, withdrawing WETH to cover. So the executor's
 /// WETH delta = `profit - bribe = 19*profit/20` — vs `profit` with no bribe.
 #[test]
@@ -2092,12 +2094,12 @@ fn all_v2_in_path_flash_pays_builder_bribe_from_profit() {
         "recipient_idx=200 must revert (proves config passes): {bad_outcome:?}"
     );
 
-    // check_mode=0, expected_value=0, bribe_bips=500 (5%), recipient=0 (coinbase).
+    // profit_mode=0, min_profit=0, bribe_bips=500 (5%), recipient=0 (coinbase).
     // Fund WETH with ETH so the executor's `WETH.withdraw` (inside the bribe
     // path) can convert profit WETH to the ETH needed for the coinbase payment.
     // In production WETH9 is heavily backed by deposits; the fixture starts empty.
     h2.set_native_balance(weth2, U256::from(1_000_000_000_000_000_000u128));
-    let config = pack_config(0, U256::ZERO, 500, 0).expect("pack_config bribe");
+    let config = pack_config(1, U256::ZERO, 500, 0).expect("pack_config bribe");
     let weth_before_bribe = h2.balance_of(weth2, h2.executor).unwrap().to::<u128>() as i128;
     let _eth_before = h2.native_balance_of(h2.executor).unwrap().to::<u128>() as i128;
     let outcome_bribe = h2
@@ -2168,7 +2170,7 @@ fn config_for_options_bribe_axis_reaches_contract_and_pays() {
     let payload = h
         .encode_path_with_opts(&path, optimal_input, &hop_outputs, opts)
         .expect("flash all-V2 must encode");
-    // The axis-aware builder produces the packed config (check_mode=0, bips=500).
+    // The axis-aware builder produces the packed config (profit_mode=0, bips=500).
     let config = config_for_options(opts, U256::ZERO).unwrap();
     assert_eq!((config >> 8) & U256::from(65535u64), U256::from(500u64));
 
@@ -2265,9 +2267,9 @@ fn v2_v3_self_fund_executes_with_exact_delta_and_differs_from_flash() {
 }
 
 /// U3WVLL defect fix: the on-chain profit assert is now ACTIVE by default
-/// (check_mode=1, contract reads its own combined balance at start+end). A
+/// (profit_mode=1, contract reads its own combined balance at start+end). A
 /// money-losing self-fund path reverts with `InsufficientProfit` — previously
-/// (expected_value=0 → no-op assert) it would silently succeed, exposing the
+/// (min_profit=0 → no-op assert) it would silently succeed, exposing the
 /// operator to loss. Symmetric V2 reserves guarantee a round-trip loss (2x
 /// 0.3% fee), so the self-fund v2_v2 path here is money-losing by construction.
 #[test]
@@ -2315,7 +2317,7 @@ fn u3wvll_money_losing_self_fund_path_reverts_with_profit_assert() {
         )
         .expect("self-fund v2_v2 must encode");
 
-    // check_mode=1 (default for Custody capture) → the profit assert is active.
+    // profit_mode=1 (default for Custody capture) → the profit assert is active.
     let config = config_for_options(
         EncodeOptions {
             funding: FundingSource::SelfFund,
@@ -2327,7 +2329,7 @@ fn u3wvll_money_losing_self_fund_path_reverts_with_profit_assert() {
     assert_eq!(
         config & U256::from(255u64),
         U256::from(1u64),
-        "check_mode=1 (assert active)"
+        "profit_mode=1 (assert active)"
     );
 
     // Self-fund precondition: executor holds the entry WETH (combined_before > 0).
@@ -2424,90 +2426,4 @@ fn u3wvll_bribe_on_self_fund_computes_on_true_profit_not_balance() {
         true_profit - (weth_after / 20)
     );
     println!("── u3wvll self-fund bribe: delta={weth_delta}, true_profit={true_profit}, bribe={bribe} (not over-bribed)");
-}
-
-/// follow-up (767TN5): the sweep opt-in (`check_mode=3`) defeats the
-/// profit assert for the rare "send accumulated profit to another address"
-/// case. The executor holds accumulated WETH (combined_before > 0); a sweep
-/// command stream sends it away (combined_after < combined_before) — which
-/// would revert under the default assert, but check_mode=3 skips it. This is
-/// the ONLY way to defeat the assert (not `expected_value=0`, the old footgun).
-#[test]
-fn u3wvll_sweep_mode_defeats_profit_assert() {
-    use degenbot_executor::composers::config_for_options;
-    use degenbot_executor::grammar_ledger::ProfitCapture;
-
-    let mut h = Harness::new().unwrap();
-    let weth = h.weth;
-    let r: u128 = 1_000_000_000_000;
-    // A pointless-but-sweeping command stream: pre-fund the executor with WETH,
-    // then a no-op (empty payload that just reads the balance + would assert).
-    // The sweep itself is modeled as: the executor holds WETH, and
-    // check_mode=3 lets a stream that SENDS it away succeed.
-    // We construct a minimal "drain" via a 2-hop all-V2 swap that returns LESS
-    // than the entry (symmetric reserves → loss) — under check_mode=1 this
-    // reverts (proven by u3wvll_money_losing_self_fund_path_reverts...); under
-    // check_mode=3 it must NOT revert (the assert is defeated).
-    let t = h.add_token().unwrap();
-    let p_a = HopPool::V2(h.add_pool(weth, t, r, r).unwrap()); // symmetric → loss
-    let p_b = HopPool::V2(h.add_pool(t, weth, r, r).unwrap());
-    let hops = vec![
-        Hop {
-            src: weth,
-            dst: t,
-            pool: p_a,
-        },
-        Hop {
-            src: t,
-            dst: weth,
-            pool: p_b,
-        },
-    ];
-    let optimal_input = 100_000u128;
-    let (path, hop_outputs, _consumed) = h.path_and_amounts(&hops, optimal_input);
-    assert!(
-        (*hop_outputs.last().unwrap() as i128 - optimal_input as i128) < 0,
-        "symmetric path must be money-losing"
-    );
-
-    let payload = h
-        .encode_path_with_opts(
-            &path,
-            optimal_input,
-            &hop_outputs,
-            EncodeOptions {
-                funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
-                ..Default::default()
-            },
-        )
-        .expect("self-fund v2_v2 must encode");
-
-    // SWEEP config (check_mode=3): the profit assert is defeated.
-    let sweep_cfg = config_for_options(
-        EncodeOptions {
-            funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
-            capture: ProfitCapture::SweepToAddress,
-            ..Default::default()
-        },
-        U256::ZERO,
-    )
-    .unwrap();
-    assert_eq!(
-        sweep_cfg & U256::from(255u64),
-        U256::from(3u64),
-        "check_mode=3 (SWEEP)"
-    );
-
-    // Self-fund precondition + WETH backed for any withdraw.
-    h.set_native_balance(weth, U256::from(1_000_000_000_000_000_000u128));
-    h.fund(weth, h.executor, optimal_input * 2).unwrap();
-
-    let outcome = h
-        .execute_payload_config(&payload, 8_000_000, sweep_cfg)
-        .unwrap();
-    assert!(
-        outcome.executed(2),
-        "SWEEP mode must NOT revert a money-losing self-fund path (assert defeated): {outcome:?}"
-    );
-    println!("── u3wvll sweep mode: money-losing self-fund path executed (assert defeated)");
 }

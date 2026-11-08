@@ -176,9 +176,7 @@ def _setup_v4_pool(
 ):
     pool_key = _make_pool_key(c0, c1, fee=fee, tick_spacing=tick_spacing)
     zfo = pool_key[0] == c0
-    _setup_v4_swap(
-        pm, owner, pool_key, amount_in, amount_out, zfo, output_token=output_token
-    )
+    _setup_v4_swap(pm, owner, pool_key, amount_in, amount_out, zfo, output_token=output_token)
     return pool_key, zfo
 
 
@@ -206,9 +204,7 @@ def _v3_swap(at, pool, zfo, amount, recipient_idx, forward_data=b""):
 def _v4_swap(at, pool_key, zfo, amount):
     c0_idx = at.add(pool_key[0])
     c1_idx = at.add(pool_key[1])
-    return enc_v4_swap_compact(
-        c0_idx, c1_idx, pool_key[2], pool_key[3], 0xFF, zfo, amount
-    )
+    return enc_v4_swap_compact(c0_idx, c1_idx, pool_key[2], pool_key[3], 0xFF, zfo, amount)
 
 
 def _erc20_xfer(at, token_idx, pool, amount):
@@ -249,7 +245,7 @@ def _run_and_verify(
     expected_transfers,
     label,
     expected_weth_delta=None,
-    check_mode=1,
+    profit_mode=1,
 ):
     """Execute a swap, then verify both transfer count and balance invariants.
 
@@ -276,16 +272,14 @@ def _run_and_verify(
                              only asserts profit > 0.
     """
     before = snapshot_balances(tokens, accounts)
-    tx = run_executor(at, commands, owner, check_mode=check_mode)
+    tx = run_executor(at, commands, owner, profit_mode=profit_mode)
     _verify_transfers(tx, expected_transfers, label)
     _verify_conservation(label, tokens, accounts, before, executor, expected_weth_delta)
     record_gas(label, tx.gas_used)
     return tx
 
 
-def _verify_conservation(
-    label, tokens, accounts, before, executor, expected_weth_delta=None
-):
+def _verify_conservation(label, tokens, accounts, before, executor, expected_weth_delta=None):
     """Assert that balance changes satisfy arbitrage invariants.
 
     Verifies:
@@ -387,28 +381,21 @@ class TestV2V2V2:
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v2_a, v2_b, v2_c
     ):
         # Set up pools with _setup_v2_for_calc (correct price ratio for V2_SWAP_DIRECT)
-        a_zfo = _setup_v2_for_calc(
-            v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC
-        )
-        b_zfo = _setup_v2_for_calc(
-            v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC
-        )
-        c_zfo = _setup_v2_for_calc(
-            v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT
-        )
+        a_zfo = _setup_v2_for_calc(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
+        b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
+        c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
 
         # Compute actual chain amounts from V2 math (K-invariant determines output)
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
-        b_out = v2_get_amount_out(
-            a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
-        c_out = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
+        b_out = v2_get_amount_out(a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
+        c_out = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
-        at = AddressTable(weth_addr=weth.address, executor_addr=executor.address, user0_addr=usdc.address, user1_addr=wbtc.address)
+        at = AddressTable(
+            weth_addr=weth.address,
+            executor_addr=executor.address,
+            user0_addr=usdc.address,
+            user1_addr=wbtc.address,
+        )
         weth_idx = at.add(weth.address)
         usdc_idx = at.add(usdc.address)
         wbtc_idx = at.add(wbtc.address)
@@ -453,25 +440,22 @@ class TestV2V2V3:
     def test_v2_v2_v3(
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v2_a, v2_b, v3_c
     ):
-        a_zfo = _setup_v2_for_calc(
-            v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC
-        )
-        b_zfo = _setup_v2_for_calc(
-            v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC
-        )
+        a_zfo = _setup_v2_for_calc(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
+        b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
 
         # Compute chain amounts before V3c setup (V3 needs exact amount_in)
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
-        b_out = v2_get_amount_out(
-            a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
+        b_out = v2_get_amount_out(a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
 
         # V3c setup with actual chain amounts
         c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
-        at = AddressTable(weth_addr=weth.address, executor_addr=executor.address, user0_addr=usdc.address, user1_addr=wbtc.address)
+        at = AddressTable(
+            weth_addr=weth.address,
+            executor_addr=executor.address,
+            user0_addr=usdc.address,
+            user1_addr=wbtc.address,
+        )
         weth_idx = at.add(weth.address)
         usdc_idx = at.add(usdc.address)
         wbtc_idx = at.add(wbtc.address)
@@ -517,18 +501,10 @@ class TestV2V2V4:
     def test_v2_v2_v4(
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v4_pm, v2_a, v2_b
     ):
-        a_zfo = _setup_v2_for_calc(
-            v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC
-        )
-        b_zfo = _setup_v2_for_calc(
-            v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC
-        )
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
-        b_out = v2_get_amount_out(
-            a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        a_zfo = _setup_v2_for_calc(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
+        b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
+        b_out = v2_get_amount_out(a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
         c_pk, c_zfo = _setup_v4_pool(
             v4_pm,
             wbtc.address,
@@ -563,9 +539,7 @@ class TestV2V2V4:
         )  # WETH→V2a directly (creates excess)
         inner += _v2_swap_direct(at, v2_a, a_zfo, a_out, at.add(v2_b.address))
         inner += enc_v4_sync(wbtc_idx)  # snapshot before V2b deposits WBTC
-        inner += _v2_swap_direct(
-            at, v2_b, b_zfo, b_out, pm_idx
-        )  # V2b→PM (WBTC delta netting)
+        inner += _v2_swap_direct(at, v2_b, b_zfo, b_out, pm_idx)  # V2b→PM (WBTC delta netting)
         inner += enc_v4_settle()  # credit +WBTC delta
         inner += enc_v4_take_compact(
             weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH
@@ -613,20 +587,19 @@ class TestV2V3V2:
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v2_a, v3_b, v2_c
     ):
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
-        a_zfo = _setup_v2_for_calc(
-            v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC
-        )
+        a_zfo = _setup_v2_for_calc(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
         # Compute a_out from V2 math for V3b setup
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
         b_zfo, b_out = _setup_v3(v3_b, usdc, wbtc, a_out, AMOUNT_WBTC, owner_account)
         c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT)
-        c_out = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c_out = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
-        at = AddressTable(weth_addr=weth.address, executor_addr=executor.address, user0_addr=usdc.address, user1_addr=wbtc.address)
+        at = AddressTable(
+            weth_addr=weth.address,
+            executor_addr=executor.address,
+            user0_addr=usdc.address,
+            user1_addr=wbtc.address,
+        )
         weth_idx = at.add(weth.address)
         usdc_idx = at.add(usdc.address)
         wbtc_idx = at.add(wbtc.address)
@@ -638,9 +611,7 @@ class TestV2V3V2:
         b_fwd += _v2_swap_direct(at, v2_a, a_zfo, a_out, at.add(v3_b.address))
 
         # V2c fires first (reverse-order). Callback: V3b swap (WBTC→V2c)
-        c_fwd = _v3_swap(
-            at, v3_b, b_zfo, a_out, at.add(v2_c.address), forward_data=b_fwd
-        )
+        c_fwd = _v3_swap(at, v3_b, b_zfo, a_out, at.add(v2_c.address), forward_data=b_fwd)
 
         commands = _v2_swap(at, v2_c, c_zfo, c_out, executor_idx, forward_data=c_fwd)
         _run_and_verify(
@@ -667,11 +638,14 @@ class TestV2V3V3:
     ):
         a_zfo, a_out = _setup_v2(v2_a, weth, usdc, owner_account, AMOUNT_WETH)
         b_zfo, b_out = _setup_v3(v3_b, usdc, wbtc, a_out, AMOUNT_WBTC, owner_account)
-        c_zfo, c_out = _setup_v3(
-            v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account
-        )
+        c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
-        at = AddressTable(weth_addr=weth.address, executor_addr=executor.address, user0_addr=usdc.address, user1_addr=wbtc.address)
+        at = AddressTable(
+            weth_addr=weth.address,
+            executor_addr=executor.address,
+            user0_addr=usdc.address,
+            user1_addr=wbtc.address,
+        )
         weth_idx = at.add(weth.address)
         usdc_idx = at.add(usdc.address)
         wbtc_idx = at.add(wbtc.address)
@@ -690,13 +664,9 @@ class TestV2V3V3:
             at, v2_a, a_zfo, a_out, v3b_idx
         )  # V2a→V3b (K-invariant via excess)
 
-        v3c_fwd = enc_v3_swap_compact(
-            v3b_idx, b_zfo, a_out, v3c_idx, forward_data=v3b_fwd
-        )
+        v3c_fwd = enc_v3_swap_compact(v3b_idx, b_zfo, a_out, v3c_idx, forward_data=v3b_fwd)
 
-        commands = enc_v3_swap_compact(
-            v3c_idx, c_zfo, b_out, executor_idx, forward_data=v3c_fwd
-        )
+        commands = enc_v3_swap_compact(v3c_idx, c_zfo, b_out, executor_idx, forward_data=v3c_fwd)
         _run_and_verify(
             executor,
             run_executor,
@@ -761,9 +731,7 @@ class TestV2V3V4:
         v4_inner += enc_v4_take_compact(
             weth_idx, v2a_idx, AMOUNT_WETH
         )  # → V2a excess for K-invariant
-        v4_inner += enc_v4_take_compact(
-            weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH
-        )
+        v4_inner += enc_v4_take_compact(weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH)
 
         b_fwd = enc_v4_unlock(v4_inner)
         b_fwd += _v2_swap_direct(
@@ -812,14 +780,10 @@ class TestV2V4V2:
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v4_pm, v2_a, v2_c
     ):
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
-        a_zfo = _setup_v2_for_calc(
-            v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC
-        )
+        a_zfo = _setup_v2_for_calc(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
 
         # Compute a_out from V2 math for V4b setup
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
 
         b_pk, b_zfo = _setup_v4_pool(
             v4_pm,
@@ -833,9 +797,7 @@ class TestV2V4V2:
             output_token=wbtc,
         )
         c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
-        c_out = v2_get_amount_out(
-            AMOUNT_WBTC, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c_out = v2_get_amount_out(AMOUNT_WBTC, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -902,14 +864,10 @@ class TestV2V4V3:
     def test_v2_v4_v3(
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v4_pm, v2_a, v3_c
     ):
-        a_zfo = _setup_v2_for_calc(
-            v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC
-        )
+        a_zfo = _setup_v2_for_calc(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
 
         # Compute a_out from V2 math for V4b setup
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
 
         b_pk, b_zfo = _setup_v4_pool(
             v4_pm,
@@ -923,9 +881,7 @@ class TestV2V4V3:
             output_token=wbtc,
         )
         b_out = AMOUNT_WBTC  # V4b sends exact amount via set_next_swap
-        c_zfo, c_out = _setup_v3(
-            v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account
-        )
+        c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -952,9 +908,7 @@ class TestV2V4V3:
         c_fwd = enc_erc20_transfer(weth_idx, at.add(v2_a.address), AMOUNT_WETH)
         c_fwd += enc_v4_unlock(v4_inner)
 
-        commands = _v3_swap(
-            at, v3_c, c_zfo, b_out, executor_idx, forward_data=c_fwd
-        )
+        commands = _v3_swap(at, v3_c, c_zfo, b_out, executor_idx, forward_data=c_fwd)
         _run_and_verify(
             executor,
             run_executor,
@@ -990,12 +944,8 @@ class TestV2V4V4:
     """
 
     def test_v2_v4_v4(self, run_executor, weth, usdc, wbtc, owner_account, executor, v4_pm, v2_a):
-        a_zfo = _setup_v2_for_calc(
-            v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC
-        )
-        a_out = v2_get_amount_out(
-            AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE
-        )
+        a_zfo = _setup_v2_for_calc(v2_a, weth, usdc, owner_account, AMOUNT_WETH, AMOUNT_USDC)
+        a_out = v2_get_amount_out(AMOUNT_WETH, weth.balanceOf(v2_a), usdc.balanceOf(v2_a), V2_FEE)
         b_pk, b_zfo = _setup_v4_pool(
             v4_pm,
             usdc.address,
@@ -1069,16 +1019,17 @@ class TestV3V2V2:
         weth.mint(executor.address, AMOUNT_WETH, sender=owner_account)
         a_zfo, a_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
         b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, a_out, AMOUNT_WBTC)
-        b_out = v2_get_amount_out(
-            a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        b_out = v2_get_amount_out(a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
         c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT)
         # V2c receives b_out (V2b's output), not AMOUNT_WBTC — recompute c_out
-        c_out = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c_out = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
-        at = AddressTable(weth_addr=weth.address, executor_addr=executor.address, user0_addr=usdc.address, user1_addr=wbtc.address)
+        at = AddressTable(
+            weth_addr=weth.address,
+            executor_addr=executor.address,
+            user0_addr=usdc.address,
+            user1_addr=wbtc.address,
+        )
         weth_idx = at.add(weth.address)
         usdc_idx = at.add(usdc.address)
         wbtc_idx = at.add(wbtc.address)
@@ -1086,15 +1037,9 @@ class TestV3V2V2:
 
         b_cmd = _v2_swap_direct(at, v2_b, b_zfo, b_out, at.add(v2_c.address))
         c_cmd = _v2_swap_direct(at, v2_c, c_zfo, c_out, executor_idx)
-        a_fwd = (
-            b_cmd
-            + c_cmd
-            + enc_erc20_transfer(weth_idx, at.add(v3_a.address), AMOUNT_WETH)
-        )
+        a_fwd = b_cmd + c_cmd + enc_erc20_transfer(weth_idx, at.add(v3_a.address), AMOUNT_WETH)
 
-        commands = _v3_swap(
-            at, v3_a, a_zfo, AMOUNT_WETH, at.add(v2_b.address), forward_data=a_fwd
-        )
+        commands = _v3_swap(at, v3_a, a_zfo, AMOUNT_WETH, at.add(v2_b.address), forward_data=a_fwd)
         _run_and_verify(
             executor,
             run_executor,
@@ -1130,18 +1075,19 @@ class TestV3V2V3:
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v3_a, v2_b, v3_c
     ):
         a_zfo, a_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
-        b_zfo = _setup_v2_for_calc(
-            v2_b, usdc, wbtc, owner_account, a_out, AMOUNT_WBTC
-        )
+        b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, a_out, AMOUNT_WBTC)
 
         # Compute chain amounts before V3c setup (V3 needs exact amount_in)
-        b_out = v2_get_amount_out(
-            a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        b_out = v2_get_amount_out(a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
 
         c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
-        at = AddressTable(weth_addr=weth.address, executor_addr=executor.address, user0_addr=usdc.address, user1_addr=wbtc.address)
+        at = AddressTable(
+            weth_addr=weth.address,
+            executor_addr=executor.address,
+            user0_addr=usdc.address,
+            user1_addr=wbtc.address,
+        )
         weth_idx = at.add(weth.address)
         usdc_idx = at.add(usdc.address)
         wbtc_idx = at.add(wbtc.address)
@@ -1153,9 +1099,7 @@ class TestV3V2V3:
         v3a_fwd += enc_erc20_transfer(weth_idx, at.add(v3_a.address), AMOUNT_WETH)
 
         # V3c callback: V3a swap (recipient=V2b, direct USDC custody) with V3a's forward_data
-        v3c_fwd = _v3_swap(
-            at, v3_a, a_zfo, AMOUNT_WETH, at.add(v2_b.address), forward_data=v3a_fwd
-        )
+        v3c_fwd = _v3_swap(at, v3_a, a_zfo, AMOUNT_WETH, at.add(v2_b.address), forward_data=v3a_fwd)
 
         # V3c fires first — sends WETH to executor, callback on executor
         commands = _v3_swap(at, v3_c, c_zfo, b_out, executor_idx, forward_data=v3c_fwd)
@@ -1190,14 +1134,10 @@ class TestV3V2V4:
         self, run_executor, weth, usdc, wbtc, owner_account, executor, v4_pm, v3_a, v2_b
     ):
         a_zfo, a_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
-        b_zfo = _setup_v2_for_calc(
-            v2_b, usdc, wbtc, owner_account, a_out, AMOUNT_WBTC
-        )
+        b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, a_out, AMOUNT_WBTC)
 
         # Compute b_out from V2 math
-        b_out = v2_get_amount_out(
-            a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        b_out = v2_get_amount_out(a_out, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
 
         c_pk, c_zfo = _setup_v4_pool(
             v4_pm,
@@ -1227,24 +1167,16 @@ class TestV3V2V4:
 
         # V4 unlock: sync WBTC (before V2b→PM deposit), settle (after), swap C, take WETH→V3a
         v4_inner = enc_v4_sync(wbtc_idx)
-        v4_inner += _v2_swap_direct(
-            at, v2_b, b_zfo, b_out, pm_idx
-        )  # V2b→PM (WBTC delta)
+        v4_inner += _v2_swap_direct(at, v2_b, b_zfo, b_out, pm_idx)  # V2b→PM (WBTC delta)
         v4_inner += enc_v4_settle()  # credit +WBTC delta
         v4_inner += _v4_swap(at, c_pk, c_zfo, b_out)
-        v4_inner += enc_v4_take_compact(
-            weth_idx, v3a_idx, AMOUNT_WETH
-        )  # → V3a directly (IIA ✓)
-        v4_inner += enc_v4_take_compact(
-            weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH
-        )
+        v4_inner += enc_v4_take_compact(weth_idx, v3a_idx, AMOUNT_WETH)  # → V3a directly (IIA ✓)
+        v4_inner += enc_v4_take_compact(weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH)
 
         # V3a→V2b direct + V4 unlock inside V3a callback
         a_fwd = enc_v4_unlock(v4_inner)
 
-        commands = _v3_swap(
-            at, v3_a, a_zfo, AMOUNT_WETH, at.add(v2_b.address), forward_data=a_fwd
-        )
+        commands = _v3_swap(at, v3_a, a_zfo, AMOUNT_WETH, at.add(v2_b.address), forward_data=a_fwd)
         _run_and_verify(
             executor,
             run_executor,
@@ -1277,14 +1209,15 @@ class TestV3V3V2:
     ):
         a_zfo, a_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
         b_zfo, b_out = _setup_v3(v3_b, usdc, wbtc, a_out, AMOUNT_WBTC, owner_account)
-        c_zfo = _setup_v2_for_calc(
-            v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT
-        )
-        c_out = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT)
+        c_out = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
-        at = AddressTable(weth_addr=weth.address, executor_addr=executor.address, user0_addr=usdc.address, user1_addr=wbtc.address)
+        at = AddressTable(
+            weth_addr=weth.address,
+            executor_addr=executor.address,
+            user0_addr=usdc.address,
+            user1_addr=wbtc.address,
+        )
         weth_idx = at.add(weth.address)
         usdc_idx = at.add(usdc.address)
         wbtc_idx = at.add(wbtc.address)
@@ -1295,14 +1228,10 @@ class TestV3V3V2:
         v3a_fwd += enc_erc20_transfer(weth_idx, at.add(v3_a.address), AMOUNT_WETH)
 
         # V3b callback: V3a swap (recipient=V3b, USDC→V3b direct — satisfies IIA)
-        v3b_fwd = _v3_swap(
-            at, v3_a, a_zfo, AMOUNT_WETH, at.add(v3_b.address), forward_data=v3a_fwd
-        )
+        v3b_fwd = _v3_swap(at, v3_a, a_zfo, AMOUNT_WETH, at.add(v3_b.address), forward_data=v3a_fwd)
 
         # V3b fires first — sends WBTC to V2c (creates excess for V2_SWAP_DIRECT)
-        commands = _v3_swap(
-            at, v3_b, b_zfo, a_out, at.add(v2_c.address), forward_data=v3b_fwd
-        )
+        commands = _v3_swap(at, v3_b, b_zfo, a_out, at.add(v2_c.address), forward_data=v3b_fwd)
         _run_and_verify(
             executor,
             run_executor,
@@ -1327,11 +1256,14 @@ class TestV3V3V3:
     ):
         a_zfo, a_out = _setup_v3(v3_a, weth, usdc, AMOUNT_WETH, AMOUNT_USDC, owner_account)
         b_zfo, b_out = _setup_v3(v3_b, usdc, wbtc, a_out, AMOUNT_WBTC, owner_account)
-        c_zfo, c_out = _setup_v3(
-            v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account
-        )
+        c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
-        at = AddressTable(weth_addr=weth.address, executor_addr=executor.address, user0_addr=usdc.address, user1_addr=wbtc.address)
+        at = AddressTable(
+            weth_addr=weth.address,
+            executor_addr=executor.address,
+            user0_addr=usdc.address,
+            user1_addr=wbtc.address,
+        )
         weth_idx = at.add(weth.address)
         usdc_idx = at.add(usdc.address)
         wbtc_idx = at.add(wbtc.address)
@@ -1404,12 +1336,8 @@ class TestV3V3V4:
 
         v4_inner = enc_v4_settle()  # settle WBTC deposited by V3b
         v4_inner += _v4_swap(at, c_pk, c_zfo, b_out)
-        v4_inner += enc_v4_take_compact(
-            weth_idx, v3a_idx, AMOUNT_WETH
-        )  # → V3a directly! (IIA✓)
-        v4_inner += enc_v4_take_compact(
-            weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH
-        )
+        v4_inner += enc_v4_take_compact(weth_idx, v3a_idx, AMOUNT_WETH)  # → V3a directly! (IIA✓)
+        v4_inner += enc_v4_take_compact(weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH)
 
         a_fwd = enc_v4_unlock(v4_inner)
         b_fwd = _v3_swap(at, v3_a, a_zfo, AMOUNT_WETH, v3b_idx, forward_data=a_fwd)
@@ -1453,9 +1381,7 @@ class TestV3V4V2:
         )
         b_out = AMOUNT_WBTC  # V4b sends exact amount via set_next_swap
         c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT)
-        c_out = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c_out = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -1528,9 +1454,7 @@ class TestV3V4V3:
             output_token=wbtc,
         )
         b_out = AMOUNT_WBTC  # V4b sends exact amount via set_next_swap
-        c_zfo, c_out = _setup_v3(
-            v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account
-        )
+        c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -1547,9 +1471,7 @@ class TestV3V4V3:
         v3c_idx = at.add(v3_c.address)
 
         # V3a callback: explicit WETH→V3a payment + V4 unlock (V4b swap, V4_TAKE WBTC→V3c)
-        v4_inner = (
-            enc_v4_settle()
-        )  # credit +USDC delta (V3a deposited to PM after sync)
+        v4_inner = enc_v4_settle()  # credit +USDC delta (V3a deposited to PM after sync)
         v4_inner += _v4_swap(at, b_pk, b_zfo, a_out)
         v4_inner += enc_v4_take_compact(wbtc_idx, v3c_idx, b_out)
 
@@ -1560,9 +1482,7 @@ class TestV3V4V3:
         c_fwd = _v3_swap(at, v3_a, a_zfo, AMOUNT_WETH, pm_idx, forward_data=a_fwd)
 
         commands = enc_v4_sync(usdc_idx)
-        commands += _v3_swap(
-            at, v3_c, c_zfo, b_out, executor_idx, forward_data=c_fwd
-        )
+        commands += _v3_swap(at, v3_c, c_zfo, b_out, executor_idx, forward_data=c_fwd)
         _run_and_verify(
             executor,
             run_executor,
@@ -1626,9 +1546,7 @@ class TestV3V4V4:
         v4_inner += _v4_swap(at, b_pk, b_zfo, a_out)
         v4_inner += _v4_swap(at, c_pk, c_zfo, b_out)
         v4_inner += enc_v4_take_compact(weth_idx, v3a_idx, AMOUNT_WETH)  # → V3a! (IIA✓)
-        v4_inner += enc_v4_take_compact(
-            weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH
-        )
+        v4_inner += enc_v4_take_compact(weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH)
 
         a_fwd = enc_v4_unlock(v4_inner)
 
@@ -1669,14 +1587,10 @@ class TestV4V2V2:
             output_token=usdc,
         )
         b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
-        b_out = v2_get_amount_out(
-            AMOUNT_USDC, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        b_out = v2_get_amount_out(AMOUNT_USDC, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
         c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
         # V2c receives b_out (V2b's output), not AMOUNT_WBTC — recompute c_out
-        c_out = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c_out = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -1746,14 +1660,10 @@ class TestV4V2V3:
             tick_spacing=60,
             output_token=usdc,
         )
-        b_zfo = _setup_v2_for_calc(
-            v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC
-        )
+        b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
 
         # Compute b_out from V2 math for V3c setup
-        b_out = v2_get_amount_out(
-            AMOUNT_USDC, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        b_out = v2_get_amount_out(AMOUNT_USDC, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
 
         c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
@@ -1822,14 +1732,10 @@ class TestV4V2V4:
             tick_spacing=60,
             output_token=usdc,
         )
-        b_zfo = _setup_v2_for_calc(
-            v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC
-        )
+        b_zfo = _setup_v2_for_calc(v2_b, usdc, wbtc, owner_account, AMOUNT_USDC, AMOUNT_WBTC)
 
         # Compute b_out from V2 math before V4c setup
-        b_out = v2_get_amount_out(
-            AMOUNT_USDC, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE
-        )
+        b_out = v2_get_amount_out(AMOUNT_USDC, usdc.balanceOf(v2_b), wbtc.balanceOf(v2_b), V2_FEE)
 
         c_pk, c_zfo = _setup_v4_pool(
             v4_pm,
@@ -1915,9 +1821,7 @@ class TestV4V3V2:
         a_out = AMOUNT_USDC  # V4a sends exact amount via set_next_swap
         b_zfo, b_out = _setup_v3(v3_b, usdc, wbtc, a_out, AMOUNT_WBTC, owner_account)
         c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, b_out, AMOUNT_WETH_PROFIT)
-        c_out = v2_get_amount_out(
-            b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c_out = v2_get_amount_out(b_out, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -1938,9 +1842,7 @@ class TestV4V3V2:
         b_fwd += _v2_swap_direct(at, v2_c, c_zfo, c_out, executor_idx)
 
         inner = _v4_swap(at, a_pk, a_zfo, AMOUNT_WETH)
-        inner += _v3_swap(
-            at, v3_b, b_zfo, a_out, at.add(v2_c.address), forward_data=b_fwd
-        )
+        inner += _v3_swap(at, v3_b, b_zfo, a_out, at.add(v2_c.address), forward_data=b_fwd)
         inner += enc_v4_settle_delta(weth_idx)
 
         commands = enc_v4_unlock(inner)
@@ -1986,9 +1888,7 @@ class TestV4V3V3:
         )
         a_out = AMOUNT_USDC  # V4a sends exact amount via set_next_swap
         b_zfo, b_out = _setup_v3(v3_b, usdc, wbtc, a_out, AMOUNT_WBTC, owner_account)
-        c_zfo, c_out = _setup_v3(
-            v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account
-        )
+        c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -2098,7 +1998,9 @@ class TestV4V3V4:
         v3b_idx = at.add(v3_b.address)
 
         # V3b callback: V4_TAKE USDC→V3b (IIA ✓, during callback) + V4c swap + take profit
-        b_fwd = enc_v4_take_compact(usdc_idx, v3b_idx, a_out)  # USDC→V3b during callback (IIA ✓); amount known (V4a output), skip take_delta overhead
+        b_fwd = enc_v4_take_compact(
+            usdc_idx, v3b_idx, a_out
+        )  # USDC→V3b during callback (IIA ✓); amount known (V4a output), skip take_delta overhead
         b_fwd += _v4_swap(at, c_pk, c_zfo, b_out)
         b_fwd += enc_v4_take_compact(
             weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH
@@ -2157,9 +2059,7 @@ class TestV4V4V2:
         )
         b_out = AMOUNT_WBTC  # V4b sends exact amount via set_next_swap
         c_zfo = _setup_v2_for_calc(v2_c, wbtc, weth, owner_account, AMOUNT_WBTC, AMOUNT_WETH_PROFIT)
-        c_out = v2_get_amount_out(
-            AMOUNT_WBTC, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE
-        )
+        c_out = v2_get_amount_out(AMOUNT_WBTC, wbtc.balanceOf(v2_c), weth.balanceOf(v2_c), V2_FEE)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -2227,9 +2127,7 @@ class TestV4V4V3:
             output_token=wbtc,
         )
         b_out = AMOUNT_WBTC  # V4b sends exact amount via set_next_swap
-        c_zfo, c_out = _setup_v3(
-            v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account
-        )
+        c_zfo, c_out = _setup_v3(v3_c, wbtc, weth, b_out, AMOUNT_WETH_PROFIT, owner_account)
 
         at = AddressTable(
             weth_addr=weth.address,
@@ -2249,9 +2147,7 @@ class TestV4V4V3:
 
         inner = _v4_swap(at, a_pk, a_zfo, AMOUNT_WETH)
         inner += _v4_swap(at, b_pk, b_zfo, a_out)
-        inner += _v3_swap(
-            at, v3_c, c_zfo, b_out, executor_idx, forward_data=c_take
-        )
+        inner += _v3_swap(at, v3_c, c_zfo, b_out, executor_idx, forward_data=c_take)
         inner += enc_v4_settle_delta(weth_idx)
 
         commands = enc_v4_unlock(inner)
@@ -2349,7 +2245,7 @@ class TestV4V4V4:
             [executor, v4_pm],
             1,
             "TestV4V4V4",
-            check_mode=2,
+            profit_mode=2,
         )
 
 
@@ -2360,9 +2256,7 @@ class TestV4V4V4:
 # outputs from on-chain reserves). We need reserves at the correct price.
 
 
-def _setup_v2_for_calc(
-    pool, input_token, output_token, owner, amount_in, amount_out, fee=V2_FEE
-):
+def _setup_v2_for_calc(pool, input_token, output_token, owner, amount_in, amount_out, fee=V2_FEE):
     """Set up a V2 pair with ample liquidity at the correct price for V2_SWAP_DIRECT.
 
     Mints 100x the swap amounts of each token, providing deep liquidity

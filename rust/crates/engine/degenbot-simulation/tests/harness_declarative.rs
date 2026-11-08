@@ -246,7 +246,7 @@ fn matrix_covers_full_reachable_grammar() {
 }
 
 /// Negative control: a deliberately unprofitable chain under the
-/// production axis-aware config (default Custody → `check_mode=1`) now reverts
+/// production axis-aware config (default Custody → `profit_mode=1`) now reverts
 /// **on-chain** at the U3WVLL profit assert — the money-loss floor is active
 /// by default, so the loss never executes. The harness classifies the revert
 /// and [`assert_profitable`]'s first guard ("payload must execute") fires.
@@ -289,7 +289,7 @@ fn unprofitable_chain_is_rejected() {
             },
         )
         .unwrap();
-    // The on-chain `check_mode=1` assert reverts the losing self-fund path
+    // The on-chain `profit_mode=1` assert reverts the losing self-fund path
     // (U3WVLL floor) — the revert IS the protection; classify it as such.
     assert!(
         matches!(
@@ -299,49 +299,6 @@ fn unprofitable_chain_is_rejected() {
         "losing self-fund path must revert at the profit assert: {result:?}"
     );
     assert_profitable(&result, 2, "unprofitable");
-}
-
-/// The off-chain delta guard remains the belt-and-suspenders: with
-/// the documented on-chain assert opt-out (`ProfitCapture::SweepToAddress` →
-/// `check_mode=3`, the ONLY way to defeat the U3WVLL assert), the losing path
-/// EXECUTES and a negative WETH delta is what reaches the operator — so
-/// [`assert_profitable`]'s delta guard must still fire on it.
-#[test]
-#[should_panic(expected = "expected a profitable (positive) WETH delta")]
-fn unprofitable_chain_sweep_defeats_assert_but_delta_guard_fires() {
-    let mut h = Harness::new().unwrap();
-    let u = h.add_token().unwrap();
-    let pa = h.add_pool(u, h.weth, 2_000_000, 1_000_000).unwrap();
-    let pb = h.add_pool(u, h.weth, 2_000_000, 1_000_000).unwrap();
-    let hops = vec![
-        Hop {
-            src: h.weth,
-            dst: u,
-            pool: HopPool::V2(pa),
-        },
-        Hop {
-            src: u,
-            dst: h.weth,
-            pool: HopPool::V2(pb),
-        },
-    ];
-    let opts = degenbot_executor::composers::EncodeOptions {
-        funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
-        capture: degenbot_executor::grammar_ledger::ProfitCapture::SweepToAddress,
-        ..Default::default()
-    };
-    let result = h
-        .run_chain_with_opts(&hops, 100_000, 5_000_000, opts)
-        .unwrap();
-    assert!(
-        result.outcome.executed(2),
-        "sweep defeats the on-chain assert; the loss path still executes: {result:?}"
-    );
-    assert!(
-        result.actual_weth_delta < 0,
-        "must actually lose: {result:?}"
-    );
-    assert_profitable(&result, 2, "unprofitable-sweep");
 }
 
 /// ADR-033 guard: the harness's session-scoped [`EncodeContext`] projection
@@ -484,7 +441,7 @@ fn concentrated_liquidity_hop_aligned_clamp_shape_executes_with_consistent_delta
 /// strategy's `SimulatePath → encode_request → execute(axis-aware config)`
 /// path. The stream mints the profit as an ERC6909 claim on the PoolManager;
 /// the oracle is the contract-computed `PM.balanceOf(executor, weth)` read
-/// around `execute` — the independent side of the `check_mode=2` on-chain
+/// around `execute` — the independent side of the `profit_mode=2` on-chain
 /// assert — measured to the 0.1% `assert_profitable` pattern.
 #[test]
 fn erc6909_capture_v4v4_lands_in_vault() {
