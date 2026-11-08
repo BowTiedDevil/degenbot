@@ -53,22 +53,30 @@ impl Evm2SimError {
     }
 }
 
-/// One settled run: the verdict, the gas burned, the top-level return data,
+/// One settled step: the verdict, the gas burned, the top-level return data,
 /// and the storage writes it produced (captured from the transaction's
 /// account changes before the scratch was discarded).
 #[derive(Debug)]
 pub struct Evm2SimRun {
-    /// How the run ended (the engine-neutral verdict shared with the revm
-    /// session).
+    /// How the step ended (the engine-neutral verdict shared with the revm
+    /// session). A [`Evm2SimStep::ReadNativeBalance`] step always reports
+    /// [`RunVerdict::Success`]: it executes no code and can neither revert nor
+    /// halt.
     pub verdict: RunVerdict,
-    /// The envelope's gas used.
+    /// The envelope's gas used; zero for a balance-read step.
     pub gas_used: u64,
-    /// The call's return bytes, the revert payload, or empty for a halt.
+    /// The call's return bytes, the revert payload, or empty for a halt and
+    /// for a balance-read step.
     pub output: Bytes,
     /// Storage writes the run produced: `(address, slot, value)` per written
     /// slot whose value changed, in unspecified order. The settled result the
     /// discard contract removes from everywhere else.
     pub storage_writes: Vec<(Address, U256, U256)>,
+    /// The native balance a [`Evm2SimStep::ReadNativeBalance`] step observed at
+    /// its position in the sequence, read from the accumulating journaled state
+    /// (an account the state layer holds no record of holds zero). `None` for
+    /// every transaction step, which observes no balance of its own.
+    pub native_balance: Option<U256>,
 }
 
 /// The capture a journaled sequence drains from its throwaway EVM's
@@ -93,6 +101,35 @@ pub struct Evm2SequenceCapture {
     pub access_list: alloy::rpc::types::eth::AccessList,
 }
 
+/// The native balance a [`Evm2SimStep::ReadNativeBalance`] step observes in the
+/// sequence's accumulating state.
+///
+/// Read untracked (a probe read buys no storage and enters no transaction
+/// overlay); an account the state layer holds no record of holds zero, which is
+/// the account's actual balance rather than an absent figure.
+fn read_native_balance(
+    evm: &mut Evm<'_, BaseEvmTypes>,
+    account: &Address,
+) -> Result<U256, Evm2SimError> {
+    evm.state_mut()
+        .account_info_untracked(account)
+        .map(|info| info.map_or(U256::ZERO, |info| info.balance))
+        .map_err(|err| Evm2SimError::Database(err.to_string()))
+}
+
+/// The settled result a native-balance read step produces: no code runs, so no
+/// gas is burned, no return data exists, and nothing is written — the observed
+/// balance is the whole result.
+const fn native_balance_run(balance: U256) -> Evm2SimRun {
+    Evm2SimRun {
+        verdict: RunVerdict::Success,
+        gas_used: 0,
+        output: Bytes::new(),
+        storage_writes: Vec::new(),
+        native_balance: Some(balance),
+    }
+}
+
 /// One step of a journaled sequence (the revm-side `SimStep` analog):
 /// `Transact` steps run bare; `Inspect` steps are the captured steps —
 /// the settlement bundle's balance reads stay out of the execute()-only
@@ -104,6 +141,12 @@ pub enum Evm2SimStep {
     Transact(RecoveredTxEnvelope),
     /// A captured step (capture rides just this step).
     Inspect(RecoveredTxEnvelope),
+    /// A native-balance read at this position in the sequence: the declared
+    /// account's own ETH balance, read from the accumulating journaled state
+    /// (so a later step's value movement is visible to a later read). No
+    /// transaction is built and nothing is spent: the read observes the account
+    /// itself, never a contract called on its behalf.
+    ReadNativeBalance(Address),
 }
 
 /// How a sequence's `Inspect` steps capture.
@@ -236,6 +279,7 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
             gas_used: result.tx_gas_used(),
             output: result.output.clone(),
             storage_writes,
+            native_balance: None,
         })
     }
 
@@ -291,6 +335,21 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
         let mut calls = Vec::with_capacity(steps.len());
         let mut writes = std::collections::BTreeMap::new();
         for (index, step) in steps.iter().enumerate() {
+            // A balance-read step neither transacts nor captures: it observes
+            // the account's own native balance in the accumulating overlay, so
+            // a later read sees every earlier step's value movement. A DB
+            // refusal is a step refusal like any other — the read produced no
+            // figure, and the caller must not receive a fabricated zero.
+            if let Evm2SimStep::ReadNativeBalance(account) = step {
+                let balance = read_native_balance(&mut seq_evm, account).map_err(|source| {
+                    Evm2SimError::Sequence {
+                        index,
+                        source: Box::new(source),
+                    }
+                })?;
+                calls.push(native_balance_run(balance));
+                continue;
+            }
             let captured = matches!(step, Evm2SimStep::Inspect(_));
             let settled = match (step, mode) {
                 (Evm2SimStep::Transact(tx), _)
@@ -298,6 +357,8 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
                 (Evm2SimStep::Inspect(tx), Evm2CaptureMode::Inspector) => {
                     seq_evm.transact_with_inspector(tx, &mut inspected)
                 }
+                // Handled above, before any transaction runs.
+                (Evm2SimStep::ReadNativeBalance(_), _) => continue,
             };
             let executed = match settled {
                 Ok(executed) => executed,
@@ -350,6 +411,7 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
                 gas_used: result.tx_gas_used(),
                 output: result.output.clone(),
                 storage_writes,
+                native_balance: None,
             });
         }
         let capture = settle_capture(mode, inspected, captured_logs, seam_slots, seam_swaps);

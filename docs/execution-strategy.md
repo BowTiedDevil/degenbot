@@ -36,7 +36,7 @@ declared data, and one is the defaulted pricing half of assessment.
 | Part | What it does | What you supply | Engine/degenbot provides |
 |---|---|---|---|
 | **Encode** | solved path → ONE `{to, data, value}` transaction | a function (Rust trait impl / Python callable) + its target/value binding | the `ExecutionAdapter` / `PayloadComposer` seams |
-| **Probe** | which pre/post read-calls to snapshot (`label, addr, selector`) | declared data | run the reads, warm cache, access list, report readings |
+| **Probe** | which pre/post reads to snapshot — a contract call with complete calldata, or a native-account balance | declared data | run the reads, warm cache, access list, report readings |
 | **Assess** | typed `ExecutionObservation` → profit + pass/fail | a built-in shape (sum-of-deltas / return-data) **or your own interpreter** | transaction execution, gas, return data, events |
 | **Fee** | priority-fee/gas pricing | defaulted (market-percentile); you may override | `FeePolicy` primitives |
 
@@ -113,15 +113,33 @@ How the evidence is assembled:
 
 - The transaction executes exactly as Encode returned it, including a nonzero
   native `value`.
-- A declared `ProbeSpec` is an `eth_call`-shaped read: a call to the spec's
-  address carrying its 4-byte selector as the *whole* calldata. Declared
-  pre-reads run in declared order before the transaction and post-reads after
-  it, all inside ONE journaled sequence, so both edges (and the transaction)
-  observe the same accumulated state.
-- A read that yields no figure is absent, never a fabricated zero: a reverted or
-  halted read, a read whose call returned no data, and a pseudo-read declared
-  with no callee (`address: None` — nothing to call). The observation still
-  carries one `ProbeReading` per declared spec, in declared order.
+- A declared `ProbeSpec` is one of two neutral executable forms, and the leaf
+  executes whichever you declared:
+  - **`ProbeSpec::Call`** — a contract call carrying its **complete calldata**
+    (the 4-byte selector *plus* its ABI arguments). A WETH-shaped
+    `balanceOf(executor)` read is the selector followed by the executor's ABI
+    word; an ERC6909-shaped `balanceOf(owner, id)` read carries both words. The
+    calldata is passed to the declared callee verbatim, and the call's return
+    data must be **exactly one ABI word (32 bytes)** — that word is the figure.
+    Nothing about the call is inferred from the label.
+  - **`ProbeSpec::NativeBalance`** — the declared account's own native (ETH)
+    balance, read from the journaled state at that step. No transaction is
+    built and nothing is spent on the account's behalf, so the read costs no gas
+    and cannot revert; the account *is* the thing observed. An account the state
+    layer holds no record of holds zero, which is a fact with both edges present
+    (it is not an absent reading).
+  Declared pre-reads run in declared order before the transaction and post-reads
+  after it, all inside ONE journaled sequence, so both edges (and the
+  transaction) observe the same accumulated state.
+- A **call** read that yields no figure is absent, never a fabricated zero: a
+  reverted or halted call, a call that returned no data, and a call whose return
+  data is **not exactly one word** (a short payload is not left-padded into a
+  value, and a multi-word payload's words — different fields — are not chosen
+  between). The observation still carries one `ProbeReading` per declared spec,
+  in declared order, so the default sum-of-deltas assessment reports
+  `AssessError::Evidence` rather than pricing a guessed word. The retired
+  `address: None` pseudo-read is gone: every declaration is executable, and a
+  native read names its account instead of pretending to be a call.
 - `gas_used` is the engine's per-call measurement: never inflated by a
   submission safety margin, and never the envelope's gas limit.
 - `events` are the transaction's committed logs, with emitter, topics, data, and
@@ -324,11 +342,19 @@ def my_payload(result):
         [result.optimal_input, result.hop_outputs[-1], list(result.hop_outputs)],
     )
 
+WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+EXECUTOR = "0x7777777777777777777777777777777777777777"
+
 adapter = PayloadAdapter(
     my_payload,
-    to="0x7777777777777777777777777777777777777777",   # your contract
+    to=EXECUTOR,                                        # your contract
     value=0,                                            # native value (wei)
-    probes=[("WETH", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", bytes([0x70,0xA0,0x82,0x31]))],
+    probes=[
+        # A contract-call read carries COMPLETE calldata: selector + ABI args.
+        {"label": "WETH", "to": WETH, "data": abi_encode_call("balanceOf(address)", [EXECUTOR])},
+        # A native-account read observes the account's own ETH balance.
+        {"label": "ETH", "account": EXECUTOR},
+    ],
     min_net_profit=0,
 )
 ```
@@ -371,6 +397,10 @@ Every consumer-visible transition, Rust and Python:
 | `ExecutionResult` built only inside the trait default | unchanged fields, plus `ExecutionResult::price(..)` so a custom `assess` reuses the pricing half; the helper pins the terminal-status invariant — a reverted observation is always a zero-gross, `passed = false` decline, even when a custom decoder found profitable-looking return data or events |
 | `degenbot-execution-sample`: `compose_solution(&SolveResult) -> Bytes` | `encode_solution(&SolveResult) -> TransactionRequest` (target + value included) |
 | Python `PayloadComposer(callable)` was the whole strategy (implied full adapter) | `PayloadComposer(callable)` stays the encoding-only route; `PayloadAdapter(callable, to, value=.., probes=.., min_net_profit=..)` is the full adapter returning `{to, data, value}` |
+| `ProbeSpec::new(label, Option<Address>, [u8; 4])` — one selector-only form, `address: None` for a pseudo-read with no callee | `ProbeSpec::call(label, to, data)` — a contract call with COMPLETE calldata (selector + ABI arguments), whose figure is exactly one 32-byte ABI return word (any other return length is an absent reading) — or `ProbeSpec::native_balance(label, account)` — the declared account's own native balance read from state. `ProbeSpec::label()` is the diagnostic name. A native read is a real observation, never a fabricated call, and every declaration is executable (the no-callee pseudo-read is retired) |
+| Python `probes=[("WETH", "0x…", b"\x70\xa0\x82\x31")]` (`(label, address, selector)` triples; a native read was `(label, None, selector)`) | `probes=[{"label": "WETH", "to": "0x…", "data": <complete calldata>}, {"label": "ETH", "account": "0x…"}]` — one dict per probe; keys must be exactly one declaration's set, so the retired triple (which cannot carry a call's arguments) fails loud at the boundary with `ValueError` |
+| a `degenbot-execution-sample` probe declaring WETH's selector with no argument | the sample declares `WETH.balanceOf(executor)` as complete calldata, so the read observes the sample executor's own balance |
+| `Evm2SimRun` carried transaction steps only | `Evm2SimStep::ReadNativeBalance(account)` is a sequence step that reports the account's balance in `Evm2SimRun::native_balance` (zero gas, no calldata, `None` on transaction steps); native reads therefore sit at their declared position in the one journaled sequence |
 | no engine-side entry point took an adapter | `degenbot_simulation::sim::production::{simulate_opportunity, simulate_transaction}` execute one adapter transaction beside its declared probes and return the adapter's assessment. Additive: canonical dispatch still drives its own balance bundle and the built-in encoder until the cutover |
 
 ## Boundaries this chunk does not cross

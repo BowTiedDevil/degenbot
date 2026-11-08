@@ -45,7 +45,7 @@ pub enum ExecutionStatus {
     Revert,
 }
 
-/// One declared probe read, before and after the call.
+/// One declared probe read, before and after the opportunity's transaction.
 ///
 /// `before` / `after` are `None` when the engine's read failed at that edge —
 /// an unavailable observation, never a zero balance.

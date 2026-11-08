@@ -1338,6 +1338,11 @@ fn simulate_path_on_evm_seam(
                     selector[..n].copy_from_slice(&input[..n]);
                     (env.to().unwrap_or(ctx.executor_address), selector)
                 }
+                // This bundle's seven-call choreography is three balance-read
+                // calls, `execute()`, and three more: it builds no
+                // native-balance read step, and a read step runs no code, so
+                // it can never be the failing step attributed here.
+                Evm2SimStep::ReadNativeBalance(account) => (*account, [0u8; 4]),
             };
             fail_buckets.record_revert(
                 path.path_id,

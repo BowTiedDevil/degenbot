@@ -33,6 +33,32 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **A declared probe is a neutral executable declaration, not a selector
+  (ADR-098 D2).** `ProbeSpec` is now an enum of two forms: `ProbeSpec::Call {
+  label, to, data }` — a contract call carrying its COMPLETE calldata (selector
+  plus every ABI argument) — and `ProbeSpec::NativeBalance { label, account }` —
+  the declared account's own native (ETH) balance, read from the journaled state
+  at that step. `ProbeSpec::new(label, Option<Address>, [u8; 4])` is deleted:
+  the optional-address pseudo-read could express neither `balanceOf(account)`
+  nor `balanceOf(account, id)`, and a native read was a call to nothing. The
+  production leaf (`degenbot_simulation::sim::production`) executes both forms
+  in declared order before and after the opportunity transaction inside the
+  same journaled sequence, with `Evm2SimStep::ReadNativeBalance(account)`
+  carrying the native read at its position and reporting the balance in
+  `Evm2SimRun::native_balance` (zero gas, no calldata; `None` on transaction
+  steps). Absent edges stay honest for call reads: a revert, a halt, no return
+  data, and return data that is not EXACTLY one 32-byte ABI word (a short
+  payload is not padded into a value, a multi-word payload's words are not
+  chosen between) all report `None` at both edges, so the default sum-of-deltas
+  assessment reports `AssessError::Evidence` instead of pricing a guessed value.
+  A native read either answers — an account the state layer holds no record of
+  holds zero, both edges present — or the sequence refuses. The Python lift's
+  `PayloadAdapter(probes=...)` declares the same two forms as dicts
+  (`{"label", "to", "data"}` / `{"label", "account"}`), and the retired
+  `(label, address, selector)` triple fails loud with `ValueError`. Assessment,
+  one-opportunity-one-transaction, and the built-in adapter's own balance bundle
+  are unchanged.
+
 - **The execution seam carries one complete transaction and one typed
   observation (ADR-098 D2).** `ExecutionAdapter::encode` returns a
   `TransactionRequest { to, data, value }` instead of bare `Bytes`, so a foreign

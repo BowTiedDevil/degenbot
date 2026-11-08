@@ -48,9 +48,9 @@ fn no_probes() -> &'static ProbeSpecs {
 fn credit_probe() -> ProbeSpecs {
     // The adapter's own observed asset — a credit ledger in its own system, not
     // a settlement-token balance the engine assumes on its behalf.
-    vec![ProbeSpec::new(
-        "CREDIT".to_string(),
-        Some(CREDIT_LEDGER),
+    vec![ProbeSpec::call(
+        "CREDIT",
+        CREDIT_LEDGER,
         [0xde, 0xad, 0xbe, 0xef],
     )]
 }
@@ -232,9 +232,15 @@ fn foreign_adapter_declares_its_own_observation_target() {
     let probes = adapter.probe_spec();
 
     assert_eq!(probes.len(), 1);
-    assert_eq!(probes[0].label, "CREDIT");
-    assert_eq!(probes[0].address, Some(CREDIT_LEDGER));
-    assert_ne!(probes[0].address, Some(PREPAY_ROUTER));
+    assert_eq!(probes[0].label(), "CREDIT");
+    assert_eq!(
+        probes[0],
+        ProbeSpec::call("CREDIT", CREDIT_LEDGER, [0xde, 0xad, 0xbe, 0xef])
+    );
+    assert_ne!(
+        probes[0],
+        ProbeSpec::call("CREDIT", PREPAY_ROUTER, [0xde, 0xad, 0xbe, 0xef])
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -362,11 +368,7 @@ fn custom_assessment_reads_a_captured_event() {
 fn default_sum_of_deltas_assessment_requires_every_probe_read() {
     let options = AssessOptions::default();
     let fee = FeePolicy::default();
-    let spec = ProbeSpec::new(
-        "CREDIT".to_string(),
-        Some(CREDIT_LEDGER),
-        [0xde, 0xad, 0xbe, 0xef],
-    );
+    let spec = ProbeSpec::call("CREDIT", CREDIT_LEDGER, [0xde, 0xad, 0xbe, 0xef]);
 
     let incomplete =
         observation_of(ExecutionStatus::Success).with_probe_reads(vec![ProbeReading::new(
@@ -467,11 +469,7 @@ fn assessment_prices_the_observation_gas_and_fee_policy() {
     let gross = 1_000_000_000_000_000u128;
     let observation =
         observation_of(ExecutionStatus::Success).with_probe_reads(vec![ProbeReading::new(
-            ProbeSpec::new(
-                "CREDIT".to_string(),
-                Some(CREDIT_LEDGER),
-                [0xde, 0xad, 0xbe, 0xef],
-            ),
+            ProbeSpec::call("CREDIT", CREDIT_LEDGER, [0xde, 0xad, 0xbe, 0xef]),
             Some(U256::ZERO),
             Some(U256::from(gross)),
         )]);
@@ -487,11 +485,7 @@ fn assessment_prices_the_observation_gas_and_fee_policy() {
 
     // A gross smaller than the gas cost cannot clear the gate.
     let loss = observation_of(ExecutionStatus::Success).with_probe_reads(vec![ProbeReading::new(
-        ProbeSpec::new(
-            "CREDIT".to_string(),
-            Some(CREDIT_LEDGER),
-            [0xde, 0xad, 0xbe, 0xef],
-        ),
+        ProbeSpec::call("CREDIT", CREDIT_LEDGER, [0xde, 0xad, 0xbe, 0xef]),
         Some(U256::ZERO),
         Some(U256::from(1u64)),
     )]);
@@ -505,11 +499,7 @@ fn assessment_prices_the_observation_gas_and_fee_policy() {
 /// engine captured it; events and status are always present.
 #[test]
 fn observation_reports_evidence_availability() {
-    let spec = ProbeSpec::new(
-        "CREDIT".to_string(),
-        Some(CREDIT_LEDGER),
-        [0xde, 0xad, 0xbe, 0xef],
-    );
+    let spec = ProbeSpec::call("CREDIT", CREDIT_LEDGER, [0xde, 0xad, 0xbe, 0xef]);
     assert_eq!(ProbeReading::new(spec.clone(), None, None).delta(), None);
     assert_eq!(
         ProbeReading::new(spec.clone(), Some(U256::from(5u64)), None).delta(),

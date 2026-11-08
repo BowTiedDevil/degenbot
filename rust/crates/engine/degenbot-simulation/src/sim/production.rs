@@ -20,17 +20,34 @@
 //!
 //! # Probe reads
 //!
-//! A declared [`ProbeSpec`] is an `eth_call`-shaped read: a transaction to
-//! `spec.address` whose entire calldata is the 4-byte `spec.selector`. Declared
-//! pre-reads replay in declared order before the opportunity's transaction and
-//! post-reads after it, all inside ONE journaled sequence, so both edges see
-//! the same accumulated state and the transaction sees the pre-reads' state.
+//! A declared [`ProbeSpec`] is one of two neutral executable forms, and the
+//! leaf executes whichever was declared:
+//!
+//! - [`ProbeSpec::Call`] — an `eth_call`-shaped read: a call to the declared
+//!   callee carrying the declared calldata **verbatim**, so a read is as
+//!   complete as its declaration (a 4-byte selector for an argument-less view,
+//!   or selector + ABI words for `balanceOf(account)` /
+//!   `balanceOf(account, id)`). The return data must be **exactly one ABI word**
+//!   (32 bytes); that word is the figure.
+//! - [`ProbeSpec::NativeBalance`] — the declared account's own native (ETH)
+//!   balance, read from the journaled state layer at that step. No transaction
+//!   is built and nothing is spent on the account's behalf: the account *is*
+//!   the thing observed, so the read costs no gas and cannot revert.
+//!
+//! Declared pre-reads replay in declared order before the opportunity's
+//! transaction and post-reads after it, all inside ONE journaled sequence, so
+//! both edges see the same accumulated state and the transaction sees the
+//! pre-reads' state.
 //!
 //! A read the engine could not turn into a figure is absent (`None`), never a
-//! fabricated zero: a reverted or halted read, a read whose call returned no
-//! data, and a pseudo-read declared with no callee (`address: None` — nothing
-//! to call). The observation still carries one [`ProbeReading`] per declared
-//! spec, in declared order.
+//! fabricated zero: a reverted or halted call read, a call that returned no
+//! data, and a call whose return data is not exactly one word (a short payload
+//! is not padded into a value and a multi-word payload's fields are not chosen
+//! between). The observation still carries one [`ProbeReading`] per declared spec,
+//! in declared order. A native-account read has no such failure mode — the
+//! state layer either answers (an account it holds no record of holds zero,
+//! which is a fact, not an absence) or the sequence refuses with
+//! [`ProductionSimError::Engine`].
 //!
 //! # Evidence honesty
 //!
@@ -72,11 +89,12 @@ use crate::sim::evm2::session::{
 };
 use crate::sim::RunVerdict;
 
-/// The gas limit a declared probe read runs under.
+/// The gas limit a declared contract-call probe read runs under.
 ///
-/// A read is a view call: it must fit comfortably inside one call's budget, and
-/// a read that runs out of gas is reported as an absent reading rather than
-/// consuming the sequence's remaining budget.
+/// A call read is a view call: it must fit comfortably inside one call's
+/// budget, and a read that runs out of gas is reported as an absent reading
+/// rather than consuming the sequence's remaining budget. A native-account read
+/// builds no call and executes no code, so no gas limit applies to it.
 pub const PROBE_CALL_GAS_LIMIT: u64 = 100_000;
 
 /// The deployment- and block-scoped facts the leaf needs beyond the adapter.
@@ -213,30 +231,33 @@ pub fn simulate_transaction(
     })
 }
 
-/// Queue one declared probe read as a bare (uncaptured) sequence step and
-/// return its step index, or `None` when the spec names no callee.
+/// Queue one declared probe read as a sequence step and return its step index.
+///
+/// A contract call becomes a bare (uncaptured) transaction carrying the
+/// declared calldata; a native-account read becomes a read step at this
+/// position, so the account is observed directly rather than through a
+/// fabricated call.
 fn push_probe_step(
     steps: &mut Vec<Evm2SimStep>,
     spec: &ProbeSpec,
     ctx: &ProductionSimContext,
     gas_price: u128,
-) -> Option<usize> {
-    let address = spec.address?;
-    steps.push(Evm2SimStep::Transact(probe_envelope(
-        address,
-        spec.selector,
-        ctx,
-        gas_price,
-    )));
-    Some(steps.len() - 1)
+) -> usize {
+    steps.push(match spec {
+        ProbeSpec::Call { to, data, .. } => {
+            Evm2SimStep::Transact(probe_envelope(*to, data, ctx, gas_price))
+        }
+        ProbeSpec::NativeBalance { account, .. } => Evm2SimStep::ReadNativeBalance(*account),
+    });
+    steps.len() - 1
 }
 
 /// The observation's readings: one entry per declared spec, in declared order,
 /// each edge resolved from its own sequence step.
 fn probe_readings(
     specs: &[ProbeSpec],
-    before: &[Option<usize>],
-    after: &[Option<usize>],
+    before: &[usize],
+    after: &[usize],
     calls: &[Evm2SimRun],
 ) -> Vec<ProbeReading> {
     specs
@@ -246,36 +267,46 @@ fn probe_readings(
         .map(|((spec, before), after)| {
             ProbeReading::new(
                 spec.clone(),
-                read_figure(calls, *before),
-                read_figure(calls, *after),
+                read_figure(spec, calls, *before),
+                read_figure(spec, calls, *after),
             )
         })
         .collect()
 }
 
-/// The figure one probe step reported, or `None` when the read did not yield
-/// one (no callee, a revert/halt, or no return data).
-fn read_figure(calls: &[Evm2SimRun], step: Option<usize>) -> Option<U256> {
-    let call = calls.get(step?)?;
-    if call.verdict != RunVerdict::Success {
-        return None;
-    }
-    decode_figure(&call.output)
-}
-
-/// Decode a read-call's return bytes as a `uint256`: the ABI right-aligns the
-/// value in the final 32 bytes, a shorter payload is left-padded, and an empty
-/// payload carries no figure at all.
-fn decode_figure(data: &[u8]) -> Option<U256> {
-    match data.len() {
-        0 => None,
-        n if n >= 32 => Some(U256::from_be_slice(&data[n - 32..])),
-        n => {
-            let mut word = [0u8; 32];
-            word[32 - n..].copy_from_slice(data);
-            Some(U256::from_be_slice(&word))
+/// The figure one probe step reported for its declaration, or `None` when the
+/// read did not yield one.
+///
+/// A call read reports the one ABI word a completed call returned; a revert, a
+/// halt, and a successful call whose return data is empty, short, or multi-word
+/// are all absent.
+/// A native-account read reports the balance the step observed (the step always
+/// completes; a state-layer refusal fails the whole sequence instead).
+fn read_figure(spec: &ProbeSpec, calls: &[Evm2SimRun], step: usize) -> Option<U256> {
+    let call = calls.get(step)?;
+    match spec {
+        ProbeSpec::NativeBalance { .. } => call.native_balance,
+        ProbeSpec::Call { .. } => {
+            if call.verdict != RunVerdict::Success {
+                return None;
+            }
+            decode_figure(&call.output)
         }
     }
+}
+
+/// Decode a read-call's return bytes as a `uint256`: EXACTLY one ABI word (32
+/// bytes) decodes to a figure, and any other length yields none.
+///
+/// A short payload is not left-padded into a value and a multi-word payload's
+/// words are not chosen between: either would report a figure the call never
+/// returned, and a two-word response's words are different fields. A read whose
+/// callee answers in another shape is therefore an absent reading, not evidence.
+fn decode_figure(data: &[u8]) -> Option<U256> {
+    let Ok(word) = <[u8; 32]>::try_from(data) else {
+        return None;
+    };
+    Some(U256::from_be_bytes(word))
 }
 
 /// The events the transaction committed, in execution order.
@@ -317,17 +348,17 @@ fn envelope(
     )
 }
 
-/// Build a probe read's envelope: an argument-less call to the declared
-/// address carrying only its selector, which reads and never funds.
+/// Build a probe read's envelope: a call to the declared callee carrying the
+/// declared calldata verbatim, which reads and never funds.
 fn probe_envelope(
-    address: Address,
-    selector: [u8; 4],
+    to: Address,
+    data: &Bytes,
     ctx: &ProductionSimContext,
     gas_price: u128,
 ) -> ::evm2::ethereum::RecoveredTxEnvelope {
     build_envelope(
-        address,
-        &Bytes::copy_from_slice(&selector),
+        to,
+        data,
         U256::ZERO,
         PROBE_CALL_GAS_LIMIT,
         ctx.caller,

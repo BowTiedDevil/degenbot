@@ -37,7 +37,7 @@
 use alloy::primitives::{Address, Bytes, U256};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList};
 
 use degenbot_execution::solve_result::{HopDescriptor, HopFamily};
 use degenbot_execution::PathInfo;
@@ -328,7 +328,12 @@ impl PayloadComposer for PyPayloadComposer {
 ///     compose_simple_executor,            # result -> bytes
 ///     "0x7777…7777",                      # the contract the call targets
 ///     value=0,                            # native value sent with the call (wei)
-///     probes=[("WETH", "0xC02a…Cc2", b"\x70\xa0\x82\x31")],
+///     probes=[
+///         # A contract-call read carries its COMPLETE calldata.
+///         {"label": "WETH", "to": "0xC02a…Cc2", "data": balance_of_executor},
+///         # A native-account read observes the account itself.
+///         {"label": "ETH", "account": "0x7777…7777"},
+///     ],
 ///     min_net_profit=0,
 /// )
 /// ```
@@ -349,12 +354,23 @@ pub struct PyPayloadAdapter {
     min_net_profit: U256,
 }
 
-/// Parse the declared probe list: `[(label, address_or_None, selector_bytes)]`.
+/// The sorted key set a contract-call probe declaration carries.
+const PROBE_CALL_KEYS: [&str; 3] = ["data", "label", "to"];
+/// The sorted key set a native-account probe declaration carries.
+const PROBE_NATIVE_KEYS: [&str; 2] = ["account", "label"];
+
+/// Parse the declared probe list, one dict per probe:
+///
+/// - `{"label": str, "to": str, "data": bytes}` — a contract-call read carrying
+///   its COMPLETE calldata (selector plus ABI arguments);
+/// - `{"label": str, "account": str}` — the declared account's own native (ETH)
+///   balance.
 ///
 /// # Errors
 ///
-/// `ValueError` when a probe entry is not a `(str, str|None, bytes)` triple with
-/// a 4-byte selector, or the address cannot be parsed.
+/// `ValueError` when an entry is not a dict, its keys are not exactly one of the
+/// two declaration shapes, an address cannot be parsed, or a call's `data` is
+/// not `bytes` carrying at least the 4-byte selector.
 fn parse_probes(probes: Option<&Bound<'_, PyAny>>) -> PyResult<ProbeSpecs> {
     let Some(probes) = probes else {
         return Ok(Vec::new());
@@ -365,24 +381,76 @@ fn parse_probes(probes: Option<&Bound<'_, PyAny>>) -> PyResult<ProbeSpecs> {
     let mut specs = Vec::new();
     for entry in probes.try_iter()? {
         let entry = entry?;
-        let (label, address, selector): (String, Option<String>, Vec<u8>) =
-            entry.extract().map_err(|_| {
-                PyValueError::new_err(
-                    "each probe must be a (label: str, address: str | None, selector: bytes) triple",
-                )
-            })?;
-        let address = address
-            .map(|address| {
-                crate::address_utils::parse_address(&address)
-                    .map_err(|err| PyValueError::new_err(err.to_string()))
-            })
-            .transpose()?;
-        let selector: [u8; 4] = selector
-            .try_into()
-            .map_err(|_| PyValueError::new_err("a probe selector must be exactly 4 bytes"))?;
-        specs.push(ProbeSpec::new(label, address, selector));
+        specs.push(parse_probe(&entry)?);
     }
     Ok(specs)
+}
+
+/// Parse one probe declaration dict into its neutral core form.
+fn parse_probe(entry: &Bound<'_, PyAny>) -> PyResult<ProbeSpec> {
+    let dict = entry.cast::<PyDict>().map_err(|_| {
+        PyValueError::new_err(
+            "each probe must be a dict: {'label', 'to', 'data'} for a contract call \
+             or {'label', 'account'} for a native balance read",
+        )
+    })?;
+    let keys = probe_keys(dict)?;
+    let keys_sorted: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let is_call = PROBE_CALL_KEYS.as_slice() == keys_sorted.as_slice();
+    let is_native = PROBE_NATIVE_KEYS.as_slice() == keys_sorted.as_slice();
+    if !is_call && !is_native {
+        return Err(PyValueError::new_err(format!(
+            "a probe declares exactly one form: {{'label', 'to', 'data'}} for a contract \
+             call or {{'label', 'account'}} for a native balance read (got {keys:?})"
+        )));
+    }
+    let label: String = dict
+        .get_item("label")?
+        .ok_or_else(|| PyValueError::new_err("a probe needs a `label`"))?
+        .extract()
+        .map_err(|_| PyValueError::new_err("a probe `label` must be a str"))?;
+    if is_call {
+        let to = dict
+            .get_item("to")?
+            .ok_or_else(|| PyValueError::new_err("a probe call needs a `to`"))?
+            .extract::<String>()
+            .map_err(|_| PyValueError::new_err("a probe `to` must be an address string"))?;
+        let to = crate::address_utils::parse_address(&to)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let data: Vec<u8> = dict
+            .get_item("data")?
+            .ok_or_else(|| PyValueError::new_err("a probe call needs `data`"))?
+            .extract()
+            .map_err(|_| PyValueError::new_err("a probe `data` must be bytes"))?;
+        if data.len() < 4 {
+            return Err(PyValueError::new_err(
+                "a probe call's `data` must carry at least the 4-byte selector",
+            ));
+        }
+        return Ok(ProbeSpec::call(label, to, data));
+    }
+    let account = dict
+        .get_item("account")?
+        .ok_or_else(|| PyValueError::new_err("a native balance probe needs an `account`"))?
+        .extract::<String>()
+        .map_err(|_| PyValueError::new_err("a probe `account` must be an address string"))?;
+    let account = crate::address_utils::parse_address(&account)
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok(ProbeSpec::native_balance(label, account))
+}
+
+/// The sorted key set of one probe declaration dict, so an unknown or missing
+/// key fails loud instead of silently narrowing the declaration.
+fn probe_keys(dict: &Bound<'_, PyDict>) -> PyResult<Vec<String>> {
+    let mut keys = Vec::with_capacity(dict.len());
+    for key in dict.keys() {
+        keys.push(
+            key.extract::<String>()
+                .map_err(|_| PyValueError::new_err("probe dict keys must be str"))?,
+        );
+    }
+    keys.sort();
+    Ok(keys)
 }
 
 #[pymethods]
@@ -391,13 +459,17 @@ impl PyPayloadAdapter {
     ///
     /// `to` is the contract the call targets; `value` is the native value sent
     /// with it (wei, zero for a flash-funded contract); `probes` is the declared
-    /// pre/post read list as `(label, address | None, selector)` triples;
+    /// pre/post read list, one dict per probe: `{"label", "to", "data"}` for a
+    /// contract call carrying its complete calldata (selector plus ABI
+    /// arguments) or `{"label", "account"}` for a native-account balance read;
     /// `min_net_profit` is the gate threshold in wei.
     ///
     /// # Errors
     ///
     /// `TypeError` when `callback` is not callable; `ValueError` for an
-    /// unparseable address, a malformed probe entry, or a negative value.
+    /// unparseable address, a malformed probe entry (including the retired
+    /// `(label, address, selector)` triple, which cannot carry a call's
+    /// arguments), or a negative value.
     #[new]
     #[pyo3(signature = (callback, to, value = None, probes = None, min_net_profit = None))]
     fn new(
@@ -431,23 +503,26 @@ impl PyPayloadAdapter {
         u256_to_py(py, &self.value)
     }
 
-    /// The declared pre/post read list, as `(label, address | None, selector)`
-    /// triples.
+    /// The declared pre/post read list, one dict per probe — `{"label", "to",
+    /// "data"}` for a contract call (complete calldata) or `{"label",
+    /// "account"}` for a native-account balance read.
     #[getter]
     fn probes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let list = PyList::empty(py);
         for spec in &self.probes {
-            let label = spec.label.clone();
-            let address = spec.address.map(|address| address.to_checksum(None));
-            let selector = PyBytes::new(py, &spec.selector);
-            list.append(PyTuple::new(
-                py,
-                [
-                    label.into_pyobject(py)?.into_any(),
-                    address.into_pyobject(py)?.into_any(),
-                    selector.into_any(),
-                ],
-            )?)?;
+            let entry = PyDict::new(py);
+            match spec {
+                ProbeSpec::Call { label, to, data } => {
+                    entry.set_item("label", label)?;
+                    entry.set_item("to", to.to_checksum(None))?;
+                    entry.set_item("data", PyBytes::new(py, data))?;
+                }
+                ProbeSpec::NativeBalance { label, account } => {
+                    entry.set_item("label", label)?;
+                    entry.set_item("account", account.to_checksum(None))?;
+                }
+            }
+            list.append(entry)?;
         }
         Ok(list.into_any())
     }
@@ -719,7 +794,9 @@ mod tests {
             let callback = py.eval(c"lambda result: b''", None, None).unwrap();
             let probes = py
                 .eval(
-                    c"[('WETH', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', bytes([0x70, 0xA0, 0x82, 0x31]))]",
+                    c"[{'label': 'WETH', 'to': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', \
+                        'data': bytes([0x70, 0xA0, 0x82, 0x31]) + b'\\x11' * 31 + b'\\x11'}, \
+                       {'label': 'ETH', 'account': '0x7777777777777777777777777777777777777777'}]",
                     None,
                     None,
                 )
@@ -735,14 +812,38 @@ mod tests {
             .unwrap();
 
             let declared = adapter.probe_spec();
-            assert_eq!(declared.len(), 1);
-            assert_eq!(declared[0].label, "WETH");
-            assert_eq!(declared[0].address, Some(WETH));
-            assert_eq!(declared[0].selector, [0x70, 0xA0, 0x82, 0x31]);
+            assert_eq!(declared.len(), 2);
+            let mut expected = vec![0x70, 0xA0, 0x82, 0x31];
+            expected.extend_from_slice(&[0x11; 32]);
+            assert_eq!(declared[0], ProbeSpec::call("WETH", WETH, expected));
+            assert_eq!(declared[1], ProbeSpec::native_balance("ETH", EXECUTOR));
             let options = adapter.assess_options();
             assert_eq!(options.rule, AssessRule::SumOfDeltas);
             assert_eq!(options.min_net_profit, U256::from(1_000_000_000_000_000u64));
             assert_eq!(adapter.fee_policy(), FeePolicy::default());
+        });
+    }
+
+    #[test]
+    fn payload_adapter_rejects_the_retired_probe_triple() {
+        Python::attach(|py| {
+            let callback = py.eval(c"lambda result: b''", None, None).unwrap();
+            let probes = py
+                .eval(
+                    c"[('WETH', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', bytes([0x70, 0xA0, 0x82, 0x31]))]",
+                    None,
+                    None,
+                )
+                .unwrap();
+            let err = PyPayloadAdapter::new(
+                callback.unbind(),
+                "0x7777777777777777777777777777777777777777",
+                None,
+                Some(&probes),
+                None,
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("dict"), "{err}");
         });
     }
 

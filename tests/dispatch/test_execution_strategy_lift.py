@@ -97,6 +97,10 @@ class TestPyPayloadAdapterBinding:
     WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
     BALANCE_OF = bytes([0x70, 0xA0, 0x82, 0x31])
 
+    def _balance_of(self, account: str) -> bytes:
+        """`WETH.balanceOf(account)` — a COMPLETE calldata read."""
+        return _ffi_execution().abi_encode_call("balanceOf(address)", [account])
+
     def test_binds_target_and_preserves_nonzero_value(self) -> None:
         adapter = _ffi_execution().PayloadAdapter(
             lambda result: b"\x01\x02",
@@ -107,26 +111,66 @@ class TestPyPayloadAdapterBinding:
         assert adapter.value == 5_000_000_000_000_000, "native value survives the lift"
         assert adapter.min_net_profit == 0
 
-    def test_declares_probes_and_minimum_profit(self) -> None:
+    def test_declares_a_complete_calldata_read(self) -> None:
+        data = self._balance_of(self.TO)
+        assert len(data) == 4 + 32, "selector + the ABI address argument"
         adapter = _ffi_execution().PayloadAdapter(
             lambda result: b"",
             to=self.TO,
-            probes=[("WETH", self.WETH, self.BALANCE_OF)],
+            probes=[{"label": "WETH", "to": self.WETH, "data": data}],
             min_net_profit=1_000_000_000_000_000,
         )
-        assert adapter.probes == [("WETH", self.WETH, self.BALANCE_OF)]
+        assert adapter.probes == [{"label": "WETH", "to": self.WETH, "data": data}]
         assert adapter.min_net_profit == 1_000_000_000_000_000
+
+    def test_declares_a_native_account_read(self) -> None:
+        adapter = _ffi_execution().PayloadAdapter(
+            lambda result: b"",
+            to=self.TO,
+            probes=[{"label": "ETH", "account": self.TO}],
+        )
+        assert adapter.probes == [{"label": "ETH", "account": self.TO}]
+
+    def test_declares_both_forms_in_order(self) -> None:
+        data = self._balance_of(self.TO)
+        declared = [
+            {"label": "WETH", "to": self.WETH, "data": data},
+            {"label": "ETH", "account": self.TO},
+        ]
+        adapter = _ffi_execution().PayloadAdapter(
+            lambda result: b"",
+            to=self.TO,
+            probes=declared,
+        )
+        assert adapter.probes == declared, "declared order is preserved"
 
     def test_rejects_non_callable(self) -> None:
         with pytest.raises(TypeError, match="callable"):
             _ffi_execution().PayloadAdapter(42, to=self.TO)
 
-    def test_rejects_malformed_probe(self) -> None:
-        with pytest.raises(ValueError, match="4 bytes"):
+    def test_rejects_a_short_call_data(self) -> None:
+        with pytest.raises(ValueError, match="4-byte selector"):
             _ffi_execution().PayloadAdapter(
                 lambda result: b"",
                 to=self.TO,
-                probes=[("WETH", self.WETH, b"\x01\x02\x03")],
+                probes=[{"label": "WETH", "to": self.WETH, "data": b"\x01\x02\x03"}],
+            )
+
+    def test_rejects_the_retired_probe_triple(self) -> None:
+        """The selector-only triple cannot carry a call's arguments."""
+        with pytest.raises(ValueError, match="dict"):
+            _ffi_execution().PayloadAdapter(
+                lambda result: b"",
+                to=self.TO,
+                probes=[("WETH", self.WETH, self.BALANCE_OF)],
+            )
+
+    def test_rejects_a_probe_with_unknown_keys(self) -> None:
+        with pytest.raises(ValueError, match="exactly one form"):
+            _ffi_execution().PayloadAdapter(
+                lambda result: b"",
+                to=self.TO,
+                probes=[{"label": "WETH", "to": self.WETH, "account": self.TO}],
             )
 
 
@@ -176,15 +220,24 @@ class TestPythonForeignStrategySample:
         self, foreign_strategy_example: ModuleType
     ) -> None:
         strategy = foreign_strategy_example.build_strategy()
-        assert strategy.to.lower() == foreign_strategy_example.SIMPLE_EXECUTOR.lower()
+        executor = foreign_strategy_example.SIMPLE_EXECUTOR
+        assert strategy.to.lower() == executor.lower()
         assert strategy.value == 0, "the sample executor is flash-funded"
+        # The declared reads carry the executor argument / name the account, so
+        # the engine observes the executor's own balances rather than an
+        # argument-less selector.
         assert strategy.probes == [
-            (
-                "WETH",
-                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-                bytes([0x70, 0xA0, 0x82, 0x31]),
-            )
+            {
+                "label": "WETH",
+                "to": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                "data": foreign_strategy_example.weth_balance_of(executor),
+            },
+            {"label": "ETH", "account": executor},
         ]
+        (weth_probe, native_probe) = strategy.probes
+        assert len(weth_probe["data"]) == 4 + 32, "selector + the address argument"
+        assert weth_probe["data"][:4] == bytes([0x70, 0xA0, 0x82, 0x31]), "balanceOf(address)"
+        assert native_probe["account"] == executor
 
     def test_cross_layer_oracle_matches_recorded_corpus(
         self, foreign_strategy_example: ModuleType

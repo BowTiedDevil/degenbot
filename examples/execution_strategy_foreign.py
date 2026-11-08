@@ -62,10 +62,29 @@ def compose_simple_executor(result: Any) -> bytes:
     )
 
 
-# Probe — declared data, not code: which pre/post read-calls the engine runs
-# (`label, address, selector`). Assess/Fee use the seam's defaults.
-PROBES: list[tuple[str, str, bytes]] = [
-    ("WETH", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", bytes([0x70, 0xA0, 0x82, 0x31])),
+# Probe — declared data, not code: which pre/post reads the engine runs, in
+# declared order. Two neutral forms, neither naming a protocol:
+#
+# - a contract CALL carries its COMPLETE calldata (selector + ABI arguments),
+#   so `WETH.balanceOf(executor)` observes the executor's own balance;
+# - a NATIVE-ACCOUNT read observes the declared account's own ETH balance.
+# Assess/Fee use the seam's defaults.
+WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+
+def weth_balance_of(account: str) -> bytes:
+    """`WETH.balanceOf(account)` — the complete calldata the probe declares.
+
+    Returns:
+        The 4-byte selector followed by the ABI-encoded account word.
+
+    """
+    return abi_encode_call("balanceOf(address)", [account])
+
+
+PROBES: list[dict[str, Any]] = [
+    {"label": "WETH", "to": WETH, "data": weth_balance_of(SIMPLE_EXECUTOR)},
+    {"label": "ETH", "account": SIMPLE_EXECUTOR},
 ]
 
 

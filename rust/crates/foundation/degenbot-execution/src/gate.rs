@@ -18,35 +18,73 @@
 //! pins the terminal-status invariant, so a reverted observation prices to zero
 //! gross and `passed = false` whatever the adapter decoded.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use thiserror::Error;
 
 use crate::observation::{ExecutionObservation, ExecutionStatus};
 
-/// A declared pre/post read-call to snapshot: `(label, addr, selector)`.
+/// A declared pre/post read to snapshot, before and after the opportunity's
+/// transaction.
 ///
-/// The engine runs the read (`eth_call` on the address with the selector),
-/// warms the cache + access list, and returns the decoded readings. `address`
-/// is `None` for native-ETH reads (e.g. a balance read against no contract);
-/// `selector` is the 4-byte function selector.
+/// A probe is one of two **neutral executable** forms, and nothing here names a
+/// protocol, token, pool manager, or adapter:
+///
+/// - [`ProbeSpec::Call`] — a contract call carrying its COMPLETE calldata (the
+///   4-byte selector plus every ABI argument). The engine runs it as an
+///   `eth_call`-shaped read to the declared callee and decodes its return data
+///   as exactly one ABI word (32 bytes); any other length is an absent reading.
+/// - [`ProbeSpec::NativeBalance`] — the native (ETH) balance of one declared
+///   account, read from the journaled state layer directly. No call is
+///   fabricated: the account *is* the thing observed.
+///
+/// The label is the only adapter-side vocabulary the engine sees; it exists for
+/// diagnostics and for assessment evidence errors that name the probe.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ProbeSpec {
-    /// A human label for diagnostics (`"CREDIT"`, `"ETH"`, `"USDC"`, …).
-    pub label: String,
-    /// The contract to read. `None` for a pseudo-read with no callee.
-    pub address: Option<Address>,
-    /// The 4-byte function selector.
-    pub selector: [u8; 4],
+pub enum ProbeSpec {
+    /// A contract-call read: complete calldata to a declared callee.
+    Call {
+        /// A human label for diagnostics (`"CREDIT"`, `"WETH"`, `"USDC"`, …).
+        label: String,
+        /// The contract the read calls.
+        to: Address,
+        /// The complete calldata: the 4-byte selector plus its ABI arguments.
+        data: Bytes,
+    },
+    /// A native-account balance read: the declared account's own ETH balance.
+    NativeBalance {
+        /// A human label for diagnostics (`"ETH"`, `"EXECUTOR_ETH"`, …).
+        label: String,
+        /// The account whose native balance is observed.
+        account: Address,
+    },
 }
 
 impl ProbeSpec {
-    /// Build a probe spec from `(label, address, selector)`.
+    /// Declare a contract-call read: `data` is the complete calldata (selector
+    /// plus ABI arguments), passed to the callee verbatim.
     #[must_use]
-    pub const fn new(label: String, address: Option<Address>, selector: [u8; 4]) -> Self {
-        Self {
-            label,
-            address,
-            selector,
+    pub fn call(label: impl Into<String>, to: Address, data: impl Into<Bytes>) -> Self {
+        Self::Call {
+            label: label.into(),
+            to,
+            data: data.into(),
+        }
+    }
+
+    /// Declare a native-account balance read of `account`'s own ETH balance.
+    #[must_use]
+    pub fn native_balance(label: impl Into<String>, account: Address) -> Self {
+        Self::NativeBalance {
+            label: label.into(),
+            account,
+        }
+    }
+
+    /// The declared label — the diagnostic name of this probe.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Call { label, .. } | Self::NativeBalance { label, .. } => label,
         }
     }
 }
@@ -131,7 +169,7 @@ impl AssessOptions {
                         reading.delta().ok_or_else(|| {
                             AssessError::evidence(format!(
                                 "probe `{}` has no complete before/after reading",
-                                reading.spec.label
+                                reading.spec.label()
                             ))
                         })
                     })

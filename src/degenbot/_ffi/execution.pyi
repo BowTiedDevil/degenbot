@@ -35,7 +35,12 @@ class PayloadAdapter:
         compose_simple_executor,  # result -> bytes
         "0x7777…7777",  # the contract the call targets
         value=0,  # native value sent with the call (wei)
-        probes=[("WETH", "0xC02a…Cc2", b"\\x70\\xa0\\x82\\x31")],
+        probes=[
+            # A contract-call read carries its COMPLETE calldata.
+            {"label": "WETH", "to": "0xC02a…Cc2", "data": balance_of_executor},
+            # A native-account read observes the account itself.
+            {"label": "ETH", "account": "0x7777…7777"},
+        ],
         min_net_profit=0,
     )
     ```
@@ -61,13 +66,17 @@ class PayloadAdapter:
 
         `to` is the contract the call targets; `value` is the native value sent
         with it (wei, zero for a flash-funded contract); `probes` is the declared
-        pre/post read list as `(label, address | None, selector)` triples;
+        pre/post read list, one dict per probe: `{"label", "to", "data"}` for a
+        contract call carrying its complete calldata (selector plus ABI
+        arguments) or `{"label", "account"}` for a native-account balance read;
         `min_net_profit` is the gate threshold in wei.
 
         # Errors
 
         `TypeError` when `callback` is not callable; `ValueError` for an
-        unparseable address, a malformed probe entry, or a negative value.
+        unparseable address, a malformed probe entry (including the retired
+        `(label, address, selector)` triple, which cannot carry a call's
+        arguments), or a negative value.
         """
     @property
     def min_net_profit(self, /) -> Any:
@@ -78,8 +87,9 @@ class PayloadAdapter:
     @property
     def probes(self, /) -> Any:
         """
-        The declared pre/post read list, as `(label, address | None, selector)`
-        triples.
+        The declared pre/post read list, one dict per probe — `{"label", "to",
+        "data"}` for a contract call (complete calldata) or `{"label",
+        "account"}` for a native-account balance read.
         """
     @property
     def to(self, /) -> str:

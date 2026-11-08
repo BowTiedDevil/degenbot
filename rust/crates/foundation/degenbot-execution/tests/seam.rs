@@ -120,16 +120,35 @@ fn solve_result_projection_carries_amounts_and_hop_count() {
     assert_eq!(view.hop_descriptors.len(), 2);
 }
 
+/// Pins: the two neutral probe forms round-trip their declarations — a contract
+/// call carries its COMPLETE calldata (selector plus ABI arguments) verbatim,
+/// and a native-account read names the account itself with no callee and no
+/// calldata.
 #[test]
-fn probe_spec_roundtrips_label_address_selector() {
-    let spec = ProbeSpec::new("WETH".to_string(), Some(WETH), [0x70, 0xa0, 0x82, 0x31]);
-    assert_eq!(spec.label, "WETH");
-    assert_eq!(spec.address, Some(WETH));
-    assert_eq!(spec.selector, [0x70, 0xa0, 0x82, 0x31]);
+fn probe_spec_declares_a_call_or_a_native_account() {
+    // `balanceOf(address)` calldata: selector + the ABI argument word.
+    let mut data = Vec::from([0x70, 0xa0, 0x82, 0x31]);
+    data.extend_from_slice(&U256::from_be_slice(WETH.as_slice()).to_be_bytes::<32>());
+    let spec = ProbeSpec::call("WETH", WETH, data.clone());
+    assert_eq!(spec.label(), "WETH");
+    assert_eq!(
+        spec,
+        ProbeSpec::Call {
+            label: "WETH".to_string(),
+            to: WETH,
+            data: Bytes::from(data),
+        }
+    );
 
-    // A pseudo-read with no callee has no address.
-    let native = ProbeSpec::new("ETH".to_string(), None, [0x47, 0xd5, 0x1f, 0x2d]);
-    assert_eq!(native.address, None);
+    let native = ProbeSpec::native_balance("ETH", WETH);
+    assert_eq!(native.label(), "ETH");
+    assert_eq!(
+        native,
+        ProbeSpec::NativeBalance {
+            label: "ETH".to_string(),
+            account: WETH,
+        }
+    );
 }
 
 fn observed(probe_reads: Vec<ProbeReading>) -> ExecutionObservation {
@@ -147,7 +166,7 @@ fn default_assessment_sums_probe_deltas_and_prices_the_market_fee() {
     // Realistic arb scale: gross = Σ deltas = 1 ETH (1e18 wei); default
     // market-percentile priority fee is 1 gwei; gas = 100k at 10 wei/gas base
     // → gas_cost ≈ 1e14 wei ≪ gross, so net > 0 → passes the zero threshold.
-    let spec = ProbeSpec::new("WETH".to_string(), Some(WETH), [0x70, 0xa0, 0x82, 0x31]);
+    let spec = ProbeSpec::call("WETH", WETH, [0x70, 0xa0, 0x82, 0x31]);
     let observation = observed(vec![
         ProbeReading::new(
             spec.clone(),
@@ -200,7 +219,7 @@ fn assess_breaks_even_at_exactly_zero_net() {
         0 => [gas_cost_i128 / 2, gas_cost_i128 / 2],
         _ => [gas_cost_i128 / 2, gas_cost_i128 - gas_cost_i128 / 2],
     };
-    let spec = ProbeSpec::new("WETH".to_string(), Some(WETH), [0x70, 0xa0, 0x82, 0x31]);
+    let spec = ProbeSpec::call("WETH", WETH, [0x70, 0xa0, 0x82, 0x31]);
     let observation = ExecutionObservation::new(
         TransactionRequest::new(POOL, Bytes::from_static(b"FX"), U256::ZERO),
         ExecutionStatus::Success,

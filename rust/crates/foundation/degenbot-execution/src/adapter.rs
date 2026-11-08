@@ -68,8 +68,9 @@ pub trait ExecutionAdapter {
         inputs: &ComposerInputs<'_>,
     ) -> Result<TransactionRequest, ComposeError>;
 
-    /// **Probe** — declared data: which pre/post read-calls to snapshot
-    /// `(label, addr, selector)`.
+    /// **Probe** — declared data: which pre/post reads to snapshot, each either
+    /// a contract call carrying complete calldata or a declared account's own
+    /// native balance (see [`crate::ProbeSpec`]).
     ///
     /// The engine runs these reads, warms the cache + access list, and reports
     /// the readings on [`ExecutionObservation::probe_reads`]. This is *declared

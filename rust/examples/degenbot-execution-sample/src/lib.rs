@@ -166,20 +166,35 @@ impl Default for SimpleExecutorStrategy {
     }
 }
 
+/// The WETH contract the sample's declared read observes.
+const WETH: Address = alloy::primitives::address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+/// The `balanceOf(address)` selector — `keccak256("balanceOf(address)")[..4]`.
+const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+
+/// `WETH.balanceOf(executor)` as COMPLETE calldata: the selector plus the ABI
+/// argument word, so the declared read observes the sample executor's own
+/// balance rather than an argument-less call that could not be one.
+#[must_use]
+pub fn weth_balance_of_calldata(executor: Address) -> Bytes {
+    let mut calldata = Vec::with_capacity(4 + 32);
+    calldata.extend_from_slice(&BALANCE_OF_SELECTOR);
+    calldata.extend_from_slice(&U256::from_be_slice(executor.as_slice()).to_be_bytes::<32>());
+    Bytes::from(calldata)
+}
+
 impl SimpleExecutorStrategy {
     /// Construct for a sample contract with the canonical probe set — a
-    /// `WETH.balanceOf(executor)` declared read (label, address, selector),
-    /// exactly the `ProbeSpec` shape the engine runs/warms.
+    /// `WETH.balanceOf(executor)` declared read carrying its complete calldata,
+    /// exactly the `ProbeSpec` the engine executes.
     #[must_use]
     pub fn for_executor(executor: Address) -> Self {
         Self {
             composer: SimpleExecutorComposer { executor },
-            probes: vec![ProbeSpec::new(
-                "WETH".to_string(),
-                Some(alloy::primitives::address!(
-                    "C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-                )),
-                [0x70, 0xa0, 0x82, 0x31], // balanceOf(address)
+            probes: vec![ProbeSpec::call(
+                "WETH",
+                WETH,
+                weth_balance_of_calldata(executor),
             )],
             ..Self::default()
         }
@@ -389,10 +404,23 @@ mod tests {
     #[test]
     fn four_part_wiring_and_builtin_assess() {
         let strat = SimpleExecutorStrategy::for_executor(EXECUTOR);
-        // Probe — declared data (WETH balanceOf selector).
+        // Probe — declared data (`WETH.balanceOf(executor)`, complete calldata).
         assert_eq!(strat.probes.len(), 1);
-        assert_eq!(strat.probes[0].label, "WETH");
-        assert_eq!(strat.probes[0].selector, [0x70, 0xa0, 0x82, 0x31]);
+        assert_eq!(strat.probes[0].label(), "WETH");
+        assert_eq!(&keccak256(b"balanceOf(address)")[..4], &BALANCE_OF_SELECTOR);
+        let read = weth_balance_of_calldata(EXECUTOR);
+        assert_eq!(read.len(), 4 + 32, "the read carries its ABI argument");
+        assert_eq!(&read[..4], &BALANCE_OF_SELECTOR, "balanceOf(address)");
+        assert_eq!(
+            &read[4..],
+            &U256::from_be_slice(EXECUTOR.as_slice()).to_be_bytes::<32>(),
+            "the read observes the sample executor"
+        );
+        assert_eq!(
+            strat.probes[0],
+            ProbeSpec::call("WETH", WETH, read),
+            "the declaration is exactly that complete call"
+        );
         // Assess — built-in sum-of-deltas + zero min threshold.
         assert_eq!(strat.assess_options, AssessOptions::default());
         // Fee — built-in market-percentile default.
@@ -400,7 +428,7 @@ mod tests {
 
         // Built-in assess: gross = Σ deltas, net = gross − gas×fee.
         // gas_cost = 100_000 × (1e9 + 1e9) = 2e14; gross 3e15 clears it.
-        let spec = ProbeSpec::new("WETH".to_string(), None, [0x70, 0xa0, 0x82, 0x31]);
+        let spec = ProbeSpec::call("WETH", WETH, weth_balance_of_calldata(EXECUTOR));
         let observation = ExecutionObservation::new(
             TransactionRequest::new(EXECUTOR, Bytes::new(), U256::ZERO),
             degenbot_execution::ExecutionStatus::Success,
@@ -431,7 +459,7 @@ mod tests {
             1_000_000_000,
         )
         .with_probe_reads(vec![ProbeReading::new(
-            ProbeSpec::new("WETH".to_string(), None, [0x70, 0xa0, 0x82, 0x31]),
+            ProbeSpec::call("WETH", WETH, weth_balance_of_calldata(EXECUTOR)),
             Some(U256::from(0u64)),
             Some(U256::from(10_000u64)),
         )]);
