@@ -228,11 +228,7 @@ markers = [
 
 [dependency-groups]
 dev = [
-    "ape-foundry == 0.8.12",
-    "ape-vyper == 0.8.12",
-    "eth-ape == 0.8.50",
-    "eth-abi",
-    "eth-hash[pycryptodome]",
+    "eth-ape[recommended-plugins]",
     "hypothesis",
     "maturin",
     "mypy",
