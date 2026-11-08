@@ -156,8 +156,8 @@ class PoolRegistrationError(ValueError):
     A pool was refused at registration (duplicate address, out-of-spec field, V4 amount-modifying hook, V4 dynamic fee, or V4 high static fee > 65535). Subclasses classify the specific admission reason so build_paths skips rejected pools by type, not string matching.
     """
 
-    detail: str
-    kind: BuildFailureKind
+    detail: str | None
+    kind: BuildFailureKind | None
 
 class PossibleInaccurateResult(ValueError):
     """

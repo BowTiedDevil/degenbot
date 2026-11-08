@@ -75,8 +75,8 @@ _DECLARED: dict[str, dict[str, str]] = {
     # ``tests/builders/test_build_failure_exception_taxonomy.py`` (the cassette
     # paths) and the Rust ``map_build_failure`` rendering table.
     "degenbot._ffi.PoolRegistrationError": {
-        "kind": "BuildFailureKind",
-        "detail": "str",
+        "kind": "BuildFailureKind | None",
+        "detail": "str | None",
     },
     "degenbot._ffi.HookedPoolRejectedError": {
         "kind": "BuildFailureKind",

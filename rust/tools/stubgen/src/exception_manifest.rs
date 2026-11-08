@@ -168,11 +168,11 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         attributes: &[
             ExceptionAttribute {
                 name: "kind",
-                ty: AttributeType::ClassRef("BuildFailureKind"),
+                ty: AttributeType::OptionalClassRef("BuildFailureKind"),
             },
             ExceptionAttribute {
                 name: "detail",
-                ty: AttributeType::Str,
+                ty: AttributeType::OptionalStr,
             },
         ],
         base: "ValueError",
@@ -1068,11 +1068,11 @@ mod tests {
                 ),
                 ("PoolBuildRpcError", "detail", "str".to_owned()),
                 ("PoolBuildRpcError", "kind", "BuildFailureKind".to_owned()),
-                ("PoolRegistrationError", "detail", "str".to_owned()),
+                ("PoolRegistrationError", "detail", "str | None".to_owned(),),
                 (
                     "PoolRegistrationError",
                     "kind",
-                    "BuildFailureKind".to_owned(),
+                    "BuildFailureKind | None".to_owned(),
                 ),
                 ("SessionConsumerError", "batch_index", "int".to_owned()),
                 (
