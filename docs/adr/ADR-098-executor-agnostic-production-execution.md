@@ -167,7 +167,7 @@ The three confirmed test surfaces are:
    built-in protocol drift, not genericity by itself.
 
 The acceptance proof for genericity is a foreign contract with no
-`version()`, `capabilities()`, `release_id()`, WETH, PoolManager, or command
+`version()`, `capabilities_hash()`, `release_id()`, WETH, PoolManager, or command
 stream using the production path. The acceptance proof for independent
 versioning is two defined `cmd_executor` deployments selecting different
 encoders beside that foreign target.

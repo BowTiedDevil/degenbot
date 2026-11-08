@@ -215,8 +215,12 @@ layout, the `execute` ABI, and the runtime artifact. A deployment compiled befor
 these getters answers nothing, and naming it requires an explicit operator legacy
 mapping; silence is never read as "latest".
 
-See [`releases.md`](releases.md) for the current release, the manifest schema,
-and the migration policy.
+See [`releases.md`](releases.md) for the current release, the schema-v2
+manifest and the commitment derivation, the ordered `cmd_executor/2` migration
+and verification workflow, and the policy for getterless deployments. None of it
+applies to a custom execution contract: a metadata-free contract exposes no
+getters and binds through its own adapter
+([execution adapters](../execution-adapters.md)).
 
 ---
 

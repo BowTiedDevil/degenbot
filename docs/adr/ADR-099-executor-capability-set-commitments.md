@@ -1,9 +1,12 @@
 # ADR-099: Executor capability-set commitments — one constant-size hash, one manifest list
 
-**Status: accepted.** Refines [ADR-098](ADR-098-executor-agnostic-production-execution.md)
-D5: versioning, capability declaration, and release manifests stay an *optional
-built-in* policy, and this ADR changes how that policy publishes one of its four
-metadata facts. Nothing here reaches the generic execution seam.
+**Status: implemented** (ergo epic `KVORI5`). `cmd_executor/2` ships the
+`capabilities_hash()` commitment, the schema-v2 manifest block, and the refusal
+at binding; the acceptance list below is the certification. Refines
+[ADR-098](ADR-098-executor-agnostic-production-execution.md) D5: versioning,
+capability declaration, and release manifests stay an *optional built-in* policy,
+and this ADR changes how that policy publishes one of its four metadata facts.
+Nothing here reaches the generic execution seam.
 
 ## Context
 

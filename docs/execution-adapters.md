@@ -29,8 +29,11 @@ Pick the path that matches what you run:
 
 Your own contract needs **none** of degenbot's built-in machinery: no command
 grammar, no `release_id()`/`protocol_major()`/`call_encoding_version()`/
-`capabilities_hash()` getter, no release manifest, and no entry in the release
-registry. All of that exists for the bundled `cmd_executor` alone.
+`capabilities_hash()` getter, no release manifest, no capability commitment, and
+no entry in the release registry. All of that exists for the bundled
+`cmd_executor` alone, and so does every step of the `cmd_executor/2` migration and
+verification workflow: a custom adapter is verified by its own simulation, not by
+metadata screens.
 
 ## One opportunity, one transaction
 
@@ -402,7 +405,7 @@ independent; a foreign adapter uses neither.
 
 `CmdExecutorBinding::deployment(id)` binds the session's own `cmd_executor`
 identities to the release this build ships as *the current one*
-(`cmd_executor/1`). Nothing is read from the chain: the session already names the
+(`cmd_executor/2`). Nothing is read from the chain: the session already names the
 contract, the consumer is offline-safe, and the encoder is chosen by
 construction.
 
@@ -508,7 +511,8 @@ inferred — and it evolves without touching the generic interface. A future maj
 ships one manifest plus one encoding in a new build; a deployment declaring a
 major or tag that build does not dispatch is refused at binding rather than
 guessed at. The manifest schema, the capability catalog, the artifact
-verification, and the migration policy for getterless deployments live in
+verification, the ordered `cmd_executor/2` migration and verification workflow,
+and the migration policy for getterless deployments live in
 [the executor release reference](executor/releases.md).
 
 ## Reference

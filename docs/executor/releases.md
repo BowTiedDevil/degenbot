@@ -11,7 +11,12 @@ versioning is an optional built-in policy, and none of it is part of the generic
 `ExecutionAdapter` seam — and
 [ADR-099](../adr/ADR-099-executor-capability-set-commitments.md), which replaces
 the bounded capability array with one constant-size commitment. A foreign
-execution contract needs no metadata getters, no manifest, and no release policy.
+execution contract needs no metadata getters, no manifest, and no release policy
+([execution adapters](../execution-adapters.md)).
+
+Command streams, balance semantics, and the contract's full command set are in
+[the user guide](user-guide.md); this page covers what a deployment *declares*
+about itself, not how to encode for it.
 
 ## The current release
 
@@ -142,6 +147,34 @@ declared identity to the whole call encoding. It is deserialized with
 `deny_unknown_fields` and validated on every use, so a misspelled or invented key
 is a hard error rather than a silently ignored line.
 
+`schema_version` is `2` and nothing else: a manifest written against another
+schema is `ManifestError::UnsupportedSchemaVersion`, not a best-effort read. The
+capability block is what schema 2 replaced — one derivation, one word, one list:
+
+```json
+"capabilities": {
+  "scheme": "degenbot/cmd_executor/capabilities/v1",
+  "commitment": "0x9cce6a2d69dbea3b4023e117492ff11aadc2e3feadb28a83faa172fc0823bcbf",
+  "ids": [
+    {
+      "id": 1,
+      "name": "address_table",
+      "description": "The preprocessing address table plus the protocol sentinel indices.",
+      "provides": ["SET_ADDRESS"]
+    }
+  ]
+}
+```
+
+`ids` is the complete list, and it carries **no length ceiling**. The retired
+`MAX_CAPABILITY_IDS` bound of 32 is gone from both sides — the contract answers
+one word, and a manifest may declare 15, 48 (the suite's above-the-old-bound
+fixture), or more: nothing validates a maximum, while the deployment's metadata
+surface stays one `bytes32`. Validation bounds *shape*, not size: IDs ascending,
+unique, and non-zero, the list non-empty, and every `provides` entry a declared
+opcode (`provides` may be omitted for a capability that is a config or receipt
+semantic rather than an opcode).
+
 | Section | Binds |
 |---------|-------|
 | `release_id`, `protocol` | the declared tag and bounded major/minor |
@@ -156,6 +189,7 @@ is a hard error rather than a silently ignored line.
 
 Validation cross-checks, so a contradictory manifest cannot pass as current:
 
+- `schema_version` is exactly `2` (`ManifestError::UnsupportedSchemaVersion`);
 - the `release_id` is a NUL-padded printable-ASCII tag;
 - `protocol.major` is in this build's **bounded** set `SUPPORTED_PROTOCOL_MAJORS`
   (`[1]`), so an unknown major is a refusal rather than an implicit upgrade;
@@ -170,7 +204,8 @@ Validation cross-checks, so a contradictory manifest cannot pass as current:
 - the capability block's `scheme` is the format's preimage prefix
   (`degenbot/cmd_executor/capabilities/v1`) and nothing else;
 - capability IDs are unique, ascending, and non-zero, and the list is non-empty;
-  every opcode a capability claims is declared;
+  every opcode a capability claims is declared; there is no upper bound on how
+  many IDs the list holds;
 - `capabilities.commitment` is exactly the commitment the manifest's own `ids`
   derive (`ManifestError::CapabilityCommitment { declared, derived }`), so the
   word and the list check each other and a hand edit of either one is refused;
@@ -429,36 +464,147 @@ capability decline.
 7. **Do not** add version, capability, or release fields to a generic crate. The
    generic seam stays `to` + `data` + `value` plus Assess (ADR-098 D2/D4).
 
-## Migration notes: the capability commitment cutover
+## Migrating a deployment to `cmd_executor/2`
 
 `capabilities()` → `capabilities_hash()` is a hard cutover, not an additive
-change (ADR-099 D5):
+change (ADR-099 D5). ADR-099 D2 explains why one word replaces the list and D7
+explains why a match is a screen rather than proof; this section is the
+operational form — what an operator runs, ordered so the checks metadata cannot
+fake come first.
 
-- **Constructor** is unchanged: `__init__(weth, pool_manager, usdc, usdt)`, four
-  role addresses, 128 bytes of deploy arguments.
-- **Storage** is unchanged: every getter is a constant return — no new slot, no
-  initializer, no migration call.
-- **Runtime bytecode shrank.** The retired getter's dispatch arm and array
-  return encoder left with it: 18,524 B code + CBOR, 18,748 B deployed with the
-  224-byte immutable tail — well under the 24,576-byte EIP-170 limit. The two
-  precomputed delta slots and the immutable tail are untouched, because no
-  getter introduces an immutable.
-- **Artifacts re-baked**: `tier3-oracle/artifacts/executor/*` plus the
-  `contracts/cmd_executor_*` copies. Both are reproduced by
-  `tier3-oracle/build-tier3-executor-harness.sh` and `contracts/recompile.py`,
-  and pinned by `just verify-tier3-executor-artifact`.
-- **The wire is unchanged.** `execute()` produces the same calldata and returns
-  the same `{gross_profit, bribe_paid}` receipt; `call_encoding_version()` is
-  still `1` and `protocol_major()` is still `1`.
-- **The operator action is a redeploy** from the new artifact at a new address,
-  with a new `DeploymentId`. There is no proxy, no upgrade, and no migration
-  call.
-- **A deployment still answering `capabilities()` is refused at binding**, and
-  it is *not* addressable through the legacy mapping: three of four getters
-  answered is a contradiction to investigate, never silence to fill in —
+It applies to a built-in `cmd_executor` deployment only. A custom execution
+contract needs none of it — no getters, no manifest, no commitment, and no
+release bump ([execution adapters](../execution-adapters.md)).
+
+### The migration, step by step
+
+**1. Pin the build.** Record the commit, then confirm the artifacts are the ones
+that commit ships: `just verify-tier3-executor-artifact` recompiles the tracked
+`contracts/vyper/cmd_executor.vy` with the pinned Vyper 0.5.0b2 into a throwaway
+directory and byte-compares the result against the committed artifacts, while
+`tier3-oracle/artifacts/executor/manifest.json` pins each artifact's sha256 to
+its tracked source. Nothing in this step reads the chain.
+
+**2. Redeploy the immutable code.** The constructor is unchanged —
+`__init__(weth, pool_manager, usdc, usdt)`, four role addresses, 128 bytes of
+deploy arguments appended to creation code that is identical for every
+deployment of the release:
+
+```bash
+DEPLOY_INPUT="$(cat tier3-oracle/artifacts/executor/cmd_executor.creation.hex)$(cast abi-encode 'f(address,address,address,address)' "$WETH" "$POOL_MANAGER" "$USDC" "$USDT")"
+```
+
+There is no proxy, no upgrade, and no migration call: the new artifact is a new
+address, and the session names it with a new `DeploymentId`.
+
+**3. Verify deploy-time provenance.** The deployment transaction's `input` must
+equal `$DEPLOY_INPUT` byte for byte, and its receipt's `contractAddress` must be
+the address you intend to drive. This step depends on no metadata getter and no
+post-deploy state.
+
+**4. Reconcile the runtime bytes.** `eth_getCode(address, block)` must equal the
+compiler artifact runtime — code plus CBOR metadata, 18,524 B, no immutables —
+followed by the 224-byte immutable tail, one 32-byte word each, in the layout
+`tier3-oracle/artifacts/executor/cmd_executor.immutables.json` declares. (The
+deployment artifact `contracts/cmd_executor_runtime_bytecode.txt` is those
+18,524 bytes with one concrete deployment's tail already appended, 18,748 B
+total; only the tail differs between two deployments of the release.)
+
+| Offset | Word | Value |
+|--------|------|-------|
+| `0x00` | `OWNER_ADDR` | the deployer |
+| `0x20` | `WETH_ADDR` | deploy argument 1 |
+| `0x40` | `POOL_MANAGER_ADDR` | deploy argument 2 |
+| `0x60` | `USDC_ADDR` | deploy argument 3 |
+| `0x80` | `USDT_ADDR` | deploy argument 4 |
+| `0xa0` | `WETH_DELTA_SLOT` | `keccak256(abi.encodePacked(executor, weth))` |
+| `0xc0` | `NATIVE_DELTA_SLOT` | `keccak256(abi.encodePacked(executor, address(0)))` |
+
+Addresses are left-padded to a word. A mismatch here is a different
+implementation, not a different deployment argument — and no getter can settle
+it, because a getter only answers what the code at that address chooses to say.
+
+**5. Read the four getters.**
+
+```bash
+cast call "$EXECUTOR" 'release_id()(bytes32)'            # cmd_executor/2, NUL-padded
+cast call "$EXECUTOR" 'protocol_major()(uint32)'         # 1
+cast call "$EXECUTOR" 'call_encoding_version()(uint32)'  # 1
+cast call "$EXECUTOR" 'capabilities_hash()(bytes32)'     # 0x9cce…bcbf
+```
+
+**6. Recompute and compare the commitment.** Derive the word from the manifest's
+`capabilities.ids` with the recipe above; the manifest performs the same
+recomputation at validation, so its `ids` and `commitment` cannot disagree
+silently. A **mismatch is dispositive** — this is not the deployment the
+document describes — while a **match is a screen**: it says the deployment
+agrees with a public, guessable preimage, and nothing about the code behind it.
+
+**7. Bind.** `BoundCmdExecutor::discover` resolves the tag against this build's
+registry, then checks the declaration against that release's manifest. Every
+refusal in the table above is typed, and none of them defaults to the newest
+release:
+
+```rust
+let registry = ReleaseRegistry::production()?;
+let binding = CmdExecutorBinding::new(owner, executor, weth, pool_manager, EncodeOptions::default());
+let bound = BoundCmdExecutor::discover(binding, &provider, None, &registry).await?;
+```
+
+**8. Prove behavior.** Run one exact-block representative simulation of the
+deployment's own address through the production path:
+
+```rust
+let deployment = bound.deployment(DeploymentId::new(1));   // deployed code, no injected build
+```
+
+The adapter encodes a representative path to exact `to`/`data`/`value`, the
+engine executes the code the chain holds at that address, and Assess decodes the
+`ExecutionReceipt`. Steps 1–4 verify artifacts and deployed bytes, steps 5–6
+verify a *claim*, and this step is the only one that observes what the code
+does. It is mandatory for every new deployment.
+
+### What did not move
+
+- **The protocol major and the call-encoding version.** `protocol_major()` is
+  still `1` and `call_encoding_version()` is still `1`, because the wire did not
+  move; a metadata-only bump that dragged the encoding version along would claim
+  a wire change that did not happen.
+- **The `execute()` calldata and the receipt.** Same `execute(commands, config)`
+  bytes, same `ExecutionReceipt { gross_profit, bribe_paid }`; the per-release
+  goldens in `degenbot-arbitrage/tests/release_binding.rs` pin both under the new
+  tag.
+- **Capability planning.** It still compares the manifest's declared ID list with
+  the encoder's requirement set; the commitment is never a planning input.
+- **The legacy mapping.** It still names only deployments that answered
+  *nothing*, and still never overrides or rescues a declaration.
+- **Read classification.** Empty return data and a revert are absent; a transport
+  failure is `BindingError::Node` and is never folded into absence.
+- **Constructor, deploy arguments, storage, and the immutable tail.** No new
+  slot, no initializer, no new immutable; the two delta slots and the 224-byte
+  tail are byte-identical. The runtime only lost the retired getter's dispatch
+  arm and array return encoder (18,638 B → 18,524 B code + CBOR, well under the
+  24,576-byte EIP-170 limit).
+- **The generic seam.** `degenbot-execution` gained no commitment type, no
+  metadata-getter requirement, and no release field (ADR-098 D2/D4).
+
+### What refuses, and what cannot rescue it
+
+- A deployment still answering `capabilities()` answers three of four getters, so
+  binding is
   `MetadataDecodeError::PartialAnswers { answered: 3, absent: ["capabilities_hash"] }`
-  → `BindingError::Decode`. An operator who must keep driving a `cmd_executor/1`
-  deployment keeps the build that declares it.
+  → `BindingError::Decode`: refused loudly, before any encoder is chosen, with
+  the silent getter named.
+- The legacy mapping does **not** rescue it: an entry supplies a release for a
+  deployment that answered nothing, and three answers is a contradiction to
+  investigate, not silence to fill in. Binding also refuses a mapping whose tag
+  this build does not dispatch (`BindingError::UnknownRelease`, listing the tags
+  this build dispatches).
+- There is no dual getter, no "try the hash, fall back to the array", no decoder
+  that accepts either shape, and no registry entry for the retired
+  `cmd_executor/1` metadata ABI. An operator who must keep driving a
+  `cmd_executor/1` deployment keeps the build that declares it (ADR-087:
+  deleting the reader is the retirement).
 
 ### Operator runbook: naming a getterless deployment
 
