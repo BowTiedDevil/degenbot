@@ -2,18 +2,16 @@
 # Build the committed Vyper executor artifact for the tier-3b oracle
 # (deterministic evm2 replay of the V3->V4->V3 sim-Halt against real bytecode).
 #
-# Compiles the vendored `executor/contracts/cmd_executor.vy` with the PINNED
-# vyper 0.5.0b2 (the pinned executor/ uv project version), emits creation + runtime bytecode + ABI + method identifiers +
+# Compiles `contracts/vyper/cmd_executor.vy` with the PINNED
+# vyper 0.5.0b2 (the root uv lock version), emits creation + runtime bytecode + ABI + method identifiers +
 # error map + immutable-deploy layout, and writes the artifact + manifest under
 # `artifacts/executor/`. The compiled output is byte-for-byte deterministic
 # (verified: a fresh build of the committed source equals the committed
 # artifact). The V3 topology harness (`src-executor/ExecutorV3Harness.sol`)
 # is compiled alongside with solc 0.7.6.
 #
-# Toolchain: the in-repo `executor/` uv project (`uv run vyper` executes
-# inside it; vyper pinned ==0.5.0b2, requires-python >=3.14). The executor
-# contracts were pulled in from the sibling /workspaces/executor repo
-# (now in-repo) — degenbot is self-contained.
+# Toolchain: the root uv project (`uv run --no-sync vyper`; vyper pinned
+# ==0.5.0b2). The executor sources and tests are first-class root-project files.
 #
 # EXECUTOR_DIR / VYPROOT env vars override the in-repo defaults for one-off
 # builds. This mirrors `build-tier3-*-swap-harness.sh` and is wired into the
@@ -27,14 +25,14 @@ TD="$(cd "$(dirname "$0")" && pwd)"
 cd "${TD}"
 
 REPO_ROOT="$(cd "${TD}/.." && pwd)"
-EXECUTOR_DIR="${EXECUTOR_DIR:-${REPO_ROOT}/executor}"
+EXECUTOR_DIR="${EXECUTOR_DIR:-${REPO_ROOT}}"
 VYPROOT="${VYPROOT:-${EXECUTOR_DIR}}"
-VYPER_SRC="${EXECUTOR_DIR}/contracts/cmd_executor.vy"
+VYPER_SRC="${EXECUTOR_DIR}/contracts/vyper/cmd_executor.vy"
 OUT_ROOT="${OUT_DIR:-${TD}/artifacts}"
 OUT="${OUT_ROOT}/executor"
 
 # The V3 topology harness (solc 0.7.6) stays oracle-side; the Vyper executor
-# source + interfaces live in the vendored executor/ project.
+# source + interfaces live in the root contracts tree.
 SRC_DIR="src-executor"
 
 echo "▸ compiling ${VYPER_SRC} with pinned vyper 0.5.0b2"
@@ -45,7 +43,7 @@ mkdir -p "${OUT}"
 # passing the absolute contracts path works regardless of cwd.
 (
   cd "${VYPROOT}"
-  uv run vyper -f combined_json "${VYPER_SRC}" > /tmp/tier3_executor_combined.json
+  uv run --no-sync vyper -f combined_json "${VYPER_SRC}" > /tmp/tier3_executor_combined.json
 )
 
 # ── V3 topology harness (solc 0.7.6) ─────────────────────────────────────

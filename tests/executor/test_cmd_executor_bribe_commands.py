@@ -6,12 +6,12 @@ parameter of execute(), not in the command stream. The actual bribe is
 executed by execute() after the profit check, sending profit * bips / 10000
 ETH to the recipient.
 
-U3WVLL: any slow-path tx (check_mode != 0, or bribe requested) asserts
+Any slow-path tx (check_mode != 0, or bribe requested) asserts
 combined-after >= combined-before on the on-chain WETH+ETH balance. A
 self-funded bribe tx must therefore end with MORE WETH+ETH than it started.
 The bribe flows below are 2-hop WETH→USDC→WETH routes whose terminal profit
-is WETH. (The old single WETH→USDC route predates U3WVLL and now correctly
-reverts as a WETH+ETH-losing self-fund path.)
+is WETH. (The old single WETH→USDC route does not preserve the starting
+balance and correctly reverts as a WETH+ETH-losing self-fund path.)
 """
 
 import pytest
@@ -34,7 +34,7 @@ AMOUNT_WETH = 1 * 10**18
 AMOUNT_USDC = 2000 * 10**6
 
 # 2-hop bribe routes: 10 WETH in, 20 WETH out — terminal profit denominated
-# in WETH (required by the U3WVLL on-chain profit floor on self-funded
+# in WETH (required by the on-chain profit floor on self-funded
 # slow-path txs; see the file docstring).
 IN_WETH = 10 * 10**18
 MID_USDC = 2000 * 10**6

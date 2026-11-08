@@ -489,7 +489,7 @@ class TestV3V3V3ReverseDirectCustody:
 class TestV3V3V3ForwardDirectCustody:
     """V3a→V3b→V3c forward order with direct custody — expected to FAIL.
 
-    In the reverse-order approach, V3b sends WBTC to V3c DURING V3c's
+    In the reverse-order approach, V3b sends WBTC to V3c during V3c's
     callback, so V3c's IIA balance-delta check passes. In forward order,
     V3a sends USDC to V3b BEFORE V3b.swap() is called, so V3b's
     balance_before snapshot already includes the USDC. The IIA check
@@ -497,7 +497,7 @@ class TestV3V3V3ForwardDirectCustody:
     nothing more arrives, so it fails.
 
     V3's IIA check: balance_before + amount_owed <= balance_after
-    The input tokens must arrive DURING the callback (between the two
+    The input tokens must arrive during the callback (between the two
     balance reads), not before swap() is called. This is fundamentally
     different from V2's K-invariant check (which checks total balances).
 
@@ -556,7 +556,7 @@ class TestV3V3V3ForwardDirectCustody:
         # before balance_before was taken, not during the callback.
         assert tx.status == 0, (
             "Forward-order V3 direct custody should fail due to IIA timing: "
-            "tokens must arrive DURING the callback, not before swap()"
+            "tokens must arrive during the callback, not before swap()"
         )
 
 

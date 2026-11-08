@@ -1,5 +1,7 @@
 # ADR-025: The `ExecutionAdapter` seam — a deep, user-owned execution layer over the thin engine
 
+> **Refinement (ADR-098).** The generic seam is now the production interface, not only a foreign-adapter example. Neutral opportunity types leave `degenbot-executor`, Encode produces a complete transaction, Assess consumes a generic execution observation, and production simulation/submission become adapter-driven. The `degenbot-execution → degenbot-executor` dependency described below is reversed; the built-in command executor and its versioning policy depend on the generic seam.
+
 **Status: accepted.** In response to a Candidate-1 architecture review of the
 composer explosion in `degenbot-executor/src/composers.rs`, grilling reframed
 the repository's actual friction: the execution side of degenbot is **overfit to

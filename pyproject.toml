@@ -228,6 +228,9 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "ape-foundry == 0.8.12",
+    "ape-vyper == 0.8.12",
+    "eth-ape == 0.8.50",
     "eth-abi",
     "eth-hash[pycryptodome]",
     "hypothesis",
@@ -243,6 +246,7 @@ dev = [
     "python-dotenv",
     "sybil",
     "tomlkit",
+    "vyper == 0.5.0b2",
 ]
 
 [tool.ty.src]
@@ -267,6 +271,9 @@ paths = ["src/degenbot"]
 
 [tool.uv]
 exclude-newer = "14 days"
+# The executor toolchain is pinned deliberately; these four packages postdate
+# the rolling cutoff, so exempt only them rather than weakening every dependency.
+exclude-newer-package = { "ape-foundry" = "2026-11-08T00:00:00Z", "ape-vyper" = "2026-11-08T00:00:00Z", "eth-ape" = "2026-11-08T00:00:00Z", "vyper" = "2026-11-08T00:00:00Z" }
 link-mode = "copy"
 cache-keys = [
     # Any uv *project* build (uv build, or a plain uv sync) must invalidate when

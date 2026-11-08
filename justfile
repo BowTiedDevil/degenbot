@@ -162,7 +162,7 @@ test-standalone:
 # ratchet is a ~1s source scan (ADR-087 D4), so it rides here as well as at
 # pre-push: a tripwire introduced while iterating fails at `just test`, not only
 # at the push that follows.
-test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-python check-consumer-probes
+test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-python test-executor check-consumer-probes
 
 # Run the pre-push gates before `git push`. prek.toml's
 # `stages = ["pre-push"]` entries are the single owner of the gate list (the
@@ -844,23 +844,22 @@ test-python: dev
     {{ py_run }} pytest -x -q --no-header
 
 
-# The executor project's Ape suite (executor/tests) — the canonical wrapper for
-# testing the Vyper executor contracts. The in-repo `executor/` uv project owns
-# its own toolchain (ape + vyper ==0.5.0b2, executor/uv.lock), so the recipe pins
-# UV_PROJECT_ENVIRONMENT at that project's venv: the ambient redirect (the root
-# project's container-level venv) has no ape and would misdirect `uv run`.
-# ape-config.yaml's mainnet-fork upstream is ${TEST_ETHEREUM_FULL_NODE_HTTP_URI},
+# The root project's Ape suite (tests/executor) — the canonical wrapper for
+# testing the Vyper executor contracts under contracts/vyper. The root uv lock
+# owns Ape and vyper ==0.5.0b2, so the suite uses the same environment as every
+# other root-project gate. ape-config.yaml's mainnet-fork upstream is
+# ${TEST_ETHEREUM_FULL_NODE_HTTP_URI},
 # resolved through tests/conftest.py's declared layers (env > tests.env) and
 # exported here like `test-fork`; fail closed when the machine declares no
 # endpoint. Extra args forward to `ape test` for tight loops (a single file,
 # a -k filter, -n0); the bare recipe runs the whole suite.
 #   just test-executor                                    # full suite
-#   just test-executor tests/test_sentinel_failclosed.py   # one file
+#   just test-executor tests/executor/test_sentinel_failclosed.py  # one file
 #   just test-executor tests/ -k 'sentinel'               # filtered
-test-executor target="tests/" *args:
+test-executor target="tests/executor/" *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    target="${1:-tests/}"; [ $# -eq 0 ] || shift
+    target="${1:-tests/executor/}"; [ $# -eq 0 ] || shift
     rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_FULL_NODE_HTTP_URI") or "")')"
     if [ -z "$rpc_uri" ]; then
         echo "ERROR: no RPC declared — set TEST_ETHEREUM_FULL_NODE_HTTP_URI (process env or tests.env) to a reachable Ethereum endpoint" >&2
@@ -872,9 +871,8 @@ test-executor target="tests/" *args:
         echo "ERROR: no reachable Ethereum RPC at TEST_ETHEREUM_FULL_NODE_HTTP_URI=$rpc_uri" >&2
         exit 1
     fi
-    cd executor
-    exec env UV_PROJECT_ENVIRONMENT="$PWD/.venv" TEST_ETHEREUM_FULL_NODE_HTTP_URI="$rpc_uri" \
-        uv run --no-sync ape test "$target" "$@"
+    exec env TEST_ETHEREUM_FULL_NODE_HTTP_URI="$rpc_uri" \
+        {{ py_run }} ape test "$target" "$@"
 
 
 

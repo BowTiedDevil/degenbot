@@ -1,5 +1,7 @@
 # ADR-033: The encode funnel's intake contract — one encode request per path, one context per session
 
+> **Refinement (ADR-098).** The separate generic-execution decision contemplated below is now accepted: neutral path descriptors leave this crate, while `EncodeRequest` / `EncodeContext` and the command grammar remain `cmd_executor` internals behind the generic execution adapter.
+
 **Status: accepted.** Decision recorded 2026-08-17 (architecture review, encode-seam candidate). Implementation: ergo task `NSOFR2` under epic `4GHYBP` (follow-up `SMOZG3` for the ERC6909 capture it keeps first-class).
 
 ## Context

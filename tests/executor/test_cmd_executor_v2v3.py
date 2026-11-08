@@ -70,7 +70,7 @@ class TestV2ToV3:
         v3_idx = at.add(v3_pool.address)
         v2_idx = at.add(v2_pair.address)
 
-        # V3 callback forward_data: pay USDC to V3 pool (tokens must arrive DURING callback for IIA)
+        # V3 callback forward_data: pay USDC to V3 pool (tokens must arrive during callback for IIA)
         v3_fwd = enc_erc20_transfer(usdc_idx, v3_idx, v2_amount_out)
 
         # V2 callback forward_data:

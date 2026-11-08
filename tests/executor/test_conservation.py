@@ -61,7 +61,7 @@ AMOUNT_WETH = 1 * 10**18
 AMOUNT_USDC = 2000 * 10**6
 AMOUNT_WBTC = 100 * 10**8
 AMOUNT_WETH_PROFIT = 2 * 10**18
-PROFIT = AMOUNT_WETH_PROFIT - AMOUNT_WETH  # 1 WETH
+NET_PROFIT = AMOUNT_WETH_PROFIT - AMOUNT_WETH  # 1 WETH
 V2_FEE = 30
 
 # ── Helpers (duplicated from test_cmd_executor_three_hop_optimized) ──
@@ -184,7 +184,7 @@ class TestConservationCatchesLeakedTokens:
         owner_account is in the AddressTable (needed for the command encoding)
         but NOT in the accounts list passed to snapshot_balances. The WETH
         leaves PM, arrives at owner_account (invisible to the snapshot), and
-        conservation detects a -PROFIT imbalance.
+        conservation detects a -NET_PROFIT imbalance.
         """
         a_pk, a_zfo = _setup_v4_pool(
             v4_pm,
@@ -233,7 +233,7 @@ class TestConservationCatchesLeakedTokens:
         inner += _v4_swap(at, b_pk, b_zfo, AMOUNT_USDC, zero_idx)
         inner += _v4_swap(at, c_pk, c_zfo, AMOUNT_WBTC, zero_idx)
         # BUG: profit goes to owner_account instead of executor
-        inner += enc_v4_take(weth_idx, owner_idx, PROFIT)
+        inner += enc_v4_take(weth_idx, owner_idx, NET_PROFIT)
 
         commands = enc_v4_unlock(inner)
         before = snapshot_balances([weth, usdc, wbtc], [executor, v4_pm])
@@ -316,12 +316,12 @@ class TestConservationCatchesExtraTransfer:
         zero_idx = at.add(ZERO_ADDRESS)
         owner_idx = at.add(owner_account.address)
 
-        leak_amount = PROFIT // 2  # accidentally send half the profit to owner
+        leak_amount = NET_PROFIT // 2  # accidentally send half the profit to owner
 
         inner = _v4_swap(at, a_pk, a_zfo, AMOUNT_WETH, zero_idx)
         inner += _v4_swap(at, b_pk, b_zfo, AMOUNT_USDC, zero_idx)
         inner += _v4_swap(at, c_pk, c_zfo, AMOUNT_WBTC, zero_idx)
-        inner += enc_v4_take(weth_idx, executor_idx, PROFIT)  # correct V4_TAKE
+        inner += enc_v4_take(weth_idx, executor_idx, NET_PROFIT)  # correct V4_TAKE
         # BUG: stray transfer that shouldn't be here
         inner += enc_erc20_transfer(weth_idx, owner_idx, leak_amount)
 
@@ -366,7 +366,7 @@ class TestConservationPassesButProfitCheckFails:
 
         WETH physically leaves PM and arrives at V2_a — both PM and V2_a
         are in the accounts list, so conservation passes. But executor
-        expected +PROFIT WETH and got 0.
+        expected +NET_PROFIT WETH and got 0.
         """
         a_pk, a_zfo = _setup_v4_pool(
             v4_pm,
@@ -415,7 +415,7 @@ class TestConservationPassesButProfitCheckFails:
         inner += _v4_swap(at, b_pk, b_zfo, AMOUNT_USDC, zero_idx)
         inner += _v4_swap(at, c_pk, c_zfo, AMOUNT_WBTC, zero_idx)
         # BUG: profit goes to V2_a (tracked) instead of executor
-        inner += enc_v4_take(weth_idx, v2a_idx, PROFIT)
+        inner += enc_v4_take(weth_idx, v2a_idx, NET_PROFIT)
 
         commands = enc_v4_unlock(inner)
         accounts = [executor, v4_pm, v2_a]
@@ -429,7 +429,7 @@ class TestConservationPassesButProfitCheckFails:
             "V4TakeToTracked", [weth, usdc, wbtc], accounts, before, executor
         )
 
-        # But the PROFIT CHECK fails — executor didn't get its profit
+        # But the NET_PROFIT CHECK fails — executor didn't get its profit
         with pytest.raises(AssertionError, match="executor WETH\\+ETH profit mismatch"):
             _verify_conservation(
                 "V4TakeToTracked",
@@ -437,7 +437,7 @@ class TestConservationPassesButProfitCheckFails:
                 accounts,
                 before,
                 executor,
-                expected_weth_delta=PROFIT,
+                expected_weth_delta=NET_PROFIT,
             )
 
 

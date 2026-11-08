@@ -34,6 +34,7 @@ from .conftest_shared import (
 SOL_REF_ARTIFACT = (
     Path(__file__).resolve().parent.parent
     / "contracts"
+    / "vyper"
     / "sol_reference"
     / "artifacts"
     / "SolReference.json"
@@ -71,7 +72,7 @@ def sol_ref(accounts):
     if not SOL_REF_ARTIFACT.is_file():
         pytest.fail(
             f"missing committed artifact {SOL_REF_ARTIFACT} — build and commit it "
-            "with executor/scripts/build-sol-reference-artifact.sh"
+            "with contracts/scripts/build-sol-reference-artifact.sh"
         )
     with open(SOL_REF_ARTIFACT) as f:
         artifact = json.load(f)

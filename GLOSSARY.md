@@ -1103,7 +1103,7 @@ configured; it doubles as the in-memory test fake.
 ## Execution strategy
 
 **Execution strategy**:
-The searcher-owned layer that turns a solve result into a submitted transaction: payload
+The searcher-owned layer that turns a solve result into a submitted transaction: transaction
 composition, declared probe reads, the assess gate, and fee pricing — implemented as an
 adapter that both Python and Rust consumers meet at the same seam.
 
@@ -1112,9 +1112,28 @@ The encode half of an execution strategy: solve result → payload bytes for one
 contract. Rust consumers implement it; Python consumers supply a callable.
 
 **Probe and assess**:
-Declared pre/post balance reads (probe) plus the gate converting deltas into profit and
-pass/fail (assess). Fee pricing is the defaulted pricing half of assess, not a separate
-seam.
+Declared pre/post observations (probe) plus the gate converting an execution observation
+into profit and pass/fail (assess). Fee pricing is the defaulted pricing half of assess,
+not a separate seam.
+
+**Opportunity**:
+The executor-neutral input to execution: a solved path, its hop descriptors, and its integer
+amounts. It names no command-stream encoding or executor implementation.
+
+**Transaction request**:
+The complete execution adapter output for one opportunity: target address, calldata, and ETH
+value. The generic execution scope ends at this one transaction; batching inside the target
+contract is adapter-owned.
+
+**Execution observation**:
+The engine-owned simulation evidence presented to an adapter for assessment: execution status,
+gas, return data, declared probe results, and captured diagnostics. It carries no built-in
+profit or custody assumption.
+
+**Deployment identity**:
+The executor-neutral identity of one configured contract instance, distinct from the
+implementation release running there and from other deployments of that same release.
+_Avoid_: using an implementation release ID or contract address alone as the candidate key.
 
 ## Executor command layer
 
@@ -1141,6 +1160,18 @@ _Avoid_: rebuilding it per adapter, frame, or candidate; a candidate-derived man
 The low-level encode-intake value shared by command encoding calls in one session.
 _Avoid_: using it as the strategy-wide session context or folding it into the
 per-path encode request.
+
+**Execution receipt**:
+The built-in executor's report of one measured execution: gross WETH-equivalent profit
+before bribe payment and the actual bribe paid. It is simulation assessment evidence,
+not a value recoverable from an Ethereum transaction receipt.
+_Avoid_: treating zero as an unmeasured result or a sweep balance as arbitrage profit.
+
+**Profit mode**:
+The accounting domain used by the built-in executor's non-decrease and minimum-profit
+guards: physical WETH plus native ETH, or PoolManager ERC6909 WETH claims. It selects
+what is measured, never whether execution is measured.
+_Avoid_: `check_mode`, unchecked execution, sweep as a profit mode.
 
 **Command grammar**:
 The rules that derive a valid command stream for a shape class, including the ordering

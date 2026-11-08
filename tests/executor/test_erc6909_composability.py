@@ -68,7 +68,7 @@ AMOUNT_WETH = 1 * 10**18
 AMOUNT_USDC = 2000 * 10**6
 AMOUNT_WBTC = 100 * 10**8
 AMOUNT_WETH_PROFIT = 2 * 10**18
-PROFIT = AMOUNT_WETH_PROFIT - AMOUNT_WETH  # 1 WETH
+NET_PROFIT = AMOUNT_WETH_PROFIT - AMOUNT_WETH  # 1 WETH
 WARMUP_WEI = 1  # 1 wei ERC6909 minted by initialize() to warm the slot
 
 # ── Helpers ──
@@ -177,7 +177,7 @@ class TestERC6909MintProfitV4V4V4:
         inner += _v4_swap(at, pool_key_b, zfo_b, AMOUNT_USDC, zero_idx)
         inner += _v4_swap(at, pool_key_c, zfo_c, AMOUNT_WBTC, zero_idx)
         # V4_MINT profit instead of V4_TAKE: 0 ERC20 transfers!
-        inner += enc_v4_mint_compact(weth_idx, executor_idx, PROFIT)
+        inner += enc_v4_mint_compact(weth_idx, executor_idx, NET_PROFIT)
 
         commands = enc_v4_unlock(inner)
         tx = executor.execute(enc_preamble(at) + commands, sender=owner_account)
@@ -187,15 +187,15 @@ class TestERC6909MintProfitV4V4V4:
         # (executor may already hold WETH from deployment — just check the delta)
         weth_id = int(weth.address, 16)
         erc6909_bal = v4_pm.balanceOf(executor.address, weth_id)
-        assert erc6909_bal == PROFIT + WARMUP_WEI, (
-            f"ERC6909 WETH balance should be {PROFIT + WARMUP_WEI}, got {erc6909_bal}"
+        assert erc6909_bal == NET_PROFIT + WARMUP_WEI, (
+            f"ERC6909 WETH balance should be {NET_PROFIT + WARMUP_WEI}, got {erc6909_bal}"
         )
 
         # V4_MINT does NOT produce a physical WETH transfer out of PM
         # (the existing WETH at executor is from deployment, not the arb)
 
         print(
-            f"\n  ✅ V4-V4-V4 with V4_MINT: 0 ERC20 transfers, {PROFIT} WETH as ERC6909"
+            f"\n  ✅ V4-V4-V4 with V4_MINT: 0 ERC20 transfers, {NET_PROFIT} WETH as ERC6909"
         )
 
 
@@ -277,7 +277,7 @@ class TestERC6909MultiTxComposability:
         inner_1 = _v4_swap(at, pool_key_a, zfo_a, AMOUNT_WETH, zero_idx)
         inner_1 += _v4_swap(at, pool_key_b, zfo_b, AMOUNT_USDC, zero_idx)
         inner_1 += _v4_swap(at, pool_key_c, zfo_c, AMOUNT_WBTC, zero_idx)
-        inner_1 += enc_v4_mint_compact(weth_idx, executor_idx, PROFIT)
+        inner_1 += enc_v4_mint_compact(weth_idx, executor_idx, NET_PROFIT)
 
         commands_1 = enc_v4_unlock(inner_1)
         tx1 = executor.execute(enc_preamble(at) + commands_1, sender=owner_account)
@@ -285,8 +285,8 @@ class TestERC6909MultiTxComposability:
 
         # Verify ERC6909 balance from TX1
         weth_id = int(weth.address, 16)
-        assert v4_pm.balanceOf(executor.address, weth_id) == PROFIT + WARMUP_WEI
-        print(f"\n  TX1: V4_MINT stored {PROFIT} WETH as ERC6909 (0 ERC20 transfers)")
+        assert v4_pm.balanceOf(executor.address, weth_id) == NET_PROFIT + WARMUP_WEI
+        print(f"\n  TX1: V4_MINT stored {NET_PROFIT} WETH as ERC6909 (0 ERC20 transfers)")
 
         # ── TX2: Burn ERC6909 to settle WETH debit on new V4-V4-V4 ──
         _setup_v4_swap(
@@ -324,7 +324,7 @@ class TestERC6909MultiTxComposability:
         # This offsets the -AMOUNT_WETH debit from V4a swap.
         # V4_BURN is not needed for V4-V4-V4 settlement. After 3 swaps,
         # delta netting cancels all WETH debits/credits except the net profit:
-        # delta[WETH] = +PROFIT. The -1WETH from V4a is already offset by
+        # delta[WETH] = +NET_PROFIT. The -1WETH from V4a is already offset by
         # +2WETH from V4c within delta.
         #
         # The use case for V4_BURN is funding a WETH debit that ISN'T covered
@@ -333,7 +333,7 @@ class TestERC6909MultiTxComposability:
         #
         # For V4-V4-V4 specifically, this scenario is: we already have ERC6909
         # and want to compound. Test the withdrawal pattern instead.
-        inner_2 += enc_v4_mint_compact(weth_idx, executor_idx, PROFIT)
+        inner_2 += enc_v4_mint_compact(weth_idx, executor_idx, NET_PROFIT)
 
         commands_2 = enc_v4_unlock(inner_2)
         tx2 = executor.execute(enc_preamble(at) + commands_2, sender=owner_account)
@@ -341,14 +341,14 @@ class TestERC6909MultiTxComposability:
 
         # Verify: ERC6909 balance doubled (compounded)
         erc6909_bal = v4_pm.balanceOf(executor.address, weth_id)
-        assert erc6909_bal == 2 * PROFIT + WARMUP_WEI
+        assert erc6909_bal == 2 * NET_PROFIT + WARMUP_WEI
         print(
-            f"  TX2: V4_MINT again — {PROFIT} more WETH as ERC6909 (0 transfers, cumulative: {erc6909_bal})"
+            f"  TX2: V4_MINT again — {NET_PROFIT} more WETH as ERC6909 (0 transfers, cumulative: {erc6909_bal})"
         )
 
         # ── TX3: Withdraw all ERC6909 profit as physical WETH ──
         total_erc6909 = v4_pm.balanceOf(executor.address, weth_id)
-        assert total_erc6909 == 2 * PROFIT + WARMUP_WEI
+        assert total_erc6909 == 2 * NET_PROFIT + WARMUP_WEI
 
         inner_3 = enc_v4_burn_compact(weth_idx, total_erc6909)
         inner_3 += enc_v4_take(weth_idx, executor_idx, total_erc6909)
@@ -370,7 +370,7 @@ class TestERC6909MultiTxComposability:
     ):
         """V4_BURN replaces sync+transfer+settle when executor holds ERC6909.
 
-        TX1: V4-V4-V4 with V4_MINT profit → executor holds PROFIT WETH as ERC6909.
+        TX1: V4-V4-V4 with V4_MINT profit → executor holds NET_PROFIT WETH as ERC6909.
         TX2: V4-V4-V4 where we need to WETH-FUND V4a's debit. Instead of
              sync+transfer(executor→PM)+settle (1 ERC20 xfer), we use V4_BURN
              to convert the ERC6909 from TX1 into a +WETH delta, covering V4a's debit.
@@ -440,15 +440,15 @@ class TestERC6909MultiTxComposability:
         inner_1 = _v4_swap(at, pool_key_a, zfo_a, AMOUNT_WETH, zero_idx)
         inner_1 += _v4_swap(at, pool_key_b, zfo_b, AMOUNT_USDC, zero_idx)
         inner_1 += _v4_swap(at, pool_key_c, zfo_c, AMOUNT_WBTC, zero_idx)
-        inner_1 += enc_v4_mint_compact(weth_idx, executor_idx, PROFIT)
+        inner_1 += enc_v4_mint_compact(weth_idx, executor_idx, NET_PROFIT)
 
         commands_1 = enc_v4_unlock(inner_1)
         tx1 = executor.execute(enc_preamble(at) + commands_1, sender=owner_account)
         assert tx1.status == 1
 
         weth_id = int(weth.address, 16)
-        assert v4_pm.balanceOf(executor.address, weth_id) == PROFIT + WARMUP_WEI
-        print(f"\n  TX1: V4_MINT profit = {PROFIT} WETH as ERC6909 (0 ERC20 transfers)")
+        assert v4_pm.balanceOf(executor.address, weth_id) == NET_PROFIT + WARMUP_WEI
+        print(f"\n  TX1: V4_MINT profit = {NET_PROFIT} WETH as ERC6909 (0 ERC20 transfers)")
 
         # ── TX2: Compound — another V4-V4-V4, V4_MINT more profit ──
         _setup_v4_swap(
@@ -482,16 +482,16 @@ class TestERC6909MultiTxComposability:
         inner_2 = _v4_swap(at, pool_key_a, zfo_a, AMOUNT_WETH, zero_idx)
         inner_2 += _v4_swap(at, pool_key_b, zfo_b, AMOUNT_USDC, zero_idx)
         inner_2 += _v4_swap(at, pool_key_c, zfo_c, AMOUNT_WBTC, zero_idx)
-        inner_2 += enc_v4_mint_compact(weth_idx, executor_idx, PROFIT)
+        inner_2 += enc_v4_mint_compact(weth_idx, executor_idx, NET_PROFIT)
 
         commands_2 = enc_v4_unlock(inner_2)
         tx2 = executor.execute(enc_preamble(at) + commands_2, sender=owner_account)
         assert tx2.status == 1
 
         erc6909_bal = v4_pm.balanceOf(executor.address, weth_id)
-        assert erc6909_bal == 2 * PROFIT + WARMUP_WEI
+        assert erc6909_bal == 2 * NET_PROFIT + WARMUP_WEI
         print(
-            f"  TX2: V4_MINT again — {PROFIT} more WETH as ERC6909 (cumulative: {erc6909_bal})"
+            f"  TX2: V4_MINT again — {NET_PROFIT} more WETH as ERC6909 (cumulative: {erc6909_bal})"
         )
 
         # ── TX3: V4_BURN to fund a non-V4 path's WETH requirement ──
@@ -500,7 +500,7 @@ class TestERC6909MultiTxComposability:
         # The executor can then use this WETH for a V2/V3 swap.
         # This is the withdrawal pattern: accumulated ERC6909 → physical WETH.
         total_erc6909 = v4_pm.balanceOf(executor.address, weth_id)
-        assert total_erc6909 == 2 * PROFIT + WARMUP_WEI
+        assert total_erc6909 == 2 * NET_PROFIT + WARMUP_WEI
 
         inner_3 = enc_v4_burn_compact(weth_idx, total_erc6909)
         inner_3 += enc_v4_take(weth_idx, executor_idx, total_erc6909)
@@ -665,7 +665,7 @@ class TestERC6909MintProfitMixedPaths:
         v4_inner += _v4_swap(at, pool_key_c, zfo_c, AMOUNT_WBTC, zero_idx)
         v4_inner += enc_v4_take(weth_idx, v3a_idx, AMOUNT_WETH)  # routing → V3a (IIA ✓)
         # V4_MINT profit instead of V4_TAKE: saves 1 ERC20 transfer!
-        v4_inner += enc_v4_mint_compact(weth_idx, executor_idx, PROFIT)
+        v4_inner += enc_v4_mint_compact(weth_idx, executor_idx, NET_PROFIT)
 
         a_fwd = enc_v4_unlock(v4_inner)
 
@@ -680,9 +680,9 @@ class TestERC6909MintProfitMixedPaths:
         # Profit as ERC6909
         weth_id = int(weth.address, 16)
         erc6909_bal = v4_pm.balanceOf(executor.address, weth_id)
-        assert erc6909_bal == PROFIT + WARMUP_WEI
+        assert erc6909_bal == NET_PROFIT + WARMUP_WEI
         print(
-            f"\n  ✅ V3-V4-V4 with V4_MINT: {PROFIT} WETH as ERC6909 (2 ERC20 transfers, was 3)"
+            f"\n  ✅ V3-V4-V4 with V4_MINT: {NET_PROFIT} WETH as ERC6909 (2 ERC20 transfers, was 3)"
         )
 
 

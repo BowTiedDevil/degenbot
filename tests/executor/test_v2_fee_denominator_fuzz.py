@@ -161,7 +161,7 @@ class TestPancakeSwapFee25:
     This means:
     - Old gives MORE output (undercharged fee)
     - Old gives LESS required input (undercharged fee)
-    - Old K-check is WEAKER (easier to pass, because less fee is subtracted)
+    - Old K-check is weaker (easier to pass, because less fee is subtracted)
     """
 
     @given(amount_in=uint112, reserve_in=uint112, reserve_out=uint112)
@@ -196,7 +196,7 @@ class TestPancakeSwapFee25:
         If new 10000-base K-check passes, old 1000-base K-check also passes.
 
         Old K-check subtracts LESS fee (2/1000 < 25/10000 per unit input),
-        making adjusted balances HIGHER and the check EASIER to pass.
+        making adjusted balances higher and the check easier to pass.
 
         This means our executor's amounts (computed with 10000-base formula)
         are SAFE to use against real V2 pairs that use the 1000-base K-check.

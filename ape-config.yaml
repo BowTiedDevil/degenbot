@@ -1,0 +1,47 @@
+name: degenbot
+
+default_ecosystem: ethereum
+
+ethereum:
+  default_network: mainnet-fork
+  mainnet:
+    default_provider: node
+  mainnet_fork:
+    default_provider: foundry
+
+node:
+  ethereum:
+    mainnet:
+      # The executor recipe exports the declared archive URI before invoking Ape.
+      # A valid local fallback lets ordinary root pytest load the Ape plugin
+      # without requiring executor-only environment configuration.
+      uri: http://127.0.0.1:8545
+
+foundry:
+  host: auto
+  fork:
+    ethereum:
+      mainnet:
+        upstream_provider: node
+    base:
+      mainnet:
+        upstream_provider: node
+
+# The default test accounts can misbehave on mainnet forks due to EIP-7702
+# delegation, so use a project-specific test mnemonic.
+test:
+  mnemonic: lonely obtain knife delay escape high cotton light rabbit release orient paddle ordinary toast abandon jazz issue visa patient bleak broom summer snack author
+
+# Generated artifacts and Solidity reference inputs are data for separate
+# pinned builders, not sources for the routine Ape/Vyper test compile.
+compile:
+  exclude:
+    - artifacts
+    - sol_reference
+
+vyper:
+  version: 0.5.0b2
+
+plugins:
+  - foundry
+  - vyper

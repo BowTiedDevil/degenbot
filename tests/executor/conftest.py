@@ -9,14 +9,14 @@ import os
 from pathlib import Path
 
 import pytest
-
-from eth_utils.address import to_checksum_address
-from hypothesis import settings
-from .conftest_shared import WETH_DEPLOYMENT_WRAP_AMOUNT, enc_preamble, make_config
 from ape.api.accounts import TestAccountAPI
 from ape.contracts.base import ContractInstance
 from ape.managers.project import ProjectManager
 from ape_test.accounts import TestAccount
+from eth_utils.address import to_checksum_address
+from hypothesis import settings
+
+from .conftest_shared import WETH_DEPLOYMENT_WRAP_AMOUNT, enc_preamble, make_config
 
 # pytest-xdist: pin one anvil port per worker.
 # ape-foundry's "host: auto" makes the FIRST caller prefer 127.0.0.1:8545
@@ -33,9 +33,7 @@ from ape_test.accounts import TestAccount
 # default 8545 path and collapses the workers back onto one chain.
 _xdist_worker = os.environ.get("PYTEST_XDIST_WORKER", "")
 if _xdist_worker.startswith("gw"):
-    os.environ.setdefault(
-        "APE_FOUNDRY_HOST", f"http://127.0.0.1:{8550 + int(_xdist_worker[2:])}"
-    )
+    os.environ.setdefault("APE_FOUNDRY_HOST", f"http://127.0.0.1:{8550 + int(_xdist_worker[2:])}")
 
 # Hypothesis policy: no per-example wall-clock deadline. Fuzz tests here assert
 # math properties, not timing; the 200ms default only fails spuriously under
@@ -54,16 +52,13 @@ def pytest_configure(config):
     Path(".gas-results").unlink(missing_ok=True)
 
 
-# Common fixtures
-
-
 @pytest.fixture
 def owner_account(accounts: TestAccountAPI) -> TestAccount:
     return accounts[0]
 
 
 @pytest.fixture
-def usdc(project, owner_account: TestAccount) -> ContractInstance:
+def usdc(project: ProjectManager, owner_account: TestAccount) -> ContractInstance:
     return project.fake_erc20.deploy(
         "Fake USD Coin",
         "USDC",
@@ -74,7 +69,8 @@ def usdc(project, owner_account: TestAccount) -> ContractInstance:
 
 
 @pytest.fixture
-def weth(project, owner_account) -> ContractInstance:
+def weth(project: ProjectManager, owner_account) -> ContractInstance:
+    fake_weth: ContractInstance
     fake_weth = project.fake_weth.deploy(
         "Fake Wrapped Ether",
         "WETH",
@@ -146,7 +142,7 @@ def run_executor(weth, executor, v4_pm):
         owner: Transaction sender account
         check_mode: Profit check mode (default=1).
             1 = check WETH + ETH combined balance (default for most paths)
-            2 = check ERC6909 WETH balance (V4V4V4 with MINT, saves ~4,900 gas)
+            2 = check ERC6909 WETH balance (V4→V4→V4 with MINT, saves ~4,900 gas)
         skip_profit: If True, pass config=0 (no on-chain check).
                      Use ONLY when the test legitimately reduces combined
                      WETH+ETH balance (bribes, withdrawals, ERC6909 mint,

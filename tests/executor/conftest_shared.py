@@ -2,10 +2,10 @@
 Shared encoding helpers, constants, and revert identity vocabulary for cmd_executor tests.
 """
 
-from eth_utils.address import to_checksum_address
 from pathlib import Path
 
 from ape.exceptions import ContractLogicError, CustomError, TransactionError
+from eth_utils.address import to_checksum_address
 from ethpm_types.abi import ABIType, ErrorABI
 
 NATIVE_ADDRESS = to_checksum_address("0x0000000000000000000000000000000000000000")
@@ -24,6 +24,7 @@ def _isqrt(n):
         x = y
         y = (x + n // x) // 2
     return x
+
 
 WETH_DEPLOYMENT_WRAP_AMOUNT = 10 * 10**18
 
@@ -81,7 +82,7 @@ CMD_V4_BURN_COMPACT = b"\x59"
 
 # Stream separators
 BEGIN_PREPROCESSING = b"\xfe"  # First byte: signals a preprocessing section follows
-BEGIN_EXECUTION = b"\xff"       # End of preprocessing / start of execution
+BEGIN_EXECUTION = b"\xff"  # End of preprocessing / start of execution
 
 # Address table sentinels — reserved index values that bypass TLOAD for common addresses
 # 0xFF = NATIVE_ADDRESS (address(0) / no hooks / native ETH)
@@ -114,10 +115,14 @@ def enc_v2_swap_compact(pool_idx, zfo, amount_out, recipient_idx, fee=30, forwar
     Written to t_v2_pair_fee[pool] before swap() for correct auto-pay.
     """
     return b"".join([
-        CMD_V2_SWAP_COMPACT, _encode_word(pool_idx, 1),
+        CMD_V2_SWAP_COMPACT,
+        _encode_word(pool_idx, 1),
         b"\x01" if zfo else b"\x00",
-        _encode_word(amount_out, 12), _encode_word(recipient_idx, 1), _encode_word(fee, 2),
-        _encode_word(len(forward_data), 1), forward_data,
+        _encode_word(amount_out, 12),
+        _encode_word(recipient_idx, 1),
+        _encode_word(fee, 2),
+        _encode_word(len(forward_data), 1),
+        forward_data,
     ])
 
 
@@ -133,17 +138,23 @@ def enc_v3_swap_compact(pool_idx, zfo, amount_specified, recipient_idx, forward_
 
 def enc_v3_swap_one_for_zero(pool_idx, amount_specified, recipient_idx, forward_data=b""):
     return b"".join([
-        CMD_V3_SWAP_ONE_FOR_ZERO, _encode_word(pool_idx, 1),
-        _encode_word(amount_specified, 12), _encode_word(recipient_idx, 1),
-        _encode_word(len(forward_data), 1), forward_data,
+        CMD_V3_SWAP_ONE_FOR_ZERO,
+        _encode_word(pool_idx, 1),
+        _encode_word(amount_specified, 12),
+        _encode_word(recipient_idx, 1),
+        _encode_word(len(forward_data), 1),
+        forward_data,
     ])
 
 
 def enc_v3_swap_zero_for_one(pool_idx, amount_specified, recipient_idx, forward_data=b""):
     return b"".join([
-        CMD_V3_SWAP_ZERO_FOR_ONE, _encode_word(pool_idx, 1),
-        _encode_word(amount_specified, 12), _encode_word(recipient_idx, 1),
-        _encode_word(len(forward_data), 1), forward_data,
+        CMD_V3_SWAP_ZERO_FOR_ONE,
+        _encode_word(pool_idx, 1),
+        _encode_word(amount_specified, 12),
+        _encode_word(recipient_idx, 1),
+        _encode_word(len(forward_data), 1),
+        forward_data,
     ])
 
 
@@ -154,8 +165,12 @@ def enc_v4_swap_compact(c0_idx, c1_idx, fee, tick_spacing, hooks_idx, zfo, amoun
     """
     return b"".join([
         CMD_V4_SWAP_COMPACT,
-        _encode_word(c0_idx, 1), _encode_word(c1_idx, 1), _encode_word(fee, 2), _encode_word(tick_spacing, 2, signed=True),
-        _encode_word(hooks_idx, 1), b"\x01" if zfo else b"\x00",
+        _encode_word(c0_idx, 1),
+        _encode_word(c1_idx, 1),
+        _encode_word(fee, 2),
+        _encode_word(tick_spacing, 2, signed=True),
+        _encode_word(hooks_idx, 1),
+        b"\x01" if zfo else b"\x00",
         _encode_word(amount_u128, 12),
     ])
 
@@ -167,34 +182,41 @@ def enc_v4_swap_dynamic(c0_idx, c1_idx, fee, tick_spacing, hooks_idx, zfo):
     """
     return b"".join([
         CMD_V4_SWAP_DYNAMIC,
-        _encode_word(c0_idx, 1), _encode_word(c1_idx, 1), _encode_word(fee, 2), _encode_word(tick_spacing, 2, signed=True),
-        _encode_word(hooks_idx, 1), b"\x01" if zfo else b"\x00",
+        _encode_word(c0_idx, 1),
+        _encode_word(c1_idx, 1),
+        _encode_word(fee, 2),
+        _encode_word(tick_spacing, 2, signed=True),
+        _encode_word(hooks_idx, 1),
+        b"\x01" if zfo else b"\x00",
     ])
 
 
 def enc_v4_batch(swaps):
     """
     V4_BATCH: [0x42][num_swaps:1][entry_1:20]...[entry_N:20]
-    
+
     Each 20-byte entry: [c0_idx:1][c1_idx:1][fee:2][ts:2][hooks_idx:1][zfo:1][amount:12]
     amount = 0 → dynamic (read from PM exttload delta of input currency)
     amount > 0 → explicit exact-input amount
-    
+
     After all swaps, auto-settles all nonzero deltas (take positive, settle negative).
     This replaces separate V4_TAKE/V4_TAKE_DELTA + V4_SETTLE_DELTA commands.
-    
+
     Args:
         swaps: list of (c0_idx, c1_idx, fee, tick_spacing, hooks_idx, zfo, amount_u128) tuples
-    
+
     Returns:
         Encoded command bytes
     """
     inner = b"".join([CMD_V4_BATCH, _encode_word(len(swaps), 1)])
     for c0_idx, c1_idx, fee, tick_spacing, hooks_idx, zfo, amount_u128 in swaps:
         inner += b"".join([
-            _encode_word(c0_idx, 1), _encode_word(c1_idx, 1),
-            _encode_word(fee, 2), _encode_word(tick_spacing, 2, signed=True),
-            _encode_word(hooks_idx, 1), b"\x01" if zfo else b"\x00",
+            _encode_word(c0_idx, 1),
+            _encode_word(c1_idx, 1),
+            _encode_word(fee, 2),
+            _encode_word(tick_spacing, 2, signed=True),
+            _encode_word(hooks_idx, 1),
+            b"\x01" if zfo else b"\x00",
             _encode_word(amount_u128, 12),
         ])
     return inner
@@ -205,7 +227,12 @@ def enc_v3_swap_delta(pool_idx, zfo, recipient_idx):
     V3_SWAP_DELTA: [0x31][pool_idx:1][zfo:1][recipient_idx:1]
     = 4 bytes (amount from PM exttload + default sqrt + auto-pay)
     """
-    return b"".join([CMD_V3_SWAP_DELTA, _encode_word(pool_idx, 1), b"\x01" if zfo else b"\x00", _encode_word(recipient_idx, 1)])
+    return b"".join([
+        CMD_V3_SWAP_DELTA,
+        _encode_word(pool_idx, 1),
+        b"\x01" if zfo else b"\x00",
+        _encode_word(recipient_idx, 1),
+    ])
 
 
 def enc_v2_swap_calc(pool_idx, zfo, recipient_idx, fee=30):
@@ -213,7 +240,13 @@ def enc_v2_swap_calc(pool_idx, zfo, recipient_idx, fee=30):
     V2_SWAP_CALC: [0x21][pool_idx:1][zfo:1][recipient_idx:1][fee:2]
     fee is a fraction of 10000 (30 = 0.3% UniswapV2, 25 = 0.25% PancakeSwap).
     """
-    return b"".join([CMD_V2_SWAP_CALC, _encode_word(pool_idx, 1), b"\x01" if zfo else b"\x00", _encode_word(recipient_idx, 1), _encode_word(fee, 2)])
+    return b"".join([
+        CMD_V2_SWAP_CALC,
+        _encode_word(pool_idx, 1),
+        b"\x01" if zfo else b"\x00",
+        _encode_word(recipient_idx, 1),
+        _encode_word(fee, 2),
+    ])
 
 
 def enc_v2_swap_direct(pool_idx, zfo, amount_out, recipient_idx):
@@ -232,18 +265,29 @@ def enc_v2_swap_direct(pool_idx, zfo, amount_out, recipient_idx):
     No fee field needed — the V2 pair knows its own fee and enforces K.
     """
     return b"".join([
-        CMD_V2_SWAP_DIRECT, _encode_word(pool_idx, 1),
+        CMD_V2_SWAP_DIRECT,
+        _encode_word(pool_idx, 1),
         b"\x01" if zfo else b"\x00",
-        _encode_word(amount_out, 12), _encode_word(recipient_idx, 1),
+        _encode_word(amount_out, 12),
+        _encode_word(recipient_idx, 1),
     ])
 
 
 def enc_v4_take(currency_idx, recipient_idx, amount):
-    return b"".join([CMD_V4_TAKE, _encode_word(currency_idx, 1), _encode_word(recipient_idx, 1), _encode_word(amount)])
+    return b"".join([
+        CMD_V4_TAKE,
+        _encode_word(currency_idx, 1),
+        _encode_word(recipient_idx, 1),
+        _encode_word(amount),
+    ])
 
 
 def enc_v4_take_delta(currency_idx, recipient_idx):
-    return b"".join([CMD_V4_TAKE_DELTA, _encode_word(currency_idx, 1), _encode_word(recipient_idx, 1)])
+    return b"".join([
+        CMD_V4_TAKE_DELTA,
+        _encode_word(currency_idx, 1),
+        _encode_word(recipient_idx, 1),
+    ])
 
 
 def enc_v4_take_compact(currency_idx, recipient_idx, amount_u128):
@@ -251,7 +295,12 @@ def enc_v4_take_compact(currency_idx, recipient_idx, amount_u128):
     V4_TAKE_COMPACT: [0x52][currency_idx:1][recipient_idx:1][amount:12]
     = 15 bytes (vs 35 for V4_TAKE, saves 20 bytes)
     """
-    return b"".join([CMD_V4_TAKE_COMPACT, _encode_word(currency_idx, 1), _encode_word(recipient_idx, 1), _encode_word(amount_u128, 12)])
+    return b"".join([
+        CMD_V4_TAKE_COMPACT,
+        _encode_word(currency_idx, 1),
+        _encode_word(recipient_idx, 1),
+        _encode_word(amount_u128, 12),
+    ])
 
 
 def enc_v4_mint_compact(currency_idx, recipient_idx, amount_u128):
@@ -259,7 +308,12 @@ def enc_v4_mint_compact(currency_idx, recipient_idx, amount_u128):
     V4_MINT_COMPACT: [0x58][currency_idx:1][recipient_idx:1][amount:12]
     = 15 bytes. Converts positive PM delta → ERC6909 balance. No transfer out.
     """
-    return b"".join([CMD_V4_MINT_COMPACT, _encode_word(currency_idx, 1), _encode_word(recipient_idx, 1), _encode_word(amount_u128, 12)])
+    return b"".join([
+        CMD_V4_MINT_COMPACT,
+        _encode_word(currency_idx, 1),
+        _encode_word(recipient_idx, 1),
+        _encode_word(amount_u128, 12),
+    ])
 
 
 def enc_v4_burn_compact(currency_idx, amount_u128):
@@ -267,7 +321,11 @@ def enc_v4_burn_compact(currency_idx, amount_u128):
     V4_BURN_COMPACT: [0x59][currency_idx:1][amount:12]
     = 14 bytes. Converts executor's own ERC6909 balance → payable PM delta.
     """
-    return b"".join([CMD_V4_BURN_COMPACT, _encode_word(currency_idx, 1), _encode_word(amount_u128, 12)])
+    return b"".join([
+        CMD_V4_BURN_COMPACT,
+        _encode_word(currency_idx, 1),
+        _encode_word(amount_u128, 12),
+    ])
 
 
 def enc_v4_sync(currency_idx):
@@ -287,11 +345,20 @@ def enc_v4_settle_all():
 
 
 def enc_erc20_transfer(token_idx, recipient_idx, amount):
-    return b"".join([CMD_ERC20_TRANSFER, _encode_word(token_idx, 1), _encode_word(recipient_idx, 1), _encode_word(amount, 12)])
+    return b"".join([
+        CMD_ERC20_TRANSFER,
+        _encode_word(token_idx, 1),
+        _encode_word(recipient_idx, 1),
+        _encode_word(amount, 12),
+    ])
 
 
 def enc_erc20_xfer_balance(token_idx, recipient_idx):
-    return b"".join([CMD_ERC20_XFER_BALANCE, _encode_word(token_idx, 1), _encode_word(recipient_idx, 1)])
+    return b"".join([
+        CMD_ERC20_XFER_BALANCE,
+        _encode_word(token_idx, 1),
+        _encode_word(recipient_idx, 1),
+    ])
 
 
 def enc_weth_deposit(amount):
@@ -503,7 +570,9 @@ def _setup_v3(pool, input_token, output_token, amount_in, amount_out, owner, liq
     return zfo, actual_out
 
 
-def _setup_v4_swap(pool_manager, owner, pool_key, amount_in, amount_out, zfo, output_token=None, fund_eth=False):
+def _setup_v4_swap(
+    pool_manager, owner, pool_key, amount_in, amount_out, zfo, output_token=None, fund_eth=False
+):
     if fund_eth:
         pool_manager.balance += amount_out
     elif output_token is not None:
@@ -519,8 +588,10 @@ class AddressTable:
     0xFC = POOL_MANAGER_ADDR, 0xFD = executor (self), 0xFE = WETH_ADDR,
     0xFF = ZERO_ADDRESS / native ETH. Other addresses use SET_ADDRESS entries.
     """
-    def __init__(self, weth_addr=None, executor_addr=None, pm_addr=None,
-                 user0_addr=None, user1_addr=None):
+
+    def __init__(
+        self, weth_addr=None, executor_addr=None, pm_addr=None, user0_addr=None, user1_addr=None
+    ):
         self._addresses = []
         self._index_map = {}
         self._weth_addr = weth_addr
@@ -572,6 +643,7 @@ def snapshot_state():
         int: The snapshot ID for use with revert_to_snapshot().
     """
     from ape import chain
+
     return chain.provider.web3.provider.make_request("evm_snapshot", [])
 
 
@@ -585,6 +657,7 @@ def revert_to_snapshot(snapshot_id):
         snapshot_id: The snapshot ID returned by snapshot_state().
     """
     from ape import chain
+
     chain.provider.web3.provider.make_request("evm_revert", [snapshot_id])
 
 
@@ -608,20 +681,23 @@ def compute_access_list(cmd_ex, owner, commands):
                     access_list= kwarg: [{"address": ..., "storageKeys": [...]}]
     """
     from ape import chain
+
     w3 = chain.provider.web3
     calldata = cmd_ex.execute.encode_input(commands)
     tx_dict = {
-        'from': owner.address,
-        'to': cmd_ex.address,
-        'data': calldata,
-        'value': 0,
+        "from": owner.address,
+        "to": cmd_ex.address,
+        "data": calldata,
+        "value": 0,
     }
     al_result = w3.eth.create_access_list(tx_dict)
-    return al_result['accessList']
+    return al_result["accessList"]
 
 
 def run_gas_benchmark(
-    cmd_ex, owner, commands,
+    cmd_ex,
+    owner,
+    commands,
     setup_fn,
     label="",
 ):
@@ -661,23 +737,23 @@ def run_gas_benchmark(
     # Step 5+6: Reset state consumed by eth_createAccessList trace,
     # then execute WITH access list
     setup_fn()
-    tx_with_al = cmd_ex.execute(commands, sender=owner,
-                                access_list=access_list)
+    tx_with_al = cmd_ex.execute(commands, sender=owner, access_list=access_list)
     gas_with_al = tx_with_al.gas_used
     gas_saved = gas_no_al - gas_with_al
 
     if label:
         print(f"\n  {label}:")
         print(f"    No AL:  {gas_no_al:>8,} gas")
-        print(f"    w/ AL:  {gas_with_al:>8,} gas  (saves {gas_saved:+,}, {len(access_list)} AL entries)")
+        print(
+            f"    w/ AL:  {gas_with_al:>8,} gas  (saves {gas_saved:+,}, {len(access_list)} AL entries)"
+        )
 
     return {
-        'gas_no_al': gas_no_al,
-        'gas_with_al': gas_with_al,
-        'access_list': access_list,
-        'gas_saved': gas_saved,
+        "gas_no_al": gas_no_al,
+        "gas_with_al": gas_with_al,
+        "access_list": access_list,
+        "gas_saved": gas_saved,
     }
-
 
 
 # ── Gas result recording ──

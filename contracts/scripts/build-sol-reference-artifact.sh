@@ -8,7 +8,7 @@
 # contracts/sol_reference/*.sol and commit the result.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 SOLC_VER="0.7.6"
 SOLC_LONG="0.7.6+commit.7338295f"
@@ -24,7 +24,7 @@ fi
 
 SOLC_VERSION="$("${SOLC_BIN}" --version | awk 'NR==2 {sub(/^Version: /, ""); print}')"
 
-SRC_DIR="contracts/sol_reference"
+SRC_DIR="contracts/vyper/sol_reference"
 OUT_DIR="${SRC_DIR}/artifacts"
 mkdir -p "${OUT_DIR}"
 

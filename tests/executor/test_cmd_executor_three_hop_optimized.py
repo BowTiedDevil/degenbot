@@ -598,7 +598,7 @@ class TestV2V3V2:
     1. V3b.swap(to=V2c) — WBTC goes directly to V2c (satisfies V2c K-invariant)
     2. V3b callback (forward_data):
        a. ERC20_TRANSFER WETH→V2a (creates excess for V2_SWAP_DIRECT)
-       b. V2a V2_SWAP_DIRECT→V3b (sends USDC to V3b DURING V3b callback → IIA ✓)
+       b. V2a V2_SWAP_DIRECT→V3b (sends USDC to V3b during V3b callback → IIA ✓)
 
     V3b IIA: USDC from V2a arrived during V3b callback ✓
     V2c K-invariant: WBTC from V3b replaces WETH output ✓
@@ -681,7 +681,7 @@ class TestV2V3V3:
         v3c_idx = at.add(v3_c.address)
 
         # OPTIMIZED: V3c outermost, V2a inside V3b callback with to=V3b (5→4 transfers)
-        # V2a's optimistic USDC transfer hits V3b DURING V3b's callback → IIA ✓
+        # V2a's optimistic USDC transfer hits V3b during V3b's callback → IIA ✓
         # V2a uses V2_SWAP_DIRECT (no callback) because excess WETH pre-funded.
         v3b_fwd = enc_erc20_transfer(
             weth_idx, v2a_idx, AMOUNT_WETH
@@ -1728,7 +1728,7 @@ class TestV4V2V3:
 
     Key insight: "V4→V3 IIA ✗" only applies in FORWARD-order (V4_TAKE arrives
     before V3.swap() starts). In REVERSE-order (V3c fires first, V4_TAKE
-    deposits during V3c's callback), the tokens arrive DURING the callback
+    deposits during V3c's callback), the tokens arrive during the callback
     window, satisfying IIA.
     """
 
@@ -1859,7 +1859,7 @@ class TestV4V2V4:
         # Single V4 unlock: V4a swap → V4_TAKE USDC→V2b → sync(WBTC) → V2b→PM → settle → V4c swap → take WETH
         # V2b sends WBTC directly to PM (delta netting via sync+settle), eliminating
         # executor custody of WBTC + the settle_delta exttload + executor→PM transfer.
-        # Mirrors the V2V4V2 "send output directly to PM" pattern on the settle side.
+        # Mirrors the V2→V4→V2 "send output directly to PM" pattern on the settle side.
         inner = _v4_swap(at, a_pk, a_zfo, AMOUNT_WETH)
         inner += enc_v4_take_compact(usdc_idx, at.add(v2_b.address), AMOUNT_USDC)
         inner += enc_v4_sync(wbtc_idx)
@@ -2053,7 +2053,7 @@ class TestV4V3V4:
     V3b→PM delta netting for WBTC.
     Eliminates V3b auto-pay (V4_TAKE deposits USDC directly).
 
-    Key insight: V4_TAKE→V3b DURING V3b's callback satisfies IIA because
+    Key insight: V4_TAKE→V3b during V3b's callback satisfies IIA because
     the balance increase happens between balance_before and balance_after.
     """
 
@@ -2102,7 +2102,7 @@ class TestV4V3V4:
         b_fwd += _v4_swap(at, c_pk, c_zfo, b_out)
         b_fwd += enc_v4_take_compact(
             weth_idx, executor_idx, AMOUNT_WETH_PROFIT - AMOUNT_WETH
-        )  # take net profit WETH directly (delta = +AMOUNT_WETH_PROFIT (V4c) - AMOUNT_WETH (V4a debt) = profit; skip take_delta exttload+INVOKE)
+        )  # take net profit WETH directly (delta = +AMOUNT_WETH_PROFIT (V4c) - AMOUNT_WETH (V4a debt) = profit; skip the take_delta exttload and internal call)
 
         # V4 unlock: swap A, V3b swap (→PM), sync+settle WBTC
         inner = _v4_swap(at, a_pk, a_zfo, AMOUNT_WETH)

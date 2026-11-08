@@ -48,7 +48,7 @@ AMOUNT_WETH = 1 * 10**18
 AMOUNT_USDC = 2000 * 10**6
 AMOUNT_WBTC = 100 * 10**8
 AMOUNT_WETH_PROFIT = 2 * 10**18
-PROFIT = AMOUNT_WETH_PROFIT - AMOUNT_WETH
+NET_PROFIT = AMOUNT_WETH_PROFIT - AMOUNT_WETH
 V2_FEE = 30
 
 _gas_results = {}
@@ -134,7 +134,7 @@ def v3_c(project, owner_account, wbtc, weth):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# V2-ENDING PATHS (delta accounting works cleanly)
+# V2-ending paths (delta accounting works cleanly)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
