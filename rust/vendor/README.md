@@ -39,6 +39,12 @@ resolve. Vendoring the family under names we own fixes both today.
 - `rustfmt.toml` here sets `disable_all_formatting`, so the source stays
   byte-identical to upstream's, and `just check-vendor-tracked` asserts every
   file here is in the git index (the copy is only verbatim if it is complete).
+- **The editor checks the family the same way the lanes do.** rust-analyzer's
+  default check compiles upstream's in-crate test modules as primary packages
+  and floods the editor with diagnostics from the undeclared dev-deps above.
+  `scripts/rust_analyzer_check.sh` runs the lane contract instead and is wired
+  as `rust-analyzer.check.overrideCommand` (`.vscode/settings.json`); it
+  derives its excludes from `scripts/vendor_members.sh` like every lane.
 
 ## The switch (this tree is temporary)
 
@@ -50,8 +56,9 @@ The day upstream publishes `evm2` to crates.io:
 3. Drop the ten names from `EXPECTED_NAMES` in
    `rust/crates/facade/degenbot/tests/architecture_gates.rs`, the catalog row in
    `docs/capabilities.md`, this tree's exclusions in
-   `scripts/hooks/comment-hygiene.sh` and `prek.toml`, and the
-   `scripts/vendor_members.sh` call sites.
+   `scripts/hooks/comment-hygiene.sh` and `prek.toml`, the
+   `scripts/vendor_members.sh` call sites, and
+   `scripts/rust_analyzer_check.sh` with its `.vscode/settings.json` wiring.
 
 Recorded as the deletion condition of ADR-096. Deleting the tree is the
 complete retirement — no gate keeps it gone afterwards.
