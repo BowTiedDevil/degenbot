@@ -5,12 +5,16 @@
 //! (not re-derived in Python — AGENTS.md's "driver shell, not a
 //! co-implementation"). This crate owns the settlement-arbitrage bot's strategy logic:
 //!
-//! - the 7-call pre/post-balance bundle (3 pre-balance → `execute()` →
-//!   3-post-balance over WETH9 / Multicall3 / PoolManager ERC6909),
-//! - `decode_balance`,
-//! - `compute_priority_fee` (TARGET_PROFIT_RATIO / age-decay),
-//! - the sim value types (`SimResult`, `SimulateContext`, `SimulatePath`,
-//!   `FailBuckets`, the int128 guard),
+//! - the built-in `cmd_executor` deployment binding ([`cmd_executor`]): its
+//!   Encode (command stream + packed config), its declared settlement probes
+//!   (WETH9 `balanceOf`, Multicall3 `getEthBalance`, PoolManager ERC6909), and
+//!   its gross assessment — the built-in side of the ADR-098 seam,
+//! - `compute_priority_fee` (TARGET_PROFIT_RATIO / age-decay) — the operator's
+//!   fee sizing, applied once above the seam for a deployment that opts into
+//!   [`FeeSizing::MarketAware`] (an adapter-owned deployment keeps its own Fee),
+//! - the sim value types (`SimResult`, `SimulatePath`, `FailBuckets`, the
+//!   int128 guard) + the composition boundary ([`deployment::SimulateContext`]:
+//!   block facts beside the injected [`deployment::SimulationDeployment`]),
 //! - `dispatch_profitable_results` (the in-process fan-out) + its thin-margin /
 //!   suppression / categorization policy.
 //!
@@ -33,9 +37,17 @@
 // ubiquitous in this crate's docs; allow the pedantic doc-markdown lint.
 #![expect(clippy::doc_markdown)]
 
-/// The 7-call calldata builders (balanceOf / getEthBalance / ERC6909 /
-/// execute-wrap) — the settlement-arbitrage bundle's read + execute calldata.
+/// The settlement balance-read calldata builders (balanceOf / getEthBalance /
+/// ERC6909 / execute-wrap) — the built-in deployment's declared probes.
 pub mod calldata;
+
+/// The built-in `cmd_executor` simulation binding: Encode / Probe / Assess plus
+/// the deployment's warmup math, runtime-artifact selection, and cmd config.
+pub mod cmd_executor;
+
+/// The simulation composition boundary: block-wide facts beside the injected
+/// execution deployment.
+pub mod deployment;
 
 /// The executor-runtime bytecode artifact: the engine's resolution precedence
 /// + the validated `0x`-hex read. Every consumer that injects executor code
@@ -60,7 +72,8 @@ pub mod pool_divergence;
 /// no engine accessor required.
 pub mod fot_registry;
 
-/// The sim value types + the 7-call orchestration (`simulate_path_on_evm`).
+/// The sim value types + the production simulation entry
+/// (`simulate_path_on_evm`).
 pub mod simulator;
 
 pub use calldata::{
@@ -68,11 +81,17 @@ pub use calldata::{
     encode_get_eth_balance_calldata, wrap_execute_calldata, BALANCE_OF_SELECTOR,
     ERC6909_BALANCE_OF_SELECTOR, GET_ETH_BALANCE_SELECTOR,
 };
+pub use cmd_executor::{
+    CmdExecutorBinding, CmdExecutorSimAdapter, InjectionAddressMismatch, PROBE_INDEX_ERC6909,
+    PROBE_INDEX_ETH, PROBE_INDEX_WETH, PROBE_LABEL_ERC6909, PROBE_LABEL_ETH, PROBE_LABEL_WETH,
+    SETTLEMENT_PROBE_COUNT,
+};
 /// `BlockPriorityFees` is sourced from `degenbot_rpc::fees` (the fee struct is
 /// market data, owned by the RPC crate per ADR-019 D5) — re-exported here so
 /// the strategy's `SimulateContext` + `compute_priority_fee` consumers reach
 /// it through the surface they already use.
 pub use degenbot_rpc::BlockPriorityFees;
+pub use deployment::{FeeSizing, SimulateContext, SimulationBlock, SimulationDeployment};
 pub use dispatch::{
     candidate_is_stale, dispatch_profitable_results, filter_thin_margin_results, is_gas_profitable,
     DispatchCandidate, DispatchOutcome, SolveStep, BPS_DENOM, MAX_SIMULATE_CONCURRENT,
@@ -96,9 +115,9 @@ pub use pool_divergence::{
 pub use simulator::{
     compute_priority_fee, execute_gas_limit, fits_int128, simulate_in_process_with_db,
     simulate_path_on_evm, simulate_path_on_evm_in_span, FailBuckets, NoProfitShape, RevertingFrame,
-    SimFailure, SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT,
-    BALANCE_CALL_GAS_LIMIT, EXECUTE_GAS_ENV, GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX,
-    INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
+    SimFailure, SimResult, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_GAS_ENV, GAS_SAFETY_MARGIN,
+    INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
+    MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
 // The swap-event-capture inspector's decoded per-swap struct. Re-exported
 // here so a consumer of the sim surface can name the captured-swap element

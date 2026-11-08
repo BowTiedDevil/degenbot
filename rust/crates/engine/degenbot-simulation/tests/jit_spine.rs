@@ -106,16 +106,19 @@ fn envelope(data: &[u8]) -> RecoveredTxEnvelope {
 fn override_params() -> SimulationOverrideParams {
     SimulationOverrideParams {
         owner: SENDER,
-        inject_code: true,
-        injected_address: Some(EXECUTOR),
-        runtime_bytecode: Bytes::copy_from_slice(EXECUTOR_CODE),
-        warmup: WarmupSlots {
-            weth_balance: U256::from(1),
-            erc6909_weth: U256::from(2),
-            erc6909_native: U256::from(3),
-        },
-        weth_address: WETH,
-        pool_manager_address: POOL_MANAGER,
+        code: Some(degenbot_simulation::DeclaredCode {
+            address: EXECUTOR,
+            runtime: Bytes::copy_from_slice(EXECUTOR_CODE),
+        }),
+        settlement: Some(degenbot_simulation::SettlementWarmup {
+            weth_address: WETH,
+            pool_manager_address: Some(POOL_MANAGER),
+            slots: WarmupSlots {
+                weth_balance: U256::from(1),
+                erc6909_weth: U256::from(2),
+                erc6909_native: U256::from(3),
+            },
+        }),
     }
 }
 

@@ -75,11 +75,21 @@ returns a typed `ExecutionObservation`. The adapter's Assess decision converts
 that observation into economic success, gross profit, and diagnostics. Common
 sum-of-deltas and return-value shapes may be defaults; neither is mandatory.
 Fee pricing remains the defaulted pricing half of Assess rather than a fifth
-execution concern.
+execution concern, so an adapter's priced result — its priority fee, net,
+threshold, and verdict — is returned unchanged unless the deployment explicitly
+opts into the settlement strategy's market-aware re-pricing. The generic seam
+never infers that choice from the adapter's type.
 
 The production scope is **one opportunity → one transaction**. A contract may
 batch internally. Multi-transaction strategy choreography and a free-form
 consumer-owned simulation loop are outside this seam.
+
+The deployment's final verdict travels with the result. Generic dispatch joins
+it with its own gas floor, so a failed assessment is never gas-profitable or
+submitted even when its gross and net are positive; such a result stays
+visible as a diagnostic. A declared code override is installed only at the
+address the adapter's own transaction targets, so a mismatch is refused rather
+than simulated.
 
 ### D3 — Production simulation is adapter-driven end to end
 

@@ -67,6 +67,15 @@
 //! - `events` are the committed logs the transaction emitted, in execution
 //!   order, with their index within the transaction.
 //!
+//! # Engine mechanics beside the assessment evidence
+//!
+//! [`ProductionSimulation::capture`] carries what the engine owns and the
+//! adapter does not assess: the per-step settlements (so a caller can name the
+//! read or the call that failed), the call trace, the captured (and
+//! reverted-frame) swap events, the log count, and the access list. That is the
+//! same set a strategy needs for diagnostics and submission — and none of it is
+//! required to reach an economic verdict, so an adapter never sees it.
+//!
 //! # Failure classes
 //!
 //! The leaf never panics the bot. It reports a [`ProductionSimError`]: the
@@ -84,10 +93,11 @@ use degenbot_execution::{
 };
 use thiserror::Error;
 
+use crate::sim::capture::CallTrace;
 use crate::sim::evm2::session::{
-    Evm2CaptureMode, Evm2SimError, Evm2SimRun, Evm2SimSession, Evm2SimStep,
+    Evm2CaptureMode, Evm2SequenceCapture, Evm2SimError, Evm2SimRun, Evm2SimSession, Evm2SimStep,
 };
-use crate::sim::RunVerdict;
+use crate::sim::{CapturedSwap, RunVerdict};
 
 /// The gas limit a declared contract-call probe read runs under.
 ///
@@ -112,17 +122,109 @@ pub struct ProductionSimContext {
     pub gas_limit: u64,
 }
 
-/// One production simulation's product: the evidence the engine captured and
-/// the verdict the adapter reached over it.
+/// One executed step's settled facts — the verdict, the return (or revert)
+/// bytes, and the gas the step burned.
+///
+/// Steps are reported in the sequence's own order: the declared pre-reads, the
+/// opportunity's transaction, then the declared post-reads. A caller that
+/// declared `n` probes therefore finds its transaction at index `n`, and the
+/// first step whose verdict is not [`RunVerdict::Success`] names the read or
+/// call that failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepReading {
+    /// How the step ended.
+    pub verdict: RunVerdict,
+    /// The step's return bytes, its revert payload, or empty for a halt and
+    /// for a native-balance read.
+    pub output: Bytes,
+    /// The step's gas usage (zero for a native-balance read, which runs no
+    /// code).
+    pub gas_used: u64,
+}
+
+impl StepReading {
+    /// Whether the step failed (reverted or halted).
+    #[must_use]
+    pub const fn failed(&self) -> bool {
+        !matches!(self.verdict, RunVerdict::Success)
+    }
+}
+
+/// The engine-owned mechanics a simulation produces beside the assessment
+/// evidence: the per-step settlements, the call trace, the captured swap
+/// events, and the access list.
+///
+/// None of this is assessment evidence — an adapter assesses the
+/// [`ExecutionObservation`] — and none of it is adapter policy either. It is
+/// engine mechanics a caller uses for diagnostics (which step failed, what the
+/// trace saw), for submission (the access list), and for its own strategy
+/// bookkeeping (the swap capture).
+#[derive(Clone, Debug, Default)]
+pub struct SimulationCapture {
+    /// The access list the executed transaction implied.
+    pub access_list: alloy::rpc::types::AccessList,
+    /// The call trace, when the capture mode collected one (the production
+    /// seam mode derives no trace; the diagnostic inspector mode does).
+    pub trace: CallTrace,
+    /// The committed swap events, in execution order.
+    pub swaps: Vec<CapturedSwap>,
+    /// The swap events emitted inside reverted frames (the divergence
+    /// diagnostic).
+    pub reverted_swaps: Vec<CapturedSwap>,
+    /// Every `log` hook invocation the capture saw, including non-swap and
+    /// reverted-frame logs.
+    pub log_count: usize,
+    /// One reading per executed step, in step order.
+    pub steps: Vec<StepReading>,
+}
+
+impl SimulationCapture {
+    /// The index of the first step that failed (reverted or halted), if any.
+    ///
+    /// This is the sequence-position attribution: with `n` declared probes the
+    /// opportunity's own transaction sits at index `n`, so a caller can name the
+    /// failing read or the call itself from the declaration it made.
+    #[must_use]
+    pub fn failing_step(&self) -> Option<usize> {
+        self.steps.iter().position(StepReading::failed)
+    }
+
+    /// The reading for one step, if the sequence reached it.
+    #[must_use]
+    pub fn step(&self, index: usize) -> Option<&StepReading> {
+        self.steps.get(index)
+    }
+
+    /// Drain the sequence's capture into this value's mechanics.
+    fn from_sequence(capture: Evm2SequenceCapture, calls: &[Evm2SimRun]) -> Self {
+        Self {
+            access_list: capture.access_list,
+            trace: capture.trace,
+            swaps: capture.swaps,
+            reverted_swaps: capture.reverted_swaps,
+            log_count: capture.log_count,
+            steps: calls
+                .iter()
+                .map(|call| StepReading {
+                    verdict: call.verdict,
+                    output: call.output.clone(),
+                    gas_used: call.gas_used,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One production simulation's product: the evidence the engine captured, the
+/// verdict the adapter reached over it, and the engine mechanics beside them.
 #[derive(Clone, Debug)]
 pub struct ProductionSimulation {
     /// The typed evidence the adapter assessed.
     pub observation: ExecutionObservation,
     /// The adapter's assessment of that observation.
     pub result: ExecutionResult,
-    /// The access list the executed transaction implied — engine-owned
-    /// submission/diagnostic mechanics, never assessment evidence.
-    pub access_list: alloy::rpc::types::AccessList,
+    /// The engine mechanics: per-step settlements, trace, swaps, access list.
+    pub capture: SimulationCapture,
 }
 
 /// The leaf's typed failures.
@@ -146,8 +248,18 @@ pub enum ProductionSimError {
     MissingExecution,
     /// The adapter's Assess could not interpret the observation: the evidence
     /// it needs is absent or undecodable.
-    #[error("adapter assessment failed: {0}")]
-    Assess(#[from] AssessError),
+    ///
+    /// The engine's evidence still rides the refusal, so a caller can categorise
+    /// the failure against the same facts the assessment declined to rule on.
+    #[error("adapter assessment failed: {source}")]
+    Assess {
+        /// The assessment's typed refusal.
+        source: AssessError,
+        /// The observation the assessment refused.
+        observation: Box<ExecutionObservation>,
+        /// The mechanics the executed sequence produced.
+        capture: Box<SimulationCapture>,
+    },
 }
 
 /// Encode one opportunity with `adapter`, execute exactly that transaction
@@ -223,11 +335,18 @@ pub fn simulate_transaction(
     .with_probe_reads(probe_readings(specs, &before, &after, &sequence.calls))
     .with_events(captured_events(&sequence.capture.logs));
 
-    let result = adapter.assess(&observation)?;
+    let capture = SimulationCapture::from_sequence(sequence.capture, &sequence.calls);
+    let result = adapter
+        .assess(&observation)
+        .map_err(|source| ProductionSimError::Assess {
+            source,
+            observation: Box::new(observation.clone()),
+            capture: Box::new(capture.clone()),
+        })?;
     Ok(ProductionSimulation {
         observation,
         result,
-        access_list: sequence.capture.access_list,
+        capture,
     })
 }
 

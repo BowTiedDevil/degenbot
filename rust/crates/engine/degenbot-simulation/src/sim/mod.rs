@@ -36,9 +36,9 @@ pub use prefetch::{
 };
 pub use production::{
     simulate_opportunity, simulate_transaction, ProductionSimContext, ProductionSimError,
-    ProductionSimulation, PROBE_CALL_GAS_LIMIT,
+    ProductionSimulation, SimulationCapture, StepReading, PROBE_CALL_GAS_LIMIT,
 };
-pub use state_override::SimulationOverrideParams;
+pub use state_override::{DeclaredCode, SettlementWarmup, SimulationOverrideParams};
 pub use storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};
 
 /// How one settled run ended.

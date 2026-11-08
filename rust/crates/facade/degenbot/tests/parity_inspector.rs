@@ -46,10 +46,10 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
+    simulate_in_process_with_db, CmdExecutorBinding, FailBuckets, SimulateContext, SimulatePath,
+    SimulationBlock, SolveStep,
 };
 use degenbot::cmd_executor::composers::EncodeOptions;
-use degenbot::cmd_executor::{compute_simulation_warmup_slots, WarmupSlots};
 use degenbot::execution::{HopInfo, PathInfo, V2HopInfo};
 use degenbot::simulation::apply_simulation_overrides;
 use degenbot_rpc::provider::AlloyProvider;
@@ -142,10 +142,6 @@ fn mock_no_rpc_provider() -> AlloyProvider {
     AlloyProvider::from_provider(Arc::new(dyn_provider) as Arc<dyn Provider<Ethereum>>)
 }
 
-fn smoke_warmup() -> WarmupSlots {
-    compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH)
-}
-
 fn smoke_v2_path(path_id: u64) -> SimulatePath {
     SimulatePath {
         path_id,
@@ -179,11 +175,6 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
             }),
         ]),
         solve_block: SMOKE_SOLVE_BLOCK,
-        opts: EncodeOptions {
-            erc6909_profit: false,
-            use_v4_batch: false,
-            ..Default::default()
-        },
     }
 }
 
@@ -208,24 +199,31 @@ fn inspector_dual_driver_parity_cafebabe_revert() {
             .unwrap_or(&fx.fixture.runtime_bytecode_hex),
     )
     .expect("fixture runtime_bytecode_hex decodes");
+    let deployment = CmdExecutorBinding::new(
+        SMOKE_OWNER,
+        SMOKE_EXECUTOR,
+        SMOKE_WETH,
+        SMOKE_PM,
+        SMOKE_MULTICALL3,
+        EncodeOptions::default(),
+    )
+    .injected(
+        SMOKE_EXECUTOR,
+        alloy::primitives::Bytes::from(runtime_bytecode),
+    )
+    .expect("the declared override names the executor");
     let ctx = SimulateContext {
-        provider: &provider,
-        executor_owner: SMOKE_OWNER,
-        executor_address: SMOKE_EXECUTOR,
-        weth_address: SMOKE_WETH,
-        pool_manager_address: SMOKE_PM,
-        multicall3_address: SMOKE_MULTICALL3,
-        inject_code: true,
-        injected_address: Some(SMOKE_EXECUTOR),
-        runtime_bytecode: alloy::primitives::Bytes::from(runtime_bytecode),
-        warmup: smoke_warmup(),
-        base_fee_next: SMOKE_BASE_FEE_NEXT,
-        current_block: SMOKE_CURRENT_BLOCK,
-        block_timestamp: SMOKE_BLOCK_TIMESTAMP,
-        block_priority_fees: None,
+        block: SimulationBlock {
+            provider: &provider,
+            base_fee_next: SMOKE_BASE_FEE_NEXT,
+            current_block: SMOKE_CURRENT_BLOCK,
+            block_timestamp: SMOKE_BLOCK_TIMESTAMP,
+            block_priority_fees: None,
+        },
+        deployment: &deployment,
     };
     let mut cache_db = InMemoryDB::default();
-    apply_simulation_overrides(&mut cache_db, &ctx.override_params());
+    apply_simulation_overrides(&mut cache_db, &ctx.deployment.override_params());
     let mut buckets = FailBuckets::new();
     let path = smoke_v2_path(fx.fixture.path_id);
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets)

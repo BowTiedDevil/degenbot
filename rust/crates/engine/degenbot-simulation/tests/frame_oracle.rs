@@ -54,7 +54,6 @@ use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{address, keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use degenbot_executor::WarmupSlots;
 use degenbot_pools::state::slot_layout;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle;
@@ -1046,17 +1045,6 @@ const V2_PAIR_USDC_WETH: Address = address!("0xB4e16d0168e52d35CACD2c6185b44281E
 /// pool family.
 const V3_POOL_USDC_WETH_005: Address = address!("0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640");
 
-/// The scratch stack never applies the strategy's state overrides, so the
-/// live tests only need a well-formed (all-zero) warmup set to pass through
-/// `Evm2BlockSimHandle::build`.
-fn zero_warmup() -> WarmupSlots {
-    WarmupSlots {
-        weth_balance: U256::ZERO,
-        erc6909_weth: U256::ZERO,
-        erc6909_native: U256::ZERO,
-    }
-}
-
 fn live_provider() -> RootProvider {
     let rpc_url = std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1").unwrap();
     ProviderBuilder::default().connect_http(rpc_url.parse().unwrap())
@@ -1438,12 +1426,8 @@ macro_rules! live_scratch {
             degenbot_rpc::provider::AlloyProvider::from_provider(Arc::new($provider.clone()));
         let override_params = SimulationOverrideParams {
             owner: Address::ZERO,
-            inject_code: false,
-            injected_address: None,
-            runtime_bytecode: Bytes::new(),
-            warmup: zero_warmup(),
-            weth_address: Address::ZERO,
-            pool_manager_address: Address::ZERO,
+            code: None,
+            settlement: None,
         };
         let anchor = degenbot_substrate::SimAnchorState::default();
         let warm_cache = WarmCodeCacheInner::shared_default();

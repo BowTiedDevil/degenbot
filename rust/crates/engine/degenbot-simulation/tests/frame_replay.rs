@@ -36,19 +36,6 @@ use degenbot_simulation::sim::frame_replay::{
 };
 use degenbot_simulation::RunVerdict;
 
-use degenbot_executor::WarmupSlots;
-
-/// The scratch stack never applies the strategy's state overrides, so the
-/// live tests only need a well-formed (all-zero) warmup set to pass through
-/// `Evm2BlockSimHandle::build`.
-fn zero_warmup() -> WarmupSlots {
-    WarmupSlots {
-        weth_balance: U256::ZERO,
-        erc6909_weth: U256::ZERO,
-        erc6909_native: U256::ZERO,
-    }
-}
-
 const SENDER: Address = address!("0x1111111111111111111111111111111111111111");
 const WRITER: Address = address!("0x2222222222222222222222222222222222222222");
 const READER: Address = address!("0x3333333333333333333333333333333333333333");
@@ -933,12 +920,8 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
     let base_fee_next = u128::from(block.header.base_fee_per_gas.unwrap_or(0)).max(1);
     let override_params = SimulationOverrideParams {
         owner: Address::ZERO,
-        inject_code: false,
-        injected_address: None,
-        runtime_bytecode: Bytes::new(),
-        warmup: zero_warmup(),
-        weth_address: Address::ZERO,
-        pool_manager_address: Address::ZERO,
+        code: None,
+        settlement: None,
     };
     let anchor = degenbot_substrate::SimAnchorState::default();
     let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
@@ -1081,12 +1064,8 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
 
     let override_params = SimulationOverrideParams {
         owner: Address::ZERO,
-        inject_code: false,
-        injected_address: None,
-        runtime_bytecode: Bytes::new(),
-        warmup: zero_warmup(),
-        weth_address: Address::ZERO,
-        pool_manager_address: Address::ZERO,
+        code: None,
+        settlement: None,
     };
     let anchor = degenbot_substrate::SimAnchorState::default();
     let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();

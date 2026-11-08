@@ -46,7 +46,7 @@
 #
 rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::dispatch_profitable_results	faithful dispatch seam; mutex-poison guards panic loudly
 rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::the_fanout_prefetches_the_anchors_slot_set_once	the three fan-outs' wire observations read top-down
-rust/crates/engine/degenbot-arbitrage/src/simulator.rs::simulate_path_on_evm_seam	the 7-call seam's body
+rust/crates/engine/degenbot-arbitrage/src/simulator.rs::simulate_path_on_evm_seam	the production seam's body
 rust/crates/engine/degenbot-batch-executor/src/assembly.rs::assemble_batch	the stage reads best as one ordered policy pass
 rust/crates/engine/degenbot-batch-executor/src/executor.rs::renderer_drain_reads_every_stage	the fixture spells every stage's record verbatim
 rust/crates/engine/degenbot-batch-executor/src/executor.rs::run_stages_1_2	the leaf reads best as one ordered stage pass
@@ -200,6 +200,5 @@ rust/crates/shells/degenbot-cli-core/src/aave.rs::update
 rust/crates/shells/degenbot-python/src/bot/engine/crawl.rs::crawl_config_from_python	one flat translation table: the config schema is read field by field, in the order the core's CrawlConfig declares them
 rust/crates/shells/degenbot-python/src/bot/mod.rs::assemble_v3_tick_map_chain_truth_gate
 rust/crates/shells/degenbot-python/src/diagnostics/gil_probe.rs::start_gil_probe	thread bodies are linear by design
-rust/crates/shells/degenbot-python/src/simulation/in_process_probe.rs::simulate_in_process_revert_probe	PyO3 FFI dict-building surface; one set_item per field
 rust/crates/shells/degenbot-python/src/simulation/inline_hook.rs::simulate_path
 rust/examples/settlement_bot/src/main.rs::run	linear boot + ledger + EngineDriver handshake driver; splitting obscures the phase order

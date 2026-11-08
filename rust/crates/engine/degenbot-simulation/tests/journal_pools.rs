@@ -902,17 +902,6 @@ fn assert_pinned_pool(verified: &[VerifiedPool], frame: &PinnedFrame) {
     );
 }
 
-/// The scratch stack never applies the strategy's state overrides, so the
-/// live tests only need a well-formed (all-zero) warmup set to pass through
-/// `Evm2BlockSimHandle::build`.
-fn zero_warmup() -> degenbot_executor::WarmupSlots {
-    degenbot_executor::WarmupSlots {
-        weth_balance: U256::ZERO,
-        erc6909_weth: U256::ZERO,
-        erc6909_native: U256::ZERO,
-    }
-}
-
 fn live_provider() -> alloy::providers::RootProvider {
     let rpc_url = std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1").unwrap();
     alloy::providers::ProviderBuilder::default().connect_http(rpc_url.parse().unwrap())
@@ -1039,12 +1028,8 @@ macro_rules! live_scratch {
             degenbot_rpc::provider::AlloyProvider::from_provider(Arc::new($provider.clone()));
         let override_params = degenbot_simulation::SimulationOverrideParams {
             owner: Address::ZERO,
-            inject_code: false,
-            injected_address: None,
-            runtime_bytecode: Bytes::new(),
-            warmup: zero_warmup(),
-            weth_address: Address::ZERO,
-            pool_manager_address: Address::ZERO,
+            code: None,
+            settlement: None,
         };
         let anchor = degenbot_substrate::SimAnchorState::default();
         let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();

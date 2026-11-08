@@ -70,6 +70,22 @@ class TestPySimulateContext:
                 inject_code=True,
             )
 
+    def test_inject_code_true_with_mismatched_injected_address_raises(self) -> None:
+        """The override installs code at the executor the adapter encodes to, so
+        a declared address anywhere else is refused instead of simulated."""
+        provider = _make_async_provider()
+        with pytest.raises(ValueError, match="is not executor_address"):
+            SimulateContext(
+                provider=provider,
+                executor_owner=OWNER,
+                executor_address=EXECUTOR,
+                weth_address=WETH,
+                pool_manager_address=POOL_MANAGER,
+                multicall3_address=MULTICALL3,
+                inject_code=True,
+                injected_address=POOL_MANAGER,
+            )
+
     def test_inject_code_true_with_injected_address_constructs(self) -> None:
         provider = _make_async_provider()
         ctx = SimulateContext(

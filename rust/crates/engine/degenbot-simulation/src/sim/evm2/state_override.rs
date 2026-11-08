@@ -23,11 +23,9 @@ use crate::sim::state_override::{
 /// Apply the simulation state-overrides onto an evm2 `CacheDB`,
 /// field-for-field with the revm-side original (see the module doc).
 ///
-/// # Panics
-///
-/// Panics if `params.inject_code` is `true` but `params.injected_address`
-/// is `None` (mirrors the original).
-#[expect(clippy::expect_used)] // inject_code => injected_address required (same contract as the original)
+/// The settlement warmup touches apply only for a deployment that declares the
+/// identities ([`SimulationOverrideParams::settlement`]); a declared code
+/// override installs its runtime at the declaration's own address.
 pub fn apply_simulation_overrides<ExtDb>(
     cache_db: &mut CacheDB<ExtDb>,
     params: &SimulationOverrideParams,
@@ -37,42 +35,42 @@ pub fn apply_simulation_overrides<ExtDb>(
         AccountInfo::default().with_balance(eth_amount(OWNER_FUND_ETH)),
     );
 
-    if params.inject_code {
-        let injected = params.injected_address.expect(
-            "inject_code is true but injected_address is None — supply the injection address",
-        );
-
+    if let Some(code) = &params.code {
         cache_db.insert_account_info(
-            &injected,
+            &code.address,
             AccountInfo::default()
                 .with_balance(eth_amount(EXECUTOR_FUND_ETH))
-                .with_code(Bytecode::new_raw(params.runtime_bytecode.clone())),
+                .with_code(Bytecode::new_raw(code.runtime.clone())),
         );
+    }
 
+    if let Some(settlement) = &params.settlement {
         // The three 1-wei warmup touches (WETH9 balanceOf, PoolManager
         // ERC6909 weth-id + native-id) — storage only, the executor's
         // balance survives.
         cache_db.insert_account_storage(
-            &params.weth_address,
-            &params.warmup.weth_balance,
+            &settlement.weth_address,
+            &settlement.slots.weth_balance,
             &ONE_WEI,
         );
-        cache_db.insert_account_storage(
-            &params.pool_manager_address,
-            &params.warmup.erc6909_weth,
-            &ONE_WEI,
-        );
-        cache_db.insert_account_storage(
-            &params.pool_manager_address,
-            &params.warmup.erc6909_native,
-            &ONE_WEI,
-        );
+        if let Some(pool_manager) = settlement.pool_manager_address {
+            cache_db.insert_account_storage(
+                &pool_manager,
+                &settlement.slots.erc6909_weth,
+                &ONE_WEI,
+            );
+            cache_db.insert_account_storage(
+                &pool_manager,
+                &settlement.slots.erc6909_native,
+                &ONE_WEI,
+            );
+        }
 
         // Raise the WETH9 balanceOf slot from the 1-wei touch to the
         // operational amount for V3 callbacks.
         cache_db.insert_account_storage(
-            &params.weth_address,
-            &params.warmup.weth_balance,
+            &settlement.weth_address,
+            &settlement.slots.weth_balance,
             &eth_amount(EXECUTOR_FUND_ETH),
         );
     }

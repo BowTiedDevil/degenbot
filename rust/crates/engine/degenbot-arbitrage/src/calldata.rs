@@ -1,8 +1,8 @@
-//! 7-call vector calldata builders — the settlement-arbitrage strategy's balance-read +
-//! execute-wrap calldata.
+//! Settlement balance-read calldata builders — the built-in `cmd_executor`
+//! deployment's declared probes, plus the `execute(bytes,uint256)` wrap.
 //!
 //! The three pre/post balance-read calldata blobs that bracket the `execute()`
-//! call in the 7-call simulate vector: WETH9/ERC20 `balanceOf(address)`,
+//! call in the built-in simulate sequence: WETH9/ERC20 `balanceOf(address)`,
 //! Multicall3 `getEthBalance(address)`, and PoolManager ERC6909
 //! `balanceOf(address,uint256)`. Plus the `execute(bytes,uint256)` calldata
 //! wrap (a thin delegation to `degenbot_executor::encode_execute_call`).

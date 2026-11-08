@@ -308,9 +308,11 @@ async fn hook_slots_warm_the_second_quote() {
     );
     let warm = WarmCodeCacheInner::shared_default();
     let facts = PrefetchFacts {
-        weth_address: WETH,
-        pool_manager_address: Some(V4_POOL_MANAGER),
-        warmup: compute_simulation_warmup_slots(Address::ZERO, WETH),
+        settlement: Some(degenbot_simulation::SettlementWarmup {
+            weth_address: WETH,
+            pool_manager_address: Some(V4_POOL_MANAGER),
+            slots: compute_simulation_warmup_slots(Address::ZERO, WETH),
+        }),
     };
 
     // Pick the first priceable pool per hook (the H1 fixture's own order).

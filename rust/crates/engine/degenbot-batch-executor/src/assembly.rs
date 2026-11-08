@@ -21,7 +21,6 @@ use crate::record::PathInfoView;
 
 use degenbot_arbitrage::{DispatchCandidate, FeeOnTransferRegistry, PoolDivergence};
 use degenbot_execution::PathInfo;
-use degenbot_executor::composers::EncodeOptions;
 use degenbot_submission::{PoolKey, SubmitCandidate};
 
 use crate::record::{AssemblyVerdict, BatchOutcome, SimReceipt, SimulateVerdict};
@@ -66,7 +65,6 @@ pub struct AssemblyInputs<'a> {
     /// The path resolver.
     pub resolver: &'a dyn PathResolver,
     /// The encode options stamped onto every candidate.
-    pub opts: EncodeOptions,
     /// The batch-local payload-served set (decision b: THIS batch's already-
     /// simulated paths — an idempotency/dedup rule with no state of its own).
     pub payload_served: &'a HashSet<u64>,
@@ -175,7 +173,7 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
         };
         // The loud-abort shape guard + the candidate construction — one home
         // shared with the PyO3 assembly delegate ([`build_raw_candidate`]).
-        let candidate = build_raw_candidate(row, &path_info, inputs.opts)?;
+        let candidate = build_raw_candidate(row, &path_info)?;
         path_info_by_id.insert(row.path_id, path_info.clone());
         batch.candidates.push(candidate);
     }
@@ -459,7 +457,6 @@ pub fn classify_raw_row<S: std::hash::BuildHasher>(
 pub fn build_raw_candidate(
     row: &RawResult,
     path_info: &PathInfo,
-    opts: EncodeOptions,
 ) -> Result<DispatchCandidate, AssemblyError> {
     let hops = path_info.hops.len();
     if row.hop_outputs.len() != hops {
@@ -492,7 +489,7 @@ pub fn build_raw_candidate(
             ),
         });
     }
-    Ok(row.to_candidate(path_info.clone(), opts))
+    Ok(row.to_candidate(path_info.clone()))
 }
 
 /// The payload arm's per-entry categorization verdict (the driver seam
@@ -590,7 +587,6 @@ mod tests {
     use degenbot_arbitrage::{FeeOnTransferRegistry, PoolDivergence};
     use degenbot_core::address_utils::parse_address;
     use degenbot_execution::{HopInfo, V2HopInfo};
-    use degenbot_executor::composers::EncodeOptions;
     use degenbot_submission::PathSuppression;
     use std::sync::{Arc, Mutex};
 
@@ -663,7 +659,6 @@ mod tests {
             rows,
             payloads,
             resolver: res,
-            opts: EncodeOptions::default(),
             payload_served: &served,
             suppression: &mut suppression,
             divergence: &p.divergence,
@@ -779,7 +774,6 @@ mod tests {
                 rows: &[row(5, 1_000, 10_000)],
                 payloads: &[],
                 resolver: &res,
-                opts: EncodeOptions::default(),
                 payload_served: &served,
                 suppression: &mut suppression,
                 divergence: &p.divergence,
@@ -811,7 +805,6 @@ mod tests {
             rows: &rows,
             payloads: &[],
             resolver: &res,
-            opts: EncodeOptions::default(),
             payload_served: &served,
             suppression: &mut suppression,
             divergence: &p.divergence,
@@ -850,7 +843,6 @@ mod tests {
             rows: &rows,
             payloads: &[],
             resolver: &res,
-            opts: EncodeOptions::default(),
             payload_served: &served,
             suppression: &mut suppression,
             divergence: &p.divergence,
@@ -1095,6 +1087,7 @@ mod tests {
             execute_calldata: alloy::primitives::Bytes::from(vec![0xab, 0x58, 0x98, 0xe8, 0x01]),
             access_list: None,
             captured_swaps: Vec::new(),
+            passed: true,
             hop_count: 2,
         };
         let executor = "0x690b9a9e9aa1c9db991c7721a92d351db4fac990"

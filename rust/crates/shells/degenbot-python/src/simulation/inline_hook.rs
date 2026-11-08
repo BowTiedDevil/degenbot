@@ -42,14 +42,14 @@ use std::sync::Arc;
 
 use alloy::primitives::{Bytes, U256};
 use degenbot_arbitrage::{
-    simulate_path_on_evm_in_span, FailBuckets, SimResult, SimulateContext, SimulatePath, SolveStep,
+    simulate_path_on_evm_in_span, FailBuckets, SimResult, SimulateContext, SimulatePath,
+    SimulationBlock, SimulationDeployment, SolveStep,
 };
 use degenbot_bot::arb_engine::{
     AccessListRow, CapturedSwapRow, HookedLeg, HookedLegAnchor, HookedLegAnswer, HookedLegQuote,
     HookedLegReQuote, InlineSimFailure, InlineSimRequest, InlineSimulator, InlineSwapFamily,
     SimulatedPathResult,
 };
-use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::capture::SwapFamily;
 use degenbot_simulation::WarmCodeCacheInner;
@@ -65,16 +65,8 @@ pub(crate) struct InlineSimHook {
     /// The `sim_bounded` provider (fail-fast cold-miss budget — the dispatch
     /// seam's incident-2026-08-20 discipline).
     provider: Arc<AlloyProvider>,
-    executor_owner: alloy::primitives::Address,
-    executor_address: alloy::primitives::Address,
-    weth_address: alloy::primitives::Address,
-    pool_manager_address: alloy::primitives::Address,
-    multicall3_address: alloy::primitives::Address,
-    inject_code: bool,
-    injected_address: Option<alloy::primitives::Address>,
-    runtime_bytecode: Bytes,
-    warmup: degenbot_executor::WarmupSlots,
-    erc6909_profit: bool,
+    /// The injected execution deployment this hook simulates through.
+    deployment: Arc<SimulationDeployment>,
     /// The shared core (the sim anchor's snapshot source) — the SAME short
     /// read discipline as the FFI path (snapshot under a short read,
     /// drop the guard BEFORE any provider I/O).
@@ -153,34 +145,15 @@ fn outputs_vec(req: &InlineSimRequest) -> Vec<u128> {
 impl InlineSimHook {
     /// Assemble the hook from the installed `PyO3` context (see
     /// `PyArbEngine::install_inline_simulator`).
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         provider: Arc<AlloyProvider>,
-        executor_owner: alloy::primitives::Address,
-        executor_address: alloy::primitives::Address,
-        weth_address: alloy::primitives::Address,
-        pool_manager_address: alloy::primitives::Address,
-        multicall3_address: alloy::primitives::Address,
-        inject_code: bool,
-        injected_address: Option<alloy::primitives::Address>,
-        runtime_bytecode: Bytes,
-        warmup: degenbot_executor::WarmupSlots,
-        erc6909_profit: bool,
+        deployment: Arc<SimulationDeployment>,
         bot_state: Arc<StateLock<BotState>>,
         warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
     ) -> Self {
         Self {
             provider,
-            executor_owner,
-            executor_address,
-            weth_address,
-            pool_manager_address,
-            multicall3_address,
-            inject_code,
-            injected_address,
-            runtime_bytecode,
-            warmup,
-            erc6909_profit,
+            deployment,
             bot_state,
             warm_cache,
             storage_memo: std::sync::Mutex::new((
@@ -516,10 +489,6 @@ impl InlineSimulator for InlineSimHook {
             steps: steps.into_boxed_slice(),
             path_info,
             solve_block: req.sim_block,
-            opts: EncodeOptions {
-                erc6909_profit: self.erc6909_profit,
-                ..EncodeOptions::default()
-            },
         };
 
         let path_id = req.path_id;
@@ -564,15 +533,7 @@ impl InlineSimulator for InlineSimHook {
             );
         }
         let storage_memo = self.memo_for_block(req.sim_block);
-        let executor_owner = self.executor_owner;
-        let executor_address = self.executor_address;
-        let weth_address = self.weth_address;
-        let pool_manager_address = self.pool_manager_address;
-        let multicall3_address = self.multicall3_address;
-        let inject_code = self.inject_code;
-        let injected_address = self.injected_address;
-        let runtime_bytecode = self.runtime_bytecode.clone();
-        let warmup = self.warmup;
+        let deployment = Arc::clone(&self.deployment);
 
         // 4. The sim body runs as a task on the dedicated runtime (see the
         //    module doc for the thread/runtime matrix). The request is cloned
@@ -623,27 +584,21 @@ impl InlineSimulator for InlineSimHook {
                     let eval = tokio::task::spawn_blocking(move || {
                         let _sim_span = inline_span.clone().entered();
                         let ctx = SimulateContext {
-                            provider: &provider,
-                            executor_owner,
-                            executor_address,
-                            weth_address,
-                            pool_manager_address,
-                            multicall3_address,
-                            inject_code,
-                            injected_address,
-                            runtime_bytecode,
-                            warmup,
-                            base_fee_next,
-                            current_block: req.sim_block,
-                            block_timestamp: req.block_timestamp,
-                            block_priority_fees: None,
+                            block: SimulationBlock {
+                                provider: &provider,
+                                base_fee_next,
+                                current_block: req.sim_block,
+                                block_timestamp: req.block_timestamp,
+                                block_priority_fees: None,
+                            },
+                            deployment: &deployment,
                         };
                         if let Some(mut handle) = degenbot_simulation::Evm2BlockSimHandle::build(
                             &provider,
                             base_fee_next,
                             req.sim_block,
                             req.block_timestamp,
-                            &ctx.override_params(),
+                            &ctx.deployment.override_params(),
                             &anchor,
                             &warm_cache,
                             Some(&storage_memo),

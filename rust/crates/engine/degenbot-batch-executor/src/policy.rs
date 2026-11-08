@@ -84,22 +84,20 @@ pub struct ExecutorRuntime {
     pub fot: Arc<Mutex<FeeOnTransferRegistry>>,
     /// The typed RPC provider (the sim leaf's cold-miss fallback DB).
     pub provider: Arc<AlloyProvider>,
-    /// The operator key's address (the `execute()` `from`).
-    pub executor_owner: alloy::primitives::Address,
-    /// The `cmd_executor` contract address (the `execute()` target + join).
+    /// The built-in settlement deployment binding: the executor / WETH /
+    /// `PoolManager` / Multicall3 identities, the owner, and the encode policy.
+    /// The warmup math and the runtime-artifact selection are the binding's.
+    pub binding: degenbot_arbitrage::CmdExecutorBinding,
+    /// The `cmd_executor` contract address (the join stamp).
     pub executor_address: alloy::primitives::Address,
-    /// WETH9 contract address.
-    pub weth_address: alloy::primitives::Address,
-    /// The `Uniswap V4 PoolManager` contract address.
-    pub pool_manager_address: alloy::primitives::Address,
-    /// Multicall3 contract address.
-    pub multicall3_address: alloy::primitives::Address,
-    /// The injected executor address (used when the inject stance is on).
+    /// The declared-code override address (used when the inject stance is on).
+    ///
+    /// Must be the executor address the built-in adapter encodes its
+    /// transaction to: the override installs the runtime at that address, so a
+    /// mismatch is a construction error, not a second target.
     pub injected_address: Option<alloy::primitives::Address>,
-    /// The executor runtime bytecode.
+    /// The executor runtime bytecode (installed by the declared override).
     pub runtime_bytecode: alloy::primitives::Bytes,
-    /// The simulation warmup slots.
-    pub warmup: degenbot_executor::WarmupSlots,
     /// The engine's shared state owner (`None` only for empty-input
     /// callers).
     pub bot_state: Option<Arc<StateLock<BotState>>>,
@@ -222,17 +220,17 @@ mod tests {
             divergence: Arc::new(Mutex::new(PoolDivergence::new())),
             fot: Arc::new(Mutex::new(FeeOnTransferRegistry::new())),
             provider,
-            executor_owner: alloy::primitives::Address::ZERO,
-            executor_address,
-            weth_address: alloy::primitives::Address::ZERO,
-            pool_manager_address: alloy::primitives::Address::ZERO,
-            multicall3_address: alloy::primitives::Address::ZERO,
-            injected_address: None,
-            runtime_bytecode: alloy::primitives::Bytes::new(),
-            warmup: degenbot_executor::compute_simulation_warmup_slots(
+            binding: degenbot_arbitrage::CmdExecutorBinding::new(
+                alloy::primitives::Address::ZERO,
                 executor_address,
                 alloy::primitives::Address::ZERO,
+                alloy::primitives::Address::ZERO,
+                alloy::primitives::Address::ZERO,
+                degenbot_executor::composers::EncodeOptions::default(),
             ),
+            executor_address,
+            injected_address: None,
+            runtime_bytecode: alloy::primitives::Bytes::new(),
             bot_state: None,
             warm_cache: None,
             dispatcher: Arc::new(Mutex::new(Dispatcher::for_block(0))),

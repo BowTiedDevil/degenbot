@@ -1206,25 +1206,23 @@ fn build_batch_executor(
                 degenbot::arbitrage::FeeOnTransferRegistry::new(),
             )),
             provider: std::sync::Arc::new(provider.clone()),
-            executor_owner,
+            binding: degenbot::arbitrage::CmdExecutorBinding::new(
+                executor_owner,
+                executor_address,
+                weth_address,
+                degenbot::core::address_utils::parse_address(UNISWAP_V4_POOL_MANAGER_ADDRESS)
+                    .map_err(|e| format!("V4 PoolManager address: {e}"))?,
+                degenbot::core::address_utils::parse_address(MULTICALL3_ADDRESS)
+                    .map_err(|e| format!("Multicall3 address: {e}"))?,
+                degenbot::cmd_executor::composers::EncodeOptions::default(),
+            ),
             executor_address,
-            weth_address,
-            pool_manager_address: degenbot::core::address_utils::parse_address(
-                UNISWAP_V4_POOL_MANAGER_ADDRESS,
-            )
-            .map_err(|e| format!("V4 PoolManager address: {e}"))?,
-            multicall3_address: degenbot::core::address_utils::parse_address(MULTICALL3_ADDRESS)
-                .map_err(|e| format!("Multicall3 address: {e}"))?,
             injected_address: cfg
                 .inject_executor_code
                 .then(|| degenbot::core::address_utils::parse_address(&cfg.injected_address))
                 .transpose()
                 .map_err(|e| format!("injected executor address: {e}"))?,
             runtime_bytecode,
-            warmup: degenbot::cmd_executor::compute_simulation_warmup_slots(
-                executor_address,
-                weth_address,
-            ),
             bot_state: Some(bot.state_arc()),
             // No separate warm-code cache in this driver: the sim's cold-miss
             // fallback DB (the provider) serves the reads.

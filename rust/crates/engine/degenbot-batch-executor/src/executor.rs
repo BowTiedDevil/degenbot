@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 
 use degenbot_arbitrage::{
     candidate_is_stale, dispatch_profitable_results, DispatchOutcome, FeeOnTransferRegistry,
-    PoolDivergence, SimulateContext,
+    PoolDivergence, SimulateContext, SimulationBlock, SimulationDeployment,
 };
 use degenbot_execution::PathInfo;
 use degenbot_executor::composers::EncodeOptions;
@@ -60,9 +60,6 @@ pub struct ExecutorConfig {
     /// The thin-margin floor in bps (0 disables;
     /// `dispatch.min_profit_margin_bps`).
     pub(crate) min_profit_margin_bps: u64,
-    /// The encode options stamped onto every assembled candidate
-    /// (`dispatch.erc6909_profit` + the runtime v4-batch axis).
-    pub(crate) opts: EncodeOptions,
     /// The path resolver (the engine registry projection).
     pub(crate) resolver: Arc<dyn PathResolver>,
     /// The cross-block suppression registry (decision b — its own policy
@@ -75,26 +72,12 @@ pub struct ExecutorConfig {
     // ── Simulate-stage session values (the `SimulateContext` projection) ──
     /// The typed RPC provider (cold-miss fallback DB).
     pub(crate) provider: Arc<AlloyProvider>,
-    /// The operator key's address (the `execute()` `from`).
-    pub(crate) executor_owner: alloy::primitives::Address,
-    /// The `cmd_executor` contract address (the `execute()` target + the join
-    /// stamp).
+    /// The injected execution deployment: its Encode / Probe / Assess adapter
+    /// plus the deployment facts the engine's overrides and transaction need.
+    pub(crate) deployment: Arc<SimulationDeployment>,
+    /// The `cmd_executor` contract address: the single-target join stamp that
+    /// stands in for a generic deployment identity.
     pub(crate) executor_address: alloy::primitives::Address,
-    /// WETH9 contract address.
-    pub(crate) weth_address: alloy::primitives::Address,
-    /// The `Uniswap V4 PoolManager` contract address.
-    pub(crate) pool_manager_address: alloy::primitives::Address,
-    /// Multicall3 contract address.
-    pub(crate) multicall3_address: alloy::primitives::Address,
-    /// Whether to inject the executor runtime bytecode in-sim
-    /// (`simulation.inject_executor_code`).
-    pub(crate) inject_code: bool,
-    /// The injected executor address (used when `inject_code`).
-    pub(crate) injected_address: Option<alloy::primitives::Address>,
-    /// The executor runtime bytecode.
-    pub(crate) runtime_bytecode: alloy::primitives::Bytes,
-    /// The simulation warmup slots.
-    pub(crate) warmup: degenbot_executor::WarmupSlots,
     /// The engine's shared state owner (the staleness gate + the per-block
     /// EVM anchor). `None` only for empty-input callers.
     pub(crate) bot_state: Option<Arc<StateLock<BotState>>>,
@@ -131,6 +114,13 @@ impl ExecutorConfig {
     /// A driver never names a policy value itself: the twin clamps that used
     /// to live at the Python and FFI construction sites died with this
     /// boundary.
+    ///
+    /// # Panics
+    ///
+    /// When the resolved verdict declares `simulation.inject_executor_code` but
+    /// the injected runtime names no `injected_address`, or names an address
+    /// other than the executor the built-in adapter encodes to — the declared
+    /// override must name the very contract its transaction targets.
     #[must_use]
     pub fn from_verdict(verdict: &degenbot_config::BotConfig, runtime: ExecutorRuntime) -> Self {
         let policy = ExecutorPolicy::from(verdict);
@@ -143,25 +133,35 @@ impl ExecutorConfig {
             sim_concurrency: policy.sim_concurrency,
             max_candidates,
             min_profit_margin_bps: policy.min_profit_margin_bps,
-            opts: EncodeOptions {
-                erc6909_profit: policy.erc6909_profit,
-                use_v4_batch: runtime.use_v4_batch,
-                ..EncodeOptions::default()
+            deployment: {
+                let opts = EncodeOptions {
+                    erc6909_profit: policy.erc6909_profit,
+                    use_v4_batch: runtime.use_v4_batch,
+                    ..EncodeOptions::default()
+                };
+                let binding = runtime.binding.with_opts(opts);
+                Arc::new(if policy.inject_code {
+                    #[expect(clippy::expect_used)] // the declared inject stance names its address
+                    let address = runtime.injected_address.expect(
+                        "inject_code is true but injected_address is None — supply the injection address",
+                    );
+                    #[expect(clippy::expect_used)] // the declared address must be the executor's
+                    let deployment = binding
+                        .injected(address, runtime.runtime_bytecode)
+                        .expect(
+                            "the declared injection address must be the executor address the                              adapter encodes to",
+                        );
+                    deployment
+                } else {
+                    binding.deployment()
+                })
             },
             resolver: runtime.resolver,
             suppression: runtime.suppression,
             divergence: runtime.divergence,
             fot: runtime.fot,
             provider: runtime.provider,
-            executor_owner: runtime.executor_owner,
             executor_address: runtime.executor_address,
-            weth_address: runtime.weth_address,
-            pool_manager_address: runtime.pool_manager_address,
-            multicall3_address: runtime.multicall3_address,
-            inject_code: policy.inject_code,
-            injected_address: runtime.injected_address,
-            runtime_bytecode: runtime.runtime_bytecode,
-            warmup: runtime.warmup,
             bot_state: runtime.bot_state,
             warm_cache: runtime.warm_cache,
             dispatcher: runtime.dispatcher,
@@ -250,7 +250,6 @@ impl EngineLeaves {
                 rows: &work.rows,
                 payloads: &work.payloads,
                 resolver: cfg.resolver.as_ref(),
-                opts: cfg.opts,
                 payload_served: &served,
                 suppression: &mut suppression,
                 divergence: &cfg.divergence,
@@ -294,20 +293,14 @@ impl EngineLeaves {
         // this same no-await span, and the cap is already applied.
         let provider = Arc::clone(&cfg.provider);
         let ctx = SimulateContext {
-            provider: &provider,
-            executor_owner: cfg.executor_owner,
-            executor_address: cfg.executor_address,
-            weth_address: cfg.weth_address,
-            pool_manager_address: cfg.pool_manager_address,
-            multicall3_address: cfg.multicall3_address,
-            inject_code: cfg.inject_code,
-            injected_address: cfg.injected_address,
-            runtime_bytecode: cfg.runtime_bytecode.clone(),
-            warmup: cfg.warmup,
-            base_fee_next: work.base_fee_next,
-            current_block: work.current_block,
-            block_timestamp: work.block_timestamp,
-            block_priority_fees: work.block_priority_fees.clone(),
+            block: SimulationBlock {
+                provider: &provider,
+                base_fee_next: work.base_fee_next,
+                current_block: work.current_block,
+                block_timestamp: work.block_timestamp,
+                block_priority_fees: work.block_priority_fees.clone(),
+            },
+            deployment: &cfg.deployment,
         };
         let outcome: DispatchOutcome = {
             // ONE Jaeger span per simulate fan-out (ADR-043), entered only

@@ -31,9 +31,9 @@ use crate::prelude::*;
 use crate::provider::AlloyProvider;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
 use alloy::primitives::Bytes;
-use degenbot_arbitrage::executor_runtime::load_executor_runtime;
+use degenbot_arbitrage::{CmdExecutorBinding, SimulationDeployment};
 use degenbot_core::op_info;
-use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
+use degenbot_executor::composers::EncodeOptions;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use std::path::Path;
 use std::sync::Arc;
@@ -51,17 +51,37 @@ pub struct PySimulateContext {
     /// the cockpit holds). Moved into A4's async block; the borrowed
     /// `SimulateContext<'_>.provider` borrows `&*this`.
     pub(crate) provider: Arc<AlloyProvider>,
-    pub(crate) executor_owner: alloy::primitives::Address,
+    /// The built-in settlement deployment binding: the executor / WETH /
+    /// `PoolManager` / Multicall3 identities plus the session's encode policy.
+    /// The warmup math and the runtime-artifact selection are the binding's, so
+    /// this seam carries no second copy of either.
+    pub(crate) binding: CmdExecutorBinding,
     pub(crate) executor_address: alloy::primitives::Address,
-    pub(crate) weth_address: alloy::primitives::Address,
-    pub(crate) pool_manager_address: alloy::primitives::Address,
-    pub(crate) multicall3_address: alloy::primitives::Address,
     pub(crate) inject_code: bool,
     pub(crate) injected_address: Option<alloy::primitives::Address>,
+    /// The loaded executor runtime (the artifact the Declared override installs).
     pub(crate) runtime_bytecode: Bytes,
-    /// The three warmed storage slots — precomputed once (they depend only on
-    /// the injected executor + `WETH` + `PoolManager` addresses).
-    pub(crate) warmup: WarmupSlots,
+}
+
+impl PySimulateContext {
+    /// The injected execution deployment for a consumer's own encode policy.
+    ///
+    /// `inject_code` selects the declared-code override (the artifact installed
+    /// at `injected_address`); otherwise the deployment simulates the code the
+    /// chain holds at the executor address.
+    #[expect(clippy::expect_used)] // the constructor holds injected == executor
+    pub(crate) fn deployment(&self, opts: EncodeOptions) -> Arc<SimulationDeployment> {
+        let binding = self.binding.with_opts(opts);
+        Arc::new(match (self.inject_code, self.injected_address) {
+            // [`PySimulateContext::new`] refused a declared address that is not
+            // the executor, so this override installs at the very address the
+            // built-in adapter encodes its transaction to.
+            (true, Some(address)) => binding
+                .injected(address, self.runtime_bytecode.clone())
+                .expect("the constructor validated injected_address == executor_address"),
+            _ => binding.deployment(),
+        })
+    }
 }
 
 #[pymethods]
@@ -145,36 +165,35 @@ impl PySimulateContext {
                 "inject_code is True but injected_address is None — supply the injection address",
             ));
         }
+        // The built-in adapter encodes every transaction to the executor, so a
+        // declared override anywhere else would simulate code the transaction
+        // never runs. Fail closed at the boundary instead.
+        if let (true, Some(injected_address)) = (inject_code, injected) {
+            if injected_address != exec {
+                return Err(PyValueError::new_err(format!(
+                    "injected_address {injected_address} is not executor_address {exec} — the                      executor's code is overridden at the executor address, so the injection                      must name it"
+                )));
+            }
+        }
 
-        // Warmup slots depend only on injected + weth; compute once.
-        let warmup_injected = injected.unwrap_or(owner);
-        let warmup = compute_simulation_warmup_slots(warmup_injected, weth);
-
-        // The engine resolves + loads the artifact: one precedence chain and
-        // one validated read for every consumer (this seam, the native paths).
-        let runtime = load_executor_runtime(
+        // The built-in binding resolves + loads the executor runtime artifact
+        // (one precedence chain and one validated read for every consumer), and
+        // it owns the settlement warmup math the deployment declares.
+        let binding =
+            CmdExecutorBinding::new(owner, exec, weth, pm, multicall, EncodeOptions::default());
+        let runtime_bytecode = CmdExecutorBinding::load_runtime(
             executor_runtime_path.map(Path::new),
             contracts_dir.map(Path::new),
         )
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        op_info!(
-            domain = sim,
-            bytes = runtime.bytecode.len(),
-            path = %runtime.path.display(),
-            "executor runtime bytecode loaded"
-        );
 
         Ok(Self {
             provider,
-            executor_owner: owner,
+            binding,
             executor_address: exec,
-            weth_address: weth,
-            pool_manager_address: pm,
-            multicall3_address: multicall,
             inject_code,
             injected_address: injected,
-            runtime_bytecode: runtime.bytecode,
-            warmup,
+            runtime_bytecode,
         })
     }
 
@@ -214,18 +233,14 @@ impl crate::bot::engine::PyArbEngine {
     ) {
         let bot_state = self.bot_state_arc();
         let warm_cache = self.warm_code_cache_arc();
+        // The hook's own encode axis set (the payload path's `erc6909_profit`).
+        let deployment = context.deployment(EncodeOptions {
+            erc6909_profit,
+            ..EncodeOptions::default()
+        });
         let hook = Arc::new(crate::simulation::inline_hook::InlineSimHook::new(
             Arc::new(context.provider.sim_bounded()),
-            context.executor_owner,
-            context.executor_address,
-            context.weth_address,
-            context.pool_manager_address,
-            context.multicall3_address,
-            context.inject_code,
-            context.injected_address,
-            context.runtime_bytecode.clone(),
-            context.warmup,
-            erc6909_profit,
+            deployment,
             bot_state,
             warm_cache,
         ));

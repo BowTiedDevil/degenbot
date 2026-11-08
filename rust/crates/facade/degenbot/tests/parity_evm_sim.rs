@@ -56,10 +56,10 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
+    simulate_in_process_with_db, CmdExecutorBinding, FailBuckets, SimulateContext, SimulatePath,
+    SimulationBlock, SolveStep,
 };
 use degenbot::cmd_executor::composers::EncodeOptions;
-use degenbot::cmd_executor::compute_simulation_warmup_slots;
 use degenbot::execution::{HopInfo, PathInfo, V2HopInfo};
 use degenbot::simulation::apply_simulation_overrides;
 use degenbot_rpc::provider::AlloyProvider;
@@ -84,6 +84,13 @@ const SMOKE_SOLVE_BLOCK: u64 = 100;
 const SMOKE_BASE_FEE_NEXT: u128 = 1_000_000_000;
 const SMOKE_CURRENT_BLOCK: u64 = 100;
 const SMOKE_BLOCK_TIMESTAMP: u64 = 0;
+
+/// A contract that answers every call with one ABI word of zero — the
+/// settlement bundle's readable-zero stand-in. WETH9 and the PoolManager exist
+/// on chain, so their `balanceOf` reads return a 32-byte word; a fixture with
+/// no code at those addresses reports an ABSENT reading (honest evidence), not a
+/// fabricated zero.
+const ZERO_WORD_BYTECODE: [u8; 10] = [0x60, 0x00, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3];
 
 /// Multicall3.getEthBalance(address) → `address.balance`.
 const MULTICALL3_BYTECODE: [u8; 12] = [
@@ -155,26 +162,45 @@ fn evm_sim_success_path_dual_driver_parity() {
     let fx = load_fixture();
     let provider = mock_no_rpc_provider();
     let executor_bc = executor_stub_bytecode(SMOKE_GIFT);
-    let warmup = compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH);
+    let deployment = CmdExecutorBinding::new(
+        SMOKE_OWNER,
+        SMOKE_EXECUTOR,
+        SMOKE_WETH,
+        SMOKE_PM,
+        SMOKE_MULTICALL3,
+        EncodeOptions::default(),
+    )
+    .injected(SMOKE_EXECUTOR, Bytes::from(executor_bc))
+    .expect("the declared override names the executor");
     let ctx = SimulateContext {
-        provider: &provider,
-        executor_owner: SMOKE_OWNER,
-        executor_address: SMOKE_EXECUTOR,
-        weth_address: SMOKE_WETH,
-        pool_manager_address: SMOKE_PM,
-        multicall3_address: SMOKE_MULTICALL3,
-        inject_code: true,
-        injected_address: Some(SMOKE_EXECUTOR),
-        runtime_bytecode: Bytes::from(executor_bc),
-        warmup,
-        base_fee_next: SMOKE_BASE_FEE_NEXT,
-        current_block: SMOKE_CURRENT_BLOCK,
-        block_timestamp: SMOKE_BLOCK_TIMESTAMP,
-        block_priority_fees: None,
+        block: SimulationBlock {
+            provider: &provider,
+            base_fee_next: SMOKE_BASE_FEE_NEXT,
+            current_block: SMOKE_CURRENT_BLOCK,
+            block_timestamp: SMOKE_BLOCK_TIMESTAMP,
+            block_priority_fees: None,
+        },
+        deployment: &deployment,
     };
 
     let mut cache_db = InMemoryDB::default();
-    apply_simulation_overrides(&mut cache_db, &ctx.override_params());
+    apply_simulation_overrides(&mut cache_db, &ctx.deployment.override_params());
+    // Deploy the settlement contracts' readable-zero stand-ins (see
+    // `ZERO_WORD_BYTECODE`).
+    for settlement in [SMOKE_WETH, SMOKE_PM] {
+        let code = Bytecode::new_raw(Bytes::from(ZERO_WORD_BYTECODE.to_vec()));
+        cache_db.insert_account_info(
+            &settlement,
+            AccountInfo {
+                balance: U256::ZERO,
+                nonce: 1,
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+    }
+
     // Deploy Multicall3 (so getEthBalance returns real ETH balances).
     cache_db.insert_account_info(
         &SMOKE_MULTICALL3,
@@ -234,11 +260,6 @@ fn evm_sim_success_path_dual_driver_parity() {
             }),
         ]),
         solve_block: SMOKE_SOLVE_BLOCK,
-        opts: EncodeOptions {
-            erc6909_profit: false,
-            use_v4_batch: false,
-            ..Default::default()
-        },
     };
 
     let mut buckets = FailBuckets::new();

@@ -90,7 +90,7 @@ use crate::sim::evm2::hook_slots::HookSlotStore;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::diag;
 use degenbot_execution::{HopInfo, PathInfo};
-use degenbot_executor::{mapping_slot, WarmupSlots, WETH9_BALANCE_OF_SLOT};
+use degenbot_executor::{mapping_slot, WETH9_BALANCE_OF_SLOT};
 use degenbot_pools::{
     v4_liquidity_slot, v4_pool_state_base_slot, v4_slot0_slot, V2_RESERVES_SLOT, V2_TOKEN0_SLOT,
     V2_TOKEN1_SLOT, V3_LIQUIDITY_SLOT, V3_SLOT0_SLOT,
@@ -98,6 +98,7 @@ use degenbot_pools::{
 use degenbot_rpc::provider::AlloyProvider;
 
 use super::hot_slots::HotSlotStore;
+use super::state_override::SettlementWarmup;
 use super::storage_memo::{ReadAnchor, StorageMemo};
 
 /// The most slots one prefetch batch may carry. A batch is ONE round trip, so
@@ -164,35 +165,34 @@ impl Default for FamilySlotLayout {
     }
 }
 
-/// The non-path facts a prefetch needs: the executor-side fixed slots every
+/// The non-path facts a prefetch needs: the settlement slots every
 /// `execute()` touches, plus the WETH9 address whose `balanceOf` mapping base
 /// is a known constant (so a pool's own WETH balance is derivable too).
 ///
 /// The addresses say WHERE each warmup slot lives (the slot values alone do
-/// not carry their account).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// not carry their account). A deployment that declares no settlement identity
+/// (a foreign contract with no WETH / PoolManager) carries `None`: the
+/// path-derived pool words still derive, and only the settlement-side words are
+/// skipped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PrefetchFacts {
-    /// WETH9's address (the executor's `balanceOf` slot lives here).
-    pub weth_address: Address,
-    /// The PoolManager singleton's address (the ERC6909 balance slots live
-    /// here). `None` when the caller's session has no PoolManager to name (a
-    /// lab fixture without one) — those two slots are then simply not derived.
-    pub pool_manager_address: Option<Address>,
-    /// The session's computed warmup slot addresses (the same set the state
-    /// overrides install).
-    pub warmup: WarmupSlots,
+    /// The settlement warmup the deployment declares (WETH + PoolManager
+    /// identities and the slots its contract touches).
+    pub settlement: Option<SettlementWarmup>,
 }
 
 impl PrefetchFacts {
     /// The executor-side `(address, slot)` pairs: the WETH `balanceOf(executor)`
-    /// word, plus the PoolManager ERC6909 balance words when a PoolManager is
-    /// known.
+    /// word, plus the PoolManager ERC6909 balance words.
     #[must_use]
     pub fn slots(&self) -> Vec<(Address, U256)> {
-        let mut slots = vec![(self.weth_address, self.warmup.weth_balance)];
-        if let Some(pool_manager) = self.pool_manager_address {
-            slots.push((pool_manager, self.warmup.erc6909_weth));
-            slots.push((pool_manager, self.warmup.erc6909_native));
+        let Some(settlement) = self.settlement else {
+            return Vec::new();
+        };
+        let mut slots = vec![(settlement.weth_address, settlement.slots.weth_balance)];
+        if let Some(pool_manager) = settlement.pool_manager_address {
+            slots.push((pool_manager, settlement.slots.erc6909_weth));
+            slots.push((pool_manager, settlement.slots.erc6909_native));
         }
         slots
     }
@@ -289,8 +289,8 @@ pub fn path_prefetch_slots<'a>(
                             slots.push(entry);
                         }
                     }
-                    if holds_weth(&[v2.token0_address, v2.token1_address], facts) {
-                        let entry = (facts.weth_address, facts.weth_balance_slot(v2.pool_address));
+                    if let Some(weth) = holds_weth(&[v2.token0_address, v2.token1_address], facts) {
+                        let entry = (weth, facts.weth_balance_slot(v2.pool_address));
                         if slots.len() < MAX_PREFETCH_SLOTS && seen.insert(entry) {
                             slots.push(entry);
                         }
@@ -303,8 +303,8 @@ pub fn path_prefetch_slots<'a>(
                             slots.push(entry);
                         }
                     }
-                    if holds_weth(&[v3.token0_address, v3.token1_address], facts) {
-                        let entry = (facts.weth_address, facts.weth_balance_slot(v3.pool_address));
+                    if let Some(weth) = holds_weth(&[v3.token0_address, v3.token1_address], facts) {
+                        let entry = (weth, facts.weth_balance_slot(v3.pool_address));
                         if slots.len() < MAX_PREFETCH_SLOTS && seen.insert(entry) {
                             slots.push(entry);
                         }
@@ -336,11 +336,13 @@ pub fn path_prefetch_slots<'a>(
     slots
 }
 
-/// Whether a pool's token pair includes WETH — the precondition for the pool's
-/// own WETH `balanceOf` word being derivable (see
-/// [`PrefetchFacts::weth_balance_slot`]).
-fn holds_weth(tokens: &[Address], facts: &PrefetchFacts) -> bool {
-    tokens.contains(&facts.weth_address)
+/// The WETH9 address a pool's pair holds, if any — the precondition for the
+/// pool's own WETH `balanceOf` word being derivable (see
+/// [`PrefetchFacts::weth_balance_slot`]). `None` when the pair holds no WETH, or
+/// when the deployment declares no WETH identity at all.
+fn holds_weth(tokens: &[Address], facts: &PrefetchFacts) -> Option<Address> {
+    let weth = facts.settlement?.weth_address;
+    tokens.contains(&weth).then_some(weth)
 }
 
 /// The 32-byte V4 pool id behind a path hop's `0x`-prefixed hex, if it is
@@ -389,9 +391,11 @@ pub fn path_prefetch_addresses<'a>(
             }
         }
     }
-    push_address(&mut addresses, &mut seen, facts.weth_address);
-    if let Some(pool_manager) = facts.pool_manager_address {
-        push_address(&mut addresses, &mut seen, pool_manager);
+    if let Some(settlement) = facts.settlement {
+        push_address(&mut addresses, &mut seen, settlement.weth_address);
+        if let Some(pool_manager) = settlement.pool_manager_address {
+            push_address(&mut addresses, &mut seen, pool_manager);
+        }
     }
     addresses
 }
@@ -740,9 +744,11 @@ mod tests {
 
     fn executor_facts() -> PrefetchFacts {
         PrefetchFacts {
-            weth_address: WETH,
-            pool_manager_address: Some(POOL_MANAGER),
-            warmup: compute_simulation_warmup_slots(EXECUTOR, WETH),
+            settlement: Some(SettlementWarmup {
+                weth_address: WETH,
+                pool_manager_address: Some(POOL_MANAGER),
+                slots: compute_simulation_warmup_slots(EXECUTOR, WETH),
+            }),
         }
     }
 

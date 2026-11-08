@@ -34,7 +34,6 @@ use degenbot_arbitrage::{
 };
 use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
 use degenbot_executor::composers::EncodeOptions;
-use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
 use degenbot_rpc::provider::AlloyProvider;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -54,6 +53,11 @@ const SMOKE_GIFT: alloy::primitives::Address =
     alloy::primitives::address!("dddddddddddddddddddddddddddddddddddddddd");
 const ONE_ETH: alloy::primitives::U256 =
     alloy::primitives::U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
+
+/// A contract that answers every call with one ABI word of zero — the
+/// settlement bundle's readable-zero stand-in (see the success probe's
+/// fixture note: WETH9 and the `PoolManager` exist on chain).
+const ZERO_WORD_BYTECODE: [u8; 10] = [0x60, 0x00, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3];
 
 /// Multicall3.getEthBalance(address) → `address.balance`.
 /// `PUSH1 0x04 CALLDATALOAD BALANCE PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN`
@@ -115,8 +119,35 @@ fn mock_no_rpc_provider() -> AlloyProvider {
     AlloyProvider::from_provider(Arc::new(dyn_provider) as Arc<dyn Provider<Ethereum>>)
 }
 
-fn smoke_warmup() -> WarmupSlots {
-    compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH)
+/// The built-in settlement binding these probes inject.
+fn smoke_binding() -> degenbot_arbitrage::CmdExecutorBinding {
+    degenbot_arbitrage::CmdExecutorBinding::new(
+        SMOKE_OWNER,
+        SMOKE_EXECUTOR,
+        SMOKE_WETH,
+        SMOKE_PM,
+        SMOKE_MULTICALL3,
+        EncodeOptions::default(),
+    )
+}
+
+/// The built-in deployment with `runtime` installed at the executor address.
+#[expect(clippy::expect_used)] // the declared override names the executor
+fn smoke_deployment(runtime: alloy::primitives::Bytes) -> degenbot_arbitrage::SimulationDeployment {
+    smoke_binding()
+        .injected(SMOKE_EXECUTOR, runtime)
+        .expect("the declared override names the executor")
+}
+
+/// The block-wide simulation facts these probes replay under.
+fn smoke_block(provider: &AlloyProvider) -> degenbot_arbitrage::SimulationBlock<'_> {
+    degenbot_arbitrage::SimulationBlock {
+        provider,
+        base_fee_next: SMOKE_BASE_FEE_NEXT,
+        current_block: SMOKE_CURRENT_BLOCK,
+        block_timestamp: SMOKE_BLOCK_TIMESTAMP,
+        block_priority_fees: None,
+    }
 }
 
 fn smoke_v2_path(path_id: u64) -> SimulatePath {
@@ -152,11 +183,6 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
             }),
         ]),
         solve_block: SMOKE_SOLVE_BLOCK,
-        opts: EncodeOptions {
-            erc6909_profit: false,
-            use_v4_batch: false,
-            ..Default::default()
-        },
     }
 }
 
@@ -188,7 +214,6 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
 /// `ProviderResult` is honored for parity with the production signature).
 #[pyfunction]
 #[pyo3(signature = (path_id, runtime_bytecode))]
-#[expect(clippy::too_many_lines)] // PyO3 FFI dict-building surface; one set_item per field
 pub fn simulate_in_process_revert_probe<'py>(
     py: Python<'py>,
     path_id: u64,
@@ -197,21 +222,10 @@ pub fn simulate_in_process_revert_probe<'py>(
     // 1. Build the ctx (mock provider — never called over CacheDB<EmptyDB>).
     let provider = mock_no_rpc_provider();
     let byte_slice = runtime_bytecode.as_bytes();
+    let deployment = smoke_deployment(alloy::primitives::Bytes::copy_from_slice(byte_slice));
     let ctx = SimulateContext {
-        provider: &provider,
-        executor_owner: SMOKE_OWNER,
-        executor_address: SMOKE_EXECUTOR,
-        weth_address: SMOKE_WETH,
-        pool_manager_address: SMOKE_PM,
-        multicall3_address: SMOKE_MULTICALL3,
-        inject_code: true,
-        injected_address: Some(SMOKE_EXECUTOR),
-        runtime_bytecode: alloy::primitives::Bytes::copy_from_slice(byte_slice),
-        warmup: smoke_warmup(),
-        base_fee_next: SMOKE_BASE_FEE_NEXT,
-        current_block: SMOKE_CURRENT_BLOCK,
-        block_timestamp: SMOKE_BLOCK_TIMESTAMP,
-        block_priority_fees: None,
+        block: smoke_block(&provider),
+        deployment: &deployment,
     };
 
     // 2. Build the in-memory DB + apply the executor-injection overrides
@@ -219,7 +233,7 @@ pub fn simulate_in_process_revert_probe<'py>(
     let mut cache_db = ::evm2::evm::InMemoryDB::default();
     degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
         &mut cache_db,
-        &ctx.override_params(),
+        &ctx.deployment.override_params(),
     );
 
     // 3. Run the 7-call orchestration (GIL-free — release is implicit: no
@@ -354,21 +368,10 @@ pub fn simulate_in_process_success_probe(
     // 1. Build the ctx (mock provider — never called over CacheDB<EmptyDB>).
     let provider = mock_no_rpc_provider();
     let executor_bc = executor_stub_bytecode(SMOKE_GIFT);
+    let deployment = smoke_deployment(alloy::primitives::Bytes::copy_from_slice(&executor_bc));
     let ctx = SimulateContext {
-        provider: &provider,
-        executor_owner: SMOKE_OWNER,
-        executor_address: SMOKE_EXECUTOR,
-        weth_address: SMOKE_WETH,
-        pool_manager_address: SMOKE_PM,
-        multicall3_address: SMOKE_MULTICALL3,
-        inject_code: true,
-        injected_address: Some(SMOKE_EXECUTOR),
-        runtime_bytecode: alloy::primitives::Bytes::copy_from_slice(&executor_bc),
-        warmup: smoke_warmup(),
-        base_fee_next: SMOKE_BASE_FEE_NEXT,
-        current_block: SMOKE_CURRENT_BLOCK,
-        block_timestamp: SMOKE_BLOCK_TIMESTAMP,
-        block_priority_fees: None,
+        block: smoke_block(&provider),
+        deployment: &deployment,
     };
 
     // 2. Build the in-memory DB + apply overrides (owner, executor, WETH
@@ -376,10 +379,23 @@ pub fn simulate_in_process_success_probe(
     let mut cache_db = ::evm2::evm::InMemoryDB::default();
     degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
         &mut cache_db,
-        &ctx.override_params(),
+        &ctx.deployment.override_params(),
     );
 
-    // 3. Deploy the supporting contracts (Multicall3 + gift).
+    // 3. Deploy the supporting contracts (Multicall3 + gift + the settlement
+    //    bundle's readable-zero stand-ins). WETH9 and the PoolManager exist on
+    //    chain, so their `balanceOf` reads return a 32-byte word; without code
+    //    there the reading is honestly ABSENT, never a fabricated zero.
+    for settlement in [SMOKE_WETH, SMOKE_PM] {
+        cache_db.insert_account_info(
+            &settlement,
+            ::evm2::evm::AccountInfo::default().with_nonce(1).with_code(
+                ::evm2::bytecode::Bytecode::new_raw(alloy::primitives::Bytes::from_static(
+                    &ZERO_WORD_BYTECODE,
+                )),
+            ),
+        );
+    }
     cache_db.insert_account_info(
         &SMOKE_MULTICALL3,
         ::evm2::evm::AccountInfo::default().with_nonce(1).with_code(

@@ -735,7 +735,13 @@ fn leaf_reports_an_assessment_that_needs_absent_evidence() {
             .expect_err("no Prepaid event was emitted")
     });
     assert!(
-        matches!(error, ProductionSimError::Assess(AssessError::Evidence(_))),
+        matches!(
+            error,
+            ProductionSimError::Assess {
+                source: AssessError::Evidence(_),
+                ..
+            }
+        ),
         "{error:?}"
     );
 }
@@ -986,7 +992,13 @@ fn leaf_reports_a_non_word_call_read_as_an_assessment_evidence_error() {
                 .expect_err("a non-word read is absent evidence")
         });
         assert!(
-            matches!(error, ProductionSimError::Assess(AssessError::Evidence(_))),
+            matches!(
+                error,
+                ProductionSimError::Assess {
+                    source: AssessError::Evidence(_),
+                    ..
+                }
+            ),
             "{label}: {error:?}"
         );
     }

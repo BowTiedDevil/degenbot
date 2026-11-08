@@ -38,7 +38,6 @@ use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
 use degenbot_execution::{HopInfo, PathInfo};
-use degenbot_executor::composers::EncodeOptions;
 use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
@@ -151,11 +150,14 @@ pub const MAX_SIMULATE_CONCURRENT: usize = 50;
 /// operator's inspect surface.
 pub const MIN_PROFIT_NET: u128 = 1;
 
-/// The gas-profitability predicate — the one dispatch-floor comparison both
-/// dispatch arms route through: the FFI batch fan-out (step 8 below) and the
-/// inline-payload join. A net profit that reaches [`MIN_PROFIT_NET`] is
-/// submitted; anything below it is tallied gas-unprofitable. Keeping the
-/// comparison here keeps it out of either adapter.
+/// The gas-profitability predicate — the dispatch-floor half of the submit
+/// decision, and the one home for it: the FFI batch fan-out (step 8 below) and
+/// the inline-payload join both route through it. Keeping the comparison here
+/// keeps it out of either adapter.
+///
+/// The floor alone does not make a result submittable: the deployment's own
+/// assessment verdict must have passed too ([`SimResult::is_submittable`]).
+/// A result below the floor is tallied gas-unprofitable.
 #[must_use]
 pub fn is_gas_profitable(net_profit: U256) -> bool {
     net_profit >= U256::from(MIN_PROFIT_NET)
@@ -261,10 +263,8 @@ pub struct DispatchCandidate {
     pub steps: Box<[SolveStep]>,
     /// `solve_block` — the block the solver produced the result on.
     pub solve_block: u64,
-    /// `path_info` — the resolved path hops (consumed by `encode_cmd_stream`).
+    /// `path_info` — the resolved path hops the deployment's Encode part encodes.
     pub path_info: PathInfo,
-    /// `opts` — the encode options (`erc6909_profit` / `use_v4_batch`).
-    pub opts: EncodeOptions,
 }
 
 impl DispatchCandidate {
@@ -285,7 +285,6 @@ impl DispatchCandidate {
             steps: self.steps.clone(),
             path_info: self.path_info.clone(),
             solve_block: self.solve_block,
-            opts: self.opts,
         }
     }
 }
@@ -296,11 +295,15 @@ impl DispatchCandidate {
 /// struct exposes the typed buckets it renders.
 #[derive(Debug, Default)]
 pub struct DispatchOutcome {
-    /// Gas-profitable results (net ≥ [`MIN_PROFIT_NET`]), sorted by net profit
-    /// descending.
+    /// Submittable results: the deployment's assessment passed AND the net
+    /// clears [`MIN_PROFIT_NET`] ([`SimResult::is_submittable`]), sorted by net
+    /// profit descending.
     pub gas_profitable: Vec<SimResult>,
-    /// Onchain-valid but gas-unprofitable (gross > 0, net below threshold),
-    /// sorted by net profit descending.
+    /// Returned but not submittable, sorted by net profit descending: the
+    /// gross-positive rows that either fell below the gas floor or whose
+    /// deployment assessment declined them. A failed assessment stays visible
+    /// here — the same "every gross-profitable path stays visible" policy —
+    /// instead of vanishing at the sim seam.
     pub gas_unprofitable: Vec<SimResult>,
     /// The number of candidates that raised an exception during simulation.
     pub exception_count: usize,
@@ -386,9 +389,10 @@ impl DispatchOutcome {
 ///    failure, record divergence for the diverging hop's pool key (derived
 ///    from `path_info.hops[i]`); the NEXT block's skip (step 2) drops paths
 ///    through it pre-sim.
-/// 8. **Categorize** — gas-profitable (`net ≥ MIN_PROFIT_NET`) /
-///    gas-unprofitable (`None`-filtered, gross > 0, net below threshold) /
-///    exception. Sort both categories by net profit descending.
+/// 8. **Categorize** — gas-profitable (the deployment's assessment passed and
+///    `net ≥ MIN_PROFIT_NET`) / gas-unprofitable (returned, gross > 0, but
+///    below the floor or declined by the deployment's verdict) / exception.
+///    Sort both categories by net profit descending.
 /// 9. **Record suppression outcomes** — `record_success(pid)` for paths that
 ///    returned a result, `record_failure(pid)` for paths that didn't.
 ///
@@ -701,7 +705,7 @@ pub fn dispatch_profitable_results(
                 .iter()
                 .map(|c| c.solve_block)
                 .max()
-                .unwrap_or(ctx.current_block);
+                .unwrap_or(ctx.block.current_block);
             // The engine fan-out (ADR-089 cutover — the revm arm retired):
             // `Evm2BlockSimHandle` + the seam drive every candidate. The
             // warm-cache owner wires at the bot level; until then this uses
@@ -735,7 +739,7 @@ pub fn dispatch_profitable_results(
                 // (never across provider I/O). A failed read degrades to the
                 // number-only anchor — the pre-fence scope, never a wrong one.
                 let read_anchor =
-                    degenbot_simulation::sim::resolve_read_anchor(ctx.provider, sim_block);
+                    degenbot_simulation::sim::resolve_read_anchor(ctx.block.provider, sim_block);
                 // The per-anchor memo, the session's cross-block hot-slot
                 // store, and the durable per-hook slot-set store are all owned
                 // by the warm-cache owner; taken together under one short read
@@ -781,14 +785,15 @@ pub fn dispatch_profitable_results(
                 // quote has learned yet — joins nothing, which is the cold start
                 // this lane pays down.
                 let prefetch = degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
-                    ctx.provider,
+                    ctx.block.provider,
                     sim_block,
                     candidates.iter().map(|c| &c.path_info),
                     &degenbot_simulation::sim::prefetch::FamilySlotLayout::PRODUCTION,
+                    // The deployment declares its own settlement identities (the
+                    // built-in executor's WETH + PoolManager); a foreign
+                    // deployment declares none and derives only path words.
                     &degenbot_simulation::sim::prefetch::PrefetchFacts {
-                        weth_address: ctx.weth_address,
-                        pool_manager_address: Some(ctx.pool_manager_address),
-                        warmup: ctx.warmup,
+                        settlement: ctx.deployment.settlement(),
                     },
                     degenbot_simulation::sim::LearnedSets {
                         hot: &hot_slots,
@@ -825,11 +830,11 @@ pub fn dispatch_profitable_results(
                     },
                 );
                 match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build(
-                    ctx.provider,
-                    ctx.base_fee_next,
+                    ctx.block.provider,
+                    ctx.block.base_fee_next,
                     sim_block,
-                    ctx.block_timestamp,
-                    &ctx.override_params(),
+                    ctx.block.block_timestamp,
+                    &ctx.deployment.override_params(),
                     &anchor,
                     &evm2_warm_cache,
                     Some(&storage_memo),
@@ -926,7 +931,7 @@ pub fn dispatch_profitable_results(
         match result {
             Ok(Some(r)) => {
                 succeeded_path_ids.insert(pid);
-                if is_gas_profitable(r.net_profit) {
+                if r.is_submittable() {
                     outcome.gas_profitable.push(r);
                 } else {
                     outcome.gas_unprofitable.push(r);
@@ -1109,8 +1114,11 @@ mod tests {
     use alloy::rpc::client::ClientBuilder;
     use alloy::transports::mock::{Asserter, MockTransport};
     use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
-    use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
+    use degenbot_executor::composers::EncodeOptions;
     use degenbot_rpc::provider::AlloyProvider;
+
+    use crate::cmd_executor::CmdExecutorBinding;
+    use crate::deployment::{SimulationBlock, SimulationDeployment};
     use std::sync::{Arc, Mutex};
 
     const OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e");
@@ -1127,30 +1135,48 @@ mod tests {
         )
     }
 
-    fn warmup() -> WarmupSlots {
-        compute_simulation_warmup_slots(EXECUTOR, WETH)
+    /// The built-in `cmd_executor` binding every fan-out test injects.
+    fn binding() -> CmdExecutorBinding {
+        CmdExecutorBinding::new(
+            OWNER,
+            EXECUTOR,
+            WETH,
+            PM,
+            MULTICALL3,
+            EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: false,
+                ..EncodeOptions::default()
+            },
+        )
     }
 
-    fn ctx(provider: &AlloyProvider) -> SimulateContext<'_> {
+    /// The built-in deployment with `runtime` installed at the executor address
+    /// (the tests' declared code override).
+    #[expect(clippy::expect_used)] // the declared override names the executor
+    fn deployment(runtime: Bytes) -> SimulationDeployment {
+        binding()
+            .injected(EXECUTOR, runtime)
+            .expect("the declared override names the executor")
+    }
+
+    fn ctx<'a>(
+        provider: &'a AlloyProvider,
+        deployment: &'a SimulationDeployment,
+    ) -> SimulateContext<'a> {
         SimulateContext {
-            provider,
-            executor_owner: OWNER,
-            executor_address: EXECUTOR,
-            weth_address: WETH,
-            pool_manager_address: PM,
-            multicall3_address: MULTICALL3,
-            inject_code: true,
-            injected_address: Some(EXECUTOR),
-            runtime_bytecode: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            warmup: warmup(),
-            base_fee_next: 1_000_000_000u128, // 1 gwei
-            current_block: 100,
-            block_timestamp: 0,
-            block_priority_fees: Some(BlockPriorityFees {
-                block: 100,
-                p10: U256::from(500_000_000u64),   // 0.5 gwei
-                p50: U256::from(2_000_000_000u64), // 2 gwei
-            }),
+            block: SimulationBlock {
+                provider,
+                base_fee_next: 1_000_000_000u128, // 1 gwei
+                current_block: 100,
+                block_timestamp: 0,
+                block_priority_fees: Some(BlockPriorityFees {
+                    block: 100,
+                    p10: U256::from(500_000_000u64),   // 0.5 gwei
+                    p50: U256::from(2_000_000_000u64), // 2 gwei
+                }),
+            },
+            deployment,
         }
     }
 
@@ -1198,11 +1224,6 @@ mod tests {
             }]),
             solve_block: 100,
             path_info: single_v2_hop(pool),
-            opts: EncodeOptions {
-                erc6909_profit: false,
-                use_v4_batch: false,
-                ..Default::default()
-            },
         }
     }
 
@@ -1225,11 +1246,6 @@ mod tests {
             ]),
             solve_block: 100,
             path_info: two_v2_hops(),
-            opts: EncodeOptions {
-                erc6909_profit: false,
-                use_v4_batch: false,
-                ..Default::default()
-            },
         }
     }
 
@@ -1259,46 +1275,25 @@ mod tests {
 
     #[test]
     #[expect(clippy::expect_used)] // in-range axes; a fail-closed panic is the test contract
-    fn erc6909_candidate_option_reaches_intake_and_mode2_config() {
-        // The operator's `erc6909_profit` flag must survive the full
-        // production projection — DispatchCandidate → `to_simulate_path` →
-        // `encode_request` (the ADR-033 intake) — resolving through
-        // `resolve_axes` to the `Erc6909` capture axis and packing
+    fn erc6909_option_reaches_the_binding_and_mode2_config() {
+        // The operator's `erc6909_profit` flag must survive the production
+        // projection — the injected deployment binding's encode policy is the
+        // ONE authority (a candidate carries no second copy) — resolving
+        // through `resolve_axes` to the `Erc6909` capture axis and packing
         // `profit_mode=2` (the on-chain ERC6909 WETH floor the profit assert
-        // runs under). This pins the chain end-to-end so the ADR-033
-        // reshape cannot silently drop the knob.
-        let cand = DispatchCandidate {
-            path_id: 42,
-            optimal_input: 1_000_000_000_000_000_000u128,
-            engine_profit: 1_000,
-            steps: Box::new([
-                SolveStep {
-                    output: 1_100_000_000_000_000_000u128,
-                    consumed_input: 1_000_000_000_000_000_000u128,
-                    state_nonce: 0,
-                },
-                SolveStep {
-                    output: 1_300_000_000_000_000_000u128,
-                    consumed_input: 1_100_000_000_000_000_000u128,
-                    state_nonce: 0,
-                },
-            ]),
-            solve_block: 100,
-            path_info: two_v2_hops(),
-            opts: EncodeOptions {
-                erc6909_profit: true,
-                ..Default::default()
-            },
+        // runs under).
+        let opts = EncodeOptions {
+            erc6909_profit: true,
+            ..EncodeOptions::default()
         };
-        let path = cand.to_simulate_path();
-        // kwarg → SimulatePath.opts (unchanged across the ADR-033 reshape):
+        let adapter =
+            CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, PM, MULTICALL3, opts).adapter();
         assert!(
-            path.opts.erc6909_profit,
-            "candidate opts must reach SimulatePath"
+            adapter.binding().opts().erc6909_profit,
+            "the binding carries the operator's erc6909 axis"
         );
-        let req = path.encode_request();
         // → resolve_axes: the legacy bool forces the Erc6909 capture axis.
-        let (_, capture, _) = degenbot_executor::composers::resolve_axes(req.opts);
+        let (_, capture, _) = degenbot_executor::composers::resolve_axes(opts);
         assert!(
             matches!(
                 capture,
@@ -1307,7 +1302,7 @@ mod tests {
             "erc6909_profit must resolve to the Erc6909 capture axis"
         );
         // → the axis-aware packed config: profit_mode=2 (Erc6909 WETH assert).
-        let cfg = degenbot_executor::composers::config_for_options(req.opts, U256::ZERO)
+        let cfg = degenbot_executor::composers::config_for_options(opts, U256::ZERO)
             .expect("axes in range");
         assert_eq!(
             cfg & U256::from(255u64),
@@ -1318,13 +1313,11 @@ mod tests {
 
     #[test]
     #[expect(clippy::expect_used)] // in-range axes; a fail-closed panic is the test contract
-    fn custody_candidate_defaults_to_mode1_assert() {
+    fn custody_defaults_to_mode1_assert() {
         // Control: the default (no operator toggle) runs the ACTIVE
         // WETH+ETH profit assert, not the old profit_mode=0 fast path.
-        let cand = candidate(43, 1_000, 100);
-        let path = cand.to_simulate_path();
-        let req = path.encode_request();
-        let cfg = degenbot_executor::composers::config_for_options(req.opts, U256::ZERO)
+        let opts = EncodeOptions::default();
+        let cfg = degenbot_executor::composers::config_for_options(opts, U256::ZERO)
             .expect("axes in range");
         assert_eq!(
             cfg & U256::from(255u64),
@@ -1469,10 +1462,11 @@ mod tests {
                 candidate(40, 1_000_000_000_000_000_000u128, 1_000),
                 candidate(41, 1_000_000_000_000_000_000u128, 1_000),
             ];
+            let deployment = deployment(Bytes::from_static(&[0xfe]));
             rt.block_on(async {
                 dispatch_profitable_results(
                     cands,
-                    &ctx(&provider),
+                    &ctx(&provider, &deployment),
                     &suppression,
                     100,
                     0,
@@ -1800,11 +1794,10 @@ mod tests {
             moved_members,
         ) = std::thread::spawn(move || {
             rt.block_on(async {
-                let mut the_ctx = ctx(&provider);
-                the_ctx.runtime_bytecode = Bytes::from_static(&[0xfe]); // INVALID
+                let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
                 let first = dispatch_profitable_results(
                     cands.clone(),
-                    &the_ctx,
+                    &ctx(&provider, &deployment),
                     &suppression,
                     100,
                     0,
@@ -1817,7 +1810,7 @@ mod tests {
                 let first_members = recorder.storage_members();
                 let _second = dispatch_profitable_results(
                     cands,
-                    &the_ctx,
+                    &ctx(&provider, &deployment),
                     &suppression,
                     100,
                     0,
@@ -1829,7 +1822,7 @@ mod tests {
                 let second_batches = recorder.storage_batches();
                 let moved_run = dispatch_profitable_results(
                     moved,
-                    &the_ctx,
+                    &ctx(&provider, &deployment),
                     &suppression,
                     101,
                     0,
@@ -1934,12 +1927,11 @@ mod tests {
         let (first_members, shared_batches, reorg_batches, reorg_members, reads, reorg_run) =
             std::thread::spawn(move || {
                 rt.block_on(async {
-                    let mut the_ctx = ctx(&provider);
-                    the_ctx.runtime_bytecode = Bytes::from_static(&[0xfe]); // INVALID
+                    let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
 
                     let _first = dispatch_profitable_results(
                         cands.clone(),
-                        &the_ctx,
+                        &ctx(&provider, &deployment),
                         &suppression,
                         100,
                         0,
@@ -1955,7 +1947,7 @@ mod tests {
                     // fan-out dispatches no batch at all.
                     let _second = dispatch_profitable_results(
                         cands.clone(),
-                        &the_ctx,
+                        &ctx(&provider, &deployment),
                         &suppression,
                         100,
                         0,
@@ -1971,7 +1963,7 @@ mod tests {
                     recorder.reorg_at_same_height(B256::new([0xb2; 32]));
                     let reorg_run = dispatch_profitable_results(
                         cands,
-                        &the_ctx,
+                        &ctx(&provider, &deployment),
                         &suppression,
                         100,
                         0,
@@ -2044,12 +2036,11 @@ mod tests {
             .build()
             .expect("multi-thread runtime");
         let sim_thread = std::thread::spawn(move || {
-            let mut the_ctx = ctx(&provider);
-            the_ctx.runtime_bytecode = Bytes::from_static(&[0xfe]); // INVALID
+            let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
             rt.block_on(async {
                 dispatch_profitable_results(
                     cands,
-                    &the_ctx,
+                    &ctx(&provider, &deployment),
                     &suppression,
                     100,
                     0,
@@ -2114,9 +2105,10 @@ mod tests {
             candidate(40, 1_000_000_000_000_000_000u128, 1_000),
             candidate(41, 1_000_000_000_000_000_000u128, 1_000),
         ];
+        let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
         let outcome = dispatch_profitable_results(
             cands,
-            &ctx(&provider),
+            &ctx(&provider, &deployment),
             &suppression,
             100,
             0,
@@ -2181,9 +2173,10 @@ mod tests {
             candidate_through_pool(50, POOL_A), // divergent → dropped pre-sim
             candidate_through_pool(51, POOL_B), // clean → reaches sim
         ];
+        let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
         let outcome = dispatch_profitable_results(
             cands,
-            &ctx(&provider),
+            &ctx(&provider, &deployment),
             &suppression,
             100,
             0,
@@ -2235,9 +2228,10 @@ mod tests {
             60,
             address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
         )];
+        let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
         let outcome = dispatch_profitable_results(
             cands,
-            &ctx(&provider),
+            &ctx(&provider, &deployment),
             &suppression,
             100,
             0,
@@ -2275,11 +2269,6 @@ mod tests {
             steps: Box::new([]),
             solve_block: 100,
             path_info: path.clone(),
-            opts: EncodeOptions {
-                erc6909_profit: false,
-                use_v4_batch: false,
-                ..Default::default()
-            },
         };
         // Deliberately passed in a non-sorted order, with a profit tie (100).
         let mut cands = vec![mk(10, 100), mk(5, 500), mk(9, 100), mk(20, 300)];

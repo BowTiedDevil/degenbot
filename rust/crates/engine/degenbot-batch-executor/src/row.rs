@@ -10,7 +10,6 @@ use crate::record::FailureDetail;
 use alloy::primitives::U256;
 use degenbot_arbitrage::{CapturedSwap, DispatchCandidate, SimResult, SolveStep};
 use degenbot_execution::PathInfo;
-use degenbot_executor::composers::EncodeOptions;
 
 /// One raw engine-result row — the solver's result for one path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +44,7 @@ impl RawResult {
     /// (a length mismatch against the RESOLVED hop count is the loud-abort
     /// shape check the assembly stage applies BEFORE this builder runs).
     #[must_use]
-    pub fn to_candidate(&self, path_info: PathInfo, opts: EncodeOptions) -> DispatchCandidate {
+    pub fn to_candidate(&self, path_info: PathInfo) -> DispatchCandidate {
         let count = self
             .hop_outputs
             .len()
@@ -65,7 +64,6 @@ impl RawResult {
             steps: steps.into_boxed_slice(),
             solve_block: self.solve_block,
             path_info,
-            opts,
         }
     }
 }
@@ -129,6 +127,11 @@ impl PayloadRow {
             execute_calldata: self.execute_calldata.clone(),
             access_list: self.access_list.clone(),
             captured_swaps: self.captured_swaps.clone(),
+            // The payload arm carries a deployment the engine already assessed.
+            // The built-in deployment is the one that opts into market-aware
+            // sizing, and its verdict IS the dispatch floor, so the floor
+            // comparison reconstructs the same pass flag the fan-out stored.
+            passed: degenbot_arbitrage::is_gas_profitable(self.net_profit),
             hop_count: 0,
         }
     }

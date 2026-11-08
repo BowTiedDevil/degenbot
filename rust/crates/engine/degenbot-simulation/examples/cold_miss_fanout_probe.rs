@@ -1459,9 +1459,11 @@ fn main() {
     // executor slots are not named here (a production session always names it);
     // the frame never reads them either way.
     let facts = PrefetchFacts {
-        weth_address: weth,
-        pool_manager_address: None,
-        warmup: degenbot_executor::compute_simulation_warmup_slots(executor, weth),
+        settlement: Some(degenbot_simulation::SettlementWarmup {
+            weth_address: weth,
+            pool_manager_address: None,
+            slots: degenbot_executor::compute_simulation_warmup_slots(executor, weth),
+        }),
     };
     // The corpus's pools are the harness `Pair` stub, whose layout is
     // token0@0 / token1@1 / reserves@2 — the canonical Uniswap pair (6/7/8) is

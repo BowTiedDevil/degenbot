@@ -122,17 +122,20 @@ async fn offline_executor(resolver: HashMap<u64, degenbot::execution::PathInfo>)
             divergence: Arc::new(Mutex::new(degenbot::arbitrage::PoolDivergence::new())),
             fot: Arc::new(Mutex::new(degenbot::arbitrage::FeeOnTransferRegistry::new())),
             provider: Arc::new(provider),
-            executor_owner: degenbot::core::address_utils::parse_address(
-                "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-            )
-            .unwrap(),
+            binding: degenbot::arbitrage::CmdExecutorBinding::new(
+                degenbot::core::address_utils::parse_address(
+                    "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                )
+                .unwrap(),
+                executor_address,
+                weth,
+                alloy::primitives::Address::ZERO,
+                alloy::primitives::Address::ZERO,
+                degenbot::cmd_executor::composers::EncodeOptions::default(),
+            ),
             executor_address,
-            weth_address: weth,
-            pool_manager_address: alloy::primitives::Address::ZERO,
-            multicall3_address: alloy::primitives::Address::ZERO,
             injected_address: None,
             runtime_bytecode: alloy::primitives::Bytes::new(),
-            warmup: degenbot::cmd_executor::compute_simulation_warmup_slots(executor_address, weth),
             bot_state: None,
             warm_cache: None,
             dispatcher: Arc::new(Mutex::new(Dispatcher::for_block(0))),

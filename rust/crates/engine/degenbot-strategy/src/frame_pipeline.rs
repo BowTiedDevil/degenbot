@@ -561,16 +561,16 @@ pub async fn build_block_handle<'a>(
     let base_fee = u128::from(block.header.base_fee_per_gas.unwrap_or(0));
     let override_params = SimulationOverrideParams {
         owner: Address::ZERO,
-        inject_code: false,
-        injected_address: None,
-        runtime_bytecode: Bytes::new(),
-        warmup: degenbot_executor::WarmupSlots {
-            weth_balance: U256::ZERO,
-            erc6909_weth: U256::ZERO,
-            erc6909_native: U256::ZERO,
-        },
-        weth_address: execution.weth(),
-        pool_manager_address: execution.pool_manager(),
+        code: None,
+        settlement: Some(degenbot_simulation::SettlementWarmup {
+            weth_address: execution.weth(),
+            pool_manager_address: Some(execution.pool_manager()),
+            slots: degenbot_executor::WarmupSlots {
+                weth_balance: U256::ZERO,
+                erc6909_weth: U256::ZERO,
+                erc6909_native: U256::ZERO,
+            },
+        }),
     };
     Evm2BlockSimHandle::build(
         provider,

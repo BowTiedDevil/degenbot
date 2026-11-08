@@ -41,10 +41,10 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
+    simulate_in_process_with_db, CmdExecutorBinding, FailBuckets, SimulateContext, SimulatePath,
+    SimulationBlock, SolveStep,
 };
 use degenbot::cmd_executor::composers::EncodeOptions;
-use degenbot::cmd_executor::compute_simulation_warmup_slots;
 use degenbot::db::snapshot_db::SnapshotDb;
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::execution::{HopInfo, PathInfo, V2HopInfo};
@@ -779,8 +779,10 @@ fn registration_lifecycle_standalone_slice() {
 /// gift contract; the gift (`CALLER SELFDESTRUCT`) sends 1 ETH to the
 /// executor → `gross_profit = 1 ETH` → non-None `SimResult`. Multicall3
 /// bytecode (`getEthBalance`) deployed so the pre/post balance reads return
-/// real ETH balances. No RPC — `CacheDB<EmptyDB>` + a mock provider with an
-/// empty queue.
+/// real ETH balances, and the WETH9 / `PoolManager` readable-zero stand-ins
+/// deployed so their `balanceOf` reads answer one zero word the way the
+/// deployed chain contracts do. No RPC — `CacheDB<EmptyDB>` + a mock provider
+/// with an empty queue.
 #[expect(clippy::too_many_lines)]
 fn in_process_sim_standalone_slice() {
     const OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e");
@@ -796,6 +798,14 @@ fn in_process_sim_standalone_slice() {
     const POOL_C: Address = address!("cccccccccccccccccccccccccccccccccccccccc");
     const GIFT: Address = address!("dddddddddddddddddddddddddddddddddddddddd");
     const ONE_ETH: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
+    /// A contract answering every call with one ABI word of zero — the
+    /// settlement bundle's readable-zero stand-in. WETH9 and the `PoolManager`
+    /// exist on chain, so their `balanceOf` reads return a 32-byte word; a
+    /// fixture with no code at those addresses reports an ABSENT reading
+    /// (honest evidence, never a fabricated zero) and the settlement
+    /// assessment has nothing to rule on.
+    const ZERO_WORD_BYTECODE: [u8; 10] =
+        [0x60, 0x00, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3];
     /// Multicall3.getEthBalance(address) → `address.balance`.
     const MULTICALL3_BYTECODE: [u8; 12] = [
         0x60, 0x04, 0x35, 0x31, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
@@ -818,26 +828,40 @@ fn in_process_sim_standalone_slice() {
     let provider = degenbot::rpc::provider::AlloyProvider::from_provider(
         Arc::new(dyn_provider) as Arc<dyn Provider<Ethereum>>
     );
-    let warmup = compute_simulation_warmup_slots(EXECUTOR, WETH);
+    let deployment = CmdExecutorBinding::new(
+        OWNER,
+        EXECUTOR,
+        WETH,
+        PM,
+        MULTICALL3,
+        EncodeOptions::default(),
+    )
+    .injected(EXECUTOR, Bytes::from(executor_bc))
+    .expect("the declared override names the executor");
     let ctx = SimulateContext {
-        provider: &provider,
-        executor_owner: OWNER,
-        executor_address: EXECUTOR,
-        weth_address: WETH,
-        pool_manager_address: PM,
-        multicall3_address: MULTICALL3,
-        inject_code: true,
-        injected_address: Some(EXECUTOR),
-        runtime_bytecode: Bytes::from(executor_bc),
-        warmup,
-        base_fee_next: 1_000_000_000u128,
-        current_block: 100,
-        block_timestamp: 0,
-        block_priority_fees: None,
+        block: SimulationBlock {
+            provider: &provider,
+            base_fee_next: 1_000_000_000u128,
+            current_block: 100,
+            block_timestamp: 0,
+            block_priority_fees: None,
+        },
+        deployment: &deployment,
     };
 
     let mut cache_db = InMemoryDB::default();
-    apply_simulation_overrides(&mut cache_db, &ctx.override_params());
+    apply_simulation_overrides(&mut cache_db, &ctx.deployment.override_params());
+    // Deploy the settlement contracts' readable-zero stand-ins (see
+    // `ZERO_WORD_BYTECODE`): the settlement probes read WETH9 and the
+    // PoolManager, which hold code on chain.
+    for settlement in [WETH, PM] {
+        cache_db.insert_account_info(
+            &settlement,
+            AccountInfo::default()
+                .with_nonce(1)
+                .with_code(Bytecode::new_raw(Bytes::from(ZERO_WORD_BYTECODE.to_vec()))),
+        );
+    }
     cache_db.insert_account_info(
         &MULTICALL3,
         AccountInfo::default()
@@ -883,18 +907,19 @@ fn in_process_sim_standalone_slice() {
             }),
         ]),
         solve_block: 100,
-        opts: EncodeOptions {
-            erc6909_profit: false,
-            use_v4_batch: false,
-            ..Default::default()
-        },
     };
     let mut buckets = FailBuckets::new();
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets)
         .expect("standalone: in-process sim over CacheDB<EmptyDB> cannot RPC-fail");
-    let sim = result.expect(
-        "standalone: the SELFDESTRUCT-gift fixture must produce a non-None SimResult (gross_profit = 1 ETH)",
-    );
+    // A `None` names the failure bucket that classified this path, so a
+    // fixture regression reports WHY the closed-form 1 ETH never landed.
+    let sim = result.unwrap_or_else(|| {
+        panic!(
+            "standalone: the SELFDESTRUCT-gift fixture must produce a non-None SimResult (gross_profit = 1 ETH); buckets={:?} failures={:?}",
+            buckets.buckets(),
+            buckets.failures()
+        )
+    });
     assert_eq!(
         sim.gross_profit, ONE_ETH,
         "standalone: gross_profit must be 1 ETH (closed form)"

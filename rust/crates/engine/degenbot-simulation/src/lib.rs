@@ -3,12 +3,14 @@
 //! ADR-019 D4/D7 (decision R — strategy/engine separation): this crate owns
 //! the **engine** (`Evm2BlockSimHandle`, the settle verb `Evm2SimSession::run`,
 //! the layered DB, `apply_simulation_overrides`, `CollectedSlots`,
-//! `WarmCodeCache`). The **strategy** — the 7-call pre/post-balance bundle,
-//! `compute_priority_fee`, `decode_balance`, `SimResult`,
-//! `dispatch_profitable_results`, `SimulateContext`, `SimulatePath`,
-//! `FailBuckets`, the calldata builders — relocated to the
+//! `WarmCodeCache`). The **strategy** — the settlement balance bundle,
+//! `compute_priority_fee`, `SimResult`, `dispatch_profitable_results`, the
+//! simulation composition boundary (`SimulateContext` / `SimulationBlock` /
+//! `SimulationDeployment`), `SimulatePath`, `FailBuckets`, the built-in
+//! `cmd_executor` binding + its calldata builders — lives in the
 //! `degenbot-arbitrage` crate, which drives the engine through
-//! [`Evm2BlockSimHandle::session`].
+//! [`Evm2BlockSimHandle::session`] and the adapter-driven production leaf
+//! ([`simulate_transaction`]).
 //!
 //! # Standalone-Rust consumer
 //!
@@ -78,8 +80,9 @@ pub use sim::evm2::v4_black_box::{
 };
 pub use sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 pub use sim::{
-    divergence_probe, simulate_opportunity, simulate_transaction, BaseFeeSource, FrameRpcCounter,
-    HotSlotStore, ProductionSimContext, ProductionSimError, ProductionSimulation, ReplayFrameError,
-    ReplayableTx, RunVerdict, ScratchBlock, SequenceReplayError, SimulationOverrideParams,
-    StorageMemo, StorageMemoCache, PROBE_CALL_GAS_LIMIT,
+    divergence_probe, simulate_opportunity, simulate_transaction, BaseFeeSource, DeclaredCode,
+    FrameRpcCounter, HotSlotStore, ProductionSimContext, ProductionSimError, ProductionSimulation,
+    ReplayFrameError, ReplayableTx, RunVerdict, ScratchBlock, SequenceReplayError,
+    SettlementWarmup, SimulationCapture, SimulationOverrideParams, StepReading, StorageMemo,
+    StorageMemoCache, PROBE_CALL_GAS_LIMIT,
 };
