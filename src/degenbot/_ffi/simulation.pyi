@@ -466,7 +466,6 @@ class SimulateContext:
         executor_address: str,
         weth_address: str,
         pool_manager_address: str,
-        multicall3_address: str,
         inject_code: bool,
         injected_address: str | None = None,
         executor_runtime_path: str | None = None,
@@ -483,10 +482,10 @@ class SimulateContext:
                 `from` of `execute()` + the owner funded with ETH in
                 `stateOverrides`.
             `executor_address`: the `cmd_executor` contract address (hex) — the
-                `execute()` target + the balance-diff subject.
+                `execute()` target, i.e. the receipt's subject. No balances are
+                read: the contract reports its own profit.
             `weth_address`: WETH9 contract address (hex).
             `pool_manager_address`: Uniswap V4 `PoolManager` address (hex).
-            `multicall3_address`: Multicall3 contract address (hex).
             `inject_code`: whether to inject the executor runtime bytecode
                 (the `simulation.inject_executor_code` stance).
             `injected_address`: the fresh address to inject the executor at
@@ -762,9 +761,8 @@ def simulate_in_process_success_probe(path_id: SupportsIndex) -> dict:
 
     The fixture (identical to the Rust `parity_evm_sim.rs` test): the executor
     stub bytecode CALLs a gift contract; the gift `SELFDESTRUCT`s to the
-    executor (`CALLER`), sending its 1 ETH balance → `gross_profit = 1 ETH` →
-    a non-None `SimResult`. Multicall3 bytecode is deployed so `getEthBalance`
-    returns real ETH balances (the pre/post balance reads).
+    executor (`CALLER`), sending its 1 ETH balance, and the stub returns the
+    receipt `(1 ETH, 0)` → `gross_profit = 1 ETH` → a non-None `SimResult`.
 
     The caller supplies only `path_id` (round-trips through the FFI); every
     other fixture detail is hardcoded to mirror the Rust parity test.

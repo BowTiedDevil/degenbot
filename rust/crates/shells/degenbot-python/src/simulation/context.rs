@@ -2,11 +2,11 @@
 //! once per `BotRunner` and reuses across every block's sim fan-out.
 //!
 //! Mirrors `PyDispatcher::for_block`'s "construct once, drive many" shape, but
-//! longer-lived: the executor/weth/pm/multicall addresses + the inject flag +
-//! the runtime bytecode + the precomputed [`WarmupSlots`] do not vary per
-//! block. The per-block parts (`base_fee_next` / `current_block` /
-//! `block_priority_fees`) are call-args, not fields here — they are stitched
-//! into a borrowed `SimulateContext<'_>` at call time.
+//! longer-lived: the executor / owner / `WETH` / `PoolManager` addresses + the
+//! inject flag + the runtime bytecode do not vary per block. The per-block parts
+//! (`base_fee_next` / `current_block` / `block_priority_fees`) are call-args, not
+//! fields here — they are stitched into a borrowed `SimulateContext<'_>` at call
+//! time.
 //!
 //! The runtime bytecode's provenance is the engine's
 //! (`degenbot_arbitrage::executor_runtime`): this seam carries the two operator
@@ -52,7 +52,7 @@ pub struct PySimulateContext {
     /// `SimulateContext<'_>.provider` borrows `&*this`.
     pub(crate) provider: Arc<AlloyProvider>,
     /// The built-in settlement deployment binding: the executor / WETH /
-    /// `PoolManager` / Multicall3 identities plus the session's encode policy.
+    /// `PoolManager` identities plus the session's encode policy.
     /// The warmup math and the runtime-artifact selection are the binding's, so
     /// this seam carries no second copy of either.
     pub(crate) binding: CmdExecutorBinding,
@@ -96,10 +96,10 @@ impl PySimulateContext {
     ///         `from` of `execute()` + the owner funded with ETH in
     ///         `stateOverrides`.
     ///     `executor_address`: the `cmd_executor` contract address (hex) — the
-    ///         `execute()` target + the balance-diff subject.
+    ///         `execute()` target, i.e. the receipt's subject. No balances are
+    ///         read: the contract reports its own profit.
     ///     `weth_address`: WETH9 contract address (hex).
     ///     `pool_manager_address`: Uniswap V4 `PoolManager` address (hex).
-    ///     `multicall3_address`: Multicall3 contract address (hex).
     ///     `inject_code`: whether to inject the executor runtime bytecode
     ///         (the `simulation.inject_executor_code` stance).
     ///     `injected_address`: the fresh address to inject the executor at
@@ -125,8 +125,7 @@ impl PySimulateContext {
     #[new]
     #[pyo3(signature = (
         provider, executor_owner, executor_address, weth_address, pool_manager_address,
-        multicall3_address, inject_code, injected_address=None, executor_runtime_path=None,
-        contracts_dir=None,
+        inject_code, injected_address=None, executor_runtime_path=None, contracts_dir=None,
     ))]
     #[expect(clippy::too_many_arguments)]
     fn new(
@@ -135,7 +134,6 @@ impl PySimulateContext {
         executor_address: &str,
         weth_address: &str,
         pool_manager_address: &str,
-        multicall3_address: &str,
         inject_code: bool,
         injected_address: Option<&str>,
         executor_runtime_path: Option<&str>,
@@ -150,8 +148,6 @@ impl PySimulateContext {
             .map_err(|e| PyValueError::new_err(format!("Invalid weth_address: {e}")))?;
         let pm = parse_address(pool_manager_address)
             .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager_address: {e}")))?;
-        let multicall = parse_address(multicall3_address)
-            .map_err(|e| PyValueError::new_err(format!("Invalid multicall3_address: {e}")))?;
 
         let injected = match injected_address {
             Some(s) => Some(
@@ -179,8 +175,7 @@ impl PySimulateContext {
         // The built-in binding resolves + loads the executor runtime artifact
         // (one precedence chain and one validated read for every consumer), and
         // it owns the settlement warmup math the deployment declares.
-        let binding =
-            CmdExecutorBinding::new(owner, exec, weth, pm, multicall, EncodeOptions::default());
+        let binding = CmdExecutorBinding::new(owner, exec, weth, pm, EncodeOptions::default());
         let runtime_bytecode = CmdExecutorBinding::load_runtime(
             executor_runtime_path.map(Path::new),
             contracts_dir.map(Path::new),

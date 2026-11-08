@@ -25,7 +25,10 @@ OWNER = "0x9c56a29c7231974c269e24f9fb3c29203039089e"
 EXECUTOR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 WETH = "0xC02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2"
 POOL_MANAGER = "0x000000000004444C5DC75cB358380d2e3dE08a90"
-MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"
+# The Multicall3 identity an earlier constructor took. The built-in deployment
+# reads no Multicall3 balances (it assesses the executor's own receipt), so the
+# keyword is gone and a stale construction site must fail at the boundary.
+RETIRED_MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
 # An HTTP URL against a dead port. alloy's HTTP transport is lazy (it does
 # not dial at construction), so this constructs offline. No RPC is made
@@ -51,7 +54,6 @@ class TestPySimulateContext:
             executor_address=EXECUTOR,
             weth_address=WETH,
             pool_manager_address=POOL_MANAGER,
-            multicall3_address=MULTICALL3,
             inject_code=False,
         )
         assert isinstance(ctx, SimulateContext)
@@ -66,8 +68,23 @@ class TestPySimulateContext:
                 executor_address=EXECUTOR,
                 weth_address=WETH,
                 pool_manager_address=POOL_MANAGER,
-                multicall3_address=MULTICALL3,
                 inject_code=True,
+            )
+
+    def test_retired_multicall3_keyword_raises_type_error(self) -> None:
+        """A stale construction site passes the retired keyword: the boundary
+        refuses it as an unexpected keyword instead of quietly simulating a
+        deployment whose Multicall3 argument no longer means anything."""
+        provider = _make_async_provider()
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            SimulateContext(
+                provider=provider,
+                executor_owner=OWNER,
+                executor_address=EXECUTOR,
+                weth_address=WETH,
+                pool_manager_address=POOL_MANAGER,
+                multicall3_address=RETIRED_MULTICALL3,
+                inject_code=False,
             )
 
     def test_inject_code_true_with_mismatched_injected_address_raises(self) -> None:
@@ -81,7 +98,6 @@ class TestPySimulateContext:
                 executor_address=EXECUTOR,
                 weth_address=WETH,
                 pool_manager_address=POOL_MANAGER,
-                multicall3_address=MULTICALL3,
                 inject_code=True,
                 injected_address=POOL_MANAGER,
             )
@@ -94,7 +110,6 @@ class TestPySimulateContext:
             executor_address=EXECUTOR,
             weth_address=WETH,
             pool_manager_address=POOL_MANAGER,
-            multicall3_address=MULTICALL3,
             inject_code=True,
             injected_address=EXECUTOR,
         )

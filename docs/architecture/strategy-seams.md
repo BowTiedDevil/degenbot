@@ -21,7 +21,7 @@ partitions, the config-facet additions, and the test-surface pattern.
 | Path enumeration primitive | `degenbot-pathfinding` | leaf `PathGraph` DFS; both discovery styles build on it |
 | Simulation engine | `degenbot-simulation` | `Evm2BlockSimHandle`, `Evm2ScratchEvm`, replay seam, journal extraction (V2/V3/V4) |
 | Execution seam (Encode/Probe/Assess/Fee) | `degenbot-execution` | `ExecutionAdapter`, `TransactionRequest`, `ExecutionObservation`, `ProbeSpec`/`AssessOptions`/`ExecutionResult` — neutral, pyo3-free, no executor dependency (ADR-098 D1) |
-| Production simulation leaf | `degenbot-simulation::sim::production` | one adapter transaction + declared probes → engine execution → typed observation → adapter Assess; the engine-side leaf canonical dispatch will drive (ADR-098 D3) |
+| Production simulation leaf | `degenbot-simulation::sim::production` | one adapter transaction + its declared probes → engine execution → typed observation → adapter Assess; the engine-side leaf canonical dispatch drives (ADR-098 D3) |
 | Command grammar | `degenbot-executor` | `encode_cmd_stream`, `EncodeRequest` |
 | RPC spine | `degenbot-rpc` | provider, multicall3, head watch, pending-tx feeds, fee oracle |
 | State owner + admission | `degenbot-substrate` | live registry `BotState` (pump-fed) and the planning sandbox (`planning::Workspace` + `ExplicitPoolState`) — the substrate's one home since ADR-067; `degenbot-bot` composes it as a peer and re-exports it at the historical `bot_core::*` paths |

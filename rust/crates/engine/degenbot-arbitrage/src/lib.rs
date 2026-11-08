@@ -6,9 +6,9 @@
 //! co-implementation"). This crate owns the settlement-arbitrage bot's strategy logic:
 //!
 //! - the built-in `cmd_executor` deployment binding ([`cmd_executor`]): its
-//!   Encode (command stream + packed config), its declared settlement probes
-//!   (WETH9 `balanceOf`, Multicall3 `getEthBalance`, PoolManager ERC6909), and
-//!   its gross assessment — the built-in side of the ADR-098 seam,
+//!   Encode (command stream + packed config) and its receipt assessment (the
+//!   contract reports `ExecutionReceipt { gross_profit, bribe_paid }`) — the
+//!   built-in side of the ADR-098 seam,
 //! - `compute_priority_fee` (TARGET_PROFIT_RATIO / age-decay) — the operator's
 //!   fee sizing, applied once above the seam for a deployment that opts into
 //!   [`FeeSizing::MarketAware`] (an adapter-owned deployment keeps its own Fee),
@@ -31,15 +31,11 @@
 //! zero `pyo3` dependency (ADR-005 standalone-core). The Python driver
 //! (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`) is a thin cockpit over a PyO3
 //! wrapper around `dispatch_profitable_results` — it does NOT re-derive the
-//! 7-call bundle.
+//! settlement's profit measurement.
 
 // Solidity/EVM identifiers (balanceOf, WETH9, PoolManager, ERC6909, …) are
 // ubiquitous in this crate's docs; allow the pedantic doc-markdown lint.
 #![expect(clippy::doc_markdown)]
-
-/// The settlement balance-read calldata builders (balanceOf / getEthBalance /
-/// ERC6909 / execute-wrap) — the built-in deployment's declared probes.
-pub mod calldata;
 
 /// The built-in `cmd_executor` simulation binding: Encode / Probe / Assess plus
 /// the deployment's warmup math, runtime-artifact selection, and cmd config.
@@ -76,15 +72,9 @@ pub mod fot_registry;
 /// (`simulate_path_on_evm`).
 pub mod simulator;
 
-pub use calldata::{
-    encode_balance_of_calldata, encode_erc6909_balance_of_calldata,
-    encode_get_eth_balance_calldata, wrap_execute_calldata, BALANCE_OF_SELECTOR,
-    ERC6909_BALANCE_OF_SELECTOR, GET_ETH_BALANCE_SELECTOR,
-};
 pub use cmd_executor::{
-    CmdExecutorBinding, CmdExecutorSimAdapter, InjectionAddressMismatch, PROBE_INDEX_ERC6909,
-    PROBE_INDEX_ETH, PROBE_INDEX_WETH, PROBE_LABEL_ERC6909, PROBE_LABEL_ETH, PROBE_LABEL_WETH,
-    SETTLEMENT_PROBE_COUNT,
+    CmdExecutorBinding, CmdExecutorSimAdapter, ExecutionReceipt, InjectionAddressMismatch,
+    EXECUTION_RECEIPT_LEN,
 };
 /// `BlockPriorityFees` is sourced from `degenbot_rpc::fees` (the fee struct is
 /// market data, owned by the RPC crate per ADR-019 D5) — re-exported here so

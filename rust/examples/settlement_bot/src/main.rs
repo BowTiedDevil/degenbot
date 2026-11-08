@@ -96,10 +96,6 @@ const PATH_SUPPRESS_RETRY_INTERVAL: u64 = 100;
 /// `WETH_ADDRESS` (runner/identity.py) — Ethereum mainnet wrapped native.
 const WETH_ADDRESS: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
-/// `MULTICALL3_ADDRESS` (runner/identity.py) — the aggregate3 probe target
-/// the simulate fan-out reads balances through.
-const MULTICALL3_ADDRESS: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
-
 /// `UNISWAP_V4_POOL_MANAGER_ADDRESS` (runner/identity.py).
 const UNISWAP_V4_POOL_MANAGER_ADDRESS: &str = "0x000000000004444c5dc75cB358380D2e3De08A90";
 
@@ -1212,8 +1208,6 @@ fn build_batch_executor(
                 weth_address,
                 degenbot::core::address_utils::parse_address(UNISWAP_V4_POOL_MANAGER_ADDRESS)
                     .map_err(|e| format!("V4 PoolManager address: {e}"))?,
-                degenbot::core::address_utils::parse_address(MULTICALL3_ADDRESS)
-                    .map_err(|e| format!("Multicall3 address: {e}"))?,
                 degenbot::cmd_executor::composers::EncodeOptions::default(),
             ),
             executor_address,

@@ -146,9 +146,10 @@ let execute_config = config_for_options(path.opts, U256::ZERO);
 let execute_calldata = encode_execute_call(ctx.executor_address, &cmd_bytes, execute_config)?;
 ```
 
-See `rust/crates/engine/degenbot-arbitrage/src/simulator.rs` (~`build_execute_tx`)
-for the full production path, including the pre/post balance reads that prove
-profitability.
+See `rust/crates/engine/degenbot-arbitrage/src/simulator.rs` for the full
+production path; profitability is the contract's own returned
+`ExecutionReceipt { gross_profit, bribe_paid }`, decoded by the built-in
+adapter (`degenbot-arbitrage/src/cmd_executor.rs`).
 
 ## Building a `PathInfo`
 

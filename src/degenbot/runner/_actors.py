@@ -21,7 +21,6 @@ from degenbot.dispatch import SimulateContext
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.identity import (
-    MULTICALL3_ADDRESS,
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
 )
@@ -125,7 +124,6 @@ def build_sim_ctx(
         executor_address=cfg.executor_address,
         weth_address=WETH_ADDRESS,
         pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
-        multicall3_address=MULTICALL3_ADDRESS,
         inject_code=cfg.inject_executor_code,
         injected_address=cfg.injected_address if cfg.inject_executor_code else None,
         # The operator's explicit artifact path, passed through untouched: the

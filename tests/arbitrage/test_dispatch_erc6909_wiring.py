@@ -40,7 +40,6 @@ def _ctx() -> SimulateContext:
         executor_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         weth_address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         pool_manager_address="0x000000000004444C5DC75cB358380d2e3dE08a90",
-        multicall3_address="0xcA11bde05977b3631167028862bE2a173976CA11",
         inject_code=False,
     )
 

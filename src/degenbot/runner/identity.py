@@ -26,7 +26,6 @@ from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.types.chain import ChainId
 
 WETH_ADDRESS = WRAPPED_NATIVE_TOKENS[ChainId.ETH]
-MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
 # V3 factories (Ethereum mainnet).
 UNISWAP_V3_MAINNET_FACTORY = "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"

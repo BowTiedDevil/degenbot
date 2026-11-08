@@ -27,12 +27,12 @@
 //! contract whose bytecode is `CALLER SELFDESTRUCT` — when the executor calls
 //! the gift, the gift self-destructs + sends its 1 ETH balance to the caller
 //! (the executor). The executor's ETH balance increases by 1 ETH →
-//! `gross_profit = 1 ETH` → the 7-call orchestration returns a non-None
+//! `gross_profit = 1 ETH` → the sim returns a non-None
 //! `SimResult`.
 //!
-//! Multicall3 bytecode (`getEthBalance`) is also deployed so the pre/post
-//! balance reads return real ETH values (without it, the balance reads return
-//! empty → decoded as 0 → `gross_profit = 0` → no-profit).
+//! The stub then returns the executor's own receipt `(1 ETH, 0)` — the two ABI
+//! words `execute(bytes,uint256)` returns — which is what the built-in
+//! assessment decodes (ADR-098 D7).
 //!
 //! ## Oracle (weaker — recorded constant, no closed form)
 //!
@@ -70,7 +70,6 @@ const SMOKE_OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e"
 const SMOKE_EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 const SMOKE_WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const SMOKE_PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
-const SMOKE_MULTICALL3: Address = address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
 const SMOKE_TOKEN1: Address = address!("1111111111111111111111111111111111111111");
 const SMOKE_POOL_B: Address = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 const SMOKE_POOL_C: Address = address!("cccccccccccccccccccccccccccccccccccccccc");
@@ -85,27 +84,24 @@ const SMOKE_BASE_FEE_NEXT: u128 = 1_000_000_000;
 const SMOKE_CURRENT_BLOCK: u64 = 100;
 const SMOKE_BLOCK_TIMESTAMP: u64 = 0;
 
-/// A contract that answers every call with one ABI word of zero — the
-/// settlement bundle's readable-zero stand-in. WETH9 and the PoolManager exist
-/// on chain, so their `balanceOf` reads return a 32-byte word; a fixture with
-/// no code at those addresses reports an ABSENT reading (honest evidence), not a
-/// fabricated zero.
-const ZERO_WORD_BYTECODE: [u8; 10] = [0x60, 0x00, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3];
-
-/// Multicall3.getEthBalance(address) → `address.balance`.
-const MULTICALL3_BYTECODE: [u8; 12] = [
-    0x60, 0x04, 0x35, 0x31, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
-];
 /// Gift contract: `CALLER SELFDESTRUCT` → sends gift's ETH to the caller.
 const GIFT_BYTECODE: [u8; 2] = [0x33, 0xFF];
 
-/// Build the executor stub bytecode that CALLs the gift.
+/// Build the executor stub bytecode that CALLs the gift and returns the receipt
+/// `(1 ETH, 0)` — gross 1 ETH, no bribe.
 fn executor_stub_bytecode(gift: Address) -> Vec<u8> {
     let mut code = vec![
         0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73,
     ];
     code.extend_from_slice(gift.as_slice());
-    code.extend_from_slice(&[0x5A, 0xF1, 0x50, 0x00]);
+    code.extend_from_slice(&[0x5A, 0xF1, 0x50]);
+    code.push(0x7F); // PUSH32 gross_profit = 1 ETH
+    code.extend_from_slice(&ONE_ETH.to_be_bytes::<32>());
+    code.extend_from_slice(&[0x60, 0x00, 0x52]); // PUSH1 0x00 MSTORE
+    code.push(0x7F); // PUSH32 bribe_paid = 0
+    code.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+    code.extend_from_slice(&[0x60, 0x20, 0x52]); // PUSH1 0x20 MSTORE
+    code.extend_from_slice(&[0x60, 0x40, 0x60, 0x00, 0xF3]); // PUSH1 0x40 PUSH1 0x00 RETURN
     code
 }
 
@@ -167,7 +163,6 @@ fn evm_sim_success_path_dual_driver_parity() {
         SMOKE_EXECUTOR,
         SMOKE_WETH,
         SMOKE_PM,
-        SMOKE_MULTICALL3,
         EncodeOptions::default(),
     )
     .injected(SMOKE_EXECUTOR, Bytes::from(executor_bc))
@@ -185,36 +180,6 @@ fn evm_sim_success_path_dual_driver_parity() {
 
     let mut cache_db = InMemoryDB::default();
     apply_simulation_overrides(&mut cache_db, &ctx.deployment.override_params());
-    // Deploy the settlement contracts' readable-zero stand-ins (see
-    // `ZERO_WORD_BYTECODE`).
-    for settlement in [SMOKE_WETH, SMOKE_PM] {
-        let code = Bytecode::new_raw(Bytes::from(ZERO_WORD_BYTECODE.to_vec()));
-        cache_db.insert_account_info(
-            &settlement,
-            AccountInfo {
-                balance: U256::ZERO,
-                nonce: 1,
-                code_hash: code.hash_slow(),
-                code: Some(code),
-                ..Default::default()
-            },
-        );
-    }
-
-    // Deploy Multicall3 (so getEthBalance returns real ETH balances).
-    cache_db.insert_account_info(
-        &SMOKE_MULTICALL3,
-        AccountInfo {
-            balance: U256::ZERO,
-            nonce: 1,
-            code_hash: ::evm2::bytecode::Bytecode::new_raw(Bytes::from(
-                MULTICALL3_BYTECODE.to_vec(),
-            ))
-            .hash_slow(),
-            code: Some(Bytecode::new_raw(Bytes::from(MULTICALL3_BYTECODE.to_vec()))),
-            ..Default::default()
-        },
-    );
     // Deploy the gift contract (1 ETH + CALLER SELFDESTRUCT bytecode).
     cache_db.insert_account_info(
         &SMOKE_GIFT,

@@ -100,9 +100,11 @@ observation → Assess → generic dispatch/submission policy.
 Block-wide facts (provider, block environment, fee samples, Multicall3) are
 separate from deployment facts (adapter, target, owner, declared runtime and
 warmup). The settlement seven-call balance bundle and all WETH/PoolManager
-assumptions leave generic simulation. The built-in executor reports its own
-receipt (D7), so the seven-call bundle is retired after receipt parity is
-proven rather than preserved as a second assessment path.
+assessment assumptions leave generic simulation. The built-in executor reports
+its own receipt (D7), so that bundle is retired rather than preserved as a
+second assessment path: the built-in adapter declares no probe reads and
+assesses the `execute` return data. Receipt-vs-seven-call parity is pinned by
+`degenbot-arbitrage/tests/execution_receipt_parity.rs`.
 
 Actual deployed code is the production simulation authority. An adapter may
 supply declared code/storage/balance overrides for development or an undeployed

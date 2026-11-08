@@ -636,24 +636,12 @@ def _render_one_failure(
 
 
 def _render_failure_debug(rec: dict[str, Any], path_id: int) -> None:
-    """Render the per-failure debug detail lines (trace, balances, swap counts)."""
+    """Render the per-failure debug detail lines (trace, log counts, swaps)."""
     ct = rec.get("call_trace") or []
     if ct:
         # 2026-08-22 audit: per-failure detail rides at debug; the [sim-fail]
         # bucket summary above is the operator-grade line.
         bot_logger.debug(f"[sim-trace] path={path_id} frames={';'.join(str(x) for x in ct)}")
-
-    weth_before = rec.get("weth_before")
-    weth_after = rec.get("weth_after")
-    if weth_before is not None and weth_after is not None:
-        eb, ea = rec.get("eth_before") or 0, rec.get("eth_after") or 0
-        fb, fa = rec.get("erc6909_before") or 0, rec.get("erc6909_after") or 0
-        d_w, d_e, d_f = weth_after - weth_before, ea - eb, fa - fb
-        bot_logger.debug(
-            f"[sim-bals] path={path_id} weth {weth_before}->{weth_after} (d={d_w:+d}) "
-            f"| eth {eb}->{ea} (d={d_e:+d}) | erc6909 {fb}->{fa} (d={d_f:+d}) "
-            f"| combined d={d_w + d_e + d_f:+d}"
-        )
 
     if rec.get("log_full_count") is not None:
         n_swap = len(rec.get("captured_swaps") or [])

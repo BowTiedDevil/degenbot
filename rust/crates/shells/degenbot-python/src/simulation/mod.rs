@@ -18,7 +18,8 @@
 //! - **Strategy** (`degenbot-arbitrage`): the settlement-arbitrage bundle —
 //!   `dispatch_profitable_results`, `SimResult`, `SimulateContext`,
 //!   `DispatchCandidate`, `DispatchOutcome`, `FailBuckets`,
-//!   `compute_priority_fee`, the 7-call `simulate_path_on_evm`. Zero pyo3.
+//!   `compute_priority_fee`, the adapter-driven `simulate_path_on_evm`. Zero
+//!   pyo3.
 //!   The Python driver is a thin cockpit over this — NOT a co-implementation
 //!   (AGENTS.md).
 //! - **`PyO3` wrapper** (this module): `#[pyclass]`/`#[pyfunction]` only —

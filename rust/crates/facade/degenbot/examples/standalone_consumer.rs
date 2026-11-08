@@ -789,7 +789,6 @@ fn in_process_sim_standalone_slice() {
     const EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     const PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
-    const MULTICALL3: Address = address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
     const TOKEN1: Address = address!("1111111111111111111111111111111111111111");
     const POOL_B: Address = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     // Balancer V2 singleton Vault (mainnet). Only used as a read target on the
@@ -798,28 +797,23 @@ fn in_process_sim_standalone_slice() {
     const POOL_C: Address = address!("cccccccccccccccccccccccccccccccccccccccc");
     const GIFT: Address = address!("dddddddddddddddddddddddddddddddddddddddd");
     const ONE_ETH: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
-    /// A contract answering every call with one ABI word of zero — the
-    /// settlement bundle's readable-zero stand-in. WETH9 and the `PoolManager`
-    /// exist on chain, so their `balanceOf` reads return a 32-byte word; a
-    /// fixture with no code at those addresses reports an ABSENT reading
-    /// (honest evidence, never a fabricated zero) and the settlement
-    /// assessment has nothing to rule on.
-    const ZERO_WORD_BYTECODE: [u8; 10] =
-        [0x60, 0x00, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3];
-    /// Multicall3.getEthBalance(address) → `address.balance`.
-    const MULTICALL3_BYTECODE: [u8; 12] = [
-        0x60, 0x04, 0x35, 0x31, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
-    ];
     /// Gift contract: `CALLER SELFDESTRUCT` → sends gift's ETH to the caller.
     const GIFT_BYTECODE: [u8; 2] = [0x33, 0xFF];
 
     // Build the executor stub bytecode: CALL the gift → gift self-destructs →
-    // 1 ETH lands on the executor.
+    // 1 ETH lands on the executor → the stub returns the receipt (1 ETH, 0).
     let mut executor_bc = vec![
         0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73,
     ];
     executor_bc.extend_from_slice(GIFT.as_slice());
-    executor_bc.extend_from_slice(&[0x5A, 0xF1, 0x50, 0x00]);
+    executor_bc.extend_from_slice(&[0x5A, 0xF1, 0x50]);
+    executor_bc.push(0x7F); // PUSH32 gross_profit
+    executor_bc.extend_from_slice(&ONE_ETH.to_be_bytes::<32>());
+    executor_bc.extend_from_slice(&[0x60, 0x00, 0x52]); // PUSH1 0x00 MSTORE
+    executor_bc.push(0x7F); // PUSH32 bribe_paid
+    executor_bc.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+    executor_bc.extend_from_slice(&[0x60, 0x20, 0x52]); // PUSH1 0x20 MSTORE
+    executor_bc.extend_from_slice(&[0x60, 0x40, 0x60, 0x00, 0xF3]); // RETURN mem[0..0x40]
 
     // Mock provider — empty transport queue (never called over CacheDB<EmptyDB>).
     let asserter = Asserter::new();
@@ -828,16 +822,9 @@ fn in_process_sim_standalone_slice() {
     let provider = degenbot::rpc::provider::AlloyProvider::from_provider(
         Arc::new(dyn_provider) as Arc<dyn Provider<Ethereum>>
     );
-    let deployment = CmdExecutorBinding::new(
-        OWNER,
-        EXECUTOR,
-        WETH,
-        PM,
-        MULTICALL3,
-        EncodeOptions::default(),
-    )
-    .injected(EXECUTOR, Bytes::from(executor_bc))
-    .expect("the declared override names the executor");
+    let deployment = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, PM, EncodeOptions::default())
+        .injected(EXECUTOR, Bytes::from(executor_bc))
+        .expect("the declared override names the executor");
     let ctx = SimulateContext {
         block: SimulationBlock {
             provider: &provider,
@@ -851,23 +838,6 @@ fn in_process_sim_standalone_slice() {
 
     let mut cache_db = InMemoryDB::default();
     apply_simulation_overrides(&mut cache_db, &ctx.deployment.override_params());
-    // Deploy the settlement contracts' readable-zero stand-ins (see
-    // `ZERO_WORD_BYTECODE`): the settlement probes read WETH9 and the
-    // PoolManager, which hold code on chain.
-    for settlement in [WETH, PM] {
-        cache_db.insert_account_info(
-            &settlement,
-            AccountInfo::default()
-                .with_nonce(1)
-                .with_code(Bytecode::new_raw(Bytes::from(ZERO_WORD_BYTECODE.to_vec()))),
-        );
-    }
-    cache_db.insert_account_info(
-        &MULTICALL3,
-        AccountInfo::default()
-            .with_nonce(1)
-            .with_code(Bytecode::new_raw(Bytes::from(MULTICALL3_BYTECODE.to_vec()))),
-    );
     cache_db.insert_account_info(
         &GIFT,
         AccountInfo::default()

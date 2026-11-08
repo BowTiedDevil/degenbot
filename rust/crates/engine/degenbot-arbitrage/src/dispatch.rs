@@ -1125,7 +1125,6 @@ mod tests {
     const EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     const PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
-    const MULTICALL3: Address = address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
 
     fn mock_provider(asserter: &Asserter) -> AlloyProvider {
         let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
@@ -1142,7 +1141,6 @@ mod tests {
             EXECUTOR,
             WETH,
             PM,
-            MULTICALL3,
             EncodeOptions {
                 erc6909_profit: false,
                 use_v4_batch: false,
@@ -1286,8 +1284,7 @@ mod tests {
             erc6909_profit: true,
             ..EncodeOptions::default()
         };
-        let adapter =
-            CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, PM, MULTICALL3, opts).adapter();
+        let adapter = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, PM, opts).adapter();
         assert!(
             adapter.binding().opts().erc6909_profit,
             "the binding carries the operator's erc6909 axis"
@@ -2061,13 +2058,17 @@ mod tests {
             0,
             "the INVALID executor yields no profitable path"
         );
-        // Both candidates: execute() call [3] halts on 0xfe → the "empty"
-        // bucket with deep frame attribution on whichever engine ran.
+        // Both candidates: execute() halts on 0xfe → the "empty" bucket with
+        // deep frame attribution on whichever engine ran.
         assert_eq!(outcome.fail_buckets.get("empty"), 2);
         assert_eq!(outcome.failures.len(), 2);
         for failure in &outcome.failures {
             assert_eq!(failure.bucket, "empty");
-            assert_eq!(failure.fail_index, Some(3), "the execute() call failed");
+            assert_eq!(
+                failure.fail_index,
+                Some(0),
+                "the execute() call is the sequence's only step"
+            );
             let frame = failure
                 .reverting_frame
                 .as_ref()

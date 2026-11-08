@@ -77,7 +77,8 @@ beside it, for submission and diagnostics).
 The Rust entry point is `degenbot_simulation::sim::production` —
 [`simulate_opportunity`] for the whole seam, and `simulate_transaction` when a
 caller already holds the encoded `TransactionRequest`. It is the generic leaf
-the canonical dispatch path drives: your Encode, your declared probes, the
+the canonical dispatch path drives: your Encode, your declared probes (none for
+a contract that reports its own receipt, as the built-in executor does), the
 engine's execution, and your Assess, in that order.
 
 ```rust
@@ -401,18 +402,10 @@ Every consumer-visible transition, Rust and Python:
 | Python `probes=[("WETH", "0x…", b"\x70\xa0\x82\x31")]` (`(label, address, selector)` triples; a native read was `(label, None, selector)`) | `probes=[{"label": "WETH", "to": "0x…", "data": <complete calldata>}, {"label": "ETH", "account": "0x…"}]` — one dict per probe; keys must be exactly one declaration's set, so the retired triple (which cannot carry a call's arguments) fails loud at the boundary with `ValueError` |
 | a `degenbot-execution-sample` probe declaring WETH's selector with no argument | the sample declares `WETH.balanceOf(executor)` as complete calldata, so the read observes the sample executor's own balance |
 | `Evm2SimRun` carried transaction steps only | `Evm2SimStep::ReadNativeBalance(account)` is a sequence step that reports the account's balance in `Evm2SimRun::native_balance` (zero gas, no calldata, `None` on transaction steps); native reads therefore sit at their declared position in the one journaled sequence |
-| no engine-side entry point took an adapter | `degenbot_simulation::sim::production::{simulate_opportunity, simulate_transaction}` execute one adapter transaction beside its declared probes and return the adapter's assessment. Additive: canonical dispatch still drives its own balance bundle and the built-in encoder until the cutover |
+| no engine-side entry point took an adapter | `degenbot_simulation::sim::production::{simulate_opportunity, simulate_transaction}` execute one adapter transaction beside its declared probes and return the adapter's assessment. Canonical dispatch drives that leaf: the built-in deployment's adapter is the only producer of its transaction, and it assesses the contract's own `ExecutionReceipt` instead of a balance bundle |
 
 ## Boundaries this chunk does not cross
 
-- **Canonical dispatch cutover.** The production simulation leaf exists
-  (`degenbot_simulation::sim::production`) and a foreign adapter runs through it
-  on real deployed code, but canonical dispatch still drives its own balance
-  bundle and the built-in encoder directly. Routing production dispatch through
-  an injected `Arc<dyn ExecutionAdapter>`, and migrating the built-in adapter
-  onto Encode + Assess, is the cutover that follows (ADR-098 D3).
-- **Built-in receipt assessment.** The bundled `cmd_executor` keeps its current
-  assessment; adopting adapter-defined receipt assessment for it is separate.
 - **Deployment identity and version policy.** `DeploymentId`/`CandidateId`
   fan-out and `cmd_executor` protocol-version/release policy are their own
   slices. The generic seam carries no capability, version, or release metadata,

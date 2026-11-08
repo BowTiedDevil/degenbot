@@ -225,7 +225,6 @@ mod tests {
                 executor_address,
                 alloy::primitives::Address::ZERO,
                 alloy::primitives::Address::ZERO,
-                alloy::primitives::Address::ZERO,
                 degenbot_executor::composers::EncodeOptions::default(),
             ),
             executor_address,

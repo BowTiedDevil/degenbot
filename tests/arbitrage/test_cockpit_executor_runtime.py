@@ -32,7 +32,6 @@ OWNER = "0x9c56a29c7231974c269e24f9fb3c29203039089e"
 EXECUTOR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 POOL_MANAGER = "0x000000000004444C5DC75cB358380d2e3dE08a90"
-MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
 # A dead port: alloy's transport is lazy, so construction dials nothing.
 _RPC_URL = "http://127.0.0.1:1"
@@ -61,7 +60,6 @@ def _ctx(*, executor_runtime_path: str | None = None, contracts_dir: str | None 
         executor_address=EXECUTOR,
         weth_address=WETH,
         pool_manager_address=POOL_MANAGER,
-        multicall3_address=MULTICALL3,
         inject_code=False,
         executor_runtime_path=executor_runtime_path,
         contracts_dir=contracts_dir,

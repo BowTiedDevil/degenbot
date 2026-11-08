@@ -141,7 +141,6 @@ mod tests {
                     executor_address,
                     weth,
                     alloy::primitives::Address::ZERO,
-                    alloy::primitives::Address::ZERO,
                     degenbot::cmd_executor::composers::EncodeOptions::default(),
                 ),
                 executor_address,

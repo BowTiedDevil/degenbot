@@ -65,8 +65,6 @@ const SMOKE_WETH: alloy::primitives::Address =
     alloy::primitives::address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const SMOKE_PM: alloy::primitives::Address =
     alloy::primitives::address!("000000000004444c5dc75cb358380d2e3de08a90");
-const SMOKE_MULTICALL3: alloy::primitives::Address =
-    alloy::primitives::address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
 const SMOKE_TOKEN1: alloy::primitives::Address =
     alloy::primitives::address!("1111111111111111111111111111111111111111");
 const SMOKE_POOL_B: alloy::primitives::Address =
@@ -204,7 +202,6 @@ fn inspector_dual_driver_parity_cafebabe_revert() {
         SMOKE_EXECUTOR,
         SMOKE_WETH,
         SMOKE_PM,
-        SMOKE_MULTICALL3,
         EncodeOptions::default(),
     )
     .injected(

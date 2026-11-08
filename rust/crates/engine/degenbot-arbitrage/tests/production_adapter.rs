@@ -15,8 +15,8 @@
 //!    world is EMPTY: no WETH9, no PoolManager, no Multicall3 code exists in
 //!    the fixture, so a path that hardcoded the settlement balance vector
 //!    could not produce a profitable result.
-//! 2. **Built-in regression.** The built-in `cmd_executor` binding still
-//!    declares the settlement probes in their fixed order, still produces the
+//! 2. **Built-in regression.** The built-in `cmd_executor` binding declares no
+//!    probe reads (its contract reports its own receipt), still produces the
 //!    command-stream bytes for the session's encode policy, still targets the
 //!    one deployed executor, and simulates deployed code unless an explicit
 //!    declared-code override is injected.
@@ -34,7 +34,7 @@ use alloy::transports::{TransportError, TransportFut};
 use degenbot_arbitrage::{
     dispatch_profitable_results, CmdExecutorBinding, DispatchCandidate, DispatchOutcome,
     FeeOnTransferRegistry, PoolDivergence, SimulationBlock, SimulationDeployment, SolveStep,
-    MIN_PROFIT_NET, PROBE_INDEX_ERC6909, PROBE_INDEX_ETH, PROBE_INDEX_WETH, SETTLEMENT_PROBE_COUNT,
+    MIN_PROFIT_NET,
 };
 use degenbot_execution::{
     AssessError, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter,
@@ -54,7 +54,6 @@ const OWNER: Address = address!("0x1111111111111111111111111111111111111111");
 const FOREIGN: Address = address!("0x2222222222222222222222222222222222222222");
 const WETH: Address = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const POOL_MANAGER: Address = address!("0x000000000004444c5dc75cb358380d2e3de08a90");
-const MULTICALL3: Address = address!("0xc411372f0b8ae58585e33b78aea9e0596da9a6f1");
 const EXECUTOR: Address = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
 const BLOCK: u64 = 100;
@@ -595,54 +594,25 @@ fn a_deployment_without_settlement_identities_is_representable() {
     assert_eq!(overrides.owner, OWNER);
 }
 
-/// Pins the built-in packet: the settlement probes are declared in their fixed
-/// order, the adapter targets the deployment's one executor with a zero native
-/// value, and the encoded bytes are the command stream the session's encode
-/// policy produces — composed independently here, so the pin is not circular.
+/// Pins the built-in packet: the adapter declares no probe reads (the contract
+/// returns its own receipt — ADR-098 D7), targets the deployment's one executor
+/// with a zero native value, and produces the command-stream bytes the session's
+/// encode policy chooses — composed independently here, so the pin is not
+/// circular.
 #[test]
-fn the_builtin_binding_keeps_its_probe_order_and_command_bytes() {
+fn the_builtin_binding_declares_no_probes_and_keeps_its_command_bytes() {
     let opts = EncodeOptions {
         erc6909_profit: false,
         use_v4_batch: false,
         ..EncodeOptions::default()
     };
-    let binding = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, POOL_MANAGER, MULTICALL3, opts);
+    let binding = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, POOL_MANAGER, opts);
     let adapter = binding.adapter();
 
-    let probes = adapter.probe_spec();
-    assert_eq!(probes.len(), SETTLEMENT_PROBE_COUNT);
-    assert_eq!(probes[PROBE_INDEX_WETH].label(), "WETH");
-    assert_eq!(probes[PROBE_INDEX_ETH].label(), "ETH");
-    assert_eq!(probes[PROBE_INDEX_ERC6909].label(), "ERC6909_WETH");
-    assert_eq!(PROBE_INDEX_WETH, 0);
-    assert_eq!(PROBE_INDEX_ETH, 1);
-    assert_eq!(PROBE_INDEX_ERC6909, 2);
-    for (index, expected_to, expected_len) in [
-        (PROBE_INDEX_WETH, WETH, 4 + 32),
-        (PROBE_INDEX_ETH, MULTICALL3, 4 + 32),
-        // `balanceOf(address,uint256)` carries BOTH arguments.
-        (PROBE_INDEX_ERC6909, POOL_MANAGER, 4 + 64),
-    ] {
-        match &probes[index] {
-            ProbeSpec::Call { to, data, .. } => {
-                assert_eq!(*to, expected_to);
-                assert_eq!(
-                    data.len(),
-                    expected_len,
-                    "the read carries its ABI arguments"
-                );
-                assert_eq!(
-                    &data[4 + 12..4 + 32],
-                    EXECUTOR.as_slice(),
-                    "the first argument is the executor whose balances are assessed"
-                );
-            }
-            ProbeSpec::NativeBalance { .. } => assert_eq!(
-                "native-balance", "contract-call",
-                "the built-in settlement probes are declared contract reads"
-            ),
-        }
-    }
+    assert!(
+        adapter.probe_spec().is_empty(),
+        "the built-in assessment reads the execute receipt, not pre/post balances"
+    );
 
     let path = two_v2_hops();
     let hop_outputs = [PREPAY_U128, PREPAY_U128];
@@ -691,7 +661,6 @@ fn the_builtin_binding_injects_code_only_when_declared() {
         EXECUTOR,
         WETH,
         POOL_MANAGER,
-        MULTICALL3,
         EncodeOptions::default(),
     );
     let deployed = binding.deployment();
@@ -722,7 +691,6 @@ fn a_builtin_declared_override_must_name_the_executor() {
         EXECUTOR,
         WETH,
         POOL_MANAGER,
-        MULTICALL3,
         EncodeOptions::default(),
     );
     let elsewhere = address!("0xdddddddddddddddddddddddddddddddddddddddd");

@@ -16,31 +16,33 @@
 //! the mechanics (the journaled sequence, gas, return data, trace, swap capture,
 //! access list), and this module owns the categorical policy around them (the
 //! int128 guard, the bucket taxonomy, the fee sizing). The built-in
-//! `cmd_executor` deployment — the settlement read bundle, the command stream,
-//! the packed cmd config, the warmup math, and the runtime artifact — lives in
+//! `cmd_executor` deployment — the command stream, the receipt assessment, the
+//! packed cmd config, the warmup math, and the runtime artifact — lives in
 //! [`crate::cmd_executor`]. The Python driver is a thin cockpit over a PyO3
 //! wrapper around `dispatch_profitable_results` — it does NOT re-derive the
-//! settlement bundle (AGENTS.md: "driver shell, not a co-implementation").
+//! settlement's profit measurement (AGENTS.md: "driver shell, not a
+//! co-implementation").
 //!
 //! # In-process sim
 //!
-//! One opportunity is one transaction: the deployment's declared probes bracket
-//! it inside one `Evm2SimSession::run_sequence` of journaled steps (the journaled
-//! state accumulates across them), and the seam returns the `SimResult` shape
-//! the dispatch leaf consumes. Measured latency profile (cold 8374 µs / 9 RPCs;
-//! warm 442 µs / 0 RPC; 18.9× speedup vs cold; standing record: ADR-019) + the
+//! One opportunity is one transaction: the deployment's declared probes (none
+//! for the built-in) bracket it inside one `Evm2SimSession::run_sequence` of
+//! journaled steps (the journaled state accumulates across them), and the seam
+//! returns the `SimResult` shape the dispatch leaf consumes. Measured latency
+//! profile (cold 8374 µs / 9 RPCs; warm 442 µs / 0 RPC; 18.9× speedup vs cold;
+//! standing record: ADR-019) + the
 //! `ResultAndState.state` access-list emission API. (The detailing spike doc was
 //! removed in the stale-docs cleanup `71ec78b2`.)
 //!
-//! The settlement bundle is *declared data* on the built-in deployment, in its
-//! fixed order: WETH9 `balanceOf(executor)`, Multicall3 `getEthBalance(executor)`,
-//! PoolManager ERC6909 `balanceOf(executor, weth_id)` — each before and after the
-//! `execute(bytes,uint256)` transaction, so the sequence positions (and the
-//! reported `fail_index` taxonomy) are unchanged from the pre-seam bundle.
+//! The built-in deployment declares no probe reads: its contract reports
+//! `ExecutionReceipt { gross_profit, bribe_paid }` from `execute(bytes,uint256)`,
+//! and the adapter assesses that return data (ADR-098 D7). A foreign adapter may
+//! still declare pre/post reads; the engine runs them, reports the readings, and
+//! the sequence positions they occupy are what a reported `fail_index` names.
 
 // Solidity/EVM identifiers (execute(bytes,uint256), int128, V4 BalanceDelta,
-// WETH9, PoolManager, Multicall3, balanceOf, getEthBalance, ERC6909, etc.) are
-// ubiquitous here — match the degenbot-simulation convention.
+// WETH9, PoolManager, ERC6909, etc.) are ubiquitous here — match the
+// degenbot-simulation convention.
 #![expect(clippy::doc_markdown)]
 use degenbot_core::{diag, diag_trace, op_info};
 
@@ -61,7 +63,6 @@ use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_simulation::sim::production::{simulate_transaction, SimulationCapture};
 use degenbot_simulation::{CapturedSwap, ProductionSimContext, ProductionSimError};
 
-use crate::cmd_executor::{PROBE_INDEX_ERC6909, PROBE_INDEX_ETH, PROBE_INDEX_WETH};
 use crate::deployment::{FeeSizing, SimulateContext};
 use crate::dispatch::SolveStep;
 
@@ -177,8 +178,10 @@ pub fn fits_int128(value: u128) -> bool {
 pub struct SimResult {
     /// The path id (`path_id`).
     pub path_id: u64,
-    /// Gross profit = `(weth_after + eth_after + erc6909_after) -
-    /// (weth_before + eth_before + erc6909_before)` (C2).
+    /// The deployment's assessed gross profit (wei) before gas pricing — for the
+    /// built-in executor the contract's own retained figure
+    /// (`gross_profit − bribe_paid`, after the bribe and before gas), for a
+    /// foreign adapter whatever its Assess reports.
     pub gross_profit: U256,
     /// Net profit = `gross_profit - gas_used * (base_fee_next + priority_fee)`.
     pub net_profit: U256,
@@ -248,16 +251,16 @@ impl SimResult {
 /// attribution when available).
 ///
 /// `fail_index` is `Some(idx)` for failures attributable to a specific
-/// simulated call — the revert branch (`result.first_failure`) AND the
-/// balance-decode branch (the malformed word's call index). It is `None` for
-/// orchestration-only buckets (`int128-overflow`, `encode-failed`,
-/// `rpc-failed`, `no-profit`) where no single call failed.
+/// simulated step — the revert branch AND a declared probe read whose figure was
+/// absent. It is `None` for orchestration-only buckets (`int128-overflow`,
+/// `encode-failed`, `rpc-failed`, `balance-decode`, `no-profit`) where no single
+/// call failed.
 ///
 /// `reverting_frame` is `Some` only for `execute()` reverts where the
-/// `CallTraceInspector` (attached at call [3]) captured the failing frame —
-/// it carries the DEEP attribution (depth, target, selector, revert data,
-/// `classify_revert` label) of the frame that actually reverted, rather than
-/// the top-level bubble. `None` for orchestration-only buckets + the
+/// `CallTraceInspector` (attached at the opportunity's own step) captured the
+/// failing frame — it carries the DEEP attribution (depth, target, selector,
+/// revert data, `classify_revert` label) of the frame that actually reverted,
+/// rather than the top-level bubble. `None` for orchestration-only buckets + the
 /// balance-decode branch (no inspection ran on the failing call).
 #[derive(Debug, Clone)]
 pub struct SimFailure {
@@ -266,9 +269,9 @@ pub struct SimFailure {
     /// The bucket label — the `classify_revert` output for reverts, else the
     /// orchestration-only bucket string.
     pub bucket: String,
-    /// The index of the failing step in the executed sequence (the built-in
-    /// bundle's 7-call vector: 3 pre-balance reads, `execute()`, 3 post-balance
-    /// reads), if any.
+    /// The index of the failing step in the executed sequence (the adapter's
+    /// declared pre-reads, then the opportunity's transaction, then its
+    /// post-reads), if any.
     pub fail_index: Option<usize>,
     /// The raw revert data bytes (the 4-byte selector + ABI-encoded args) —
     /// the TOP-LEVEL revert bubble's data. Empty for orchestration-only
@@ -278,9 +281,9 @@ pub struct SimFailure {
     /// the Python `[sim-fail]` column-stability contract).
     pub revert_data: alloy::primitives::Bytes,
     /// The inspector-captured reverting-frame attribution — `Some` only for
-    /// `execute()` reverts where call [3] ran under the composite
-    /// inspector's call trace. `None` for orchestration-only buckets + the
-    /// balance-decode branch.
+    /// `execute()` reverts where the opportunity's own step ran under the
+    /// composite inspector's call trace. `None` for orchestration-only buckets +
+    /// the balance-decode branch.
     pub reverting_frame: Option<RevertingFrame>,
     /// The swap events captured BEFORE the revert (the swaps `execute()` did
     /// before reverting) — diagnostic for WHY it reverted (e.g. a partial fill
@@ -317,18 +320,6 @@ pub struct SimFailure {
     /// `no-profit` where hop0 + mid hops emit but the outermost V3 swap does
     /// not. Empty when no trace was captured.
     pub call_trace: Vec<String>,
-    /// The executor's asset balances around `execute()` (its profitability
-    /// basis): pre/post WETH, ETH, and ERC-6909. `no-profit` ⇔
-    /// `(w + e + f)_after <= (w + e + f)_before` (gross, no gas). Surfacing
-    /// all three legs — not just WETH — debugs a spurious `no-profit` where
-    /// one component delta (e.g. an ETH/ERC-6909 leg) is measured anomalously
-    /// while the others net positive.
-    pub weth_before: u128,
-    pub weth_after: u128,
-    pub eth_before: u128,
-    pub eth_after: u128,
-    pub erc6909_before: u128,
-    pub erc6909_after: u128,
 }
 
 /// The inspector-captured attribution of a failing `execute()` frame — the
@@ -482,12 +473,6 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace: Vec::new(),
-            weth_before: 0,
-            weth_after: 0,
-            eth_before: 0,
-            eth_after: 0,
-            erc6909_before: 0,
-            erc6909_after: 0,
         });
     }
 
@@ -503,7 +488,7 @@ impl FailBuckets {
     /// record as a plain `no-profit`, which downstream reads as "the path
     /// traded and earned nothing" when it means "`execute()` emitted no swap
     /// at all". Callers cannot mislabel a shape they do not name.
-    #[expect(clippy::too_many_arguments)] // path attribution + swap/trace/weth detail
+    #[expect(clippy::too_many_arguments)] // path attribution + swap/trace detail
     pub fn record_no_profit(
         &mut self,
         path_id: u64,
@@ -513,12 +498,6 @@ impl FailBuckets {
         optimal_input: u128,
         hop_outputs: Vec<u128>,
         call_trace: Vec<String>,
-        weth_before: u128,
-        weth_after: u128,
-        eth_before: u128,
-        eth_after: u128,
-        erc6909_before: u128,
-        erc6909_after: u128,
     ) {
         let bucket = NoProfitShape::of(&captured_swaps, &reverted_swaps).bucket();
         self.tally(bucket);
@@ -534,12 +513,6 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace,
-            weth_before,
-            weth_after,
-            eth_before,
-            eth_after,
-            erc6909_before,
-            erc6909_after,
         });
     }
 
@@ -571,12 +544,6 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace: Vec::new(),
-            weth_before: 0,
-            weth_after: 0,
-            eth_before: 0,
-            eth_after: 0,
-            erc6909_before: 0,
-            erc6909_after: 0,
         });
     }
 
@@ -1154,17 +1121,19 @@ fn simulate_path_on_evm_seam(
             }
         };
 
-    // The step taxonomy the settlement bundle reports on: the declared reads in
-    // declared order, the opportunity's transaction at the probe count, and the
-    // first failing step carrying the revert/no-op attribution.
+    // The step taxonomy the failure record reports on: the adapter's declared
+    // reads in declared order, the opportunity's transaction at the probe count,
+    // and the first failing step carrying the revert/no-op attribution.
     let probes = ctx.deployment.adapter().probe_spec();
     if let Some(fail_idx) = capture.failing_step() {
         record_failed_step(path, fail_buckets, probes, &observation, &capture, fail_idx);
         return Ok(None);
     }
 
-    // An assessment that needed evidence the transaction never produced: the
-    // settlement bundle names the read whose figure is absent.
+    // An assessment that needed evidence the transaction never produced —
+    // a declared probe read with no figure, or an `execute` receipt the call
+    // did not return (ADR-098 D7). The record names a failing read when the
+    // adapter declared one; otherwise the bucket alone carries the verdict.
     let Some(assessment) = assessment else {
         fail_buckets.record(
             path.path_id,
@@ -1179,7 +1148,7 @@ fn simulate_path_on_evm_seam(
 
     let gross_profit = assessment.gross_profit;
     if gross_profit.is_zero() {
-        record_no_profit(path, fail_buckets, &observation, &capture);
+        record_no_profit(path, fail_buckets, &capture);
         return Ok(None);
     }
 
@@ -1308,9 +1277,9 @@ fn selector_of(data: &alloy::primitives::Bytes) -> [u8; 4] {
     selector
 }
 
-/// Record the first failing step of the sequence — the settlement bundle's
-/// revert taxonomy, with the deepest captured frame when the capture collected a
-/// trace and the failing step's own identity otherwise.
+/// Record the first failing step of the sequence — the bucket/revert taxonomy,
+/// with the deepest captured frame when the capture collected a trace and the
+/// failing step's own identity otherwise.
 fn record_failed_step(
     path: &SimulatePath,
     fail_buckets: &mut FailBuckets,
@@ -1404,7 +1373,6 @@ fn record_failed_step(
 fn record_no_profit(
     path: &SimulatePath,
     fail_buckets: &mut FailBuckets,
-    observation: &ExecutionObservation,
     capture: &SimulationCapture,
 ) {
     use degenbot_simulation::FrameOutcome as FO;
@@ -1435,27 +1403,6 @@ fn record_no_profit(
         })
         .collect();
 
-    // The settlement bundle's own legs, in declared order: WETH, native ETH,
-    // ERC6909. A deployment that declares a different probe set simply reports
-    // the first three readings (absent legs read as zero — this record's leg
-    // names are the settlement bundle's diagnostic vocabulary).
-    let before_at = |index: usize| {
-        observation
-            .probe_reads
-            .get(index)
-            .and_then(|reading| reading.before)
-            .and_then(|value| u128::try_from(value).ok())
-            .unwrap_or_default()
-    };
-    let after_at = |index: usize| {
-        observation
-            .probe_reads
-            .get(index)
-            .and_then(|reading| reading.after)
-            .and_then(|value| u128::try_from(value).ok())
-            .unwrap_or_default()
-    };
-
     fail_buckets.record_no_profit(
         path.path_id,
         capture.swaps.clone(),
@@ -1464,12 +1411,6 @@ fn record_no_profit(
         path.optimal_input,
         path.expected_outputs_vec(),
         call_trace,
-        before_at(PROBE_INDEX_WETH),
-        after_at(PROBE_INDEX_WETH),
-        before_at(PROBE_INDEX_ETH),
-        after_at(PROBE_INDEX_ETH),
-        before_at(PROBE_INDEX_ERC6909),
-        after_at(PROBE_INDEX_ERC6909),
     );
 }
 
@@ -1977,7 +1918,6 @@ mod tests {
     const SMOKE_EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const SMOKE_WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     const SMOKE_PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
-    const SMOKE_MULTICALL3: Address = address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
 
     fn smoke_provider(asserter: &Asserter) -> AlloyProvider {
         let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
@@ -1994,13 +1934,26 @@ mod tests {
             SMOKE_EXECUTOR,
             SMOKE_WETH,
             SMOKE_PM,
-            SMOKE_MULTICALL3,
             EncodeOptions {
                 erc6909_profit: false,
                 use_v4_batch: false,
                 ..EncodeOptions::default()
             },
         )
+    }
+
+    /// An executor stub that returns `(gross_profit, bribe_paid)` as the two
+    /// ABI words `execute` returns — the receipt the built-in adapter assesses.
+    fn receipt_stub(gross: U256, bribe: U256) -> Bytes {
+        let mut code = Vec::with_capacity(76);
+        code.push(0x7f); // PUSH32 gross_profit
+        code.extend_from_slice(&gross.to_be_bytes::<32>());
+        code.extend_from_slice(&[0x60, 0x00, 0x52]); // PUSH1 0x00 MSTORE
+        code.push(0x7f); // PUSH32 bribe_paid
+        code.extend_from_slice(&bribe.to_be_bytes::<32>());
+        code.extend_from_slice(&[0x60, 0x20, 0x52]); // PUSH1 0x20 MSTORE
+        code.extend_from_slice(&[0x60, 0x40, 0x60, 0x00, 0xf3]); // PUSH1 0x40 PUSH1 0x00 RETURN
+        Bytes::from(code)
     }
 
     /// The built-in deployment with `runtime` installed at the executor address
@@ -2115,7 +2068,11 @@ mod tests {
             assert_eq!(failures.len(), 1);
             let failure = &failures[0];
             assert_eq!(failure.path_id, path_id);
-            assert_eq!(failure.fail_index, Some(3), "the execute() call failed");
+            assert_eq!(
+                failure.fail_index,
+                Some(0),
+                "the execute() call is the sequence's only step"
+            );
             let frame = failure.reverting_frame.as_ref().expect("deep attribution");
             assert_eq!(frame.depth, 1, "the top-level execute() frame");
             assert_eq!(frame.target, SMOKE_EXECUTOR, "the executor reverted");
@@ -2124,43 +2081,10 @@ mod tests {
         }
     }
 
-    /// A contract that answers every call with one ABI word of zero — the
-    /// settlement bundle's readable-zero stand-in (WETH9 / Multicall3 /
-    /// PoolManager all exist on chain and answer a 32-byte word).
-    fn zero_word_code() -> Bytes {
-        Bytes::from_static(&[
-            0x60, 0x00, // PUSH1 0 (value)
-            0x60, 0x00, // PUSH1 0 (offset)
-            0x52, // MSTORE(0, 0)
-            0x60, 0x20, // PUSH1 32 (size)
-            0x60, 0x00, // PUSH1 0 (offset)
-            0xf3, // RETURN mem[0..32]
-        ])
-    }
-
-    /// A fixture `CacheDB` carrying code at the settlement identities, so the
-    /// declared reads answer a real ABI word instead of an absent one.
-    fn settlement_cache_db(ctx: &SimulateContext<'_>) -> ::evm2::evm::InMemoryDB {
-        use ::evm2::bytecode::Bytecode;
-        use ::evm2::evm::{AccountInfo, InMemoryDB};
-        let mut db = InMemoryDB::default();
-        let settlement = ctx
-            .deployment
-            .settlement()
-            .expect("the built-in deployment declares its settlement identities");
-        for address in [
-            settlement.weth_address,
-            #[expect(clippy::expect_used)] // the built-in binding names its PoolManager
-            settlement
-                .pool_manager_address
-                .expect("the built-in binding declares its PoolManager"),
-            SMOKE_MULTICALL3,
-        ] {
-            db.insert_account_info(
-                &address,
-                AccountInfo::default().with_code(Bytecode::new_raw(zero_word_code())),
-            );
-        }
+    /// The fixture `CacheDB` for a declared-code build: the state overrides and
+    /// nothing else (the receipt needs no auxiliary contract code).
+    fn smoke_cache_db(ctx: &SimulateContext<'_>) -> ::evm2::evm::InMemoryDB {
+        let mut db = ::evm2::evm::InMemoryDB::default();
         degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
             &mut db,
             &ctx.deployment.override_params(),
@@ -2168,19 +2092,18 @@ mod tests {
         db
     }
 
-    /// The no-profit smoke: executor injected as EMPTY bytecode (no-op) → all
-    /// seven steps settle (the three declared reads answer a zero word) →
-    /// pre==post → gross 0 → the `execute-no-op` shape. Proves the success-path
-    /// orchestration (the declared reads, the transaction, the assessment, the
-    /// profit arithmetic, the tally) runs end-to-end, and that the no-op shape
-    /// is named for what it is instead of posing as an economic `no-profit`.
+    /// The no-profit smoke: the executor returns a `(0, 0)` receipt → the
+    /// assessment prices zero gross → the `execute-no-op` shape. Proves the
+    /// success-path orchestration (the transaction, the assessment, the profit
+    /// arithmetic, the tally) runs end-to-end, and that the no-op shape is
+    /// named for what it is instead of posing as an economic `no-profit`.
     #[test]
     fn simulate_in_process_with_db_no_profit_path_smoke() {
         let asserter = Asserter::new();
         let provider = smoke_provider(&asserter);
-        let deployment = smoke_deployment(Bytes::new()); // empty code — a no-op
+        let deployment = smoke_deployment(receipt_stub(U256::ZERO, U256::ZERO));
         let ctx = smoke_ctx(&provider, &deployment);
-        let cache_db = settlement_cache_db(&ctx);
+        let cache_db = smoke_cache_db(&ctx);
         let mut buckets = FailBuckets::new();
 
         let path = smoke_v2_path(11);
@@ -2202,8 +2125,32 @@ mod tests {
         // like the plain record() — proves the field is plumbed end-to-end.
         assert!(
             failures[0].captured_swaps.is_empty(),
-            "empty bytecode swaps"
+            "no swap events from the receipt stub"
         );
+    }
+
+    /// An `execute` that returns no receipt is unmeasured, never a
+    /// zero-profit arb: the assessment refuses, and the seam records the
+    /// evidence refusal instead of the economic no-profit shapes.
+    #[test]
+    fn an_unmeasured_execute_receipt_is_not_a_zero_profit() {
+        let asserter = Asserter::new();
+        let provider = smoke_provider(&asserter);
+        let deployment = smoke_deployment(Bytes::new()); // returns no data at all
+        let ctx = smoke_ctx(&provider, &deployment);
+        let cache_db = smoke_cache_db(&ctx);
+        let mut buckets = FailBuckets::new();
+
+        let result =
+            simulate_in_process_with_db(&ctx, cache_db, &smoke_v2_path(12), &mut buckets).unwrap();
+        assert!(result.is_none(), "no receipt, no verdict");
+        assert_eq!(buckets.get("balance-decode"), 1, "the refusal is recorded");
+        assert_eq!(buckets.get("no-profit"), 0, "not an economic no-profit");
+        assert_eq!(buckets.get("execute-no-op"), 0, "not a measured zero");
+        let failures = buckets.failures();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].path_id, 12);
+        assert!(failures[0].fail_index.is_none(), "no read or call to name");
     }
 
     /// The shape discriminator: a zero-gross outcome is named by what the
@@ -2247,21 +2194,7 @@ mod tests {
             ),
         ] {
             let mut buckets = FailBuckets::new();
-            buckets.record_no_profit(
-                3,
-                captured,
-                reverted,
-                0,
-                1_000,
-                vec![990],
-                Vec::new(),
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-            );
+            buckets.record_no_profit(3, captured, reverted, 0, 1_000, vec![990], Vec::new());
             assert_eq!(buckets.get(bucket), 1, "tallied under its own shape");
             let failures = buckets.failures();
             assert_eq!(failures[0].bucket, bucket);
@@ -2803,7 +2736,6 @@ mod tests {
             executor,
             weth,
             pm,
-            SMOKE_MULTICALL3,
             EncodeOptions {
                 erc6909_profit: false,
                 use_v4_batch: false,

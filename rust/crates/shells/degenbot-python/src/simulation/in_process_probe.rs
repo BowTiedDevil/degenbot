@@ -6,9 +6,9 @@
 //! node. The Tier-2 dual-driver parity test can't depend on a live RPC, so
 //! this binding exposes the **in-process** path (`simulate_in_process_with_db`
 //! over `CacheDB<EmptyDB>`) — no RPC, no `BotState` tracked pools. The
-//! executor is injected with caller-supplied runtime bytecode; the 7-call
-//! orchestration runs against the empty DB (all balance reads return zero,
-//! `execute()` either reverts or no-ops).
+//! executor is injected with caller-supplied runtime bytecode; the sim runs the
+//! one `execute` transaction against the empty DB and assesses whatever receipt
+//! (or revert) it returns.
 //!
 //! This is a **test-only parity probe**, not a production entrypoint: the
 //! fixture (addresses, 2-hop V2 path, block env) is hardcoded to mirror the
@@ -43,39 +43,35 @@ use crate::simulation::render::captured_swap_to_dict;
 // ---- the SELFDESTRUCT-gift success-path fixture (mirrors the Rust
 //      parity_evm_sim.rs test — a non-None SimResult over CacheDB<EmptyDB>) ----
 // The executor stub CALLs a "gift" contract; the gift SELFDESTRUCTs to the
-// executor (CALLER), sending its 1 ETH balance → gross_profit = 1 ETH → the
-// only success-path (non-None SimResult) achievable over CacheDB<EmptyDB>
-// (no real pool state — the profit comes from the gift's ETH, not a swap).
-// Multicall3 bytecode is deployed so `getEthBalance` returns real balances
-// (without it, the pre/post balance reads return empty → Decoded as 0 →
-// gross_profit = 0 → no-profit).
+// executor (CALLER), sending its 1 ETH balance → the stub returns the receipt
+// `(1 ETH, 0)` → gross_profit = 1 ETH → the only success-path (non-None
+// SimResult) achievable over CacheDB<EmptyDB> (no real pool state — the profit
+// comes from the gift's ETH, not a swap).
 const SMOKE_GIFT: alloy::primitives::Address =
     alloy::primitives::address!("dddddddddddddddddddddddddddddddddddddddd");
 const ONE_ETH: alloy::primitives::U256 =
     alloy::primitives::U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
 
-/// A contract that answers every call with one ABI word of zero — the
-/// settlement bundle's readable-zero stand-in (see the success probe's
-/// fixture note: WETH9 and the `PoolManager` exist on chain).
-const ZERO_WORD_BYTECODE: [u8; 10] = [0x60, 0x00, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3];
-
-/// Multicall3.getEthBalance(address) → `address.balance`.
-/// `PUSH1 0x04 CALLDATALOAD BALANCE PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN`
-const MULTICALL3_BYTECODE: [u8; 12] = [
-    0x60, 0x04, 0x35, 0x31, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
-];
 /// Gift contract: `CALLER SELFDESTRUCT` → sends gift's ETH to the caller.
 const GIFT_BYTECODE: [u8; 2] = [0x33, 0xFF];
 
-/// Build the executor stub bytecode that CALLs the gift (joyless: the
-/// the execute(bytes,uint256) calldata is ignored — the stub just CALLs the
-/// gift + stops). `PUSH1 0x00 ×5 PUSH20 <gift> GAS CALL POP STOP`.
+/// Build the executor stub bytecode that CALLs the gift and returns the receipt
+/// `(1 ETH, 0)` — gross 1 ETH, no bribe. The `execute(bytes,uint256)` calldata
+/// is ignored: `PUSH1 0x00 ×5 PUSH20 <gift> GAS CALL POP` then the two ABI words.
 fn executor_stub_bytecode(gift: alloy::primitives::Address) -> Vec<u8> {
     let mut code = vec![
         0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73,
     ];
     code.extend_from_slice(gift.as_slice());
-    code.extend_from_slice(&[0x5A, 0xF1, 0x50, 0x00]);
+    code.extend_from_slice(&[0x5A, 0xF1, 0x50]);
+    // gross_profit = 1 ETH at mem[0x00..0x20]; bribe_paid = 0 at mem[0x20..0x40].
+    code.push(0x7F); // PUSH32
+    code.extend_from_slice(&ONE_ETH.to_be_bytes::<32>());
+    code.extend_from_slice(&[0x60, 0x00, 0x52]); // PUSH1 0x00 MSTORE
+    code.push(0x7F); // PUSH32
+    code.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+    code.extend_from_slice(&[0x60, 0x20, 0x52]); // PUSH1 0x20 MSTORE
+    code.extend_from_slice(&[0x60, 0x40, 0x60, 0x00, 0xF3]); // PUSH1 0x40 PUSH1 0x00 RETURN
     code
 }
 
@@ -91,8 +87,6 @@ const SMOKE_WETH: alloy::primitives::Address =
     alloy::primitives::address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const SMOKE_PM: alloy::primitives::Address =
     alloy::primitives::address!("000000000004444c5dc75cb358380d2e3de08a90");
-const SMOKE_MULTICALL3: alloy::primitives::Address =
-    alloy::primitives::address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
 const SMOKE_TOKEN1: alloy::primitives::Address =
     alloy::primitives::address!("1111111111111111111111111111111111111111");
 const SMOKE_POOL_B: alloy::primitives::Address =
@@ -126,7 +120,6 @@ fn smoke_binding() -> degenbot_arbitrage::CmdExecutorBinding {
         SMOKE_EXECUTOR,
         SMOKE_WETH,
         SMOKE_PM,
-        SMOKE_MULTICALL3,
         EncodeOptions::default(),
     )
 }
@@ -236,7 +229,7 @@ pub fn simulate_in_process_revert_probe<'py>(
         &ctx.deployment.override_params(),
     );
 
-    // 3. Run the 7-call orchestration (GIL-free — release is implicit: no
+    // 3. Run the production sim seam (GIL-free — release is implicit: no
     //    Python objects held across the call).
     let mut buckets = FailBuckets::new();
     let path = smoke_v2_path(path_id);
@@ -302,12 +295,6 @@ pub fn simulate_in_process_revert_probe<'py>(
             ct_list.append(s)?;
         }
         fdict.set_item("call_trace", ct_list)?;
-        fdict.set_item("weth_before", f.weth_before)?;
-        fdict.set_item("weth_after", f.weth_after)?;
-        fdict.set_item("eth_before", f.eth_before)?;
-        fdict.set_item("eth_after", f.eth_after)?;
-        fdict.set_item("erc6909_before", f.erc6909_before)?;
-        fdict.set_item("erc6909_after", f.erc6909_after)?;
         // optimal_input + hop_outputs as Python ints (u128 fits in PyLong).
         fdict.set_item("optimal_input", f.optimal_input)?;
         let hop_outputs_list = PyList::empty(py);
@@ -334,9 +321,8 @@ pub fn simulate_in_process_revert_probe<'py>(
 ///
 /// The fixture (identical to the Rust `parity_evm_sim.rs` test): the executor
 /// stub bytecode CALLs a gift contract; the gift `SELFDESTRUCT`s to the
-/// executor (`CALLER`), sending its 1 ETH balance → `gross_profit = 1 ETH` →
-/// a non-None `SimResult`. Multicall3 bytecode is deployed so `getEthBalance`
-/// returns real ETH balances (the pre/post balance reads).
+/// executor (`CALLER`), sending its 1 ETH balance, and the stub returns the
+/// receipt `(1 ETH, 0)` → `gross_profit = 1 ETH` → a non-None `SimResult`.
 ///
 /// The caller supplies only `path_id` (round-trips through the FFI); every
 /// other fixture detail is hardcoded to mirror the Rust parity test.
@@ -382,28 +368,7 @@ pub fn simulate_in_process_success_probe(
         &ctx.deployment.override_params(),
     );
 
-    // 3. Deploy the supporting contracts (Multicall3 + gift + the settlement
-    //    bundle's readable-zero stand-ins). WETH9 and the PoolManager exist on
-    //    chain, so their `balanceOf` reads return a 32-byte word; without code
-    //    there the reading is honestly ABSENT, never a fabricated zero.
-    for settlement in [SMOKE_WETH, SMOKE_PM] {
-        cache_db.insert_account_info(
-            &settlement,
-            ::evm2::evm::AccountInfo::default().with_nonce(1).with_code(
-                ::evm2::bytecode::Bytecode::new_raw(alloy::primitives::Bytes::from_static(
-                    &ZERO_WORD_BYTECODE,
-                )),
-            ),
-        );
-    }
-    cache_db.insert_account_info(
-        &SMOKE_MULTICALL3,
-        ::evm2::evm::AccountInfo::default().with_nonce(1).with_code(
-            ::evm2::bytecode::Bytecode::new_raw(alloy::primitives::Bytes::from(
-                MULTICALL3_BYTECODE.to_vec(),
-            )),
-        ),
-    );
+    // 3. Deploy the gift contract (the executor stub pays the receipt from it).
     cache_db.insert_account_info(
         &SMOKE_GIFT,
         ::evm2::evm::AccountInfo::default()
@@ -414,7 +379,7 @@ pub fn simulate_in_process_success_probe(
             )),
     );
 
-    // 4. Run the 7-call orchestration (GIL-free).
+    // 4. Run the production sim seam (GIL-free).
     let mut buckets = FailBuckets::new();
     let path = smoke_v2_path(path_id);
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).map_err(|e| {
@@ -427,7 +392,7 @@ pub fn simulate_in_process_success_probe(
     let sim = result.ok_or_else(|| {
         pyo3::exceptions::PyRuntimeError::new_err(
             "simulate_in_process_success_probe: fixture regressed to None (check gift ETH / \
-             multicall3 bytecode). A non-None SimResult is the contract.",
+             receipt stub). A non-None SimResult is the contract.",
         )
     })?;
 

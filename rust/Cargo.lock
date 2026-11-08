@@ -2385,7 +2385,6 @@ version = "0.6.0-alpha.19"
 dependencies = [
  "alloy",
  "alloy-json-rpc",
- "degenbot-abi",
  "degenbot-bot",
  "degenbot-config",
  "degenbot-core",

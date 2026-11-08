@@ -125,8 +125,8 @@ pub struct SimReceipt {
 /// The per-candidate failure detail. One source of truth: the core fan-out's
 /// [`SimFailure`] already carries every field the failure renderers read
 /// (bucket, fail index, revert bytes, reverting frame, captured/reverted
-/// swaps, call trace, balance legs, log count) — the alias keeps the record
-/// vocabulary named without duplicating the struct.
+/// swaps, call trace, log count) — the alias keeps the record vocabulary named
+/// without duplicating the struct.
 pub type FailureDetail = SimFailure;
 
 /// Stage 3 — the submit receipt or typed failure.

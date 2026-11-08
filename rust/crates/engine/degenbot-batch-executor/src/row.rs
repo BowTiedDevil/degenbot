@@ -170,12 +170,6 @@ impl PayloadRow {
             optimal_input: request.map_or(0, |r| r.optimal_input),
             hop_outputs: request.map_or_else(Vec::new, |r| r.hop_outputs.clone()),
             call_trace: Vec::new(),
-            weth_before: 0,
-            weth_after: 0,
-            eth_before: 0,
-            eth_after: 0,
-            erc6909_before: 0,
-            erc6909_after: 0,
         })
     }
 }
