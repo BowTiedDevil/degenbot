@@ -129,6 +129,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [097](ADR-097-native-token.md) | Conceptual `NativeToken` — one chain-scoped identity, chain-facts metadata, protocol-private sentinel translations | accepted / implemented (conceptual type, chain facts, protocol translations, Python projection, account-cache read-through live) |
 | [098](ADR-098-executor-agnostic-production-execution.md) | Executor-agnostic production execution — `cmd_executor` is one adapter | accepted (implemented) |
 | [099](ADR-099-executor-capability-set-commitments.md) | Executor capability-set commitments — one constant-size hash, the manifest keeps the full list | accepted (implemented) |
+| [100](ADR-100-progressive-custom-adapter-validation.md) | Progressive custom-adapter validation — a declared interface, explicit cases, execution-backed certification | accepted |
 
 ## Historical — provenance only
 
