@@ -5,21 +5,19 @@ description: Rules for workers dispatched into the degenbot workspace by a proje
 
 # Dispatched-Agent Lane Rules
 
-You arrived by dispatch and work under a project manager. Your manager owns commits, the whole-workspace gates, and the definition of done. Your job is one scoped chunk of implementation work.
+You arrived by dispatch and work under a project manager. Your manager owns commits, the whole-workspace gates, the task lifecycle, and the definition of done. Your job is one scoped chunk of implementation work.
 
 ## Never commit or push
 
-Commits happen only in the manager's post-settle quiet window, staged whole. Leave the tree dirty for review. A partial stage by you plus the pre-commit stash dance plus the manager's own edits aborts the commit after mutating the tree.
+Commits and staging belong to the manager, who commits only in the post-settle quiet window. Leave the tree dirty for review, and never stage files yourself — a partial stage by you plus the pre-commit stash dance plus the manager's own edits aborts the commit after mutating the tree.
 
 ## Run only scoped gates
 
-Yours:
+Your scoped gates are named in the **dispatch brief**, and the **current justfile** is the authority for how to run them: its recipes carry the full contract (locking, the Python libdir export, feature aliases, `RUSTFLAGS`, the nextest profile, pytest marker filters), and a hand-typed `cargo test`, `cargo build`, `maturin develop`, or `uv run pytest` misses it. Run gates through their recipe — narrowing inside a tight red-green loop is fine (`just test-rust-nextest -p <crate>`, `-E 'test(name)'`) — then run the brief's scoped gates whole before signing off. Whatever the brief names for lint/format, run it: the commit hook formats every staged file, so a format miss blocks the manager's commit.
 
-- `cargo test -p <crate>` for crates you touched
-- `cargo fmt --manifest-path rust/Cargo.toml -p <touched crate> -- --check` for any Rust edit (the commit hook rustfmts staged files; a P4a chunk needed a manager-side fix)
-- `uv run --no-sync pytest <the test files you touched>`
-- `uv run --no-sync ruff check <touched files>` AND `uv run --no-sync ruff format --check <touched files>` — the commit hook formats every staged file, so a format miss blocks the manager's commit (two chunks have needed manager-side format fixes; check both)
-- `just lint-rust-check` when your change alters a public type's size or shape (enum variant payloads, `Result` error types, struct fields crossing crates) — clippy's type-size/`result_large_err` lints only fire on the full-feature lane, so the crate's nextest gate stays green while the workspace lint lane breaks
+Two conditional extras, when your change triggers them:
+
+- `just lint-rust-check` when your change alters a public type's size or shape (enum variant payloads, `Result` error types, struct fields crossing crates) — clippy's type-size/`result_large_err` lints only fire on the full-feature lane, so the scoped gate stays green while the workspace lint lane breaks
 - `just gen-stubs` when degenbot_rs or a doc-comment feeding the stubs changed — the stub-drift gate fails closed on any FFI-crate doc/signature touch; run it before signing off
 
 Not yours (the dispatcher runs these across all workers):
@@ -27,7 +25,9 @@ Not yours (the dispatcher runs these across all workers):
 - `just test-rust-nextest`, `just test-python`, `just test-rust` and any other whole-workspace ladder
 - whole-tree lint/format sweeps
 
-Per-crate `cargo test -p <crate>` is fine inside a tight red-green loop, but do not declare workspace-wide health from it — say what you ran and what you did not.
+Scoped narrowing never proves workspace-wide health — say what you ran and what you did not.
+
+**Final scoped gates run after your final edit.** Any gate result that predates the last edit is stale; re-run after the last change and report the fresh result.
 
 ## Foreground commands only
 
@@ -41,22 +41,10 @@ Other workers may share this workspace. Before editing:
 2. Leave unfamiliar files and modifications completely alone — never revert, fix, or "clean up" work that is not yours.
 3. Name any foreign edit you observe in your sign-off. You are the manager's eyes on the tree; the manager relays facts between workers.
 
+## Scope guard
+
+Your brief is one design problem and one behavior cluster. If the work reaches an independent design problem or behavior cluster beyond it, stop at a **coherent partial completion** — the part you finished stands on its own — and report the concrete continuation scope: what remains, which files it touches, and what the next slice must decide. Never narrow acceptance criteria silently to fit what you finished, and never report partial completion as complete; name every unmet acceptance item explicitly.
+
 ## Sign-off shape
 
-End with a compact statement of: what changed (files + intent), which gates you ran and their results, anything marked PENDING, and any foreign tree activity you noticed. The manager reviews your **diff**, not your story — never summarize around a failure.
-
-## Closing the task: ergo `set` takes a JSON argument, not piped stdin
-
-To mark your task done, pass FIELD updates (`state`, `result`) as a quoted JSON
-**argument**. `result` must be a FILE PATH, not prose:
-
-```sh
-ergo --json set <ID> '{"state":"done","result":"<path/to/result-file>"}'
-```
-
-Piped stdin is a DIFFERENT interface: `ergo set` reads stdin as a REPLACEMENT
-BODY. Mixing the two — `ergo set <ID> '{...}' < some-file`, or a JSON argument
-while stdin is a pipe/here-doc — feeds the JSON in as the new body and drops the
-fields, silently clobbering the task contract you were dispatched with. This
-has happened. Use the JSON-argument form for `state`/`result`; use piped stdin
-only when you deliberately mean to rewrite the body.
+End with a compact statement of: what changed (files + intent), which gates you ran after your final edit and their results, anything marked PENDING, any unfinished acceptance items with their continuation scope, and any foreign tree activity you noticed. The manager reviews your **diff**, not your story — never summarize around a failure.
