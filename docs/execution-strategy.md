@@ -69,7 +69,85 @@ engine captured; nothing here is a simulation handle.
 A `ProbeReading` exposes `delta()` only when **both** edges were observed; a
 missing read is absent, never a fabricated zero. Traces and access lists stay
 engine-owned submission/diagnostic mechanics — they are not assessment evidence
-and do not cross this boundary.
+and never appear in the observation itself (the leaf hands the access list back
+beside it, for submission and diagnostics).
+
+## How the engine runs your transaction
+
+The Rust entry point is `degenbot_simulation::sim::production` —
+[`simulate_opportunity`] for the whole seam, and `simulate_transaction` when a
+caller already holds the encoded `TransactionRequest`. It is the generic leaf
+the canonical dispatch path drives: your Encode, your declared probes, the
+engine's execution, and your Assess, in that order.
+
+```rust
+let simulation = degenbot_simulation::sim::production::simulate_opportunity(
+    &mut session,        // the per-block evm2 session
+    &adapter,            // &dyn ExecutionAdapter — foreign or built-in
+    &path,               // the neutral hop descriptors
+    &solve_result,       // the solved amounts (`compose_view` input)
+    &ProductionSimContext { caller, gas_limit },
+)?;
+// simulation.observation — the typed evidence above
+// simulation.result      — your assessment of it
+// simulation.access_list — engine-owned submission/diagnostic mechanics
+```
+
+The composition contract:
+
+- `ProductionSimContext` carries only the block/deployment facts the engine
+  cannot read from the EVM: who sends the transaction (`caller`) and its
+  top-level `gas_limit`. The base fee comes from the session's own block env —
+  the fee the transaction actually ran under, never a second copy of a caller
+  parameter.
+- `ProductionSimulation` returns the observation and the assessment together,
+  so a caller never assembles evidence itself.
+- The leaf composes no encoder, no settlement token, no `PoolManager`, no
+  command stream, no version/release policy, and no per-adapter runtime
+  override. Actual deployed code is the simulation authority: this leaf injects
+  no code and silently substitutes nothing.
+- One opportunity is one transaction. The leaf has no simulation-loop hook and
+  no multi-transaction choreography.
+
+How the evidence is assembled:
+
+- The transaction executes exactly as Encode returned it, including a nonzero
+  native `value`.
+- A declared `ProbeSpec` is an `eth_call`-shaped read: a call to the spec's
+  address carrying its 4-byte selector as the *whole* calldata. Declared
+  pre-reads run in declared order before the transaction and post-reads after
+  it, all inside ONE journaled sequence, so both edges (and the transaction)
+  observe the same accumulated state.
+- A read that yields no figure is absent, never a fabricated zero: a reverted or
+  halted read, a read whose call returned no data, and a pseudo-read declared
+  with no callee (`address: None` — nothing to call). The observation still
+  carries one `ProbeReading` per declared spec, in declared order.
+- `gas_used` is the engine's per-call measurement: never inflated by a
+  submission safety margin, and never the envelope's gas limit.
+- `events` are the transaction's committed logs, with emitter, topics, data, and
+  their index within the transaction, in execution order.
+- `status` is two-way: a halt (out of gas, invalid opcode) reports `Revert`,
+  because it moved no value either.
+
+[`simulate_opportunity`]: ../rust/crates/engine/degenbot-simulation/src/sim/production.rs
+
+### Typed failure semantics
+
+The leaf returns `Result<ProductionSimulation, ProductionSimError>` and never
+crashing the bot is part of its contract. The error variants name the part of
+the seam that could not deliver:
+
+| Variant | Meaning |
+|---|---|
+| `Encode(ComposeError)` | your Encode declined this opportunity; nothing was executed |
+| `Engine(Evm2SimError)` | the engine refused the journaled sequence (`step_index()` names the refusing step) |
+| `MissingExecution` | the engine returned no result for the executed step, so no evidence exists to assess |
+| `Assess(AssessError)` | your Assess needs evidence the observation does not carry, or cannot decode it |
+
+An **economic decline is not an error**: it is `Ok` with `result.passed == false`.
+A **revert** is a successful run whose assessment declines: the observation
+reports the revert, and the shared `ExecutionResult::price` invariant prices it
+to zero gross no matter what the payload bytes decode to.
 
 ## Assessment semantics
 
@@ -293,12 +371,16 @@ Every consumer-visible transition, Rust and Python:
 | `ExecutionResult` built only inside the trait default | unchanged fields, plus `ExecutionResult::price(..)` so a custom `assess` reuses the pricing half; the helper pins the terminal-status invariant — a reverted observation is always a zero-gross, `passed = false` decline, even when a custom decoder found profitable-looking return data or events |
 | `degenbot-execution-sample`: `compose_solution(&SolveResult) -> Bytes` | `encode_solution(&SolveResult) -> TransactionRequest` (target + value included) |
 | Python `PayloadComposer(callable)` was the whole strategy (implied full adapter) | `PayloadComposer(callable)` stays the encoding-only route; `PayloadAdapter(callable, to, value=.., probes=.., min_net_profit=..)` is the full adapter returning `{to, data, value}` |
+| no engine-side entry point took an adapter | `degenbot_simulation::sim::production::{simulate_opportunity, simulate_transaction}` execute one adapter transaction beside its declared probes and return the adapter's assessment. Additive: canonical dispatch still drives its own balance bundle and the built-in encoder until the cutover |
 
 ## Boundaries this chunk does not cross
 
-- **Production simulator routing.** Engine-side simulation does not yet *consume*
-  adapters end to end; this interface is the contract that routing will drive.
-  Nothing here routes a foreign adapter through the production sim path.
+- **Canonical dispatch cutover.** The production simulation leaf exists
+  (`degenbot_simulation::sim::production`) and a foreign adapter runs through it
+  on real deployed code, but canonical dispatch still drives its own balance
+  bundle and the built-in encoder directly. Routing production dispatch through
+  an injected `Arc<dyn ExecutionAdapter>`, and migrating the built-in adapter
+  onto Encode + Assess, is the cutover that follows (ADR-098 D3).
 - **Built-in receipt assessment.** The bundled `cmd_executor` keeps its current
   assessment; adopting adapter-defined receipt assessment for it is separate.
 - **Deployment identity and version policy.** `DeploymentId`/`CandidateId`

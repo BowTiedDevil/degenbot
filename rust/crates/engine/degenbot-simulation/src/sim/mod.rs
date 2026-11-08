@@ -16,6 +16,7 @@ pub mod frame_replay;
 pub mod hot_slots;
 pub mod journal_pools;
 pub mod prefetch;
+pub mod production;
 pub mod sim_metrics;
 pub mod state_override;
 pub mod storage_memo;
@@ -32,6 +33,10 @@ pub use prefetch::{
     path_hook_slots, path_prefetch_addresses, path_prefetch_slots, prefetch_into_memo,
     prefetch_paths_into_memo, prewarm_plan, resolve_read_anchor, FamilySlotLayout, LearnedSets,
     PrefetchFacts, PrefetchReport, PrefetchSkip, PrewarmPlan, V2SlotIndices, V3SlotIndices,
+};
+pub use production::{
+    simulate_opportunity, simulate_transaction, ProductionSimContext, ProductionSimError,
+    ProductionSimulation, PROBE_CALL_GAS_LIMIT,
 };
 pub use state_override::SimulationOverrideParams;
 pub use storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};

@@ -23,6 +23,10 @@
 /// The in-process evm2 engine + its DB stack (the EVM handle, overrides,
 /// AL collector, warm cache). The settlement-arbitrage strategy relocated to
 /// `degenbot-arbitrage` (ADR-019 D4/D7, decision R).
+///
+/// [`sim::production`] is the adapter-driven production simulation leaf
+/// (ADR-098 D3): one adapter transaction beside its declared probe reads → the
+/// engine's execution → a typed observation → the adapter's own assessment.
 pub mod sim;
 
 /// The executor grammar harness: deploy the real `cmd_executor` +
@@ -74,7 +78,8 @@ pub use sim::evm2::v4_black_box::{
 };
 pub use sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 pub use sim::{
-    divergence_probe, BaseFeeSource, FrameRpcCounter, HotSlotStore, ReplayFrameError, ReplayableTx,
-    RunVerdict, ScratchBlock, SequenceReplayError, SimulationOverrideParams, StorageMemo,
-    StorageMemoCache,
+    divergence_probe, simulate_opportunity, simulate_transaction, BaseFeeSource, FrameRpcCounter,
+    HotSlotStore, ProductionSimContext, ProductionSimError, ProductionSimulation, ReplayFrameError,
+    ReplayableTx, RunVerdict, ScratchBlock, SequenceReplayError, SimulationOverrideParams,
+    StorageMemo, StorageMemoCache, PROBE_CALL_GAS_LIMIT,
 };

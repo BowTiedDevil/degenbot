@@ -1130,6 +1130,16 @@ The engine-owned simulation evidence presented to an adapter for assessment: exe
 gas, return data, declared probe results, and captured diagnostics. It carries no built-in
 profit or custody assumption.
 
+**Production simulation leaf**:
+The engine-side entry point that runs ONE adapter transaction end to end: the adapter's Encode
+produces the complete transaction, the engine executes it beside the adapter's declared pre/post
+probe reads, assembles the typed execution observation, and hands it back for the adapter's
+Assess. It injects no code, knows no settlement token or command stream, and owns no
+per-adapter version policy; canonical dispatch drives it through an injected adapter
+(`degenbot_simulation::sim::production`).
+_Avoid_: calling it a strategy, an executor, or a simulation loop — it carries exactly one
+opportunity's one transaction.
+
 **Deployment identity**:
 The executor-neutral identity of one configured contract instance, distinct from the
 implementation release running there and from other deployments of that same release.

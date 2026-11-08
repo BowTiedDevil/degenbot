@@ -78,6 +78,10 @@ pub struct Evm2SimRun {
 pub struct Evm2SequenceCapture {
     /// The call trace (revert attribution).
     pub trace: crate::sim::capture::CallTrace,
+    /// The committed logs the captured steps emitted, in execution order — the
+    /// event evidence a production observation reports (a reverted frame's logs
+    /// are not committed, matching the swap capture's scope).
+    pub logs: Vec<alloy::primitives::Log>,
     /// The committed swap events.
     pub swaps: Vec<crate::sim::CapturedSwap>,
     /// The reverted-frame swap events (the divergence diagnostic).
@@ -278,12 +282,12 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
         // captured steps as a BORROWED slot (`transact_with_inspector`),
         // drained from the local value after the loop — no typed
         // retrieval off the locally-borrowed EVM.
-        let mut inspector = crate::sim::evm2::inspectors::Evm2SimInspector::default();
+        let mut inspected = crate::sim::evm2::inspectors::Evm2SimInspector::default();
         // `Seam` mode accumulators: the captured steps' slots/swaps read
         // from the state layer instead.
         let mut seam_slots = crate::sim::capture::CollectedSlots::default();
         let mut seam_swaps: Vec<crate::sim::capture::CapturedSwap> = Vec::new();
-        let mut seam_log_count = 0usize;
+        let mut captured_logs: Vec<alloy::primitives::Log> = Vec::new();
         let mut calls = Vec::with_capacity(steps.len());
         let mut writes = std::collections::BTreeMap::new();
         for (index, step) in steps.iter().enumerate() {
@@ -292,7 +296,7 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
                 (Evm2SimStep::Transact(tx), _)
                 | (Evm2SimStep::Inspect(tx), Evm2CaptureMode::Seam) => seq_evm.transact(tx),
                 (Evm2SimStep::Inspect(tx), Evm2CaptureMode::Inspector) => {
-                    seq_evm.transact_with_inspector(tx, &mut inspector)
+                    seq_evm.transact_with_inspector(tx, &mut inspected)
                 }
             };
             let executed = match settled {
@@ -327,8 +331,10 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
             // `Seam` capture, post-resolve: the journal already scopes the
             // result's logs to committed frames (the swap buffer's LIFO
             // notion), so decode directly.
+            if captured {
+                captured_logs.extend(result.logs.iter().cloned());
+            }
             if captured && mode == Evm2CaptureMode::Seam {
-                seam_log_count += result.logs.len();
                 seam_swaps.extend(
                     result
                         .logs
@@ -346,22 +352,7 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
                 storage_writes,
             });
         }
-        let capture = match mode {
-            Evm2CaptureMode::Inspector => Evm2SequenceCapture {
-                trace: inspector.take_trace(),
-                swaps: inspector.take_swaps(),
-                reverted_swaps: inspector.take_reverted_swaps(),
-                log_count: inspector.log_count(),
-                access_list: inspector.take_access_list(),
-            },
-            Evm2CaptureMode::Seam => Evm2SequenceCapture {
-                trace: crate::sim::capture::CallTrace::default(),
-                swaps: seam_swaps,
-                reverted_swaps: Vec::new(),
-                log_count: seam_log_count,
-                access_list: seam_slots.take_access_list(),
-            },
-        };
+        let capture = settle_capture(mode, inspected, captured_logs, seam_slots, seam_swaps);
         // The learning path: a completed capture's access list IS the exact
         // `(address, slot)` set the sequence touched, so it is the prewarm's
         // historical knowledge — recorded against the height the sequence's
@@ -423,9 +414,51 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
             .map(decode_v3_slot0)
     }
 
+    /// The block env this session's sequences replay under — the simulated
+    /// block's own facts (number, timestamp, base fee), so an observation can
+    /// report the fee the transaction actually ran under instead of a
+    /// caller-supplied copy.
+    #[must_use]
+    pub const fn block_env(&self) -> &::evm2::env::BlockEnvExt {
+        &self.block_env
+    }
+
     /// The raw evm2 EVM — the documented escape hatch (see the module doc).
     pub fn evm_mut(&mut self) -> &mut Evm<'a, BaseEvmTypes> {
         self.evm
+    }
+}
+
+/// Assemble a finished sequence's capture from the accumulators its steps
+/// filled: the inspector's trace/trace-scoped swaps in `Inspector` mode, the
+/// state-layer slots and committed swaps in `Seam` mode. The committed logs are
+/// captured in both modes — they are the event evidence a production
+/// observation reports, not a diagnostic of one capture mechanism.
+fn settle_capture(
+    mode: Evm2CaptureMode,
+    mut inspected: crate::sim::evm2::inspectors::Evm2SimInspector,
+    logs: Vec<alloy::primitives::Log>,
+    mut seam_slots: crate::sim::capture::CollectedSlots,
+    seam_swaps: Vec<crate::sim::capture::CapturedSwap>,
+) -> Evm2SequenceCapture {
+    let log_count = logs.len();
+    match mode {
+        Evm2CaptureMode::Inspector => Evm2SequenceCapture {
+            trace: inspected.take_trace(),
+            logs,
+            swaps: inspected.take_swaps(),
+            reverted_swaps: inspected.take_reverted_swaps(),
+            log_count: inspected.log_count(),
+            access_list: inspected.take_access_list(),
+        },
+        Evm2CaptureMode::Seam => Evm2SequenceCapture {
+            trace: crate::sim::capture::CallTrace::default(),
+            logs,
+            swaps: seam_swaps,
+            reverted_swaps: Vec::new(),
+            log_count,
+            access_list: seam_slots.take_access_list(),
+        },
     }
 }
 
