@@ -50,9 +50,11 @@ hashbrown.workspace = true
 degenbot-core.workspace = true
 degenbot-config.workspace = true
 # `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` + the
-# `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim
-# orchestration consumes — crossed from the executor leaf.
+# `encode_cmd_stream`/`EncodeOptions` types the sim orchestration consumes —
+# crossed from the executor leaf.
 degenbot-executor.workspace = true
+# `PathInfo` / `HopInfo` — the neutral opportunity descriptors (ADR-098 D1).
+degenbot-execution.workspace = true
 # `sqrt_price_math` — the engine's proven V3 amount math, so the harness
 # computes V3 hop outputs byte-consistent with the `PoolV3` stub.
 degenbot-math.workspace = true
@@ -179,9 +181,11 @@ tokio = { version = "^1.54", features = ["macros", "rt-multi-thread"] }
 # is ungated — the offline provider builds on it at runtime.) Production builds
 # (the umbrella, the cdylib) never enable this feature.
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
-# `compute_simulation_warmup_slots` + the `PathInfo`/`HopInfo`/`V2HopInfo`/
-# `EncodeOptions` types the smoke test's `SimulatePath` fixture constructs.
+# `compute_simulation_warmup_slots` + the `EncodeOptions` type the smoke test's
+# `SimulatePath` fixture constructs.
 degenbot-executor.workspace = true
+# `PathInfo`/`HopInfo`/`V2HopInfo` — the neutral opportunity descriptors.
+degenbot-execution.workspace = true
 # `DexVariant` for the `BotStateDb` tripwire tests (register a tracked V2 pool
 # so `pool_id_by_address` resolves) — dev-only, no production linkage.
 degenbot-uniswap.workspace = true

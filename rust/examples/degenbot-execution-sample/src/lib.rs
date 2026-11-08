@@ -22,17 +22,20 @@
 //! Guardrails observed:
 //! - **No `degenbot-arbitrage` dependency** (this crate uses only the
 //!   thin seam + its descriptor/solver input types).
+//! - **No `degenbot-executor` dependency** — the hop descriptors are the
+//!   seam's own (`degenbot_execution::{PathInfo, HopInfo, ...}`, ADR-098 D1),
+//!   pinned by `architecture_gates::foreign_execution_sample_carries_no_concrete_executor_edge`.
 //! - **No `pyo3`** — a pure-Rust consumer, per AGENTS.md consumer #1.
 //! - **Encode is unconditional user code**; Probe/Assess/Fee are data/defaults
 //!   the foreign searcher wires (ADR-025 D2/D5).
 
 use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_execution::solve_result::SolveResult;
+use degenbot_execution::PathInfo;
 use degenbot_execution::{
     AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter, ExecutionResult,
     FeePolicy, PayloadComposer, ProbeSpec, ProbeSpecs,
 };
-use degenbot_executor::composers::PathInfo;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Encode — the foreign `SimpleExecutor` composer (ADR-025 D2)

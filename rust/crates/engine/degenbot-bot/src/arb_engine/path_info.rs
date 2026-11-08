@@ -1,22 +1,22 @@
 //! The engine-side path-info seam: `ArbitrageEngine`-registered paths resolve
-//! to the executor's `composers::PathInfo` (the encode-relay
+//! to the seam's `PathInfo` (the encode-relay
 //! flatten).
 //!
 //! The pure projection (a hop list + `BotState` pool identities →
-//! `degenbot_executor::composers::PathInfo`) lives in
+//! `degenbot_execution::PathInfo`) lives in
 //! `degenbot_substrate::path_info`, where the strategy plane can reach it
 //! without the engine. What stays here is the engine-registry lookup
 //! ([`path_info_for`]) and the telemetry hop description — both ride the
 //! engine's path registry and core read lock.
 
 use ::degenbot_pools::solve::HopType;
-use degenbot_executor::composers::PathInfo;
+use degenbot_execution::PathInfo;
 
 use super::ArbitrageEngine;
 use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::BotState;
 
-/// Build the engine-facing `composers::PathInfo` for `path_id` by
+/// Build the engine-facing `PathInfo` for `path_id` by
 /// resolving each registered hop's identity from the shared `BotState`.
 ///
 /// Returns:
@@ -94,7 +94,7 @@ mod tests {
     use ::degenbot_pools::solve::PoolHop;
     use ::degenbot_pools::V4PoolKey;
     use alloy::primitives::{aliases::U112, Address, U256};
-    use degenbot_executor::composers::HopInfo;
+    use degenbot_execution::HopInfo;
     use degenbot_pools::RegisterV4PoolParams;
     use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
     use hashbrown::HashMap;

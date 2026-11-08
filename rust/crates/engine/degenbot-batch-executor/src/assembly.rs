@@ -20,7 +20,8 @@ use std::collections::{HashMap, HashSet};
 use crate::record::PathInfoView;
 
 use degenbot_arbitrage::{DispatchCandidate, FeeOnTransferRegistry, PoolDivergence};
-use degenbot_executor::composers::{EncodeOptions, PathInfo};
+use degenbot_execution::PathInfo;
+use degenbot_executor::composers::EncodeOptions;
 use degenbot_submission::{PoolKey, SubmitCandidate};
 
 use crate::record::{AssemblyVerdict, BatchOutcome, SimReceipt, SimulateVerdict};
@@ -406,16 +407,12 @@ pub fn join_sim_result(
 /// Derive the mutual-exclusion pool-key set from a path's hops (V4 → the
 /// `pool_id_hex` string; V2/V3 → the checksummed Display form).
 #[must_use]
-pub fn derive_path_pools(hops: &[degenbot_executor::composers::HopInfo]) -> HashSet<PoolKey> {
+pub fn derive_path_pools(hops: &[degenbot_execution::HopInfo]) -> HashSet<PoolKey> {
     hops.iter()
         .map(|h| match h {
-            degenbot_executor::composers::HopInfo::V4(v4) => PoolKey::new(v4.pool_id_hex.clone()),
-            degenbot_executor::composers::HopInfo::V2(v2) => {
-                PoolKey::new(format!("{}", v2.pool_address))
-            }
-            degenbot_executor::composers::HopInfo::V3(v3) => {
-                PoolKey::new(format!("{}", v3.pool_address))
-            }
+            degenbot_execution::HopInfo::V4(v4) => PoolKey::new(v4.pool_id_hex.clone()),
+            degenbot_execution::HopInfo::V2(v2) => PoolKey::new(format!("{}", v2.pool_address)),
+            degenbot_execution::HopInfo::V3(v3) => PoolKey::new(format!("{}", v3.pool_address)),
         })
         .collect()
 }
@@ -592,7 +589,8 @@ mod tests {
     use alloy::primitives::Address;
     use degenbot_arbitrage::{FeeOnTransferRegistry, PoolDivergence};
     use degenbot_core::address_utils::parse_address;
-    use degenbot_executor::composers::{EncodeOptions, HopInfo, V2HopInfo};
+    use degenbot_execution::{HopInfo, V2HopInfo};
+    use degenbot_executor::composers::EncodeOptions;
     use degenbot_submission::PathSuppression;
     use std::sync::{Arc, Mutex};
 
@@ -1001,8 +999,8 @@ mod tests {
 
     // ── Moved from the PyO3 seam (the join's one home is here now) ────────
 
-    fn v2_hop(addr: &str) -> degenbot_executor::composers::HopInfo {
-        degenbot_executor::composers::HopInfo::V2(V2HopInfo {
+    fn v2_hop(addr: &str) -> degenbot_execution::HopInfo {
+        degenbot_execution::HopInfo::V2(V2HopInfo {
             pool_address: addr.parse().unwrap(),
             token0_address: addr.parse().unwrap(),
             token1_address: addr.parse().unwrap(),
@@ -1011,8 +1009,8 @@ mod tests {
         })
     }
 
-    fn v3_hop(addr: &str) -> degenbot_executor::composers::HopInfo {
-        degenbot_executor::composers::HopInfo::V3(degenbot_executor::composers::V3HopInfo {
+    fn v3_hop(addr: &str) -> degenbot_execution::HopInfo {
+        degenbot_execution::HopInfo::V3(degenbot_execution::V3HopInfo {
             pool_address: addr.parse().unwrap(),
             token0_address: addr.parse().unwrap(),
             token1_address: addr.parse().unwrap(),
@@ -1021,8 +1019,8 @@ mod tests {
         })
     }
 
-    fn v4_hop(pool_id_hex: &str) -> degenbot_executor::composers::HopInfo {
-        degenbot_executor::composers::HopInfo::V4(degenbot_executor::composers::V4HopInfo {
+    fn v4_hop(pool_id_hex: &str) -> degenbot_execution::HopInfo {
+        degenbot_execution::HopInfo::V4(degenbot_execution::V4HopInfo {
             pool_manager_address: "0x000000000004444c5dc75cb358380d2e3de08a90"
                 .parse()
                 .unwrap(),

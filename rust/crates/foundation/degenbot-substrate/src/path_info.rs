@@ -1,9 +1,9 @@
 //! The command-stream path-info projection: a hop list over `BotState` pool
-//! identities becomes the executor's `composers::PathInfo` (the
+//! identities becomes the seam's `PathInfo` (the
 //! encode-relay flatten).
 //!
 //! The projection resolves every hop's identity from the shared [`BotState`]
-//! and feeds the SAME `composers::PathInfo` to the SAME
+//! and feeds the SAME `PathInfo` to the SAME
 //! `degenbot_executor::composers::encode_cmd_stream`, so byte-for-byte
 //! encoder parity reduces to "does the projection build identical `HopInfo`
 //! field values?" — pinned by the `degenbot-executor` 59-fn golden suite +
@@ -11,7 +11,7 @@
 //!
 //! # Unsupported hop families
 //!
-//! `composers::HopInfo` has only `V2`/`V3`/`V4` variants. The solver's
+//! `HopInfo` has only `V2`/`V3`/`V4` variants. The solver's
 //! `HopType` enum additionally covers `SolidlyStable`, `BalancerWeighted`,
 //! `BalancerStable`, `CurveStableswap` — for which the command-stream encoder
 //! has no arm (`composers.rs` "2-hop Solidly / mixed-V2-V3-with-Solidly: not
@@ -21,8 +21,8 @@
 //! "hop must be V2HopInfo/V3HopInfo/V4HopInfo". No new encoding capability is
 //! added; the pre-existing Solidly/Balancer/Curve encoding gap is preserved.
 
-use ::degenbot_executor::composers::{HopInfo, PathInfo};
 use ::degenbot_pools::solve::{HopType, MixedPoolRef};
+use degenbot_execution::{HopInfo, PathInfo};
 use thiserror::Error;
 
 use crate::executor_hop::{v2_hop, v3_hop, v4_hop};
@@ -43,7 +43,7 @@ pub enum PathInfoBuildError {
     UnsupportedHopType { hop_type: HopType, pool_id: u64 },
 }
 
-/// Build the `composers::PathInfo` for a hop list straight off the shared
+/// Build the `PathInfo` for a hop list straight off the shared
 /// core — the ENGINE-LOCK-FREE form: the inline-sim hook runs
 /// in the SOLVE WORKER while the calling cycle holds the engine `Mutex`, so
 /// it must NEVER re-enter the engine lock. The projection resolves every

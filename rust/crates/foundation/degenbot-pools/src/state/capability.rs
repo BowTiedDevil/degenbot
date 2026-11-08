@@ -34,7 +34,7 @@
 //!   capability claim.
 //! - Settlement's seven solver families all `solve` (mixed `HopType` dispatch),
 //!   but only the three [`ENCODER_FAMILIES`] `compose`; Solidly / Balancer /
-//!   Curve have no `composers::HopInfo` arm (`arb_engine::path_info` returns
+//!   Curve have no `HopInfo` arm (`arb_engine::path_info` returns
 //!   `UnsupportedHopType`).
 //! - [`Family::LfjBinned`] is roadmap-only: both arms declare it unsupported
 //!   (D8), and the descriptor seam carries the loud `family-unsupported`
@@ -372,7 +372,7 @@ impl FamilyCapabilities {
     }
 }
 
-/// Families with an executor command-stream encoder arm: `composers::HopInfo`
+/// Families with an executor command-stream encoder arm: `HopInfo`
 /// carries V2/V3/V4 only (ADR-059 D5).
 pub const ENCODER_FAMILIES: [Family; 3] = [Family::V2, Family::V3, Family::V4];
 

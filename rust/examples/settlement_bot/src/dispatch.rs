@@ -28,7 +28,7 @@ use alloy::primitives::{B256, U256};
 use degenbot::arbitrage::{compute_priority_fee, BlockPriorityFees};
 use degenbot::batch_executor::PathResolver;
 use degenbot::bot::arb_engine::EngineStages;
-use degenbot::cmd_executor::composers::PathInfo;
+use degenbot::execution::PathInfo;
 use degenbot::rpc::provider::AlloyProvider;
 use degenbot::submission::{Dispatcher, ReceiptProbe, SubmissionError, SubmissionResult};
 
@@ -182,10 +182,7 @@ mod tests {
     #[test]
     fn map_resolver_answers_from_the_map() {
         let mut map = HashMap::new();
-        map.insert(
-            7_u64,
-            degenbot::cmd_executor::composers::PathInfo::new(Vec::new()),
-        );
+        map.insert(7_u64, degenbot::execution::PathInfo::new(Vec::new()));
         let resolver = MapResolver(map);
         assert!(resolver.resolve(7).is_some());
         assert!(resolver.resolve(8).is_none());

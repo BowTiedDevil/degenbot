@@ -29,9 +29,10 @@
 //! (`tests/native_eth_3hop_bridge.rs`).
 use alloy::primitives::{Address, U256};
 
-use crate::composers::{V2HopInfo, V3HopInfo, NATIVE_CURRENCY_ADDRESS};
+use crate::composers::NATIVE_CURRENCY_ADDRESS;
 use crate::encoders::{self, AddressTable, SENTINEL_PM, SENTINEL_SELF};
 use crate::grammar_ledger::{LedgerOp, SwapRecipient};
+use degenbot_execution::{V2HopInfo, V3HopInfo};
 
 /// A hop-protocol family member.
 pub use crate::grammar_ledger::Prot;
@@ -47,7 +48,9 @@ pub use crate::grammar_ledger::{
 // and matches on `HopInfo`; scoped to test builds so the lib build has no
 // unused-import warning.
 #[cfg(test)]
-use crate::composers::{ComposerInputs, HopInfo};
+use crate::composers::ComposerInputs;
+#[cfg(test)]
+use degenbot_execution::HopInfo;
 
 pub(crate) fn v2_forward(h: &V2HopInfo) -> Address {
     if h.zfo {

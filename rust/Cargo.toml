@@ -109,7 +109,7 @@ degenbot-core = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot
 degenbot-config = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-config" }
 degenbot-db = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-db" }
 degenbot-decoders = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-decoders" }
-degenbot-execution = { version = "0.6.0-alpha.19", path = "crates/engine/degenbot-execution" }
+degenbot-execution = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-execution" }
 degenbot-executor = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-executor" }
 degenbot-eventhub = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-eventhub" }
 degenbot-fork = { version = "0.6.0-alpha.19", path = "crates/integrations/degenbot-fork" }
@@ -172,6 +172,7 @@ members = [
     "crates/foundation/degenbot-db",
     "crates/foundation/degenbot-decoders",
     "crates/foundation/degenbot-eventhub",
+    "crates/foundation/degenbot-execution",
     "crates/foundation/degenbot-executor",
     "crates/foundation/degenbot-math",
     "crates/foundation/degenbot-order-index",
@@ -184,7 +185,6 @@ members = [
     "crates/engine/degenbot-arbitrage",
     "crates/engine/degenbot-batch-executor",
     "crates/engine/degenbot-bot",
-    "crates/engine/degenbot-execution",
     "crates/engine/degenbot-simulation",
     "crates/engine/degenbot-strategy",
     "crates/engine/degenbot-submission",

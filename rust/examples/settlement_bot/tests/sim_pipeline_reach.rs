@@ -88,17 +88,15 @@ impl ReceiptProbe for NoopProbe {
 
 /// A map-backed resolver (the offline driver shape; the live driver resolves
 /// through `EngineDriver::path_info_for`).
-struct MapResolver(HashMap<u64, degenbot::cmd_executor::composers::PathInfo>);
+struct MapResolver(HashMap<u64, degenbot::execution::PathInfo>);
 
 impl degenbot::batch_executor::PathResolver for MapResolver {
-    fn resolve(&self, path_id: u64) -> Option<degenbot::cmd_executor::composers::PathInfo> {
+    fn resolve(&self, path_id: u64) -> Option<degenbot::execution::PathInfo> {
         self.0.get(&path_id).cloned()
     }
 }
 
-async fn offline_executor(
-    resolver: HashMap<u64, degenbot::cmd_executor::composers::PathInfo>,
-) -> BatchExecutor {
+async fn offline_executor(resolver: HashMap<u64, degenbot::execution::PathInfo>) -> BatchExecutor {
     let executor_address =
         degenbot::core::address_utils::parse_address("0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5")
             .unwrap();

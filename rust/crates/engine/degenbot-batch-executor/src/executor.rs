@@ -21,7 +21,8 @@ use degenbot_arbitrage::{
     candidate_is_stale, dispatch_profitable_results, DispatchOutcome, FeeOnTransferRegistry,
     PoolDivergence, SimulateContext,
 };
-use degenbot_executor::composers::{EncodeOptions, PathInfo};
+use degenbot_execution::PathInfo;
+use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::{
     dispatch_and_submit, Dispatcher, EnqueueOutcome, PathSuppression, PipelineFailure,
@@ -969,7 +970,7 @@ mod tests {
     )]
     #[tokio::test]
     async fn renderer_drain_reads_every_stage() {
-        use degenbot_executor::composers::V2HopInfo;
+        use degenbot_execution::V2HopInfo;
 
         struct MixedSim;
         impl SimLeaf<BatchWork, SimStageOutput> for MixedSim {
@@ -979,16 +980,15 @@ mod tests {
                         "0x1111111111111111111111111111111111111111",
                     )
                     .unwrap();
-                    let view =
-                        PathInfoView::from(&degenbot_executor::composers::PathInfo::new(vec![
-                            degenbot_executor::composers::HopInfo::V2(V2HopInfo {
-                                pool_address: pool,
-                                token0_address: pool,
-                                token1_address: pool,
-                                fee: 30,
-                                zfo: true,
-                            }),
-                        ]));
+                    let view = PathInfoView::from(&degenbot_execution::PathInfo::new(vec![
+                        degenbot_execution::HopInfo::V2(V2HopInfo {
+                            pool_address: pool,
+                            token0_address: pool,
+                            token1_address: pool,
+                            fee: 30,
+                            zfo: true,
+                        }),
+                    ]));
                     let failure = FailureDetail {
                         path_id: 3,
                         bucket: "no-profit".to_string(),

@@ -27,7 +27,9 @@ degenbot-arbitrage.workspace = true
 # simulate-dispatch telemetry span (ADR-043).
 degenbot-bot.workspace = true
 degenbot-substrate.workspace = true
-# `EncodeOptions` / `PathInfo` / `HopInfo` / `WarmupSlots` (the composer seam).
+# `PathInfo` / `HopInfo` — the neutral opportunity descriptors (ADR-098 D1).
+degenbot-execution.workspace = true
+# `EncodeOptions` / `WarmupSlots` (the composer seam).
 degenbot-executor.workspace = true
 # `AlloyProvider` — the sim leaf's cold-miss DB fallback + the submit leaf's
 # broadcast surfaces.

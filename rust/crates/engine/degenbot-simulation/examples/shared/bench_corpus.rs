@@ -15,7 +15,8 @@ use ::evm2::ethereum::{ethereum_tx_registry, RecoveredTxEnvelope, TxEnvelope};
 use ::evm2::evm::InMemoryDB;
 use ::evm2::{BaseEvmTypes, Evm, EvmFeatures, ExecutionConfig, Precompiles, Version};
 
-use degenbot_executor::composers::{EncodeOptions, EncodeRequest, HopInfo, PathInfo, V2HopInfo};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
+use degenbot_executor::composers::{EncodeOptions, EncodeRequest};
 use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
 use degenbot_simulation::sim::evm2::inspectors::Evm2SimInspector;
 

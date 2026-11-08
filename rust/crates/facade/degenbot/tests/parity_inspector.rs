@@ -48,8 +48,9 @@ use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
     simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
 };
-use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
+use degenbot::cmd_executor::composers::EncodeOptions;
 use degenbot::cmd_executor::{compute_simulation_warmup_slots, WarmupSlots};
+use degenbot::execution::{HopInfo, PathInfo, V2HopInfo};
 use degenbot::simulation::apply_simulation_overrides;
 use degenbot_rpc::provider::AlloyProvider;
 use serde::Deserialize;

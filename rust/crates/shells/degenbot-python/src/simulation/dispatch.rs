@@ -19,7 +19,7 @@ use degenbot_arbitrage::CapturedSwap;
 use degenbot_batch_executor::assembly::{merge_payload_results, PayloadArm};
 use degenbot_batch_executor::row::{PayloadFailure, PayloadRow};
 use degenbot_batch_executor::PathResolver;
-use degenbot_executor::composers::PathInfo;
+use degenbot_execution::PathInfo;
 use degenbot_pools::RegisteredPoolFamily;
 use degenbot_simulation::sim::capture::SwapFamily;
 use degenbot_submission::SubmitCandidate;

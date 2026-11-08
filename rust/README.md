@@ -73,7 +73,6 @@ foundation capabilities.
 | `degenbot-strategy` | Strategy vocabulary, host, and concrete executable strategy compositions. |
 | `degenbot-arbitrage` | Settlement-arbitrage searcher policy: pre/post balance checks, profit and priority-fee policy, and dispatch categorization. |
 | `degenbot-simulation` | The generic in-process evm2 executor and simulation dispatch. It does not own searcher-specific policy. |
-| `degenbot-execution` | The user-owned execution-adapter seam and its value/protocol types; it ships no default strategy. |
 | `degenbot-submission` | Nonce-leased dispatch, EIP-1559 signing, raw and relay broadcast, receipt monitoring, and the submission ledger. |
 | `degenbot-workers` | Worker-role state machine, budget authority, priority dispatch, and cordon posture. |
 
@@ -112,7 +111,8 @@ meaningful without a complete bot runtime.
 | `degenbot-db` | Rust-owned SQLite schema, migrations, file operations, and persistence substrate. |
 | `degenbot-pathfinding` | Zero-dependency arbitrage graph and path enumeration. |
 | `degenbot-order-index` | Net-profit order indexing under variable gas price. |
-| `degenbot-executor` | Cmd-executor domain layout and storage math. |
+| `degenbot-execution` | The user-owned execution-adapter seam, its value/protocol types, and the neutral opportunity descriptors (`PathInfo` / `HopInfo`); it ships no default strategy. The built-in `degenbot-executor` depends on it, never the reverse (ADR-098 D1). |
+| `degenbot-executor` | Cmd-executor domain layout and storage math; the built-in command grammar consumes the seam's hop descriptors. |
 | `degenbot-eventhub` | Transport-pure event vocabulary and overflow policy for in-process fan-out. |
 | `degenbot-ingestion` | WebSocket block/log intake, filtering, backfill, and watchdog policy (moved from integrations — ADR-084 D4: the stack depends on it). |
 | `degenbot-runs` | Per-session run artifacts (stdout log and trace JSONL) (moved from integrations — ADR-084 D4). |

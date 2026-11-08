@@ -32,10 +32,13 @@
 //!
 //! `pyo3`-free (enforced by `just check-no-pyo3-in-cores`); consumable by both
 //! the standalone Rust path and the PyO3 driver shell. Dep graph is a DAG:
-//! `execution → {executor, simulation, solvers}`.
+//! `execution → {pools}`; `executor → execution` (ADR-098 D1) — this seam owns
+//! the neutral opportunity descriptors ([`PathInfo`] / [`HopInfo`]), so a
+//! foreign adapter never depends on the built-in command executor.
 
 pub mod adapter;
 pub mod gate;
+pub mod path;
 pub mod payload;
 pub mod solve_result;
 
@@ -45,5 +48,6 @@ pub mod solve_result;
 // ComposerInputs, ComposeError};`).
 pub use adapter::ExecutionAdapter;
 pub use gate::{AssessOptions, AssessRule, ExecutionResult, FeePolicy, ProbeSpec, ProbeSpecs};
+pub use path::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 pub use payload::{ComposeError, ComposeOptions, ComposerInputs, PayloadComposer};
 pub use solve_result::SolveResult;

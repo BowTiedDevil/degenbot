@@ -9,7 +9,8 @@
 use crate::record::FailureDetail;
 use alloy::primitives::U256;
 use degenbot_arbitrage::{CapturedSwap, DispatchCandidate, SimResult, SolveStep};
-use degenbot_executor::composers::{EncodeOptions, PathInfo};
+use degenbot_execution::PathInfo;
+use degenbot_executor::composers::EncodeOptions;
 
 /// One raw engine-result row — the solver's result for one path.
 #[derive(Debug, Clone, PartialEq, Eq)]

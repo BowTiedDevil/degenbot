@@ -8,7 +8,8 @@
 // precisely, so this byte-golden remains as the smoke-level byte cross-check.
 
 use alloy::primitives::{address, Address};
-use degenbot_executor::composers::{encode_cmd_3_hop, EncodeOptions, HopInfo, PathInfo, V4HopInfo};
+use degenbot_execution::{HopInfo, PathInfo, V4HopInfo};
+use degenbot_executor::composers::{encode_cmd_3_hop, EncodeOptions};
 use degenbot_executor::encoders::{
     self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH,
 };

@@ -505,7 +505,7 @@ impl Harness {
         hop_outputs: &[u128],
         gas: u64,
     ) -> Result<ExecOutcome, String> {
-        use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo};
+        use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
         let n = pool_indices.len();
         debug_assert_eq!(n, zfo.len());
         debug_assert_eq!(n, hop_outputs.len());
@@ -531,7 +531,7 @@ impl Harness {
     /// `consumed_inputs` defaults to `[optimal_input, hop_outputs[0], …]`.
     pub fn run_path(
         &mut self,
-        path: &degenbot_executor::composers::PathInfo,
+        path: &degenbot_execution::PathInfo,
         optimal_input: u128,
         hop_outputs: &[u128],
         gas: u64,
@@ -555,7 +555,7 @@ impl Harness {
     /// Custody → `profit_mode=1` active assert; `erc6909_profit` → `profit_mode=2`).
     pub fn run_path_with_opts(
         &mut self,
-        path: &degenbot_executor::composers::PathInfo,
+        path: &degenbot_execution::PathInfo,
         optimal_input: u128,
         hop_outputs: &[u128],
         gas: u64,
@@ -572,7 +572,7 @@ impl Harness {
     /// hop_outputs[0], …]`).
     pub fn run_path_with_consumed(
         &mut self,
-        path: &degenbot_executor::composers::PathInfo,
+        path: &degenbot_execution::PathInfo,
         optimal_input: u128,
         hop_outputs: &[u128],
         consumed_inputs: &[u128],
@@ -596,7 +596,7 @@ impl Harness {
     /// `encode_cmd_stream` intake (`EncodeContext` + `EncodeRequest`).
     pub fn encode_path_with_consumed(
         &self,
-        path: &degenbot_executor::composers::PathInfo,
+        path: &degenbot_execution::PathInfo,
         optimal_input: u128,
         hop_outputs: &[u128],
         consumed_inputs: &[u128],
@@ -627,7 +627,7 @@ impl Harness {
     /// payload `execute_payload`/`execute_data` then drive).
     pub fn encode_path(
         &self,
-        path: &degenbot_executor::composers::PathInfo,
+        path: &degenbot_execution::PathInfo,
         optimal_input: u128,
         hop_outputs: &[u128],
     ) -> Result<Vec<u8>, String> {
@@ -655,7 +655,7 @@ impl Harness {
     /// — funding source / profit capture / bribe).
     pub fn encode_path_with_opts(
         &self,
-        path: &degenbot_executor::composers::PathInfo,
+        path: &degenbot_execution::PathInfo,
         optimal_input: u128,
         hop_outputs: &[u128],
         opts: degenbot_executor::composers::EncodeOptions,

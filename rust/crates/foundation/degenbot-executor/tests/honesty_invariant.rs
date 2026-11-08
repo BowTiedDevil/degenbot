@@ -28,9 +28,8 @@
 )]
 
 use alloy::primitives::{address, Address};
-use degenbot_executor::composers::{
-    ComposerInputs, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
-};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
+use degenbot_executor::composers::{ComposerInputs, EncodeOptions};
 use degenbot_executor::grammar_ledger::{AxisSupport, Bribe, FundingSource, ProfitCapture, Prot};
 use degenbot_executor::grammar_shape::{derive_shape, family_axis_support};
 

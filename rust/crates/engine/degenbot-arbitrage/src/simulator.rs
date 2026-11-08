@@ -41,9 +41,9 @@ use alloy::primitives::{Address, TxKind, I256, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_core::fee_percentiles::{P10_INDEX, P50_INDEX, PRIORITY_FEE_PERCENTILES};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V4HopInfo};
 use degenbot_executor::composers::{
-    config_for_options, encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo,
-    PathInfo, V2HopInfo, V4HopInfo,
+    config_for_options, encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest,
 };
 use degenbot_executor::WarmupSlots;
 use degenbot_rpc::fees::BlockPriorityFees;
@@ -1901,7 +1901,7 @@ mod tests {
     }
     use super::*;
     use alloy::primitives::U256;
-    use degenbot_executor::composers::V3HopInfo;
+    use degenbot_execution::V3HopInfo;
 
     // ── C0: execute_gas_limit config override (artificial-ceiling
     // investigation; the string contract lives in degenbot-config's
@@ -2040,7 +2040,8 @@ mod tests {
     use alloy::providers::{Provider, ProviderBuilder};
     use alloy::rpc::client::ClientBuilder;
     use alloy::transports::mock::{Asserter, MockTransport};
-    use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
+    use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
+    use degenbot_executor::composers::EncodeOptions;
     use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
     use degenbot_rpc::provider::AlloyProvider;
     use std::sync::Arc;
@@ -2317,7 +2318,7 @@ mod tests {
     // ── scan_for_v4_v2_boundary_bridge ─────────────────────────
     #[test]
     fn scan_detects_v4_native_to_v2_weth_boundary() {
-        use degenbot_executor::composers::{HopInfo, V2HopInfo, V4HopInfo};
+        use degenbot_execution::{HopInfo, V2HopInfo, V4HopInfo};
         let native = Address::ZERO;
         let weth = Address::from([0xc0u8; 20]);
         let usdc = Address::from([0xa0u8; 20]);
@@ -2351,7 +2352,7 @@ mod tests {
 
     #[test]
     fn scan_detects_v2_weth_to_v4_native_boundary() {
-        use degenbot_executor::composers::{HopInfo, V2HopInfo, V4HopInfo};
+        use degenbot_execution::{HopInfo, V2HopInfo, V4HopInfo};
         let native = Address::ZERO;
         let weth = Address::from([0xc0u8; 20]);
         let usdc = Address::from([0xa0u8; 20]);
@@ -2390,7 +2391,7 @@ mod tests {
     fn scan_returns_none_for_native_path_ends_v4_v2_v4() {
         // V4a native-in, V4c native-out — native at PATH ENDS, boundary token
         // is WETH (ERC20) on the V2 ↔ V4 sides. No bridge needed.
-        use degenbot_executor::composers::{HopInfo, V2HopInfo, V4HopInfo};
+        use degenbot_execution::{HopInfo, V2HopInfo, V4HopInfo};
         let native = Address::ZERO;
         let weth = Address::from([0xc0u8; 20]);
         let usdc = Address::from([0xa0u8; 20]);
@@ -2595,7 +2596,7 @@ mod tests {
     /// must map each to its true hop.
     #[test]
     fn match_v3_v4_v3_captures_by_emitter_not_emit_index() {
-        use degenbot_executor::composers::{HopInfo, V3HopInfo, V4HopInfo};
+        use degenbot_execution::{HopInfo, V3HopInfo, V4HopInfo};
         let v3a = address!("1111111111111111111111111111111111111111");
         let v3c = address!("2222222222222222222222222222222222222222");
         let pm = SMOKE_PM; // the V4 PoolManager (same emitter as every V4 hop)
@@ -2660,7 +2661,7 @@ mod tests {
     /// `hop_index = None` (defensive — should not occur, but must not panic).
     #[test]
     fn unmatched_emitter_attributes_to_none_without_panicking() {
-        use degenbot_executor::composers::{HopInfo, V2HopInfo};
+        use degenbot_execution::{HopInfo, V2HopInfo};
         let stranger = address!("9999999999999999999999999999999999999999");
         let hops = vec![HopInfo::V2(V2HopInfo {
             pool_address: address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
@@ -2686,7 +2687,7 @@ mod tests {
     /// real UNI pool 0x9a5c1d2f recurrence (block 25673381, path 57150).
     #[test]
     fn reverted_swap_carries_pool_id_input_and_sim_scalars() {
-        use degenbot_executor::composers::{HopInfo, V4HopInfo};
+        use degenbot_execution::{HopInfo, V4HopInfo};
         let pm = SMOKE_PM;
         let hops = vec![HopInfo::V4(V4HopInfo {
             pool_manager_address: pm,

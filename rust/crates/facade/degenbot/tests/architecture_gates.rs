@@ -2362,6 +2362,47 @@ fn dependency_charter_is_respected() {
     );
 }
 
+/// ADR-098 D1/D6: the foreign consumer seam is proven from outside this
+/// workspace's built-in adapter. `examples/degenbot-execution-sample` implements
+/// and drives an `ExecutionAdapter` over the neutral opportunity descriptors, so
+/// neither its manifest nor its normal dependency tree may carry the built-in
+/// command executor.
+///
+/// live-invariant gate (ADR-087 D2): watches the foreign sample's manifest edge
+/// and its resolved tree; not tripwire precedent.
+#[test]
+fn foreign_execution_sample_carries_no_concrete_executor_edge() {
+    const SAMPLE: &str = "degenbot-execution-sample";
+    let manifest = workspace_root().join("examples/degenbot-execution-sample/Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).expect("read sample manifest");
+    let declared: Vec<&str> = text
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("degenbot-executor"))
+        .collect();
+    assert!(
+        declared.is_empty(),
+        "the foreign consumer sample must not declare the built-in executor (ADR-098 D1): {declared:#?}"
+    );
+
+    let tree = cargo_tree_of(SAMPLE);
+    let offenders: Vec<&str> = tree
+        .lines()
+        .skip(1)
+        .filter(|line| {
+            let entry = line
+                .trim_start_matches([' ', '│', '├', '└', '─', '|', '`', '+', '-', '\\'])
+                .trim();
+            !entry.is_empty()
+                && entry.split(" v").next().unwrap_or(entry).trim() == "degenbot-executor"
+        })
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "the foreign sample's dependency tree reached the built-in executor: {offenders:#?}"
+    );
+}
+
 /// ADR-084 D4: capability layers, honestly named — edge direction is enforced
 /// over the `role_edge_direction_census.txt` allowlist, which can only shrink.
 #[test]

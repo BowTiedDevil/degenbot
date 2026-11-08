@@ -22,6 +22,7 @@ degenbot-config.workspace = true
 degenbot-core.workspace = true
 degenbot-db.workspace = true
 degenbot-decoders.workspace = true
+degenbot-execution.workspace = true
 degenbot-executor.workspace = true
 degenbot-ingestion.workspace = true
 degenbot-math.workspace = true

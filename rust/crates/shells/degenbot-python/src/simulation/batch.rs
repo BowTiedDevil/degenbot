@@ -49,7 +49,7 @@ use degenbot_batch_executor::{
     BatchExecutor, BatchOutcome, BatchOutcomeSet, ExecutorConfig, ExecutorRuntime, PathResolver,
 };
 use degenbot_bot::arb_engine::EngineStages;
-use degenbot_executor::composers::PathInfo;
+use degenbot_execution::PathInfo;
 use degenbot_submission::{PathSuppression, SubmissionTarget};
 use pyo3::types::{PyDict, PyList};
 

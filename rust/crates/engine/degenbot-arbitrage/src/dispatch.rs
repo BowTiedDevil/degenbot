@@ -37,7 +37,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
-use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo};
+use degenbot_execution::{HopInfo, PathInfo};
+use degenbot_executor::composers::EncodeOptions;
 use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
@@ -1068,7 +1069,7 @@ pub fn dispatch_profitable_results(
 /// revert. Dropping the candidate pre-sim avoids the revert.
 #[must_use]
 pub fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
-    use degenbot_executor::composers::HopInfo;
+    use degenbot_execution::HopInfo;
     for (i, hop) in candidate.path_info.hops.iter().enumerate() {
         let Some(step) = candidate.steps.get(i) else {
             return false; // Mismatched lengths — let the sim path handle it.
@@ -1107,7 +1108,7 @@ mod tests {
     use alloy::providers::{Provider, ProviderBuilder};
     use alloy::rpc::client::ClientBuilder;
     use alloy::transports::mock::{Asserter, MockTransport};
-    use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo};
+    use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
     use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
     use degenbot_rpc::provider::AlloyProvider;
     use std::sync::{Arc, Mutex};

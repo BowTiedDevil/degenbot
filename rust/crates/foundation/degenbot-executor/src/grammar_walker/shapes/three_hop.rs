@@ -1927,14 +1927,13 @@ fn rule_walk_v2v3_v4_mixed(
 mod rule_walker_tests {
     #![expect(clippy::cast_possible_truncation, clippy::expect_used)]
     use super::{derive, rule_walk_v2v3, rule_walk_v2v3_v4_mixed, rule_walk_v4_led};
-    use crate::composers::{
-        ComposerInputs, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
-    };
+    use crate::composers::{ComposerInputs, EncodeOptions};
     use crate::encoders::enc_preamble;
     use crate::grammar_ledger::Prot;
     use crate::grammar_plan::plan_to_bytes;
     use crate::grammar_walker::facts_for;
     use alloy::primitives::{address, Address};
+    use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 
     const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");

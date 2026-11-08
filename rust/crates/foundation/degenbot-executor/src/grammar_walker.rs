@@ -22,12 +22,13 @@
 //! reference producer is pinned by the evm2 contract matrix + the
 //! `spike_derivation` golden suite.
 
-use crate::composers::{ComposerInputs, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
+use crate::composers::ComposerInputs;
 use crate::encoders::AddressTable;
 use crate::grammar_ledger::Prot;
 use crate::grammar_plan::{v2_forward, v3_forward, v3_input, Plan};
 use crate::grammar_shape::v4_hop_currencies;
 use alloy::primitives::Address;
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 
 /// Whether an amount fits the on-chain i128 swap-input field.
 fn fits_i128(v: u128) -> bool {
@@ -848,10 +849,9 @@ mod tests {
     #![expect(clippy::cast_possible_truncation, clippy::panic)]
 
     use super::*;
-    use crate::composers::{
-        ComposerInputs, EncodeOptions, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
-    };
+    use crate::composers::{ComposerInputs, EncodeOptions};
     use alloy::primitives::{address, Address};
+    use degenbot_execution::{PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 
     const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");

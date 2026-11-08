@@ -16,6 +16,10 @@ workspace = true
 alloy = { version = "^2.5" }
 degenbot-abi.workspace = true
 degenbot-core.workspace = true
+# The neutral opportunity descriptors (`PathInfo` / `HopInfo` / the family hop
+# payloads) — the seam's Encode intake, which the command grammar consumes
+# (ADR-098 D1). The built-in executor depends on the seam, never the reverse.
+degenbot-execution.workspace = true
 thiserror = { version = "^2.0" }
 
 [dev-dependencies]

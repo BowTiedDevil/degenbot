@@ -15,9 +15,9 @@ workspace = true
 [dependencies]
 alloy = { version = "^2.5", features = ["signers"] }
 thiserror = { version = "^2.0" }
-# The seam itself — `PayloadComposer` / `ExecutionAdapter` + value types.
+# The seam itself — `PayloadComposer` / `ExecutionAdapter` + value types, plus
+# the neutral `PathInfo` / `HopInfo` hop descriptors it owns (ADR-098 D1). The
+# sample proves the seam from outside: no `degenbot-executor` edge.
 degenbot-execution.workspace = true
-# `PathInfo` / `HopInfo` hop descriptors (the seam's Encode input).
-degenbot-executor.workspace = true
 # `SolvePathResult` amounts (the solve-result view's amount side).
 degenbot-pools.workspace = true

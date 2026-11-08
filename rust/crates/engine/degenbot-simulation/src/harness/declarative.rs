@@ -30,7 +30,7 @@
 #![expect(clippy::cast_possible_wrap)]
 
 use alloy::primitives::{Address, U256};
-use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 
 use super::{v3_amount_out, ExecOutcome, Harness, V2Pool, V3Pool, V4Pool};
 /// A single path hop: the protocol-tagged pool + the src (input) and dst

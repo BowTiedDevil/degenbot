@@ -1,11 +1,14 @@
 # degenbot-execution
 
-`degenbot-execution` is the generic foreign-adapter seam (ADR-025): a pyo3-free
-crate owning `ExecutionAdapter`, `PayloadComposer`, the solve-result view, and
-the probe/assess/fee value types used to build a payload for a user-defined
-execution contract. Its `ComposerInputs` intentionally carries only
-solver-driven amounts and adapter-agnostic options; it does not carry
-`cmd_executor` addresses or command-encoding options.
+`degenbot-execution` is the generic foreign-adapter seam (ADR-025): a pyo3-free,
+foundation-layer crate owning `ExecutionAdapter`, `PayloadComposer`, the
+solve-result view, the probe/assess/fee value types used to build a payload for
+a user-defined execution contract, and the neutral opportunity descriptors
+(`path::{PathInfo, HopInfo, V2HopInfo, V3HopInfo, V4HopInfo}`). The built-in
+`degenbot-executor` depends on this seam, never the reverse (ADR-098 D1).
+Its `ComposerInputs` intentionally carries only solver-driven amounts and
+adapter-agnostic options; it does not carry `cmd_executor` addresses or
+command-encoding options.
 
 The concrete built-in production adapter lives in `degenbot-strategy`, where
 `CmdExecutorAdapter` owns the canonical `cmd_executor` path. It captures one

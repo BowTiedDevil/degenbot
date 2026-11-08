@@ -14,7 +14,7 @@
 //! `extract_hop` / `extract_path_info` / `hop_to_py` / `path_info_to_py`
 //! helpers are RETIRED. The encode path moved to the Rust core
 //! (`composers::encode_cmd_stream`, called by the executor's own row builders,
-//! never from Python), and a candidate resolves its `composers::PathInfo` from
+//! never from Python), and a candidate resolves its `PathInfo` from
 //! a registered `path_id` via `PyArbEngine::path_info_for_core`. The `[profit]`
 //! hop-detail render reads `outcome.path_infos` as plain `dict`s (built in
 //! `simulation/render.rs`). The Python `hop_info` dataclasses are deleted.

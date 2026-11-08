@@ -15,11 +15,8 @@ workspace = true
 [dependencies]
 alloy = { version = "^2.5" }
 thiserror = { version = "^2.0" }
-# `PathInfo` (hop descriptors) — the solve-result view's hop side (ADR-025 D4).
-# `degenbot-executor` is the developer's `cmd_executor` adapter, NOT a general
-# execution layer; this crate only borrows its `PathInfo`/`HopInfo` descriptor
-# types so the seam's Encode input (`path: &PathInfo`) matches what a Rust
-# consumer already reaches.
-degenbot-executor.workspace = true
+# The neutral opportunity descriptors (`PathInfo` / `HopInfo`, ADR-098 D1) are
+# this crate's own; the built-in `cmd_executor` implementation depends on this
+# seam, never the reverse.
 # `SolvePathResult` (amounts) — the solve-result view's amount side (ADR-025 D4).
 degenbot-pools.workspace = true

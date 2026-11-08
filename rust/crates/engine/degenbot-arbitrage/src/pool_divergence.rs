@@ -55,7 +55,7 @@
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, B256, U256};
-use degenbot_executor::composers::HopInfo;
+use degenbot_execution::HopInfo;
 
 use crate::simulator::SimFailure;
 use degenbot_simulation::CapturedSwap;
@@ -277,7 +277,7 @@ mod tests {
     use super::*;
     use crate::simulator::SimFailure;
     use alloy::primitives::{address, Address, I256};
-    use degenbot_executor::composers::{HopInfo, V2HopInfo, V3HopInfo, V4HopInfo};
+    use degenbot_execution::{HopInfo, V2HopInfo, V3HopInfo, V4HopInfo};
     use degenbot_simulation::SwapFamily;
 
     const V2_POOL: Address = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");

@@ -35,8 +35,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
 use degenbot_execution::solve_result::{HopDescriptor, HopFamily};
+use degenbot_execution::PathInfo;
 use degenbot_execution::{ComposeError, ComposerInputs, PayloadComposer, SolveResult};
-use degenbot_executor::composers::PathInfo;
 
 use crate::conversion::alloy::u256_to_py;
 
@@ -361,7 +361,7 @@ pub mod execution {
 mod tests {
     use super::*;
     use alloy::primitives::Address;
-    use degenbot_executor::composers::{HopInfo, V2HopInfo};
+    use degenbot_execution::{HopInfo, V2HopInfo};
 
     const WETH: Address = alloy::primitives::address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     const USDC: Address = alloy::primitives::address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");

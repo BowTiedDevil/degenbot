@@ -4,17 +4,17 @@
 //! the stage-surface `path_info_for` projection as a `pub(crate)` accessor so
 //! the batch executor's enqueue path (`crate::simulation::batch`) and the
 //! payload seam (`crate::simulation::dispatch`) can resolve a path's
-//! `composers::PathInfo` from a registered `path_id` without a Python
+//! `PathInfo` from a registered `path_id` without a Python
 //! `PathInfo` dataclass round-trip.
 //!
-//! No `#[pymethod]` mirror is exposed: `composers::PathInfo` is not a pyclass
+//! No `#[pymethod]` mirror is exposed: `PathInfo` is not a pyclass
 //! (it's the Rust encode-side type), and the cockpit never calls this from
 //! Python — only the Rust enqueue/payload paths reach it via the core
 //! accessor. A future Python-visible resolver (if the cockpit ever needs to
 //! introspect a path's hops outside those seams) would wrap the `PathInfo` in
 //! a pyclass first.
 
-use degenbot_executor::composers::PathInfo;
+use degenbot_execution::PathInfo;
 use pyo3::Python;
 
 use degenbot_substrate::path_info::PathInfoBuildError;
@@ -23,7 +23,7 @@ use super::PyArbEngine;
 
 impl PyArbEngine {
     /// Core-path accessor (no GIL): resolve `path_id` to its
-    /// `composers::PathInfo` via the engine's stored path + the shared
+    /// `PathInfo` via the engine's stored path + the shared
     /// `BotState` identities.
     ///
     /// `pub(crate)` so the executor's enqueue path resolves the `PathInfo`

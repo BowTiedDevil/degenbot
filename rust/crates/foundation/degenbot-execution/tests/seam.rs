@@ -9,11 +9,11 @@
 
 use alloy::primitives::{address, Address, Bytes, U256};
 
+use degenbot_execution::PathInfo;
 use degenbot_execution::{
     AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter, FeePolicy,
     PayloadComposer, ProbeSpec, SolveResult,
 };
-use degenbot_executor::composers::PathInfo;
 
 const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 
@@ -92,7 +92,7 @@ fn solve_result_projection_carries_amounts_and_hop_count() {
 
     // Project via a path of two V2 hops so hop_count + descriptors populate.
     let v2_hop = |i: u64| {
-        degenbot_executor::composers::HopInfo::V2(degenbot_executor::composers::V2HopInfo {
+        degenbot_execution::HopInfo::V2(degenbot_execution::V2HopInfo {
             pool_address: address!("2222222222222222222222222222222222222222"),
             token0_address: WETH,
             token1_address: address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),

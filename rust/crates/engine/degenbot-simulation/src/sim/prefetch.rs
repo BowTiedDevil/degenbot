@@ -89,7 +89,7 @@ use std::future::Future;
 use crate::sim::evm2::hook_slots::HookSlotStore;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::diag;
-use degenbot_executor::composers::{HopInfo, PathInfo};
+use degenbot_execution::{HopInfo, PathInfo};
 use degenbot_executor::{mapping_slot, WarmupSlots, WETH9_BALANCE_OF_SLOT};
 use degenbot_pools::{
     v4_liquidity_slot, v4_pool_state_base_slot, v4_slot0_slot, V2_RESERVES_SLOT, V2_TOKEN0_SLOT,
@@ -704,7 +704,7 @@ mod tests {
     use alloy::rpc::client::ClientBuilder;
     use alloy::rpc::json_rpc::{Response, ResponsePacket, ResponsePayload, SerializedRequest};
     use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
-    use degenbot_executor::composers::{V2HopInfo, V3HopInfo, V4HopInfo};
+    use degenbot_execution::{V2HopInfo, V3HopInfo, V4HopInfo};
     use degenbot_executor::{compute_simulation_warmup_slots, mapping_slot};
     use degenbot_substrate::NO_SIM_ANCHOR;
     use std::convert::Infallible;

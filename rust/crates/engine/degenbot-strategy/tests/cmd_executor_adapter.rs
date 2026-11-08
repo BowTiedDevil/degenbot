@@ -4,10 +4,12 @@
 )]
 
 use alloy::primitives::{address, Address, Bytes, B256, U256};
-use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
+use degenbot_execution::{
+    solve_result::HopDescriptor, HopInfo, PathInfo, SolveResult, V2HopInfo, V3HopInfo, V4HopInfo,
+};
 use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions,
-    EncodeRequest, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
+    EncodeRequest,
 };
 use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
 use degenbot_simulation::sim::journal_pools::{PoolFamily, V4PoolDescriptor};

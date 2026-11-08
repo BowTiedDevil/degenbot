@@ -3,8 +3,8 @@
 
 use crate::backrun_engine::{LaneCandidate, LaneFamily};
 use alloy::primitives::U256;
+use degenbot_execution::PathInfo;
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
-use degenbot_executor::composers::PathInfo;
 use degenbot_substrate::executor_hop::{v2_hop, v3_hop, v4_hop};
 
 /// Project one solved strategy candidate into `PathInfo` and `SolveResult`.

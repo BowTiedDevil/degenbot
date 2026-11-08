@@ -20,9 +20,8 @@
 
 use alloy::primitives::{Bytes, U256};
 
-use degenbot_executor::composers::PathInfo;
-
 use crate::gate::{AssessRule, FeePolicy, ProbeSpecs};
+use crate::path::PathInfo;
 use crate::payload::{ComposeError, ComposeOptions, ComposerInputs, PayloadComposer};
 use crate::solve_result::SolveResult;
 

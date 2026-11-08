@@ -39,7 +39,7 @@
 use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U256};
-use degenbot_executor::composers::HopInfo;
+use degenbot_execution::HopInfo;
 
 use crate::pool_divergence::{
     captured_swap_output, hop_pool_key, is_solver_calc_failure, PoolDivergenceKey,
@@ -473,7 +473,7 @@ mod tests {
 
     // zfo = true → input token = token0 / currency0
     fn v2_hop_zfo(pool: Address) -> HopInfo {
-        HopInfo::V2(degenbot_executor::composers::V2HopInfo {
+        HopInfo::V2(degenbot_execution::V2HopInfo {
             pool_address: pool,
             token0_address: TOKEN_IN,
             token1_address: TOKEN_OUT,
@@ -483,7 +483,7 @@ mod tests {
     }
     // zfo = false → input token = token1 / currency1
     fn v2_hop_one_for_zero(pool: Address) -> HopInfo {
-        HopInfo::V2(degenbot_executor::composers::V2HopInfo {
+        HopInfo::V2(degenbot_execution::V2HopInfo {
             pool_address: pool,
             token0_address: TOKEN_OUT,
             token1_address: TOKEN_IN,
@@ -492,7 +492,7 @@ mod tests {
         })
     }
     fn v3_hop(pool: Address) -> HopInfo {
-        HopInfo::V3(degenbot_executor::composers::V3HopInfo {
+        HopInfo::V3(degenbot_execution::V3HopInfo {
             pool_address: pool,
             token0_address: TOKEN_IN,
             token1_address: TOKEN_OUT,
@@ -501,7 +501,7 @@ mod tests {
         })
     }
     fn v4_hop(pm: Address, pool_id_hex: &str) -> HopInfo {
-        HopInfo::V4(degenbot_executor::composers::V4HopInfo {
+        HopInfo::V4(degenbot_execution::V4HopInfo {
             pool_manager_address: pm,
             pool_id_hex: pool_id_hex.to_string(),
             currency0_address: TOKEN_IN,

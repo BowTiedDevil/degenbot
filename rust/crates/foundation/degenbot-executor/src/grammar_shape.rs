@@ -29,8 +29,9 @@
 
 use alloy::primitives::Address;
 
-use crate::composers::{ComposerInputs, HopInfo, PathInfo, V4HopInfo, NATIVE_CURRENCY_ADDRESS};
+use crate::composers::{ComposerInputs, NATIVE_CURRENCY_ADDRESS};
 use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
+use degenbot_execution::{HopInfo, PathInfo, V4HopInfo};
 // Re-export the deep walker's public surface so external
 // `degenbot_executor::grammar_shape::{Plan, PlanStep, plan_to_bytes,
 // plan_to_ledger_ops, Prot, FundingSource, …}` paths keep resolving.
@@ -386,10 +387,11 @@ mod tests {
     // A3: the reference producers are deleted; these aliases re-point the
     // structure-inspection tests at the single `build_walk` pipeline
     // (byte-identical, A2-proven).
-    use crate::composers::{EncodeOptions, V2HopInfo, V3HopInfo};
+    use crate::composers::EncodeOptions;
     use crate::encoders::enc_preamble;
     use crate::grammar_walker::build_walk;
     use alloy::primitives::{address, Address, U256};
+    use degenbot_execution::{V2HopInfo, V3HopInfo};
 
     // Per-family aliases — every former `build_*_walk` delegate is now the
     // single `build_walk` (facts_for dispatches internally). Kept as local

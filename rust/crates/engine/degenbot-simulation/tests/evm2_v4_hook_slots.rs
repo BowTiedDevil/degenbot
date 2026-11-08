@@ -51,7 +51,7 @@ use alloy::primitives::{address, Address, Bytes, B256, U256};
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, CacheDB, Database, Db};
 
-use degenbot_executor::composers::{HopInfo, PathInfo, V4HopInfo};
+use degenbot_execution::{HopInfo, PathInfo, V4HopInfo};
 use degenbot_executor::compute_simulation_warmup_slots;
 use degenbot_pools::{v4_pool_id, V4PoolKey};
 use degenbot_rpc::provider::AlloyProvider;

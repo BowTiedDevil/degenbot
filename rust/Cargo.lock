@@ -2391,6 +2391,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-decoders",
  "degenbot-evm2",
+ "degenbot-execution",
  "degenbot-executor",
  "degenbot-order-index",
  "degenbot-pools",
@@ -2415,6 +2416,7 @@ dependencies = [
  "degenbot-bot",
  "degenbot-config",
  "degenbot-core",
+ "degenbot-execution",
  "degenbot-executor",
  "degenbot-pools",
  "degenbot-rpc",
@@ -2441,6 +2443,7 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-eventhub",
+ "degenbot-execution",
  "degenbot-executor",
  "degenbot-ingestion",
  "degenbot-math",
@@ -2741,7 +2744,6 @@ name = "degenbot-execution"
 version = "0.6.0-alpha.19"
 dependencies = [
  "alloy",
- "degenbot-executor",
  "degenbot-pools",
  "thiserror",
 ]
@@ -2752,7 +2754,6 @@ version = "0.6.0-alpha.19"
 dependencies = [
  "alloy",
  "degenbot-execution",
- "degenbot-executor",
  "degenbot-pools",
  "thiserror",
 ]
@@ -2764,6 +2765,7 @@ dependencies = [
  "alloy",
  "degenbot-abi",
  "degenbot-core",
+ "degenbot-execution",
  "proptest",
  "thiserror",
 ]
@@ -2947,6 +2949,7 @@ dependencies = [
  "degenbot-evm2-jit",
  "degenbot-evm2-jit-build",
  "degenbot-evm2-jit-runtime",
+ "degenbot-execution",
  "degenbot-executor",
  "degenbot-math",
  "degenbot-pools",
@@ -3046,6 +3049,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-db",
  "degenbot-decoders",
+ "degenbot-execution",
  "degenbot-executor",
  "degenbot-ingestion",
  "degenbot-math",

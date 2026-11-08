@@ -11,7 +11,7 @@
 
 use alloy::primitives::U256;
 use degenbot_arbitrage::SimFailure;
-use degenbot_executor::composers::{HopInfo, PathInfo};
+use degenbot_execution::{HopInfo, PathInfo};
 
 /// The typed result of one candidate's ordered pass through the pipeline.
 #[derive(Debug, Clone)]
@@ -267,7 +267,7 @@ impl From<&PathInfo> for PathInfoView {
 mod tests {
     use super::*;
     use degenbot_core::address_utils::parse_address;
-    use degenbot_executor::composers::V2HopInfo;
+    use degenbot_execution::V2HopInfo;
 
     fn v2_path() -> PathInfo {
         let pool = parse_address("0x1111111111111111111111111111111111111111").unwrap();

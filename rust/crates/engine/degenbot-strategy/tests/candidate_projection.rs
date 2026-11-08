@@ -6,7 +6,7 @@
 use alloy::primitives::{address, Address, B256, U256};
 use degenbot_core::fee::{V2FeePair, V2Fees};
 use degenbot_execution::solve_result::HopDescriptor;
-use degenbot_executor::composers::HopInfo;
+use degenbot_execution::HopInfo;
 use degenbot_strategy::backrun_engine::{BackrunHopRef, LaneCandidate, LaneFamily};
 use degenbot_strategy::backrun_strategy::backrun_encode_options;
 use degenbot_strategy::cmd_executor_adapter::{

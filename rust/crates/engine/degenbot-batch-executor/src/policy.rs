@@ -135,7 +135,7 @@ mod tests {
     struct EmptyResolver;
 
     impl crate::assembly::PathResolver for EmptyResolver {
-        fn resolve(&self, _path_id: u64) -> Option<degenbot_executor::composers::PathInfo> {
+        fn resolve(&self, _path_id: u64) -> Option<degenbot_execution::PathInfo> {
             None
         }
     }

@@ -28,8 +28,10 @@ degenbot-config.workspace = true
 # fan-out reads via `Evm2BlockSimHandle`.
 degenbot-bot.workspace = true
 degenbot-substrate.workspace = true
-# `PathInfo` / `HopInfo` / `EncodeOptions` / `WarmupSlots` / the
-# `compute_simulation_warmup_slots` the candidate + context consume.
+# `PathInfo` / `HopInfo` — the neutral opportunity descriptors (ADR-098 D1).
+degenbot-execution.workspace = true
+# `EncodeOptions` / `WarmupSlots` / the `compute_simulation_warmup_slots` the
+# candidate + context consume.
 degenbot-executor.workspace = true
 # `PathSuppression` (the dispatcher's per-path suppression ring) +
 # `SubmitCandidate` (the submission seam's input shape — the dispatch joins

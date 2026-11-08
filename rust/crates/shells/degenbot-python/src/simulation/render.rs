@@ -11,7 +11,7 @@
 use crate::prelude::*;
 use alloy::primitives::U256;
 use degenbot_arbitrage::{CapturedSwap, SimFailure};
-use degenbot_executor::composers::{HopInfo, PathInfo};
+use degenbot_execution::{HopInfo, PathInfo};
 use degenbot_pools::RegisteredPoolFamily;
 use pyo3::types::{PyDict, PyList};
 

@@ -146,8 +146,12 @@ submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
 # `simulation` build links LLVM 23 (`llvm-config-23`, the devcontainer's
 # toolchain); elsewhere it links no LLVM and runs the interpreter.
 simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "dep:evm2", "rpc", "executor", "submission"]
-executor = ["dep:degenbot-executor"]
-execution = ["dep:degenbot-execution", "executor"]
+# The built-in executor command grammar depends on the execution seam, so the
+# `executor` feature names both deps: every executor consumer (and the
+# `simulation` lane it rides) reads the neutral opportunity descriptors off
+# `degenbot-execution` (ADR-098 D1).
+executor = ["dep:degenbot-executor", "dep:degenbot-execution"]
+execution = ["executor"]
 fork = ["dep:degenbot-fork"]
 rpc = ["dep:degenbot-rpc", "abi"]
 abi = ["dep:degenbot-abi"]

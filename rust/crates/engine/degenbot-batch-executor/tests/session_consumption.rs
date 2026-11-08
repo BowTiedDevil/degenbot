@@ -48,7 +48,7 @@ use degenbot_bot::arb_engine::{BlockNotification, Heartbeat, ResultBatch, Sessio
 use degenbot_bot::arb_engine::{EngineDriver, EventHandoff};
 use degenbot_bot::bot_core::Bot;
 use degenbot_core::address_utils::parse_address;
-use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
 use degenbot_submission::{
     Dispatcher, PathSuppression, ReceiptProbe, SubmissionLedger, SubmissionResult,
     SubmissionTarget, TxSigner,

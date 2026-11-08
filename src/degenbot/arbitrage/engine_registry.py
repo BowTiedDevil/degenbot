@@ -102,7 +102,7 @@ class EngineRegistry:
             self.engine = ArbitrageEngine(py_bot=bot._py_bot)  # ruff:ignore[private-member-access]
         # The Python `PathInfo` relay is retired. `register_path`
         # returns the Rust `path_id`; the batch executor's enqueue path
-        # resolves the encoder's `composers::PathInfo` from that `path_id` via
+        # resolves the seam's `PathInfo` from that `path_id` via
         # `PyArbitrageEngine.path_info_for_core`. The `[profit]` hop-detail
         # render reads `outcome.path_infos` (Rust→Py), not a stored Python copy.
         # ADR-006 D4: a pluggable path-composition predicate enforces
@@ -397,7 +397,7 @@ class EngineRegistry:
         ``register_and_solve_path`` (eager solve — the path is immediately
         included in the next result batch). The Python ``PathInfo``
         relay is retired — the batch executor's enqueue path resolves the
-        encoder's ``composers::PathInfo`` from the returned ``path_id`` via
+        seam's ``PathInfo`` from the returned ``path_id`` via
         ``PyArbitrageEngine.path_info_for_core`` (no Python hop build, no
         stored copy).
 

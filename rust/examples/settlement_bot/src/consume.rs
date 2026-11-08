@@ -71,8 +71,8 @@ mod tests {
     };
     use degenbot::bot::arb_engine::SimulatedPathResult;
     use degenbot::bot::arb_engine::{BlockNotification, Heartbeat, ResultBatch, SessionEvent};
-    use degenbot::cmd_executor::composers::{HopInfo, PathInfo, V2HopInfo};
     use degenbot::core::address_utils::parse_address;
+    use degenbot::execution::{HopInfo, PathInfo, V2HopInfo};
     use degenbot::rpc::provider::AlloyProvider;
     use degenbot::solvers::SolvePathResult;
     use degenbot::submission::{

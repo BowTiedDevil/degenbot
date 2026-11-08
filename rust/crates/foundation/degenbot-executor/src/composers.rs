@@ -30,6 +30,11 @@ use crate::encoders::{self, SENTINEL_SELF};
 use alloy::primitives::{Address, U256};
 use alloy::sol_types::SolCall;
 
+use degenbot_execution::{HopInfo, PathInfo, V4HopInfo};
+// The V2/V3 hop payloads are constructed only by the composer fixtures below.
+#[cfg(test)]
+use degenbot_execution::{V2HopInfo, V3HopInfo};
+
 /// `NATIVE_CURRENCY_ADDRESS` — V4's native-ETH currency is `address(0)`.
 ///
 /// Mirrors `degenbot.uniswap.v4_liquidity_pool.NATIVE_CURRENCY_ADDRESS` and
@@ -41,77 +46,6 @@ alloy::sol! {
     /// profit-check/bribe config word.
     interface ICommandExecutor {
         function execute(bytes commands, uint256 config) external;
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Hop descriptors + PathInfo
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Engine-facing hop descriptor — one variant per pool family, carrying the
-/// typed hop the solver emits and the executor consumes.
-#[derive(Clone, Debug)]
-pub enum HopInfo {
-    /// A Uniswap-V2 (or V2-compatible) pool hop.
-    V2(V2HopInfo),
-    /// A Uniswap-V3 pool hop.
-    V3(V3HopInfo),
-    /// A Uniswap-V4 pool hop.
-    V4(V4HopInfo),
-}
-
-/// V2 hop descriptor — `pool_address`, `token0/1_address`, `fee` (bips of
-/// 10000, e.g. 30 = 0.3%), `zfo` (zero-for-one direction).
-#[derive(Clone, Debug)]
-pub struct V2HopInfo {
-    pub pool_address: Address,
-    pub token0_address: Address,
-    pub token1_address: Address,
-    pub fee: u16,
-    pub zfo: bool,
-}
-
-/// V3 hop descriptor — `pool_address`, `token0/1_address`, `fee` (bips of
-/// 1e6, e.g. 3000 = 0.3%), `zfo`.
-///
-/// `fee` is informational only — V3 fees are encoded in the pool address,
-/// not the command stream.
-#[derive(Clone, Debug)]
-pub struct V3HopInfo {
-    pub pool_address: Address,
-    pub token0_address: Address,
-    pub token1_address: Address,
-    pub fee: u32,
-    pub zfo: bool,
-}
-
-/// V4 hop descriptor — `pool_manager_address`, `pool_id_hex` (0x-prefixed),
-/// `currency0/1_address`, `fee` (uint24), `tick_spacing` (int24), `hook_address`,
-/// `zfo`.
-#[derive(Clone, Debug)]
-pub struct V4HopInfo {
-    pub pool_manager_address: Address,
-    pub pool_id_hex: String,
-    pub currency0_address: Address,
-    pub currency1_address: Address,
-    pub fee: u32,
-    pub tick_spacing: i32,
-    pub hook_address: Address,
-    pub zfo: bool,
-}
-
-/// An arbitrage path's ordered hops.
-#[derive(Clone, Debug)]
-pub struct PathInfo {
-    /// Ordered hops; the V2/V3/V4 mix in `hops` selects the composer.
-    pub hops: Vec<HopInfo>,
-}
-
-impl PathInfo {
-    /// Construct from an ordered hop slice.
-    #[must_use]
-    pub fn new(hops: Vec<HopInfo>) -> Self {
-        Self { hops }
     }
 }
 

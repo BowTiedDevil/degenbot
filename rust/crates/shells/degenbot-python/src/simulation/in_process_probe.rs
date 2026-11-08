@@ -32,7 +32,8 @@ use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot_arbitrage::{
     simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
 };
-use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
+use degenbot_executor::composers::EncodeOptions;
 use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
 use degenbot_rpc::provider::AlloyProvider;
 use pyo3::prelude::*;

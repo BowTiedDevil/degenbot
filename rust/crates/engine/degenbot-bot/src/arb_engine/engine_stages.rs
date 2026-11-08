@@ -72,7 +72,7 @@ use super::DiagnosticPathState;
 #[cfg(test)]
 use super::ResultBatch;
 use ::degenbot_pools::solve::{MixedPoolRef, PoolHop, SolvePathResult};
-use degenbot_executor::composers::PathInfo;
+use degenbot_execution::PathInfo;
 use degenbot_substrate::path_info::PathInfoBuildError;
 use hashbrown::HashMap;
 /// THE one arm-attribution wiring site (cold-start trace): the cycle span is

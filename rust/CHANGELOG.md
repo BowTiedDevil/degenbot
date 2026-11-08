@@ -33,6 +33,22 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **`degenbot-execution` is a foundation crate and owns the neutral opportunity
+  descriptors (ADR-098 D1).** `PathInfo`, `HopInfo`, and the `V2HopInfo` /
+  `V3HopInfo` / `V4HopInfo` family payloads leave
+  `degenbot_executor::composers` for `degenbot_execution::path` (also re-exported
+  at the crate root) with names and field shapes unchanged, and the crate moves
+  from `crates/engine/` to `crates/foundation/`. The dependency edge flips to
+  `degenbot-executor → degenbot-execution`; the reverse edge is deleted, and
+  `tests/dependency_charter.txt` now encodes it. The command grammar stays put:
+  `EncodeRequest` / `EncodeContext`, the opcode encoders, packed command config,
+  warmup-slot math, Vyper artifact selection, and the `CurrencyBridge`
+  classification remain `degenbot-executor`'s, and `SolvePathResult` remains
+  `degenbot-pools`'. Existing command-stream golden bytes are unchanged. The
+  umbrella moves the re-export to `degenbot::execution`, so
+  `degenbot::cmd_executor::composers::{PathInfo, HopInfo, ...}` is gone rather
+  than aliased. Migration table below.
+
 - **Typed build refusals cross the PyO3 seam as data — one final renderer, no
   Python prefix stripping.** Every `BuildFailure` arm raises its historical
   exception class now carrying a closed `kind` attribute (a
@@ -510,3 +526,17 @@ public surfaces that move, was → is:
 | `BotIo.fetch_factory_address` / `fetch_balancer_pool_id` / `probe_balancer_pool_type` / `fetch_balancer_factory`, and the pyclass `BalancerFamily` (FFI `degenbot._ffi.BalancerFamily`, re-exported as `degenbot.balancer.BalancerFamily`) | deleted — the one `factory()` read, the Balancer `pool_id` read, the weighted/stable sub-probe, and the `isPoolFromFactory` membership walk are core-owned (the core `bot_core::BalancerFamily` stays the sub-family's semantic owner); the Python companion keeps only `descriptor_for_identity` / `pool_class_for_descriptor` beside `Bot.resolve_pool_type` and the `PoolTypeDescriptor` it binds |
 | `PoolConstruction::{V2, V3, AerodromeV2}` carried the pool address alone, and the route's rung decision plus `fetch_v2`/`fetch_v3_immutable_data` re-read `factory()` | the three arms carry `factory: Option<Address>` — the resolved identity's factory, consumed by the route and the build instead of a second read (`None` = the caller resolved nothing and one read answers both); Python `PoolConstructionRequest.v2` / `aerodrome_v2` / `concentrated_liquidity` gain `factory=` |
 | behavior: a DB read failure or a present-but-unknown DB kind fell through to on-chain re-classification; a factory transport failure read as "no factory"; a transport failure could classify a pool as an unmodeled Balancer | every one is a loud typed refusal (`PoolIdentityError::{Db, UnknownDbKind, Io, ...}`) — resolution is positive-only and never falls through to a classification; the kind grammar is open to third-party forks (`<variant>_v2` / `<variant>_v3`), and a kind outside the grammar is the unknown-kind refusal |
+
+Neutral opportunity descriptors now live in the execution seam, and that seam is
+a foundation crate (ADR-098 D1). `cargo add degenbot-execution` is the whole
+foreign-adapter dependency for the hop vocabulary; the built-in
+`degenbot-executor` consumes it. One table, was → is:
+
+| Was | Is |
+| --- | --- |
+| `degenbot_executor::composers::{PathInfo, HopInfo, V2HopInfo, V3HopInfo, V4HopInfo}` | `degenbot_execution::{PathInfo, HopInfo, V2HopInfo, V3HopInfo, V4HopInfo}` (module path `degenbot_execution::path`) — one set of types with unchanged names and field shapes, and no compatibility re-export at the old home |
+| `degenbot::cmd_executor::composers::{PathInfo, HopInfo, V2HopInfo, V3HopInfo, V4HopInfo}` (umbrella) | `degenbot::execution::{PathInfo, HopInfo, V2HopInfo, V3HopInfo, V4HopInfo}` — `degenbot::execution` is the umbrella re-export of the seam |
+| hop descriptors required `degenbot-executor` in a consumer's `Cargo.toml` | `degenbot-execution` alone: `cargo tree -p degenbot-execution -e normal` carries no `degenbot-executor` node, pinned by `dependency_charter.txt` and by the foreign-sample gate (`foreign_execution_sample_carries_no_concrete_executor_edge`) |
+| `degenbot_executor::composers::{encode_cmd_stream, encode_cmd_3_hop, encode_execute_call, EncodeRequest, EncodeContext}` | unchanged home and signatures — only `path` is now typed `&degenbot_execution::PathInfo` |
+| `degenbot_executor::composers::{CurrencyBridge, v4_input_is_native, v4_output_is_native, NATIVE_CURRENCY_ADDRESS}` | unchanged — the native-ETH/WETH command-stream classification stays with the built-in grammar |
+| crate path `rust/crates/engine/degenbot-execution/` | `rust/crates/foundation/degenbot-execution/` — the seam is a workflow-free foundation capability, and the `degenbot-executor → degenbot-execution` edge replaces the reversed one |

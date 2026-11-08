@@ -3,8 +3,8 @@
 //! Today the per-hop solve amounts do not cross to Python on the clean path —
 //! [`degenbot_pools::solve::SolvePathResult`] carries
 //! `optimal_input` / `hop_outputs` / `consumed_inputs`, and
-//! `degenbot_executor::composers::PathInfo` carries the hop descriptors, but
-//! neither is exposed to Python as a typed view. This module owns the one
+//! [`crate::path::PathInfo`] carries the hop descriptors, but neither is
+//! exposed to Python as a typed view. This module owns the one
 //! genuinely new surface: a symmetric, both-consumer view of the solved path.
 //!
 //! **Amounts are integer fixed-point u256, never floats** — decimal place
@@ -12,8 +12,9 @@
 
 use alloy::primitives::U256;
 
-use degenbot_executor::composers::{HopInfo, PathInfo};
 use degenbot_pools::solve::SolvePathResult;
+
+use crate::path::{HopInfo, PathInfo};
 
 /// Which engine family owns a hop — the descriptor's family tag.
 ///

@@ -21,3 +21,8 @@
 # single-package default-feature resolution does not enable; opt-in lanes
 # (`executor-ab-probe`, the test lanes) still compile it, documented residual.
 *: pyo3 zstd ; except degenbot-python
+
+# ADR-098 D1: the generic execution seam is executor-agnostic. The neutral
+# opportunity descriptors (`PathInfo` / `HopInfo`) live in it, and the built-in
+# command executor depends on the seam — never the reverse.
+degenbot-execution: degenbot-executor

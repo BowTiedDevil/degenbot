@@ -343,7 +343,7 @@ mod walk_probe {
     )]
 
     use super::super::test_support as tf;
-    use crate::composers::PathInfo;
+    use degenbot_execution::PathInfo;
 
     /// The walk region: everything before the first test module, so the probe
     /// cannot count literals inside its own fixture.

@@ -14,11 +14,9 @@
     reason = "amount literals intentionally mirror the glopcn fixtures"
 )]
 
-use crate::composers::{
-    encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo, PathInfo, V2HopInfo,
-    V3HopInfo, V4HopInfo,
-};
+use crate::composers::{encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest};
 use alloy::primitives::{address, Address};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 
 pub const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 pub const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");

@@ -40,6 +40,7 @@ degenbot-pools.workspace = true
 degenbot-substrate.workspace = true
 degenbot-pool-updater.workspace = true
 degenbot-pathfinding.workspace = true
+degenbot-execution.workspace = true
 degenbot-executor.workspace = true
 degenbot-uniswap.workspace = true
 # ADR-042 F3: the fleet (role-switching worker fleet) hosts the solve bins

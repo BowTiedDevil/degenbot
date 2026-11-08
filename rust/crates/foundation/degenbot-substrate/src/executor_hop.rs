@@ -7,7 +7,7 @@
 
 use alloy::primitives::{Address, B256};
 use degenbot_core::fee::V2Fee;
-use degenbot_executor::composers::{HopInfo, V2HopInfo, V3HopInfo, V4HopInfo};
+use degenbot_execution::{HopInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 
 /// Build the executor descriptor for a V2 hop.
 #[must_use]
@@ -80,7 +80,7 @@ mod tests {
     use super::{v2_hop, v3_hop, v4_hop};
     use alloy::primitives::{address, B256};
     use degenbot_core::fee::{V2Fee, V2FeePair, V2FeeRefusal};
-    use degenbot_executor::composers::HopInfo;
+    use degenbot_execution::HopInfo;
 
     #[test]
     fn v2_fee_projection_uses_discovered_fractions_and_refuses_bad_values() {

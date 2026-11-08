@@ -10,9 +10,9 @@
 )]
 
 use alloy::primitives::{address, Address};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 use degenbot_executor::composers::{
-    encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo, PathInfo, V2HopInfo,
-    V3HopInfo, V4HopInfo,
+    encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest,
 };
 
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");

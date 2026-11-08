@@ -16,8 +16,9 @@
 
 use alloy::primitives::{Bytes, U256};
 
-use degenbot_executor::composers::PathInfo;
 use thiserror::Error;
+
+use crate::path::PathInfo;
 
 /// Generic, adapter-agnostic encode knobs (ADR-025 D2/D5).
 ///

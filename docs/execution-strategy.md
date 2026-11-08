@@ -40,10 +40,11 @@ There is **one** seam — `degenbot-execution` — and two ways to reach it:
 - **Rust user:** implement a trait in your own crate.
   ```toml
   # Cargo.toml
-  degenbot-execution = "0.x"   # the seam (PayloadComposer, ExecutionAdapter, Probe/Assess/Fee types)
-  degenbot-executor = "0.x"    # PathInfo / HopInfo hop descriptors
+  degenbot-execution = "0.x"   # the seam: PayloadComposer, ExecutionAdapter, PathInfo/HopInfo, Probe/Assess/Fee
   degenbot-pools = "0.x"       # the solve result type (SolvePathResult)
   ```
+  The seam owns the neutral opportunity descriptors, so a foreign adapter
+  never depends on the built-in `degenbot-executor` (ADR-098 D1).
   A complete, green reference is the `degenbot-execution-sample` crate in this
   repo — a foreign `SimpleExecutor` strategy wiring all four parts, with its
   own recorded expected-bytes corpus.
@@ -61,8 +62,8 @@ Rust-canonical). It is not the only way; it's the default.
 
 Your Encode part receives a `SolveResult` — the solved path's amounts + hop
 descriptors, i.e. `SolvePathResult` (`optimal_input`, `hop_outputs`,
-`consumed_inputs`) + `PathInfo` (pool addresses, tokens, direction), exposed to
-Python as a typed view.
+`consumed_inputs`) + `PathInfo` (the seam's hop descriptors: pool addresses,
+tokens, direction), exposed to Python as a typed view.
 
 ```python
 from typing import Protocol
@@ -90,10 +91,9 @@ recorded corpus in the repo asserts this).
 
 ```rust
 use degenbot_execution::{
-    AssessRule, ComposeError, ComposerInputs, ExecutionAdapter, FeePolicy,
+    AssessRule, ComposeError, ComposerInputs, ExecutionAdapter, FeePolicy, PathInfo,
     PayloadComposer, ProbeSpec, ProbeSpecs,
 };
-use degenbot_executor::composers::PathInfo;
 use alloy::primitives::{Address, Bytes};
 
 pub struct MyComposer { pub executor: Address }

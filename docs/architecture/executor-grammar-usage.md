@@ -12,8 +12,9 @@
 The bot builds a command stream for an arbitrage path with one function:
 
 ```rust
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
 use degenbot_executor::composers::{
-    encode_cmd_stream, config_for_options, EncodeOptions, HopInfo, PathInfo, V2HopInfo,
+    encode_cmd_stream, config_for_options, EncodeOptions,
 };
 
 let cmd_bytes = encode_cmd_stream(
@@ -154,7 +155,7 @@ profitability.
 A `PathInfo` is the ordered hop descriptors:
 
 ```rust
-use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
+use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 
 let path = PathInfo::new(vec![
     HopInfo::V2(V2HopInfo {
@@ -170,6 +171,10 @@ let path = PathInfo::new(vec![
     }),
 ]);
 ```
+
+The hop descriptors live in the seam crate (`degenbot-execution`, ADR-098 D1);
+`degenbot-executor` consumes them, so the grammar guide and a foreign adapter
+name the same types from opposite sides of one edge.
 
 The `HopInfo` variants carry exactly the fields the encoder needs — pool
 address, direction (`zfo` = zero-for-one), fee, and the token0/token1 (or

@@ -4,9 +4,9 @@ use alloy::primitives::{Bytes, U256};
 
 use crate::execution_context::ExecutionContext;
 use degenbot_execution::SolveResult;
+use degenbot_execution::{HopInfo, PathInfo};
 use degenbot_executor::composers::{
-    config_for_options, encode_execute_call, ComposerInputs, EncodeOptions, EncodeRequest, HopInfo,
-    PathInfo,
+    config_for_options, encode_execute_call, ComposerInputs, EncodeOptions, EncodeRequest,
 };
 use degenbot_executor::grammar_shape::{derive_all_v2_detailed, derive_shape_detailed, Derive};
 
