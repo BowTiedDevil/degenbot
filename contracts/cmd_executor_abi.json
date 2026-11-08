@@ -72,6 +72,16 @@
 "type": "error"
 },
 {
+"name": "InvalidProfitMode",
+"inputs": [
+{
+"name": "mode",
+"type": "uint256"
+}
+],
+"type": "error"
+},
+{
 "name": "BipsTooHigh",
 "inputs": [
 {
@@ -104,6 +114,54 @@
 "outputs": []
 },
 {
+"stateMutability": "view",
+"type": "function",
+"name": "release_id",
+"inputs": [],
+"outputs": [
+{
+"name": "",
+"type": "bytes32"
+}
+]
+},
+{
+"stateMutability": "view",
+"type": "function",
+"name": "protocol_major",
+"inputs": [],
+"outputs": [
+{
+"name": "",
+"type": "uint32"
+}
+]
+},
+{
+"stateMutability": "view",
+"type": "function",
+"name": "call_encoding_version",
+"inputs": [],
+"outputs": [
+{
+"name": "",
+"type": "uint32"
+}
+]
+},
+{
+"stateMutability": "view",
+"type": "function",
+"name": "capabilities",
+"inputs": [],
+"outputs": [
+{
+"name": "",
+"type": "uint32[]"
+}
+]
+},
+{
 "stateMutability": "nonpayable",
 "type": "function",
 "name": "withdraw",
@@ -112,6 +170,18 @@
 "name": "amount",
 "type": "uint256"
 },
+{
+"name": "destination",
+"type": "address"
+}
+],
+"outputs": []
+},
+{
+"stateMutability": "nonpayable",
+"type": "function",
+"name": "sweep",
+"inputs": [
 {
 "name": "destination",
 "type": "address"
@@ -132,7 +202,17 @@
 "outputs": [
 {
 "name": "",
+"type": "tuple",
+"components": [
+{
+"name": "gross_profit",
 "type": "uint256"
+},
+{
+"name": "bribe_paid",
+"type": "uint256"
+}
+]
 }
 ]
 },
@@ -153,7 +233,17 @@
 "outputs": [
 {
 "name": "",
+"type": "tuple",
+"components": [
+{
+"name": "gross_profit",
 "type": "uint256"
+},
+{
+"name": "bribe_paid",
+"type": "uint256"
+}
+]
 }
 ]
 },

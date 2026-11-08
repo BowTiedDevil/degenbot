@@ -2767,6 +2767,8 @@ dependencies = [
  "degenbot-core",
  "degenbot-execution",
  "proptest",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

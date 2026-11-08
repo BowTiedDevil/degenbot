@@ -20,6 +20,7 @@ Start with {doc}`getting-started` — or open {doc}`adr/README` if you want the 
 - {doc}`architecture/executor-command-grammar` — the execution layer's command language
 - {doc}`architecture/rust-owned-bot` — what moved into the Rust core and why
 - {doc}`executor/user-guide` — the Vyper executor, command streams, and balance semantics
+- {doc}`executor/releases` — the executor's declared release identity, release manifest, and migration policy
 
 …plus 14 more in the sidebar: executor grammar usage, concentrated-liquidity tickmaps, Curve stableswap, inspector-captured sim diagnostics, storage layouts.
 

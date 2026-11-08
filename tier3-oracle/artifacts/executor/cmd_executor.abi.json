@@ -114,6 +114,54 @@
 "outputs": []
 },
 {
+"stateMutability": "view",
+"type": "function",
+"name": "release_id",
+"inputs": [],
+"outputs": [
+{
+"name": "",
+"type": "bytes32"
+}
+]
+},
+{
+"stateMutability": "view",
+"type": "function",
+"name": "protocol_major",
+"inputs": [],
+"outputs": [
+{
+"name": "",
+"type": "uint32"
+}
+]
+},
+{
+"stateMutability": "view",
+"type": "function",
+"name": "call_encoding_version",
+"inputs": [],
+"outputs": [
+{
+"name": "",
+"type": "uint32"
+}
+]
+},
+{
+"stateMutability": "view",
+"type": "function",
+"name": "capabilities",
+"inputs": [],
+"outputs": [
+{
+"name": "",
+"type": "uint32[]"
+}
+]
+},
+{
 "stateMutability": "nonpayable",
 "type": "function",
 "name": "withdraw",

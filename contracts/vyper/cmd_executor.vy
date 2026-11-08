@@ -136,6 +136,40 @@ MAX_INDEXED_ADDRESSES: constant(uint256) = 32
 MAX_COMMANDS_LENGTH: constant(uint256) = 288
 MAX_V4_BATCH_SWAPS: constant(uint256) = 8
 
+# ── Release metadata (pure constants) ──
+# The built-in executor's declared release identity. Every value here is a
+# compile-time constant: no storage slot, no constructor argument, no proxy.
+# These getters are the on-chain half of the release description; the off-chain
+# manifest (`rust/crates/foundation/degenbot-executor/releases/`) binds them to
+# the complete call encoding (command stream + packed config + execute ABI) and
+# to the runtime artifact location. Version the WHOLE call encoding with
+# CALL_ENCODING_VERSION: a stream, config, or execute-ABI change is one release
+# bump, never three independent ones.
+RELEASE_ID: constant(bytes32) = 0x636d645f6578656375746f722f31000000000000000000000000000000000000  # "cmd_executor/1"
+PROTOCOL_MAJOR: constant(uint32) = 1
+CALL_ENCODING_VERSION: constant(uint32) = 1
+MAX_CAPABILITY_IDS: constant(uint256) = 32
+
+# Capability IDs. Stable, never reused: a capability that disappears leaves a
+# gap, so an ID always names the same feature. The names live off-chain in the
+# release manifest; the contract declares only the IDs, so an off-chain reader
+# that does not know an ID keeps it verbatim instead of rejecting it.
+CAPABILITY_ADDRESS_TABLE: constant(uint32) = 1
+CAPABILITY_V2_SWAPS: constant(uint32) = 2
+CAPABILITY_V2_SWAP_CALC: constant(uint32) = 3
+CAPABILITY_V3_SWAPS: constant(uint32) = 4
+CAPABILITY_V3_DYNAMIC_AMOUNTS: constant(uint32) = 5
+CAPABILITY_V4_SWAPS: constant(uint32) = 6
+CAPABILITY_V4_BATCH: constant(uint32) = 7
+CAPABILITY_V4_BATCH_OPEN_WETH: constant(uint32) = 8
+CAPABILITY_V4_DYNAMIC_DELTAS: constant(uint32) = 9
+CAPABILITY_ERC6909_CLAIMS: constant(uint32) = 10
+CAPABILITY_WETH_WRAP_UNWRAP: constant(uint32) = 11
+CAPABILITY_NATIVE_TRANSFERS: constant(uint32) = 12
+CAPABILITY_CONFIG_BRIBE: constant(uint32) = 13
+CAPABILITY_CONFIG_MIN_PROFIT: constant(uint32) = 14
+CAPABILITY_EXECUTION_RECEIPT: constant(uint32) = 15
+
 # Command opcodes — grouped by protocol at 0x10 boundaries
 #
 # 0x00–0x0F  Control / Preprocessing
@@ -478,6 +512,57 @@ def initialize():
         slice(convert(1, bytes32), 20, 12),  # uint96 amount = 1
     )
     extcall IPoolManager(POOL_MANAGER_ADDR).unlock(warmup, skip_contract_check=True)
+
+
+# ── Release metadata getters ──
+# Read-only constant returns (no SLOAD). A deployment that predates these
+# getters answers with empty revert data; off-chain code must treat that as
+# "unnamed", never as "latest" — naming such a deployment requires an explicit
+# operator-provided legacy release mapping.
+
+
+@external
+@view
+def release_id() -> bytes32:
+    """The declared release identity, as a NUL-padded ASCII tag."""
+    return RELEASE_ID
+
+
+@external
+@view
+def protocol_major() -> uint32:
+    """The declared protocol major: the bounded dispatch unit for this release."""
+    return PROTOCOL_MAJOR
+
+
+@external
+@view
+def call_encoding_version() -> uint32:
+    """The declared version of the whole call encoding (stream + config + ABI)."""
+    return CALL_ENCODING_VERSION
+
+
+@external
+@view
+def capabilities() -> DynArray[uint32, MAX_CAPABILITY_IDS]:
+    """The declared capability IDs, ascending and unique."""
+    return [
+        CAPABILITY_ADDRESS_TABLE,
+        CAPABILITY_V2_SWAPS,
+        CAPABILITY_V2_SWAP_CALC,
+        CAPABILITY_V3_SWAPS,
+        CAPABILITY_V3_DYNAMIC_AMOUNTS,
+        CAPABILITY_V4_SWAPS,
+        CAPABILITY_V4_BATCH,
+        CAPABILITY_V4_BATCH_OPEN_WETH,
+        CAPABILITY_V4_DYNAMIC_DELTAS,
+        CAPABILITY_ERC6909_CLAIMS,
+        CAPABILITY_WETH_WRAP_UNWRAP,
+        CAPABILITY_NATIVE_TRANSFERS,
+        CAPABILITY_CONFIG_BRIBE,
+        CAPABILITY_CONFIG_MIN_PROFIT,
+        CAPABILITY_EXECUTION_RECEIPT,
+    ]
 
 
 @internal

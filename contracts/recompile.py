@@ -129,9 +129,7 @@ def _check_manifest() -> None:
             break
     if pin is None:
         sys.exit("manifest.json: no executor/cmd_executor.* pin found")
-    actual = hashlib.sha256(
-        (DEGENBOT_ROOT / "executor" / "contracts" / "cmd_executor.vy").read_bytes()
-    ).hexdigest()
+    actual = hashlib.sha256(VYPER_SOURCE.read_bytes()).hexdigest()
     if actual != pin:
         sys.exit(
             f"source/artifact drift: cmd_executor.vy sha256 {actual[:16]} != manifest pin "

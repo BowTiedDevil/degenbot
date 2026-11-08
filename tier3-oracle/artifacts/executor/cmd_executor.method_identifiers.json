@@ -1,5 +1,9 @@
 {
 "initialize()": "0x8129fc1c",
+"release_id()": "0x43643676",
+"protocol_major()": "0x7417356",
+"call_encoding_version()": "0x76c4345b",
+"capabilities()": "0x34a18fc3",
 "withdraw(uint256,address)": "0xf714ce",
 "sweep(address)": "0x1681a62",
 "execute(bytes)": "0x9c5eabe",

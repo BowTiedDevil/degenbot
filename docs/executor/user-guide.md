@@ -14,6 +14,7 @@ pattern for every pool-permutation, and how to verify correctness.
 1. [Overview](#1-overview)
 2. [Core Concepts](#2-core-concepts)
 3. [Deployment & Initialization](#3-deployment--initialization)
+   - [3.4 Release identity](#34-release-identity)
 4. [The `execute()` Entry Point](#4-the-execute-entry-point)
 5. [Command Stream Format](#5-command-stream-format)
 6. [Address Resolution & Sentinels](#6-address-resolution--sentinels)
@@ -142,13 +143,15 @@ transaction happen inside one `unlock()` call.
 ### 3.1 Constructor Parameters
 
 ```python
-__init__(weth: address, pool_manager: address)
+__init__(weth: address, pool_manager: address, usdc: address, usdt: address)
 ```
 
 | Parameter | Purpose | Typical Value |
 |-----------|---------|---------------|
 | `weth` | WETH9 contract address | Network-specific (e.g., `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` on mainnet) |
 | `pool_manager` | Uniswap V4 PoolManager address | Network-specific |
+| `usdc` | USDC role address (sentinel index `0xFA`) | Network-specific |
+| `usdt` | USDT role address (sentinel index `0xFB`) | Network-specific |
 
 The deployer (`msg.sender`) becomes the **owner** — the only address that can
 call `execute()`.
@@ -163,7 +166,8 @@ call `execute()`.
 
 ### 3.2 Warmup (ERC6909 Slot Initialization)
 
-After deployment, call `initialize()` with 2 wei of ETH. This:
+After deployment, call `initialize()` with 1 wei of ETH (owner only; any other
+`msg.value` reverts with `InvalidMsgValue`). This:
 
 1. Deposits 1 wei WETH into the PoolManager
 2. Mints 1 wei as ERC6909 to the executor (warming the storage slot)
@@ -174,8 +178,8 @@ and subsequent mints cost only ~2,900 gas (warm dirty SSTORE). This saves
 ~17,000 gas on the first real arbitrage after warmup.
 
 ```python
-# Call once after deployment (send 2 wei ETH)
-executor.initialize(value=2)
+# Call once after deployment (send 1 wei ETH; it is consumed by WETH.deposit)
+executor.initialize(value=1)
 ```
 
 ### 3.3 ERC6909 Warmup Details
@@ -189,6 +193,29 @@ as a +1 WETH delta, then mints it as ERC6909 to the executor. After this:
 
 This 1 wei of ERC6909 remains permanently and does not affect profit
 calculations — it's purely a gas optimization.
+
+### 3.4 Release identity
+
+Every deployment declares its own release through four pure getters, so a client
+never has to infer which encoder matches a contract:
+
+```python
+executor.release_id()                # bytes32: NUL-padded ASCII tag, "cmd_executor/1"
+executor.protocol_major()            # uint32:  the bounded dispatch unit
+executor.call_encoding_version()     # uint32:  versions the WHOLE call encoding
+executor.capabilities()              # uint32[]: stable capability IDs, ascending
+```
+
+They return compile-time constants: no storage read, no constructor argument, no
+proxy. A capability ID you do not recognize is kept verbatim rather than
+rejected — the names live in the off-chain release manifest, which also
+describes the command grammar, the packed `config` layout, the `execute` ABI,
+and the runtime artifact. A deployment compiled before these getters answers
+nothing, and naming it requires an explicit operator legacy mapping; silence is
+never read as "latest".
+
+See [`releases.md`](releases.md) for the current release, the manifest schema,
+and the migration policy.
 
 ---
 

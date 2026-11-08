@@ -14,7 +14,7 @@ Two implementations — **tstore_executor** (static payload queue) and **cmd_exe
 
 | Contract | Description | Runtime Bytecode |
 |----------|-------------|-----------------|
-| `cmd_executor.vy` | Compact command-stream executor with dynamic V4 delta tracking via PM exttload + ERC6909 mint/burn + excess-balance V2 swaps + packed ABI config param | 15,359 bytes |
+| `cmd_executor.vy` | Compact command-stream executor with dynamic V4 delta tracking via PM exttload + ERC6909 mint/burn + excess-balance V2 swaps + packed ABI config param + release metadata getters | 18,638 bytes (+224 B immutables) |
 | `tstore_executor.vy` | Static payload-queue executor with V4 auto-settle | 5,871 bytes |
 | `fake_uniswap_v2_pair.vy` | Mock V2 pair with K-invariant check, reset(), getReserves (3 callback variants + configurable fee) | 4,462 bytes |
 | `fake_uniswap_v3_pool.vy` | Mock V3 pool with balance-delta check (2 callback variants) | 3,005 bytes |
@@ -79,6 +79,8 @@ V2 (0x20–0x2F):
 V3 (0x30–0x3F):
   0x30  V3_SWAP_COMPACT   V3 swap (uint96 amount + default sqrt + auto-pay)
   0x31  V3_SWAP_DELTA     V3 swap (amount from PM exttload + default sqrt + auto-pay)
+  0x33  V3_SWAP_ONE_FOR_ZERO  V3 exact-input one-for-zero (direction + max price baked in)
+  0x34  V3_SWAP_ZERO_FOR_ONE  V3 exact-input zero-for-one (direction + min price baked in)
   0x33  V3_SWAP_ONE_FOR_ZERO  V3 exact-input with direction and max price baked in
   0x34  V3_SWAP_ZERO_FOR_ONE  V3 exact-input with direction and min price baked in
 
@@ -86,6 +88,7 @@ V4 Swaps (0x40–0x4F):
   0x40  V4_SWAP_COMPACT   V4 swap (uint96 amount + default sqrt_price_limit)
   0x41  V4_SWAP_DYNAMIC   V4 swap (amount from PM exttload, default sqrt_price_limit)
   0x42  V4_BATCH          V4 multi-swap + auto-settle (tight loop)
+  0x43  V4_BATCH_OPEN_WETH  V4 multi-swap; leaves a positive WETH delta open for a trailing V4_MINT_COMPACT
 
 V4 Settlement / ERC6909 (0x50–0x5F):
   0x50  V4_UNLOCK         Enter PoolManager unlock context
@@ -100,9 +103,24 @@ V4 Settlement / ERC6909 (0x50–0x5F):
   0x59  V4_BURN_COMPACT   Burn from ERC6909 with uint96 amount (no transfer)
 
 Stream separators:
-  0xFE  BEGIN_PREPROCESSING  First byte: signals a preprocessing section follows
   0xFF  BEGIN_EXECUTION      Marks end of preprocessing / start of execution
 ```
+
+There is no `0xFE` stream prefix: preprocessing runs unconditionally from offset
+0, reading `SET_ADDRESS` commands until `0xFF` or the first execution opcode.
+
+## Release Metadata
+
+Every deployment declares its own release through four pure getters —
+`release_id()`, `protocol_major()`, `call_encoding_version()`, and
+`capabilities()`. They are compile-time constants (no storage, no constructor
+argument, no proxy), and they are the on-chain half of a description whose other
+half is the committed release manifest. A deployment that predates them answers
+nothing, and naming it requires an explicit operator legacy mapping — never a
+guess at "latest".
+
+See [`releases.md`](releases.md) for the current release, the manifest schema,
+the strict decoding rules, and the versioning policy.
 
 ## Callbacks
 

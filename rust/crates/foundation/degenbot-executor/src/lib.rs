@@ -13,6 +13,10 @@
 //!   [`composers::encode_cmd_stream`] (ADR-033). The ADR-029/030/031 record
 //!   records own the grammar's invariants (axes, tri-state outcomes, the
 //!   facts-driven walker).
+//! - **The release identity** ([`release`]): the on-chain metadata getters'
+//!   strict decoders, the getterless/legacy distinction, and the committed
+//!   release manifest that describes the complete call encoding
+//!   (ADR-098 D5).
 //! - **The warmup-slot math** ([`WarmupSlots`] /
 //!   [`compute_simulation_warmup_slots`]): the Solidity storage-slot math
 //!   that feeds simulation state-override warmup — three slots pre-warmed so
@@ -57,6 +61,7 @@ pub mod encoders;
 pub mod grammar_ledger;
 pub mod grammar_plan;
 pub mod grammar_shape;
+pub mod release;
 
 pub mod grammar_walker;
 

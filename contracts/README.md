@@ -120,7 +120,7 @@ The previous pipeline compiled from the retired `~/code/executor/` path
 
 ## cmd_executor — Command-Stream Executor
 
-**Vyper**: 0.5.0b2 | **EVM**: Cancun | **Runtime**: 16,622 bytes (16,462 B code + CBOR + 160 B immutables)
+**Vyper**: 0.5.0b2 | **EVM**: Cancun | **Runtime**: 18,638 bytes of code + CBOR, plus the 224-byte immutable tail (18,862 B deployed)
 **Source**: in-repo `contracts/vyper/cmd_executor.vy` (vendored); committed artifacts in `tier3-oracle/artifacts/executor/` (vyper 0.5.0b2, compile-vs-use gate: `just verify-tier3-executor-artifact`)
 **Tests**: in-repo `tests/executor/` (Ape + Foundry)
 
@@ -142,6 +142,12 @@ struct ExecutionReceipt:
 def execute(commands: Bytes[288], config: uint256 = 1) -> ExecutionReceipt
 
 def sweep(destination: address)
+
+# Release metadata — pure constant returns, no storage, no constructor argument
+def release_id() -> bytes32              # NUL-padded ASCII tag: "cmd_executor/1"
+def protocol_major() -> uint32           # bounded dispatch unit
+def call_encoding_version() -> uint32    # versions stream + config + execute ABI together
+def capabilities() -> DynArray[uint32, 32]
 ```
 
 `config = (min_profit << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | profit_mode`.
@@ -152,6 +158,18 @@ balance-domain increase after all commands and before bribe payment;
 A decrease or `gross_profit < min_profit` reverts. `sweep()` is a separate
 owner-only administrative transfer of all physical WETH + native ETH and has
 no profit or bribe semantics.
+
+The release metadata getters are the on-chain half of the executor's release
+identity. The other half is the committed release manifest
+(`rust/crates/foundation/degenbot-executor/releases/cmd_executor.v1.json`),
+which binds the declared tag, protocol major, and capability IDs to the complete
+call encoding (command stream, packed config, execute ABI) and the runtime
+artifact location. Whole-bytecode hashes are deliberately NOT the release
+identity: Vyper immutables differ per deployment, so artifact integrity stays
+with `tier3-oracle/artifacts/executor/manifest.json`. A deployment compiled
+before these getters answers nothing, and naming it requires an explicit
+operator legacy mapping — never a guess at the latest release. Details and the
+migration policy: `docs/executor/releases.md`.
 
 The command stream format:
 
