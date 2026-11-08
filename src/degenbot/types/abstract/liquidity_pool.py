@@ -11,6 +11,7 @@ from degenbot.types.address_comparable import AddressComparable
 if TYPE_CHECKING:
     from degenbot._ffi import BotIo, Pool
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.erc20.native_token import NativeToken
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.pool_type import PoolTypeDescriptor
 
@@ -118,7 +119,7 @@ class AbstractLiquidityPool(AddressComparable, ABC):
 
     @property
     @abstractmethod
-    def tokens(self) -> tuple[Erc20Token, ...]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, ...]:
         """Tokens."""
         ...
 

@@ -23,7 +23,7 @@ from degenbot.types.abstract import AbstractPoolState
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.rpc_types import BlockIdentifier
@@ -40,7 +40,12 @@ NATIVE_COIN_ALL_ES: Final = get_checksum_address("0x" + "EE" * 20)
 
 
 def is_curve_native_coin(address: str) -> bool:
-    """Whether `address` is Curve's all-Es native-coin sentinel."""
+    """Whether `address` is Curve's all-Es native-coin sentinel.
+
+    Returns:
+        Whether `address` is Curve's all-Es native-coin sentinel.
+
+    """
     return get_checksum_address(address) == NATIVE_COIN_ALL_ES
 
 
@@ -162,7 +167,7 @@ class BasePoolPort(Protocol):
     """
 
     @property
-    def tokens(self) -> tuple[Erc20Token, ...]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, ...]:
         """Base-pool coin companions."""
         ...
 

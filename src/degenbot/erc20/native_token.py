@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from degenbot._ffi import NativeToken as _NativeTokenHandle
-
     from degenbot.types.aliases import ChainId
 
 
@@ -82,13 +81,28 @@ class NativeToken:
         return self._py_native.decimals
 
     def __repr__(self) -> str:
-        """Return a representation naming the chain, not an address."""
+        """Return a representation naming the chain, not an address.
+
+        Returns:
+            A representation naming the symbol and chain ID.
+
+        """
         return f"{type(self).__name__}(symbol={self.symbol!r}, chain_id={self.chain_id!r})"
 
     def __eq__(self, other: object) -> bool:
-        """One conceptual native token per chain: equality is chain identity."""
+        """One conceptual native token per chain: equality is chain identity.
+
+        Returns:
+            Whether `other` is this chain's conceptual native token.
+
+        """
         return type(self) is type(other) and self.chain_id == other.chain_id  # type: ignore[attr-defined]
 
     def __hash__(self) -> int:
-        """Hash on the class and chain, the same identity :meth:`__eq__` uses."""
+        """Hash on the class and chain, the same identity :meth:`__eq__` uses.
+
+        Returns:
+            The hash of this token's class and chain identity.
+
+        """
         return hash((type(self), self.chain_id))

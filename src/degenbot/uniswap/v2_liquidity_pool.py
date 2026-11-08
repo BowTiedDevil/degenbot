@@ -6,7 +6,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20 import Erc20Token
+from degenbot.erc20 import Erc20Token, NativeToken
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
@@ -48,8 +48,8 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     factory: ChecksummedAddress
     _fee_token0: Fraction
     _fee_token1: Fraction
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
     init_hash: str
     deployer: ChecksummedAddress
     name: str

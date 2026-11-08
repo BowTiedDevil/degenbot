@@ -30,7 +30,12 @@ NATIVE_SENTINEL_ADDRESSES = (
 
 
 def _is_native_sentinel(address: str) -> bool:
-    """Whether `address` is a raw protocol native-asset sentinel."""
+    """Whether `address` is a raw protocol native-asset sentinel.
+
+    Returns:
+        Whether `address` is a raw protocol native-asset sentinel.
+
+    """
     return address in NATIVE_SENTINEL_ADDRESSES
 
 
@@ -235,7 +240,7 @@ class Erc20Builder:
         chain_id: ChainId | None = None,
         silent: bool = False,
     ) -> NativeToken:
-        """The chain's conceptual native token (ADR-097).
+        """Build the chain's conceptual native token (ADR-097).
 
         Metadata resolves through the core chain-facts manifest — no contract
         read, no DB row, and no operator config. The Python shell keeps only
@@ -257,7 +262,7 @@ class Erc20Builder:
             logger.info(f"• {token.symbol} ({token.name})")
         return token
 
-    def get_token_balance(  # ruff:ignore[no-self-use]
+    def get_token_balance(
         self,
         token: Erc20Token | NativeToken,
         address: str,
@@ -281,7 +286,7 @@ class Erc20Builder:
             self._py_bot.fetch_token_balance(token_handle(token), address, block_identifier),
         )
 
-    def get_token_approval(  # ruff:ignore[no-self-use]
+    def get_token_approval(
         self,
         token: Erc20Token,
         owner: str,
@@ -305,7 +310,7 @@ class Erc20Builder:
             ),
         )
 
-    def get_token_total_supply(  # ruff:ignore[no-self-use]
+    def get_token_total_supply(
         self,
         token: Erc20Token,
         block_identifier: BlockIdentifier | None = None,
@@ -323,7 +328,7 @@ class Erc20Builder:
             self._py_bot.fetch_token_total_supply(token_handle(token), block_identifier),
         )
 
-    def get_ether_balance(  # ruff:ignore[no-self-use]
+    def get_ether_balance(
         self,
         chain_id: ChainId,
         address: str,
@@ -343,6 +348,6 @@ class Erc20Builder:
         return cast(
             "int",
             self._py_bot.fetch_token_balance(
-                self.build_native(chain_id=chain_id)._py_native, address, block_identifier
+                token_handle(self.build_native(chain_id=chain_id)), address, block_identifier
             ),
         )

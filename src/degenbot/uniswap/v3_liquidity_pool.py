@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict, cast
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20 import Erc20Token
+from degenbot.erc20 import Erc20Token, NativeToken
 from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
@@ -85,8 +85,8 @@ class UniswapV3Pool(
     factory: ChecksummedAddress
     _fee: int
     _tick_spacing: int
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
     init_hash: str
     deployer_address: ChecksummedAddress
     name: str

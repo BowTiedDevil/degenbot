@@ -24,7 +24,7 @@ from degenbot.types.price_ladder import PriceLadder
 if TYPE_CHECKING:
     from degenbot.aerodrome.types import AerodromeV2PoolState
     from degenbot.aerodrome.v2_pool_quoter import AerodromeV2SwapQuoter
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types.abstract import AbstractPoolState
 
 
@@ -36,8 +36,8 @@ class AerodromeV2PoolCalc(PriceLadder):
     """
 
     # Attributes provided by AerodromeV2PoolState in the MRO
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
     _fee: Fraction
 
     # Read-only views provided by the concrete pool class in the MRO (see

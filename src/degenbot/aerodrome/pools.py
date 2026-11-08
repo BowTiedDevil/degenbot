@@ -13,7 +13,7 @@ from degenbot.aerodrome.v2_pool_calc import AerodromeV2PoolCalc
 from degenbot.aerodrome.v2_pool_quoter import AerodromeV2SwapQuoter
 from degenbot.aerodrome.v2_pool_state import AerodromeV2PoolState as AerodromeV2PoolStateMixin
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20 import Erc20Token
+from degenbot.erc20 import Erc20Token, NativeToken
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -46,8 +46,8 @@ class AerodromeV2Pool(
     _initial_state_block: int
     _stable: bool
     _fee: Fraction
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
     name: str
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from fractions import Fraction
 
     from degenbot.aerodrome.types import AerodromeV2PoolState
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types import Pool
     from degenbot.uniswap import SwapRefused
 
@@ -83,7 +83,7 @@ class AerodromeV2QuoteHost(Protocol):
     """The companion reads the Aerodrome quoter needs."""
 
     @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, Erc20Token | NativeToken]:
         """The pool's token pair, token0 first."""
         ...
 

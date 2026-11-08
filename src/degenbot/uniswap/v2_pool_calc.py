@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, cast
 from degenbot.types.price_ladder import PriceLadder
 
 if TYPE_CHECKING:
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types import Pool
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.uniswap.v2_pool_quoter import UniswapV2SwapQuoter
@@ -41,8 +41,8 @@ class UniswapV2PoolCalc(PriceLadder):
     """
 
     # Attributes provided by V2PoolState in the MRO
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
     _fee_token0: Fraction
     _fee_token1: Fraction
 

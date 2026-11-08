@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from fractions import Fraction
 
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.erc20.native_token import NativeToken
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.chain import ChecksummedAddress
 
@@ -50,13 +51,13 @@ class ConstantProductPool(Protocol):
         ...
 
     @property
-    def token0(self) -> Erc20Token:
-        """The lower-addressed token in the pair."""
+    def token0(self) -> Erc20Token | NativeToken:
+        """The pair's token0 (an ERC-20 or the conceptual native token)."""
         ...
 
     @property
-    def token1(self) -> Erc20Token:
-        """The higher-addressed token in the pair."""
+    def token1(self) -> Erc20Token | NativeToken:
+        """The pair's token1 (an ERC-20 or the conceptual native token)."""
         ...
 
     @property
@@ -98,13 +99,13 @@ class ConcentratedLiquidityPool(Protocol):
         ...
 
     @property
-    def token0(self) -> Erc20Token:
-        """The lower-addressed token in the pair."""
+    def token0(self) -> Erc20Token | NativeToken:
+        """The pair's token0 (an ERC-20 or the conceptual native token)."""
         ...
 
     @property
-    def token1(self) -> Erc20Token:
-        """The higher-addressed token in the pair."""
+    def token1(self) -> Erc20Token | NativeToken:
+        """The pair's token1 (an ERC-20 or the conceptual native token)."""
         ...
 
     @property
@@ -143,7 +144,7 @@ class StableswapPool(Protocol):
     """
 
     @property
-    def tokens(self) -> tuple[Erc20Token, ...]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, ...]:
         """Tuple of all pool tokens."""
         ...
 

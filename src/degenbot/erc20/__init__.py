@@ -1,6 +1,9 @@
 """ERC-20 token with on-chain metadata and balance tracking."""
 
-from typing import Any
+from __future__ import annotations
+
+from degenbot._ffi import Erc20Token as _TokenHandle
+from degenbot._ffi import NativeToken as _NativeTokenHandle
 
 from .erc20 import UNKNOWN_DECIMALS, UNKNOWN_NAME, UNKNOWN_SYMBOL, Erc20Token
 from .native_token import NativeToken
@@ -11,7 +14,7 @@ from .native_token import NativeToken
 AnyToken = Erc20Token | NativeToken
 
 
-def wrap_token_handle(handle: Any) -> Erc20Token | NativeToken:
+def wrap_token_handle(handle: _TokenHandle | _NativeTokenHandle) -> Erc20Token | NativeToken:
     """Wrap a token companion handle as the public ``Erc20Token | NativeToken`` union.
 
     A generic pool token getter hands back either handle type; wrapping
@@ -22,15 +25,13 @@ def wrap_token_handle(handle: Any) -> Erc20Token | NativeToken:
         The wrapped token companion.
 
     """
-    from degenbot._ffi import NativeToken as _NativeTokenHandle
-
     if isinstance(handle, _NativeTokenHandle):
         return NativeToken.from_handle(handle)
     return Erc20Token.from_handle(handle)
 
 
-def token_handle(token: Erc20Token | NativeToken) -> Any:
-    """The Rust companion handle behind a token companion (the FFI wire form).
+def token_handle(token: Erc20Token | NativeToken) -> _TokenHandle | _NativeTokenHandle:
+    """Return the Rust companion handle behind a token companion (the FFI wire form).
 
     The thin adapter over the two companion seams (`_py_token` /
     `_py_native`), so a caller with the union never needs sentinel or
@@ -40,7 +41,9 @@ def token_handle(token: Erc20Token | NativeToken) -> Any:
         The token's Rust handle.
 
     """
-    return token._py_token if isinstance(token, Erc20Token) else token._py_native
+    # This module is the seam adapter: reaching through the private
+    # companion attribute is its one job, so every other caller stays off it.
+    return token._py_token if isinstance(token, Erc20Token) else token._py_native  # ruff:ignore[private-member-access]
 
 
 __all__ = (

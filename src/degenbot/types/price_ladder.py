@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 from degenbot.exceptions import DegenbotValueError
 
 if TYPE_CHECKING:
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types.abstract import AbstractPoolState
 
 
@@ -41,12 +41,14 @@ class PriceLadder:
     concrete pool the family mixin is composed with.
     """
 
-    # Attributes provided by the family's state mixin in the MRO.
-    _token0: Erc20Token
-    _token1: Erc20Token
+    # Attributes provided by the family's state mixin in the MRO. A pair leg
+    # is a token companion of either kind (ADR-097): V4 pairs may hold the
+    # conceptual native token where V2/V3 pairs hold only ERC-20s.
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
 
     @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, Erc20Token | NativeToken]:
         """The pair this pool prices (concrete pool provides).
 
         Returns:

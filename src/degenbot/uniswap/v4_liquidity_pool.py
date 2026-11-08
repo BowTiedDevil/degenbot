@@ -52,12 +52,15 @@ from degenbot.utils.bytes import to_0x_hex
 
 
 def v4_currency(token: Erc20Token | NativeToken) -> ChecksummedAddress:
-    """The V4 `Currency` spelling of `token` — the protocol's wire view.
+    """Return the V4 `Currency` spelling of `token` — the protocol's wire view.
 
     One of exactly three places the conceptual native token becomes V4's
     `address(0)` currency (ADR-097 D3): PoolKey/pool-id derivation. The
     inverse translation (zero -> `NativeToken`) happens only at the V4
     identity getters; generic inputs never carry the raw spelling.
+
+    Returns:
+        The V4 `Currency` — an address, ``address(0)`` for the native token.
 
     """
     return ZERO_ADDRESS if isinstance(token, NativeToken) else token.address

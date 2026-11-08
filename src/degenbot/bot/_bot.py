@@ -32,8 +32,8 @@ from degenbot.builders.type_resolution import (
     pool_class_for_descriptor,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.constants import ZERO_ADDRESS
 from degenbot.config import resolve_chain_id, resolve_database_path
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.discovery import PoolRef
 from degenbot.discovery import pools_for_tokens as _pools_for_tokens
@@ -377,7 +377,7 @@ class Bot(AccountQueryMixin):
         return self.build_erc20token(address)
 
     def get_native_token(self) -> NativeToken:
-        """The chain's conceptual native token (ADR-097).
+        """Return the chain's conceptual native token (ADR-097).
 
         One per chain: metadata from the core chain-facts manifest — no
         contract read, no DB row, no protocol address.
@@ -706,9 +706,6 @@ class Bot(AccountQueryMixin):
                 assert isinstance(existing, UniswapV4Pool)
             return existing
 
-        pool_id_bytes = to_bytes(request.pool_id)
-        pool_manager_address = get_checksum_address(address)
-
         head = self._io.get_block_number()
         state_block = request.state_block if request.state_block is not None else head
 
@@ -737,8 +734,8 @@ class Bot(AccountQueryMixin):
         # handle is self-describing) — no per-value threading, and the
         # echo-parity guard is core-side now.
         construction_request = PoolConstructionRequest.managed_v4(
-            pool_manager_address,
-            to_0x_hex(pool_id_bytes),
+            address,
+            to_0x_hex(to_bytes(request.pool_id)),
             tokens=[str(t) for t in request.tokens] if request.tokens else None,
             fee=int(request.fee) if request.fee is not None else None,
             tick_spacing=int(request.tick_spacing) if request.tick_spacing is not None else None,
@@ -763,31 +760,11 @@ class Bot(AccountQueryMixin):
             raise DegenbotValueError(message=str(exc) or "V4 identity resolution failed") from exc
         py_pool_handle = outcome.pool
 
-        # The pool's two currencies build in ONE core batch entry (the batch
-        # call shape over the same per-token construction `build` uses). V4's
-        # `address(0)` currency is that protocol's private spelling of the
-        # native asset (ADR-097 D3): translated to the session's NativeToken
-        # here, at the construction outcome, and spelled back only inside
-        # PoolKey/pool-id derivation and execution. The currency pair is the
-        # outcome's identity echo.
-        currencies = [outcome.token0, outcome.token1]
-        native_indices = [i for i, currency in enumerate(currencies) if currency == ZERO_ADDRESS]
-        erc20_indices = [i for i, currency in enumerate(currencies) if currency != ZERO_ADDRESS]
-        tokens: list[Erc20Token | NativeToken] = []
-        if erc20_indices:
-            tokens = self._erc20_builder.build_many(
-                [currencies[index] for index in erc20_indices],
-                chain_id=chain_id,
-                silent=request.silent,
-            )
-        resolved: list[Erc20Token | NativeToken | None] = [None, None]
-        for index, token in zip(erc20_indices, tokens, strict=True):
-            resolved[index] = token
-        for index in native_indices:
-            resolved[index] = self._erc20_builder.build_native(
-                chain_id=chain_id, silent=request.silent
-            )
-        token0, token1 = resolved
+        token0, token1 = self._companion_tokens_for_v4_currencies(
+            [outcome.token0, outcome.token1],
+            chain_id=chain_id,
+            silent=request.silent,
+        )
 
         pool = UniswapV4Pool.from_handle(py_pool_handle)
 
@@ -807,8 +784,52 @@ class Bot(AccountQueryMixin):
 
         return pool
 
+    def _companion_tokens_for_v4_currencies(
+        self,
+        currencies: list[str],
+        *,
+        chain_id: ChainId,
+        silent: bool,
+    ) -> tuple[Erc20Token | NativeToken, Erc20Token | NativeToken]:
+        """Build the companion pair for a constructed V4 pool's two currencies.
+
+        The pair's companions build in ONE core batch entry (the batch call
+        shape over the same per-token construction `build` uses). V4's
+        `address(0)` currency is that protocol's private spelling of the
+        native asset (ADR-097 D3): translated to the session's NativeToken
+        here, at the construction outcome, and spelled back only inside
+        PoolKey/pool-id derivation and execution. The currency pair is the
+        outcome's identity echo.
+
+        Returns:
+            The two token companions, currency0 first.
+
+        """
+        native_indices = [i for i, currency in enumerate(currencies) if currency == ZERO_ADDRESS]
+        erc20_indices = [i for i, currency in enumerate(currencies) if currency != ZERO_ADDRESS]
+        companions: dict[int, Erc20Token | NativeToken] = {}
+        if erc20_indices:
+            companions.update(
+                zip(
+                    erc20_indices,
+                    self._erc20_builder.build_many(
+                        [currencies[index] for index in erc20_indices],
+                        chain_id=chain_id,
+                        silent=silent,
+                    ),
+                    strict=True,
+                )
+            )
+        for index in native_indices:
+            companions[index] = self._erc20_builder.build_native(chain_id=chain_id, silent=silent)
+        return companions[0], companions[1]
+
     @staticmethod
-    def _log_v4_pool(pool: UniswapV4Pool, token0: Erc20Token, token1: Erc20Token) -> None:
+    def _log_v4_pool(
+        pool: UniswapV4Pool,
+        token0: Erc20Token | NativeToken,
+        token1: Erc20Token | NativeToken,
+    ) -> None:
         """Trace-log a freshly built V4 managed pool (the caller gates on `silent`)."""
         logger.info(pool.name)
         logger.info(f"• ID: {to_0x_hex(pool.pool_id)}")

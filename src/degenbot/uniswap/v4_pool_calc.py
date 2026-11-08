@@ -20,7 +20,7 @@ from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.uniswap.v4_types import UniswapV4PoolState
 
@@ -34,8 +34,8 @@ class UniswapV4PoolCalc(PriceLadder):
 
     # MRO-provided attributes (declared for type checking;
     # actual definitions live on V4PoolState and the pool class)
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
 
     # Read-only views provided by the concrete pool class (see
     # UniswapV2PoolCalc for the rationale).

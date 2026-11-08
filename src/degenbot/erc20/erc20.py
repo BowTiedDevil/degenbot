@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.types.abstract import AbstractErc20Token
-from degenbot.types.concrete import BoundedCache
 
 if TYPE_CHECKING:
     from degenbot._ffi import Erc20Token as _TokenHandle
-    from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
 
 UNKNOWN_NAME = "Unknown Token"
@@ -139,7 +137,7 @@ class Erc20Token(AbstractErc20Token):
             The cached value, or ``None`` when the stream holds no entry.
 
         """
-        return self._py_token.get_cached_balance(address, block_number)
+        return cast("int | None", self._py_token.get_cached_balance(address, block_number))
 
     def set_cached_balance(
         self, address: ChecksummedAddress, block_number: int, balance: int
@@ -159,7 +157,7 @@ class Erc20Token(AbstractErc20Token):
             The cached value, or ``None`` when the stream holds no entry.
 
         """
-        return self._py_token.get_cached_approval(owner, spender, block_number)
+        return cast("int | None", self._py_token.get_cached_approval(owner, spender, block_number))
 
     def set_cached_approval(
         self,
@@ -178,7 +176,7 @@ class Erc20Token(AbstractErc20Token):
             The cached value, or ``None`` when the stream holds no entry.
 
         """
-        return self._py_token.get_cached_total_supply(block_number)
+        return cast("int | None", self._py_token.get_cached_total_supply(block_number))
 
     def set_cached_total_supply(self, block_number: int, total_supply: int) -> None:
         """Record the total supply at ``block_number`` in the session stream."""

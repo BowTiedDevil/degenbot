@@ -24,7 +24,7 @@ from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.uniswap.v3_pool_quoter import UniswapV3SwapQuoter
     from degenbot.uniswap.v3_types import UniswapV3PoolSimulationResult, UniswapV3PoolState
@@ -41,13 +41,13 @@ class UniswapV3PoolCalc(PriceLadder):
     """
 
     # Attributes provided by sibling/child mixins in the MRO.
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
     _fee: int
 
     @property
     @abstractmethod
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, Erc20Token | NativeToken]:
         """Tokens.
 
         Returns:

@@ -32,7 +32,7 @@ from degenbot.curve.types import (
 
 if TYPE_CHECKING:
     from degenbot.curve.types import BasePoolPort
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -58,7 +58,8 @@ class StableswapPoolState:
     """State for Curve StableSwap pools.
 
     Immutable data set at construction:
-    - _tokens: the pool's ERC-20 tokens (2 or more)
+    - _tokens: the pool's token companions (2 or more; an ERC-20 or the
+      conceptual native asset for Curve's native-coin pools — ADR-097)
     - Configuration attributes (a_coefficient, fee, admin_fee, etc.)
     - Strategy enums and variant computation selectors
 
@@ -68,15 +69,15 @@ class StableswapPoolState:
 
     # ── Immutable: set once at construction ──
 
-    _tokens: tuple[Erc20Token, ...]
+    _tokens: tuple[Erc20Token | NativeToken, ...]
     _a_coefficient: int
     _fee: int
     _admin_fee: int
     _rate_multipliers: tuple[int, ...]
     _precision_multipliers: tuple[int, ...]
     _base_pool: BasePoolPort | None
-    _tokens_underlying: tuple[Erc20Token, ...] | None
-    _lp_token: Erc20Token
+    _tokens_underlying: tuple[Erc20Token | NativeToken, ...] | None
+    _lp_token: Erc20Token | NativeToken
     _use_lending: tuple[bool, ...]
     _initial_a_coefficient: int | None
     _future_a_coefficient: int | None
@@ -95,7 +96,7 @@ class StableswapPoolState:
     # ── Immutable properties ──
 
     @property
-    def tokens(self) -> tuple[Erc20Token, ...]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, ...]:
         """Tokens."""
         return self._tokens
 
@@ -130,12 +131,12 @@ class StableswapPoolState:
         return self._base_pool
 
     @property
-    def tokens_underlying(self) -> tuple[Erc20Token, ...] | None:
+    def tokens_underlying(self) -> tuple[Erc20Token | NativeToken, ...] | None:
         """Tokens underlying."""
         return self._tokens_underlying
 
     @property
-    def lp_token(self) -> Erc20Token:
+    def lp_token(self) -> Erc20Token | NativeToken:
         """Lp token."""
         return self._lp_token
 

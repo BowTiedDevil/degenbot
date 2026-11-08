@@ -24,8 +24,11 @@ import dataclasses
 import sys
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from degenbot.builders.erc20_builder import NATIVE_SENTINEL_ADDRESSES
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import (
+    DegenbotValueError,
     DuplicatePoolError,
     HopCountExceededError,
     HopCountInsufficientError,
@@ -39,6 +42,8 @@ from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+    from degenbot.types.chain import ChecksummedAddress
 
 __all__ = [
     "NoOpPathPredicate",
@@ -95,20 +100,55 @@ def _pool_identity(pool: ArbPathPool) -> str:
     return get_checksum_address(pool.address)
 
 
-def _hop_token_pair(pool: ArbPathPool, zfo: bool) -> tuple[str, str]:  # ruff:ignore[boolean-type-hint-positional-argument]
-    """Return the ``(token_in, token_out)`` addresses a hop swaps between.
-
-    ``zfo=True`` → token0→token1; ``zfo=False`` → token1→token0. All pools
-    (V2/V3/V4) expose ``token0``/``token1`` as
-    :class:`~degenbot.erc20.erc20.Erc20Token` with a checksummed ``address``.
+def _policy_address(token: ChecksummedAddress | str) -> ChecksummedAddress:
+    """Return the checksummed token address a policy entry names.
 
     Returns:
-        The ``(token_in, token_out)`` checksummed addresses for this hop.
+        The checksummed address the entry names.
+
+    Raises:
+        DegenbotValueError: If the entry is a raw protocol native-asset
+            sentinel — one protocol's wire spelling, never a way to name the
+            native asset in an input (ADR-097 D1).
 
     """
-    token_in = pool.token0.address if zfo else pool.token1.address
-    token_out = pool.token1.address if zfo else pool.token0.address
-    return token_in, token_out
+    address = get_checksum_address(token)
+    if address in NATIVE_SENTINEL_ADDRESSES:
+        msg = (
+            f"Policy token {address} is a protocol native-asset sentinel, "
+            "not a token contract address; name the native asset through "
+            "NativeToken (Bot.get_native_token)."
+        )
+        raise DegenbotValueError(message=msg)
+    return address
+
+
+def _hop_token_pair(pool: ArbPathPool, zfo: bool) -> tuple[str, str]:  # ruff:ignore[boolean-type-hint-positional-argument]
+    """Return the ``(token_in, token_out)`` wire addresses a hop swaps between.
+
+    ``zfo=True`` → token0→token1; ``zfo=False`` → token1→token0. Each leg
+    carries the wire spelling its pool's protocol gives it — the same key
+    space the core's ``touched_tokens`` (``policy.rs``) reads off the hop
+    facts. A V4 pair's key already carries its currencies (a native leg is
+    that protocol's ``address(0)`` currency there); a raw sentinel never
+    NAMES the native asset in a policy input (ADR-097 D1), and
+    :func:`_policy_address` refuses one there.
+
+    Returns:
+        The ``(token_in, token_out)`` wire addresses for this hop.
+
+    """
+    if isinstance(pool, UniswapV4Pool):
+        currency0, currency1 = pool.pool_key.currency0, pool.pool_key.currency1
+        return (currency0, currency1) if zfo else (currency1, currency0)
+    token_in = pool.token0 if zfo else pool.token1
+    token_out = pool.token1 if zfo else pool.token0
+    # A V2/V3/Aerodrome pair holds only ERC-20 contracts — the native asset
+    # gets a wire spelling only from a protocol that carries one (the V4
+    # currencies above) (ADR-097 D3).
+    assert isinstance(token_in, Erc20Token)
+    assert isinstance(token_out, Erc20Token)
+    return token_in.address, token_out.address
 
 
 def touched_tokens(pools_and_zfos: Sequence[tuple[ArbPathPool, bool]]) -> list[str]:
@@ -117,11 +157,13 @@ def touched_tokens(pools_and_zfos: Sequence[tuple[ArbPathPool, bool]]) -> list[s
     Captures the input token (first hop's ``token_in``) + every hop's
     ``token_out`` (which includes all intermediate connecting tokens and the
     final profit token). Order: input first, then each hop's output in path
-    order; duplicates removed preserving first occurrence.
+    order; duplicates removed preserving first occurrence. The addresses are
+    the hops' wire spellings (:func:`_hop_token_pair`) — the same key space
+    the core's ``touched_tokens`` (``policy.rs``) reads.
 
     Returns:
-        The ordered, de-duplicated list of touched checksummed token
-        addresses (input + intermediates + profit token).
+        The ordered, de-duplicated list of touched token addresses (input +
+        intermediates + profit token).
 
     """
     touched: list[str] = []
@@ -152,7 +194,9 @@ class PathPolicy:
     4. min-liquidity gate (only when ``liquidity_of`` is supplied)
 
     Token-address inputs are normalized by checksum so denylist/allowlist
-    entries supplied in any case match the pool's checksummed token addresses.
+    entries supplied in any case match the hops' wire token addresses. A raw
+    protocol sentinel is refused loudly (ADR-097 D1): one protocol's wire
+    spelling is never a way to name the native asset in an input.
 
     The library deliberately does NOT encode pool-type-specific liquidity
     math (V2 reserves vs. V3/V4 ``liquidity``/``sqrt_price_x96``). Supply a
@@ -197,11 +241,11 @@ class PathPolicy:
             )
 
         # Normalize denylist/allowlist to checksummed addresses once.
-        disallowed = frozenset(get_checksum_address(t) for t in self.disallowed_tokens)
+        disallowed = frozenset(_policy_address(t) for t in self.disallowed_tokens)
         allowed = (
             None
             if self.allowed_tokens is None
-            else frozenset(get_checksum_address(t) for t in self.allowed_tokens)
+            else frozenset(_policy_address(t) for t in self.allowed_tokens)
         )
 
         # 2. Token denylist / allowlist (input + intermediates + profit).

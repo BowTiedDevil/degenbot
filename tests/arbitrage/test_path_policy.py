@@ -20,9 +20,11 @@ from degenbot.arbitrage.policy import (
     PathPolicy,
     touched_tokens,
 )
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import (
     ArbitrageError,
     DegenbotError,
+    DegenbotValueError,
     DuplicatePoolError,
     HopCountExceededError,
     HopCountInsufficientError,
@@ -30,14 +32,46 @@ from degenbot.exceptions import (
     PathRejectedError,
     TokenDenylistedError,
 )
+from tests.helpers.erc20_factory import make_native_token
+from tests.helpers.v4_pool_factory import make_v4_pool
 from tests.types.test_concrete_pool_construction import (
+    V4_POOL_MANAGER,
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,
     _make_uniswap_v4_pool,
+    _make_weth,
 )
 
 WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+
+def _make_native_leg_v4_pool(bot):
+    """A V4 managed pool whose currency0 is the conceptual native asset.
+
+    The V4 ``address(0)`` currency is translated to the session's
+    ``NativeToken`` at the construction outcome (ADR-097 D3); the pair is
+    token0=native, token1=WETH.
+    """
+    return make_v4_pool(
+        # keccak(abi.encode(pool_key)) — the companion verifies the ID against
+        # the key, so the fixture carries the real derivation.
+        pool_id="0xe541b44249066366e0edc2f6b71f431169e5747a50cbc3506e85203079af215a",
+        pool_manager_address=V4_POOL_MANAGER,
+        token0=make_native_token(bot),
+        token1=_make_weth(bot),
+        fee=500,
+        tick_spacing=10,
+        hook_address=ZERO_ADDRESS,
+        sqrt_price_x96=2_198_666_895_605_149_686_863,
+        tick=-76020,
+        liquidity=9876543210,
+        protocol_fee_zero_for_one=0,
+        protocol_fee_one_for_zero=0,
+        lp_fee=500000,
+        state_block=18_000_000,
+        py_bot=bot,
+    )
 
 
 class FakeArbitrageEngine:
@@ -137,6 +171,15 @@ def test_touched_tokens_preserves_order_uniqueness(py_bot) -> None:
     assert touched_tokens(pools_and_zfos) == [USDC, WETH]
 
 
+def test_touched_tokens_native_leg_keys_the_wire_currency(py_bot) -> None:
+    """A V4 native leg keys as that protocol's ``address(0)`` currency.
+
+    The hop key is the wire spelling — the same key space the core's
+    ``touched_tokens`` (``policy.rs``) reads off the hop facts."""
+    v4 = _make_native_leg_v4_pool(py_bot)
+    assert touched_tokens([(v4, True)]) == [ZERO_ADDRESS, WETH]
+
+
 # ---------------------------------------------------------------------------
 # NoOpPathPredicate + Protocol structural conformance
 # ---------------------------------------------------------------------------
@@ -184,6 +227,24 @@ def test_policy_token_denylist_case_insensitive_via_checksum(py_bot) -> None:
     with pytest.raises(TokenDenylistedError) as exc_info:
         policy.evaluate(pools_and_zfos)
     assert exc_info.value.token == USDC
+
+
+def test_policy_denylist_sentinel_input_refused_loudly(py_bot) -> None:
+    """A raw protocol sentinel in a policy input is refused, never resolved to
+    the native asset (ADR-097 D1) — mirroring the seam's own config parse."""
+    policy = PathPolicy(disallowed_tokens=frozenset({ZERO_ADDRESS}))
+    with pytest.raises(DegenbotValueError, match="native-asset sentinel"):
+        policy.evaluate([(_make_uniswap_v2_pool(py_bot), True)])
+
+
+def test_policy_allowlist_excludes_the_native_leg(py_bot) -> None:
+    """An address allowlist excludes the native leg: its wire key is a
+    protocol sentinel no allowlist entry can name (ADR-097 D1)."""
+    v4 = _make_native_leg_v4_pool(py_bot)
+    policy = PathPolicy(allowed_tokens=frozenset({WETH}))
+    with pytest.raises(TokenDenylistedError) as exc_info:
+        policy.evaluate([(v4, True)])
+    assert exc_info.value.token == ZERO_ADDRESS
 
 
 def test_policy_token_allowlist_rejects_unknown_token(py_bot) -> None:

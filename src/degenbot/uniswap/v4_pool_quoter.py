@@ -21,7 +21,7 @@ from degenbot.uniswap.swap_quote import (
 )
 
 if TYPE_CHECKING:
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types import Pool
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap import SwapRefused
@@ -37,7 +37,7 @@ class UniswapV4QuoteHost(Protocol):
     """
 
     @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, Erc20Token | NativeToken]:
         """The pool's token pair, currency0 first."""
         ...
 
@@ -64,7 +64,7 @@ class UniswapV4SwapQuoter(DoorSwapQuoter):
 
     def exact_in(
         self,
-        token: Erc20Token,
+        token: Erc20Token | NativeToken,
         quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:
@@ -99,7 +99,7 @@ class UniswapV4SwapQuoter(DoorSwapQuoter):
 
     def exact_out(
         self,
-        token: Erc20Token,
+        token: Erc20Token | NativeToken,
         quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:

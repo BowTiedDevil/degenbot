@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from degenbot._ffi import CurveView
     from degenbot.curve.types import BasePoolPort, CurveStableswapPoolState
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types.rpc_types import BlockIdentifier
 
 
@@ -30,12 +30,12 @@ class CurveQuoteHost(Protocol):
     """The companion reads the Curve quoter needs."""
 
     @property
-    def tokens(self) -> tuple[Erc20Token, ...]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, ...]:
         """The pool's own coins."""
         ...
 
     @property
-    def tokens_underlying(self) -> tuple[Erc20Token, ...] | None:
+    def tokens_underlying(self) -> tuple[Erc20Token | NativeToken, ...] | None:
         """The underlying coins a metapool's reads can name."""
         ...
 
@@ -62,8 +62,8 @@ class CurveSwapQuoter:
 
     def exact_in(
         self,
-        token_in: Erc20Token,
-        token_out: Erc20Token,
+        token_in: Erc20Token | NativeToken,
+        token_out: Erc20Token | NativeToken,
         quantity: int,
         override_state: CurveStableswapPoolState | None = None,
         block_identifier: BlockIdentifier | None = None,
@@ -196,8 +196,8 @@ class CurveSwapQuoter:
 
     def _metapool_with_base(
         self,
-        token_in: Erc20Token,
-        token_out: Erc20Token,
+        token_in: Erc20Token | NativeToken,
+        token_out: Erc20Token | NativeToken,
         quantity: int,
         block_number: int,
         override_state: CurveStableswapPoolState | None,

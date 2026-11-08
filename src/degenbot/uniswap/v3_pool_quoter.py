@@ -18,7 +18,7 @@ from degenbot.uniswap.swap_quote import DoorSwapQuoter, SwapRequest
 from degenbot.uniswap.v3_types import UniswapV3PoolSimulationResult
 
 if TYPE_CHECKING:
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
     from degenbot.types import Pool
     from degenbot.uniswap.v3_types import UniswapV3PoolState
 
@@ -31,7 +31,7 @@ class UniswapV3QuoteHost(Protocol):
     """
 
     @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, Erc20Token | NativeToken]:
         """The pool's token pair, token0 first."""
         ...
 

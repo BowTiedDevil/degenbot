@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from degenbot.erc20 import Erc20Token
+    from degenbot.erc20 import Erc20Token, NativeToken
 
 
 class AerodromeV2PoolState:
@@ -28,18 +28,18 @@ class AerodromeV2PoolState:
     """
 
     # Immutable — set once at construction
-    _token0: Erc20Token
-    _token1: Erc20Token
+    _token0: Erc20Token | NativeToken
+    _token1: Erc20Token | NativeToken
     _fee: Fraction
     _stable: bool
 
     @property
-    def token0(self) -> Erc20Token:
+    def token0(self) -> Erc20Token | NativeToken:
         """Token0."""
         return self._token0
 
     @property
-    def token1(self) -> Erc20Token:
+    def token1(self) -> Erc20Token | NativeToken:
         """Token1."""
         return self._token1
 
@@ -64,6 +64,6 @@ class AerodromeV2PoolState:
         return self._stable
 
     @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+    def tokens(self) -> tuple[Erc20Token | NativeToken, Erc20Token | NativeToken]:
         """Tokens."""
         return self._token0, self._token1

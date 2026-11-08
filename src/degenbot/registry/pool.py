@@ -396,7 +396,9 @@ class PoolRegistry:
             # delegates), so this cannot unregister a PoolManager. The handle
             # carries the canonical address, so no key is re-derived.
             for entry in self._companions.entries():
-                self._py_bot.unregister_pool(address=entry.handle.address)
+                address = entry.handle.address
+                assert address is not None
+                self._py_bot.unregister_pool(address=address)
         self.reset()
 
     def list_all(self) -> Iterator[AbstractLiquidityPool]:
