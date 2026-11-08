@@ -43,7 +43,7 @@ found 237 in-code tracker citations, zero resolvable. The rules live in
   six-char ID token, scanned over
   the *working tree* (`rg`, not `git grep`) for the code-ish file classes
   (`*.py`, `*.rs`, `*.pyi`, `*.toml`, `*.yml`, `*.yaml`, `*.sh`, `*.sol`, and
-  the extensionless `justfile`; minus `executor/**` and the
+  the extensionless `justfile`; minus the
   `tier3-oracle/src*` harness sources, whose bytes are sha256-pinned in
   `tier3-oracle/artifacts/manifest.json` — a comment edit there fails the
   committed-artifact match tests until a solc/vyper rebuild). Build recipes

@@ -32,7 +32,7 @@ from .conftest_shared import (
 # the original Solidity V3-math libraries, deployed next to the Vyper
 # test_harness for cross-implementation fuzzing.
 SOL_REF_ARTIFACT = (
-    Path(__file__).resolve().parent.parent
+    Path(__file__).resolve().parents[2]
     / "contracts"
     / "vyper"
     / "sol_reference"

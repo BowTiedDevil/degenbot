@@ -12,10 +12,9 @@ ethereum:
 node:
   ethereum:
     mainnet:
-      # The executor recipe exports the declared archive URI before invoking Ape.
-      # A valid local fallback lets ordinary root pytest load the Ape plugin
-      # without requiring executor-only environment configuration.
-      uri: http://127.0.0.1:8545
+      # The executor recipe exports this URI before invoking Ape. Ordinary root
+      # pytest disables the Ape plugin, so it never evaluates this interpolation.
+      uri: ${TEST_ETHEREUM_FULL_NODE_HTTP_URI}
 
 foundry:
   host: auto

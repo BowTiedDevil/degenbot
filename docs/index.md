@@ -19,6 +19,7 @@ Start with {doc}`getting-started` — or open {doc}`adr/README` if you want the 
 - {doc}`architecture/block-state-machine` — the pump's block clock as a finite state machine
 - {doc}`architecture/executor-command-grammar` — the execution layer's command language
 - {doc}`architecture/rust-owned-bot` — what moved into the Rust core and why
+- {doc}`executor/user-guide` — the Vyper executor, command streams, and balance semantics
 
 …plus 14 more in the sidebar: executor grammar usage, concentrated-liquidity tickmaps, Curve stableswap, inspector-captured sim diagnostics, storage layouts.
 

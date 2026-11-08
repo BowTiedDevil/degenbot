@@ -258,7 +258,7 @@ def _set_degenbot_logging():
 # from the table raises at collection, so the vocabulary cannot drift from its
 # defaults. The names are imported across
 # the suite (``tests/test_anvil_fork.py``, the parity suites) and the ``_FULL_``
-# env spellings are an external contract (``executor/ape-config.yaml``), so the
+# env spellings are an external contract (``ape-config.yaml``), so the
 # bindings stay real module-level assignments.
 _DEFAULT_RPC_URIS: dict[str, str] = {
     "TEST_ARBITRUM_FULL_NODE_HTTP_URI": "https://arbitrum-one-rpc.publicnode.com",
@@ -333,7 +333,7 @@ def _rpc(key: str) -> str:
     chain has nowhere to fold into. They are therefore not
     ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>`` names and must not grow a fallback
     onto them — a second namespace that shares a fallback is how the next
-    ambiguity starts. ``executor/ape-config.yaml`` reads
+    ambiguity starts. ``ape-config.yaml`` reads
     ``${TEST_ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
     ``_FULL_`` names outlive the suite that defines them.
     """

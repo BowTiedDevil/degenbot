@@ -9,10 +9,23 @@ import os
 from pathlib import Path
 
 import pytest
+from ape import networks
 from ape.api.accounts import TestAccountAPI
 from ape.contracts.base import ContractInstance
 from ape.managers.project import ProjectManager
 from ape_test.accounts import TestAccount
+from ape_vyper.config import VyperConfig
+
+# Pydantic 2.14 requires an explicit rebuild for ape-vyper's forward reference
+# to Remapping, which is defined later in its config module.
+VyperConfig.model_rebuild()
+
+# Ape 0.8 selects networks through its API rather than a CLI --network flag.
+# The offline recipe uses this to run standalone Foundry instead of mainnet-fork.
+if os.environ.get("APE_ETHEREUM_NETWORK") == "local":
+    networks.ethereum.local.set_default_provider("foundry")
+    networks.ethereum.set_default_network("local")
+
 from eth_utils.address import to_checksum_address
 from hypothesis import settings
 

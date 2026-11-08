@@ -17,8 +17,7 @@
 #   Scope: the working tree, not the index. The search runs rg (same tool
 #   and ignore rules as Detector 2) over the whole repo for the code-ish
 #   file classes (*.py, *.rs, *.pyi, *.toml, *.yml, *.yaml, *.sh, *.sol,
-#   and the extensionless `justfile`), excluding executor/** (a
-#   self-contained sub-workspace with its own conventions), the
+#   and the extensionless `justfile`), excluding the
 #   tier3-oracle/src* harness sources (their bytes are sha256-pinned in
 #   artifacts/manifest.json — a comment edit there fails the
 #   committed-artifact match tests until a solc/vyper rebuild, so they stay
@@ -124,7 +123,6 @@ hits="$(rg -n --no-heading -e "$pat" \
   -g '*.py' -g '*.rs' -g '*.pyi' -g '*.toml' \
   -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.sol' \
   -g 'justfile' \
-  -g '!executor/**' \
   -g '!rust/vendor/**' \
   -g '!tier3-oracle/src*/**' \
   2>/dev/null || true)"
@@ -246,7 +244,6 @@ rg -n -o --no-heading -i -P \
   -g '*.py' -g '*.rs' -g '*.pyi' -g '*.toml' \
   -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.sol' \
   -g 'justfile' \
-  -g '!executor/**' \
   -g '!rust/vendor/**' \
   -g '!tier3-oracle/src*/**' \
   -g '!scripts/hooks/comment-hygiene*' \

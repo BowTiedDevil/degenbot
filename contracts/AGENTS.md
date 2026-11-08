@@ -12,24 +12,24 @@ An on-chain arbitrage executor for Uniswap V2/V3/V4, written in **Vyper 0.5.0b2*
 
 | Item | Location | Notes |
 |------|----------|-------|
-| Main contract | `contracts/cmd_executor.vy` | 1931 lines, **only file to optimize** |
-| Legacy contract | `contracts/tstore_executor.vy` | Older payload-queue executor, not the target |
-| Fake V2 pair | `contracts/fake_uniswap_v2_pair.vy` | K-invariant + configurable fee + 3 callback variants |
-| Fake V3 pool | `contracts/fake_uniswap_v3_pool.vy` | Balance-delta IIA check + 2 callback variants |
-| Fake V4 PM | `contracts/fake_uniswap_v4_pool_manager.vy` | exttload + ERC6909 + delta accounting |
-| Fake ERC20 | `contracts/fake_erc20.vy` | Standard mock with mint |
-| Fake WETH | `contracts/fake_weth.vy` | deposit/withdraw wrapping |
-| Test suite | `tests/` | ~276 tests, run with `uv run ape test tests/ -v -s` |
-| Benchmark | `tests/test_cmd_executor_three_hop_optimized.py` | 27 three-hop permutations — the gas benchmark |
+| Main contract | `vyper/cmd_executor.vy` | **Only file to optimize** |
+| Legacy contract | `vyper/tstore_executor.vy` | Older payload-queue executor, not the target |
+| Fake V2 pair | `vyper/fake_uniswap_v2_pair.vy` | K-invariant + configurable fee + 3 callback variants |
+| Fake V3 pool | `vyper/fake_uniswap_v3_pool.vy` | Balance-delta IIA check + 2 callback variants |
+| Fake V4 PM | `vyper/fake_uniswap_v4_pool_manager.vy` | exttload + ERC6909 + delta accounting |
+| Fake ERC20 | `vyper/fake_erc20.vy` | Standard mock with mint |
+| Fake WETH | `vyper/fake_weth.vy` | deposit/withdraw wrapping |
+| Test suite | `../tests/executor/` | Run with `just test-executor` |
+| Benchmark | `../tests/executor/test_cmd_executor_three_hop_optimized.py` | 27 three-hop permutations — the gas benchmark |
 | Gas results | `.gas-results` | Written by test suite, consumed by `.auto/measure.sh` |
 | Autoresearch | `.auto/` | Config, logs, ideas from gas optimization sessions |
 
 ## Build & Run
 
 ```bash
-uv run ape test tests/ -v -s              # All tests
-uv run ape test tests/test_cmd_executor_*.py -v   # cmd_executor only
-uv run ape test tests/test_cmd_executor_three_hop_optimized.py -v -s  # Gas benchmark
+just test-executor                                               # All tests
+just test-executor tests/executor/test_cmd_executor_compact.py    # Focused file
+just test-executor tests/executor/test_cmd_executor_three_hop_optimized.py  # Gas benchmark
 ```
 
 Uses **Foundry (Anvil)** for local test execution. `ape-config.yaml` sets Vyper 0.5.0b2, mainnet-fork default, and a custom test mnemonic (to avoid EIP-7702 delegation issues).
@@ -140,7 +140,7 @@ Before committing to a code change, you can inspect Venom's intermediate represe
 # Generate the Venom IR (after Venom passes, before EVM code generation)
 # This reveals: inlining decisions, control-flow structure, alloca placement,
 # redundant operation elimination, and why certain patterns compile well or badly.
-uv run vyper -f ir_runtime contracts/cmd_executor.vy > /tmp/venom_ir.vy
+uv run --no-sync vyper -f ir_runtime contracts/vyper/cmd_executor.vy > /tmp/venom_ir.vy
 ```
 
 **How to use this in practice:**
@@ -267,11 +267,11 @@ Bribe configuration is packed into the ABI `config` parameter (bits 8-23 = bribe
 
 | File | Reason |
 |------|--------|
-| `contracts/fake_*.vy` | Fake contracts — checksums verified by measure.sh |
-| `contracts/tstore_executor.vy` | Separate implementation, not optimization target |
-| `contracts/interfaces/` | Interface definitions |
-| `contracts/utility_functions.vy` | Shared helpers |
-| `contracts/ExttloadComparator.vy` | Verification utility |
+| `vyper/fake_*.vy` | Fake contracts — checksums verified by measure.sh |
+| `vyper/tstore_executor.vy` | Separate implementation, not optimization target |
+| `vyper/interfaces/` | Interface definitions |
+| `vyper/utility_functions.vy` | Shared helpers |
+| `vyper/ExttloadComparator.vy` | Verification utility |
 | `.auto/baseline_checksums.json` | Baseline checksums for fake contracts |
 
 ## Additional Documentation

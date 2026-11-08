@@ -155,7 +155,7 @@ pub fn v4_output_is_native(hop: &V4HopInfo) -> bool {
 /// path's hop A outputs one and hop B's input expects the other, an explicit
 /// `WETH_DEPOSIT` (wrap native→WETH) or `WETH_WITHDRAW` (unwrap WETH→native)
 /// must bridge the gap inside `V4_UNLOCK` before hop B runs. See `docs/architecture/rust-owned-bot.md` §10.3 +
-/// `executor/tests/test_cmd_executor_v4v4_wrap_unwrap.py`
+/// `tests/executor/test_cmd_executor_v4v4_wrap_unwrap.py`
 /// for the canonical on-chain pattern.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurrencyBridge {

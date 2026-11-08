@@ -19,6 +19,9 @@ target_dir := env_var_or_default("CARGO_TARGET_DIR", "rust/target")
 set positional-arguments := true
 
 py_run := "uv run --no-sync"
+# Ordinary root pytest must not start Ape's provider during collection-finish.
+# `ape test` injects the plugin explicitly, so it does not use this prefix.
+pytest_run := "env 'PYTEST_ADDOPTS=-p no:ape_test' uv run --no-sync pytest"
 
 # The type checker's exact version. Every gate that runs `ty` reads this one
 # pin: an unpinned `--with ty` resolved whatever PyPI published that minute, so
@@ -407,7 +410,7 @@ test-fork: dev
     echo
     echo "▶ pytest fork legs: -m '(online_rpc or base) and not slow and not deployment_verify'"
     pytest_rc=0
-    {{ py_run }} pytest -n0 -m '(online_rpc or base) and not slow and not deployment_verify' -q --no-header || pytest_rc=$?
+    {{ pytest_run }} -n0 -m '(online_rpc or base) and not slow and not deployment_verify' -q --no-header || pytest_rc=$?
     echo
     echo "▶ Rust live evm2 fork legs: degenbot-simulation live_* (run-ignored only)"
     rust_rc=0
@@ -775,7 +778,7 @@ check-too-many-lines-waivers *args:
 # and never runs pools' examples, so it cannot satisfy C5.
 check-consumer-probes:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --features capture-fixtures --example solve_path_probe
-    {{py_run}} pytest tests/standalone_parity/test_solve_surface_probe.py -q -p no:cacheprovider
+    {{ pytest_run }} tests/standalone_parity/test_solve_surface_probe.py -q -p no:cacheprovider
     {{py_run}} degenbot config show --resolved > /dev/null
 
 # Build Rust extension module in the release-equivalent feature set. This uses
@@ -841,7 +844,7 @@ check-uv-lock:
 # the retired runtime build-receipt/staleness gate: freshness is guaranteed by
 # building the thing we test, not by inspecting whether a build happened.
 test-python: dev
-    {{ py_run }} pytest -x -q --no-header
+    {{ pytest_run }} -x -q --no-header
 
 
 # The root project's Ape suite (tests/executor) — the canonical wrapper for
@@ -871,9 +874,25 @@ test-executor target="tests/executor/" *args:
         echo "ERROR: no reachable Ethereum RPC at TEST_ETHEREUM_FULL_NODE_HTTP_URI=$rpc_uri" >&2
         exit 1
     fi
-    exec env TEST_ETHEREUM_FULL_NODE_HTTP_URI="$rpc_uri" \
-        {{ py_run }} ape test "$target" "$@"
+    # Ape has its own strict pytest policy and narrowly scoped upstream warning
+    # exceptions; ordinary root pytest never starts this provider.
+    exec env -u PYTEST_ADDOPTS TEST_ETHEREUM_FULL_NODE_HTTP_URI="$rpc_uri" \
+        {{ py_run }} ape test "$target" -c ape-pytest.ini "$@"
 
+
+# Offline executor lane for CI and machines without an archive endpoint: run
+# fake-contract tests on standalone Anvil, excluding only the real PoolManager
+# parity test marked mainnet_fork. The archive-backed test-executor recipe above
+# remains the complete local gate.
+test-executor-offline target="tests/executor/" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target="${1:-tests/executor/}"; [ $# -eq 0 ] || shift
+    # Local (non-fork) mode never reads the upstream URI; the valid placeholder
+    # merely satisfies interpolation in the shared Ape project config.
+    exec env -u PYTEST_ADDOPTS APE_ETHEREUM_NETWORK=local \
+        TEST_ETHEREUM_FULL_NODE_HTTP_URI="http://127.0.0.1:8545" \
+        {{ py_run }} ape test "$target" -c ape-pytest.ini -m "not mainnet_fork" "$@"
 
 
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
@@ -970,7 +989,7 @@ test-flake-probe:
     set -euo pipefail
     for i in 1 2 3; do
         echo "▶ flake-probe run ${i}/3"
-        timeout 600 {{ py_run }} pytest -n0 -q --no-header -p no:cacheprovider \
+        timeout 600 {{ pytest_run }} -n0 -q --no-header -p no:cacheprovider \
             tests/arbitrage/test_arbitrage_session.py tests/operator/test_operator_channel.py
     done
     echo "✓ flake-probe: 3/3 green"
@@ -1052,7 +1071,7 @@ test-flake-probe-rust: check-toolchain
 # function and accumulate keys across params; parallelism would race the shared
 # file (last-writer-wins, losing keys). Replay is read-only and safe under xdist.
 record-golden *args:
-    {{ py_run }} pytest -n0 --golden-mode record -m onchain_oracle -q --no-header {{ args }}
+    {{ pytest_run }} -n0 --golden-mode record -m onchain_oracle -q --no-header {{ args }}
 
 # Live chain-data drift gate (explicit only — never in test/pre-push/CI lanes):
 # re-records every py_oracle corpus twice and requires byte-identity with disk,
@@ -1061,7 +1080,7 @@ record-golden *args:
 #   just live-drift                # all three chains
 #   just live-drift -- -k ethereum # one chain
 live-drift *args:
-    {{ py_run }} pytest -n0 -m live_drift -q --no-header tests/golden/test_live_drift.py {{ args }}
+    {{ pytest_run }} -n0 -m live_drift -q --no-header tests/golden/test_live_drift.py {{ args }}
 
 
 # Record the README examples' chain surface into the offline replay cassette
@@ -1092,7 +1111,7 @@ check-readme-cassette:
 # (`deployment_verify` marker): this recipe is the single owning live lane for
 # deployment-drift verification — run on demand only.
 verify-deployments *args:
-    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} {{ py_run }} pytest -n0 -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} {{ pytest_run }} -n0 -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # Re-populate the golden deployment-verification capture (tier 1/2/4 facts for
 # every factory row on a reachable chain, plus the tier-3 verified source name
@@ -1102,7 +1121,7 @@ verify-deployments *args:
 # unreachable chains contribute no rows. Tier 4 is asserted live while
 # recording, so a capture is only committed when every recorded row verified.
 record-deployment-golden *args:
-    DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ py_run }} pytest -n0 --golden-mode record -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ pytest_run }} -n0 --golden-mode record -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # ========== Tier-3 On-Chain Oracles ==========
 #
@@ -1211,7 +1230,7 @@ verify-tier3-artifacts:
 # load from `tier3-oracle/artifacts/executor/`. This is the authoritative
 # compile-vs-use check for the vyper artifact; the toolchain-free complement
 # `tier3_executor_artifacts.rs` runs in the default suite. Requires the
-# toolchain: the in-repo `executor/` uv project (vyper ==0.5.0b2). Wired into
+# toolchain: the root uv project (vyper ==0.5.0b2). Wired into
 # the CI `tier3-oracle` job (not the default cargo-test path).
 verify-tier3-executor-artifact:
     tier3-oracle/verify-tier3-executor-artifact.sh
@@ -1464,7 +1483,7 @@ setup-git-hooks:
 # (tests/standalone_parity/dual_driver_gate.py --live).
 test-settlement-parity:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-settlement-bot-example --test boot_gate
-    {{ py_run }} pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
+    {{ pytest_run }} tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
     {{ py_run }} python -m tests.standalone_parity.dual_driver_gate --recorded
 
 # Single-source check for the settlement-bot parity ledger's statuses. They have

@@ -74,8 +74,8 @@ from degenbot.crypto import keccak256
 DEGENBOT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONTRACTS_DIR = DEGENBOT_ROOT / "contracts"
 ARTIFACTS_DIR = DEGENBOT_ROOT / "tier3-oracle" / "artifacts" / "executor"
-EXECUTOR_DIR = DEGENBOT_ROOT / "executor"
-VYPER_SOURCE = EXECUTOR_DIR / "contracts" / "cmd_executor.vy"
+EXECUTOR_DIR = DEGENBOT_ROOT
+VYPER_SOURCE = EXECUTOR_DIR / "contracts" / "vyper" / "cmd_executor.vy"
 
 # ── Mainnet immutable values ───────────────────────────────────────
 OWNER_ADDR = "0x9C56a29c7231974c269E24F9FB3c29203039089E"

@@ -761,7 +761,7 @@ def run_gas_benchmark(
 # On Linux, small append-mode writes (<4096 bytes) are atomic, so
 # xdist workers can safely write concurrently without a lock.
 
-_GAS_RESULTS_PATH = Path(__file__).resolve().parent.parent / ".gas-results"
+_GAS_RESULTS_PATH = Path(__file__).resolve().parents[2] / ".gas-results"
 
 
 def record_gas(label: str, gas_used: int) -> None:

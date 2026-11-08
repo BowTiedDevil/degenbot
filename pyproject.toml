@@ -188,9 +188,6 @@ allow-star-arg-any = true
 # Four workers keep local-node forks below the resource and RPC pressure that
 # made unbounded parallelism flaky. Live and recording lanes override this with -n0.
 addopts = [
-    # Ape owns only the explicit `ape test` lane; ordinary root pytest must not
-    # start a fork in its collection-finish hook. `ape test` injects ape_test itself.
-    "-p", "no:ape_test",
     "--numprocesses", "4",
     "--dist", "loadgroup",
     "--import-mode", "importlib",

@@ -37,8 +37,8 @@ SRC_DIR="src-executor"
 
 echo "▸ compiling ${VYPER_SRC} with pinned vyper 0.5.0b2"
 mkdir -p "${OUT}"
-# `uv run vyper` must run inside the executor project (its venv + pyproject own
-# the pinned vyper 0.5.0b2 and the `ethereum` builtin package). Vyper resolves
+# `uv run --no-sync vyper` runs in the root project, whose venv owns the
+# pinned vyper 0.5.0b2 and the `ethereum` builtin package. Vyper resolves
 # the `.interfaces` relative import from the input file's own directory, so
 # passing the absolute contracts path works regardless of cwd.
 (

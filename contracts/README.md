@@ -122,14 +122,14 @@ The previous pipeline compiled from the retired `~/code/executor/` path
 
 **Vyper**: 0.5.0b2 | **EVM**: Cancun | **Runtime**: 16,622 bytes (16,462 B code + CBOR + 160 B immutables)
 **Source**: in-repo `contracts/vyper/cmd_executor.vy` (vendored); committed artifacts in `tier3-oracle/artifacts/executor/` (vyper 0.5.0b2, compile-vs-use gate: `just verify-tier3-executor-artifact`)
-**Tests**: in-repo `executor/tests/` (Ape + Foundry)
+**Tests**: in-repo `tests/executor/` (Ape + Foundry)
 
 Compact command-stream executor. All execution decisions are made off-chain and encoded as a byte stream; the contract is a pure command interpreter. Two modes are freely mixed:
 
 1. **Explicit** — off-chain pre-computes amounts (`V4_TAKE`, `ERC20_TRANSFER`)
 2. **Dynamic** — on-chain reads from PM exttload (`V4_TAKE_DELTA`, `V4_SETTLE_DELTA`, `V4_SETTLE_ALL`)
 
-Full documentation: `executor/README.md`
+Full documentation: `docs/executor/README.md`
 
 ### Interface
 
