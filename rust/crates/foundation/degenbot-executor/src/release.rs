@@ -251,6 +251,77 @@ impl std::fmt::Display for CapabilityId {
     }
 }
 
+/// The capability IDs this build names, and the feature each one gates.
+///
+/// Codes are **stable and never reused**: a capability that disappears leaves
+/// a gap, so an ID always names the same encoding feature. The manifest maps
+/// these IDs to the opcodes they cover; these constants are what the encoder's
+/// own requirement set ([`crate::release_registry::required_capabilities`])
+/// speaks in, so planning never has to guess an ID from a name.
+pub mod capability {
+    use super::CapabilityId;
+
+    /// `SET_ADDRESS` preprocessing and the sentinel address indices.
+    pub const ADDRESS_TABLE: CapabilityId = CapabilityId::new(1);
+    /// `V2_SWAP_COMPACT` / `V2_SWAP_DIRECT`.
+    pub const V2_SWAPS: CapabilityId = CapabilityId::new(2);
+    /// `V2_SWAP_CALC` (in-stream amount computation).
+    pub const V2_SWAP_CALC: CapabilityId = CapabilityId::new(3);
+    /// The `V3_SWAP_*` commands.
+    pub const V3_SWAPS: CapabilityId = CapabilityId::new(4);
+    /// In-stream V3 amounts (`V3_SWAP_DELTA`).
+    pub const V3_DYNAMIC_AMOUNTS: CapabilityId = CapabilityId::new(5);
+    /// The `V4_SWAP_*` commands.
+    pub const V4_SWAPS: CapabilityId = CapabilityId::new(6);
+    /// `V4_BATCH` (single PoolManager extcall).
+    pub const V4_BATCH: CapabilityId = CapabilityId::new(7);
+    /// `V4_BATCH_OPEN_WETH`.
+    pub const V4_BATCH_OPEN_WETH: CapabilityId = CapabilityId::new(8);
+    /// The V4 delta commands (`V4_TAKE_DELTA` / `V4_SETTLE_DELTA` / `V4_SETTLE_ALL`).
+    pub const V4_DYNAMIC_DELTAS: CapabilityId = CapabilityId::new(9);
+    /// ERC6909 claim capture (`V4_MINT_COMPACT` / `V4_BURN_COMPACT`).
+    pub const ERC6909_CLAIMS: CapabilityId = CapabilityId::new(10);
+    /// WETH wrap/unwrap commands.
+    pub const WETH_WRAP_UNWRAP: CapabilityId = CapabilityId::new(11);
+    /// Native ETH transfer commands.
+    pub const NATIVE_TRANSFERS: CapabilityId = CapabilityId::new(12);
+    /// A bribe rate and recipient in the packed config.
+    pub const CONFIG_BRIBE: CapabilityId = CapabilityId::new(13);
+    /// A gross-profit floor in the packed config.
+    pub const CONFIG_MIN_PROFIT: CapabilityId = CapabilityId::new(14);
+    /// `execute()` returns `ExecutionReceipt{gross_profit,bribe_paid}`.
+    pub const EXECUTION_RECEIPT: CapabilityId = CapabilityId::new(15);
+
+    /// The name of a capability ID, from this build's stable catalog.
+    ///
+    /// A release manifest names only the IDs it declares, so a release that
+    /// does NOT declare a capability cannot name it either. Diagnostics that
+    /// explain a missing capability therefore read the catalog: the ID's
+    /// meaning is stable across releases (an ID is never reused), which is
+    /// exactly why it can be named from outside the manifest.
+    #[must_use]
+    pub const fn name(id: CapabilityId) -> &'static str {
+        match id.get() {
+            1 => "address_table",
+            2 => "v2_swaps",
+            3 => "v2_swap_calc",
+            4 => "v3_swaps",
+            5 => "v3_dynamic_amounts",
+            6 => "v4_swaps",
+            7 => "v4_batch",
+            8 => "v4_batch_open_weth",
+            9 => "v4_dynamic_deltas",
+            10 => "erc6909_claims",
+            11 => "weth_wrap_unwrap",
+            12 => "native_transfers",
+            13 => "config_bribe",
+            14 => "config_min_profit",
+            15 => "execution_receipt",
+            _ => "unknown",
+        }
+    }
+}
+
 /// An ordered capability-ID list as the deployment declares it.
 ///
 /// Order is preserved and duplicates are preserved by construction; the strict
@@ -1027,13 +1098,14 @@ pub enum ManifestError {
     /// The release tag is not a NUL-padded printable-ASCII tag.
     #[error("release manifest release_id {0:?} is not a NUL-padded printable-ASCII tag")]
     MalformedReleaseId(String),
-    /// The protocol major is outside this build's bounded set.
-    #[error("protocol major {major} is not one of this build's bounded majors {supported:?}")]
+    /// The protocol major is outside the bounded set the manifest was
+    /// validated against.
+    #[error("protocol major {major} is not one of the bounded majors {supported:?}")]
     UnsupportedProtocolMajor {
         /// The declared major.
         major: u32,
-        /// The bounded set this build dispatches.
-        supported: &'static [u32],
+        /// The bounded set the manifest was validated against.
+        supported: Vec<u32>,
     },
     /// Zero versions name nothing.
     #[error("call_encoding.version and protocol.major must be non-zero")]
@@ -1148,21 +1220,51 @@ impl ReleaseManifest {
         Ok(manifest)
     }
 
-    /// Validate every cross-reference in the manifest.
+    /// Parse a release manifest against an explicit bounded major set.
+    ///
+    /// The bound is the caller's: a release registry that dispatches an
+    /// injected test release validates that release's manifest against the
+    /// majors the registry declares, while [`Self::parse`] keeps production
+    /// bounded by [`SUPPORTED_PROTOCOL_MAJORS`].
+    ///
+    /// # Errors
+    ///
+    /// [`ManifestError::Json`] when the JSON does not match the schema, and the
+    /// specific [`ManifestError`] when validation refuses the manifest.
+    pub fn parse_within(json: &str, supported_majors: &[u32]) -> Result<Self, ManifestError> {
+        let manifest: Self =
+            serde_json::from_str(json).map_err(|error| ManifestError::Json(error.to_string()))?;
+        manifest.validate_within(supported_majors)?;
+        Ok(manifest)
+    }
+
+    /// Validate every cross-reference in the manifest against this build's
+    /// bounded protocol-major set.
     ///
     /// # Errors
     ///
     /// Returns the specific [`ManifestError`] of the first contradiction found.
     pub fn validate(&self) -> Result<(), ManifestError> {
+        self.validate_within(SUPPORTED_PROTOCOL_MAJORS)
+    }
+
+    /// Validate every cross-reference in the manifest against `supported_majors`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the specific [`ManifestError`] of the first contradiction found,
+    /// including [`ManifestError::UnsupportedProtocolMajor`] when the declared
+    /// major is outside `supported_majors`.
+    pub fn validate_within(&self, supported_majors: &[u32]) -> Result<(), ManifestError> {
         if self.schema_version != 1 {
             return Err(ManifestError::UnsupportedSchemaVersion(self.schema_version));
         }
         ReleaseId::from_ascii_tag(&self.release_id)
             .map_err(|_| ManifestError::MalformedReleaseId(self.release_id.clone()))?;
-        if !SUPPORTED_PROTOCOL_MAJORS.contains(&self.protocol.major) {
+        if !supported_majors.contains(&self.protocol.major) {
             return Err(ManifestError::UnsupportedProtocolMajor {
                 major: self.protocol.major,
-                supported: SUPPORTED_PROTOCOL_MAJORS,
+                supported: supported_majors.to_vec(),
             });
         }
         if self.call_encoding.version == 0 {
@@ -1519,10 +1621,28 @@ impl ReleaseManifest {
     /// observed protocol major outside this build's bounded set — an unknown
     /// major is a refusal, never "current".
     pub fn check_metadata(&self, observed: &ExecutorMetadata) -> Result<(), ReleaseMismatch> {
-        if !observed.protocol_major.is_supported() {
+        self.check_metadata_within(observed, SUPPORTED_PROTOCOL_MAJORS)
+    }
+
+    /// Check an observed declaration against this manifest, bounded by an
+    /// explicit major set.
+    ///
+    /// The bound belongs to the dispatcher, not to the manifest: a registry
+    /// that carries an injected release validates deployments against the
+    /// majors that registry can actually dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReleaseMismatch`] on the first disagreement.
+    pub fn check_metadata_within(
+        &self,
+        observed: &ExecutorMetadata,
+        supported_majors: &[u32],
+    ) -> Result<(), ReleaseMismatch> {
+        if !supported_majors.contains(&observed.protocol_major.get()) {
             return Err(ReleaseMismatch::UnsupportedProtocolMajor {
                 observed: observed.protocol_major.get(),
-                supported: SUPPORTED_PROTOCOL_MAJORS,
+                supported: supported_majors.to_vec(),
             });
         }
         if observed.release.ascii_tag() != self.release_id {
@@ -1577,13 +1697,14 @@ pub enum ReleaseMismatch {
         /// The deployment's major.
         observed: u32,
     },
-    /// The observed protocol major is outside this build's bounded set.
-    #[error("protocol major {observed} is not one of this build's bounded majors {supported:?}")]
+    /// The observed protocol major is outside the bounded set the manifest
+    /// was checked against.
+    #[error("protocol major {observed} is not one of the bounded majors {supported:?}")]
     UnsupportedProtocolMajor {
         /// The observed major.
         observed: u32,
-        /// The bounded set this build dispatches.
-        supported: &'static [u32],
+        /// The bounded set the release registry dispatches.
+        supported: Vec<u32>,
     },
     /// The call-encoding versions differ.
     #[error("deployment declares call encoding version {observed}, manifest describes {declared}")]
@@ -2240,7 +2361,7 @@ mod tests {
             revalidate(|manifest| manifest["protocol"]["major"] = json!(7)),
             ManifestError::UnsupportedProtocolMajor {
                 major: 7,
-                supported: SUPPORTED_PROTOCOL_MAJORS,
+                supported: SUPPORTED_PROTOCOL_MAJORS.to_vec(),
             }
         );
         assert_eq!(
@@ -2332,7 +2453,7 @@ mod tests {
             manifest.check_metadata(&unknown_major).unwrap_err(),
             ReleaseMismatch::UnsupportedProtocolMajor {
                 observed: 2,
-                supported: SUPPORTED_PROTOCOL_MAJORS,
+                supported: SUPPORTED_PROTOCOL_MAJORS.to_vec(),
             }
         );
 

@@ -1,6 +1,6 @@
 # ADR-098: Executor-agnostic production execution — `cmd_executor` is one adapter
 
-**Status: accepted (implementation in progress).** Refines ADR-025 and ADR-033: the
+**Status: accepted (implemented).** Refines ADR-025 and ADR-033: the
 execution-strategy seam becomes the production interface for both the built-in
 command executor and foreign executors, with neutral opportunity types and no
 generic dependency on the command-executor implementation.
@@ -138,7 +138,11 @@ implementation.
 The `cmd_executor` adapter may discover and validate its own protocol version,
 capability set, and release ID; select a matching encoder and artifact; and
 bind multiple deployments independently. Unknown versions or releases fail at
-binding rather than defaulting to the newest encoder. Capability-aware planning
+binding rather than defaulting to the newest encoder. `BoundCmdExecutor::discover`
+is the opt-in binding API: a consumer names a release registry and, for getterless
+deployments, the operator's legacy mapping. Sessions do not acquire discovery
+through configuration; existing sessions keep the explicit current-v1 mapping
+(`CmdExecutorBinding::adapter`). Capability-aware planning
 covers the complete call encoding — stream, config, and execute ABI — and a
 missing capability produces a documented fallback or decline.
 
@@ -167,6 +171,15 @@ The acceptance proof for genericity is a foreign contract with no
 stream using the production path. The acceptance proof for independent
 versioning is two defined `cmd_executor` deployments selecting different
 encoders beside that foreign target.
+
+Multi-release and foreign-target certification live in
+`degenbot-arbitrage/tests/release_binding.rs`: production v1 dispatch beside two
+test-only releases that differ in selector, packed-config layout, `execute`
+return width, artifact, and capability set, driven through the one generic
+target interface. The test-only alternate releases prove bounded selection —
+an unknown tag, an undispatchable major, a declaration that disagrees with its
+own manifest, and another release's artifact all refuse to bind — without
+inventing a production v2.
 
 ### D7 — The built-in executor returns an explicit `ExecutionReceipt`
 

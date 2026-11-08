@@ -39,11 +39,9 @@ use degenbot_execution::{
     AssessError, ComposeError, ComposerInputs, DeploymentId, ExecutionAdapter,
     ExecutionObservation, ExecutionResult, FeePolicy, PathInfo, ProbeSpecs, TransactionRequest,
 };
-use degenbot_executor::composers::{
-    config_for_options, encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions,
-    EncodeRequest,
-};
+use degenbot_executor::composers::{EncodeContext, EncodeOptions, EncodeRequest};
 use degenbot_executor::compute_simulation_warmup_slots;
+use degenbot_executor::release_registry::{CmdStreamV1Encoding, Release, ReleaseEncoding};
 use degenbot_simulation::{DeclaredCode, SettlementWarmup};
 
 use crate::deployment::SimulationDeployment;
@@ -110,10 +108,18 @@ impl CmdExecutorBinding {
         self
     }
 
-    /// The built-in adapter: this deployment's Encode / Probe / Assess.
+    /// The built-in adapter over this build's explicit current release
+    /// (`cmd_executor/1`), with no release-capability planning.
+    ///
+    /// This is the offline/current consumer's mapping: the session already
+    /// names the release by construction, so nothing is discovered and no
+    /// release is chosen. A deployment whose release must be *validated* from
+    /// declared metadata binds through
+    /// [`crate::release_binding::BoundCmdExecutor`], whose adapter carries the
+    /// selected [`Release`] and declines a path the release cannot run.
     #[must_use]
-    pub const fn adapter(&self) -> CmdExecutorSimAdapter {
-        CmdExecutorSimAdapter { binding: *self }
+    pub fn adapter(&self) -> CmdExecutorSimAdapter {
+        CmdExecutorSimAdapter::new(self, Arc::new(CmdStreamV1Encoding), None)
     }
 
     /// The deployment of the ACTUAL deployed contract: production sims the code
@@ -185,6 +191,24 @@ impl CmdExecutorBinding {
         injected: Option<Address>,
         runtime: Option<Bytes>,
     ) -> SimulationDeployment {
+        self.deployment_with_adapter(deployment_id, injected, runtime, self.adapter())
+    }
+
+    /// Compose a deployment around a caller-supplied adapter.
+    ///
+    /// The release-bound binding
+    /// ([`crate::release_binding::BoundCmdExecutor`]) supplies the adapter that
+    /// carries its resolved release; everything else — the warmup it declares,
+    /// the gas limit, the target, and the market-aware fee sizing — is the
+    /// built-in deployment's, exactly as for the explicit current-release
+    /// mapping.
+    pub(crate) fn deployment_with_adapter(
+        &self,
+        deployment_id: DeploymentId,
+        injected: Option<Address>,
+        runtime: Option<Bytes>,
+        adapter: CmdExecutorSimAdapter,
+    ) -> SimulationDeployment {
         // The warmup slots key on the account whose ledger the contract touches:
         // the injected address for a declared build, else the owner (the
         // session's funding account).
@@ -200,7 +224,7 @@ impl CmdExecutorBinding {
         };
         SimulationDeployment::new(
             deployment_id,
-            Arc::new(self.adapter()),
+            Arc::new(adapter),
             self.owner,
             // The built-in adapter encodes every transaction to the executor,
             // so the deployment's execution target IS that address (a declared
@@ -241,98 +265,61 @@ impl std::fmt::Display for InjectionAddressMismatch {
 
 impl std::error::Error for InjectionAddressMismatch {}
 
-/// The built-in contract's own profit measurement (ADR-098 D7).
+/// The built-in contract's own profit measurement (ADR-098 D7), owned beside
+/// the release model that declares its shape and re-exported here for the
+/// adapter's consumers.
+pub use degenbot_executor::receipt::{ExecutionReceipt, EXECUTION_RECEIPT_LEN};
+
+/// The built-in `cmd_executor` [`ExecutionAdapter`]: one complete release
+/// transaction for the deployment, no declared probes, and its receipt-based
+/// assessment.
 ///
-/// `execute(bytes,uint256)` returns this struct as TWO ABI words, in order:
-/// `gross_profit` — the selected WETH-equivalent balance-domain increase after
-/// the command stream and BEFORE the bribe — and `bribe_paid` — the native ETH
-/// the executor actually transferred to the bribe recipient, after any
-/// available-balance cap.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ExecutionReceipt {
-    /// The selected-domain increase after the commands, before the bribe.
-    pub gross_profit: U256,
-    /// The native ETH actually paid to the bribe recipient.
-    pub bribe_paid: U256,
-}
-
-/// The receipt's ABI size: two `uint256` words and nothing else.
-pub const EXECUTION_RECEIPT_LEN: usize = 64;
-
-impl ExecutionReceipt {
-    /// Decode the receipt from a completed `execute` call's return data.
-    ///
-    /// The encoding is exactly two ABI words. Anything else — absent data, a
-    /// short payload, or trailing bytes — is a decode failure rather than a
-    /// padded or partially-read receipt: a fabricated figure is
-    /// indistinguishable from a measured one.
-    ///
-    /// # Errors
-    ///
-    /// [`AssessError::Evidence`] when the engine captured no return data;
-    /// [`AssessError::Decode`] when the payload is not exactly
-    /// [`EXECUTION_RECEIPT_LEN`] bytes.
-    pub fn decode(return_data: Option<&Bytes>) -> Result<Self, AssessError> {
-        let data = return_data.ok_or_else(|| {
-            AssessError::evidence(
-                "the execute call's return data was not captured: the receipt is unmeasured",
-            )
-        })?;
-        let words: [u8; EXECUTION_RECEIPT_LEN] = data.as_ref().try_into().map_err(|_| {
-            AssessError::decode(format!(
-                "the execute receipt is two ABI words ({EXECUTION_RECEIPT_LEN} bytes); \
-                 the call returned {}",
-                data.len()
-            ))
-        })?;
-        let mut gross = [0u8; 32];
-        gross.copy_from_slice(&words[..32]);
-        let mut bribe = [0u8; 32];
-        bribe.copy_from_slice(&words[32..]);
-        Ok(Self {
-            gross_profit: U256::from_be_bytes(gross),
-            bribe_paid: U256::from_be_bytes(bribe),
-        })
-    }
-
-    /// The retained profit before gas: the measured increase minus the bribe
-    /// actually paid.
-    ///
-    /// # Errors
-    ///
-    /// [`AssessError::Evidence`] when the bribe exceeds the measured gross. The
-    /// contract REQUESTS `gross_profit * bribe_bips / 10000` with
-    /// `bribe_bips <= 10000`, and its available-balance cap can only reduce what
-    /// it sends (pre-existing funds raise the cap, never the requested share),
-    /// so `bribe_paid <= gross_profit` holds for every receipt the contract can
-    /// produce. A receipt that breaks it is inconsistent evidence; saturating
-    /// the subtraction would report a figure the transaction never produced.
-    pub fn retained(&self) -> Result<U256, AssessError> {
-        self.gross_profit
-            .checked_sub(self.bribe_paid)
-            .ok_or_else(|| {
-                AssessError::evidence(format!(
-                    "the receipt reports bribe_paid {} above gross_profit {} — \
-                     inconsistent evidence",
-                    self.bribe_paid, self.gross_profit
-                ))
-            })
-    }
-}
-
-/// The built-in `cmd_executor` [`ExecutionAdapter`]: one complete
-/// `execute(bytes,uint256)` transaction for the deployment, no declared probes,
-/// and its receipt-based assessment.
-#[derive(Clone, Copy, Debug)]
+/// The adapter holds the release's own [`ReleaseEncoding`] — so the command
+/// stream, the packed config, the `execute` ABI, and the receipt shape all move
+/// together with the release — plus, for a bound deployment, the [`Release`]
+/// itself, which is what makes capability planning possible: a call that needs
+/// a capability the release does not declare is a
+/// [`ComposeError::Unsupported`] decline for THIS candidate, never an encoding
+/// error (ADR-098 D4/D5).
+#[derive(Clone, Debug)]
 pub struct CmdExecutorSimAdapter {
     binding: CmdExecutorBinding,
+    encoding: Arc<dyn ReleaseEncoding>,
+    release: Option<Arc<Release>>,
 }
 
 impl CmdExecutorSimAdapter {
+    /// Compose an adapter from the deployment facts, the release's encoding,
+    /// and (for a metadata-bound deployment) the release to plan against.
+    #[must_use]
+    pub fn new(
+        binding: &CmdExecutorBinding,
+        encoding: Arc<dyn ReleaseEncoding>,
+        release: Option<Arc<Release>>,
+    ) -> Self {
+        Self {
+            binding: *binding,
+            encoding,
+            release,
+        }
+    }
+
     /// The deployment facts this adapter encodes against.
     #[must_use]
     pub const fn binding(&self) -> &CmdExecutorBinding {
         &self.binding
+    }
+
+    /// The release encoding this adapter produces bytes with.
+    #[must_use]
+    pub fn encoding(&self) -> &dyn ReleaseEncoding {
+        self.encoding.as_ref()
+    }
+
+    /// The validated release this adapter plans against, if it is bound.
+    #[must_use]
+    pub fn release(&self) -> Option<&Release> {
+        self.release.as_deref()
     }
 
     /// The built-in adapter's own pricing floor: base fee, no priority fee.
@@ -366,18 +353,31 @@ impl ExecutionAdapter for CmdExecutorSimAdapter {
             self.binding.pool_manager,
             self.binding.weth,
         );
-        let Some(commands) = encode_cmd_stream(&context, &request) else {
-            return Err(ComposeError::unsupported(
-                "the command grammar has no producer for this path",
-            ));
-        };
-        let config = config_for_options(self.binding.opts, U256::ZERO)
-            .map_err(|error| ComposeError::encode(format!("config_for_options failed: {error}")))?;
-        let call = encode_execute_call(self.binding.executor, &commands, config);
+
+        // One release encodes stream, config, and execute ABI together, so the
+        // call is the release's answer as a unit.
+        let call = self.encoding.encode(&context, &request)?;
+
+        // Capability planning: a bound deployment checks the call's declared
+        // requirements against the capabilities its release declares. A missing
+        // one is a routine decline for this candidate (the fan-out offers the
+        // path to the next target); it is not an encoding error, because
+        // another release would run the same path.
+        if let Some(release) = &self.release {
+            let missing = release.missing_capabilities(&call.requires);
+            if !missing.is_empty() {
+                return Err(ComposeError::unsupported(format!(
+                    "release {} does not declare {}; this path needs it",
+                    release.release_id(),
+                    release.describe_capabilities(&missing)
+                )));
+            }
+        }
+
         Ok(TransactionRequest::new(
             self.binding.executor,
-            Bytes::from(call.data),
-            U256::ZERO,
+            call.data,
+            call.value,
         ))
     }
 
@@ -409,7 +409,10 @@ impl ExecutionAdapter for CmdExecutorSimAdapter {
         // `gross_profit` means, so gas and the fee policy apply exactly once
         // here and once more only if the deployment opts into market-aware
         // sizing above the seam.
-        let retained = ExecutionReceipt::decode(observation.return_data.as_ref())?.retained()?;
+        let retained = self
+            .encoding
+            .decode_receipt(observation.return_data.as_ref())?
+            .retained()?;
         Ok(ExecutionResult::price(
             retained,
             Vec::new(),

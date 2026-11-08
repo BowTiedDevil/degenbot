@@ -163,12 +163,167 @@ match classify_deployment(address, observations, legacy_mapping)? {
 - **Partial answers** — an error (`PartialAnswers`). A half-declaring deployment
   is neither declared nor getterless, and a legacy entry does not rescue it.
 
+## Binding a deployment: discovery, validation, refusal
+
+A binding is the deployment's identity plus the release this build will encode
+against. It is resolved once per deployment, before anything is encoded:
+
+```rust
+use degenbot_arbitrage::{BoundCmdExecutor, CmdExecutorBinding, read_metadata};
+use degenbot_executor::release::LegacyReleaseMapping;
+use degenbot_executor::release_registry::ReleaseRegistry;
+
+let registry = ReleaseRegistry::production()?;                 // the bounded set
+let binding = CmdExecutorBinding::new(owner, executor, weth, pool_manager, opts);
+let bound = BoundCmdExecutor::discover(                            // over RPC
+    binding,
+    &provider,
+    Some(&LegacyReleaseMapping::new(&legacy_entries)),             // optional
+    &registry,
+)
+.await?;
+let adapter = bound.adapter();                                     // the release's encoding
+```
+
+`BoundCmdExecutor::bind` is the same step from already-read answers, so an
+offline consumer (a replay, a capture, a fixture) binds without a provider.
+`read_metadata` is the only part that talks to a node.
+
+### What a failed read means
+
+The classification is deliberate, because it decides whether a deployment
+enters the legacy path:
+
+| `eth_call` outcome | classified as | why |
+|--------------------|---------------|-----|
+| return data | an answer | the deployment declared something |
+| empty return data (`0x`) | **absent getter** | no code, or a fallback that returns nothing, declares nothing |
+| EVM revert (`execution reverted`) | **absent getter** | an unknown selector on a contract without a fallback reverts |
+| transport / node failure | **binding error** (`BindingError::Node`) | a timeout, a dropped connection, a rate limit, or a node that does not serve `eth_call` proves nothing about the deployment |
+
+A node failure is **never** folded into "getterless": doing so would let a
+broken endpoint push a metadata-declaring deployment into the legacy path,
+where only an operator mapping (or a refusal) is left.
+
+### What binding refuses
+
+Nothing defaults to the newest release this build knows. Every one of these is a
+typed error, raised at binding, before any encoding:
+
+| Situation | Error |
+|-----------|-------|
+| no getter answered and no legacy mapping names the address | `BindingError::Unknown` |
+| an unknown `release_id()` tag | `BindingError::UnknownRelease` (the refusal lists the tags this build dispatches) |
+| a protocol major outside the registry's bounded set | `BindingError::Mismatch { mismatch: UnsupportedProtocolMajor }` |
+| `call_encoding_version()` disagreements with the manifest | `BindingError::Mismatch { mismatch: CallEncodingVersion }` |
+| a capability set that disagrees with the manifest (including a capability ID the release does not declare) | `BindingError::Mismatch { mismatch: Capabilities }` |
+| a protocol major or release tag that disagrees with the manifest | `BindingError::Mismatch { mismatch: ProtocolMajor / ReleaseId }` |
+| partial, short, non-canonical, or malformed answers | `BindingError::Decode` |
+
+An unknown capability ID is **preserved** by `CapabilitySet` (it is never
+rejected for being unfamiliar) but it is **not** support: a deployment declaring
+an ID its release does not declare fails the equality check above.
+
+### Offline and current-release consumers
+
+`CmdExecutorBinding::new(...)` remains the explicit current-release mapping: the
+session already names the release by construction, so `binding.adapter()` uses
+this build's `cmd_executor/1` encoding and discovers nothing. It cannot silently
+choose another release. A deployment whose release must be *validated* from its
+own declaration binds through `BoundCmdExecutor`, whose adapter carries the
+selected release and plans capabilities against it.
+
+## The bounded release registry
+
+`ReleaseRegistry` is the set of releases this build dispatches — the bound, made
+explicit:
+
+- `ReleaseRegistry::production()` holds exactly the releases compiled into this
+  build. Today that is `cmd_executor/1` and nothing else. A production build
+  does **not** invent a second protocol major.
+- `ReleaseRegistry::with_releases(...)` is the explicit extension point: another
+  major under development, or a test that certifies selection. It refuses two
+  releases claiming one tag (`ReleaseError::DuplicateRelease`) and a release
+  whose encoding names a different tag than its manifest
+  (`ReleaseError::EncodingReleaseId`).
+- `ReleaseRegistry::majors()` is the bounded major set deployment metadata is
+  validated against. A registered tag with an unregistered major is a refusal,
+  not an upgrade.
+- `Release::new(manifest, supported_majors, encoding, development_runtime)`
+  validates the manifest against the majors the caller declares. `parse_within`
+  is the same bound for a manifest read from JSON; `parse`/`validate` keep the
+  production bound (`SUPPORTED_PROTOCOL_MAJORS`).
+
+A release selects the COMPLETE call encoding — command stream, packed config
+semantics, and the `execute` ABI with its receipt (`ReleaseEncoding::encode`,
+`ReleaseEncoding::decode_receipt`). The three are versioned and selected
+together, because a stream that grew a command means nothing to an encoder that
+cannot pack the matching config.
+
+Two deployments may run one release: a deployment and an implementation release
+are different facts, and each deployment keeps its own `DeploymentId` (ADR-098
+D4).
+
+## Capability-aware planning
+
+An encoder states the capability IDs its call needs (`ReleaseCall::requires`,
+derived by `required_capabilities` from the path's pool families and the encode
+axes); a release states the IDs it declares. Planning is the subtraction, and a
+call that needs an undeclared capability is declined:
+
+```rust
+Err(ComposeError::Unsupported(
+    "release test_executor/2 does not declare erc6909_claims (capability:10); this path needs it",
+))
+```
+
+What the requirement set contains:
+
+| Requirement | When |
+|-------------|------|
+| `address_table`, `execution_receipt` | every call (the stream opens with the table, and the receipt is the evidence) |
+| `v2_swaps` / `v3_swaps` / `v4_swaps` | one per pool family present in the path |
+| `v4_batch` | only a pure-V4 path with the `use_v4_batch` axis |
+| `erc6909_claims` | an ERC6909 profit capture |
+| `config_bribe` | the config carries a bribe |
+
+A decline is **per candidate**: `ComposeError::Unsupported` is a routine refusal
+that the first-compatible walk advances past, and in an all-target fan-out it is
+that lane's own `encode-failed` bucket. One target's missing capability never
+suppresses another target's execution. A hard `ComposeError::Encode` failure is
+that candidate's own unrecoverable error — it is never reclassified as a
+capability decline.
+
+## Artifacts: deployed code, and an injected build
+
+- **Production simulates deployed code.** `BoundCmdExecutor::deployment(id)`
+  declares no code override: the engine executes what the chain holds at the
+  deployment's address.
+- **An injected build uses the release's own artifact.**
+  `BoundCmdExecutor::injected(id)` installs the selected release's runtime
+  artifact at the deployment's executor address (nowhere else — the adapter
+  encodes to that address).
+  `BoundCmdExecutor::injected_with_runtime(id, bytes)` accepts caller-supplied
+  bytes only when they ARE that artifact; any other release's code is refused
+  (`BoundRuntimeError::Mismatch`), because simulating another implementation's
+  code under this deployment would produce evidence the deployment never gave.
+- **Where the bytes come from.** A release definition that ships its artifact in
+  memory (an injected test release, an undeployed build) answers from memory.
+  Otherwise the committed DEPLOYMENT artifact is read through the one
+  executor-runtime precedence chain (`contracts/cmd_executor_runtime_bytecode.txt`,
+  overridable by the operator's artifact keys). The manifest separately names the
+  COMPILER artifact (`artifact.runtime_code`), which
+  `just verify-tier3-executor-artifact` compiles and byte-compares; it is
+  referenced there, never injected.
+
 ## Versioning policy
 
 - **Additive getter** (a new `@external @view`) — additive ABI surface. Existing
   getters keep their selectors and values; nothing else moves.
 - **New capability** — a new unused ID, appended to `capabilities()` and named in
-  the manifest. Never reuse or renumber an ID.
+  the manifest. Never reuse or renumber an ID. The stable ID → name catalog
+  (`degenbot_executor::release::capability`) is what lets diagnostics name a
+  capability a release does *not* declare.
 - **Any change to the command stream, the packed config layout, or the execute
   ABI/receipt** — one release bump: a new `RELEASE_ID`, a new
   `CALL_ENCODING_VERSION`, a new manifest file, and (when the wire format is
@@ -176,9 +331,32 @@ match classify_deployment(address, observations, legacy_mapping)? {
   on purpose: a stream that grew a new command means nothing to an encoder that
   cannot pack the matching config.
 - **Multi-major support** grows `SUPPORTED_PROTOCOL_MAJORS` and adds one manifest
-  per major. The bounded set and the per-release manifests are the only extension
-  points; no generic crate changes (ADR-098 D4/D5), and runtime target selection
-  is a separate concern.
+  *plus one `ReleaseEncoding`* per major, registered in
+  `ReleaseRegistry::production()`. The bounded set, the per-release manifests,
+  and the per-release encodings are the only extension points; no generic crate
+  changes (ADR-098 D4/D5).
+
+## Adding a future major (runbook)
+
+1. **Contract.** Change the Vyper source under a new `PROTOCOL_MAJOR` and bump
+   `call_encoding_version()` in the same edit: they are one release.
+2. **Capability IDs.** Add new IDs; never reuse or renumber an existing one.
+   Add the ID to the stable catalog (`release::capability`, including its
+   `name()` arm) — the catalog is release-independent.
+3. **Manifest.** Add `rust/crates/foundation/degenbot-executor/releases/cmd_executor.vN.json`
+   describing the whole call encoding. Insert it into the registry's production
+   set; extend `SUPPORTED_PROTOCOL_MAJORS` in the same change.
+4. **Encoding.** Implement `ReleaseEncoding` for the new release (stream, config,
+   `execute` ABI, receipt) and pair it in `Release::new`. The registry refuses a
+   mismatched pairing, so the two halves cannot drift.
+5. **Artifacts.** Re-bake the tier3 artifacts so `artifact.*` paths are real, and
+   pin them through the existing verification gate.
+6. **Goldens.** Add the new release's per-release golden (exact `to`/`data`/
+   `value`) and its receipt-shape test beside
+   `degenbot-arbitrage/tests/release_binding.rs`. The existing release's goldens
+   stay untouched: one release's bytes never move because another landed.
+7. **Do not** add version, capability, or release fields to a generic crate. The
+   generic seam stays `to` + `data` + `value` plus Assess (ADR-098 D2/D4).
 
 ## Migration notes: the metadata ABI addition
 
@@ -204,11 +382,43 @@ disruption:
   client's point of view, so naming them requires an explicit legacy mapping —
   which is exactly the point of the previous section.
 
+### Operator runbook: naming a getterless deployment
+
+1. Ask the deployment: if all four metadata calls revert or return no data, it
+   is getterless. A node error is **not** an answer — retry against a healthy
+   endpoint before concluding anything.
+2. Decide which release the deployment actually runs. That decision is the
+   operator's; nothing in this repository infers it, and a wrong guess would hand
+   the deployment an encoder its contract cannot execute.
+3. Declare it:
+
+   ```rust
+   let legacy = LegacyReleaseMapping::new(&[LegacyReleaseEntry {
+       address: deployed_executor,
+       release: ReleaseId::from_ascii_tag("cmd_executor/1")?,
+   }]);
+   let bound = BoundCmdExecutor::discover(binding, &provider, Some(&legacy), &registry).await?;
+   ```
+
+4. Binding refuses a mapping whose release tag this build does not dispatch
+   (`BindingError::UnknownRelease`) and refuses a deployment that answers
+   *partially* — a half-declaring deployment is neither declared nor getterless,
+   so investigate rather than fall back.
+
 ## Gates
 
 ```bash
 just test-executor-offline                     # contract tests (Ape, offline)
 just verify-tier3-executor-artifact            # compile-vs-use, needs vyper + solc
-just test-rust-nextest -p degenbot-executor    # strict decoders + manifest validation
+just test-rust-nextest -p degenbot-executor    # strict decoders, manifest validation, the bounded registry
+just test-rust-nextest -p degenbot-arbitrage   # validating binding + per-release goldens + capability planning
 just lint-rust-check lint-comment-hygiene fmt-check lint-markdown-check
 ```
+
+The certification suite is
+`rust/crates/engine/degenbot-arbitrage/tests/release_binding.rs`: it binds two
+DEFINED releases (production `cmd_executor/1` and an injected
+`test_executor/2`) beside a metadata-free foreign contract, asserts each release's
+exact `to`/`data`/`value` and receipt shape, and pins every fail-closed case
+above. `rust/crates/foundation/degenbot-executor/tests/release_registry.rs` covers
+the registry bound, the capability catalog, and the getter classification.

@@ -107,10 +107,24 @@ impl std::error::Error for ExecutorRuntimeError {
 /// the package ships no contracts directory and the operator supplies the
 /// artifact through one of the two keys.
 fn source_layout_candidate() -> Option<PathBuf> {
+    repository_root().map(|root| root.join("contracts").join(EXECUTOR_RUNTIME_FILE))
+}
+
+/// The checkout root this crate was compiled in, when there is one.
+///
+/// `CARGO_MANIFEST_DIR` is this crate's compile-time location, so the hop to the
+/// repository root is fixed rather than a search:
+/// `<root>/rust/crates/engine/degenbot-arbitrage`. The release manifests name
+/// their artifacts repository-relative, so the release-bound binding resolves
+/// them against this same root. A wheel build compiles from a scratch directory,
+/// so its root simply does not hold the artifacts — the caller supplies
+/// [`Path::new`]-based roots explicitly instead of searching.
+#[must_use]
+pub fn repository_root() -> Option<PathBuf> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(4)
-        .map(|root| root.join("contracts").join(EXECUTOR_RUNTIME_FILE))
+        .map(Path::to_path_buf)
 }
 
 /// Resolve the executor-runtime artifact path — first hit wins, no walk.
@@ -161,15 +175,35 @@ pub fn load_executor_runtime(
     contracts_dir: Option<&Path>,
 ) -> Result<ExecutorRuntime, ExecutorRuntimeError> {
     let path = resolve_executor_runtime_path(explicit, contracts_dir);
-    let text = std::fs::read_to_string(&path).map_err(|source| match source.kind() {
-        std::io::ErrorKind::NotFound => ExecutorRuntimeError::NotFound { path: path.clone() },
+    let bytecode = load_runtime_file(&path)?;
+    Ok(ExecutorRuntime { path, bytecode })
+}
+
+/// Read and decode ONE runtime-artifact file, at an already-resolved path.
+///
+/// The release-bound binding resolves its artifact from the release manifest
+/// (`artifact.runtime_code`, repository-relative) instead of the operator
+/// precedence chain, and reads it through this same strict `0x`-hex decode: one
+/// decode rule for every executor runtime artifact, whoever named the file.
+///
+/// # Errors
+///
+/// - [`ExecutorRuntimeError::NotFound`] when `path` holds no file.
+/// - [`ExecutorRuntimeError::Unreadable`] when the file exists but cannot be
+///   read.
+/// - [`ExecutorRuntimeError::Parse`] when the text is not a non-empty,
+///   even-length `0x`-hex body; the message names the file.
+pub fn load_runtime_file(path: &Path) -> Result<Bytes, ExecutorRuntimeError> {
+    let text = std::fs::read_to_string(path).map_err(|source| match source.kind() {
+        std::io::ErrorKind::NotFound => ExecutorRuntimeError::NotFound {
+            path: path.to_path_buf(),
+        },
         _ => ExecutorRuntimeError::Unreadable {
-            path: path.clone(),
+            path: path.to_path_buf(),
             source,
         },
     })?;
-    let bytecode = parse_bytecode(&path, &text)?;
-    Ok(ExecutorRuntime { path, bytecode })
+    parse_bytecode(path, &text)
 }
 
 /// Decode the artifact's `0x`-hex body into runtime bytecode.

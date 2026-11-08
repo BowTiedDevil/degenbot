@@ -47,6 +47,11 @@ pub mod cmd_executor;
 /// execution deployment, and the session's ordered deployment registry.
 pub mod deployment;
 
+/// Validating built-in target binding (ADR-098 D5): read a deployment's declared
+/// release, resolve it in the bounded release registry, validate it against that
+/// release's manifest, and bind the deployment's complete call encoding to it.
+pub mod release_binding;
+
 /// The registry fan-out: one simulation lane per registered deployment, under
 /// either target-selection policy.
 pub mod fanout;
@@ -109,6 +114,14 @@ pub use executor_runtime::{
 pub use fanout::{
     dispatch_across_deployments, DeploymentFanOutError, DeploymentFanOutOutcome, DeploymentLane,
 };
+
+pub use release_binding::{
+    read_metadata, BindingError, BoundCmdExecutor, BoundRuntimeError, ReleaseSource,
+};
+
+/// The release model a bound deployment resolves against: the bounded registry,
+/// the per-release complete encodings, and the on-chain discovery classifiers.
+pub use degenbot_executor::{discovery, receipt, release, release_registry};
 pub use fot_registry::{
     fot_suspected_token, fot_suspected_token_from_reverting_frame,
     fot_suspected_token_from_swap_mismatch, hop_input_token, hop_output_token,

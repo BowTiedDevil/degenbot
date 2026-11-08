@@ -17,6 +17,16 @@
 //!   strict decoders, the getterless/legacy distinction, and the committed
 //!   release manifest that describes the complete call encoding
 //!   (ADR-098 D5).
+//! - **Discovery** ([`discovery`]): the four getters as an `eth_call` target,
+//!   and the deliberate classification that keeps a node failure distinct from
+//!   a getterless deployment.
+//! - **The bounded release registry** ([`release_registry`]): one
+//!   [`release_registry::ReleaseEncoding`] per release (stream + config +
+//!   `execute` ABI together), the release set this build dispatches, and the
+//!   capability planning that declines a path a release cannot run.
+//! - **The receipt** ([`receipt`]): the `cmd_executor/1` `execute` return
+//!   values (`gross_profit`, `bribe_paid`), declared by the manifest's
+//!   `execute_abi.returns` and decoded with the strictness that shape needs.
 //! - **The warmup-slot math** ([`WarmupSlots`] /
 //!   [`compute_simulation_warmup_slots`]): the Solidity storage-slot math
 //!   that feeds simulation state-override warmup — three slots pre-warmed so
@@ -57,11 +67,14 @@ use alloy::primitives::{keccak256, Address, U256};
 
 pub mod composers;
 pub mod config;
+pub mod discovery;
 pub mod encoders;
 pub mod grammar_ledger;
 pub mod grammar_plan;
 pub mod grammar_shape;
+pub mod receipt;
 pub mod release;
+pub mod release_registry;
 
 pub mod grammar_walker;
 
