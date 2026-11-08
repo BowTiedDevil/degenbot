@@ -50,7 +50,7 @@ pub const V4_REVERT_SELECTORS: &[(&str, &str)] = &[
 /// Selector → full custom-error signature for the `cmd_executor` revert
 /// selectors (legacy bare-assert labels + Vyper 0.5.0a3+ custom errors). The
 /// custom-error rows state the canonical ABI signature from
-/// `executor/contracts/cmd_executor.vy`, so their selectors hash from it; the
+/// `contracts/vyper/cmd_executor.vy`, so their selectors hash from it; the
 /// two legacy rows carry a bare reason string that predates the
 /// `Error(string)` envelope and has no ABI preimage (cited in
 /// `tests::LEGACY_NON_ABI_SELECTORS`). Ported from the Python

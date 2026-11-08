@@ -7,7 +7,7 @@
 //! to RUN the suite. This test closes the drift hole that committed-binary
 //! decision opens: it recomputes the sha256 of the git-tracked executor
 //! sources (REPO-ROOT-relative `source` paths recorded in the manifest —
-//! `executor/contracts/cmd_executor.vy` for the Vyper source, the oracle-side
+//! `contracts/vyper/cmd_executor.vy` for the Vyper source, the oracle-side
 //! `.sol` for the V3 topology harness) and compares against
 //! `artifacts/executor/manifest.json`, asserting each committed artifact is
 //! present (with non-empty hex bytecode for the `.hex` files). A tracked

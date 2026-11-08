@@ -1206,7 +1206,7 @@ verify-tier3-artifacts:
     tier3-oracle/verify-tier3-artifacts.sh
 
 # Validate the committed Vyper executor artifact (tier-3b): recompile
-# executor/contracts/cmd_executor.vy with the pinned vyper 0.5.0b2 (into a
+# contracts/vyper/cmd_executor.vy with the pinned vyper 0.5.0b2 (into a
 # throwaway dir, PUBLISH=0) and byte-compare against what the Rust tier-3b tests
 # load from `tier3-oracle/artifacts/executor/`. This is the authoritative
 # compile-vs-use check for the vyper artifact; the toolchain-free complement

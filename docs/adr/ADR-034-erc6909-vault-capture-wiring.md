@@ -16,8 +16,8 @@ selectable in production dispatch, simulated end to end, and proven by an
 oracle assertion on the contract-computed ERC6909 balance.
 
 ## Oracle findings (verified against the executor source — then
-`tier3-oracle/src-executor/cmd_executor.vy`, now `executor/contracts/cmd_executor.vy`
-after SRMMM7 — + runtime harness probes)
+`tier3-oracle/src-executor/cmd_executor.vy`, now `contracts/vyper/cmd_executor.vy`
+after SRMMM7 and the ADR-098 relocation — + runtime harness probes)
 
 1. **Fresh mint suffices — no pre-held ERC6909 position required.**
    `V4_MINT_COMPACT` (0x58) converts the caller's *positive PM delta* into an

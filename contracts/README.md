@@ -121,7 +121,7 @@ The previous pipeline compiled from the retired `~/code/executor/` path
 ## cmd_executor — Command-Stream Executor
 
 **Vyper**: 0.5.0b2 | **EVM**: Cancun | **Runtime**: 16,622 bytes (16,462 B code + CBOR + 160 B immutables)
-**Source**: in-repo `executor/contracts/cmd_executor.vy` (vendored); committed artifacts in `tier3-oracle/artifacts/executor/` (vyper 0.5.0b2, compile-vs-use gate: `just verify-tier3-executor-artifact`)
+**Source**: in-repo `contracts/vyper/cmd_executor.vy` (vendored); committed artifacts in `tier3-oracle/artifacts/executor/` (vyper 0.5.0b2, compile-vs-use gate: `just verify-tier3-executor-artifact`)
 **Tests**: in-repo `executor/tests/` (Ape + Foundry)
 
 Compact command-stream executor. All execution decisions are made off-chain and encoded as a byte stream; the contract is a pure command interpreter. Two modes are freely mixed:
