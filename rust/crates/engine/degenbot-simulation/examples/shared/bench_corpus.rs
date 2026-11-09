@@ -404,8 +404,13 @@ fn encode_workload(
         ),
     )
     .ok_or_else(|| "encode_cmd_stream returned None".to_string())?;
+    // config bits 0-7 = profit_mode (1 = physical WETH + native ETH, the
+    // production mode); 8-23 = bribe_bips; 32-255 = min_profit. A zero config
+    // reverts at entry with `InvalidProfitMode(0)` — the frame must execute
+    // (`capture_seam_probe` asserts the walk runs and the swaps capture).
     let data =
-        degenbot_executor::composers::encode_execute_call(Address::ZERO, &cmd, U256::ZERO).data;
+        degenbot_executor::composers::encode_execute_call(Address::ZERO, &cmd, U256::from(1u64))
+            .data;
     Ok((
         envelope(
             DEPLOYER,

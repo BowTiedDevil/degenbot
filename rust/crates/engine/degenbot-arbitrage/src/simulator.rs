@@ -1020,10 +1020,35 @@ fn simulate_path_on_evm_in_span_prepared(
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
 ) -> ProviderResult<Option<SimResult>> {
+    let mut trace_reads = None;
     let (result, sim_dur) = degenbot_simulation::sim::sim_metrics::timed(|| {
-        simulate_path_on_evm_seam(session, ctx, path, prepared, fail_buckets, span)
+        simulate_path_on_evm_seam(
+            session,
+            ctx,
+            path,
+            prepared,
+            fail_buckets,
+            span,
+            &mut trace_reads,
+        )
     });
     degenbot_simulation::sim::sim_metrics::record_sim(sim_dur);
+    // One TRACE-level fan-out-trace row per candidate (the recorded-fan-out
+    // replay's corpus). Gated by the `degenbot=trace` sink, never the console.
+    let (verdict, gas) = match &result {
+        Ok(Some(sim)) => ("result", sim.gas_used),
+        Ok(None) => ("none", 0),
+        Err(_) => ("error", 0),
+    };
+    let empty = AccessList::default();
+    crate::fanout_trace::record(
+        ctx.block.current_block,
+        &path.candidate_id.to_string(),
+        u64::try_from(sim_dur.as_nanos()).unwrap_or(u64::MAX),
+        verdict,
+        gas,
+        trace_reads.as_ref().unwrap_or(&empty),
+    );
     result
 }
 
@@ -1073,6 +1098,7 @@ fn simulate_path_on_evm_seam(
     prepared: Option<&crate::selection::PreparedEncoding>,
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
+    trace_reads: &mut Option<AccessList>,
 ) -> ProviderResult<Option<SimResult>> {
     let _enter = span.enter();
     let mut guard = SimSpanVerdict {
@@ -1232,6 +1258,10 @@ fn simulate_path_on_evm_seam(
                 });
             }
         };
+
+    // The forensic fan-out trace's read set: captured here, before any
+    // outcome branch, so reverts and refusals carry their read walk too.
+    *trace_reads = Some(capture.access_list.clone());
 
     // The step taxonomy the failure record reports on: the adapter's declared
     // reads in declared order, the opportunity's transaction at the probe count,

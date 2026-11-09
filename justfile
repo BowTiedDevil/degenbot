@@ -443,6 +443,15 @@ bench-sim-modes *ARGS:
 aot-prepare-executor *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example aot_prepare_executor --features evm2-jit -- {{ ARGS }}
 
+# The per-worker EVM fan-out probe (ADR-089 concurrency trio item 4): corpus,
+# four drive strategies (serial shared / per-worker threads / per-candidate
+# fibers with batched-round scheduler / warm fibers), cross-leg verdict
+# identity gate. Offline by construction; the decision instrument for the
+# ADR-089 concurrency-trio item 4 prototype.
+worker-fanout-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example worker_fanout_probe -- {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash

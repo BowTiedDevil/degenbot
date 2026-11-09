@@ -55,6 +55,7 @@ pub mod release_binding;
 /// The registry fan-out: one simulation lane per registered deployment, under
 /// either target-selection policy.
 pub mod fanout;
+pub mod fanout_trace;
 
 /// The target-selection policy above the registry: which deployments a solved
 /// path is offered to, and the ordered first-compatible walk.
