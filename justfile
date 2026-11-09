@@ -452,6 +452,18 @@ worker-fanout-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example worker_fanout_probe -- {{ ARGS }}
 
 
+# The session-scheduler captured-data benchmark (ADR-089 concurrency trio): the
+# 444 recorded production read walks replayed through the committed `ReadHub`
+# under the committed W/F slot bound, walled against the serial and per-worker
+# read shapes under ONE latency model with the recorded execution spent as wall,
+# with a slot-count sensitivity table, the multi-fan-out submission bound, and a
+# cross-leg read-digest gate. Offline by construction; the corpus is the
+# `fanout-trace` stream of `logs/bot_run.log` (default `/tmp/fanout_trace.log`;
+# `SESSION_FANOUT_TRACE` overrides it, and its absence is a hard failure).
+session-fanout-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example session_fanout_probe -- {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash
