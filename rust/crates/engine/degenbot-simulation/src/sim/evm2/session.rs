@@ -11,20 +11,26 @@
 //!
 //! # Execution verbs
 //!
-//! One ordered `Evm2SimStep` sequence has two drivers over one accumulation:
+//! One ordered `Evm2SimStep` sequence has three drivers over one accumulation:
 //!
 //! - [`Evm2SimSession::run_sequence`] is the SYNCHRONOUS driver — each step is
 //!   `transact`/`transact_with_inspector` on the session's own thread.
 //! - [`Evm2SimSession::run_sequence_async`] is the coroutine driver — each
 //!   step is evm2's `transact_async`, so a cold database read suspends the
 //!   sequence (the returned future reports `Pending`) instead of blocking the
-//!   task that drives it.
+//!   task that drives it. It builds a throwaway EVM per call and its
+//!   accumulation dies with it.
+//! - [`Evm2SimSession::run_sequence_async_in_place`] is the same coroutine
+//!   driver on the caller's OWN EVM: the steps reuse that EVM's engine
+//!   configuration and fiber stack instead of a per-call one, and the caller
+//!   owns the reset of the accepted overlay the sequence leaves behind.
 //!
-//! Both feed the same settlement + capture accumulation
-//! (`SequenceAccumulator`), so what a step settles — accepted writes, gas,
+//! All three feed the same settlement + capture accumulation
+//! (`SequenceAccumulator`; the two async verbs share
+//! `drive_sequence_async`), so what a step settles — accepted writes, gas,
 //! output, verdict, the logs/swaps/access list a capture drains — and how a
 //! refusal is reported (step-indexed [`Evm2SimError::Sequence`]) are the same
-//! facts on both drivers. The verbs differ in scheduling only.
+//! facts on every driver. The verbs differ in scheduling and EVM ownership only.
 //!
 //! ## Migrating a sequence to the async verb
 //!
@@ -40,6 +46,17 @@
 //! `session.run_sequence_async(&steps, mode).await` — and the result is the
 //! same value. The synchronous verb and every existing consumer stay as they
 //! are; neither verb is a wrapper of the other.
+//!
+//! A caller that runs many sequences over ONE EVM — a reusable slot a fan-out
+//! recycles candidate after candidate — takes the in-place verb instead of the
+//! throwaway one: `run_sequence_async` rebuilds an EVM (and reserves a fiber
+//! stack) per call, which is exactly the cost the slot exists to avoid. The
+//! in-place verb's contract is stated on the verb: the sequence's writes land
+//! in the caller's accepted overlay, and the caller's reset
+//! (`Evm::set_database`, i.e. the next candidate's installation) is what keeps
+//! two candidates from sharing a write. A reused slot therefore pays one EVM and
+//! one fiber stack for its whole life, and each candidate gets a fresh
+//! accepted-state layer.
 //!
 //! ## Bare state reads on the async verb
 //!
@@ -459,47 +476,51 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
         steps: &[Evm2SimStep],
         mode: Evm2CaptureMode,
     ) -> Result<Evm2SimSequence, Evm2SimError> {
-        if mode == Evm2CaptureMode::Inspector {
-            return Err(Evm2SimError::AsyncInspectorUnsupported { mode });
-        }
-        let mut acc = SequenceAccumulator::new(mode, steps.len());
-        {
+        let sequence = {
             let mut seq_evm = self.sequence_evm();
-            for (index, step) in steps.iter().enumerate() {
-                let (tx, captured) = match step {
-                    Evm2SimStep::ReadNativeBalance(account) => {
-                        // A bare state read takes the fiber entrypoint too, so a
-                        // cold account suspends the sequence rather than refusing
-                        // for want of a transaction to suspend on.
-                        let balance = read_native_balance_async(&mut seq_evm, account)
-                            .await
-                            .map_err(|source| Evm2SimError::Sequence {
-                                index,
-                                source: Box::new(source),
-                            })?;
-                        acc.observe_balance(balance);
-                        continue;
-                    }
-                    Evm2SimStep::Transact(tx) => (tx, false),
-                    Evm2SimStep::Inspect(tx) => (tx, true),
-                };
-                // `Inspector` capture is refused above, so every step takes the
-                // plain async entrypoint; `Seam` capture reads the settled state
-                // layer afterwards, exactly as on the synchronous driver.
-                let executed = match seq_evm.transact_async(tx).await {
-                    Ok(executed) => executed,
-                    Err(err) => {
-                        return Err(Evm2SimError::Sequence {
-                            index,
-                            source: Box::new(Evm2SimError::Transact(err.to_string())),
-                        });
-                    }
-                };
-                acc.capture_slots(captured, &executed);
-                acc.accept(captured, executed);
-            }
-        }
-        let sequence = acc.finish();
+            drive_sequence_async(&mut seq_evm, steps, mode).await?
+        };
+        self.record_capture(&sequence.capture);
+        Ok(sequence)
+    }
+
+    /// Run `steps` in order on THIS session's EVM — the in-place coroutine
+    /// driver: the same steps, the same accumulation, the same refusals as
+    /// [`Self::run_sequence_async`], dispatched on the EVM the session was handed
+    /// instead of on a throwaway built per call.
+    ///
+    /// The difference is what a sequence costs and where its writes land.
+    /// [`Self::run_sequence_async`] builds a fresh EVM over the shared database
+    /// handle for every call — engine configuration, block env, and fiber stack
+    /// included — and drops it (and its accumulation) when the sequence ends.
+    /// This verb runs `transact_async` and `read_account_info_async` on the
+    /// caller's own EVM, so the sequence reuses that EVM's engine configuration,
+    /// its block env, and its OWN fiber stack across steps and across sequences.
+    ///
+    /// # Reset ownership
+    ///
+    /// Because the steps commit into the caller's EVM, its accepted overlay
+    /// carries the sequence's writes, journal, logs, and transient storage when
+    /// the call returns. That is the trade: the caller owns the reset. A slot
+    /// owner installs the next candidate's state (`Evm::set_database` → the
+    /// whole accepted-state layer replaced), which is exactly the isolation
+    /// `run_sequence_async` gets by dropping its throwaway — see
+    /// [`AsyncFanoutSlot::install`](super::async_fanout::AsyncFanoutSlot::install),
+    /// the caller that relies on it. A caller that keeps reading the EVM after
+    /// the sequence (view reads, a second sequence without a reset) observes the
+    /// candidate's writes rather than the block's state.
+    ///
+    /// # Errors
+    ///
+    /// [`Evm2SimError::Sequence`] carrying the refusing step's index, and
+    /// [`Evm2SimError::AsyncInspectorUnsupported`] when `mode` is
+    /// [`Evm2CaptureMode::Inspector`] — refused before any step runs.
+    pub async fn run_sequence_async_in_place(
+        &mut self,
+        steps: &[Evm2SimStep],
+        mode: Evm2CaptureMode,
+    ) -> Result<Evm2SimSequence, Evm2SimError> {
+        let sequence = drive_sequence_async(&mut *self.evm, steps, mode).await?;
         self.record_capture(&sequence.capture);
         Ok(sequence)
     }
@@ -777,6 +798,61 @@ impl ::evm2::evm::StateChangeSink for StepWrites {
             .push((change.address, change.key, change.current));
         Ok(())
     }
+}
+
+/// The coroutine driver both async verbs feed: run `steps` in order on `evm`,
+/// accumulating into one [`SequenceAccumulator`] (see the module doc).
+///
+/// The EVM is a parameter, not a field, because that is the only difference
+/// between the two async verbs: one hands this function a throwaway EVM built
+/// over the shared database handle, the other hands it the caller's own EVM. Both
+/// therefore dispatch through the same `transact_async` /
+/// `read_account_info_async` calls with the same accumulation, the same capture,
+/// and the same step-indexed refusals — the fiber stack a sequence runs on is
+/// whichever EVM's stack the caller supplied.
+async fn drive_sequence_async(
+    evm: &mut Evm<'_, BaseEvmTypes>,
+    steps: &[Evm2SimStep],
+    mode: Evm2CaptureMode,
+) -> Result<Evm2SimSequence, Evm2SimError> {
+    if mode == Evm2CaptureMode::Inspector {
+        return Err(Evm2SimError::AsyncInspectorUnsupported { mode });
+    }
+    let mut acc = SequenceAccumulator::new(mode, steps.len());
+    for (index, step) in steps.iter().enumerate() {
+        let (tx, captured) = match step {
+            Evm2SimStep::ReadNativeBalance(account) => {
+                // A bare state read takes the fiber entrypoint too, so a cold
+                // account suspends the sequence rather than refusing for want of
+                // a transaction to suspend on.
+                let balance = read_native_balance_async(evm, account)
+                    .await
+                    .map_err(|source| Evm2SimError::Sequence {
+                        index,
+                        source: Box::new(source),
+                    })?;
+                acc.observe_balance(balance);
+                continue;
+            }
+            Evm2SimStep::Transact(tx) => (tx, false),
+            Evm2SimStep::Inspect(tx) => (tx, true),
+        };
+        // `Inspector` capture is refused above, so every step takes the plain
+        // async entrypoint; `Seam` capture reads the settled state layer
+        // afterwards, exactly as on the synchronous driver.
+        let executed = match evm.transact_async(tx).await {
+            Ok(executed) => executed,
+            Err(err) => {
+                return Err(Evm2SimError::Sequence {
+                    index,
+                    source: Box::new(Evm2SimError::Transact(err.to_string())),
+                });
+            }
+        };
+        acc.capture_slots(captured, &executed);
+        acc.accept(captured, executed);
+    }
+    Ok(acc.finish())
 }
 
 /// Read one [`Evm2SimStep::ReadNativeBalance`] step's balance out of the

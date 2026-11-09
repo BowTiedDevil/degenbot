@@ -731,3 +731,80 @@ async fn the_async_verb_refuses_the_inspector_capture_mode() {
         "the refused async call left no state behind"
     );
 }
+
+/// The in-place driver settles the same sequence as the throwaway-EVM driver,
+/// and — unlike it — runs the steps on the caller's OWN EVM: the sequence's
+/// accepted write is still in the slot afterwards, and the slot owner's reset
+/// (`Evm::set_database`, what `AsyncFanoutSlot::install` does between
+/// candidates) is what clears it.
+#[tokio::test]
+async fn the_in_place_driver_matches_the_throwaway_driver_and_owns_its_reset() {
+    let steps = worked_sequence();
+    let suspensions = Arc::new(AtomicUsize::new(0));
+
+    let mut throwaway_evm = build_block_evm2(
+        AsyncDb::new(DelayedDb::new(seeded(), Arc::clone(&suspensions))),
+        BASE_FEE_GWEI,
+        BLOCK,
+        TIMESTAMP,
+    );
+    let throwaway = {
+        let mut session = Evm2SimSession::new(&mut throwaway_evm);
+        session
+            .run_sequence_async(&steps, Evm2CaptureMode::Seam)
+            .await
+            .expect("the throwaway driver settles")
+    };
+    assert!(
+        throwaway_evm.state_mut().logs().is_empty(),
+        "the throwaway driver's accumulated state dies with its throwaway EVM"
+    );
+
+    let mut slot_evm = build_block_evm2(
+        AsyncDb::new(DelayedDb::new(seeded(), Arc::clone(&suspensions))),
+        BASE_FEE_GWEI,
+        BLOCK,
+        TIMESTAMP,
+    );
+    let in_place = {
+        let mut session = Evm2SimSession::new(&mut slot_evm);
+        session
+            .run_sequence_async_in_place(&steps, Evm2CaptureMode::Seam)
+            .await
+            .expect("the in-place driver settles")
+    };
+
+    assert_driver_parity(&throwaway, &in_place);
+    assert!(
+        suspensions.load(Ordering::Relaxed) > 0,
+        "the in-place driver suspended on the same delayed reads as the throwaway driver"
+    );
+    assert_eq!(
+        slot_evm
+            .state_mut()
+            .storage_slot_untracked(&DUAL, &Word::from(SLOT))
+            .expect("the in-memory database answers"),
+        U256::from(STORED),
+        "the in-place driver ran the sequence on the caller's EVM, so its accepted write is in the slot"
+    );
+
+    // The owner's reset is what a slot does between candidates: install the next
+    // candidate's own state layer.
+    slot_evm.set_database(seeded());
+    assert_eq!(
+        slot_evm
+            .state_mut()
+            .storage_slot_untracked(&DUAL, &Word::from(SLOT))
+            .expect("the installed in-memory database answers"),
+        U256::ZERO,
+        "the slot owner's reset clears the accepted write between candidates"
+    );
+    assert!(
+        slot_evm.state_mut().logs().is_empty(),
+        "the slot owner's reset clears the sequence's committed logs too"
+    );
+    assert!(
+        slot_evm.state_mut().journal().is_empty(),
+        "the slot owner's reset clears the sequence's journal too"
+    );
+}

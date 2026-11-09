@@ -21,7 +21,7 @@
 //! the measured cold-frame cost (the `cold_miss_fanout_probe` model).
 
 use alloy::primitives::{Address, B256};
-use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::r#async::AsyncDatabase;
@@ -39,6 +39,25 @@ pub enum AlloyAsyncDbError {
     /// `eth_getBlockByNumber` returned null for a requested block.
     #[error("block {0} not found")]
     BlockNotFound(u64),
+}
+
+/// The account-row conversion every async adapter shares: an all-empty row is a
+/// non-existent account, and a served row's code is eager-loaded with
+/// `new_raw` (never `new_legacy`) — foreign code may be an EIP-7702 delegation
+/// designator, and only the raw constructor auto-detects it; a legacy-wrapped
+/// 7702 account fails validation (`RejectCallerWithCode`) and decodes wrong
+/// downstream.
+#[must_use]
+pub fn account_info_from_read(read: &AccountRead) -> Option<AccountInfo> {
+    if read.balance.is_zero() && read.nonce == 0 && read.code.is_empty() {
+        return None;
+    }
+    Some(
+        AccountInfo::default()
+            .with_balance(read.balance)
+            .with_nonce(read.nonce)
+            .with_code(Bytecode::new_raw(read.code.clone())),
+    )
 }
 
 /// The async batching read lane in front of these single reads is
@@ -73,19 +92,7 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
     /// account reads as non-existent.
     async fn get_account(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         let read = self.provider.get_account_at(&address, self.block).await?;
-        if read.balance.is_zero() && read.nonce == 0 && read.code.is_empty() {
-            return Ok(None);
-        }
-        // `new_raw` (never `new_legacy`): foreign code may be an EIP-7702
-        // delegation designator, and only the raw constructor auto-detects
-        // it — a legacy-wrapped 7702 account fails validation
-        // (`RejectCallerWithCode`) and decodes wrong downstream.
-        Ok(Some(
-            AccountInfo::default()
-                .with_balance(read.balance)
-                .with_nonce(read.nonce)
-                .with_code(Bytecode::new_raw(read.code)),
-        ))
+        Ok(account_info_from_read(&read))
     }
 
     /// Unreachable: `get_account` eager-loads code, the same invariant the

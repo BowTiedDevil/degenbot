@@ -21,10 +21,17 @@
 //! migrating off single reads takes `ReadHubCache::for_anchor` and drains a
 //! round when no fiber can progress; the single-read leaf stays in place for the
 //! consumers that never overlap reads.
+//!
+//! Over both sits the bounded candidate scheduler (`async_fanout`): W worker
+//! threads and F reusable EVM slots over the in-place async sequence verb, with
+//! the hub's idle round as its only other progress source. It is the shape a dispatch
+//! fan-out drives when candidates must overlap without an EVM per candidate; the
+//! dispatch integration itself is not part of it.
 
 pub mod alloy_async_db;
 #[cfg(feature = "evm2-jit")]
 pub mod aot_store;
+pub mod async_fanout;
 pub mod blocking_async_db;
 pub mod bot_state_db;
 pub mod frame_replay;
