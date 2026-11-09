@@ -243,6 +243,48 @@ a literal). The runnable, self-checking script is
 uv run python examples/execution_strategy_foreign.py
 ```
 
+## Certifying against the compiled contract
+
+An adapter can declare the ABI it encodes and compare explicit cases against it,
+and both checks cost no simulation: they read the calldata your adapter produced.
+That is also their limit. A declaration that describes garbage calldata passes
+exactly as a faithful one does, because behaviour lives in code and a declaration
+never runs it — **a violation is dispositive, a pass is a screen** (ADR-100 D8).
+
+Certification is the tier that runs the code. It installs a tracked contract's
+own compiled runtime as a deployment's declared code (development only, so no
+live submission — see [Registering a deployment](#registering-a-deployment)), or
+executes the code actually deployed at the target (the `just test-fork` lane),
+and drives it through the same session → batch → candidate lane production uses,
+so the adapter's encode, the engine's mechanics, and the adapter's assess all run
+exactly as they will live. What the verdict then carries is named per kind:
+
+| Evidence | What it proves |
+|---|---|
+| receipt / probe deltas — `gross_profit` is the declared read's post-minus-pre | the call moved the state or balances the adapter named |
+| the contract's own public getters, declared as probes | *which* function ran and *what* it stored — calldata inspection cannot show either |
+| return data / captured events | the contract reported the figure the assessment decoded |
+| submit-plan rows | the certified candidate reached submission, or was correctly skipped |
+
+Two requirements make certification an instrument rather than a formality:
+
+- **Name the evidence in the assertion.** The verdict assertion reads the probe
+  delta or return data it claims. "The transaction succeeded" proves a call ran;
+  it does not prove the call did the job.
+- **Keep a negative control in the same module, and pin the asymmetry.** The
+  decoy case keeps the identical read set and declaration and encodes a different
+  function: the verdict must report that function's own movement and never the
+  marker. Its counterweight is a declaration over a runtime that refuses to store
+  the marker: the same calldata decodes and the case run passes, and execution
+  fails anyway. One control without the other cannot separate "the evidence
+  proves the call" from "the evidence proves something".
+
+Registration checks and certification are different instruments and stay apart:
+registration answers "may this deployment run" and never simulates;
+certification answers "does its code do what its calldata says" and never
+registers. A certification never runs at registration, and a registration never
+waits on a simulation.
+
 ## Registering a deployment
 
 An adapter says *how* to encode and assess. A **deployment** says *where* and
@@ -536,7 +578,11 @@ Detailed material behind this guide:
   `tests/dispatch/test_custom_executor_contract.py` compiles
   `contracts/vyper/custom_executor_probe.vy`, installs it as a foreign
   deployment's declared runtime, and proves which of its functions ran by
-  reading its own public getters as the verdict's evidence
+  reading its own public getters as the verdict's evidence. The module is the
+  worked example of the two requirements above: `custom_executor_reverting.vy`
+  is the declaration's twin (same `record(uint256)` ABI, no storage), the decoy
+  case is the negative control, and a third case pins the submit lane's refusal
+  of declared code with no broadcast configured
 
 The design rationale for a generic execution interface with adapter-owned
 versioning is [ADR-098](adr/ADR-098-executor-agnostic-production-execution.md).

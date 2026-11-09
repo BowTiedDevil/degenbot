@@ -6,17 +6,33 @@ deployment's declared runtime. Nothing here is a hand-assembled EVM stub: the
 engine executes the compiled runtime at the deployment's target address, and the
 adapter's declared probe reads are the only observation surface.
 
-The claim is functional, not textual. The positive case encodes
-``record(uint256)`` with a unique marker and declares one read of the contract's
-own ``last_value()`` getter; the gross figure the verdict reports IS that read's
-post-minus-pre delta, so a selector that looked right over a run that stored
-nothing cannot pass. The decoy case keeps the same read and encodes ``decoy()``
+The claim is functional, not textual, and it has three parts (ADR-100 D8):
+
+* **The declaration is validated.** The certified adapter carries the compiled
+  contract's own ABI through ``interface=``, so the calldata the engine executes
+  has already been checked against it: the declared selector, arguments that
+  decode against the declared types, the declared target, and a zero native
+  value. An explicit case run adds tier 2 — for one path and one amount set, the
+  adapter must produce *that* call.
+* **The behaviour is proven by execution.** The positive case encodes
+  ``record(uint256)`` with a unique marker and declares one read of the
+  contract's own ``last_value()`` getter; the gross figure the verdict reports IS
+  that read's post-minus-pre delta, so a selector that looked right over a run
+  that stored nothing cannot pass.
+* **The asymmetry is pinned.** ``custom_executor_reverting.vy`` declares the same
+  ``record(uint256)`` ABI and refuses to store anything: the identical
+  declaration accepts the identical calldata, and only running the code reports
+  it. A decodable interface is a screen; execution is the proof.
+
+The decoy case keeps the same read set and declaration and encodes ``decoy()``
 instead: the same engine runs the same contract, the decoy's own flag moves, and
-the record evidence is absent — so neither a wrong selector nor an empty revert
-can impersonate a certified run.
+the record evidence is absent — so neither a wrong selector nor a failed run can
+impersonate a certified success.
 
 Every batch runs ``dry_run`` and answers its cold-state reads from a loopback
-stub, so no live endpoint and no committed bytecode are involved.
+stub, so no live endpoint and no committed bytecode are involved. The one test
+that turns the inject stance on asserts the submit lane's refusal of the
+broadcast, and no broadcast provider is ever configured.
 """
 
 from __future__ import annotations
@@ -40,6 +56,7 @@ from degenbot.dispatch import (
     SimulateContext,
     SimulateVerdict,
     SimulationDeployment,
+    SkippedRecord,
     SubmitSkipReason,
     TxSigner,
     typed_submit_record,
@@ -47,6 +64,7 @@ from degenbot.dispatch import (
 from tests.helpers.seam import (
     AlloyProvider,
     AsyncAlloyProvider,
+    CaseReport,
     PayloadAdapter,
     abi_encode_call,
     build_batch_executor_py,
@@ -58,9 +76,17 @@ if TYPE_CHECKING:
     from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
 
-CONTRACT_PATH = (
-    Path(__file__).resolve().parents[2] / "contracts" / "vyper" / "custom_executor_probe.vy"
-)
+_CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts" / "vyper"
+
+CONTRACT_PATH = _CONTRACTS_DIR / "custom_executor_probe.vy"
+
+#: The declaration's twin: the same ``record(uint256)`` ABI over code that
+#: refuses to store anything, so the same calldata decodes and execution fails.
+REVERTING_CONTRACT_PATH = _CONTRACTS_DIR / "custom_executor_reverting.vy"
+
+#: The reason the reverting runtime gives, and the failure bucket it classifies
+#: to (``classify_revert`` labels an ``Error(string)`` revert with its message).
+REVERT_REASON = "custom_executor_reverting: record stores nothing"
 
 RECORD_SIGNATURE = "record(uint256)"
 DECOY_SIGNATURE = "decoy()"
@@ -188,14 +214,69 @@ def canned_chain() -> Iterator[_CannedChainNode]:
         node.close()
 
 
-@pytest.fixture(scope="module")
-def probe_runtime() -> bytes:
-    """The probe contract's runtime bytecode, compiled by the pinned Vyper."""
-    compiled = vyper.compile_code(
-        CONTRACT_PATH.read_text(encoding="utf-8"),
-        output_formats=["bytecode_runtime"],
+def _compile(path: Path) -> dict[str, Any]:
+    """Compile one contract source with the pinned Vyper: runtime + ABI artifact."""
+    return vyper.compile_code(
+        path.read_text(encoding="utf-8"),
+        output_formats=["bytecode_runtime", "abi"],
     )
+
+
+def _runtime(compiled: dict[str, Any]) -> bytes:
+    """The runtime bytecode a compiled artifact carries."""
     return bytes.fromhex(compiled["bytecode_runtime"].removeprefix("0x"))
+
+
+@pytest.fixture(scope="module")
+def probe_compiled() -> dict[str, Any]:
+    """The probe contract, compiled once: the code under test and its own ABI."""
+    return _compile(CONTRACT_PATH)
+
+
+@pytest.fixture(scope="module")
+def probe_runtime(probe_compiled: dict[str, Any]) -> bytes:
+    """The probe contract's runtime bytecode, compiled by the pinned Vyper."""
+    return _runtime(probe_compiled)
+
+
+@pytest.fixture(scope="module")
+def reverting_runtime() -> bytes:
+    """The reverting twin's runtime bytecode: same ABI, no storage."""
+    return _runtime(_compile(REVERTING_CONTRACT_PATH))
+
+
+def _declaration(abi: list[dict[str, Any]]) -> dict[str, Any]:
+    """The certified adapter's interface declaration, decomposed by the binding.
+
+    The ABI is the compiler's own artifact for the probe contract, so the
+    declaration covers both functions the certification encodes and both getters
+    its probes read. The selector allow-list names only the functions an encode
+    may produce — a getter is a read, never an encoded call — and the target and
+    native value are the facts this binding already owns.
+    """
+    return {
+        "abi": abi,
+        "selectors": [RECORD_SIGNATURE, DECOY_SIGNATURE],
+        "target": TARGET,
+        "value": {"kind": "zero"},
+    }
+
+
+def _adapter(
+    compose: Callable[[object], bytes],
+    *,
+    probes: list[dict[str, object]],
+    declaration: dict[str, Any],
+) -> PayloadAdapter:
+    """The certified adapter: calldata, binding, declared reads, declaration."""
+    return PayloadAdapter(
+        compose,
+        to=TARGET,
+        value=0,
+        probes=probes,
+        min_net_profit=0,
+        interface=declaration,
+    )
 
 
 def _executor(
@@ -203,10 +284,17 @@ def _executor(
     *,
     rpc_url: str,
     runtime: bytes,
-    compose: Callable[[object], bytes],
-    probes: list[dict[str, object]],
+    adapter: PayloadAdapter,
+    dry_run: bool = True,
+    inject_code: bool = False,
 ) -> BatchExecutor:
-    """Build the session executor over one foreign deployment carrying `runtime`."""
+    """Build the session executor over one foreign deployment carrying `runtime`.
+
+    `inject_code` is the session's inject stance — the only stance under which a
+    declared runtime exists at an address the chain does not hold code at. It is
+    off for every certification case and on for the test that pins the submit
+    lane's refusal.
+    """
     provider = AsyncAlloyProvider(AlloyProvider(rpc_url))
     return build_batch_executor_py(
         context=SimulateContext(
@@ -215,19 +303,20 @@ def _executor(
             executor_address=EXECUTOR,
             weth_address=WETH,
             pool_manager_address=POOL_MANAGER,
-            inject_code=False,
+            inject_code=inject_code,
+            injected_address=EXECUTOR if inject_code else None,
         ),
         dispatcher=Dispatcher.for_block(0),
         engine=engine,
         signer=TxSigner(key="0x" + "11" * 32, chain_id=1),
         submit_provider=provider,
         operator_nonce=5,
-        dry_run=True,
+        dry_run=dry_run,
         broadcast_providers=None,
         deployments=[
             SimulationDeployment(
                 DEPLOYMENT_ID,
-                PayloadAdapter(compose, to=TARGET, probes=probes),
+                adapter,
                 OWNER,
                 TARGET,
                 GAS_LIMIT,
@@ -309,6 +398,43 @@ def _getter_read(label: str, signature: str) -> dict[str, object]:
     return {"label": label, "to": TARGET, "data": abi_encode_call(signature, [])}
 
 
+#: One V2 hop literal — the case's own path, as data (no pool, no chain read).
+CASE_POOL = "0x1111111111111111111111111111111111111111"
+CASE_QUOTE = "0x2222222222222222222222222222222222222222"
+
+
+def _record_case() -> dict[str, Any]:
+    """The declared case: for THIS path and THESE amounts, produce record(MARKER).
+
+    The certified compose callable answers one call for every path, so the case
+    fixes the path and the amounts it is handed and asserts the call it must
+    produce — selector and decoded argument, never a byte golden.
+    """
+    return {
+        "name": "record_stores_the_marker",
+        "hops": [
+            {
+                "family": "v2",
+                "pool_address": CASE_POOL,
+                "token0": WETH,
+                "token1": CASE_QUOTE,
+                "fee": 30,
+                "zfo": True,
+            }
+        ],
+        "amounts": {
+            "optimal_input": MARKER,
+            "hop_outputs": [MARKER],
+            "consumed_inputs": [MARKER],
+        },
+        "expect": {
+            "kind": "transaction",
+            "selector": RECORD_SIGNATURE,
+            "arguments": [MARKER],
+        },
+    }
+
+
 class TestCompiledRecordFunction:
     """The engine executes the compiled ``record(uint256)`` the adapter encoded."""
 
@@ -316,6 +442,7 @@ class TestCompiledRecordFunction:
         self,
         nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int],
         canned_chain: _CannedChainNode,
+        probe_compiled: dict[str, Any],
         probe_runtime: bytes,
     ) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
@@ -335,16 +462,35 @@ class TestCompiledRecordFunction:
         last_value = _getter_read("LAST_VALUE", LAST_VALUE_SIGNATURE)
         assert last_value["data"] == function_selector(LAST_VALUE_SIGNATURE)
 
+        adapter = _adapter(
+            compose,
+            probes=[last_value],
+            declaration=_declaration(probe_compiled["abi"]),
+        )
+
+        # Tiers 1 and 2: the declaration accepts the very call the engine will
+        # run, offline — one path literal, one amount set, no provider, no
+        # deployment, no chain.
+        reports = adapter.check_cases([_record_case()])
+
+        assert composed == [payload], "a case run encodes exactly once"
+        assert [report.name for report in reports] == ["record_stores_the_marker"]
+        assert all(isinstance(report, CaseReport) for report in reports)
+        assert [report.passed for report in reports] == [True], reports
+        assert reports[0].violations == []
+
+        # Tier 3: the same adapter, through the production lane.
         executor = _executor(
             engine,
             rpc_url=canned_chain.url,
             runtime=probe_runtime,
-            compose=compose,
-            probes=[last_value],
+            adapter=adapter,
         )
         batch = await _one_batch(executor, path_id=path_id)
 
-        assert composed == [payload], "the adapter encoded once, for the deployment it names"
+        assert composed == [payload, payload], (
+            "the case run and the production lane encoded the same declared call"
+        )
 
         custom = _custom(batch.records)
         assert custom.candidate_id.path_id == path_id
@@ -368,12 +514,19 @@ class TestCompiledRecordFunction:
 
 
 class TestWrongSelectorNegativeControl:
-    """``decoy()`` runs the same contract and produces none of the record evidence."""
+    """``decoy()`` runs the same contract and produces none of the record evidence.
+
+    The control keeps the positive case's declared reads AND its declaration, so
+    the only difference between the two runs is the encoded function: the decoy
+    passes the same interface check and still cannot produce the marker's
+    evidence.
+    """
 
     async def test_the_decoy_selector_runs_without_storing_the_marker(
         self,
         nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int],
         canned_chain: _CannedChainNode,
+        probe_compiled: dict[str, Any],
         probe_runtime: bytes,
     ) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
@@ -387,15 +540,20 @@ class TestWrongSelectorNegativeControl:
             composed.append(payload)
             return payload
 
-        executor = _executor(
-            engine,
-            rpc_url=canned_chain.url,
-            runtime=probe_runtime,
-            compose=compose,
+        adapter = _adapter(
+            compose,
             probes=[
                 _getter_read("LAST_VALUE", LAST_VALUE_SIGNATURE),
                 _getter_read("DECOY_FLAG", DECOY_FLAG_SIGNATURE),
             ],
+            declaration=_declaration(probe_compiled["abi"]),
+        )
+
+        executor = _executor(
+            engine,
+            rpc_url=canned_chain.url,
+            runtime=probe_runtime,
+            adapter=adapter,
         )
         batch = await _one_batch(executor, path_id=path_id)
 
@@ -411,3 +569,136 @@ class TestWrongSelectorNegativeControl:
         assert verdict.receipt.gross_profit != MARKER
 
         assert _custom_submits(batch) == [], "a wrong selector never reaches the submit plan"
+
+
+class TestDecodableInterfaceIsNotABehaviourProof:
+    """A declaration is a screen; only execution proves the stored marker.
+
+    ``custom_executor_reverting.vy`` declares the same ``record(uint256)`` and
+    keeps the same ``last_value()`` getter, so the identical declaration accepts
+    the identical calldata that the certified run executes. Its code refuses to
+    store anything, and that is visible only in the verdict: calldata inspection
+    cannot distinguish a faithful encoder from one that points at code which does
+    nothing.
+    """
+
+    async def test_a_decodable_interface_is_not_a_behaviour_proof(
+        self,
+        nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int],
+        canned_chain: _CannedChainNode,
+        probe_compiled: dict[str, Any],
+        reverting_runtime: bytes,
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
+        assert reverting_runtime, "the pinned Vyper compiler produced runtime bytecode"
+
+        payload = abi_encode_call(RECORD_SIGNATURE, [MARKER])
+        assert payload[:4] == function_selector(RECORD_SIGNATURE), "the declared selector"
+        assert int.from_bytes(payload[4:], "big") == MARKER, "the declared argument"
+
+        composed: list[bytes] = []
+
+        def compose(_result: object) -> bytes:
+            composed.append(payload)
+            return payload
+
+        adapter = _adapter(
+            compose,
+            probes=[_getter_read("LAST_VALUE", LAST_VALUE_SIGNATURE)],
+            declaration=_declaration(probe_compiled["abi"]),
+        )
+
+        # The declaration and the case both pass: this calldata IS the call the
+        # interface describes, and the adapter produces it exactly. Nothing about
+        # the declaration can see the runtime underneath it.
+        reports = adapter.check_cases([_record_case()])
+
+        assert [report.passed for report in reports] == [True], reports
+        assert reports[0].violations == []
+
+        executor = _executor(
+            engine,
+            rpc_url=canned_chain.url,
+            runtime=reverting_runtime,
+            adapter=adapter,
+        )
+        batch = await _one_batch(executor, path_id=path_id)
+
+        assert composed == [payload, payload], "the declared call, encoded twice"
+
+        verdict = _custom(batch.records).simulate
+        assert isinstance(verdict, SimulateVerdict.Failed), (
+            "a passing declaration over code that stores nothing is an execution failure — "
+            f"neither a violation nor a profit: {verdict!r}"
+        )
+        assert verdict.detail.bucket == REVERT_REASON, (
+            "the bucket is the runtime's own revert reason: the code ran and refused, which "
+            f"no calldata check can report: {verdict.detail.record()!r}"
+        )
+
+        assert _custom_submits(batch) == [], (
+            "a run that stored nothing never reaches the submit plan"
+        )
+
+
+class TestDeclaredCodeStaysRefusedForLiveSubmission:
+    """Declared code is development data, so the submit lane refuses to broadcast.
+
+    The certification's own deployment carries a runtime installed at its target
+    — code the chain does not hold. The simulation proves the call either way;
+    the submit lane is what keeps a development-only runtime off the wire, and it
+    does so on the inject stance rather than on the verdict.
+    """
+
+    async def test_declared_code_stays_refused_for_live_submission(
+        self,
+        nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int],
+        canned_chain: _CannedChainNode,
+        probe_compiled: dict[str, Any],
+        probe_runtime: bytes,
+        governed_holder: Callable[[dict[str, str]], None],
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
+
+        # The inject stance is a session decision, resolved from the config the
+        # executor construction reads — never a per-call argument.
+        governed_holder({"DEGENBOT_INJECT_EXECUTOR_CODE": "true"})
+
+        payload = abi_encode_call(RECORD_SIGNATURE, [MARKER])
+        adapter = _adapter(
+            lambda _result: payload,
+            probes=[_getter_read("LAST_VALUE", LAST_VALUE_SIGNATURE)],
+            declaration=_declaration(probe_compiled["abi"]),
+        )
+
+        # `dry_run` OFF (its guard would mask the inject guard) and the inject
+        # stance ON: the certified candidate is profitable and STILL not sent.
+        executor = _executor(
+            engine,
+            rpc_url=canned_chain.url,
+            runtime=probe_runtime,
+            adapter=adapter,
+            dry_run=False,
+            inject_code=True,
+        )
+        batch = await _one_batch(executor, path_id=path_id)
+
+        verdict = _custom(batch.records).simulate
+        assert isinstance(verdict, SimulateVerdict.Profitable), (
+            "the certified call executed: the submission stance does not change what the "
+            f"simulation proves: {verdict!r}"
+        )
+        assert verdict.receipt.gross_profit == MARKER
+
+        submits = _custom_submits(batch)
+        assert len(submits) == 1, "the certified candidate reached the submit plan"
+        assert submits[0].candidate.path_id == path_id
+        assert isinstance(submits[0], SkippedRecord), (
+            f"no broadcast record exists for declared code: {submits[0]!r}"
+        )
+        assert submits[0].reason is SubmitSkipReason.INJECT_CODE, (
+            "the refusal is the inject guard, not the dry-run mode"
+        )
+        assert "eth_sendRawTransaction" not in canned_chain.methods, (
+            "the refusal happened before any broadcast reached even the stub endpoint"
+        )
