@@ -28,6 +28,40 @@ adapter-agnostic options; it does not carry `cmd_executor` addresses or
 command-encoding options, and the seam carries no capability, version, or
 release metadata — that state stays private to an adapter (ADR-098 D4/D5).
 
+## Validating an adapter (ADR-100)
+
+`interface` adds the opt-in declaration facility beside the seam. Three tiers,
+and the default pays none of them:
+
+| Tier | What the operator declares | When it runs |
+|---|---|---|
+| 0 — none (default) | nothing | today's path, unchanged |
+| 1 — contract interface | the contract's ABI plus optional target, selector, and native-value policies | every `encode`, once attached |
+| 2 — validation cases | explicit path + amount + expected-transaction literals | an explicit call by the author or a CI test |
+
+A tier-1 declaration is a `ContractInterface`, derived either from standard ABI
+JSON (`from_abi_json`) or from the same `sol!` signatures that produce the
+calldata (`from_signatures`) — a Rust adapter needs no second ABI source, so its
+encoder and its declaration cannot drift. Attach it by wrapping:
+
+```rust,ignore
+let interface = ContractInterface::from_signatures([MyCalls::executeCall::SIGNATURE])?
+    .with_target(my_contract)?;
+let adapter = ValidatedAdapter::new(my_adapter, interface)?;
+```
+
+`ValidatedAdapter` forwards Encode, `compose_view`, the declared probes, the
+assessment defaults, the fee policy, and the adapter's own `assess` — and
+validates the encoded transaction before returning it. It never repairs one: a
+violation is `ComposeError::Validation(ContractViolation)`, a hard encode
+failure, not the routine capability decline another target could absorb. A
+violation is dispositive; a pass is only a screen, because whether the contract
+does what the calldata says is proven by execution, not by decoding.
+
+Tier 2 runs the same checks plus an explicit expectation over a real `PathInfo`
+and real amounts: `run_cases(&adapter, &interface, &cases)` returns one
+`CaseReport` per case, offline, with no provider, engine, or registry.
+
 The concrete built-in production adapter lives in `degenbot-strategy`, where
 `CmdExecutorAdapter` owns the canonical `cmd_executor` path. It captures one
 strategy `ExecutionContext` (executor, authoritative V4 `PoolManager`, and WETH)

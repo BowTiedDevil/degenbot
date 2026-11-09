@@ -34,8 +34,11 @@
 //! [`degenbot_execution::ComposeError::Encode`] failure is a primitive encoding
 //! error: it is unrecoverable for that candidate, so it ends the walk instead of
 //! being reclassified as "this target cannot" — another target would not make
-//! the failure disappear, it would only hide it. A transaction aimed away from
-//! the deployment's declared target is likewise that candidate's own refusal (the
+//! the failure disappear, it would only hide it. A declared-interface violation
+//! ([`degenbot_execution::ComposeError::Validation`]) is the same hard stop: the
+//! adapter produced calldata its own declaration rejects, which is broken code
+//! rather than a path the contract cannot handle (ADR-100 D5). A transaction
+//! aimed away from the deployment's declared target is likewise that candidate's own refusal (the
 //! simulation leaf records `target-mismatch`), and a revert, an unprofitable
 //! result, or a failed assessment is a simulation verdict: the walk is over
 //! before any of them ran, so none of them can select a later target.
@@ -101,8 +104,10 @@ pub enum PreparedEncoding {
     /// ([`degenbot_execution::ComposeError::Unsupported`]) — a routine refusal
     /// the walk advanced past.
     Declined(String),
-    /// A primitive encoding step failed ([`degenbot_execution::ComposeError::Encode`]):
-    /// this candidate's own exception, and the end of the walk.
+    /// A primitive encoding step failed ([`degenbot_execution::ComposeError::Encode`]),
+    /// or the produced transaction violated the interface its adapter declared
+    /// ([`degenbot_execution::ComposeError::Validation`]): this candidate's own
+    /// exception, and the end of the walk.
     Failed(String),
 }
 
@@ -114,6 +119,10 @@ impl PreparedEncoding {
             Ok(transaction) => Self::Accepted(transaction),
             Err(ComposeError::Unsupported(detail)) => Self::Declined(detail),
             Err(ComposeError::Encode(detail)) => Self::Failed(detail),
+            // A declared-interface violation is that same verdict: the adapter's
+            // own calldata contradicts its declaration, so the walk stops here
+            // rather than offering the path to another target (ADR-100 D5).
+            Err(ComposeError::Validation(violation)) => Self::Failed(violation.to_string()),
         }
     }
 

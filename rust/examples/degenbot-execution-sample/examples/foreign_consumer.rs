@@ -9,9 +9,15 @@
 //! sealed `SolveResult` view, and encodes ONE complete transaction — target,
 //! calldata, native value — through the four-part seam (Encode + declared Probe
 //! reads + Assess + Fee) with no `degenbot-arbitrage` and no pyo3.
+//!
+//! It then repeats the encode through `ValidatedAdapter`, the ADR-100 tier-1
+//! wrapper: the declaration is derived from the SAME `sol!` call type that
+//! produced the calldata, so the check costs one decode and cannot disagree with
+//! the encoder. An adapter that declares nothing skips this entirely.
 
 use alloy::primitives::{address, Address, U256};
 use degenbot_execution::solve_result::SolveResult;
+use degenbot_execution::{ExecutionAdapter, PathInfo, ValidatedAdapter, ValuePolicy};
 use degenbot_execution_sample::{simple_executor_selector, SimpleExecutorStrategy};
 
 const EXECUTOR: Address = address!("7777777777777777777777777777777777777777");
@@ -59,6 +65,29 @@ fn main() {
         &simple_executor_selector(),
         "payload leads with the foreign execute(uint256,uint256,uint256[]) selector"
     );
+    // Tier 1 (ADR-100): the SAME `sol!` call type declares the interface, so the
+    // encoder and its declaration are one fact. The wrapper forwards the
+    // strategy's encode and validates the transaction it produced.
+    let interface = strat
+        .composer
+        .interface()
+        .expect("the sample's declaration builds")
+        .with_value_policy(ValuePolicy::Zero);
+    let validated = ValidatedAdapter::new(strat, interface).expect("the declarations agree");
+    let checked = validated
+        .compose_view(&PathInfo::new(Vec::new()), &result)
+        .expect("the declaration accepts the strategy's own encoding");
+    assert_eq!(
+        checked, transaction,
+        "validation forwards the transaction it checked, byte for byte"
+    );
+    println!(
+        "declared interface: selectors={:?} target={} value_policy={} — accepted",
+        validated.interface().selectors(),
+        checked.to,
+        validated.interface().value_policy().name()
+    );
+
     println!(
         "foreign consumer OK — one complete transaction, distinct from the default cmd_executor adapter"
     );

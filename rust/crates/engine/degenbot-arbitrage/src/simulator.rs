@@ -1038,7 +1038,8 @@ fn simulate_path_on_evm_in_span_prepared(
 ///
 /// The adapter's own [`ComposeError`]: [`ComposeError::Unsupported`] when the
 /// path is outside the contract's capability, [`ComposeError::Encode`] when a
-/// primitive encoding step failed.
+/// primitive encoding step failed, [`ComposeError::Validation`] when the produced
+/// transaction violates the interface its adapter declared (ADR-100 D5).
 pub fn compose_transaction(
     deployment: &SimulationDeployment,
     path: &SimulatePath,
@@ -1156,6 +1157,18 @@ fn simulate_path_on_evm_seam(
             return Err(ProviderError::RpcError {
                 code: -32603,
                 message: detail,
+            });
+        }
+        Err(ComposeError::Validation(violation)) => {
+            // The adapter's own calldata contradicts the interface it declared
+            // (ADR-100 D5): broken adapter code, so the same hard pre-encode
+            // error as an unrecoverable encode failure — never the routine
+            // `encode-failed` skip, and never a submission row.
+            guard.verdict = SimVerdict::Error;
+            guard.error_reason = Some(degenbot_bot::telemetry::error_reason::SIM_PRE_ENCODE);
+            return Err(ProviderError::RpcError {
+                code: -32603,
+                message: violation.to_string(),
             });
         }
     };

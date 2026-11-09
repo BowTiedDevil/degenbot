@@ -132,6 +132,12 @@ pub trait ExecutionAdapter {
     /// strategy whose Encode wants the sealed view instead of `path`/`inputs`
     /// may override.
     ///
+    /// A [`crate::ValidatedAdapter`] wrapper forwards THIS method to the inner
+    /// adapter and validates what it returns (ADR-100 D4), so an override here
+    /// is never bypassed by the wrapper. The trait gains no method and no
+    /// default changes for validation — tier 0 is byte- and cost-identical to
+    /// the path before it existed.
+    ///
     /// # Errors
     ///
     /// Returns [`ComposeError`] when the payload cannot be encoded.

@@ -28,6 +28,7 @@ use alloy::primitives::{Address, Bytes, U256};
 use thiserror::Error;
 
 use crate::gate::{AssessOptions, FeePolicy, ProbeSpecs};
+use crate::interface::ContractViolation;
 use crate::path::PathInfo;
 
 /// Generic, adapter-agnostic encode knobs (ADR-025 D2/D5).
@@ -77,6 +78,16 @@ pub enum ComposeError {
     /// A primitive encoding step failed (e.g. int128 overflow).
     #[error("encode failure: {0}")]
     Encode(String),
+    /// The encoded transaction violates the interface its adapter declared
+    /// (ADR-100 D5).
+    ///
+    /// This is a **hard** failure, not a capability decline: an adapter that
+    /// produces calldata its own declaration rejects is broken, and offering the
+    /// same path to another target would hide the defect rather than fix it.
+    /// The target-selection walk stops for the candidate, and the simulation
+    /// records the pre-encode exception.
+    #[error("declared-interface violation: {0}")]
+    Validation(ContractViolation),
 }
 
 /// A custom failure factory for user composers.
@@ -91,6 +102,14 @@ impl ComposeError {
     #[must_use]
     pub fn encode(msg: impl Into<String>) -> Self {
         Self::Encode(msg.into())
+    }
+}
+
+/// A validated adapter reports a violation as the seam's encode failure, so a
+/// caller that already handles [`ComposeError`] needs no second error type.
+impl From<ContractViolation> for ComposeError {
+    fn from(violation: ContractViolation) -> Self {
+        Self::Validation(violation)
     }
 }
 

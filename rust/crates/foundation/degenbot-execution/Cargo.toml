@@ -14,6 +14,13 @@ workspace = true
 
 [dependencies]
 alloy = { version = "^2.5" }
+# The declared contract interface (ADR-100 D2) reads standard ABI JSON. `alloy`'s
+# `json-abi` feature re-exports that module but not the `serde_json`-gated
+# `JsonAbi::from_json_str` parser, so the alloy family's own ABI crate carries
+# that one feature here: the crate is already in the graph through `alloy`, so
+# no new dependency enters the lock, and no serde type is named in this crate's
+# code or its public API (the parse error renders with `to_string()`).
+alloy-json-abi = { version = "^1.7", features = ["serde_json"] }
 thiserror = { version = "^2.0" }
 # The neutral opportunity descriptors (`PathInfo` / `HopInfo`, ADR-098 D1) are
 # this crate's own; the built-in `cmd_executor` implementation depends on this

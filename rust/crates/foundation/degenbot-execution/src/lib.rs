@@ -40,6 +40,16 @@
 //! version metadata. An adapter may keep any private protocol version,
 //! release, or deployment state it needs (ADR-098 D4/D5).
 //!
+//! The seam also carries the **opt-in declared-interface facility** (ADR-100,
+//! [`interface`]): a [`ContractInterface`] states one contract's callable
+//! surface plus optional target/selector/native-value policies, a
+//! [`ValidatedAdapter`] checks every encode against it, and [`run_cases`]
+//! compares explicit path/amount literals against an expected transaction. An
+//! adapter that declares nothing is untouched: no wrapper exists, so no decode
+//! runs and the tier-0 path is unchanged. A violation is
+//! [`ComposeError::Validation`] — a hard encode failure, never the routine
+//! capability decline.
+//!
 //! The generic seam has no built-in `cmd_executor` policy. The concrete
 //! production `CmdExecutorAdapter` lives in `degenbot-strategy`, where it owns
 //! the canonical command-executor path; a foreign user's crate implements
@@ -55,6 +65,7 @@
 pub mod adapter;
 pub mod gate;
 pub mod identity;
+pub mod interface;
 pub mod observation;
 pub mod path;
 pub mod payload;
@@ -66,6 +77,11 @@ pub use gate::{
     AssessError, AssessOptions, AssessRule, ExecutionResult, FeePolicy, ProbeSpec, ProbeSpecs,
 };
 pub use identity::{CandidateId, DeploymentId};
+pub use interface::{
+    case_hop_family, run_cases, CaseAmounts, CaseFailure, CaseReport, ContractInterface,
+    ContractViolation, DeclarationError, Expected, ExpectedCall, ExpectedTransaction,
+    ValidatedAdapter, ValidationCase, ValuePolicy,
+};
 pub use observation::{CapturedEvent, ExecutionObservation, ExecutionStatus, ProbeReading};
 pub use path::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 pub use payload::{ComposeError, ComposeOptions, ComposerInputs, PayloadAdapter, PayloadComposer};

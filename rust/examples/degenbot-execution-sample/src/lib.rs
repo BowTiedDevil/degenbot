@@ -15,6 +15,18 @@
 //!   distinct** from the default adapter's yul-command stream — the
 //!   distinct-payload doctrine that proves a foreign strategy is a genuinely
 //!   different path, never a re-derivation of `cmd_executor`.
+//!
+//!   The calldata is **typed**: [`SimpleExecutor`] is a `sol!` declaration, and
+//!   `executeCall::abi_encode()` emits the canonical bytes no hand-packed word
+//!   layout has to imitate. The same call type also declares the adapter's
+//!   interface ([`SimpleExecutorComposer::interface`], ADR-100 D3), so an
+//!   encoder and its declaration cannot drift — and the sample ships no ABI
+//!   JSON at all.
+//! - **Validate (optional)** — wrapping the strategy in
+//!   [`degenbot_execution::ValidatedAdapter`] checks every encode against that
+//!   declaration (ADR-100 D4). The sample's
+//!   `examples/foreign_consumer.rs` shows the wrapped call site; the unwrapped
+//!   strategy is tier 0 and pays nothing for the facility.
 //! - **Probe** — [`SimpleExecutorStrategy::probes`]: declared pre/post
 //!   read-calls (`WETH.balanceOf`) the engine snapshots (declared data).
 //! - **Assess** — the built-in gate over the engine's typed
@@ -33,31 +45,49 @@
 //! - **Encode is unconditional user code**; Probe/Assess/Fee are data/defaults
 //!   the foreign searcher wires (ADR-025 D2/D5).
 
-use alloy::primitives::{keccak256, Address, Bytes, U256};
+use alloy::primitives::{Address, Bytes, U256};
+use alloy::sol_types::SolCall;
 use degenbot_execution::solve_result::SolveResult;
-use degenbot_execution::PathInfo;
 use degenbot_execution::{
-    AssessOptions, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter,
-    ExecutionObservation, ExecutionResult, FeePolicy, PayloadComposer, ProbeSpec, ProbeSpecs,
-    TransactionRequest,
+    AssessOptions, ComposeError, ComposeOptions, ComposerInputs, ContractInterface,
+    DeclarationError, ExecutionAdapter, ExecutionObservation, ExecutionResult, FeePolicy, PathInfo,
+    PayloadComposer, ProbeSpec, ProbeSpecs, TransactionRequest,
 };
+
+alloy::sol! {
+    /// The sample's own execution contract, declared once. The generated
+    /// `executeCall` carries the ABI's argument types, `SIGNATURE`, and
+    /// `SELECTOR` — the encoder and the declared interface both derive from this
+    /// one type (ADR-100 D3), so neither can disagree with the other.
+    interface SimpleExecutor {
+        function execute(uint256 optimal_input, uint256 final_output, uint256[] hop_outputs)
+            external
+            returns (bool);
+    }
+}
+
+alloy::sol! {
+    /// The read the sample's declared probe performs — the same typed-encoding
+    /// rule, so its calldata is ABI-encoded rather than hand-packed.
+    interface IWeth {
+        function balanceOf(address owner) external view returns (uint256);
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Encode — the foreign `SimpleExecutor` composer (ADR-025 D2)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// The `SimpleExecutor.execute` function selector:
-/// `selector = keccak256("execute(uint256,uint256,uint256[])")[..4]`.
+/// The `SimpleExecutor.execute` function selector, as Alloy computes it for the
+/// `sol!` declaration: `keccak256("execute(uint256,uint256,uint256[])")[..4]`.
 ///
 /// A foreign contract names its own selector. Distinct from `cmd_executor`'s
 /// `execute(commands, config)` (which packs a YUL command stream) by both
-/// selector and argument shape.
+/// selector and argument shape. Nothing in this crate hashes a signature string
+/// itself: the selector is the declaration's own constant.
 #[must_use]
 pub fn simple_executor_selector() -> [u8; 4] {
-    let digest = keccak256(b"execute(uint256,uint256,uint256[])");
-    let mut sel = [0u8; 4];
-    sel.copy_from_slice(&digest[..4]);
-    sel
+    SimpleExecutor::executeCall::SELECTOR
 }
 
 /// Error type for the foreign composer (wraps the seam's [`ComposeError`]).
@@ -80,43 +110,45 @@ impl SimpleExecutorComposer {
     /// Build the `execute(uint256,uint256,uint256[])` calldata:
     /// `selector || abi.encode(optimal_input, final_output, hop_outputs)`.
     ///
-    /// Each value is a 32-byte big-endian uint256 word; the dynamic `uint256[]`
-    /// is ABI-encoded with a static offset then a length-prefixed element
-    /// run. `hop_outputs` carries the per-hop outputs (`[i]` = after hop `i`),
-    /// so the final element is the path's final output — the foreign
-    /// contract's settlement figure.
+    /// The bytes are the generated call struct's own `abi_encode()`, so the
+    /// canonical ABI layout — the static head, the dynamic array's offset, its
+    /// length prefix, and the element run — is Alloy's to emit, not this
+    /// crate's to hand-pack. `hop_outputs` carries the per-hop outputs (`[i]` =
+    /// after hop `i`), so the final element is the path's final output — the
+    /// foreign contract's settlement figure.
     fn build_calldata(inputs: &ComposerInputs<'_>) -> Result<Bytes, ComposeError> {
-        let n: usize = inputs.hop_outputs.len();
-        // static head: opt, final_out, array-offset
-        let final_out = inputs
+        let final_output = inputs
             .hop_outputs
             .last()
             .copied()
             .ok_or_else(|| ComposeError::encode("path has no hops"))?;
-        let mut words: Vec<[u8; 32]> = Vec::with_capacity(4 + n);
-        words.push(to_word(inputs.optimal_input));
-        words.push(to_word(final_out));
-        // array data offset: 3 static words (0x00/0x20/0x40) → data at 0x60
-        words.push(U256::from(0x60u64).to_be_bytes());
-        words.push(U256::from(n as u64).to_be_bytes());
-        for out in inputs.hop_outputs {
-            words.push(to_word(*out));
-        }
-        let mut calldata = Vec::with_capacity(4 + words.len() * 32);
-        calldata.extend_from_slice(&simple_executor_selector());
-        for w in &words {
-            calldata.extend_from_slice(w);
-        }
-        Ok(Bytes::from(calldata))
+        let call = SimpleExecutor::executeCall {
+            optimal_input: U256::from(inputs.optimal_input),
+            final_output: U256::from(final_output),
+            hop_outputs: inputs.hop_outputs.iter().copied().map(U256::from).collect(),
+        };
+        Ok(Bytes::from(call.abi_encode()))
     }
-}
 
-/// Encode a `u128` as a 32-byte big-endian ABI word (the `cmd_executor`
-/// int128 convention — amounts are integer fixed-point, never floats).
-fn to_word(value: u128) -> [u8; 32] {
-    let mut word = [0u8; 32];
-    word[16..].copy_from_slice(&value.to_be_bytes());
-    word
+    /// The adapter's declared contract interface, derived from the SAME `sol!`
+    /// call type that produces the calldata (ADR-100 D3).
+    ///
+    /// No ABI JSON is shipped: the signature, the selector, and the argument
+    /// types are the declaration's own facts. The target is this composer's
+    /// contract, so a transaction aimed anywhere else is a hard error; the
+    /// sample declares no native-value policy because its funding model is the
+    /// operator's choice — a flash-funded deployment adds
+    /// [`degenbot_execution::ValuePolicy::Zero`].
+    ///
+    /// # Errors
+    ///
+    /// [`DeclarationError`] when the declaration cannot be built (the sample's
+    /// own signature always parses, so this is the type's shape, not a runtime
+    /// case).
+    pub fn interface(&self) -> Result<ContractInterface, DeclarationError> {
+        ContractInterface::from_signatures([SimpleExecutor::executeCall::SIGNATURE])?
+            .with_target(self.executor)
+    }
 }
 
 impl PayloadComposer for SimpleExecutorComposer {
@@ -169,18 +201,12 @@ impl Default for SimpleExecutorStrategy {
 /// The WETH contract the sample's declared read observes.
 const WETH: Address = alloy::primitives::address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
-/// The `balanceOf(address)` selector — `keccak256("balanceOf(address)")[..4]`.
-const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
-
 /// `WETH.balanceOf(executor)` as COMPLETE calldata: the selector plus the ABI
 /// argument word, so the declared read observes the sample executor's own
 /// balance rather than an argument-less call that could not be one.
 #[must_use]
 pub fn weth_balance_of_calldata(executor: Address) -> Bytes {
-    let mut calldata = Vec::with_capacity(4 + 32);
-    calldata.extend_from_slice(&BALANCE_OF_SELECTOR);
-    calldata.extend_from_slice(&U256::from_be_slice(executor.as_slice()).to_be_bytes::<32>());
-    Bytes::from(calldata)
+    Bytes::from(IWeth::balanceOfCall { owner: executor }.abi_encode())
 }
 
 impl SimpleExecutorStrategy {
@@ -300,6 +326,7 @@ impl ExecutionAdapter for SimpleExecutorStrategy {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use alloy::primitives::keccak256;
     use degenbot_execution::solve_result::{HopDescriptor, HopFamily};
     use degenbot_execution::ProbeReading;
 
@@ -380,6 +407,80 @@ mod tests {
         );
     }
 
+    /// The typed rewrite is a no-op for every committed golden: the `sol!` call
+    /// type emits exactly the canonical bytes the retired hand-packing
+    /// imitated, so the recorded corpus still pins the foreign payload (ADR-100
+    /// D3's acceptance criterion for the rewrite).
+    #[test]
+    fn typed_encoding_reproduces_the_hand_packed_corpus() {
+        const CORPUS: &str = "ead35cae\
+            0000000000000000000000000000000000000000000000000de0b6b3a7640000\
+            00000000000000000000000000000000000000000000000010cac896d2390000\
+            0000000000000000000000000000000000000000000000000000000000000060\
+            0000000000000000000000000000000000000000000000000000000000000002\
+            0000000000000000000000000000000000000000000000000de0b6b3a7640000\
+            00000000000000000000000000000000000000000000000010cac896d2390000";
+
+        let (hop_outputs, _consumed) = sample_inputs();
+        let typed = SimpleExecutor::executeCall {
+            optimal_input: U256::from(hop_outputs[0]),
+            final_output: U256::from(hop_outputs[1]),
+            hop_outputs: hop_outputs.iter().copied().map(U256::from).collect(),
+        }
+        .abi_encode();
+
+        assert_eq!(
+            Bytes::from(typed),
+            Bytes::from(alloy::hex::decode(format!("0x{CORPUS}")).unwrap()),
+            "the typed encoding must reproduce the recorded corpus byte for byte"
+        );
+    }
+
+    /// The declaration derived from the same `sol!` call type accepts the
+    /// strategy's own encoding, and the wrapper forwards it unchanged — the
+    /// tier-1 shape a foreign author opts into.
+    #[test]
+    fn the_sol_declaration_accepts_the_typed_encoding() {
+        use degenbot_execution::{ContractViolation, ValidatedAdapter, ValuePolicy};
+
+        let strat = SimpleExecutorStrategy::for_executor(EXECUTOR);
+        let interface = strat
+            .composer
+            .interface()
+            .unwrap()
+            .with_value_policy(ValuePolicy::Zero);
+        assert_eq!(interface.target(), Some(EXECUTOR));
+        assert_eq!(
+            interface.selectors(),
+            vec![SimpleExecutor::executeCall::SIGNATURE],
+            "the declaration is the call type's own signature"
+        );
+
+        let validated = ValidatedAdapter::new(strat, interface).unwrap();
+        let (hop_outputs, consumed) = sample_inputs();
+        let inputs = ComposerInputs {
+            optimal_input: hop_outputs[0],
+            hop_outputs: &hop_outputs,
+            consumed_inputs: &consumed,
+            opts: ComposeOptions,
+        };
+        let transaction =
+            ExecutionAdapter::encode(&validated, &PathInfo::new(Vec::new()), &inputs).unwrap();
+        assert_eq!(transaction.to, EXECUTOR);
+        assert_eq!(transaction.data[..4], simple_executor_selector());
+
+        // A call the declaration does not describe is refused: the wrapper
+        // reports it rather than repairing it.
+        let mut elsewhere = transaction.data.to_vec();
+        elsewhere[..4].copy_from_slice(&keccak256(b"steal(uint256)")[..4]);
+        assert!(matches!(
+            validated
+                .interface()
+                .validate(&TransactionRequest::call(EXECUTOR, Bytes::from(elsewhere))),
+            Err(ContractViolation::Selector { .. })
+        ));
+    }
+
     /// `cmd_executor.execute` selector — known to differ from the foreign one
     /// (the default adapter's `execute(commands, config)` ABI signature).
     #[test]
@@ -407,10 +508,19 @@ mod tests {
         // Probe — declared data (`WETH.balanceOf(executor)`, complete calldata).
         assert_eq!(strat.probes.len(), 1);
         assert_eq!(strat.probes[0].label(), "WETH");
-        assert_eq!(&keccak256(b"balanceOf(address)")[..4], &BALANCE_OF_SELECTOR);
+        // The declared read's selector is Alloy's, checked against an
+        // independent keccak of the signature.
+        assert_eq!(
+            &IWeth::balanceOfCall::SELECTOR[..],
+            &keccak256(b"balanceOf(address)")[..4]
+        );
         let read = weth_balance_of_calldata(EXECUTOR);
         assert_eq!(read.len(), 4 + 32, "the read carries its ABI argument");
-        assert_eq!(&read[..4], &BALANCE_OF_SELECTOR, "balanceOf(address)");
+        assert_eq!(
+            &read[..4],
+            &IWeth::balanceOfCall::SELECTOR[..],
+            "balanceOf(address)"
+        );
         assert_eq!(
             &read[4..],
             &U256::from_be_slice(EXECUTOR.as_slice()).to_be_bytes::<32>(),
