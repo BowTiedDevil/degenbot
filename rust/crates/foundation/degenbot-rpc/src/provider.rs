@@ -2508,6 +2508,49 @@ impl AlloyProvider {
         .await
     }
 
+    /// Fetch the raw EIP-7928 block access list of ONE exact block
+    /// (`debug_getRawBlockAccessList`), as its RLP-encoded bytes.
+    ///
+    /// The request carries the caller's block HASH as its only parameter —
+    /// never a `latest` or number tag — because the block access list is a fact
+    /// about one canonical block: a same-height reorg changes the hash, and
+    /// with it the request identity and the bytes, so anchoring on the hash is
+    /// what makes the answer reorg-safe at the call site.
+    ///
+    /// Best-effort by contract: an unsupported method, a `null` answer (no list
+    /// at that hash), or a transport failure is a classified error the caller's
+    /// prefetch stage reports as a skip — it never fails a read. Dispatch is a
+    /// single attempt (`debug_*` sits outside the idempotent-retry allowlist of
+    /// [`Self::make_request`], which therefore does not re-issue it).
+    ///
+    /// # Errors
+    ///
+    /// The [`ProviderError`] classified from the request's own failure (see
+    /// [`Self::make_request`]), or [`ProviderError::InvalidResponse`] when the
+    /// node answers `null` or bytes that are not a hex string.
+    pub async fn get_raw_block_access_list(&self, block_hash: B256) -> ProviderResult<Bytes> {
+        let result = self
+            .make_request(
+                "debug_getRawBlockAccessList",
+                serde_json::json!([block_hash]),
+            )
+            .await?;
+        match result.as_str() {
+            Some(hex) => hex
+                .parse::<Bytes>()
+                .map_err(|error| ProviderError::InvalidResponse {
+                    message: format!(
+                    "debug_getRawBlockAccessList returned non-hex bytes for {block_hash}: {error}"
+                ),
+                }),
+            None => Err(ProviderError::InvalidResponse {
+                message: format!(
+                    "debug_getRawBlockAccessList returned no block access list for {block_hash}"
+                ),
+            }),
+        }
+    }
+
     /// Make a raw JSON-RPC request.
     ///
     /// This method allows calling arbitrary RPC methods that don't have
@@ -4428,6 +4471,205 @@ mod tests {
             reconcile_count.load(Ordering::SeqCst),
             0,
             "reconcile must NOT be called for a definitive RpcError rejection"
+        );
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::panic)]
+mod raw_block_access_list_tests {
+    use super::*;
+    use alloy::providers::RootProvider;
+    use alloy::rpc::json_rpc::{Response, ResponsePayload, SerializedRequest};
+    use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
+    use serde_json::json;
+    use serde_json::value::to_raw_value;
+    use std::borrow::Cow;
+    use std::sync::Mutex;
+    use std::task::{Context, Poll};
+    /// One dispatched request, recorded as its `(method, params)` pair.
+    type Packet = (String, String);
+    /// The raw block access list bytes the stub serves.
+    const BAL: &[u8] = &[0xc8, 0x01, 0xc6, 0xc2, 0x80, 0x07, 0xc2, 0x02, 0x2a];
+    /// The exact-hash fetch's one block identity.
+    fn block_hash() -> B256 {
+        B256::new([0xaa; 32])
+    }
+    /// A transport serving `debug_getRawBlockAccessList` only, recording every
+    /// request it is dispatched.
+    #[derive(Debug, Clone)]
+    struct BalStub {
+        packets: Arc<Mutex<Vec<Packet>>>,
+        /// Answer `null` instead of raw bytes (the node holds no BAL here).
+        empty: bool,
+        /// Answer with a JSON-RPC method-not-found refusal.
+        unsupported: bool,
+        /// Fail the transport instead of answering.
+        down: bool,
+    }
+    impl BalStub {
+        fn serving() -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+                empty: false,
+                unsupported: false,
+                down: false,
+            }
+        }
+        fn empty() -> Self {
+            Self {
+                empty: true,
+                ..Self::serving()
+            }
+        }
+        fn unsupported() -> Self {
+            Self {
+                unsupported: true,
+                ..Self::serving()
+            }
+        }
+        fn downed() -> Self {
+            Self {
+                down: true,
+                ..Self::serving()
+            }
+        }
+        fn packets(&self) -> Vec<Packet> {
+            self.packets.lock().unwrap().clone()
+        }
+        fn provider(&self) -> AlloyProvider {
+            let client = ClientBuilder::default().transport(self.clone(), true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(Arc::new(root))
+        }
+        fn answer(&self, req: &SerializedRequest) -> Response {
+            assert_eq!(
+                req.method(),
+                "debug_getRawBlockAccessList",
+                "the exact-anchor fetch issues only its one method"
+            );
+            let payload = if self.unsupported {
+                ResponsePayload::Failure(alloy::rpc::json_rpc::ErrorPayload {
+                    code: -32_601,
+                    message: Cow::Borrowed("the method debug_getRawBlockAccessList does not exist"),
+                    data: None,
+                })
+            } else {
+                let result = if self.empty {
+                    json!(null)
+                } else {
+                    json!(Bytes::copy_from_slice(BAL))
+                };
+                ResponsePayload::Success(to_raw_value(&result).unwrap())
+            };
+            Response {
+                id: req.id().clone(),
+                payload,
+            }
+        }
+    }
+    impl tower::Service<RequestPacket> for BalStub {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let stub = self.clone();
+            Box::pin(async move {
+                let recorded = match &req {
+                    RequestPacket::Single(one) => (
+                        one.method().to_string(),
+                        one.params()
+                            .map_or_else(String::new, |p| p.get().to_string()),
+                    ),
+                    RequestPacket::Batch(_) => panic!("the exact-anchor fetch is never a batch"),
+                };
+                stub.packets.lock().unwrap().push(recorded);
+                if stub.down {
+                    return Err(TransportErrorKind::custom_str("stub transport down"));
+                }
+                match req {
+                    RequestPacket::Single(one) => Ok(ResponsePacket::Single(stub.answer(&one))),
+                    RequestPacket::Batch(_) => unreachable!(),
+                }
+            })
+        }
+    }
+    /// The request pins the EXACT block hash as its only parameter: no
+    /// `latest`, no number tag, no second parameter.
+    #[tokio::test]
+    async fn get_raw_block_access_list_requests_the_exact_hash_never_a_tag() {
+        let stub = BalStub::serving();
+        let provider = stub.provider();
+        let raw = provider
+            .get_raw_block_access_list(block_hash())
+            .await
+            .unwrap();
+        assert_eq!(raw.as_ref(), BAL);
+        let packets = stub.packets();
+        assert_eq!(packets.len(), 1, "one request: {packets:?}");
+        let (method, params) = &packets[0];
+        assert_eq!(method, "debug_getRawBlockAccessList");
+        assert_eq!(
+            params,
+            &format!("[\"{:#x}\"]", block_hash()),
+            "the parameter is the hash itself: {params}"
+        );
+        assert!(!params.contains("latest"), "never a mutable tag: {params}");
+    }
+    /// A served raw list answers with the exact bytes.
+    #[tokio::test]
+    async fn get_raw_block_access_list_returns_the_served_bytes() {
+        let stub = BalStub::serving();
+        let provider = stub.provider();
+        let raw = provider
+            .get_raw_block_access_list(block_hash())
+            .await
+            .unwrap();
+        assert_eq!(raw, Bytes::copy_from_slice(BAL));
+    }
+    /// A node answer of `null` (no block access list at that hash) is an
+    /// invalid response, not silently empty bytes.
+    #[tokio::test]
+    async fn get_raw_block_access_list_reports_a_missing_list_as_invalid_response() {
+        let stub = BalStub::empty();
+        let provider = stub.provider();
+        let result = provider.get_raw_block_access_list(block_hash()).await;
+        assert!(
+            matches!(result, Err(ProviderError::InvalidResponse { .. })),
+            "a missing list is an invalid response, got {result:?}"
+        );
+    }
+    /// A method-not-found refusal classifies like any JSON-RPC refusal.
+    #[tokio::test]
+    async fn get_raw_block_access_list_classifies_an_unsupported_method() {
+        let stub = BalStub::unsupported();
+        let provider = stub.provider();
+        let result = provider.get_raw_block_access_list(block_hash()).await;
+        match result {
+            Err(ProviderError::RpcError { code, message }) => {
+                assert_eq!(code, -32_601, "{message}");
+            }
+            other => panic!("the refusal must classify as RpcError, got {other:?}"),
+        }
+    }
+    /// A transport failure surfaces as the provider's own classification, so
+    /// the assist layer above sees a skip rather than bytes.
+    #[tokio::test]
+    async fn get_raw_block_access_list_surfaces_a_transport_failure() {
+        let stub = BalStub::downed();
+        let provider = stub.provider();
+        let result = provider.get_raw_block_access_list(block_hash()).await;
+        assert!(
+            matches!(
+                result,
+                Err(ProviderError::RpcError { code: -1, .. }
+                    | ProviderError::ConnectionFailed { .. }
+                    | ProviderError::Timeout { .. })
+            ),
+            "the transport failure classifies, got {result:?}"
         );
     }
 }

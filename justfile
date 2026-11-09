@@ -464,6 +464,26 @@ session-fanout-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example session_fanout_probe -- {{ ARGS }}
 
 
+# The parent-linked BAL carry-forward live probe: EVERY canonical block of the
+# captured corpus range (default 26375033..26375053; `BAL_CARRY_FIRST` /
+# `BAL_CARRY_LAST` / `BAL_CARRY_TRACE` override) advanced through the
+# production decode/advance pipeline (`ReadHubCache::advance_bal`) against live
+# reth, so parent links are real, with every candidate anchor's carried/cold
+# values compared against independent cold-node reads at that anchor — any
+# value mismatch is a hard failure (nonzero exit). Recorded storage-read
+# replay, not full EVM verdict parity. Fails closed unless the machine DECLARES
+# an endpoint (the conftest layers, the same resolution `test-fork` probes).
+bal-carry-probe *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC declared — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
+        exit 1
+    fi
+    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-simulation --example bal_carry_probe -- {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash

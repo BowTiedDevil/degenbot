@@ -79,6 +79,7 @@ rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/scenarios.rs::bamk
 rust/crates/engine/degenbot-bot/src/bot_core/pool_builder/builder.rs::build_curve_pool
 rust/crates/engine/degenbot-bot/src/instruments.rs::apply	the dispatch IS one flat 1:1 table over the closed census vocabulary; hiding rows in helpers would obscure the event→instrument map
 rust/crates/engine/degenbot-bot/src/instruments.rs::new	one instrument per block; splitting hides the inventory
+rust/crates/engine/degenbot-simulation/examples/bal_carry_probe.rs::run	the probe's corpus, replay, report, and scaling leg read top-down
 rust/crates/engine/degenbot-simulation/examples/cold_miss_fanout_probe.rs::main	the probe's leg sequence reads top-down
 rust/crates/engine/degenbot-simulation/examples/mirror_coverage_probe.rs::!module
 rust/crates/engine/degenbot-simulation/examples/worker_fanout_probe.rs::build_candidate	the candidate's deploy + depth seeding + frame encode read top-down
@@ -95,6 +96,8 @@ rust/crates/engine/degenbot-simulation/tests/frame_oracle.rs::oracle_masks_untra
 rust/crates/engine/degenbot-simulation/tests/frame_oracle.rs::oracle_parity_for	the per-family parity lanes read top-to-bottom per tracked slot kind, mirroring the layout table
 rust/crates/engine/degenbot-simulation/tests/frame_replay.rs::live_v2_router_swap_replay_matches_chain_post_state
 rust/crates/engine/degenbot-simulation/tests/journal_pools.rs::v3_frame_verdict	the parity lanes read top-to-bottom per tracked slot kind, mirroring the layout table
+rust/crates/engine/degenbot-simulation/tests/read_hub.rs::a_cold_generation_breaks_the_chain_and_cannot_resurrect_earlier_values	one five-generation chain reads top-to-bottom
+rust/crates/engine/degenbot-simulation/tests/read_hub.rs::refused_links_start_a_cold_child_and_request_the_child_hash_bal	the whole refusal matrix side by side is the contract
 rust/crates/engine/degenbot-simulation/tests/spike_derivation.rs::!module
 rust/crates/engine/degenbot-simulation/tests/tier3_v3_pool_swap_vs_reference_bytecode.rs::v3_pool_arbitrary_liquidity_matches_sim_proptest
 rust/crates/engine/degenbot-simulation/tests/tier3_v3_pool_swap_vs_reference_bytecode.rs::v3_pool_arbitrary_topology_edge_corpus

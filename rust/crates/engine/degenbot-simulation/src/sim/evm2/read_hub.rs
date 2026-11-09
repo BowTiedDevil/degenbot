@@ -121,24 +121,76 @@
 //! that used the flat [`AlloyProvider::get_storage_batch_at`] (which collapses a
 //! batch to its first failure) reads through the hub to keep the served slots.
 //!
+//! # Parent-linked carry-forward
+//!
+//! [`ReadHubCache::advance_bal`] is the opt-in state transition between
+//! anchors: install the child anchor with a snapshot of the SETTLED parent
+//! chain values plus EVERY final write of the child's exact-hash canonical
+//! block access list. The link is exact — carried only when the installed
+//! parent is exactly one block below the child and its hash is the child's
+//! parent hash, taken from the child's actual header — and the list is fetched
+//! and fully decoded BEFORE anything is cloned, so a missing, unsupported,
+//! RPC-failed, or malformed list yields a cold child that never serves parent
+//! values. Only settled storage words cross; accounts, queued or in-flight
+//! reads, waiters, and stats stay behind, so parent and child are independent
+//! afterwards.
+//!
+//! The write coverage is a TRUST boundary, not a fallback: a syntactically
+//! valid list from the trusted node is assumed to record every write the block
+//! made, and valid-but-incomplete write coverage is undetectable here — a
+//! carried parent value for an unrecorded write would silently outlive the
+//! block that changed it. Read omissions are safe: a slot no source mentions
+//! stays on the ordinary dynamic path.
+//!
+//! Carry-forward V1 is write-only: no read-only identities are prefetched at
+//! the child, unknown reads queue and settle through the ordinary batch path,
+//! and the carry takes no plan and no caps — its one filter is the relevance
+//! rule on new writes ([`ReadHubCache::advance_bal`]). Same-anchor calls are
+//! idempotent and repeat no BAL work.
+//!
+//! # What the snapshot holds, and what it costs
+//!
+//! The snapshot grows from two sources only: values candidates actually read
+//! (the working set, carried forward) and final writes to unknown slots whose
+//! address the caller's relevance set covers. Writes to known keys always
+//! update — relevance may add entries, never veto updates — and an irrelevant
+//! unknown write is left unknown so a later read falls back dynamically, so
+//! unrelated mainnet state does not accumulate. Growth is still UNBOUNDED over
+//! a long run within those two sources, and the clone cost grows with it;
+//! [`ReadHub::snapshot_breakdown`] splits working-set entries from BAL-only
+//! retention so the growth stays visible. Retiring BAL-only entries (or
+//! bounding the snapshot) is a deliberate later decision, not a silent one.
+//!
 //! # What this deliberately does not do
 //!
 //! No EVM `Database` implementation, no worker pool, no dispatch integration,
-//! and no prefetch policy: the hub is the read lane those later pieces share.
-//! Block hashes are per-chain facts and are never hub reads.
+//! and no prefetch policy of its own: the hub is the read lane those later
+//! pieces share. The opt-in BAL assist ([`seed_bal`](ReadHub::seed_bal) /
+//! [`prefetch_bal`](ReadHub::prefetch_bal), types in
+//! [`bal_prefetch`](super::bal_prefetch)) seeds one anchor's hub from an
+//! EIP-7928 block access list — final write values into the memo, read-only
+//! identities into this same queue — but it is a seeding seam with no dispatch
+//! and no second RPC path behind it. The carry-forward
+//! ([`advance_bal`](ReadHubCache::advance_bal)) keeps the same posture one
+//! anchor over: a snapshot transition seam with no dispatch. Block hashes are
+//! per-chain facts and are never hub reads.
 
-use alloy::primitives::{Address, StorageValue, U256};
+use alloy::primitives::{Address, StorageValue, B256, U256};
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 use futures_util::future::join;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
+use super::bal_prefetch::{
+    decode_bal_seed, BalPlan, BalPrefetchReport, BalSeed, BalSeedReport, BalSkip,
+};
 use crate::sim::storage_memo::ReadAnchor;
 
 /// Why a hub read has no value.
@@ -257,12 +309,25 @@ impl<T> Pending<T> {
             waiters: vec![waiter],
         }
     }
+    /// A BAL read-only identity: queued for the next round's batch with no
+    /// waiter of its own — requesters that join it before the drain coalesce
+    /// onto it exactly as they would onto any queued identity.
+    fn prefetched() -> Self {
+        Self {
+            dispatched: false,
+            waiters: Vec::new(),
+        }
+    }
 }
 
 #[derive(Default)]
 struct HubState {
     /// The anchor's fetched storage words.
     storage_values: HashMap<Slot, StorageValue>,
+    /// Every slot a CANDIDATE read at this anchor or anywhere earlier in the
+    /// carried chain — the snapshot's working set (see
+    /// [`ReadHub::snapshot_breakdown`]).
+    read_set: HashSet<Slot>,
     /// The anchor's fetched account rows (EOA rows included: see the module docs).
     account_values: HashMap<Address, AccountRead>,
     /// Storage identities queued or in flight at this anchor.
@@ -309,6 +374,25 @@ impl<'p> ReadHub<'p> {
         self.state.lock().storage_values.len()
     }
 
+    /// The snapshot's retention split: how much of it candidates have actually
+    /// read, versus entries seeded only because a BAL final write's address was
+    /// in the caller's relevance set. Both grow without bound over a long run
+    /// (see the module docs), so `bal_only` is the growth a run pays for slots
+    /// nobody reads — visible here.
+    #[must_use]
+    pub fn snapshot_breakdown(&self) -> SnapshotRetention {
+        let state = self.state.lock();
+        let working_set = state
+            .read_set
+            .iter()
+            .filter(|key| state.storage_values.contains_key(key))
+            .count();
+        SnapshotRetention {
+            working_set,
+            bal_only: state.storage_values.len().saturating_sub(working_set),
+        }
+    }
+
     /// Register one storage read at the hub's anchor.
     ///
     /// Resolves from the anchor memo when the word is known, joins the round that
@@ -317,6 +401,7 @@ impl<'p> ReadHub<'p> {
     pub fn read_storage(&self, address: Address, index: U256) -> ReadFuture<StorageValue> {
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.lock();
+        state.read_set.insert((address, index));
         if let Some(value) = state.storage_values.get(&(address, index)).copied() {
             state.stats.memo_hits += 1;
             drop(state);
@@ -388,6 +473,157 @@ impl<'p> ReadHub<'p> {
         )
         .await;
         round.settle(storage, accounts)
+    }
+
+    /// Seed one decoded BAL's assistance into this anchor's hub: every final
+    /// write value joins the anchor memo — settling any queued waiter with the
+    /// very value its round would have fetched — and every read-only identity
+    /// joins the queue the next [`Self::drain_round`] batches. No storage RPC
+    /// lives here; omitted and unread slots keep the ordinary dynamic path.
+    ///
+    /// Race contract: an identity an in-flight round already owns is left
+    /// exactly as it is (that round settles it with the same anchor value), so
+    /// no waiter is stranded and no pending entry is lost. Everything else is
+    /// seeded under this hub's lock, and every value is this anchor's alone.
+    pub fn seed_bal(&self, seed: &BalSeed) -> BalSeedReport {
+        let mut report = BalSeedReport::default();
+        let mut state = self.state.lock();
+        for &(address, slot, value) in &seed.writes {
+            let key = (address, slot);
+            if state.storage_values.contains_key(&key) {
+                report.writes_already_known += 1;
+                continue;
+            }
+            if let Some(pending) = state.storage_pending.remove(&key) {
+                if pending.dispatched {
+                    // The in-flight round owns this identity and will settle it
+                    // with the same anchor value; touching it here could only
+                    // duplicate or displace that settlement.
+                    report.writes_ignored_in_flight += 1;
+                    state.storage_pending.insert(key, pending);
+                    continue;
+                }
+                state.storage_values.insert(key, value);
+                report.writes_seeded += 1;
+                // The lock is held across the sends only (see `RoundGuard::settle`).
+                deliver(pending.waiters, &Ok(value));
+                continue;
+            }
+            state.storage_values.insert(key, value);
+            report.writes_seeded += 1;
+        }
+        for &(address, slot) in &seed.reads {
+            let key = (address, slot);
+            if state.storage_values.contains_key(&key) || state.storage_pending.contains_key(&key) {
+                report.reads_skipped_known += 1;
+                continue;
+            }
+            state.storage_pending.insert(key, Pending::prefetched());
+            report.reads_queued += 1;
+        }
+        report
+    }
+
+    /// The opt-in BAL-accelerated prefetch: fetch this anchor's EXACT-hash raw
+    /// block access list, decode it wholesale, and seed what the plan admits
+    /// (see [`Self::seed_bal`]).
+    ///
+    /// Best-effort by contract — candidate execution is never failed and later
+    /// reads are never poisoned. A number-only anchor (no hash to request by),
+    /// a refused or failed request, or malformed bytes is reported as a
+    /// [`BalSkip`] with nothing seeded, and every read falls back to the
+    /// ordinary batch/drain path with unchanged semantics. Subsequent dynamic
+    /// misses — the slots assistance did not cover — are visible afterwards as
+    /// fresh rounds in [`Self::stats`].
+    pub async fn prefetch_bal(&self, plan: &BalPlan) -> BalPrefetchReport {
+        let Some(hash) = self.anchor.hash else {
+            return BalPrefetchReport {
+                skip: Some(BalSkip::NoAnchorHash),
+                ..BalPrefetchReport::default()
+            };
+        };
+        let raw = match self.provider.get_raw_block_access_list(hash).await {
+            Ok(raw) => raw,
+            Err(error) => {
+                return BalPrefetchReport {
+                    skip: Some(BalSkip::Rpc(error.to_string())),
+                    ..BalPrefetchReport::default()
+                };
+            }
+        };
+        let seed = match decode_bal_seed(&raw, plan) {
+            Ok(seed) => seed,
+            Err(error) => {
+                return BalPrefetchReport {
+                    skip: Some(BalSkip::Decode(error.to_string())),
+                    ..BalPrefetchReport::default()
+                };
+            }
+        };
+        BalPrefetchReport {
+            skip: None,
+            seeded: self.seed_bal(&seed),
+            filtered_entries: seed.filtered_entries,
+            capped_entries: seed.capped_entries,
+        }
+    }
+
+    /// Clone every SETTLED storage word of `parent` into this hub's memo — the
+    /// carry-forward's whole transfer. Only values a `drain_round` settled at
+    /// the parent cross: accounts, queued or in-flight identities, waiters, and
+    /// stats stay behind, and the two hubs are independent afterwards.
+    fn carry_settled_storage(&self, parent: &ReadHub<'_>) -> usize {
+        let (settled, read_set) = {
+            let state = parent.state.lock();
+            (state.storage_values.clone(), state.read_set.clone())
+        };
+        let carried = settled.len();
+        let mut state = self.state.lock();
+        state.storage_values.extend(settled);
+        state.read_set.extend(read_set);
+        carried
+    }
+
+    /// Apply the child BAL's final writes to this hub's memo under the carry's
+    /// write policy. A write to a slot the snapshot already holds OVERWRITES it
+    /// whatever `relevance` says — a stale carried value outliving the block
+    /// that changed it is the one outcome the carry must never produce, and a
+    /// zero or deletion final overwrites like any other. A write to an UNKNOWN
+    /// slot is seeded only when its address is in `relevance`; an irrelevant
+    /// unknown write is left unknown (counted, never hidden) so a later read
+    /// takes the ordinary dynamic path and unrelated mainnet state never
+    /// accumulates in the snapshot.
+    ///
+    /// The snapshot is built before the hub is installed, so there is never a
+    /// waiter to settle here (unlike [`Self::seed_bal`], there is no
+    /// already-known skip and no in-flight carve-out).
+    fn apply_final_writes(
+        &self,
+        writes: &[(Address, U256, U256)],
+        relevance: &[Address],
+    ) -> AppliedWrites {
+        let mut state = self.state.lock();
+        let mut applied = Vec::new();
+        let mut overwritten = 0;
+        let mut skipped = 0;
+        for &(address, slot, value) in writes {
+            let key = (address, slot);
+            let known = state.storage_values.contains_key(&key);
+            if !known && !relevance.contains(&address) {
+                skipped += 1;
+                continue;
+            }
+            state.storage_values.insert(key, value);
+            if known {
+                overwritten += 1;
+            }
+            applied.push(key);
+        }
+        AppliedWrites {
+            applied,
+            overwritten,
+            skipped,
+        }
     }
 
     /// Mark every queued identity as dispatched and return it, so the round takes
@@ -570,6 +806,122 @@ fn count_u64(count: usize) -> u64 {
     u64::try_from(count).unwrap_or(u64::MAX)
 }
 
+/// Why a carry-forward refused to link the child to the installed parent.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CarryRefusal {
+    /// Nothing is installed, so there is no settled chain to carry.
+    #[error("no parent anchor is installed, so there is no settled chain to carry")]
+    NoParent,
+    /// The installed parent is not exactly one block below the child: a gap, a
+    /// backwards step, or a child at the parent's own height.
+    #[error("the installed parent anchor is not exactly one block below the child")]
+    NotConsecutive,
+    /// The installed parent is number-only: its hash cannot be compared against
+    /// the child's parent hash, so the link is unverifiable, never assumed.
+    #[error(
+        "the installed parent anchor is number-only, so the child's parent hash cannot be verified against it"
+    )]
+    ParentHashUnknown,
+    /// The installed parent's hash is not the child's parent hash — a wrong
+    /// hash, or a same-height reorg whose abandoned block the child still names.
+    #[error("the installed parent anchor's hash is not the child's parent hash")]
+    ParentHashMismatch,
+}
+
+/// What one parent-linked carry-forward advance did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CarryOutcome {
+    /// The child anchor was already installed: the same hub handed back, and no
+    /// BAL work repeated.
+    AlreadyCurrent,
+    /// The settled parent chain was cloned into the child snapshot and the
+    /// child's final writes applied over it.
+    Carried {
+        /// Settled parent storage words cloned into the child snapshot.
+        carried_values: usize,
+    },
+    /// The child snapshot holds no parent values: the lineage refused, the BAL
+    /// stage stepped aside, or both. The child's final writes may still be
+    /// applied under the same relevance rule (they are the child's own
+    /// post-block words); every other read follows the ordinary dynamic path.
+    Cold {
+        /// Why the chain was not carried; `None` when the lineage matched and
+        /// the BAL stage is what stepped aside.
+        lineage: Option<CarryRefusal>,
+        /// Why the child's final writes were not read; `None` when the child's
+        /// BAL decoded.
+        bal: Option<BalSkip>,
+    },
+}
+
+/// A snapshot's retention split — what candidates read, versus what only the
+/// BAL wrote (see [`ReadHub::snapshot_breakdown`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SnapshotRetention {
+    /// Snapshot entries whose slot a candidate read at this anchor or anywhere
+    /// earlier in the carried chain.
+    pub working_set: usize,
+    /// Snapshot entries no candidate has read — seeded because their address
+    /// was relevant when the write landed, never because an irrelevant write
+    /// was kept.
+    pub bal_only: usize,
+}
+
+/// What one application of a child's final writes did.
+struct AppliedWrites {
+    /// The identities applied, in BAL order.
+    applied: Vec<(Address, U256)>,
+    /// How many applied writes replaced a value the snapshot already held.
+    overwritten: usize,
+    /// Unknown-slot writes left unknown: address outside the relevance set.
+    skipped: usize,
+}
+
+/// One parent-linked carry-forward advance: its outcome, what its writes did,
+/// and where the time went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarryReport {
+    /// The transition that happened.
+    pub outcome: CarryOutcome,
+    /// The identities of the child's final writes APPLIED to the snapshot
+    /// `(address, slot)`, in BAL order: a write to a slot the snapshot held
+    /// (overwritten whatever the relevance set says) or to an unknown slot
+    /// whose address is in the relevance set. Empty when the BAL stage stepped
+    /// aside or the call was idempotent.
+    pub writes: Vec<(Address, U256)>,
+    /// How many of `writes` replaced a value the snapshot already held.
+    pub writes_overwritten: usize,
+    /// Final writes left UNKNOWN: slots the snapshot did not hold whose address
+    /// is outside the relevance set. A later read takes the dynamic path.
+    pub writes_skipped: usize,
+    /// Wall time of the child BAL's fetch and full decode.
+    pub bal_latency: Duration,
+    /// Wall time of the settled-parent clone.
+    pub clone_time: Duration,
+}
+
+/// Classify the child→installed-parent link: carried only when the parent is
+/// exactly one block below the child and its hash is the child's parent hash.
+/// A number-only parent's hash is unknown, so the link is unverifiable rather
+/// than matched.
+fn classify_link(
+    parent: Option<&ReadAnchor>,
+    child: ReadAnchor,
+    child_parent_hash: B256,
+) -> Option<CarryRefusal> {
+    let Some(parent) = parent else {
+        return Some(CarryRefusal::NoParent);
+    };
+    if parent.number.checked_add(1) != Some(child.number) {
+        return Some(CarryRefusal::NotConsecutive);
+    }
+    match parent.hash {
+        None => Some(CarryRefusal::ParentHashUnknown),
+        Some(hash) if hash != child_parent_hash => Some(CarryRefusal::ParentHashMismatch),
+        Some(_) => None,
+    }
+}
+
 /// The session-scoped owner of the per-anchor [`ReadHub`] — the migration entry
 /// point for a caller that used to pin a block number per read.
 pub struct ReadHubCache<'p> {
@@ -605,6 +957,159 @@ impl<'p> ReadHubCache<'p> {
         let hub = Arc::new(ReadHub::new(self.provider, anchor));
         *current = Some((anchor, Arc::clone(&hub)));
         hub
+    }
+
+    /// The opt-in parent-linked carry-forward: install `child` as the current
+    /// anchor with a snapshot of the settled parent chain values plus EVERY
+    /// final write of the child's exact-hash canonical block access list.
+    ///
+    /// The link is exact and supplied by the caller: `child` is the child
+    /// block's own anchor (number AND hash) and `child_parent_hash` is the
+    /// parent hash from that block's ACTUAL header. The chain is carried only
+    /// when the installed anchor is exactly one block below the child AND its
+    /// hash equals `child_parent_hash`. Without a match — nothing installed, a
+    /// gap, a number-only parent, a same-height reorg naming the abandoned
+    /// block — the child starts cold rather than guessing lineage.
+    ///
+    /// The child BAL is fetched at the child's exact hash and FULLY decoded
+    /// before anything is cloned: a missing, unsupported, RPC-failed, or
+    /// malformed list returns a cold child with the skip reported, and parent
+    /// values are never served at a child whose list could not be read. What is
+    /// cloned is only the parent's SETTLED storage words. Carry-forward V1 is
+    /// write-only — no read-only prefetch, no plan, no caps — and unknown child
+    /// reads queue and settle through the ordinary batch path.
+    ///
+    /// # The write policy: update known keys, seed only relevant new ones
+    ///
+    /// `relevance` is the caller's current-candidate (or tracked MEV) address
+    /// set. Every final write to a slot the snapshot already holds — carried
+    /// parent value included, zero or deletion final included — OVERWRITES it
+    /// whatever `relevance` says: a stale carried value outliving the block
+    /// that changed it is the one outcome the carry must never produce, so
+    /// relevance may add entries but never veto updates. A final write to an
+    /// UNKNOWN slot is seeded only when its address is in `relevance`; anything
+    /// else is left unknown — counted in [`CarryReport::writes_skipped`], never
+    /// hidden — so a later read takes the ordinary dynamic path and unrelated
+    /// mainnet state never accumulates. Cold children follow the same rule:
+    /// with no carried values, only relevant new writes seed.
+    ///
+    /// Same-anchor calls are idempotent: the installed hub is handed back and
+    /// no BAL work is repeated. Two CONCURRENT advances to the same child may
+    /// duplicate the BAL fetch — there is no single-flight here.
+    ///
+    /// # The write-coverage trust boundary
+    ///
+    /// A syntactically valid BAL from the trusted node is assumed COMPLETE for
+    /// writes. A write the list omits is undetectable here — the carried parent
+    /// value for that slot would silently outlive the block that changed it —
+    /// so this is a TRUST boundary, not a fallback path. Read omissions are
+    /// safe: a slot no source mentions stays dynamic and misses nothing.
+    pub async fn advance_bal(
+        &self,
+        child: ReadAnchor,
+        child_parent_hash: B256,
+        relevance: &[Address],
+    ) -> (Arc<ReadHub<'p>>, CarryReport) {
+        // Idempotence precedes any RPC: the same child anchor repeats no BAL
+        // work, and no lock guard crosses the fetch.
+        {
+            let current = self.current.lock();
+            if let Some((installed, hub)) = current.as_ref() {
+                if *installed == child {
+                    return (
+                        Arc::clone(hub),
+                        CarryReport {
+                            outcome: CarryOutcome::AlreadyCurrent,
+                            writes: Vec::new(),
+                            writes_overwritten: 0,
+                            writes_skipped: 0,
+                            bal_latency: Duration::ZERO,
+                            clone_time: Duration::ZERO,
+                        },
+                    );
+                }
+            }
+        }
+
+        // The child BAL is fetched and FULLY decoded before anything is
+        // cloned: a skip here can never return a child serving parent values.
+        let bal_started = Instant::now();
+        let fetched = match child.hash {
+            None => Err(BalSkip::NoAnchorHash),
+            Some(hash) => self
+                .provider
+                .get_raw_block_access_list(hash)
+                .await
+                .map_err(|error| BalSkip::Rpc(error.to_string())),
+        };
+        let (final_writes, bal) = match fetched {
+            Err(skip) => (Vec::new(), Some(skip)),
+            Ok(raw) => match decode_bal_seed(&raw, &BalPlan::default()) {
+                Err(error) => (Vec::new(), Some(BalSkip::Decode(error.to_string()))),
+                // V1 is write-only: read-only identities are not prefetched
+                // here; unknown reads take the ordinary dynamic path.
+                Ok(seed) => (seed.writes, None),
+            },
+        };
+        let bal_latency = bal_started.elapsed();
+
+        // Link, snapshot, and install under one lock hold, so the lineage check
+        // and the anchor move are one transition. The clone reads the SAME
+        // installed parent the check validated: a reorg or a concurrent
+        // transition while the BAL is in flight re-classifies against what is
+        // actually installed, and the reported lineage can never disagree with
+        // the hub the values were cloned from.
+        let mut current = self.current.lock();
+        if let Some((installed, hub)) = current.as_ref() {
+            if *installed == child {
+                return (
+                    Arc::clone(hub),
+                    CarryReport {
+                        outcome: CarryOutcome::AlreadyCurrent,
+                        writes: Vec::new(),
+                        writes_overwritten: 0,
+                        writes_skipped: 0,
+                        bal_latency,
+                        clone_time: Duration::ZERO,
+                    },
+                );
+            }
+        }
+        let lineage = classify_link(
+            current.as_ref().map(|(anchor, _)| anchor),
+            child,
+            child_parent_hash,
+        );
+        let linked = lineage.is_none() && bal.is_none();
+        let hub = ReadHub::new(self.provider, child);
+        let mut carried_values = 0;
+        let mut clone_time = Duration::ZERO;
+        if linked {
+            if let Some((_, parent_hub)) = current.as_ref() {
+                let clone_started = Instant::now();
+                carried_values = hub.carry_settled_storage(parent_hub);
+                clone_time = clone_started.elapsed();
+            }
+        }
+        let applied = hub.apply_final_writes(&final_writes, relevance);
+        let outcome = if linked {
+            CarryOutcome::Carried { carried_values }
+        } else {
+            CarryOutcome::Cold { lineage, bal }
+        };
+        let hub = Arc::new(hub);
+        *current = Some((child, Arc::clone(&hub)));
+        (
+            hub,
+            CarryReport {
+                outcome,
+                writes: applied.applied,
+                writes_overwritten: applied.overwritten,
+                writes_skipped: applied.skipped,
+                bal_latency,
+                clone_time,
+            },
+        )
     }
 
     /// The installed anchor (`None` before the first `for_anchor`).
