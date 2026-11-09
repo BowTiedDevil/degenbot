@@ -14,6 +14,12 @@ is deliberately distinct from the default `cmd_executor` adapter — never a
 re-derivation of the canonical settlement-arbitrage 7-call bundle (ADR-019 R / ADR-025 D3,
 "driver shell, not a co-implementation").
 
+It is also the worked tier-1/tier-2 pair of ADR-100: the adapter declares its
+interface (standard ABI JSON, a selector allow-list, and a zero native-value
+policy), so every encode is checked against it, and `demo()` runs the recorded
+corpus as a validation case over a real `PathInfo` — the seam's own intake, not
+a stand-in shape.
+
 Guardrails:
 - The Python lift produces calldata and declares the binding, probe list, and
   minimum profit. The engine runs the simulation and the Rust seam interprets
@@ -41,6 +47,24 @@ SIMPLE_EXECUTOR_SIGNATURE = "execute(uint256,uint256,uint256[])"
 # The foreign contract's own address (the transaction target). The sample
 # `SimpleExecutor` is flash-funded, so the call carries no native value.
 SIMPLE_EXECUTOR = "0x7777777777777777777777777777777777777777"
+
+# The same surface as standard ABI JSON — the tier-1 declaration's one required
+# part, written the way a toolchain emits it. The `constructor` entry is here on
+# purpose: non-function entries are accepted and ignored.
+EXECUTOR_ABI: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "name": "execute",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "optimal_input", "type": "uint256"},
+            {"name": "final_output", "type": "uint256"},
+            {"name": "hop_outputs", "type": "uint256[]"},
+        ],
+        "outputs": [{"name": "", "type": "bool"}],
+    },
+    {"type": "constructor", "inputs": [], "stateMutability": "nonpayable"},
+]
 
 
 def compose_simple_executor(result: Any) -> bytes:
@@ -70,6 +94,7 @@ def compose_simple_executor(result: Any) -> bytes:
 # - a NATIVE-ACCOUNT read observes the declared account's own ETH balance.
 # Assess/Fee use the seam's defaults.
 WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
 
 def weth_balance_of(account: str) -> bytes:
@@ -86,6 +111,49 @@ PROBES: list[dict[str, Any]] = [
     {"label": "WETH", "to": WETH, "data": weth_balance_of(SIMPLE_EXECUTOR)},
     {"label": "ETH", "account": SIMPLE_EXECUTOR},
 ]
+
+
+# A solved two-hop path — WETH -> USDC -> WETH — declared as data, so the case
+# below hands the encoder the seam's own `PathInfo` and `ComposerInputs` instead
+# of a stand-in object.
+TWO_HOP_HOPS: list[dict[str, Any]] = [
+    {
+        "family": "v2",
+        "pool_address": "0x1111111111111111111111111111111111111111",
+        "token0": WETH,
+        "token1": USDC,
+        "fee": 30,
+        "zfo": True,
+    },
+    {
+        "family": "v2",
+        "pool_address": "0x2222222222222222222222222222222222222222",
+        "token0": USDC,
+        "token1": WETH,
+        "fee": 30,
+        "zfo": False,
+    },
+]
+
+TWO_HOP_AMOUNTS: dict[str, Any] = {
+    "optimal_input": 1_000_000_000_000_000_000,
+    "hop_outputs": [1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
+    "consumed_inputs": [1_000_000_000_000_000_000, 1_000_000_000_000_000_000],
+}
+
+# The Rust sample's recorded `execute` payload for those amounts, pinned here
+# byte-for-byte: the case compares against bytes neither layer derives in this
+# file. Its first four bytes are the foreign selector `0xead35cae`, distinct
+# from `cmd_executor`'s `execute(bytes,uint256)`.
+RECORDED_CORPUS = bytes.fromhex(
+    "ead35cae"
+    "0000000000000000000000000000000000000000000000000de0b6b3a7640000"
+    "00000000000000000000000000000000000000000000000010cac896d2390000"
+    "0000000000000000000000000000000000000000000000000000000000000060"
+    "0000000000000000000000000000000000000000000000000000000000000002"
+    "0000000000000000000000000000000000000000000000000de0b6b3a7640000"
+    "00000000000000000000000000000000000000000000000010cac896d2390000"
+)
 
 
 def build_strategy() -> PayloadAdapter:
@@ -108,32 +176,42 @@ def build_strategy() -> PayloadAdapter:
         value=0,
         probes=PROBES,
         min_net_profit=0,
+        interface={
+            "abi": EXECUTOR_ABI,
+            "selectors": [SIMPLE_EXECUTOR_SIGNATURE],
+            "value": {"kind": "zero"},
+        },
     )
 
 
 def demo() -> None:
-    """Compose a sample solved path and print the foreign transaction binding."""
-    from types import SimpleNamespace
-
+    """Run the recorded corpus as a validation case over a real `PathInfo`."""
     strategy = build_strategy()
 
-    # A solved path's per-hop amounts, sealed into the Python `SolveResult`
-    # shape (here a stand-in with the same integer attributes the view exposes).
-    result = SimpleNamespace(
-        optimal_input=1_000_000_000_000_000_000,
-        hop_outputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
-        consumed_inputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
-    )
-    payload = compose_simple_executor(result)
-    # The foreign `execute(uint256,uint256,uint256[])` selector — distinct from
-    # `cmd_executor`'s `execute(bytes,uint256)` (verified in the Rust sample).
-    assert payload[:4] == bytes.fromhex("ead35cae")
+    reports = strategy.check_cases([
+        {
+            "name": "two_hop_v2_execute",
+            "hops": TWO_HOP_HOPS,
+            "amounts": TWO_HOP_AMOUNTS,
+            "expect": {
+                "kind": "transaction",
+                "selector": SIMPLE_EXECUTOR_SIGNATURE,
+                "calldata": "0x" + RECORDED_CORPUS.hex(),
+            },
+        },
+    ])
+
+    assert [report.name for report in reports] == ["two_hop_v2_execute"]
+    assert [report.passed for report in reports] == [True], [
+        (report.name, report.violations) for report in reports if not report.passed
+    ]
+
     logger.info(
-        "foreign transaction: to=%s value=%s data (%s bytes): 0x%s… via %s (probes=%d)",
+        "foreign transaction: to=%s value=%s data (%s bytes) matches the recorded "
+        "corpus via %s (probes=%d)",
         strategy.to,
         strategy.value,
-        len(payload),
-        payload.hex()[:16],
+        len(RECORDED_CORPUS),
         strategy.__class__.__name__,
         len(strategy.probes),
     )

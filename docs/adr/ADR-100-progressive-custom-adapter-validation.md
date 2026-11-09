@@ -1,9 +1,9 @@
 # ADR-100: Progressive custom-adapter validation — a declared interface, explicit cases, execution-backed certification
 
-**Status: accepted.** Design only: this change adds no production code. It refines
+**Status: accepted (implemented).** It refines
 [ADR-025](ADR-025-execution-strategy-seam.md) and
 [ADR-098](ADR-098-executor-agnostic-production-execution.md). A foreign adapter's
-encoder output becomes checkable against a declaration the operator writes, at
+encoder output is checkable against a declaration the operator writes, at
 three increasing strengths, and behaviour stays proven only by simulation.
 
 ## Context
@@ -155,6 +155,19 @@ Rules that make the declaration checkable rather than decorative:
    list.** It describes one contract's surface, nothing about its build or its
    future.
 
+Reading the ABI needs a parser, and the parser has one dependency fact:
+`JsonAbi::from_json_str` sits behind `alloy-json-abi`'s `serde_json` feature,
+which `alloy`'s `json-abi` re-export does not turn on. The crate therefore takes
+`alloy-json-abi` directly with that feature — the same crate already in the graph
+through `alloy`, so no new dependency enters the lock — and names no serde type in
+its code or its public API (a parse error renders with `to_string()`).
+
+Builder methods are fallible exactly where a value can be wrong: `with_target`
+returns `Result` (a zero address is a typo, not a deployment) and
+`with_selectors` returns `Result` (an allow-listed signature must exist in the
+ABI), while `with_value_policy` is infallible once `ValuePolicy::parse` has read
+the policy document.
+
 ### D3 — Rust declares the same interface from `sol!`, and encodes with it
 
 A pure-Rust adapter has a better source of truth than ABI JSON: its `sol!`
@@ -178,7 +191,7 @@ let data = Bytes::from(SimpleExecutor::executeCall {
 }.abi_encode());
 
 let interface = ContractInterface::from_signatures([SimpleExecutor::executeCall::SIGNATURE])?
-    .with_target(my_contract)
+    .with_target(my_contract)?          // fallible: a zero target is refused
     .with_value_policy(ValuePolicy::Zero);
 ```
 
@@ -314,7 +327,7 @@ model is part of the decision:
 | Tier | Added per-encode work |
 |---|---|
 | 0 (default) | none. No wrapper exists, no decode runs, no field is added to any adapter |
-| 1 | one `[u8;4]` selector lookup in a compiled table, then one `DynSolType` decode over the bytes after the selector. No re-encode, no keccak, no provider, no ABI re-parse |
+| 1 | one `[u8;4]` selector lookup in a compiled table, then one `DynSolType` decode over the bytes after the selector, then one re-encode of the decoded values to check canonicity. No keccak, no provider, no ABI re-parse |
 | 2 | none on any production path: cases run only when a caller asks |
 | 3 | engine work, in CI and the fork lane only |
 
@@ -325,6 +338,13 @@ ABI JSON. Per-encode validation allocates only the decoded argument values
 retains state, never caches per path, and never touches the journal or the
 provider.
 
+Argument checks are strict, and strictness is the one comparison the tier pays
+for. Alloy's dynamic decoder exposes no strict mode, so canonicality — no
+trailing bytes, no non-canonical dynamic offset or padding — is checked by
+re-encoding the decoded values and comparing that against the payload. The
+re-encode runs only on an opt-in tier-1 path, and it is what keeps a padded
+payload distinguishable from the declared call it merely resembles.
+
 Full ABI decoding therefore never happens on a path that did not ask for it. The
 ADR records the cost deliberately: tier 1 is intended for development, CI, and
 operators who accept one decode per transaction in exchange for refusing a
@@ -334,8 +354,10 @@ opt-in.
 
 There is no `validation` cargo feature. A feature would fork one crate's public
 surface and add a lane to the feature matrix to guard code that is inert unless a
-declaration is constructed; `alloy`'s default feature set already provides
-`json_abi` and `dyn_abi`, so the module adds no dependency edge.
+declaration is constructed. `alloy`'s default features already provide `json_abi`
+and `dyn_abi`; the module's only dependency fact is the `serde_json` feature on
+`alloy-json-abi` that turns on the ABI JSON parser (D2), and that crate is in the
+graph through `alloy` regardless.
 
 ### D7 — Validation cases own a real `PathInfo` and real amounts
 
@@ -521,6 +543,15 @@ Rules:
 7. **Python still authors no encoder and no assessment.** `abi_encode_call`
    remains the only encoding helper; the interface is a checker. A custom
    assessment interpreter stays a Rust-side `assess` override.
+
+8. **The routine decline is a typed exception.** `UnsupportedPath` is exported
+   beside `PayloadAdapter`, and a compose callable raises it to report
+   `ComposeError::Unsupported`: the target-selection walk advances to the next
+   target, and a case with `expect.kind == "decline"` accepts it. Every other
+   exception the callable raises stays that candidate's hard
+   `ComposeError::Encode`, which no case excuses whatever it expected — a
+   string-matched message would make a capability decision into a spelling
+   convention.
 
 ### D11 — What this deliberately is not
 
@@ -720,11 +751,13 @@ migration to `sol!` encoding with a declared interface.
   `ComposeError::Validation(ContractViolation)` and its doc.
 - `rust/crates/foundation/degenbot-execution/src/adapter.rs`: doc note that the
   wrapper forwards `compose_view` (no trait change).
-- `rust/crates/foundation/degenbot-execution/Cargo.toml`: no dependency change;
-  `alloy`'s default features already expose `alloy::json_abi` and
-  `alloy::dyn_abi` (verified: `alloy` default → `essentials` → `contract` →
-  `dyn-abi`/`json-abi`). Do not add `serde`/`serde_json`: name no serde type,
-  render `JsonAbi::from_json_str`'s error with `to_string()`.
+- `rust/crates/foundation/degenbot-execution/Cargo.toml`: one dependency
+  addition — `alloy-json-abi` with its `serde_json` feature. `alloy`'s
+  `json-abi` re-export exposes the module but not `JsonAbi::from_json_str`'s
+  parser, and that parser is what reads an ABI JSON array; the crate is already
+  in the graph through `alloy`, so no new dependency enters the lock. No serde
+  type is named in this crate's code or its public API: the parse error renders
+  with `to_string()`.
 - `rust/crates/engine/degenbot-arbitrage/src/selection.rs`: one arm —
   `ComposeError::Validation(detail)` → `PreparedEncoding::Failed(detail.into())`
   (i.e. treat it exactly like `Encode`).

@@ -243,13 +243,255 @@ a literal). The runnable, self-checking script is
 uv run python examples/execution_strategy_foreign.py
 ```
 
+## Validating your adapter
+
+Writing an adapter is one step; knowing it encodes the call you meant is
+another. degenbot offers three progressive checks, each opt-in, each proving
+more than the one below it (ADR-100):
+
+| Tier | What you declare | What it proves | When it runs |
+|---|---|---|---|
+| **0 — none** (default) | nothing | that the engine simulated the bytes the adapter returned | today's path, unchanged |
+| **1 — contract interface** | the contract's ABI JSON, plus optional target, selector, and native-value policies | the encoder's output is a *declared call to this contract*: declared selector, arguments that decode against the declared types, allowed target, allowed value | every `encode`, once you attach the declaration |
+| **2 — validation cases** | explicit path + amount + expected-transaction literals, one per behaviour | the encoder produces *that exact call* for *that exact path*, across the dimensions the cases cover | an explicit `check_cases(...)` / `run_cases(...)` call; never at registration |
+| **3 — execution-backed certification** | a compiled contract and its expected evidence | the deployed code *does what the calldata says* | CI and the fork lane; never in a production process |
+
+No lower tier implies a higher one, and the default costs nothing: an adapter
+that declares nothing keeps exactly today's encode path — no wrapper, no decode,
+no new field, no registration change. Validation is a **checker**, not a plugin
+framework and not a manifest: a contract declares one callable surface, never a
+version, a release tag, or a capability list (ADR-099 D8).
+
+### The declaration (tier 1)
+
+A contract interface is standard ABI JSON plus three independent, optional
+policies:
+
+```json
+{
+  "abi": [ { "type": "function", "name": "execute", "stateMutability": "nonpayable",
+             "inputs": [ {"name": "optimal_input", "type": "uint256"},
+                         {"name": "final_output", "type": "uint256"},
+                         {"name": "hop_outputs", "type": "uint256[]"} ],
+             "outputs": [ {"name": "", "type": "bool"} ] } ],
+  "selectors": ["execute(uint256,uint256,uint256[])"],
+  "target": "0x7777777777777777777777777777777777777777",
+  "value": {"kind": "zero"}
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `abi` | yes | a standard Solidity **ABI JSON array**. Only `type: "function"` entries are the callable surface; `constructor`, `event`, `error`, `fallback`, and `receive` entries are accepted and ignored, so a generated artifact pastes in whole |
+| `selectors` | no | a signature allow-list drawn from `abi`. Present, the encoded selector must be one of them; absent, any function the ABI declares is allowed |
+| `target` | no | the one address this interface's transactions must name. Omitted means address-agnostic — one declaration may describe deployments of one contract |
+| `value` | no | the native-value policy. Omitted means unchecked: native value is a funding decision the deployment owns, not a fact the ABI states |
+
+`value` takes exactly one of four forms:
+
+| Form | Meaning |
+|---|---|
+| `{"kind": "any"}` (the default when `value` is omitted) | no check |
+| `{"kind": "zero"}` | `value == 0` — a flash-funded contract |
+| `{"kind": "max", "max_wei": "123"}` | `value <= max_wei`, a decimal string (u256; never a JSON number) |
+| `{"kind": "exact", "exact_wei": "123"}` | `value == exact_wei` |
+
+Five rules make the declaration checkable rather than decorative:
+
+1. **Selectors come from the ABI, not from arithmetic here.** Each is
+   `keccak256(canonical signature)[..4]` as Alloy computes it, so a declaration
+   and a toolchain cannot disagree about what a signature means.
+2. **A declaration must contain at least one function.** A surface that declares
+   none could never validate anything, so it is refused instead of silently
+   passing.
+3. **Two functions may not share a selector.** A 4-byte collision is refused at
+   construction, because the declaration would otherwise be ambiguous about
+   which argument types a given calldata must decode against.
+4. **An allow-listed signature must exist in `abi`.** Naming a function the ABI
+   does not declare is a typo to refuse, not an implicit second declaration.
+5. **Argument types are the ABI's own.** Each parameter resolves to an Alloy
+   type; nothing in the declaration names a degenbot type, and nothing in it
+   describes a build or a future.
+
+A **Rust** adapter declares from the same `sol!` types that produce its calldata,
+so the encoder and its declaration cannot drift — the sample crate does exactly
+this:
+
+```rust
+alloy::sol! {
+    interface SimpleExecutor {
+        function execute(uint256 optimal_input, uint256 final_output, uint256[] hop_outputs)
+            external returns (bool);
+    }
+}
+
+use degenbot_execution::{ContractInterface, PayloadAdapter, ValidatedAdapter, ValuePolicy};
+
+// `with_target` and `with_selectors` are fallible; `with_value_policy` is not.
+let interface = ContractInterface::from_signatures([SimpleExecutor::executeCall::SIGNATURE])?
+    .with_target(my_executor)?
+    .with_value_policy(ValuePolicy::Zero);
+
+// Attach it by wrapping: every other adapter member is forwarded unchanged.
+let adapter = ValidatedAdapter::new(
+    PayloadAdapter::new(MyComposer { executor: my_executor }, my_executor),
+    interface,
+)?;
+```
+
+`ContractInterface::from_abi_json(...)` is the other construction route, for an
+adapter that ships its ABI artifact rather than a `sol!` declaration. The wrapper
+**forwards and never repairs**: `encode` and `compose_view` run the inner adapter
+and then validate the returned transaction unchanged, while `probe_spec`,
+`assess_options`, `fee_policy`, and `assess` are the inner's own — custom
+overrides included. Nothing is coerced, zeroed, or re-encoded, because repair
+would invent a transaction the adapter did not produce.
+
+A **Python** adapter declares with one keyword; the binding does the rest
+(serializes the `abi` array, parses the addresses, resolves the policy, and
+stamps the target from its own `to`, since one binding encodes to one address):
+
+```python
+adapter = PayloadAdapter(
+    compose_execute,
+    to=MY_EXECUTOR,
+    value=0,
+    interface={
+        "abi": EXECUTOR_ABI,                                    # standard ABI JSON
+        "selectors": ["execute(uint256,uint256,uint256[])"],
+        "value": {"kind": "zero"},
+        # "target" is omitted: the binding stamps its own `to`
+    },
+)
+```
+
+Construction is **pure data validation**: it never invokes your compose callable,
+never reads the chain, and never touches a provider. A malformed ABI, an empty
+surface, a duplicate selector, an unknown allow-listed signature, a bad policy, a
+declared `target` that disagrees with `to`, or a declared probe to your own
+contract that the declaration does not describe is a `ValueError` there, before
+any deployment exists. Checking a declaration is not registration:
+`SimulationDeployment` gains no validation hook, and a validated adapter arrives
+as an ordinary adapter.
+
+### The cases (tier 2)
+
+A **validation case** is a literal that says: for *this* path, with *these*
+amounts, the adapter must produce *that* transaction — or decline.
+
+```python
+CASES = [
+    {
+        "name": "two_hop_v2_execute",
+        "hops": [
+            {"family": "v2", "pool_address": "0x1111…1111", "token0": "0xC02a…",
+             "token1": "0xA0b8…", "fee": 30, "zfo": True},
+            {"family": "v2", "pool_address": "0x2222…2222", "token0": "0xA0b8…",
+             "token1": "0xC02a…", "fee": 30, "zfo": False},
+        ],
+        "amounts": {"optimal_input": 10**18,
+                    "hop_outputs": [10**18, 121 * 10**16],
+                    "consumed_inputs": [10**18, 10**18]},
+        # Decoded argument expectations, in declaration order.
+        "expect": {"kind": "transaction",
+                   "selector": "execute(uint256,uint256,uint256[])",
+                   "arguments": [10**18, 121 * 10**16, [10**18, 121 * 10**16]]},
+    },
+    {
+        "name": "three_hop_path_declines",
+        "hops": [ …three hops… ],
+        "amounts": {"optimal_input": 10**18, "hop_outputs": [ … ],
+                    "consumed_inputs": [ … ]},
+        "expect": {"kind": "decline"},
+    },
+]
+
+reports = adapter.check_cases(CASES)
+assert all(report.passed for report in reports), [r.violations for r in reports]
+```
+
+| Part | Rule |
+|---|---|
+| `name` | unique within the list; the report key and the message prefix |
+| `hops` | the **full** per-family hop shape, not the solver's report descriptor. `v2`/`v3` carry `pool_address`, `token0`, `token1`, `fee`, `zfo`; `v4` carries `pool_manager_address`, `pool_id_hex`, `currency0`, `currency1`, `fee`, `tick_spacing`, `hook_address`, `zfo` |
+| `amounts` | `optimal_input`, plus `hop_outputs` and `consumed_inputs` with exactly one entry per hop; every amount at or below the seam's `int128` bound |
+| `expect.kind` | `"transaction"`, then `selector` is required and `target`/`value` default to the binding's own; or `"decline"` |
+| `expect.arguments` | decoded argument values in declaration order — the produced calldata is decoded against the declared types and compared |
+| `expect.calldata` | an exact calldata golden (hex), mutually exclusive with `arguments` |
+
+A case needs no chain, because its path **is** data: each `hops` entry becomes a
+real `HopInfo` variant, the `amounts` become a real `ComposerInputs`, and the run
+calls the same `encode` production calls. There is no pool lookup, no `eth_call`,
+no engine, no registration, and no provider parameter to pass — which is also why
+a malformed case (wrong arity, an amount above the bound, an unknown family tag)
+is refused before the first encode instead of being encoded against.
+
+`check_cases` is explicit and synchronous. In Rust, `run_cases(&adapter,
+&interface, &cases)` returns one `CaseReport` per case; in Python the method
+returns reports carrying `name`, `passed`, and `violations`. A case that expected
+a transaction but received a decline (or the reverse) fails as a refusal; a case
+whose declared evidence disagrees fails as a named mismatch. Both are data, so one
+run reports every failing case.
+
+### Declines and violations
+
+Two refusals look alike and mean opposite things.
+
+| Refusal | Where it comes from | What happens |
+|---|---|---|
+| `ComposeError::Unsupported` — Python: raise `UnsupportedPath` | your adapter's routine capability decline ("this path is outside what my contract can encode") | `FirstCompatible` advances to the next target; nothing is suppressed or failed |
+| `ComposeError::Validation(ContractViolation)` | the encoder's output disagrees with the declaration you attached | a **hard** encode failure: the walk stops for that candidate, the simulation records `SimVerdict::Error`, and no submit row is produced — offering the same path to another target would hide the defect rather than fix it |
+| `ComposeError::Encode` — Python: any other exception | your encoder failed outright | the same hard failure |
+| `DeclarationError` | the declaration, or a case document, is unusable | a loud refusal where it is read: `ValueError` in Python |
+| `ContractViolation::CaseExpectation` | the produced transaction disagrees with a case's declared evidence | that case fails by name; the other cases still run |
+
+`AssessError` is untouched: validation never fabricates economic evidence, and a
+refusal is never priced.
+
+`ContractViolation` names the field that disagreed — `Calldata` (payload shorter
+than a 4-byte selector), `Selector` (not declared, or not allow-listed),
+`Arguments` (bytes that do not decode against the declared types, or are not
+their canonical encoding), `Target`, `NativeValue`, and tier 2's
+`CaseExpectation`. `DeclarationError` names what made the declaration unusable —
+`AbiJson`, `EmptyInterface`, `DuplicateSelector`, `UnknownSelector`,
+`UnparsableSignature`, `ZeroTarget`, `InvalidValuePolicy`, `Probe`, and tier 2's
+`CaseDocument`, `CaseArity`, `CaseAmount`.
+
+Argument checks are strict: the payload must be the **canonical** encoding of its
+arguments, so trailing bytes and a non-canonical dynamic offset are refused
+rather than tolerated. The decoder exposes no strict mode, so exactness is checked
+by re-encoding the decoded values and comparing — which is what keeps a padded
+payload distinguishable from the declared call.
+
+### What validation costs
+
+| Tier | Added per-encode work |
+|---|---|
+| 0 (default) | none — no wrapper exists, no decode runs, no field is added to any adapter |
+| 1 | one 4-byte selector lookup in the compiled table, then one argument decode (and the canonical re-encode comparison) over the bytes after the selector. No keccak, no provider, no ABI re-parse: the declaration is compiled once, at construction |
+| 2 | none on any production path — cases run only when a caller asks |
+| 3 | engine work, in CI and the fork lane only |
+
+Tier 1 targets development, CI, and operators who accept one decode per
+transaction in exchange for refusing a broken call before paying for its
+simulation. There is no `validation` cargo feature and no configuration key: the
+facility is inert until a declaration is constructed.
+
+The maintained starting point is `examples/execution_adapter_template.py` — ABI
+declaration, one transaction case with decoded argument expectations, one decline
+case, and the assertions that keep it self-checking:
+
+```bash
+uv run python examples/execution_adapter_template.py
+```
+
 ## Certifying against the compiled contract
 
-An adapter can declare the ABI it encodes and compare explicit cases against it,
-and both checks cost no simulation: they read the calldata your adapter produced.
-That is also their limit. A declaration that describes garbage calldata passes
-exactly as a faithful one does, because behaviour lives in code and a declaration
-never runs it — **a violation is dispositive, a pass is a screen** (ADR-100 D8).
+Tiers 1 and 2 read the calldata your adapter produced, and both cost no
+simulation. That is also their limit: a declaration that describes garbage
+calldata passes exactly as a faithful one does, because behaviour lives in code
+and a declaration never runs it — **a violation is dispositive, a pass is a
+screen** (ADR-100 D8).
 
 Certification is the tier that runs the code. It installs a tracked contract's
 own compiled runtime as a deployment's declared code (development only, so no
@@ -573,7 +815,12 @@ Detailed material behind this guide:
   manifest, capability IDs, and migration policy
 - Rust sample: `rust/examples/degenbot-execution-sample` (a foreign
   `SimpleExecutor` strategy, with its own recorded payload corpus)
-- Python sample: `examples/execution_strategy_foreign.py`
+- Python sample: `examples/execution_strategy_foreign.py` — the same foreign
+  payload, with a declared interface and its recorded corpus run as a
+  validation case over a real `PathInfo`
+- Maintained template: `examples/execution_adapter_template.py` — ABI
+  declaration, one transaction case with decoded argument expectations, one
+  decline case, no provider
 - Compiled-contract certification:
   `tests/dispatch/test_custom_executor_contract.py` compiles
   `contracts/vyper/custom_executor_probe.vy`, installs it as a foreign
@@ -586,3 +833,6 @@ Detailed material behind this guide:
 
 The design rationale for a generic execution interface with adapter-owned
 versioning is [ADR-098](adr/ADR-098-executor-agnostic-production-execution.md).
+The three validation tiers, the declaration document, the case shape, and the
+classification of a violation as a hard encode failure are
+[ADR-100](adr/ADR-100-progressive-custom-adapter-validation.md).

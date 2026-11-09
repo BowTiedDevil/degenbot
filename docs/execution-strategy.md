@@ -270,6 +270,56 @@ explicit act, and the binding is what meets the production seam. A composer
 whose target or value varies per opportunity implements
 `ExecutionAdapter::encode` directly instead.
 
+## Validating what you encode
+
+An adapter that wants to know its calldata is the call it meant attaches a
+**declared contract interface**; explicit **validation cases** then pin what it
+produces for real paths. Both are opt-in checkers on top of the seam — the trait
+gains no method, and an adapter that declares nothing behaves and costs exactly
+as it does today (ADR-100).
+
+| Name | What it is |
+|---|---|
+| `ContractInterface` | the compiled declaration: standard ABI JSON (`from_abi_json`) or `sol!` signatures (`from_signatures`), optionally narrowed by `with_target`, `with_selectors`, and `with_value_policy` |
+| `ValuePolicy` | the native-value promise: `Any` (unchecked, the default), `Zero`, `Max(U256)`, or `Exact(U256)` |
+| `ValidatedAdapter` | the optional wrapper that forwards every member to the inner adapter and validates the transaction `encode` and `compose_view` return — it never repairs one |
+| `ValidationCase` | one literal: a real `PathInfo`, real `ComposerInputs`, and the transaction the adapter must produce (or the decline it must report) |
+| `CaseReport` | one case's outcome: `name` plus `Ok(())` or `CaseFailure::{Refused, Mismatch}` |
+| `ComposeError::Validation` | the **hard** encode failure a violation becomes — never the routine `Unsupported` decline |
+| `DeclarationError` | a declaration or case document that cannot be read, refused where it is read |
+
+Python meets the same surface through two additions: the `interface=` keyword on
+`PayloadAdapter`, and `check_cases(cases)` over the same case documents, where a
+routine decline is the typed `UnsupportedPath` exception a compose callable
+raises:
+
+```python
+from degenbot._ffi.execution import PayloadAdapter, UnsupportedPath, abi_encode_call
+
+def compose_execute(result):
+    if len(result.hop_outputs) != 2:
+        # The routine capability decline: the walk advances to the next target.
+        raise UnsupportedPath("this contract settles exactly two hops")
+    return abi_encode_call("execute(uint256,uint256,uint256[])",
+                           [result.optimal_input, result.hop_outputs[-1],
+                            list(result.hop_outputs)])
+
+adapter = PayloadAdapter(
+    compose_execute,
+    to=EXECUTOR,
+    interface={"abi": EXECUTOR_ABI,
+               "selectors": ["execute(uint256,uint256,uint256[])"]},
+)
+assert all(report.passed for report in adapter.check_cases(CASES))
+```
+
+A pass is a screen, not a proof: tiers 1 and 2 check the encoder against its own
+declaration, and only execution-backed certification — a compiled contract driven
+through the production lane — shows what the deployed code does with the bytes.
+The worked examples are `examples/execution_adapter_template.py` (declaration plus
+two cases, offline) and the certification module
+`tests/dispatch/test_custom_executor_contract.py`.
+
 ## Quick examples
 
 Both examples build the same **foreign** `SimpleExecutor` payload — a plain
@@ -456,6 +506,10 @@ behavior unchanged.
   the engine.
 - **Multi-transaction choreography.** One opportunity is one transaction.
 - **A fifth seam for fee.** Pricing is the defaulted half of Assess.
+- **A plugin framework, a manifest, or a capability scheme around validation.**
+  A declared interface is a checker for calldata you already produce — not an
+  adapter registry, not a version/capability document, and not a declarative
+  encoder: your code still maps path fields to call arguments (ADR-100 D11).
 
 ## Migration notes (this interface change)
 
@@ -498,7 +552,8 @@ Concrete, green, golden-pinned references ship in this repo:
   strategy wiring all four parts; its recorded expected-bytes corpus is pinned
   as its own golden, distinct from `cmd_executor`).
 - **Python** — `examples/execution_strategy_foreign.py` (the Encode blob over
-  `degenbot._ffi.execution` + `abi_encode_call`, bound with `PayloadAdapter`).
+  `degenbot._ffi.execution` + `abi_encode_call`, bound with `PayloadAdapter`,
+  with a declared interface and its recorded corpus run as a validation case).
 
 Both produce the **same** recorded foreign payload byte-for-byte (cross-layer
 parity oracle). The Python example is the seam lift alone; registering that
@@ -510,5 +565,6 @@ consumer drives — one fan-out implementation, two shells.
 
 - [ADR-025 — the `ExecutionAdapter` seam](adr/ADR-025-execution-strategy-seam.md)
 - [ADR-098 — executor-agnostic production execution](adr/ADR-098-executor-agnostic-production-execution.md)
+- [ADR-100 — progressive custom-adapter validation](adr/ADR-100-progressive-custom-adapter-validation.md)
 - `GLOSSARY.md` — the seam / two-consumer (Rust engine, Python driver shell)
   framing.

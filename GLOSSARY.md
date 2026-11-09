@@ -1178,6 +1178,38 @@ verdict and never advances the walk.
 _Avoid_: calling it a fallback or a per-path retry loop, and putting capability policy
 inside an encoder.
 
+**Contract interface**:
+
+One contract's declared callable surface plus its transaction policy — standard ABI JSON
+with an optional selector allow-list, target, and native-value policy — compiled once into
+a selector-keyed table that checks every encode of an adapter it is attached to. It
+describes one deployment's surface and carries no version, release tag, or capability
+list; a violation is dispositive, a pass is only a screen.
+
+_Avoid_: calling it a schema or a manifest; reading it as a version/capability declaration,
+a second encoder, or a declarative mapping from path fields to call arguments.
+
+**Validation case**:
+
+One literal expectation about an adapter's encoder: a real `PathInfo`, real amounts, and
+the transaction (or the routine decline) the adapter must produce for them. A case's path
+is data it owns, so a case run touches no provider, engine, or registry, and it runs only
+when a caller asks.
+
+_Avoid_: treating it as a golden-bytes corpus, a registration step, a configuration key, or
+a check that may fetch its own path from a chain or a session.
+
+**Certification**:
+
+Execution-backed proof of a custom executor: a compiled contract — tracked source installed
+as declared code, or the code actually deployed at the target — driven through the
+production encode → simulate → assess lane with the verdict's evidence named per kind, and
+a negative control in the same module. Only execution shows what the deployed code does
+with the calldata.
+
+_Avoid_: calling a declared-interface or validation-case pass a certification; treating a
+certification as a registration check, or running one in a production process.
+
 ## Executor command layer
 
 The layer turning a solver result into the bytes passed to the on-chain executor's
