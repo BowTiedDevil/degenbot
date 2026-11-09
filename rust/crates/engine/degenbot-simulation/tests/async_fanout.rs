@@ -34,8 +34,8 @@ use alloy::rpc::json_rpc::{
 use alloy::transports::{TransportError, TransportFut};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::async_fanout::{
-    AsyncEvmFanout, AsyncFanoutSlot, CandidateStateSource, FanoutEngineConfig, FanoutError,
-    FanoutLimits, FanoutOutcome, PreparedCandidate, ReadHubDb, ReadHubDbError,
+    AsyncEvmFanout, AsyncFanoutSlot, CandidateStateSource, DrainPolicy, FanoutEngineConfig,
+    FanoutError, FanoutLimits, FanoutOutcome, PreparedCandidate, ReadHubDb, ReadHubDbError,
 };
 use degenbot_simulation::sim::evm2::handle_block_env;
 use degenbot_simulation::sim::evm2::read_hub::ReadHub;
@@ -455,9 +455,16 @@ async fn a_small_job_occupies_one_slot() {
 /// The concurrent fan-out and the one-slot sequential driver settle the same
 /// facts per candidate, over a database whose reads park on the read hub: the
 /// fan-out's idle rounds are what settle them, and the results are the
-/// sequential ones.
+/// sequential ones — under either drain ownership.
 #[tokio::test]
 async fn the_fanout_settles_the_indexed_sequential_result() {
+    for policy in [DrainPolicy::SessionWide, DrainPolicy::PerLane] {
+        indexed_sequential_result_holds(policy).await;
+    }
+}
+
+/// One drain policy's concurrent fan-out, against the one-slot sequential driver.
+async fn indexed_sequential_result_holds(policy: DrainPolicy) {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let hub = ReadHub::new(
@@ -471,6 +478,7 @@ async fn the_fanout_settles_the_indexed_sequential_result() {
     };
 
     let concurrent = AsyncEvmFanout::new(FanoutLimits::new(3, 3), fanout_config())
+        .with_drain_policy(policy)
         .run(&candidates, &source, Some(&hub))
         .await
         .expect("the concurrent fan-out settles every candidate");
@@ -480,10 +488,6 @@ async fn the_fanout_settles_the_indexed_sequential_result() {
     );
     let stats = hub.stats();
     assert!(stats.rounds >= 1, "the hub settled at least one round");
-    assert!(
-        stats.coalesced >= 1,
-        "concurrent candidates joined an identity already queued, got {stats:?}"
-    );
 
     let sequential = AsyncEvmFanout::new(FanoutLimits::new(1, 1), fanout_config())
         .run(&candidates, &source, Some(&hub))
@@ -511,6 +515,50 @@ async fn the_fanout_settles_the_indexed_sequential_result() {
         );
         assert_eq!(
             fast.calls[2].native_balance,
+            Some(U256::from(transferred(index))),
+            "candidate {index}: the transfer it made is its own"
+        );
+    }
+}
+
+/// One lane's pass registers every parked candidate's read before it drains, so
+/// candidates sharing a read identity coalesce onto ONE fetch by construction —
+/// the single-flight rule's own evidence, not a thread-start race.
+#[tokio::test]
+async fn concurrent_candidates_coalesce_onto_one_fetch() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let hub = ReadHub::new(
+        &provider,
+        ReadAnchor::identified(BLOCK, B256::repeat_byte(0xaa)),
+    );
+    let candidates: Vec<PreparedCandidate> = (0..2).map(hub_candidate).collect();
+    let source = HubSource {
+        hub: &hub,
+        provider: &provider,
+    };
+
+    let outcome = AsyncEvmFanout::new(FanoutLimits::new(1, 2), fanout_config())
+        .run(&candidates, &source, Some(&hub))
+        .await
+        .expect("both candidates settle");
+
+    let stats = hub.stats();
+    assert!(
+        stats.coalesced >= 1,
+        "the second candidate joined the first one's queued identity, got {stats:?}"
+    );
+    for index in 0..2 {
+        let sequence = outcome
+            .sequence(index)
+            .unwrap_or_else(|| panic!("candidate {index} settled"));
+        assert_eq!(
+            sequence.calls[1].output,
+            served_storage_word(),
+            "candidate {index}: the captured step returns the hub's slot value"
+        );
+        assert_eq!(
+            sequence.calls[2].native_balance,
             Some(U256::from(transferred(index))),
             "candidate {index}: the transfer it made is its own"
         );
@@ -792,6 +840,9 @@ struct ChainStub {
     /// How long a dispatched packet takes to answer — a round's latency, so a
     /// round can still be in flight while another lane looks for work.
     delay: Duration,
+    /// Raised the moment a packet reaches the transport: a round is in flight,
+    /// which a held-back read waits for before it registers.
+    dispatched: Option<Arc<FirstDispatch>>,
 }
 
 impl ChainStub {
@@ -805,6 +856,12 @@ impl ChainStub {
             delay,
             ..Self::default()
         }
+    }
+
+    /// The same stub, raising `dispatched` as each packet reaches it.
+    fn announcing(mut self, dispatched: Arc<FirstDispatch>) -> Self {
+        self.dispatched = Some(dispatched);
+        self
     }
 
     fn provider(&self) -> AlloyProvider {
@@ -862,6 +919,9 @@ impl tower::Service<RequestPacket> for ChainStub {
     fn call(&mut self, req: RequestPacket) -> Self::Future {
         let stub = self.clone();
         Box::pin(async move {
+            if let Some(dispatched) = &stub.dispatched {
+                dispatched.raise();
+            }
             if !stub.delay.is_zero() {
                 std::thread::sleep(stub.delay);
             }
@@ -1014,21 +1074,25 @@ async fn two_candidates_on_one_slot_share_no_writes() {
 }
 
 /// Nothing can wake a parked candidate forever: the driver refuses to spin and
-/// reports the candidates still waiting instead of parking the caller.
+/// reports the candidates still waiting instead of parking the caller — under
+/// either drain ownership.
 #[tokio::test]
 async fn a_candidate_no_round_can_settle_is_reported_as_stalled() {
-    let candidates = vec![transfer_candidate(0)];
-    let outcome = AsyncEvmFanout::new(FanoutLimits::new(1, 1), fanout_config())
-        .run(&candidates, &ParkingSource, None)
-        .await;
-    let Err(refusal) = outcome else {
-        panic!("the run reports the stall");
-    };
-    assert_eq!(
-        refusal,
-        FanoutError::Stalled { waiting: vec![0] },
-        "the stalled candidate is named"
-    );
+    for policy in [DrainPolicy::SessionWide, DrainPolicy::PerLane] {
+        let candidates = vec![transfer_candidate(0)];
+        let outcome = AsyncEvmFanout::new(FanoutLimits::new(1, 1), fanout_config())
+            .with_drain_policy(policy)
+            .run(&candidates, &ParkingSource, None)
+            .await;
+        let Err(refusal) = outcome else {
+            panic!("the run reports the stall under {policy:?}");
+        };
+        assert_eq!(
+            refusal,
+            FanoutError::Stalled { waiting: vec![0] },
+            "the stalled candidate is named"
+        );
+    }
 }
 
 /// The state source whose reads never resolve and never wake.
@@ -1374,9 +1438,17 @@ impl<'h> CandidateStateSource<'h> for GatedHubSource<'h, '_> {
 /// hub before the first round: one lane's round is in flight while the others find
 /// an empty drain, and the run still completes. A lane that counted a neighbour's
 /// round as "nothing can settle" would spin through [`MAX_IDLE_ROUNDS`] and report
-/// a false [`FanoutError::Stalled`] while the reads were being served.
+/// a false [`FanoutError::Stalled`] while the reads were being served — under
+/// either drain ownership.
 #[tokio::test]
 async fn overlapping_hub_reads_across_workers_do_not_false_stall() {
+    for policy in [DrainPolicy::SessionWide, DrainPolicy::PerLane] {
+        overlapping_reads_do_not_false_stall(policy).await;
+    }
+}
+
+/// One drain policy's overlapping hub reads across workers.
+async fn overlapping_reads_do_not_false_stall(policy: DrainPolicy) {
     let stub = ChainStub::slow(ROUND_DELAY);
     let provider = stub.provider();
     let hub = ReadHub::new(
@@ -1393,6 +1465,7 @@ async fn overlapping_hub_reads_across_workers_do_not_false_stall() {
     };
 
     let outcome = AsyncEvmFanout::new(FanoutLimits::new(HUB_WORKERS, HUB_SLOTS), fanout_config())
+        .with_drain_policy(policy)
         .run(&candidates, &source, Some(&hub))
         .await
         .expect("overlapping hub reads across workers must not report a false stall");
@@ -1442,4 +1515,237 @@ async fn overlapping_hub_reads_across_workers_do_not_false_stall() {
             "candidate {index}: the transfer it made is its own"
         );
     }
+}
+
+/// The moment a round is in flight: raised when the stub's transport receives
+/// the round's packet, while the modeled round trip is still ahead of it.
+#[derive(Debug, Default)]
+struct FirstDispatch {
+    raised: Mutex<bool>,
+    announced: Condvar,
+}
+
+impl FirstDispatch {
+    /// Announce the dispatch. Idempotent: every packet announces the same fact.
+    fn raise(&self) {
+        let mut raised = self
+            .raised
+            .lock()
+            .expect("the dispatch flag is not poisoned");
+        *raised = true;
+        self.announced.notify_all();
+    }
+
+    /// Block until a round is in flight, giving up after a bounded wait so a
+    /// broken ordering fails the assertions instead of hanging the suite.
+    fn wait(&self) {
+        let _outcome = self
+            .announced
+            .wait_timeout_while(
+                self.raised
+                    .lock()
+                    .expect("the dispatch flag is not poisoned"),
+                Rendezvous::BUDGET,
+                |raised| !*raised,
+            )
+            .expect("the dispatch flag is not poisoned");
+    }
+}
+
+/// One candidate's hub stack held back until a neighbour's round is in flight:
+/// its reads register only once another round already owns the identities, so
+/// this lane's own drain is the empty one the stall guard must coordinate.
+struct HeldBackDb<'h, 'p> {
+    inner: ReadHubDb<'h, 'p>,
+    dispatch: Arc<FirstDispatch>,
+    held: bool,
+}
+
+impl<'h, 'p> HeldBackDb<'h, 'p> {
+    fn new(inner: ReadHubDb<'h, 'p>, dispatch: Arc<FirstDispatch>) -> Self {
+        Self {
+            inner,
+            dispatch,
+            held: false,
+        }
+    }
+
+    /// Hold the FIRST read only: the walk's later reads follow its answers.
+    fn hold(&mut self) {
+        if self.held {
+            return;
+        }
+        self.held = true;
+        self.dispatch.wait();
+    }
+}
+
+impl AsyncDatabase for HeldBackDb<'_, '_> {
+    type Error = ReadHubDbError;
+
+    fn get_account(
+        &mut self,
+        address: Address,
+    ) -> impl Future<Output = Result<Option<AccountInfo>, Self::Error>> + Send + '_ {
+        self.hold();
+        self.inner.get_account(address)
+    }
+
+    fn get_code_by_hash(
+        &mut self,
+        code_hash: B256,
+    ) -> impl Future<Output = Result<::evm2::bytecode::Bytecode, Self::Error>> + Send + '_ {
+        self.hold();
+        self.inner.get_code_by_hash(code_hash)
+    }
+
+    fn get_storage(
+        &mut self,
+        address: Address,
+        key: Word,
+    ) -> impl Future<Output = Result<Word, Self::Error>> + Send + '_ {
+        self.hold();
+        self.inner.get_storage(address, key)
+    }
+
+    fn get_block_hash(
+        &mut self,
+        number: Word,
+    ) -> impl Future<Output = Result<B256, Self::Error>> + Send + '_ {
+        self.hold();
+        self.inner.get_block_hash(number)
+    }
+}
+
+/// The per-candidate state source whose candidate 1 is held back: both
+/// candidates walk the same read identities, and candidate 1's first read
+/// registers only after candidate 0's round is in flight.
+struct OwnedReadSource<'h, 'p> {
+    hub: &'h ReadHub<'p>,
+    provider: &'p AlloyProvider,
+    dispatch: Arc<FirstDispatch>,
+}
+
+impl<'h> CandidateStateSource<'h> for OwnedReadSource<'h, '_> {
+    fn database(&self, candidate: usize) -> Box<dyn DynDatabase + 'h> {
+        let inner = ReadHubDb::new(self.hub, self.provider);
+        if candidate == 0 {
+            Box::new(AsyncDb::new(inner))
+        } else {
+            Box::new(AsyncDb::new(HeldBackDb::new(
+                inner,
+                Arc::clone(&self.dispatch),
+            )))
+        }
+    }
+}
+
+/// Candidate `index`'s work over the recipient BOTH candidates share: the
+/// transfer values differ per candidate, but every read identity is common, so
+/// one round can own both candidates' reads.
+fn shared_read_candidate(index: usize) -> PreparedCandidate {
+    PreparedCandidate::new(
+        vec![
+            Evm2SimStep::Transact(value_tx(recipient(0), transferred(index))),
+            Evm2SimStep::ReadNativeBalance(recipient(0)),
+        ],
+        settlement_overrides(),
+    )
+}
+
+/// Two lanes over one hub, both candidates walking the same read identities,
+/// with candidate 1's first read registering only after candidate 0's round is
+/// in flight. That neighbour's round therefore owns candidate 1's read: the
+/// lane must wait for it (never spin into a false stall, never fetch the
+/// identity a second time), and both candidates must settle with their own
+/// results.
+#[tokio::test]
+async fn a_lane_whose_reads_a_neighbours_round_owns_waits_and_shares_one_fetch() {
+    let dispatch = Arc::new(FirstDispatch::default());
+    let stub = ChainStub::slow(ROUND_DELAY).announcing(Arc::clone(&dispatch));
+    let provider = stub.provider();
+    let hub = ReadHub::new(
+        &provider,
+        ReadAnchor::identified(BLOCK, B256::repeat_byte(0xaa)),
+    );
+    let candidates = vec![shared_read_candidate(0), shared_read_candidate(1)];
+    let source = OwnedReadSource {
+        hub: &hub,
+        provider: &provider,
+        dispatch,
+    };
+
+    let outcome = AsyncEvmFanout::new(FanoutLimits::new(2, 2), fanout_config())
+        .with_drain_policy(DrainPolicy::PerLane)
+        .run(&candidates, &source, Some(&hub))
+        .await
+        .expect("a lane whose read a neighbour's round owns waits instead of stalling");
+
+    assert!(
+        outcome.stats.slots_created <= 2,
+        "the TOTAL slot bound holds, built {}",
+        outcome.stats.slots_created
+    );
+    assert!(
+        outcome.stats.peak_active_slots <= 2,
+        "at most F candidates were ever in flight, peaked at {}",
+        outcome.stats.peak_active_slots
+    );
+    for index in 0..2 {
+        assert_candidate_identity(&outcome, index);
+    }
+    let stats = hub.stats();
+    assert!(
+        stats.coalesced >= 1,
+        "the held-back read joined the neighbour's identity, got {stats:?}"
+    );
+    let fetched = stub
+        .packets
+        .lock()
+        .expect("the packet log is not poisoned")
+        .iter()
+        .flatten()
+        .filter(|method| *method == "eth_getBalance")
+        .count();
+    assert_eq!(
+        fetched,
+        usize::try_from(stats.account_members).expect("the member count fits a usize"),
+        "each dispatched identity was fetched exactly once, whatever lane drained it"
+    );
+}
+
+/// The stall guard's sensitivity: the same two-lane fixture with the
+/// coordinated wait removed. Candidate 1's read is owned by candidate 0's
+/// round, so its drains report empty while the read is being served — counted
+/// as idle, that is the false [`FanoutError::Stalled`] the guard exists to
+/// prevent, and the unguarded run must reproduce it.
+#[tokio::test]
+async fn uncoordinated_drains_reproduce_the_false_stall_the_guard_prevents() {
+    let dispatch = Arc::new(FirstDispatch::default());
+    let stub = ChainStub::slow(ROUND_DELAY).announcing(Arc::clone(&dispatch));
+    let provider = stub.provider();
+    let hub = ReadHub::new(
+        &provider,
+        ReadAnchor::identified(BLOCK, B256::repeat_byte(0xaa)),
+    );
+    let candidates = vec![shared_read_candidate(0), shared_read_candidate(1)];
+    let source = OwnedReadSource {
+        hub: &hub,
+        provider: &provider,
+        dispatch,
+    };
+
+    let outcome = AsyncEvmFanout::new(FanoutLimits::new(2, 2), fanout_config())
+        .with_drain_policy(DrainPolicy::PerLaneUnguarded)
+        .run(&candidates, &source, Some(&hub))
+        .await;
+
+    let Err(FanoutError::Stalled { waiting }) = outcome else {
+        panic!("without the coordinated wait the neighbour's round reads as a stall");
+    };
+    assert_eq!(
+        waiting,
+        vec![1],
+        "the false stall names the lane whose read the neighbour's round owns"
+    );
 }

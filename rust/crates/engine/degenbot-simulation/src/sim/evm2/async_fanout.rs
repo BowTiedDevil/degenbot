@@ -120,24 +120,41 @@
 //! [`RoundReport`](super::read_hub::RoundReport). Read as "nothing can settle",
 //! that empty report would let one lane's in-flight round starve every other lane
 //! into a false [`FanoutError::Stalled`] — the lanes would count a wave of reads
-//! being served as a stall. So a round has exactly one owner at a time:
+//! being served as a stall. [`DrainPolicy`] selects how the lanes own rounds:
 //!
-//! - A lane takes the drain ROLE before it drains and holds it for the whole
-//!   round (`HubDrain`). The role is an async mutex that guards the act of taking
-//!   and settling a round and nothing else: no candidate, slot, queue, future,
-//!   outcome, or gauge lives behind it, and no lock of any kind is held while a
-//!   candidate is polled.
-//! - Because the role spans the round, an empty report can only mean the queue
-//!   really was empty — no other lane's round could have owned this lane's reads.
-//!   A lane that has to wait waits for the round to settle (and then polls the
-//!   reads that round carried) instead of spinning into a stall, and one round in
-//!   flight per fan-out is also the shape the hub wants: overlapping rounds only
-//!   split the same wave of reads across two packets.
+//! - [`DrainPolicy::SessionWide`] is the committed baseline: one round is in
+//!   flight for the whole fan-out. A lane takes the drain ROLE before it drains
+//!   and holds it for the whole round (`HubDrain`) — an async mutex that guards
+//!   the act of taking and settling a round and nothing else: no candidate,
+//!   slot, queue, future, outcome, or gauge lives behind it, and no lock of any
+//!   kind is held while a candidate is polled. Because the role spans the round,
+//!   an empty report can only mean the queue really was empty — no other lane's
+//!   round could have owned this lane's reads — and one round in flight per
+//!   fan-out is also the shape the hub wants: overlapping rounds only split the
+//!   same wave of reads across two packets.
+//! - [`DrainPolicy::PerLane`] is the experimental alternative: every lane
+//!   settles its own rounds, concurrently. The hub's single-flight rule already
+//!   keeps one fetch per identity whatever lane drains it, so concurrent rounds
+//!   never duplicate a fetch and never change a requester's result; what they
+//!   change is which lane's round carries which wave of reads. An empty report
+//!   is then ambiguous in exactly one way — another lane's round may own this
+//!   lane's reads — and the coordinator resolves it by WAITING: a lane that
+//!   drains empty while a neighbour's round is in flight waits for that round to
+//!   settle (and then polls the reads it carried), so the wave counts as the
+//!   neighbour's progress it is, never as this lane's march through
+//!   [`MAX_IDLE_ROUNDS`] toward a false stall. An empty report with no round in
+//!   flight is the unambiguous one: the queue really was empty.
+//! - [`DrainPolicy::PerLaneUnguarded`] is [`DrainPolicy::PerLane`] with that
+//!   wait removed: the negative probe's fault injection, which must reproduce
+//!   the false stall the wait exists to prevent.
 //!
 //! A driver given `None` for the hub states that its candidates' databases
 //! settle their reads themselves (an in-memory stack, or a test double that
 //! self-wakes); it then has no round to drain and a parked-everything pass is a
-//! stall. Either way the driver refuses to spin: after
+//! stall. Either way the driver refuses to spin: a pass that finds nothing
+//! yields the task before its nothing counts — a poll with no cooperative
+//! budget left reports Pending whatever its read holds, so counting those
+//! reports without a fresh budget manufactures stalls and spins — and after
 //! [`MAX_IDLE_ROUNDS`] consecutive passes that neither progressed nor settled a
 //! read, the run fails with [`FanoutError::Stalled`] naming the candidate
 //! indices still waiting, instead of parking the caller forever.
@@ -215,7 +232,7 @@ use ::evm2::{BaseEvmTypes, Evm, EvmFeatures, ExecutionConfig, Precompiles, SpecI
 use degenbot_rpc::provider::AlloyProvider;
 
 use super::alloy_async_db::account_info_from_read;
-use super::read_hub::ReadHubError;
+use super::read_hub::{ReadHubError, RoundReport};
 
 use super::handle::EVM2_PRODUCTION_SPEC;
 use super::read_hub::ReadHub;
@@ -679,47 +696,138 @@ impl RunGauge {
     }
 }
 
+/// How the fan-out's lanes own rounds over their shared [`ReadHub`] (see the
+/// module docs).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DrainPolicy {
+    /// The committed baseline: one round is in flight for the whole fan-out,
+    /// the drain role taken per round.
+    #[default]
+    SessionWide,
+    /// The experimental alternative: every lane settles its own rounds
+    /// concurrently, and a lane that drains empty while a neighbour's round is
+    /// in flight waits for that round instead of counting the wave it is
+    /// serving as its own stall.
+    PerLane,
+    /// [`Self::PerLane`] with that wait removed — the negative probe's fault
+    /// injection, which must reproduce the false [`FanoutError::Stalled`] the
+    /// wait exists to prevent.
+    PerLaneUnguarded,
+}
+
+/// What one settled round did (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainOutcome {
+    /// The round carried reads and settled them.
+    Carried,
+    /// The round dispatched nothing while a neighbour's round was in flight,
+    /// and this lane waited for that round to settle — the wait that keeps a
+    /// wave of reads being served from counting as "nothing can settle".
+    Coordinated,
+    /// The round dispatched nothing and no round was in flight: the queue
+    /// really was empty.
+    Idle,
+}
+
 /// The drain coordination every lane shares (see the module docs).
-struct HubDrain<'h, 'p> {
+pub struct HubDrain<'h, 'p> {
     hub: &'h ReadHub<'p>,
-    /// The drain role: one lane at a time takes the queue and settles the round.
-    /// It guards that act and nothing else — no lane state, no candidate, no
-    /// outcome, and no gauge lives behind it, and it is never held while a
-    /// candidate is polled.
+    /// The ownership the lanes take over rounds.
+    policy: DrainPolicy,
+    /// The drain role ([`DrainPolicy::SessionWide`]): one lane at a time takes
+    /// the queue and settles the round. It guards that act and nothing else —
+    /// no lane state, no candidate, no outcome, and no gauge lives behind it,
+    /// and it is never held while a candidate is polled.
     ///
     /// Holding it across the whole round is what makes an empty report
     /// unambiguous: a lane drains only when no other round is in flight, so
-    /// "empty" means the queue really was empty — never "a neighbour's round owns
-    /// this lane's reads". A lane that has to wait waits for a wave of reads to
-    /// settle, not for [`MAX_IDLE_ROUNDS`] spins at a stall.
+    /// "empty" means the queue really was empty — never "a neighbour's round
+    /// owns this lane's reads".
     role: tokio::sync::Mutex<()>,
+    /// The rounds in flight right now ([`DrainPolicy::PerLane`]), and the wake
+    /// a settling round publishes. An empty report consults it before counting
+    /// idle: a neighbour still in flight is the one case where "nothing queued"
+    /// does not mean "nothing can settle".
+    flight: tokio::sync::watch::Sender<usize>,
     /// Rounds that carried at least one read — the run's measured read shape.
     rounds: AtomicUsize,
 }
 
 impl<'h, 'p> HubDrain<'h, 'p> {
-    /// The coordinator over `hub`.
-    fn new(hub: &'h ReadHub<'p>) -> Self {
+    /// The coordinator over `hub`, handing the lanes `policy`'s ownership.
+    pub fn new(hub: &'h ReadHub<'p>, policy: DrainPolicy) -> Self {
+        let (flight, _installed) = tokio::sync::watch::channel(0usize);
         Self {
             hub,
+            policy,
             role: tokio::sync::Mutex::new(()),
+            flight,
             rounds: AtomicUsize::new(0),
         }
     }
 
-    /// Take the drain role and settle one round, reporting whether the round
-    /// carried a read.
-    async fn settle(&self) -> bool {
-        let report = {
-            // The role ends with this block, before the caller polls a candidate.
-            let _role = self.role.lock().await;
-            self.hub.drain_round().await
+    /// The ownership the lanes take over rounds.
+    pub const fn policy(&self) -> DrainPolicy {
+        self.policy
+    }
+
+    /// Take the policy's ownership and settle one round, reporting what the
+    /// round did.
+    pub async fn settle(&self) -> DrainOutcome {
+        self.settle_with(|_report| {}).await
+    }
+
+    /// [`Self::settle`], with `charge` run once the round settled and before the
+    /// ownership ends: the benchmark's modeled round trip, which a lane waiting
+    /// on this round waits out along with it.
+    pub async fn settle_with(&self, charge: impl FnOnce(&RoundReport)) -> DrainOutcome {
+        let report = match self.policy {
+            DrainPolicy::SessionWide => {
+                // The role ends with this block, before the caller polls a candidate.
+                let _role = self.role.lock().await;
+                let report = self.hub.drain_round().await;
+                charge(&report);
+                report
+            }
+            DrainPolicy::PerLane | DrainPolicy::PerLaneUnguarded => {
+                self.flight.send_modify(|in_flight| *in_flight += 1);
+                let report = self.hub.drain_round().await;
+                charge(&report);
+                self.flight.send_modify(|in_flight| *in_flight -= 1);
+                if report.is_empty() && self.policy == DrainPolicy::PerLane {
+                    return self.await_neighbour_rounds().await;
+                }
+                report
+            }
         };
         if report.is_empty() {
-            false
+            DrainOutcome::Idle
         } else {
             self.rounds.fetch_add(1, Ordering::Relaxed);
-            true
+            DrainOutcome::Carried
+        }
+    }
+
+    /// Wait until no round is in flight, reporting [`DrainOutcome::Coordinated`]
+    /// when one was: the wait a false stall would otherwise be counted from.
+    async fn await_neighbour_rounds(&self) -> DrainOutcome {
+        // Subscribed before the first read of the gauge, so a round settling
+        // between that read and this wait is still observed — a missed wake
+        // would park the lane past the round that can free it.
+        let mut settled = self.flight.subscribe();
+        let mut waited = false;
+        loop {
+            if *self.flight.borrow() == 0 {
+                return if waited {
+                    DrainOutcome::Coordinated
+                } else {
+                    DrainOutcome::Idle
+                };
+            }
+            waited = true;
+            if settled.changed().await.is_err() {
+                return DrainOutcome::Coordinated;
+            }
         }
     }
 
@@ -866,22 +974,36 @@ where
         let mut cx = Context::from_waker(&waker);
         let mut idle_rounds = 0;
         while !self.done() {
-            if self.pump(&mut cx) || counter.take() > 0 {
+            if self.pump(&mut cx) {
                 idle_rounds = 0;
+                continue;
+            }
+            if counter.take() > 0 {
+                idle_rounds = 0;
+                // A wake is not always a read: the cooperative poll budget wakes
+                // the task when it runs out, and a poll without budget reports
+                // Pending whatever its read holds. The lane yields for a fresh
+                // budget instead of spinning on budget wakes.
+                tokio::task::yield_now().await;
                 continue;
             }
             let settled = match drain {
                 Some(hub) => hub.settle().await,
-                None => false,
+                None => DrainOutcome::Idle,
             };
-            if settled {
-                idle_rounds = 0;
-            } else {
-                idle_rounds += 1;
-                if idle_rounds > MAX_IDLE_ROUNDS {
-                    return Err(FanoutError::Stalled {
-                        waiting: self.waiting(),
-                    });
+            match settled {
+                DrainOutcome::Carried | DrainOutcome::Coordinated => idle_rounds = 0,
+                DrainOutcome::Idle => {
+                    // The same fresh-budget yield before anything counts as
+                    // idle: a budget-starved pass is not a pass that proved
+                    // nothing can settle.
+                    tokio::task::yield_now().await;
+                    idle_rounds += 1;
+                    if idle_rounds > MAX_IDLE_ROUNDS {
+                        return Err(FanoutError::Stalled {
+                            waiting: self.waiting(),
+                        });
+                    }
                 }
             }
         }
@@ -974,13 +1096,33 @@ where
 pub struct AsyncEvmFanout {
     limits: FanoutLimits,
     config: FanoutEngineConfig,
+    policy: DrainPolicy,
 }
 
 impl AsyncEvmFanout {
-    /// A fan-out with `limits`' shape building every slot from `config`.
+    /// A fan-out with `limits`' shape building every slot from `config`, its
+    /// lanes draining under [`DrainPolicy::SessionWide`].
     #[must_use]
     pub fn new(limits: FanoutLimits, config: FanoutEngineConfig) -> Self {
-        Self { limits, config }
+        Self {
+            limits,
+            config,
+            policy: DrainPolicy::SessionWide,
+        }
+    }
+
+    /// The same fan-out with its lanes draining under `policy` (see the module
+    /// docs).
+    #[must_use]
+    pub fn with_drain_policy(mut self, policy: DrainPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// The drain ownership the lanes take over their shared hub.
+    #[must_use]
+    pub const fn drain_policy(&self) -> DrainPolicy {
+        self.policy
     }
 
     /// The configured shape.
@@ -1027,7 +1169,7 @@ impl AsyncEvmFanout {
     {
         let lanes_used = self.limits.effective_workers();
         let gauge = RunGauge::default();
-        let drain = hub.map(HubDrain::new);
+        let drain = hub.map(|hub| HubDrain::new(hub, self.policy));
         if candidates.is_empty() {
             return Ok(assemble(
                 Vec::new(),

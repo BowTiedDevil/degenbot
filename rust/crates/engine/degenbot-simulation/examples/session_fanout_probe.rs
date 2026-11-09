@@ -72,6 +72,10 @@
 //! - `session` — W lanes over ONE shared hub and F total slots
 //!   (`FanoutLimits::lane_capacity`), one drain role for the whole session, a
 //!   lane draining only when nothing it owns can progress.
+//! - `per-lane` — the same W lanes and F slots, with each lane draining its own
+//!   rounds concurrently ([`DrainPolicy::PerLane`] on the scheduler's own
+//!   coordinator): an empty report waits for the round that owns the lane's
+//!   reads instead of spinning into a false stall.
 //!
 //! # Gate
 //!
@@ -110,7 +114,9 @@ use serde_json::value::to_raw_value;
 use serde_json::{json, Value};
 
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
-use degenbot_simulation::sim::evm2::async_fanout::{FanoutLimits, MAX_IDLE_ROUNDS};
+use degenbot_simulation::sim::evm2::async_fanout::{
+    DrainOutcome, DrainPolicy, FanoutLimits, HubDrain, MAX_IDLE_ROUNDS,
+};
 use degenbot_simulation::sim::evm2::read_hub::{ReadHub, ReadHubStats};
 use degenbot_simulation::sim::ReadAnchor;
 
@@ -502,6 +508,9 @@ struct LanePlan {
     shared_hub: bool,
     /// Bound each lane to `FanoutLimits::lane_capacity`, or leave it open.
     bounded: bool,
+    /// The drain ownership the lanes take over a shared hub. The per-worker-hub
+    /// legs own their rounds outright and ignore it.
+    policy: DrainPolicy,
 }
 
 /// Whether `SESSION_FANOUT_DEBUG` asks for the lane progress trace.
@@ -559,8 +568,8 @@ fn walk_fiber<'h>(hub: &'h ReadHub<'_>, row: &'h Recorded) -> WalkFuture<'h> {
     })
 }
 
-/// Drain one round and charge its modeled round trip. `false` when nothing was
-/// queued (another round already owns every pending identity).
+/// Drain one round of a leg-owned hub and charge its modeled round trip.
+/// `false` when nothing was queued.
 async fn settle(hub: &ReadHub<'_>, node: Node) -> bool {
     let report = hub.drain_round().await;
     if report.is_empty() {
@@ -578,13 +587,36 @@ struct LaneRun<'r, 'p> {
     node: Node,
     provider: &'p AlloyProvider,
     shared: Option<&'r ReadHub<'p>>,
-    role: Option<&'r tokio::sync::Mutex<()>>,
+    drain: Option<&'r HubDrain<'r, 'p>>,
     gauge: &'r Gauge,
 }
 
 struct LaneOutcome {
     digests: Digests,
     stats: Option<ReadHubStats>,
+}
+
+/// Settle one round on the leg's read lane and report what it did — through the
+/// scheduler's own drain coordinator for a shared hub, or the leg-owned hub's
+/// own round for a per-worker-hub leg.
+async fn settle_lane_round(run: &LaneRun<'_, '_>, hub: &ReadHub<'_>) -> DrainOutcome {
+    match run.drain {
+        Some(drain) => {
+            let node = run.node;
+            drain
+                .settle_with(move |report| {
+                    node.charge_round(report.storage_members > 0, report.account_members > 0);
+                })
+                .await
+        }
+        None => {
+            if settle(hub, run.node).await {
+                DrainOutcome::Carried
+            } else {
+                DrainOutcome::Idle
+            }
+        }
+    }
 }
 
 /// Drive one lane: admit into free slots, poll, and settle a round whenever
@@ -666,25 +698,25 @@ async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome,
             idle_rounds = 0;
             continue;
         }
-        let settled = match run.role {
-            Some(role) => {
-                let _only_one_round = role.lock().await;
-                settle(hub, run.node).await
+        let settled = settle_lane_round(run, hub).await;
+        match settled {
+            DrainOutcome::Carried | DrainOutcome::Coordinated => idle_rounds = 0,
+            DrainOutcome::Idle => {
+                // A pass that found nothing still hands the task a fresh
+                // cooperative poll budget before its nothing counts as idle: a
+                // budget-starved poll reports Pending whatever its read holds,
+                // so counting those passes without a yield manufactures stalls.
+                tokio::task::yield_now().await;
+                idle_rounds += 1;
+                if idle_rounds > MAX_IDLE_ROUNDS {
+                    let mut waiting: Vec<usize> = queue.iter().copied().collect();
+                    waiting.extend(active.iter().map(|(index, _)| *index));
+                    waiting.sort_unstable();
+                    return Err(format!(
+                        "lane {worker} stalled with candidates {waiting:?} waiting and no read round to settle"
+                    ));
+                }
             }
-            None => settle(hub, run.node).await,
-        };
-        if settled {
-            idle_rounds = 0;
-            continue;
-        }
-        idle_rounds += 1;
-        if idle_rounds > MAX_IDLE_ROUNDS {
-            let mut waiting: Vec<usize> = queue.iter().copied().collect();
-            waiting.extend(active.iter().map(|(index, _)| *index));
-            waiting.sort_unstable();
-            return Err(format!(
-                "lane {worker} stalled with candidates {waiting:?} waiting and no read round to settle"
-            ));
         }
     }
     Ok(LaneOutcome {
@@ -725,7 +757,7 @@ async fn drive_lanes(
     let shared = plan
         .shared_hub
         .then(|| ReadHub::new(provider, ReadAnchor::at(block)));
-    let role = tokio::sync::Mutex::new(());
+    let drain = shared.as_ref().map(|hub| HubDrain::new(hub, plan.policy));
     let run = LaneRun {
         plan,
         base,
@@ -733,7 +765,7 @@ async fn drive_lanes(
         node,
         provider,
         shared: shared.as_ref(),
-        role: plan.shared_hub.then_some(&role),
+        drain: drain.as_ref(),
         gauge: &gauge,
     };
     let started = Instant::now();
@@ -883,6 +915,7 @@ async fn drive_fanout(
             limits: config.limits,
             shared_hub: false,
             bounded: false,
+            policy: DrainPolicy::PerLane,
         },
         rows,
         0,
@@ -896,6 +929,7 @@ async fn drive_fanout(
             limits: FanoutLimits::new(1, 1),
             shared_hub: true,
             bounded: false,
+            policy: DrainPolicy::SessionWide,
         },
         rows,
         0,
@@ -915,6 +949,7 @@ async fn drive_fanout(
             limits: config.limits,
             shared_hub: true,
             bounded: true,
+            policy: DrainPolicy::SessionWide,
         },
         rows,
         0,
@@ -925,7 +960,24 @@ async fn drive_fanout(
     if let Some(flag) = &config.plant {
         flag.store(false, Ordering::Relaxed);
     }
-    Ok(vec![serial, hybrid, fibers, session])
+    if debug {
+        println!("    debug: anchor {block}: per-lane");
+    }
+    let per_lane = drive_lanes(
+        "per-lane",
+        LanePlan {
+            limits: config.limits,
+            shared_hub: true,
+            bounded: true,
+            policy: DrainPolicy::PerLane,
+        },
+        rows,
+        0,
+        provider,
+        node,
+    )
+    .await?;
+    Ok(vec![serial, hybrid, fibers, session, per_lane])
 }
 
 // ── Report ────────────────────────────────────────────────────────────────
@@ -999,8 +1051,8 @@ async fn drive_point(
     node: Node,
     provider: &AlloyProvider,
     observed: &mut Vec<(String, Digests)>,
-) -> Result<[Totals; 4], String> {
-    let mut totals: [Totals; 4] = Default::default();
+) -> Result<[Totals; 5], String> {
+    let mut totals: [Totals; 5] = Default::default();
     for (block, rows) in fanouts {
         let legs = drive_fanout(config, *block, rows, node, provider).await?;
         for (index, facts) in legs.iter().enumerate() {
@@ -1036,6 +1088,7 @@ async fn sensitivity(
             limits: FanoutLimits::new(config.limits.workers(), slots),
             shared_hub: true,
             bounded: true,
+            policy: DrainPolicy::SessionWide,
         };
         let facts = drive_lanes("session", plan, rows, 0, provider, node).await?;
         if slots == 1 {
@@ -1102,6 +1155,7 @@ async fn multi_fan_out(
         limits: config.limits,
         shared_hub: true,
         bounded: true,
+        policy: DrainPolicy::SessionWide,
     };
     println!(
         "\nmulti-fan-out submission (anchor {block}: {} candidates as {} fan-outs of <= {chunk}):",
