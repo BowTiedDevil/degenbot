@@ -141,8 +141,15 @@ from degenbot._ffi.deployments import (
 from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 
 # execution: the Python-authored Encode binding a foreign deployment carries,
-# and the calldata builder a declared probe read spells its call with.
-from degenbot._ffi.execution import PayloadAdapter, abi_encode_call
+# the calldata builder a declared probe read spells its call with, the report a
+# declared-interface case run answers with, and the typed routine path-decline a
+# compose callable raises for a path its own contract cannot encode.
+from degenbot._ffi.execution import (
+    CaseReport,
+    PayloadAdapter,
+    UnsupportedPath,
+    abi_encode_call,
+)
 
 # provider: the transport the offline harnesses stub.
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider, is_local_rpc_url
@@ -190,6 +197,7 @@ __all__ = [
     "BuildFailureKind",
     "CancelHandle",
     "CandidateId",
+    "CaseReport",
     "ChainMismatchError",
     "DexIdentity",
     "Dispatcher",
@@ -220,6 +228,7 @@ __all__ = [
     "TxSigner",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
+    "UnsupportedPath",
     "V3PoolRowInput",
     "VerificationRpcError",
     "abi_encode_call",

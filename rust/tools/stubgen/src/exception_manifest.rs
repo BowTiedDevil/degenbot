@@ -412,6 +412,14 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         message: "The swap-simulation seam refused the read (ADR-037). Typed attributes: `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere; `amount` is the signed request the read could not meet (negative = exact input, positive = exact output), `None` on the fetch arms, which never got to answer for an amount.",
     },
     ExceptionIsland {
+        python_module: "degenbot._ffi.execution",
+        rust_path: "execution",
+        name: "UnsupportedPath",
+        attributes: &[],
+        base: "Exception",
+        message: "The adapter declined this path: a routine capability refusal (ComposeError::Unsupported), not an interface-validation failure, so the target-selection walk examines the next target. Every other exception a compose callable raises is a hard encode failure.",
+    },
+    ExceptionIsland {
         python_module: "degenbot._ffi.fleet",
         rust_path: "fleet",
         name: "PostureRetuneError",

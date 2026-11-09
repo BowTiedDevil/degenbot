@@ -16,9 +16,41 @@ parent module registers the submodule itself and its `sys.modules` entry.
 
 from typing import Any, final
 
+from _typeshed import Incomplete
 from typing_extensions import disjoint_base
 
-__all__ = ["PayloadAdapter", "PayloadComposer", "SolveResult", "abi_encode_call"]
+class UnsupportedPath(Exception):
+    """
+    The adapter declined this path: a routine capability refusal (ComposeError::Unsupported), not an interface-validation failure, so the target-selection walk examines the next target. Every other exception a compose callable raises is a hard encode failure.
+    """
+
+@final
+class CaseReport:
+    """
+    `CaseReport` — one validation case's outcome.
+
+    `name` is the case's report key, `passed` says whether the adapter produced
+    exactly what the case declared (or declined where the case expected a
+    decline), and `violations` carries the rendered failure messages: empty when
+    the case passed, one message when it did not, because a case stops at its
+    first violation. A case run returns one report per case, so every failing
+    case is reported in one pass.
+    """
+    @property
+    def name(self, /) -> str:
+        """
+        The case's name — the report key and the message prefix.
+        """
+    @property
+    def passed(self, /) -> bool:
+        """
+        Whether the case's expectation was met.
+        """
+    @property
+    def violations(self, /) -> Any:
+        """
+        The rendered failure messages; empty when the case passed.
+        """
 
 @disjoint_base
 class PayloadAdapter:
@@ -51,6 +83,21 @@ class PayloadAdapter:
     net profit and the defaulted market-percentile fee. A custom assessment
     interpreter is a Rust-side override — Python states policy data, it does not
     run a second assessment engine.
+
+    An optional `interface` declaration attaches the core's compiled
+    `ContractInterface` to this binding: every encode is then checked against it
+    (declared selector, decodable arguments, declared target and native value),
+    and `check_cases` can compare explicit path/amount literals against the
+    transaction it must produce. The declaration is decomposed by the binding
+    from standard ABI JSON plus optional selector/target/value policies; Python
+    authors no ABI parser. An adapter that declares nothing keeps the exact
+    encode path it has today.
+
+    The callable declines a path its contract cannot encode by raising
+    [`UnsupportedPath`]: that is the adapter's routine capability refusal
+    (`ComposeError::Unsupported`), not a verdict on the declaration, and the
+    target-selection walk advances to the next target. Every other exception it
+    raises is that candidate's hard `ComposeError::Encode`.
     """
     def __new__(
         cls,
@@ -60,6 +107,7 @@ class PayloadAdapter:
         value: Any | None = None,
         probes: Any | None = None,
         min_net_profit: Any | None = None,
+        interface: Any | None = None,
     ) -> PayloadAdapter:
         """
         Construct from a calldata callable plus its transaction binding.
@@ -71,12 +119,82 @@ class PayloadAdapter:
         arguments) or `{"label", "account"}` for a native-account balance read;
         `min_net_profit` is the gate threshold in wei.
 
+        `interface` is the optional declared interface, given as one dict:
+
+        ```text
+        {
+            "abi": [ ... ],                       # a standard ABI JSON array
+            "selectors": ["execute(uint256,...)"],  # optional signature allow-list
+            "value": {"kind": "zero"},             # optional native-value policy
+            "target": "0x7777…7777",               # optional; defaults to `to`
+        }
+        ```
+
+        The binding — not the caller — serializes the `abi` array to ABI JSON
+        text, parses the addresses, resolves the value policy, and stamps the
+        target from its own `to`, because one binding encodes to one address. A
+        declared `target` that disagrees with `to` is refused. Construction is
+        pure data validation: it never invokes `callback`, never reads the chain,
+        and never touches a provider, and it checks the declared probe list
+        against the declaration (a probe reading this adapter's own contract must
+        name a declared selector with decodable arguments).
+
         # Errors
 
         `TypeError` when `callback` is not callable; `ValueError` for an
         unparseable address, a malformed probe entry (including the retired
         `(label, address, selector)` triple, which cannot carry a call's
-        arguments), or a negative value.
+        arguments), a negative value, or an unusable `interface` declaration — a
+        malformed ABI JSON array, a surface that declares no function, two
+        functions sharing a selector, an allow-listed signature the ABI does not
+        declare, an invalid value policy, a declared target that disagrees with
+        `to`, or a declared probe to this adapter's own contract that the
+        declaration does not describe.
+        """
+    def check_cases(self, /, cases: Any) -> list[CaseReport]:
+        """
+        Run explicit validation cases against this adapter.
+
+        `cases` is a list of case documents:
+
+        ```text
+        {
+            "name": "two_hop_v2_execute",
+            "hops": [{"family": "v2", "pool_address": …, "token0": …, "token1": …,
+                      "fee": 30, "zfo": True}, …],
+            "amounts": {"optimal_input": 10**18, "hop_outputs": […],
+                        "consumed_inputs": […]},
+            "expect": {"kind": "transaction", "selector": "execute(uint256,…)",
+                       "arguments": […]},        # or "calldata": "0x…"
+        }
+        ```
+
+        `hops` is the full `HopInfo` shape per family (`v2`/`v3`: `pool_address`,
+        `token0`, `token1`, `fee`, `zfo`; `v4`: `pool_manager_address`,
+        `pool_id_hex`, `currency0`, `currency1`, `fee`, `tick_spacing`,
+        `hook_address`, `zfo`), not the solver's report descriptor. Both amount
+        lists carry exactly one entry per hop. `expect.kind` is `"transaction"`
+        (then `selector` is required and `arguments` or `calldata` is optional) or
+        `"decline"` (the adapter must refuse with `ComposeError::Unsupported`, which
+        a Python callable spells by raising `UnsupportedPath`; any other exception
+        is a hard encode failure and fails the case whatever it expected).
+
+        The run is explicit, synchronous, and offline: each case becomes a real
+        `PathInfo` plus `ComposerInputs`, the adapter's own compose callable runs
+        once per case, and nothing crosses a network boundary — no provider, no
+        engine, no pool lookup, no path registration, no chain read. The whole
+        document is decomposed and checked before the first encode, so a malformed
+        case is refused instead of being encoded against.
+
+        # Errors
+
+        `ValueError` when this adapter declares no `interface` (validation cases
+        sit above the declared interface, so a silent no-op would be a false
+        pass), when a case document is malformed (an unknown family tag or field,
+        an amount list that is not one entry per hop, an unparseable address, both
+        or neither of `arguments`/`calldata`, an unknown `expect.kind`, an
+        argument that does not coerce against the declared parameter types), or
+        when an amount is outside the seam's `int128` bound.
         """
     @property
     def min_net_profit(self, /) -> Any:
@@ -127,7 +245,10 @@ class PayloadComposer:
     is wired into the canonical `dispatch_profitable_*` fan-out (ADR-025 D3).
 
     The callable's return must be `bytes`/`bytearray` (the calldata for its
-    own contract).
+    own contract). A callable that cannot encode the path raises
+    [`UnsupportedPath`] — the adapter's routine capability decline, which the
+    target-selection walk advances past; any other exception it raises is that
+    candidate's hard `ComposeError::Encode`.
     """
     def __new__(cls, /, callback: Any) -> PayloadComposer:
         """
@@ -211,9 +332,13 @@ def abi_encode_call(signature: str, values: Any) -> bytes:
     encoded.
     """
 
+def __getattr__(name: str) -> Incomplete: ...
+
 __all__ = [
+    "CaseReport",
     "PayloadAdapter",
     "PayloadComposer",
     "SolveResult",
+    "UnsupportedPath",
     "abi_encode_call",
 ]
