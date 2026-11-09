@@ -49,22 +49,19 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use alloy::primitives::{Address, B256, U256};
-use serde_json::Value;
 
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::bal_prefetch::BalSeed;
 use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, ReadHubCache};
 use degenbot_simulation::sim::ReadAnchor;
 
-/// One recorded row's read groups: an address and the slots the trace lists
-/// beside it.
-type ReadGroups = Vec<(Address, Vec<U256>)>;
+// The shared benchmark corpus module carries more surface than this probe
+// reads (the wall-ceiling benchmark divides it).
+#[path = "shared/recorded_corpus.rs"]
+#[expect(dead_code)]
+mod recorded_corpus;
 
-/// The tag the bot's tracing formatter prefixes each recorded row with.
-const TRACE_TAG: &str = "fanout-trace ";
-
-/// The recorded corpus this probe is defined over.
-const DEFAULT_TRACE: &str = "/tmp/fanout_trace.log";
+use recorded_corpus::{anchors_keys, load_rows, DEFAULT_TRACE};
 
 /// The corpus's canonical stretch: every block in this range is advanced.
 const FIRST_BLOCK: u64 = 26_375_033;
@@ -102,59 +99,13 @@ fn rpc_url() -> Result<String, String> {
 
 // ── The recorded rows ─────────────────────────────────────────────────────
 
-/// One recorded candidate's read groups, as the trace carries them.
-fn parse_trace_line(line: &str) -> Option<(u64, ReadGroups)> {
-    let start = line.find(TRACE_TAG)? + TRACE_TAG.len();
-    let value: Value = serde_json::from_str(line[start..].trim()).ok()?;
-    let block = value.get("block")?.as_u64()?;
-    let reads = value
-        .get("reads")?
-        .as_array()?
-        .iter()
-        .filter_map(|entry| {
-            let mut parts = entry.as_str()?.split('|');
-            let address = parts.next()?.parse::<Address>().ok()?;
-            let slots = parts
-                .next()?
-                .split(',')
-                .filter(|slot| !slot.is_empty())
-                .filter_map(|slot| slot.parse::<U256>().ok())
-                .collect();
-            Some((address, slots))
-        })
-        .collect();
-    Some((block, reads))
-}
-
-/// Every anchor's DISTINCT recorded identities, in first-seen order — the
-/// coalesced read set one hub at that anchor would carry.
+/// Every anchor's DISTINCT recorded identities — the coalesced read set one
+/// hub at that anchor would carry.
 fn load_anchor_keys(path: &str) -> Result<BTreeMap<u64, Vec<(Address, U256)>>, String> {
-    let text = std::fs::read_to_string(path).map_err(|error| {
-        format!(
-            "read the recorded fan-out trace {path}: {error} (this probe has no corpus without it)"
-        )
-    })?;
-    let mut anchors: BTreeMap<u64, BTreeSet<(Address, U256)>> = BTreeMap::new();
-    let mut rows = 0usize;
-    for line in text.lines() {
-        if let Some((block, groups)) = parse_trace_line(line) {
-            rows += 1;
-            let keys = anchors.entry(block).or_default();
-            for (address, slots) in groups {
-                for slot in slots {
-                    keys.insert((address, slot));
-                }
-            }
-        }
-    }
-    if rows == 0 {
-        return Err(format!("no `{TRACE_TAG}` rows in {path}"));
-    }
-    println!("corpus: {rows} rows, {} anchors", anchors.len());
-    Ok(anchors
-        .into_iter()
-        .map(|(block, keys)| (block, keys.into_iter().collect()))
-        .collect())
+    let rows = load_rows(path)?;
+    let anchors = anchors_keys(&rows);
+    println!("corpus: {} rows, {} anchors", rows.len(), anchors.len());
+    Ok(anchors)
 }
 
 // ── The replay ────────────────────────────────────────────────────────────

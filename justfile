@@ -464,6 +464,22 @@ session-fanout-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example session_fanout_probe -- {{ ARGS }}
 
 
+# The deterministic wall-clock ceiling benchmark of BAL carry-forward: the 444
+# recorded read walks replayed under three cache policies (cold per anchor /
+# cold + exact-anchor BAL write seeding / parent-linked carry-forward through
+# every intermediate block) under ONE modeled cost model with the recorded
+# execution spent as wall, candidate wall time attributed to six reconciled
+# buckets, and the eliminable storage-wait ceiling reported per price point.
+# Offline by construction; the corpus is the `fanout-trace` stream (default
+# `/tmp/fanout_trace.log`; `BAL_WALL_TRACE` overrides it, and its absence is a
+# hard failure). Knobs: `BAL_WALL_STORAGE_US` / `BAL_WALL_ACCOUNT_US` /
+# `BAL_WALL_W` / `BAL_WALL_F`, the negative probes
+# `BAL_WALL_PLANT_STORAGE_DELAY_US` (reports bucket/ceiling deltas) and
+# `BAL_WALL_PLANT_DIVERGENCE` (exits 1), and `BAL_WALL_DEBUG`.
+bal-wall-ceiling-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example bal_wall_ceiling_probe -- {{ ARGS }}
+
+
 # The parent-linked BAL carry-forward live probe: EVERY canonical block of the
 # captured corpus range (default 26375033..26375053; `BAL_CARRY_FIRST` /
 # `BAL_CARRY_LAST` / `BAL_CARRY_TRACE` override) advanced through the

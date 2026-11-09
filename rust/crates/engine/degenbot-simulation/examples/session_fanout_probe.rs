@@ -29,14 +29,16 @@
 //!
 //! # The modeled node
 //!
-//! One stub JSON-RPC transport answers every recorded key with a value derived
-//! from that key alone (so a value is identical in every leg: the digest gate
-//! catches a dropped, duplicated, or reordered read, never a value drift). The
-//! transport is reached through the real `AlloyProvider` batch primitives the
-//! hub dispatches, so the batches, member sets, and single-flight joins counted
-//! here are the production adapter's own.
+//! The stub transport in [`modeled_chain`] answers every recorded key at its
+//! pinned block with the modeled chain's value (so a value is identical in
+//! every leg at the same anchor: the digest gate catches a dropped, duplicated,
+//! or reordered read, never a value drift). The transport is reached through
+//! the real `AlloyProvider` batch primitives the hub dispatches, so the batches,
+//! member sets, and single-flight joins counted here are the production
+//! adapter's own.
 //!
-//! The latency model is one round trip per dispatched packet:
+//! The latency model ([`wall_ledger::Node`]) is one round trip per dispatched
+//! packet:
 //!
 //! - a storage batch costs `storage_us`, a multi-account batch costs
 //!   `account_us`;
@@ -95,38 +97,40 @@
 //! SESSION_FANOUT_PLANT_DIVERGENCE=1 just session-fanout-probe   # exits 1
 //! ```
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
-use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy::providers::RootProvider;
-use alloy::rpc::client::ClientBuilder;
-use alloy::rpc::json_rpc::{
-    ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
-};
-use alloy::transports::{TransportError, TransportFut};
-use serde_json::value::to_raw_value;
-use serde_json::{json, Value};
+use alloy::primitives::U256;
 
-use degenbot_rpc::provider::{AccountRead, AlloyProvider};
-use degenbot_simulation::sim::evm2::async_fanout::{
-    DrainOutcome, DrainPolicy, FanoutLimits, HubDrain, MAX_IDLE_ROUNDS,
-};
-use degenbot_simulation::sim::evm2::read_hub::{ReadHub, ReadHubStats};
-use degenbot_simulation::sim::ReadAnchor;
+use degenbot_rpc::provider::AlloyProvider;
+use degenbot_simulation::sim::evm2::async_fanout::{DrainPolicy, FanoutLimits};
+
+// The shared benchmark modules carry more surface than one consumer drives
+// (the probes divide it); the parts this probe does not replay stay unmarked
+// only where every item has a caller here.
+#[path = "shared/modeled_chain.rs"]
+mod modeled_chain;
+#[path = "shared/probe_report.rs"]
+#[expect(dead_code)]
+mod probe_report;
+#[path = "shared/recorded_corpus.rs"]
+#[expect(dead_code)]
+mod recorded_corpus;
+#[path = "shared/session_drive.rs"]
+mod session_drive;
+#[path = "shared/wall_ledger.rs"]
+#[expect(dead_code)]
+mod wall_ledger;
+
+use modeled_chain::{ChainState, StubChain};
+use probe_report::identity_gate;
+use recorded_corpus::{group_by_anchor, load_rows, Recorded, DEFAULT_TRACE};
+use session_drive::{drive_lanes, extend_account, LanePlan, LegFacts};
+use wall_ledger::{Digests, Node, ReadKind, WallLedger};
 
 // ── Configuration ─────────────────────────────────────────────────────────
-
-/// The tag the bot's tracing formatter prefixes each recorded row with.
-const TRACE_TAG: &str = "fanout-trace ";
-
-/// The recorded corpus this benchmark is defined over.
-const DEFAULT_TRACE: &str = "/tmp/fanout_trace.log";
 
 /// The optimistic model (the earlier probe's calibrated point).
 const OPTIMISTIC: (u64, u64) = (200, 400);
@@ -150,6 +154,11 @@ fn env_count(name: &str, fallback: usize) -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|count| *count > 0)
         .unwrap_or(fallback)
+}
+
+/// Whether `SESSION_FANOUT_DEBUG` asks for the lane progress trace.
+fn debug_enabled() -> bool {
+    std::env::var("SESSION_FANOUT_DEBUG").is_ok()
 }
 
 /// What one invocation drives.
@@ -198,264 +207,7 @@ impl Config {
     }
 }
 
-// ── The recorded rows ─────────────────────────────────────────────────────
-
-/// One recorded candidate: the read walk the simulation seam drained and the
-/// execution wall it measured. The trace carries no calldata, so this is the
-/// whole of what a replay can know about the candidate.
-#[derive(Clone)]
-struct Recorded {
-    block: u64,
-    sim_ns: u64,
-    reads: Vec<(Address, Vec<U256>)>,
-}
-
-/// Parse one log line's trace row (the substring after `fanout-trace `).
-fn parse_trace_line(line: &str) -> Option<Recorded> {
-    let start = line.find(TRACE_TAG)? + TRACE_TAG.len();
-    let value: Value = serde_json::from_str(line[start..].trim()).ok()?;
-    let reads = value
-        .get("reads")?
-        .as_array()?
-        .iter()
-        .filter_map(|entry| {
-            let mut parts = entry.as_str()?.split('|');
-            let address = parts.next()?.parse::<Address>().ok()?;
-            let slots = parts
-                .next()?
-                .split(',')
-                .filter(|slot| !slot.is_empty())
-                .filter_map(|slot| slot.parse::<U256>().ok())
-                .collect();
-            Some((address, slots))
-        })
-        .collect();
-    Some(Recorded {
-        block: value.get("block")?.as_u64()?,
-        sim_ns: value.get("sim_ns")?.as_u64()?,
-        reads,
-    })
-}
-
-/// Load every recorded row, failing loudly when the corpus is absent.
-fn load_rows(path: &str) -> Result<Vec<Recorded>, String> {
-    let text = std::fs::read_to_string(path).map_err(|error| {
-        format!("read the recorded fan-out trace {path}: {error} (this benchmark has no corpus without it)")
-    })?;
-    let rows: Vec<Recorded> = text.lines().filter_map(parse_trace_line).collect();
-    if rows.is_empty() {
-        return Err(format!("no `{TRACE_TAG}` rows in {path}"));
-    }
-    Ok(rows)
-}
-
-/// Group the rows into fan-outs: one per recorded anchor, in file order.
-fn group_by_anchor(rows: Vec<Recorded>) -> Vec<(u64, Vec<Recorded>)> {
-    let mut groups: Vec<(u64, Vec<Recorded>)> = Vec::new();
-    for row in rows {
-        match groups.last_mut() {
-            Some((block, group)) if *block == row.block => group.push(row),
-            _ => groups.push((row.block, vec![row])),
-        }
-    }
-    groups
-}
-
-// ── The modeled node ──────────────────────────────────────────────────────
-
-/// The stub JSON-RPC transport behind the modeled node: every answer is a
-/// function of the read key, and nothing is memoized here (the memo belongs to
-/// the hub or to the leg's own map, as it does in production).
-#[derive(Clone, Debug)]
-struct StubChain {
-    /// Raised by the negative probe: storage answers one wei high.
-    plant: Arc<AtomicBool>,
-}
-
-impl StubChain {
-    fn provider(&self) -> AlloyProvider {
-        let client = ClientBuilder::default().transport(self.clone(), true);
-        let root: RootProvider = RootProvider::new(client);
-        AlloyProvider::from_provider(Arc::new(root))
-    }
-
-    fn answer(&self, request: &SerializedRequest) -> Response {
-        let payload = match self.serve(request) {
-            Ok(value) => {
-                ResponsePayload::Success(to_raw_value(&value).expect("a served answer serializes"))
-            }
-            Err(message) => ResponsePayload::Failure(ErrorPayload {
-                code: -32_000,
-                message: message.into(),
-                data: None,
-            }),
-        };
-        Response {
-            id: request.id().clone(),
-            payload,
-        }
-    }
-
-    fn serve(&self, request: &SerializedRequest) -> Result<Value, String> {
-        let params = request.params().ok_or("a member carries params")?;
-        let params: Value = serde_json::from_str(params.get())
-            .map_err(|error| format!("member params: {error}"))?;
-        let address = params
-            .get(0)
-            .and_then(Value::as_str)
-            .ok_or("the address is the first param")?
-            .parse::<Address>()
-            .map_err(|error| format!("member address: {error}"))?;
-        match request.method() {
-            "eth_getStorageAt" => {
-                let slot = params
-                    .get(1)
-                    .and_then(Value::as_str)
-                    .ok_or("the slot is the second param")?
-                    .parse::<U256>()
-                    .map_err(|error| format!("member slot: {error}"))?;
-                let mut word = word_for(address, slot);
-                if self.plant.load(Ordering::Relaxed) {
-                    word = word.wrapping_add(U256::from(1u8));
-                }
-                Ok(json!(format!("{word:#x}")))
-            }
-            "eth_getBalance" => Ok(json!(format!("{:#x}", account_read(address).balance))),
-            "eth_getTransactionCount" => Ok(json!(format!("{:#x}", account_read(address).nonce))),
-            "eth_getCode" => Ok(json!(format!(
-                "0x{}",
-                alloy::hex::encode(&account_read(address).code)
-            ))),
-            other => Err(format!("the modeled node serves no {other}")),
-        }
-    }
-}
-
-impl tower::Service<RequestPacket> for StubChain {
-    type Response = ResponsePacket;
-    type Error = TransportError;
-    type Future = TransportFut<'static>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, request: RequestPacket) -> Self::Future {
-        let chain = self.clone();
-        Box::pin(async move {
-            let responses = match &request {
-                RequestPacket::Single(one) => ResponsePacket::Single(chain.answer(one)),
-                RequestPacket::Batch(many) => {
-                    ResponsePacket::Batch(many.iter().map(|one| chain.answer(one)).collect())
-                }
-            };
-            Ok(responses)
-        })
-    }
-}
-
-/// One byte-tagged derivation off a key's seed hash.
-fn derived(tag: u8, seed: B256) -> [u8; 32] {
-    let mut preimage = [0u8; 33];
-    preimage[0] = tag;
-    preimage[1..].copy_from_slice(seed.as_slice());
-    keccak256(preimage).0
-}
-
-/// The word the modeled node serves for one slot.
-fn word_for(address: Address, slot: U256) -> U256 {
-    let mut preimage = [0u8; 52];
-    preimage[..20].copy_from_slice(address.as_slice());
-    preimage[20..].copy_from_slice(&slot.to_be_bytes::<32>());
-    U256::from_be_bytes(keccak256(preimage).0)
-}
-
-/// The balance/nonce/code triple the modeled node serves for one account.
-fn account_read(address: Address) -> AccountRead {
-    let seed = keccak256(address.as_slice());
-    let nonce = derived(2, seed);
-    let mut nonce_bytes = [0u8; 8];
-    nonce_bytes.copy_from_slice(&nonce[..8]);
-    AccountRead {
-        balance: U256::from_be_bytes(derived(1, seed)),
-        nonce: u64::from_be_bytes(nonce_bytes),
-        code: Bytes::copy_from_slice(&derived(3, seed)),
-    }
-}
-
-// ── The cost model ────────────────────────────────────────────────────────
-
-/// Which round trip a read costs.
-#[derive(Clone, Copy, Debug)]
-enum ReadKind {
-    Storage,
-    Account,
-}
-
-/// The latency model every leg pays: one round trip per dispatched packet.
-#[derive(Clone, Copy, Debug)]
-struct Node {
-    storage: Duration,
-    account: Duration,
-}
-
-impl Node {
-    const fn new(storage: Duration, account: Duration) -> Self {
-        Self { storage, account }
-    }
-
-    const fn latency(self, kind: ReadKind) -> Duration {
-        match kind {
-            ReadKind::Storage => self.storage,
-            ReadKind::Account => self.account,
-        }
-    }
-
-    /// One serial read's round trip.
-    ///
-    /// The model spends the wait on the thread that owns the read (today's
-    /// `BlockingAsyncDb` shape). A blocking sleep, not a timer: the modeled
-    /// prices are hundreds of microseconds and a timer wheel's tick would round
-    /// them up to whole milliseconds.
-    fn charge_read(self, kind: ReadKind) {
-        std::thread::sleep(self.latency(kind));
-    }
-
-    /// One drained round's round trip: the hub issues its storage and account
-    /// batches concurrently, so the round costs the most expensive kind it
-    /// carried. Charged on the lane that owns the round — the read lane is
-    /// occupied for the round's whole duration either way.
-    fn charge_round(self, storage: bool, account: bool) {
-        let wait = match (storage, account) {
-            (true, true) => self.storage.max(self.account),
-            (true, false) => self.storage,
-            (false, true) => self.account,
-            (false, false) => Duration::ZERO,
-        };
-        std::thread::sleep(wait);
-    }
-}
-
 // ── The leg facts ─────────────────────────────────────────────────────────
-
-/// Per-candidate read digests, keyed by `(anchor, index within the anchor)`.
-type Digests = BTreeMap<(u64, usize), B256>;
-
-/// One leg's measured shape over one or more fan-outs.
-struct LegFacts {
-    label: &'static str,
-    wall: Duration,
-    /// Round trips paid: one per drained hub round, one per serial read.
-    rounds: u64,
-    storage_fetches: u64,
-    account_fetches: u64,
-    memo_hits: u64,
-    coalesced: u64,
-    peak_active: usize,
-    lanes: usize,
-    slots: Option<usize>,
-    digests: Digests,
-}
 
 #[derive(Clone, Default)]
 struct Totals {
@@ -486,342 +238,6 @@ impl Totals {
     }
 }
 
-/// The digest material of one account read.
-fn extend_account(material: &mut Vec<u8>, read: &AccountRead) {
-    material.extend_from_slice(&read.balance.to_be_bytes::<32>());
-    material.extend_from_slice(&read.nonce.to_be_bytes());
-    material.extend_from_slice(&read.code);
-}
-
-/// Spend a candidate's recorded execution cost as wall (see the module docs).
-fn exec_pause(row: &Recorded) {
-    std::thread::sleep(Duration::from_nanos(row.sim_ns));
-}
-
-// ── Lanes ─────────────────────────────────────────────────────────────────
-
-/// How a leg schedules its candidates.
-#[derive(Clone, Copy, Debug)]
-struct LanePlan {
-    limits: FanoutLimits,
-    /// One shared hub for the whole leg, or one hub per lane.
-    shared_hub: bool,
-    /// Bound each lane to `FanoutLimits::lane_capacity`, or leave it open.
-    bounded: bool,
-    /// The drain ownership the lanes take over a shared hub. The per-worker-hub
-    /// legs own their rounds outright and ignore it.
-    policy: DrainPolicy,
-}
-
-/// Whether `SESSION_FANOUT_DEBUG` asks for the lane progress trace.
-fn debug_enabled() -> bool {
-    std::env::var("SESSION_FANOUT_DEBUG").is_ok()
-}
-
-/// The session-wide in-flight gauge: the peak is a real temporal peak across
-/// lanes, never a sum of per-lane maxima.
-#[derive(Default)]
-struct Gauge {
-    active: AtomicUsize,
-    peak: AtomicUsize,
-}
-
-impl Gauge {
-    fn admitted(&self) {
-        let active = self.active.fetch_add(1, Ordering::Relaxed) + 1;
-        self.peak.fetch_max(active, Ordering::Relaxed);
-    }
-
-    fn released(&self) {
-        self.active.fetch_sub(1, Ordering::Relaxed);
-    }
-
-    fn peak(&self) -> usize {
-        self.peak.load(Ordering::Relaxed)
-    }
-}
-
-type WalkFuture<'h> = Pin<Box<dyn Future<Output = Result<B256, String>> + 'h>>;
-
-/// One recorded candidate's read walk on one fiber: every read registers against
-/// the hub and parks until a round settles it, then the recorded execution is
-/// spent in the slot.
-fn walk_fiber<'h>(hub: &'h ReadHub<'_>, row: &'h Recorded) -> WalkFuture<'h> {
-    Box::pin(async move {
-        let mut material: Vec<u8> = Vec::new();
-        for (address, slots) in &row.reads {
-            let read = hub
-                .read_account(*address)
-                .await
-                .map_err(|error| format!("hub account read of {address}: {error}"))?;
-            extend_account(&mut material, &read);
-            for slot in slots {
-                let value = hub
-                    .read_storage(*address, *slot)
-                    .await
-                    .map_err(|error| format!("hub storage read of {address}/{slot}: {error}"))?;
-                material.extend_from_slice(&value.to_be_bytes::<32>());
-            }
-        }
-        exec_pause(row);
-        Ok(keccak256(&material))
-    })
-}
-
-/// Drain one round of a leg-owned hub and charge its modeled round trip.
-/// `false` when nothing was queued.
-async fn settle(hub: &ReadHub<'_>, node: Node) -> bool {
-    let report = hub.drain_round().await;
-    if report.is_empty() {
-        return false;
-    }
-    node.charge_round(report.storage_members > 0, report.account_members > 0);
-    true
-}
-
-/// One lane's inputs: its plan, its rows, and the read lane it shares.
-struct LaneRun<'r, 'p> {
-    plan: LanePlan,
-    base: usize,
-    rows: &'r [Recorded],
-    node: Node,
-    provider: &'p AlloyProvider,
-    shared: Option<&'r ReadHub<'p>>,
-    drain: Option<&'r HubDrain<'r, 'p>>,
-    gauge: &'r Gauge,
-}
-
-struct LaneOutcome {
-    digests: Digests,
-    stats: Option<ReadHubStats>,
-}
-
-/// Settle one round on the leg's read lane and report what it did — through the
-/// scheduler's own drain coordinator for a shared hub, or the leg-owned hub's
-/// own round for a per-worker-hub leg.
-async fn settle_lane_round(run: &LaneRun<'_, '_>, hub: &ReadHub<'_>) -> DrainOutcome {
-    match run.drain {
-        Some(drain) => {
-            let node = run.node;
-            drain
-                .settle_with(move |report| {
-                    node.charge_round(report.storage_members > 0, report.account_members > 0);
-                })
-                .await
-        }
-        None => {
-            if settle(hub, run.node).await {
-                DrainOutcome::Carried
-            } else {
-                DrainOutcome::Idle
-            }
-        }
-    }
-}
-
-/// Drive one lane: admit into free slots, poll, and settle a round whenever
-/// nothing this lane owns can progress.
-async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome, String> {
-    let lanes = run.plan.limits.effective_workers();
-    let capacity = if run.plan.bounded {
-        run.plan.limits.lane_capacity(worker)
-    } else {
-        usize::MAX
-    };
-    let mut queue: VecDeque<usize> = (worker..run.rows.len()).step_by(lanes).collect();
-    let local = run.shared.is_none().then(|| {
-        ReadHub::new(
-            run.provider,
-            ReadAnchor::at(run.rows.first().map_or(0, |r| r.block)),
-        )
-    });
-    let hub: &ReadHub<'_> = run
-        .shared
-        .unwrap_or_else(|| local.as_ref().expect("a per-worker lane owns its hub"));
-    // A no-op waker: this driver polls every parked fiber on every pass and
-    // drains a round whenever the pass neither completed nor admitted anything,
-    // so it never needs the wake hint. (A counting waker is unusable here:
-    // re-polling a read that is waiting on its round re-arms a wake each time,
-    // which would make "somebody woke me" permanently true and starve the
-    // drain.)
-    let waker = Waker::noop();
-    let mut cx = Context::from_waker(waker);
-    let mut active: Vec<(usize, WalkFuture<'_>)> = Vec::new();
-    let mut digests = Digests::new();
-    let mut idle_rounds = 0usize;
-    let mut passes = 0u64;
-    let debug = debug_enabled();
-    while !queue.is_empty() || !active.is_empty() {
-        passes += 1;
-        if debug && passes % 200 == 1 {
-            println!(
-                "    debug: lane {worker} pass {passes} active={} queued={} done={}",
-                active.len(),
-                queue.len(),
-                digests.len()
-            );
-        }
-        while active.len() < capacity {
-            let Some(index) = queue.pop_front() else {
-                break;
-            };
-            active.push((index, walk_fiber(hub, &run.rows[index])));
-            run.gauge.admitted();
-        }
-        let mut ready: Vec<(usize, usize, B256)> = Vec::new();
-        for (position, entry) in active.iter_mut().enumerate() {
-            let index = entry.0;
-            match entry.1.as_mut().poll(&mut cx) {
-                Poll::Ready(Ok(digest)) => ready.push((position, index, digest)),
-                Poll::Ready(Err(error)) => return Err(error),
-                Poll::Pending => {}
-            }
-        }
-        let completed = !ready.is_empty();
-        for (position, index, digest) in ready.into_iter().rev() {
-            let _dropped = active.swap_remove(position);
-            run.gauge.released();
-            digests.insert((run.rows[index].block, run.base + index), digest);
-        }
-        if debug && passes % 200 == 1 {
-            let stats = hub.stats();
-            println!(
-                "    debug: lane {worker} pass {passes} later completed={completed} \
-                 rounds={} memo={} coalesced={} slots={}",
-                stats.rounds,
-                stats.memo_hits,
-                stats.coalesced,
-                hub.memoized_slots()
-            );
-        }
-        if completed {
-            idle_rounds = 0;
-            continue;
-        }
-        let settled = settle_lane_round(run, hub).await;
-        match settled {
-            DrainOutcome::Carried | DrainOutcome::Coordinated => idle_rounds = 0,
-            DrainOutcome::Idle => {
-                // A pass that found nothing still hands the task a fresh
-                // cooperative poll budget before its nothing counts as idle: a
-                // budget-starved poll reports Pending whatever its read holds,
-                // so counting those passes without a yield manufactures stalls.
-                tokio::task::yield_now().await;
-                idle_rounds += 1;
-                if idle_rounds > MAX_IDLE_ROUNDS {
-                    let mut waiting: Vec<usize> = queue.iter().copied().collect();
-                    waiting.extend(active.iter().map(|(index, _)| *index));
-                    waiting.sort_unstable();
-                    return Err(format!(
-                        "lane {worker} stalled with candidates {waiting:?} waiting and no read round to settle"
-                    ));
-                }
-            }
-        }
-    }
-    Ok(LaneOutcome {
-        digests,
-        stats: local.as_ref().map(ReadHub::stats),
-    })
-}
-
-/// The summed hub counters of a per-worker-hub leg.
-fn sum_stats(left: ReadHubStats, right: ReadHubStats) -> ReadHubStats {
-    ReadHubStats {
-        memo_hits: left.memo_hits + right.memo_hits,
-        coalesced: left.coalesced + right.coalesced,
-        rounds: left.rounds + right.rounds,
-        storage_members: left.storage_members + right.storage_members,
-        account_members: left.account_members + right.account_members,
-        storage_member_errors: left.storage_member_errors + right.storage_member_errors,
-        account_member_errors: left.account_member_errors + right.account_member_errors,
-    }
-}
-
-/// Drive `rows` with `plan`'s shape and report what the schedule did.
-///
-/// `base` is the index of `rows[0]` within its anchor's full fan-out, so a
-/// chunked submission keys its digests exactly as the whole fan-out would.
-async fn drive_lanes(
-    label: &'static str,
-    plan: LanePlan,
-    rows: &[Recorded],
-    base: usize,
-    provider: &AlloyProvider,
-    node: Node,
-) -> Result<LegFacts, String> {
-    let limits = plan.limits;
-    let lanes = limits.effective_workers();
-    let gauge = Gauge::default();
-    let block = rows.first().map_or(0, |row| row.block);
-    let shared = plan
-        .shared_hub
-        .then(|| ReadHub::new(provider, ReadAnchor::at(block)));
-    let drain = shared.as_ref().map(|hub| HubDrain::new(hub, plan.policy));
-    let run = LaneRun {
-        plan,
-        base,
-        rows,
-        node,
-        provider,
-        shared: shared.as_ref(),
-        drain: drain.as_ref(),
-        gauge: &gauge,
-    };
-    let started = Instant::now();
-    let outcomes: Vec<Result<LaneOutcome, String>> = if lanes == 1 {
-        vec![drive_lane(&run, 0).await]
-    } else {
-        // The lane's futures are thread-local by construction (they borrow the
-        // hub), so each lane is built and polled on the thread that owns it, the
-        // way the committed driver does it.
-        let handle = tokio::runtime::Handle::current();
-        std::thread::scope(|scope| {
-            let joins: Vec<_> = (0..lanes)
-                .map(|worker| {
-                    let handle = handle.clone();
-                    let run = &run;
-                    scope.spawn(move || handle.block_on(drive_lane(run, worker)))
-                })
-                .collect();
-            joins
-                .into_iter()
-                .map(|join| match join.join() {
-                    Ok(outcome) => outcome,
-                    Err(panic) => std::panic::resume_unwind(panic),
-                })
-                .collect()
-        })
-    };
-    let wall = started.elapsed();
-    let mut digests = Digests::new();
-    let mut stats = ReadHubStats::default();
-    for outcome in outcomes {
-        let outcome = outcome?;
-        digests.extend(outcome.digests);
-        if let Some(lane_stats) = outcome.stats {
-            stats = sum_stats(stats, lane_stats);
-        }
-    }
-    if let Some(hub) = shared.as_ref() {
-        // A shared hub's counters are already session-wide: read them once.
-        stats = hub.stats();
-    }
-    Ok(LegFacts {
-        label,
-        wall,
-        rounds: stats.rounds,
-        storage_fetches: stats.storage_members,
-        account_fetches: stats.account_members,
-        memo_hits: stats.memo_hits,
-        coalesced: stats.coalesced,
-        peak_active: gauge.peak(),
-        lanes,
-        slots: plan.bounded.then_some(limits.slots()),
-        digests,
-    })
-}
-
 // ── The serial leg ────────────────────────────────────────────────────────
 
 /// Today's shape: one read in flight at a time over the production provider
@@ -832,12 +248,13 @@ async fn drive_serial(
     node: Node,
 ) -> Result<LegFacts, String> {
     let block = rows.first().map_or(0, |row| row.block);
-    let mut memo: HashMap<(Address, U256), U256> = HashMap::new();
+    let mut memo: HashMap<(alloy::primitives::Address, U256), U256> = HashMap::new();
     let mut digests = Digests::new();
     let mut rounds = 0u64;
     let mut storage_fetches = 0u64;
     let mut account_fetches = 0u64;
     let mut memo_hits = 0u64;
+    let ledger = WallLedger::new();
     let started = Instant::now();
     for (index, row) in rows.iter().enumerate() {
         let mut material: Vec<u8> = Vec::new();
@@ -846,7 +263,7 @@ async fn drive_serial(
                 .get_account_at(address, block)
                 .await
                 .map_err(|error| format!("serial account read of {address}: {error}"))?;
-            node.charge_read(ReadKind::Account);
+            node.charge_read(ReadKind::Account, &ledger);
             account_fetches += 1;
             rounds += 1;
             extend_account(&mut material, &read);
@@ -861,7 +278,7 @@ async fn drive_serial(
                         .map_err(|error| {
                             format!("serial storage read of {address}/{slot}: {error}")
                         })?;
-                    node.charge_read(ReadKind::Storage);
+                    node.charge_read(ReadKind::Storage, &ledger);
                     storage_fetches += 1;
                     rounds += 1;
                     let value = U256::from_be_bytes(word.0);
@@ -871,8 +288,8 @@ async fn drive_serial(
                 material.extend_from_slice(&value.to_be_bytes::<32>());
             }
         }
-        exec_pause(row);
-        digests.insert((row.block, index), keccak256(&material));
+        ledger.spend_exec(row.sim_ns);
+        digests.insert((row.block, index), alloy::primitives::keccak256(&material));
     }
     Ok(LegFacts {
         label: "serial",
@@ -889,7 +306,7 @@ async fn drive_serial(
     })
 }
 
-// ── One anchor's four legs ────────────────────────────────────────────────
+// ── One anchor's five legs ────────────────────────────────────────────────
 
 async fn drive_fanout(
     config: &Config,
@@ -909,6 +326,7 @@ async fn drive_fanout(
     if debug {
         println!("    debug: anchor {block}: hybrid");
     }
+    let ledger = WallLedger::new();
     let hybrid = drive_lanes(
         "hybrid",
         LanePlan {
@@ -916,11 +334,14 @@ async fn drive_fanout(
             shared_hub: false,
             bounded: false,
             policy: DrainPolicy::PerLane,
+            debug,
         },
         rows,
         0,
         provider,
         node,
+        None,
+        &ledger,
     )
     .await?;
     let fibers = drive_lanes(
@@ -930,11 +351,14 @@ async fn drive_fanout(
             shared_hub: true,
             bounded: false,
             policy: DrainPolicy::SessionWide,
+            debug,
         },
         rows,
         0,
         provider,
         node,
+        None,
+        &ledger,
     )
     .await?;
     if debug {
@@ -950,11 +374,14 @@ async fn drive_fanout(
             shared_hub: true,
             bounded: true,
             policy: DrainPolicy::SessionWide,
+            debug,
         },
         rows,
         0,
         provider,
         node,
+        None,
+        &ledger,
     )
     .await?;
     if let Some(flag) = &config.plant {
@@ -970,11 +397,14 @@ async fn drive_fanout(
             shared_hub: true,
             bounded: true,
             policy: DrainPolicy::PerLane,
+            debug,
         },
         rows,
         0,
         provider,
         node,
+        None,
+        &ledger,
     )
     .await?;
     Ok(vec![serial, hybrid, fibers, session, per_lane])
@@ -1083,14 +513,16 @@ async fn sensitivity(
         "F", "lanes", "wall_us", "rounds", "storage", "account", "peak", "vs F=1"
     );
     let mut serial_wall = Duration::ZERO;
+    let ledger = WallLedger::new();
     for slots in [1usize, 2, 4, 8, 16, 32] {
         let plan = LanePlan {
             limits: FanoutLimits::new(config.limits.workers(), slots),
             shared_hub: true,
             bounded: true,
             policy: DrainPolicy::SessionWide,
+            debug: debug_enabled(),
         };
-        let facts = drive_lanes("session", plan, rows, 0, provider, node).await?;
+        let facts = drive_lanes("session", plan, rows, 0, provider, node, None, &ledger).await?;
         if slots == 1 {
             serial_wall = facts.wall;
         }
@@ -1156,13 +588,15 @@ async fn multi_fan_out(
         shared_hub: true,
         bounded: true,
         policy: DrainPolicy::SessionWide,
+        debug: debug_enabled(),
     };
     println!(
         "\nmulti-fan-out submission (anchor {block}: {} candidates as {} fan-outs of <= {chunk}):",
         rows.len(),
         chunks.len()
     );
-    let pooled = drive_lanes("pooled", plan, rows, 0, provider, node).await?;
+    let ledger = WallLedger::new();
+    let pooled = drive_lanes("pooled", plan, rows, 0, provider, node, None, &ledger).await?;
     print_leg(*block, rows.len(), &pooled);
     println!(
         "    one submission: {} fan-outs share ONE hub, {} lanes and {} slots",
@@ -1176,7 +610,18 @@ async fn multi_fan_out(
     let futures: Vec<_> = chunks
         .iter()
         .enumerate()
-        .map(|(index, part)| drive_lanes("chunk", plan, part, index * chunk, provider, node))
+        .map(|(index, part)| {
+            drive_lanes(
+                "chunk",
+                plan,
+                part,
+                index * chunk,
+                provider,
+                node,
+                None,
+                &ledger,
+            )
+        })
         .collect();
     let legs = futures_util::future::join_all(futures)
         .await
@@ -1205,27 +650,6 @@ async fn multi_fan_out(
     );
     observed.push((format!("per-fanout/{block}"), split.digests));
     Ok(())
-}
-
-/// Compare every leg's read digests against the serial baseline.
-fn identity_gate(baseline: &Digests, legs: &[(String, Digests)]) -> Vec<String> {
-    let mut mismatches = Vec::new();
-    for (label, digests) in legs {
-        if digests.is_empty() {
-            mismatches.push(format!("{label}: replayed no candidate"));
-            continue;
-        }
-        for (key, got) in digests {
-            match baseline.get(key) {
-                None => mismatches.push(format!("{label}: {key:?} is not in the baseline")),
-                Some(want) if want != got => {
-                    mismatches.push(format!("{label}: {key:?} digest {got} != baseline {want}"));
-                }
-                Some(_) => {}
-            }
-        }
-    }
-    mismatches
 }
 
 // ── Entry ─────────────────────────────────────────────────────────────────
@@ -1330,13 +754,15 @@ fn report_gate(observed: Vec<(String, Digests)>, candidates: usize) -> Result<()
 async fn run() -> Result<(), String> {
     let config = Config::from_env();
     let rows = load_rows(&config.trace)?;
+    let (keys, first, last) = recorded_corpus::universe(&rows);
+    let chain = Arc::new(ChainState::build(&keys, first, last)?);
     let fanouts = group_by_anchor(rows);
     let candidates: usize = fanouts.iter().map(|(_, rows)| rows.len()).sum();
     let plant = config
         .plant
         .clone()
         .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-    let provider = StubChain { plant }.provider();
+    let provider = StubChain { chain, plant }.provider();
     print_header(&config, candidates, fanouts.len());
 
     let mut observed: Vec<(String, Digests)> = Vec::new();
