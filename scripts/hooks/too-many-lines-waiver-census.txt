@@ -81,6 +81,7 @@ rust/crates/engine/degenbot-bot/src/instruments.rs::apply	the dispatch IS one fl
 rust/crates/engine/degenbot-bot/src/instruments.rs::new	one instrument per block; splitting hides the inventory
 rust/crates/engine/degenbot-simulation/examples/cold_miss_fanout_probe.rs::main	the probe's leg sequence reads top-down
 rust/crates/engine/degenbot-simulation/examples/mirror_coverage_probe.rs::!module
+rust/crates/engine/degenbot-simulation/examples/worker_fanout_probe.rs::build_candidate	the candidate's deploy + depth seeding + frame encode read top-down
 rust/crates/engine/degenbot-simulation/examples/worker_fanout_probe.rs::main	the probe's leg sequence + corpus build + gate read top-down
 rust/crates/engine/degenbot-simulation/tests/evm2_batch_quote_bench.rs::!module
 rust/crates/engine/degenbot-simulation/tests/evm2_gas_decomposition.rs::!module

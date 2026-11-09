@@ -593,6 +593,7 @@ fn seed_pair(
 
 /// One candidate: its own token + two pairs (the disjoint deep slots), frame
 /// encoded through the real `cmd_executor` grammar at the knob's depth.
+#[expect(clippy::too_many_lines)] // the candidate's deploy + depth seeding + frame encode read top-down
 fn build_candidate(
     setup: &mut Evm<'static, BaseEvmTypes>,
     nonce: &mut u64,
