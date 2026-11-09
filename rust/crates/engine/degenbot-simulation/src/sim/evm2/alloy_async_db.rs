@@ -41,6 +41,11 @@ pub enum AlloyAsyncDbError {
     BlockNotFound(u64),
 }
 
+/// The async batching read lane in front of these single reads is
+/// [`read_hub`](super::read_hub): it coalesces concurrent reads at one anchor,
+/// issues one provider batch per kind, and hands every requester its value. This
+/// adapter stays the single-read leaf (one account, one slot), and the hub is
+/// built beside it rather than through it.
 /// An `AsyncDatabase` over the shared `AlloyProvider`, pinning every read to
 /// one block — the per-block cold-miss fallback in the target evm2 stack
 /// (`CacheDB<WarmCodeCache<BotStateDb<AlloyAsyncDb>>>`).

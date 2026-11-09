@@ -2959,6 +2959,7 @@ dependencies = [
  "degenbot-rpc",
  "degenbot-substrate",
  "degenbot-uniswap",
+ "futures-util",
  "hashbrown 0.17.1",
  "hex",
  "parking_lot 0.13.0",

@@ -702,18 +702,298 @@ mod account_read_batch_tests {
     }
 }
 
-/// Tests for the one-round-trip batched storage read
-/// ([`AlloyProvider::get_storage_batch_at`]): the batch shape, its
-/// byte-identical parameter parity with the serial reads, its per-member
-/// decode, its failure classification, and the empty-input short circuit.
+/// Tests for the multi-account batch
+/// ([`AlloyProvider::get_accounts_batch_at`]): one round trip for many accounts,
+/// per-address member-failure attribution, and the empty-input short circuit.
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod accounts_batch_tests {
+    use super::*;
+    use alloy::providers::RootProvider;
+    use alloy::rpc::json_rpc::{ErrorPayload, Response, ResponsePayload, SerializedRequest};
+    use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
+    use serde_json::value::to_raw_value;
+    use serde_json::Value;
+    use std::borrow::Cow;
+    use std::sync::Mutex;
+    use std::task::{Context, Poll};
+
+    /// One dispatched packet, recorded as its `(method, params)` members — one
+    /// entry per `call`, so a JSON-RPC batch is ONE entry.
+    type Packet = Vec<(String, String)>;
+
+    /// The address whose member reads the stub refuses: a node that answers the
+    /// batch but cannot serve this account's state over HTTP 200.
+    const REFUSED: Address = Address::new([0xbb; 20]);
+
+    /// 1 ETH, nonce 42, two code bytes — the row every served address answers.
+    const BALANCE: &str = "0xde0b6b3a7640000";
+    const NONCE: &str = "0x2a";
+    const CODE: &str = "0x60016001";
+
+    /// An account-serving transport, with [`REFUSED`]'s members answered as
+    /// JSON-RPC failures (`down` fails the whole transport instead).
+    #[derive(Debug, Clone)]
+    struct MultiAccountStub {
+        packets: Arc<Mutex<Vec<Packet>>>,
+        down: bool,
+    }
+
+    impl MultiAccountStub {
+        fn serving() -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+                down: false,
+            }
+        }
+
+        fn transport_down() -> Self {
+            Self {
+                down: true,
+                ..Self::serving()
+            }
+        }
+
+        fn packets(&self) -> Vec<Packet> {
+            self.packets.lock().unwrap().clone()
+        }
+
+        fn provider(&self) -> AlloyProvider {
+            let client = ClientBuilder::default().transport(self.clone(), true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(Arc::new(root))
+        }
+    }
+
+    /// A dispatched request's identity in wire form.
+    fn member(req: &SerializedRequest) -> (String, String) {
+        (
+            req.method().to_string(),
+            req.params()
+                .map_or_else(String::new, |p| p.get().to_string()),
+        )
+    }
+
+    /// The address a member reads, parsed out of its `[address, block]` params.
+    fn member_address(req: &SerializedRequest) -> Address {
+        let params: Value =
+            serde_json::from_str(req.params().expect("a member carries params").get())
+                .expect("member params are JSON");
+        params
+            .get(0)
+            .and_then(Value::as_str)
+            .expect("the address is the first param")
+            .parse()
+            .expect("the member address parses")
+    }
+
+    /// The stub's answer for one request: the account row, or a refused member.
+    fn answer(req: &SerializedRequest) -> Response {
+        if member_address(req) == REFUSED {
+            return Response {
+                id: req.id().clone(),
+                payload: ResponsePayload::Failure(ErrorPayload {
+                    code: -32_000,
+                    message: Cow::Borrowed("missing trie node"),
+                    data: None,
+                }),
+            };
+        }
+        let result = match req.method() {
+            "eth_getBalance" => serde_json::json!(BALANCE),
+            "eth_getTransactionCount" => serde_json::json!(NONCE),
+            "eth_getCode" => serde_json::json!(CODE),
+            other => panic!("an account read must not issue {other}"),
+        };
+        Response {
+            id: req.id().clone(),
+            payload: ResponsePayload::Success(to_raw_value(&result).unwrap()),
+        }
+    }
+
+    impl tower::Service<RequestPacket> for MultiAccountStub {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let stub = self.clone();
+            Box::pin(async move {
+                let recorded: Packet = match &req {
+                    RequestPacket::Single(one) => vec![member(one)],
+                    RequestPacket::Batch(many) => many.iter().map(member).collect(),
+                };
+                stub.packets.lock().unwrap().push(recorded);
+                if stub.down {
+                    return Err(TransportErrorKind::custom_str("stub transport down"));
+                }
+                Ok(match req {
+                    RequestPacket::Single(one) => ResponsePacket::Single(answer(&one)),
+                    RequestPacket::Batch(many) => {
+                        ResponsePacket::Batch(many.iter().map(answer).collect())
+                    }
+                })
+            })
+        }
+    }
+
+    /// The served row, as the batch must decode it.
+    fn served_row() -> AccountRead {
+        AccountRead {
+            balance: U256::from(1_000_000_000_000_000_000_u64),
+            nonce: 42,
+            code: Bytes::from_static(&[0x60, 0x01, 0x60, 0x01]),
+        }
+    }
+
+    /// Many accounts cost ONE dispatched packet carrying three members each, in
+    /// input order, and answer exactly what the single-account read serves.
+    #[tokio::test]
+    async fn many_accounts_are_one_batch_round_trip() {
+        let stub = MultiAccountStub::serving();
+        let provider = stub.provider();
+        let block = 0x1234;
+        let addresses = [
+            Address::from([0x11; 20]),
+            Address::from([0x22; 20]),
+            Address::from([0x33; 20]),
+        ];
+
+        let reads = provider
+            .get_accounts_batch_at(&addresses, block)
+            .await
+            .unwrap();
+
+        assert_eq!(reads.len(), addresses.len(), "one answer per address");
+        for read in reads {
+            assert_eq!(
+                read.unwrap(),
+                served_row(),
+                "each address answers the single-account read's row"
+            );
+        }
+
+        let packets = stub.packets();
+        assert_eq!(
+            packets.len(),
+            1,
+            "many accounts = ONE dispatched batch packet, got {packets:?}"
+        );
+        let batch = &packets[0];
+        assert_eq!(batch.len(), 9, "three members per address: {batch:?}");
+        assert_eq!(
+            batch
+                .iter()
+                .map(|(method, _)| method.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "eth_getBalance",
+                "eth_getTransactionCount",
+                "eth_getCode",
+                "eth_getBalance",
+                "eth_getTransactionCount",
+                "eth_getCode",
+                "eth_getBalance",
+                "eth_getTransactionCount",
+                "eth_getCode",
+            ],
+            "members are grouped per address, balance/nonce/code in hydration order"
+        );
+        assert!(
+            batch
+                .iter()
+                .all(|(_, params)| params.contains(&format!("{block:#x}"))),
+            "every member pins the same block tag: {batch:?}"
+        );
+    }
+
+    /// One address's refused members fail only that address: the round trip
+    /// succeeds, and its neighbours in the same batch are answered.
+    #[tokio::test]
+    async fn a_refused_member_fails_only_its_own_address() {
+        let stub = MultiAccountStub::serving();
+        let provider = stub.provider();
+        let addresses = [
+            Address::from([0x11; 20]),
+            REFUSED,
+            Address::from([0x33; 20]),
+        ];
+
+        let reads = provider.get_accounts_batch_at(&addresses, 7).await.unwrap();
+
+        assert_eq!(reads.len(), 3);
+        assert_eq!(reads[0].as_ref().unwrap(), &served_row());
+        match &reads[1] {
+            Err(ProviderError::RpcError { code, message }) => {
+                assert_eq!(*code, -32_000);
+                assert!(
+                    message.contains("missing trie node"),
+                    "the member's own failure travels: {message}"
+                );
+            }
+            other => panic!("the refused address must fail on its own: {other:?}"),
+        }
+        assert_eq!(
+            reads[2].as_ref().unwrap(),
+            &served_row(),
+            "a refused member must not fail its neighbours"
+        );
+        assert_eq!(
+            stub.packets().len(),
+            1,
+            "the whole attribution is one round trip"
+        );
+    }
+
+    /// An empty input dispatches nothing (never an empty-batch RPC).
+    #[tokio::test]
+    async fn an_empty_input_dispatches_nothing() {
+        let stub = MultiAccountStub::serving();
+        let provider = stub.provider();
+
+        let reads = provider.get_accounts_batch_at(&[], 7).await.unwrap();
+
+        assert!(reads.is_empty());
+        assert!(stub.packets().is_empty(), "no packet was dispatched");
+    }
+
+    /// A transport failure has no per-address answer, so it fails the round.
+    #[tokio::test]
+    async fn a_transport_failure_fails_the_round() {
+        let stub = MultiAccountStub::transport_down();
+        let provider = stub.provider();
+
+        let error = provider
+            .get_accounts_batch_at(&[Address::from([0x11; 20])], 7)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, ProviderError::RpcError { code: -1, .. }),
+            "a downed transport is the round's failure: {error}"
+        );
+    }
+}
+
+/// Tests for the one-round-trip batched storage read
+/// ([`AlloyProvider::get_storage_batch_at`] and its per-slot form
+/// [`AlloyProvider::get_storage_batch_results_at`]): the batch shape, its
+/// byte-identical parameter parity with the serial reads, its per-member
+/// decode, its failure classification, its per-slot failure attribution, and
+/// the empty-input short circuit.
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod storage_batch_tests {
     use super::*;
     use alloy::providers::RootProvider;
-    use alloy::rpc::json_rpc::{Response, ResponsePayload, SerializedRequest};
+    use alloy::rpc::json_rpc::{ErrorPayload, Response, ResponsePayload, SerializedRequest};
     use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
     use serde_json::value::to_raw_value;
+    use std::borrow::Cow;
     use std::sync::Mutex;
     use std::task::{Context, Poll};
 
@@ -730,11 +1010,15 @@ mod storage_batch_tests {
     }
 
     /// A storage-serving transport that records every packet it is dispatched
-    /// (`fail` answers with a transport error instead).
+    /// (`fail` answers with a transport error instead, `refused_slot` answers
+    /// that one member as a JSON-RPC failure and serves the rest).
     #[derive(Debug, Clone)]
     struct StorageStub {
         packets: Arc<Mutex<Vec<Packet>>>,
         fail: bool,
+        /// The slot whose member reads are refused over HTTP 200 — the node
+        /// that answers the batch but cannot serve this slot's state.
+        refused_slot: Option<U256>,
     }
 
     impl StorageStub {
@@ -742,6 +1026,7 @@ mod storage_batch_tests {
             Self {
                 packets: Arc::new(Mutex::new(Vec::new())),
                 fail: false,
+                refused_slot: None,
             }
         }
 
@@ -749,6 +1034,46 @@ mod storage_batch_tests {
             Self {
                 fail: true,
                 ..Self::new()
+            }
+        }
+
+        fn refusing_slot(slot: U256) -> Self {
+            Self {
+                refused_slot: Some(slot),
+                ..Self::new()
+            }
+        }
+
+        /// The stub's answer for one request: the slot's derived value, or a
+        /// refused member.
+        fn answer(&self, req: &SerializedRequest) -> Response {
+            assert_eq!(
+                req.method(),
+                "eth_getStorageAt",
+                "a storage read must issue only eth_getStorageAt"
+            );
+            let params: serde_json::Value =
+                serde_json::from_str(req.params().expect("a storage read carries params").get())
+                    .expect("params are JSON");
+            let slot = params[1]
+                .as_str()
+                .expect("the member's second param is the slot");
+            let slot_value = U256::from_str_radix(slot.trim_start_matches("0x"), 16)
+                .expect("the requested slot parses");
+            if self.refused_slot == Some(slot_value) {
+                return Response {
+                    id: req.id().clone(),
+                    payload: ResponsePayload::Failure(ErrorPayload {
+                        code: -32_000,
+                        message: Cow::Borrowed("missing trie node"),
+                        data: None,
+                    }),
+                };
+            }
+            let result = serde_json::Value::String(answer_for(slot));
+            Response {
+                id: req.id().clone(),
+                payload: ResponsePayload::Success(to_raw_value(&result).unwrap()),
             }
         }
 
@@ -776,26 +1101,6 @@ mod storage_batch_tests {
         )
     }
 
-    /// The stub's answer for one request: the slot's derived value.
-    fn answer(req: &SerializedRequest) -> Response {
-        assert_eq!(
-            req.method(),
-            "eth_getStorageAt",
-            "a storage prefetch must issue only eth_getStorageAt"
-        );
-        let params: serde_json::Value =
-            serde_json::from_str(req.params().expect("a storage read carries params").get())
-                .expect("params are JSON");
-        let slot = params[1]
-            .as_str()
-            .expect("the member's second param is the slot");
-        let result = serde_json::Value::String(answer_for(slot));
-        Response {
-            id: req.id().clone(),
-            payload: ResponsePayload::Success(to_raw_value(&result).unwrap()),
-        }
-    }
-
     impl tower::Service<RequestPacket> for StorageStub {
         type Response = ResponsePacket;
         type Error = TransportError;
@@ -817,9 +1122,9 @@ mod storage_batch_tests {
                     return Err(TransportErrorKind::custom_str("stub transport down"));
                 }
                 Ok(match req {
-                    RequestPacket::Single(one) => ResponsePacket::Single(answer(&one)),
+                    RequestPacket::Single(one) => ResponsePacket::Single(stub.answer(&one)),
                     RequestPacket::Batch(many) => {
-                        ResponsePacket::Batch(many.iter().map(answer).collect())
+                        ResponsePacket::Batch(many.iter().map(|one| stub.answer(one)).collect())
                     }
                 })
             })
@@ -942,6 +1247,96 @@ mod storage_batch_tests {
         );
     }
 
+    /// One slot's refused member fails only that slot: the round trip succeeds,
+    /// its neighbours in the same batch are answered, and the outcomes come back
+    /// one per slot in input order.
+    #[tokio::test]
+    async fn a_refused_storage_member_fails_only_its_own_slot() {
+        let refused_slot = U256::from(7u64);
+        let stub = StorageStub::refusing_slot(refused_slot);
+        let provider = stub.provider();
+        let first = Address::from([0x11; 20]);
+        let second = Address::from([0x22; 20]);
+        let slots = [
+            (first, U256::from(6u64)),
+            (second, refused_slot),
+            (first, U256::from(8u64)),
+        ];
+
+        let outcomes = provider
+            .get_storage_batch_results_at(&slots, 0x1234)
+            .await
+            .unwrap();
+
+        assert_eq!(outcomes.len(), slots.len(), "one outcome per input slot");
+        assert_eq!(
+            outcomes[0].as_ref().unwrap(),
+            &StorageValue::from(7u64),
+            "the slot before the refusal is answered"
+        );
+        match &outcomes[1] {
+            Err(ProviderError::RpcError { code, message }) => {
+                assert_eq!(*code, -32_000);
+                assert!(
+                    message.contains("missing trie node"),
+                    "the member's own failure travels: {message}"
+                );
+            }
+            other => panic!("the refused slot must fail on its own: {other:?}"),
+        }
+        assert_eq!(
+            outcomes[2].as_ref().unwrap(),
+            &StorageValue::from(9u64),
+            "a refused member must not fail its neighbours"
+        );
+
+        let packets = stub.packets();
+        assert_eq!(
+            packets.len(),
+            1,
+            "the whole attribution is ONE dispatched batch packet, got {packets:?}"
+        );
+        assert_eq!(packets[0].len(), 3, "one member per slot: {:?}", packets[0]);
+        assert!(
+            packets[0]
+                .iter()
+                .all(|(_, params)| params.contains(&format!("{:#x}", 0x1234))),
+            "every member pins the same block tag: {:?}",
+            packets[0]
+        );
+    }
+
+    /// The flat wrapper keeps its whole-batch contract: the first refused member
+    /// is the batch's failure, so an existing prefetch caller never sees a
+    /// partial answer it has no shape for.
+    #[tokio::test]
+    async fn get_storage_batch_at_still_collapses_a_refused_member() {
+        let refused_slot = U256::from(7u64);
+        let stub = StorageStub::refusing_slot(refused_slot);
+        let provider = stub.provider();
+        let address = Address::from([0x11; 20]);
+
+        let error = provider
+            .get_storage_batch_at(
+                &[
+                    (address, U256::from(6u64)),
+                    (address, refused_slot),
+                    (address, U256::from(8u64)),
+                ],
+                7,
+            )
+            .await
+            .unwrap_err();
+
+        match error {
+            ProviderError::RpcError { code, message } => {
+                assert_eq!(code, -32_000, "the refused member's classification");
+                assert!(message.contains("missing trie node"), "{message}");
+            }
+            other => panic!("the flat shape must surface the refused member: {other:?}"),
+        }
+    }
+
     /// An empty slot set dispatches nothing — no empty-batch RPC.
     #[tokio::test]
     async fn get_storage_batch_at_empty_dispatches_nothing() {
@@ -1021,9 +1416,18 @@ pub const SIM_MAX_ATTEMPTS: u32 = 2;
 const GET_ACCOUNT_CONTEXT: &str =
     "Failed to read account (batched eth_getBalance/eth_getTransactionCount/eth_getCode)";
 
+/// The failure context of the batched MULTI-account read
+/// ([`AlloyProvider::get_accounts_batch_at`]): the round owns one failure, and
+/// each member's own failure is returned to its address instead.
+const GET_ACCOUNTS_CONTEXT: &str =
+    "Failed to read accounts (batched eth_getBalance/eth_getTransactionCount/eth_getCode)";
+
 /// The failure context of the batched storage read
-/// ([`AlloyProvider::get_storage_batch_at`]): one context for the whole batch,
-/// since one round trip has one failure.
+/// ([`AlloyProvider::get_storage_batch_results_at`], and the flat
+/// [`AlloyProvider::get_storage_batch_at`] over it): the round's failure and a
+/// refused member's own failure share one classification, exactly as the
+/// serial [`AlloyProvider::get_storage_at`] and the batched multi-account read
+/// classify theirs.
 const GET_STORAGE_CONTEXT: &str = "Failed to read storage (batched eth_getStorageAt)";
 
 /// One account's cold-read triple — balance, nonce, and code — read at one
@@ -1644,30 +2048,45 @@ impl AlloyProvider {
     }
 
     /// Many storage slots at ONE pinned block, in ONE JSON-RPC batch round
-    /// trip.
+    /// trip, with each slot's failure attributed to its OWN slot.
     ///
     /// Every read a path's upfront slot set needs (`eth_getStorageAt` over the
     /// `(address, slot)` pairs) shares the same block tag and answer shape as
-    /// the serial [`Self::get_storage_at`], so a prefetch pays one round trip
+    /// the serial [`Self::get_storage_at`], so a fan-out pays one round trip
     /// instead of one per slot. The members' parameters are byte-identical to
     /// the serial call's — `(address, position)` plus the pinned block tag —
     /// so an entry read here is the same answer the fallback would serve.
     ///
-    /// Values are returned in the input order. An empty `slots` slice
-    /// dispatches nothing (no empty-batch RPC).
+    /// Outcomes are returned in the input order, one per slot. An empty `slots`
+    /// slice dispatches nothing (no empty-batch RPC).
     ///
     /// Retry/timeout policy is the provider's own ([`Self::retry_with_backoff`]):
     /// a retryable failure re-issues the whole batch, so the batch is one
     /// "call" for the retry budget.
     ///
+    /// # Failure shape
+    ///
+    /// The OUTER result is the ROUND's failure: a transport failure, a member
+    /// that cannot be serialized, or the retry budget running out. A round with
+    /// no answer fails every slot in the batch.
+    ///
+    /// The INNER result is one slot's member outcome. A node that refuses to
+    /// serve one slot fails only that slot; every other slot in the same round
+    /// trip is answered. A member failure is deliberately not retried here —
+    /// the round already succeeded, so the caller decides whether that slot is
+    /// re-issued in a later round.
+    ///
+    /// [`Self::get_storage_batch_at`] is the flat wrapper for a caller (a
+    /// prefetch) that owns a whole batch and cannot act on a partial answer.
+    ///
     /// # Errors
     ///
-    /// The [`ProviderError`] classified from the batch's first failing member.
-    pub async fn get_storage_batch_at(
+    /// The [`ProviderError`] classified from the round's own failure.
+    pub async fn get_storage_batch_results_at(
         &self,
         slots: &[(Address, U256)],
         block: u64,
-    ) -> ProviderResult<Vec<StorageValue>> {
+    ) -> ProviderResult<Vec<ProviderResult<StorageValue>>> {
         if slots.is_empty() {
             return Ok(Vec::new());
         }
@@ -1691,17 +2110,49 @@ impl AlloyProvider {
                 .send()
                 .await
                 .map_err(|e| e.into_provider_error(GET_STORAGE_CONTEXT))?;
-            let mut values = Vec::with_capacity(waiters.len());
+            let mut outcomes = Vec::with_capacity(waiters.len());
             for waiter in waiters {
-                values.push(
+                // One slot's member settles here and its failure stops here: a
+                // refused member is THIS slot's answer, never the round's.
+                outcomes.push(
                     waiter
                         .await
-                        .map_err(|e| e.into_provider_error(GET_STORAGE_CONTEXT))?,
+                        .map_err(|e| e.into_provider_error(GET_STORAGE_CONTEXT)),
                 );
             }
-            Ok(values)
+            Ok(outcomes)
         })
         .await
+    }
+
+    /// Many storage slots at ONE pinned block, in ONE JSON-RPC batch round
+    /// trip, as one flat value list.
+    ///
+    /// The batch shape of [`Self::get_storage_batch_results_at`] — one
+    /// `eth_getStorageAt` member per `(address, slot)` pair, every member
+    /// pinned to `block`, parameters byte-identical to the serial
+    /// [`Self::get_storage_at`] — collapsed to one answer for callers that own
+    /// the whole batch (the upfront slot prefetch). An empty `slots` slice
+    /// dispatches nothing (no empty-batch RPC).
+    ///
+    /// Values are returned in the input order. This shape has no per-slot
+    /// answer: a caller that must keep the served slots when one is refused
+    /// reads [`Self::get_storage_batch_results_at`] instead.
+    ///
+    /// # Errors
+    ///
+    /// The [`ProviderError`] classified from the batch's first failing member,
+    /// or from the round's own failure (a transport failure, or the retry
+    /// budget running out).
+    pub async fn get_storage_batch_at(
+        &self,
+        slots: &[(Address, U256)],
+        block: u64,
+    ) -> ProviderResult<Vec<StorageValue>> {
+        self.get_storage_batch_results_at(slots, block)
+            .await?
+            .into_iter()
+            .collect()
     }
 
     /// Get the balance of an address.
@@ -1818,6 +2269,97 @@ impl AlloyProvider {
                 nonce: nonce.to::<u64>(),
                 code,
             })
+        })
+        .await
+    }
+
+    /// Many accounts at ONE pinned block, in ONE JSON-RPC batch round trip —
+    /// balance + nonce + code for every address, with each member's failure
+    /// attributed to its OWN address.
+    ///
+    /// The cold-read fan-out shape: N cold accounts cost one round trip and 3N
+    /// batch members, never 3N round trips. Every member is byte-identical to
+    /// the corresponding [`Self::get_account_at`] read — `eth_getBalance`,
+    /// `eth_getTransactionCount`, and `eth_getCode` at `[address, block]` — so
+    /// an answer here is the answer the single-account read would serve.
+    /// Results are returned in the input order, one per address. An empty
+    /// `addresses` slice dispatches nothing (no empty-batch RPC).
+    ///
+    /// # Failure shape
+    ///
+    /// The OUTER result is the ROUND's failure: a transport failure, a member
+    /// that cannot be serialized, or the retry budget running out. A round with
+    /// no answer fails every requester of the round, and
+    /// [`Self::retry_with_backoff`] re-issues the whole batch — one round trip
+    /// is one "call" for the retry budget.
+    ///
+    /// The INNER result is one address's member outcome. A node that refuses to
+    /// serve one address fails only that address; every other address in the
+    /// same round trip is answered. A member failure is deliberately not
+    /// retried here — the round already succeeded, so the caller decides
+    /// whether that address is re-issued in a later round.
+    ///
+    /// # Errors
+    ///
+    /// The [`ProviderError`] classified from the round's own failure.
+    pub async fn get_accounts_batch_at(
+        &self,
+        addresses: &[Address],
+        block: u64,
+    ) -> ProviderResult<Vec<ProviderResult<AccountRead>>> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.retry_with_backoff(|| async {
+            let mut batch = BatchRequest::new(self.inner.client());
+            let mut waiters = Vec::with_capacity(addresses.len());
+            for address in addresses {
+                // One `ParamsWithBlock` per address: every member pins the same
+                // block tag, and each address's three reads share one pair.
+                let params = ParamsWithBlock::new(*address, BlockId::number(block));
+                let balance = batch
+                    .add_call::<_, U256>("eth_getBalance", &params)
+                    .map_err(|e| e.into_provider_error(GET_ACCOUNTS_CONTEXT))?;
+                let nonce = batch
+                    .add_call::<_, U64>("eth_getTransactionCount", &params)
+                    .map_err(|e| e.into_provider_error(GET_ACCOUNTS_CONTEXT))?;
+                let code = batch
+                    .add_call::<_, Bytes>("eth_getCode", &params)
+                    .map_err(|e| e.into_provider_error(GET_ACCOUNTS_CONTEXT))?;
+                waiters.push((balance, nonce, code));
+            }
+            // Awaiting the batch is what dispatches it (see `get_account_at`:
+            // the waiters are dropped rather than read on a transport failure,
+            // so one classified error never becomes N unclassifiable ones).
+            batch
+                .send()
+                .await
+                .map_err(|e| e.into_provider_error(GET_ACCOUNTS_CONTEXT))?;
+            let mut reads = Vec::with_capacity(waiters.len());
+            for (balance, nonce, code) in waiters {
+                // One address's three members settle here and their failures
+                // stop here: a refused member is THIS address's answer, never
+                // the round's.
+                let read: ProviderResult<AccountRead> = async {
+                    let balance = balance
+                        .await
+                        .map_err(|e| e.into_provider_error(GET_ACCOUNTS_CONTEXT))?;
+                    let nonce = nonce
+                        .await
+                        .map_err(|e| e.into_provider_error(GET_ACCOUNTS_CONTEXT))?;
+                    let code = code
+                        .await
+                        .map_err(|e| e.into_provider_error(GET_ACCOUNTS_CONTEXT))?;
+                    Ok(AccountRead {
+                        balance,
+                        nonce: nonce.to::<u64>(),
+                        code,
+                    })
+                }
+                .await;
+                reads.push(read);
+            }
+            Ok(reads)
         })
         .await
     }

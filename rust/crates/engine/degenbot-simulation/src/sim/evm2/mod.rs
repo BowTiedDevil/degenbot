@@ -13,6 +13,14 @@
 //! `detach`), the same shape as the revm engine's `transact_one` + `finalize`
 //! discipline: `discard` is the finalize-never-commit equivalent, so a pilot
 //! run leaves no writes in the shared read cache.
+//!
+//! The read lane has two leaves with the same anchoring contract: the
+//! single-read fallback (`alloy_async_db`, one account or one slot per call,
+//! adapted synchronously by `blocking_async_db`) and the async batching hub
+//! (`read_hub`, one provider batch per kind per caller-drained round). A caller
+//! migrating off single reads takes `ReadHubCache::for_anchor` and drains a
+//! round when no fiber can progress; the single-read leaf stays in place for the
+//! consumers that never overlap reads.
 
 pub mod alloy_async_db;
 #[cfg(feature = "evm2-jit")]
@@ -25,6 +33,7 @@ pub mod hook_slots;
 pub mod inspectors;
 pub mod jit;
 pub mod memoized_storage;
+pub mod read_hub;
 pub mod session;
 pub mod state_override;
 pub mod v4_black_box;

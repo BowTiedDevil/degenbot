@@ -86,6 +86,10 @@ serde_json = { version = "^1.0" }
 # (matches `degenbot-bot` so the `Option<Arc<RwLock<BotState>>>` fan-out param
 # is the same lock family).
 parking_lot = "^0.13"
+# `futures_util::future::join` — the read hub issues its storage batch and its
+# multi-account batch concurrently (one round, two round trips in flight).
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+
 # `tower::Service` — the JSON-RPC transport seam the scratch chain serves (the
 # same shape the degenbot-rpc recording/replay transports implement).
 tower = { version = "^0.5", default-features = false }
@@ -93,8 +97,10 @@ tower = { version = "^0.5", default-features = false }
 # reads on a runtime — `BlockingAsyncDb::new` needs an ambient multi-threaded
 # tokio handle). The fan-out/categorization policy + its
 # `buffer_unordered`/`Semaphore` concurrency retired with the strategy
-# relocation to `degenbot-arbitrage` (ADR-019 D4/D7).
-tokio = { version = "^1.54", features = ["rt"] }
+# relocation to `degenbot-arbitrage` (ADR-019 D4/D7). `sync` carries the read
+# hub's per-requester answer channels (`tokio::sync::oneshot` — a channel, not a
+# runtime).
+tokio = { version = "^1.54", features = ["rt", "sync"] }
 
 [build-dependencies]
 # build.rs's builtins-symbol export — optional, enabled by the evm2-jit
@@ -174,6 +180,8 @@ sha2 = "0.11"
 # `rt-multi-thread` is the flavor the `BlockingAsyncDb` cold path needs: its
 # reads block on the ambient tokio runtime, and under a `CurrentThread`
 # runtime `BlockingAsyncDb::new` returns `None`.
+# The hub's public-seam tests drive caller-drained rounds directly, so the
+# `#[tokio::test]` macros and the multi-threaded flavor are all they need.
 tokio = { version = "^1.54", features = ["macros", "rt-multi-thread"] }
 # `test-utils` gates the pending-tx pump's frame-injection support
 # (`PendingTxPump::push`) so the §4.2 wire-shape tests + the parity fixture can

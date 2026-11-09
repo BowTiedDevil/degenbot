@@ -1,0 +1,615 @@
+//! `ReadHub` — the anchor-scoped async read hub: storage and account reads
+//! coalesced per anchor and settled by a round the caller drains.
+//!
+//! The blocking leaf ([`BlockingAsyncDb`](super::blocking_async_db) over
+//! [`AlloyAsyncDb`](super::alloy_async_db)) reads one slot or one account per
+//! call: every cold read is its own RPC round trip, and two fan-outs pinned to
+//! the same block re-pay the same slot. The hub is the async batching leaf in
+//! its place — reads register against ONE anchor, duplicate reads collapse onto
+//! ONE fetch, distinct reads queued in a round share ONE provider batch per read
+//! kind, and the caller (a scheduler with work to overlap), never a timer,
+//! decides when a round is dispatched.
+//!
+//! # The anchor pins every value
+//!
+//! A hub is minted for one [`ReadAnchor`] and reads the provider's batch
+//! primitives at that anchor's block number, with the anchor's block hash as the
+//! identity fence: [`ReadHubCache::for_anchor`] hands every caller at an anchor the same
+//! hub and mints a fresh one the moment the anchor moves — a same-height reorg
+//! included, exactly as
+//! [`StorageMemoCache`](crate::sim::storage_memo::StorageMemoCache) retires its
+//! memo. A value memoized in one hub is therefore unreachable from any other
+//! anchor's hub; there is no cross-anchor map that can go stale.
+//!
+//! # One fetch per read identity (single flight)
+//!
+//! A read identity is `(anchor, kind, key)`; the anchor is the hub's, so the
+//! hub's maps carry the rest. Three paths answer a read, and only the third
+//! costs a round trip:
+//!
+//! 1. the anchor memo already holds the value: answered on the spot;
+//! 2. the identity is already queued or already in flight: the requester joins
+//!    that entry's waiters, so one fetch answers every requester with the same
+//!    result;
+//! 3. otherwise the read joins the round queue.
+//!
+//! # A round is drained by the caller
+//!
+//! [`ReadHub::drain_round`] takes every queued identity, issues the queued
+//! storage identities as one
+//! [`AlloyProvider::get_storage_batch_results_at`] batch and the queued account
+//! identities as one [`AlloyProvider::get_accounts_batch_at`] batch (both at the
+//! anchor, issued concurrently), then hands each waiter its value. There is no
+//! sleep, no debounce, and no background task: a read future resolves only
+//! because a `drain_round` settled it (or because the memo already had it), so a
+//! caller that awaits a read without draining parks by contract. The scheduler's
+//! shape is therefore: poll the runnable fibers, drain one round when none can
+//! progress, poll again.
+//!
+//! A drain takes the queue at its start, so a read registered while a round is
+//! in flight joins that round's identity instead of waiting for another drain,
+//! and a second concurrent drain finds nothing queued and returns an empty
+//! [`RoundReport`].
+//!
+//! No lock guard crosses an RPC await. The hub's lock covers registration,
+//! round-taking, and settlement only: the provider calls run after it is dropped
+//! and the settlement re-takes it afterwards.
+//!
+//! # Failure shape
+//!
+//! Both batches attribute failures per member, so a refusal is never round-wide:
+//! a storage slot the node refuses fails only that slot's waiters, and the
+//! neighbours in the same packet are answered and memoized; an account address
+//! the node refuses fails only that address's requester. A refused identity
+//! never joins the anchor memo — its in-flight entry is cleared instead — so a
+//! later read of it queues a fresh round: a node that could not serve one slot
+//! last time may serve it next time.
+//!
+//! Only a round-wide failure reaches every requester: a transport failure, or a
+//! batch that never dispatched, has no per-member answer to attribute, so the
+//! whole round fails for the identities it carried. A round that fails, or is
+//! abandoned (its `drain_round` future dropped mid-flight), likewise clears its
+//! in-flight entries and hands each waiter an error, so the next read of that
+//! identity queues a fresh round instead of waiting on a fetch that will never
+//! answer.
+//!
+//! # The account memo's scope and its limits
+//!
+//! The account memo is per anchor, not cross-block: it holds the same
+//! balance/nonce/code triple the provider read at the anchor's block, for as
+//! long as that anchor lives. It therefore memoizes EOA rows (an all-empty read)
+//! too — they are correct for the anchor and unreachable from the next one. This
+//! is deliberately NOT the cross-block
+//! [`WarmCodeCache`](super::warm_code_cache) policy, which refuses to cache EOA
+//! rows because their nonce/balance mutate every block: an anchor's memo dies
+//! with the anchor, so the EOA staleness that policy guards against cannot arise
+//! here, and the warm cache is untouched by the hub.
+//!
+//! The limits follow from that scope. A hub's maps are unbounded within their
+//! anchor: every distinct slot and account a fan-out touches is retained until
+//! the anchor moves, which is the point (the second fan-out at the anchor is
+//! free) and also the cost ceiling — memory and lock contention grow with the
+//! anchor's distinct read set, not with the fan-out count. Values are the
+//! provider's answers, so a hub memo never holds an engine write; the EVM's
+//! per-candidate overlay owns those.
+//!
+//! # Migration from single reads
+//!
+//! A caller replacing a single read ([`AlloyAsyncDb::get_storage`](super::alloy_async_db),
+//! [`AlloyAsyncDb::get_account`](super::alloy_async_db), or a bare
+//! [`AlloyProvider::get_storage_at`] / [`AlloyProvider::get_account_at`]) moves in
+//! three steps:
+//!
+//! 1. own a [`ReadHubCache`] for the session and take `for_anchor(anchor)` where
+//!    the caller used to pin a block number — the anchor is the block the reads
+//!    are pinned to, never a lagging clock;
+//! 2. replace the read call with [`ReadHub::read_storage`] /
+//!    [`ReadHub::read_account`], keeping the returned future instead of awaiting
+//!    it inline;
+//! 3. await the futures after a [`ReadHub::drain_round`] settled their round —
+//!    the scheduler drains when no fiber can progress; a sequential caller
+//!    registers its reads, drains once, then awaits.
+//!
+//! The value shapes cross unchanged: `read_storage` answers the provider's
+//! `StorageValue` for the pinned index, and `read_account` answers the provider's
+//! [`AccountRead`] triple, so the all-empty → non-existent rule stays where it
+//! already lives (the DB adapter's `get_account`), not in the hub.
+//!
+//! The failure shape does change, and in the caller's favour: a single read
+//! surfaces one failure as its own, while a hub read surfaces its member's
+//! refusal as its own and leaves the round's other reads answered. A caller
+//! that used the flat [`AlloyProvider::get_storage_batch_at`] (which collapses a
+//! batch to its first failure) reads through the hub to keep the served slots.
+//!
+//! # What this deliberately does not do
+//!
+//! No EVM `Database` implementation, no worker pool, no dispatch integration,
+//! and no prefetch policy: the hub is the read lane those later pieces share.
+//! Block hashes are per-chain facts and are never hub reads.
+
+use alloy::primitives::{Address, StorageValue, U256};
+use degenbot_core::errors::{ProviderError, ProviderResult};
+use degenbot_rpc::provider::{AccountRead, AlloyProvider};
+use futures_util::future::join;
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::sync::oneshot;
+
+use crate::sim::storage_memo::ReadAnchor;
+
+/// Why a hub read has no value.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ReadHubError {
+    /// The provider's read failed: the member's own failure for a refused
+    /// storage slot or account address, or the round's failure for a transport
+    /// failure (which has no per-member answer to attribute).
+    #[error("RPC read failed: {0}")]
+    Rpc(#[from] ProviderError),
+    /// No answer will arrive: the round owning the read was cancelled before it
+    /// settled, and its in-flight entry was cleared for a later retry.
+    #[error("the read was abandoned before its round settled")]
+    Abandoned,
+}
+
+/// Cumulative hub counters — the read lane's own profile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReadHubStats {
+    /// Reads answered by the anchor memo (no queue, no fetch).
+    pub memo_hits: u64,
+    /// Reads that joined an identity another requester already queued or was
+    /// already fetching.
+    pub coalesced: u64,
+    /// Rounds that settled at least one member (a round abandoned mid-flight
+    /// dispatched without settling, so it is not counted).
+    pub rounds: u64,
+    /// Distinct storage slots dispatched, summed over rounds.
+    pub storage_members: u64,
+    /// Distinct accounts dispatched, summed over rounds.
+    pub account_members: u64,
+    /// Storage slots whose member read was refused, summed over rounds. Each
+    /// failed only its own waiters (see the module's failure shape).
+    pub storage_member_errors: u64,
+    /// Account addresses whose member read was refused, summed over rounds.
+    pub account_member_errors: u64,
+}
+
+/// What one drained round dispatched and settled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RoundReport {
+    /// Distinct storage slots the round's storage batch carried.
+    pub storage_members: usize,
+    /// Distinct accounts the round's account batch carried.
+    pub account_members: usize,
+    /// Storage slots whose member read was refused; each failed only its own
+    /// waiters, and the round's other slots were answered.
+    pub storage_member_errors: usize,
+    /// Account addresses whose members failed; each failed only its requester.
+    pub account_member_errors: usize,
+}
+
+impl RoundReport {
+    /// Whether the round dispatched nothing (a drain that found no queued read,
+    /// because another round already owns every pending identity).
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.storage_members == 0 && self.account_members == 0
+    }
+
+    /// The account batch's RPC member count: `eth_getBalance`,
+    /// `eth_getTransactionCount`, and `eth_getCode` per account.
+    #[must_use]
+    pub const fn account_rpc_members(&self) -> usize {
+        self.account_members * 3
+    }
+}
+
+/// One hub read: a handle that resolves when the round owning the read settles,
+/// or immediately when the anchor memo already holds the answer.
+///
+/// The read registers when the handle is created ([`ReadHub::read_storage`] /
+/// [`ReadHub::read_account`]), so a caller registers everything it needs and then
+/// drains once.
+#[must_use = "a read is settled by a `drain_round` call, or by the anchor memo"]
+pub struct ReadFuture<T> {
+    rx: oneshot::Receiver<Result<T, ReadHubError>>,
+}
+
+impl<T> ReadFuture<T> {
+    const fn new(rx: oneshot::Receiver<Result<T, ReadHubError>>) -> Self {
+        Self { rx }
+    }
+}
+
+impl<T> Future for ReadFuture<T> {
+    type Output = Result<T, ReadHubError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match Pin::new(&mut self.get_mut().rx).poll(cx) {
+            Poll::Ready(Ok(outcome)) => Poll::Ready(outcome),
+            // The sender is gone without an answer: the round was abandoned
+            // mid-flight, or the hub dropped before settling.
+            Poll::Ready(Err(_gone)) => Poll::Ready(Err(ReadHubError::Abandoned)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+/// A storage read identity: one word of one account at the hub's anchor.
+type Slot = (Address, U256);
+
+/// One read identity's requesters, and whether a round already owns its fetch.
+struct Pending<T> {
+    /// A drained round is fetching this identity (its waiters are served by that
+    /// round, not by the next drain).
+    dispatched: bool,
+    /// Every requester's answer channel, in registration order.
+    waiters: Vec<oneshot::Sender<Result<T, ReadHubError>>>,
+}
+
+impl<T> Pending<T> {
+    fn queued(waiter: oneshot::Sender<Result<T, ReadHubError>>) -> Self {
+        Self {
+            dispatched: false,
+            waiters: vec![waiter],
+        }
+    }
+}
+
+#[derive(Default)]
+struct HubState {
+    /// The anchor's fetched storage words.
+    storage_values: HashMap<Slot, StorageValue>,
+    /// The anchor's fetched account rows (EOA rows included: see the module docs).
+    account_values: HashMap<Address, AccountRead>,
+    /// Storage identities queued or in flight at this anchor.
+    storage_pending: HashMap<Slot, Pending<StorageValue>>,
+    /// Account identities queued or in flight at this anchor.
+    account_pending: HashMap<Address, Pending<AccountRead>>,
+    stats: ReadHubStats,
+}
+
+/// The anchor-scoped async read hub (see the module docs).
+pub struct ReadHub<'p> {
+    provider: &'p AlloyProvider,
+    anchor: ReadAnchor,
+    state: Mutex<HubState>,
+}
+
+impl<'p> ReadHub<'p> {
+    /// A hub for `anchor`: every read it makes is pinned to that block.
+    #[must_use]
+    pub fn new(provider: &'p AlloyProvider, anchor: ReadAnchor) -> Self {
+        Self {
+            provider,
+            anchor,
+            state: Mutex::new(HubState::default()),
+        }
+    }
+
+    /// The anchor every value this hub serves was read at.
+    #[must_use]
+    pub const fn anchor(&self) -> ReadAnchor {
+        self.anchor
+    }
+
+    /// The hub's cumulative counters.
+    #[must_use]
+    pub fn stats(&self) -> ReadHubStats {
+        self.state.lock().stats
+    }
+
+    /// How many storage words the anchor memo holds — the memoization seam's
+    /// observable state.
+    #[must_use]
+    pub fn memoized_slots(&self) -> usize {
+        self.state.lock().storage_values.len()
+    }
+
+    /// Register one storage read at the hub's anchor.
+    ///
+    /// Resolves from the anchor memo when the word is known, joins the round that
+    /// already owns the identity when one is queued or in flight, and otherwise
+    /// waits for the next [`Self::drain_round`].
+    pub fn read_storage(&self, address: Address, index: U256) -> ReadFuture<StorageValue> {
+        let (tx, rx) = oneshot::channel();
+        let mut state = self.state.lock();
+        if let Some(value) = state.storage_values.get(&(address, index)).copied() {
+            state.stats.memo_hits += 1;
+            drop(state);
+            let _ = tx.send(Ok(value));
+            return ReadFuture::new(rx);
+        }
+        let coalesced = if let Some(pending) = state.storage_pending.get_mut(&(address, index)) {
+            pending.waiters.push(tx);
+            true
+        } else {
+            state
+                .storage_pending
+                .insert((address, index), Pending::queued(tx));
+            false
+        };
+        if coalesced {
+            state.stats.coalesced += 1;
+        }
+        ReadFuture::new(rx)
+    }
+
+    /// Register one account read at the hub's anchor — balance, nonce, and code
+    /// in one batch member group (see [`AlloyProvider::get_accounts_batch_at`]).
+    pub fn read_account(&self, address: Address) -> ReadFuture<AccountRead> {
+        let (tx, rx) = oneshot::channel();
+        let mut state = self.state.lock();
+        if let Some(read) = state.account_values.get(&address).cloned() {
+            state.stats.memo_hits += 1;
+            drop(state);
+            let _ = tx.send(Ok(read));
+            return ReadFuture::new(rx);
+        }
+        let coalesced = if let Some(pending) = state.account_pending.get_mut(&address) {
+            pending.waiters.push(tx);
+            true
+        } else {
+            state.account_pending.insert(address, Pending::queued(tx));
+            false
+        };
+        if coalesced {
+            state.stats.coalesced += 1;
+        }
+        ReadFuture::new(rx)
+    }
+
+    /// Dispatch one round: every identity queued by the time this call takes the
+    /// queue becomes one provider batch per kind, both issued at the anchor and
+    /// issued concurrently, and every waiter is handed its answer before this
+    /// returns.
+    ///
+    /// Returns an empty [`RoundReport`] when nothing was queued (every pending
+    /// identity is already owned by another in-flight round).
+    pub async fn drain_round(&self) -> RoundReport {
+        let (storage_keys, account_keys) = self.take_queued();
+        if storage_keys.is_empty() && account_keys.is_empty() {
+            return RoundReport::default();
+        }
+        // The guard abandons this round's in-flight entries if the future is
+        // dropped before it settles, so a cancelled drain never strands a read.
+        let round = RoundGuard {
+            hub: self,
+            storage: &storage_keys,
+            accounts: &account_keys,
+            settled: false,
+        };
+        let (storage, accounts) = join(
+            self.fetch_storage(&storage_keys),
+            self.fetch_accounts(&account_keys),
+        )
+        .await;
+        round.settle(storage, accounts)
+    }
+
+    /// Mark every queued identity as dispatched and return it, so the round takes
+    /// exactly the queue that existed when it started.
+    fn take_queued(&self) -> (Vec<Slot>, Vec<Address>) {
+        let mut state = self.state.lock();
+        let mut storage = Vec::new();
+        for (key, pending) in &mut state.storage_pending {
+            if !pending.dispatched {
+                pending.dispatched = true;
+                storage.push(*key);
+            }
+        }
+        let mut accounts = Vec::new();
+        for (key, pending) in &mut state.account_pending {
+            if !pending.dispatched {
+                pending.dispatched = true;
+                accounts.push(*key);
+            }
+        }
+        (storage, accounts)
+    }
+
+    /// One storage batch at the anchor, one member outcome per slot (empty queue
+    /// dispatches nothing).
+    async fn fetch_storage(
+        &self,
+        keys: &[Slot],
+    ) -> ProviderResult<Vec<ProviderResult<StorageValue>>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.provider
+            .get_storage_batch_results_at(keys, self.anchor.number)
+            .await
+    }
+
+    /// One multi-account batch at the anchor, one member outcome per address.
+    async fn fetch_accounts(
+        &self,
+        addresses: &[Address],
+    ) -> ProviderResult<Vec<ProviderResult<AccountRead>>> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.provider
+            .get_accounts_batch_at(addresses, self.anchor.number)
+            .await
+    }
+
+    /// Clear this round's in-flight entries and fail every waiter — the
+    /// cancellation path: the identities must be readable again.
+    fn abandon(&self, storage: &[Slot], accounts: &[Address]) {
+        let mut state = self.state.lock();
+        for key in storage {
+            if let Some(pending) = state.storage_pending.remove(key) {
+                deliver(pending.waiters, &Err(ReadHubError::Abandoned));
+            }
+        }
+        for address in accounts {
+            if let Some(pending) = state.account_pending.remove(address) {
+                deliver(pending.waiters, &Err(ReadHubError::Abandoned));
+            }
+        }
+    }
+}
+
+/// The in-flight ownership of one drained round, and the settlement that ends it.
+struct RoundGuard<'a, 'p> {
+    hub: &'a ReadHub<'p>,
+    storage: &'a [Slot],
+    accounts: &'a [Address],
+    settled: bool,
+}
+
+impl Drop for RoundGuard<'_, '_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.hub.abandon(self.storage, self.accounts);
+        }
+    }
+}
+
+impl RoundGuard<'_, '_> {
+    /// Hand each identity its outcome: memoize the values and answer every
+    /// waiter, or fail the identities the round could not answer.
+    fn settle(
+        mut self,
+        storage: ProviderResult<Vec<ProviderResult<StorageValue>>>,
+        accounts: ProviderResult<Vec<ProviderResult<AccountRead>>>,
+    ) -> RoundReport {
+        self.settled = true;
+        let mut report = RoundReport {
+            storage_members: self.storage.len(),
+            account_members: self.accounts.len(),
+            storage_member_errors: 0,
+            account_member_errors: 0,
+        };
+        // The lock is held across the sends only: waking a waiter schedules it,
+        // it never runs hub code inline, and no await crosses this scope.
+        let mut state = self.hub.state.lock();
+        match storage {
+            Ok(values) => {
+                for (key, value) in self.storage.iter().zip(values) {
+                    let Some(pending) = state.storage_pending.remove(key) else {
+                        continue;
+                    };
+                    // One slot's member settles here: a value joins the anchor
+                    // memo and answers its waiters, a refusal fails only them
+                    // and leaves the identity readable for a later round.
+                    match value {
+                        Ok(value) => {
+                            state.storage_values.insert(*key, value);
+                            deliver(pending.waiters, &Ok(value));
+                        }
+                        Err(error) => {
+                            report.storage_member_errors += 1;
+                            deliver(pending.waiters, &Err(ReadHubError::Rpc(error)));
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                for key in self.storage {
+                    if let Some(pending) = state.storage_pending.remove(key) {
+                        deliver(pending.waiters, &Err(ReadHubError::Rpc(error.clone())));
+                    }
+                }
+            }
+        }
+        match accounts {
+            Ok(reads) => {
+                for (address, read) in self.accounts.iter().zip(reads) {
+                    let Some(pending) = state.account_pending.remove(address) else {
+                        continue;
+                    };
+                    match read {
+                        Ok(read) => {
+                            state.account_values.insert(*address, read.clone());
+                            deliver(pending.waiters, &Ok(read));
+                        }
+                        Err(error) => {
+                            report.account_member_errors += 1;
+                            deliver(pending.waiters, &Err(ReadHubError::Rpc(error)));
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                for address in self.accounts {
+                    if let Some(pending) = state.account_pending.remove(address) {
+                        deliver(pending.waiters, &Err(ReadHubError::Rpc(error.clone())));
+                    }
+                }
+            }
+        }
+        state.stats.rounds += 1;
+        state.stats.storage_members += count_u64(report.storage_members);
+        state.stats.account_members += count_u64(report.account_members);
+        state.stats.storage_member_errors += count_u64(report.storage_member_errors);
+        state.stats.account_member_errors += count_u64(report.account_member_errors);
+        report
+    }
+}
+
+/// Hand one outcome to every requester of an identity. A dropped receiver is a
+/// requester that went away with its read future; the outcome is still the
+/// round's, so a failed send is not an error.
+fn deliver<T: Clone>(
+    waiters: Vec<oneshot::Sender<Result<T, ReadHubError>>>,
+    outcome: &Result<T, ReadHubError>,
+) {
+    for waiter in waiters {
+        let _ = waiter.send(outcome.clone());
+    }
+}
+
+/// A member count as a saturating counter increment.
+fn count_u64(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
+/// The session-scoped owner of the per-anchor [`ReadHub`] — the migration entry
+/// point for a caller that used to pin a block number per read.
+pub struct ReadHubCache<'p> {
+    provider: &'p AlloyProvider,
+    current: Mutex<Option<(ReadAnchor, Arc<ReadHub<'p>>)>>,
+}
+
+impl<'p> ReadHubCache<'p> {
+    /// An empty owner: no anchor installed yet.
+    #[must_use]
+    pub fn new(provider: &'p AlloyProvider) -> Self {
+        Self {
+            provider,
+            current: Mutex::new(None),
+        }
+    }
+
+    /// The hub for `anchor`: the installed one when the whole anchor (number AND
+    /// hash) is unchanged, otherwise a fresh hub that becomes the installed one.
+    ///
+    /// A replacement drops the retired hub's every value with it — the same
+    /// invalidation contract as
+    /// [`StorageMemoCache::for_anchor`](crate::sim::storage_memo::StorageMemoCache::for_anchor),
+    /// and for the same reason: a same-height reorg leaves the number alone and
+    /// changes only the hash.
+    pub fn for_anchor(&self, anchor: ReadAnchor) -> Arc<ReadHub<'p>> {
+        let mut current = self.current.lock();
+        if let Some((installed, hub)) = current.as_ref() {
+            if *installed == anchor {
+                return Arc::clone(hub);
+            }
+        }
+        let hub = Arc::new(ReadHub::new(self.provider, anchor));
+        *current = Some((anchor, Arc::clone(&hub)));
+        hub
+    }
+
+    /// The installed anchor (`None` before the first `for_anchor`).
+    #[must_use]
+    pub fn anchor(&self) -> Option<ReadAnchor> {
+        self.current.lock().as_ref().map(|(anchor, _)| *anchor)
+    }
+}
