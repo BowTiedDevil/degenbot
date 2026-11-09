@@ -382,6 +382,17 @@ impl<'a, 'db> AccountHandle<'a, 'db> {
         self.tracked.present.as_ref()
     }
 
+    /// Returns the account information at the transaction boundary, before any frame mutated it.
+    ///
+    /// `None` means the account did not exist at the start of the transaction. Loading bytecode
+    /// into the present overlay does not change this baseline; committing and starting another
+    /// transaction does. Use [`Self::original_code`] to load the account's start-of-transaction
+    /// bytecode.
+    #[inline]
+    pub const fn original(&self) -> Option<&AccountInfo> {
+        self.tracked.original.as_ref()
+    }
+
     /// Returns whether the account currently exists in the overlay.
     #[inline]
     pub const fn exists(&self) -> bool {
@@ -827,6 +838,53 @@ mod tests {
         let overlay_address = Address::repeat_byte(0x8e);
         state.account(&overlay_address).unwrap().set_code(seed, fresh());
         assert_eq!(state.account(&overlay_address).unwrap().load_code().unwrap().hash_slow(), seed);
+    }
+
+    #[test]
+    fn account_original_reports_transaction_baseline() {
+        let address = Address::repeat_byte(0x93);
+        let code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x01]));
+        let original =
+            empty_account().with_balance(Word::from(10)).with_nonce(3).with_code(code.clone());
+        let mut database = CacheDB::default();
+        database.insert_account_info(&address, original.clone());
+        let mut state = State::new(database);
+
+        // An unchanged account reports its start-of-transaction info.
+        {
+            let account = state.account(&address).unwrap();
+            assert_eq!(account.original(), Some(&original));
+            assert_eq!(account.get(), Some(&original));
+        }
+
+        // Mutations move the present overlay but leave the baseline alone.
+        {
+            let mut account = state.account(&address).unwrap();
+            account.set_balance(Word::from(99));
+            account.set_nonce(4);
+            assert_eq!(account.original(), Some(&original));
+            assert_eq!(account.balance(), Word::from(99));
+            assert_eq!(account.nonce(), 4);
+        }
+
+        // Loading bytecode into the present cache does not move the baseline either.
+        {
+            let mut account = state.account(&address).unwrap();
+            assert_eq!(account.load_code().unwrap(), code);
+            assert_eq!(account.original(), Some(&original));
+        }
+
+        // An account absent at the transaction boundary keeps no baseline, including after the
+        // transaction creates it.
+        let created = Address::repeat_byte(0x94);
+        {
+            let mut account = state.account(&created).unwrap();
+            assert_eq!(account.original(), None);
+            account.get_or_insert().balance = Word::ONE;
+            account.mark_created();
+            assert_eq!(account.original(), None);
+            assert_eq!(account.balance(), Word::ONE);
+        }
     }
 
     #[test]

@@ -116,14 +116,13 @@ fn dispatch_inner<T: EvmTypesHost, C: EvmConfig<T>, M: InspectMode<T>, G: Dispat
             gas.sync_before_exec(state, dynamic_gas);
             if hooked {
                 state.set_pc_stack_len(pc.as_ptr(), *stack.len);
-                state.set_hooked_running(true);
             }
             r = instr(&mut pc, stack.reborrow(), state);
-            if hooked {
-                state.set_hooked_running(false);
-            }
             if r.is_ok() {
                 inc_pc(&mut pc, op);
+                if hooked {
+                    state.note_inspector_config_change();
+                }
             }
             gas.sync_after_exec(state, dynamic_gas);
         }
@@ -137,6 +136,12 @@ fn dispatch_inner<T: EvmTypesHost, C: EvmConfig<T>, M: InspectMode<T>, G: Dispat
     } else if let Err(e) = r {
         state.set_result(Err(e));
         cold_path();
+        return (Pc::new(core::ptr::null()), gas);
+    } else if hooked && state.reload_requested() {
+        // The frame continues after the instruction on the table for the new config.
+        cold_path();
+        state.set_result(Err(InstrStop::Reload));
+        state.set_pc_stack_len(pc.as_ptr(), *stack.len);
         return (Pc::new(core::ptr::null()), gas);
     }
     (pc, gas)
@@ -168,6 +173,13 @@ fn run_inner<T: EvmTypesHost, M: InspectMode<T>>(
     let mut loop_state = imp::loop_state(state.gas_mut());
     let mut cursor = imp::Cursor::new(pc, stack.len());
     let steps = if M::INSPECT { state.steps() } else { OpcodeSet::EMPTY };
+    // Without this, the loop's offset in its 64-byte line depends on unrelated code size, and a
+    // loop that crosses a line costs about 20%.
+    #[cfg(all(not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
+    // SAFETY: The directive only pads with nops. It reads and writes no memory or registers.
+    unsafe {
+        core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
+    }
     loop {
         let op = cursor.pc().op();
         // A sparse set's table holds inspect handlers at the stepped opcodes and plain handlers

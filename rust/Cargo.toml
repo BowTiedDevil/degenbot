@@ -130,7 +130,7 @@ degenbot-substrate = { version = "0.6.0-alpha.19", path = "crates/foundation/deg
 degenbot-uniswap = { version = "0.6.0-alpha.19", path = "crates/foundation/degenbot-uniswap" }
 degenbot-workers = { version = "0.6.0-alpha.19", path = "crates/engine/degenbot-workers" }
 
-# The vendored evm2 family (rust/vendor/, upstream baf0d38f — see its README).
+# The vendored evm2 family (rust/vendor/, upstream 53fe0ef8 — see its README).
 # The keys are upstream's names, so every `use evm2::...` and `X.workspace = true`
 # keeps working; the `package` renames are what make the family publishable under
 # names we own. To retire the fork: point these entries at the registry release,

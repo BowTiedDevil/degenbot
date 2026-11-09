@@ -1,5 +1,6 @@
-# Vendored from alloy-rs/evm2 @ baf0d38f3b4f971e59b4aeb51de65e44d868d703; source
-# verbatim, manifest rewritten (see rust/vendor/README.md). Upstream name: evm2-jit.
+# Vendored from alloy-rs/evm2 @ 53fe0ef86b87ae0e6fd3068ad6262dd39a3b37f7; the source
+# is upstream's plus the downstream patches rust/vendor/README.md enumerates, and
+# this manifest is rewritten. Upstream name: evm2-jit.
 
 [package]
 name = "degenbot-evm2-jit"

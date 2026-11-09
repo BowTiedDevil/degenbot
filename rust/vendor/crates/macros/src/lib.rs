@@ -41,12 +41,13 @@ use syn::{
 ///   mutable gas state.
 /// - `#[instruction(hooked)]`: Marks an instruction that may run inspector hooks or host code that
 ///   read the interpreter. Before the instruction runs, the dispatch stores the latest pc, stack
-///   length and gas into the interpreter, so `hooked` implies `dynamic_gas`. Set it on an
-///   instruction that runs a child message. The `call`, `call_end`, `create` and `create_end` hooks
-///   get the interpreter from inside such an instruction. `step` and `step_end` get the current
-///   state from the dispatch, and `initialize_interp` runs at frame start, so they need no flag. An
-///   instruction that only reaches `log` or `selfdestruct` needs none either, because those hooks
-///   get the host, which has no current frame. Flag it if a hook starts receiving the interpreter.
+///   length and gas into the interpreter, so `hooked` implies `dynamic_gas`. After it returns, the
+///   dispatch picks up a change of the inspector's config. Set it on an instruction that runs a
+///   child message. The `call`, `call_end`, `create` and `create_end` hooks get the interpreter
+///   from inside such an instruction. `step` and `step_end` get the current state from the
+///   dispatch, and `initialize_interp` runs at frame start, so they need no flag. An instruction
+///   that only reaches `log` or `selfdestruct` needs none either, because those hooks get the host,
+///   which has no current frame. Flag it if a hook starts receiving the interpreter.
 /// - `#[instruction(EvmTypes = CustomTypes)]`: Implements the instruction for a concrete EVM type
 ///   family instead of generating a generic implementation.
 /// - `#[instruction(EvmTypes: CustomTypesTrait)]`: Adds a trait bound to the generated generic EVM

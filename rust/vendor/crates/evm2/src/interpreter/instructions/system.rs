@@ -275,8 +275,6 @@ fn call_inner<T: EvmTypesHost>(
 /// `after` runs.
 ///
 /// An `Err` from either hook stops the instruction with that error.
-///
-/// The result can be the stop for a config reload. Return it as the last step of the instruction.
 #[inline]
 pub fn call_with<T: EvmTypesHost>(
     stack: StackMut<'_>,
@@ -334,7 +332,6 @@ unsafe fn call_impl<T: EvmTypesHost>(
     if result.stop.is_fatal() {
         return Err(result.stop);
     }
-    state.note_inspector_config_change();
     gas.merge_child_gas(result.gas, result.stop);
     // EIP-8037: a value-bearing CALL that creates the target charges NEW_ACCOUNT state
     // gas upfront on this frame. If the call does not succeed (depth/balance failure,
@@ -351,7 +348,7 @@ unsafe fn call_impl<T: EvmTypesHost>(
     }
     state.swap_return_data(&mut result.output);
     stack.push_u64(result.is_success() as u64)?;
-    // A hook's stop or a config reload.
+    // A stop a hook set.
     state.result()
 }
 
@@ -380,7 +377,6 @@ fn create_inner<T: EvmTypesHost>(
 /// A fatal child result returns before `after` runs.
 ///
 /// Both hooks may charge or credit `gas` or fail the instruction, as in [`call_with`].
-/// Its result can be the stop for a config reload, as in [`call_with`].
 #[inline]
 pub fn create_with<T: EvmTypesHost>(
     mut stack: StackMut<'_>,
@@ -506,7 +502,6 @@ pub fn create_with<T: EvmTypesHost>(
     if result.stop.is_fatal() {
         return Err(result.stop);
     }
-    state.note_inspector_config_change();
     gas.merge_child_gas(result.gas, result.stop);
 
     // EIP-8037: when the opcode charged the conditional `create_state_gas`
@@ -526,7 +521,7 @@ pub fn create_with<T: EvmTypesHost>(
         state.clear_return_data();
     }
     stack.push(result.created_address_for_parent())?;
-    // A hook's stop or a config reload.
+    // A stop a hook set.
     state.result()
 }
 

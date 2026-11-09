@@ -1492,6 +1492,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn amsterdam_total_gas_cap_is_configurable() {
+        let gas_limit = 1u64 << 32;
+
+        // The default keeps the EIP-8037 cap from #862.
+        let amsterdam = Version::base(SpecId::AMSTERDAM);
+        assert_eq!(
+            validate_tx_gas_limit_cap(amsterdam, gas_limit),
+            Err(HandlerError::TxGasLimitGreaterThanCap {
+                gas_limit,
+                cap: MAX_TX_TOTAL_GAS_LIMIT_AMSTERDAM
+            })
+        );
+
+        // A chain with larger blocks can raise the cap above the execution cap.
+        let mut raised = Version::new(SpecId::AMSTERDAM);
+        raised.tx_total_gas_cap = 10_000_000_000;
+        assert_eq!(validate_tx_gas_limit_cap(&raised, gas_limit), Ok(()));
+        assert_eq!(
+            validate_tx_gas_limit_cap(&raised, raised.tx_total_gas_cap + 1),
+            Err(HandlerError::TxGasLimitGreaterThanCap {
+                gas_limit: raised.tx_total_gas_cap + 1,
+                cap: raised.tx_total_gas_cap
+            })
+        );
+
+        // `u64::MAX` disables the total cap.
+        let mut disabled = Version::new(SpecId::AMSTERDAM);
+        disabled.tx_total_gas_cap = u64::MAX;
+        assert_eq!(validate_tx_gas_limit_cap(&disabled, gas_limit), Ok(()));
+        assert_eq!(validate_tx_gas_limit_cap(&disabled, u64::MAX), Ok(()));
+
+        // Without EIP-8037 the field is unused and the execution cap bounds `tx.gas`.
+        let mut without_eip8037 = Version::new(SpecId::AMSTERDAM);
+        without_eip8037.features.remove(EvmFeatures::EIP8037);
+        without_eip8037.tx_total_gas_cap = u64::MAX;
+        assert_eq!(
+            validate_tx_gas_limit_cap(&without_eip8037, gas_limit),
+            Err(HandlerError::TxGasLimitGreaterThanCap {
+                gas_limit,
+                cap: without_eip8037.tx_gas_limit_cap
+            })
+        );
+    }
+
     #[rstest::rstest]
     fn amsterdam_handler_rejects_gas_limit_above_total_cap(
         #[values(MAX_TX_TOTAL_GAS_LIMIT_AMSTERDAM, MAX_TX_TOTAL_GAS_LIMIT_AMSTERDAM + 1)]
