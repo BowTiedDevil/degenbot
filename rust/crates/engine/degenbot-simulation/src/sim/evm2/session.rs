@@ -8,6 +8,66 @@
 //! reads. The escape hatch ([`Evm2SimSession::evm_mut`]) hands out the raw
 //! EVM for bundles that need journaled accumulation across calls; its
 //! caller owns the same contract the revm side documents.
+//!
+//! # Execution verbs
+//!
+//! One ordered `Evm2SimStep` sequence has two drivers over one accumulation:
+//!
+//! - [`Evm2SimSession::run_sequence`] is the SYNCHRONOUS driver — each step is
+//!   `transact`/`transact_with_inspector` on the session's own thread.
+//! - [`Evm2SimSession::run_sequence_async`] is the coroutine driver — each
+//!   step is evm2's `transact_async`, so a cold database read suspends the
+//!   sequence (the returned future reports `Pending`) instead of blocking the
+//!   task that drives it.
+//!
+//! Both feed the same settlement + capture accumulation
+//! (`SequenceAccumulator`), so what a step settles — accepted writes, gas,
+//! output, verdict, the logs/swaps/access list a capture drains — and how a
+//! refusal is reported (step-indexed [`Evm2SimError::Sequence`]) are the same
+//! facts on both drivers. The verbs differ in scheduling only.
+//!
+//! ## Migrating a sequence to the async verb
+//!
+//! Pick the driver from the session's database stack, not from taste: the
+//! async verb is the one that helps when the stack bottoms out in evm2's
+//! `AsyncDb` adapter (the RPC cold-miss fallback of the evm2 stack), because
+//! that adapter can only poll its reads from inside an EVM async fiber. A
+//! synchronous stack ([`super::blocking_async_db::BlockingAsyncDb`], or a
+//! purely in-memory one) gains nothing: `transact_async` over a synchronous
+//! database is the synchronous transaction on a fiber. A caller migrates by
+//! awaiting the verb where it previously called it —
+//! `session.run_sequence(&steps, mode)` becomes
+//! `session.run_sequence_async(&steps, mode).await` — and the result is the
+//! same value. The synchronous verb and every existing consumer stay as they
+//! are; neither verb is a wrapper of the other.
+//!
+//! ## Bare state reads on the async verb
+//!
+//! A [`Evm2SimStep::ReadNativeBalance`] step is not a transaction, but it is
+//! still a state read — and on an `AsyncDb`-backed stack a cold account's read
+//! is a database round trip that only exists inside an EVM fiber. The step
+//! therefore takes evm2's untracked account-info read through
+//! `Evm::read_account_info_async`, the async-fiber counterpart of the
+//! synchronous read: the same `state.account_info_untracked` call on the SAME
+//! reusable fiber `transact_async` uses, so a cold read suspends the sequence
+//! exactly as a cold transaction read does, and resolves to the same figure the
+//! synchronous driver blocks for.
+//!
+//! Overlay semantics are unchanged by the fiber: the read consults the
+//! accumulating accepted overlay first and only falls through to the database
+//! for an account no earlier step loaded or moved, so a value-moving step
+//! earlier in the sequence is visible to a later balance read on both drivers.
+//! Nothing is seeded into a cache to make a read answerable.
+//!
+//! ## What the async verb refuses
+//!
+//! [`Evm2CaptureMode::Inspector`] capture is REFUSED
+//! ([`Evm2SimError::AsyncInspectorUnsupported`]) before any step runs. The
+//! composite capture inspector rides a step through a borrowed inspector, and
+//! evm2's async entrypoints have no inspector counterpart — honoring the mode
+//! here would silently mean "captured by another mechanism", which is exactly
+//! the substitution the capture mode promises not to make. The diagnostic mode
+//! stays on the synchronous verb.
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_pools::{
@@ -16,7 +76,7 @@ use degenbot_pools::{
 };
 
 use ::evm2::ethereum::RecoveredTxEnvelope;
-use ::evm2::evm::TxResult;
+use ::evm2::evm::{ExecutedTx, TxResult};
 use ::evm2::{BaseEvmTypes, Evm, ExecutionConfig};
 
 use crate::sim::RunVerdict;
@@ -40,6 +100,18 @@ pub enum Evm2SimError {
         /// The refusal class.
         source: Box<Evm2SimError>,
     },
+    /// The async sequence verb was asked for a capture mode evm2's async
+    /// entrypoints cannot carry. `transact_async` dispatches through
+    /// `transact`, which has no inspector counterpart, so an `Inspector`-mode
+    /// sequence would have to capture by some other mechanism under the same
+    /// name. Refused before any step runs.
+    #[error(
+        "async sequence cannot carry the {mode:?} capture mode: evm2 has no async inspector entrypoint"
+    )]
+    AsyncInspectorUnsupported {
+        /// The refused capture mode.
+        mode: Evm2CaptureMode,
+    },
 }
 
 impl Evm2SimError {
@@ -48,7 +120,7 @@ impl Evm2SimError {
     pub fn step_index(&self) -> Option<usize> {
         match self {
             Self::Sequence { index, .. } => Some(*index),
-            Self::Database(_) | Self::Transact(_) => None,
+            Self::Database(_) | Self::Transact(_) | Self::AsyncInspectorUnsupported { .. } => None,
         }
     }
 }
@@ -113,6 +185,22 @@ fn read_native_balance(
 ) -> Result<U256, Evm2SimError> {
     evm.state_mut()
         .account_info_untracked(account)
+        .map(|info| info.map_or(U256::ZERO, |info| info.balance))
+        .map_err(|err| Evm2SimError::Database(err.to_string()))
+}
+
+/// The same balance read on evm2's async fiber: the identical untracked
+/// account-info peek, on the fiber `transact_async` uses, so a cold account's
+/// database round trip suspends the sequence instead of failing outside a fiber.
+/// Overlay precedence is `account_info_untracked`'s either way — the accepted
+/// overlay answers first, the database only for an account no step has loaded or
+/// moved.
+async fn read_native_balance_async(
+    evm: &mut Evm<'_, BaseEvmTypes>,
+    account: &Address,
+) -> Result<U256, Evm2SimError> {
+    evm.read_account_info_async(*account)
+        .await
         .map(|info| info.map_or(U256::ZERO, |info| info.balance))
         .map_err(|err| Evm2SimError::Database(err.to_string()))
 }
@@ -297,6 +385,10 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
     /// still commits (a revert's nonce/gas effects persist, matching the
     /// revm journal) and keeps the sequence running.
     ///
+    /// The synchronous driver of the shared accumulation
+    /// `SequenceAccumulator` holds; [`Self::run_sequence_async`] is the
+    /// coroutine driver of the same value (see the module doc).
+    ///
     /// # Errors
     ///
     /// [`Evm2SimError::Sequence`] carrying the refusing step's index.
@@ -305,135 +397,111 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
         steps: &[Evm2SimStep],
         mode: Evm2CaptureMode,
     ) -> Result<Evm2SimSequence, Evm2SimError> {
-        let spec = self.evm.spec_id();
-        // The throwaway EVM: the shared DB by mutable handle (reads warm
-        // the shared stack; the accumulation dies with it), configured
-        // from the shared EVM's own `Version` so runtime feature
-        // relaxations (the frame-replay checks) carry over.
-        let exec = ExecutionConfig::<BaseEvmTypes>::for_spec_and_version(spec, *self.evm.version());
-        let mut seq_evm = Evm::new_with_execution_config(
-            exec,
-            spec,
-            self.block_env,
-            ::evm2::ethereum::ethereum_tx_registry(spec),
-            self.evm.state_mut().initial_mut(),
-            ::evm2::Precompiles::base(spec),
-        );
-        if let Some(runner) = &self.jit {
-            seq_evm.set_shared_interpreter_runner(std::sync::Arc::clone(runner));
-        }
-        // `Inspector` mode: the composite capture inspector rides the
-        // captured steps as a BORROWED slot (`transact_with_inspector`),
-        // drained from the local value after the loop — no typed
-        // retrieval off the locally-borrowed EVM.
-        let mut inspected = crate::sim::evm2::inspectors::Evm2SimInspector::default();
-        // `Seam` mode accumulators: the captured steps' slots/swaps read
-        // from the state layer instead.
-        let mut seam_slots = crate::sim::capture::CollectedSlots::default();
-        let mut seam_swaps: Vec<crate::sim::capture::CapturedSwap> = Vec::new();
-        let mut captured_logs: Vec<alloy::primitives::Log> = Vec::new();
-        let mut calls = Vec::with_capacity(steps.len());
-        let mut writes = std::collections::BTreeMap::new();
-        for (index, step) in steps.iter().enumerate() {
-            // A balance-read step neither transacts nor captures: it observes
-            // the account's own native balance in the accumulating overlay, so
-            // a later read sees every earlier step's value movement. A DB
-            // refusal is a step refusal like any other — the read produced no
-            // figure, and the caller must not receive a fabricated zero.
-            if let Evm2SimStep::ReadNativeBalance(account) = step {
-                let balance = read_native_balance(&mut seq_evm, account).map_err(|source| {
-                    Evm2SimError::Sequence {
-                        index,
-                        source: Box::new(source),
-                    }
-                })?;
-                calls.push(native_balance_run(balance));
-                continue;
-            }
-            let captured = matches!(step, Evm2SimStep::Inspect(_));
-            let settled = match (step, mode) {
-                (Evm2SimStep::Transact(tx), _)
-                | (Evm2SimStep::Inspect(tx), Evm2CaptureMode::Seam) => seq_evm.transact(tx),
-                (Evm2SimStep::Inspect(tx), Evm2CaptureMode::Inspector) => {
-                    seq_evm.transact_with_inspector(tx, &mut inspected)
-                }
-                // Handled above, before any transaction runs.
-                (Evm2SimStep::ReadNativeBalance(_), _) => continue,
-            };
-            let executed = match settled {
-                Ok(executed) => executed,
-                Err(err) => {
-                    return Err(Evm2SimError::Sequence {
-                        index,
-                        source: Box::new(Evm2SimError::Transact(err.to_string())),
-                    });
-                }
-            };
-            // `Seam` capture, pre-resolve: every slot the step loaded or
-            // wrote, from the state-layer overlay (the step hook's
-            // SLOAD/SSTORE coverage without the hook; storage-less
-            // touches are out of that domain).
-            if captured && mode == Evm2CaptureMode::Seam {
-                for changes in executed.account_changes() {
-                    if changes.storage.slots.is_empty() {
+        let mut acc = SequenceAccumulator::new(mode, steps.len());
+        {
+            let mut seq_evm = self.sequence_evm();
+            for (index, step) in steps.iter().enumerate() {
+                let (tx, captured) = match step {
+                    Evm2SimStep::ReadNativeBalance(account) => {
+                        observe_balance_step(&mut seq_evm, account, index, &mut acc)?;
                         continue;
                     }
-                    for key in changes.storage.slots.keys() {
-                        seam_slots.record(changes.address, alloy::primitives::B256::from(*key));
+                    Evm2SimStep::Transact(tx) => (tx, false),
+                    Evm2SimStep::Inspect(tx) => (tx, true),
+                };
+                let settled = if captured && mode == Evm2CaptureMode::Inspector {
+                    // `Inspector` mode: the composite capture inspector rides
+                    // the captured steps as a BORROWED slot
+                    // (`transact_with_inspector`) — the borrow ends with the
+                    // call, so the handle comes straight back into `acc`.
+                    seq_evm.transact_with_inspector(tx, &mut acc.inspected)
+                } else {
+                    seq_evm.transact(tx)
+                };
+                let executed = match settled {
+                    Ok(executed) => executed,
+                    Err(err) => {
+                        return Err(Evm2SimError::Sequence {
+                            index,
+                            source: Box::new(Evm2SimError::Transact(err.to_string())),
+                        });
                     }
-                }
+                };
+                acc.capture_slots(captured, &executed);
+                acc.accept(captured, executed);
             }
-            // The writes stream through a sink (`commit_with`) rather than
-            // `account_changes`: the iterator's `impl Trait` over-captures
-            // the EVM borrow under the Rust 2024 capture rules.
-            let mut sink = StepWrites { writes: Vec::new() };
-            let Ok(result) = executed.commit_with(&mut sink);
-            let storage_writes = sink.writes;
-            // `Seam` capture, post-resolve: the journal already scopes the
-            // result's logs to committed frames (the swap buffer's LIFO
-            // notion), so decode directly.
-            if captured {
-                captured_logs.extend(result.logs.iter().cloned());
-            }
-            if captured && mode == Evm2CaptureMode::Seam {
-                seam_swaps.extend(
-                    result
-                        .logs
-                        .iter()
-                        .filter_map(crate::sim::capture::CapturedSwap::from_log),
-                );
-            }
-            for (address, key, value) in &storage_writes {
-                writes.insert((*address, *key), *value);
-            }
-            calls.push(Evm2SimRun {
-                verdict: verdict_of(&result),
-                gas_used: result.tx_gas_used(),
-                output: result.output.clone(),
-                storage_writes,
-                native_balance: None,
-            });
         }
-        let capture = settle_capture(mode, inspected, captured_logs, seam_slots, seam_swaps);
-        // The learning path: a completed capture's access list IS the exact
-        // `(address, slot)` set the sequence touched, so it is the prewarm's
-        // historical knowledge — recorded against the height the sequence's
-        // reads were pinned to (the session's replay block, which production
-        // sets to the fan-out's `sim_block`). The store keys on identity only:
-        // the next prewarm reads the VALUES from the node at its own anchor, so
-        // a drifted prediction costs one batch member, never a wrong read.
-        if let Some(hot_slots) = &self.hot_slots {
-            let anchor = u64::try_from(self.block_env.number).unwrap_or(u64::MAX);
-            hot_slots.record_capture(anchor, &capture.access_list);
+        let sequence = acc.finish();
+        self.record_capture(&sequence.capture);
+        Ok(sequence)
+    }
+
+    /// Run `steps` in order exactly as [`Self::run_sequence`] does, dispatching
+    /// each transaction step through evm2's `transact_async` coroutine seam.
+    ///
+    /// This is the verb a session whose database stack bottoms out in evm2's
+    /// `AsyncDb` adapter drives: a cold read that misses suspends the whole
+    /// sequence (the returned future reports `Pending`) instead of blocking the
+    /// task, and the sequence resumes in place when the read resolves. The
+    /// settlement and capture accumulation is `SequenceAccumulator`'s — the
+    /// one the synchronous driver feeds — so the two verbs differ in scheduling
+    /// only: the same accepted writes, gas, output, verdicts, logs, swaps,
+    /// access list, and step-indexed refusals.
+    ///
+    /// # Errors
+    ///
+    /// [`Evm2SimError::Sequence`] carrying the refusing step's index, and
+    /// [`Evm2SimError::AsyncInspectorUnsupported`] when `mode` is
+    /// [`Evm2CaptureMode::Inspector`] — refused before any step runs (see the
+    /// module doc for why, and for how a bare balance read suspends).
+    pub async fn run_sequence_async(
+        &mut self,
+        steps: &[Evm2SimStep],
+        mode: Evm2CaptureMode,
+    ) -> Result<Evm2SimSequence, Evm2SimError> {
+        if mode == Evm2CaptureMode::Inspector {
+            return Err(Evm2SimError::AsyncInspectorUnsupported { mode });
         }
-        Ok(Evm2SimSequence {
-            calls,
-            storage_writes: writes
-                .into_iter()
-                .map(|((address, key), value)| (address, key, value))
-                .collect(),
-            capture,
-        })
+        let mut acc = SequenceAccumulator::new(mode, steps.len());
+        {
+            let mut seq_evm = self.sequence_evm();
+            for (index, step) in steps.iter().enumerate() {
+                let (tx, captured) = match step {
+                    Evm2SimStep::ReadNativeBalance(account) => {
+                        // A bare state read takes the fiber entrypoint too, so a
+                        // cold account suspends the sequence rather than refusing
+                        // for want of a transaction to suspend on.
+                        let balance = read_native_balance_async(&mut seq_evm, account)
+                            .await
+                            .map_err(|source| Evm2SimError::Sequence {
+                                index,
+                                source: Box::new(source),
+                            })?;
+                        acc.observe_balance(balance);
+                        continue;
+                    }
+                    Evm2SimStep::Transact(tx) => (tx, false),
+                    Evm2SimStep::Inspect(tx) => (tx, true),
+                };
+                // `Inspector` capture is refused above, so every step takes the
+                // plain async entrypoint; `Seam` capture reads the settled state
+                // layer afterwards, exactly as on the synchronous driver.
+                let executed = match seq_evm.transact_async(tx).await {
+                    Ok(executed) => executed,
+                    Err(err) => {
+                        return Err(Evm2SimError::Sequence {
+                            index,
+                            source: Box::new(Evm2SimError::Transact(err.to_string())),
+                        });
+                    }
+                };
+                acc.capture_slots(captured, &executed);
+                acc.accept(captured, executed);
+            }
+        }
+        let sequence = acc.finish();
+        self.record_capture(&sequence.capture);
+        Ok(sequence)
     }
 
     /// Read one storage word from the settled view — the shared read cache
@@ -489,6 +557,177 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
     pub fn evm_mut(&mut self) -> &mut Evm<'a, BaseEvmTypes> {
         self.evm
     }
+
+    /// Build the THROWAWAY EVM one sequence accumulates in — the shared DB by
+    /// mutable handle (reads warm the shared stack; the accumulation dies with
+    /// it), configured from the shared EVM's own `Version` so runtime feature
+    /// relaxations (the frame-replay checks) carry over, under the session's
+    /// block env and interpreter runner. Both sequence drivers build it here, so
+    /// neither can run under a different engine configuration than the other.
+    fn sequence_evm(&mut self) -> Evm<'_, BaseEvmTypes> {
+        let spec = self.evm.spec_id();
+        let exec = ExecutionConfig::<BaseEvmTypes>::for_spec_and_version(spec, *self.evm.version());
+        let block_env = self.block_env;
+        let jit = self.jit.clone();
+        let mut seq_evm = Evm::new_with_execution_config(
+            exec,
+            spec,
+            block_env,
+            ::evm2::ethereum::ethereum_tx_registry(spec),
+            self.evm.state_mut().initial_mut(),
+            ::evm2::Precompiles::base(spec),
+        );
+        if let Some(runner) = jit {
+            seq_evm.set_shared_interpreter_runner(runner);
+        }
+        seq_evm
+    }
+
+    /// The learning path: a completed capture's access list IS the exact
+    /// `(address, slot)` set the sequence touched, so it is the prewarm's
+    /// historical knowledge — recorded against the height the sequence's reads
+    /// were pinned to (the session's replay block, which production sets to the
+    /// fan-out's `sim_block`). The store keys on identity only: the next prewarm
+    /// reads the VALUES from the node at its own anchor, so a drifted prediction
+    /// costs one batch member, never a wrong read.
+    fn record_capture(&self, capture: &Evm2SequenceCapture) {
+        let Some(hot_slots) = &self.hot_slots else {
+            return;
+        };
+        let anchor = u64::try_from(self.block_env.number).unwrap_or(u64::MAX);
+        hot_slots.record_capture(anchor, &capture.access_list);
+    }
+}
+
+/// The settlement + capture accumulation ONE ordered sequence performs — the
+/// single implementation both drivers feed ([`Evm2SimSession::run_sequence`]
+/// dispatches each step on the session's thread,
+/// [`Evm2SimSession::run_sequence_async`] suspends it on evm2's coroutine seam).
+/// A driver owns only how a step is dispatched; what a step settles — its
+/// accepted writes, gas, output, verdict, and the logs/swaps/slots its capture
+/// drains — is recorded here, once, for both.
+struct SequenceAccumulator {
+    /// The sequence's capture mechanism.
+    mode: Evm2CaptureMode,
+    /// The composite inspector `Inspector`-mode captured steps ride as a
+    /// borrowed slot, drained at [`Self::finish`]. The async driver refuses
+    /// `Inspector` mode and never fills it.
+    inspected: crate::sim::evm2::inspectors::Evm2SimInspector,
+    /// The steps' results, in step order.
+    calls: Vec<Evm2SimRun>,
+    /// The accumulated writes, merged in step order (a later step overwrites an
+    /// earlier step's value for the same slot).
+    writes: std::collections::BTreeMap<(Address, U256), U256>,
+    /// The captured steps' committed logs, in execution order.
+    logs: Vec<alloy::primitives::Log>,
+    /// `Seam` capture: the slots the captured steps touched, read from the
+    /// state layer.
+    seam_slots: crate::sim::capture::CollectedSlots,
+    /// `Seam` capture: the swaps decoded from the captured steps' committed
+    /// logs.
+    seam_swaps: Vec<crate::sim::capture::CapturedSwap>,
+}
+
+impl SequenceAccumulator {
+    /// An empty accumulation for `steps` steps under the capture mechanism
+    /// `mode`.
+    fn new(mode: Evm2CaptureMode, steps: usize) -> Self {
+        Self {
+            mode,
+            inspected: crate::sim::evm2::inspectors::Evm2SimInspector::default(),
+            calls: Vec::with_capacity(steps),
+            writes: std::collections::BTreeMap::new(),
+            logs: Vec::new(),
+            seam_slots: crate::sim::capture::CollectedSlots::default(),
+            seam_swaps: Vec::new(),
+        }
+    }
+
+    /// Record a [`Evm2SimStep::ReadNativeBalance`] step: the observed balance is
+    /// the whole result (no code ran).
+    fn observe_balance(&mut self, balance: U256) {
+        self.calls.push(native_balance_run(balance));
+    }
+
+    /// Record what a settled step's capture reads BEFORE its state changes are
+    /// accepted: `Seam` capture takes every slot the step loaded or wrote, from
+    /// the state-layer overlay (the step hook's SLOAD/SSTORE coverage without
+    /// the hook; storage-less touches are out of that domain). `Inspector`
+    /// capture records its own hooks during the step, so it reads nothing here.
+    fn capture_slots(&mut self, captured: bool, executed: &ExecutedTx<'_, '_, BaseEvmTypes>) {
+        if !(captured && self.mode == Evm2CaptureMode::Seam) {
+            return;
+        }
+        for changes in executed.account_changes() {
+            if changes.storage.slots.is_empty() {
+                continue;
+            }
+            for key in changes.storage.slots.keys() {
+                self.seam_slots
+                    .record(changes.address, alloy::primitives::B256::from(*key));
+            }
+        }
+    }
+
+    /// Accept the step into the accumulating overlay and record what it settled:
+    /// the writes it produced, the committed logs (and, in `Seam` mode, the
+    /// swaps decoded from them), and the per-step result. A step that reverted
+    /// still commits — a revert's nonce/gas effects persist, matching the revm
+    /// journal — and keeps the sequence running.
+    fn accept(&mut self, captured: bool, executed: ExecutedTx<'_, '_, BaseEvmTypes>) {
+        // The writes stream through a sink (`commit_with`) rather than
+        // `account_changes`: the iterator's `impl Trait` over-captures the EVM
+        // borrow under the Rust 2024 capture rules.
+        let mut sink = StepWrites { writes: Vec::new() };
+        let Ok(result) = executed.commit_with(&mut sink);
+        let storage_writes = sink.writes;
+        // `Seam` capture, post-resolve: the journal already scopes the result's
+        // logs to committed frames (the swap buffer's LIFO notion), so decode
+        // directly.
+        if captured {
+            self.logs.extend(result.logs.iter().cloned());
+        }
+        if captured && self.mode == Evm2CaptureMode::Seam {
+            self.seam_swaps.extend(
+                result
+                    .logs
+                    .iter()
+                    .filter_map(crate::sim::capture::CapturedSwap::from_log),
+            );
+        }
+        for (address, key, value) in &storage_writes {
+            self.writes.insert((*address, *key), *value);
+        }
+        self.calls.push(Evm2SimRun {
+            verdict: verdict_of(&result),
+            gas_used: result.tx_gas_used(),
+            output: result.output.clone(),
+            storage_writes,
+            native_balance: None,
+        });
+    }
+
+    /// Assemble the settled sequence: the per-step results in order, the merged
+    /// writes, and the drained capture.
+    fn finish(self) -> Evm2SimSequence {
+        let Self {
+            mode,
+            inspected,
+            calls,
+            writes,
+            logs,
+            seam_slots,
+            seam_swaps,
+        } = self;
+        Evm2SimSequence {
+            calls,
+            storage_writes: writes
+                .into_iter()
+                .map(|((address, key), value)| (address, key, value))
+                .collect(),
+            capture: settle_capture(mode, inspected, logs, seam_slots, seam_swaps),
+        }
+    }
 }
 
 /// Assemble a finished sequence's capture from the accumulators its steps
@@ -538,6 +777,28 @@ impl ::evm2::evm::StateChangeSink for StepWrites {
             .push((change.address, change.key, change.current));
         Ok(())
     }
+}
+
+/// Read one [`Evm2SimStep::ReadNativeBalance`] step's balance out of the
+/// sequence's accumulating state and record it, or report the refusal under the
+/// step's own index. A balance-read step neither transacts nor captures: it
+/// observes the account's own native balance in the accumulating overlay, so a
+/// later read sees every earlier step's value movement. A database refusal is a
+/// step refusal like any other — the read produced no figure, and the caller
+/// must not receive a fabricated zero.
+fn observe_balance_step(
+    seq_evm: &mut Evm<'_, BaseEvmTypes>,
+    account: &Address,
+    index: usize,
+    acc: &mut SequenceAccumulator,
+) -> Result<(), Evm2SimError> {
+    let balance =
+        read_native_balance(seq_evm, account).map_err(|source| Evm2SimError::Sequence {
+            index,
+            source: Box::new(source),
+        })?;
+    acc.observe_balance(balance);
+    Ok(())
 }
 
 /// Map the evm2 result to the engine-neutral verdict.

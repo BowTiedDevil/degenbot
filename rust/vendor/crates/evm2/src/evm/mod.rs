@@ -683,6 +683,33 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
         self.state.account_info_untracked(address)
     }
 
+    /// Returns account information visible through the accepted state overlay, on an async fiber.
+    ///
+    /// This is [`Self::read_account_info`] on the async EVM fiber: the same untracked state read
+    /// (the accepted overlay first, the backing database otherwise, nothing cached into the
+    /// overlay), so an account the overlay has no record of can suspend the driving task on its
+    /// cold database read instead of failing outside a fiber. This must be used with an async
+    /// database adapter such as [`evm::async::AsyncDb`](crate::evm::async::AsyncDb) to take
+    /// advantage of yielding database I/O. With a synchronous database this is mostly equivalent to
+    /// running the synchronous read on a fiber.
+    ///
+    /// This returns a local future and does not require the erased database, precompile provider,
+    /// or optional inspector to be `Send`.
+    #[cfg(feature = "async")]
+    pub fn read_account_info_async(
+        &mut self,
+        address: Address,
+    ) -> impl Future<Output = r#async::AsyncResult<Option<AccountInfo>, DatabaseError>> + '_ {
+        let stack = self.async_stack();
+        // SAFETY: The returned future owns the exclusive `&mut self` borrow, so nothing else can
+        // access the EVM stack slot until that future is dropped.
+        unsafe {
+            r#async::on_local_fiber_result_with_stack(stack, move || {
+                self.state.account_info_untracked(&address)
+            })
+        }
+    }
+
     /// Applies borrowed changes to the accepted state overlay.
     #[inline]
     pub fn commit_source<S: StateChangeSource>(&mut self, source: &S) {

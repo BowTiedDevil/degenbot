@@ -406,9 +406,9 @@ unsafe fn restore_context_lifetime<'a>(cx: &'a mut Context<'static>) -> &'a mut 
 /// Asynchronous backing database implementation.
 ///
 /// To take advantage of yielding host I/O, this must be wrapped in [`AsyncDb`] and used with
-/// async EVM entrypoints such as [`crate::Evm::transact_async`]. Calling synchronous EVM
-/// entrypoints with an [`AsyncDb`] fails because the adapter can only poll futures from inside an
-/// async EVM fiber.
+/// async EVM entrypoints such as [`crate::Evm::transact_async`] and
+/// [`crate::Evm::read_account_info_async`]. Calling synchronous EVM entrypoints with an [`AsyncDb`]
+/// fails because the adapter can only poll futures from inside an async EVM fiber.
 pub trait AsyncDatabase: NonStaticAny {
     /// Database error type.
     type Error: Error + Send + Sync + 'static;
