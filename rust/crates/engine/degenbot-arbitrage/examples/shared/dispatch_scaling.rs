@@ -47,7 +47,7 @@
 //!   settled from a list that deliberately OMITS the candidate's read identity:
 //!   the unknown-read control. The generation answers everything else, so the
 //!   frame's read is the one dynamic fallback this point pays.
-//! - [`Leg::ColdUnprepared`] — the delta opt-in with the current head DELIVERED
+//! - [`Leg::ColdFailed`] — the delta opt-in with the current head DELIVERED
 //!   but not yet applied: the control. It must take the legacy lane, pay the
 //!   same prefetch batch, and request no BAL on the dispatch leg.
 //! - [`Leg::ColdUndelivered`] — the same control with no head delivered at all.
@@ -94,7 +94,7 @@
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use alloy::primitives::{address, Address, Bytes, B256, U256};
 use alloy::rpc::types::AccessList;
@@ -119,7 +119,7 @@ use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 
-use crate::probe::{DeltaRecorder, StorageLatency, WireCensus, BLOCK};
+use crate::probe::{settle_head, BalMode, DeltaRecorder, StorageLatency, WireCensus, BLOCK};
 
 /// The owner + executor + settlement identities the built-in `cmd_executor`
 /// deployment declares (the same scripted facts the dispatch unit suites use).
@@ -141,11 +141,6 @@ const CURRENT: B256 = B256::new([0xc1; 32]);
 /// The parent of `GRANDPARENT`, so the first settled head is the one that
 /// cannot carry.
 const GENESIS: B256 = B256::new([0xa0; 32]);
-
-/// The readiness deadline every delta leg arms. Irrelevant to a fan-out (the
-/// selection never waits) and generous enough that the scripted chain settles
-/// every head well inside it.
-const READINESS_DEADLINE: Duration = Duration::from_millis(500);
 
 /// The executor's own storage slot every candidate frame reads — the word the
 /// fixture makes value-sensitive. It is deliberately NOT path-derivable, so the
@@ -254,8 +249,10 @@ pub enum Leg {
     /// The delta opt-in with the current head settled from a list that OMITS
     /// the candidate's read identity: the unknown-read control.
     ReadyCurrentUnknown,
-    /// The delta opt-in with the current head delivered but not applied.
-    ColdUnprepared,
+    /// The delta opt-in with the current head delivered and SETTLED COLD — its
+    /// lineage could not carry — so the fan-out must fall back to the legacy
+    /// lane with the real terminal reason.
+    ColdFailed,
     /// The delta opt-in with no head delivered at all.
     ColdUndelivered,
 }
@@ -267,7 +264,7 @@ impl Leg {
         Self::ReadyCurrent,
         Self::ReadyPrevious,
         Self::ReadyCurrentUnknown,
-        Self::ColdUnprepared,
+        Self::ColdFailed,
         Self::ColdUndelivered,
     ];
 
@@ -288,7 +285,7 @@ impl Leg {
             Self::ReadyCurrent => "on-ready-current",
             Self::ReadyPrevious => "on-ready-previous",
             Self::ReadyCurrentUnknown => "on-ready-unknown",
-            Self::ColdUnprepared => "on-cold-unprepared",
+            Self::ColdFailed => "on-cold-failed",
             Self::ColdUndelivered => "on-cold-undelivered",
         }
     }
@@ -713,9 +710,7 @@ fn census_delta(before: WireCensus, after: WireCensus) -> WireCensus {
 /// A fresh delta session cache: the opt-in on, nothing delivered, prepared or
 /// fetched yet.
 fn delta_cache() -> Arc<parking_lot::RwLock<WarmCodeCacheInner>> {
-    WarmCodeCacheInner::shared_with_delta_dispatch(DeltaDispatchConfig::with_readiness_deadline(
-        READINESS_DEADLINE,
-    ))
+    WarmCodeCacheInner::shared_with_delta_dispatch(DeltaDispatchConfig::development())
 }
 
 /// Arm the session's canonical-head pipeline and return its driver — the same
@@ -776,12 +771,12 @@ async fn settle(
 /// The lane label a fan-out's own selection resolves after the run, queried
 /// through the production selector (so the label is the production
 /// vocabulary, never the bench's guess).
-fn lane_label(
+async fn lane_label(
     provider: &AlloyProvider,
     cache: &Arc<parking_lot::RwLock<WarmCodeCacheInner>>,
     anchor: u64,
 ) -> String {
-    let selection = select_dispatch_storage(provider, cache, anchor);
+    let selection = select_dispatch_storage(provider, cache, anchor).await;
     match selection.outcome.reason() {
         Some(reason) => format!("{}/{reason}", selection.outcome.mode()),
         None => selection.outcome.mode().to_string(),
@@ -821,13 +816,7 @@ pub async fn run_leg(
         anchor,
         latency: *model,
     };
-    Ok(measure_leg(
-        leg,
-        &candidates,
-        recorder,
-        &session,
-        generation,
-    ))
+    Ok(measure_leg(leg, &candidates, recorder, &session, generation).await)
 }
 
 /// What one leg's measured fan-out runs against: the provider the chain answers
@@ -896,13 +885,23 @@ async fn prepare_leg(
     let cache: Arc<parking_lot::RwLock<WarmCodeCacheInner>> = match leg {
         Leg::OffLegacy => WarmCodeCacheInner::shared_default(),
         Leg::ColdUndelivered => delta_cache(),
-        Leg::ColdUnprepared => {
+        Leg::ColdFailed => {
             let cache = delta_cache();
+
             let driver = arm(&cache, provider);
-            // The head arrived on the block clock; nothing prepared it.
-            let _ticket = driver.deliver(ReadAnchor::identified(BLOCK, CURRENT), PREVIOUS);
+
+            // The head settles COLD — nothing is installed below it, so its
+            // lineage cannot carry — and the fan-out falls back with that real
+            // terminal reason, exactly as the shipped lane does.
+            let outcome =
+                settle_head(&driver, ReadAnchor::identified(BLOCK, CURRENT), PREVIOUS).await;
+            if !matches!(outcome, HeadOutcome::Settled(_)) {
+                return Err(format!("the failed head did not settle: {outcome:?}"));
+            }
+
             cache
         }
+
         Leg::ReadyCurrent | Leg::ReadyPrevious | Leg::ReadyCurrentUnknown => {
             let cache = delta_cache();
             let driver = arm(&cache, provider);
@@ -951,7 +950,7 @@ async fn prepare_leg(
 /// The measured fan-out: the ONE production dispatch entry over the candidates
 /// and the cache the leg prepared, its wire, and the background work that made
 /// the cache what it is.
-fn measure_leg(
+async fn measure_leg(
     leg: Leg,
     candidates: &[DispatchCandidate],
     recorder: &DeltaRecorder,
@@ -971,7 +970,7 @@ fn measure_leg(
     let wall_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let sims_after = sim_metrics::snapshot();
     let census = census_delta(before, recorder.census());
-    let lane = lane_label(session.provider, &session.cache, session.anchor);
+    let lane = lane_label(session.provider, &session.cache, session.anchor).await;
     let sims = sim_metrics::delta(sims_after, sims_before);
     // The post-execution read witness: only a result row carries an access
     // list, so the tally is (rows returned, rows that name the read identity).
@@ -1519,19 +1518,22 @@ fn render_controls(bench: &Bench, out: &mut String) {
     let _ = write!(
         out,
         "## Cold controls\n\n\
-         `bal` is the BAL fetch count on the DISPATCH leg: a control that prepared nothing\n\
-         must report zero, and its batch must equal the legacy lane's.\n\n\
-         | count | word | model | legacy members | unprepared members | undelivered members | unprepared bal | undelivered bal | unprepared lane | undelivered lane |\n\
+         `bal` is the BAL fetch count on the DISPATCH leg: a control that settled cold\n\
+         must report zero, and its batch must equal the legacy lane's.\n\
+         \n\
+         | count | word | model | legacy members | failed members | undelivered members | failed bal | undelivered bal | failed lane | undelivered lane |\n\
          | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
     );
+
     for point in &bench.points {
-        let (Some(off), Some(unprepared), Some(undelivered)) = (
+        let (Some(off), Some(failed), Some(undelivered)) = (
             point.summary(Leg::OffLegacy),
-            point.summary(Leg::ColdUnprepared),
+            point.summary(Leg::ColdFailed),
             point.summary(Leg::ColdUndelivered),
         ) else {
             continue;
         };
+
         let _ = writeln!(
             out,
             "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
@@ -1539,11 +1541,11 @@ fn render_controls(bench: &Bench, out: &mut String) {
             point.word.label(),
             point.model.label(),
             off.members,
-            unprepared.members,
+            failed.members,
             undelivered.members,
-            unprepared.bal,
+            failed.bal,
             undelivered.bal,
-            unprepared.lane,
+            failed.lane,
             undelivered.lane,
         );
     }
@@ -1689,4 +1691,138 @@ fn percent(delta: i64, base: u64) -> String {
     } else {
         format!("{:+.1}%", delta as f64 * 100.0 / base as f64)
     }
+}
+
+/// What the three same-block wait shapes measured: the shape's name, the lane
+/// the production selector resolved, and the two walls the shape paid.
+#[derive(Debug, Clone)]
+pub struct WaitShape {
+    /// The shape's name, for the report row.
+    pub shape: &'static str,
+    /// The lane the production selector resolved.
+    pub lane: String,
+    /// The selection's own wall, in microseconds.
+    pub selection_us: u64,
+    /// The background preparation's wall, in microseconds.
+    pub prepare_us: u64,
+}
+
+/// The three shapes the terminal-state wait distinguishes, each against a
+/// deliberately slow preparation: the exact in-flight head (the selection
+/// joins the existing preparation and resolves delta after the actual
+/// remaining wait), the previous anchor (no wait), and an explicit terminal
+/// failure (one wait, then the legacy fallback).
+///
+/// Every shape runs on its own session cache over one scripted chain, driven
+/// through the production selector. The walls are measured here and never
+/// asserted — no timing is a gate, and no end-to-end speedup is claimed.
+///
+/// # Errors
+///
+/// A scripted chain that cannot settle the heads a shape needs is a broken
+/// fixture, never a result.
+pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
+    let runtime = crate::probe::runtime();
+    runtime.block_on(async {
+        let recorder = DeltaRecorder::default();
+        let provider = crate::probe::provider(&recorder);
+        recorder.serve_head(BLOCK - 2, GRANDPARENT, GENESIS);
+        recorder.serve_head(BLOCK - 1, PREVIOUS, GRANDPARENT);
+        recorder.serve_head(BLOCK, CURRENT, PREVIOUS);
+        let mut shapes = Vec::new();
+
+        for shape in ["same-block-in-flight", "previous-block", "explicit-failure"] {
+            // The chain's three heads: the first two settle (so the previous
+            // anchor is a READY window), the third is the shape's subject.
+            recorder.set_bal_mode(BalMode::Serving);
+            recorder.set_bal_payload(crate::probe::EMPTY_BAL.to_vec());
+            let cache = delta_cache();
+            let driver = arm(&cache, &provider);
+            for (number, hash, parent) in [
+                (BLOCK - 2, GRANDPARENT, GENESIS),
+                (BLOCK - 1, PREVIOUS, GRANDPARENT),
+            ] {
+                let outcome =
+                    settle_head(&driver, ReadAnchor::identified(number, hash), parent).await;
+                if !matches!(outcome, HeadOutcome::Settled(_)) {
+                    return Err(format!("head {number} did not settle: {outcome:?}"));
+                }
+            }
+
+            // The subject head's preparation takes its time — long enough
+            // that the selection's wall is the wait it actually paid — and,
+            // for the failure shape, carries a list that cannot be read.
+            let failed = shape == "explicit-failure";
+            recorder.set_bal_mode(BalMode::Slow);
+            if failed {
+                recorder.set_bal_payload(vec![0xff, 0x00]);
+            }
+            let ticket = driver.deliver(ReadAnchor::identified(BLOCK, CURRENT), PREVIOUS);
+            let head = Arc::clone(&driver);
+            let prepared = tokio::spawn(async move {
+                let started = Instant::now();
+                let outcome = head.advance(ticket, &[]).await;
+                (started.elapsed(), outcome)
+            });
+            // The shape's selection must find the claim live: it starts only
+            // once the preparation's fetch is genuinely in flight.
+            while recorder.bal_in_flight() == 0 {
+                tokio::task::yield_now().await;
+            }
+
+            let anchor = if shape == "previous-block" {
+                BLOCK - 1
+            } else {
+                BLOCK
+            };
+            let started = Instant::now();
+            let selection = select_dispatch_storage(&provider, &cache, anchor).await;
+            let selection_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+            let (prepare, outcome) = prepared
+                .await
+                .map_err(|error| format!("the preparation task failed: {error}"))?;
+            if !matches!(outcome, HeadOutcome::Settled(_)) {
+                return Err(format!("the subject head did not settle: {outcome:?}"));
+            }
+
+            let lane = match selection.outcome.reason() {
+                Some(reason) => format!("{}/{reason}", selection.outcome.mode()),
+                None => selection.outcome.mode().to_string(),
+            };
+            shapes.push(WaitShape {
+                shape,
+                lane,
+                selection_us,
+                prepare_us: u64::try_from(prepare.as_micros()).unwrap_or(u64::MAX),
+            });
+        }
+
+        Ok(shapes)
+    })
+}
+
+/// The wait-shapes table: what each shape paid, wall for wall.
+pub fn render_wait_shapes(shapes: &[WaitShape]) -> String {
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "## Same-block terminal wait\n\n\
+         The three shapes the terminal-state wait distinguishes, each against a\n\
+         deliberately slow preparation. A selection at the exact in-flight head\n\
+         joins the head's EXISTING preparation, so its wall is the actual remaining wait\n\
+         it paid; the previous anchor never waits; an explicit terminal failure falls\n\
+         back after one wait. Walls are measured here and never asserted — no\n\
+         end-to-end speedup is claimed.\n\n\
+         | shape | lane | selection us | prepare us |\n\
+         | --- | --- | --- | --- |\n"
+    );
+    for shape in shapes {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} |",
+            shape.shape, shape.lane, shape.selection_us, shape.prepare_us
+        );
+    }
+    out.push('\n');
+    out
 }

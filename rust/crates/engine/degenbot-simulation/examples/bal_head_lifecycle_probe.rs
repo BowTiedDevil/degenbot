@@ -64,7 +64,7 @@ const LAST_BLOCK: u64 = 26_375_053;
 /// The default fresh-head sample size.
 const FRESH_HEADS: u64 = 6;
 
-/// The readiness deadlines the fallback counts are reported against.
+/// The prepare-wall thresholds the wait cost is reported against.
 const DEADLINES_MS: &[u64] = &[25, 100, 500, 1_000, 2_000];
 
 /// The committed real write-coverage capture whose write addresses stand in for
@@ -360,8 +360,9 @@ async fn fresh_leg(
     Ok(())
 }
 
-/// Per-leg walls, readiness, and the deadline fallbacks the measured prepare
-/// walls imply.
+/// Per-leg walls and readiness: the measured prepare walls a same-block
+/// caller now waits out (it joins the head's preparation instead of taking a
+/// timed fallback).
 fn print_leg(leg: Leg, rows: &[Row]) {
     let leg_rows: Vec<&Row> = rows.iter().filter(|row| row.leg == leg).collect();
     if leg_rows.is_empty() {
@@ -396,7 +397,7 @@ fn print_leg(leg: Leg, rows: &[Row]) {
         percentile(&applies, 95),
         percentile(&delivers, 50)
     );
-    print!("  deadline fallbacks (a head still cold when the deadline elapsed):");
+    print!("  prepare walls beyond a threshold (what a same-block wait pays):");
     for deadline in DEADLINES_MS {
         let deadline = Duration::from_millis(*deadline);
         let count = leg_rows.iter().filter(|row| row.prepare > deadline).count();
@@ -467,12 +468,12 @@ async fn run() -> Result<(), String> {
         config.url, config.first, config.last, config.fresh
     );
     println!(
-        "readiness deadlines are reported as observations, never asserted: the driver waits for \
-         nothing, so a caller past its deadline takes the cold path"
+        "prepare walls are reported as observations, never asserted: a same-block caller joins \
+         the head's existing preparation and waits for its terminal settle"
     );
 
     // A session's first anchor is a settled head; every later head carries it.
-    let driver = BalHeadDriver::new(&provider, Duration::from_millis(100));
+    let driver = BalHeadDriver::new(&provider);
     let relevance = relevance_set()?;
     println!(
         "relevance: ORACLE — {} distinct write addresses from the committed capture {}",

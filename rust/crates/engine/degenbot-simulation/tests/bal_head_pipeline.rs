@@ -15,7 +15,7 @@
 //! both from one deterministic write history.
 //!
 //! The driver's own transition pins (lineage refusals, the read window, the
-//! deadline, retention, compaction) live in `bal_head_lifecycle.rs`; this file
+//! retention, compaction) live in `bal_head_lifecycle.rs`; this file
 //! pins the same behaviors at the PIPELINE seam, where the phase that produces
 //! them is spawned rather than awaited by the test, and adds the one behavior
 //! the seam owns outright: a head is prepared with no candidate ever running,
@@ -41,7 +41,6 @@ use std::collections::BTreeSet;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
-use std::time::Duration;
 
 #[path = "../examples/shared/chain_stub.rs"]
 #[expect(dead_code)]
@@ -61,10 +60,6 @@ use modeled_chain::{bal_bytes, block_hash, ChainState, Key, StubChain};
 
 /// The height every test advances from, unless the test is about lineage.
 const HEIGHT: u64 = 100;
-
-/// A readiness deadline no test ever reaches: a view is cold only because the
-/// head has not been applied yet, never because a deadline elapsed.
-const PATIENT: Duration = Duration::from_secs(3600);
 
 /// The deterministic spawn seam: every phase the pipeline spawns parks here
 /// until the test drains it, in the order the test chooses.
@@ -180,7 +175,7 @@ async fn a_skipped_head_settles_cold_and_the_next_consecutive_head_carries() {
     // The gap head's own post-block word: the value its generation settles
     // dynamically and the head above it must carry.
     stub.serve_at(HEIGHT + 2, address(0x11), U256::from(2u64), 6);
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue);
 
@@ -307,7 +302,7 @@ async fn a_same_height_reorg_supersedes_and_the_new_branch_starts_cold() {
     stub.serve_bal_at(successor, bal_bytes(&[]));
     stub.serve_at(HEIGHT, address(0x33), slot, 777);
     stub.serve_at(HEIGHT + 1, address(0x33), slot, 888);
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue);
 
@@ -502,7 +497,7 @@ async fn every_consecutive_head_of_a_modeled_stream_carries_after_the_cold_start
     };
     let provider = stub.provider();
     let keys: Vec<Key> = keys.into_iter().collect();
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue);
 
@@ -583,7 +578,7 @@ async fn a_head_delivered_with_no_candidate_ever_running_is_still_prepared() {
     stub.serve_bal_at(child, bal_bytes(&[(address(0x11), slot, U256::from(5u64))]));
     stub.serve_at(HEIGHT, address(0x11), slot, 1);
     stub.serve_at(HEIGHT + 1, address(0x11), slot, 5);
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue);
 
@@ -669,7 +664,7 @@ async fn a_prepared_list_that_lands_after_supersede_installs_nothing_and_the_cha
     stub.serve_bal_at(heir, bal_bytes(&[]));
     stub.serve_at(HEIGHT + 1, address(0x33), slot, 777);
     stub.serve_at(HEIGHT + 2, address(0x33), slot, 888);
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue);
 

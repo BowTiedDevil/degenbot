@@ -186,9 +186,10 @@ sha2 = "0.11"
 # `rt-multi-thread` is the flavor the `BlockingAsyncDb` cold path needs: its
 # reads block on the ambient tokio runtime, and under a `CurrentThread`
 # runtime `BlockingAsyncDb::new` returns `None`.
-# The hub's public-seam tests drive caller-drained rounds directly, so the
-# `#[tokio::test]` macros and the multi-threaded flavor are all they need.
-tokio = { version = "^1.54", features = ["macros", "rt-multi-thread"] }
+# The hub's public-seam tests drive caller-drained rounds directly (macros +
+# the multi-threaded flavor), and the head-wait boundary tests bound their
+# waits with `tokio::time::timeout`, which needs the `time` feature.
+tokio = { version = "^1.54", features = ["macros", "rt-multi-thread", "time"] }
 # `test-utils` gates the pending-tx pump's frame-injection support
 # (`PendingTxPump::push`) so the §4.2 wire-shape tests + the parity fixture can
 # feed the typed dispatch without a live node. (`AlloyProvider::from_provider`

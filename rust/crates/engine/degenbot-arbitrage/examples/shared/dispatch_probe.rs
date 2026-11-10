@@ -30,7 +30,7 @@
 //! Nothing here is a latency CLAIM about a live node — the durations are
 //! synthetic, deterministic inputs, and the report says so.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -162,7 +162,8 @@ pub enum BalMode {
     /// official JSON one it falls back to is refused too, so no successful
     /// negotiation becomes sticky and every acquisition pays both refusals.
     Unsupported,
-    /// Answer, but only after a delay past any readiness deadline under test.
+    /// Answer, but only after a fixed delay — the wait-shapes' deliberately
+    /// slow preparation, whose wall the report measures and never asserts.
     Slow,
 }
 
@@ -185,6 +186,13 @@ pub struct DeltaRecorder {
     heads: Arc<Mutex<std::collections::BTreeMap<u64, (B256, B256)>>>,
     bal: Arc<BalScript>,
     bal_payload: Arc<Mutex<Vec<u8>>>,
+    /// The deferred BAL gate: while armed, a BAL fetch parks on
+    /// [`Self::release_bal`] and nothing else answers it — the deterministic
+    /// "genuinely in flight" state a wait's registration is observed in.
+    bal_deferred: Arc<AtomicBool>,
+    bal_release: Arc<tokio::sync::watch::Sender<bool>>,
+    /// Gated BAL fetches currently parked on [`Self::release_bal`].
+    bal_in_flight: Arc<AtomicU64>,
     /// The scripted storage words, keyed by `(address, slot)`. An identity this
     /// map does not name serves zero, so a run scripts exactly the words its
     /// frames read and nothing else.
@@ -208,6 +216,9 @@ impl Default for DeltaRecorder {
             heads: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
             bal: Arc::new(serving_bal()),
             bal_payload: Arc::new(Mutex::new(EMPTY_BAL.to_vec())),
+            bal_deferred: Arc::default(),
+            bal_release: Arc::new(tokio::sync::watch::channel(false).0),
+            bal_in_flight: Arc::default(),
             storage: Arc::default(),
             latency: StorageLatency::ZERO,
             wire: Arc::default(),
@@ -249,6 +260,29 @@ impl DeltaRecorder {
     /// Serve these raw list bytes for every BAL request.
     pub fn set_bal_payload(&self, bytes: Vec<u8>) {
         *self.bal_payload.lock().expect("recorder mutex") = bytes;
+    }
+
+    /// Defer every BAL answer until [`Self::release_bal`]: a fetch is
+    /// genuinely in flight — parked on a gate only the test opens — so a
+    /// preparation's claim is observably live before anything settles it.
+    pub fn defer_bal(&self) {
+        self.bal_release.send_replace(false);
+        self.bal_in_flight.store(0, Ordering::Relaxed);
+        self.bal_deferred.store(true, Ordering::Relaxed);
+    }
+
+    /// Answer the deferred BAL fetches, completing every preparation parked
+    /// on the gate.
+    pub fn release_bal(&self) {
+        self.bal_deferred.store(false, Ordering::Relaxed);
+        self.bal_release.send_replace(true);
+    }
+
+    /// BAL fetches dispatched but not yet answered: the observable "the
+    /// preparation is in flight" signal.
+    #[must_use]
+    pub fn bal_in_flight(&self) -> u64 {
+        self.bal_in_flight.load(Ordering::Relaxed)
     }
 
     /// Serve `value` for the storage identity `(address, slot)`. Every identity
@@ -399,14 +433,17 @@ fn block_number(req: &SerializedRequest) -> Option<u64> {
         .or_else(|| number.as_u64())
 }
 
-/// Whether this packet is a BAL fetch that must pay the slow endpoint's delay,
-/// so the readiness deadline has something outstanding to fire against.
-fn pays_slow_bal_delay(recorder: &DeltaRecorder, req: &RequestPacket) -> bool {
-    let is_bal = match req {
+/// Whether this packet carries a BAL fetch.
+fn is_bal_packet(req: &RequestPacket) -> bool {
+    match req {
         RequestPacket::Single(one) => is_bal_method(one.method()),
         RequestPacket::Batch(many) => many.iter().any(|one| is_bal_method(one.method())),
-    };
-    is_bal && matches!(*recorder.bal.lock().expect("recorder mutex"), BalMode::Slow)
+    }
+}
+
+/// Whether this packet is a BAL fetch that must pay the slow endpoint's delay.
+fn pays_slow_bal_delay(recorder: &DeltaRecorder, req: &RequestPacket) -> bool {
+    is_bal_packet(req) && matches!(*recorder.bal.lock().expect("recorder mutex"), BalMode::Slow)
 }
 
 /// The one packet's charges under the latency model: a serial storage read, the
@@ -468,15 +505,29 @@ impl tower::Service<RequestPacket> for RecordingTransport {
     fn call(&mut self, req: RequestPacket) -> Self::Future {
         let recorder = self.recorder.clone();
         Box::pin(async move {
-            // A slow BAL endpoint PENDS: the readiness deadline must be able to
-            // fire while the fetch is outstanding, which a blocking sleep on
-            // this worker could not allow.
+            let is_bal = is_bal_packet(&req);
+            if is_bal {
+                recorder.bal_in_flight.fetch_add(1, Ordering::Relaxed);
+            }
+            // A gated BAL fetch parks on the test's gate: the request is
+            // genuinely in flight — and the claim that owns it observably
+            // live — until the release answers it.
+            if is_bal && recorder.bal_deferred.load(Ordering::Relaxed) {
+                let mut released = recorder.bal_release.subscribe();
+                let _ = released.wait_for(|open| *open).await;
+            }
+            // A slow BAL endpoint PENDS on a timer rather than blocking this
+            // worker, so the fetch stays observably outstanding while the rest
+            // of the run proceeds.
             if pays_slow_bal_delay(&recorder, &req) {
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
             // The deterministic latency model, paid before the packet is
             // answered.
             pay_modeled_latency(&recorder, &req).await;
+            if is_bal {
+                recorder.bal_in_flight.fetch_sub(1, Ordering::Relaxed);
+            }
             let respond = |req: &SerializedRequest| -> Response {
                 record_wire(&recorder, req);
                 let payload = match req.method() {

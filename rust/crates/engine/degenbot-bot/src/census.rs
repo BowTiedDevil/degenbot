@@ -271,10 +271,12 @@ pub enum CensusEvent {
     /// One dispatch fan-out's storage selection: which representation it read
     /// candidates through (`delta` = a ready BAL delta generation, `legacy` =
     /// the per-anchor memo + prefetch lane), and the closed-set reason when the
-    /// opt-in's head did not settle ready (`unprepared` | `deadline` |
-    /// `superseded` | `undelivered` | `lineage-refused` | `bal-unreadable` |
-    /// `settled` | `lineage-unreadable`) or `None` when it did (and when the
-    /// opt-in is off).
+    /// opt-in's head did not settle ready (`abandoned` | `superseded` |
+    /// `undelivered` | `lineage-refused` | `bal-unreadable` | `settled` |
+    /// `lineage-unreadable`). A head whose preparation is genuinely in flight
+    /// is never a label — the fan-out waits for that preparation's terminal
+    /// result first — and the reason is `None` when the generation answered
+    /// and when the opt-in is off.
     DispatchStorage {
         mode: &'static str,
         reason: Option<&'static str>,

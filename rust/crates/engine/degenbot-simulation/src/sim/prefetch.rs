@@ -698,7 +698,7 @@ pub fn prefetch_into_memo(
 /// The same precondition as
 /// [`BlockingAsyncDb::new`](super::evm2::blocking_async_db::BlockingAsyncDb::new):
 /// where the fan-out can read at all, the prefetch can too.
-pub(crate) fn block_on_ambient<T>(future: impl Future<Output = T>) -> Option<T> {
+pub fn block_on_ambient<T>(future: impl Future<Output = T>) -> Option<T> {
     let handle = tokio::runtime::Handle::try_current().ok()?;
     if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
         return None;
@@ -715,16 +715,12 @@ pub(crate) fn block_on_ambient<T>(future: impl Future<Output = T>) -> Option<T> 
 /// words. One identity read per fan-out against the cold storage chain the memo
 /// saves on that anchor's later fan-outs.
 ///
-/// Degrades like the lane around it: no ambient runtime, no block at `block`,
+/// Degrades like the lane around it: no block at `block`,
 /// or an RPC failure answers the number-only anchor ([`ReadAnchor::at`]) — the
 /// fence weakens to the pre-hash scope, the fan-out never fails.
 #[must_use]
-pub fn resolve_read_anchor(provider: &AlloyProvider, block: u64) -> ReadAnchor {
-    let Some(read) = block_on_ambient(provider.get_block_hash_at(block)) else {
-        return ReadAnchor::at(block);
-    };
-
-    match read {
+pub async fn resolve_read_anchor(provider: &AlloyProvider, block: u64) -> ReadAnchor {
+    match provider.get_block_hash_at(block).await {
         Ok(Some(hash)) => ReadAnchor::identified(block, hash),
         Ok(None) => {
             diag!(
@@ -744,7 +740,6 @@ pub fn resolve_read_anchor(provider: &AlloyProvider, block: u64) -> ReadAnchor {
         }
     }
 }
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -1150,15 +1145,19 @@ mod tests {
         (values, forwards.load(Ordering::Relaxed))
     }
 
-    /// A fan-out with no ambient runtime cannot identify its anchor, so the key
-    /// degrades to the number-only fence: the run continues on the pre-hash
-    /// scope rather than failing on a read it cannot make.
+    /// A fan-out with no ambient runtime cannot drive its anchor identity, so
+    /// the drive seam answers nothing and the caller's key degrades to the
+    /// number-only fence: the run continues on the pre-hash scope rather than
+    /// failing on a read it cannot make.
     #[test]
     fn an_anchor_without_an_ambient_runtime_is_unfenced() {
         let stub = ChainStub::new();
         let provider = stub.provider();
 
-        assert_eq!(resolve_read_anchor(&provider, 7), ReadAnchor::at(7));
+        assert!(
+            block_on_ambient(resolve_read_anchor(&provider, 7)).is_none(),
+            "nothing can be driven without a runtime"
+        );
         assert!(
             stub.packets().is_empty(),
             "no identity read is even attempted"

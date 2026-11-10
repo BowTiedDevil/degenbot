@@ -188,10 +188,12 @@ Rule inventory (14 rules, 2 groups; `degenbot-critical` evaluates every
   `degenbot_dispatch_storage_total{mode="legacy", reason!="none"}` over the
   whole fan-out rate > 0.5. The BAL delta opt-in is on and the delta lane is
   not answering at the head, so candidate execution is paying the legacy memo +
-  prefetch lane. The cold reason label (`unprepared`, `deadline`,
-  `superseded`, `undelivered`, `lineage-refused`, `bal-unreadable`,
-  `settled`, `lineage-unreadable`) names the stage that failed; the dashboard
-  "Dispatch storage lane" panel shows the split over the same 5m.
+  prefetch lane. The cold reason label (`abandoned`, `superseded`,
+  `undelivered`, `lineage-refused`, `bal-unreadable`, `settled`,
+  `lineage-unreadable`) names the stage that failed — `abandoned` means the
+  head's preparation did not reach a BAL verdict and the fan-out used the
+  legacy lane; the dashboard "Dispatch storage lane" panel shows the split
+  over the same 5m.
 
 ### Removed
 

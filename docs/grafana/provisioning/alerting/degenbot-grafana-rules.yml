@@ -382,10 +382,11 @@ groups:
             for a cold reason for 10m while the BAL delta opt-in is on
             (degenbot_dispatch_storage_total{mode="legacy", reason!="none"} over
             the whole fan-out rate). The reason label is the closed cold set
-            (unprepared deadline superseded undelivered lineage-refused
-            bal-unreadable settled lineage-unreadable): a head that is
-            chronically unprepared or past its readiness deadline means the BAL
-            fetch is not landing in time, and every candidate at that head is
+            (abandoned superseded undelivered lineage-refused
+            bal-unreadable settled lineage-unreadable): abandoned means the
+            head's preparation did not reach a BAL verdict and the fan-out used
+            the legacy lane, so a chronically abandoned head means preparation
+            keeps ending without settling and every candidate at that head is
             paid for on the legacy memo + prefetch lane. With the opt-in OFF
             every fan-out reports reason="none" and this ratio stays at 0, so
             the rule is silent by construction; it never fires on a bot that

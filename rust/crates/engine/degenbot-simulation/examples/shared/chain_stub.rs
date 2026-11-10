@@ -50,7 +50,7 @@ pub fn worked_list() -> Vec<u8> {
 
 /// A chain stub serving the serial storage read and the raw block access list
 /// at exact hashes, recording every dispatched request.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ChainStub {
     requests: Arc<Mutex<Vec<String>>>,
     bal_by_hash: Arc<Mutex<HashMap<B256, Vec<u8>>>>,
@@ -67,8 +67,39 @@ pub struct ChainStub {
     refused: Arc<Mutex<HashSet<(u64, Address, U256)>>>,
     hold: Arc<AtomicBool>,
     slow: Arc<AtomicBool>,
+    /// The deferred BAL gate: while armed, a BAL fetch is genuinely in flight
+    /// and only [`Self::release_bal`] answers it.
+    bal_deferred: Arc<AtomicBool>,
+    bal_release: Arc<tokio::sync::watch::Sender<bool>>,
     storage_singles: Arc<AtomicUsize>,
     storage_batched: Arc<AtomicUsize>,
+}
+
+impl Default for ChainStub {
+    fn default() -> Self {
+        let (bal_release, _) = tokio::sync::watch::channel(false);
+        Self {
+            requests: Arc::default(),
+            bal_by_hash: Arc::default(),
+            bal_json_by_hash: Arc::default(),
+            bal_raw_unsupported: Arc::default(),
+            bal_json_unsupported: Arc::default(),
+            bal_null: Arc::default(),
+            head: Arc::default(),
+            lineage: Arc::default(),
+            head_unreadable: Arc::default(),
+            lineage_unreadable: Arc::default(),
+            down: Arc::default(),
+            values: Arc::default(),
+            refused: Arc::default(),
+            hold: Arc::default(),
+            slow: Arc::default(),
+            bal_deferred: Arc::default(),
+            bal_release: Arc::new(bal_release),
+            storage_singles: Arc::default(),
+            storage_batched: Arc::default(),
+        }
+    }
 }
 
 impl ChainStub {
@@ -178,6 +209,22 @@ impl ChainStub {
     /// observably in flight across a poll (the in-flight coalescing path).
     pub fn set_slow(&self, slow: bool) {
         self.slow.store(slow, Ordering::Relaxed);
+    }
+
+    /// Defer every BAL answer until [`Self::release_bal`]: the fetch is
+    /// genuinely in flight — the caller's future is pending on a gate only the
+    /// test can open — which is what makes a wait's registration observable
+    /// before its notification.
+    pub fn defer_bal(&self) {
+        self.bal_release.send_replace(false);
+        self.bal_deferred.store(true, Ordering::Relaxed);
+    }
+
+    /// Answer the deferred BAL fetches, completing every preparation parked on
+    /// the gate.
+    pub fn release_bal(&self) {
+        self.bal_deferred.store(false, Ordering::Relaxed);
+        self.bal_release.send_replace(true);
     }
 
     pub fn clear(&self) {
@@ -433,6 +480,32 @@ impl tower::Service<RequestPacket> for ChainStub {
     }
 
     fn call(&mut self, req: RequestPacket) -> Self::Future {
+        let stub = self.clone();
+        let defers_bal = stub.bal_deferred.load(Ordering::Relaxed)
+            && match &req {
+                RequestPacket::Single(one) => one.method().ends_with("BlockAccessList"),
+                RequestPacket::Batch(many) => many
+                    .iter()
+                    .any(|one| one.method().ends_with("BlockAccessList")),
+            };
+        if defers_bal {
+            // The deferred mock: the BAL fetch is dispatched and parked on the
+            // test's gate, so a preparation is observably in flight and only
+            // the release answers it.
+            let mut released = stub.bal_release.subscribe();
+            return Box::pin(async move {
+                let _ = released.wait_for(|open| *open).await;
+                stub.call_now(req).await
+            });
+        }
+        stub.call_now(req)
+    }
+}
+
+impl ChainStub {
+    /// The answering future for one request — the node's own response
+    /// construction, after the hold/down/slow handling.
+    fn call_now(&self, req: RequestPacket) -> TransportFut<'static> {
         let stub = self.clone();
         if stub.hold.load(Ordering::Relaxed) {
             // A request the node never answers: the caller's round stays in

@@ -22,7 +22,7 @@ use alloy::primitives::map::{AddressHashMap, B256HashMap};
 use alloy::primitives::{Address, B256, KECCAK256_EMPTY};
 use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use degenbot_rpc::provider::AlloyProvider;
 
@@ -34,7 +34,7 @@ use crate::sim::evm2::bal_heads::BalHeadPipeline;
 use crate::sim::evm2::delta_snapshot::{BalHeadDriver, DeltaHub, Retention, DEFAULT_MAX_DEPTH};
 use crate::sim::evm2::hook_slots::HookSlotStore;
 use crate::sim::hot_slots::HotSlotStore;
-use crate::sim::prefetch::{block_on_ambient, resolve_read_anchor};
+use crate::sim::prefetch::resolve_read_anchor;
 use crate::sim::sim_metrics;
 use crate::sim::storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};
 use degenbot_core::diag;
@@ -74,17 +74,23 @@ pub const WARM_CODE_CACHE_TTL_BLOCKS: u64 = 10_000;
 /// one head's clock never expires anything out of another's. A head that
 /// settled READY answers candidate storage through its `DeltaHub` (a
 /// [`StorageView`](super::storage_view::StorageView)) and pays no prefetch
-/// batch; a head that is unprepared, past its readiness deadline, superseded,
-/// unreadable (unsupported endpoint, malformed list), lineage-refused, or never
-/// delivered at all (the head edge never saw it) takes the legacy memo +
-/// prefetch lane with the reason reported, and serves no parent value on that
-/// fallback.
+/// batch; a fan-out at the exact head whose preparation is genuinely in flight
+/// joins that head's existing preparation and waits for its terminal result (a
+/// settle, a provider failure, a supersession, or the preparation's
+/// abandonment — never a wall clock), then re-reads the exact anchor. Every
+/// real terminal cold outcome — an abandoned preparation (`abandoned`),
+/// superseded, unreadable (unsupported endpoint, malformed list),
+/// lineage-refused, or never delivered at all (the head edge never saw it) —
+/// takes the legacy memo + prefetch lane with the reason reported, and serves
+/// no parent value on that fallback.
 ///
 /// The fan-out never generates BAL work. The session's canonical-head pipeline
 /// ([`BalHeadPipeline`]) delivers, prepares and applies every accepted head on
-/// the block pump's header edge — off every fan-out's critical path — so the
-/// readiness deadline is observational: it labels a head that is still
-/// unprepared when a fan-out asks, and nothing waits on it.
+/// the block pump's header edge — off every fan-out's critical path. A fan-out
+/// at a head that is still preparing does not manufacture that work either: it
+/// waits on the pipeline's existing preparation through the driver's per-head
+/// completion notification, so the head settles exactly once however many
+/// fan-outs arrive while it is in flight.
 ///
 /// # Enabling it, and the metrics that say what happened
 ///
@@ -119,24 +125,20 @@ pub const WARM_CODE_CACHE_TTL_BLOCKS: u64 = 10_000;
 ///
 /// Every opt-in fan-out reports its selection on
 /// `degenbot.dispatch.storage{mode,reason}` — `mode` is `delta` or `legacy`,
-/// and `reason` is the closed cold set (`unprepared`, `deadline`,
-/// `superseded`, `undelivered`, `lineage-refused`, `bal-unreadable`, `settled`,
-/// `lineage-unreadable`) or `none`. A ready delta fan-out also leaves
-/// `degenbot.storage.prefetch` untouched (it dispatches no batch), which is what
-/// makes the two lanes distinguishable from a scrape while the flag is on.
+/// and `reason` is the closed cold set (`abandoned`, `superseded`,
+/// `undelivered`, `lineage-refused`, `bal-unreadable`, `settled`,
+/// `lineage-unreadable`) or `none`. `abandoned` means the head's preparation
+/// ended without reaching a BAL verdict — or none ever claimed it — and the
+/// fan-out used the legacy lane. A head whose preparation is genuinely in
+/// flight is never a fallback label: a fan-out at that exact head waits for
+/// the preparation's own terminal result instead. A ready delta fan-out also
+/// leaves `degenbot.storage.prefetch` untouched (it dispatches no batch),
+/// which is what makes the two lanes distinguishable from a scrape while the
+/// flag is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeltaDispatchConfig {
-    /// How long a delivered head may stay unprepared before every caller at it
-    /// is told the deadline elapsed and takes the legacy path.
-    pub readiness_deadline: Duration,
-}
+pub struct DeltaDispatchConfig;
 
 impl DeltaDispatchConfig {
-    /// The readiness deadline the development opt-in uses: long enough for a
-    /// local node's BAL, short enough that a head still unprepared at a fan-out
-    /// is labelled `deadline` rather than mistaken for an in-flight one.
-    pub const DEVELOPMENT_READINESS_DEADLINE: Duration = Duration::from_millis(50);
-
     /// The idle window, in blocks, the development opt-in's delta generations
     /// use: an entry no candidate has READ for this many blocks stops being
     /// served and a read of it falls back dynamically to the exact anchor's
@@ -153,19 +155,10 @@ impl DeltaDispatchConfig {
     /// any caller constructing its own cache or driver.
     pub const DEVELOPMENT_IDLE_BLOCKS: u64 = 8;
 
-    /// The development opt-in at
-    /// [`Self::DEVELOPMENT_READINESS_DEADLINE`].
+    /// The development opt-in.
     #[must_use]
     pub const fn development() -> Self {
-        Self {
-            readiness_deadline: Self::DEVELOPMENT_READINESS_DEADLINE,
-        }
-    }
-
-    /// The opt-in with an explicit readiness deadline (the A/B and test knob).
-    #[must_use]
-    pub const fn with_readiness_deadline(readiness_deadline: Duration) -> Self {
-        Self { readiness_deadline }
+        Self
     }
 }
 
@@ -186,8 +179,8 @@ pub enum StorageSelectionOutcome {
     Disabled,
     /// The exact head settled ready: the delta generation answers.
     Ready,
-    /// The exact head did not settle ready in time (or settled cold); the
-    /// legacy lane answers and the label says why.
+    /// The exact head did not settle ready (settled cold, or its preparation
+    /// was abandoned); the legacy lane answers and the label says why.
     Cold(&'static str),
     /// The head's lineage could not be read, so no head was delivered.
     LineageUnreadable,
@@ -223,6 +216,12 @@ pub struct DispatchStorageSelection {
     pub storage: FanOutStorage,
     /// The outcome label, for the diagnostic and metric surfaces.
     pub outcome: StorageSelectionOutcome,
+    /// The wall this selection spent waiting for an in-flight head's terminal
+    /// result — zero on every fast path. The one wait figure the fan-out's
+    /// diagnostic row reports (`wait_us`); detailed per-head wait telemetry is
+    /// deliberately deferred, and waits stay measurable through the tests and
+    /// the controlled benchmark.
+    pub wait: Duration,
 }
 
 impl DispatchStorageSelection {
@@ -231,6 +230,24 @@ impl DispatchStorageSelection {
     #[must_use]
     pub const fn is_delta(&self) -> bool {
         matches!(self.storage, FanOutStorage::Delta(_))
+    }
+
+    /// The selection a fan-out degrades to when no ambient runtime can drive
+    /// [`select_dispatch_storage`]: the number-only anchor and the honest
+    /// label — `Disabled` when the opt-in is off, `LineageUnreadable` when it
+    /// is on (no lineage was read, so no head could answer).
+    #[must_use]
+    pub fn degraded(delta_dispatch_off: bool, block: u64) -> Self {
+        Self {
+            anchor: ReadAnchor::at(block),
+            storage: FanOutStorage::Legacy,
+            outcome: if delta_dispatch_off {
+                StorageSelectionOutcome::Disabled
+            } else {
+                StorageSelectionOutcome::LineageUnreadable
+            },
+            wait: Duration::ZERO,
+        }
     }
 }
 
@@ -251,22 +268,27 @@ impl DispatchStorageSelection {
 ///   the current head linked (`BalHeadDriver::previous`), which is the window a
 ///   fan-out whose candidates were solved one block behind the head reads
 ///   through;
-/// - otherwise [`FanOutStorage::Legacy`] with the closed cold reason — a head
-///   still preparing (`unprepared`), past its readiness deadline (`deadline`),
-///   superseded, settled cold (`lineage-refused` / `bal-unreadable` /
-///   `settled`), or one that never arrived at all (`undelivered`). The caller
-///   then runs the existing memo + prefetch lane, and no parent value is served
-///   on that fallback.
+/// - a head whose preparation is genuinely in flight is NOT a fallback: the
+///   selection waits for that exact head's terminal result and then re-reads
+///   the exact anchor, which answers ready (delta) or cold with the real
+///   reason. A head no live preparation owns — dropped mid-flight, or
+///   delivered and never claimed — resolves terminal `abandoned` at that exact
+///   anchor without waiting;
+/// - otherwise [`FanOutStorage::Legacy`] with the closed cold reason — an
+///   `abandoned` head, a superseded head, a settled cold head
+///   (`lineage-refused` / `bal-unreadable` / `settled`), or one that never
+///   arrived at all (`undelivered`). The caller then runs the existing memo +
+///   prefetch lane, and no parent value is served on that fallback.
 ///
-/// Nothing here delivers, prepares, applies, or advances a head, and nothing
-/// here waits on the readiness deadline. That work belongs to the session's
-/// canonical-head pipeline ([`BalHeadPipeline`]), which runs it on the block
-/// pump's accepted-header edge, off every fan-out's critical path. A fan-out
+/// Nothing here delivers, prepares, applies, or advances a head. That work
+/// belongs to the session's canonical-head pipeline ([`BalHeadPipeline`]),
+/// which runs it on the block pump's accepted-header edge, off every fan-out's
+/// critical path; a fan-out that waits joins that work, it never starts it. A fan-out
 /// therefore pays at most the ONE header read — the same read the OFF lane pays —
 /// and a head the head edge never delivered answers `undelivered` rather than
 /// being manufactured here.
 #[must_use]
-pub fn select_dispatch_storage(
+pub async fn select_dispatch_storage(
     provider: &AlloyProvider,
     warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
     block: u64,
@@ -277,17 +299,18 @@ pub fn select_dispatch_storage(
     let Some(heads) = heads else {
         // Off: the legacy anchor read, and nothing that could request a BAL.
         return DispatchStorageSelection {
-            anchor: resolve_read_anchor(provider, block),
+            anchor: resolve_read_anchor(provider, block).await,
             storage: FanOutStorage::Legacy,
             outcome: StorageSelectionOutcome::Disabled,
+            wait: Duration::ZERO,
         };
     };
 
     // The opt-in's ONE header read: the whole lineage, never one read per hash.
-    let lineage = match block_on_ambient(provider.get_block_lineage_at(block)) {
-        Some(Ok(Some(lineage))) => lineage,
+    let lineage = match provider.get_block_lineage_at(block).await {
+        Ok(Some(lineage)) => lineage,
         other => {
-            if let Some(Err(error)) = other {
+            if let Err(error) = other {
                 diag!(
                     domain = sim,
                     anchor = block,
@@ -298,24 +321,37 @@ pub fn select_dispatch_storage(
                 anchor: ReadAnchor::at(block),
                 storage: FanOutStorage::Legacy,
                 outcome: StorageSelectionOutcome::LineageUnreadable,
+                wait: Duration::ZERO,
             };
         }
     };
     let anchor = ReadAnchor::identified(lineage.number, lineage.hash);
-    // The whole selection: what this exact anchor answers right now. The driver
-    // owns readiness, the previous-anchor window, and the closed cold reasons;
-    // this seam only reports them.
-    let view = heads.snapshot(anchor);
+
+    // The whole selection: what this exact anchor answers. Every settled,
+    // previous-window and terminal-cold view resolves on the wait's first,
+    // synchronous step — those never wait; only the exact CURRENT head with a
+    // genuinely live preparation does, joining the preparation the
+    // canonical-head pipeline already owns (never starting one), and ending on
+    // that head's own terminal result rather than on a timer. A head no live
+    // preparation owns resolves terminal `abandoned` instead of waiting. The
+    // driver owns readiness, the previous-anchor window, and the closed cold
+    // reasons; this seam only reports them.
+    let started = Instant::now();
+    let view = heads.wait_for_head(anchor).await;
+    let wait = started.elapsed();
+
     match view.readiness.cold_reason() {
         None => DispatchStorageSelection {
             anchor,
             storage: FanOutStorage::Delta(view.hub),
             outcome: StorageSelectionOutcome::Ready,
+            wait,
         },
         Some(reason) => DispatchStorageSelection {
             anchor,
             storage: FanOutStorage::Legacy,
             outcome: StorageSelectionOutcome::Cold(reason.label()),
+            wait,
         },
     }
 }
@@ -459,14 +495,13 @@ impl WarmCodeCacheInner {
     /// every fan-out at one exact anchor.
     #[must_use]
     pub fn delta_heads(&self, provider: &AlloyProvider) -> Option<Arc<BalHeadDriver>> {
-        let config = self.delta_dispatch?;
+        self.delta_dispatch?;
         let mut slot = self.delta_heads.lock();
         Some(Arc::clone(slot.get_or_insert_with(|| {
             Arc::new(BalHeadDriver::with_config(
                 provider,
                 DEFAULT_MAX_DEPTH,
                 Retention::IdleBlocks(DeltaDispatchConfig::DEVELOPMENT_IDLE_BLOCKS),
-                config.readiness_deadline,
             ))
         })))
     }
@@ -856,7 +891,7 @@ mod tests {
     /// probe suites that opt into a threshold explicitly) keep their posture.
     #[test]
     fn the_library_defaults_stay_unbounded_at_the_default_fold_depth() {
-        let driver = BalHeadDriver::new(&forbidden_provider(), Duration::from_millis(1));
+        let driver = BalHeadDriver::new(&forbidden_provider());
         assert_eq!(driver.retention(), Retention::Unbounded);
         assert_eq!(driver.max_depth(), DEFAULT_MAX_DEPTH);
     }
@@ -869,15 +904,13 @@ mod tests {
         let store = Arc::new(HookSlotStore::in_memory(::evm2::SpecId::CANCUN));
         let inner = WarmCodeCacheInner::shared_with_hook_slots_and_delta_dispatch(
             Arc::clone(&store),
-            DeltaDispatchConfig::with_readiness_deadline(Duration::from_millis(7)),
+            DeltaDispatchConfig::development(),
         );
         let cache = inner.read();
         assert!(cache.hook_slots().is_some(), "the hook store survives");
         assert_eq!(
             cache.delta_dispatch(),
-            Some(DeltaDispatchConfig::with_readiness_deadline(
-                Duration::from_millis(7)
-            ))
+            Some(DeltaDispatchConfig::development())
         );
         assert!(cache.delta_heads(&forbidden_provider()).is_some());
     }

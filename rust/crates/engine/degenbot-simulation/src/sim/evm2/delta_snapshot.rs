@@ -136,12 +136,11 @@
 //!
 //! Readiness is keyed by the WHOLE anchor, never the number. A caller at a
 //! delivered head gets [`HeadReadiness::Cold`] with the reason until that exact
-//! head's list applied — so an unprepared head, a list the node cannot serve, a
-//! malformed list, and a head past its readiness deadline all take the cold
-//! path instead of ever serving a parent value at the wrong anchor. Once settled
-//! the head is [`HeadReadiness::Ready`], or cold-and-settled when the lineage
-//! refused or the list could not be read (the two ways the synchronous control
-//! also settles cold).
+//! head's list applied — so an unprepared head, a list the node cannot serve, and
+//! a malformed list all take the cold path instead of ever serving a parent
+//! value at the wrong anchor. Once settled the head is [`HeadReadiness::Ready`],
+//! or cold-and-settled when the lineage refused or the list could not be read
+//! (the two ways the synchronous control also settles cold).
 //!
 //! Three fences keep a late or wrong response out of the snapshot: the prepared
 //! list must carry the ticket's exact anchor ([`HeadOutcome::Foreign`]), the
@@ -152,11 +151,25 @@
 //! resurrect: the next head above the survivor is consecutive again and carries
 //! only the survivor's own generation.
 //!
-//! Nothing waits on a preparation. [`BalHeadDriver::snapshot`] is synchronous, so
-//! a candidate loop never blocks on a BAL; [`BalHeadDriver::advance`] is the
-//! claim-and-fetch form a caller spawns, it tells a second concurrent caller
-//! [`HeadOutcome::InFlight`] instead of duplicating the fetch, and a cancelled
-//! advance releases its claim so the head prepares normally next time.
+//! [`BalHeadDriver::snapshot`] is synchronous, so a candidate loop never blocks
+//! on a BAL; [`BalHeadDriver::advance`] is the claim-and-fetch form a caller
+//! spawns, it tells a second concurrent caller [`HeadOutcome::InFlight`] instead
+//! of duplicating the fetch, and a cancelled advance releases its claim so the
+//! head prepares normally next time.
+//!
+//! A caller that wants the head's SETTLED answer joins that existing
+//! preparation instead of falling back while it runs:
+//! [`BalHeadDriver::wait_for_head`] registers on the exact `(anchor, seq)`
+//! generation — while its preparation is genuinely live — and waits for its
+//! per-head completion notification ([`HeadCompletion`]), then re-reads the
+//! exact anchor. The wait is bounded by real outcomes, never by a wall clock:
+//! a settle (a provider failure settling cold included), a supersession, or
+//! the preparation's abandonment — a generation no live preparation owns
+//! answers [`HeadCold::Abandoned`] and the caller takes its fallback lane, so
+//! nothing is ever parked on a preparation that is gone. The wait fetches
+//! nothing, claims nothing, and holds no lock across it. Every terminal path
+//! wakes its waiters, so no registration is stranded, and many waiters share
+//! one head's one completion.
 //!
 //! Two costs are deliberate and visible. The provisional generation is cold, so
 //! whatever it settles before the apply is dropped with it — a candidate that
@@ -175,7 +188,7 @@
 //!
 //! 1. own the driver for the session instead of the cache
 //!    ([`BalHeadDriver::new`] / [`BalHeadDriver::with_config`], which fixes the
-//!    compaction threshold, the retention policy, and the readiness deadline);
+//!    compaction threshold and the retention policy);
 //! 2. on every canonical head, [`BalHeadDriver::deliver`] the anchor, the
 //!    header's parent hash, and the relevance set the caller derived — the
 //!    relevance input stays the CALLER's (production derivation is not part of
@@ -187,7 +200,7 @@
 //! 4. branch on [`HeadReadiness`]: `Ready` means the head's generation carries
 //!    its chain, `Cold(reason)` means the caller is on the existing cold path
 //!    and the reason is available for its own telemetry
-//!    ([`BalHeadDriver::stats`] counts the deadline fallbacks and the views).
+//!    ([`BalHeadDriver::stats`] counts the views).
 //!
 //! Nothing else changes: the write policy, zero-write lists, same-anchor
 //! idempotence, retention expiry, parent/child isolation, and the compaction
@@ -265,6 +278,7 @@ use std::task::{Context, Poll};
 use alloy::primitives::{Address, StorageValue, B256, U256};
 
 use parking_lot::Mutex;
+use tokio::sync::watch;
 
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 
@@ -1581,16 +1595,25 @@ impl HeadTicket {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeadCold {
     /// The head is delivered and its prepared BAL has not been applied yet:
-    /// parent values are withheld rather than served at the wrong anchor.
+    /// parent values are withheld rather than served at the wrong anchor. The
+    /// synchronous view's answer for an unsettled head; a caller that wants
+    /// the settled answer waits for it ([`BalHeadDriver::wait_for_head`]),
+    /// which joins a genuinely live preparation and resolves terminal — a
+    /// preparation that is gone or was never claimed answers
+    /// [`Self::Abandoned`].
     Unprepared,
-    /// The head is still unprepared and its readiness deadline elapsed: the
-    /// caller took the cold path instead of waiting for the BAL.
-    Deadline,
     /// A later canonical head superseded this one before it settled. The
     /// abandoned branch is never resurrected.
     Superseded,
     /// No head with this exact anchor was ever delivered to the driver.
     Undelivered,
+    /// The head's preparation ended without applying — a dropped (cancelled)
+    /// claim — or no preparation ever claimed this delivered head. The wait's
+    /// terminal answer at this exact anchor: the caller takes its own fallback
+    /// lane and nothing is left parked. A later explicit retry may still
+    /// settle the head; NEW callers then read the settled generation, while a
+    /// wait that already resolved is never retroactively changed.
+    Abandoned,
     /// The head SETTLED at its exact hash and serves no parent value, for this
     /// reason.
     Settled {
@@ -1609,9 +1632,9 @@ impl HeadCold {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Unprepared => "unprepared",
-            Self::Deadline => "deadline",
             Self::Superseded => "superseded",
             Self::Undelivered => "undelivered",
+            Self::Abandoned => "abandoned",
             Self::Settled { lineage, bal } => {
                 if lineage.is_some() {
                     "lineage-refused"
@@ -1692,6 +1715,34 @@ pub enum HeadOutcome {
     },
 }
 
+/// The per-head completion notification's terminal result: what one
+/// `(anchor, seq)` generation's waiters are woken with.
+///
+/// A generation reaches exactly one of these, and reaching one is what ends
+/// every wait registered on it ([`BalHeadDriver::wait_for_head`]): the head
+/// settled, a later delivery replaced it, or the preparation that owned it
+/// ended without applying. The first two re-read the exact anchor for the
+/// settled truth; `Abandoned` is itself the wait's terminal answer — the
+/// generation has no live preparation left to settle it — so its waiters
+/// resolve [`HeadCold::Abandoned`] instead of registering for one. A later
+/// explicit retry may still settle the head for NEW callers; a wait that
+/// already resolved is never retroactively changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadCompletion {
+    /// The head's own list applied to its exact anchor — carried or cold. The
+    /// re-read then answers [`HeadReadiness::Ready`], or cold with the exact
+    /// `Settled` reason.
+    Settled,
+    /// A later delivery replaced this head before it settled. The abandoned
+    /// branch is never resurrected and never served.
+    Superseded,
+    /// The preparation that owned this head ended without applying (a
+    /// cancelled advance, or a list prepared at a foreign anchor): the
+    /// generation's waiters resolve [`HeadCold::Abandoned`] and take their
+    /// fallback lane.
+    Abandoned,
+}
+
 /// The head driver's cumulative counters — the lifecycle's own profile.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HeadStats {
@@ -1712,8 +1763,6 @@ pub struct HeadStats {
     pub ready_views: u64,
     /// Callers served a cold generation.
     pub cold_views: u64,
-    /// Heads whose readiness deadline elapsed before they settled.
-    pub deadline_fallbacks: u64,
 }
 
 /// One canonical head's delivery state.
@@ -1721,16 +1770,36 @@ struct DeliveredHead {
     anchor: ReadAnchor,
     parent_hash: B256,
     seq: u64,
-    delivered_at: Instant,
+    /// The per-head completion notification: the terminal result every waiter
+    /// on this `(anchor, seq)` generation is woken with.
+    completion: watch::Sender<Option<HeadCompletion>>,
     /// The cold generation callers read while the head is unprepared, dropped
     /// at settle so the settled generation replaces it wholesale.
     provisional: Option<Arc<DeltaHub>>,
     /// The report this driver's apply produced, once the head settled.
     report: Option<Arc<DeltaReport>>,
-    /// Whether a caller already owns this head's preparation.
+    /// Whether a caller already owns this head's preparation — the
+    /// genuinely-live state a wait registers on; `false` means no preparation
+    /// is in flight, so a wait resolves instead of parking.
     preparing: bool,
-    /// Whether the deadline fallback was already counted for this head.
-    deadline_counted: bool,
+}
+
+impl DeliveredHead {
+    /// Publish this generation's terminal result: a real terminal (the head's
+    /// own settle, or its supersession) is the last word and is never
+    /// rewritten, while a dropped claim's abandonment publishes over anything
+    /// but a real terminal — a previous abandonment included — so every
+    /// claim's own waiters wake to its end.
+    fn complete(&self, completion: HeadCompletion) {
+        let published = *self.completion.borrow();
+        let already_terminal = matches!(
+            published,
+            Some(HeadCompletion::Settled | HeadCompletion::Superseded)
+        );
+        if !already_terminal {
+            self.completion.send_replace(Some(completion));
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1777,7 +1846,7 @@ struct DriverState {
 ///
 /// - A view at a delivered head is [`HeadReadiness::Cold`] — serving no parent
 ///   value — until that exact head's prepared list applied. An unsupported,
-///   missing, malformed, or past-deadline list is the cold path with the reason
+///   missing, or malformed list is the cold path with the reason
 ///   reported, never a stale parent value.
 /// - A prepared list applies only to the head it was prepared for: the exact
 ///   anchor is fenced, and a list whose head a later delivery superseded is
@@ -1808,38 +1877,25 @@ pub struct BalHeadDriver {
     provider: AlloyProvider,
     cache: DeltaSnapshotCache,
     retention: Retention,
-    readiness_deadline: Duration,
     state: Mutex<DriverState>,
 }
 
 impl BalHeadDriver {
     /// A driver over a fresh cache at [`DEFAULT_MAX_DEPTH`] and
-    /// [`Retention::Unbounded`], whose heads may stay unprepared for
-    /// `readiness_deadline` before callers are told the deadline elapsed.
+    /// [`Retention::Unbounded`].
     #[must_use]
-    pub fn new(provider: &AlloyProvider, readiness_deadline: Duration) -> Self {
-        Self::with_config(
-            provider,
-            DEFAULT_MAX_DEPTH,
-            Retention::Unbounded,
-            readiness_deadline,
-        )
+    pub fn new(provider: &AlloyProvider) -> Self {
+        Self::with_config(provider, DEFAULT_MAX_DEPTH, Retention::Unbounded)
     }
 
     /// A driver whose cache uses `max_depth` and `retention` for every
     /// generation it installs, and whose provisional generations match.
     #[must_use]
-    pub fn with_config(
-        provider: &AlloyProvider,
-        max_depth: u32,
-        retention: Retention,
-        readiness_deadline: Duration,
-    ) -> Self {
+    pub fn with_config(provider: &AlloyProvider, max_depth: u32, retention: Retention) -> Self {
         Self {
             provider: provider.clone(),
             cache: DeltaSnapshotCache::with_max_depth_and_retention(provider, max_depth, retention),
             retention,
-            readiness_deadline,
             state: Mutex::new(DriverState::default()),
         }
     }
@@ -1904,23 +1960,31 @@ impl BalHeadDriver {
             if previous.provisional.is_some() {
                 state.stats.superseded = state.stats.superseded.saturating_add(1);
             }
+            // The replaced generation is terminal for its waiters: the wake is
+            // what makes a stale registration resolve instead of sleeping
+            // through its own abandonment.
+            previous.complete(HeadCompletion::Superseded);
             state.superseded = Some(previous.anchor);
         }
         state.stats.delivered = state.stats.delivered.saturating_add(1);
-        if installed {
-            state.stats.already_current = state.stats.already_current.saturating_add(1);
-            state.installed = Some((anchor, HeadReadiness::Ready));
-        }
-        state.head = Some(DeliveredHead {
+        let (completion, _) = watch::channel(None);
+        let head = DeliveredHead {
             anchor,
             parent_hash,
             seq,
-            delivered_at: Instant::now(),
+            completion,
             provisional,
             report: None,
             preparing: false,
-            deadline_counted: false,
-        });
+        };
+        if installed {
+            state.stats.already_current = state.stats.already_current.saturating_add(1);
+            state.installed = Some((anchor, HeadReadiness::Ready));
+            // A delivery of an installed block settles on the spot: its
+            // generation is terminal the moment it exists.
+            head.complete(HeadCompletion::Settled);
+        }
+        state.head = Some(head);
         HeadTicket { anchor, seq }
     }
 
@@ -1986,6 +2050,11 @@ impl BalHeadDriver {
             };
         }
         if self.cache.anchor() == Some(current) {
+            // The head is already installed — this apply found it settled:
+            // its generation is terminal and its waiters wake.
+            if let Some(head) = state.head.as_mut() {
+                head.complete(HeadCompletion::Settled);
+            }
             return HeadOutcome::AlreadySettled;
         }
         let (anchor, parent_hash) = (head.anchor, head.parent_hash);
@@ -2028,6 +2097,7 @@ impl BalHeadDriver {
             head.provisional = None;
             head.report = Some(Arc::clone(&report));
             head.preparing = false;
+            head.complete(HeadCompletion::Settled);
         }
         HeadOutcome::Settled(report)
     }
@@ -2087,8 +2157,12 @@ impl BalHeadDriver {
         // transition. Anything that registered during the fetch window is in
         // the set this head applies with.
         let relevance = resolve();
+        // The claim outlives the apply: its drop publishes the abandonment
+        // only when the apply settled nothing, so a cancelled preparation and
+        // a settled one stay distinguishable to the generation's waiters.
+        let outcome = self.apply_members(ticket, &prepared, &relevance);
         drop(claim);
-        self.apply_members(ticket, &prepared, &relevance)
+        outcome
     }
 
     /// The snapshot `anchor` answers with right now, never blocking.
@@ -2121,17 +2195,8 @@ impl BalHeadDriver {
                 .map_or(HeadReadiness::Ready, |(_, readiness)| readiness.clone());
             (self.cache.for_anchor(anchor), readiness)
         } else if current {
-            let reason = if let Some(head) = state.head.as_mut() {
-                if head.delivered_at.elapsed() >= self.readiness_deadline {
-                    if !head.deadline_counted {
-                        head.deadline_counted = true;
-                        state.stats.deadline_fallbacks =
-                            state.stats.deadline_fallbacks.saturating_add(1);
-                    }
-                    HeadCold::Deadline
-                } else {
-                    HeadCold::Unprepared
-                }
+            let reason = if state.head.is_some() {
+                HeadCold::Unprepared
             } else {
                 HeadCold::Undelivered
             };
@@ -2215,6 +2280,117 @@ impl BalHeadDriver {
     pub fn stats(&self) -> HeadStats {
         self.state.lock().stats
     }
+
+    /// The terminal result the driver published for the head at `anchor`,
+    /// when the head it holds is that one and it has published one — the
+    /// per-head completion notification's value, readable without waiting.
+    #[must_use]
+    pub fn completion(&self, anchor: ReadAnchor) -> Option<HeadCompletion> {
+        let state = self.state.lock();
+        let head = state.head.as_ref()?;
+        if head.anchor != anchor {
+            return None;
+        }
+        let published = *head.completion.borrow();
+        published
+    }
+
+    /// Wait until `anchor` reaches a terminal state, then answer it: the
+    /// deterministic wait a same-block caller joins the head's EXISTING
+    /// preparation with (see the module docs).
+    ///
+    /// The wait registers on the exact `(anchor, seq)` generation — only while
+    /// that generation's preparation is genuinely live — and resolves on the
+    /// generation's per-head completion notification, then RE-READS the exact
+    /// anchor. The returned view is never [`HeadCold::Unprepared`] and never
+    /// parks without a live owner: a settle answers the settled generation
+    /// ([`HeadReadiness::Ready`]) or the settled-cold reason, a supersession
+    /// answers [`HeadCold::Superseded`], and a generation no live preparation
+    /// owns — dropped mid-flight, or delivered and never claimed — answers
+    /// [`HeadCold::Abandoned`] at that exact anchor, decided once and never
+    /// retroactively changed by a later retry. It fetches nothing, claims
+    /// nothing, applies nothing, and holds no lock across the wait; many
+    /// waiters share one head's one completion, and dropping one wait cancels
+    /// nothing. The wait ends on those real outcomes — never on a wall clock.
+    pub async fn wait_for_head(&self, anchor: ReadAnchor) -> HeadView {
+        loop {
+            let registered = {
+                let state = self.state.lock();
+                Self::registration(&self.cache, &state, anchor)
+            };
+            if let Some(mut signal) = registered {
+                // The subscription was taken under the same lock hold that
+                // read the head's state, so a notification landing between the
+                // two is still seen here — there is no lost-wakeup window.
+                let _ = signal.changed().await;
+                // The wake is this generation's end being published. An
+                // abandonment is the wait's own terminal answer: it resolves
+                // here rather than registering again onto the published
+                // abandonment — a retry that settles later serves NEW
+                // callers, never this one retroactively.
+                if matches!(*signal.borrow(), Some(HeadCompletion::Abandoned)) {
+                    return self.abandoned_view(anchor);
+                }
+                continue;
+            }
+            let view = self.snapshot(anchor);
+            return match &view.readiness {
+                // The exact head is current and unsettled with no live
+                // preparation: its terminal answer is the abandoned cold
+                // view, never a park.
+                HeadReadiness::Cold(HeadCold::Unprepared) => HeadView {
+                    hub: view.hub,
+                    readiness: HeadReadiness::Cold(HeadCold::Abandoned),
+                },
+                _ => view,
+            };
+        }
+    }
+
+    /// The wait's terminal answer for a generation no live preparation owns:
+    /// the exact anchor's cold generation — carrying nothing, never another
+    /// head's values — with the closed `abandoned` reason.
+    fn abandoned_view(&self, anchor: ReadAnchor) -> HeadView {
+        let view = self.snapshot(anchor);
+        let hub = if view.readiness.is_ready() {
+            // A retry settled while this wait was waking. The settled
+            // generation is the anchor's truth for NEW callers, but this
+            // wait's answer is the abandonment it observed, and a cold answer
+            // carries nothing — so it gets its own cold generation.
+            cold_generation(&self.provider, anchor, self.retention)
+        } else {
+            view.hub
+        };
+        HeadView {
+            hub,
+            readiness: HeadReadiness::Cold(HeadCold::Abandoned),
+        }
+    }
+
+    /// The wait registration for `anchor`, under the state lock:
+    /// [`Option::None`] when no LIVE preparation owns the exact anchor's
+    /// unsettled generation — it settled, it is not the driver's current head
+    /// any more, or nothing has claimed it — otherwise the live claim's
+    /// completion signal.
+    ///
+    /// Subscribing is reserved for a genuinely live preparation
+    /// ([`DeliveredHead::preparing`]): a delivered head nothing claimed yet,
+    /// and a head whose claim was dropped, have no future notification worth
+    /// waiting for, so the wait answers terminal instead of parking.
+    fn registration(
+        cache: &DeltaSnapshotCache,
+        state: &DriverState,
+        anchor: ReadAnchor,
+    ) -> Option<watch::Receiver<Option<HeadCompletion>>> {
+        if cache.anchor() == Some(anchor) {
+            return None;
+        }
+        let head = state.head.as_ref()?;
+        if head.anchor != anchor || !head.preparing {
+            return None;
+        }
+        Some(head.completion.subscribe())
+    }
 }
 
 /// The ownership of one head's preparation: dropping it — a cancelled advance
@@ -2230,6 +2406,10 @@ impl Drop for PrepareClaim<'_> {
         if let Some(head) = state.head.as_mut() {
             if head.seq == self.seq {
                 head.preparing = false;
+                // The claim's end is terminal for this generation's waiters:
+                // they wake to the abandoned cold answer instead of sleeping
+                // through a preparation that is gone.
+                head.complete(HeadCompletion::Abandoned);
             }
         }
     }

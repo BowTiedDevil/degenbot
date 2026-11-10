@@ -44,7 +44,6 @@ use futures_util::future::BoxFuture;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
-use std::time::Duration;
 
 #[path = "../examples/shared/chain_stub.rs"]
 #[expect(dead_code)]
@@ -61,10 +60,6 @@ use modeled_chain::bal_bytes;
 
 /// The height every test advances from, unless the test is about lineage.
 const HEIGHT: u64 = 200;
-
-/// A readiness deadline no test ever reaches: a view is cold only because the
-/// head has not been applied yet, never because a deadline elapsed.
-const PATIENT: Duration = Duration::from_secs(3600);
 
 fn address(tag: u8) -> Address {
     Address::new([tag; 20])
@@ -289,7 +284,7 @@ async fn relevance_is_the_union_of_the_registered_paths_and_the_settlement_ident
     );
     stub.serve_at(HEIGHT, unknown, U256::from(3u64), 33);
     let provider = stub.provider();
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue, source(&stages, settlement_facts()));
 
@@ -336,7 +331,7 @@ async fn a_path_registered_during_preparation_is_included_when_it_lands_before_t
     let stub = ChainStub::serving();
     stub.serve_bal_at(hash, bal_bytes(&[(pool_a, slot, U256::from(44u64))]));
     let provider = stub.provider();
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue, source(&stages, settlement_facts()));
 
@@ -395,7 +390,7 @@ async fn a_path_registered_after_the_apply_seeds_from_the_next_head_and_its_cand
     stub.serve_at(HEIGHT, pool_a, slot, 55);
     stub.serve_at(HEIGHT + 1, pool_a, slot, 66);
     let provider = stub.provider();
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue, source(&stages, settlement_facts()));
 
@@ -492,7 +487,7 @@ async fn the_set_and_slice_relevance_inputs_produce_an_identical_report() {
             ]),
         );
         let provider = stub.provider();
-        let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+        let driver = Arc::new(BalHeadDriver::new(&provider));
         let ticket = driver.deliver(identified(HEIGHT, hash), genesis());
         let outcome = if by_set {
             // The set is built from a REVERSED iterator: membership carries no
@@ -551,7 +546,7 @@ async fn relevance_is_derived_once_per_registry_revision_and_reused_across_heads
         previous = hash;
     }
     let provider = stub.provider();
-    let driver = Arc::new(BalHeadDriver::new(&provider, PATIENT));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
     let queue = SpawnQueue::new();
     let pipeline = armed_pipeline(&driver, &queue, source(&stages, settlement_facts()));
 

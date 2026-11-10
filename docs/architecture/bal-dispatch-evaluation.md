@@ -105,10 +105,20 @@ Four consequences an operator can hold onto:
 
 Readiness, retention and endpoint facts:
 
-- **The readiness deadline is 50 ms and is observational only**
-  (`DEVELOPMENT_READINESS_DEADLINE`, `warm_code_cache.rs:129`). Nothing waits on
-  it; it labels a head that is still unprepared when a fan-out asks. A fan-out
-  that asks one block after delivery normally finds the head ready.
+- **A fan-out at the exact in-flight head waits for that head's terminal
+  result** (post-evaluation change, after `cfaf61199`). The same-block
+  readiness wait this evaluation's limit 9 called future behaviour has since
+  landed: the dispatch selection joins the head's EXISTING preparation through
+  the driver's per-head completion notification and re-reads the exact anchor
+  after the settle. The wait ends on real outcomes — a settle (carried or cold,
+  a provider failure included), a supersession, or the preparation's
+  abandonment — never on a timer, and a generation no live preparation owns
+  resolves terminal `abandoned` at that exact anchor instead of parking. The
+  fallback labels are `abandoned`, `superseded`, `undelivered`,
+  `lineage-refused`, `bal-unreadable`, `settled`, `lineage-unreadable` —
+  `abandoned` means the head's preparation did not reach a BAL verdict and the
+  fan-out used the legacy lane — and a fan-out one block behind the head still
+  finds its anchor ready through the read window.
 - **Retention is a fixed eight-block idle window**
   (`DEVELOPMENT_IDLE_BLOCKS = 8`, `warm_code_cache.rs:145`) at the default fold
   depth. An entry no candidate has READ for eight blocks stops being served; a
@@ -226,7 +236,7 @@ window. It is a direction, not a measured retention saving on the prepare path.
 `logs/bal_dispatch_scaling_result.md` is the measurement the live windows said
 was missing: ONE exact head, ONE candidate list, ONE deployment declaration, ONE
 scripted provider state, six legs per point (OFF legacy, ready-current,
-ready-previous, ready-unknown, cold-unprepared, cold-undelivered), 3 interleaved
+ready-previous, ready-unknown, cold-failed, cold-undelivered), 3 interleaved
 repetitions, driven through the production entry
 (`dispatch_profitable_results`). The storage representation is the only
 variable. Every simulated candidate executes a real SLOAD of the executor's own
@@ -283,7 +293,7 @@ What the matrix establishes, and its edges:
   pre-filter over the caller's longer list, identically in both lanes; nothing
   above 50 is a wider fan-out.
 - **The cold controls are the shipped lane.** Both cold legs resolve
-  `legacy/unprepared` and `legacy/undelivered`, dispatch the same wire as
+  `legacy/lineage-refused` and `legacy/undelivered`, dispatch the same wire as
   `off-legacy`, report the same modeled wall, and produce identical verdicts: the
   fallback is the production path, not a degraded one.
 - **The background cost is reported and not subtracted.** At the cap, settling
@@ -380,10 +390,13 @@ Claims and the pins or probes that carry them (test names are the contract):
 | Expiry is invisibility, never staleness: an expired read takes the dynamic path and answers the anchor's CURRENT word | 14 pins in `bal_retention.rs`; `both_real_fixtures_match_independent_cold_reads_at_every_anchor_with_retention` (zero mismatches) |
 | Dynamic reads are round-coalesced and single-flight; a refused or abandoned round settles nothing | 11 pins in `bal_delta_rounds.rs`; a planted duplicate dispatches one member; a planted one-wei divergence is caught (30,132 mismatches, nonzero exit) |
 | One previous generation is readable; a two-block lag is not | `a_lagging_fan_out_anchor_reads_the_previous_generation_and_a_two_block_lag_does_not`; the probe's `on-ready-previous` leg is `delta` at every count |
-| Dispatch does no BAL work; a never-delivered or unprepared head serves no parent value on the legacy lane | `dispatch_never_prepares_a_bal_and_a_never_delivered_head_takes_the_legacy_lane`, `an_unprepared_exact_head_serves_no_parent_value_on_the_legacy_fallback` |
+| Dispatch does no BAL work; a never-delivered or settle-cold head serves no parent value on the legacy lane | `dispatch_never_prepares_a_bal_and_a_never_delivered_head_takes_the_legacy_lane`, `an_explicit_failure_waits_once_then_the_legacy_prefetch_lane_works` |
+| A waiter resolves on its own generation's end, and a superseded or gapped head is never served | `a_waiter_on_a_superseded_head_resolves_and_never_serves_the_abandoned_branch`, `a_waiter_across_a_gap_resolves_with_the_actual_current_reason` (`bal_head_lifecycle.rs`) |
+| An abandoned or never-claimed preparation is terminal: its waiters resolve `abandoned`, a later explicit retry serves only NEW selections, and the fan-out takes the legacy lane | `an_abandoned_prepare_claim_wakes_its_waiters_with_the_terminal_abandonment`, `a_waiter_arriving_after_an_abandonment_resolves_immediately`, `a_delivered_head_with_no_preparation_owner_resolves_abandoned_without_parking`, `a_later_explicit_retry_settles_the_head_for_new_callers_only` (`bal_head_lifecycle.rs`); `an_abandoned_preparation_resolves_the_selection_on_the_legacy_lane_with_the_abandoned_reason`, `a_delivered_head_nothing_prepared_resolves_the_selection_with_the_abandoned_reason`, `an_abandoned_preparation_takes_the_fan_out_to_the_legacy_lane_with_the_abandoned_reason` (`dispatch.rs`) |
 | OFF is the shipped path byte for byte, and requests nothing | `the_off_lane_is_byte_identical_to_the_shipped_legacy_path`, `the_opt_in_off_makes_no_bal_request_and_keeps_the_prefetch_lane` |
 | The storage representation changes the reads and never the verdict | `the_storage_selection_changes_the_reads_and_never_the_verdict`, `candidate_verdicts_and_failure_buckets_are_identical_with_the_pipeline_on_and_off` |
-| An unsupported BAL endpoint, no parent, a deadline overrun and a superseded head each take the legacy lane with their own label | `an_unsupported_bal_endpoint_takes_the_legacy_path_with_its_reason`, `a_lineage_refused_head_takes_the_legacy_path_with_its_reason`, `a_head_past_its_readiness_deadline_takes_the_legacy_path`, `the_cold_reason_vocabulary_is_the_closed_set` |
+| An unsupported BAL endpoint, no parent, an explicit terminal failure and a superseded head each take the legacy lane with their own label | `an_unsupported_bal_endpoint_takes_the_legacy_path_with_its_reason`, `a_lineage_refused_head_takes_the_legacy_path_with_its_reason`, `an_explicit_failure_waits_once_then_the_legacy_prefetch_lane_works`, `the_cold_reason_vocabulary_is_the_closed_set` |
+| A same-block in-flight head waits for its settle and resolves delta; the previous anchor does not wait; duplicate fan-outs join one completion | `a_same_block_in_flight_head_waits_for_the_settle_and_resolves_delta`, `the_previous_block_does_not_wait_while_the_current_head_is_in_flight`, `duplicate_fan_outs_join_one_completion_without_duplicate_bal` |
 | Value-sensitive parity at dispatch scale, both words, every count | 8 pins in `rust/crates/engine/degenbot-arbitrage/tests/bal_dispatch_scaling.rs`; the probe's own fixture gates exit 1 on any divergence |
 
 State of the suites at the evaluated commit: `degenbot-simulation` 478 passed,
@@ -433,9 +446,11 @@ are the epic's own ladder; this document does not re-derive them.
    endpoint is a construction error instead of a per-head `bal-unreadable`
    collapse to the legacy lane. OFF stays request-free, and no new transport code
    was needed: the probe is the provider's `get_block_access_list` acquisition
-   under the same unsupported/closed classification. There is still no in-flight
-   wait, and a same-block readiness wait remains future behaviour this evaluation
-   does not cover; the seam it would reuse is the same acquisition.
+   under the same unsupported/closed classification. The same-block readiness
+   wait this evaluation did not cover has since landed (post-evaluation
+   change): a fan-out at the exact in-flight head joins the pipeline's
+   preparation through the driver's per-head completion notification and
+   re-reads the exact anchor after the settle — see the readiness facts above.
 10. **`MarketContext` installs the flag but consumes no generation.** It passes
     the warm cache to its per-block frame handle
     (`rust/crates/engine/degenbot-strategy/src/frame_pipeline.rs:561`), never
@@ -463,11 +478,13 @@ a read-origin counter, an RSS sampler) instead of assuming it away.
    share of fenced fan-outs stays at or above the v3 rate (10 of 11), and no
    settled head fails to serve its own anchor.
 2. **Cold-reason census.** Report the closed-label distribution per 1,000 heads
-   and per 1,000 fenced fan-outs. `undelivered`/`unprepared`/`deadline` should
+   and per 1,000 fenced fan-outs. `undelivered` should
    appear only at the boot edge (each later window had exactly one `undelivered`,
    at boot); a sustained `lineage-refused` rate means the pump is skipping headers
    or reorging; `bal-unreadable` means the endpoint serves neither BAL
-   representation (or answered one unreadably).
+   representation (or answered one unreadably); `abandoned` means a head's
+   preparation ended without a BAL verdict (or none ever claimed it), so its
+   fan-outs paid the legacy lane.
 3. **Verdict and failure parity.** For matched heads — or, better, one replayed
    candidate set through both lanes — verdicts, failure buckets and per-candidate
    read sets are identical, as the controlled probe already pins at one head. Any

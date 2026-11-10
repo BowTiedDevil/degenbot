@@ -234,7 +234,7 @@ fn the_off_and_cold_legs_request_no_bal_and_pay_the_legacy_batch() {
             point.count
         );
 
-        for leg in [Leg::OffLegacy, Leg::ColdUnprepared, Leg::ColdUndelivered] {
+        for leg in [Leg::OffLegacy, Leg::ColdFailed, Leg::ColdUndelivered] {
             for run in point.leg(leg) {
                 assert_eq!(
                     run.census.bal_fetches,
@@ -294,8 +294,8 @@ fn the_off_and_cold_legs_request_no_bal_and_pay_the_legacy_batch() {
         }
 
         // The controls report the closed legacy reason, never a delta lane.
-        for run in point.leg(Leg::ColdUnprepared) {
-            assert_eq!(run.lane, "legacy/unprepared");
+        for run in point.leg(Leg::ColdFailed) {
+            assert_eq!(run.lane, "legacy/lineage-refused");
         }
         for run in point.leg(Leg::ColdUndelivered) {
             assert_eq!(run.lane, "legacy/undelivered");

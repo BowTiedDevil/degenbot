@@ -36,9 +36,14 @@
 //! - `on-ready-unknown` — the same ready head settled from a list that
 //!   deliberately OMITS that identity: the unknown-read control, which measures
 //!   the dynamic serial fallback.
-//! - `on-cold-unprepared` / `on-cold-undelivered` — the controls: the opt-in is
-//!   on, the head is not applied (resp. never delivered), so the fan-out must
+//! - `on-cold-failed` / `on-cold-undelivered` — the controls: the opt-in is
+//!   on, the head settled COLD (resp. was never delivered), so the fan-out must
 //!   fall back to the legacy lane, pay the same batch, and fetch no BAL.
+//!
+//! The matrix is followed by the same-block terminal-wait shapes
+//! ([`scaling::wait_shapes`]): the exact in-flight head, the previous anchor,
+//! and an explicit terminal failure, each against a deliberately slow
+//! preparation, with the measured walls reported.
 //!
 //! The generation's list carries exactly the identities the PRODUCTION prefetch
 //! derives on the legacy lane (learned by one discovery fan-out that is never
@@ -109,13 +114,19 @@ fn main() {
     );
     println!("{}", scaling::render(&bench));
 
-    let failures = fixture_failures(&bench);
+    let wait_shapes =
+        scaling::wait_shapes().expect("the scripted chain settles the wait shapes' heads");
+    println!("{}", scaling::render_wait_shapes(&wait_shapes));
+
+    let mut failures = fixture_failures(&bench);
+    wait_shape_failures(&wait_shapes, &mut failures);
     if failures.is_empty() {
         println!(
             "\nfixture gates: every leg on its lane, cold controls BAL-free, ready \
                   generations covering the prefetch set, covered legs serving the read \
                   key, unknown legs omitting it, every simulated candidate's access \
-                  list naming the read, verdicts identical."
+                  list naming the read, verdicts identical, and every same-block wait \
+                  shape on its lane."
         );
     } else {
         println!("\nfixture gates FAILED:");
@@ -123,6 +134,28 @@ fn main() {
             println!("- {failure}");
         }
         std::process::exit(1);
+    }
+}
+
+/// The wait shapes' own gates: each shape resolved the lane its name promises —
+/// the in-flight shape joined the preparation and resolved delta, the previous
+/// anchor did not wait and resolved delta, and the explicit terminal failure
+/// fell back with its real reason. The walls are the report's, never gates.
+fn wait_shape_failures(shapes: &[scaling::WaitShape], failures: &mut Vec<String>) {
+    let expected = [
+        ("same-block-in-flight", "delta"),
+        ("previous-block", "delta"),
+        ("explicit-failure", "legacy/bal-unreadable"),
+    ];
+    for (shape, lane) in expected {
+        match shapes.iter().find(|row| row.shape == shape) {
+            Some(row) if row.lane == lane => {}
+            Some(row) => failures.push(format!(
+                "wait shape {shape} resolved lane `{}` (expected `{lane}`)",
+                row.lane
+            )),
+            None => failures.push(format!("wait shape {shape} did not run")),
+        }
     }
 }
 
@@ -185,7 +218,7 @@ fn lane_failures(leg: Leg, lane: &str, at: &str, failures: &mut Vec<String>) {
     let expected = match leg {
         Leg::OffLegacy => lane == "legacy",
         Leg::ReadyCurrent | Leg::ReadyPrevious | Leg::ReadyCurrentUnknown => lane == "delta",
-        Leg::ColdUnprepared => lane == "legacy/unprepared",
+        Leg::ColdFailed => lane == "legacy/lineage-refused",
         Leg::ColdUndelivered => lane == "legacy/undelivered",
     };
     if !expected {
@@ -233,7 +266,7 @@ fn wire_failures(
     failures: &mut Vec<String>,
 ) {
     match leg {
-        Leg::OffLegacy | Leg::ColdUnprepared | Leg::ColdUndelivered => {
+        Leg::OffLegacy | Leg::ColdFailed | Leg::ColdUndelivered => {
             if summary.bal != 0 {
                 failures.push(format!(
                     "{at}: leg {} fetched {} BAL lists on the dispatch leg",
