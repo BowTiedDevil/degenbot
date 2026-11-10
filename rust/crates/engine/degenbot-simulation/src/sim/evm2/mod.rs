@@ -35,6 +35,7 @@ pub mod async_fanout;
 pub mod bal_prefetch;
 pub mod blocking_async_db;
 pub mod bot_state_db;
+pub mod delta_snapshot;
 pub mod frame_replay;
 pub mod handle;
 pub mod hook_slots;

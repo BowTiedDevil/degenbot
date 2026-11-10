@@ -904,7 +904,7 @@ pub struct CarryReport {
 /// exactly one block below the child and its hash is the child's parent hash.
 /// A number-only parent's hash is unknown, so the link is unverifiable rather
 /// than matched.
-fn classify_link(
+pub(crate) fn classify_link(
     parent: Option<&ReadAnchor>,
     child: ReadAnchor,
     child_parent_hash: B256,

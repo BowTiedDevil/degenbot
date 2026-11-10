@@ -545,6 +545,22 @@ bal-candidate-scaling-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example bal_candidate_scaling_probe -- {{ ARGS }}
 
 
+# The full-clone versus delta-chain snapshot measurement: the same BAL
+# carry-forward advances driven through the production full-clone control
+# (`ReadHubCache::advance_bal`) and the parent-linked delta-chain prototype at
+# the working-set sizes `BAL_DELTA_SIZES` (default `2500,25000,100000,1000000`),
+# reporting advance latency, single-thread lookup, compaction cost, walk depth,
+# and RSS/allocation evidence as p50/p95 over `BAL_DELTA_REPS` runs
+# (`BAL_DELTA_LOOKUPS`, `BAL_DELTA_MAX_DEPTH` tune the replay). The offline
+# real-coverage replay gates correctness first — zero delta-versus-control
+# mismatches or nonzero exit — and `BAL_DELTA_PLANT_DIVERGENCE=1` is the
+# negative probe: a one-wei skew armed on the prototype's serial reads that the
+# same comparison must catch. NOT modeled: lock contention, concurrent
+# readers. Measurements: `logs/bal_delta_snapshot_result.md`.
+bal-delta-snapshot-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example bal_delta_snapshot_probe -- {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash
