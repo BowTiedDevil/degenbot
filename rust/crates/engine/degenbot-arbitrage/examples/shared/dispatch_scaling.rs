@@ -11,19 +11,19 @@
 //! disjoint heads over different candidate mixes, so no fan-out had a
 //! counterpart. This bench removes that confound entirely by scripting the
 //! chain and the market: every leg runs the SAME head, the SAME candidates, the
-//! SAME deployment, and the SAME zero-valued storage chain, so a lane's
-//! difference is the storage representation and nothing else.
+//! SAME deployment, and the SAME scripted storage chain, so a lane's difference
+//! is the storage representation and nothing else.
 //!
 //! The price is that the corpus is synthetic in three ways, and the report
 //! states all three beside every number:
 //!
-//! 1. **The market is one scripted chain.** Storage words are zeros and the
-//!    injected executor runtime is a single INVALID opcode, so every candidate
-//!    frame reverts before it reads a slot — the verdict surface is the revert
-//!    bucket, not a priced profit. The lanes still execute the same
-//!    candidates through the same production seam, so verdict PARITY is real;
-//!    its sensitivity to a wrong storage VALUE is not, and the BAL value-parity
-//!    gates live in the simulation crate's replay suites.
+//! 1. **The market is one scripted chain.** The injected executor runtime is a
+//!    minimal value-sensitive reader ([`read_runtime`]): it SLOADs the
+//!    executor's own [`READ_SLOT`] word and returns a two-word execution receipt
+//!    whose `gross_profit` is a function of that word, so every simulated
+//!    candidate performs a real storage read and its OUTCOME CATEGORY moves with
+//!    the stored value. The priced figures are still a receipt this bench wrote,
+//!    not a swap's retained profit: nothing here measures a real opportunity.
 //! 2. **Candidates differ by pool identity only.** Candidate `i` routes the
 //!    same two-hop WETH -> TOKEN -> WETH shape through its own pool pair, so
 //!    the path identities are distinct (which is what makes the prefetch and
@@ -43,22 +43,45 @@
 //! - [`Leg::ReadyPrevious`] — the same two settled heads, with the fan-out
 //!   anchored one block behind, which is the whole reason the driver keeps one
 //!   previous generation.
+//! - [`Leg::ReadyCurrentUnknown`] — the delta opt-in with the current head
+//!   settled from a list that deliberately OMITS the candidate's read identity:
+//!   the unknown-read control. The generation answers everything else, so the
+//!   frame's read is the one dynamic fallback this point pays.
 //! - [`Leg::ColdUnprepared`] — the delta opt-in with the current head DELIVERED
 //!   but not yet applied: the control. It must take the legacy lane, pay the
 //!   same prefetch batch, and request no BAL on the dispatch leg.
 //! - [`Leg::ColdUndelivered`] — the same control with no head delivered at all.
+//!
+//! # The candidate read, and the two words
+//!
+//! Every simulated candidate executes the same scripted frame against the
+//! executor's own storage: one read of the executor's [`READ_SLOT`] word, and
+//! its two arms are the fixture's value sensitivity — the zero word
+//! takes the minimal-retained arm (a 1-wei receipt, priced `gas_unprofitable`)
+//! and the nonzero word returns the word itself (a `gas_profitable` receipt).
+//! Each point therefore runs TWO words (zero and nonzero) over the same
+//! candidates, head, deployment and provider state, so a lane that served a
+//! wrong value would land in the other arm and its verdict rows would diverge.
+//! The witness is the candidate's own post-execution access list
+//! ([`RunMeasure::read_rows`]): the production capture records every slot the
+//! frame loaded, so the read is asserted from the settled execution, never from
+//! the fact that the corpus contains bytecode that could read.
 //!
 //! # The generation's content
 //!
 //! The list each head's prepare fetches is built from the PRODUCTION prefetch's
 //! own key set: one discovery fan-out on the legacy lane records the storage
 //! identities the derived batch named, and those exact identities become the
-//! block's final writes (valued as the chain serves them, zero). The ready
-//! generation therefore carries every identity the legacy lane would have
-//! prefetched, which is what makes "a candidate reading them pays no dynamic
-//! fallback read" a checkable claim instead of an assumption —
-//! [`Generation::identities_covered`] is that check. The discovery fan-out is
-//! setup: it is never timed and its wire is discarded.
+//! block's final writes (valued as the chain serves them, zero). The COVERED
+//! list adds exactly one identity — the candidate's read key, valued as the
+//! point's scripted word — and the UNKNOWN list omits it, so the two ready
+//! controls differ in one list entry and nothing else. The ready generation
+//! therefore carries every identity the legacy lane would have prefetched plus
+//! (when covered) the candidate's own read, which is what makes "a candidate
+//! reading them pays no dynamic fallback read" a checkable claim instead of an
+//! assumption: [`Generation::identities_covered`] and
+//! [`Generation::read_value`] are those checks. The discovery fan-out is setup:
+//! it is never timed and its wire is discarded.
 //!
 //! # Background BAL cost
 //!
@@ -74,6 +97,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use alloy::primitives::{address, Address, Bytes, B256, U256};
+use alloy::rpc::types::AccessList;
 use alloy_eip7928::bal::Bal;
 use alloy_eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
 
@@ -100,7 +124,9 @@ use crate::probe::{DeltaRecorder, StorageLatency, WireCensus, BLOCK};
 /// The owner + executor + settlement identities the built-in `cmd_executor`
 /// deployment declares (the same scripted facts the dispatch unit suites use).
 const OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e");
-const EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+/// The deployment's executor: the address the injected runtime executes at, so
+/// it is also the account every candidate frame reads storage from.
+pub const EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
 /// The one non-settlement token every candidate trades through.
@@ -121,15 +147,113 @@ const GENESIS: B256 = B256::new([0xa0; 32]);
 /// every head well inside it.
 const READINESS_DEADLINE: Duration = Duration::from_millis(500);
 
+/// The executor's own storage slot every candidate frame reads — the word the
+/// fixture makes value-sensitive. It is deliberately NOT path-derivable, so the
+/// legacy prefetch cannot know it and the only thing that can serve it with no
+/// dynamic read is a generation whose list carried it.
+pub const READ_SLOT: U256 = U256::from_limbs([0x5eed, 0, 0, 0]);
+
+/// The word the NONZERO run scripts: one WETH-sized figure, so the nonzero arm's
+/// receipt clears gas and the zero arm's 1-wei receipt does not.
+pub const NONZERO_WORD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+
+/// The storage identity every candidate frame reads: the executor's own
+/// [`READ_SLOT`] word.
+#[must_use]
+pub const fn read_identity() -> (Address, U256) {
+    (EXECUTOR, READ_SLOT)
+}
+
+/// One scripted storage word the frame reads: the fixture's value-sensitivity
+/// dimension. Two words run over the same candidates, head, deployment and
+/// provider state, so a lane serving the wrong value lands in the other arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptedWord {
+    /// The zero word: the frame takes its minimal-retained arm.
+    Zero,
+    /// One WETH-sized word: the frame returns it and prices `gas_profitable`.
+    Nonzero,
+}
+
+impl ScriptedWord {
+    /// Every word, in report order.
+    pub const ALL: [Self; 2] = [Self::Zero, Self::Nonzero];
+
+    /// The word the chain serves and the covered list carries.
+    #[must_use]
+    pub const fn value(self) -> U256 {
+        match self {
+            Self::Zero => U256::ZERO,
+            Self::Nonzero => NONZERO_WORD,
+        }
+    }
+
+    /// The report's name for this word.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Zero => "zero",
+            Self::Nonzero => "nonzero",
+        }
+    }
+}
+
+/// The minimal value-sensitive storage-reading executor runtime the deployment
+/// declares at [`EXECUTOR`].
+///
+/// It is the whole candidate frame: read [`READ_SLOT`] from the executor's own
+/// storage, branch on the word, and RETURN a two-word `execute` receipt
+/// (`gross_profit`, `bribe_paid`) — the shape the built-in adapter decodes.
+///
+/// - word `!= 0` — the nonzero arm returns the word itself as `gross_profit`.
+/// - word `== 0` — the minimal-retained arm returns 1 wei, which prices
+///   `gas_unprofitable`. A zero receipt would be a `no-profit` decline, and a
+///   declined candidate carries no post-execution access list to witness the
+///   read; 1 wei keeps the zero run's read observable as a verdict ROW instead.
+///
+/// Both arms therefore cost one SLOAD, and which arm runs is decided by the
+/// stored value — a wrong word moves the candidate's output category.
+#[must_use]
+pub fn read_runtime() -> Bytes {
+    let mut code: Vec<u8> = Vec::new();
+    code.push(0x7f); // PUSH32 <slot>
+    code.extend_from_slice(&READ_SLOT.to_be_bytes::<32>());
+    code.push(0x54); // SLOAD -> [word]
+    code.push(0x60); // PUSH1 <nonzero arm>
+    let dest_at = code.len();
+    code.push(0x00); // patched once the arm offset is known
+    code.push(0x57); // JUMPI: the branch is the stored word
+                     // Zero arm: receipt(1, 0).
+    code.extend_from_slice(&[0x60, 0x01, 0x60, 0x00, 0x52]); // PUSH1 1; PUSH1 0; MSTORE
+    code.extend_from_slice(&[0x60, 0x00, 0x60, 0x20, 0x52]); // PUSH1 0; PUSH1 32; MSTORE
+    code.extend_from_slice(&[0x60, 0x40, 0x60, 0x00, 0xf3]); // PUSH1 64; PUSH1 0; RETURN
+    code.push(0x5b); // JUMPDEST: the nonzero arm starts here
+    let dest =
+        u8::try_from(code.len() - 1).expect("the nonzero arm's JUMPDEST fits one PUSH1 offset");
+    code[dest_at] = dest;
+    // Nonzero arm: receipt(word, 0) — re-read the slot, since the branch
+    // consumed the loaded word as its condition.
+    code.push(0x7f);
+    code.extend_from_slice(&READ_SLOT.to_be_bytes::<32>());
+    code.push(0x54); // SLOAD -> [word]
+    code.extend_from_slice(&[0x60, 0x00, 0x52]); // PUSH1 0; MSTORE
+    code.extend_from_slice(&[0x60, 0x40, 0x60, 0x00, 0xf3]); // PUSH1 64; PUSH1 0; RETURN
+    Bytes::from(code)
+}
+
 /// One lane of the comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Leg {
     /// The shipped posture: a session cache without the delta opt-in.
     OffLegacy,
-    /// The delta opt-in with the current head already settled.
+    /// The delta opt-in with the current head already settled, its list
+    /// carrying the candidate's read identity.
     ReadyCurrent,
     /// The delta opt-in with the previous head still inside the read window.
     ReadyPrevious,
+    /// The delta opt-in with the current head settled from a list that OMITS
+    /// the candidate's read identity: the unknown-read control.
+    ReadyCurrentUnknown,
     /// The delta opt-in with the current head delivered but not applied.
     ColdUnprepared,
     /// The delta opt-in with no head delivered at all.
@@ -138,13 +262,23 @@ pub enum Leg {
 
 impl Leg {
     /// Every leg, in the order a repetition interleaves them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::OffLegacy,
         Self::ReadyCurrent,
         Self::ReadyPrevious,
+        Self::ReadyCurrentUnknown,
         Self::ColdUnprepared,
         Self::ColdUndelivered,
     ];
+
+    /// Whether this leg settles a ready generation before the fan-out.
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::ReadyCurrent | Self::ReadyPrevious | Self::ReadyCurrentUnknown
+        )
+    }
 
     /// The report's name for this leg.
     #[must_use]
@@ -153,6 +287,7 @@ impl Leg {
             Self::OffLegacy => "off-legacy",
             Self::ReadyCurrent => "on-ready-current",
             Self::ReadyPrevious => "on-ready-previous",
+            Self::ReadyCurrentUnknown => "on-ready-unknown",
             Self::ColdUnprepared => "on-cold-unprepared",
             Self::ColdUndelivered => "on-cold-undelivered",
         }
@@ -212,13 +347,12 @@ fn binding() -> CmdExecutorBinding {
     )
 }
 
-/// The deployment with ONE INVALID-opcode runtime installed at the executor
-/// address: every candidate frame reverts at its first instruction, which is
-/// the cheap failing frame the corpus is built on (and the same declaration the
-/// unit suites pin the lanes with).
+/// The deployment with the value-sensitive reader ([`read_runtime`]) installed
+/// at the executor address: every candidate frame reads the scripted word and
+/// returns a receipt that depends on it.
 fn deployment() -> SimulationDeployment {
     binding()
-        .injected(deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
+        .injected(deployment_id(), EXECUTOR, read_runtime())
         .expect("the declared override names the executor")
 }
 
@@ -282,16 +416,27 @@ fn candidate(index: usize) -> DispatchCandidate {
 }
 
 /// The corpus at `count` candidates: distinct pool identities, one route shape.
+///
+/// The relevance set is the production derivation (each path's pools, both
+/// sides of each pair, the settlement identities) PLUS one declared address: the
+/// executor whose own storage the scripted frame reads. A path derivation has no
+/// word for a frame's own storage — the real executor reads its balances at WETH
+/// and the `PoolManager` — so the reader's own account is the one fixture fact this
+/// corpus declares, and it is what makes the covered/unknown controls a
+/// difference in the LIST rather than in the relevance policy.
 #[must_use]
 pub fn corpus(count: usize) -> Corpus {
     let candidates: Vec<DispatchCandidate> = (0..count).map(candidate).collect();
     let declaration = deployment();
-    let relevance = path_relevance_addresses(
+    let mut relevance = path_relevance_addresses(
         candidates.iter().map(|candidate| &candidate.path_info),
         &PrefetchFacts {
             settlement: declaration.settlement(),
         },
     );
+    if !relevance.contains(&EXECUTOR) {
+        relevance.push(EXECUTOR);
+    }
     let pools = (0..count)
         .flat_map(|index| [pool_address(index, 0), pool_address(index, 1)])
         .collect();
@@ -304,16 +449,16 @@ pub fn corpus(count: usize) -> Corpus {
 }
 
 /// The raw EIP-7928 list carrying `writes` as one `block_access_index = 0`
-/// storage change each, valued as the scripted chain serves storage (zero).
+/// storage change each, at the value the run scripts for that identity.
 #[must_use]
-pub fn bal_bytes(writes: &[(Address, U256)]) -> Vec<u8> {
+pub fn bal_bytes(writes: &[((Address, U256), U256)]) -> Vec<u8> {
     let mut accounts: Vec<AccountChanges> = Vec::new();
-    for &(address, slot) in writes {
+    for &((address, slot), new_value) in writes {
         let entry = SlotChanges {
             slot,
             changes: vec![StorageChange {
                 block_access_index: BlockAccessIndex(0),
-                new_value: U256::ZERO,
+                new_value,
             }],
         };
         match accounts
@@ -388,7 +533,8 @@ fn fan_out(
 }
 
 /// One candidate's verdict: the bucket that claimed it, or the priced figures
-/// that decided it. Two lanes agree only when every row matches.
+/// that decided it — plus the post-execution access list the frame's own
+/// storage loads left behind. Two lanes agree only when every row matches.
 #[must_use]
 pub fn verdicts(outcome: &DispatchOutcome) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = outcome
@@ -398,8 +544,12 @@ pub fn verdicts(outcome: &DispatchOutcome) -> Vec<(String, String)> {
             (
                 result.candidate_id.to_string(),
                 format!(
-                    "profitable gross={} net={} gas={} passed={}",
-                    result.gross_profit, result.net_profit, result.gas_used, result.passed
+                    "profitable gross={} net={} gas={} passed={} reads={}",
+                    result.gross_profit,
+                    result.net_profit,
+                    result.gas_used,
+                    result.passed,
+                    read_set(result.access_list.as_ref())
                 ),
             )
         })
@@ -407,8 +557,12 @@ pub fn verdicts(outcome: &DispatchOutcome) -> Vec<(String, String)> {
             (
                 result.candidate_id.to_string(),
                 format!(
-                    "unprofitable gross={} net={} gas={} passed={}",
-                    result.gross_profit, result.net_profit, result.gas_used, result.passed
+                    "unprofitable gross={} net={} gas={} passed={} reads={}",
+                    result.gross_profit,
+                    result.net_profit,
+                    result.gas_used,
+                    result.passed,
+                    read_set(result.access_list.as_ref())
                 ),
             )
         }))
@@ -421,6 +575,39 @@ pub fn verdicts(outcome: &DispatchOutcome) -> Vec<(String, String)> {
         .collect();
     rows.sort();
     rows
+}
+
+/// The storage identities a candidate's post-execution access list names, as
+/// `<address>:<slot>` strings, ascending. Empty when the frame recorded none.
+#[must_use]
+pub fn read_set(access_list: Option<&AccessList>) -> String {
+    let mut reads: Vec<String> = access_list
+        .map(|list| {
+            list.0
+                .iter()
+                .flat_map(|item| {
+                    item.storage_keys
+                        .iter()
+                        .map(|slot| format!("{}:{}", item.address, slot))
+                        .collect::<Vec<String>>()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    reads.sort();
+    format!("[{}]", reads.join(","))
+}
+
+/// Whether an access list names the storage identity `(address, slot)`.
+#[must_use]
+pub fn names_read(access_list: &AccessList, (address, slot): (Address, U256)) -> bool {
+    access_list.0.iter().any(|item| {
+        item.address == address
+            && item
+                .storage_keys
+                .iter()
+                .any(|key| U256::from_be_slice(key.as_slice()) == slot)
+    })
 }
 
 /// The failure-bucket histogram, sorted by bucket name.
@@ -455,6 +642,10 @@ pub struct Generation {
     pub identities_covered: usize,
     /// How many identities were checked (the legacy prefetch's own key set).
     pub identities_checked: usize,
+    /// The word the settled generation serves for the candidate's read
+    /// identity, or `None` when its list never carried that key — the
+    /// covered/unknown distinction as a checked fact.
+    pub read_value: Option<U256>,
 }
 
 /// One run of one leg at one count.
@@ -486,6 +677,14 @@ pub struct RunMeasure {
     pub fail_count: usize,
     /// The exception tally.
     pub exception_count: usize,
+    /// How many candidates returned a submittable row (`gas_profitable`).
+    pub profitable_rows: usize,
+    /// How many candidates returned a result row (the only surface that carries
+    /// a post-execution access list).
+    pub result_rows: usize,
+    /// How many of those rows names the corpus's read identity in their access
+    /// list: the witness that the candidate actually executed its SLOAD.
+    pub read_rows: usize,
     /// The background head pipeline's work, for a delta leg.
     pub generation: Option<Generation>,
 }
@@ -602,7 +801,7 @@ pub async fn run_leg(
     recorder: &DeltaRecorder,
     provider: &AlloyProvider,
     deployment: &SimulationDeployment,
-    identities: &[(Address, U256)],
+    plan: &GenerationPlan,
     model: &StorageLatency,
 ) -> Result<RunMeasure, String> {
     let lagging = matches!(leg, Leg::ReadyPrevious);
@@ -612,8 +811,9 @@ pub async fn run_leg(
         corpus.candidates.clone()
     };
     let anchor = if lagging { BLOCK - 1 } else { BLOCK };
-    let (cache, generation) =
-        prepare_leg(leg, corpus, provider, identities, anchor, lagging).await?;
+    // The list every head of THIS leg carries: the covered or the unknown one.
+    recorder.set_bal_payload(bal_bytes(plan.writes_for(leg)));
+    let (cache, generation) = prepare_leg(leg, corpus, provider, plan, anchor, lagging).await?;
     let session = Session {
         provider,
         deployment,
@@ -641,6 +841,36 @@ struct Session<'a> {
     latency: StorageLatency,
 }
 
+/// One point's two BAL write sets and the production prefetch key set they must
+/// keep covering.
+///
+/// The COVERED list is the discovery fan-out's identities (valued as the chain
+/// serves them) plus the candidate's read identity at the point's word; the
+/// UNKNOWN list is the same list with that one entry omitted. The two differ in
+/// exactly one list entry, which is what makes the pair a controlled comparison
+/// of covered versus dynamic-fallback reads.
+#[derive(Clone, Debug)]
+pub struct GenerationPlan {
+    /// The identities the legacy prefetch derived: what every ready generation
+    /// must answer.
+    pub prefetch: Vec<(Address, U256)>,
+    /// `prefetch` plus the read identity, valued at the point's word.
+    pub covered: Vec<((Address, U256), U256)>,
+    /// `prefetch` alone: the read identity deliberately omitted.
+    pub unknown: Vec<((Address, U256), U256)>,
+}
+
+impl GenerationPlan {
+    /// The list a leg's settled heads serve.
+    #[must_use]
+    pub fn writes_for(&self, leg: Leg) -> &[((Address, U256), U256)] {
+        match leg {
+            Leg::ReadyCurrentUnknown => &self.unknown,
+            _ => &self.covered,
+        }
+    }
+}
+
 /// The leg's session setup: the cache the fan-out reads through and, for a ready
 /// leg, what the background head pipeline settled and the generation it left for
 /// the fan-out to read.
@@ -652,7 +882,7 @@ async fn prepare_leg(
     leg: Leg,
     corpus: &Corpus,
     provider: &AlloyProvider,
-    identities: &[(Address, U256)],
+    plan: &GenerationPlan,
     anchor: u64,
     lagging: bool,
 ) -> Result<
@@ -673,7 +903,7 @@ async fn prepare_leg(
             let _ticket = driver.deliver(ReadAnchor::identified(BLOCK, CURRENT), PREVIOUS);
             cache
         }
-        Leg::ReadyCurrent | Leg::ReadyPrevious => {
+        Leg::ReadyCurrent | Leg::ReadyPrevious | Leg::ReadyCurrentUnknown => {
             let cache = delta_cache();
             let driver = arm(&cache, provider);
             let mut settled = Generation::default();
@@ -701,11 +931,16 @@ async fn prepare_leg(
                 if lagging { PREVIOUS } else { CURRENT },
             ));
             settled.hub_entries = view.hub.snapshot_len();
-            settled.identities_checked = identities.len();
-            settled.identities_covered = identities
+            settled.identities_checked = plan.prefetch.len();
+            settled.identities_covered = plan
+                .prefetch
                 .iter()
                 .filter(|&&(address, slot)| view.hub.snapshot_value(address, slot).is_some())
                 .count();
+            // The candidate's own read: present with this point's word on a
+            // covered list, absent on the unknown one.
+            let (address, slot) = read_identity();
+            settled.read_value = view.hub.snapshot_value(address, slot);
             generation = Some(settled);
             cache
         }
@@ -738,6 +973,24 @@ fn measure_leg(
     let census = census_delta(before, recorder.census());
     let lane = lane_label(session.provider, &session.cache, session.anchor);
     let sims = sim_metrics::delta(sims_after, sims_before);
+    // The post-execution read witness: only a result row carries an access
+    // list, so the tally is (rows returned, rows that name the read identity).
+    let mut result_rows = 0usize;
+    let mut read_rows = 0usize;
+    for result in outcome
+        .gas_profitable
+        .iter()
+        .chain(outcome.gas_unprofitable.iter())
+    {
+        result_rows += 1;
+        if result
+            .access_list
+            .as_ref()
+            .is_some_and(|list| names_read(list, read_identity()))
+        {
+            read_rows += 1;
+        }
+    }
     RunMeasure {
         leg,
         wall_us,
@@ -752,6 +1005,9 @@ fn measure_leg(
         candidate_count: outcome.candidate_count,
         fail_count: outcome.fail_count,
         exception_count: outcome.exception_count,
+        profitable_rows: outcome.gas_profitable.len(),
+        result_rows,
+        read_rows,
         generation,
     }
 }
@@ -759,15 +1015,18 @@ fn measure_leg(
 /// The whole matrix.
 #[derive(Clone, Default)]
 pub struct Bench {
-    /// Every (count, model) point.
+    /// Every (count, word, model) point.
     pub points: Vec<Point>,
 }
 
-/// One point of the matrix: a count and a latency model, every leg, every rep.
+/// One point of the matrix: a count, a scripted word and a latency model, every
+/// leg, every rep.
 #[derive(Clone)]
 pub struct Point {
     /// The caller's candidate count.
     pub count: usize,
+    /// The storage word every frame of this point read.
+    pub word: ScriptedWord,
     /// The model every packet of this point paid.
     pub model: StorageLatency,
     /// The distinct storage identities the legacy prefetch derived.
@@ -817,6 +1076,16 @@ impl Point {
             modeled: column(|run| run.modeled_us),
             sims: column(|run| run.sim_calls),
             builds: column(|run| run.handle_builds),
+            profitable: column(|run| u64::try_from(run.profitable_rows).unwrap_or(u64::MAX)),
+            result_rows: column(|run| u64::try_from(run.result_rows).unwrap_or(u64::MAX)),
+            read_rows: column(|run| u64::try_from(run.read_rows).unwrap_or(u64::MAX)),
+            read_covered: column(|run| {
+                u64::from(
+                    run.generation
+                        .as_ref()
+                        .is_some_and(|generation| generation.read_value.is_some()),
+                )
+            }),
             candidates: first.candidate_count,
             fails: first.fail_count,
             exceptions: first.exception_count,
@@ -825,17 +1094,25 @@ impl Point {
     }
 }
 
-/// Run the matrix: every count, every model, `reps` interleaved repetitions.
+/// Run the matrix: every count, every word, every model, `reps` interleaved
+/// repetitions.
 ///
 /// # Errors
 ///
 /// A chain that cannot settle a head fails the whole bench: a point measured on
 /// a broken fixture is not a result.
-pub fn run(counts: &[usize], models: &[StorageLatency], reps: usize) -> Result<Bench, String> {
+pub fn run(
+    counts: &[usize],
+    words: &[ScriptedWord],
+    models: &[StorageLatency],
+    reps: usize,
+) -> Result<Bench, String> {
     let mut points = Vec::new();
     for &count in counts {
-        for &model in models {
-            points.push(run_point(count, model, reps)?);
+        for &word in words {
+            for &model in models {
+                points.push(run_point(count, word, model, reps)?);
+            }
         }
     }
     Ok(Bench { points })
@@ -846,7 +1123,12 @@ pub fn run(counts: &[usize], models: &[StorageLatency], reps: usize) -> Result<B
 /// # Errors
 ///
 /// See [`run_leg`].
-fn run_point(count: usize, model: StorageLatency, reps: usize) -> Result<Point, String> {
+fn run_point(
+    count: usize,
+    word: ScriptedWord,
+    model: StorageLatency,
+    reps: usize,
+) -> Result<Point, String> {
     let corpus = corpus(count);
     let runtime = crate::probe::runtime();
     runtime.block_on(async move {
@@ -857,9 +1139,16 @@ fn run_point(count: usize, model: StorageLatency, reps: usize) -> Result<Point, 
         let provider = crate::probe::provider(&recorder);
         let declaration = deployment();
 
+        // The one word this point scripts: what the chain answers for the
+        // candidate's read identity, and what a covered list carries.
+        recorder.serve_storage(EXECUTOR, READ_SLOT, word.value());
+
         // The discovery fan-out: the PRODUCTION prefetch derives the key set on
         // the legacy lane, and those exact identities become the block's final
-        // writes. Setup only — never timed, its wire discarded.
+        // writes. Setup only — never timed, its wire discarded. The frame's own
+        // read reaches the node as ONE serial read on this lane; it is the
+        // fixture's read identity, not a derived prefetch member, so it is
+        // dropped from the derived set and re-added only to the covered list.
         recorder.clear_wire();
         let _discovery = fan_out(
             &provider,
@@ -868,12 +1157,22 @@ fn run_point(count: usize, model: StorageLatency, reps: usize) -> Result<Point, 
             Some(WarmCodeCacheInner::shared_default()),
         );
         let mut seen = HashSet::new();
-        let identities: Vec<(Address, U256)> = recorder
+        let prefetch: Vec<(Address, U256)> = recorder
             .storage_identities()
             .into_iter()
+            .filter(|key| *key != read_identity())
             .filter(|key| seen.insert(*key))
             .collect();
-        recorder.set_bal_payload(bal_bytes(&identities));
+        let mut covered: Vec<((Address, U256), U256)> =
+            prefetch.iter().map(|&key| (key, U256::ZERO)).collect();
+        covered.push((read_identity(), word.value()));
+        let unknown: Vec<((Address, U256), U256)> =
+            prefetch.iter().map(|&key| (key, U256::ZERO)).collect();
+        let plan = GenerationPlan {
+            prefetch,
+            covered,
+            unknown,
+        };
 
         let mut runs = Vec::new();
         for _rep in 0..reps {
@@ -885,7 +1184,7 @@ fn run_point(count: usize, model: StorageLatency, reps: usize) -> Result<Point, 
                         &recorder,
                         &provider,
                         &declaration,
-                        &identities,
+                        &plan,
                         &model,
                     )
                     .await?,
@@ -895,8 +1194,9 @@ fn run_point(count: usize, model: StorageLatency, reps: usize) -> Result<Point, 
         let simulated = runs.first().map_or(0, |run| run.simulated);
         Ok::<Point, String>(Point {
             count: corpus.count,
+            word,
             model,
-            prefetch_identities: identities.len(),
+            prefetch_identities: plan.prefetch.len(),
             pool_identities: corpus.pools.len(),
             simulated,
             runs,
@@ -943,6 +1243,15 @@ pub struct LegSummary {
     pub sims: u64,
     /// The median number of EVM handle builds the fan-out made.
     pub builds: u64,
+    /// The median count of submittable (`gas_profitable`) rows.
+    pub profitable: u64,
+    /// The median count of result rows the fan-out returned.
+    pub result_rows: u64,
+    /// The median count of those rows carrying the read identity.
+    pub read_rows: u64,
+    /// The word the settled generation serves for the read identity: the median
+    /// presence over the repetitions (`1` = covered, `0` = unknown).
+    pub read_covered: u64,
     /// The candidate tally the fan-out categorized (post-cap).
     pub candidates: usize,
     /// The failure tally.
@@ -959,6 +1268,8 @@ pub fn render(bench: &Bench) -> String {
     let mut out = String::new();
     render_corpus(bench, &mut out);
     render_absolute(bench, &mut out);
+    render_verdicts(bench, &mut out);
+    render_reads(bench, &mut out);
     render_comparison(bench, &mut out);
     render_controls(bench, &mut out);
     render_background(bench, &mut out);
@@ -971,11 +1282,16 @@ fn render_corpus(bench: &Bench, out: &mut String) {
     let _ = write!(
         out,
         "## Corpus identity\n\n\
-         One scripted chain (zero-valued storage, one INVALID-opcode executor runtime),\n\
-         one deployment declaration, one candidate list per count. Candidate `i` names its\n\
-         own two pool identities, so the corpus's distinct path identities equal the count\n\
-         while its route shape, sizes and tokens are identical throughout — repeated\n\
-         market paths, never a diverse mix.\n\n\
+         One scripted chain (scripted storage words), one deployment declaration, one\n\
+         candidate list per count. Candidate `i` names its own two pool identities, so the\n\
+         corpus's distinct path identities equal the count while its route shape, sizes and\n\
+         tokens are identical throughout — repeated market paths, never a diverse mix.\n\n\
+         Every simulated candidate executes the SAME value-sensitive frame: one SLOAD of\n\
+         the executor's own slot `0x5eed`, then a two-word `execute` receipt whose\n\
+         `gross_profit` is the frame's answer to that word — the zero word takes the\n\
+         minimal-retained arm (1 wei, priced `gas_unprofitable`), the nonzero word returns\n\
+         the word itself (priced `gas_profitable`). Every point runs BOTH words, so the\n\
+         storage value is a variable and a lane serving a wrong word moves the row.\n\n\
          | count | pool identities | prefetch identities | simulated (post-cap) |\n\
          | --- | --- | --- | --- |\n"
     );
@@ -994,15 +1310,16 @@ fn render_corpus(bench: &Bench, out: &mut String) {
     out.push('\n');
 }
 
-/// The absolute table: every leg's wall and wire at every count.
+/// The absolute table: every leg's wall and wire at every count and word.
 fn render_absolute(bench: &Bench, out: &mut String) {
     for point in &bench.points {
         let _ = write!(
             out,
-            "### count {} — model: {}\n\n\
-             | leg | lane | median us | min | max | us/candidate | batches | members | singles | bal | headers | modeled us | candidates | sims | builds | fails | exceptions |\n\
-             | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+            "### count {} — word {} — model: {}\n\n\
+             | leg | lane | median us | min | max | us/candidate | batches | members | singles | bal | headers | modeled us | candidates | results | sims | builds | fails | exceptions |\n\
+             | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
             point.count,
+            point.word.label(),
             point.model.label()
         );
         for leg in Leg::ALL {
@@ -1011,7 +1328,7 @@ fn render_absolute(bench: &Bench, out: &mut String) {
             };
             let _ = writeln!(
                 out,
-                "| {} | {} | {} | {} | {} | {:.1} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                "| {} | {} | {} | {} | {} | {:.1} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
                 leg.label(),
                 summary.lane,
                 summary.median,
@@ -1025,6 +1342,7 @@ fn render_absolute(bench: &Bench, out: &mut String) {
                 summary.headers,
                 summary.modeled,
                 summary.candidates,
+                summary.result_rows,
                 summary.sims,
                 summary.builds,
                 summary.fails,
@@ -1043,13 +1361,126 @@ fn render_absolute(bench: &Bench, out: &mut String) {
     }
 }
 
+/// The verdict surface: the legacy reference's rows and the parity pin. The
+/// point of the table is that the WORD decides the category — one figure per
+/// (count, word) is the whole fan-out's verdict class.
+fn render_verdicts(bench: &Bench, out: &mut String) {
+    let _ = write!(
+        out,
+        "## Verdict surface\n\n\
+         The legacy reference's rows (`profitable` = submittable, `unprofitable` = a\n\
+         positive gross that did not clear gas, `failures` = a declined candidate) plus\n\
+         the parity pin. The word decides the category: the zero word's 1-wei receipt can\n\
+         never clear gas, the nonzero word's receipt always does.\n\n\
+         | count | word | model | profitable | unprofitable | failures | failure buckets | parity |\n\
+         | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+    );
+    for point in &bench.points {
+        let Some(reference) = point.summary(Leg::OffLegacy) else {
+            continue;
+        };
+        let buckets: Vec<String> = point
+            .leg(Leg::OffLegacy)
+            .first()
+            .map(|run| {
+                run.fail_buckets
+                    .iter()
+                    .map(|(bucket, count)| format!("{bucket}:{count}"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} | {} | {} |",
+            point.count,
+            point.word.label(),
+            point.model.label(),
+            reference.profitable,
+            reference.result_rows - reference.profitable,
+            reference.fails,
+            if buckets.is_empty() {
+                "none".to_string()
+            } else {
+                buckets.join(", ")
+            },
+            if point.parity() {
+                "identical"
+            } else {
+                "MISMATCH"
+            },
+        );
+    }
+    out.push('\n');
+}
+
+/// The read evidence: what each leg's frames actually read, whether the settled
+/// generation served that key, and what the dynamic fallback cost.
+fn render_reads(bench: &Bench, out: &mut String) {
+    let _ = write!(
+        out,
+        "## Candidate storage reads\n\n\
+         `results` is how many candidates returned a result row (the only surface that\n\
+         carries a post-execution access list), `reads` how many of those rows name the\n\
+         read identity (`executor:0x5eed`) in that list. `served` says whether the\n\
+         settled generation holds the key: `covered` serves it, `unknown` does not, and a\n\
+         non-ready leg has no generation at all. `singles` is the dynamic-fallback count\n\
+         the wire recorded for the fan-out.\n\n\
+         | count | word | leg | simulated | results | reads | singles | served |\n\
+         | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+    );
+    for point in &bench.points {
+        for leg in Leg::ALL {
+            let Some(summary) = point.summary(leg) else {
+                continue;
+            };
+            let served = match leg {
+                Leg::ReadyCurrent | Leg::ReadyPrevious => "covered",
+                Leg::ReadyCurrentUnknown => "unknown",
+                _ => "n/a",
+            };
+            if summary.read_covered == 0 && leg.is_ready() {
+                // Rendered as its own label so a coverage miss cannot read as a
+                // covered control.
+                let _ = writeln!(
+                    out,
+                    "| {} | {} | {} | {} | {} | {} | {} | NOT-SERVED |",
+                    point.count,
+                    point.word.label(),
+                    leg.label(),
+                    summary.candidates,
+                    summary.result_rows,
+                    summary.read_rows,
+                    summary.singles,
+                );
+                continue;
+            }
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} | {} | {} | {} | {} |",
+                point.count,
+                point.word.label(),
+                leg.label(),
+                summary.candidates,
+                summary.result_rows,
+                summary.read_rows,
+                summary.singles,
+                served,
+            );
+        }
+    }
+    out.push('\n');
+}
+
 /// The ready-versus-legacy reduction table.
 fn render_comparison(bench: &Bench, out: &mut String) {
     let _ = write!(
         out,
         "## Ready versus legacy\n\n\
-         | count | model | legacy med us | ready-current med us | delta us | delta % | members legacy/ready | packets legacy/ready | modeled us legacy/ready |\n\
-         | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+         `singles` is the dynamic-fallback read count: the legacy lane pays one for the\n\
+         corpus's own read identity (nothing derives that slot), the covered ready lane\n\
+         pays none, and the unknown control's count is in its own table.\n\n\
+         | count | word | model | legacy med us | ready-current med us | delta us | delta % | members legacy/ready | singles legacy/ready | packets legacy/ready | modeled us legacy/ready |\n\
+         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
     );
     for point in &bench.points {
         let (Some(off), Some(on)) = (
@@ -1062,8 +1493,9 @@ fn render_comparison(bench: &Bench, out: &mut String) {
             - i64::try_from(off.median).unwrap_or(i64::MAX);
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {}/{} | {}/{} | {}/{} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {}/{} | {}/{} | {}/{} | {}/{} |",
             point.count,
+            point.word.label(),
             point.model.label(),
             off.median,
             on.median,
@@ -1071,6 +1503,8 @@ fn render_comparison(bench: &Bench, out: &mut String) {
             percent(delta, off.median),
             off.members,
             on.members,
+            off.singles,
+            on.singles,
             off.packets,
             on.packets,
             off.modeled,
@@ -1087,8 +1521,8 @@ fn render_controls(bench: &Bench, out: &mut String) {
         "## Cold controls\n\n\
          `bal` is the BAL fetch count on the DISPATCH leg: a control that prepared nothing\n\
          must report zero, and its batch must equal the legacy lane's.\n\n\
-         | count | model | legacy members | unprepared members | undelivered members | unprepared bal | undelivered bal | unprepared lane | undelivered lane |\n\
-         | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+         | count | word | model | legacy members | unprepared members | undelivered members | unprepared bal | undelivered bal | unprepared lane | undelivered lane |\n\
+         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
     );
     for point in &bench.points {
         let (Some(off), Some(unprepared), Some(undelivered)) = (
@@ -1100,8 +1534,9 @@ fn render_controls(bench: &Bench, out: &mut String) {
         };
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             point.count,
+            point.word.label(),
             point.model.label(),
             off.members,
             unprepared.members,
@@ -1121,56 +1556,71 @@ fn render_background(bench: &Bench, out: &mut String) {
         out,
         "## Background BAL cost (never subtracted)\n\n\
          Per settled head: the prepare wall (list fetch + full decode) and the apply wall\n\
-         (the one synchronous transition). `covered` is how many identities the legacy\n\
-         lane's prefetch derived that the settled generation answers with.\n\n\
-         | count | model | heads | prepare median us | prepare max us | apply median us | apply max us | writes median | skipped median | covered | hub entries |\n\
-         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+         (the one synchronous transition), one row for the covered list and one for the\n\
+         unknown list so the single-entry difference is visible. `prefetch covered` is how\n\
+         many identities the legacy lane's prefetch derived that the settled generation\n\
+         answers with; `read key` says whether the generation also holds the candidate's\n\
+         own read identity.\n\n\
+         | count | word | model | list | heads | prepare median us | prepare max us | apply median us | apply max us | writes median | skipped median | prefetch covered | read key | hub entries |\n\
+         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
     );
     for point in &bench.points {
-        let runs = point.leg(Leg::ReadyCurrent);
-        let generations: Vec<&Generation> = runs
-            .iter()
-            .filter_map(|run| run.generation.as_ref())
-            .collect();
-        let Some(first) = generations.first() else {
-            continue;
-        };
-        let prepares: Vec<u64> = generations
-            .iter()
-            .flat_map(|generation| generation.prepare_us.iter().copied())
-            .collect();
-        let applies: Vec<u64> = generations
-            .iter()
-            .flat_map(|generation| generation.apply_us.iter().copied())
-            .collect();
-        let counts = |pick: fn(&Generation) -> &Vec<usize>| -> Vec<u64> {
-            generations
+        for (leg, list) in [
+            (Leg::ReadyCurrent, "covered"),
+            (Leg::ReadyCurrentUnknown, "unknown"),
+        ] {
+            let runs = point.leg(leg);
+            let generations: Vec<&Generation> = runs
                 .iter()
-                .flat_map(|generation| {
-                    pick(generation)
-                        .iter()
-                        .map(|&n| u64::try_from(n).unwrap_or(0))
-                })
-                .collect()
-        };
-        let writes = counts(|generation| &generation.writes);
-        let skipped = counts(|generation| &generation.writes_skipped);
-        let _ = writeln!(
-            out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {}/{} | {} |",
-            point.count,
-            point.model.label(),
-            first.anchors.len(),
-            median(&prepares),
-            prepares.iter().copied().max().unwrap_or(0),
-            median(&applies),
-            applies.iter().copied().max().unwrap_or(0),
-            median(&writes),
-            median(&skipped),
-            first.identities_covered,
-            first.identities_checked,
-            first.hub_entries,
-        );
+                .filter_map(|run| run.generation.as_ref())
+                .collect();
+            let Some(first) = generations.first() else {
+                continue;
+            };
+            let prepares: Vec<u64> = generations
+                .iter()
+                .flat_map(|generation| generation.prepare_us.iter().copied())
+                .collect();
+            let applies: Vec<u64> = generations
+                .iter()
+                .flat_map(|generation| generation.apply_us.iter().copied())
+                .collect();
+            let counts = |pick: fn(&Generation) -> &Vec<usize>| -> Vec<u64> {
+                generations
+                    .iter()
+                    .flat_map(|generation| {
+                        pick(generation)
+                            .iter()
+                            .map(|&n| u64::try_from(n).unwrap_or(0))
+                    })
+                    .collect()
+            };
+            let writes = counts(|generation| &generation.writes);
+            let skipped = counts(|generation| &generation.writes_skipped);
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {}/{} | {} | {} |",
+                point.count,
+                point.word.label(),
+                point.model.label(),
+                list,
+                first.anchors.len(),
+                median(&prepares),
+                prepares.iter().copied().max().unwrap_or(0),
+                median(&applies),
+                applies.iter().copied().max().unwrap_or(0),
+                median(&writes),
+                median(&skipped),
+                first.identities_covered,
+                first.identities_checked,
+                if first.read_value.is_some() {
+                    "covered"
+                } else {
+                    "absent"
+                },
+                first.hub_entries,
+            );
+        }
     }
     out.push('\n');
 }
@@ -1182,8 +1632,8 @@ fn render_variability(bench: &Bench, out: &mut String) {
         "## Variability\n\n\
          The spread of each leg's repetitions at the largest count: a median far from the\n\
          maximum is an outlier the median hides.\n\n\
-         | count | model | leg | median us | max us | max/median |\n\
-         | --- | --- | --- | --- | --- | --- |\n"
+         | count | word | model | leg | median us | max us | max/median |\n\
+         | --- | --- | --- | --- | --- | --- | --- |\n"
     );
     let largest = bench
         .points
@@ -1198,8 +1648,9 @@ fn render_variability(bench: &Bench, out: &mut String) {
             };
             let _ = writeln!(
                 out,
-                "| {} | {} | {} | {} | {} | {:.2} |",
+                "| {} | {} | {} | {} | {} | {} | {:.2} |",
                 point.count,
+                point.word.label(),
                 point.model.label(),
                 leg.label(),
                 summary.median,

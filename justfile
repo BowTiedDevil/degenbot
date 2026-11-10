@@ -657,21 +657,28 @@ bal-production-relevance-probe *ARGS:
 # (`dispatch_profitable_results`) driven over ONE scripted head, ONE candidate
 # list, ONE deployment declaration and ONE provider state — the shipped legacy
 # memo + prefetch lane against an already-settled BAL delta generation (current
-# and previous) plus BOTH cold controls, from a single candidate to a burst
-# fan-out. Every leg of a point runs the same head, the same candidates, the
-# same deployment and the same zero-valued storage chain, so the storage
-# representation is the only variable — the confound the live OFF/ON pair could
-# not remove. Each point runs under TWO latency models: zero added latency (the
-# CPU/scheduler cost alone) and a deterministic 400 us storage round trip with a
-# 20 us per-member charge. Both are SYNTHETIC: nothing here is a claim about a
-# live node's latency, and no timing is ever asserted. The ready heads' lists
-# carry exactly the identities the PRODUCTION prefetch derives (learned by one
-# untimed discovery fan-out), so "the ready lane's dynamic-fallback exposure for
-# this corpus is zero" is checked per point instead of assumed, and the
-# background prepare/apply walls are reported in their own table — never
-# subtracted from a fan-out wall. Gates are fixture identity only: every leg's
-# own lane label, the controls' BAL-free dispatch wire, the ready generation's
-# coverage, and candidate verdict parity across every leg. Knobs:
+# and previous, its list carrying the candidate's read key), the unknown-read
+# control (the same ready head settled from a list that OMITS that key) and BOTH
+# cold controls, from a single candidate to a burst fan-out. Every leg of a
+# point runs the same head, the same candidates, the same deployment and the same
+# scripted storage chain, so the storage representation is the only variable —
+# the confound the live OFF/ON pair could not remove. Each candidate executes a
+# minimal value-sensitive reader: one SLOAD of the executor's own slot, then a
+# two-word receipt whose gross depends on the stored word, so the read is
+# witnessed in the post-execution access list and the outcome category moves
+# with the value. Every point runs TWO words (zero and nonzero) and TWO latency
+# models: zero added latency (the CPU/scheduler cost alone) and a deterministic
+# 400 us storage round trip with a 20 us per-member charge and a 400 us serial
+# read. All SYNTHETIC: nothing here is a claim about a live node's latency, and
+# no timing is ever asserted. The ready heads' lists carry exactly the identities
+# the PRODUCTION prefetch derives (learned by one untimed discovery fan-out) plus
+# the read key, so the covered lane's zero dynamic reads and the unknown lane's
+# ONE dynamic read are checked per point instead of assumed, and the background
+# prepare/apply walls are reported in their own table — never subtracted from a
+# fan-out wall. Gates are fixture identity only: every leg's own lane label, the
+# controls' BAL-free dispatch wire, the ready generation's coverage, the covered
+# and unknown read-key presence, the read witness on every simulated candidate,
+# and candidate verdict parity across every leg. Knobs:
 # `BAL_DISPATCH_SCALING_COUNTS` (default `1,4,16,50,100,500,1000`) and
 # `BAL_DISPATCH_SCALING_REPS` (default `3`, interleaved). The production fan-out
 # truncates at `MAX_SIMULATE_CONCURRENT`, so a count above 50 measures the

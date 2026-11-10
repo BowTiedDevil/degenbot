@@ -1,7 +1,7 @@
 //! The scripted chain the dispatch-lane suites and the dispatch-scaling probe
-//! drive: one canonical head table, zero-valued storage words, a configurable
-//! raw BAL payload, a deterministic RPC latency model, and a wire census of
-//! every dispatched request.
+//! drive: one canonical head table, scripted storage words (zero unless a run
+//! names an identity), a configurable raw BAL payload, a deterministic RPC
+//! latency model, and a wire census of every dispatched request.
 //!
 //! # What is scripted, and what is not
 //!
@@ -9,8 +9,9 @@
 //! identity (`eth_getBlockByNumber`), account basics, storage words, and
 //! `debug_getRawBlockAccessList` — and refuses everything else, so an
 //! unexpected method fails the run instead of silently answering. It holds no
-//! market state: the corpora driven through it are scripted candidates whose
-//! frames revert, and the words it serves are zeros.
+//! market state: the corpora driven through it are scripted candidates, and the
+//! only storage words a run scripts are the ones its frames read
+//! ([`DeltaRecorder::serve_storage`]); every other identity answers zero.
 //!
 //! # The latency model
 //!
@@ -162,6 +163,10 @@ pub struct DeltaRecorder {
     heads: Arc<Mutex<std::collections::BTreeMap<u64, (B256, B256)>>>,
     bal: Arc<BalScript>,
     bal_payload: Arc<Mutex<Vec<u8>>>,
+    /// The scripted storage words, keyed by `(address, slot)`. An identity this
+    /// map does not name serves zero, so a run scripts exactly the words its
+    /// frames read and nothing else.
+    storage: Arc<Mutex<std::collections::BTreeMap<(Address, U256), U256>>>,
     latency: StorageLatency,
     /// Every dispatched request's wire body — method + serialized params, in
     /// dispatch order — so a lane's traffic can be compared byte for byte
@@ -181,6 +186,7 @@ impl Default for DeltaRecorder {
             heads: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
             bal: Arc::new(serving_bal()),
             bal_payload: Arc::new(Mutex::new(EMPTY_BAL.to_vec())),
+            storage: Arc::default(),
             latency: StorageLatency::ZERO,
             wire: Arc::default(),
         }
@@ -221,6 +227,26 @@ impl DeltaRecorder {
     /// Serve these raw list bytes for every BAL request.
     pub fn set_bal_payload(&self, bytes: Vec<u8>) {
         *self.bal_payload.lock().expect("recorder mutex") = bytes;
+    }
+
+    /// Serve `value` for the storage identity `(address, slot)`. Every identity
+    /// this map does not name answers zero.
+    pub fn serve_storage(&self, address: Address, slot: U256, value: U256) {
+        self.storage
+            .lock()
+            .expect("recorder mutex")
+            .insert((address, slot), value);
+    }
+
+    /// The word this chain serves for `(address, slot)`: the scripted value, or
+    /// zero for an identity no run scripted.
+    fn storage_word(&self, address: Address, slot: U256) -> U256 {
+        self.storage
+            .lock()
+            .expect("recorder mutex")
+            .get(&(address, slot))
+            .copied()
+            .unwrap_or(U256::ZERO)
     }
 
     pub fn bal_requests(&self) -> u64 {
@@ -331,6 +357,15 @@ fn record_wire(recorder: &DeltaRecorder, req: &SerializedRequest) {
     ));
 }
 
+/// The storage identity a read names: `(address, slot)` from its params.
+fn storage_key(req: &SerializedRequest) -> Option<(Address, U256)> {
+    let params = req.params()?;
+    let value: serde_json::Value = serde_json::from_str(params.get()).ok()?;
+    let address: Address = value.get(0)?.as_str()?.parse().ok()?;
+    let slot: U256 = value.get(1)?.as_str()?.parse().ok()?;
+    Some((address, slot))
+}
+
 /// The block tag a request names, when its first parameter is one.
 fn block_number(req: &SerializedRequest) -> Option<u64> {
     let params = req.params()?;
@@ -383,6 +418,21 @@ fn packet_charges(req: &RequestPacket) -> (u64, u64, bool, u64) {
     }
 }
 
+/// Sleep exactly the wall the latency model states for one dispatched packet —
+/// the same arithmetic [`WireCensus::modeled_us`] reports from the recorded wire,
+/// so the sleep and the census can never disagree.
+async fn pay_modeled_latency(recorder: &DeltaRecorder, req: &RequestPacket) {
+    let latency = recorder.latency;
+    let (serial, members, is_storage_batch, bal) = packet_charges(req);
+    let modeled_us = serial * latency.single
+        + u64::from(is_storage_batch) * latency.batch_round
+        + members * latency.batch_member
+        + bal * latency.bal_fetch;
+    if modeled_us > 0 {
+        tokio::time::sleep(Duration::from_micros(modeled_us)).await;
+    }
+}
+
 impl tower::Service<RequestPacket> for RecordingTransport {
     type Response = ResponsePacket;
     type Error = TransportError;
@@ -404,23 +454,20 @@ impl tower::Service<RequestPacket> for RecordingTransport {
             if pays_slow_bal_delay(&recorder, &req) {
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
-            // The deterministic latency model: the same arithmetic the census
-            // states, slept before the packet is answered.
-            let latency = recorder.latency;
-            let (serial, members, is_storage_batch, bal) = packet_charges(&req);
-            let modeled_us = serial * latency.single
-                + u64::from(is_storage_batch) * latency.batch_round
-                + members * latency.batch_member
-                + bal * latency.bal_fetch;
-            if modeled_us > 0 {
-                tokio::time::sleep(Duration::from_micros(modeled_us)).await;
-            }
+            // The deterministic latency model, paid before the packet is
+            // answered.
+            pay_modeled_latency(&recorder, &req).await;
             let respond = |req: &SerializedRequest| -> Response {
                 record_wire(&recorder, req);
                 let payload = match req.method() {
                     "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
                     "eth_getCode" => success("0x"),
-                    "eth_getStorageAt" => success(&format!("0x{:064x}", 0)),
+                    "eth_getStorageAt" => {
+                        let (address, slot) =
+                            storage_key(req).expect("the storage read names its key");
+                        let word = recorder.storage_word(address, slot);
+                        success(&format!("0x{word:064x}"))
+                    }
                     "eth_getBlockByNumber" => {
                         recorder.head_reads.fetch_add(1, Ordering::Relaxed);
                         let number = block_number(req).expect("the lineage read names its block");
