@@ -61,6 +61,7 @@ fn row(block: u64, reads: &[(u8, &[u64])]) -> Recorded {
                 )
             })
             .collect(),
+        relevance: None,
     }
 }
 

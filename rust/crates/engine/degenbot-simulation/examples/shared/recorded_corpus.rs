@@ -6,6 +6,25 @@
 //! candidate (`sim_ns`). It carries no calldata and no chain snapshot, so a
 //! replay drives the read schedule and the recorded execution — never an EVM
 //! verdict.
+//!
+//! # Relevance: two provenances, one API
+//!
+//! A row may also carry `relevance` — the candidate's PRODUCTION relevance set,
+//! derived by the simulation seam from the candidate's path and the deployment's
+//! settlement facts BEFORE it ran (see `degenbot_arbitrage::fanout_trace`'s
+//! migration notes). The field is additive: rows recorded before it existed parse
+//! unchanged with no relevance set.
+//!
+//! [`row_relevance`] and [`anchor_relevance`] are the one door a replay or an
+//! analysis probe uses, and each answers with a [`RelevanceSource`] beside the
+//! addresses. A row that carries the field reports [`RelevanceSource::Production`].
+//! A legacy row can only offer its recorded read addresses — the POST-execution
+//! walk — so it reports [`RelevanceSource::RecordedReadOracle`]: those addresses
+//! are what the run turned out to read, an oracle the live run did not have when
+//! it had to decide what to snapshot, and no report may call them production
+//! relevance. An anchor's set is the union of its rows' production sets, and a
+//! single legacy row drops the whole anchor to the labelled fallback rather than
+//! reporting a partial production set as if it were complete.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -25,8 +44,8 @@ pub type ReadGroups = Vec<(Address, Vec<U256>)>;
 /// One tracked read identity.
 pub type Key = (Address, U256);
 
-/// One recorded candidate: the read walk the simulation seam drained and the
-/// execution wall it measured.
+/// One recorded candidate: the read walk the simulation seam drained, the wall
+/// it measured, and the relevance set the seam derived before the candidate ran.
 #[derive(Clone, Debug)]
 pub struct Recorded {
     /// The anchor the candidate was simulated at.
@@ -35,6 +54,12 @@ pub struct Recorded {
     pub sim_ns: u64,
     /// The candidate's recorded read walk, in recorded order.
     pub reads: ReadGroups,
+    /// The candidate's PRODUCTION relevance set, as the seam derived it from the
+    /// path and settlement facts before simulation.
+    ///
+    /// `None` on a row recorded before the field existed — an absence, never an
+    /// empty set (a candidate with no relevant address records `Some(vec![])`).
+    pub relevance: Option<Vec<Address>>,
 }
 
 /// Parse one log line's trace row (the substring after `fanout-trace `).
@@ -58,10 +83,23 @@ pub fn parse_trace_line(line: &str) -> Option<Recorded> {
             Some((address, slots))
         })
         .collect();
+    // The field is optional by construction: every row recorded before it
+    // existed parses to `None`, which is what keeps an old corpus readable.
+    let relevance = match value.get("relevance") {
+        Some(entries) => Some(
+            entries
+                .as_array()?
+                .iter()
+                .filter_map(|entry| entry.as_str()?.parse::<Address>().ok())
+                .collect(),
+        ),
+        None => None,
+    };
     Some(Recorded {
         block: value.get("block")?.as_u64()?,
         sim_ns: value.get("sim_ns")?.as_u64()?,
         reads,
+        relevance,
     })
 }
 
@@ -155,6 +193,113 @@ pub fn candidate_addresses(rows: &[Recorded]) -> Vec<Address> {
         }
     }
     ordered
+}
+
+/// Where a replay's relevance set came from — printed beside every set a report
+/// scopes a snapshot with, so an oracle-backed number can never be read as a
+/// production-derived one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RelevanceSource {
+    /// The row carried the set the simulation seam derived from the candidate's
+    /// path and settlement facts BEFORE simulation ran. Also the default for an
+    /// empty row slice: a fan-out with no candidates has nothing missing.
+    #[default]
+    Production,
+    /// The row predates the field. The recorded read addresses stand in for the
+    /// set the live run never recorded: an ORACLE, because they are what the run
+    /// turned out to read, not what it knew before it read it.
+    RecordedReadOracle,
+}
+
+impl RelevanceSource {
+    /// The label a report prints.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Production => "production",
+            Self::RecordedReadOracle => "recorded-read-oracle",
+        }
+    }
+
+    /// Whether the set is the pre-simulation production derivation.
+    #[must_use]
+    pub const fn is_production(self) -> bool {
+        matches!(self, Self::Production)
+    }
+}
+
+/// A relevance set and its provenance.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Relevance {
+    /// The distinct, first-seen-ordered addresses the candidate's execution can
+    /// reach through its path (and, for a hooked V4 hop, the hook itself).
+    pub addresses: Vec<Address>,
+    /// Which derivation produced [`Self::addresses`].
+    pub source: RelevanceSource,
+}
+
+/// One recorded candidate's relevance set.
+///
+/// A row carrying the additive field answers with it verbatim
+/// ([`RelevanceSource::Production`]); a legacy row answers with its recorded read
+/// ADDRESSES ([`RelevanceSource::RecordedReadOracle`]), which is the only thing it
+/// has and is labelled as the oracle it is.
+#[must_use]
+pub fn row_relevance(row: &Recorded) -> Relevance {
+    match &row.relevance {
+        Some(addresses) => Relevance {
+            addresses: addresses.clone(),
+            source: RelevanceSource::Production,
+        },
+        None => Relevance {
+            addresses: candidate_addresses(std::slice::from_ref(row)),
+            source: RelevanceSource::RecordedReadOracle,
+        },
+    }
+}
+
+/// An anchor's relevance set: the deduped union of its rows' relevance sets.
+///
+/// One legacy row makes the union incomplete, and an incomplete set is not
+/// reported as production: the whole anchor answers with every recorded read
+/// address of every row ([`RelevanceSource::RecordedReadOracle`]). Reporting the
+/// partial production union instead would scope a snapshot by a set the live run
+/// could not have had.
+#[must_use]
+pub fn anchor_relevance(rows: &[Recorded]) -> Relevance {
+    if rows.iter().all(|row| row.relevance.is_some()) {
+        let mut seen = BTreeSet::new();
+        let mut addresses = Vec::new();
+        for row in rows {
+            for address in row.relevance.iter().flatten() {
+                if seen.insert(*address) {
+                    addresses.push(*address);
+                }
+            }
+        }
+        return Relevance {
+            addresses,
+            source: RelevanceSource::Production,
+        };
+    }
+    Relevance {
+        addresses: candidate_addresses(rows),
+        source: RelevanceSource::RecordedReadOracle,
+    }
+}
+
+/// The corpus-wide provenance: [`RelevanceSource::Production`] only when every
+/// row carries the production field, so a report can say which kind of set its
+/// numbers were scoped by.
+#[must_use]
+pub fn corpus_relevance_source<'a>(
+    rows: impl IntoIterator<Item = &'a Recorded>,
+) -> RelevanceSource {
+    if rows.into_iter().all(|row| row.relevance.is_some()) {
+        RelevanceSource::Production
+    } else {
+        RelevanceSource::RecordedReadOracle
+    }
 }
 
 /// The corpus's set analysis: the counts a corpus description pins, computed
@@ -462,4 +607,112 @@ pub fn universe(rows: &[Recorded]) -> (BTreeSet<Key>, u64, u64) {
         }
     }
     (keys, first, last)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A row in the current format: the seam's pre-simulation relevance set
+    /// rides beside the post-read walk.
+    const NEW_ROW: &str = r#"DEBUG [sim] fanout-trace {"block":9,"cand":"1@1","sim_ns":4,"verdict":"result","gas":7,"reads":["0x1111111111111111111111111111111111111111|0x1"],"relevance":["0x1111111111111111111111111111111111111111","0x2222222222222222222222222222222222222222"]}"#;
+
+    /// A row recorded before the field existed — every earlier corpus.
+    const LEGACY_ROW: &str = r#"DEBUG [sim] fanout-trace {"block":9,"cand":"1@1","sim_ns":4,"verdict":"result","gas":7,"reads":["0x1111111111111111111111111111111111111111|0x1","0x3333333333333333333333333333333333333333|"]}"#;
+
+    fn address(byte: u8) -> Address {
+        Address::new([byte; 20])
+    }
+
+    /// The new field parses into the row's production relevance set, and the
+    /// recorded read walk is left exactly as it was.
+    #[test]
+    fn a_current_row_parses_its_production_relevance_set_beside_the_reads() {
+        let row = parse_trace_line(NEW_ROW).expect("the row parses");
+        assert_eq!(
+            row.relevance,
+            Some(vec![address(0x11), address(0x22)]),
+            "the production set is the row's own, in the seam's order"
+        );
+        assert_eq!(row.reads.len(), 1, "the read walk is unchanged: {row:?}");
+        assert_eq!(
+            row_relevance(&row),
+            Relevance {
+                addresses: vec![address(0x11), address(0x22)],
+                source: RelevanceSource::Production,
+            },
+            "a row that carries the field reports it as production, verbatim"
+        );
+    }
+
+    /// A legacy row parses unchanged, and the only relevance a replay can
+    /// recover from it is the recorded-read ADDRESSES — reported as the oracle
+    /// fallback, never as production relevance.
+    #[test]
+    fn a_legacy_row_parses_unchanged_and_its_fallback_is_labelled_an_oracle() {
+        let row = parse_trace_line(LEGACY_ROW).expect("the legacy row still parses");
+        assert_eq!(row.relevance, None, "an absent field is absent, not empty");
+        assert_eq!(row.reads.len(), 2, "the read walk parses as before");
+        let relevance = row_relevance(&row);
+        assert_eq!(
+            relevance.addresses,
+            vec![address(0x11), address(0x33)],
+            "the fallback is the recorded read addresses, first-seen order"
+        );
+        assert_eq!(
+            relevance.source,
+            RelevanceSource::RecordedReadOracle,
+            "a post-read address set is an oracle, not production relevance"
+        );
+        assert_eq!(relevance.source.label(), "recorded-read-oracle");
+    }
+
+    /// An anchor's set is the union of its rows' production sets. One legacy row
+    /// makes the union untrustworthy — the whole anchor falls back, so a partial
+    /// set can never be mistaken for the complete one.
+    #[test]
+    fn an_anchor_unions_production_sets_and_falls_back_as_a_whole_on_any_legacy_row() {
+        let first = parse_trace_line(NEW_ROW).expect("parses");
+        let mut second = first.clone();
+        second.relevance = Some(vec![address(0x22), address(0x44)]);
+        let union = anchor_relevance(&[first.clone(), second]);
+        assert_eq!(
+            union,
+            Relevance {
+                addresses: vec![address(0x11), address(0x22), address(0x44)],
+                source: RelevanceSource::Production,
+            },
+            "the anchor's set is the deduped union, in row order"
+        );
+
+        let legacy = parse_trace_line(LEGACY_ROW).expect("parses");
+        let mixed = anchor_relevance(&[first, legacy]);
+        assert_eq!(
+            mixed.source,
+            RelevanceSource::RecordedReadOracle,
+            "one legacy row means the anchor's production set is incomplete"
+        );
+        assert_eq!(
+            mixed.addresses,
+            vec![address(0x11), address(0x33)],
+            "the fallback is every recorded read address of the anchor — 0x22 \
+             was relevant but never read, so no oracle can recover it"
+        );
+    }
+
+    /// The corpus-wide provenance: production only when no row needed the
+    /// fallback. A report can then say which kind of number it is printing.
+    #[test]
+    fn the_corpus_relevance_source_reports_a_single_legacy_row() {
+        let current = parse_trace_line(NEW_ROW).expect("parses");
+        let legacy = parse_trace_line(LEGACY_ROW).expect("parses");
+        assert_eq!(
+            corpus_relevance_source(std::slice::from_ref(&current)),
+            RelevanceSource::Production
+        );
+        assert_eq!(
+            corpus_relevance_source(&[current, legacy]),
+            RelevanceSource::RecordedReadOracle
+        );
+    }
 }

@@ -30,9 +30,10 @@ pub use hot_slots::{
     HotSlotStore, HOT_SLOT_DECAY_BLOCKS, MAX_HOT_ADDRESSES, MAX_HOT_SLOTS_PER_ADDRESS,
 };
 pub use prefetch::{
-    path_hook_slots, path_prefetch_addresses, path_prefetch_slots, prefetch_into_memo,
-    prefetch_paths_into_memo, prewarm_plan, resolve_read_anchor, FamilySlotLayout, LearnedSets,
-    PrefetchFacts, PrefetchReport, PrefetchSkip, PrewarmPlan, V2SlotIndices, V3SlotIndices,
+    path_hook_slots, path_prefetch_addresses, path_prefetch_slots, path_relevance_addresses,
+    prefetch_into_memo, prefetch_paths_into_memo, prewarm_plan, resolve_read_anchor,
+    FamilySlotLayout, LearnedSets, PrefetchFacts, PrefetchReport, PrefetchSkip, PrewarmPlan,
+    V2SlotIndices, V3SlotIndices,
 };
 pub use production::{
     simulate_opportunity, simulate_transaction, ProductionSimContext, ProductionSimError,

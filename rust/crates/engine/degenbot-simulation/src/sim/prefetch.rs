@@ -400,6 +400,51 @@ pub fn path_prefetch_addresses<'a>(
     addresses
 }
 
+/// The ADDRESSES a candidate's path and settlement facts make RELEVANT: what a
+/// block-access-list snapshot must carry for that candidate to execute from the
+/// snapshot instead of a dynamic read.
+///
+/// The derivation is [`path_prefetch_addresses`] — every address whose storage a
+/// frame can reach through the path (each hop's pool, both sides of its pair, the
+/// V4 PoolManager) plus the settlement identities in `facts` — so this crate
+/// keeps ONE statement of which addresses a path names. The one address that
+/// function leaves out on purpose is a V4 hook's: the learned-complement scope
+/// only needs addresses whose derived slots exist, and a hook's storage has no
+/// derivation. Relevance is a different question — the frame absolutely reaches
+/// a named hook, and its storage is arbitrary bytecode's business, so the hook is
+/// relevant without a single derivable slot. A hooked hop therefore appends its
+/// hook address here.
+///
+/// Order is first-touch: the named-address scope in path/hop order, then each
+/// naming hop's hook address in hop order, deduplicated throughout. A candidate
+/// derived twice from the same paths and facts yields the same sequence, which
+/// is what makes the trace row it feeds diff-able.
+///
+/// Built from the PATH and the deployment's declaration only — never from a
+/// simulation's result, so a candidate's set is knowable before it runs.
+#[must_use]
+pub fn path_relevance_addresses<'a>(
+    paths: impl IntoIterator<Item = &'a PathInfo>,
+    facts: &PrefetchFacts,
+) -> Vec<Address> {
+    let paths: Vec<&PathInfo> = paths.into_iter().collect();
+    let mut addresses = path_prefetch_addresses(paths.iter().copied(), facts);
+    let mut seen: std::collections::HashSet<Address> = addresses.iter().copied().collect();
+    for path in &paths {
+        for hop in &path.hops {
+            let HopInfo::V4(v4) = hop else {
+                continue;
+            };
+            if v4.hook_address.is_zero() {
+                // A pool key with no hook names no hook storage.
+                continue;
+            }
+            push_address(&mut addresses, &mut seen, v4.hook_address);
+        }
+    }
+    addresses
+}
+
 fn push_address(
     addresses: &mut Vec<Address>,
     seen: &mut std::collections::HashSet<Address>,
@@ -1372,6 +1417,93 @@ mod tests {
             addresses.len(),
             5,
             "two pools + their shared pair's WETH and token + the PoolManager"
+        );
+    }
+
+    // ── the relevance derivation ─────────────────────────────────────────
+
+    /// A mixed V2/V3 path's relevance set is the named-address scope, in
+    /// first-touch order with every duplicate collapsed.
+    ///
+    /// Determinism is pinned by the exact sequence: a replay that derives the
+    /// same candidate's set twice must get the same row bytes, or the trace
+    /// stops being diff-able.
+    #[test]
+    fn a_mixed_path_s_relevance_set_is_the_named_scope_in_first_touch_order() {
+        let facts = executor_facts();
+        let paths = [path(vec![v2_hop(POOL_1), v3_hop(POOL_3)])];
+        let relevance = path_relevance_addresses(&paths, &facts);
+        assert_eq!(
+            relevance,
+            vec![POOL_1, WETH, TOKEN, POOL_3, POOL_MANAGER],
+            "the pair's WETH/token identities collapse across hops, and the settlement facts' identities append once"
+        );
+        assert_eq!(
+            path_relevance_addresses(&paths, &facts),
+            relevance,
+            "the derivation is a deterministic function of the paths and facts"
+        );
+    }
+
+    /// A V4 hop names its PoolManager and both currencies; the same addresses
+    /// named by several hops appear once.
+    #[test]
+    fn a_v4_path_names_its_pool_manager_and_currencies_once() {
+        let facts = executor_facts();
+        let pool_id = B256::repeat_byte(0x42);
+        let paths = [path(vec![v4_hop(pool_id)]), path(vec![v4_hop(pool_id)])];
+        let relevance = path_relevance_addresses(&paths, &facts);
+        assert_eq!(
+            relevance,
+            vec![POOL_MANAGER, WETH, TOKEN],
+            "two candidates over one V4 pool share their whole relevance set"
+        );
+    }
+
+    /// A V4 hop that names a hook makes the HOOK relevant: the hook's storage is
+    /// arbitrary bytecode's business, so no slot set derives from it, but the
+    /// frame absolutely reaches it and a snapshot that omits it cannot serve the
+    /// candidate.
+    #[test]
+    fn a_hooked_v4_hop_makes_the_hook_relevant_and_an_unhooked_one_does_not() {
+        let facts = executor_facts();
+        let hook = Address::new([0x4c; 20]);
+        let mut hooked = v4_hop(B256::repeat_byte(0x42));
+        let HopInfo::V4(ref mut v4) = hooked else {
+            unreachable!("v4_hop builds a V4 hop")
+        };
+        v4.hook_address = hook;
+        let relevance = path_relevance_addresses(&[path(vec![hooked])], &facts);
+        assert_eq!(
+            relevance,
+            vec![POOL_MANAGER, WETH, TOKEN, hook],
+            "the hook appends after the pool/token/settlement scope, once"
+        );
+
+        let unhooked = v4_hop(B256::repeat_byte(0x42));
+        let relevance = path_relevance_addresses(&[path(vec![unhooked])], &facts);
+        assert!(
+            !relevance.contains(&Address::ZERO),
+            "an unhooked pool key names no hook storage: {relevance:?}"
+        );
+    }
+
+    /// The settlement facts' identities are relevant even when the paths name
+    /// nothing on their own, and a deployment that declares none contributes
+    /// only the path's own addresses.
+    #[test]
+    fn the_settlement_facts_identities_are_relevant_and_a_foreign_deployment_adds_none() {
+        let facts = executor_facts();
+        let relevance = path_relevance_addresses(&[] as &[PathInfo], &facts);
+        assert_eq!(
+            relevance,
+            vec![WETH, POOL_MANAGER],
+            "the executor reads WETH and the PoolManager whatever the paths say"
+        );
+        let foreign = path_relevance_addresses(&[] as &[PathInfo], &PrefetchFacts::default());
+        assert!(
+            foreign.is_empty(),
+            "a deployment with no settlement identity derives nothing: {foreign:?}"
         );
     }
 

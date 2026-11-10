@@ -376,16 +376,19 @@ fn rows_group_into_anchors_in_file_order_and_the_universe_is_their_identities() 
             block: 7,
             sim_ns: 1,
             reads: vec![(Address::new([0x11; 20]), vec![U256::from(1u64)])],
+            relevance: None,
         },
         Recorded {
             block: 7,
             sim_ns: 1,
             reads: vec![(Address::new([0x22; 20]), vec![U256::from(2u64)])],
+            relevance: None,
         },
         Recorded {
             block: 9,
             sim_ns: 1,
             reads: vec![(Address::new([0x11; 20]), vec![U256::from(1u64)])],
+            relevance: None,
         },
     ];
     let groups = group_by_anchor(rows.clone());
@@ -418,11 +421,13 @@ fn read_call_counts_count_every_recorded_storage_read_of_an_anchor() {
             block: 7,
             sim_ns: 1,
             reads: vec![(address, vec![U256::from(1u64), U256::from(2u64)])],
+            relevance: None,
         },
         Recorded {
             block: 7,
             sim_ns: 1,
             reads: vec![(address, vec![U256::from(1u64)])],
+            relevance: None,
         },
     ];
     let counts = read_call_counts(&rows);

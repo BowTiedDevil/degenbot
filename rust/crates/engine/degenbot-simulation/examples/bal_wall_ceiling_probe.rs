@@ -28,8 +28,10 @@
 //! - `carry` — one [`ReadHubCache`] advanced block by block through EVERY
 //!   intermediate block of the range ([`ReadHubCache::advance_bal`]), an
 //!   unbroken parent chain carrying the settled working set forward with the
-//!   MEV-relevant new writes only (each anchor's relevance set is its own
-//!   recorded candidate addresses).
+//!   MEV-relevant new writes only (each anchor's relevance set is the production
+//!   derivation its trace rows carry — the set the seam knew BEFORE simulation —
+//!   or, for a legacy row, its recorded candidate addresses as a labelled ORACLE
+//!   fallback; the report prints which).
 //!
 //! # The modeled chain, and what this cannot prove
 //!
@@ -162,9 +164,9 @@ use probe_report::{
 };
 use real_coverage::RealCoverage;
 use recorded_corpus::{
-    anchor_keys, anchor_profiles, candidate_addresses, group_by_anchor, load_rows,
-    read_call_counts, segments_by_density, shape, universe, AnchorProfile, CorpusShape,
-    DensityRegime, Recorded, Segment, DEFAULT_TRACE,
+    anchor_keys, anchor_profiles, anchor_relevance, corpus_relevance_source, group_by_anchor,
+    load_rows, read_call_counts, segments_by_density, shape, universe, AnchorProfile, CorpusShape,
+    DensityRegime, Recorded, Relevance, Segment, DEFAULT_TRACE,
 };
 use session_drive::{drive_lanes, LanePlan, LaneTrace, LegFacts, ReadLane};
 use wall_ledger::{
@@ -795,18 +797,24 @@ async fn drive_carry(
     // The snapshot's tracked identities: the working set carried forward and
     // every final write applied so far — the hit classification's denominator.
     let mut snapshot_keys: BTreeSet<Key> = BTreeSet::new();
+    println!(
+        "relevance scope: {} (the carry's seed set)",
+        corpus_relevance_source(fanouts.iter().flat_map(|(_, rows)| rows.iter())).label()
+    );
     for number in first..=last {
-        let relevance: Vec<Address> = anchors
+        // The anchor's relevance set, as the trace records it: the production
+        // union the seam derived before simulation, or the labelled recorded-read
+        // oracle fallback for a legacy row.
+        let relevance = anchors
             .get(&number)
-            .map(|rows| candidate_addresses(rows))
-            .unwrap_or_default();
+            .map_or_else(Relevance::default, |rows| anchor_relevance(rows));
         let unit_start = ledger.spans().len();
         let unit_started = Instant::now();
         let (hub, report) = cache
             .advance_bal(
                 ReadAnchor::identified(number, mode.hash(number)?),
                 mode.parent_hash(number)?,
-                &relevance,
+                &relevance.addresses,
             )
             .await;
         let advance_wall = unit_started.elapsed();

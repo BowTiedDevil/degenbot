@@ -1020,6 +1020,18 @@ fn simulate_path_on_evm_in_span_prepared(
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
 ) -> ProviderResult<Option<SimResult>> {
+    // The candidate's PRODUCTION relevance set: what its path and the
+    // deployment's settlement declaration make relevant, derived HERE — before
+    // the frame runs, from facts the path already carries. The trace records it
+    // beside the post-read walk so a snapshot replay can scope its snapshot by
+    // something the live run actually knew; deriving it from the execution's own
+    // access list would hand the replay an oracle no live run ever had.
+    let relevance = degenbot_simulation::sim::prefetch::path_relevance_addresses(
+        std::iter::once(&path.path_info),
+        &degenbot_simulation::sim::prefetch::PrefetchFacts {
+            settlement: ctx.deployment.settlement(),
+        },
+    );
     let mut trace_reads = None;
     let (result, sim_dur) = degenbot_simulation::sim::sim_metrics::timed(|| {
         simulate_path_on_evm_seam(
@@ -1048,6 +1060,7 @@ fn simulate_path_on_evm_in_span_prepared(
         verdict,
         gas,
         trace_reads.as_ref().unwrap_or(&empty),
+        &relevance,
     );
     result
 }

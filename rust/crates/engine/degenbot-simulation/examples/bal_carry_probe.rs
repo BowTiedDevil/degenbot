@@ -19,11 +19,14 @@
 //! blocks — so the parent links are real: each block's actual header hash and
 //! parent hash drive the advance, and each block's exact-hash canonical block
 //! access list is fetched and decoded by the production pipeline. Each CANDIDATE
-//! anchor's relevance set is its own recorded candidate addresses (what the
-//! carry may seed new entries for); intermediate blocks update already-known
-//! keys only. At a candidate anchor every recorded identity is read through the
-//! carried snapshot and, separately, cold-read at the same anchor through an
-//! independent provider; any value mismatch is a HARD failure.
+//! anchor's relevance set is the set its trace rows derived from the path and
+//! settlement facts BEFORE simulation (`relevance`), or — for a row recorded
+//! before that field existed — its recorded candidate addresses as an explicitly
+//! labelled ORACLE fallback (what the carry may seed new entries for);
+//! intermediate blocks update already-known keys only. At a candidate anchor
+//! every recorded identity is read through the carried snapshot and, separately,
+//! cold-read at the same anchor through an independent provider; any value
+//! mismatch is a HARD failure.
 //!
 //! # What this cannot prove
 //!
@@ -67,7 +70,10 @@ use degenbot_simulation::sim::ReadAnchor;
 #[expect(dead_code)]
 mod recorded_corpus;
 
-use recorded_corpus::{anchors_keys, load_rows, shape, universe, CorpusShape, DEFAULT_TRACE};
+use recorded_corpus::{
+    anchor_relevance, anchors_keys, corpus_relevance_source, group_by_anchor, load_rows, shape,
+    universe, CorpusShape, Recorded, Relevance, DEFAULT_TRACE,
+};
 
 /// One corpus stretch's set analysis: the counts the manager's corpus
 /// description pins, and the fetch economy that description estimated when it
@@ -214,6 +220,8 @@ async fn run() -> Result<(), String> {
     let rows = load_rows(&trace)?;
     let corpus = shape(&rows);
     let anchors = anchors_keys(&rows);
+    let relevance_by_anchor: HashMap<u64, Vec<Recorded>> =
+        group_by_anchor(rows.clone()).into_iter().collect();
     let (_, corpus_first, corpus_last) = universe(&rows);
     println!(
         "corpus: {} rows, {} anchors over {corpus_first}..={corpus_last}",
@@ -237,6 +245,10 @@ async fn run() -> Result<(), String> {
              counts above, none enforced"
         ),
     }
+    println!(
+        "relevance scope: {} (the carry's seed set)",
+        corpus_relevance_source(&rows).label()
+    );
     let cold_anchored_reads = corpus.anchored_keys;
 
     // Two independent providers: the carry pipeline under test, and the cold
@@ -260,24 +272,19 @@ async fn run() -> Result<(), String> {
 
     for number in first..=last {
         let (hash, parent_hash) = header(&carry_provider, number).await?;
-        // The relevance set is the anchor's own recorded candidate addresses;
-        // an intermediate block updates already-known keys only.
-        let relevance: Vec<Address> = anchors
+        // The relevance set is the anchor's own production-derived set — what the
+        // seam knew before simulation — or, for a legacy corpus, its recorded
+        // candidate addresses as a labelled ORACLE fallback; an intermediate block
+        // updates already-known keys only.
+        let relevance = relevance_by_anchor
             .get(&number)
-            .map(|keys| {
-                keys.iter()
-                    .map(|(address, _)| *address)
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect()
-            })
-            .unwrap_or_default();
+            .map_or_else(Relevance::default, |rows| anchor_relevance(rows));
         let started = Instant::now();
         let (hub, report) = cache
             .advance_bal(
                 ReadAnchor::identified(number, hash),
                 parent_hash,
-                &relevance,
+                &relevance.addresses,
             )
             .await;
         let advance_wall = started.elapsed();

@@ -7,7 +7,49 @@
 //! candidate — including reverts and refusals — so a replay sees the real
 //! read-walk length distribution, not only the survivors' (the capture that
 //! reaches `SimResult` covers profitable rows only).
+//!
+//! # The row, field by field
+//!
+//! | Field | Meaning |
+//! |---|---|
+//! | `block` | the anchor the candidate was simulated at |
+//! | `cand` | the candidate identity |
+//! | `sim_ns` | the wall the seam measured for the candidate |
+//! | `verdict` / `gas` | how it ended, and the gas it burned |
+//! | `reads` | the POST-execution access list: `address|slot,slot` per entry |
+//! | `relevance` | the PRE-simulation relevance set: bare `0x` addresses |
+//!
+//! `reads` is what the frame actually touched; `relevance` is what the
+//! candidate's PATH and the deployment's settlement declaration made relevant
+//! before it ran ([`degenbot_simulation::sim::path_relevance_addresses`]). The
+//! two answer different questions — "what did this read?" versus "what must a
+//! block-access-list snapshot carry for this candidate to execute at all?" — and
+//! a snapshot replay needs the second. Deriving it from the first would replay an
+//! oracle the live run never had: a captured read is only known after the read
+//! happened, so a relevance set built from `reads` cannot filter the snapshot it
+//! was supposed to filter.
+//!
+//! # Migration notes (the additive `relevance` field)
+//!
+//! Rows written before this field existed carry `block`, `cand`, `sim_ns`,
+//! `verdict`, `gas` and `reads` only. Adding a key is backward compatible for a
+//! reader that treats it as optional, and `recorded_corpus`'s parser does exactly
+//! that: a legacy row parses unchanged with no relevance set, and a consumer that
+//! needs one falls back to the row's recorded read ADDRESSES, labelled as the
+//! ORACLE fallback it is
+//! (`recorded_corpus::RelevanceSource::RecordedReadOracle`) — never reported as
+//! production relevance. No existing field changed meaning, so an old reader of an
+//! old corpus and an old reader of a new corpus both keep working; a new consumer
+//! of an old corpus gets the labelled fallback.
+//!
+//! A later capture should read `relevance` for the candidate's address set and
+//! treat the fallback as a measurement artifact: the production set is knowable
+//! before simulation, so a snapshot scope built from it is what a live run would
+//! actually have carried. Re-capturing a corpus with this field is therefore a
+//! pure upgrade — the `reads` stream is unchanged, so every existing read-driven
+//! benchmark keeps its numbers.
 
+use alloy::primitives::Address;
 use alloy::rpc::types::eth::AccessList;
 
 use degenbot_core::diag_trace;
@@ -16,6 +58,11 @@ use degenbot_core::diag_trace;
 /// entry: `address|slot,slot` (an empty slot list is a trailing `|`), so the
 /// row stays single-line JSON without nested quoting. Slots ride as minimal
 /// word hex; addresses as full 0x-hex.
+///
+/// `relevance` is the candidate's PRE-simulation relevance set — the seam hands
+/// over [`degenbot_simulation::sim::path_relevance_addresses`]'s output, never a
+/// derivation from `access_list` (see the module's migration notes). It renders
+/// as a bare `0x`-hex array in the order the derivation produced.
 #[must_use]
 pub fn fanout_trace_row(
     block: u64,
@@ -24,6 +71,7 @@ pub fn fanout_trace_row(
     verdict: &str,
     gas: u64,
     access_list: &AccessList,
+    relevance: &[Address],
 ) -> String {
     use std::fmt::Write;
 
@@ -45,15 +93,25 @@ pub fn fanout_trace_row(
         }
         reads.push('"');
     }
-    let mut row = String::with_capacity(96 + reads.len());
+    let mut relevant = String::new();
+    for (index, address) in relevance.iter().enumerate() {
+        if index > 0 {
+            relevant.push(',');
+        }
+        let _ = write!(relevant, "\"{address:#x}\"");
+    }
+    let mut row = String::with_capacity(128 + reads.len() + relevant.len());
     let _ = write!(
         row,
-        "fanout-trace {{\"block\":{block},\"cand\":\"{cand}\",\"sim_ns\":{sim_ns},\"verdict\":\"{verdict}\",\"gas\":{gas},\"reads\":[{reads}]}}"
+        "fanout-trace {{\"block\":{block},\"cand\":\"{cand}\",\"sim_ns\":{sim_ns},\"verdict\":\"{verdict}\",\"gas\":{gas},\"reads\":[{reads}],\"relevance\":[{relevant}]}}"
     );
     row
 }
 
 /// Emit one trace row at TRACE level for a finished candidate simulation.
+///
+/// `relevance` is the set the seam derived from the candidate's path and the
+/// deployment's settlement facts BEFORE the simulation ran.
 pub fn record(
     block: u64,
     cand: &str,
@@ -61,22 +119,59 @@ pub fn record(
     verdict: &str,
     gas: u64,
     access_list: &AccessList,
+    relevance: &[Address],
 ) {
-    let row = fanout_trace_row(block, cand, sim_ns, verdict, gas, access_list);
+    let row = fanout_trace_row(block, cand, sim_ns, verdict, gas, access_list, relevance);
     diag_trace!(domain = sim, "{}", row);
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used)]
 mod tests {
     use alloy::primitives::{Address, B256};
     use alloy::rpc::types::eth::{AccessList, AccessListItem};
+    use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V4HopInfo};
+    use degenbot_executor::compute_simulation_warmup_slots;
+    use degenbot_simulation::sim::{PrefetchFacts, SettlementWarmup};
 
     use super::fanout_trace_row;
+
+    const EXECUTOR: Address = Address::new([0xaa; 20]);
+    const WETH: Address = Address::new([0xbb; 20]);
+    const POOL_MANAGER: Address = Address::new([0xcc; 20]);
+    const TOKEN: Address = Address::new([0xdd; 20]);
+    const POOL: Address = Address::new([0x01; 20]);
+    const HOOK: Address = Address::new([0x4c; 20]);
+    /// An address only a POST-read walk can know: no path hop names it.
+    const POST_READ_ONLY: Address = Address::new([0x99; 20]);
 
     fn key(byte: u8) -> B256 {
         let mut word = [0u8; 32];
         word[31] = byte;
         B256::from(word)
+    }
+
+    fn v2_hop() -> HopInfo {
+        HopInfo::V2(V2HopInfo {
+            pool_address: POOL,
+            token0_address: WETH,
+            token1_address: TOKEN,
+            fee: 30,
+            zfo: true,
+        })
+    }
+
+    fn v4_hop() -> HopInfo {
+        HopInfo::V4(V4HopInfo {
+            pool_manager_address: POOL_MANAGER,
+            pool_id_hex: format!("{}", B256::repeat_byte(0x42)),
+            currency0_address: WETH,
+            currency1_address: TOKEN,
+            fee: 500,
+            tick_spacing: 10,
+            hook_address: Address::ZERO,
+            zfo: true,
+        })
     }
 
     #[test]
@@ -91,21 +186,110 @@ mod tests {
                 storage_keys: Vec::new(),
             },
         ]);
-        let row = fanout_trace_row(7, "42-1", 9, "result", 3, &access_list);
+        let relevance = [Address::repeat_byte(0x11), Address::repeat_byte(0x22)];
+        let row = fanout_trace_row(7, "42-1", 9, "result", 3, &access_list, &relevance);
         let expected = concat!(
             "fanout-trace {\"block\":7,\"cand\":\"42-1\",\"sim_ns\":9,\"verdict\":\"result\",",
             "\"gas\":3,\"reads\":[\"0x1111111111111111111111111111111111111111|0x1,0x2\",",
-            "\"0x2222222222222222222222222222222222222222|\"]}"
+            "\"0x2222222222222222222222222222222222222222|\"],",
+            "\"relevance\":[\"0x1111111111111111111111111111111111111111\",",
+            "\"0x2222222222222222222222222222222222222222\"]}"
         );
         assert_eq!(row, expected);
     }
 
     #[test]
     fn an_empty_read_set_still_emits_a_parsable_row() {
-        let row = fanout_trace_row(1, "7-2", 0, "none", 0, &AccessList::default());
+        let row = fanout_trace_row(
+            1,
+            "7-2",
+            0,
+            "none",
+            0,
+            &AccessList::default(),
+            &[Address::repeat_byte(0x33)],
+        );
         assert_eq!(
             row,
-            "fanout-trace {\"block\":1,\"cand\":\"7-2\",\"sim_ns\":0,\"verdict\":\"none\",\"gas\":0,\"reads\":[]}"
+            concat!(
+                "fanout-trace {\"block\":1,\"cand\":\"7-2\",\"sim_ns\":0,\"verdict\":\"none\",",
+                "\"gas\":0,\"reads\":[],",
+                "\"relevance\":[\"0x3333333333333333333333333333333333333333\"]}"
+            )
+        );
+    }
+
+    /// The relevance field is the pre-simulation derivation's own output. An
+    /// address that only the POST-execution access list knows — a read the path
+    /// never named — stays in `reads` and never leaks into `relevance`, because a
+    /// replay that treated the post-read walk as production relevance would be
+    /// replaying an oracle the live run did not have.
+    #[test]
+    fn the_relevance_field_is_the_path_derivation_not_the_post_read_access_list() {
+        let facts = PrefetchFacts {
+            settlement: Some(SettlementWarmup {
+                weth_address: WETH,
+                pool_manager_address: Some(POOL_MANAGER),
+                slots: compute_simulation_warmup_slots(EXECUTOR, WETH),
+            }),
+        };
+        let mut v4 = v4_hop();
+        if let HopInfo::V4(ref mut hop) = v4 {
+            hop.hook_address = HOOK;
+        }
+        let info = PathInfo::new(vec![v2_hop(), v4]);
+        let relevance: Vec<Address> =
+            degenbot_simulation::sim::path_relevance_addresses([&info], &facts);
+
+        // The post-read walk: every relevant address PLUS an address the path
+        // never names (an arbitrary ERC20 `balanceOf` base, say).
+        let mut access_list = AccessList(Vec::new());
+        for address in &relevance {
+            access_list.0.push(AccessListItem {
+                address: *address,
+                storage_keys: vec![key(9)],
+            });
+        }
+        access_list.0.push(AccessListItem {
+            address: POST_READ_ONLY,
+            storage_keys: vec![key(4)],
+        });
+
+        let row = fanout_trace_row(11, "7-3", 5, "result", 8, &access_list, &relevance);
+        let value: serde_json::Value = serde_json::from_str(
+            row.strip_prefix("fanout-trace ")
+                .expect("the row is tagged"),
+        )
+        .expect("the row is JSON");
+        let emitted: Vec<Address> = value["relevance"]
+            .as_array()
+            .expect("the row carries a relevance array")
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_str()
+                    .expect("addresses are strings")
+                    .parse()
+                    .expect("hex address")
+            })
+            .collect();
+        assert_eq!(
+            emitted, relevance,
+            "the field is exactly the derivation, in its own order"
+        );
+        assert!(
+            emitted.contains(&HOOK),
+            "a hooked path makes the hook relevant: {emitted:?}"
+        );
+        assert!(
+            !emitted.contains(&POST_READ_ONLY),
+            "a post-read-only address must never be described as production relevance"
+        );
+        let reads = value["reads"].as_array().expect("reads stay recorded");
+        assert_eq!(
+            reads.len(),
+            relevance.len() + 1,
+            "the post-read walk still records the extra address in `reads`"
         );
     }
 }
