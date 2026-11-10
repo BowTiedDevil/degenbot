@@ -5,16 +5,20 @@
 //! Scope: the forwarding shape + the invariant tripwire (a tracked pool
 //! resolving non-existent or code-less is an impossibility — fail loudly at
 //! the value-origin point so the poisoned read can never be simulated or
-//! cached) + the revm-side original's read-path diagnostics: the per-cycle
-//! storage memo and the divergence observer (both engine-neutral — the memo
-//! is `sim::evm::StorageMemo`, the probe `sim::evm::divergence_probe`). The
+//! cached) + the revm-side original's read-path diagnostics: the storage view
+//! and the divergence observer (both engine-neutral — the view is the
+//! `storage_view` seam over the per-anchor memo or over a delta generation,
+//! the probe `sim::evm::divergence_probe`). The
 //! false-empty provenance probe stays cutover scope. The trait is evm2's
 //! mutable `Database` for the same composition reason documented in
 //! `warm_code_cache`.
 
+use std::sync::Arc;
+
 use alloy::primitives::{Address, B256, KECCAK256_EMPTY};
 use degenbot_substrate::SimAnchorOracle;
 
+use super::storage_view::StorageView;
 use crate::sim::divergence_probe::DivergenceTallyHandle;
 
 use ::evm2::bytecode::Bytecode;
@@ -36,10 +40,12 @@ where
     /// The RPC cold-miss fallback (the `AlloyProvider` adapter in the target
     /// stack).
     pub fallback: ExtDb,
-    /// The per-block storage memo (see `sim::evm::StorageMemo`): consulted
-    /// before the fallback on `get_storage`, populated from the fallback's
-    /// own answers. Recreated by the owner on every block advance.
-    pub storage_memo: Option<std::sync::Arc<crate::sim::StorageMemo>>,
+    /// The cache `get_storage` reads through (see [`StorageView`]): consulted
+    /// before the fallback, and populated from the fallback's own answers. The
+    /// legacy spelling is the per-anchor `sim::evm::StorageMemo`; a delta
+    /// generation serves the same shape. Either way the view belongs to one
+    /// anchor, and the owner recreates it on every block advance.
+    pub storage_view: Option<Arc<dyn StorageView + 'bot>>,
     /// The per-sim on-demand divergence-probe arm (VERIFY2 T2 — sim-failure
     /// re-verify or a random spot-check), skipping the env gate.
     pub divergence_probe: bool,
@@ -60,30 +66,37 @@ where
         Self {
             oracle,
             fallback,
-            storage_memo: None,
+            storage_view: None,
             divergence_probe: false,
             divergence_tally: None,
         }
     }
 
-    /// Layer the per-block storage memo onto `get_storage` (mirrors the
-    /// revm-side `with_storage_memo`).
+    /// Layer a storage view onto `get_storage` — the cache this wrapper reads
+    /// through (the per-anchor memo, or a delta generation; see
+    /// [`StorageView`]).
     #[must_use]
-    pub fn with_storage_memo(mut self, memo: std::sync::Arc<crate::sim::StorageMemo>) -> Self {
-        self.storage_memo = Some(memo);
+    pub fn with_storage_view(mut self, view: Arc<dyn StorageView + 'bot>) -> Self {
+        self.storage_view = Some(view);
         self
+    }
+
+    /// Layer the legacy per-anchor storage memo onto `get_storage` (mirrors
+    /// the revm-side `with_storage_memo`) — the memo-backed view.
+    #[must_use]
+    pub fn with_storage_memo(self, memo: Arc<crate::sim::StorageMemo>) -> Self {
+        self.with_storage_view(memo)
     }
 
     /// The `Option`-carrying form (mirrors the revm-side
     /// `with_storage_memo_opt` — the handle passes its optional memo
     /// through).
     #[must_use]
-    pub fn with_storage_memo_opt(
-        mut self,
-        memo: Option<&std::sync::Arc<crate::sim::StorageMemo>>,
-    ) -> Self {
-        self.storage_memo = memo.cloned();
-        self
+    pub fn with_storage_memo_opt(self, memo: Option<&Arc<crate::sim::StorageMemo>>) -> Self {
+        match memo {
+            Some(memo) => self.with_storage_memo(Arc::clone(memo)),
+            None => self,
+        }
     }
 
     /// Arm (or disarm) the on-demand divergence probe for this wrapper
@@ -155,17 +168,18 @@ where
     /// Forward to the fallback — the revm-side original's serving seam was
     /// retired (ADR-056); the fallback's value is the sim's value.
     fn get_storage(&mut self, address: &Address, key: &Word) -> Result<Word, Self::Error> {
-        // The per-block memo first — a hit is the same block's own earlier
-        // fallback answer (the fallback remains the authority; the memo
-        // never serves engine slots).
-        if let Some(memo) = self.storage_memo.as_ref() {
-            if let Some(value) = memo.get(*address, *key) {
+        // The view first — a hit is the same anchor's own earlier fallback
+        // answer (the fallback remains the authority; no view serves engine
+        // slots, and none serves another anchor's word).
+        if let Some(view) = self.storage_view.as_ref() {
+            if let Some(value) = view.get(*address, *key) {
                 return Ok(value);
             }
         }
+        // A fallback error propagates unchanged and settles nothing.
         let rpc_value = self.fallback.get_storage(address, key)?;
-        if let Some(memo) = self.storage_memo.as_ref() {
-            memo.put(*address, *key, rpc_value);
+        if let Some(view) = self.storage_view.as_ref() {
+            view.put(*address, *key, rpc_value);
         }
         // Observation (compares engine vs RPC, never changes what the sim
         // reads); the armed arm is the on-demand one, and both accumulate into

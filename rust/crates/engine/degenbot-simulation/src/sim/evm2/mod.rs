@@ -45,6 +45,7 @@ pub mod memoized_storage;
 pub mod read_hub;
 pub mod session;
 pub mod state_override;
+pub mod storage_view;
 pub mod v4_black_box;
 pub mod warm_code_cache;
 

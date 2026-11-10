@@ -262,6 +262,7 @@ use super::read_hub::{
     classify_link, CarryOutcome, CarryRefusal, PreparedBal, ReadFuture, ReadHub, ReadHubError,
     ReadHubStats, RoundReport,
 };
+use super::storage_view::StorageView;
 
 use crate::sim::storage_memo::ReadAnchor;
 
@@ -998,6 +999,36 @@ impl<'p> DeltaHub<'p> {
         state.sealed = true;
 
         (sealed, compaction)
+    }
+}
+
+/// The synchronous storage-view seam a `BotStateDb`-shaped consumer reads
+/// through (see [`StorageView`]): a chain hit at THIS generation's anchor, and
+/// a place to settle the caller's fallback answer.
+///
+/// The read is a chain hit — the answer, and the recency stamp, a candidate
+/// read of a served entry gets — with no round: an identity the chain cannot
+/// answer (unknown, or expired under retention) is the CALLER's fallback to
+/// take, and settles back through [`StorageView::put`]. The async round
+/// machinery stays the scheduler's seam ([`DeltaHub::read_storage_handle`]),
+/// never a synchronous wrapper's.
+impl StorageView for DeltaHub<'_> {
+    fn get(&self, address: Address, index: U256) -> Option<StorageValue> {
+        let key = (address, index);
+        let mut state = self.state.lock();
+        let value = state.resolved(&key, self.anchor.number, self.retention)?;
+        state.touch(key, self.anchor.number);
+        Some(value)
+    }
+
+    /// Settle one fallback answer into this generation: it joins the
+    /// generation's own values (shadowing every ancestor, and travelling into
+    /// the next generation at seal) and stamps the use that came with it —
+    /// the same settle a resolved candidate read performs. A settle that lands
+    /// after a child sealed this generation stays in this handle's late map,
+    /// visible to this handle, to no ancestor and to no child.
+    fn put(&self, address: Address, index: U256, value: StorageValue) {
+        self.settle((address, index), value);
     }
 }
 

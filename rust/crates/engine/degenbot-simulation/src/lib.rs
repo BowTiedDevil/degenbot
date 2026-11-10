@@ -74,6 +74,7 @@ pub use sim::evm2::bot_state_db::BotStateDb;
 pub use sim::evm2::frame_replay::{Evm2CountingFrameDb, Evm2ReplayOutcome, Evm2ScratchEvm};
 pub use sim::evm2::handle::{Evm2BlockSimHandle, Evm2ProductionBlockDb, Evm2ScratchDb};
 pub use sim::evm2::state_override::apply_simulation_overrides;
+pub use sim::evm2::storage_view::StorageView;
 pub use sim::evm2::v4_black_box::{
     decode_quote_return, leg_state_slots, quote_calldata, quote_exact_in, resolve_pool_manager,
     V4BlackBoxQuote, V4BlackBoxQuoter, V4Leg, V4QuoteError, V4QuoterConfig,
