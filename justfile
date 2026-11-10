@@ -653,6 +653,25 @@ bal-production-relevance-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example bal_production_relevance_probe -- {{ ARGS }}
 
 
+# The live OFF/ON dispatch capture analysis: parse one pair of
+# `DEGENBOT_DELTA_DISPATCH` bot captures apart by evidence class. The per-fan-out
+# rows (`fan-out storage selection`, `storage prefetch`, `[sim] cands=`) are
+# reportable as dispatch telemetry because each names its own block, anchor, and
+# storage lane; the per-candidate `fanout-trace` rows are NOT, because the seam
+# has two production callers (the dispatch fan-out and the inline hook re-quote
+# arm) and a row records the caller's head block only. The recipe refuses a pair
+# that fails a capture check (OFF selecting `delta`, a mismatched executor image,
+# no dispatch rows) unless `--allow-validation-problems` is passed, and it never
+# asserts a speedup. Both captures are inputs, not artifacts of the recipe: they
+# come from two live `just run` windows, a `DEGENBOT_DELTA_DISPATCH=0` one and a
+# `=1` one, with `RUST_LOG='degenbot=debug,degenbot=sim=trace'` so the trace
+# stream and the dispatch diag rows land in the same file. Every row count is a
+# lower bound: the console sink drops and counts records under burst (ADR-043
+# §6). Report: `logs/bal_live_ab_result.md`.
+bal-live-ab-report off='logs/bal_dispatch_off.log' on='logs/bal_dispatch_on.log' out='logs/bal_live_ab_result.md' off_trace='logs/bal_dispatch_off_trace.log' on_trace='logs/bal_dispatch_on_trace.log' *ARGS:
+    {{ py_run }} python scripts/bal_live_ab_analysis.py --off {{ off }} --on {{ on }} --out {{ out }} --off-trace {{ off_trace }} --on-trace {{ on_trace }} {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash
