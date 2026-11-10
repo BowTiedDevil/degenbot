@@ -653,6 +653,34 @@ bal-production-relevance-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example bal_production_relevance_probe -- {{ ARGS }}
 
 
+# The controlled BAL dispatch-scaling probe: the production dispatch entry
+# (`dispatch_profitable_results`) driven over ONE scripted head, ONE candidate
+# list, ONE deployment declaration and ONE provider state — the shipped legacy
+# memo + prefetch lane against an already-settled BAL delta generation (current
+# and previous) plus BOTH cold controls, from a single candidate to a burst
+# fan-out. Every leg of a point runs the same head, the same candidates, the
+# same deployment and the same zero-valued storage chain, so the storage
+# representation is the only variable — the confound the live OFF/ON pair could
+# not remove. Each point runs under TWO latency models: zero added latency (the
+# CPU/scheduler cost alone) and a deterministic 400 us storage round trip with a
+# 20 us per-member charge. Both are SYNTHETIC: nothing here is a claim about a
+# live node's latency, and no timing is ever asserted. The ready heads' lists
+# carry exactly the identities the PRODUCTION prefetch derives (learned by one
+# untimed discovery fan-out), so "the ready lane's dynamic-fallback exposure for
+# this corpus is zero" is checked per point instead of assumed, and the
+# background prepare/apply walls are reported in their own table — never
+# subtracted from a fan-out wall. Gates are fixture identity only: every leg's
+# own lane label, the controls' BAL-free dispatch wire, the ready generation's
+# coverage, and candidate verdict parity across every leg. Knobs:
+# `BAL_DISPATCH_SCALING_COUNTS` (default `1,4,16,50,100,500,1000`) and
+# `BAL_DISPATCH_SCALING_REPS` (default `3`, interleaved). The production fan-out
+# truncates at `MAX_SIMULATE_CONCURRENT`, so a count above 50 measures the
+# pre-filter cost over a longer input list, not a larger simulated set.
+# Measurements: `logs/bal_dispatch_scaling_result.md`.
+bal-dispatch-scaling-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-arbitrage --example bal_dispatch_scaling_probe -- {{ ARGS }}
+
+
 # The live OFF/ON dispatch capture analysis: parse one pair of
 # `DEGENBOT_DELTA_DISPATCH` bot captures apart by evidence class. The per-fan-out
 # rows (`fan-out storage selection`, `storage prefetch`, `[sim] cands=`) are

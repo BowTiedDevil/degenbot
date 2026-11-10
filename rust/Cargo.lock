@@ -2384,6 +2384,7 @@ name = "degenbot-arbitrage"
 version = "0.6.0-alpha.19"
 dependencies = [
  "alloy",
+ "alloy-eip7928",
  "alloy-json-rpc",
  "degenbot-bot",
  "degenbot-config",

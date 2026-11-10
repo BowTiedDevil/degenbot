@@ -2496,6 +2496,14 @@ mod tests {
     }
 }
 
+/// The scripted chain the dispatch-lane suites share with the dispatch-scaling
+/// probe: one lazy module file, compiled only for this crate's test build and
+/// included by path from the benchmark's own targets.
+#[cfg(test)]
+#[path = "../examples/shared/dispatch_probe.rs"]
+#[expect(dead_code, clippy::expect_used)] // the scripted chain fails loudly on a broken fixture
+mod probe;
+
 /// The BAL delta storage opt-in at the dispatch seam: what the fan-out reads
 /// candidates through, what it pays on the wire, and what it pays when the head
 /// does not settle ready.
@@ -2510,12 +2518,6 @@ mod delta_dispatch_tests {
 
     use crate::deployment::SimulationDeployment;
     use alloy::primitives::{Bytes, B256};
-    use alloy::providers::RootProvider;
-    use alloy::rpc::client::RpcClient;
-    use alloy::rpc::json_rpc::{
-        ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
-    };
-    use alloy::transports::{TransportError, TransportFut};
     use degenbot_rpc::provider::AlloyProvider;
     use degenbot_simulation::sim::evm2::delta_snapshot::{
         BalHeadDriver, HeadCold, HeadOutcome, HeadReadiness,
@@ -2525,280 +2527,9 @@ mod delta_dispatch_tests {
         WarmCodeCacheInner,
     };
     use degenbot_simulation::sim::ReadAnchor;
-    use serde_json::value::{to_raw_value, RawValue};
-    use std::borrow::Cow;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
-    const BLOCK: u64 = 100;
-
-    /// The empty EIP-7928 list: one complete, decodable list carrying no final
-    /// write, so a head that serves it settles READY and carries nothing.
-    const EMPTY_BAL: &[u8] = &[0xc0];
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum BalMode {
-        /// Serve the empty list.
-        Serving,
-        /// Refuse the method, as a node without the endpoint does.
-        Unsupported,
-        /// Answer, but only after a delay past any readiness deadline under test.
-        Slow,
-    }
-
-    /// The BAL endpoint's scripted behaviour.
-    type BalScript = std::sync::Mutex<BalMode>;
-
-    /// The default script: serve the list.
-    fn serving_bal() -> BalScript {
-        std::sync::Mutex::new(BalMode::Serving)
-    }
-
-    /// A scripted chain: one canonical head (`hash` + `parentHash`), zero
-    /// storage words, and the BAL endpoint's three behaviours.
-    #[derive(Clone)]
-    struct DeltaRecorder {
-        bal_requests: Arc<AtomicU64>,
-        head_reads: Arc<AtomicU64>,
-        storage_batches: Arc<AtomicU64>,
-        storage_members: Arc<AtomicU64>,
-        heads: Arc<std::sync::Mutex<std::collections::BTreeMap<u64, (B256, B256)>>>,
-        bal: Arc<BalScript>,
-        /// Every dispatched request's wire body — method + serialized params,
-        /// in dispatch order — so a lane's traffic can be compared byte for
-        /// byte against another construction's.
-        wire: Arc<std::sync::Mutex<Vec<String>>>,
-    }
-
-    impl Default for DeltaRecorder {
-        fn default() -> Self {
-            Self {
-                bal_requests: Arc::default(),
-                head_reads: Arc::default(),
-                storage_batches: Arc::default(),
-                storage_members: Arc::default(),
-                heads: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
-                bal: Arc::new(serving_bal()),
-                wire: Arc::default(),
-            }
-        }
-    }
-
-    impl DeltaRecorder {
-        /// Serve `number` as the canonical block `hash`, built on `parent`.
-        fn serve_head(&self, number: u64, hash: B256, parent: B256) {
-            self.heads
-                .lock()
-                .expect("recorder mutex")
-                .insert(number, (hash, parent));
-        }
-
-        fn head(&self, number: u64) -> (B256, B256) {
-            *self
-                .heads
-                .lock()
-                .expect("recorder mutex")
-                .get(&number)
-                .expect("the scripted chain serves this height")
-        }
-
-        fn set_bal_mode(&self, mode: BalMode) {
-            *self.bal.lock().expect("recorder mutex") = mode;
-        }
-
-        fn bal_requests(&self) -> u64 {
-            self.bal_requests.load(Ordering::Relaxed)
-        }
-
-        fn head_reads(&self) -> u64 {
-            self.head_reads.load(Ordering::Relaxed)
-        }
-
-        fn storage_batches(&self) -> u64 {
-            self.storage_batches.load(Ordering::Relaxed)
-        }
-
-        /// Every dispatched request's wire body, in dispatch order.
-        fn wire(&self) -> Vec<String> {
-            self.wire.lock().expect("recorder mutex").clone()
-        }
-
-        /// Forget the recorded wire bodies (never the counts a run already read).
-        fn clear_wire(&self) {
-            self.wire.lock().expect("recorder mutex").clear();
-        }
-    }
-
-    #[derive(Clone)]
-    struct RecordingTransport {
-        recorder: DeltaRecorder,
-    }
-
-    fn provider(recorder: &DeltaRecorder) -> AlloyProvider {
-        let client = RpcClient::new(
-            RecordingTransport {
-                recorder: recorder.clone(),
-            },
-            true,
-        );
-        let root: RootProvider = RootProvider::new(client);
-        AlloyProvider::from_provider(
-            Arc::new(root) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
-        )
-    }
-
-    fn success(value: &str) -> ResponsePayload {
-        let raw: Box<RawValue> =
-            to_raw_value(&serde_json::Value::String(value.into())).expect("valid JSON string");
-        ResponsePayload::Success(raw)
-    }
-
-    /// Record one dispatched request's wire body — method + serialized params —
-    /// in dispatch order.
-    fn record_wire(recorder: &DeltaRecorder, req: &SerializedRequest) {
-        recorder.wire.lock().expect("recorder mutex").push(format!(
-            "{} {}",
-            req.method(),
-            req.params().map_or("", |params| params.get())
-        ));
-    }
-
-    /// Whether this packet's BAL fetch must pay the slow endpoint's delay, so the
-    /// readiness deadline has something outstanding to fire against.
-    fn pays_slow_bal_delay(recorder: &DeltaRecorder, req: &RequestPacket) -> bool {
-        let is_bal = match req {
-            RequestPacket::Single(one) => one.method() == "debug_getRawBlockAccessList",
-            RequestPacket::Batch(many) => many
-                .iter()
-                .any(|one| one.method() == "debug_getRawBlockAccessList"),
-        };
-        is_bal && matches!(*recorder.bal.lock().expect("recorder mutex"), BalMode::Slow)
-    }
-
-    impl tower::Service<RequestPacket> for RecordingTransport {
-        type Response = ResponsePacket;
-        type Error = TransportError;
-        type Future = TransportFut<'static>;
-
-        fn poll_ready(
-            &mut self,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-
-        fn call(&mut self, req: RequestPacket) -> Self::Future {
-            let recorder = self.recorder.clone();
-            Box::pin(async move {
-                // A slow BAL endpoint PENDS: the readiness deadline must be able
-                // to fire while the fetch is outstanding, which a blocking sleep
-                // on this worker could not allow.
-                if pays_slow_bal_delay(&recorder, &req) {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                }
-                let respond = |req: &SerializedRequest| -> Response {
-                    record_wire(&recorder, req);
-                    let payload = match req.method() {
-                        "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
-                        "eth_getCode" => success("0x"),
-                        "eth_getStorageAt" => success(&format!("0x{:064x}", 0)),
-                        "eth_getBlockByNumber" => {
-                            recorder.head_reads.fetch_add(1, Ordering::Relaxed);
-                            // The request's block number rides the params; the
-                            // scripted chain keys its heads by height.
-                            let number = req
-                                .params()
-                                .and_then(|params| {
-                                    serde_json::from_str::<serde_json::Value>(params.get())
-                                        .ok()
-                                        .and_then(|value| {
-                                            value.get(0).and_then(|n| {
-                                                n.as_str()
-                                                    .and_then(|s| {
-                                                        u64::from_str_radix(
-                                                            s.trim_start_matches("0x"),
-                                                            16,
-                                                        )
-                                                        .ok()
-                                                    })
-                                                    .or_else(|| n.as_u64())
-                                            })
-                                        })
-                                })
-                                .expect("the lineage read names its block");
-                            let (hash, parent) = recorder.head(number);
-                            let raw: Box<RawValue> = to_raw_value(&serde_json::json!({
-                                "hash": hash,
-                                "parentHash": parent,
-                            }))
-                            .expect("valid JSON object");
-                            ResponsePayload::Success(raw)
-                        }
-                        "debug_getRawBlockAccessList" => {
-                            recorder.bal_requests.fetch_add(1, Ordering::Relaxed);
-                            match *recorder.bal.lock().expect("recorder mutex") {
-                                // The packet already paid the delay before this
-                                // response was built, so a slow endpoint answers
-                                // exactly like a serving one once it arrives.
-                                BalMode::Slow | BalMode::Serving => {}
-                                BalMode::Unsupported => {
-                                    return Response {
-                                        id: req.id().clone(),
-                                        payload: ResponsePayload::Failure(ErrorPayload {
-                                            code: -32_601,
-                                            message: Cow::Borrowed(
-                                                "method not found: debug_getRawBlockAccessList",
-                                            ),
-                                            data: None,
-                                        }),
-                                    };
-                                }
-                            }
-                            let raw: Box<RawValue> = to_raw_value(&serde_json::Value::String(
-                                alloy::primitives::hex::encode_prefixed(EMPTY_BAL),
-                            ))
-                            .expect("valid JSON value");
-                            ResponsePayload::Success(raw)
-                        }
-                        other => {
-                            return Response {
-                                id: req.id().clone(),
-                                payload: ResponsePayload::Failure(ErrorPayload {
-                                    code: -32_601,
-                                    message: format!("method not found: {other}").into(),
-                                    data: None,
-                                }),
-                            };
-                        }
-                    };
-                    Response {
-                        id: req.id().clone(),
-                        payload,
-                    }
-                };
-                Ok(match req {
-                    RequestPacket::Single(r) => ResponsePacket::Single(respond(&r)),
-                    RequestPacket::Batch(rs) => {
-                        if rs.iter().all(|r| r.method() == "eth_getStorageAt") {
-                            recorder.storage_batches.fetch_add(1, Ordering::Relaxed);
-                            recorder
-                                .storage_members
-                                .fetch_add(rs.len() as u64, Ordering::Relaxed);
-                        }
-                        ResponsePacket::Batch(rs.iter().map(respond).collect())
-                    }
-                })
-            })
-        }
-    }
-
-    fn runtime() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("multi-thread runtime")
-    }
+    use super::probe::{provider, runtime, settle_head, BalMode, DeltaRecorder, BLOCK};
 
     fn empty_cache() -> Arc<RwLock<WarmCodeCacheInner>> {
         WarmCodeCacheInner::shared_default()
@@ -2821,18 +2552,6 @@ mod delta_dispatch_tests {
             .read()
             .delta_heads(provider)
             .expect("the opt-in is on, so the session owns one driver")
-    }
-
-    /// Deliver, prepare and apply ONE head exactly as the canonical-head
-    /// pipeline does on the pump's header edge — deliberately on the OTHER side
-    /// of the fan-out, which is what makes the selection a query.
-    async fn settle_head(
-        driver: &Arc<BalHeadDriver>,
-        anchor: ReadAnchor,
-        parent_hash: B256,
-    ) -> HeadOutcome {
-        let ticket = driver.deliver(anchor, parent_hash);
-        driver.advance(ticket, &[]).await
     }
 
     /// The selection is a QUERY, never a producer: a head that never arrived on
