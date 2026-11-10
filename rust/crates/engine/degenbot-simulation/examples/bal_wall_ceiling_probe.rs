@@ -94,12 +94,25 @@
 //! and ceiling deltas (the planted delay lands only in the storage-wait
 //! bucket).
 //!
+//! # Density segmentation
+//!
+//! The corpus's anchors are segmented into the density regimes they actually
+//! record (`recorded_corpus::segments_by_density`: sparse under fifteen
+//! candidates, moderate to fifty, burst above), and every regime segment
+//! publishes its read-set diversity (new versus repeated keys, key age,
+//! survival, distinct contracts) and its real write overlap beside its
+//! cold-versus-carry replay: wall, eliminable storage wait, and the carry's
+//! reuse. A regime the corpus never recorded is named absent, never fabricated.
+//!
 //! # Usage
 //!
 //! ```sh
 //! just bal-wall-ceiling-probe                     # both modes x both price points, unplanted
 //! BAL_WALL_COVERAGE=real just bal-wall-ceiling-probe    # one mode (synthetic | real | both)
-//! BAL_WALL_TRACE=/tmp/fanout_trace.log \
+//! BAL_WALL_LEGS=cold,carry just bal-wall-ceiling-probe  # the legs (cold and carry; seed optional)
+//! BAL_WALL_TRACE=/tmp/bal_broader_trace.log \
+//! BAL_WALL_FIXTURE=rust/crates/engine/degenbot-simulation/tests/fixtures/bal_real_coverage_broader.json \
+//! BAL_WALL_COVERAGE=real BAL_WALL_LEGS=cold,carry just bal-wall-ceiling-probe
 //! BAL_WALL_STORAGE_US=700 BAL_WALL_ACCOUNT_US=1200 \
 //! BAL_WALL_W=2 BAL_WALL_F=8 just bal-wall-ceiling-probe
 //! BAL_WALL_PLANT_STORAGE_DELAY_US=500 just bal-wall-ceiling-probe   # first point, with deltas
@@ -142,13 +155,15 @@ mod wall_ledger;
 
 use modeled_chain::{write_selected, ChainState, Coverage, Key, StubChain};
 use probe_report::{
-    classify_hits, eliminable_ceiling, identity_gate, storage_accounting, CeilingReport, HitSplit,
-    StorageAccounting,
+    attribute_segment_spans, classify_hits, cross_check_live, eliminable_ceiling, identity_gate,
+    segment_ceiling, storage_accounting, write_overlap, CeilingReport, HitSplit, StorageAccounting,
+    WorkUnit,
 };
 use real_coverage::RealCoverage;
 use recorded_corpus::{
-    anchor_keys, candidate_addresses, group_by_anchor, load_rows, read_call_counts, universe,
-    Recorded, DEFAULT_TRACE,
+    anchor_keys, anchor_profiles, candidate_addresses, group_by_anchor, load_rows,
+    read_call_counts, segments_by_density, shape, universe, AnchorProfile, CorpusShape,
+    DensityRegime, Recorded, Segment, DEFAULT_TRACE,
 };
 use session_drive::{drive_lanes, LanePlan, LegFacts};
 use wall_ledger::{
@@ -170,12 +185,106 @@ const DEFAULT_FIXTURE: &str = concat!(
     "/tests/fixtures/bal_real_coverage.json"
 );
 
-/// The live `bal_carry_probe` accounting this corpus produced — the real
-/// mode's cross-check. Any discrepancy is a failing gate, never a hidden one.
-const LIVE_ANCHOR_KEYS: usize = 5_938;
-const LIVE_CARRIED_HITS: usize = 3_261;
-const LIVE_FINAL_WRITE_HITS: usize = 136;
-const LIVE_DYNAMIC_MEMBERS: usize = 2_541;
+/// The live `bal_carry_probe` accounting each recorded corpus produced — the
+/// real mode's cross-check target, measured by the live probe over the same
+/// stretch. Any discrepancy is a failing gate, never a hidden one.
+struct LiveProfile {
+    /// The corpus stretch's canonical blocks.
+    first: u64,
+    last: u64,
+    /// The per-anchor distinct-key accounting the live probe reported.
+    accounting: StorageAccounting,
+}
+
+const LIVE_PROFILES: &[LiveProfile] = &[
+    LiveProfile {
+        first: 26_375_033,
+        last: 26_375_053,
+        accounting: StorageAccounting {
+            keys: 5_938,
+            carried: 3_261,
+            final_write: 136,
+            dynamic: 2_541,
+        },
+    },
+    LiveProfile {
+        first: 26_380_992,
+        last: 26_381_018,
+        accounting: StorageAccounting {
+            keys: 6_478,
+            carried: 3_711,
+            final_write: 164,
+            dynamic: 2_603,
+        },
+    },
+];
+
+/// The corpus stretch's live accounting to cross-check against, when the
+/// stretch carries one.
+fn live_profile(first: u64, last: u64) -> Option<&'static StorageAccounting> {
+    LIVE_PROFILES
+        .iter()
+        .find(|profile| profile.first == first && profile.last == last)
+        .map(|profile| &profile.accounting)
+}
+
+/// One replay leg's cache policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegKind {
+    /// A new empty hub per candidate anchor.
+    Cold,
+    /// Exact-anchor final writes seeded into each empty hub.
+    Seed,
+    /// Parent-linked carry-forward through every block of the range.
+    Carry,
+}
+
+/// The segment each block's work units are attributed to: a block's chain
+/// maintenance is charged to the segment of the fan-out it serves next, and
+/// the tail past the last anchor stays with the last anchor's segment.
+struct SegmentMap {
+    to_segment: BTreeMap<u64, usize>,
+}
+
+impl SegmentMap {
+    /// Build the attribution over `first..=last` from the segments' anchors.
+    fn build(segments: &[Segment], first: u64, last: u64) -> Self {
+        let mut anchor_segments: Vec<(u64, usize)> = segments
+            .iter()
+            .enumerate()
+            .flat_map(|(index, segment)| {
+                segment
+                    .anchors
+                    .iter()
+                    .map(move |block| (*block, index))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        anchor_segments.sort_unstable();
+        let mut to_segment: BTreeMap<u64, usize> = BTreeMap::new();
+        let mut anchor = anchor_segments.iter().peekable();
+        for number in first..=last {
+            while anchor.peek().is_some_and(|(block, _)| *block < number) {
+                anchor.next();
+            }
+            let segment = anchor
+                .peek()
+                .map(|(_, segment)| *segment)
+                .or_else(|| anchor_segments.last().map(|(_, segment)| *segment))
+                .expect("a segmented corpus holds at least one anchor");
+            to_segment.insert(number, segment);
+        }
+        Self { to_segment }
+    }
+
+    /// The segment a block's work units belong to.
+    fn segment_of(&self, block: u64) -> usize {
+        self.to_segment
+            .get(&block)
+            .copied()
+            .expect("every corpus block is attributed to a segment")
+    }
+}
 
 fn env_us(name: &str) -> Option<Duration> {
     std::env::var(name)
@@ -203,6 +312,8 @@ struct Config {
     capture: bool,
     /// The coverage modes to report, in report order.
     modes: Vec<(&'static str, Coverage)>,
+    /// The legs to drive, in report order (`BAL_WALL_LEGS`).
+    legs: Vec<LegKind>,
     /// The `(storage, account)` latency points to report.
     points: Vec<(Duration, Duration)>,
     limits: FanoutLimits,
@@ -229,6 +340,42 @@ impl ModeChain<'_> {
     fn parent_hash(&self, number: u64) -> Result<B256, String> {
         self.coverage.parent_hash(self.real, number)
     }
+}
+
+/// Fold `BAL_WALL_LEGS` (comma-separated `cold`, `seed`, `carry`; default all
+/// three) into the legs to drive. The cold-versus-carry comparison needs both
+/// of its legs; the seed leg is the optional third.
+///
+/// # Errors
+///
+/// A leg name this probe does not implement, or a selection without both
+/// comparison legs, is a broken invocation, never a silent default.
+fn parse_legs() -> Result<Vec<LegKind>, String> {
+    let raw = std::env::var("BAL_WALL_LEGS").unwrap_or_else(|_| "cold,seed,carry".into());
+    let mut legs = Vec::new();
+    for name in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let leg = match name {
+            "cold" => LegKind::Cold,
+            "seed" => LegKind::Seed,
+            "carry" => LegKind::Carry,
+            other => {
+                return Err(format!(
+                    "BAL_WALL_LEGS={other}: expected cold, seed, or carry"
+                ))
+            }
+        };
+        if !legs.contains(&leg) {
+            legs.push(leg);
+        }
+    }
+    if !legs.contains(&LegKind::Cold) || !legs.contains(&LegKind::Carry) {
+        return Err("BAL_WALL_LEGS must drive both cold and carry".to_string());
+    }
+    Ok(legs)
 }
 
 impl Config {
@@ -274,6 +421,7 @@ impl Config {
             fixture: std::env::var("BAL_WALL_FIXTURE").unwrap_or_else(|_| DEFAULT_FIXTURE.into()),
             capture: std::env::var("BAL_WALL_FIXTURE_CAPTURE").is_ok(),
             modes,
+            legs: parse_legs()?,
             points,
             limits: FanoutLimits::new(env_count("BAL_WALL_W", 2), env_count("BAL_WALL_F", 8)),
             plant_storage: env_us("BAL_WALL_PLANT_STORAGE_DELAY_US").unwrap_or(Duration::ZERO),
@@ -290,6 +438,22 @@ fn debug_enabled() -> bool {
 }
 
 // ── One leg's report ──────────────────────────────────────────────────────
+
+/// One leg work unit's measurement: the spans it recorded and the wall it
+/// spent.
+struct UnitFact {
+    /// The span slice the unit recorded.
+    unit: WorkUnit,
+    /// The wall the unit spent, measured around its own work.
+    wall: Duration,
+}
+
+/// One anchor's replay measurement folded for the per-segment report.
+struct AnchorFold {
+    block: u64,
+    hits: HitSplit,
+    storage: StorageAccounting,
+}
 
 /// What one policy's leg measured at one latency point.
 struct LegSummary {
@@ -322,6 +486,19 @@ struct LegSummary {
     bal_fetches: u64,
     /// The distinct-key per-anchor storage accounting (the live probe's shape).
     storage: StorageAccounting,
+    /// Every work unit's span slice and measured wall (the segment attribution).
+    units: Vec<UnitFact>,
+    /// Every anchor's own hit split and distinct-key accounting.
+    anchors: Vec<AnchorFold>,
+    /// The per-segment gross bucket sums the units fold into.
+    segment_gross: Vec<[u64; 6]>,
+    /// Snapshot clone wall summed over the advances, and the largest one.
+    clone_ns: u64,
+    clone_ns_max: u64,
+    /// Snapshot entries after each advance: the memory growth series.
+    snapshot_growth: Vec<(u64, usize)>,
+    /// Resident memory at the leg's start and end, when the platform reports it.
+    resident_kb: (Option<u64>, Option<u64>),
     digests: Digests,
 }
 
@@ -347,12 +524,19 @@ impl LegSummary {
             carried_values: 0,
             bal_fetches: 0,
             storage: StorageAccounting::default(),
+            units: Vec::new(),
+            anchors: Vec::new(),
+            segment_gross: Vec::new(),
+            clone_ns: 0,
+            clone_ns_max: 0,
+            snapshot_growth: Vec::new(),
+            resident_kb: (None, None),
             digests: Digests::new(),
         }
     }
 
     /// Fold one anchor's drive into the leg.
-    fn fold(&mut self, facts: &LegFacts, hits: HitSplit, storage: StorageAccounting) {
+    fn fold(&mut self, block: u64, facts: &LegFacts, hits: HitSplit, storage: StorageAccounting) {
         assert_eq!(
             facts.label, self.label,
             "a drive's label names the leg it belongs to"
@@ -370,27 +554,49 @@ impl LegSummary {
         self.memo_hits += facts.memo_hits;
         self.hits.add(hits);
         self.storage.add(storage);
+        self.anchors.push(AnchorFold {
+            block,
+            hits,
+            storage,
+        });
         self.digests.extend(facts.digests.clone());
     }
 
-    /// Close the leg: reconcile its ledger and summarize its completions.
-    fn finish(mut self, ledger: &WallLedger) -> Result<Self, String> {
+    /// Close the leg: reconcile its ledger, fold its units into per-segment
+    /// gross sums, and summarize its completions.
+    fn finish(mut self, ledger: &WallLedger, segments: usize) -> Result<Self, String> {
         self.wall_ns = ledger.offset();
-        self.wall = reconcile(&ledger.spans(), self.wall_ns)?;
+        let spans = ledger.spans();
+        self.wall = reconcile(&spans, self.wall_ns)?;
         self.completions = completion_stats(ledger.completions())?;
+        let units: Vec<WorkUnit> = self.units.iter().map(|fact| fact.unit).collect();
+        self.segment_gross = attribute_segment_spans(&units, &spans, segments)?;
         Ok(self)
     }
 }
 
-/// The three legs of one latency point.
+/// The legs of one latency point.
 struct PointRun {
     storage: Duration,
     account: Duration,
     plant_storage: Duration,
     cold: LegSummary,
-    seed: LegSummary,
+    /// The optional same-anchor seeding leg (`BAL_WALL_LEGS`).
+    seed: Option<LegSummary>,
     carry: LegSummary,
     ceiling: CeilingReport,
+}
+
+impl PointRun {
+    /// The driven legs, in report order.
+    fn legs(&self) -> Vec<&LegSummary> {
+        let mut legs = vec![&self.cold];
+        if let Some(seed) = &self.seed {
+            legs.push(seed);
+        }
+        legs.push(&self.carry);
+        legs
+    }
 }
 
 // ── The legs ──────────────────────────────────────────────────────────────
@@ -412,11 +618,15 @@ async fn drive_cold(
     fanouts: &[(u64, Vec<Recorded>)],
     provider: &AlloyProvider,
     node: Node,
+    map: &SegmentMap,
+    segments: usize,
 ) -> Result<LegSummary, String> {
     let ledger = WallLedger::new();
     let mut summary = LegSummary::new("cold");
     for (block, rows) in fanouts {
         let hub = ReadHub::new(provider, ReadAnchor::identified(*block, mode.hash(*block)?));
+        let first_span = ledger.spans().len();
+        let started = Instant::now();
         let facts = drive_lanes(
             "cold",
             leg_plan(config),
@@ -428,6 +638,14 @@ async fn drive_cold(
             &ledger,
         )
         .await?;
+        summary.units.push(UnitFact {
+            unit: WorkUnit {
+                first_span,
+                end_span: ledger.spans().len(),
+                segment: map.segment_of(*block),
+            },
+            wall: started.elapsed(),
+        });
         let hits = classify_hits(
             &read_call_counts(rows),
             &BTreeSet::new(),
@@ -435,9 +653,9 @@ async fn drive_cold(
             facts.memo_hits,
         );
         let storage = storage_accounting(&anchor_keys(rows), &BTreeSet::new(), &BTreeSet::new());
-        summary.fold(&facts, hits, storage);
+        summary.fold(*block, &facts, hits, storage);
     }
-    summary.finish(&ledger)
+    summary.finish(&ledger, segments)
 }
 
 /// Cold plus exact-anchor final writes: each anchor's block list is fetched
@@ -449,12 +667,15 @@ async fn drive_seed(
     fanouts: &[(u64, Vec<Recorded>)],
     provider: &AlloyProvider,
     node: Node,
+    map: &SegmentMap,
+    segments: usize,
 ) -> Result<LegSummary, String> {
     let ledger = WallLedger::new();
     let mut summary = LegSummary::new("seed");
     for (block, rows) in fanouts {
         let hub = ReadHub::new(provider, ReadAnchor::identified(*block, mode.hash(*block)?));
-        let started = Instant::now();
+        let unit_start = ledger.spans().len();
+        let unit_started = Instant::now();
         let raw = provider
             .get_raw_block_access_list(mode.hash(*block)?)
             .await
@@ -462,7 +683,7 @@ async fn drive_seed(
         let seed = decode_bal_seed(&raw, &BalPlan::default())
             .map_err(|error| format!("list decode at {block}: {error}"))?;
         ledger.record_fixed(WallBucket::BalFetchDecode, node.bal());
-        ledger.record_since(WallBucket::BalFetchDecode, started);
+        ledger.record_since(WallBucket::BalFetchDecode, unit_started);
         let seeded_keys: BTreeSet<Key> = seed.writes.iter().map(|&(a, s, _)| (a, s)).collect();
         let started = Instant::now();
         let report = hub.seed_bal(&seed);
@@ -482,6 +703,14 @@ async fn drive_seed(
             &ledger,
         )
         .await?;
+        summary.units.push(UnitFact {
+            unit: WorkUnit {
+                first_span: unit_start,
+                end_span: ledger.spans().len(),
+                segment: map.segment_of(*block),
+            },
+            wall: unit_started.elapsed(),
+        });
         let hits = classify_hits(
             &read_call_counts(rows),
             &seeded_keys,
@@ -489,9 +718,9 @@ async fn drive_seed(
             facts.memo_hits,
         );
         let storage = storage_accounting(&anchor_keys(rows), &seeded_keys, &BTreeSet::new());
-        summary.fold(&facts, hits, storage);
+        summary.fold(*block, &facts, hits, storage);
     }
-    summary.finish(&ledger)
+    summary.finish(&ledger, segments)
 }
 
 /// Time one advance's list fetch/decode and snapshot clone/update into the
@@ -511,6 +740,9 @@ fn fold_advance(
         .saturating_sub(report.clone_time);
     ledger.record_fixed(WallBucket::SnapshotCloneUpdate, applied_wall);
     summary.bal_fetches += 1;
+    let clone_ns = u64::try_from(report.clone_time.as_nanos()).unwrap_or(u64::MAX);
+    summary.clone_ns = summary.clone_ns.saturating_add(clone_ns);
+    summary.clone_ns_max = summary.clone_ns_max.max(clone_ns);
     summary.writes_applied = summary
         .writes_applied
         .saturating_add(u64::try_from(report.writes.len()).unwrap_or(u64::MAX));
@@ -524,6 +756,14 @@ fn fold_advance(
     }
 }
 
+/// The process's resident memory in KiB, when the platform reports it: the
+/// snapshot's memory growth beside the entry counts, reported, never asserted.
+fn resident_kb() -> Option<u64> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages.saturating_mul(4))
+}
+
 /// Parent-linked carry-forward: every block of the range advanced through the
 /// production `advance_bal` pipeline (list fetch/decode and snapshot
 /// clone/update timed), the anchors' candidates driven against the carried
@@ -534,9 +774,12 @@ async fn drive_carry(
     fanouts: &[(u64, Vec<Recorded>)],
     provider: &AlloyProvider,
     node: Node,
+    map: &SegmentMap,
+    segments: usize,
 ) -> Result<LegSummary, String> {
     let ledger = WallLedger::new();
     let mut summary = LegSummary::new("carry");
+    summary.resident_kb = (resident_kb(), None);
     let cache = ReadHubCache::new(provider);
     let first = fanouts.first().map_or(0, |(block, _)| *block);
     let last = fanouts.last().map_or(0, |(block, _)| *block);
@@ -552,7 +795,8 @@ async fn drive_carry(
             .get(&number)
             .map(|rows| candidate_addresses(rows))
             .unwrap_or_default();
-        let started = Instant::now();
+        let unit_start = ledger.spans().len();
+        let unit_started = Instant::now();
         let (hub, report) = cache
             .advance_bal(
                 ReadAnchor::identified(number, mode.hash(number)?),
@@ -560,10 +804,21 @@ async fn drive_carry(
                 &relevance,
             )
             .await;
-        let advance_wall = started.elapsed();
+        let advance_wall = unit_started.elapsed();
         fold_advance(&ledger, node, &mut summary, &report, advance_wall);
+        summary.units.push(UnitFact {
+            unit: WorkUnit {
+                first_span: unit_start,
+                end_span: ledger.spans().len(),
+                segment: map.segment_of(number),
+            },
+            wall: advance_wall,
+        });
+        summary.snapshot_growth.push((number, hub.memoized_slots()));
         let write_keys: BTreeSet<Key> = report.writes.iter().copied().collect();
         if let Some(rows) = anchors.get(&number) {
+            let unit_start = ledger.spans().len();
+            let unit_started = Instant::now();
             let facts = drive_lanes(
                 "carry",
                 leg_plan(config),
@@ -575,6 +830,14 @@ async fn drive_carry(
                 &ledger,
             )
             .await?;
+            summary.units.push(UnitFact {
+                unit: WorkUnit {
+                    first_span: unit_start,
+                    end_span: ledger.spans().len(),
+                    segment: map.segment_of(number),
+                },
+                wall: unit_started.elapsed(),
+            });
             let keys = anchor_keys(rows);
             let hits = classify_hits(
                 &read_call_counts(rows),
@@ -583,15 +846,16 @@ async fn drive_carry(
                 facts.memo_hits,
             );
             let storage = storage_accounting(&keys, &write_keys, &snapshot_keys);
-            summary.fold(&facts, hits, storage);
+            summary.fold(number, &facts, hits, storage);
             snapshot_keys.extend(keys);
         }
         snapshot_keys.extend(write_keys);
     }
-    summary.finish(&ledger)
+    summary.resident_kb.1 = resident_kb();
+    summary.finish(&ledger, segments)
 }
 
-/// Run the three legs of one latency point and compute its ceiling.
+/// Run the selected legs of one latency point and compute its ceiling.
 #[expect(
     clippy::too_many_arguments,
     reason = "the point's controls (prices, plant, observation sink) are the comparison's inputs"
@@ -605,26 +869,36 @@ async fn run_point(
     account: Duration,
     plant_storage: Duration,
     plant: Option<&Arc<AtomicBool>>,
+    map: &SegmentMap,
+    segments: usize,
     observed: &mut Vec<(String, Digests)>,
 ) -> Result<PointRun, String> {
     let node = Node::new(storage, account).with_plant(plant_storage);
-    let cold = drive_cold(config, mode, fanouts, provider, node).await?;
-    let seed = drive_seed(config, mode, fanouts, provider, node).await?;
+    let cold = drive_cold(config, mode, fanouts, provider, node, map, segments).await?;
+    let seed = if config.legs.contains(&LegKind::Seed) {
+        Some(drive_seed(config, mode, fanouts, provider, node, map, segments).await?)
+    } else {
+        None
+    };
     if let Some(flag) = plant {
         flag.store(true, Ordering::Relaxed);
     }
-    let carry = drive_carry(config, mode, fanouts, provider, node).await;
+    let carry = drive_carry(config, mode, fanouts, provider, node, map, segments).await;
     if let Some(flag) = plant {
         flag.store(false, Ordering::Relaxed);
     }
     let carry = carry?;
-    let ceiling = eliminable_ceiling(
-        &cold.wall,
-        &[("seed", seed.wall.clone()), ("carry", carry.wall.clone())],
-    )?;
-    for summary in [&cold, &seed, &carry] {
-        observed.push((summary.label.to_string(), summary.digests.clone()));
+    let mut policies: Vec<(&'static str, WallReport)> = Vec::new();
+    if let Some(seed) = &seed {
+        policies.push(("seed", seed.wall.clone()));
     }
+    policies.push(("carry", carry.wall.clone()));
+    let ceiling = eliminable_ceiling(&cold.wall, &policies)?;
+    observed.push(("cold".to_string(), cold.digests.clone()));
+    if let Some(seed) = &seed {
+        observed.push((seed.label.to_string(), seed.digests.clone()));
+    }
+    observed.push((carry.label.to_string(), carry.digests.clone()));
     Ok(PointRun {
         storage,
         account,
@@ -710,15 +984,23 @@ fn print_reconciliation(leg: &LegSummary) {
 }
 
 fn print_ceiling(run: &PointRun) {
-    let seed_removed = run
-        .cold
-        .wall
-        .bucket(WallBucket::StorageWait)
-        .saturating_sub(run.seed.wall.bucket(WallBucket::StorageWait));
-    let seed_share = seed_removed.saturating_mul(1_000) / run.cold.wall_ns.max(1);
+    let seed_note = run.seed.as_ref().map_or_else(String::new, |seed| {
+        let removed = run
+            .cold
+            .wall
+            .bucket(WallBucket::StorageWait)
+            .saturating_sub(seed.wall.bucket(WallBucket::StorageWait));
+        let share = removed.saturating_mul(1_000) / run.cold.wall_ns.max(1);
+        format!(
+            "; seed removes {}us = {}.{:01}%",
+            us(removed),
+            share / 10,
+            share % 10
+        )
+    });
     println!(
         "  eliminable storage-wait ceiling (over a cold wall of {}us): {} removes {}us = \
-         {}.{:01}% (gross {}us = {}.{:01}%); seed removes {}us = {}.{:01}%",
+         {}.{:01}% (gross {}us = {}.{:01}%){seed_note}",
         us(run.cold.wall_ns),
         run.ceiling.policy,
         us(run.ceiling.eliminated_ns),
@@ -727,9 +1009,6 @@ fn print_ceiling(run: &PointRun) {
         us(run.ceiling.eliminated_gross_ns),
         run.ceiling.gross_share_thousandths / 10,
         run.ceiling.gross_share_thousandths % 10,
-        us(seed_removed),
-        seed_share / 10,
-        seed_share % 10,
     );
 }
 
@@ -743,10 +1022,10 @@ fn print_point(run: &PointRun) {
         run.plant_storage.as_micros(),
     );
     print_leg_header();
-    for leg in [&run.cold, &run.seed, &run.carry] {
+    for leg in run.legs() {
         print_leg_row(leg);
     }
-    for leg in [&run.cold, &run.seed, &run.carry] {
+    for leg in run.legs() {
         print_reconciliation(leg);
     }
     print_ceiling(run);
@@ -780,19 +1059,15 @@ fn print_plant_delta(base: &PointRun, planted: &PointRun) {
             "snap_d_us",
             "other_d_us"
         );
-        for (label, base, planted) in [
-            ("cold", &base.cold, &planted.cold),
-            ("seed", &base.seed, &planted.seed),
-            ("carry", &base.carry, &planted.carry),
-        ] {
+        for (base_leg, planted_leg) in base.legs().into_iter().zip(planted.legs()) {
             let delta = |bucket: WallBucket| -> i64 {
-                let before = i64::try_from(pick(base, bucket)).unwrap_or(i64::MAX);
-                let after = i64::try_from(pick(planted, bucket)).unwrap_or(i64::MAX);
+                let before = i64::try_from(pick(base_leg, bucket)).unwrap_or(i64::MAX);
+                let after = i64::try_from(pick(planted_leg, bucket)).unwrap_or(i64::MAX);
                 (after - before) / 1_000
             };
             println!(
                 "  {:<5} {:>10} {:>11} {:>11} {:>9} {:>10} {:>10}",
-                label,
+                base_leg.label,
                 delta(WallBucket::RecordedExec),
                 delta(WallBucket::StorageWait),
                 delta(WallBucket::AccountWait),
@@ -901,11 +1176,12 @@ fn print_storage_accounting(label: &str, point: &PointRun) {
     println!(
         "  storage accounting [{label}] (distinct keys per anchor, the live bal_carry_probe's shape):"
     );
-    for (leg, accounting) in [
-        ("cold", &point.cold.storage),
-        ("seed", &point.seed.storage),
-        ("carry", &point.carry.storage),
-    ] {
+    let mut legs = vec![("cold", &point.cold.storage)];
+    if let Some(seed) = &point.seed {
+        legs.push(("seed", &seed.storage));
+    }
+    legs.push(("carry", &point.carry.storage));
+    for (leg, accounting) in legs {
         println!(
             "    {leg:<5} keys {} carried {} final-write {} dynamic {}",
             accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
@@ -913,32 +1189,34 @@ fn print_storage_accounting(label: &str, point: &PointRun) {
     }
 }
 
-/// The real mode's carry accounting must be the live `bal_carry_probe`'s
-/// counts for this corpus — a discrepancy is a failing gate, never hidden.
-fn cross_check_live(accounting: &StorageAccounting) -> Result<(), String> {
-    let matched = accounting.keys == LIVE_ANCHOR_KEYS
-        && accounting.carried == LIVE_CARRIED_HITS
-        && accounting.final_write == LIVE_FINAL_WRITE_HITS
-        && accounting.dynamic == LIVE_DYNAMIC_MEMBERS;
-    if matched {
-        println!(
-            "  live cross-check: GREEN (keys {}, carried {}, final-write {}, dynamic {} — the \
-             bal_carry_probe's counts)",
-            accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
-        );
-        return Ok(());
+/// The real mode's carry accounting must reproduce the live `bal_carry_probe`'s
+/// counts for this corpus — a discrepancy is a failing gate, never hidden, and
+/// a stretch the live probe never measured has no offline verdict to trust.
+fn report_live_cross_check(
+    first: u64,
+    last: u64,
+    accounting: &StorageAccounting,
+) -> Result<(), String> {
+    let Some(live) = live_profile(first, last) else {
+        return Err(format!(
+            "the live bal_carry_probe holds no accounting for {first}..={last}: measure the stretch \
+             live before replaying its real coverage"
+        ));
+    };
+    match cross_check_live(accounting, live) {
+        Ok(()) => {
+            println!(
+                "  live cross-check: GREEN (keys {}, carried {}, final-write {}, dynamic {} — the \
+                 bal_carry_probe's counts)",
+                accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
+            );
+            Ok(())
+        }
+        Err(error) => {
+            println!("  live cross-check: RED ({error})");
+            Err(error)
+        }
     }
-    println!(
-        "  live cross-check: RED (replay keys {}, carried {}, final-write {}, dynamic {} vs live \
-         {LIVE_ANCHOR_KEYS}, {LIVE_CARRIED_HITS}, {LIVE_FINAL_WRITE_HITS}, {LIVE_DYNAMIC_MEMBERS})",
-        accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
-    );
-    Err(format!(
-        "real coverage's carry accounting (keys {}, carried {}, final-write {}, dynamic {}) does \
-         not match the live bal_carry_probe ({LIVE_ANCHOR_KEYS}, {LIVE_CARRIED_HITS}, \
-         {LIVE_FINAL_WRITE_HITS}, {LIVE_DYNAMIC_MEMBERS})",
-        accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
-    ))
 }
 
 /// The cross-mode value gate: the shared chain means both coverage modes
@@ -1036,24 +1314,34 @@ fn print_coverage_comparison(
             bucket(&real.cold, WallBucket::StorageWait)
         ),
     );
-    for (name, left, right) in [
-        ("seed wall_us / storage_us", &synthetic.seed, &real.seed),
-        ("carry wall_us / storage_us", &synthetic.carry, &real.carry),
-    ] {
+    if let (Some(synthetic_seed), Some(real_seed)) = (&synthetic.seed, &real.seed) {
         row(
-            name,
+            "seed wall_us / storage_us",
             format!(
                 "{}/{}",
-                us(left.wall_ns),
-                bucket(left, WallBucket::StorageWait)
+                us(synthetic_seed.wall_ns),
+                bucket(synthetic_seed, WallBucket::StorageWait)
             ),
             format!(
                 "{}/{}",
-                us(right.wall_ns),
-                bucket(right, WallBucket::StorageWait)
+                us(real_seed.wall_ns),
+                bucket(real_seed, WallBucket::StorageWait)
             ),
         );
     }
+    row(
+        "carry wall_us / storage_us",
+        format!(
+            "{}/{}",
+            us(synthetic.carry.wall_ns),
+            bucket(&synthetic.carry, WallBucket::StorageWait)
+        ),
+        format!(
+            "{}/{}",
+            us(real.carry.wall_ns),
+            bucket(&real.carry, WallBucket::StorageWait)
+        ),
+    );
     row(
         "carry buckets us (exec/account/bal/other)",
         format!(
@@ -1144,19 +1432,21 @@ fn print_coverage_comparison(
             real.carry.writes_applied, real.carry.writes_skipped
         ),
     );
-    row(
-        "seed keys (distinct: carried/final-write/dyn)",
-        format!(
-            "{}/{}/{}",
-            synthetic.seed.storage.carried,
-            synthetic.seed.storage.final_write,
-            synthetic.seed.storage.dynamic
-        ),
-        format!(
-            "{}/{}/{}",
-            real.seed.storage.carried, real.seed.storage.final_write, real.seed.storage.dynamic
-        ),
-    );
+    if let (Some(synthetic_seed), Some(real_seed)) = (&synthetic.seed, &real.seed) {
+        row(
+            "seed keys (distinct: carried/final-write/dyn)",
+            format!(
+                "{}/{}/{}",
+                synthetic_seed.storage.carried,
+                synthetic_seed.storage.final_write,
+                synthetic_seed.storage.dynamic
+            ),
+            format!(
+                "{}/{}/{}",
+                real_seed.storage.carried, real_seed.storage.final_write, real_seed.storage.dynamic
+            ),
+        );
+    }
 
     println!("  ceiling decomposition (carried reuse vs optimistic modeled write coverage):");
     println!(
@@ -1190,6 +1480,218 @@ fn print_coverage_comparison(
             % 10,
         real.ceiling.share_thousandths / 10,
         real.ceiling.share_thousandths % 10
+    );
+}
+
+/// A ratio as `whole.milli` for the report's mean columns.
+fn milli(sum: u64, count: u64) -> String {
+    let scaled = sum.saturating_mul(1_000) / count.max(1);
+    format!("{}.{:03}", scaled / 1_000, scaled % 1_000)
+}
+
+/// The corpus's density segmentation: the per-anchor profiles, one segment per
+/// recorded regime with its read-set diversity and real write overlap, and the
+/// regimes the corpus never recorded named as absent.
+fn print_segments(
+    corpus: &CorpusShape,
+    profiles: &[AnchorProfile],
+    segments: &[Segment],
+    real: &RealCoverage,
+) -> Result<(), String> {
+    println!();
+    println!(
+        "corpus shape: {} candidates, {} candidate anchors, {} candidate-anchor keys, {} anchored \
+         keys, {} global keys, {} contracts",
+        corpus.candidates,
+        corpus.candidate_anchors,
+        corpus.candidate_anchor_keys,
+        corpus.anchored_keys,
+        corpus.global_keys,
+        corpus.contracts
+    );
+    println!("per-anchor density and read-set novelty:");
+    println!(
+        "  {:>8}  {:<8} {:>6} {:>8} {:>7} {:>5} {:>8}",
+        "block", "regime", "cands", "reads", "keys", "new", "contracts"
+    );
+    for profile in profiles {
+        let regime = profile.regime.label();
+        let block = profile.block;
+        let cands = profile.candidates;
+        let reads = profile.read_calls;
+        let keys = profile.keys;
+        let new = profile.new_keys;
+        let contracts = profile.contracts;
+        println!(
+            "  {block:>8}  {regime:<8} {cands:>6} {reads:>8} {keys:>7} {new:>5} {contracts:>8}"
+        );
+    }
+    println!(
+        "per-segment density regimes (age = blocks since a key's corpus-first appearance; writes \
+         = read-set keys the segment's real lists write / all such writes):"
+    );
+    println!(
+        "  {:<8} {:>4} {:>6} {:>8} {:>7} {:>5} {:>8} {:>7} {:>8} {:>7} {:>8} {:>8} {:>8} {:>11}",
+        "regime",
+        "anc",
+        "cands",
+        "reads",
+        "keys",
+        "new",
+        "repeated",
+        "contr",
+        "age-mean",
+        "age-max",
+        "survive",
+        "recurred",
+        "surviving",
+        "writes"
+    );
+    for segment in segments {
+        let span_first = *segment.anchors.first().expect("a segment holds an anchor");
+        let span_last = *segment.anchors.last().expect("a segment holds an anchor");
+        let overlap = write_overlap(&segment.keys, real, span_first, span_last)?;
+        let regime = segment.regime.label();
+        let anchors = segment.anchors.len();
+        let cands = segment.candidates;
+        let reads = segment.read_calls;
+        let keys = segment.keys.len();
+        let new = segment.new_keys;
+        let repeated = segment.repeated_keys;
+        let contracts = segment.contracts;
+        let age_mean = milli(segment.key_age_sum_blocks, segment.key_age_pairs);
+        let age_max = segment.key_age_max_blocks;
+        let key_count = u64::try_from(keys).unwrap_or(u64::MAX);
+        let survive = milli(segment.survival_anchor_sum, key_count);
+        let recurred = segment.recurred_keys;
+        let surviving = segment.surviving_keys;
+        let written = overlap.written_in_span;
+        let span_writes = overlap.span_writes;
+        println!(
+            "  {regime:<8} {anchors:>4} {cands:>6} {reads:>8} {keys:>7} {new:>5} {repeated:>8} \
+             {contracts:>7} {age_mean:>8} {age_max:>7} {survive:>8} {recurred:>8} {surviving:>8} \
+             {written:>6}/{span_writes:<4}"
+        );
+    }
+    let absent: Vec<&str> = [
+        DensityRegime::Sparse,
+        DensityRegime::Moderate,
+        DensityRegime::Burst,
+    ]
+    .into_iter()
+    .filter(|regime| !segments.iter().any(|segment| segment.regime == *regime))
+    .map(DensityRegime::label)
+    .collect();
+    if absent.is_empty() {
+        println!("density regimes: sparse, moderate, and burst all recorded in this corpus");
+    } else {
+        println!(
+            "density regimes absent from this corpus, never fabricated: {}",
+            absent.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// One latency point's per-segment cold-versus-carry view: the segment's work
+/// units' measured wall, the gross storage wait the carry removes, and the
+/// carry's distinct-key and call-level reuse by regime.
+fn print_segment_replay(run: &PointRun, segments: &[Segment]) -> Result<(), String> {
+    println!(
+        "  per-segment cold vs carry (wall = the segment's work units measured; storage = gross \
+         spans; share over the segment's cold wall):"
+    );
+    println!(
+        "  {:<8} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} {:>7} | {:>6} {:>8} {:>8} {:>7} | {:>8} {:>8}",
+        "regime",
+        "cold_us",
+        "carry_us",
+        "d_us",
+        "cold_stor",
+        "carry_stor",
+        "eliminated",
+        "share",
+        "keys",
+        "carried",
+        "final-wr",
+        "dynamic",
+        "hit-carry",
+        "hit-final"
+    );
+    for (index, segment) in segments.iter().enumerate() {
+        let unit_wall = |leg: &LegSummary| -> u64 {
+            leg.units
+                .iter()
+                .filter(|fact| fact.unit.segment == index)
+                .map(|fact| u64::try_from(fact.wall.as_nanos()).unwrap_or(u64::MAX))
+                .fold(0u64, u64::saturating_add)
+        };
+        let cold_wall = unit_wall(&run.cold);
+        let carry_wall = unit_wall(&run.carry);
+        let delta = i64::try_from(us(cold_wall)).unwrap_or(i64::MAX)
+            - i64::try_from(us(carry_wall)).unwrap_or(i64::MAX);
+        let cold_storage = run.cold.segment_gross[index][WallBucket::StorageWait.index()];
+        let carry_storage = run.carry.segment_gross[index][WallBucket::StorageWait.index()];
+        let ceiling = segment_ceiling(cold_storage, carry_storage, cold_wall)?;
+        let mut storage = StorageAccounting::default();
+        let mut hits = HitSplit::default();
+        for fold in run
+            .carry
+            .anchors
+            .iter()
+            .filter(|fold| segment.anchors.contains(&fold.block))
+        {
+            storage.add(fold.storage);
+            hits.add(fold.hits);
+        }
+        let regime = segment.regime.label();
+        let cold_wall = us(cold_wall);
+        let carry_wall = us(carry_wall);
+        let cold_storage = us(cold_storage);
+        let carry_storage = us(carry_storage);
+        let eliminated = us(ceiling.eliminated_gross_ns);
+        let share_whole = ceiling.share_thousandths / 10;
+        let share_tenth = ceiling.share_thousandths % 10;
+        let keys = storage.keys;
+        let carried = storage.carried;
+        let final_write = storage.final_write;
+        let dynamic = storage.dynamic;
+        let hit_carry = hits.carried;
+        let hit_final = hits.final_write;
+        println!(
+            "  {regime:<8} {cold_wall:>10} {carry_wall:>10} {delta:>10} {cold_storage:>10} \
+             {carry_storage:>10} {eliminated:>10} {share_whole:>4}.{share_tenth}% | {keys:>6} \
+             {carried:>8} {final_write:>8} {dynamic:>7} | {hit_carry:>8} {hit_final:>8}"
+        );
+    }
+    Ok(())
+}
+
+/// The carry leg's snapshot growth, clone cost, and resident readout: the
+/// memory the working set and the relevant writes drive.
+fn print_memory(carry: &LegSummary) {
+    let Some((first_block, first_entries)) = carry.snapshot_growth.first().copied() else {
+        return;
+    };
+    let (last_block, last_entries) = carry
+        .snapshot_growth
+        .last()
+        .copied()
+        .expect("a growth series holds its tail");
+    let peak = carry
+        .snapshot_growth
+        .iter()
+        .map(|(_, entries)| *entries)
+        .max()
+        .expect("a growth series holds a peak");
+    let resident = |kb: Option<u64>| kb.map_or_else(|| "-".to_string(), |kb| kb.to_string());
+    println!(
+        "  carry memory: snapshot {first_entries}@{first_block} -> {last_entries}@{last_block} \
+         entries (peak {peak}), clone {:.2?} total / {:.2?} max, resident {} -> {} KiB",
+        Duration::from_nanos(carry.clone_ns),
+        Duration::from_nanos(carry.clone_ns_max),
+        resident(carry.resident_kb.0),
+        resident(carry.resident_kb.1),
     );
 }
 
@@ -1249,6 +1751,10 @@ async fn run() -> Result<(), String> {
     let config = Config::from_env()?;
     let rows = load_rows(&config.trace)?;
     let (keys, first, last) = universe(&rows);
+    let corpus = shape(&rows);
+    let profiles = anchor_profiles(&rows);
+    let segments = segments_by_density(&rows);
+    let map = SegmentMap::build(&segments, first, last);
     let fanouts = group_by_anchor(rows);
     let candidates: usize = fanouts.iter().map(|(_, rows)| rows.len()).sum();
 
@@ -1268,6 +1774,8 @@ async fn run() -> Result<(), String> {
         .plant
         .clone()
         .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+
+    print_segments(&corpus, &profiles, &segments, &real)?;
 
     let mut runs: Vec<(Duration, Duration, Duration)> = Vec::new();
     if config.plant_storage.is_zero() && config.plant.is_none() {
@@ -1318,10 +1826,14 @@ async fn run() -> Result<(), String> {
                 account,
                 plant_storage,
                 config.plant.as_ref(),
+                &map,
+                segments.len(),
                 &mut observed,
             )
             .await?;
             print_point(&run);
+            print_segment_replay(&run, &segments)?;
+            print_memory(&run.carry);
             completed.push(run);
         }
         if config.plant_storage > Duration::ZERO {
@@ -1352,7 +1864,7 @@ async fn run() -> Result<(), String> {
             );
             print_storage_accounting(label, point);
             if coverage == Coverage::Real {
-                if let Err(error) = cross_check_live(&point.carry.storage) {
+                if let Err(error) = report_live_cross_check(first, last, &point.carry.storage) {
                     failures.push(error);
                 }
             }

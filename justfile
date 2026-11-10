@@ -478,8 +478,13 @@ session-fanout-probe *ARGS:
 # `fanout-trace` stream (default `/tmp/fanout_trace.log`; `BAL_WALL_TRACE`
 # overrides it, and its absence is a hard failure). Knobs:
 # `BAL_WALL_STORAGE_US` / `BAL_WALL_ACCOUNT_US` / `BAL_WALL_W` / `BAL_WALL_F`,
-# the negative probes `BAL_WALL_PLANT_STORAGE_DELAY_US` (reports bucket/ceiling
+# `BAL_WALL_LEGS` (comma list of `cold`, `seed`, `carry`; cold and carry are
+# required, the default keeps all three), the negative probes
+# `BAL_WALL_PLANT_STORAGE_DELAY_US` (reports bucket/ceiling
 # deltas) and `BAL_WALL_PLANT_DIVERGENCE` (exits 1), and `BAL_WALL_DEBUG`.
+# Every run also publishes the corpus's density segmentation (per-anchor
+# profiles and per-regime segments with read-set diversity, real write overlap,
+# and per-segment cold-versus-carry results).
 bal-wall-ceiling-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example bal_wall_ceiling_probe -- {{ ARGS }}
 

@@ -43,9 +43,15 @@
 //! ```sh
 //! just bal-carry-probe
 //! BAL_CARRY_TRACE=/tmp/fanout_trace.log BAL_CARRY_FIRST=26375033 BAL_CARRY_LAST=26375053 just bal-carry-probe
+//! BAL_CARRY_TRACE=/tmp/bal_broader_trace.log BAL_CARRY_FIRST=26380992 BAL_CARRY_LAST=26381018 just bal-carry-probe
 //! ```
+//!
+//! Each recorded corpus stretch carries a set analysis — the counts its
+//! description pins (`SetAnalysis`) — and the parsed rows must reproduce them
+//! exactly before any verdict prints; a stretch with no profile prints its
+//! measured counts and enforces none.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use alloy::primitives::{Address, B256, U256};
@@ -61,16 +67,61 @@ use degenbot_simulation::sim::ReadAnchor;
 #[expect(dead_code)]
 mod recorded_corpus;
 
-use recorded_corpus::{anchors_keys, load_rows, DEFAULT_TRACE};
+use recorded_corpus::{anchors_keys, load_rows, shape, universe, CorpusShape, DEFAULT_TRACE};
+
+/// One corpus stretch's set analysis: the counts the manager's corpus
+/// description pins, and the fetch economy that description estimated when it
+/// made one. The parsed rows must reproduce the counts exactly — a parse drift
+/// must not measure a different corpus than the one described.
+struct SetAnalysis {
+    /// The stretch's canonical blocks.
+    first: u64,
+    last: u64,
+    /// The counts the parsed rows must reproduce.
+    shape: CorpusShape,
+    /// The unbroken-chain fetches the description estimated, when it did.
+    estimated_fetches: Option<usize>,
+}
+
+const SET_ANALYSES: &[SetAnalysis] = &[
+    SetAnalysis {
+        first: 26_375_033,
+        last: 26_375_053,
+        shape: CorpusShape {
+            candidates: 444,
+            candidate_anchors: 14,
+            candidate_anchor_keys: 26_099,
+            anchored_keys: 5_938,
+            global_keys: 2_543,
+            contracts: 78,
+        },
+        estimated_fetches: Some(2_541),
+    },
+    SetAnalysis {
+        first: 26_380_992,
+        last: 26_381_018,
+        shape: CorpusShape {
+            candidates: 631,
+            candidate_anchors: 19,
+            candidate_anchor_keys: 33_479,
+            anchored_keys: 6_478,
+            global_keys: 2_611,
+            contracts: 89,
+        },
+        estimated_fetches: None,
+    },
+];
+
+/// The corpus's set analysis to enforce, when the stretch carries one.
+fn set_analysis(first: u64, last: u64) -> Option<&'static SetAnalysis> {
+    SET_ANALYSES
+        .iter()
+        .find(|analysis| analysis.first == first && analysis.last == last)
+}
 
 /// The corpus's canonical stretch: every block in this range is advanced.
 const FIRST_BLOCK: u64 = 26_375_033;
 const LAST_BLOCK: u64 = 26_375_053;
-
-/// The manager's set analysis to verify (a hypothesis, not a hard-coded
-/// result): cold anchored reads and the estimated unbroken-chain fetches.
-const HYPOTHESIS_COLD_READS: usize = 5_938;
-const HYPOTHESIS_FETCHES: usize = 2_541;
 
 /// The synthetic snapshot-size scaling leg's entry count.
 const SYNTHETIC_ENTRIES: usize = 100_000;
@@ -95,17 +146,6 @@ fn rpc_url() -> Result<String, String> {
              to an archive mainnet endpoint"
                 .to_string()
         })
-}
-
-// ── The recorded rows ─────────────────────────────────────────────────────
-
-/// Every anchor's DISTINCT recorded identities — the coalesced read set one
-/// hub at that anchor would carry.
-fn load_anchor_keys(path: &str) -> Result<BTreeMap<u64, Vec<(Address, U256)>>, String> {
-    let rows = load_rows(path)?;
-    let anchors = anchors_keys(&rows);
-    println!("corpus: {} rows, {} anchors", rows.len(), anchors.len());
-    Ok(anchors)
 }
 
 // ── The replay ────────────────────────────────────────────────────────────
@@ -171,18 +211,33 @@ async fn run() -> Result<(), String> {
     let first = env_count("BAL_CARRY_FIRST", FIRST_BLOCK);
     let last = env_count("BAL_CARRY_LAST", LAST_BLOCK);
     let url = rpc_url()?;
-    let anchors = load_anchor_keys(&trace)?;
-
-    let cold_anchored_reads: usize = anchors.values().map(Vec::len).sum();
-    let global_distinct: BTreeSet<_> = anchors.values().flatten().copied().collect();
+    let rows = load_rows(&trace)?;
+    let corpus = shape(&rows);
+    let anchors = anchors_keys(&rows);
+    let (_, corpus_first, corpus_last) = universe(&rows);
     println!(
-        "set analysis: cold anchored reads {cold_anchored_reads} (hypothesis {HYPOTHESIS_COLD_READS}), \
-         global distinct keys {} (hypothesis 2543)",
-        global_distinct.len()
+        "corpus: {} rows, {} anchors over {corpus_first}..={corpus_last}",
+        corpus.candidates, corpus.candidate_anchors
     );
-    if cold_anchored_reads != HYPOTHESIS_COLD_READS || global_distinct.len() != 2_543 {
-        return Err("the parsed corpus does not match the manager's set analysis".into());
+    println!(
+        "set analysis: {} candidate-anchor keys, {} anchored keys, {} global keys, {} contracts",
+        corpus.candidate_anchor_keys, corpus.anchored_keys, corpus.global_keys, corpus.contracts
+    );
+    let analysis = set_analysis(corpus_first, corpus_last);
+    match analysis {
+        Some(analysis) if analysis.shape != corpus => {
+            return Err(format!(
+                "the parsed corpus {corpus:?} does not match the manager's set analysis {:?}",
+                analysis.shape
+            ));
+        }
+        Some(_) => {}
+        None => println!(
+            "set analysis: no manager profile for {corpus_first}..={corpus_last} — measured \
+             counts above, none enforced"
+        ),
     }
+    let cold_anchored_reads = corpus.anchored_keys;
 
     // Two independent providers: the carry pipeline under test, and the cold
     // comparison leg that must never share its snapshot.
@@ -420,12 +475,26 @@ async fn run() -> Result<(), String> {
             final_row.working_set, final_row.snapshot, final_row.bal_only
         );
     }
-    println!(
-        "  fetches:  dynamic storage members {dynamic} vs cold anchored reads {cold_anchored_reads} \
-         ({}.{:01}% fewer; manager hypothesis {HYPOTHESIS_FETCHES} = 57.21% fewer)",
-        fewer_tenths / 10,
-        fewer_tenths % 10
-    );
+    match analysis.and_then(|analysis| analysis.estimated_fetches) {
+        Some(estimate) => {
+            let estimate_tenths = 1_000 * (cold_anchored_reads - estimate) / cold_anchored_reads;
+            println!(
+                "  fetches:  dynamic storage members {dynamic} vs cold anchored reads \
+                 {cold_anchored_reads} ({}.{:01}% fewer; the set analysis estimated \
+                 {estimate} = {}.{:01}% fewer)",
+                fewer_tenths / 10,
+                fewer_tenths % 10,
+                estimate_tenths / 10,
+                estimate_tenths % 10
+            );
+        }
+        None => println!(
+            "  fetches:  dynamic storage members {dynamic} vs cold anchored reads \
+             {cold_anchored_reads} ({}.{:01}% fewer)",
+            fewer_tenths / 10,
+            fewer_tenths % 10
+        ),
+    }
     println!(
         "  wall:     total {:.2?}, BAL fetch+decode {:.2?} (median {:.2?}, p90 {:.2?}), clone {:.2?}, \
          storage batch {:.2?}, cold comparison {:.2?}, advance total {:.2?}",

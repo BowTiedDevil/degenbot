@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use alloy::primitives::{Address, U256};
 
-use crate::wall_ledger::{Digests, WallBucket, WallReport};
+use crate::real_coverage::RealCoverage;
+use crate::wall_ledger::{Digests, Span, WallBucket, WallReport};
 
 /// One anchor's snapshot hits split across their sources. The first two
 /// classes come from the corpus's read-call counts and the policy's own key
@@ -189,4 +190,166 @@ pub fn identity_gate(baseline: &Digests, legs: &[(String, Digests)]) -> Vec<Stri
         }
     }
     mismatches
+}
+
+/// One leg work unit's owned span slice, and the segment its wall is
+/// attributed to. A unit is one block advance or one anchor's fan-out drive:
+/// the spans it recorded are its wall, whatever clock the recorder stamped on
+/// them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkUnit {
+    /// Index of the first span the unit recorded (inclusive).
+    pub first_span: usize,
+    /// Index one past the unit's last span.
+    pub end_span: usize,
+    /// The segment the unit's wall is attributed to.
+    pub segment: usize,
+}
+
+/// Attribute every recorded span to the work unit that recorded it and fold
+/// gross bucket sums per segment — the per-regime wall view, computed from the
+/// same spans the leg's own reconciliation reads.
+///
+/// # Errors
+///
+/// A unit naming a segment the run never built, a unit range that runs
+/// backwards or escapes the span list, or a span no unit owns is a broken
+/// instrumentation record, never a silently clipped one.
+pub fn attribute_segment_spans(
+    units: &[WorkUnit],
+    spans: &[Span],
+    segments: usize,
+) -> Result<Vec<[u64; 6]>, String> {
+    let mut gross = vec![[0u64; 6]; segments];
+    let mut cursor = 0usize;
+    for unit in units {
+        if unit.segment >= segments {
+            return Err(format!(
+                "work unit {unit:?} names segment {} of {segments}",
+                unit.segment
+            ));
+        }
+        if unit.end_span < unit.first_span || unit.end_span > spans.len() {
+            return Err(format!(
+                "work unit {unit:?} is not a span slice of {} spans",
+                spans.len()
+            ));
+        }
+        if unit.first_span != cursor {
+            return Err(format!("span {cursor} is not owned by any work unit"));
+        }
+        for span in &spans[unit.first_span..unit.end_span] {
+            let bucket = span.bucket.index();
+            let wall = span.end_ns.saturating_sub(span.start_ns);
+            gross[unit.segment][bucket] = gross[unit.segment][bucket].saturating_add(wall);
+        }
+        cursor = unit.end_span;
+    }
+    if cursor != spans.len() {
+        return Err(format!("span {cursor} is not owned by any work unit"));
+    }
+    Ok(gross)
+}
+
+/// One segment's eliminable storage-wait ceiling over the gross span sums: the
+/// storage wait the carry stops paying in the segment's own work units, over
+/// the segment's cold wall.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SegmentCeiling {
+    /// Gross storage-wait spans the carry removes versus cold.
+    pub eliminated_gross_ns: u64,
+    /// `eliminated_gross_ns` in thousandths of the segment's cold wall.
+    pub share_thousandths: u64,
+    /// The segment's cold wall the share is taken over.
+    pub cold_wall_ns: u64,
+}
+
+/// Compute one segment's ceiling from the two legs' gross storage-wait sums.
+///
+/// # Errors
+///
+/// A segment with no cold wall has no share to report.
+pub fn segment_ceiling(
+    cold_storage_gross_ns: u64,
+    carry_storage_gross_ns: u64,
+    cold_wall_ns: u64,
+) -> Result<SegmentCeiling, String> {
+    if cold_wall_ns == 0 {
+        return Err("the segment's cold wall is zero".to_string());
+    }
+    let eliminated_gross_ns = cold_storage_gross_ns.saturating_sub(carry_storage_gross_ns);
+    Ok(SegmentCeiling {
+        eliminated_gross_ns,
+        share_thousandths: eliminated_gross_ns.saturating_mul(1_000) / cold_wall_ns,
+        cold_wall_ns,
+    })
+}
+
+/// How much of a read set the real block lists write over one block span.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WriteOverlap {
+    /// Distinct identities in the read set.
+    pub keys: usize,
+    /// Read-set identities the span's lists write at least once.
+    pub written_in_span: usize,
+    /// Write identities over the read set inside the span, repeats across
+    /// blocks included.
+    pub span_writes: usize,
+}
+
+/// Measure the captured write coverage of `keys` over the blocks `first..=last`.
+///
+/// # Errors
+///
+/// A block the capture never folded has no write set to measure against.
+pub fn write_overlap(
+    keys: &BTreeSet<(Address, U256)>,
+    real: &RealCoverage,
+    first: u64,
+    last: u64,
+) -> Result<WriteOverlap, String> {
+    let mut written: BTreeSet<(Address, U256)> = BTreeSet::new();
+    let mut span_writes = 0usize;
+    for number in first..=last {
+        if real.block(number).is_none() {
+            return Err(format!(
+                "the fixture captures no block {number} of the span"
+            ));
+        }
+        for &(address, slot) in real.writes_at(number) {
+            if keys.contains(&(address, slot)) {
+                written.insert((address, slot));
+                span_writes += 1;
+            }
+        }
+    }
+    Ok(WriteOverlap {
+        keys: keys.len(),
+        written_in_span: written.len(),
+        span_writes,
+    })
+}
+
+/// Compare the replay's per-anchor accounting against the live probe's counts
+/// for the same corpus: the offline numbers reproduce the live pipeline's
+/// decisions exactly, or the gate fails.
+pub fn cross_check_live(
+    replay: &StorageAccounting,
+    live: &StorageAccounting,
+) -> Result<(), String> {
+    if replay == live {
+        return Ok(());
+    }
+    Err(format!(
+        "the replay's carry accounting (keys {}, carried {}, final-write {}, dynamic {}) does not \
+         match the live bal_carry_probe ({}, {}, {}, {})",
+        replay.keys,
+        replay.carried,
+        replay.final_write,
+        replay.dynamic,
+        live.keys,
+        live.carried,
+        live.final_write,
+        live.dynamic
+    ))
 }
