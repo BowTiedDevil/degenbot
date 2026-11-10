@@ -678,8 +678,19 @@ pub struct BatchExecutor {
 
 impl BatchExecutor {
     /// Build the executor: the ordered lane + the two production leaves.
+    ///
+    /// Construction also ARMS the session's canonical-head BAL pipeline
+    /// (`WarmCodeCacheInner::arm_bal_heads`): this is the one place in either
+    /// composition where the provider, the session's warm cache and the
+    /// `simulation.delta_dispatch` opt-in already meet, so a session that
+    /// constructs no executor has no consumer and requests nothing. Arming is a
+    /// no-op when the cache carries no opt-in (the shipped posture), and it
+    /// fetches nothing — it only hands the pipeline the driver it will use.
     #[must_use]
     pub fn new(config: ExecutorConfig) -> Self {
+        if let Some(cache) = config.warm_cache.as_ref() {
+            cache.read().arm_bal_heads(&config.provider);
+        }
         let (outcome_tx, outcome_rx) = mpsc::unbounded_channel();
         let config = Arc::new(config);
         let leaves = Arc::new(EngineLeaves {

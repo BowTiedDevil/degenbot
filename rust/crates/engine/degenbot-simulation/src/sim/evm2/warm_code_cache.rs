@@ -30,6 +30,7 @@ use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, Database};
 use ::evm2::interpreter::Word;
 
+use crate::sim::evm2::bal_heads::BalHeadPipeline;
 use crate::sim::evm2::delta_snapshot::{BalHeadDriver, DeltaHub};
 use crate::sim::evm2::hook_slots::HookSlotStore;
 use crate::sim::hot_slots::HotSlotStore;
@@ -262,11 +263,12 @@ pub fn select_dispatch_storage(
         }
     };
     let anchor = ReadAnchor::identified(lineage.number, lineage.hash);
-    let ticket = heads.deliver(
-        anchor,
-        lineage.parent_hash,
-        path_relevance_addresses(paths.iter().copied(), facts),
-    );
+    // Relevance is the APPLY's argument, not the delivery's: a head's delivery
+    // may come from the block clock (no candidates, no relevance), and the set
+    // only has to exist when the head's writes are applied. This lane is its
+    // own applier for now, so it hands over the fan-out's own set.
+    let relevance = path_relevance_addresses(paths.iter().copied(), facts);
+    let ticket = heads.deliver(anchor, lineage.parent_hash);
 
     // A head that already settled at this exact anchor answers on the spot and
     // fetches nothing.
@@ -282,7 +284,8 @@ pub fn select_dispatch_storage(
     // Prepare and apply the head's BAL, bounded by the readiness deadline: a
     // stalled endpoint costs this fan-out the deadline and no more.
     let _ = block_on_ambient(async {
-        let _ = tokio::time::timeout(config.readiness_deadline, heads.advance(ticket)).await;
+        let _ = tokio::time::timeout(config.readiness_deadline, heads.advance(ticket, &relevance))
+            .await;
     });
 
     let view = heads.snapshot(anchor);
@@ -345,6 +348,17 @@ pub struct WarmCodeCacheInner {
     /// fan-out. Session-scoped on purpose: every fan-out at one exact head
     /// shares its generation, so a block's lanes repeat no BAL work.
     delta_heads: Mutex<Option<Arc<BalHeadDriver>>>,
+
+    /// The session's canonical-head BAL pipeline — the accepted-header consumer
+    /// the composition installs on the stage surface, and the ONE owner of the
+    /// session's off-path preparation.
+    ///
+    /// `None` — and unreachable — while the opt-in is off, so an OFF session
+    /// installs no sink and requests nothing. Present-but-UNARMED is the window
+    /// between construction (the Python engine's boot) and the batch executor's
+    /// arming, and it is inert by construction: an unarmed pipeline delivers
+    /// nothing.
+    bal_pipeline: Mutex<Option<Arc<BalHeadPipeline>>>,
 }
 
 impl WarmCodeCacheInner {
@@ -360,6 +374,7 @@ impl WarmCodeCacheInner {
             hook_slots: None,
             delta_dispatch: None,
             delta_heads: Mutex::new(None),
+            bal_pipeline: Mutex::new(None),
         }
     }
 
@@ -432,6 +447,40 @@ impl WarmCodeCacheInner {
         Some(Arc::clone(slot.get_or_insert_with(|| {
             Arc::new(BalHeadDriver::new(provider, config.readiness_deadline))
         })))
+    }
+
+    /// The session's canonical-head BAL pipeline, present exactly when the
+    /// opt-in is on — and UNARMED until [`Self::arm_bal_heads`] runs.
+    ///
+    /// The composition installs this value as the stage surface's head sink
+    /// (`install_canonical_head_sink`); because installation needs no provider
+    /// and no arming, it happens at engine boot, before any executor exists.
+    /// An OFF session gets `None` here, so it installs no sink at all.
+    #[must_use]
+    pub fn bal_head_pipeline(&self) -> Option<Arc<BalHeadPipeline>> {
+        self.delta_dispatch?;
+        let mut slot = self.bal_pipeline.lock();
+        Some(Arc::clone(
+            slot.get_or_insert_with(BalHeadPipeline::unarmed),
+        ))
+    }
+
+    /// Arm the session's pipeline with its one head driver (the batch
+    /// executor's construction calls this, because that is the one place in
+    /// either composition where the provider, the warm cache and the opt-in
+    /// already meet).
+    ///
+    /// A no-op — no driver, no request — when the opt-in is off (there is no
+    /// pipeline to arm) and when the pipeline is already armed (one generation
+    /// space per session). Arming builds the driver but fetches nothing.
+    pub fn arm_bal_heads(&self, provider: &AlloyProvider) {
+        let Some(pipeline) = self.bal_head_pipeline() else {
+            return;
+        };
+        let Some(driver) = self.delta_heads(provider) else {
+            return;
+        };
+        pipeline.arm(driver);
     }
 
     /// Is an entry loaded at `loaded_block` still fresh at `block`?
@@ -768,6 +817,68 @@ mod tests {
             ))
         );
         assert!(cache.delta_heads(&forbidden_provider()).is_some());
+    }
+
+    /// The shipped OFF posture installs NO head sink and can issue no BAL
+    /// request: there is no pipeline to install, arming is a no-op, and the
+    /// session has no head driver at all. A transport that panics on any
+    /// dispatch proves the negative.
+    #[test]
+    fn the_opt_in_off_session_installs_no_sink_and_issues_no_bal_request() {
+        let store = Arc::new(HookSlotStore::in_memory(::evm2::SpecId::CANCUN));
+        let inner = WarmCodeCacheInner::shared_with_hook_slots(store);
+        let provider = forbidden_provider();
+        let cache = inner.read();
+        assert_eq!(cache.delta_dispatch(), None, "the flag is off");
+        assert!(
+            cache.bal_head_pipeline().is_none(),
+            "an OFF session has no pipeline, so the stage surface installs no sink"
+        );
+        cache.arm_bal_heads(&provider);
+        assert!(
+            cache.delta_heads(&provider).is_none(),
+            "no driver, so nothing could ever fetch a head's list"
+        );
+        assert!(cache.bal_head_pipeline().is_none());
+    }
+
+    /// An ON session's pipeline exists from boot but is UNARMED until the batch
+    /// executor's construction arms it: feeding it heads reaches no provider
+    /// (it holds no driver), and arming itself fetches nothing.
+    #[test]
+    fn an_unarmed_pipeline_delivers_nothing_and_requests_nothing() {
+        use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+        let inner =
+            WarmCodeCacheInner::shared_with_delta_dispatch(DeltaDispatchConfig::development());
+        let provider = forbidden_provider();
+        let cache = inner.read();
+        let pipeline = cache.bal_head_pipeline().expect("the opt-in is on");
+        assert!(!pipeline.is_armed(), "boot constructs, it does not arm");
+
+        for number in 100..103u64 {
+            pipeline.on_canonical_head(CanonicalHead::new(
+                number,
+                B256::new([u8::try_from(number % 251).unwrap_or(1); 32]),
+                B256::ZERO,
+            ));
+        }
+        assert!(
+            pipeline.driver().is_none(),
+            "an unarmed pipeline owns no driver: no head is delivered, nothing is fetched"
+        );
+        assert!(!pipeline.is_armed());
+
+        cache.arm_bal_heads(&provider);
+        assert!(
+            pipeline.is_armed(),
+            "arming is what gives the session its one driver"
+        );
+        assert!(pipeline.driver().is_some());
+        assert_eq!(
+            pipeline.driver().and_then(|driver| driver.delivered()),
+            None,
+            "arming delivers no head and fetches nothing"
+        );
     }
 
     #[test]

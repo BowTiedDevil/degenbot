@@ -92,6 +92,8 @@ async fn decoupled_drain_still_publishes_with_block_metadata() {
             base_fee_per_gas: Some(1_000_000_001),
             gas_used: 10_000_001,
             gas_limit: 30_000_001,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
         WsEvent::Pool(PoolEvent::from_log(make_v2_sync_log(
             pool,

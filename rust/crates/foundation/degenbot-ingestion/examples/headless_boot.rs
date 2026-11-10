@@ -56,6 +56,8 @@ fn main() {
             base_fee_per_gas: Some(1),
             gas_used: 0,
             gas_limit: 30_000_000,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
         IngestEvent::Pool(PoolEvent::from_log(synthetic_log(irrelevant, 100, 0))),
         IngestEvent::Pool(PoolEvent::from_log(synthetic_log(relevant, 100, 1))),
@@ -66,6 +68,8 @@ fn main() {
             base_fee_per_gas: Some(1),
             gas_used: 0,
             gas_limit: 30_000_000,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
     ];
 

@@ -44,9 +44,12 @@
 //! - [`channel_lifecycle`] — the one-way delivery channel's phase. The phase IS
 //!   the sender, so "never attached" and "closed" cannot collapse into one
 //!   `None`; `SendOutcome` names which way a send did not deliver.
+//! - [`canonical_head`] — the accepted canonical head's identity (number, hash,
+//!   parent hash) and the one-method sink a consumer installs to observe it.
 
 pub mod address_utils;
 pub mod block_notification;
+pub mod canonical_head;
 pub mod chain_facts;
 pub mod channel_lifecycle;
 pub mod cpu_budget;

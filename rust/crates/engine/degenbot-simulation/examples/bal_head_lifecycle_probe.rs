@@ -267,7 +267,7 @@ async fn walk_head(
     let anchor = ReadAnchor::identified(number, hash);
 
     let deliver_started = Instant::now();
-    let ticket = driver.deliver(anchor, parent_hash, relevance.to_vec());
+    let ticket = driver.deliver(anchor, parent_hash);
     let deliver = deliver_started.elapsed();
 
     let cold_view = driver.snapshot(anchor);
@@ -291,7 +291,7 @@ async fn walk_head(
     }
 
     let apply_started = Instant::now();
-    let outcome = driver.apply(ticket, &prepared);
+    let outcome = driver.apply(ticket, &prepared, relevance);
     let apply = apply_started.elapsed();
     let HeadOutcome::Settled(report) = outcome else {
         return Err(format!(

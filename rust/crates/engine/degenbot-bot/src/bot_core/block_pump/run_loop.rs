@@ -7,6 +7,9 @@ use super::{
 // `Arc` is used by the exit guard (a `PumpControl` handle) and by the
 // `hotpath`-gated cooperative timed-exit block (`Arc::clone(&self.shutdown)`).
 use super::Arc;
+// The accepted head's chain fact, poked through `PumpControl` after the block
+// clock and never on its critical path.
+use degenbot_core::canonical_head::CanonicalHead;
 
 /// The live loop's ONE exit door.
 ///
@@ -732,6 +735,8 @@ impl BlockPump {
                     base_fee_per_gas,
                     gas_used,
                     gas_limit,
+                    hash,
+                    parent_hash,
                 })) => {
                     // The
                     // per-epoch beat — one entered root span per observed
@@ -865,6 +870,11 @@ impl BlockPump {
                         gas_used,
                         gas_limit,
                     };
+                    // Whether this header was ACCEPTED (the FSM rejected a
+                    // duplicate/stale header with no decision at all). The
+                    // canonical-head poke below fires exactly once for every
+                    // accepted header, and never for a dropped one.
+                    let mut accepted = false;
                     for decision in fsm.on_header(number, metadata, now_ms()) {
                         match decision {
                             StageDecision::Backfill { from, to } => {
@@ -901,11 +911,25 @@ impl BlockPump {
                                 // async boundary; never queued behind solve work).
                                 let _ctx = new_block_span.enter();
                                 self.control.notify_block(block, &metadata);
+                                accepted = true;
                             }
                             other => {
                                 unreachable!("on_header only emits Backfill|SetLastSolved|Notify, got {other:?}")
                             }
                         }
+                    }
+                    // The canonical-head poke: the SAME accepted header as the
+                    // block clock above, fired AFTER it so storage work can
+                    // never delay the clock. It carries the identity the alloy
+                    // header already had (hash + parent hash), so no RPC is
+                    // spent re-deriving it. An uninstalled sink — the shipped
+                    // posture — makes this a hard no-op.
+                    if accepted {
+                        self.control.on_canonical_head(&CanonicalHead::new(
+                            number,
+                            hash,
+                            parent_hash,
+                        ));
                     }
                     // The `PendingSuccessor` / `OpenNew` decisions carry no
                     // pump action beyond the above — the liveness-probe signal

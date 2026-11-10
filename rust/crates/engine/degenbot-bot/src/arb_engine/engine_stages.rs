@@ -48,6 +48,7 @@ use crate::bot_core::stage_handlers::{
 };
 use crate::bot_core::{PumpControl, Rewind, RewindOutcome};
 use degenbot_core::block_notification::BlockNotification;
+use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
 use degenbot_core::diag;
 use degenbot_core::op_error;
 use degenbot_core::op_warn;
@@ -118,6 +119,16 @@ pub struct EngineStages {
     /// second projection. A stages surface built without a driver (the
     /// crate-internal stage tests) reads [`PumpPhase::Detached`].
     session: Mutex<Option<Arc<PumpSession>>>,
+
+    /// The accepted-head consumer the session installed, if any. `None` — the
+    /// shipped posture — makes [`PumpControl::on_canonical_head`] a hard no-op,
+    /// so a session with no head consumer cannot request a head's storage by
+    /// accident: the no-op is structural, not a flag check.
+    ///
+    /// Construction-time wiring (like [`Self::set_inline_simulator`]): the
+    /// composition installs it once, and the pump's header arm only ever calls
+    /// into it.
+    canonical_head_sink: Mutex<Option<Arc<dyn CanonicalHeadSink>>>,
 }
 impl EngineStages {
     /// Construct over a strong clone of the shared engine handle and the
@@ -194,6 +205,7 @@ impl EngineStages {
             delta,
             session_events,
             session: Mutex::new(None),
+            canonical_head_sink: Mutex::new(None),
         }
     }
 
@@ -432,6 +444,23 @@ impl EngineStages {
     /// wiring, exactly like [`Self::set_inline_simulator`]).
     pub fn set_hooked_leg_requote(&self, requote: Arc<dyn HookedLegReQuote>) {
         self.engine.lock().cycle.hooked_leg_requote = Some(requote);
+    }
+
+    /// Install the accepted-head consumer (construction-time wiring, exactly
+    /// like [`Self::set_inline_simulator`]).
+    ///
+    /// The sink sees every head the pump accepts and nothing else; it is called
+    /// from the header arm, so it must hand any provider work to a task. An
+    /// uninstalled sink is the shipped posture and makes the poke a hard no-op.
+    pub fn install_canonical_head_sink(&self, sink: Arc<dyn CanonicalHeadSink>) {
+        *self.canonical_head_sink.lock() = Some(sink);
+    }
+
+    /// The installed accepted-head consumer, when the composition installed one
+    /// (a test-visible accessor for the construction-time wiring).
+    #[must_use]
+    pub fn canonical_head_sink(&self) -> Option<Arc<dyn CanonicalHeadSink>> {
+        self.canonical_head_sink.lock().clone()
     }
 
     /// Close the delivery channels — the result-batch stream and the block
@@ -883,6 +912,15 @@ impl PumpControl for EngineStages {
         // task later publishes (ADR-093 D5).
         self.session_events.send(SessionEvent::Block(notification));
     }
+    fn on_canonical_head(&self, head: &CanonicalHead) {
+        // The chain fact, forwarded to the session's one head consumer. The
+        // guard is dropped before the call: a sink is a foreign consumer and
+        // must never run under this surface's lock.
+        let sink = self.canonical_head_sink.lock().clone();
+        if let Some(sink) = sink {
+            sink.on_canonical_head(*head);
+        }
+    }
     fn on_pump_ended(&self) {
         // The live loop returned without a `Stop`: the table's `Running ->
         // Ended` edge, published here so `current_phase()` stops claiming a
@@ -1024,6 +1062,57 @@ mod candidate2_seam_pins {
         assert!(
             capture.saw_loud_close(),
             "EngineStages::on_pump_ended must emit the op_error loud-close log (it must survive T2/T3)"
+        );
+    }
+
+    /// The accepted-head poke reaches the session's installed consumer and
+    /// nothing else: with no sink installed it is a hard no-op (the shipped
+    /// posture — a session that requests no head storage), and with one
+    /// installed the exact `(number, hash, parent_hash)` triple arrives.
+    #[test]
+    fn the_canonical_head_poke_reaches_the_installed_sink_and_no_other() {
+        use crate::bot_core::PumpControl;
+        use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct RecordingSink {
+            heads: Mutex<Vec<CanonicalHead>>,
+        }
+        impl CanonicalHeadSink for RecordingSink {
+            fn on_canonical_head(&self, head: CanonicalHead) {
+                self.heads
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(head);
+            }
+        }
+
+        let stages = super::EngineStages::new(
+            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
+            Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
+        );
+        let head = CanonicalHead::new(
+            21_500_000,
+            alloy::primitives::B256::new([0xaa; 32]),
+            alloy::primitives::B256::new([0x99; 32]),
+        );
+
+        // Uninstalled: the poke is a no-op, not a fallback consumer.
+        assert!(stages.canonical_head_sink().is_none());
+        PumpControl::on_canonical_head(&stages, &head);
+
+        let sink = Arc::new(RecordingSink::default());
+        stages.install_canonical_head_sink(sink.clone());
+        PumpControl::on_canonical_head(&stages, &head);
+
+        assert_eq!(
+            *sink
+                .heads
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            vec![head],
+            "the session's one sink sees each accepted head exactly once, unaltered"
         );
     }
 }

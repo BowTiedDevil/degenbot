@@ -279,6 +279,11 @@ pub fn stream_select(
         base_fee_per_gas: header.base_fee_per_gas,
         gas_used: header.gas_used,
         gas_limit: header.gas_limit,
+        // The identity the header already carries: downstream head consumers
+        // (the canonical-head sink) fence reads by the whole anchor, and
+        // re-deriving it would cost one header read per head.
+        hash: header.hash,
+        parent_hash: header.parent_hash,
     });
     let log_events = log_stream.map(|log| IngestEvent::Pool(PoolEvent::from_log(log)));
 
@@ -336,7 +341,7 @@ mod handshake_tests {
     //! touches the data plane.
 
     use super::*;
-    use alloy::primitives::{Address, Bytes, U256};
+    use alloy::primitives::{Address, Bytes, B256, U256};
     use alloy::rpc::types::Log;
     use alloy::transports::mock::Asserter;
     use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
@@ -368,6 +373,8 @@ mod handshake_tests {
             base_fee_per_gas: None,
             gas_used: 0,
             gas_limit: 0,
+            hash: B256::ZERO,
+            parent_hash: B256::ZERO,
         }
     }
 
@@ -465,6 +472,8 @@ mod handshake_tests {
             base_fee_per_gas: None,
             gas_used: 0,
             gas_limit: 0,
+            hash: B256::ZERO,
+            parent_hash: B256::ZERO,
         }
     }
 

@@ -7,6 +7,7 @@
 //! the runtime (and to any pure-Rust consumer that subscribes upstream of
 //! the stage machine).
 
+use alloy::primitives::B256;
 use alloy::rpc::types::Log;
 
 /// A decoded-agnostic pool-relevant log event, emitted by the ingestion
@@ -46,6 +47,13 @@ impl PoolEvent {
 #[derive(Clone, Debug)]
 pub enum IngestEvent {
     /// A new block header arrived.
+    ///
+    /// The five clock scalars are what the block clock needs; `hash` and
+    /// `parent_hash` are the head's *identity*, which every consumer that
+    /// fences a read against an exact anchor needs. They ride the event because
+    /// the alloy header the stream already holds carries both — a consumer that
+    /// had to fetch them would pay one header read per head for a fact the
+    /// producer was already holding.
     BlockHeader {
         /// Block number.
         number: u64,
@@ -57,6 +65,11 @@ pub enum IngestEvent {
         gas_used: u64,
         /// Gas limit of the block.
         gas_limit: u64,
+        /// The header's own hash.
+        hash: B256,
+        /// The header's parent hash — the lineage link a head's parent chain is
+        /// verified against.
+        parent_hash: B256,
     },
     /// A log event arrived from the logs subscription.
     Pool(PoolEvent),

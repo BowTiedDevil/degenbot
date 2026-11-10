@@ -1360,6 +1360,8 @@ mod conformance {
 
         fn notify_block(&self, _block: u64, _metadata: &degenbot_substrate::BlockMetadata) {}
 
+        fn on_canonical_head(&self, _head: &degenbot_core::canonical_head::CanonicalHead) {}
+
         fn on_pump_ended(&self) {}
     }
 
@@ -1704,8 +1706,9 @@ mod candidate2_seam_pins {
 
     /// Pin 1 (RED: compile-fails until T2). The target splits the
     /// driver-facing pokes OFF `StageHandlers` onto a new required
-    /// `PumpControl` trait beside this module, with exactly these seven
-    /// methods and Epoch-typed cursor coordinates. `StageHandlers` keeps
+    /// `PumpControl` trait beside this module, with Epoch-typed cursor
+    /// coordinates (the accepted-head poke joined it later, beside
+    /// `notify_block`). `StageHandlers` keeps
     /// ONLY the eight stage hooks (`on_streaming_complete`, `on_resolve`,
     /// `on_solve`, `on_simulate`, `on_gate`, `on_publish`, `on_finalize`, `on_rewind`).
     /// This test names the trait + all seven poke signatures, so it cannot
@@ -1725,6 +1728,10 @@ mod candidate2_seam_pins {
         let _: fn(&dyn PumpControl) -> Option<Epoch> = PumpControl::last_processed_block;
         let _: fn(&dyn PumpControl, u64, &degenbot_substrate::BlockMetadata) =
             PumpControl::notify_block;
+        // The accepted-head poke: the chain fact beside the block clock. No
+        // default body, so an implementor cannot quietly inherit a no-op.
+        let _: fn(&dyn PumpControl, &degenbot_core::canonical_head::CanonicalHead) =
+            PumpControl::on_canonical_head;
         let _: fn(&dyn PumpControl) = PumpControl::on_pump_ended;
     }
 

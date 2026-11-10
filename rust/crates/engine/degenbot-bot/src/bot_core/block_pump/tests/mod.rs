@@ -188,6 +188,12 @@ struct FakeStageEngine {
     /// virtual-time stamps for each `on_drain` (paired with
     /// `drained`), read via `drained_at`.
     drained_at: Mutex<Vec<tokio::time::Instant>>,
+    /// Every `on_canonical_head` the pump poked, in arrival order: the
+    /// accepted-head edge the head-consumer seam is driven by.
+    canonical_heads: Mutex<Vec<degenbot_core::canonical_head::CanonicalHead>>,
+    /// The two header pokes in the order they arrived, so the firing order
+    /// (block clock first, head fact second) is observable.
+    header_pokes: Mutex<Vec<(&'static str, u64)>>,
 }
 
 impl FakeStageEngine {
@@ -207,7 +213,19 @@ impl FakeStageEngine {
             pump_control_ends: std::sync::atomic::AtomicUsize::new(0),
             stage_seam_ends: std::sync::atomic::AtomicUsize::new(0),
             drained_at: Mutex::new(Vec::new()),
+            canonical_heads: Mutex::new(Vec::new()),
+            header_pokes: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The header pokes in arrival order (`notify` / `canonical`).
+    fn header_pokes(&self) -> Vec<(&'static str, u64)> {
+        self.header_pokes.lock().unwrap().clone()
+    }
+
+    /// The canonical heads the pump poked, in order.
+    fn canonical_heads(&self) -> Vec<degenbot_core::canonical_head::CanonicalHead> {
+        self.canonical_heads.lock().unwrap().clone()
     }
 
     /// virtual-time stamps paired with `drained_blocks()`.
@@ -388,6 +406,14 @@ impl crate::bot_core::PumpControl for FakeStageEngine {
     }
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
         self.notified.lock().unwrap().push((block, *metadata));
+        self.header_pokes.lock().unwrap().push(("notify", block));
+    }
+    fn on_canonical_head(&self, head: &degenbot_core::canonical_head::CanonicalHead) {
+        self.canonical_heads.lock().unwrap().push(*head);
+        self.header_pokes
+            .lock()
+            .unwrap()
+            .push(("canonical", head.number));
     }
     fn on_pump_ended(&self) {
         self.pump_ended
@@ -516,6 +542,8 @@ fn gap_burst_stream_with_dirty_edge(
                     base_fee_per_gas: Some(1_000_000_001),
                     gas_used: 10_000_001,
                     gas_limit: 30_000_001,
+                    hash: alloy::primitives::B256::ZERO,
+                    parent_hash: alloy::primitives::B256::ZERO,
                 }
             } else {
                 WsEvent::Pool(PoolEvent::from_log(make_v2_sync_log(
@@ -1170,6 +1198,7 @@ fn header_receipts_resolve_the_drained_blocks_own_header() {
 }
 
 mod backfill;
+mod canonical_head_edge;
 mod quiesce;
 mod reorg;
 mod resume;

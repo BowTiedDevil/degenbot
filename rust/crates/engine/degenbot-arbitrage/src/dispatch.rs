@@ -2486,6 +2486,7 @@ mod tests {
 mod delta_dispatch_tests {
     use super::*;
 
+    use crate::deployment::SimulationDeployment;
     use alloy::primitives::{Bytes, B256};
     use alloy::providers::RootProvider;
     use alloy::rpc::client::RpcClient;
@@ -2494,6 +2495,9 @@ mod delta_dispatch_tests {
     };
     use alloy::transports::{TransportError, TransportFut};
     use degenbot_rpc::provider::AlloyProvider;
+    use degenbot_simulation::sim::evm2::delta_snapshot::{
+        BalHeadDriver, HeadOutcome, HeadReadiness,
+    };
     use degenbot_simulation::sim::evm2::warm_code_cache::{
         select_dispatch_storage, DeltaDispatchConfig, FanOutStorage, StorageSelectionOutcome,
         WarmCodeCacheInner,
@@ -2539,6 +2543,10 @@ mod delta_dispatch_tests {
         storage_members: Arc<AtomicU64>,
         heads: Arc<std::sync::Mutex<std::collections::BTreeMap<u64, (B256, B256)>>>,
         bal: Arc<BalScript>,
+        /// Every dispatched request's wire body — method + serialized params,
+        /// in dispatch order — so a lane's traffic can be compared byte for
+        /// byte against another construction's.
+        wire: Arc<std::sync::Mutex<Vec<String>>>,
     }
 
     impl Default for DeltaRecorder {
@@ -2550,6 +2558,7 @@ mod delta_dispatch_tests {
                 storage_members: Arc::default(),
                 heads: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
                 bal: Arc::new(serving_bal()),
+                wire: Arc::default(),
             }
         }
     }
@@ -2587,6 +2596,16 @@ mod delta_dispatch_tests {
         fn storage_batches(&self) -> u64 {
             self.storage_batches.load(Ordering::Relaxed)
         }
+
+        /// Every dispatched request's wire body, in dispatch order.
+        fn wire(&self) -> Vec<String> {
+            self.wire.lock().expect("recorder mutex").clone()
+        }
+
+        /// Forget the recorded wire bodies (never the counts a run already read).
+        fn clear_wire(&self) {
+            self.wire.lock().expect("recorder mutex").clear();
+        }
     }
 
     #[derive(Clone)]
@@ -2613,6 +2632,28 @@ mod delta_dispatch_tests {
         ResponsePayload::Success(raw)
     }
 
+    /// Record one dispatched request's wire body — method + serialized params —
+    /// in dispatch order.
+    fn record_wire(recorder: &DeltaRecorder, req: &SerializedRequest) {
+        recorder.wire.lock().expect("recorder mutex").push(format!(
+            "{} {}",
+            req.method(),
+            req.params().map_or("", |params| params.get())
+        ));
+    }
+
+    /// Whether this packet's BAL fetch must pay the slow endpoint's delay, so the
+    /// readiness deadline has something outstanding to fire against.
+    fn pays_slow_bal_delay(recorder: &DeltaRecorder, req: &RequestPacket) -> bool {
+        let is_bal = match req {
+            RequestPacket::Single(one) => one.method() == "debug_getRawBlockAccessList",
+            RequestPacket::Batch(many) => many
+                .iter()
+                .any(|one| one.method() == "debug_getRawBlockAccessList"),
+        };
+        is_bal && matches!(*recorder.bal.lock().expect("recorder mutex"), BalMode::Slow)
+    }
+
     impl tower::Service<RequestPacket> for RecordingTransport {
         type Response = ResponsePacket;
         type Error = TransportError;
@@ -2631,18 +2672,11 @@ mod delta_dispatch_tests {
                 // A slow BAL endpoint PENDS: the readiness deadline must be able
                 // to fire while the fetch is outstanding, which a blocking sleep
                 // on this worker could not allow.
-                let slow_bal =
-                    matches!(*recorder.bal.lock().expect("recorder mutex"), BalMode::Slow);
-                let is_bal = match &req {
-                    RequestPacket::Single(one) => one.method() == "debug_getRawBlockAccessList",
-                    RequestPacket::Batch(many) => many
-                        .iter()
-                        .any(|one| one.method() == "debug_getRawBlockAccessList"),
-                };
-                if slow_bal && is_bal {
+                if pays_slow_bal_delay(&recorder, &req) {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
                 let respond = |req: &SerializedRequest| -> Response {
+                    record_wire(&recorder, req);
                     let payload = match req.method() {
                         "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
                         "eth_getCode" => success("0x"),
@@ -3136,6 +3170,378 @@ mod delta_dispatch_tests {
             ready.fail_buckets.get("empty")
         );
         assert_eq!(off.fail_buckets.get("empty"), 2);
+    }
+
+    /// The scripted chain both parity pins run on: `BLOCK - 1` built on
+    /// [`PARENT`], and `BLOCK` built on it.
+    const PARENT: B256 = B256::new([0xa0; 32]);
+    const ROOT: B256 = B256::new([0xa1; 32]);
+    const CHILD: B256 = B256::new([0xb1; 32]);
+
+    /// One fan-out's verdict surface, per candidate: the gas bucket it landed in
+    /// or the failure bucket that claimed it, plus the priced figures that decide
+    /// it. Two lanes agree only when every row matches.
+    fn verdicts(outcome: &DispatchOutcome) -> Vec<(CandidateId, String)> {
+        let mut rows: Vec<(CandidateId, String)> = outcome
+            .gas_profitable
+            .iter()
+            .map(|result| {
+                (
+                    result.candidate_id,
+                    format!(
+                        "profitable gross={} net={} gas={} passed={}",
+                        result.gross_profit, result.net_profit, result.gas_used, result.passed
+                    ),
+                )
+            })
+            .chain(outcome.gas_unprofitable.iter().map(|result| {
+                (
+                    result.candidate_id,
+                    format!(
+                        "unprofitable gross={} net={} gas={} passed={}",
+                        result.gross_profit, result.net_profit, result.gas_used, result.passed
+                    ),
+                )
+            }))
+            .chain(
+                outcome
+                    .failures
+                    .iter()
+                    .map(|failure| (failure.candidate_id, failure.bucket.clone())),
+            )
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    /// The candidates both lanes simulate: two different sizes, so a lane's cap
+    /// or pre-filter cannot pass for parity by accident.
+    fn parity_candidates() -> Vec<DispatchCandidate> {
+        vec![
+            super::tests::candidate(70, 1_000_000_000_000_000_000u128, 1_000),
+            super::tests::candidate(71, 500_000_000_000_000_000u128, 25),
+        ]
+    }
+
+    /// The session-scoped handles one fan-out mutates.
+    struct FanOutFilters {
+        suppression: Arc<Mutex<PathSuppression>>,
+        divergence: Arc<Mutex<crate::PoolDivergence>>,
+        fot: Arc<Mutex<crate::FeeOnTransferRegistry>>,
+        bot_state: Arc<StateLock<BotState>>,
+    }
+
+    /// Fresh handles per lane, so one lane's suppression/divergence feedback
+    /// cannot reach the other's run.
+    fn fresh_filters() -> FanOutFilters {
+        FanOutFilters {
+            suppression: Arc::new(Mutex::new(PathSuppression::new())),
+            divergence: Arc::new(Mutex::new(crate::PoolDivergence::new())),
+            fot: Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new())),
+            bot_state: Arc::new(StateLock::new(BotState::new())),
+        }
+    }
+
+    /// One fan-out over [`parity_candidates`] at [`BLOCK`], through `cache` —
+    /// `None` being the shipped per-call degrade.
+    fn parity_fan_out(
+        provider: &AlloyProvider,
+        deployment: &SimulationDeployment,
+        cache: Option<Arc<RwLock<WarmCodeCacheInner>>>,
+    ) -> DispatchOutcome {
+        let filters = fresh_filters();
+        dispatch_profitable_results(
+            parity_candidates(),
+            &super::tests::ctx(provider, deployment),
+            &filters.suppression,
+            BLOCK,
+            0,
+            &filters.divergence,
+            &filters.fot,
+            Some(filters.bot_state),
+            cache,
+        )
+    }
+
+    /// The session's armed pipeline, with the chain settled on the ONE driver the
+    /// fan-out's selection reads.
+    async fn settle_the_chain(
+        provider: &AlloyProvider,
+        warm: &Arc<RwLock<WarmCodeCacheInner>>,
+    ) -> Arc<BalHeadDriver> {
+        let pipeline = warm.read().bal_head_pipeline().expect("the opt-in is on");
+        warm.read().arm_bal_heads(provider);
+        assert!(pipeline.is_armed(), "the pipeline sees every accepted head");
+        let driver = pipeline.driver().expect("arming installs the driver");
+        assert!(
+            Arc::ptr_eq(
+                &driver,
+                &warm
+                    .read()
+                    .delta_heads(provider)
+                    .expect("the session has one driver")
+            ),
+            "the pipeline and the fan-out share the ONE session driver"
+        );
+        let root_ticket = driver.deliver(ReadAnchor::identified(BLOCK - 1, ROOT), PARENT);
+        assert!(
+            matches!(
+                driver.advance(root_ticket, &[]).await,
+                HeadOutcome::Settled(_)
+            ),
+            "the parent head settled"
+        );
+        let child_ticket = driver.deliver(ReadAnchor::identified(BLOCK, CHILD), ROOT);
+        assert!(
+            matches!(
+                driver.advance(child_ticket, &[]).await,
+                HeadOutcome::Settled(_)
+            ),
+            "the head the fan-out anchors at settled"
+        );
+        assert_eq!(
+            driver
+                .snapshot(ReadAnchor::identified(BLOCK, CHILD))
+                .readiness,
+            HeadReadiness::Ready,
+            "and it answers ready before any candidate runs"
+        );
+        driver
+    }
+
+    /// What one ON-versus-OFF comparison observed: both outcomes, plus the lane
+    /// evidence that says the ON fan-out read the settled generation.
+    struct LaneEvidence {
+        off: DispatchOutcome,
+        on: DispatchOutcome,
+        bal_before_fanout: u64,
+        bal_after_fanout: u64,
+        ready_views_before: u64,
+        ready_views_after: u64,
+        repeated: u64,
+    }
+
+    /// Run the same candidate list OFF (the session cache without the opt-in),
+    /// then ON (the same cache with the pipeline armed and its chain settled).
+    async fn on_and_off_lanes(provider: &AlloyProvider, recorder: &DeltaRecorder) -> LaneEvidence {
+        let deployment = super::tests::deployment(Bytes::from_static(&[0xfe]));
+        let off = parity_fan_out(
+            provider,
+            &deployment,
+            Some(WarmCodeCacheInner::shared_default()),
+        );
+        assert_eq!(recorder.bal_requests(), 0, "OFF requests no BAL, ever");
+
+        let warm = WarmCodeCacheInner::shared_with_delta_dispatch(
+            DeltaDispatchConfig::with_readiness_deadline(Duration::from_millis(500)),
+        );
+        let driver = settle_the_chain(provider, &warm).await;
+        let bal_before_fanout = recorder.bal_requests();
+        let ready_views_before = driver.stats().ready_views;
+        let on = parity_fan_out(provider, &deployment, Some(Arc::clone(&warm)));
+        LaneEvidence {
+            off,
+            on,
+            bal_before_fanout,
+            bal_after_fanout: recorder.bal_requests(),
+            ready_views_before,
+            ready_views_after: driver.stats().ready_views,
+            repeated: driver.stats().repeated,
+        }
+    }
+
+    /// Candidate verdicts and failure buckets are identical with the pipeline ON
+    /// and OFF: the session's canonical-head pipeline is armed and has settled the
+    /// exact head before the fan-out, so the ON lane reads a delta generation
+    /// instead of the legacy memo — and not one verdict, failure bucket, or
+    /// exception moves.
+    ///
+    /// The selection is the only difference between the lanes; the pipeline owns
+    /// the preparation the fan-out never pays.
+    #[test]
+    fn candidate_verdicts_and_failure_buckets_are_identical_with_the_pipeline_on_and_off() {
+        let recorder = DeltaRecorder::default();
+        recorder.serve_head(BLOCK - 1, ROOT, PARENT);
+        recorder.serve_head(BLOCK, CHILD, ROOT);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let evidence = std::thread::spawn(move || rt.block_on(on_and_off_lanes(&provider, &rec)))
+            .join()
+            .expect("fan-out thread");
+        let (off, on) = (&evidence.off, &evidence.on);
+
+        assert_eq!(
+            evidence.bal_before_fanout, 2,
+            "the pipeline prepared and applied one list per head"
+        );
+        assert_eq!(
+            evidence.bal_after_fanout, evidence.bal_before_fanout,
+            "the ON fan-out resumed an already-settled head and requested no BAL"
+        );
+        assert_eq!(
+            evidence.repeated, 1,
+            "the fan-out re-delivered the exact head the pipeline settled"
+        );
+        assert!(
+            evidence.ready_views_after > evidence.ready_views_before,
+            "the fan-out read the settled generation ({} -> {} ready views)",
+            evidence.ready_views_before,
+            evidence.ready_views_after
+        );
+
+        assert_eq!(
+            on.candidate_count, off.candidate_count,
+            "the same candidates were simulated"
+        );
+        assert_eq!(on.fail_count, off.fail_count, "the same candidates failed");
+        assert_eq!(
+            on.exception_count, off.exception_count,
+            "the same candidates raised"
+        );
+        assert_eq!(
+            on.sim_ok_count(),
+            off.sim_ok_count(),
+            "the same candidates returned a result"
+        );
+        assert_eq!(on.suppressed_count, off.suppressed_count);
+        assert_eq!(on.thin_dropped, off.thin_dropped);
+        assert_eq!(on.divergent_dropped, off.divergent_dropped);
+        assert_eq!(on.fot_dropped, off.fot_dropped);
+        assert_eq!(on.stale_dropped, off.stale_dropped);
+        assert_eq!(
+            on.fail_buckets.buckets(),
+            off.fail_buckets.buckets(),
+            "the failure-bucket histogram is identical across the lanes"
+        );
+        assert_eq!(
+            verdicts(on),
+            verdicts(off),
+            "every candidate's verdict — its bucket and its priced figures — is identical"
+        );
+        assert_eq!(
+            verdicts(on).len(),
+            off.candidate_count,
+            "every simulated candidate produced exactly one verdict row"
+        );
+    }
+
+    /// What one legacy-versus-OFF comparison observed: both outcomes and both
+    /// wire streams, so the OFF lane's traffic can be compared byte for byte.
+    struct OffLaneEvidence {
+        legacy: DispatchOutcome,
+        session: DispatchOutcome,
+        legacy_wire: Vec<String>,
+        session_wire: Vec<String>,
+    }
+
+    /// Run the same candidate list through the shipped legacy path (no session
+    /// cache at all) and through an OFF session (a session cache with no opt-in).
+    fn legacy_and_off_lanes(provider: &AlloyProvider, recorder: &DeltaRecorder) -> OffLaneEvidence {
+        let deployment = super::tests::deployment(Bytes::from_static(&[0xfe]));
+
+        recorder.clear_wire();
+        let legacy = parity_fan_out(provider, &deployment, None);
+        let legacy_wire = recorder.wire();
+
+        let cache = WarmCodeCacheInner::shared_default();
+        assert!(
+            cache.read().bal_head_pipeline().is_none(),
+            "an OFF session has no pipeline, so the stage surface installs no sink"
+        );
+        cache.read().arm_bal_heads(provider);
+        assert!(
+            cache.read().delta_heads(provider).is_none(),
+            "and arming mints no driver: no BAL request could exist"
+        );
+        recorder.clear_wire();
+        let session = parity_fan_out(provider, &deployment, Some(Arc::clone(&cache)));
+        let session_wire = recorder.wire();
+        assert!(
+            cache.read().delta_heads(provider).is_none(),
+            "the OFF lane minted no driver even after a fan-out"
+        );
+        assert!(
+            cache.read().bal_head_pipeline().is_none(),
+            "and still owns no pipeline"
+        );
+        OffLaneEvidence {
+            legacy,
+            session,
+            legacy_wire,
+            session_wire,
+        }
+    }
+
+    /// The OFF lane is byte identical to the shipped legacy path: the same
+    /// fan-out run with NO session cache at all (the pre-opt-in degrade to a
+    /// fresh per-call cache) dispatches the same requests, in the same order,
+    /// with the same params, and produces the same verdicts.
+    ///
+    /// The opt-in's machinery is therefore invisible when it is off: an OFF
+    /// session installs no pipeline, mints no head driver, cannot be armed, and
+    /// issues no BAL request — structurally, not behind a flag check.
+    #[test]
+    fn the_off_lane_is_byte_identical_to_the_shipped_legacy_path() {
+        let recorder = DeltaRecorder::default();
+        recorder.serve_head(BLOCK - 1, ROOT, PARENT);
+        recorder.serve_head(BLOCK, CHILD, ROOT);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let evidence = std::thread::spawn(move || {
+            rt.block_on(async { legacy_and_off_lanes(&provider, &rec) })
+        })
+        .join()
+        .expect("fan-out thread");
+        let (legacy, session) = (&evidence.legacy, &evidence.session);
+
+        assert!(
+            evidence
+                .session_wire
+                .iter()
+                .any(|request| request.starts_with("eth_getBlockByNumber")),
+            "the legacy lane pays its one identity read: {:#?}",
+            evidence.session_wire
+        );
+        assert!(
+            evidence
+                .session_wire
+                .iter()
+                .any(|request| request.starts_with("eth_getStorageAt")),
+            "and its prefetch batch, so the comparison has real traffic: {:#?}",
+            evidence.session_wire
+        );
+        assert_eq!(
+            evidence.session_wire, evidence.legacy_wire,
+            "the OFF lane's wire stream is byte identical to the shipped legacy path's: \
+             same requests, same order, same params"
+        );
+        assert!(
+            !evidence
+                .session_wire
+                .iter()
+                .any(|request| request.starts_with("debug_getRawBlockAccessList")),
+            "the OFF lane issues no BAL request: {:#?}",
+            evidence.session_wire
+        );
+        assert_eq!(
+            session.candidate_count, legacy.candidate_count,
+            "the same candidates were simulated"
+        );
+        assert_eq!(session.fail_count, legacy.fail_count);
+        assert_eq!(session.exception_count, legacy.exception_count);
+        assert_eq!(session.sim_ok_count(), legacy.sim_ok_count());
+        assert_eq!(
+            session.fail_buckets.buckets(),
+            legacy.fail_buckets.buckets(),
+            "the OFF lane's failure buckets are the legacy path's"
+        );
+        assert_eq!(
+            verdicts(session),
+            verdicts(legacy),
+            "the OFF lane's verdicts are the legacy path's"
+        );
     }
 
     /// The reason vocabulary the diagnostic line and the metric labels share is

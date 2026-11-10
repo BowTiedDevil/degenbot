@@ -7,7 +7,7 @@
 //!
 //! - **`StageHandlers`** stays the pure product/facts seam — exactly the
 //!   eight `on_*` stage hooks, no control pokes.
-//! - **`PumpControl`** (this module) owns the seven pokes the runtime drives
+//! - **`PumpControl`** (this module) owns the pokes the runtime drives
 //!   between stage transitions. It is a *separate required trait*, injected
 //!   beside `Arc<dyn StageHandlers>` at pump construction; both `EngineStages`
 //!   and the two test doubles (`NoopStubEngine`, `FakeStageEngine`) implement
@@ -19,10 +19,11 @@
 //! split. `notify_block` stays raw `u64`: a `newHeads` tick is a chain fact
 //! forwarded to the delivery-to-Python block clock, not engine epoch work.
 
+use degenbot_core::canonical_head::CanonicalHead;
 use degenbot_substrate::{BlockMetadata, Epoch};
 
-/// The driver-facing control seam: the seven pokes the pump drives between
-/// stage transitions (ADR-046). Implementors: `EngineStages` and the
+/// The driver-facing control seam: the pokes the pump drives between stage
+/// transitions (ADR-046). Implementors: `EngineStages` and the
 /// test-declared conformance doubles.
 pub trait PumpControl: Send + Sync + 'static {
     /// Are there unsolved dirty pool keys accumulated since the last solve?
@@ -51,6 +52,18 @@ pub trait PumpControl: Send + Sync + 'static {
     /// work; every accepted header delivered 1:1). Raw `u64` by design —
     /// a chain coordinate, not an engine epoch.
     fn notify_block(&self, block: u64, metadata: &BlockMetadata);
+
+    /// One ACCEPTED canonical head: the chain fact (number + hash + parent
+    /// hash) a storage consumer fences its reads against. Fired after
+    /// [`Self::notify_block`] on the same header, so the block clock never
+    /// waits behind storage work, and exactly once per accepted header — a
+    /// header the stage machine rejects as duplicate/stale emits neither poke.
+    ///
+    /// No default body: an implementor with no head consumer answers `()` and
+    /// says so, exactly like [`Self::on_pump_ended`]. The shipped consumer
+    /// posture is "no sink installed", which the arb engine's answer makes a
+    /// hard no-op rather than a branch here.
+    fn on_canonical_head(&self, head: &CanonicalHead);
 
     /// The pump ended (WS stream dead or pump task exited): make the
     /// Python-facing streams END so the bot fails loudly. No default — every

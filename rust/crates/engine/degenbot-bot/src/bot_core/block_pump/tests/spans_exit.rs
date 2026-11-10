@@ -47,6 +47,8 @@ async fn header_arms_per_block_span_with_number_and_parent() {
             base_fee_per_gas: Some(1),
             gas_used: 1,
             gas_limit: 1,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
         WsEvent::BlockHeader {
             number: NEXT_BLOCK,
@@ -54,6 +56,8 @@ async fn header_arms_per_block_span_with_number_and_parent() {
             base_fee_per_gas: Some(2),
             gas_used: 2,
             gas_limit: 2,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
     ];
     let combined = stream::iter(events).boxed();
@@ -183,6 +187,8 @@ async fn header_burst_closes_every_block_span() {
             base_fee_per_gas: Some(1),
             gas_used: 1,
             gas_limit: 1,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         })
         .collect();
     // Force a park between headers: a ready stream never suspends, so the
@@ -253,6 +259,8 @@ async fn timed_exit_flag_exits_parked_select_promptly() {
         base_fee_per_gas: Some(1),
         gas_used: 1,
         gas_limit: 1,
+        hash: alloy::primitives::B256::ZERO,
+        parent_hash: alloy::primitives::B256::ZERO,
     }];
     let started = std::time::Instant::now();
     pump.run_test_loop(stream::iter(events).boxed(), 0xB000_0000)
@@ -276,6 +284,8 @@ async fn shutdown_flag_exits_loop_promptly() {
         base_fee_per_gas: Some(1),
         gas_used: 1,
         gas_limit: 1,
+        hash: alloy::primitives::B256::ZERO,
+        parent_hash: alloy::primitives::B256::ZERO,
     }];
     let started = std::time::Instant::now();
     pump.run_test_loop(stream::iter(events).boxed(), 0xB000_0000)

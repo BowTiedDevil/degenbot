@@ -56,6 +56,8 @@ async fn header_staleness_watchdog_fires_under_silent_stream() {
                     base_fee_per_gas: None,
                     gas_used: 0,
                     gas_limit: 0,
+                    hash: alloy::primitives::B256::ZERO,
+                    parent_hash: alloy::primitives::B256::ZERO,
                 },
                 (1, rx_opt),
             )),
@@ -120,6 +122,8 @@ async fn header_staleness_watchdog_does_not_fire_when_headers_fresh() {
                         base_fee_per_gas: None,
                         gas_used: 0,
                         gas_limit: 0,
+                        hash: alloy::primitives::B256::ZERO,
+                        parent_hash: alloy::primitives::B256::ZERO,
                     },
                     (phase, block + 1),
                 ))
@@ -184,6 +188,8 @@ async fn logs_silence_watchdog_fires_when_headers_flow_but_no_logs() {
                 base_fee_per_gas: None,
                 gas_used: 0,
                 gas_limit: 0,
+                hash: alloy::primitives::B256::ZERO,
+                parent_hash: alloy::primitives::B256::ZERO,
             },
             block + 1,
         ))
@@ -228,6 +234,8 @@ async fn logs_silence_watchdog_does_not_fire_when_logs_flowing() {
                 base_fee_per_gas: None,
                 gas_used: 0,
                 gas_limit: 0,
+                hash: alloy::primitives::B256::ZERO,
+                parent_hash: alloy::primitives::B256::ZERO,
             }
         } else {
             WsEvent::Pool(PoolEvent::from_log(make_v2_sync_log(
@@ -319,6 +327,8 @@ async fn watchdog_tick_mid_window_does_not_restart_settle_window() {
                             base_fee_per_gas: Some(1_000_000_001),
                             gas_used: 10_000_001,
                             gas_limit: 30_000_001,
+                            hash: alloy::primitives::B256::ZERO,
+                            parent_hash: alloy::primitives::B256::ZERO,
                         },
                         1,
                     ))
@@ -407,6 +417,8 @@ async fn finalize_carries_just_finished_blocks_metadata() {
             base_fee_per_gas: meta_101.base_fee_per_gas,
             gas_used: meta_101.gas_used,
             gas_limit: meta_101.gas_limit,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
         WsEvent::BlockHeader {
             number: 102,
@@ -414,6 +426,8 @@ async fn finalize_carries_just_finished_blocks_metadata() {
             base_fee_per_gas: meta_102.base_fee_per_gas,
             gas_used: meta_102.gas_used,
             gas_limit: meta_102.gas_limit,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
         WsEvent::Pool(PoolEvent::from_log(tombstone_log)),
     ];
@@ -487,6 +501,8 @@ async fn on_drain_receives_promoted_active_block_not_stalled_header() {
             base_fee_per_gas: Some(1_000_000_001),
             gas_used: 10_000_001,
             gas_limit: 30_000_001,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         })
         .collect();
     let combined = stream::iter(events).boxed();
@@ -526,6 +542,8 @@ async fn solve_gate_waits_for_drained_stream_headers() {
             base_fee_per_gas: Some(1_000_000_001),
             gas_used: 10_000_001,
             gas_limit: 30_000_001,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         })
         .collect();
     let combined = stream::iter(events).boxed();

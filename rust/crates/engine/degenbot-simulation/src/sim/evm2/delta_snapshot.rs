@@ -1598,7 +1598,6 @@ pub struct HeadStats {
 struct DeliveredHead {
     anchor: ReadAnchor,
     parent_hash: B256,
-    relevance: Arc<[Address]>,
     seq: u64,
     delivered_at: Instant,
     /// The cold generation callers read while the head is unprepared, dropped
@@ -1622,6 +1621,17 @@ struct DriverState {
     /// a caller still at that head gets the generation — and the truth about
     /// whether it carries — rather than a fresh cold one.
     installed: Option<(ReadAnchor, HeadReadiness)>,
+    /// The anchor the installed generation replaced, with the handle that was
+    /// installed there and the readiness it reported: the one previous anchor a
+    /// lagging caller can still read.
+    ///
+    /// Set only by a transition that linked (the new head was exactly the
+    /// previous anchor + 1 with a matching parent hash), and cleared by any
+    /// settle that did not, so a gap makes the window smaller, never wrong.
+    /// This is a window, not retention: the handle is the generation the seal
+    /// already folded into the new head's node, so it costs one `Arc` and an
+    /// empty handle-local map — not one snapshot.
+    previous: Option<(ReadAnchor, Arc<DeltaHub>, HeadReadiness)>,
     seq: u64,
     stats: HeadStats,
 }
@@ -1712,8 +1722,14 @@ impl BalHeadDriver {
         }
     }
 
-    /// Deliver one canonical head: its exact anchor, the parent hash its lineage
-    /// is verified against, and the caller's relevance set for its final writes.
+    /// Deliver one canonical head: its exact anchor and the parent hash its
+    /// lineage is verified against.
+    ///
+    /// Relevance is NOT a delivery property: a head arrives on the block clock,
+    /// which has no candidates and therefore no relevance to hand over, and the
+    /// set only needs to exist by the time the head's final writes are applied.
+    /// It is an argument of [`Self::apply`] for that reason — the applier is
+    /// whoever knows the session's relevant identities.
     ///
     /// A delivery identical to the current head — same anchor and same parent
     /// hash — is idempotent: the same ticket comes back and nothing is minted. A
@@ -1721,12 +1737,7 @@ impl BalHeadDriver {
     /// the spot without any BAL work (a reorg back to the installed block).
     /// Everything else minted a cold generation that callers at that head read
     /// until [`Self::apply`] lands.
-    pub fn deliver(
-        &self,
-        anchor: ReadAnchor,
-        parent_hash: B256,
-        relevance: Vec<Address>,
-    ) -> HeadTicket {
+    pub fn deliver(&self, anchor: ReadAnchor, parent_hash: B256) -> HeadTicket {
         let mut state = self.state.lock();
         let repeated = state
             .head
@@ -1759,7 +1770,6 @@ impl BalHeadDriver {
         state.head = Some(DeliveredHead {
             anchor,
             parent_hash,
-            relevance: relevance.into(),
             seq,
             delivered_at: Instant::now(),
             provisional,
@@ -1778,13 +1788,21 @@ impl BalHeadDriver {
         PreparedBal::prepare(&self.provider, ticket.anchor).await
     }
 
-    /// Apply `prepared` to `ticket`'s head in one synchronous transition.
+    /// Apply `prepared` to `ticket`'s head in one synchronous transition, with
+    /// `relevance` naming the identities this head's writes may SEED (a write to
+    /// a key the generation already serves always overwrites; an unknown key
+    /// seeds only when its address is relevant).
     ///
     /// The list applies only when the ticket names the head the driver still
     /// holds and the list was prepared at that same exact anchor; a superseded
     /// ticket and a foreign list install nothing. A head that is already settled
     /// is idempotent: nothing moves and no write is re-applied.
-    pub fn apply(&self, ticket: HeadTicket, prepared: &PreparedBal) -> HeadOutcome {
+    pub fn apply(
+        &self,
+        ticket: HeadTicket,
+        prepared: &PreparedBal,
+        relevance: &[Address],
+    ) -> HeadOutcome {
         let mut state = self.state.lock();
         let Some(head) = state.head.as_ref() else {
             state.stats.discarded = state.stats.discarded.saturating_add(1);
@@ -1808,13 +1826,41 @@ impl BalHeadDriver {
         if self.cache.anchor() == Some(current) {
             return HeadOutcome::AlreadySettled;
         }
-        let (anchor, parent_hash, relevance) =
-            (head.anchor, head.parent_hash, Arc::clone(&head.relevance));
+        let (anchor, parent_hash) = (head.anchor, head.parent_hash);
+        // The generation this transition is about to seal, held before the move:
+        // `for_anchor` on the installed anchor hands back the installed handle
+        // (and never installs a new one), and after the seal that same handle
+        // answers every value it served at its own anchor — the parent chain
+        // moved into the sealed node the child now owns.
+        let prior = self
+            .cache
+            .anchor()
+            .map(|installed| (installed, self.cache.for_anchor(installed)));
         let (_hub, report) = self
             .cache
-            .apply_prepared(anchor, parent_hash, &relevance, prepared);
+            .apply_prepared(anchor, parent_hash, relevance, prepared);
         let report = Arc::new(report);
         state.stats.settled = state.stats.settled.saturating_add(1);
+        // The two-anchor window: a linked transition makes the generation it
+        // just sealed the previous anchor a lagging caller may read. A settle
+        // that did not link (no parent, not consecutive, a mismatched parent
+        // hash, or an unreadable list) leaves no previous slot, so the window
+        // shrinks across a gap instead of pointing at a generation that never
+        // was this chain's parent.
+        match &report.outcome {
+            CarryOutcome::Carried { .. } => {
+                if let Some((prior_anchor, prior_hub)) = prior {
+                    let readiness = state
+                        .installed
+                        .as_ref()
+                        .filter(|(settled, _)| *settled == prior_anchor)
+                        .map_or(HeadReadiness::Ready, |(_, readiness)| readiness.clone());
+                    state.previous = Some((prior_anchor, prior_hub, readiness));
+                }
+            }
+            CarryOutcome::Cold { .. } => state.previous = None,
+            CarryOutcome::AlreadyCurrent => {}
+        }
         state.installed = Some((anchor, settled_readiness(Some(&report))));
         if let Some(head) = state.head.as_mut() {
             head.provisional = None;
@@ -1832,7 +1878,7 @@ impl BalHeadDriver {
     /// same ticket returns [`HeadOutcome::InFlight`] instead of duplicating the
     /// fetch, and a dropped (cancelled) advance releases the claim so a later
     /// call prepares the head normally. A settled head repeats no work.
-    pub async fn advance(&self, ticket: HeadTicket) -> HeadOutcome {
+    pub async fn advance(&self, ticket: HeadTicket, relevance: &[Address]) -> HeadOutcome {
         {
             let mut state = self.state.lock();
             let Some(head) = state.head.as_mut() else {
@@ -1857,13 +1903,22 @@ impl BalHeadDriver {
         };
         let prepared = self.prepare(ticket).await;
         drop(claim);
-        self.apply(ticket, &prepared)
+        self.apply(ticket, &prepared, relevance)
     }
 
-    /// The snapshot `anchor` answers with right now, never blocking: the
-    /// installed generation whenever that exact anchor settled — which keeps
-    /// answering after a later head was delivered — otherwise a cold generation
-    /// at the same anchor with the reason.
+    /// The snapshot `anchor` answers with right now, never blocking.
+    ///
+    /// Four answers, in this order:
+    ///
+    /// 1. the installed generation whenever that exact anchor settled — which
+    ///    keeps answering after a later head was delivered;
+    /// 2. the current head's cold generation while its BAL is still preparing;
+    /// 3. the PREVIOUS anchor's generation, when the transition that installed
+    ///    the current head linked (see [`Self::previous`] — this is the window a
+    ///    fan-out whose candidates were solved one block behind the head reads
+    ///    through, and it answers with the readiness that generation reported);
+    /// 4. a fresh cold generation with the reason (`Superseded` /
+    ///    `Undelivered`).
     pub fn snapshot(&self, anchor: ReadAnchor) -> HeadView {
         let mut state = self.state.lock();
         let current = state
@@ -1904,6 +1959,15 @@ impl BalHeadDriver {
                     Arc::clone,
                 );
             (hub, HeadReadiness::Cold(reason))
+        } else if let Some((_, hub, readiness)) = state
+            .previous
+            .as_ref()
+            .filter(|(previous, _, _)| *previous == anchor)
+        {
+            // The anchor the installed head replaced: the generation that was
+            // installed there (its values moved into the sealed node the new
+            // head owns), with the readiness it reported at its own settle.
+            (Arc::clone(hub), readiness.clone())
         } else {
             let reason = if state.superseded == Some(anchor) {
                 HeadCold::Superseded
@@ -1933,6 +1997,19 @@ impl BalHeadDriver {
     #[must_use]
     pub fn installed(&self) -> Option<ReadAnchor> {
         self.cache.anchor()
+    }
+
+    /// The previous anchor the read window covers: the generation the installed
+    /// head replaced, when the installing transition linked. `None` after a gap,
+    /// the first head, or a reorg — the window is two consecutive canonical
+    /// anchors or one, never a policy.
+    #[must_use]
+    pub fn previous(&self) -> Option<ReadAnchor> {
+        self.state
+            .lock()
+            .previous
+            .as_ref()
+            .map(|(anchor, _, _)| *anchor)
     }
 
     /// The report the driver's own apply produced for the head it holds, when it

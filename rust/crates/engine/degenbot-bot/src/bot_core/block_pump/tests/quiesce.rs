@@ -156,6 +156,8 @@ fn reorg_window_span_lifecycle_enter_restore_close() {
             base_fee_per_gas: Some(1_000_000_001),
             gas_used: 10_000_001,
             gas_limit: 30_000_001,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
         // Forward apply at 101: journal delta at 101.
         WsEvent::Pool(PoolEvent::from_log(make_v2_sync_log(
@@ -300,6 +302,8 @@ fn reorg_restore_without_delta_is_idempotent_noop() {
             base_fee_per_gas: Some(1_000_000_001),
             gas_used: 10_000_001,
             gas_limit: 30_000_001,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
         // No forward apply at 101: the newest delta is the registration
         // (block 100), so this removed event is a guaranteed no-op.
@@ -394,6 +398,8 @@ async fn solve_gate_waits_for_buffered_log_before_solving() {
             base_fee_per_gas: Some(1_000_000_001),
             gas_used: 10_000_001,
             gas_limit: 30_000_001,
+            hash: alloy::primitives::B256::ZERO,
+            parent_hash: alloy::primitives::B256::ZERO,
         },
         WsEvent::Pool(PoolEvent::from_log(make_v2_sync_log(
             pool,

@@ -32,6 +32,7 @@ pub mod alloy_async_db;
 #[cfg(feature = "evm2-jit")]
 pub mod aot_store;
 pub mod async_fanout;
+pub mod bal_heads;
 pub mod bal_prefetch;
 pub mod blocking_async_db;
 pub mod bot_state_db;

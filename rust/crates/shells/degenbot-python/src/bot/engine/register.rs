@@ -43,6 +43,31 @@ impl PyArbEngine {
             let bot = Arc::new(Bot::with_core(Arc::clone(&core), registry));
             (core, bot)
         };
+        // The cross-block warm bytecode cache (Option A) — one
+        // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
+        // cloned into each per-block `Evm2BlockSimHandle::build`. Empty at
+        // construction; warmed lazily by the first block's cold RPCs.
+        // The durable per-hook slot-set store (ADR-090 H2) rides the same
+        // owner: every black-box V4 leg quote learns its hook's touched-slot
+        // set once, and the anchor's prefetch joins it so steady-state
+        // re-quotes read hook storage warm. A damaged or unwritable store
+        // degrades to an in-memory one — a slot cache never fails a boot.
+        // `simulation.delta_dispatch` (default OFF) rides the SAME owner: an
+        // operator who opts into the BAL dispatch lane gets one cache carrying
+        // both the hook store and the dispatch config, so the fan-out asks this
+        // session for ready delta storage while the quoter keeps its learned
+        // slots. OFF leaves the shipped owner exactly as it was.
+        //
+        // Constructed BEFORE the stage surface because the stage surface is
+        // where the session's canonical-head consumer is installed: the cache
+        // owns the pipeline (the flag, the store and the head consumer are one
+        // session), and handing the stage surface a handle to it at
+        // construction is the whole wiring. The pipeline is UNARMED here — it
+        // has no provider yet — and the batch executor's construction arms it.
+        let warm_code_cache = warm_code_cache_for(
+            degenbot_simulation::sim::evm2::hook_slots::open_production_store(),
+            degenbot_config::holder::config().simulation.delta_dispatch,
+        );
         // The stage surface IS the engine
         // seam — it builds the engine internally from the shared core, so this
         // crate never names the engine type. The pump drives it through the
@@ -54,6 +79,17 @@ impl PyArbEngine {
         // records into — one dirty-tracking mechanism. The ledger
         // is injected at construction; the stage surface owns no swap.
         let stages = Arc::new(EngineStages::with_core(core, bot.active_delta()));
+        // The accepted-header seam, installed only when the opt-in gave the
+        // session a pipeline. An OFF session installs NO sink, so nothing on the
+        // pump's header edge can ever reach a BAL request.
+        {
+            // T1-scan-exempt: pure construction — no Python object exists yet,
+            // so no GIL can be held across this guard.
+            let cache = warm_code_cache.read();
+            if let Some(pipeline) = cache.bal_head_pipeline() {
+                stages.install_canonical_head_sink(pipeline);
+            }
+        }
         // ADR-050 D7 / ADR-093: the public Rust `EngineDriver` owns the pump
         // session (the pose machine, ONE ordered event stream with its consumer
         // claim, the reorg coordinator, the shutdown flag, the verify home);
@@ -86,24 +122,6 @@ impl PyArbEngine {
                 .borrow(py)
                 .attach_pump_state(Arc::clone(session.driver()));
         }
-        // The cross-block warm bytecode cache (Option A) — one
-        // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
-        // cloned into each per-block `Evm2BlockSimHandle::build`. Empty at
-        // construction; warmed lazily by the first block's cold RPCs.
-        // The durable per-hook slot-set store (ADR-090 H2) rides the same
-        // owner: every black-box V4 leg quote learns its hook's touched-slot
-        // set once, and the anchor's prefetch joins it so steady-state
-        // re-quotes read hook storage warm. A damaged or unwritable store
-        // degrades to an in-memory one — a slot cache never fails a boot.
-        // `simulation.delta_dispatch` (default OFF) rides the SAME owner: an
-        // operator who opts into the BAL dispatch lane gets one cache carrying
-        // both the hook store and the dispatch config, so the fan-out asks this
-        // session for ready delta storage while the quoter keeps its learned
-        // slots. OFF leaves the shipped owner exactly as it was.
-        let warm_code_cache = warm_code_cache_for(
-            degenbot_simulation::sim::evm2::hook_slots::open_production_store(),
-            degenbot_config::holder::config().simulation.delta_dispatch,
-        );
         Ok(Self {
             stages,
             session,
