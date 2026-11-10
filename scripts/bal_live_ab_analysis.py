@@ -31,6 +31,28 @@ Usage:
         --out logs/bal_live_ab_result.md
 
 `--format json` prints the computed structure instead of the markdown.
+
+# Migration notes (the additive `fanout` key and the `bal-head` rows)
+
+Three row families gained an optional `fanout=<id>` field and the simulation
+gained one new row family, all ADDITIVE — no existing field changed name or
+meaning, so this script reads an old committed capture and a new attributed one
+alike:
+
+* `fan-out storage selection`, `storage prefetch` and the `[sim] cands=` row each
+  append ` fanout=<id>` as their LAST field, inside the row's existing body (the
+  two brace-delimited rows keep their `{...}` suffix);
+* `fanout-trace` appends `"fanout":<id>` as its last JSON key. A row emitted by
+  a caller OUTSIDE any fan-out (the inline hook re-quote arm) omits the key
+  entirely, and so does every row from a capture taken before the key existed;
+  those rows are reported UNATTRIBUTED, never assigned to a fan-out by block
+  number;
+* `bal-head {...}` is a new per-head row (one per head transition, on the same
+  `sim` domain) carrying the exact `(anchor, hash, parent)`, the transition's
+  `outcome` (`settled` / `cold` / `superseded` / `foreign`), `chain`
+  (`carried` / `cold` / `already-current`), the detailed `refusal` and `bal`
+  causes a fan-out's collapsed cold label hides, and the head's `prepare_us` /
+  `apply_us` walls. An old capture carries none, and the report says so.
 """
 
 from __future__ import annotations
@@ -51,6 +73,7 @@ if TYPE_CHECKING:
 TRACE_MARKER = "fanout-trace "
 SELECTION_MARKER = "fan-out storage selection "
 PREFETCH_MARKER = "storage prefetch "
+HEAD_MARKER = "bal-head "
 LAB_MARKER = "INFO [sim] "
 OUTCOME_MARKER = "[logging] [sim] "
 MEMO_MARKER = "INFO [sim] storage memo stats (block retired) "
@@ -61,20 +84,23 @@ BACKFILL_MARKER = "BlockPump: auto-backfill from snapshot block to WS block befo
 CONNECTORS_MARKER = "[driver_boot] connector index loaded "
 EXECUTOR_MARKER = "[sim] executor runtime bytecode loaded"
 
+# The `, fanout=<id>` tail is OPTIONAL in every pattern below: a capture taken
+# before the key existed carries no such field, and both shapes parse (see the
+# module's migration notes).
 _RE_SELECTION = re.compile(
     r"\{current_block=(\d+), anchor=(\d+), anchor_fenced=(?:true|false), "
-    r'storage="(\w+)", reason=(?:None|Some\("([^"]+)"\))\}$'
+    r'storage="(\w+)", reason=(?:None|Some\("([^"]+)"\))(?:, fanout=(\d+))?\}$'
 )
 _RE_PREFETCH = re.compile(
     r"\{current_block=(\d+), anchor=(\d+), anchor_fenced=(?:true|false), "
     r"derived=(\d+), learned=(\d+), hook=(\d+), requested=(\d+), seeded=(\d+), "
-    r'skipped=(?:None|Some\("([^"]+)"\))\}$'
+    r'skipped=(?:None|Some\("([^"]+)"\))(?:, fanout=(\d+))?\}$'
 )
 _RE_LAB = re.compile(
     r"cands=(\d+) sims=(\d+) sim_ms=(\d+) builds=(\d+) build_ms=(\d+) cold: "
     r"b_fast=(\d+) b_slow=(\d+) b_ms=(\d+) code=(\d+) c_ms=(\d+) s_fast=(\d+) s_slow=(\d+)"
-    r" s_ms=(\d+) bh=(\d+) warm_basic_hits=(\d+) slow_ms=(\d+) "
-    r"\{current_block=(\d+), fanout_ms=(\d+)\}$"
+    r" s_ms=(\d+) bh=(\d+) warm_basic_hits=(\d+) slow_ms=(\d+)(?: fanout=(\d+))?"
+    r" \{current_block=(\d+), fanout_ms=(\d+)\}$"
 )
 _RE_OUTCOME = re.compile(
     r"ready_ms=([\d.]+) (\d+) candidates: (\d+) ok \((\d+) profitable, (\d+) below threshold\), "
@@ -89,7 +115,13 @@ _RE_EXECUTOR = re.compile(r"bytes=(\d+), path=(\S+)$")
 
 @dataclass(frozen=True)
 class TraceRow:
-    """One simulated candidate at the seam; the lane it read through is unknown."""
+    """One simulated candidate at the seam.
+
+    `fanout` names the dispatch fan-out that simulated it, when the row carries
+    that key. A row from the inline hook re-quote arm — or from a capture taken
+    before the key existed — has `None` and stays UNATTRIBUTED: this analysis
+    never assigns such a row to a fan-out by block number.
+    """
 
     line: int
     block: int
@@ -100,6 +132,7 @@ class TraceRow:
     addresses: tuple[str, ...]
     slots: int
     relevance: tuple[str, ...]
+    fanout: int | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +144,7 @@ class SelectionRow:
     anchor: int
     storage: str
     reason: str | None
+    fanout: int | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +160,7 @@ class PrefetchRow:
     requested: int
     seeded: int
     skipped: str | None
+    fanout: int | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +178,32 @@ class LabRow:
     s_slow: int
     slow_ms: int
     fanout_ms: int
+    fanout: int | None = None
+
+
+@dataclass(frozen=True)
+class HeadRow:
+    """One canonical-head transition as the pipeline reported it.
+
+    The fan-out side of these facts is a CLOSED cold label (`lineage-refused`
+    covers four refusals, `bal-unreadable` three). This row is the explanation
+    behind that label, plus the head's own prepare and apply walls.
+    """
+
+    line: int
+    anchor: int
+    hash: str
+    parent: str
+    outcome: str
+    chain: str | None
+    refusal: str | None
+    bal: str | None
+    prepare_us: int | None
+    apply_us: int | None
+    carried: int | None
+    writes: int | None
+    overwritten: int | None
+    skipped: int | None
 
 
 @dataclass(frozen=True)
@@ -189,6 +250,7 @@ class Capture:
     trace: list[TraceRow] = field(default_factory=list)
     selections: list[SelectionRow] = field(default_factory=list)
     prefetches: list[PrefetchRow] = field(default_factory=list)
+    heads: list[HeadRow] = field(default_factory=list)
     labs: list[LabRow] = field(default_factory=list)
     outcomes: list[OutcomeRow] = field(default_factory=list)
     memos: list[MemoRow] = field(default_factory=list)
@@ -239,6 +301,9 @@ def parse_trace_line(line: str) -> TraceRow | None:
         addresses=addresses,
         slots=slots,
         relevance=tuple(row.get("relevance", [])),
+        # Absent for a caller outside any fan-out (the inline hook re-quote arm)
+        # and for every pre-`fanout` row: both stay unattributed.
+        fanout=int(row["fanout"]) if "fanout" in row else None,
     )
 
 
@@ -250,13 +315,14 @@ def parse_selection_line(line: str) -> SelectionRow | None:
     match = _RE_SELECTION.match(body)
     if match is None:
         return None
-    current_block, anchor, storage, reason = match.groups()
+    current_block, anchor, storage, reason, fanout = match.groups()
     return SelectionRow(
         line=0,
         current_block=int(current_block),
         anchor=int(anchor),
         storage=storage,
         reason=reason,
+        fanout=int(fanout) if fanout else None,
     )
 
 
@@ -279,6 +345,7 @@ def parse_prefetch_line(line: str) -> PrefetchRow | None:
         requested=int(fields[5]),
         seeded=int(fields[6]),
         skipped=fields[7],
+        fanout=int(fields[8]) if fields[8] else None,
     )
 
 
@@ -290,19 +357,59 @@ def parse_lab_line(line: str) -> LabRow | None:
     match = _RE_LAB.match(body)
     if match is None:
         return None
-    fields = [int(value) for value in match.groups()]
+    fields = match.groups()
+    # `fanout` is the group BEFORE the two trailing `{current_block=..., fanout_ms=...}`
+    # fields, and it is absent in a capture taken before the key existed.
+    numbers = [int(value) if value is not None else None for value in fields]
     return LabRow(
         line=0,
-        current_block=fields[16],
-        candidates=fields[0],
-        sims=fields[1],
-        sim_ms=fields[2],
-        builds=fields[3],
-        build_ms=fields[4],
-        b_slow=fields[6],
-        s_slow=fields[11],
-        slow_ms=fields[15],
-        fanout_ms=fields[17],
+        current_block=numbers[17],
+        candidates=numbers[0],
+        sims=numbers[1],
+        sim_ms=numbers[2],
+        builds=numbers[3],
+        build_ms=numbers[4],
+        b_slow=numbers[6],
+        s_slow=numbers[11],
+        slow_ms=numbers[15],
+        fanout_ms=numbers[18],
+        fanout=numbers[16],
+    )
+
+
+def parse_head_line(line: str) -> HeadRow | None:
+    """Parse one `bal-head {...}` row; `None` for any other line."""
+    body = _payload(line, HEAD_MARKER)
+    if body is None or not body.startswith("{"):
+        return None
+    try:
+        row = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+
+    def optional_int(key: str) -> int | None:
+        value = row.get(key)
+        return int(value) if isinstance(value, int) else None
+
+    def optional_str(key: str) -> str | None:
+        value = row.get(key)
+        return str(value) if isinstance(value, str) else None
+
+    return HeadRow(
+        line=0,
+        anchor=int(row["anchor"]),
+        hash=str(row.get("hash", "")),
+        parent=str(row.get("parent", "")),
+        outcome=str(row.get("outcome", "")),
+        chain=optional_str("chain"),
+        refusal=optional_str("refusal"),
+        bal=optional_str("bal"),
+        prepare_us=optional_int("prepare_us"),
+        apply_us=optional_int("apply_us"),
+        carried=optional_int("carried"),
+        writes=optional_int("writes"),
+        overwritten=optional_int("overwritten"),
+        skipped=optional_int("skipped"),
     )
 
 
@@ -435,6 +542,49 @@ def relevance_coverage(row: TraceRow) -> float:
     return len(read_addresses & relevant) / len(relevant)
 
 
+@dataclass
+class FanoutAttribution:
+    """One fan-out's rows, joined by the additive `fanout` key."""
+
+    fanout: int
+    selection: SelectionRow | None = None
+    prefetch: PrefetchRow | None = None
+    lab: LabRow | None = None
+    traces: list[TraceRow] = field(default_factory=list)
+
+
+def fanout_attribution(capture: Capture) -> dict[int, FanoutAttribution]:
+    """Join a capture's rows by `fanout`, never by block number.
+
+    A row without the key belongs to NO fan-out in this analysis: it is either an
+    inline hook re-quote row or a row from a capture taken before the key
+    existed, and both stay unattributed.
+    """
+    joined: dict[int, FanoutAttribution] = {}
+    for selection in capture.selections:
+        if selection.fanout is not None:
+            joined.setdefault(
+                selection.fanout, FanoutAttribution(selection.fanout)
+            ).selection = selection
+    for prefetch in capture.prefetches:
+        if prefetch.fanout is not None:
+            joined.setdefault(
+                prefetch.fanout, FanoutAttribution(prefetch.fanout)
+            ).prefetch = prefetch
+    for lab in capture.labs:
+        if lab.fanout is not None:
+            joined.setdefault(lab.fanout, FanoutAttribution(lab.fanout)).lab = lab
+    for row in capture.trace:
+        if row.fanout is not None:
+            joined.setdefault(row.fanout, FanoutAttribution(row.fanout)).traces.append(row)
+    return joined
+
+
+def unattributed_traces(capture: Capture) -> list[TraceRow]:
+    """The candidate rows that name no fan-out, and are therefore never assigned."""
+    return [row for row in capture.trace if row.fanout is None]
+
+
 def rows_by_block(rows: Iterable[TraceRow]) -> dict[int, list[TraceRow]]:
     """Group trace rows by the head block they were simulated under."""
     grouped: dict[int, list[TraceRow]] = {}
@@ -500,6 +650,7 @@ def scan_capture(
                             addresses=row.addresses,
                             slots=row.slots,
                             relevance=row.relevance,
+                            fanout=row.fanout,
                         )
                     )
                 continue
@@ -514,6 +665,7 @@ def scan_capture(
                         selection.anchor,
                         selection.storage,
                         selection.reason,
+                        selection.fanout,
                     )
                 )
                 continue
@@ -529,6 +681,7 @@ def scan_capture(
                         requested=prefetch.requested,
                         seeded=prefetch.seeded,
                         skipped=prefetch.skipped,
+                        fanout=prefetch.fanout,
                     )
                 )
                 continue
@@ -546,6 +699,27 @@ def scan_capture(
                         s_slow=lab.s_slow,
                         slow_ms=lab.slow_ms,
                         fanout_ms=lab.fanout_ms,
+                        fanout=lab.fanout,
+                    )
+                )
+                continue
+            if HEAD_MARKER in line and (head := parse_head_line(line)) is not None:
+                capture.heads.append(
+                    HeadRow(
+                        line=index,
+                        anchor=head.anchor,
+                        hash=head.hash,
+                        parent=head.parent,
+                        outcome=head.outcome,
+                        chain=head.chain,
+                        refusal=head.refusal,
+                        bal=head.bal,
+                        prepare_us=head.prepare_us,
+                        apply_us=head.apply_us,
+                        carried=head.carried,
+                        writes=head.writes,
+                        overwritten=head.overwritten,
+                        skipped=head.skipped,
                     )
                 )
                 continue
@@ -753,12 +927,15 @@ def render_markdown(off: Capture, on: Capture) -> str:
         "## What this capture can and cannot say",
         "",
         "The `fanout-trace` rows are emitted per candidate at the simulation seam by",
-        "every production caller, and a row names only the caller's head block — never",
-        "the storage lane it read through. They are therefore reported **unattributed**:",
-        "whole-window candidate timing and read sets, never a per-candidate",
-        "`delta`-versus-`legacy` comparison. Every lane claim below comes from the",
-        "per-fan-out dispatch rows (`fan-out storage selection`, `storage prefetch`,",
-        "`[sim] cands=`), which carry their own block, anchor, and representation.",
+        "every production caller. A dispatch fan-out's rows carry that fan-out's",
+        "`fanout` key, which joins them to its dispatch-level rows; a row WITHOUT the",
+        "key — every inline hook re-quote row, and every row of a capture taken before",
+        "the key existed — is reported **unattributed** and is never assigned to a",
+        "fan-out. Whole-window candidate timing therefore stays a window number, and",
+        "any per-lane candidate timing below is one fan-out's own, not a paired",
+        "comparison across the two captures. Every lane claim comes from the per-fan-out",
+        "dispatch rows (`fan-out storage selection`, `storage prefetch`, `[sim] cands=`),",
+        "which carry their own block, anchor, representation, and `fanout` key.",
         "",
         "The console sink is a bounded drop-counting queue, so each row count is a",
         "lower bound on what the process did; a fan-out whose selection row survived",
@@ -781,6 +958,7 @@ def render_markdown(off: Capture, on: Capture) -> str:
         f"| prefetch rows | {len(off.prefetches)} | {len(on.prefetches)} |",
         f"| `cands=` rows | {len(off.labs)} | {len(on.labs)} |",
         f"| retired memos | {len(off.memos)} | {len(on.memos)} |",
+        f"| `bal-head` rows | {len(off.heads)} | {len(on.heads)} |",
         f"| trace extract (rows / mismatches) | {_extract_cell(off)} | {_extract_cell(on)} |",
         f"| cordon rows | {len(off.cordons)} | {len(on.cordons)} |",
         "",
@@ -816,6 +994,95 @@ def render_markdown(off: Capture, on: Capture) -> str:
                 f"| {row.current_block} | {row.anchor} | {row.storage} | {row.reason or '—'} | "
                 f"{'yes' if row.current_block in prefetch_blocks else 'no'} | "
                 f"{'yes' if row.current_block in lab_blocks else 'no'} |"
+            )
+        lines.append("")
+
+    lines += [
+        "## Fan-out attribution (the additive `fanout` key)",
+        "",
+        "One `fanout` identifier is minted per dispatch and carried by that fan-out's",
+        "storage-selection row, its prefetch row, its `[sim]` delta summary, and every",
+        "candidate's `fanout-trace` row, so the four families join without guessing from",
+        "a block number. A candidate row with no `fanout` key — every inline hook",
+        "re-quote row, and every row of a capture taken before the key existed — is",
+        "listed as UNATTRIBUTED and is never folded into a fan-out.",
+        "",
+    ]
+    for capture in (off, on):
+        joined = fanout_attribution(capture)
+        unattributed = unattributed_traces(capture)
+        attributed = sum(len(entry.traces) for entry in joined.values())
+        lines += [
+            f"### {capture.label.upper()}",
+            "",
+            f"fan-outs carrying a `fanout` key: {len(joined)} of {len(capture.selections)}; "
+            f"attributed candidates: {attributed} of {len(capture.trace)}; "
+            f"unattributed candidates: {len(unattributed)}.",
+            "",
+        ]
+        if not joined:
+            lines += [
+                "No row in this capture carries a `fanout` key: every candidate below is",
+                "unattributed, and this capture supports no per-lane candidate claim.",
+                "",
+            ]
+            continue
+        lines += [
+            "| fanout | current_block | anchor | storage | reason | prefetch row | `cands=` row | candidates | candidate ms |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for fanout, entry in sorted(joined.items()):
+            selection = entry.selection
+            candidates = len(entry.traces)
+            candidate_ms = _ms(float(sum(row.sim_ns for row in entry.traces)))
+            lines.append(
+                f"| {fanout} | {selection.current_block if selection else '—'} | "
+                f"{selection.anchor if selection else '—'} | "
+                f"{selection.storage if selection else '—'} | "
+                f"{(selection.reason if selection and selection.reason else '—')} | "
+                f"{'yes' if entry.prefetch else 'no'} | "
+                f"{'yes' if entry.lab else 'no'} | "
+                f"{candidates} | {candidate_ms} |"
+            )
+        lines.append("")
+
+    lines += [
+        "## Head readiness detail (the `bal-head` rows)",
+        "",
+        "One row per head transition: the exact head, what the transition did, the",
+        "DETAILED cause behind the collapsed cold label a fan-out reports, and the",
+        "head's own prepare/apply walls. `lineage-refused` covers four refusals and",
+        "`bal-unreadable` three, so this section is what explains a fallback.",
+        "",
+    ]
+    for capture in (off, on):
+        lines.append(f"### {capture.label.upper()}")
+        lines.append("")
+        if not capture.heads:
+            lines += [
+                "No `bal-head` rows — the capture predates the row, so the refusal causes",
+                "and the per-head walls are not recoverable from it.",
+                "",
+            ]
+            continue
+        lines += [
+            f"outcomes: {_counts_phrase(Counter(row.outcome for row in capture.heads))}; "
+            f"refusals: {_counts_phrase(Counter(str(row.refusal) for row in capture.heads))}; "
+            f"bal skips: {_counts_phrase(Counter(str(row.bal) for row in capture.heads))}.",
+            "",
+            "| anchor | hash | outcome | chain | refusal | bal | prepare_us | apply_us | carried | writes | overwritten | skipped |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for row in capture.heads:
+            lines.append(
+                f"| {row.anchor} | {row.hash[:10]}… | {row.outcome} | {row.chain or '—'} | "
+                f"{row.refusal or '—'} | {row.bal or '—'} | "
+                f"{row.prepare_us if row.prepare_us is not None else '—'} | "
+                f"{row.apply_us if row.apply_us is not None else '—'} | "
+                f"{row.carried if row.carried is not None else '—'} | "
+                f"{row.writes if row.writes is not None else '—'} | "
+                f"{row.overwritten if row.overwritten is not None else '—'} | "
+                f"{row.skipped if row.skipped is not None else '—'} |"
             )
         lines.append("")
 
@@ -1041,8 +1308,8 @@ def render_markdown(off: Capture, on: Capture) -> str:
         "cold and leaves the fan-out on the legacy memo + prefetch lane, serving no",
         "parent value. That contract holds in both captures: the delta fan-out has no",
         "prefetch row, and every fallback that kept its prefetch row reports a full batch",
-        "(`skipped=None`). The captures report the label only, so the refusal causes it",
-        "collapses are not separable from this log.",
+        "(`skipped=None`). The fan-out row reports the collapsed label; the causes behind",
+        "it are the head table's, whenever the capture carries `bal-head` rows.",
         "",
         "## Verdict",
         "",
@@ -1062,14 +1329,16 @@ def render_markdown(off: Capture, on: Capture) -> str:
         "",
         "## Evidence gaps (what this capture cannot answer)",
         "",
-        "1. Which storage lane any single candidate read through — the trace row records the",
-        "   caller's head block and no lane.",
-        "2. The `CarryRefusal` cause behind each `lineage-refused` label — the diagnostic",
-        "   reports the collapsed label only.",
+        "1. Which storage lane a candidate read through, for a row that carries no",
+        "   `fanout` key — the inline hook re-quote arm, and every pre-`fanout` capture.",
+        "   An attributed dispatch fan-out's candidates are answered above.",
+        "2. The `CarryRefusal` cause behind a `lineage-refused` label in a capture taken",
+        "   before the `bal-head` row existed; an attributed capture answers it per head.",
         "3. The dropped-record count for either capture — it lives on",
         '   `degenbot.log_dropped_total{sink="console"}`, not in the log.',
-        "4. The BAL fetch/prepare/applied wall per fan-out — no row reports it, so the",
-        "   readiness deadline's cost is invisible here.",
+        "4. The wall a FAN-OUT pays to read its generation: the head's own prepare and",
+        "   apply walls are `prepare_us`/`apply_us` above, but no row measures the",
+        "   fan-out's own read against them.",
         "5. Any per-head repetition — each head appears once per capture, so a head-level",
         "   distribution (let alone a paired one) is not in this corpus.",
         "",
@@ -1189,6 +1458,7 @@ def to_json(off: Capture, on: Capture) -> dict[str, object]:
                     "anchor": row.anchor,
                     "storage": row.storage,
                     "reason": row.reason,
+                    "fanout": row.fanout,
                 }
                 for row in capture.selections
             ],
@@ -1199,8 +1469,34 @@ def to_json(off: Capture, on: Capture) -> dict[str, object]:
                     "candidates": row.candidates,
                     "sims": row.sims,
                     "fanout_ms": row.fanout_ms,
+                    "fanout": row.fanout,
                 }
                 for row in capture.labs
+            ],
+            "fanouts": [
+                {
+                    "fanout": fanout,
+                    "storage": entry.selection.storage if entry.selection else None,
+                    "reason": entry.selection.reason if entry.selection else None,
+                    "prefetch": entry.prefetch is not None,
+                    "lab": entry.lab is not None,
+                    "candidates": len(entry.traces),
+                    "sim_ns": sum(row.sim_ns for row in entry.traces),
+                }
+                for fanout, entry in sorted(fanout_attribution(capture).items())
+            ],
+            "unattributed_candidates": len(unattributed_traces(capture)),
+            "heads": [
+                {
+                    "anchor": row.anchor,
+                    "outcome": row.outcome,
+                    "chain": row.chain,
+                    "refusal": row.refusal,
+                    "bal": row.bal,
+                    "prepare_us": row.prepare_us,
+                    "apply_us": row.apply_us,
+                }
+                for row in capture.heads
             ],
             "sim_ns": summarize([row.sim_ns for row in capture.trace]).__dict__,
             "verdicts": dict(Counter(row.verdict for row in capture.trace)),

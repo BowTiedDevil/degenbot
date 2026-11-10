@@ -219,8 +219,12 @@ fn an_in_process_cold_leaf_records_forwards_and_a_rerun_records_none(
         "a first-block sim has no cross-block reuse to report"
     );
     assert!(
-        sim_metrics::format_delta(&cold_delta, 1).contains("cold: b_fast="),
+        sim_metrics::format_delta(&cold_delta, 1, 7).contains("cold: b_fast="),
         "the fan-out line renders the restored counters"
+    );
+    assert!(
+        sim_metrics::format_delta(&cold_delta, 1, 7).ends_with("fanout=7"),
+        "the line names the fan-out that produced it"
     );
 
     let (word, warm_delta) = measured_run(&mut session);

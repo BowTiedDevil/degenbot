@@ -34,13 +34,10 @@ use crate::sim::evm2::bal_heads::BalHeadPipeline;
 use crate::sim::evm2::delta_snapshot::{BalHeadDriver, DeltaHub};
 use crate::sim::evm2::hook_slots::HookSlotStore;
 use crate::sim::hot_slots::HotSlotStore;
-use crate::sim::prefetch::{
-    block_on_ambient, path_relevance_addresses, resolve_read_anchor, PrefetchFacts,
-};
+use crate::sim::prefetch::{block_on_ambient, resolve_read_anchor};
 use crate::sim::sim_metrics;
 use crate::sim::storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};
 use degenbot_core::diag;
-use degenbot_execution::PathInfo;
 
 /// The default per-entry TTL in blocks — the same safety-net value as the
 /// revm-side original (≈ 1 day of mainnet blocks). A safety net, not the
@@ -60,23 +57,27 @@ pub const WARM_CODE_CACHE_TTL_BLOCKS: u64 = 10_000;
 /// requested at all — the session installs no driver, so there is no code path
 /// that could issue one.
 ///
-/// ON resolves the fan-out anchor's exact lineage `(number, hash, parent_hash)`
-/// in ONE header read and delivers it to the session's one
-/// [`BalHeadDriver`]: the driver holds the session's delta cache, so every
-/// fan-out at that exact head shares ONE generation and repeats no BAL work.
-/// The head's relevance set is the fan-out's own
-/// [`path_relevance_addresses`](crate::sim::prefetch::path_relevance_addresses)
-/// and its retention is [`Retention::Unbounded`] — the flag adds no retention
-/// knob. A head that settled READY answers candidate storage through its
-/// `DeltaHub` (a [`StorageView`](super::storage_view::StorageView)) and pays no
-/// prefetch batch; a head that is unprepared, past its readiness deadline,
-/// superseded, unreadable (unsupported endpoint, malformed list) or
-/// lineage-refused takes the legacy memo + prefetch lane with the reason
-/// reported, and serves no parent value on that fallback.
+/// ON resolves the fan-out anchor's exact lineage `(number, hash)` in ONE header
+/// read and asks the session's one [`BalHeadDriver`] what that exact anchor
+/// answers. The driver holds the session's delta cache, so every fan-out at that
+/// exact head shares ONE generation and repeats no BAL work. The head's
+/// relevance set is the session's
+/// ([`path_relevance_addresses`](crate::sim::prefetch::path_relevance_addresses)
+/// over the registered paths and the settlement identities) and its retention is
+/// [`Retention::Unbounded`] — the flag adds no retention knob. A head that
+/// settled READY answers candidate storage through its `DeltaHub` (a
+/// [`StorageView`](super::storage_view::StorageView)) and pays no prefetch
+/// batch; a head that is unprepared, past its readiness deadline, superseded,
+/// unreadable (unsupported endpoint, malformed list), lineage-refused, or never
+/// delivered at all (the head edge never saw it) takes the legacy memo +
+/// prefetch lane with the reason reported, and serves no parent value on that
+/// fallback.
 ///
-/// The readiness deadline bounds the ONE thing the opt-in may wait for: how
-/// long a fan-out may wait on its head's BAL before it settles on the legacy
-/// path. Candidate execution is never blocked past it.
+/// The fan-out never generates BAL work. The session's canonical-head pipeline
+/// ([`BalHeadPipeline`]) delivers, prepares and applies every accepted head on
+/// the block pump's header edge — off every fan-out's critical path — so the
+/// readiness deadline is observational: it labels a head that is still
+/// unprepared when a fan-out asks, and nothing waits on it.
 ///
 /// # Enabling it, and the metrics that say what happened
 ///
@@ -111,8 +112,8 @@ pub struct DeltaDispatchConfig {
 
 impl DeltaDispatchConfig {
     /// The readiness deadline the development opt-in uses: long enough for a
-    /// local node's BAL, short enough that a stalled endpoint costs the fan-out
-    /// a small fraction of a block.
+    /// local node's BAL, short enough that a head still unprepared at a fan-out
+    /// is labelled `deadline` rather than mistaken for an in-flight one.
     pub const DEVELOPMENT_READINESS_DEADLINE: Duration = Duration::from_millis(50);
 
     /// The development opt-in at
@@ -196,47 +197,48 @@ impl DispatchStorageSelection {
     }
 }
 
-/// Resolve one fan-out's storage selection at `block`.
+/// Resolve one fan-out's storage selection at `block` — a QUERY over the
+/// session's delivered heads, never a producer.
 ///
 /// OFF (no [`DeltaDispatchConfig`] on the session) is the legacy path exactly:
 /// the number+hash read anchor and no BAL request anywhere.
 ///
-/// ON resolves the block's exact lineage `(number, hash, parent_hash)` in ONE
-/// header read, delivers it to the session's one [`BalHeadDriver`] with the
-/// fan-out's own [`path_relevance_addresses`] and unbounded retention, and
-/// answers with the head's generation when that exact head settled ready. A
-/// head that is unprepared, past its readiness deadline, superseded,
-/// unreadable (unsupported endpoint or malformed list), or lineage-refused
-/// answers [`FanOutStorage::Legacy`] with its reason — the caller then runs the
-/// existing memo + prefetch lane, and no parent value is served on that
-/// fallback.
+/// ON resolves the block's exact lineage `(number, hash)` in ONE header read and
+/// asks the session's one [`BalHeadDriver`] — the handle
+/// [`WarmCodeCacheInner::delta_heads`] mints once per session — what that exact
+/// anchor answers right now:
 ///
-/// The BAL work rides this call: it is prepared and applied under the
-/// configured readiness deadline, so a stalled or unsupported endpoint costs
-/// the fan-out at most that deadline and never blocks candidate execution past
-/// it. A repeated fan-out at the SAME exact head shares the settled generation
-/// and fetches nothing.
+/// - the installed generation when that exact head settled ready — a candidate
+///   reads through its `DeltaHub` and pays no prefetch batch;
+/// - the exact PREVIOUS anchor's generation when the transition that installed
+///   the current head linked (`BalHeadDriver::previous`), which is the window a
+///   fan-out whose candidates were solved one block behind the head reads
+///   through;
+/// - otherwise [`FanOutStorage::Legacy`] with the closed cold reason — a head
+///   still preparing (`unprepared`), past its readiness deadline (`deadline`),
+///   superseded, settled cold (`lineage-refused` / `bal-unreadable` /
+///   `settled`), or one that never arrived at all (`undelivered`). The caller
+///   then runs the existing memo + prefetch lane, and no parent value is served
+///   on that fallback.
+///
+/// Nothing here delivers, prepares, applies, or advances a head, and nothing
+/// here waits on the readiness deadline. That work belongs to the session's
+/// canonical-head pipeline ([`BalHeadPipeline`]), which runs it on the block
+/// pump's accepted-header edge, off every fan-out's critical path. A fan-out
+/// therefore pays at most the ONE header read — the same read the OFF lane pays —
+/// and a head the head edge never delivered answers `undelivered` rather than
+/// being manufactured here.
 #[must_use]
 pub fn select_dispatch_storage(
     provider: &AlloyProvider,
     warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
     block: u64,
-    paths: &[&PathInfo],
-    facts: &PrefetchFacts,
 ) -> DispatchStorageSelection {
-    let (config, heads) = {
-        let cache = warm_cache.read();
-        let Some(config) = cache.delta_dispatch() else {
-            // Off: the legacy anchor read, and nothing that could request a BAL.
-            return DispatchStorageSelection {
-                anchor: resolve_read_anchor(provider, block),
-                storage: FanOutStorage::Legacy,
-                outcome: StorageSelectionOutcome::Disabled,
-            };
-        };
-        (config, cache.delta_heads(provider))
-    };
+    // The session's one head driver, or `None` while the opt-in is off — which
+    // is the whole OFF branch: no driver means no generation could exist.
+    let heads = { warm_cache.read().delta_heads(provider) };
     let Some(heads) = heads else {
+        // Off: the legacy anchor read, and nothing that could request a BAL.
         return DispatchStorageSelection {
             anchor: resolve_read_anchor(provider, block),
             storage: FanOutStorage::Legacy,
@@ -263,31 +265,9 @@ pub fn select_dispatch_storage(
         }
     };
     let anchor = ReadAnchor::identified(lineage.number, lineage.hash);
-    // Relevance is the APPLY's argument, not the delivery's: a head's delivery
-    // may come from the block clock (no candidates, no relevance), and the set
-    // only has to exist when the head's writes are applied. This lane is its
-    // own applier for now, so it hands over the fan-out's own set.
-    let relevance = path_relevance_addresses(paths.iter().copied(), facts);
-    let ticket = heads.deliver(anchor, lineage.parent_hash);
-
-    // A head that already settled at this exact anchor answers on the spot and
-    // fetches nothing.
-    let settled = heads.snapshot(anchor);
-    if settled.readiness.is_ready() {
-        return DispatchStorageSelection {
-            anchor,
-            storage: FanOutStorage::Delta(settled.hub),
-            outcome: StorageSelectionOutcome::Ready,
-        };
-    }
-
-    // Prepare and apply the head's BAL, bounded by the readiness deadline: a
-    // stalled endpoint costs this fan-out the deadline and no more.
-    let _ = block_on_ambient(async {
-        let _ = tokio::time::timeout(config.readiness_deadline, heads.advance(ticket, &relevance))
-            .await;
-    });
-
+    // The whole selection: what this exact anchor answers right now. The driver
+    // owns readiness, the previous-anchor window, and the closed cold reasons;
+    // this seam only reports them.
     let view = heads.snapshot(anchor);
     match view.readiness.cold_reason() {
         None => DispatchStorageSelection {

@@ -18,6 +18,7 @@
 //! | `verdict` / `gas` | how it ended, and the gas it burned |
 //! | `reads` | the POST-execution access list: `address|slot,slot` per entry |
 //! | `relevance` | the PRE-simulation relevance set: bare `0x` addresses |
+//! | `fanout` | the fan-out that simulated this candidate; ABSENT when a caller outside any fan-out emitted the row |
 //!
 //! `reads` is what the frame actually touched; `relevance` is what the
 //! candidate's PATH and the deployment's settlement declaration made relevant
@@ -48,6 +49,29 @@
 //! actually have carried. Re-capturing a corpus with this field is therefore a
 //! pure upgrade — the `reads` stream is unchanged, so every existing read-driven
 //! benchmark keeps its numbers.
+//!
+//! # Migration notes (the additive `fanout` field)
+//!
+//! That field joins one candidate's row to the fan-out that simulated it:
+//! `degenbot-arbitrage` mints one identifier per dispatch and echoes the same
+//! value on the fan-out's storage-selection row, its prefetch row, its `[sim]`
+//! delta summary, and every candidate's trace row
+//! (`degenbot_simulation::sim::sim_metrics::next_fanout_id`).
+//!
+//! It is OPTIONAL in two directions:
+//!
+//! - a row emitted by a caller outside any fan-out — the inline hook re-quote
+//!   arm (`degenbot-python`'s `simulation/inline_hook.rs`) — carries no `fanout`
+//!   key at all, so it can never be attributed to a fan-out that did not
+//!   simulate it, and its row shape is byte-identical to a pre-`fanout` row;
+//! - rows written before this field existed also carry no key. A reader that
+//!   treats it as optional parses both, and a consumer that needs attribution
+//!   (the OFF/ON live report) reports those rows as UNATTRIBUTED rather than
+//!   guessing from a block number.
+//!
+//! No existing field changed meaning: the key is appended last, so an old reader
+//! of a new row keeps working and a new reader of an old row gets "unattributed"
+//! instead of an error.
 
 use alloy::primitives::Address;
 use alloy::rpc::types::eth::AccessList;
@@ -63,7 +87,16 @@ use degenbot_core::diag_trace;
 /// over [`degenbot_simulation::sim::path_relevance_addresses`]'s output, never a
 /// derivation from `access_list` (see the module's migration notes). It renders
 /// as a bare `0x`-hex array in the order the derivation produced.
+///
+/// `fanout` is the fan-out that simulated the candidate, or `None` for a caller
+/// outside any fan-out (the inline hook re-quote arm). `None` OMITS the key
+/// rather than rendering a placeholder, so an unattributed row is
+/// indistinguishable from a pre-`fanout` row and no reader has to know a sentinel
+/// to avoid mis-attributing it.
 #[must_use]
+// A row is a flat record of the seam's own observations; grouping the fields into
+// a struct would move the same values to a constructor at the same call sites.
+#[expect(clippy::too_many_arguments)]
 pub fn fanout_trace_row(
     block: u64,
     cand: &str,
@@ -72,6 +105,7 @@ pub fn fanout_trace_row(
     gas: u64,
     access_list: &AccessList,
     relevance: &[Address],
+    fanout: Option<u64>,
 ) -> String {
     use std::fmt::Write;
 
@@ -103,15 +137,22 @@ pub fn fanout_trace_row(
     let mut row = String::with_capacity(128 + reads.len() + relevant.len());
     let _ = write!(
         row,
-        "fanout-trace {{\"block\":{block},\"cand\":\"{cand}\",\"sim_ns\":{sim_ns},\"verdict\":\"{verdict}\",\"gas\":{gas},\"reads\":[{reads}],\"relevance\":[{relevant}]}}"
+        "fanout-trace {{\"block\":{block},\"cand\":\"{cand}\",\"sim_ns\":{sim_ns},\"verdict\":\"{verdict}\",\"gas\":{gas},\"reads\":[{reads}],\"relevance\":[{relevant}]"
     );
+    if let Some(fanout) = fanout {
+        let _ = write!(row, ",\"fanout\":{fanout}");
+    }
+    row.push('}');
     row
 }
 
 /// Emit one trace row at TRACE level for a finished candidate simulation.
 ///
 /// `relevance` is the set the seam derived from the candidate's path and the
-/// deployment's settlement facts BEFORE the simulation ran.
+/// deployment's settlement facts BEFORE the simulation ran. `fanout` is the
+/// fan-out that simulated the candidate, or `None` for a caller outside any
+/// fan-out.
+#[expect(clippy::too_many_arguments)]
 pub fn record(
     block: u64,
     cand: &str,
@@ -120,8 +161,18 @@ pub fn record(
     gas: u64,
     access_list: &AccessList,
     relevance: &[Address],
+    fanout: Option<u64>,
 ) {
-    let row = fanout_trace_row(block, cand, sim_ns, verdict, gas, access_list, relevance);
+    let row = fanout_trace_row(
+        block,
+        cand,
+        sim_ns,
+        verdict,
+        gas,
+        access_list,
+        relevance,
+        fanout,
+    );
     diag_trace!(domain = sim, "{}", row);
 }
 
@@ -187,7 +238,7 @@ mod tests {
             },
         ]);
         let relevance = [Address::repeat_byte(0x11), Address::repeat_byte(0x22)];
-        let row = fanout_trace_row(7, "42-1", 9, "result", 3, &access_list, &relevance);
+        let row = fanout_trace_row(7, "42-1", 9, "result", 3, &access_list, &relevance, None);
         let expected = concat!(
             "fanout-trace {\"block\":7,\"cand\":\"42-1\",\"sim_ns\":9,\"verdict\":\"result\",",
             "\"gas\":3,\"reads\":[\"0x1111111111111111111111111111111111111111|0x1,0x2\",",
@@ -196,6 +247,45 @@ mod tests {
             "\"0x2222222222222222222222222222222222222222\"]}"
         );
         assert_eq!(row, expected);
+    }
+
+    /// One fan-out's identifier rides the row as a last-key `fanout` field, and a
+    /// caller OUTSIDE any fan-out (the inline hook re-quote arm) omits the key
+    /// entirely: its row is byte-identical to a pre-`fanout` row, so no reader
+    /// can mistake it for a dispatch fan-out's candidate.
+    #[test]
+    fn the_fanout_key_joins_a_row_to_its_dispatch_and_an_unattributed_caller_omits_it() {
+        let access_list = AccessList(Vec::new());
+        let relevance = [Address::repeat_byte(0x44)];
+        let attributed =
+            fanout_trace_row(9, "8-1", 3, "none", 0, &access_list, &relevance, Some(7));
+        let unattributed = fanout_trace_row(9, "8-1", 3, "none", 0, &access_list, &relevance, None);
+
+        assert!(
+            attributed.ends_with(",\"fanout\":7}"),
+            "the fan-out id is the row's last key: {attributed}"
+        );
+        assert!(
+            !unattributed.contains("\"fanout\":"),
+            "an unattributed row carries no key at all: {unattributed}"
+        );
+        let value: serde_json::Value = serde_json::from_str(
+            attributed
+                .strip_prefix("fanout-trace ")
+                .expect("the row is tagged"),
+        )
+        .expect("the row is JSON");
+        assert_eq!(value["fanout"], 7);
+        let legacy: serde_json::Value = serde_json::from_str(
+            unattributed
+                .strip_prefix("fanout-trace ")
+                .expect("the row is tagged"),
+        )
+        .expect("the row is JSON");
+        assert!(
+            legacy.get("fanout").is_none(),
+            "an absent key, never a placeholder: {legacy}"
+        );
     }
 
     #[test]
@@ -208,6 +298,7 @@ mod tests {
             0,
             &AccessList::default(),
             &[Address::repeat_byte(0x33)],
+            None,
         );
         assert_eq!(
             row,
@@ -255,7 +346,7 @@ mod tests {
             storage_keys: vec![key(4)],
         });
 
-        let row = fanout_trace_row(11, "7-3", 5, "result", 8, &access_list, &relevance);
+        let row = fanout_trace_row(11, "7-3", 5, "result", 8, &access_list, &relevance, None);
         let value: serde_json::Value = serde_json::from_str(
             row.strip_prefix("fanout-trace ")
                 .expect("the row is tagged"),

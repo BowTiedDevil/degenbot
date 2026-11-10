@@ -40,15 +40,17 @@
 //! - OFF — the default, and the shipped posture — is the legacy lane
 //!   unchanged: the number+hash read anchor, the ONE prefetch batch, and the
 //!   same telemetry, with no BAL request anywhere.
-//! - ON resolves the anchor's exact lineage `(number, hash, parent_hash)` in one
-//!   header read, delivers it to the session's one `BalHeadDriver` with this
-//!   fan-out's `path_relevance_addresses` and unbounded retention, and prepares
-//!   and applies the head's BAL under the configured readiness deadline. A head
-//!   that settles READY answers candidate reads through its `DeltaHub` and pays
-//!   NO prefetch batch; an unprepared, late, superseded, unreadable, or
-//!   lineage-refused head leaves the fan-out on the legacy lane with the reason
-//!   reported on `degenbot.dispatch.storage{mode,reason}` and the `fan-out
-//!   storage selection` diag line, and serves no parent value.
+//! - ON resolves the anchor's exact lineage `(number, hash)` in one header read
+//!   and ASKS the session's one `BalHeadDriver` what that exact anchor answers.
+//!   The selection queries; it never delivers, prepares, applies, or waits on the
+//!   readiness deadline. That work belongs to the session's canonical-head
+//!   pipeline, which runs on the pump's accepted-header edge — off every
+//!   fan-out's path — so a fan-out pays at most its one identity read. A head
+//!   that settled READY answers candidate reads through its `DeltaHub` and pays
+//!   NO prefetch batch; an unprepared, late, superseded, unreadable,
+//!   lineage-refused, or never-delivered head leaves the fan-out on the legacy
+//!   lane with the reason reported on `degenbot.dispatch.storage{mode,reason}`
+//!   and the `fan-out storage selection` diag line, and serves no parent value.
 //!
 //! The first head after enabling has no installed parent, so it settles cold
 //! (lineage-refused) once; every consecutive head after it carries, and a
@@ -56,6 +58,17 @@
 //! repeats no BAL work. Nothing else moves: the fan-out order, the candidate
 //! execution, and the verdict are the flag's invariant, and the RPC fallback
 //! stays the authority for every word the selected view does not hold.
+//!
+//! # Attribution: one `fanout` identifier per fan-out
+//!
+//! [`dispatch_profitable_results`] mints one identifier per dispatch
+//! (`degenbot_simulation::sim::sim_metrics::next_fanout_id`) and echoes it on
+//! every row that fan-out emits: the `fan-out storage selection` row, the
+//! `storage prefetch` row, the `[sim] cands=` delta summary, and each candidate's
+//! `fanout-trace` row. The four row families fire at different seams, so the
+//! identifier is what lets a capture join them — and because it is minted HERE,
+//! the inline hook re-quote arm's equally shaped trace rows carry no
+//! identifier at all and stay unattributed.
 
 use degenbot_core::diag;
 use degenbot_core::op_info;
@@ -695,6 +708,13 @@ pub fn dispatch_profitable_results(
     let lab_before = degenbot_simulation::sim::sim_metrics::snapshot();
     let lab_fanout_started = std::time::Instant::now();
     let fanout_candidate_count = candidates.len();
+    // ONE identifier per fan-out, minted here and echoed on every row this
+    // fan-out emits: the storage selection, the prefetch batch, the `[sim]`
+    // delta summary, and each candidate's `fanout-trace` row. That is what lets
+    // a capture join four row families that fire at different seams — and what
+    // keeps the inline hook re-quote arm's equally shaped trace rows
+    // unattributed instead of borrowing this fan-out's id.
+    let fanout_id = degenbot_simulation::sim::sim_metrics::next_fanout_id();
     let sim_results: Vec<(CandidateId, FailBuckets, Result<Option<SimResult>, String>)> =
         match bot_state {
             // In-process evm2 path (Tier 1): build ONE per-block EVM
@@ -784,25 +804,20 @@ pub fn dispatch_profitable_results(
                     // the legacy per-anchor memo (the default) or a ready BAL
                     // delta generation. The selection resolves the anchor either
                     // way — one identity read with the opt-in OFF, one whole
-                    // (number, hash, parent_hash) header read with it ON — and,
-                    // ON, prepares and applies the head's BAL under the
-                    // readiness deadline BEFORE any candidate runs. A head that
-                    // does not settle ready answers Legacy with its reason, so
+                    // (number, hash) header read with it ON — and, ON, only
+                    // ASKS what this exact anchor answers: the session's
+                    // canonical-head pipeline delivered, prepared and applied
+                    // every accepted head off this path, so a fan-out generates
+                    // no BAL work and waits on no readiness deadline. A head that
+                    // does not answer ready reports Legacy with its reason, so
                     // the fallback is the existing memo + prefetch lane and no
                     // parent value is served on it.
-                    let selection = {
-                        let path_refs: Vec<&degenbot_execution::PathInfo> =
-                            candidates.iter().map(|c| &c.path_info).collect();
+                    let selection =
                         degenbot_simulation::sim::evm2::warm_code_cache::select_dispatch_storage(
                             ctx.block.provider,
                             &evm2_warm_cache,
                             sim_block,
-                            &path_refs,
-                            &degenbot_simulation::sim::prefetch::PrefetchFacts {
-                                settlement: ctx.deployment.settlement(),
-                            },
-                        )
-                    };
+                        );
                     diag!(
                         domain = sim,
                         current_block,
@@ -810,6 +825,7 @@ pub fn dispatch_profitable_results(
                         anchor_fenced = selection.anchor.hash.is_some(),
                         storage = selection.outcome.mode(),
                         reason = ?selection.outcome.reason(),
+                        fanout = fanout_id,
                         "fan-out storage selection"
                     );
                     degenbot_bot::instruments::record(
@@ -899,6 +915,7 @@ pub fn dispatch_profitable_results(
                             requested = prefetch.requested,
                             seeded = prefetch.seeded,
                             skipped = ?prefetch.skipped,
+                            fanout = fanout_id,
                             "storage prefetch"
                         );
                         // The diag above is debug-level and invisible at the default
@@ -963,6 +980,7 @@ pub fn dispatch_profitable_results(
                                     &sim_path,
                                     prepared,
                                     &mut buckets,
+                                    Some(fanout_id),
                                 )
                                 .map_err(|e| format!("{e}"));
                                 (cid, buckets, result)
@@ -1013,7 +1031,11 @@ pub fn dispatch_profitable_results(
             current_block,
             fanout_ms = u64::try_from(lab_fanout_started.elapsed().as_millis()).unwrap_or(u64::MAX),
             "{}",
-            degenbot_simulation::sim::sim_metrics::format_delta(&lab, fanout_candidate_count)
+            degenbot_simulation::sim::sim_metrics::format_delta(
+                &lab,
+                fanout_candidate_count,
+                fanout_id
+            )
         );
     }
 
@@ -2496,13 +2518,12 @@ mod delta_dispatch_tests {
     use alloy::transports::{TransportError, TransportFut};
     use degenbot_rpc::provider::AlloyProvider;
     use degenbot_simulation::sim::evm2::delta_snapshot::{
-        BalHeadDriver, HeadOutcome, HeadReadiness,
+        BalHeadDriver, HeadCold, HeadOutcome, HeadReadiness,
     };
     use degenbot_simulation::sim::evm2::warm_code_cache::{
         select_dispatch_storage, DeltaDispatchConfig, FanOutStorage, StorageSelectionOutcome,
         WarmCodeCacheInner,
     };
-    use degenbot_simulation::sim::prefetch::PrefetchFacts;
     use degenbot_simulation::sim::ReadAnchor;
     use serde_json::value::{to_raw_value, RawValue};
     use std::borrow::Cow;
@@ -2789,12 +2810,104 @@ mod delta_dispatch_tests {
         )
     }
 
-    /// One V2 path and its facts — the relevance input the delta head is
-    /// delivered with.
-    fn one_path() -> (crate::SimulatePath, PrefetchFacts) {
-        let candidate = super::tests::candidate(70, 1_000_000_000_000_000_000u128, 1_000);
-        let facts = PrefetchFacts::default();
-        (candidate.to_simulate_path(), facts)
+    /// The session's ONE head driver — the handle the canonical-head pipeline
+    /// delivers through and the fan-out's selection queries. A fan-out never
+    /// mints it and never delivers through it.
+    fn session_driver(
+        cache: &Arc<RwLock<WarmCodeCacheInner>>,
+        provider: &AlloyProvider,
+    ) -> Arc<BalHeadDriver> {
+        cache
+            .read()
+            .delta_heads(provider)
+            .expect("the opt-in is on, so the session owns one driver")
+    }
+
+    /// Deliver, prepare and apply ONE head exactly as the canonical-head
+    /// pipeline does on the pump's header edge — deliberately on the OTHER side
+    /// of the fan-out, which is what makes the selection a query.
+    async fn settle_head(
+        driver: &Arc<BalHeadDriver>,
+        anchor: ReadAnchor,
+        parent_hash: B256,
+    ) -> HeadOutcome {
+        let ticket = driver.deliver(anchor, parent_hash);
+        driver.advance(ticket, &[]).await
+    }
+
+    /// The selection is a QUERY, never a producer: a head that never arrived on
+    /// the canonical-head edge takes the legacy lane, and the fan-out's whole
+    /// traffic is the ONE header read — no BAL request exists anywhere.
+    #[test]
+    fn dispatch_never_prepares_a_bal_and_a_never_delivered_head_takes_the_legacy_lane() {
+        let recorder = DeltaRecorder::default();
+        recorder.serve_head(BLOCK, B256::new([0xa1; 32]), B256::new([0xa0; 32]));
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let (selection, wire) = std::thread::spawn(move || {
+            rt.block_on(async {
+                let selection = select_dispatch_storage(&provider, &delta_cache(500), BLOCK);
+                (selection, rec.wire())
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert!(!selection.is_delta(), "an undelivered head serves nothing");
+        assert_eq!(selection.outcome.reason(), Some("undelivered"));
+        assert_eq!(recorder.bal_requests(), 0, "the selection prepares no BAL");
+        assert_eq!(
+            wire.iter()
+                .filter(|request| request.starts_with("eth_getBlockByNumber"))
+                .count(),
+            1,
+            "the exact-lineage read still happens: {wire:#?}"
+        );
+        assert_eq!(
+            wire.len(),
+            1,
+            "the header read is the fan-out's only traffic: {wire:#?}"
+        );
+    }
+
+    /// A head delivered on the block clock but not yet applied serves NO parent
+    /// value: the fan-out takes the legacy lane, the selection fetches nothing,
+    /// and the head's own generation is still cold.
+    #[test]
+    fn an_unprepared_exact_head_serves_no_parent_value_on_the_legacy_fallback() {
+        let recorder = DeltaRecorder::default();
+        let parent = B256::new([0xa0; 32]);
+        let first = B256::new([0xa1; 32]);
+        recorder.serve_head(BLOCK, first, parent);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let (selection, readiness, bal) = std::thread::spawn(move || {
+            rt.block_on(async {
+                let cache = delta_cache(500);
+                let driver = session_driver(&cache, &provider);
+                let anchor = ReadAnchor::identified(BLOCK, first);
+                // The block clock delivers; the fan-out does not.
+                driver.deliver(anchor, parent);
+                let selection = select_dispatch_storage(&provider, &cache, BLOCK);
+                let readiness = driver.snapshot(anchor).readiness;
+                (selection, readiness, rec.bal_requests())
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert!(
+            !selection.is_delta(),
+            "an unprepared head serves no parent value"
+        );
+        assert_eq!(selection.outcome.reason(), Some("unprepared"));
+        assert_eq!(readiness, HeadReadiness::Cold(HeadCold::Unprepared));
+        assert_eq!(
+            bal, 0,
+            "an unprepared head answers nothing and fetches nothing"
+        );
     }
 
     /// OFF is the shipped posture: the legacy memo + prefetch lane unchanged,
@@ -2808,10 +2921,8 @@ mod delta_dispatch_tests {
         let recorder_thread = recorder.clone();
         let (selection,) = std::thread::spawn(move || {
             rt.block_on(async {
-                let (path, facts) = one_path();
                 let cache = empty_cache();
-                let selection =
-                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
+                let selection = select_dispatch_storage(&provider, &cache, BLOCK);
                 (selection,)
             })
         })
@@ -2829,25 +2940,161 @@ mod delta_dispatch_tests {
         assert_eq!(recorder_thread.head_reads(), 1, "one identity read");
     }
 
-    /// A first head with no installed parent settles COLD — the carry has no
-    /// lineage to verify — so the fan-out takes the legacy lane with the reason
-    /// reported and serves no parent value.
+    /// A head the pipeline delivered and settled READY answers the fan-out, and
+    /// the selection's WHOLE traffic is the ONE header read: no BAL request and
+    /// no prefetch batch rides the fan-out (a ready lane skips the batch, and the
+    /// query never generates storage work).
     #[test]
-    fn a_first_head_with_no_installed_parent_takes_the_legacy_path() {
+    fn dispatch_selects_delta_when_the_head_settled_ready_and_pays_no_prefetch_batch() {
+        let recorder = DeltaRecorder::default();
+        let parent = B256::new([0xa0; 32]);
+        let root = B256::new([0xa1; 32]);
+        let child = B256::new([0xb1; 32]);
+        recorder.serve_head(BLOCK - 1, root, parent);
+        recorder.serve_head(BLOCK, child, root);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let (selection, hub_is_the_generation, bal_before, bal_after, wire) =
+            std::thread::spawn(move || {
+                rt.block_on(async {
+                    let cache = delta_cache(500);
+                    let driver = session_driver(&cache, &provider);
+                    // The canonical-head pipeline, two consecutive heads.
+                    settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                    settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                    let bal_before = rec.bal_requests();
+                    rec.clear_wire();
+                    let selection = select_dispatch_storage(&provider, &cache, BLOCK);
+                    let wire = rec.wire();
+                    let settled = driver.snapshot(ReadAnchor::identified(BLOCK, child));
+                    let hub_is_the_generation = match &selection.storage {
+                        FanOutStorage::Delta(hub) => Arc::ptr_eq(hub, &settled.hub),
+                        FanOutStorage::Legacy => false,
+                    };
+                    (
+                        selection,
+                        hub_is_the_generation,
+                        bal_before,
+                        rec.bal_requests(),
+                        wire,
+                    )
+                })
+            })
+            .join()
+            .expect("selection thread");
+
+        assert_eq!(selection.outcome, StorageSelectionOutcome::Ready);
+        assert!(
+            selection.is_delta(),
+            "a settled head answers through its hub"
+        );
+        assert_eq!(
+            selection.anchor,
+            ReadAnchor::identified(BLOCK, child),
+            "the head's own exact anchor"
+        );
+        assert!(
+            hub_is_the_generation,
+            "the fan-out reads the settled generation, never a copy of it"
+        );
+        assert_eq!(
+            bal_after, bal_before,
+            "the selection requests no BAL: the pipeline fetched it"
+        );
+        assert_eq!(
+            wire.len(),
+            1,
+            "one header read, no prefetch batch and no BAL: {wire:#?}"
+        );
+        assert!(
+            wire[0].starts_with("eth_getBlockByNumber"),
+            "the ONE request is the exact-lineage read: {wire:#?}"
+        );
+    }
+
+    /// A fan-out whose candidates were solved one block behind the head reads the
+    /// exact PREVIOUS generation — the whole reason the driver keeps one previous
+    /// anchor — while a two-block lag stays cold: the window is two consecutive
+    /// anchors, never a retention policy.
+    #[test]
+    fn a_lagging_fan_out_anchor_reads_the_previous_generation_and_a_two_block_lag_does_not() {
+        let recorder = DeltaRecorder::default();
+        let genesis = B256::new([0xa0; 32]);
+        let grandparent = B256::new([0xa1; 32]);
+        let parent = B256::new([0xb1; 32]);
+        let child = B256::new([0xc1; 32]);
+        recorder.serve_head(BLOCK - 2, grandparent, genesis);
+        recorder.serve_head(BLOCK - 1, parent, grandparent);
+        recorder.serve_head(BLOCK, child, parent);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let (lagging, two_below) = std::thread::spawn(move || {
+            rt.block_on(async {
+                let cache = delta_cache(500);
+                let driver = session_driver(&cache, &provider);
+                // Three consecutive heads: the first settles cold (no parent),
+                // the second carries it, and the third carries the second.
+                settle_head(
+                    &driver,
+                    ReadAnchor::identified(BLOCK - 2, grandparent),
+                    genesis,
+                )
+                .await;
+                settle_head(
+                    &driver,
+                    ReadAnchor::identified(BLOCK - 1, parent),
+                    grandparent,
+                )
+                .await;
+                settle_head(&driver, ReadAnchor::identified(BLOCK, child), parent).await;
+                let lagging = select_dispatch_storage(&provider, &cache, BLOCK - 1);
+                let two_below = select_dispatch_storage(&provider, &cache, BLOCK - 2);
+                (lagging, two_below)
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert_eq!(
+            lagging.outcome,
+            StorageSelectionOutcome::Ready,
+            "the anchor the installed head replaced still answers"
+        );
+        assert!(lagging.is_delta());
+        assert_eq!(lagging.anchor, ReadAnchor::identified(BLOCK - 1, parent));
+        assert!(
+            !two_below.is_delta(),
+            "two blocks below the installed head is outside the window"
+        );
+        assert_eq!(two_below.outcome.reason(), Some("undelivered"));
+    }
+
+    /// A head that SETTLED cold because its lineage could not be carried answers
+    /// the fan-out with the collapsed label — the detail behind it lives on the
+    /// head's own telemetry row, never on the selection's closed label.
+    #[test]
+    fn a_lineage_refused_head_takes_the_legacy_path_with_its_reason() {
         let recorder = DeltaRecorder::default();
         recorder.serve_head(BLOCK, B256::new([0xa1; 32]), B256::new([0xa0; 32]));
         let provider = provider(&recorder);
         let rt = runtime();
         let selection = std::thread::spawn(move || {
             rt.block_on(async {
-                let (path, facts) = one_path();
-                select_dispatch_storage(
-                    &provider,
-                    &delta_cache(500),
-                    BLOCK,
-                    &[&path.path_info],
-                    &facts,
+                let cache = delta_cache(500);
+                let driver = session_driver(&cache, &provider);
+                // The session's first head: no installed parent to carry.
+                let outcome = settle_head(
+                    &driver,
+                    ReadAnchor::identified(BLOCK, B256::new([0xa1; 32])),
+                    B256::new([0xa0; 32]),
                 )
+                .await;
+                assert!(
+                    matches!(outcome, HeadOutcome::Settled(_)),
+                    "the head settled, cold"
+                );
+                select_dispatch_storage(&provider, &cache, BLOCK)
             })
         })
         .join()
@@ -2860,66 +3107,60 @@ mod delta_dispatch_tests {
         assert_eq!(selection.outcome.reason(), Some("lineage-refused"));
     }
 
-    /// One consecutive head past an installed parent: ONE header read, ONE BAL
-    /// request, the child's own exact anchor, and a READY generation. The
-    /// repeat at the same exact anchor shares that one generation and fetches
-    /// nothing again.
+    /// Repeated fan-outs at the same exact anchor share the ONE settled
+    /// generation and repeat no BAL work — and they deliver nothing: the driver's
+    /// repeat counter stays put, because the query has no delivery to repeat.
     #[test]
     fn a_ready_head_answers_the_fanout_and_repeats_without_new_bal_work() {
         let recorder = DeltaRecorder::default();
         let parent = B256::new([0xa0; 32]);
-        let first = B256::new([0xa1; 32]);
+        let root = B256::new([0xa1; 32]);
         let child = B256::new([0xb1; 32]);
-        recorder.serve_head(BLOCK, first, parent);
-        recorder.serve_head(BLOCK + 1, child, first);
+        recorder.serve_head(BLOCK - 1, root, parent);
+        recorder.serve_head(BLOCK, child, root);
         let provider = provider(&recorder);
         let rt = runtime();
         let rec = recorder.clone();
-        let (settled, repeated, bal_after) = std::thread::spawn(move || {
-            rt.block_on(async {
-                let (path, facts) = one_path();
-                let cache = delta_cache(500);
-                // The parent head: no installed parent yet, so it settles cold
-                // and installs the generation the child carries.
-                let _parent_selection =
-                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
-                let settled = select_dispatch_storage(
-                    &provider,
-                    &cache,
-                    BLOCK + 1,
-                    &[&path.path_info],
-                    &facts,
-                );
-                let bal_after = rec.bal_requests();
-                let repeated = select_dispatch_storage(
-                    &provider,
-                    &cache,
-                    BLOCK + 1,
-                    &[&path.path_info],
-                    &facts,
-                );
-                (settled, repeated, bal_after)
+        let (settled, repeated, bal_before, bal_after, deliveries, repeats) =
+            std::thread::spawn(move || {
+                rt.block_on(async {
+                    let cache = delta_cache(500);
+                    let driver = session_driver(&cache, &provider);
+                    settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                    settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                    let stats_before = driver.stats();
+                    let bal_before = rec.bal_requests();
+                    let settled = select_dispatch_storage(&provider, &cache, BLOCK);
+                    let repeated = select_dispatch_storage(&provider, &cache, BLOCK);
+                    let stats_after = driver.stats();
+                    (
+                        settled,
+                        repeated,
+                        bal_before,
+                        rec.bal_requests(),
+                        stats_after.delivered - stats_before.delivered,
+                        stats_after.repeated - stats_before.repeated,
+                    )
+                })
             })
-        })
-        .join()
-        .expect("selection thread");
+            .join()
+            .expect("selection thread");
 
         assert_eq!(settled.outcome, StorageSelectionOutcome::Ready);
-        assert!(
-            settled.is_delta(),
-            "a ready head answers through its delta hub"
-        );
         assert_eq!(
             settled.anchor,
-            ReadAnchor::identified(BLOCK + 1, child),
+            ReadAnchor::identified(BLOCK, child),
             "the head's own exact anchor"
         );
-        assert_eq!(bal_after, 2, "one BAL per settled head");
         assert_eq!(repeated.outcome, StorageSelectionOutcome::Ready);
         assert_eq!(
-            recorder.bal_requests(),
-            2,
+            bal_after, bal_before,
             "a repeated fan-out at the same exact anchor repeats no BAL work"
+        );
+        assert_eq!(
+            (deliveries, repeats),
+            (0, 0),
+            "the query delivers nothing and repeats nothing: the head edge is the only producer"
         );
         match (&settled.storage, &repeated.storage) {
             (FanOutStorage::Delta(a), FanOutStorage::Delta(b)) => assert!(
@@ -2937,28 +3178,22 @@ mod delta_dispatch_tests {
     fn an_unsupported_bal_endpoint_takes_the_legacy_path_with_its_reason() {
         let recorder = DeltaRecorder::default();
         let parent = B256::new([0xa0; 32]);
-        let first = B256::new([0xa1; 32]);
+        let root = B256::new([0xa1; 32]);
         let child = B256::new([0xb1; 32]);
-        recorder.serve_head(BLOCK, first, parent);
-        recorder.serve_head(BLOCK + 1, child, first);
+        recorder.serve_head(BLOCK - 1, root, parent);
+        recorder.serve_head(BLOCK, child, root);
         let provider = provider(&recorder);
         let rt = runtime();
         let rec = recorder.clone();
         let (selection, bal) = std::thread::spawn(move || {
             rt.block_on(async {
-                let (path, facts) = one_path();
                 let cache = delta_cache(500);
-                let _parent_selection =
-                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
+                let driver = session_driver(&cache, &provider);
+                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
                 rec.set_bal_mode(BalMode::Unsupported);
-                let selection = select_dispatch_storage(
-                    &provider,
-                    &cache,
-                    BLOCK + 1,
-                    &[&path.path_info],
-                    &facts,
-                );
-                (selection, rec.bal_requests())
+                settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                let bal = rec.bal_requests();
+                (select_dispatch_storage(&provider, &cache, BLOCK), bal)
             })
         })
         .join()
@@ -2969,31 +3204,45 @@ mod delta_dispatch_tests {
             "an unreadable list serves no parent value: the legacy lane answers"
         );
         assert_eq!(selection.outcome.reason(), Some("bal-unreadable"));
-        assert_eq!(bal, 2, "the child's fetch was attempted once");
+        assert_eq!(
+            bal, 2,
+            "one fetch per delivered head, and none from the query"
+        );
     }
 
-    /// A list that cannot land inside the readiness deadline is the cold path,
-    /// never a blocked fan-out: the caller settles on the legacy lane with the
-    /// deadline reported.
+    /// A head whose list is still in flight past the readiness deadline is
+    /// labelled `deadline` — and the fan-out does NOT wait for it: the selection
+    /// returns while the fetch is still pended on the slow endpoint, which is the
+    /// whole difference between an observational deadline and a bounded wait.
     #[test]
     fn a_head_past_its_readiness_deadline_takes_the_legacy_path() {
         let recorder = DeltaRecorder::default();
         let parent = B256::new([0xa0; 32]);
-        let first = B256::new([0xa1; 32]);
+        let root = B256::new([0xa1; 32]);
         let child = B256::new([0xb1; 32]);
-        recorder.serve_head(BLOCK, first, parent);
-        recorder.serve_head(BLOCK + 1, child, first);
+        recorder.serve_head(BLOCK - 1, root, parent);
+        recorder.serve_head(BLOCK, child, root);
         let provider = provider(&recorder);
         let rt = runtime();
         let rec = recorder.clone();
-        let selection = std::thread::spawn(move || {
+        let (selection, elapsed) = std::thread::spawn(move || {
             rt.block_on(async {
-                let (path, facts) = one_path();
                 let cache = delta_cache(20);
-                let _parent_selection =
-                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
+                let driver = session_driver(&cache, &provider);
+                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
                 rec.set_bal_mode(BalMode::Slow);
-                select_dispatch_storage(&provider, &cache, BLOCK + 1, &[&path.path_info], &facts)
+                // The head edge delivers and starts the prepare, then walks away:
+                // nothing on the fan-out's side owns that future.
+                let head = Arc::clone(&driver);
+                let handle = tokio::spawn(async move {
+                    settle_head(&head, ReadAnchor::identified(BLOCK, child), root).await
+                });
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                let started = std::time::Instant::now();
+                let selection = select_dispatch_storage(&provider, &cache, BLOCK);
+                let elapsed = started.elapsed();
+                handle.await.expect("the head's prepare finished");
+                (selection, elapsed)
             })
         })
         .join()
@@ -3001,6 +3250,10 @@ mod delta_dispatch_tests {
 
         assert!(!selection.is_delta(), "a late BAL never blocks the fan-out");
         assert_eq!(selection.outcome.reason(), Some("deadline"));
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "the selection never waits on the readiness deadline (took {elapsed:?})"
+        );
     }
 
     /// A same-height reorg is a DIFFERENT head: the replacement's own BAL is
@@ -3011,40 +3264,30 @@ mod delta_dispatch_tests {
     fn a_same_height_reorg_selects_the_replacement_branch() {
         let recorder = DeltaRecorder::default();
         let parent = B256::new([0xa0; 32]);
-        let first = B256::new([0xa1; 32]);
+        let root = B256::new([0xa1; 32]);
         let child = B256::new([0xb1; 32]);
         let replacement = B256::new([0xb2; 32]);
-        recorder.serve_head(BLOCK, first, parent);
-        recorder.serve_head(BLOCK + 1, child, first);
+        recorder.serve_head(BLOCK - 1, root, parent);
+        recorder.serve_head(BLOCK, child, root);
         let provider = provider(&recorder);
         let rt = runtime();
         let rec = recorder.clone();
         let (held, after, bal) = std::thread::spawn(move || {
             rt.block_on(async {
-                let (path, facts) = one_path();
                 let cache = delta_cache(500);
-                let _parent_selection =
-                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
-                let settled = select_dispatch_storage(
-                    &provider,
-                    &cache,
-                    BLOCK + 1,
-                    &[&path.path_info],
-                    &facts,
-                );
+                let driver = session_driver(&cache, &provider);
+                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                let settled = select_dispatch_storage(&provider, &cache, BLOCK);
                 let held = match &settled.storage {
                     FanOutStorage::Delta(hub) => Arc::clone(hub),
                     FanOutStorage::Legacy => panic!("the consecutive head settled ready"),
                 };
-                // Same height, different canonical block.
-                rec.serve_head(BLOCK + 1, replacement, first);
-                let after = select_dispatch_storage(
-                    &provider,
-                    &cache,
-                    BLOCK + 1,
-                    &[&path.path_info],
-                    &facts,
-                );
+                // Same height, different canonical block: the replacement head
+                // arrives on the head edge and supersedes the settled one.
+                rec.serve_head(BLOCK, replacement, root);
+                settle_head(&driver, ReadAnchor::identified(BLOCK, replacement), root).await;
+                let after = select_dispatch_storage(&provider, &cache, BLOCK);
                 (held, after, rec.bal_requests())
             })
         })
@@ -3053,12 +3296,12 @@ mod delta_dispatch_tests {
 
         assert_eq!(
             held.anchor(),
-            ReadAnchor::identified(BLOCK + 1, child),
+            ReadAnchor::identified(BLOCK, child),
             "the generation a candidate already holds stays pinned at its own head"
         );
         assert_eq!(
             after.anchor,
-            ReadAnchor::identified(BLOCK + 1, replacement),
+            ReadAnchor::identified(BLOCK, replacement),
             "the replacement block's own anchor, never the abandoned one"
         );
         assert!(
@@ -3070,22 +3313,24 @@ mod delta_dispatch_tests {
     }
 
     /// The fan-out's wire signature, OFF versus ON: OFF pays the legacy prefetch
-    /// batch and no BAL; a COLD head pays its BAL attempt AND the legacy batch;
-    /// a READY head pays its BAL and NO prefetch batch. Every run's verdicts are
-    /// identical — the selection changes the reads, never the outcome.
+    /// batch and no BAL; a head the canonical-head edge never delivered leaves the
+    /// fan-out on the same batch and still pays no BAL (the pipeline owns the
+    /// fetch); a READY head reads through its generation and pays NO prefetch
+    /// batch. Every run's verdicts are identical — the selection changes the
+    /// reads, never the outcome.
     #[test]
     fn the_storage_selection_changes_the_reads_and_never_the_verdict() {
         let recorder = DeltaRecorder::default();
         let parent = B256::new([0xa0; 32]);
-        let first = B256::new([0xa1; 32]);
+        let root = B256::new([0xa1; 32]);
         let child = B256::new([0xb1; 32]);
-        recorder.serve_head(BLOCK, first, parent);
-        recorder.serve_head(BLOCK + 1, child, first);
+        recorder.serve_head(BLOCK - 1, root, parent);
+        recorder.serve_head(BLOCK, child, root);
         let provider = provider(&recorder);
         let rt = runtime();
         let rec = recorder.clone();
 
-        let (off, off_batches, cold_batches, ready_batches, ready) =
+        let (off, cold, off_batches, cold_batches, ready_batches, ready, bal_before, bal_after) =
             std::thread::spawn(move || {
                 rt.block_on(async {
                     let deployment = super::tests::deployment(Bytes::from_static(&[0xfe]));
@@ -3097,65 +3342,74 @@ mod delta_dispatch_tests {
                     let divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
                     let fot = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
                     let bot_state = Arc::new(StateLock::new(BotState::new()));
+                    let ctx = super::tests::ctx(&provider, &deployment);
+                    let run =
+                        |cands: Vec<crate::DispatchCandidate>,
+                         cache: Option<Arc<RwLock<WarmCodeCacheInner>>>| {
+                            dispatch_profitable_results(
+                                cands,
+                                &ctx,
+                                &suppression,
+                                BLOCK,
+                                0,
+                                &divergence,
+                                &fot,
+                                Some(Arc::clone(&bot_state)),
+                                cache,
+                            )
+                        };
 
                     // OFF: the shipped posture.
-                    let off = dispatch_profitable_results(
-                        cands.clone(),
-                        &super::tests::ctx(&provider, &deployment),
-                        &suppression,
-                        BLOCK,
-                        0,
-                        &divergence,
-                        &fot,
-                        Some(Arc::clone(&bot_state)),
-                        Some(WarmCodeCacheInner::shared_default()),
-                    );
+                    let off = run(cands.clone(), Some(WarmCodeCacheInner::shared_default()));
                     let off_batches = rec.storage_batches();
 
-                    // ON, first head: no installed parent, so it settles cold and
-                    // the fan-out pays the legacy prefetch batch.
+                    // ON with no head delivered: `undelivered`, the legacy batch,
+                    // and no BAL — the fan-out generates nothing.
                     let warm = WarmCodeCacheInner::shared_with_delta_dispatch(
                         DeltaDispatchConfig::with_readiness_deadline(Duration::from_millis(500)),
                     );
-                    let _cold = dispatch_profitable_results(
-                        cands.clone(),
-                        &super::tests::ctx(&provider, &deployment),
-                        &suppression,
-                        BLOCK,
-                        0,
-                        &divergence,
-                        &fot,
-                        Some(Arc::clone(&bot_state)),
-                        Some(Arc::clone(&warm)),
-                    );
+                    let cold = run(cands.clone(), Some(Arc::clone(&warm)));
                     let cold_batches = rec.storage_batches() - off_batches;
 
-                    // ON, the consecutive head: the child carries, so the ready
-                    // generation answers and no prefetch batch is dispatched.
-                    let ready = dispatch_profitable_results(
-                        cands,
-                        &super::tests::ctx(&provider, &deployment),
-                        &suppression,
-                        BLOCK + 1,
-                        0,
-                        &divergence,
-                        &fot,
-                        Some(bot_state),
-                        Some(warm),
-                    );
+                    // The canonical-head pipeline settles the two consecutive
+                    // heads off the fan-out's path; the child carries, so the
+                    // ready generation answers and no prefetch batch is dispatched.
+                    let driver = session_driver(&warm, &provider);
+                    settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                    settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                    let bal_before = rec.bal_requests();
+                    let ready = run(cands, Some(warm));
+                    let bal_after = rec.bal_requests();
                     let ready_batches = rec.storage_batches() - off_batches - cold_batches;
-                    (off, off_batches, cold_batches, ready_batches, ready)
+                    (
+                        off,
+                        cold,
+                        off_batches,
+                        cold_batches,
+                        ready_batches,
+                        ready,
+                        bal_before,
+                        bal_after,
+                    )
                 })
             })
             .join()
             .expect("fan-out thread");
 
         assert_eq!(off_batches, 1, "OFF pays the legacy prefetch batch");
-        assert_eq!(cold_batches, 1, "a cold head falls back to the SAME batch");
+        assert_eq!(
+            cold_batches, 1,
+            "an undelivered head falls back to the SAME batch"
+        );
         assert_eq!(
             ready_batches, 0,
             "a ready head reads through its generation and pays no prefetch"
         );
+        assert_eq!(
+            bal_after, bal_before,
+            "the ready fan-out requested no BAL: the pipeline had already settled it"
+        );
+        assert_eq!(cold.candidate_count, off.candidate_count);
 
         // Verdict identity at the dispatch seam.
         assert_eq!(off.candidate_count, ready.candidate_count);
@@ -3318,6 +3572,7 @@ mod delta_dispatch_tests {
         bal_after_fanout: u64,
         ready_views_before: u64,
         ready_views_after: u64,
+        delivered: u64,
         repeated: u64,
     }
 
@@ -3337,16 +3592,18 @@ mod delta_dispatch_tests {
         );
         let driver = settle_the_chain(provider, &warm).await;
         let bal_before_fanout = recorder.bal_requests();
-        let ready_views_before = driver.stats().ready_views;
+        let stats_before = driver.stats();
         let on = parity_fan_out(provider, &deployment, Some(Arc::clone(&warm)));
+        let stats_after = driver.stats();
         LaneEvidence {
             off,
             on,
             bal_before_fanout,
             bal_after_fanout: recorder.bal_requests(),
-            ready_views_before,
-            ready_views_after: driver.stats().ready_views,
-            repeated: driver.stats().repeated,
+            ready_views_before: stats_before.ready_views,
+            ready_views_after: stats_after.ready_views,
+            delivered: stats_after.delivered - stats_before.delivered,
+            repeated: stats_after.repeated - stats_before.repeated,
         }
     }
 
@@ -3380,8 +3637,12 @@ mod delta_dispatch_tests {
             "the ON fan-out resumed an already-settled head and requested no BAL"
         );
         assert_eq!(
-            evidence.repeated, 1,
-            "the fan-out re-delivered the exact head the pipeline settled"
+            evidence.repeated, 0,
+            "the fan-out delivers nothing: the head edge is the only producer"
+        );
+        assert_eq!(
+            evidence.delivered, 0,
+            "and it mints no delivery, so a fan-out can never manufacture a head"
         );
         assert!(
             evidence.ready_views_after > evidence.ready_views_before,
@@ -3542,6 +3803,111 @@ mod delta_dispatch_tests {
             verdicts(legacy),
             "the OFF lane's verdicts are the legacy path's"
         );
+    }
+
+    /// A log buffer the test subscriber writes into.
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log buffer").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    impl LogBuffer {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().expect("log buffer")).into_owned()
+        }
+    }
+
+    /// The `fanout=<id>` a row of `marker`'s family carries, if it carries one.
+    fn fanout_of(text: &str, marker: &str) -> Option<String> {
+        let line = text.lines().find(|line| line.contains(marker))?;
+        let rest = &line[line.find("fanout=")? + "fanout=".len()..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        (!digits.is_empty()).then_some(digits)
+    }
+
+    /// ONE fan-out mints ONE identifier and every row it emits carries it: the
+    /// storage selection, the prefetch batch, the `[sim]` delta summary, and each
+    /// candidate's `fanout-trace` row all name the same fan-out. That join is what
+    /// lets a capture attribute a candidate (and its lane) without guessing from a
+    /// block number.
+    #[test]
+    fn the_fanout_id_joins_selection_prefetch_sim_and_trace_rows_for_one_fan_out() {
+        let recorder = DeltaRecorder::default();
+        recorder.serve_head(BLOCK, B256::new([0xa1; 32]), B256::new([0xa0; 32]));
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(buffer.clone())
+            .finish();
+        let evidence = std::thread::spawn(move || {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            rt.block_on(async {
+                let deployment = super::tests::deployment(Bytes::from_static(&[0xfe]));
+                let cands = vec![
+                    super::tests::candidate(70, 1_000_000_000_000_000_000u128, 1_000),
+                    super::tests::candidate(71, 1_000_000_000_000_000_000u128, 1_000),
+                ];
+                let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+                let divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+                let fot = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
+                let bot_state = Arc::new(StateLock::new(BotState::new()));
+                // The legacy lane: this fan-out pays the prefetch batch, so all
+                // four row families exist in ONE fan-out's log.
+                dispatch_profitable_results(
+                    cands,
+                    &super::tests::ctx(&provider, &deployment),
+                    &suppression,
+                    BLOCK,
+                    0,
+                    &divergence,
+                    &fot,
+                    Some(bot_state),
+                    Some(WarmCodeCacheInner::shared_default()),
+                )
+            })
+        })
+        .join()
+        .expect("fan-out thread");
+        assert_eq!(evidence.candidate_count, 2);
+
+        let text = buffer.text();
+        let selection = fanout_of(&text, "fan-out storage selection").expect("a selection row");
+        let prefetch = fanout_of(&text, "storage prefetch").expect("a prefetch row");
+        let lab = fanout_of(&text, "cands=").expect("a `cands=` row");
+        assert_eq!(
+            (prefetch.as_str(), lab.as_str()),
+            (selection.as_str(), selection.as_str()),
+            "every dispatch-level row of one fan-out names the same fan-out:\n{text}"
+        );
+        let traces: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("fanout-trace "))
+            .collect();
+        assert_eq!(traces.len(), 2, "one trace row per candidate:\n{text}");
+        for row in traces {
+            assert!(
+                row.contains(&format!("\"fanout\":{selection}")),
+                "a candidate's trace row names its fan-out: {row}"
+            );
+        }
     }
 
     /// The reason vocabulary the diagnostic line and the metric labels share is

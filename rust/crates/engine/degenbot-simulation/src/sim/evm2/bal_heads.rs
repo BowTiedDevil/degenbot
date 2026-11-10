@@ -83,11 +83,14 @@ use futures_util::future::BoxFuture;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use tracing::Instrument;
 
 use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+use degenbot_core::{diag, op_span};
 use degenbot_execution::PathInfo;
 
-use crate::sim::evm2::delta_snapshot::{BalHeadDriver, HeadTicket, RelevanceSet};
+use crate::sim::evm2::delta_snapshot::{BalHeadDriver, HeadOutcome, HeadTicket, RelevanceSet};
+use crate::sim::evm2::read_hub::CarryOutcome;
 use crate::sim::prefetch::{path_relevance_addresses, PrefetchFacts};
 use crate::sim::ReadAnchor;
 
@@ -326,15 +329,29 @@ impl BalHeadPipeline {
             ReadAnchor::identified(head.number, head.hash),
             head.parent_hash,
         );
+        // The head's own span: the prepare and the apply run off the pump's task,
+        // so without it the transition's diagnostics would land outside any engine
+        // span (ADR-043 §3) and the row would not export as a span event.
+        let span = op_span!(
+            domain = sim,
+            "degenbot.sim.bal_head",
+            anchor = head.number,
+            hash = %head.hash,
+            parent = %head.parent_hash
+        );
         // The spawned phase is spawned even for a repeated delivery: the driver
         // — not this seam — owns "already settled" and "another caller is
         // preparing this head", and both answer before any fetch, so a repeat
         // costs a task and no RPC.
-        (self.spawn)(Box::pin(async move {
-            let _ = driver
-                .advance_with_relevance(ticket, move || relevance.members())
-                .await;
-        }));
+        (self.spawn)(Box::pin(
+            async move {
+                let outcome = driver
+                    .advance_with_relevance(ticket, move || relevance.members())
+                    .await;
+                record_head_outcome(head, &outcome);
+            }
+            .instrument(span),
+        ));
         Some(ticket)
     }
 }
@@ -350,5 +367,255 @@ impl std::fmt::Debug for BalHeadPipeline {
         f.debug_struct("BalHeadPipeline")
             .field("armed", &self.is_armed())
             .finish_non_exhaustive()
+    }
+}
+
+// ── The head's one telemetry row ───────────────────────────────────────────
+
+/// The row ONE head transition leaves behind, or `None` when the transition moved
+/// nothing (a repeat delivery, another caller's in-flight preparation).
+///
+/// # Why the fan-out's own label cannot carry this
+///
+/// A fan-out's selection reports a CLOSED cold label — `lineage-refused` covers
+/// four different lineage refusals and `bal-unreadable` covers three different
+/// BAL failures — because those labels are a metric/diagnostic contract a scrape
+/// and a dashboard facet share. The head's own row carries the detail behind
+/// them, on the transition that produced it:
+///
+/// - `refusal` names the exact [`CarryRefusal`](crate::sim::evm2::read_hub::CarryRefusal)
+///   (`no-parent`, `not-consecutive`, `parent-hash-unknown`,
+///   `parent-hash-mismatch`), which is what separates "the session's first head"
+///   from "the pump skipped a block" from "a reorg rewind" in a live capture;
+/// - `bal` names the exact [`BalSkip`](crate::sim::evm2::bal_prefetch::BalSkip)
+///   (`no-anchor-hash`, `rpc`, `decode`), which separates an unsupported endpoint
+///   from a malformed list;
+/// - `prepare_us` is the head's BAL fetch and full decode (`DeltaReport::bal_latency`),
+///   and `apply_us` is the apply transition's own wall (`DeltaReport::link_time`:
+///   the parent seal, the link and the write pass, compaction excluded). Together
+///   they are the "does preparation actually land before the fan-outs" evidence a
+///   re-capture needs.
+///
+/// One `bal-head {...}` JSON object per transition, on the same `sim` domain as
+/// the rest of the simulation telemetry: a reader treats any field it does not
+/// know as optional, so this row is additive beside the existing rows. Only the
+/// fields THIS transition has are present — a transition that moved nothing
+/// writes no row at all, and a superseded or foreign apply has no wall to
+/// report.
+fn head_row(head: CanonicalHead, outcome: &HeadOutcome) -> Option<String> {
+    use std::fmt::Write;
+
+    let (verdict, report) = match outcome {
+        HeadOutcome::Settled(report) => (
+            // A settle that carried no parent value is the `cold` case the
+            // fan-out's label reports as `lineage-refused` / `bal-unreadable` /
+            // `settled`, and the row is where the cause is separable.
+            if matches!(report.outcome, CarryOutcome::Cold { .. }) {
+                "cold"
+            } else {
+                "settled"
+            },
+            Some(report),
+        ),
+        HeadOutcome::Superseded { .. } => ("superseded", None),
+        HeadOutcome::Foreign { .. } => ("foreign", None),
+        HeadOutcome::AlreadySettled | HeadOutcome::InFlight => return None,
+    };
+    let mut row = String::with_capacity(256);
+    let _ = write!(
+        row,
+        "bal-head {{\"anchor\":{},\"hash\":\"{:#x}\",\"parent\":\"{:#x}\",\"outcome\":\"{verdict}\"",
+        head.number, head.hash, head.parent_hash
+    );
+    if let Some(report) = report {
+        match &report.outcome {
+            CarryOutcome::Carried { carried_values } => {
+                let _ = write!(row, ",\"chain\":\"carried\",\"carried\":{carried_values}");
+            }
+            CarryOutcome::AlreadyCurrent => {
+                let _ = write!(row, ",\"chain\":\"already-current\"");
+            }
+            CarryOutcome::Cold { lineage, bal } => {
+                let _ = write!(row, ",\"chain\":\"cold\"");
+                match lineage {
+                    Some(refusal) => {
+                        let _ = write!(row, ",\"refusal\":\"{}\"", refusal.label());
+                    }
+                    None => row.push_str(",\"refusal\":null"),
+                }
+                match bal {
+                    Some(skip) => {
+                        let _ = write!(row, ",\"bal\":\"{}\"", skip.label());
+                    }
+                    None => row.push_str(",\"bal\":null"),
+                }
+            }
+        }
+        let _ = write!(
+            row,
+            ",\"prepare_us\":{},\"apply_us\":{},\"writes\":{},\"overwritten\":{},\"skipped\":{}",
+            report.bal_latency.as_micros(),
+            report.link_time.as_micros(),
+            report.writes.len(),
+            report.writes_overwritten,
+            report.writes_skipped
+        );
+    }
+    row.push('}');
+    Some(row)
+}
+
+/// Emit the head's row (see [`head_row`]) on the `sim` domain at DEBUG — the
+/// level the OFF/ON capture recipe enables.
+fn record_head_outcome(head: CanonicalHead, outcome: &HeadOutcome) {
+    if let Some(row) = head_row(head, outcome) {
+        diag!(domain = sim, "{}", row);
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "the row assertions fail loudly on a broken fixture"
+)]
+mod tests {
+    use super::*;
+    use crate::sim::evm2::bal_prefetch::BalSkip;
+    use crate::sim::evm2::delta_snapshot::{DeltaReport, HeadCold};
+    use crate::sim::evm2::read_hub::CarryRefusal;
+    use alloy::primitives::{Address, B256, U256};
+    use std::time::Duration;
+
+    const HEAD: CanonicalHead =
+        CanonicalHead::new(26_382_799, B256::new([0xaa; 32]), B256::new([0x99; 32]));
+
+    /// A report with the walls and write counts a real transition carries.
+    fn report(outcome: CarryOutcome) -> Arc<DeltaReport> {
+        Arc::new(DeltaReport {
+            outcome,
+            writes: vec![(Address::ZERO, U256::ZERO), (Address::ZERO, U256::ZERO)],
+            writes_overwritten: 1,
+            writes_skipped: 2,
+            bal_latency: Duration::from_micros(700),
+            link_time: Duration::from_micros(31),
+            compaction: None,
+        })
+    }
+
+    /// The head row names the lineage refusal the cold selection label collapses,
+    /// on the transition that produced it, together with the prepare and apply
+    /// walls — the two facts a live capture needs after the fact (gaps 2 and 4 of
+    /// the design's evidence list).
+    #[test]
+    fn the_head_row_names_the_lineage_refusal_that_the_selection_label_collapses() {
+        let cold = HeadCold::Settled {
+            lineage: Some(CarryRefusal::NotConsecutive),
+            bal: None,
+        };
+        assert_eq!(
+            cold.label(),
+            "lineage-refused",
+            "the selection's label collapses four refusals into one"
+        );
+        let row = head_row(
+            HEAD,
+            &HeadOutcome::Settled(report(CarryOutcome::Cold {
+                lineage: Some(CarryRefusal::NotConsecutive),
+                bal: None,
+            })),
+        )
+        .expect("a settled head leaves a row");
+
+        assert!(row.starts_with("bal-head {"), "one greppable row: {row}");
+        assert!(row.contains(r#""anchor":26382799"#), "{row}");
+        assert!(
+            row.contains(r#""hash":"0xaaaaaa"#),
+            "the head's own exact identity: {row}"
+        );
+        assert!(row.contains(r#""parent":"0x999999"#), "{row}");
+        assert!(
+            row.contains(r#""outcome":"cold""#),
+            "the settle was cold: {row}"
+        );
+        assert!(row.contains(r#""chain":"cold""#), "{row}");
+        assert!(
+            row.contains(r#""refusal":"not-consecutive""#),
+            "the cause the label collapses: {row}"
+        );
+        assert!(row.contains(r#""bal":null"#), "the list decoded: {row}");
+        assert!(
+            row.contains(r#""prepare_us":700"#) && row.contains(r#""apply_us":31"#),
+            "both walls: {row}"
+        );
+        assert!(
+            row.contains(r#""writes":2"#)
+                && row.contains(r#""overwritten":1"#)
+                && row.contains(r#""skipped":2"#),
+            "the write counts: {row}"
+        );
+    }
+
+    /// Every refusal and every skip has its own label: the collapsed labels are a
+    /// dispatch contract, not the explanation.
+    #[test]
+    fn every_refusal_and_every_bal_skip_has_its_own_label() {
+        assert_eq!(
+            [
+                CarryRefusal::NoParent.label(),
+                CarryRefusal::NotConsecutive.label(),
+                CarryRefusal::ParentHashUnknown.label(),
+                CarryRefusal::ParentHashMismatch.label(),
+            ],
+            [
+                "no-parent",
+                "not-consecutive",
+                "parent-hash-unknown",
+                "parent-hash-mismatch",
+            ]
+        );
+        assert_eq!(
+            [
+                BalSkip::NoAnchorHash.label(),
+                BalSkip::Rpc("unsupported".into()).label(),
+                BalSkip::Decode("short".into()).label(),
+            ],
+            ["no-anchor-hash", "rpc", "decode"]
+        );
+        let row = head_row(
+            HEAD,
+            &HeadOutcome::Settled(report(CarryOutcome::Cold {
+                lineage: None,
+                bal: Some(BalSkip::Rpc("unsupported".into())),
+            })),
+        )
+        .expect("a settled head leaves a row");
+        assert!(
+            row.contains(r#""refusal":null"#),
+            "the lineage matched: {row}"
+        );
+        assert!(row.contains(r#""bal":"rpc""#), "the skip cause: {row}");
+    }
+
+    /// A carried head's row says so and carries the parent-value count; a
+    /// transition that moved nothing writes no row at all.
+    #[test]
+    fn a_carried_head_names_its_chain_and_a_transition_that_moved_nothing_writes_no_row() {
+        let row = head_row(
+            HEAD,
+            &HeadOutcome::Settled(report(CarryOutcome::Carried { carried_values: 5 })),
+        )
+        .expect("a settled head leaves a row");
+        assert!(row.contains(r#""outcome":"settled""#), "{row}");
+        assert!(row.contains(r#""chain":"carried""#), "{row}");
+        assert!(row.contains(r#""carried":5"#), "{row}");
+
+        assert!(
+            head_row(HEAD, &HeadOutcome::AlreadySettled).is_none(),
+            "a repeat delivery moved nothing, so it reports nothing"
+        );
+        assert!(
+            head_row(HEAD, &HeadOutcome::InFlight).is_none(),
+            "another caller owns the preparation: nothing moved here"
+        );
     }
 }

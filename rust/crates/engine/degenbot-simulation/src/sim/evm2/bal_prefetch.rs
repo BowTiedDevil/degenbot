@@ -46,6 +46,20 @@ pub enum BalSkip {
     Decode(String),
 }
 
+impl BalSkip {
+    /// The closed-vocabulary label this skip reports — one label per VARIANT, so
+    /// a diagnostic row names the cause a caller's collapsed `bal-unreadable`
+    /// label hides.
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::NoAnchorHash => "no-anchor-hash",
+            Self::Rpc(_) => "rpc",
+            Self::Decode(_) => "decode",
+        }
+    }
+}
+
 /// The bytes did not decode as one complete EIP-7928 block access list.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("malformed block access list RLP: {0}")]

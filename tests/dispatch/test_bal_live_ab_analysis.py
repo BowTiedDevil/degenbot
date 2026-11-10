@@ -15,6 +15,21 @@ here are shaped the same way:
 Every parser pin states the wire shape it consumes; each literal line below is
 copied from an emitted row, so the expected parse is the format's truth and not
 a restatement of the implementation.
+
+# The additive `fanout` key and the `bal-head` rows
+
+The parser reads an old committed capture and an attributed one alike: the
+`fanout=<id>` tail of the two dispatch rows and of the `[sim] cands=` row, and
+the `"fanout":<id>` key of a trace row, are OPTIONAL (a capture taken before the
+key existed carries neither), and a candidate row WITHOUT the key is reported
+unattributed rather than assigned to a fan-out by block number — that is what
+keeps the inline hook re-quote arm's rows out of a dispatch fan-out's lane.
+`bal-head {...}` is a row family an old capture simply does not have.
+
+The literals below are exactly what the emitters write: the Rust rows are pinned
+by `degenbot-arbitrage`'s `fanout_trace`/`sim_metrics` tests and
+`degenbot-simulation`'s `bal_heads::tests`, and the Python pins here consume the
+same wire shape.
 """
 
 from __future__ import annotations
@@ -86,6 +101,39 @@ OUTCOME_LINE = (
 )
 
 MEMO_LINE = "INFO [sim] storage memo stats (block retired) {block_number=26382751, memo.hits=2888, memo.misses=391}"
+
+# The attributed shapes: the same rows with the additive `fanout` tail, plus the
+# per-head row. Every candidate row of ONE fan-out names that fan-out's id (41).
+SELECTION_ATTRIBUTED = (
+    "DEBUG [sim] fan-out storage selection {current_block=26382800, anchor=26382799, "
+    'anchor_fenced=true, storage="delta", reason=None, fanout=41}'
+)
+
+PREFETCH_ATTRIBUTED = (
+    "DEBUG [sim] storage prefetch {current_block=26382752, anchor=26382751, anchor_fenced=true, "
+    "derived=115, learned=96, hook=36, requested=247, seeded=247, skipped=None, fanout=41}"
+)
+
+LAB_ATTRIBUTED = (
+    "INFO [sim] cands=50 sims=172 sim_ms=1710 builds=123 build_ms=7 cold: b_fast=0 b_slow=164 "
+    "b_ms=79 code=0 c_ms=0 s_fast=18379 s_slow=4753 s_ms=1601 bh=0 warm_basic_hits=3691 "
+    "slow_ms=1681 fanout=41 {current_block=26382752, fanout_ms=814}"
+)
+
+TRACE_ATTRIBUTED = (
+    'DEBUG [sim] fanout-trace {"block":26382800,"cand":"47821@1","sim_ns":279587028,'
+    '"verdict":"none","gas":0,"reads":['
+    '"0x556b9306565093c855aea9ae92a594704c2cd59e|0xd,0x10,0x11"],'
+    '"relevance":["0x556b9306565093c855aea9ae92a594704c2cd59e"],"fanout":41}'
+)
+
+HEAD_ROW = (
+    'DEBUG [sim] bal-head {"anchor":26382799,"hash":"0xaaaa'
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+    '"parent":"0x9999999999999999999999999999999999999999999999999999999999999999",'
+    '"outcome":"cold","chain":"cold","refusal":"not-consecutive","bal":null,'
+    '"prepare_us":700,"apply_us":31,"writes":1400,"overwritten":1392,"skipped":8}'
+)
 
 
 def test_a_trace_row_parses_its_block_candidate_verdict_and_read_walk(analysis: ModuleType) -> None:
@@ -233,9 +281,147 @@ def test_relevance_coverage_counts_the_pre_simulation_addresses_the_reads_carrie
     assert analysis.relevance_coverage(no_relevance) == 1.0
 
 
-def _write_capture(path: Path, *, selections: list[str], traces: list[str]) -> Path:
-    path.write_text("\n".join([*selections, *traces, ""]) + "\n")
+def _write_capture(
+    path: Path, *, selections: list[str], traces: list[str], heads: list[str] | None = None
+) -> Path:
+    path.write_text("\n".join([*(heads or []), *selections, *traces, ""]) + "\n")
     return path
+
+
+def test_a_trace_row_without_the_fanout_key_still_parses(analysis: ModuleType) -> None:
+    legacy = analysis.parse_trace_line(TRACE_LINE)
+    attributed = analysis.parse_trace_line(TRACE_ATTRIBUTED)
+
+    assert legacy is not None
+    assert legacy.fanout is None, "a pre-`fanout` row carries no attribution"
+    assert (legacy.block, legacy.sim_ns, legacy.verdict) == (26382751, 279587028, "none")
+    assert attributed is not None
+    assert attributed.fanout == 41
+    assert attributed.cand == "47821@1"
+    assert attributed.block == 26382800
+
+
+def test_the_dispatch_rows_carry_their_optional_fanout_key(analysis: ModuleType) -> None:
+    assert analysis.parse_selection_line(SELECTION_DELTA).fanout is None
+    attributed = analysis.parse_selection_line(SELECTION_ATTRIBUTED)
+    assert attributed is not None
+    assert (attributed.fanout, attributed.storage, attributed.reason) == (41, "delta", None)
+    assert analysis.parse_prefetch_line(PREFETCH_LINE).fanout is None
+    prefetch = analysis.parse_prefetch_line(PREFETCH_ATTRIBUTED)
+    assert prefetch is not None
+    assert (prefetch.fanout, prefetch.seeded) == (41, 247)
+    assert analysis.parse_lab_line(LAB_LINE).fanout is None
+    lab = analysis.parse_lab_line(LAB_ATTRIBUTED)
+    assert lab is not None
+    assert (lab.fanout, lab.current_block, lab.fanout_ms) == (41, 26382752, 814)
+
+
+def test_the_fanout_id_joins_selection_prefetch_sim_and_trace_rows_for_one_fan_out(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[SELECTION_ATTRIBUTED],
+            traces=[TRACE_ATTRIBUTED, TRACE_ATTRIBUTED],
+        )
+    )
+    capture.prefetches.append(analysis.parse_prefetch_line(PREFETCH_ATTRIBUTED))
+    capture.labs.append(analysis.parse_lab_line(LAB_ATTRIBUTED))
+
+    joined = analysis.fanout_attribution(capture)
+
+    assert list(joined) == [41], "one fan-out, one identifier"
+    entry = joined[41]
+    assert entry.selection is not None
+    assert entry.prefetch is not None and entry.prefetch.seeded == 247
+    assert entry.lab is not None and entry.lab.candidates == 50
+    assert len(entry.traces) == 2, "both candidates of the fan-out join it"
+    assert {row.cand for row in entry.traces} == {"47821@1"}
+    assert analysis.unattributed_traces(capture) == []
+
+
+def test_an_unattributed_candidate_is_never_assigned_to_a_fanout(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    # The inline hook arm's row is at the SAME block as the dispatch fan-out's.
+    inline_hook_row = TRACE_ATTRIBUTED.replace(',"fanout":41', "").replace(
+        '"cand":"47821@1"', '"cand":"9@1"'
+    )
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[SELECTION_ATTRIBUTED],
+            traces=[TRACE_ATTRIBUTED, inline_hook_row],
+        )
+    )
+
+    joined = analysis.fanout_attribution(capture)
+    unattributed = analysis.unattributed_traces(capture)
+
+    assert len(joined[41].traces) == 1, "the fan-out owns only its own candidate"
+    assert [row.cand for row in unattributed] == ["9@1"]
+    assert '"fanout":' not in inline_hook_row, "the inline hook row carries no key"
+    report = analysis.render_markdown(capture, capture)
+    assert "unattributed candidates: 1" in report
+    assert "attributed candidates: 1" in report
+
+
+def test_a_head_row_names_the_refusal_and_walls_behind_the_collapsed_label(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    row = analysis.parse_head_line(HEAD_ROW)
+    assert row is not None
+    assert (row.anchor, row.outcome, row.chain) == (26382799, "cold", "cold")
+    assert row.refusal == "not-consecutive", "the cause the fan-out label collapses"
+    assert row.bal is None
+    assert (row.prepare_us, row.apply_us) == (700, 31)
+    assert (row.writes, row.overwritten, row.skipped) == (1400, 1392, 8)
+    assert analysis.parse_head_line(TRACE_LINE) is None
+
+    old = analysis.scan_capture(
+        _write_capture(tmp_path / "old.log", selections=[SELECTION_REFUSED], traces=[TRACE_LINE])
+    )
+    assert old.heads == [], "a pre-`bal-head` capture has no head rows"
+    assert "No `bal-head` rows" in analysis.render_markdown(old, old)
+
+
+def test_the_report_reads_an_old_capture_pair_and_an_attributed_pair_alike(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    old_off = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "old_off.log", selections=[SELECTION_DISABLED], traces=[TRACE_LINE]
+        )
+    )
+    old_on = analysis.scan_capture(
+        _write_capture(tmp_path / "old_on.log", selections=[SELECTION_REFUSED], traces=[TRACE_LINE])
+    )
+    old_report = analysis.render_markdown(old_off, old_on)
+    assert "No row in this capture carries a `fanout` key" in old_report
+    assert "No `bal-head` rows" in old_report
+
+    new_off = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "new_off.log",
+            selections=[SELECTION_ATTRIBUTED],
+            traces=[TRACE_ATTRIBUTED],
+            heads=[HEAD_ROW],
+        )
+    )
+    new_on = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "new_on.log",
+            selections=[SELECTION_ATTRIBUTED],
+            traces=[TRACE_ATTRIBUTED],
+            heads=[HEAD_ROW],
+        )
+    )
+    new_report = analysis.render_markdown(new_off, new_on)
+    assert "not-consecutive" in new_report, "the detailed refusal reached the report"
+    assert "| fanout | current_block |" in new_report
+    assert "| 41 |" in new_report
+    assert "No `bal-head` rows" not in new_report
 
 
 def test_a_capture_whose_off_window_selects_delta_fails_validation(

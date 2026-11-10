@@ -833,6 +833,24 @@ pub enum CarryRefusal {
     ParentHashMismatch,
 }
 
+impl CarryRefusal {
+    /// The closed-vocabulary label this refusal reports.
+    ///
+    /// One label per VARIANT, so a diagnostic row can name the cause a caller's
+    /// collapsed `lineage-refused` label deliberately hides: the label is the
+    /// dispatch contract (a closed set a scrape and a metric share), while this
+    /// vocabulary is the explanation of why the chain did not carry.
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::NoParent => "no-parent",
+            Self::NotConsecutive => "not-consecutive",
+            Self::ParentHashUnknown => "parent-hash-unknown",
+            Self::ParentHashMismatch => "parent-hash-mismatch",
+        }
+    }
+}
+
 /// What one parent-linked carry-forward advance did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CarryOutcome {

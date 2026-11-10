@@ -46,6 +46,9 @@ static HANDLE_BUILD_NS: AtomicU64 = AtomicU64::new(0);
 static SIM_CALLS: AtomicU64 = AtomicU64::new(0);
 static SIM_TOTAL_NS: AtomicU64 = AtomicU64::new(0);
 
+// The fan-out identifier minted per dispatch.
+static FANOUT_IDS: AtomicU64 = AtomicU64::new(1);
+
 /// FAST vs SLOW split: an anchor/BotStateDb serve lands ~µs, an RPC fetch
 /// ~300 µs+; 100 µs separates them with ~two orders of margin.
 const SLOW_FETCH_THRESHOLD: Duration = Duration::from_micros(100);
@@ -104,6 +107,18 @@ pub fn record_handle_build(dur: Duration) {
         u64::try_from(dur.as_nanos()).unwrap_or(u64::MAX),
         Ordering::Relaxed,
     );
+}
+
+/// Mint the identifier ONE fan-out carries across the rows it emits.
+///
+/// Process-global and monotonic: a fan-out is a per-dispatch unit of work, not a
+/// per-block one, so the identifier is minted where the fan-out starts and rides
+/// every seam it reaches — the storage selection, the prefetch batch, the
+/// `[sim]` delta summary, and each candidate's `fanout-trace` row. Starting at 1
+/// keeps `0` free to mean "unattributed" for a trace row emitted outside any
+/// fan-out (the inline hook re-quote arm).
+pub fn next_fanout_id() -> u64 {
+    FANOUT_IDS.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Record one completed per-candidate sim.
@@ -187,13 +202,19 @@ pub fn slow_total_ns(d: &SimLabSnapshot) -> u64 {
     d.cold_basic_slow_ns + d.cold_code_slow_ns + d.cold_storage_slow_ns
 }
 
-/// One grep-able lab line for a fan-out's delta — target `[sim-lab]`.
+/// One grep-able lab line for a fan-out's delta.
+///
+/// `fanout` is that fan-out's own identifier ([`next_fanout_id`]), rendered as a
+/// trailing `fanout=<n>` field so a capture can join this row to the same
+/// fan-out's storage-selection row, its prefetch row, and its candidates' trace
+/// rows. Append-only: every pre-existing field keeps its name and position, so a
+/// reader that ignores the new one parses an old capture and a new one alike.
 #[must_use]
-pub fn format_delta(d: &SimLabSnapshot, candidates: usize) -> String {
+pub fn format_delta(d: &SimLabSnapshot, candidates: usize, fanout: u64) -> String {
     format!(
         "cands={candidates} sims={} sim_ms={} builds={} build_ms={} \
          cold: b_fast={} b_slow={} b_ms={} code={} c_ms={} s_fast={} s_slow={} s_ms={} \
-         bh={} warm_basic_hits={} slow_ms={}",
+         bh={} warm_basic_hits={} slow_ms={} fanout={fanout}",
         d.sim_calls,
         d.sim_total_ns / 1_000_000,
         d.handle_builds,

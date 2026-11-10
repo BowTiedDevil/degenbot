@@ -976,6 +976,11 @@ pub fn simulate_path_on_evm(
 /// recorded decline or failure is categorised without calling it at all.
 /// `None` composes here, the explicit all-target fan-out's shape.
 ///
+/// `fanout` is the dispatch fan-out this candidate belongs to, echoed on its
+/// [`fanout_trace`](crate::fanout_trace) row so the row joins the fan-out's
+/// dispatch-level telemetry. A caller outside any fan-out — the inline hook
+/// re-quote arm — passes `None` and its row stays unattributed.
+///
 /// # Errors
 ///
 /// Same contract as the revm seam.
@@ -985,6 +990,7 @@ pub fn simulate_path_on_evm_prepared(
     path: &SimulatePath,
     prepared: Option<&PreparedEncoding>,
     fail_buckets: &mut FailBuckets,
+    fanout: Option<u64>,
 ) -> ProviderResult<Option<SimResult>> {
     let span = tracing::info_span!(
         "degenbot.bundle.simulate",
@@ -993,7 +999,7 @@ pub fn simulate_path_on_evm_prepared(
         simulate.expected_profit = tracing::field::Empty,
         simulate.error_reason = tracing::field::Empty,
     );
-    simulate_path_on_evm_in_span_prepared(session, ctx, path, prepared, fail_buckets, &span)
+    simulate_path_on_evm_in_span_prepared(session, ctx, path, prepared, fail_buckets, &span, fanout)
 }
 
 /// The caller-held-span form (mirrors `simulate_path_on_evm_in_span`).
@@ -1008,7 +1014,7 @@ pub fn simulate_path_on_evm_in_span(
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
 ) -> ProviderResult<Option<SimResult>> {
-    simulate_path_on_evm_in_span_prepared(session, ctx, path, None, fail_buckets, span)
+    simulate_path_on_evm_in_span_prepared(session, ctx, path, None, fail_buckets, span, None)
 }
 
 /// The span-taking body both public entries share.
@@ -1019,6 +1025,7 @@ fn simulate_path_on_evm_in_span_prepared(
     prepared: Option<&PreparedEncoding>,
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
+    fanout: Option<u64>,
 ) -> ProviderResult<Option<SimResult>> {
     // The candidate's PRODUCTION relevance set: what its path and the
     // deployment's settlement declaration make relevant, derived HERE — before
@@ -1061,6 +1068,7 @@ fn simulate_path_on_evm_in_span_prepared(
         gas,
         trace_reads.as_ref().unwrap_or(&empty),
         &relevance,
+        fanout,
     );
     result
 }
