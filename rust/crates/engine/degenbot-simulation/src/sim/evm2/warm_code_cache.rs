@@ -20,23 +20,285 @@
 
 use alloy::primitives::map::{AddressHashMap, B256HashMap};
 use alloy::primitives::{Address, B256, KECCAK256_EMPTY};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
+use std::time::Duration;
+
+use degenbot_rpc::provider::AlloyProvider;
 
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, Database};
 use ::evm2::interpreter::Word;
 
+use crate::sim::evm2::delta_snapshot::{BalHeadDriver, DeltaHub};
 use crate::sim::evm2::hook_slots::HookSlotStore;
 use crate::sim::hot_slots::HotSlotStore;
+use crate::sim::prefetch::{
+    block_on_ambient, path_relevance_addresses, resolve_read_anchor, PrefetchFacts,
+};
 use crate::sim::sim_metrics;
 use crate::sim::storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};
+use degenbot_core::diag;
+use degenbot_execution::PathInfo;
 
 /// The default per-entry TTL in blocks — the same safety-net value as the
 /// revm-side original (≈ 1 day of mainnet blocks). A safety net, not the
 /// primary correctness mechanism: in the bot's domain every cached contract
 /// is immutable.
 pub const WARM_CODE_CACHE_TTL_BLOCKS: u64 = 10_000;
+
+/// The development opt-in that lets the dispatch fan-out read candidate storage
+/// through a BAL delta generation
+/// ([`BalHeadDriver`](crate::sim::evm2::delta_snapshot::BalHeadDriver)) instead
+/// of the per-anchor [`StorageMemo`] plus the path/hot/hook prefetch lane.
+///
+/// # What the flag selects, and what it never changes
+///
+/// OFF (the default, and the shipped posture) is the legacy path unchanged: the
+/// per-anchor memo, the ONE prefetch batch, and the same telemetry. NO BAL is
+/// requested at all — the session installs no driver, so there is no code path
+/// that could issue one.
+///
+/// ON resolves the fan-out anchor's exact lineage `(number, hash, parent_hash)`
+/// in ONE header read and delivers it to the session's one
+/// [`BalHeadDriver`]: the driver holds the session's delta cache, so every
+/// fan-out at that exact head shares ONE generation and repeats no BAL work.
+/// The head's relevance set is the fan-out's own
+/// [`path_relevance_addresses`](crate::sim::prefetch::path_relevance_addresses)
+/// and its retention is [`Retention::Unbounded`] — the flag adds no retention
+/// knob. A head that settled READY answers candidate storage through its
+/// `DeltaHub` (a [`StorageView`](super::storage_view::StorageView)) and pays no
+/// prefetch batch; a head that is unprepared, past its readiness deadline,
+/// superseded, unreadable (unsupported endpoint, malformed list) or
+/// lineage-refused takes the legacy memo + prefetch lane with the reason
+/// reported, and serves no parent value on that fallback.
+///
+/// The readiness deadline bounds the ONE thing the opt-in may wait for: how
+/// long a fan-out may wait on its head's BAL before it settles on the legacy
+/// path. Candidate execution is never blocked past it.
+///
+/// # Enabling it, and the metrics that say what happened
+///
+/// The flag rides the session's warm-cache owner, so a session opts in at ONE
+/// construction site: [`WarmCodeCacheInner::shared_with_delta_dispatch`] (or
+/// [`WarmCodeCacheInner::shared_with_hook_slots_and_delta_dispatch`] where the
+/// owner also installs the durable hook store). There is no retention knob and
+/// no second switch: the driver is built at
+/// [`Retention::Unbounded`](crate::sim::evm2::delta_snapshot::Retention) and
+/// [`DEFAULT_MAX_DEPTH`](crate::sim::evm2::delta_snapshot::DEFAULT_MAX_DEPTH).
+///
+/// The operator-facing switch is the typed `simulation.delta_dispatch`
+/// (`DEGENBOT_DELTA_DISPATCH`) key, default OFF. Both production owners read it
+/// ONCE at construction: the PyO3 engine's session owner installs the hook
+/// store and this config on one cache, and the pure-Rust `MarketContext` owner
+/// installs the config on its own. Nothing re-reads the flag per fan-out, and a
+/// test-built cache ([`WarmCodeCacheInner::shared_default`]) stays OFF.
+///
+/// Every opt-in fan-out reports its selection on
+/// `degenbot.dispatch.storage{mode,reason}` — `mode` is `delta` or `legacy`,
+/// and `reason` is the closed cold set (`unprepared`, `deadline`,
+/// `superseded`, `undelivered`, `lineage-refused`, `bal-unreadable`, `settled`,
+/// `lineage-unreadable`) or `none`. A ready delta fan-out also leaves
+/// `degenbot.storage.prefetch` untouched (it dispatches no batch), which is what
+/// makes the two lanes distinguishable from a scrape while the flag is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeltaDispatchConfig {
+    /// How long a delivered head may stay unprepared before every caller at it
+    /// is told the deadline elapsed and takes the legacy path.
+    pub readiness_deadline: Duration,
+}
+
+impl DeltaDispatchConfig {
+    /// The readiness deadline the development opt-in uses: long enough for a
+    /// local node's BAL, short enough that a stalled endpoint costs the fan-out
+    /// a small fraction of a block.
+    pub const DEVELOPMENT_READINESS_DEADLINE: Duration = Duration::from_millis(50);
+
+    /// The development opt-in at
+    /// [`Self::DEVELOPMENT_READINESS_DEADLINE`].
+    #[must_use]
+    pub const fn development() -> Self {
+        Self {
+            readiness_deadline: Self::DEVELOPMENT_READINESS_DEADLINE,
+        }
+    }
+
+    /// The opt-in with an explicit readiness deadline (the A/B and test knob).
+    #[must_use]
+    pub const fn with_readiness_deadline(readiness_deadline: Duration) -> Self {
+        Self { readiness_deadline }
+    }
+}
+
+/// The storage representation one fan-out reads its candidates through.
+pub enum FanOutStorage {
+    /// The legacy per-anchor memo plus the path/hot/hook prefetch lane — the
+    /// default, and the fallback for every head that did not settle ready.
+    Legacy,
+    /// A ready BAL delta generation at the fan-out's exact anchor.
+    Delta(Arc<DeltaHub>),
+}
+
+/// Why a fan-out's storage selection resolved the way it did — the closed label
+/// set the diagnostic line and the metric labels share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageSelectionOutcome {
+    /// The opt-in is off: the legacy path, and no BAL request was made.
+    Disabled,
+    /// The exact head settled ready: the delta generation answers.
+    Ready,
+    /// The exact head did not settle ready in time (or settled cold); the
+    /// legacy lane answers and the label says why.
+    Cold(&'static str),
+    /// The head's lineage could not be read, so no head was delivered.
+    LineageUnreadable,
+}
+
+impl StorageSelectionOutcome {
+    /// Which path this fan-out reads through (`delta` / `legacy`).
+    #[must_use]
+    pub const fn mode(&self) -> &'static str {
+        match self {
+            Self::Ready => "delta",
+            Self::Disabled | Self::Cold(_) | Self::LineageUnreadable => "legacy",
+        }
+    }
+
+    /// The reason label a legacy fallback reports, and `None` when no fallback
+    /// happened.
+    #[must_use]
+    pub const fn reason(&self) -> Option<&'static str> {
+        match self {
+            Self::Disabled | Self::Ready => None,
+            Self::Cold(reason) => Some(reason),
+            Self::LineageUnreadable => Some("lineage-unreadable"),
+        }
+    }
+}
+
+/// What one fan-out's storage selection resolved to.
+pub struct DispatchStorageSelection {
+    /// The anchor the legacy memo (and the delta head) is fenced by.
+    pub anchor: ReadAnchor,
+    /// The representation this fan-out reads through.
+    pub storage: FanOutStorage,
+    /// The outcome label, for the diagnostic and metric surfaces.
+    pub outcome: StorageSelectionOutcome,
+}
+
+impl DispatchStorageSelection {
+    /// Whether a ready delta generation answers this fan-out (and the prefetch
+    /// lane is therefore skipped).
+    #[must_use]
+    pub const fn is_delta(&self) -> bool {
+        matches!(self.storage, FanOutStorage::Delta(_))
+    }
+}
+
+/// Resolve one fan-out's storage selection at `block`.
+///
+/// OFF (no [`DeltaDispatchConfig`] on the session) is the legacy path exactly:
+/// the number+hash read anchor and no BAL request anywhere.
+///
+/// ON resolves the block's exact lineage `(number, hash, parent_hash)` in ONE
+/// header read, delivers it to the session's one [`BalHeadDriver`] with the
+/// fan-out's own [`path_relevance_addresses`] and unbounded retention, and
+/// answers with the head's generation when that exact head settled ready. A
+/// head that is unprepared, past its readiness deadline, superseded,
+/// unreadable (unsupported endpoint or malformed list), or lineage-refused
+/// answers [`FanOutStorage::Legacy`] with its reason — the caller then runs the
+/// existing memo + prefetch lane, and no parent value is served on that
+/// fallback.
+///
+/// The BAL work rides this call: it is prepared and applied under the
+/// configured readiness deadline, so a stalled or unsupported endpoint costs
+/// the fan-out at most that deadline and never blocks candidate execution past
+/// it. A repeated fan-out at the SAME exact head shares the settled generation
+/// and fetches nothing.
+#[must_use]
+pub fn select_dispatch_storage(
+    provider: &AlloyProvider,
+    warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
+    block: u64,
+    paths: &[&PathInfo],
+    facts: &PrefetchFacts,
+) -> DispatchStorageSelection {
+    let (config, heads) = {
+        let cache = warm_cache.read();
+        let Some(config) = cache.delta_dispatch() else {
+            // Off: the legacy anchor read, and nothing that could request a BAL.
+            return DispatchStorageSelection {
+                anchor: resolve_read_anchor(provider, block),
+                storage: FanOutStorage::Legacy,
+                outcome: StorageSelectionOutcome::Disabled,
+            };
+        };
+        (config, cache.delta_heads(provider))
+    };
+    let Some(heads) = heads else {
+        return DispatchStorageSelection {
+            anchor: resolve_read_anchor(provider, block),
+            storage: FanOutStorage::Legacy,
+            outcome: StorageSelectionOutcome::Disabled,
+        };
+    };
+
+    // The opt-in's ONE header read: the whole lineage, never one read per hash.
+    let lineage = match block_on_ambient(provider.get_block_lineage_at(block)) {
+        Some(Ok(Some(lineage))) => lineage,
+        other => {
+            if let Some(Err(error)) = other {
+                diag!(
+                    domain = sim,
+                    anchor = block,
+                    "delta head lineage unreadable: {error}"
+                );
+            }
+            return DispatchStorageSelection {
+                anchor: ReadAnchor::at(block),
+                storage: FanOutStorage::Legacy,
+                outcome: StorageSelectionOutcome::LineageUnreadable,
+            };
+        }
+    };
+    let anchor = ReadAnchor::identified(lineage.number, lineage.hash);
+    let ticket = heads.deliver(
+        anchor,
+        lineage.parent_hash,
+        path_relevance_addresses(paths.iter().copied(), facts),
+    );
+
+    // A head that already settled at this exact anchor answers on the spot and
+    // fetches nothing.
+    let settled = heads.snapshot(anchor);
+    if settled.readiness.is_ready() {
+        return DispatchStorageSelection {
+            anchor,
+            storage: FanOutStorage::Delta(settled.hub),
+            outcome: StorageSelectionOutcome::Ready,
+        };
+    }
+
+    // Prepare and apply the head's BAL, bounded by the readiness deadline: a
+    // stalled endpoint costs this fan-out the deadline and no more.
+    let _ = block_on_ambient(async {
+        let _ = tokio::time::timeout(config.readiness_deadline, heads.advance(ticket)).await;
+    });
+
+    let view = heads.snapshot(anchor);
+    match view.readiness.cold_reason() {
+        None => DispatchStorageSelection {
+            anchor,
+            storage: FanOutStorage::Delta(view.hub),
+            outcome: StorageSelectionOutcome::Ready,
+        },
+        Some(reason) => DispatchStorageSelection {
+            anchor,
+            storage: FanOutStorage::Legacy,
+            outcome: StorageSelectionOutcome::Cold(reason.label()),
+        },
+    }
+}
 
 /// The cross-block persistent inner state — bytecode + account-existence
 /// maps, each entry tagged with its load block for per-entry TTL expiry.
@@ -73,6 +335,16 @@ pub struct WarmCodeCacheInner {
     /// it. `None` until the engine owner installs one (a session without it
     /// joins no hook slots; nothing else changes).
     hook_slots: Option<Arc<HookSlotStore>>,
+
+    /// The dispatch fan-out's development opt-in ([`DeltaDispatchConfig`]).
+    /// `None` — the default — is the legacy memo + prefetch path with no BAL
+    /// read anywhere.
+    delta_dispatch: Option<DeltaDispatchConfig>,
+
+    /// The session's one BAL delta head driver, installed on the first opt-in
+    /// fan-out. Session-scoped on purpose: every fan-out at one exact head
+    /// shares its generation, so a block's lanes repeat no BAL work.
+    delta_heads: Mutex<Option<Arc<BalHeadDriver>>>,
 }
 
 impl WarmCodeCacheInner {
@@ -86,6 +358,8 @@ impl WarmCodeCacheInner {
             storage_memo: StorageMemoCache::new(),
             hot_slots: Arc::new(HotSlotStore::new()),
             hook_slots: None,
+            delta_dispatch: None,
+            delta_heads: Mutex::new(None),
         }
     }
 
@@ -111,6 +385,53 @@ impl WarmCodeCacheInner {
         let mut inner = Self::new(WARM_CODE_CACHE_TTL_BLOCKS);
         inner.hook_slots = Some(store);
         Arc::new(RwLock::new(inner))
+    }
+
+    /// The engine-owner construction shape with the durable per-hook slot-set
+    /// store AND the dispatch BAL delta opt-in installed — the session owner
+    /// that reads the development flag ([`DeltaDispatchConfig`]) once at boot
+    /// and hands the same session one driver for its life.
+    #[must_use]
+    pub fn shared_with_hook_slots_and_delta_dispatch(
+        store: Arc<HookSlotStore>,
+        config: DeltaDispatchConfig,
+    ) -> Arc<RwLock<Self>> {
+        let mut inner = Self::new(WARM_CODE_CACHE_TTL_BLOCKS);
+        inner.hook_slots = Some(store);
+        inner.delta_dispatch = Some(config);
+        Arc::new(RwLock::new(inner))
+    }
+
+    /// A shared inner state carrying the dispatch BAL delta opt-in and no hook
+    /// store (the tests' and the A/B's construction shape).
+    #[must_use]
+    pub fn shared_with_delta_dispatch(config: DeltaDispatchConfig) -> Arc<RwLock<Self>> {
+        let mut inner = Self::new(WARM_CODE_CACHE_TTL_BLOCKS);
+        inner.delta_dispatch = Some(config);
+        Arc::new(RwLock::new(inner))
+    }
+
+    /// The dispatch BAL delta opt-in this session carries, when it carries one.
+    #[must_use]
+    pub const fn delta_dispatch(&self) -> Option<DeltaDispatchConfig> {
+        self.delta_dispatch
+    }
+
+    /// The session's BAL delta head driver, installed on FIRST use when the
+    /// opt-in is on — `None` (and no BAL request anywhere) while it is off.
+    ///
+    /// Installed under this cache's `&self` (the caller holds the engine's
+    /// `RwLock` read guard) and handed back as an owned `Arc` so the caller
+    /// drops the guard before any provider I/O. One driver per session, so the
+    /// driver's generations, its delivered head, and its BAL work are shared by
+    /// every fan-out at one exact anchor.
+    #[must_use]
+    pub fn delta_heads(&self, provider: &AlloyProvider) -> Option<Arc<BalHeadDriver>> {
+        let config = self.delta_dispatch?;
+        let mut slot = self.delta_heads.lock();
+        Some(Arc::clone(slot.get_or_insert_with(|| {
+            Arc::new(BalHeadDriver::new(provider, config.readiness_deadline))
+        })))
     }
 
     /// Is an entry loaded at `loaded_block` still fresh at `block`?
@@ -255,6 +576,7 @@ where
 }
 
 #[cfg(test)]
+#[expect(clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, U256};
@@ -348,6 +670,104 @@ mod tests {
             cache.get_storage(&CONTRACT, &Word::from(8u64)).unwrap();
         }
         assert_eq!(cache.inner().storage_calls.get(), 3);
+    }
+
+    /// A provider no request may reach: any dispatch is a bug, so it panics.
+    #[derive(Debug, Clone)]
+    struct ForbiddenTransport;
+
+    impl tower::Service<alloy::rpc::json_rpc::RequestPacket> for ForbiddenTransport {
+        type Response = alloy::rpc::json_rpc::ResponsePacket;
+        type Error = alloy::transports::TransportError;
+        type Future = alloy::transports::TransportFut<'static>;
+
+        fn poll_ready(
+            &mut self,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: alloy::rpc::json_rpc::RequestPacket) -> Self::Future {
+            let methods: Vec<String> = match req {
+                alloy::rpc::json_rpc::RequestPacket::Single(one) => {
+                    vec![one.method().to_string()]
+                }
+                alloy::rpc::json_rpc::RequestPacket::Batch(many) => {
+                    many.iter().map(|one| one.method().to_string()).collect()
+                }
+            };
+            panic!("no request may be dispatched here, got {methods:?}");
+        }
+    }
+
+    fn forbidden_provider() -> AlloyProvider {
+        use alloy::providers::RootProvider;
+        use alloy::rpc::client::ClientBuilder;
+
+        let client = ClientBuilder::default().transport(ForbiddenTransport, true);
+        let root: RootProvider = RootProvider::new(client);
+        AlloyProvider::from_provider(Arc::new(root))
+    }
+
+    /// The shipped posture: no opt-in, so the session holds no head driver and
+    /// nothing that could request a BAL — the transport is never reached.
+    #[test]
+    fn the_delta_dispatch_opt_in_is_off_by_default_and_requests_nothing() {
+        let inner = WarmCodeCacheInner::shared_default();
+        assert_eq!(inner.read().delta_dispatch(), None);
+        assert!(
+            inner.read().delta_heads(&forbidden_provider()).is_none(),
+            "an opt-out session has no head driver"
+        );
+    }
+
+    /// One driver per session: the first opt-in fan-out installs it, later ones
+    /// share the same handle (so every fan-out at one exact head shares one
+    /// generation and repeats no BAL work), and installation itself fetches
+    /// nothing.
+    #[test]
+    fn the_delta_head_driver_is_installed_once_and_shared() {
+        let inner =
+            WarmCodeCacheInner::shared_with_delta_dispatch(DeltaDispatchConfig::development());
+        let provider = forbidden_provider();
+        let cache = inner.read();
+        assert_eq!(
+            cache.delta_dispatch(),
+            Some(DeltaDispatchConfig::development())
+        );
+        let first = cache.delta_heads(&provider).expect("the opt-in is on");
+        let second = cache.delta_heads(&provider).expect("the opt-in is on");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "one session-scoped driver, never one per fan-out"
+        );
+        assert_eq!(
+            first.delivered(),
+            None,
+            "installation delivers no head and fetches nothing"
+        );
+    }
+
+    /// The production construction shape carries the opt-in AND the durable
+    /// hook store — the two session-scoped stores are installed by one owner,
+    /// and neither displaces the other.
+    #[test]
+    fn the_hook_store_and_the_delta_opt_in_ride_the_same_owner() {
+        let store = Arc::new(HookSlotStore::in_memory(::evm2::SpecId::CANCUN));
+        let inner = WarmCodeCacheInner::shared_with_hook_slots_and_delta_dispatch(
+            Arc::clone(&store),
+            DeltaDispatchConfig::with_readiness_deadline(Duration::from_millis(7)),
+        );
+        let cache = inner.read();
+        assert!(cache.hook_slots().is_some(), "the hook store survives");
+        assert_eq!(
+            cache.delta_dispatch(),
+            Some(DeltaDispatchConfig::with_readiness_deadline(
+                Duration::from_millis(7)
+            ))
+        );
+        assert!(cache.delta_heads(&forbidden_provider()).is_some());
     }
 
     #[test]

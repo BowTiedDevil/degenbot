@@ -78,6 +78,27 @@ or TOML key fails the load loudly with a pointed message, for one release.
 | `fleet.stance` / `DEGENBOT_FLEET` | LW-T9 (ergo CQLMM2) | fleet is the only stance since LW-T9 — the worker fleet is the only behavior |
 | `solve.solve_sim_inflight` / `DEGENBOT_SOLVE_SIM_INFLIGHT` | LW-T9 (ergo CQLMM2) | SimDriver capacity: `fleet.sim_slot_cap`; inline-sim sizing: `solve.inline_sim_workers` |
 
+## Development opt-ins (new typed keys)
+
+A new typed key defaults to today's behavior, so an operator who writes nothing
+migrates by doing nothing.
+
+`simulation.delta_dispatch` (`DEGENBOT_DELTA_DISPATCH`, default `false`) is the
+BAL dispatch opt-in. On, a session's fan-out reads candidate storage through the
+block-access-list delta generation at its exact head when that head settled
+ready, and falls back to the legacy memo + prefetch lane when it did not — the
+fallback's reason lands on `degenbot.dispatch.storage`, and a ready delta
+fan-out leaves `degenbot.storage.prefetch` untouched. That split is on the
+dashboard's "Dispatch storage lane: delta vs legacy fallback" panel (Pump &
+Pipeline row of [`degenbot-overview.json`](grafana/degenbot-overview.json)),
+and `DegenbotDispatchStorageFallback` ([`ALERTS.md`](grafana/ALERTS.md)) pages
+when a cold fallback holds over half the fan-out rate for 10m. Off is the
+shipped posture: the legacy lane, and no BAL request anywhere. The flag is
+the whole switch — there is no retention or readiness knob, and the session's
+one driver is built at unbounded retention. Nothing else in the file or the
+environment changes shape, so an existing config keeps working and only gains
+the option.
+
 ## What is NOT retired
 
 `[failure_policy]` is deliberately **not** typed and **not** rejected: it is the ADR-040 D3 free-form per-bucket override table, read as a raw TOML table from the same file the loader selected (`BotConfigLoader::file_path()`). Files may keep it unchanged.

@@ -219,7 +219,7 @@ fn outcome_label(report: &DeltaReport) -> String {
 /// Compare every identity the block's list wrote against an independent cold
 /// read at the same anchor; returns the comparisons made.
 async fn verify_settled_values(
-    driver: &BalHeadDriver<'_>,
+    driver: &BalHeadDriver,
     cold: &AlloyProvider,
     anchor: ReadAnchor,
     report: &DeltaReport,
@@ -257,7 +257,7 @@ async fn verify_settled_values(
 /// One head's whole lifecycle: deliver, prove the cold path, prepare, apply, and
 /// verify the settled generation.
 async fn walk_head(
-    driver: &BalHeadDriver<'_>,
+    driver: &BalHeadDriver,
     cold: &AlloyProvider,
     leg: Leg,
     number: u64,
@@ -327,7 +327,7 @@ async fn walk_head(
 /// process, pinned as the session's first head and then advanced block by block.
 async fn historical_leg(
     config: &Config,
-    driver: &BalHeadDriver<'_>,
+    driver: &BalHeadDriver,
     cold: &AlloyProvider,
     relevance: &[Address],
     rows: &mut Vec<Row>,
@@ -343,7 +343,7 @@ async fn historical_leg(
 /// precomputed with the block.
 async fn fresh_leg(
     config: &Config,
-    driver: &BalHeadDriver<'_>,
+    driver: &BalHeadDriver,
     cold: &AlloyProvider,
     relevance: &[Address],
     rows: &mut Vec<Row>,

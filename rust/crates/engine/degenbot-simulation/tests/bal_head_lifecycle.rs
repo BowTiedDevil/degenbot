@@ -103,7 +103,7 @@ fn assert_reports_agree(control: &DeltaReport, lifecycle: &DeltaReport) {
 /// The control's generation and the lifecycle's hold the same entries and answer
 /// them alike — the loaded fixtures' write, the carried parent word, the relevant
 /// seed, and the identity neither representation knows.
-fn assert_same_snapshot(control: &DeltaHub<'_>, lifecycle: &DeltaHub<'_>) {
+fn assert_same_snapshot(control: &DeltaHub, lifecycle: &DeltaHub) {
     assert_eq!(
         control.snapshot_len(),
         lifecycle.snapshot_len(),

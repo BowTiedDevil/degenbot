@@ -698,7 +698,7 @@ pub fn prefetch_into_memo(
 /// The same precondition as
 /// [`BlockingAsyncDb::new`](super::evm2::blocking_async_db::BlockingAsyncDb::new):
 /// where the fan-out can read at all, the prefetch can too.
-fn block_on_ambient<T>(future: impl Future<Output = T>) -> Option<T> {
+pub(crate) fn block_on_ambient<T>(future: impl Future<Output = T>) -> Option<T> {
     let handle = tokio::runtime::Handle::try_current().ok()?;
     if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
         return None;

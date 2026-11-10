@@ -336,14 +336,14 @@ fn anchors(real: &RealCoverage, number: u64) -> Result<(ReadAnchor, B256), Strin
 }
 
 /// Drive the full-clone leg's advance for one block, returning its lane.
-async fn advance_full<'p>(
-    control: &ReadHubCache<'p>,
+async fn advance_full(
+    control: &ReadHubCache,
     real: &RealCoverage,
     number: u64,
     relevance: &[Address],
     ledger: &WallLedger,
     node: Node,
-) -> Result<(Arc<ReadHub<'p>>, u64), String> {
+) -> Result<(Arc<ReadHub>, u64), String> {
     let (anchor, parent) = anchors(real, number)?;
     let started = Instant::now();
     let (hub, report) = control.advance_bal(anchor, parent, relevance).await;
@@ -352,8 +352,8 @@ async fn advance_full<'p>(
 }
 
 /// Drive a delta leg's advance for one block.
-async fn advance_delta<'p>(
-    delta: &DeltaSnapshotCache<'p>,
+async fn advance_delta(
+    delta: &DeltaSnapshotCache,
     real: &RealCoverage,
     number: u64,
     relevance: &[Address],
@@ -361,7 +361,7 @@ async fn advance_delta<'p>(
     node: Node,
 ) -> Result<
     (
-        Arc<degenbot_simulation::sim::evm2::delta_snapshot::DeltaHub<'p>>,
+        Arc<degenbot_simulation::sim::evm2::delta_snapshot::DeltaHub>,
         usize,
     ),
     String,
@@ -412,7 +412,7 @@ async fn drive_leg(
         let relevance = by_anchor
             .get(&number)
             .map_or_else(Relevance::default, |rows| anchor_relevance(rows));
-        let full_hub: Option<Arc<ReadHub<'_>>> = match control.as_ref() {
+        let full_hub: Option<Arc<ReadHub>> = match control.as_ref() {
             Some(control) => {
                 let (hub, charged) =
                     advance_full(control, real, number, &relevance.addresses, &ledger, node)

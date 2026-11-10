@@ -64,17 +64,17 @@ fn hash(step: u8) -> B256 {
 }
 
 /// Install the scenario chain's first generation: cold, at `HEIGHT`.
-fn start<'p>(cache: &DeltaSnapshotCache<'p>) -> Arc<DeltaHub<'p>> {
+fn start(cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
     cache.for_anchor(ReadAnchor::identified(HEIGHT, hash(0)))
 }
 
 /// Advance one linked generation carrying `writes`.
-async fn advance<'p>(
-    cache: &DeltaSnapshotCache<'p>,
+async fn advance(
+    cache: &DeltaSnapshotCache,
     stub: &ChainStub,
     step: u8,
     writes: &[(Address, U256, U256)],
-) -> Arc<DeltaHub<'p>> {
+) -> Arc<DeltaHub> {
     stub.serve_bal_at(hash(step), modeled_chain::bal_bytes(writes));
     let (hub, _) = cache
         .advance_bal(

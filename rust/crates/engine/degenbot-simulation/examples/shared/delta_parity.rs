@@ -94,7 +94,7 @@ pub async fn replay(provider: &AlloyProvider, blocks: &[ParityBlock]) -> ParityR
 }
 
 /// The control's read shape: register every read, drain one round, await.
-async fn read_control(hub: &ReadHub<'_>, reads: &[Key]) -> Vec<Result<U256, String>> {
+async fn read_control(hub: &ReadHub, reads: &[Key]) -> Vec<Result<U256, String>> {
     let futures: Vec<_> = reads
         .iter()
         .map(|&(address, slot)| hub.read_storage(address, slot))

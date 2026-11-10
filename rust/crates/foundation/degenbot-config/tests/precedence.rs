@@ -65,6 +65,37 @@ fn inject_executor_code_env_parity() {
     );
 }
 
+/// The BAL dispatch opt-in reads as a typed boolean: off unless the operator
+/// says otherwise, and the standard flag words are the whole env vocabulary —
+/// there is no second spelling to keep in step.
+#[test]
+fn simulation_delta_dispatch_is_off_by_default_and_reads_the_flag_words() {
+    let dflt = must_ok(&BotConfigLoader::new().without_env());
+    assert!(
+        !dflt.config.simulation.delta_dispatch,
+        "unset -> default false (the legacy lane, and no BAL request anywhere)"
+    );
+    assert_eq!(
+        dflt.source_of("DEGENBOT_DELTA_DISPATCH"),
+        Some(Source::Default)
+    );
+
+    let on =
+        must_ok(&BotConfigLoader::new().with_env(map_env(&[("DEGENBOT_DELTA_DISPATCH", "1")])));
+    assert!(
+        on.config.simulation.delta_dispatch,
+        "env DEGENBOT_DELTA_DISPATCH=1 opts in"
+    );
+    assert_eq!(on.source_of("DEGENBOT_DELTA_DISPATCH"), Some(Source::Env));
+
+    let off =
+        must_ok(&BotConfigLoader::new().with_env(map_env(&[("DEGENBOT_DELTA_DISPATCH", "off")])));
+    assert!(
+        !off.config.simulation.delta_dispatch,
+        "the `off` flag word is the off default, explicitly"
+    );
+}
+
 /// The per-session run-artifact root: typed schema default under HOME,
 /// overridable through the standard `DEGENBOT_RUNS_DIR` env layer.
 #[test]

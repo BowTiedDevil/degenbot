@@ -725,7 +725,7 @@ impl GenState {
 /// [`Self::read_storage_handle`]). A settled value joins the generation's own
 /// map, so it shadows ancestors and carries to the next generation exactly like
 /// the control's memo.
-pub struct DeltaHub<'p> {
+pub struct DeltaHub {
     anchor: ReadAnchor,
 
     retention: Retention,
@@ -734,15 +734,15 @@ pub struct DeltaHub<'p> {
     /// registers with, and the account memo candidates share. One hub per
     /// generation, minted at the generation's own anchor, so no memoized value
     /// is reachable from another anchor.
-    reads: ReadHub<'p>,
+    reads: ReadHub,
 
     state: Mutex<GenState>,
 }
 
-impl<'p> DeltaHub<'p> {
+impl DeltaHub {
     /// A generation whose own state starts at `state`.
     fn generation(
-        provider: &'p AlloyProvider,
+        provider: &AlloyProvider,
 
         anchor: ReadAnchor,
 
@@ -762,7 +762,7 @@ impl<'p> DeltaHub<'p> {
     }
 
     /// A fresh cold generation: nothing carried, nothing written.
-    fn fresh(provider: &'p AlloyProvider, anchor: ReadAnchor, retention: Retention) -> Self {
+    fn fresh(provider: &AlloyProvider, anchor: ReadAnchor, retention: Retention) -> Self {
         Self::generation(
             provider,
             anchor,
@@ -854,7 +854,7 @@ impl<'p> DeltaHub<'p> {
     /// machinery (a scheduler) takes the hub directly and drains it; a caller
     /// that just wants the value uses [`Self::read_storage`].
     #[must_use]
-    pub fn read_hub(&self) -> &ReadHub<'p> {
+    pub fn read_hub(&self) -> &ReadHub {
         &self.reads
     }
 
@@ -887,7 +887,7 @@ impl<'p> DeltaHub<'p> {
     /// round leave the generation exactly as it was, and the identity is
     /// readable again.
     #[must_use = "a delta read is settled by a `drain_round` call, or by the chain"]
-    pub fn read_storage_handle(&self, address: Address, index: U256) -> DeltaRead<'_, 'p> {
+    pub fn read_storage_handle(&self, address: Address, index: U256) -> DeltaRead<'_> {
         let key = (address, index);
         let origin = {
             let state = self.state.lock();
@@ -1012,7 +1012,7 @@ impl<'p> DeltaHub<'p> {
 /// take, and settles back through [`StorageView::put`]. The async round
 /// machinery stays the scheduler's seam ([`DeltaHub::read_storage_handle`]),
 /// never a synchronous wrapper's.
-impl StorageView for DeltaHub<'_> {
+impl StorageView for DeltaHub {
     fn get(&self, address: Address, index: U256) -> Option<StorageValue> {
         let key = (address, index);
         let mut state = self.state.lock();
@@ -1050,8 +1050,8 @@ pub enum ReadOrigin {
 /// hub's answer (settling it into this generation's own map, then stamping
 /// recency). A failed or abandoned round settles nothing.
 #[must_use = "a read is settled by a `drain_round` call, or by the chain"]
-pub struct DeltaRead<'h, 'p> {
-    hub: &'h DeltaHub<'p>,
+pub struct DeltaRead<'h> {
+    hub: &'h DeltaHub,
     key: Slot,
     origin: DeltaReadOrigin,
 }
@@ -1064,7 +1064,7 @@ enum DeltaReadOrigin {
     Hub(ReadFuture<StorageValue>),
 }
 
-impl DeltaRead<'_, '_> {
+impl DeltaRead<'_> {
     /// Whether the chain answered this read without any round.
     #[must_use]
     pub const fn is_chain_hit(&self) -> bool {
@@ -1081,7 +1081,7 @@ impl DeltaRead<'_, '_> {
     }
 }
 
-impl Future for DeltaRead<'_, '_> {
+impl Future for DeltaRead<'_> {
     type Output = Result<StorageValue, ReadHubError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -1181,20 +1181,20 @@ impl DeltaReport {
 
 /// The session-scoped owner of the per-generation [`DeltaHub`] — the
 /// delta-chain counterpart of the control's `ReadHubCache`.
-pub struct DeltaSnapshotCache<'p> {
-    provider: &'p AlloyProvider,
+pub struct DeltaSnapshotCache {
+    provider: AlloyProvider,
 
     max_depth: u32,
 
     retention: Retention,
 
-    current: Mutex<Option<(ReadAnchor, Arc<DeltaHub<'p>>)>>,
+    current: Mutex<Option<(ReadAnchor, Arc<DeltaHub>)>>,
 }
 
-impl<'p> DeltaSnapshotCache<'p> {
+impl DeltaSnapshotCache {
     /// An empty owner at [`DEFAULT_MAX_DEPTH`] and [`Retention::Unbounded`].
     #[must_use]
-    pub fn new(provider: &'p AlloyProvider) -> Self {
+    pub fn new(provider: &AlloyProvider) -> Self {
         Self::with_max_depth(provider, DEFAULT_MAX_DEPTH)
     }
 
@@ -1203,13 +1203,13 @@ impl<'p> DeltaSnapshotCache<'p> {
     /// threshold below 1 is treated as 1: every generation then keeps at most
     /// its own delta over one compacted root.
     #[must_use]
-    pub fn with_max_depth(provider: &'p AlloyProvider, max_depth: u32) -> Self {
+    pub fn with_max_depth(provider: &AlloyProvider, max_depth: u32) -> Self {
         Self::with_max_depth_and_retention(provider, max_depth, Retention::Unbounded)
     }
 
     /// An empty owner at [`DEFAULT_MAX_DEPTH`] under `retention`.
     #[must_use]
-    pub fn with_retention(provider: &'p AlloyProvider, retention: Retention) -> Self {
+    pub fn with_retention(provider: &AlloyProvider, retention: Retention) -> Self {
         Self::with_max_depth_and_retention(provider, DEFAULT_MAX_DEPTH, retention)
     }
 
@@ -1218,12 +1218,12 @@ impl<'p> DeltaSnapshotCache<'p> {
     /// stays served (module docs). A threshold below 1 is treated as 1.
     #[must_use]
     pub fn with_max_depth_and_retention(
-        provider: &'p AlloyProvider,
+        provider: &AlloyProvider,
         max_depth: u32,
         retention: Retention,
     ) -> Self {
         Self {
-            provider,
+            provider: provider.clone(),
 
             max_depth: max_depth.max(1),
 
@@ -1237,7 +1237,7 @@ impl<'p> DeltaSnapshotCache<'p> {
     /// (number AND hash) is unchanged, otherwise a fresh cold generation that
     /// becomes the installed one — the control's `for_anchor` contract, where
     /// a replacement drops the retired generation's values with it.
-    pub fn for_anchor(&self, anchor: ReadAnchor) -> Arc<DeltaHub<'p>> {
+    pub fn for_anchor(&self, anchor: ReadAnchor) -> Arc<DeltaHub> {
         let mut current = self.current.lock();
 
         if let Some((installed, hub)) = current.as_ref() {
@@ -1246,7 +1246,7 @@ impl<'p> DeltaSnapshotCache<'p> {
             }
         }
 
-        let hub = Arc::new(DeltaHub::fresh(self.provider, anchor, self.retention));
+        let hub = Arc::new(DeltaHub::fresh(&self.provider, anchor, self.retention));
 
         *current = Some((anchor, Arc::clone(&hub)));
 
@@ -1273,20 +1273,20 @@ impl<'p> DeltaSnapshotCache<'p> {
         child_parent_hash: B256,
 
         relevance: &[Address],
-    ) -> (Arc<DeltaHub<'p>>, DeltaReport) {
+    ) -> (Arc<DeltaHub>, DeltaReport) {
         // Idempotence precedes any RPC: the same child anchor repeats no BAL
         // work, and no lock guard crosses the fetch.
         if let Some(hub) = self.installed(child) {
             return (hub, DeltaReport::already_current(Duration::ZERO));
         }
 
-        let prepared = PreparedBal::prepare(self.provider, child).await;
+        let prepared = PreparedBal::prepare(&self.provider, child).await;
 
         self.apply_prepared(child, child_parent_hash, relevance, &prepared)
     }
 
     /// The generation installed at exactly `anchor`, when there is one.
-    fn installed(&self, anchor: ReadAnchor) -> Option<Arc<DeltaHub<'p>>> {
+    fn installed(&self, anchor: ReadAnchor) -> Option<Arc<DeltaHub>> {
         let current = self.current.lock();
 
         current
@@ -1313,7 +1313,7 @@ impl<'p> DeltaSnapshotCache<'p> {
         child_parent_hash: B256,
         relevance: &[Address],
         prepared: &PreparedBal,
-    ) -> (Arc<DeltaHub<'p>>, DeltaReport) {
+    ) -> (Arc<DeltaHub>, DeltaReport) {
         let final_writes = prepared.final_writes();
 
         let bal = prepared.skip().cloned();
@@ -1375,7 +1375,7 @@ impl<'p> DeltaSnapshotCache<'p> {
             seed_final_writes(final_writes, relevance, &base, child.number, self.retention);
 
         let hub = Arc::new(DeltaHub::generation(
-            self.provider,
+            &self.provider,
             child,
             self.retention,
             GenState {
@@ -1480,6 +1480,29 @@ pub enum HeadCold {
     },
 }
 
+impl HeadCold {
+    /// The closed-set label this cold reason reports — the one vocabulary a
+    /// caller's diagnostic line and its metric labels share.
+    #[must_use]
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Unprepared => "unprepared",
+            Self::Deadline => "deadline",
+            Self::Superseded => "superseded",
+            Self::Undelivered => "undelivered",
+            Self::Settled { lineage, bal } => {
+                if lineage.is_some() {
+                    "lineage-refused"
+                } else if bal.is_some() {
+                    "bal-unreadable"
+                } else {
+                    "settled"
+                }
+            }
+        }
+    }
+}
+
 /// Whether a caller's snapshot at one exact head is that head's settled
 /// generation, or the cold path with the reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1511,11 +1534,11 @@ impl HeadReadiness {
 
 /// The snapshot one exact head answers with: the generation to read, and
 /// whether that generation is the head's settled one.
-pub struct HeadView<'p> {
+pub struct HeadView {
     /// The generation to read. A settled head's own generation when
     /// [`Self::readiness`] is [`HeadReadiness::Ready`]; otherwise a cold
     /// generation pinned at the same anchor that carries nothing.
-    pub hub: Arc<DeltaHub<'p>>,
+    pub hub: Arc<DeltaHub>,
     /// Whether the head settled, or why the cold path answered.
     pub readiness: HeadReadiness,
 }
@@ -1572,7 +1595,7 @@ pub struct HeadStats {
 }
 
 /// One canonical head's delivery state.
-struct DeliveredHead<'p> {
+struct DeliveredHead {
     anchor: ReadAnchor,
     parent_hash: B256,
     relevance: Arc<[Address]>,
@@ -1580,7 +1603,7 @@ struct DeliveredHead<'p> {
     delivered_at: Instant,
     /// The cold generation callers read while the head is unprepared, dropped
     /// at settle so the settled generation replaces it wholesale.
-    provisional: Option<Arc<DeltaHub<'p>>>,
+    provisional: Option<Arc<DeltaHub>>,
     /// The report this driver's apply produced, once the head settled.
     report: Option<Arc<DeltaReport>>,
     /// Whether a caller already owns this head's preparation.
@@ -1590,8 +1613,8 @@ struct DeliveredHead<'p> {
 }
 
 #[derive(Default)]
-struct DriverState<'p> {
-    head: Option<DeliveredHead<'p>>,
+struct DriverState {
+    head: Option<DeliveredHead>,
     /// The anchor the last delivery superseded: one slot, so a caller still
     /// working at the abandoned head learns why its snapshot is cold.
     superseded: Option<ReadAnchor>,
@@ -1649,20 +1672,20 @@ struct DriverState<'p> {
 /// arrived still answers with the generation that settled it. A view at an
 /// anchor no head ever answered (never delivered, or an abandoned head) mints a
 /// fresh cold generation per query: hold the earlier view for a stable hub.
-pub struct BalHeadDriver<'p> {
-    provider: &'p AlloyProvider,
-    cache: DeltaSnapshotCache<'p>,
+pub struct BalHeadDriver {
+    provider: AlloyProvider,
+    cache: DeltaSnapshotCache,
     retention: Retention,
     readiness_deadline: Duration,
-    state: Mutex<DriverState<'p>>,
+    state: Mutex<DriverState>,
 }
 
-impl<'p> BalHeadDriver<'p> {
+impl BalHeadDriver {
     /// A driver over a fresh cache at [`DEFAULT_MAX_DEPTH`] and
     /// [`Retention::Unbounded`], whose heads may stay unprepared for
     /// `readiness_deadline` before callers are told the deadline elapsed.
     #[must_use]
-    pub fn new(provider: &'p AlloyProvider, readiness_deadline: Duration) -> Self {
+    pub fn new(provider: &AlloyProvider, readiness_deadline: Duration) -> Self {
         Self::with_config(
             provider,
             DEFAULT_MAX_DEPTH,
@@ -1675,13 +1698,13 @@ impl<'p> BalHeadDriver<'p> {
     /// generation it installs, and whose provisional generations match.
     #[must_use]
     pub fn with_config(
-        provider: &'p AlloyProvider,
+        provider: &AlloyProvider,
         max_depth: u32,
         retention: Retention,
         readiness_deadline: Duration,
     ) -> Self {
         Self {
-            provider,
+            provider: provider.clone(),
             cache: DeltaSnapshotCache::with_max_depth_and_retention(provider, max_depth, retention),
             retention,
             readiness_deadline,
@@ -1720,7 +1743,7 @@ impl<'p> BalHeadDriver<'p> {
         let provisional = if installed {
             None
         } else {
-            Some(cold_generation(self.provider, anchor, self.retention))
+            Some(cold_generation(&self.provider, anchor, self.retention))
         };
         if let Some(previous) = state.head.take() {
             if previous.provisional.is_some() {
@@ -1752,7 +1775,7 @@ impl<'p> BalHeadDriver<'p> {
     /// off the critical path; the exact-hash fence is enforced by
     /// [`Self::apply`].
     pub async fn prepare(&self, ticket: HeadTicket) -> PreparedBal {
-        PreparedBal::prepare(self.provider, ticket.anchor).await
+        PreparedBal::prepare(&self.provider, ticket.anchor).await
     }
 
     /// Apply `prepared` to `ticket`'s head in one synchronous transition.
@@ -1841,7 +1864,7 @@ impl<'p> BalHeadDriver<'p> {
     /// installed generation whenever that exact anchor settled — which keeps
     /// answering after a later head was delivered — otherwise a cold generation
     /// at the same anchor with the reason.
-    pub fn snapshot(&self, anchor: ReadAnchor) -> HeadView<'p> {
+    pub fn snapshot(&self, anchor: ReadAnchor) -> HeadView {
         let mut state = self.state.lock();
         let current = state
             .head
@@ -1877,7 +1900,7 @@ impl<'p> BalHeadDriver<'p> {
                 .as_ref()
                 .and_then(|head| head.provisional.as_ref())
                 .map_or_else(
-                    || cold_generation(self.provider, anchor, self.retention),
+                    || cold_generation(&self.provider, anchor, self.retention),
                     Arc::clone,
                 );
             (hub, HeadReadiness::Cold(reason))
@@ -1888,7 +1911,7 @@ impl<'p> BalHeadDriver<'p> {
                 HeadCold::Undelivered
             };
             (
-                cold_generation(self.provider, anchor, self.retention),
+                cold_generation(&self.provider, anchor, self.retention),
                 HeadReadiness::Cold(reason),
             )
         };
@@ -1934,12 +1957,12 @@ impl<'p> BalHeadDriver<'p> {
 
 /// The ownership of one head's preparation: dropping it — a cancelled advance
 /// included — releases the claim so a later call prepares that head normally.
-struct PrepareClaim<'a, 'p> {
-    driver: &'a BalHeadDriver<'p>,
+struct PrepareClaim<'a> {
+    driver: &'a BalHeadDriver,
     seq: u64,
 }
 
-impl Drop for PrepareClaim<'_, '_> {
+impl Drop for PrepareClaim<'_> {
     fn drop(&mut self) {
         let mut state = self.driver.state.lock();
         if let Some(head) = state.head.as_mut() {
@@ -1956,7 +1979,7 @@ fn cold_generation(
     provider: &AlloyProvider,
     anchor: ReadAnchor,
     retention: Retention,
-) -> Arc<DeltaHub<'_>> {
+) -> Arc<DeltaHub> {
     Arc::new(DeltaHub::fresh(provider, anchor, retention))
 }
 

@@ -34,6 +34,7 @@ use super::frame_replay::{Evm2CountingFrameDb, Evm2ScratchEvm};
 use super::inspectors::Evm2SimInspector;
 use super::session::Evm2SimSession;
 use super::state_override::apply_simulation_overrides;
+use super::storage_view::StorageView;
 use super::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 use crate::sim::divergence_probe::DivergenceTallyHandle;
 use crate::sim::frame_replay::{FrameRpcCounter, ScratchBlock};
@@ -69,7 +70,10 @@ pub struct Evm2BlockSimHandle<'a> {
     block_timestamp: u64,
     oracle: &'a dyn SimAnchorOracle,
     warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
-    storage_memo: Option<Arc<crate::sim::StorageMemo>>,
+    /// The cache `get_storage` reads through for this block — the per-anchor
+    /// [`StorageMemo`](crate::sim::StorageMemo) (the default) or a delta
+    /// generation's `DeltaHub`. `None` reads the chain every time.
+    storage_view: Option<Arc<dyn StorageView + 'a>>,
     verify_divergence: bool,
     /// The divergence tally this block's observations accumulate into (`None`
     /// — the production default — is the process-global tally).
@@ -104,6 +108,46 @@ impl<'a> Evm2BlockSimHandle<'a> {
         divergence_tally: Option<&DivergenceTallyHandle>,
         jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
     ) -> Option<Self> {
+        // The legacy spelling: the per-anchor memo, installed as a view.
+        let storage_view = storage_memo.map(|memo| {
+            let cloned: Arc<crate::sim::StorageMemo> = memo.clone();
+            let view: Arc<dyn StorageView + 'a> = cloned;
+            view
+        });
+        Self::build_with_view(
+            provider,
+            base_fee_next,
+            current_block,
+            block_timestamp,
+            override_params,
+            oracle,
+            warm_cache,
+            storage_view,
+            verify_divergence,
+            divergence_tally,
+            jit,
+        )
+    }
+
+    /// Build the per-block shared EVM over an explicit storage VIEW — the
+    /// representation-agnostic spelling of [`Self::build`]: the legacy
+    /// per-anchor memo and a delta generation's `DeltaHub` are both views, and
+    /// the caller (dispatch) selects which one the block reads through.
+    #[expect(clippy::too_many_arguments)] // the same eleven inputs as `build`
+    #[must_use]
+    pub fn build_with_view(
+        provider: &'a AlloyProvider,
+        base_fee_next: u128,
+        current_block: u64,
+        block_timestamp: u64,
+        override_params: &SimulationOverrideParams,
+        oracle: &'a dyn SimAnchorOracle,
+        warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
+        storage_view: Option<Arc<dyn StorageView + 'a>>,
+        verify_divergence: bool,
+        divergence_tally: Option<&DivergenceTallyHandle>,
+        jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
+    ) -> Option<Self> {
         // Lab: build cost (the amortization target — the build re-arms per
         // dispatch; the fan-out line reports builds/build_ms).
         let (built, build_dur) = crate::sim::sim_metrics::timed(|| {
@@ -115,7 +159,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
                 override_params,
                 oracle,
                 warm_cache,
-                storage_memo,
+                storage_view,
                 verify_divergence,
                 divergence_tally,
                 jit,
@@ -135,14 +179,14 @@ impl<'a> Evm2BlockSimHandle<'a> {
         override_params: &SimulationOverrideParams,
         oracle: &'a dyn SimAnchorOracle,
         warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
-        storage_memo: Option<&Arc<crate::sim::StorageMemo>>,
+        storage_view: Option<Arc<dyn StorageView + 'a>>,
         verify_divergence: bool,
         divergence_tally: Option<&DivergenceTallyHandle>,
         jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
     ) -> Option<Self> {
         let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, current_block))?;
         let bot_state_db = BotStateDb::new(oracle, blocking)
-            .with_storage_memo_opt(storage_memo)
+            .with_storage_view_opt(storage_view.as_ref())
             .with_divergence_probe(verify_divergence)
             .with_divergence_tally_opt(divergence_tally);
         let warm_code_cache =
@@ -178,7 +222,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
             oracle,
             jit,
             warm_cache: Arc::clone(warm_cache),
-            storage_memo: storage_memo.cloned(),
+            storage_view,
             verify_divergence,
             divergence_tally: divergence_tally.cloned(),
             scratch: None,
@@ -216,7 +260,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
                 BlockingAsyncDb::new(AlloyAsyncDb::new(self.provider, self.current_block)).map(
                     |blocking| {
                         let bot_state_db = BotStateDb::new(self.oracle, blocking)
-                            .with_storage_memo_opt(self.storage_memo.as_ref())
+                            .with_storage_view_opt(self.storage_view.as_ref())
                             .with_divergence_probe(self.verify_divergence)
                             .with_divergence_tally_opt(self.divergence_tally.as_ref());
                         let counted_cold_path =

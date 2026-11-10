@@ -74,17 +74,13 @@ fn other_slot() -> Word {
 }
 
 /// Install the scenario cache's first generation: cold, at `HEIGHT`.
-fn start<'p>(cache: &DeltaSnapshotCache<'p>) -> Arc<DeltaHub<'p>> {
+fn start(cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
     cache.for_anchor(ReadAnchor::identified(HEIGHT, hash(0)))
 }
 
 /// Advance one linked generation carrying no writes, so the retention clock
 /// moves and nothing else does.
-async fn advance<'p>(
-    cache: &DeltaSnapshotCache<'p>,
-    stub: &ChainStub,
-    step: u8,
-) -> Arc<DeltaHub<'p>> {
+async fn advance(cache: &DeltaSnapshotCache, stub: &ChainStub, step: u8) -> Arc<DeltaHub> {
     stub.serve_bal_at(hash(step), modeled_chain::bal_bytes(&[]));
     let (hub, _) = cache
         .advance_bal(

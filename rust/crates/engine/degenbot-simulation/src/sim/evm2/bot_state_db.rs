@@ -81,6 +81,16 @@ where
         self
     }
 
+    /// The `Option`-carrying form of [`Self::with_storage_view`] — the handle
+    /// passes its optional view through, whichever representation backs it.
+    #[must_use]
+    pub fn with_storage_view_opt(self, view: Option<&Arc<dyn StorageView + 'bot>>) -> Self {
+        match view {
+            Some(view) => self.with_storage_view(Arc::clone(view)),
+            None => self,
+        }
+    }
+
     /// Layer the legacy per-anchor storage memo onto `get_storage` (mirrors
     /// the revm-side `with_storage_memo`) — the memo-backed view.
     #[must_use]

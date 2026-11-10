@@ -329,9 +329,9 @@ impl LegKind {
 }
 
 /// The hub one advance installed, kept alive for the anchor's reads.
-enum AdvanceHub<'p> {
-    Full(Arc<ReadHub<'p>>),
-    Delta(Arc<DeltaHub<'p>>),
+enum AdvanceHub {
+    Full(Arc<ReadHub>),
+    Delta(Arc<DeltaHub>),
 }
 
 /// What one block's advance applied and left behind.
@@ -435,15 +435,15 @@ fn anchors(real: &RealCoverage, number: u64) -> Result<(ReadAnchor, B256), Strin
 }
 
 /// Drive one block's advance through the leg's cache and report what it applied.
-async fn advance<'p>(
-    control: Option<&ReadHubCache<'p>>,
-    delta: Option<&DeltaSnapshotCache<'p>>,
+async fn advance(
+    control: Option<&ReadHubCache>,
+    delta: Option<&DeltaSnapshotCache>,
     real: &RealCoverage,
     number: u64,
     relevance: &[Address],
     ledger: &WallLedger,
     node: Node,
-) -> Result<(AdvanceHub<'p>, AdvanceFacts), String> {
+) -> Result<(AdvanceHub, AdvanceFacts), String> {
     let (anchor, parent) = anchors(real, number)?;
     let started = Instant::now();
     match (control, delta) {
@@ -491,7 +491,7 @@ struct LegContext<'a> {
 /// Drive one anchor's recorded candidates through the leg's lane, arming the
 /// divergence plant only while a delta leg answers.
 async fn drive_anchor(
-    hub: &AdvanceHub<'_>,
+    hub: &AdvanceHub,
     rows: &[Recorded],
     kind: LegKind,
     limits: FanoutLimits,

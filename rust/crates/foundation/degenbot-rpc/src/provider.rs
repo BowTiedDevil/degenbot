@@ -1354,6 +1354,36 @@ mod storage_batch_tests {
     }
 }
 
+/// One canonical block's lineage: the height, the block's own canonical hash,
+/// and the parent hash its header names.
+///
+/// The identity a caller states for an exact head — a number alone cannot see a
+/// same-height reorg, and a hash alone cannot say which block the head links
+/// to. [`AlloyProvider::get_block_lineage_at`] is the one read that answers all
+/// three together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockLineage {
+    /// The block's height.
+    pub number: u64,
+    /// The block's own canonical hash.
+    pub hash: B256,
+    /// The hash of the block this one builds on.
+    pub parent_hash: B256,
+}
+
+impl BlockLineage {
+    /// The lineage of `number`, identified by `hash` and linked to
+    /// `parent_hash`.
+    #[must_use]
+    pub const fn new(number: u64, hash: B256, parent_hash: B256) -> Self {
+        Self {
+            number,
+            hash,
+            parent_hash,
+        }
+    }
+}
+
 /// High-performance Ethereum RPC provider.
 pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
@@ -1842,6 +1872,61 @@ impl AlloyProvider {
                 .map_err(|e| e.into_provider_error("Failed to get block hash"))?;
 
             Ok(header.and_then(|header| header.hash))
+        })
+        .await
+    }
+
+    /// One canonical block's LINEAGE: the height, the block's own canonical
+    /// hash, and the parent hash its header names — all three out of ONE
+    /// `eth_getBlockByNumber` round trip.
+    ///
+    /// `fullTransactions = false` plus a decode target carrying only `hash` and
+    /// `parentHash`, so a caller that must state a block's exact identity AND
+    /// the block it links to (the BAL delta snapshot's head lifecycle, whose
+    /// carry is fenced by the parent hash) pays one header read rather than the
+    /// body — and never a second read for the parent.
+    ///
+    /// `Ok(None)` means the node has no block at that number, or served a header
+    /// missing either hash: a caller that cannot state the whole lineage has no
+    /// exact head, and guessing one is what this helper exists to prevent.
+    ///
+    /// Retry/timeout policy is the provider's own
+    /// ([`Self::retry_with_backoff`]): a retryable failure re-issues the read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::RpcError`] if the RPC call fails.
+    pub async fn get_block_lineage_at(
+        &self,
+        block_number: u64,
+    ) -> ProviderResult<Option<BlockLineage>> {
+        /// The two header fields this read wants out of a block body.
+        #[derive(Debug, serde::Deserialize)]
+        struct HeaderLineage {
+            hash: Option<B256>,
+            #[serde(rename = "parentHash")]
+            parent_hash: Option<B256>,
+        }
+
+        self.retry_with_backoff(|| async {
+            let header: Option<HeaderLineage> = self
+                .inner
+                .client()
+                .request(
+                    "eth_getBlockByNumber",
+                    (BlockNumberOrTag::Number(block_number), false),
+                )
+                .await
+                .map_err(|e| e.into_provider_error("Failed to get block lineage"))?;
+
+            Ok(
+                header.and_then(|header| match (header.hash, header.parent_hash) {
+                    (Some(hash), Some(parent_hash)) => {
+                        Some(BlockLineage::new(block_number, hash, parent_hash))
+                    }
+                    _ => None,
+                }),
+            )
         })
         .await
     }
@@ -4471,6 +4556,196 @@ mod tests {
             reconcile_count.load(Ordering::SeqCst),
             0,
             "reconcile must NOT be called for a definitive RpcError rejection"
+        );
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
+mod block_lineage_tests {
+    use super::*;
+
+    use alloy::providers::RootProvider;
+    use alloy::rpc::json_rpc::{
+        RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
+    };
+    use alloy::transports::{TransportError, TransportFut};
+    use serde_json::value::to_raw_value;
+    use std::sync::Mutex;
+    use std::task::{Context, Poll};
+
+    /// The header the stub serves: one canonical hash and the parent it links
+    /// to.
+    fn hash(tag: u8) -> B256 {
+        B256::new([tag; 32])
+    }
+
+    /// What the stub serves instead of a header.
+    #[derive(Debug, Clone, Copy)]
+    enum Answer {
+        /// One complete header.
+        Header,
+        /// No block at that number.
+        Missing,
+        /// A header carrying a hash but no parent hash.
+        Parentless,
+        /// A transport-level refusal.
+        Down,
+    }
+
+    /// A transport answering the ONE lineage read, recording every packet it
+    /// is dispatched.
+    #[derive(Debug, Clone)]
+    struct LineageStub {
+        packets: Arc<Mutex<Vec<(String, String)>>>,
+        answer: Answer,
+    }
+
+    impl LineageStub {
+        fn serving(answer: Answer) -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+                answer,
+            }
+        }
+
+        fn packets(&self) -> Vec<(String, String)> {
+            self.packets.lock().unwrap().clone()
+        }
+
+        fn provider(&self) -> AlloyProvider {
+            let client = ClientBuilder::default().transport(self.clone(), true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(Arc::new(root))
+        }
+    }
+
+    impl tower::Service<RequestPacket> for LineageStub {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let stub = self.clone();
+            Box::pin(async move {
+                let respond = |req: &SerializedRequest| -> Result<Response, TransportError> {
+                    assert_eq!(
+                        req.method(),
+                        "eth_getBlockByNumber",
+                        "the lineage read issues one header request"
+                    );
+                    stub.packets.lock().unwrap().push((
+                        req.method().to_string(),
+                        req.params()
+                            .map_or_else(String::new, |params| params.get().to_string()),
+                    ));
+                    let payload = match stub.answer {
+                        Answer::Down => {
+                            return Err(TransportError::local_usage_str(
+                                "the lineage read is down",
+                            ));
+                        }
+                        Answer::Missing => ResponsePayload::Success(
+                            to_raw_value(&serde_json::Value::Null).unwrap(),
+                        ),
+                        Answer::Parentless => ResponsePayload::Success(
+                            to_raw_value(&serde_json::json!({ "hash": hash(0xa1) })).unwrap(),
+                        ),
+                        Answer::Header => ResponsePayload::Success(
+                            to_raw_value(&serde_json::json!({
+                                "number": "0x64",
+                                "hash": hash(0xa1),
+                                "parentHash": hash(0xa0),
+                            }))
+                            .unwrap(),
+                        ),
+                    };
+                    Ok(Response {
+                        id: req.id().clone(),
+                        payload,
+                    })
+                };
+                match req {
+                    RequestPacket::Single(r) => Ok(ResponsePacket::Single(respond(&r)?)),
+                    RequestPacket::Batch(rs) => {
+                        let mut answers = Vec::with_capacity(rs.len());
+                        for r in &rs {
+                            answers.push(respond(r)?);
+                        }
+                        Ok(ResponsePacket::Batch(answers))
+                    }
+                }
+            })
+        }
+    }
+
+    /// The lineage read is ONE packet and it answers the whole
+    /// `(number, hash, parent_hash)` triple — the parent hash never costs a
+    /// second read.
+    #[tokio::test]
+    async fn the_lineage_read_answers_height_hash_and_parent_hash_in_one_packet() {
+        let stub = LineageStub::serving(Answer::Header);
+        let provider = stub.provider();
+
+        let lineage = provider
+            .get_block_lineage_at(100)
+            .await
+            .expect("the stub answers");
+
+        assert_eq!(
+            lineage,
+            Some(BlockLineage::new(100, hash(0xa1), hash(0xa0))),
+            "the height the caller asked for, the canonical hash, and the header's parent"
+        );
+        let packets = stub.packets();
+        assert_eq!(packets.len(), 1, "one header read, never one per hash");
+        assert_eq!(packets[0].0, "eth_getBlockByNumber");
+        assert!(
+            !packets[0].1.contains("true"),
+            "the body is never requested: fullTransactions is false"
+        );
+    }
+
+    /// A number the node holds no block at has no lineage — the caller degrades
+    /// rather than inventing one.
+    #[tokio::test]
+    async fn a_block_the_node_does_not_hold_has_no_lineage() {
+        let stub = LineageStub::serving(Answer::Missing);
+        assert_eq!(
+            stub.provider()
+                .get_block_lineage_at(100)
+                .await
+                .expect("a null header is not an error"),
+            None
+        );
+    }
+
+    /// A header without its parent hash states no lineage: a read that answered
+    /// half the triple cannot fence a carry, so it answers `None`.
+    #[tokio::test]
+    async fn a_header_missing_its_parent_hash_states_no_lineage() {
+        let stub = LineageStub::serving(Answer::Parentless);
+        assert_eq!(
+            stub.provider()
+                .get_block_lineage_at(100)
+                .await
+                .expect("an incomplete header is not an error"),
+            None
+        );
+    }
+
+    /// A failing transport is an error the caller sees, never a fabricated
+    /// lineage.
+    #[tokio::test]
+    async fn a_failed_lineage_read_is_an_error() {
+        let stub = LineageStub::serving(Answer::Down);
+        assert!(
+            stub.provider().get_block_lineage_at(100).await.is_err(),
+            "a failed read reports a failure"
         );
     }
 }

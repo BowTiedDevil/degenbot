@@ -240,6 +240,9 @@ pub struct PipelineInstruments {
     /// registration gate + this family). Error-class detail stays in log
     /// spans and the `[build_paths] Progress` breakdown.
     registration_skips: Counter<u64>,
+    /// Dispatch fan-outs by storage representation (`delta`/`legacy`) and, on a
+    /// legacy fallback, by the closed-set cold reason.
+    dispatch_storage: Counter<u64>,
     /// Cumulative un-submitted profitable-candidate net profit (wei).
     profit_missed: Counter<f64>,
     /// Monitor outcomes, labeled (`confirmed`, `expired`).
@@ -738,6 +741,12 @@ impl PipelineInstruments {
                 .u64_counter("degenbot.registration.skips")
                 .with_description("Registration-candidate skips by closed-set reason (PRG-2)")
                 .build(),
+            dispatch_storage: meter
+                .u64_counter("degenbot.dispatch.storage")
+                .with_description(
+                    "Dispatch fan-outs by storage representation (delta/legacy) and cold reason",
+                )
+                .build(),
             detached_in_flight: meter
                 .f64_gauge("degenbot.detached.in_flight")
                 .with_description(
@@ -1173,8 +1182,29 @@ impl PipelineInstruments {
         self.candidates_found.add(n, &[KeyValue::new("arm", arm)]);
     }
 
-    /// One storage-prefetch lane report: the plan's attribution plus the
-    /// batch's member/seeded counts, and the degrade reason when it backed off.
+    /// One dispatch fan-out's storage selection: `mode` is the representation it
+    /// read candidates through (`delta` | `legacy`), and `reason` the closed-set
+    /// cold reason when the delta opt-in's head did not settle ready. A lane
+    /// that did not fall back records `none` — which is every fan-out while the
+    /// opt-in is off.
+    pub fn count_dispatch_storage(&self, mode: &str, reason: Option<&str>) {
+        let labels = match reason {
+            Some(reason) => vec![
+                KeyValue::new("mode", mode.to_owned()),
+                KeyValue::new("reason", reason.to_owned()),
+            ],
+            None => vec![
+                KeyValue::new("mode", mode.to_owned()),
+                KeyValue::new("reason", "none"),
+            ],
+        };
+        self.dispatch_storage.add(1, &labels);
+    }
+
+    /// One storage-prefetch lane report: the plan's attribution (`derived` +
+    /// `learned`), the batch's member count (`requested` — the slots the memo
+    /// did not already hold), the entries actually `seeded`, and the closed
+    /// degrade reason when the lane backed off (`no_runtime` | `rpc_failed`).
     pub fn add_storage_prefetch(
         &self,
         derived: u64,
@@ -1588,6 +1618,9 @@ impl PipelineInstruments {
                 success,
                 secs,
             } => self.observe_jit_compilation(kind, success, secs),
+            CensusEvent::DispatchStorage { mode, reason } => {
+                self.count_dispatch_storage(mode, reason);
+            }
             CensusEvent::StoragePrefetch {
                 derived,
                 learned,

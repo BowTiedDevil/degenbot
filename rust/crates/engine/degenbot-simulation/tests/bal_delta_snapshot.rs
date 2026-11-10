@@ -335,7 +335,7 @@ async fn parent_and_child_stay_independent_after_the_transition() {
 }
 
 /// The control's read shape: register, drain one round, await.
-async fn control_read(hub: &ReadHub<'_>, address: Address, slot: U256) -> U256 {
+async fn control_read(hub: &ReadHub, address: Address, slot: U256) -> U256 {
     let read = hub.read_storage(address, slot);
     hub.drain_round().await;
     read.await.expect("the round settles")
@@ -344,8 +344,8 @@ async fn control_read(hub: &ReadHub<'_>, address: Address, slot: U256) -> U256 {
 /// One identity resolved through both representations: the control's drained
 /// round and the delta's chain-or-fetch read must agree.
 async fn assert_dual_read(
-    control_hub: &ReadHub<'_>,
-    delta_hub: &DeltaHub<'_>,
+    control_hub: &ReadHub,
+    delta_hub: &DeltaHub,
     address: Address,
     slot: U256,
 ) -> U256 {

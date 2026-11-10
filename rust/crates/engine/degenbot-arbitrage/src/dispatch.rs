@@ -27,6 +27,35 @@
 //!   rendering (`format_failure_breakdown`). This leaf exposes the tally as a
 //!   typed [`FailBuckets`] (re-exported from `simulator` at this crate's root)
 //!   and the companion renders it.
+//!
+//! # The BAL delta storage opt-in
+//!
+//! A `DeltaDispatchConfig` on the session's warm cache turns on ONE alternative
+//! storage representation for the fan-out: a BAL delta generation
+//! (`DeltaHub`) instead of the per-anchor `StorageMemo`. The anchor site
+//! resolves the choice once per fan-out
+//! (`degenbot_simulation::sim::evm2::warm_code_cache::select_dispatch_storage`)
+//! BEFORE any candidate runs.
+//!
+//! - OFF — the default, and the shipped posture — is the legacy lane
+//!   unchanged: the number+hash read anchor, the ONE prefetch batch, and the
+//!   same telemetry, with no BAL request anywhere.
+//! - ON resolves the anchor's exact lineage `(number, hash, parent_hash)` in one
+//!   header read, delivers it to the session's one `BalHeadDriver` with this
+//!   fan-out's `path_relevance_addresses` and unbounded retention, and prepares
+//!   and applies the head's BAL under the configured readiness deadline. A head
+//!   that settles READY answers candidate reads through its `DeltaHub` and pays
+//!   NO prefetch batch; an unprepared, late, superseded, unreadable, or
+//!   lineage-refused head leaves the fan-out on the legacy lane with the reason
+//!   reported on `degenbot.dispatch.storage{mode,reason}` and the `fan-out
+//!   storage selection` diag line, and serves no parent value.
+//!
+//! The first head after enabling has no installed parent, so it settles cold
+//! (lineage-refused) once; every consecutive head after it carries, and a
+//! repeated fan-out at one exact anchor shares the one settled generation and
+//! repeats no BAL work. Nothing else moves: the fan-out order, the candidate
+//! execution, and the verdict are the flag's invariant, and the RPC fallback
+//! stays the authority for every word the selected view does not hold.
 
 use degenbot_core::diag;
 use degenbot_core::op_info;
@@ -751,10 +780,45 @@ pub fn dispatch_profitable_results(
                     // anchor's later fan-outs, and BEFORE any guard is taken
                     // (never across provider I/O). A failed read degrades to the
                     // number-only anchor — the pre-fence scope, never a wrong one.
-                    let read_anchor = degenbot_simulation::sim::resolve_read_anchor(
-                        ctx.block.provider,
-                        sim_block,
+                    // The storage representation this fan-out reads through:
+                    // the legacy per-anchor memo (the default) or a ready BAL
+                    // delta generation. The selection resolves the anchor either
+                    // way — one identity read with the opt-in OFF, one whole
+                    // (number, hash, parent_hash) header read with it ON — and,
+                    // ON, prepares and applies the head's BAL under the
+                    // readiness deadline BEFORE any candidate runs. A head that
+                    // does not settle ready answers Legacy with its reason, so
+                    // the fallback is the existing memo + prefetch lane and no
+                    // parent value is served on it.
+                    let selection = {
+                        let path_refs: Vec<&degenbot_execution::PathInfo> =
+                            candidates.iter().map(|c| &c.path_info).collect();
+                        degenbot_simulation::sim::evm2::warm_code_cache::select_dispatch_storage(
+                            ctx.block.provider,
+                            &evm2_warm_cache,
+                            sim_block,
+                            &path_refs,
+                            &degenbot_simulation::sim::prefetch::PrefetchFacts {
+                                settlement: ctx.deployment.settlement(),
+                            },
+                        )
+                    };
+                    diag!(
+                        domain = sim,
+                        current_block,
+                        anchor = sim_block,
+                        anchor_fenced = selection.anchor.hash.is_some(),
+                        storage = selection.outcome.mode(),
+                        reason = ?selection.outcome.reason(),
+                        "fan-out storage selection"
                     );
+                    degenbot_bot::instruments::record(
+                        degenbot_bot::instruments::CensusEvent::DispatchStorage {
+                            mode: selection.outcome.mode(),
+                            reason: selection.outcome.reason(),
+                        },
+                    );
+                    let read_anchor = selection.anchor;
                     // The per-anchor memo, the session's cross-block hot-slot
                     // store, and the durable per-hook slot-set store are all owned
                     // by the warm-cache owner; taken together under one short read
@@ -799,7 +863,13 @@ pub fn dispatch_profitable_results(
                     // hook's own address. A session without the store — or a hook no
                     // quote has learned yet — joins nothing, which is the cold start
                     // this lane pays down.
-                    let prefetch = degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
+                    // A ready delta generation answers candidate storage through
+                    // its own generation, so this fan-out pays NO memo prefetch.
+                    let prefetch =
+                        if selection.is_delta() {
+                            None
+                        } else {
+                            Some(degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
                         ctx.block.provider,
                         sim_block,
                         candidates.iter().map(|c| &c.path_info),
@@ -815,36 +885,54 @@ pub fn dispatch_profitable_results(
                             hooks: hook_slots.as_deref(),
                         },
                         &storage_memo,
-                    );
-                    diag!(
-                        domain = sim,
-                        current_block,
-                        anchor = sim_block,
-                        anchor_fenced = read_anchor.hash.is_some(),
-                        derived = prefetch.derived,
-                        learned = prefetch.learned,
-                        hook = prefetch.hook,
-                        requested = prefetch.requested,
-                        seeded = prefetch.seeded,
-                        skipped = ?prefetch.skipped,
-                        "storage prefetch"
-                    );
-                    // The diag above is debug-level and invisible at the default
-                    // log level; the same report lands on the metrics surface so a
-                    // cold lane, a warm lane and a degraded lane are distinguishable
-                    // from a scrape.
-                    degenbot_bot::instruments::record(
-                        degenbot_bot::instruments::CensusEvent::StoragePrefetch {
-                            derived: u64::try_from(prefetch.derived).unwrap_or(u64::MAX),
-                            learned: u64::try_from(prefetch.learned).unwrap_or(u64::MAX),
-                            requested: u64::try_from(prefetch.requested).unwrap_or(u64::MAX),
-                            seeded: u64::try_from(prefetch.seeded).unwrap_or(u64::MAX),
-                            skipped: prefetch
-                                .skipped
-                                .map(degenbot_simulation::sim::prefetch::PrefetchSkip::label),
-                        },
-                    );
-                    match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build(
+                        ))
+                        };
+                    if let Some(prefetch) = prefetch.as_ref() {
+                        diag!(
+                            domain = sim,
+                            current_block,
+                            anchor = sim_block,
+                            anchor_fenced = read_anchor.hash.is_some(),
+                            derived = prefetch.derived,
+                            learned = prefetch.learned,
+                            hook = prefetch.hook,
+                            requested = prefetch.requested,
+                            seeded = prefetch.seeded,
+                            skipped = ?prefetch.skipped,
+                            "storage prefetch"
+                        );
+                        // The diag above is debug-level and invisible at the default
+                        // log level; the same report lands on the metrics surface so a
+                        // cold lane, a warm lane and a degraded lane are distinguishable
+                        // from a scrape.
+                        degenbot_bot::instruments::record(
+                            degenbot_bot::instruments::CensusEvent::StoragePrefetch {
+                                derived: u64::try_from(prefetch.derived).unwrap_or(u64::MAX),
+                                learned: u64::try_from(prefetch.learned).unwrap_or(u64::MAX),
+                                requested: u64::try_from(prefetch.requested).unwrap_or(u64::MAX),
+                                seeded: u64::try_from(prefetch.seeded).unwrap_or(u64::MAX),
+                                skipped: prefetch
+                                    .skipped
+                                    .map(degenbot_simulation::sim::prefetch::PrefetchSkip::label),
+                            },
+                        );
+                    }
+                    // The view the handle reads candidates through: the ready
+                    // delta generation, or the per-anchor memo this lane seeded.
+                    let storage_view: Option<
+                        Arc<dyn degenbot_simulation::sim::evm2::storage_view::StorageView + '_>,
+                    > = match selection.storage {
+                        degenbot_simulation::sim::evm2::warm_code_cache::FanOutStorage::Delta(
+                            hub,
+                        ) => Some(hub),
+                        degenbot_simulation::sim::evm2::warm_code_cache::FanOutStorage::Legacy => {
+                            let view: Arc<
+                                dyn degenbot_simulation::sim::evm2::storage_view::StorageView + '_,
+                            > = storage_memo;
+                            Some(view)
+                        }
+                    };
+                    match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build_with_view(
                         ctx.block.provider,
                         ctx.block.base_fee_next,
                         sim_block,
@@ -852,7 +940,7 @@ pub fn dispatch_profitable_results(
                         &ctx.deployment.override_params(),
                         &anchor,
                         &evm2_warm_cache,
-                        Some(&storage_memo),
+                        storage_view,
                         false,
                         None,
                         degenbot_simulation::sim::evm2::jit::shared_runner(),
@@ -1181,13 +1269,13 @@ mod tests {
     /// The built-in deployment with `runtime` installed at the executor address
     /// (the tests' declared code override).
     #[expect(clippy::expect_used)] // the declared override names the executor
-    fn deployment(runtime: Bytes) -> SimulationDeployment {
+    pub(super) fn deployment(runtime: Bytes) -> SimulationDeployment {
         binding()
             .injected(deployment_id(), EXECUTOR, runtime)
             .expect("the declared override names the executor")
     }
 
-    fn ctx<'a>(
+    pub(super) fn ctx<'a>(
         provider: &'a AlloyProvider,
         deployment: &'a SimulationDeployment,
     ) -> SimulateContext<'a> {
@@ -1255,7 +1343,7 @@ mod tests {
         }
     }
 
-    fn candidate(path_id: u64, opt_input: u128, profit: u128) -> DispatchCandidate {
+    pub(super) fn candidate(path_id: u64, opt_input: u128, profit: u128) -> DispatchCandidate {
         DispatchCandidate {
             candidate_id: CandidateId::new(path_id, deployment_id()),
             optimal_input: opt_input,
@@ -2383,5 +2471,694 @@ mod tests {
             .collect();
         // profit descending, then id ascending on the 100-tie.
         assert_eq!(order, vec![(5, 500), (20, 300), (9, 100), (10, 100)]);
+    }
+}
+
+/// The BAL delta storage opt-in at the dispatch seam: what the fan-out reads
+/// candidates through, what it pays on the wire, and what it pays when the head
+/// does not settle ready.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "the scripted chain and its assertions fail loudly on a broken fixture"
+)]
+mod delta_dispatch_tests {
+    use super::*;
+
+    use alloy::primitives::{Bytes, B256};
+    use alloy::providers::RootProvider;
+    use alloy::rpc::client::RpcClient;
+    use alloy::rpc::json_rpc::{
+        ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
+    };
+    use alloy::transports::{TransportError, TransportFut};
+    use degenbot_rpc::provider::AlloyProvider;
+    use degenbot_simulation::sim::evm2::warm_code_cache::{
+        select_dispatch_storage, DeltaDispatchConfig, FanOutStorage, StorageSelectionOutcome,
+        WarmCodeCacheInner,
+    };
+    use degenbot_simulation::sim::prefetch::PrefetchFacts;
+    use degenbot_simulation::sim::ReadAnchor;
+    use serde_json::value::{to_raw_value, RawValue};
+    use std::borrow::Cow;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    const BLOCK: u64 = 100;
+
+    /// The empty EIP-7928 list: one complete, decodable list carrying no final
+    /// write, so a head that serves it settles READY and carries nothing.
+    const EMPTY_BAL: &[u8] = &[0xc0];
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum BalMode {
+        /// Serve the empty list.
+        Serving,
+        /// Refuse the method, as a node without the endpoint does.
+        Unsupported,
+        /// Answer, but only after a delay past any readiness deadline under test.
+        Slow,
+    }
+
+    /// The BAL endpoint's scripted behaviour.
+    type BalScript = std::sync::Mutex<BalMode>;
+
+    /// The default script: serve the list.
+    fn serving_bal() -> BalScript {
+        std::sync::Mutex::new(BalMode::Serving)
+    }
+
+    /// A scripted chain: one canonical head (`hash` + `parentHash`), zero
+    /// storage words, and the BAL endpoint's three behaviours.
+    #[derive(Clone)]
+    struct DeltaRecorder {
+        bal_requests: Arc<AtomicU64>,
+        head_reads: Arc<AtomicU64>,
+        storage_batches: Arc<AtomicU64>,
+        storage_members: Arc<AtomicU64>,
+        heads: Arc<std::sync::Mutex<std::collections::BTreeMap<u64, (B256, B256)>>>,
+        bal: Arc<BalScript>,
+    }
+
+    impl Default for DeltaRecorder {
+        fn default() -> Self {
+            Self {
+                bal_requests: Arc::default(),
+                head_reads: Arc::default(),
+                storage_batches: Arc::default(),
+                storage_members: Arc::default(),
+                heads: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
+                bal: Arc::new(serving_bal()),
+            }
+        }
+    }
+
+    impl DeltaRecorder {
+        /// Serve `number` as the canonical block `hash`, built on `parent`.
+        fn serve_head(&self, number: u64, hash: B256, parent: B256) {
+            self.heads
+                .lock()
+                .expect("recorder mutex")
+                .insert(number, (hash, parent));
+        }
+
+        fn head(&self, number: u64) -> (B256, B256) {
+            *self
+                .heads
+                .lock()
+                .expect("recorder mutex")
+                .get(&number)
+                .expect("the scripted chain serves this height")
+        }
+
+        fn set_bal_mode(&self, mode: BalMode) {
+            *self.bal.lock().expect("recorder mutex") = mode;
+        }
+
+        fn bal_requests(&self) -> u64 {
+            self.bal_requests.load(Ordering::Relaxed)
+        }
+
+        fn head_reads(&self) -> u64 {
+            self.head_reads.load(Ordering::Relaxed)
+        }
+
+        fn storage_batches(&self) -> u64 {
+            self.storage_batches.load(Ordering::Relaxed)
+        }
+    }
+
+    #[derive(Clone)]
+    struct RecordingTransport {
+        recorder: DeltaRecorder,
+    }
+
+    fn provider(recorder: &DeltaRecorder) -> AlloyProvider {
+        let client = RpcClient::new(
+            RecordingTransport {
+                recorder: recorder.clone(),
+            },
+            true,
+        );
+        let root: RootProvider = RootProvider::new(client);
+        AlloyProvider::from_provider(
+            Arc::new(root) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
+        )
+    }
+
+    fn success(value: &str) -> ResponsePayload {
+        let raw: Box<RawValue> =
+            to_raw_value(&serde_json::Value::String(value.into())).expect("valid JSON string");
+        ResponsePayload::Success(raw)
+    }
+
+    impl tower::Service<RequestPacket> for RecordingTransport {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(
+            &mut self,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let recorder = self.recorder.clone();
+            Box::pin(async move {
+                // A slow BAL endpoint PENDS: the readiness deadline must be able
+                // to fire while the fetch is outstanding, which a blocking sleep
+                // on this worker could not allow.
+                let slow_bal =
+                    matches!(*recorder.bal.lock().expect("recorder mutex"), BalMode::Slow);
+                let is_bal = match &req {
+                    RequestPacket::Single(one) => one.method() == "debug_getRawBlockAccessList",
+                    RequestPacket::Batch(many) => many
+                        .iter()
+                        .any(|one| one.method() == "debug_getRawBlockAccessList"),
+                };
+                if slow_bal && is_bal {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+                let respond = |req: &SerializedRequest| -> Response {
+                    let payload = match req.method() {
+                        "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
+                        "eth_getCode" => success("0x"),
+                        "eth_getStorageAt" => success(&format!("0x{:064x}", 0)),
+                        "eth_getBlockByNumber" => {
+                            recorder.head_reads.fetch_add(1, Ordering::Relaxed);
+                            // The request's block number rides the params; the
+                            // scripted chain keys its heads by height.
+                            let number = req
+                                .params()
+                                .and_then(|params| {
+                                    serde_json::from_str::<serde_json::Value>(params.get())
+                                        .ok()
+                                        .and_then(|value| {
+                                            value.get(0).and_then(|n| {
+                                                n.as_str()
+                                                    .and_then(|s| {
+                                                        u64::from_str_radix(
+                                                            s.trim_start_matches("0x"),
+                                                            16,
+                                                        )
+                                                        .ok()
+                                                    })
+                                                    .or_else(|| n.as_u64())
+                                            })
+                                        })
+                                })
+                                .expect("the lineage read names its block");
+                            let (hash, parent) = recorder.head(number);
+                            let raw: Box<RawValue> = to_raw_value(&serde_json::json!({
+                                "hash": hash,
+                                "parentHash": parent,
+                            }))
+                            .expect("valid JSON object");
+                            ResponsePayload::Success(raw)
+                        }
+                        "debug_getRawBlockAccessList" => {
+                            recorder.bal_requests.fetch_add(1, Ordering::Relaxed);
+                            match *recorder.bal.lock().expect("recorder mutex") {
+                                // The packet already paid the delay before this
+                                // response was built, so a slow endpoint answers
+                                // exactly like a serving one once it arrives.
+                                BalMode::Slow | BalMode::Serving => {}
+                                BalMode::Unsupported => {
+                                    return Response {
+                                        id: req.id().clone(),
+                                        payload: ResponsePayload::Failure(ErrorPayload {
+                                            code: -32_601,
+                                            message: Cow::Borrowed(
+                                                "method not found: debug_getRawBlockAccessList",
+                                            ),
+                                            data: None,
+                                        }),
+                                    };
+                                }
+                            }
+                            let raw: Box<RawValue> = to_raw_value(&serde_json::Value::String(
+                                alloy::primitives::hex::encode_prefixed(EMPTY_BAL),
+                            ))
+                            .expect("valid JSON value");
+                            ResponsePayload::Success(raw)
+                        }
+                        other => {
+                            return Response {
+                                id: req.id().clone(),
+                                payload: ResponsePayload::Failure(ErrorPayload {
+                                    code: -32_601,
+                                    message: format!("method not found: {other}").into(),
+                                    data: None,
+                                }),
+                            };
+                        }
+                    };
+                    Response {
+                        id: req.id().clone(),
+                        payload,
+                    }
+                };
+                Ok(match req {
+                    RequestPacket::Single(r) => ResponsePacket::Single(respond(&r)),
+                    RequestPacket::Batch(rs) => {
+                        if rs.iter().all(|r| r.method() == "eth_getStorageAt") {
+                            recorder.storage_batches.fetch_add(1, Ordering::Relaxed);
+                            recorder
+                                .storage_members
+                                .fetch_add(rs.len() as u64, Ordering::Relaxed);
+                        }
+                        ResponsePacket::Batch(rs.iter().map(respond).collect())
+                    }
+                })
+            })
+        }
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("multi-thread runtime")
+    }
+
+    fn empty_cache() -> Arc<RwLock<WarmCodeCacheInner>> {
+        WarmCodeCacheInner::shared_default()
+    }
+
+    fn delta_cache(deadline_ms: u64) -> Arc<RwLock<WarmCodeCacheInner>> {
+        WarmCodeCacheInner::shared_with_delta_dispatch(
+            DeltaDispatchConfig::with_readiness_deadline(Duration::from_millis(deadline_ms)),
+        )
+    }
+
+    /// One V2 path and its facts — the relevance input the delta head is
+    /// delivered with.
+    fn one_path() -> (crate::SimulatePath, PrefetchFacts) {
+        let candidate = super::tests::candidate(70, 1_000_000_000_000_000_000u128, 1_000);
+        let facts = PrefetchFacts::default();
+        (candidate.to_simulate_path(), facts)
+    }
+
+    /// OFF is the shipped posture: the legacy memo + prefetch lane unchanged,
+    /// and NOT ONE BAL request — the session installs no head driver.
+    #[test]
+    fn the_opt_in_off_makes_no_bal_request_and_keeps_the_prefetch_lane() {
+        let recorder = DeltaRecorder::default();
+        recorder.serve_head(BLOCK, B256::new([0xa1; 32]), B256::new([0xa0; 32]));
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let recorder_thread = recorder.clone();
+        let (selection,) = std::thread::spawn(move || {
+            rt.block_on(async {
+                let (path, facts) = one_path();
+                let cache = empty_cache();
+                let selection =
+                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
+                (selection,)
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert_eq!(selection.outcome, StorageSelectionOutcome::Disabled);
+        assert!(!selection.is_delta(), "OFF reads through the legacy memo");
+        assert_eq!(
+            selection.anchor,
+            ReadAnchor::identified(BLOCK, B256::new([0xa1; 32])),
+            "the legacy anchor is still the number+hash identity read"
+        );
+        assert_eq!(recorder_thread.bal_requests(), 0, "no BAL while disabled");
+        assert_eq!(recorder_thread.head_reads(), 1, "one identity read");
+    }
+
+    /// A first head with no installed parent settles COLD — the carry has no
+    /// lineage to verify — so the fan-out takes the legacy lane with the reason
+    /// reported and serves no parent value.
+    #[test]
+    fn a_first_head_with_no_installed_parent_takes_the_legacy_path() {
+        let recorder = DeltaRecorder::default();
+        recorder.serve_head(BLOCK, B256::new([0xa1; 32]), B256::new([0xa0; 32]));
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let selection = std::thread::spawn(move || {
+            rt.block_on(async {
+                let (path, facts) = one_path();
+                select_dispatch_storage(
+                    &provider,
+                    &delta_cache(500),
+                    BLOCK,
+                    &[&path.path_info],
+                    &facts,
+                )
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert!(
+            !selection.is_delta(),
+            "a lineage-refused head serves nothing"
+        );
+        assert_eq!(selection.outcome.reason(), Some("lineage-refused"));
+    }
+
+    /// One consecutive head past an installed parent: ONE header read, ONE BAL
+    /// request, the child's own exact anchor, and a READY generation. The
+    /// repeat at the same exact anchor shares that one generation and fetches
+    /// nothing again.
+    #[test]
+    fn a_ready_head_answers_the_fanout_and_repeats_without_new_bal_work() {
+        let recorder = DeltaRecorder::default();
+        let parent = B256::new([0xa0; 32]);
+        let first = B256::new([0xa1; 32]);
+        let child = B256::new([0xb1; 32]);
+        recorder.serve_head(BLOCK, first, parent);
+        recorder.serve_head(BLOCK + 1, child, first);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let (settled, repeated, bal_after) = std::thread::spawn(move || {
+            rt.block_on(async {
+                let (path, facts) = one_path();
+                let cache = delta_cache(500);
+                // The parent head: no installed parent yet, so it settles cold
+                // and installs the generation the child carries.
+                let _parent_selection =
+                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
+                let settled = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    BLOCK + 1,
+                    &[&path.path_info],
+                    &facts,
+                );
+                let bal_after = rec.bal_requests();
+                let repeated = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    BLOCK + 1,
+                    &[&path.path_info],
+                    &facts,
+                );
+                (settled, repeated, bal_after)
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert_eq!(settled.outcome, StorageSelectionOutcome::Ready);
+        assert!(
+            settled.is_delta(),
+            "a ready head answers through its delta hub"
+        );
+        assert_eq!(
+            settled.anchor,
+            ReadAnchor::identified(BLOCK + 1, child),
+            "the head's own exact anchor"
+        );
+        assert_eq!(bal_after, 2, "one BAL per settled head");
+        assert_eq!(repeated.outcome, StorageSelectionOutcome::Ready);
+        assert_eq!(
+            recorder.bal_requests(),
+            2,
+            "a repeated fan-out at the same exact anchor repeats no BAL work"
+        );
+        match (&settled.storage, &repeated.storage) {
+            (FanOutStorage::Delta(a), FanOutStorage::Delta(b)) => assert!(
+                Arc::ptr_eq(a, b),
+                "both fan-outs share the ONE settled generation"
+            ),
+            _ => panic!("both fan-outs must read through the delta generation"),
+        }
+    }
+
+    /// A list the node cannot serve (the endpoint is unsupported) settles COLD
+    /// on an otherwise consecutive head: the legacy lane answers and the reason
+    /// is reported.
+    #[test]
+    fn an_unsupported_bal_endpoint_takes_the_legacy_path_with_its_reason() {
+        let recorder = DeltaRecorder::default();
+        let parent = B256::new([0xa0; 32]);
+        let first = B256::new([0xa1; 32]);
+        let child = B256::new([0xb1; 32]);
+        recorder.serve_head(BLOCK, first, parent);
+        recorder.serve_head(BLOCK + 1, child, first);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let (selection, bal) = std::thread::spawn(move || {
+            rt.block_on(async {
+                let (path, facts) = one_path();
+                let cache = delta_cache(500);
+                let _parent_selection =
+                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
+                rec.set_bal_mode(BalMode::Unsupported);
+                let selection = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    BLOCK + 1,
+                    &[&path.path_info],
+                    &facts,
+                );
+                (selection, rec.bal_requests())
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert!(
+            !selection.is_delta(),
+            "an unreadable list serves no parent value: the legacy lane answers"
+        );
+        assert_eq!(selection.outcome.reason(), Some("bal-unreadable"));
+        assert_eq!(bal, 2, "the child's fetch was attempted once");
+    }
+
+    /// A list that cannot land inside the readiness deadline is the cold path,
+    /// never a blocked fan-out: the caller settles on the legacy lane with the
+    /// deadline reported.
+    #[test]
+    fn a_head_past_its_readiness_deadline_takes_the_legacy_path() {
+        let recorder = DeltaRecorder::default();
+        let parent = B256::new([0xa0; 32]);
+        let first = B256::new([0xa1; 32]);
+        let child = B256::new([0xb1; 32]);
+        recorder.serve_head(BLOCK, first, parent);
+        recorder.serve_head(BLOCK + 1, child, first);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let selection = std::thread::spawn(move || {
+            rt.block_on(async {
+                let (path, facts) = one_path();
+                let cache = delta_cache(20);
+                let _parent_selection =
+                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
+                rec.set_bal_mode(BalMode::Slow);
+                select_dispatch_storage(&provider, &cache, BLOCK + 1, &[&path.path_info], &facts)
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert!(!selection.is_delta(), "a late BAL never blocks the fan-out");
+        assert_eq!(selection.outcome.reason(), Some("deadline"));
+    }
+
+    /// A same-height reorg is a DIFFERENT head: the replacement's own BAL is
+    /// what a later fan-out reads against, never the abandoned branch's
+    /// generation, and a candidate already holding the older generation keeps
+    /// reading it.
+    #[test]
+    fn a_same_height_reorg_selects_the_replacement_branch() {
+        let recorder = DeltaRecorder::default();
+        let parent = B256::new([0xa0; 32]);
+        let first = B256::new([0xa1; 32]);
+        let child = B256::new([0xb1; 32]);
+        let replacement = B256::new([0xb2; 32]);
+        recorder.serve_head(BLOCK, first, parent);
+        recorder.serve_head(BLOCK + 1, child, first);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+        let (held, after, bal) = std::thread::spawn(move || {
+            rt.block_on(async {
+                let (path, facts) = one_path();
+                let cache = delta_cache(500);
+                let _parent_selection =
+                    select_dispatch_storage(&provider, &cache, BLOCK, &[&path.path_info], &facts);
+                let settled = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    BLOCK + 1,
+                    &[&path.path_info],
+                    &facts,
+                );
+                let held = match &settled.storage {
+                    FanOutStorage::Delta(hub) => Arc::clone(hub),
+                    FanOutStorage::Legacy => panic!("the consecutive head settled ready"),
+                };
+                // Same height, different canonical block.
+                rec.serve_head(BLOCK + 1, replacement, first);
+                let after = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    BLOCK + 1,
+                    &[&path.path_info],
+                    &facts,
+                );
+                (held, after, rec.bal_requests())
+            })
+        })
+        .join()
+        .expect("selection thread");
+
+        assert_eq!(
+            held.anchor(),
+            ReadAnchor::identified(BLOCK + 1, child),
+            "the generation a candidate already holds stays pinned at its own head"
+        );
+        assert_eq!(
+            after.anchor,
+            ReadAnchor::identified(BLOCK + 1, replacement),
+            "the replacement block's own anchor, never the abandoned one"
+        );
+        assert!(
+            !after.is_delta(),
+            "the abandoned branch's parent chain is never carried into the replacement"
+        );
+        assert_eq!(after.outcome.reason(), Some("lineage-refused"));
+        assert_eq!(bal, 3, "the replacement pays its own attempt");
+    }
+
+    /// The fan-out's wire signature, OFF versus ON: OFF pays the legacy prefetch
+    /// batch and no BAL; a COLD head pays its BAL attempt AND the legacy batch;
+    /// a READY head pays its BAL and NO prefetch batch. Every run's verdicts are
+    /// identical — the selection changes the reads, never the outcome.
+    #[test]
+    fn the_storage_selection_changes_the_reads_and_never_the_verdict() {
+        let recorder = DeltaRecorder::default();
+        let parent = B256::new([0xa0; 32]);
+        let first = B256::new([0xa1; 32]);
+        let child = B256::new([0xb1; 32]);
+        recorder.serve_head(BLOCK, first, parent);
+        recorder.serve_head(BLOCK + 1, child, first);
+        let provider = provider(&recorder);
+        let rt = runtime();
+        let rec = recorder.clone();
+
+        let (off, off_batches, cold_batches, ready_batches, ready) =
+            std::thread::spawn(move || {
+                rt.block_on(async {
+                    let deployment = super::tests::deployment(Bytes::from_static(&[0xfe]));
+                    let cands = vec![
+                        super::tests::candidate(70, 1_000_000_000_000_000_000u128, 1_000),
+                        super::tests::candidate(71, 1_000_000_000_000_000_000u128, 1_000),
+                    ];
+                    let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+                    let divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+                    let fot = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
+                    let bot_state = Arc::new(StateLock::new(BotState::new()));
+
+                    // OFF: the shipped posture.
+                    let off = dispatch_profitable_results(
+                        cands.clone(),
+                        &super::tests::ctx(&provider, &deployment),
+                        &suppression,
+                        BLOCK,
+                        0,
+                        &divergence,
+                        &fot,
+                        Some(Arc::clone(&bot_state)),
+                        Some(WarmCodeCacheInner::shared_default()),
+                    );
+                    let off_batches = rec.storage_batches();
+
+                    // ON, first head: no installed parent, so it settles cold and
+                    // the fan-out pays the legacy prefetch batch.
+                    let warm = WarmCodeCacheInner::shared_with_delta_dispatch(
+                        DeltaDispatchConfig::with_readiness_deadline(Duration::from_millis(500)),
+                    );
+                    let _cold = dispatch_profitable_results(
+                        cands.clone(),
+                        &super::tests::ctx(&provider, &deployment),
+                        &suppression,
+                        BLOCK,
+                        0,
+                        &divergence,
+                        &fot,
+                        Some(Arc::clone(&bot_state)),
+                        Some(Arc::clone(&warm)),
+                    );
+                    let cold_batches = rec.storage_batches() - off_batches;
+
+                    // ON, the consecutive head: the child carries, so the ready
+                    // generation answers and no prefetch batch is dispatched.
+                    let ready = dispatch_profitable_results(
+                        cands,
+                        &super::tests::ctx(&provider, &deployment),
+                        &suppression,
+                        BLOCK + 1,
+                        0,
+                        &divergence,
+                        &fot,
+                        Some(bot_state),
+                        Some(warm),
+                    );
+                    let ready_batches = rec.storage_batches() - off_batches - cold_batches;
+                    (off, off_batches, cold_batches, ready_batches, ready)
+                })
+            })
+            .join()
+            .expect("fan-out thread");
+
+        assert_eq!(off_batches, 1, "OFF pays the legacy prefetch batch");
+        assert_eq!(cold_batches, 1, "a cold head falls back to the SAME batch");
+        assert_eq!(
+            ready_batches, 0,
+            "a ready head reads through its generation and pays no prefetch"
+        );
+
+        // Verdict identity at the dispatch seam.
+        assert_eq!(off.candidate_count, ready.candidate_count);
+        assert_eq!(off.fail_count, ready.fail_count);
+        assert_eq!(off.exception_count, ready.exception_count);
+        assert_eq!(
+            off.gas_profitable.len() + off.gas_unprofitable.len(),
+            ready.gas_profitable.len() + ready.gas_unprofitable.len()
+        );
+        assert_eq!(
+            off.fail_buckets.get("empty"),
+            ready.fail_buckets.get("empty")
+        );
+        assert_eq!(off.fail_buckets.get("empty"), 2);
+    }
+
+    /// The reason vocabulary the diagnostic line and the metric labels share is
+    /// this closed set: a rename has to come with the tests above.
+    #[test]
+    fn the_cold_reason_vocabulary_is_the_closed_set() {
+        assert_eq!(
+            [
+                StorageSelectionOutcome::Cold("unprepared").reason(),
+                StorageSelectionOutcome::Cold("deadline").reason(),
+                StorageSelectionOutcome::LineageUnreadable.reason(),
+                StorageSelectionOutcome::Ready.reason(),
+                StorageSelectionOutcome::Disabled.reason(),
+            ],
+            [
+                Some("unprepared"),
+                Some("deadline"),
+                Some("lineage-unreadable"),
+                None,
+                None
+            ]
+        );
+        assert_eq!(StorageSelectionOutcome::Ready.mode(), "delta");
+        assert_eq!(StorageSelectionOutcome::Cold("deadline").mode(), "legacy");
     }
 }

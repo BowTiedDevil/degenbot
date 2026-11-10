@@ -1499,11 +1499,11 @@ fn refusal_chain_truth(stub: &ChainStub) {
 }
 
 /// Settle the parent's x and y in a fresh cache; the packet log is clean after.
-async fn settled_parent<'p>(
+async fn settled_parent(
     stub: &ChainStub,
-    provider: &'p AlloyProvider,
+    provider: &AlloyProvider,
     parent: ReadAnchor,
-) -> (ReadHubCache<'p>, Arc<ReadHub<'p>>) {
+) -> (ReadHubCache, Arc<ReadHub>) {
     let cache = ReadHubCache::new(provider);
     let hub = cache.for_anchor(parent);
     let x = hub.read_storage(address(0x11), U256::from(1u64));
@@ -1521,7 +1521,7 @@ async fn settled_parent<'p>(
 /// no storage RPC for x.
 async fn assert_cold_child(
     stub: &ChainStub,
-    child: &ReadHub<'_>,
+    child: &ReadHub,
     write_seeded: bool,
     x_value: u64,
     y_value: u64,

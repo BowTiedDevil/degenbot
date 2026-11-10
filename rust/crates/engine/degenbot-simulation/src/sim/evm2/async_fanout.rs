@@ -730,8 +730,8 @@ pub enum DrainOutcome {
 }
 
 /// The drain coordination every lane shares (see the module docs).
-pub struct HubDrain<'h, 'p> {
-    hub: &'h ReadHub<'p>,
+pub struct HubDrain<'h> {
+    hub: &'h ReadHub,
     /// The ownership the lanes take over rounds.
     policy: DrainPolicy,
     /// The drain role ([`DrainPolicy::SessionWide`]): one lane at a time takes
@@ -753,9 +753,9 @@ pub struct HubDrain<'h, 'p> {
     rounds: AtomicUsize,
 }
 
-impl<'h, 'p> HubDrain<'h, 'p> {
+impl<'h> HubDrain<'h> {
     /// The coordinator over `hub`, handing the lanes `policy`'s ownership.
-    pub fn new(hub: &'h ReadHub<'p>, policy: DrainPolicy) -> Self {
+    pub fn new(hub: &'h ReadHub, policy: DrainPolicy) -> Self {
         let (flight, _installed) = tokio::sync::watch::channel(0usize);
         Self {
             hub,
@@ -968,7 +968,7 @@ where
 
     /// Drive this lane to completion: admit and poll, and settle a hub round
     /// whenever nothing in this lane can progress (see the module docs).
-    async fn drive(&mut self, drain: Option<&HubDrain<'_, '_>>) -> Result<(), FanoutError> {
+    async fn drive(&mut self, drain: Option<&HubDrain<'_>>) -> Result<(), FanoutError> {
         let counter = Arc::new(WakeCounter::default());
         let waker = futures_util::task::waker(Arc::clone(&counter));
         let mut cx = Context::from_waker(&waker);
@@ -1162,7 +1162,7 @@ impl AsyncEvmFanout {
         &self,
         candidates: &'j [PreparedCandidate],
         state: &(dyn CandidateStateSource<'a> + Sync),
-        hub: Option<&ReadHub<'_>>,
+        hub: Option<&ReadHub>,
     ) -> Result<FanoutOutcome, FanoutError>
     where
         'a: 'j,
@@ -1203,7 +1203,7 @@ impl AsyncEvmFanout {
         &self,
         candidates: &'j [PreparedCandidate],
         state: &(dyn CandidateStateSource<'a> + Sync),
-        drain: Option<&HubDrain<'_, '_>>,
+        drain: Option<&HubDrain<'_>>,
         gauge: &RunGauge,
         lanes_used: usize,
     ) -> Result<Vec<LaneOutcome>, FanoutError>
@@ -1276,27 +1276,36 @@ pub enum ReadHubDbError {
 /// A read registered here parks until a [`ReadHub::drain_round`] settles it, so
 /// this adapter is only usable inside a stack whose driver drains rounds — the
 /// fan-out's own idle pass ([`AsyncEvmFanout::run`]).
-pub struct ReadHubDb<'h, 'p> {
-    hub: &'h ReadHub<'p>,
-    provider: &'p AlloyProvider,
+pub struct ReadHubDb<'h> {
+    hub: &'h ReadHub,
+    /// The provider answering the block-hash reads the hub does not cache.
+    ///
+    /// Held by VALUE (`AlloyProvider` clones the one shared transport) so the
+    /// adapter carries no second borrow lifetime: the hub owns its own handle
+    /// for the same reason, and a lane built from a borrowed hub cannot
+    /// accidentally outlive the provider handle it borrowed.
+    provider: AlloyProvider,
 }
 
-impl<'h, 'p> ReadHubDb<'h, 'p> {
+impl<'h> ReadHubDb<'h> {
     /// The adapter over `hub`, with `provider` answering the block-hash reads
     /// the hub does not cache.
     #[must_use]
-    pub const fn new(hub: &'h ReadHub<'p>, provider: &'p AlloyProvider) -> Self {
-        Self { hub, provider }
+    pub fn new(hub: &'h ReadHub, provider: &AlloyProvider) -> Self {
+        Self {
+            hub,
+            provider: provider.clone(),
+        }
     }
 
     /// The hub every read registers against.
     #[must_use]
-    pub const fn hub(&self) -> &'h ReadHub<'p> {
+    pub const fn hub(&self) -> &'h ReadHub {
         self.hub
     }
 }
 
-impl AsyncDatabase for ReadHubDb<'_, '_> {
+impl AsyncDatabase for ReadHubDb<'_> {
     type Error = ReadHubDbError;
 
     fn get_account(
@@ -1332,7 +1341,7 @@ impl AsyncDatabase for ReadHubDb<'_, '_> {
         &mut self,
         number: Word,
     ) -> impl Future<Output = Result<B256, Self::Error>> + Send + '_ {
-        let provider = self.provider;
+        let provider = &self.provider;
         async move {
             let height = number.to::<u64>();
             let block = provider.get_block(height).await?;

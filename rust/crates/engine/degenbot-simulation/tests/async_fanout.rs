@@ -823,7 +823,7 @@ impl CandidateStateSource<'static> for SeededSource {
 /// The per-candidate state source over the read hub: every candidate's database
 /// is the hub adapter, so a cold read parks until a round is drained.
 struct HubSource<'h, 'p> {
-    hub: &'h ReadHub<'p>,
+    hub: &'h ReadHub,
     provider: &'p AlloyProvider,
 }
 
@@ -1350,15 +1350,15 @@ const ROUND_DELAY: Duration = Duration::from_millis(25);
 /// One candidate's hub stack under a gate: the FIRST read waits at the gate
 /// before it registers, so every lane has a candidate parked on the hub before
 /// any lane can settle a round.
-struct GatedHubDb<'h, 'p> {
-    inner: ReadHubDb<'h, 'p>,
+struct GatedHubDb<'h> {
+    inner: ReadHubDb<'h>,
     gate: Arc<Rendezvous>,
     met: Arc<AtomicUsize>,
     arrived: bool,
 }
 
-impl<'h, 'p> GatedHubDb<'h, 'p> {
-    fn new(inner: ReadHubDb<'h, 'p>, gate: Arc<Rendezvous>, met: Arc<AtomicUsize>) -> Self {
+impl<'h> GatedHubDb<'h> {
+    fn new(inner: ReadHubDb<'h>, gate: Arc<Rendezvous>, met: Arc<AtomicUsize>) -> Self {
         Self {
             inner,
             gate,
@@ -1379,7 +1379,7 @@ impl<'h, 'p> GatedHubDb<'h, 'p> {
     }
 }
 
-impl AsyncDatabase for GatedHubDb<'_, '_> {
+impl AsyncDatabase for GatedHubDb<'_> {
     type Error = ReadHubDbError;
 
     fn get_account(
@@ -1418,7 +1418,7 @@ impl AsyncDatabase for GatedHubDb<'_, '_> {
 
 /// The per-candidate state source over the gated hub stack.
 struct GatedHubSource<'h, 'p> {
-    hub: &'h ReadHub<'p>,
+    hub: &'h ReadHub,
     provider: &'p AlloyProvider,
     gate: Arc<Rendezvous>,
     met: Arc<AtomicUsize>,
@@ -1555,14 +1555,14 @@ impl FirstDispatch {
 /// One candidate's hub stack held back until a neighbour's round is in flight:
 /// its reads register only once another round already owns the identities, so
 /// this lane's own drain is the empty one the stall guard must coordinate.
-struct HeldBackDb<'h, 'p> {
-    inner: ReadHubDb<'h, 'p>,
+struct HeldBackDb<'h> {
+    inner: ReadHubDb<'h>,
     dispatch: Arc<FirstDispatch>,
     held: bool,
 }
 
-impl<'h, 'p> HeldBackDb<'h, 'p> {
-    fn new(inner: ReadHubDb<'h, 'p>, dispatch: Arc<FirstDispatch>) -> Self {
+impl<'h> HeldBackDb<'h> {
+    fn new(inner: ReadHubDb<'h>, dispatch: Arc<FirstDispatch>) -> Self {
         Self {
             inner,
             dispatch,
@@ -1580,7 +1580,7 @@ impl<'h, 'p> HeldBackDb<'h, 'p> {
     }
 }
 
-impl AsyncDatabase for HeldBackDb<'_, '_> {
+impl AsyncDatabase for HeldBackDb<'_> {
     type Error = ReadHubDbError;
 
     fn get_account(
@@ -1621,7 +1621,7 @@ impl AsyncDatabase for HeldBackDb<'_, '_> {
 /// candidates walk the same read identities, and candidate 1's first read
 /// registers only after candidate 0's round is in flight.
 struct OwnedReadSource<'h, 'p> {
-    hub: &'h ReadHub<'p>,
+    hub: &'h ReadHub,
     provider: &'p AlloyProvider,
     dispatch: Arc<FirstDispatch>,
 }

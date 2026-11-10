@@ -58,20 +58,20 @@ fn hash(step: u8) -> B256 {
 }
 
 /// Install the scenario chain's first generation: cold, at `HEIGHT`.
-fn start<'p>(cache: &DeltaSnapshotCache<'p>) -> Arc<DeltaHub<'p>> {
+fn start(cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
     cache.for_anchor(ReadAnchor::identified(HEIGHT, hash(0)))
 }
 
 /// Advance one linked generation carrying `writes`: the child's list is served
 /// at its exact hash first (a list the stub does not hold would make the child
 /// COLD, which the cold-semantics pins exercise on purpose).
-async fn advance<'p>(
-    cache: &DeltaSnapshotCache<'p>,
+async fn advance(
+    cache: &DeltaSnapshotCache,
     stub: &ChainStub,
     step: u8,
     writes: &[(Address, U256, U256)],
     relevance: &[Address],
-) -> (Arc<DeltaHub<'p>>, DeltaReport) {
+) -> (Arc<DeltaHub>, DeltaReport) {
     stub.serve_bal_at(hash(step), bal_bytes(writes));
     cache
         .advance_bal(

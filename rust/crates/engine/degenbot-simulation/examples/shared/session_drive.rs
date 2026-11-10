@@ -104,17 +104,17 @@ impl TraceLog {
 /// schedule drives either lane unchanged: they differ only in where a storage
 /// answer resolves — the hub's anchor memo, or a delta generation's chain.
 #[derive(Clone, Copy)]
-pub enum ReadLane<'h, 'p> {
+pub enum ReadLane<'h> {
     /// The production per-anchor hub, read directly.
-    Full(&'h ReadHub<'p>),
+    Full(&'h ReadHub),
     /// A delta generation: chain hits locally, misses through its own hub.
-    Delta(&'h DeltaHub<'p>),
+    Delta(&'h DeltaHub),
 }
 
-impl<'h, 'p> ReadLane<'h, 'p> {
+impl<'h> ReadLane<'h> {
     /// The hub this lane's rounds belong to — the lane's drain coordinator and
     /// its counters both read it.
-    pub fn hub(self) -> &'h ReadHub<'p> {
+    pub fn hub(self) -> &'h ReadHub {
         match self {
             Self::Full(hub) => hub,
             Self::Delta(hub) => hub.read_hub(),
@@ -127,7 +127,7 @@ impl<'h, 'p> ReadLane<'h, 'p> {
     }
 
     /// Register one storage read on the lane's round.
-    pub fn read_storage(self, address: Address, index: U256) -> StorageRead<'h, 'p> {
+    pub fn read_storage(self, address: Address, index: U256) -> StorageRead<'h> {
         match self {
             Self::Full(hub) => StorageRead::Full(hub.read_storage(address, index)),
             Self::Delta(hub) => StorageRead::Delta(hub.read_storage_handle(address, index)),
@@ -141,14 +141,14 @@ impl<'h, 'p> ReadLane<'h, 'p> {
 }
 
 /// One lane's pending storage read, whichever lane registered it.
-pub enum StorageRead<'h, 'p> {
+pub enum StorageRead<'h> {
     /// The production hub's read future.
     Full(ReadFuture<StorageValue>),
     /// A delta generation's read handle.
-    Delta(DeltaRead<'h, 'p>),
+    Delta(DeltaRead<'h>),
 }
 
-impl StorageRead<'_, '_> {
+impl StorageRead<'_> {
     /// Which side of the lane's seam answered, when the lane classifies it.
     #[must_use]
     pub const fn origin(&self) -> Option<ReadOrigin> {
@@ -159,7 +159,7 @@ impl StorageRead<'_, '_> {
     }
 }
 
-impl Future for StorageRead<'_, '_> {
+impl Future for StorageRead<'_> {
     type Output = Result<StorageValue, ReadHubError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -201,7 +201,7 @@ pub type WalkFuture<'h> = Pin<Box<dyn Future<Output = Result<B256, String>> + 'h
 /// records each answered storage read's block, identity, and — for a delta
 /// lane — its answer source.
 pub fn walk_fiber<'h>(
-    lane: ReadLane<'h, '_>,
+    lane: ReadLane<'h>,
     row: &'h Recorded,
     ledger: &'h WallLedger,
     trace: Option<&'h TraceLog>,
@@ -239,7 +239,7 @@ pub fn walk_fiber<'h>(
 
 /// Drain one round of a leg-owned lane and charge its modeled round trip.
 /// `false` when nothing was queued.
-async fn settle(lane: ReadLane<'_, '_>, node: Node, ledger: &WallLedger) -> bool {
+async fn settle(lane: ReadLane<'_>, node: Node, ledger: &WallLedger) -> bool {
     let report = lane.drain_round().await;
     if report.is_empty() {
         return false;
@@ -301,8 +301,8 @@ struct LaneRun<'r, 'p> {
     rows: &'r [Recorded],
     node: Node,
     provider: &'p AlloyProvider,
-    shared: Option<ReadLane<'r, 'p>>,
-    drain: Option<&'r HubDrain<'r, 'p>>,
+    shared: Option<ReadLane<'r>>,
+    drain: Option<&'r HubDrain<'r>>,
     gauge: &'r Gauge,
     ledger: &'r WallLedger,
     trace: Option<&'r TraceLog>,
@@ -316,7 +316,7 @@ struct LaneOutcome {
 /// Settle one round on the leg's read lane and report what it did — through the
 /// scheduler's own drain coordinator for a shared hub, or the leg-owned hub's
 /// own round for a per-worker-hub leg.
-async fn settle_lane_round(run: &LaneRun<'_, '_>, lane: ReadLane<'_, '_>) -> DrainOutcome {
+async fn settle_lane_round(run: &LaneRun<'_, '_>, lane: ReadLane<'_>) -> DrainOutcome {
     match run.drain {
         Some(drain) => {
             let node = run.node;
@@ -357,7 +357,7 @@ async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome,
             ReadAnchor::at(run.rows.first().map_or(0, |r| r.block)),
         )
     });
-    let hub: ReadLane<'_, '_> = run
+    let hub: ReadLane<'_> = run
         .shared
         .unwrap_or_else(|| ReadLane::Full(local.as_ref().expect("a per-worker lane owns its hub")));
     // A no-op waker: this driver polls every parked fiber on every pass and
@@ -480,7 +480,7 @@ pub async fn drive_lanes(
     base: usize,
     provider: &AlloyProvider,
     node: Node,
-    external: Option<ReadLane<'_, '_>>,
+    external: Option<ReadLane<'_>>,
     ledger: &WallLedger,
 ) -> Result<LegFacts, String> {
     let limits = plan.limits;

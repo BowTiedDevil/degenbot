@@ -338,18 +338,23 @@ struct HubState {
 }
 
 /// The anchor-scoped async read hub (see the module docs).
-pub struct ReadHub<'p> {
-    provider: &'p AlloyProvider,
+///
+/// The hub OWNS its provider handle (`AlloyProvider` clones the one shared
+/// transport), never borrowing it, so a session-scoped owner can hold a hub —
+/// and a hub-holding cache — for the engine's life instead of pinning itself to
+/// one call's provider borrow.
+pub struct ReadHub {
+    provider: AlloyProvider,
     anchor: ReadAnchor,
     state: Mutex<HubState>,
 }
 
-impl<'p> ReadHub<'p> {
+impl ReadHub {
     /// A hub for `anchor`: every read it makes is pinned to that block.
     #[must_use]
-    pub fn new(provider: &'p AlloyProvider, anchor: ReadAnchor) -> Self {
+    pub fn new(provider: &AlloyProvider, anchor: ReadAnchor) -> Self {
         Self {
-            provider,
+            provider: provider.clone(),
             anchor,
             state: Mutex::new(HubState::default()),
         }
@@ -572,7 +577,7 @@ impl<'p> ReadHub<'p> {
     /// carry-forward's whole transfer. Only values a `drain_round` settled at
     /// the parent cross: accounts, queued or in-flight identities, waiters, and
     /// stats stay behind, and the two hubs are independent afterwards.
-    fn carry_settled_storage(&self, parent: &ReadHub<'_>) -> usize {
+    fn carry_settled_storage(&self, parent: &ReadHub) -> usize {
         let (settled, read_set) = {
             let state = parent.state.lock();
             (state.storage_values.clone(), state.read_set.clone())
@@ -692,14 +697,14 @@ impl<'p> ReadHub<'p> {
 }
 
 /// The in-flight ownership of one drained round, and the settlement that ends it.
-struct RoundGuard<'a, 'p> {
-    hub: &'a ReadHub<'p>,
+struct RoundGuard<'a> {
+    hub: &'a ReadHub,
     storage: &'a [Slot],
     accounts: &'a [Address],
     settled: bool,
 }
 
-impl Drop for RoundGuard<'_, '_> {
+impl Drop for RoundGuard<'_> {
     fn drop(&mut self) {
         if !self.settled {
             self.hub.abandon(self.storage, self.accounts);
@@ -707,7 +712,7 @@ impl Drop for RoundGuard<'_, '_> {
     }
 }
 
-impl RoundGuard<'_, '_> {
+impl RoundGuard<'_> {
     /// Hand each identity its outcome: memoize the values and answer every
     /// waiter, or fail the identities the round could not answer.
     fn settle(
@@ -1018,17 +1023,17 @@ pub(crate) fn classify_link(
 
 /// The session-scoped owner of the per-anchor [`ReadHub`] — the migration entry
 /// point for a caller that used to pin a block number per read.
-pub struct ReadHubCache<'p> {
-    provider: &'p AlloyProvider,
-    current: Mutex<Option<(ReadAnchor, Arc<ReadHub<'p>>)>>,
+pub struct ReadHubCache {
+    provider: AlloyProvider,
+    current: Mutex<Option<(ReadAnchor, Arc<ReadHub>)>>,
 }
 
-impl<'p> ReadHubCache<'p> {
+impl ReadHubCache {
     /// An empty owner: no anchor installed yet.
     #[must_use]
-    pub fn new(provider: &'p AlloyProvider) -> Self {
+    pub fn new(provider: &AlloyProvider) -> Self {
         Self {
-            provider,
+            provider: provider.clone(),
             current: Mutex::new(None),
         }
     }
@@ -1041,14 +1046,14 @@ impl<'p> ReadHubCache<'p> {
     /// [`StorageMemoCache::for_anchor`](crate::sim::storage_memo::StorageMemoCache::for_anchor),
     /// and for the same reason: a same-height reorg leaves the number alone and
     /// changes only the hash.
-    pub fn for_anchor(&self, anchor: ReadAnchor) -> Arc<ReadHub<'p>> {
+    pub fn for_anchor(&self, anchor: ReadAnchor) -> Arc<ReadHub> {
         let mut current = self.current.lock();
         if let Some((installed, hub)) = current.as_ref() {
             if *installed == anchor {
                 return Arc::clone(hub);
             }
         }
-        let hub = Arc::new(ReadHub::new(self.provider, anchor));
+        let hub = Arc::new(ReadHub::new(&self.provider, anchor));
         *current = Some((anchor, Arc::clone(&hub)));
         hub
     }
@@ -1103,7 +1108,7 @@ impl<'p> ReadHubCache<'p> {
         child: ReadAnchor,
         child_parent_hash: B256,
         relevance: &[Address],
-    ) -> (Arc<ReadHub<'p>>, CarryReport) {
+    ) -> (Arc<ReadHub>, CarryReport) {
         // Idempotence precedes any RPC: the same child anchor repeats no BAL
         // work, and no lock guard crosses the fetch.
         {
@@ -1127,7 +1132,7 @@ impl<'p> ReadHubCache<'p> {
 
         // The child BAL is fetched and FULLY decoded before anything is
         // cloned: a skip here can never return a child serving parent values.
-        let prepared = PreparedBal::prepare(self.provider, child).await;
+        let prepared = PreparedBal::prepare(&self.provider, child).await;
         let final_writes = prepared.final_writes();
         let bal = prepared.skip().cloned();
         let bal_latency = prepared.latency();
@@ -1160,7 +1165,7 @@ impl<'p> ReadHubCache<'p> {
             child_parent_hash,
         );
         let linked = lineage.is_none() && bal.is_none();
-        let hub = ReadHub::new(self.provider, child);
+        let hub = ReadHub::new(&self.provider, child);
         let mut carried_values = 0;
         let mut clone_time = Duration::ZERO;
         if linked {

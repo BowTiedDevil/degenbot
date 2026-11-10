@@ -371,3 +371,41 @@ groups:
               expression: A
               conditions:
                 - evaluator: { type: gt, params: [1.0005] }
+      - uid: degenbot-dispatch-storage-fallback
+        title: DegenbotDispatchStorageFallback
+        condition: C
+        for: 10m
+        annotations:
+          summary: degenbot BAL dispatch storage fallback - the delta lane is not answering
+          description: >-
+            More than half of the dispatch fan-outs took the legacy storage lane
+            for a cold reason for 10m while the BAL delta opt-in is on
+            (degenbot_dispatch_storage_total{mode="legacy", reason!="none"} over
+            the whole fan-out rate). The reason label is the closed cold set
+            (unprepared deadline superseded undelivered lineage-refused
+            bal-unreadable settled lineage-unreadable): a head that is
+            chronically unprepared or past its readiness deadline means the BAL
+            fetch is not landing in time, and every candidate at that head is
+            paid for on the legacy memo + prefetch lane. With the opt-in OFF
+            every fan-out reports reason="none" and this ratio stays at 0, so
+            the rule is silent by construction; it never fires on a bot that
+            has not opted in.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expr: >-
+                (sum(rate(degenbot_dispatch_storage_total{mode="legacy", reason!="none"}[10m]))
+                / clamp_min(sum(rate(degenbot_dispatch_storage_total[10m])), 0.001)) > 0.5
+                or vector(0)
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }

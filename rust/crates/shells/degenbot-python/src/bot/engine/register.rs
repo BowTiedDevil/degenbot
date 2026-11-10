@@ -95,8 +95,14 @@ impl PyArbEngine {
         // set once, and the anchor's prefetch joins it so steady-state
         // re-quotes read hook storage warm. A damaged or unwritable store
         // degrades to an in-memory one — a slot cache never fails a boot.
-        let warm_code_cache = degenbot_simulation::WarmCodeCacheInner::shared_with_hook_slots(
+        // `simulation.delta_dispatch` (default OFF) rides the SAME owner: an
+        // operator who opts into the BAL dispatch lane gets one cache carrying
+        // both the hook store and the dispatch config, so the fan-out asks this
+        // session for ready delta storage while the quoter keeps its learned
+        // slots. OFF leaves the shipped owner exactly as it was.
+        let warm_code_cache = warm_code_cache_for(
             degenbot_simulation::sim::evm2::hook_slots::open_production_store(),
+            degenbot_config::holder::config().simulation.delta_dispatch,
         );
         Ok(Self {
             stages,
@@ -318,5 +324,84 @@ impl PyArbEngine {
     /// creation).
     fn session_end_future<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::bot::pump::session_end_future(py, self.session.driver())
+    }
+}
+
+/// The engine session's warm-cache owner: the durable per-hook slot-set store,
+/// plus — exactly when the typed `simulation.delta_dispatch` opt-in is on — the
+/// BAL dispatch config. One owner either way, so the store the black-box quoter
+/// learns and the dispatch lane share the session instead of forking it, and
+/// OFF is the shipped `shared_with_hook_slots` shape unchanged.
+fn warm_code_cache_for(
+    hook_store: Arc<degenbot_simulation::sim::evm2::hook_slots::HookSlotStore>,
+    delta_dispatch: bool,
+) -> Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>> {
+    if delta_dispatch {
+        degenbot_simulation::WarmCodeCacheInner::shared_with_hook_slots_and_delta_dispatch(
+            hook_store,
+            degenbot_simulation::sim::evm2::warm_code_cache::DeltaDispatchConfig::development(),
+        )
+    } else {
+        degenbot_simulation::WarmCodeCacheInner::shared_with_hook_slots(hook_store)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The session owner's construction mapping: `simulation.delta_dispatch`
+    //! (default off) is read once here and decides which warm-cache owner the
+    //! engine installs. OFF keeps the durable hook store alone — the legacy
+    //! memo + prefetch lane, and no BAL request anywhere. ON installs the SAME
+    //! cache with the hook store AND the dispatch opt-in, so the quoter's
+    //! learned slots and the dispatch lane can never land in two owners.
+
+    use super::{warm_code_cache_for, Arc};
+    use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
+    use degenbot_simulation::sim::evm2::hook_slots::HookSlotStore;
+    use degenbot_simulation::sim::evm2::warm_code_cache::DeltaDispatchConfig;
+    use degenbot_simulation::WarmCodeCacheInner;
+
+    fn hook_store() -> Arc<HookSlotStore> {
+        Arc::new(HookSlotStore::in_memory(EVM2_PRODUCTION_SPEC))
+    }
+
+    /// The owner's two facts through ONE guard: whether the durable hook store
+    /// rides the session, and which dispatch opt-in (if any) it carries.
+    fn owner_facts(
+        cache: &Arc<parking_lot::RwLock<WarmCodeCacheInner>>,
+    ) -> (bool, Option<DeltaDispatchConfig>) {
+        // T1-scan-exempt: pure-Rust test seam — nothing here attaches Python,
+        // so no GIL can be held across the guard.
+        let inner = cache.read();
+        (inner.hook_slots().is_some(), inner.delta_dispatch())
+    }
+
+    /// OFF (the default) is the shipped owner: the durable hook store, no
+    /// dispatch config, so the fan-out selects the legacy lane and requests no
+    /// BAL.
+    #[test]
+    fn the_default_owner_keeps_the_hook_store_and_installs_no_opt_in() {
+        let (hook_slots, opt_in) = owner_facts(&warm_code_cache_for(hook_store(), false));
+        assert!(
+            hook_slots,
+            "the ADR-090 hook store rides the session whatever the flag says"
+        );
+        assert_eq!(
+            opt_in, None,
+            "off: the legacy lane, and no BAL request anywhere"
+        );
+    }
+
+    /// ON installs the dispatch opt-in on the SAME owner that carries the hook
+    /// store — one session cache, not a second one beside it.
+    #[test]
+    fn the_enabled_owner_installs_the_opt_in_on_the_same_hook_store_owner() {
+        let (hook_slots, opt_in) = owner_facts(&warm_code_cache_for(hook_store(), true));
+        assert!(hook_slots, "the hook store still rides the enabled session");
+        assert_eq!(
+            opt_in,
+            Some(DeltaDispatchConfig::development()),
+            "on: the dispatch opt-in rides the same owner"
+        );
     }
 }

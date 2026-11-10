@@ -98,6 +98,16 @@ shared instruments.
 
 - Import `docs/grafana/degenbot-overview.json` for the companion dashboard;
   point it at the Prometheus data source scraping the bot endpoint.
+- Dispatch storage lane (BAL delta opt-in): `degenbot.dispatch.storage`
+  (`degenbot_dispatch_storage_total` once Prometheus renders it) carries
+  `mode` (`delta` = a ready BAL delta generation at the fan-out's exact head,
+  `legacy` = the memo + prefetch lane) and `reason` (the closed cold reason
+  set that DegenbotDispatchStorageFallback lists below, or `none` when no
+  fallback happened — which is also every fan-out while the opt-in is off).
+  The "Dispatch storage lane: delta vs legacy fallback" panel in the
+  dashboard's Pump & Pipeline row plots the delta share, the no-fallback
+  legacy share, and the legacy share per cold reason;
+  DegenbotDispatchStorageFallback pages on the sustained cold share.
 - Function-level profiler metrics (hotpath) are a separate scrape job + the
   `docs/grafana/hotpath-profiling.json` dashboard — the enablement and scrape
   recipe is [`HOTPATH.md`](HOTPATH.md).
@@ -124,7 +134,8 @@ second, parallel rules file would double-fire every alert. If a running
 Prometheus still references the retired rules file, remove the entry and reload
 Prometheus at the operator convenience.
 
-Rule inventory (10 rules, 2 groups, 60s evaluation):
+Rule inventory (14 rules, 2 groups; `degenbot-critical` evaluates every
+30s, `degenbot-warning` every 1m):
 
 ### Critical (page immediately - money or liveness at risk)
 
@@ -172,6 +183,15 @@ Rule inventory (10 rules, 2 groups, 60s evaluation):
   that the stage cycle chronically spills past the next header (also visible
   as the dashboard stale-drop-share stat); precedes detached-straggler
   backpressure.
+- **DegenbotDispatchStorageFallback** - more than half of the dispatch
+  fan-outs took the legacy storage lane for a cold reason for 10m:
+  `degenbot_dispatch_storage_total{mode="legacy", reason!="none"}` over the
+  whole fan-out rate > 0.5. The BAL delta opt-in is on and the delta lane is
+  not answering at the head, so candidate execution is paying the legacy memo +
+  prefetch lane. The cold reason label (`unprepared`, `deadline`,
+  `superseded`, `undelivered`, `lineage-refused`, `bal-unreadable`,
+  `settled`, `lineage-unreadable`) names the stage that failed; the dashboard
+  "Dispatch storage lane" panel shows the split over the same 5m.
 
 ### Removed
 

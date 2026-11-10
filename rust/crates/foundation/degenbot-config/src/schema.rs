@@ -642,6 +642,8 @@ crate::config_schema! {
             doc = "Passes per arm for the offline executor A/B probe.";
         pipeline_concurrency [usize] = 8, env = "DEGENBOT_SIM_PIPELINE_CONCURRENCY", def = "8",
             doc = "Sims in flight per block before the pipeline's submitter is held back; 1 reproduces the serial reference (one sim, FIFO submit) for an offline soak. Clamped to >= 1 at the use site.";
+        delta_dispatch [bool] = false, env = "DEGENBOT_DELTA_DISPATCH", def = "false",
+            doc = "The BAL dispatch opt-in (development flag). On, a session's fan-out reads candidate storage through the block-access-list delta generation at its exact head when that head settled ready, and takes the legacy memo + prefetch lane when it did not (the reason lands on `degenbot.dispatch.storage`). Off is the shipped posture: the legacy lane, and no BAL request anywhere. The flag is the whole switch -- there is no retention or readiness knob, and the one session-scoped driver is built at unbounded retention.";
         exit_ignore_buckets [string] = String::new(), env = "DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", def = "(empty)",
             doc = "Owner: the Python driver shell's sim-failure trap. Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot.";
     }
@@ -1433,6 +1435,23 @@ mod tests {
         assert!(
             !BotConfig::default().simulation.inject_executor_code,
             "production default is the deployed executor: injection is opt-in"
+        );
+    }
+
+    /// The BAL dispatch opt-in is declared once, defaults OFF, and carries the
+    /// one typed env name — there is no second spelling for a stray env read to
+    /// hide behind.
+    #[test]
+    fn delta_dispatch_is_declared_off_by_default() {
+        let key = SCHEMA
+            .iter()
+            .find(|k| k.toml_path == "simulation.delta_dispatch");
+        assert!(key.is_some(), "key must be declared exactly once");
+        assert_eq!(key.map(|k| k.env), Some("DEGENBOT_DELTA_DISPATCH"));
+        assert_eq!(key.map(|k| k.default_repr), Some("false"));
+        assert!(
+            !BotConfig::default().simulation.delta_dispatch,
+            "the legacy memo + prefetch lane is the shipped posture: the delta lane is opt-in"
         );
     }
 

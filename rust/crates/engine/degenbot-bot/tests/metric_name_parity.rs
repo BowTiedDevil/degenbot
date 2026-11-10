@@ -46,6 +46,7 @@ const FROZEN_NAMES: &[&str] = &[
     "degenbot.dispatch.gas_used",
     "degenbot.dispatch.gross_profit",
     "degenbot.dispatch.net_profit",
+    "degenbot.dispatch.storage",
     "degenbot.engine.quarantined_pools",
     "degenbot.engine.registered_paths",
     "degenbot.epoch.header_to_publish",

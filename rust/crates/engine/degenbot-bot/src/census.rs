@@ -268,6 +268,17 @@ pub enum CensusEvent {
         negatives_played: u64,
         negative_entries: u64,
     },
+    /// One dispatch fan-out's storage selection: which representation it read
+    /// candidates through (`delta` = a ready BAL delta generation, `legacy` =
+    /// the per-anchor memo + prefetch lane), and the closed-set reason when the
+    /// opt-in's head did not settle ready (`unprepared` | `deadline` |
+    /// `superseded` | `undelivered` | `lineage-refused` | `bal-unreadable` |
+    /// `settled` | `lineage-unreadable`) or `None` when it did (and when the
+    /// opt-in is off).
+    DispatchStorage {
+        mode: &'static str,
+        reason: Option<&'static str>,
+    },
     /// One storage-prefetch lane report: the plan's attribution (`derived`
     /// path-derived pairs + `learned` capture-learned complement), the batch's
     /// member count (`requested` — the slots the memo did not already hold),
