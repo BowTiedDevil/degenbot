@@ -23,14 +23,19 @@
 //! # Correctness leg, and the negative probe
 //!
 //! Before measuring, every run replays with verification on: EVERY identity at
-//! EVERY anchor is compared against an INDEPENDENT COLD READ of the chain —
-//! through the provider's batch primitive, a wire shape the delta's serial
-//! dynamic fallback never uses — and any served value that differs from the
-//! chain's word there is a hard failure (nonzero exit).
-//! `BAL_RETENTION_PLANT_DIVERGENCE=1` arms a one-wei skew on the prototype's
-//! serial storage answers (the `eth_getStorageAt` singles only its dynamic
-//! fallback produces), and the same comparison must CATCH the planted
-//! divergence and exit nonzero, proving the comparison has teeth.
+//! EVERY anchor is compared against an INDEPENDENT COLD READ of the chain,
+//! issued through the provider's batch primitive with the divergence plant
+//! paused, and any served value that differs from the chain's word there is a
+//! hard failure (nonzero exit). `BAL_RETENTION_PLANT_DIVERGENCE=1` arms a
+//! one-wei skew on every storage answer the delta's rounds take, and the same
+//! comparison must CATCH the planted divergence and exit nonzero, proving the
+//! comparison has teeth.
+//!
+//! Dynamic fetches are counted where the read seam reports them: each
+//! generation hub's dispatched storage members, beside the rounds drained and
+//! the duplicate reads coalesced onto them. A wire-shape count would no longer
+//! mean anything — every delta miss, like the verification's own cold read, is
+//! a batch member.
 //!
 //! # Knobs
 //!
@@ -51,6 +56,7 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -128,19 +134,19 @@ fn rss_bytes() -> u64 {
         .map_or(0, |pages| pages.saturating_mul(4096))
 }
 
-/// The benchmark node behind one run: the modeled chain, per-shape request
-/// counters, and the optional planted skew on the serial answers.
+/// The benchmark node behind one run: the modeled chain and the optional
+/// planted skew on its storage answers.
 ///
-/// The two `eth_getStorageAt` shapes are counted apart on purpose: SINGLES are
-/// the delta's dynamic fallback, BATCH MEMBERS are the independent cold reads
-/// — so "dynamic fetches" is a wire fact, and the negative probe can skew one
-/// shape without touching the other.
+/// The delta's dynamic fetches are counted where the seam reports them — the
+/// generation hub's dispatched storage members — never inferred from a wire
+/// shape. The plant skews every storage answer while armed, and the independent
+/// cold-read verification pauses it, so a divergence is planted in the delta's
+/// answers alone and the cold truth stays clean.
 #[derive(Clone)]
 struct BenchChain {
     inner: StubChain,
-    singles: Arc<AtomicU64>,
-    batched: Arc<AtomicU64>,
     armed: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
 }
 
 impl BenchChain {
@@ -150,9 +156,8 @@ impl BenchChain {
                 chain: Arc::new(chain),
                 plant: Arc::new(AtomicBool::new(false)),
             },
-            singles: Arc::new(AtomicU64::new(0)),
-            batched: Arc::new(AtomicU64::new(0)),
             armed: Arc::new(AtomicBool::new(armed)),
+            paused: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -162,18 +167,13 @@ impl BenchChain {
         AlloyProvider::from_provider(Arc::new(root))
     }
 
-    /// Zero the shape counters at a run's start.
-    fn reset(&self) {
-        self.singles.store(0, Ordering::Relaxed);
-        self.batched.store(0, Ordering::Relaxed);
-    }
-
-    /// `(dynamic fetches, cold batch members)` since the last reset.
-    fn counts(&self) -> (u64, u64) {
-        (
-            self.singles.load(Ordering::Relaxed),
-            self.batched.load(Ordering::Relaxed),
-        )
+    /// Run one independent cold read with the divergence plant paused: the
+    /// verification's truth is never skewed by the negative probe.
+    async fn unplanted<T>(&self, read: impl Future<Output = T>) -> T {
+        self.paused.store(true, Ordering::Relaxed);
+        let out = read.await;
+        self.paused.store(false, Ordering::Relaxed);
+        out
     }
 }
 
@@ -187,22 +187,24 @@ impl tower::Service<RequestPacket> for BenchChain {
     }
 
     fn call(&mut self, req: RequestPacket) -> Self::Future {
-        let serial_storage =
-            matches!(&req, RequestPacket::Single(one) if one.method() == "eth_getStorageAt");
-        let batch_storage = matches!(&req, RequestPacket::Batch(many) if many.iter().any(|one| one.method() == "eth_getStorageAt"));
-        if serial_storage {
-            self.singles.fetch_add(1, Ordering::Relaxed);
-        } else if batch_storage {
-            self.batched.fetch_add(1, Ordering::Relaxed);
-        }
+        let storage = match &req {
+            RequestPacket::Single(one) => one.method() == "eth_getStorageAt",
+            RequestPacket::Batch(many) => many.iter().any(|one| one.method() == "eth_getStorageAt"),
+        };
+        let skew =
+            storage && self.armed.load(Ordering::Relaxed) && !self.paused.load(Ordering::Relaxed);
         let mut inner = self.inner.clone();
-        let armed = Arc::clone(&self.armed);
         let pending = inner.call(req);
         Box::pin(async move {
             let mut packet = pending.await?;
-            if armed.load(Ordering::Relaxed) && serial_storage {
-                if let ResponsePacket::Single(response) = &mut packet {
-                    skew_response(response);
+            if skew {
+                match &mut packet {
+                    ResponsePacket::Single(response) => skew_response(response),
+                    ResponsePacket::Batch(responses) => {
+                        for response in responses {
+                            skew_response(response);
+                        }
+                    }
                 }
             }
             Ok(packet)
@@ -234,6 +236,8 @@ fn skew_response(response: &mut Response) {
 struct Sample {
     reads: usize,
     fetches: u64,
+    rounds: u64,
+    coalesced: u64,
     live_max: usize,
     live_final: usize,
     held_final: usize,
@@ -286,7 +290,6 @@ async fn drive(
     let relevance: Vec<Address> = keys.iter().map(|(address, _)| *address).collect();
     let mut sample = Sample::default();
     let mut mismatches = Vec::new();
-    chain.reset();
     let alloc_before = allocated_bytes();
 
     for number in real.first()..=real.last() {
@@ -322,7 +325,7 @@ async fn drive(
                     .expect("the modeled chain answers");
                 sample.reads = sample.reads.saturating_add(1);
                 if verify {
-                    let cold = cold_read(&provider, address, slot, number).await;
+                    let cold = cold_read(chain, &provider, address, slot, number).await;
                     if served != cold {
                         mismatches.push(format!(
                             "block {number} {address}/{slot}: read {served} vs cold {cold}"
@@ -332,8 +335,9 @@ async fn drive(
             }
         }
         if verify {
-            let cold = provider
-                .get_storage_batch_results_at(&key_vec, number)
+            let pending = provider.get_storage_batch_results_at(&key_vec, number);
+            let cold = chain
+                .unplanted(pending)
                 .await
                 .expect("the cold batch answers");
             for (index, &(address, slot)) in key_vec.iter().enumerate() {
@@ -347,14 +351,16 @@ async fn drive(
                 }
             }
         }
+        let stats = hub.read_stats();
+        sample.fetches = sample.fetches.saturating_add(stats.storage_members);
+        sample.rounds = sample.rounds.saturating_add(stats.rounds);
+        sample.coalesced = sample.coalesced.saturating_add(stats.coalesced);
         sample.live_final = hub.live_len();
         sample.held_final = hub.snapshot_len();
     }
 
     sample.alloc_bytes = allocated_bytes().saturating_sub(alloc_before);
     sample.rss_after = rss_bytes();
-    let (fetches, _cold_members) = chain.counts();
-    sample.fetches = fetches;
     (sample, mismatches)
 }
 
@@ -373,11 +379,19 @@ fn synth_read(number: u64, _address: Address, slot: U256) -> bool {
     }
 }
 
-/// One independent cold read of the chain's word at an anchor — the batch
-/// primitive, a wire shape the delta's serial fallback never uses.
-async fn cold_read(provider: &AlloyProvider, address: Address, slot: U256, number: u64) -> U256 {
-    let cold = provider
-        .get_storage_batch_results_at(&[(address, slot)], number)
+/// One independent cold read of the chain's word at an anchor, through the batch
+/// primitive with the divergence plant paused.
+async fn cold_read(
+    chain: &BenchChain,
+    provider: &AlloyProvider,
+    address: Address,
+    slot: U256,
+    number: u64,
+) -> U256 {
+    let slots = [(address, slot)];
+    let pending = provider.get_storage_batch_results_at(&slots, number);
+    let cold = chain
+        .unplanted(pending)
         .await
         .expect("the cold batch answers");
     cold[0].clone().expect("the cold member answers")
@@ -423,7 +437,11 @@ fn report_driver(name: &str, columns: &[(String, Sample)]) {
     };
     let control = columns.first().map(|(_, sample)| sample);
     row("candidate reads", &|s| s.reads.to_string());
-    row("dynamic fetches", &|s| s.fetches.to_string());
+    row("dynamic fetches (hub storage members)", &|s| {
+        s.fetches.to_string()
+    });
+    row("rounds drained", &|s| s.rounds.to_string());
+    row("coalesced duplicate reads", &|s| s.coalesced.to_string());
     row("carried hits (reads - fetches)", &|s| s.hits().to_string());
     row("carried-hit loss vs unbounded", &|s| {
         control.map_or_else(String::new, |c| {

@@ -45,11 +45,35 @@
 //! overwrites whatever `relevance` says; an unknown write seeds only when its
 //! address is relevant and is left unknown otherwise), zero-write lists,
 //! same-anchor idempotence, and cold children following the same new-write
-//! rule. Only settled storage words cross between generations. Accounts,
-//! waiters, pending reads, stats, and EVM overlays keep the existing semantics
-//! untouched — this prototype owns no dispatch, no coalescing, and no
-//! persistent-map/copy-on-write structure; those are separate workstreams.
-//! One retention policy IS prototyped here, opt-in and off by default (below).
+//! rule. Only settled storage words cross between generations. Accounts and
+//! EVM overlays keep the existing semantics untouched, and this prototype owns
+//! no dispatch and no persistent-map/copy-on-write structure; those are
+//! separate workstreams. One retention policy IS prototyped here, opt-in and
+//! off by default (below), and one read seam IS: a chain miss registers with
+//! the generation's own [`ReadHub`], so single-flight and batched rounds are
+//! the production hub's, never a second implementation (below).
+//!
+//! # The read seam: chain hits locally, misses through the hub
+//!
+//! [`DeltaHub::read_storage_handle`] is the candidate read: the generation's
+//! chain answers first ([`ReadOrigin::Snapshot`], no RPC), and anything it
+//! cannot answer — an unknown identity, or an entry the retention policy has
+//! expired — registers with the generation's [`ReadHub`] ([`ReadOrigin::Hub`]).
+//! One hub per generation, minted at that generation's anchor, so duplicate
+//! misses coalesce onto one member, distinct misses share one storage batch per
+//! drained round, and no memoized value is reachable from another anchor.
+//! Accounts read the same hub ([`DeltaHub::read_account`]) and are never
+//! carried.
+//!
+//! A successful round settles its answer into the generation that asked
+//! (`DeltaHub::settle`): the value joins that generation's own map, which
+//! shadows every ancestor and travels into the next generation at seal, and the
+//! candidate use is stamped with the READING generation's block — once per
+//! resolving handle, so a coalesced duplicate cannot extend a window. A refused
+//! member and an abandoned round settle nothing, and the identity is readable
+//! again on the next round. A settle that lands after a child linked the
+//! generation stays in that handle's late map, invisible to the parent and to
+//! every child, because the sealed node is immutable.
 //!
 //! # Idle-block retention (opt-in)
 //!
@@ -91,28 +115,52 @@
 //! and its per-anchor read handle for a [`DeltaHub`]: `for_anchor` and
 //! `advance_bal` keep the signatures and semantics the hub cache taught it
 //! (same [`ReadAnchor`] pinning, same [`CarryOutcome`](super::read_hub::CarryOutcome)
-//! / [`CarryRefusal`](super::read_hub::CarryRefusal) reports), and
-//! [`DeltaHub::read_storage`] is the dynamic read seam — a chain hit answers
-//! on the spot, a miss is the provider's serial slot read at the anchor and
-//! settles into the generation's own map. Retention adds ONE configuration
-//! decision and no new seam: pick [`Retention::IdleBlocks`] with a threshold
-//! ([`DeltaSnapshotCache::with_retention`] / [`DeltaSnapshotCache::with_max_depth_and_retention`])
-//! and every read, write, and compaction keeps its meaning. What a migrating
-//! consumer must decide for itself: reads at one generation coalesce through
-//! the production hub today (single-flight, batched rounds) and this prototype
-//! deliberately does not reimplement that; a production integration would
-//! route the miss through the hub's round machinery rather than a serial
-//! fetch. Two questions are what the probes measure: whether the delta chain
-//! beats a full clone at realistic working-set sizes
+//! / [`CarryRefusal`](super::read_hub::CarryRefusal) reports). Retention adds
+//! ONE configuration decision and no new seam: pick [`Retention::IdleBlocks`]
+//! with a threshold ([`DeltaSnapshotCache::with_retention`] /
+//! [`DeltaSnapshotCache::with_max_depth_and_retention`]) and every read, write,
+//! and compaction keeps its meaning.
+//!
+//! The read side has two entry points, and a consumer picks by who owns the
+//! round:
+//!
+//! - [`DeltaHub::read_storage`] is the sequential convenience: register, drain
+//!   one round, await. Its error type is the hub's
+//!   ([`ReadHubError`](super::read_hub::ReadHubError)), so a refused member and
+//!   an abandoned round are distinguishable, and nothing is settled on either.
+//! - [`DeltaHub::read_storage_handle`] is the scheduler seam: register every
+//!   read, poll the fibers, and [`DeltaHub::drain_round`] when none can
+//!   progress — the same shape as [`ReadHub::read_storage`](super::read_hub::ReadHub::read_storage)
+//!   plus [`ReadHub::drain_round`](super::read_hub::ReadHub::drain_round). The
+//!   recorded-read driver (`examples/shared/session_drive.rs`) drives a delta
+//!   generation and the full-clone control through one lane abstraction, which
+//!   is what makes a round-coalesced replay comparable to the existing legs.
+//!
+//! [`DeltaHub::read_hub`] exposes the generation's hub for a caller that owns
+//! the round coordinator (the driver's [`HubDrain`](super::async_fanout::HubDrain)),
+//! and [`DeltaHub::read_stats`] reports the round counters (rounds, distinct
+//! members, memo hits, coalesced duplicates) the replay's fetch accounting
+//! reads.
+//!
+//! What the probes measure, and what a production integration still owes:
+//! whether the delta chain beats a full clone at realistic working-set sizes
 //! (`just bal-delta-snapshot-probe`, knobs `BAL_DELTA_SIZES`, `BAL_DELTA_REPS`,
 //! `BAL_DELTA_LOOKUPS`, `BAL_DELTA_PLANT_DIVERGENCE`), and which idle-block
-//! threshold (if any) bounds memory without burning the reuse the carry
-//! exists for (`just bal-retention-probe`, knobs `BAL_RETENTION_THRESHOLDS`,
+//! threshold (if any) bounds memory without burning the reuse the carry exists
+//! for (`just bal-retention-probe`, knobs `BAL_RETENTION_THRESHOLDS`,
 //! `BAL_RETENTION_SYNTH_BLOCKS`, `BAL_RETENTION_SYNTH_KEYS`,
 //! `BAL_RETENTION_SYNTH_WAVE`, `BAL_RETENTION_PLANT_DIVERGENCE`). The
-//! representation verdict is in `logs/bal_delta_snapshot_result.md`; the
-//! retention tradeoff and the threshold recommendation for the dispatch
-//! vertical slice are in `logs/bal_retention_result.md`.
+//! round-coalesced scheduler replay (`just bal-delta-rounds-probe`, knobs
+//! `BAL_DELTA_ROUNDS_TRACES`, `BAL_DELTA_ROUNDS_FIXTURES`,
+//! `BAL_DELTA_ROUNDS_STORAGE_US`, `BAL_DELTA_ROUNDS_ACCOUNT_US`,
+//! `BAL_DELTA_ROUNDS_IDLE`, `BAL_DELTA_ROUNDS_PLANT_DIVERGENCE`) adds the
+//! candidate re-read gap distributions and the measured idle-window cost. The
+//! representation verdict is in `logs/bal_delta_snapshot_result.md`, the
+//! retention tradeoff in `logs/bal_retention_result.md`, and the round-coalesced
+//! replay's numbers, retention decision, and GO/NO-GO in
+//! `logs/bal_delta_rounds_result.md`. Production relevance derivation, the
+//! new-head lifecycle, and dispatch integration remain separate workstreams —
+//! the seam here is a scheduler-shaped read, not a dispatch.
 
 use std::collections::{HashMap, HashSet};
 
@@ -120,17 +168,23 @@ use std::sync::Arc;
 
 use std::time::{Duration, Instant};
 
+use std::future::Future;
+
+use std::pin::Pin;
+
+use std::task::{Context, Poll};
+
 use alloy::primitives::{Address, StorageValue, B256, U256};
 
 use parking_lot::Mutex;
 
-use degenbot_core::errors::ProviderResult;
-
-use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 
 use super::bal_prefetch::{decode_bal_seed, BalPlan, BalSkip};
 
-use super::read_hub::{classify_link, CarryOutcome};
+use super::read_hub::{
+    classify_link, CarryOutcome, ReadFuture, ReadHub, ReadHubError, ReadHubStats, RoundReport,
+};
 
 use crate::sim::storage_memo::ReadAnchor;
 
@@ -587,16 +641,22 @@ impl GenState {
 
 /// One anchor generation's snapshot handle (see the module docs).
 ///
-/// Reads resolve the generation's own map before its ancestors and fall back
-/// to the provider for anything the chain does not hold; a settled fallback
-/// joins the generation's own map, so it shadows ancestors and carries to the
-/// next generation exactly like the control's memo.
+/// Reads resolve the generation's own map before its ancestors; a hit is the
+/// whole answer, and a miss registers with this generation's own [`ReadHub`],
+/// so every fetch takes the production hub's single-flight, batched round (see
+/// [`Self::read_storage_handle`]). A settled value joins the generation's own
+/// map, so it shadows ancestors and carries to the next generation exactly like
+/// the control's memo.
 pub struct DeltaHub<'p> {
-    provider: &'p AlloyProvider,
-
     anchor: ReadAnchor,
 
     retention: Retention,
+
+    /// This generation's read lane: the round machinery every chain miss
+    /// registers with, and the account memo candidates share. One hub per
+    /// generation, minted at the generation's own anchor, so no memoized value
+    /// is reachable from another anchor.
+    reads: ReadHub<'p>,
 
     state: Mutex<GenState>,
 }
@@ -613,11 +673,11 @@ impl<'p> DeltaHub<'p> {
         state: GenState,
     ) -> Self {
         Self {
-            provider,
-
             anchor,
 
             retention,
+
+            reads: ReadHub::new(provider, anchor),
 
             state: Mutex::new(state),
         }
@@ -711,57 +771,108 @@ impl<'p> DeltaHub<'p> {
         }
     }
 
-    /// Read one storage word at this generation's anchor — the candidate-read
-    /// seam: whatever it answers stamps the entry's recency with this
-    /// generation's block.
+    /// The generation's read lane: the [`ReadHub`] every chain miss registers
+    /// with and every account read is answered by. A caller that owns the round
+    /// machinery (a scheduler) takes the hub directly and drains it; a caller
+    /// that just wants the value uses [`Self::read_storage`].
+    #[must_use]
+    pub fn read_hub(&self) -> &ReadHub<'p> {
+        &self.reads
+    }
+
+    /// Drain one round of this generation's read lane: every queued miss takes
+    /// one storage batch (and every queued account its own batch), the answers
+    /// settle, and the read handles they belong to resolve. An empty report
+    /// means nothing was queued — another round already owns every pending read.
+    pub async fn drain_round(&self) -> RoundReport {
+        self.reads.drain_round().await
+    }
+
+    /// This generation's cumulative round counters: rounds drained, distinct
+    /// members dispatched, memo hits, and coalesced duplicate reads. The delta's
+    /// fetch economy is visible here, not inferred from a wire shape.
+    #[must_use]
+    pub fn read_stats(&self) -> ReadHubStats {
+        self.reads.stats()
+    }
+
+    /// Register one storage read at this generation's anchor — the candidate-read
+    /// seam a scheduler uses: a chain hit resolves on its first poll without any
+    /// RPC, and a miss registers with this generation's [`ReadHub`] so duplicate
+    /// misses coalesce onto one member and distinct misses share one storage
+    /// batch. Whatever a read answers stamps the entry's recency with this
+    /// generation's block, once the handle resolves.
     ///
-    /// A chain hit answers on the spot; a miss is the provider's serial slot
-    /// read at the anchor, and its answer settles into the generation's own
-    /// map so the next read — here or at any child — is a hit. An entry the
-    /// retention policy has expired is a miss like any other: the fallback
-    /// answers the chain's CURRENT word. The coalescing, waiter, and stats
-    /// semantics stay the production hub's (module docs).
+    /// An entry the retention policy has expired is a miss like any other: its
+    /// round answers the chain's CURRENT word and the entry re-settles with a
+    /// fresh window. Errors never settle: a refused member and an abandoned
+    /// round leave the generation exactly as it was, and the identity is
+    /// readable again.
+    #[must_use = "a delta read is settled by a `drain_round` call, or by the chain"]
+    pub fn read_storage_handle(&self, address: Address, index: U256) -> DeltaRead<'_, 'p> {
+        let key = (address, index);
+        let origin = {
+            let state = self.state.lock();
+            match state.resolved(&key, self.anchor.number, self.retention) {
+                Some(value) => DeltaReadOrigin::Chain(value),
+                None => DeltaReadOrigin::Hub(self.reads.read_storage(address, index)),
+            }
+        };
+        DeltaRead {
+            hub: self,
+            key,
+            origin,
+        }
+    }
+
+    /// Read one storage word at this generation's anchor — the sequential
+    /// caller's convenience over [`Self::read_storage_handle`]: register the
+    /// read, drain one round (the read it just queued, plus anything else
+    /// already waiting), and await the answer.
+    ///
+    /// A chain hit skips the drain entirely. A caller that wants its reads
+    /// coalesced across several fibers registers them all and drains once — see
+    /// [`Self::read_storage_handle`] and [`Self::drain_round`].
     ///
     /// # Errors
     ///
-    /// The dynamic fallback's serial read failed — a refused slot or a
-    /// transport failure — and nothing was settled; a later read retries.
+    /// The round could not answer the read: the member was refused
+    /// ([`ReadHubError::Rpc`]), or the round was abandoned before it settled
+    /// ([`ReadHubError::Abandoned`]). Nothing was settled, so a later read
+    /// retries.
     pub async fn read_storage(
         &self,
         address: Address,
         index: U256,
-    ) -> ProviderResult<StorageValue> {
-        let key = (address, index);
-
-        let now = self.anchor.number;
-
-        {
-            let mut state = self.state.lock();
-
-            if let Some(value) = state.resolved(&key, now, self.retention) {
-                state.touch(key, now);
-
-                return Ok(value);
-            }
+    ) -> Result<StorageValue, ReadHubError> {
+        let read = self.read_storage_handle(address, index);
+        if read.is_chain_hit() {
+            return read.await;
         }
-
-        let fetched = self.fetch_one(address, index).await?;
-
-        let mut state = self.state.lock();
-
-        state.settle(key, fetched, now);
-
-        Ok(fetched)
+        self.reads.drain_round().await;
+        read.await
     }
 
-    /// The dynamic fallback's one serial read, pinned to this anchor.
-    async fn fetch_one(&self, address: Address, index: U256) -> ProviderResult<StorageValue> {
-        let word = self
-            .provider
-            .get_storage_at(&address, index, Some(self.anchor.number))
-            .await?;
+    /// Read one account at this generation's anchor: the generation's [`ReadHub`]
+    /// answers it (balance, nonce, and code in one batch member group), coalesced
+    /// with every other read at the anchor. Accounts are never part of the delta
+    /// — only settled storage words cross generations — so this is the hub's own
+    /// seam, not a second one.
+    pub fn read_account(&self, address: Address) -> ReadFuture<AccountRead> {
+        self.reads.read_account(address)
+    }
 
-        Ok(U256::from_be_bytes(word.0))
+    /// Record one resolved candidate read's use at this generation's block.
+    fn touch(&self, key: Slot) {
+        self.state.lock().touch(key, self.anchor.number);
+    }
+
+    /// Settle one hub answer into this generation's own map, stamping the use
+    /// that came with it. Called once per resolving read handle, so a value two
+    /// handles coalesced onto settles on each handle's poll — the same value, at
+    /// the same generation, with the same stamp.
+    fn settle(&self, key: Slot, value: StorageValue) {
+        self.state.lock().settle(key, value, self.anchor.number);
     }
 
     /// Seal this generation's own map into an immutable node over a base
@@ -810,6 +921,81 @@ impl<'p> DeltaHub<'p> {
         state.sealed = true;
 
         (sealed, compaction)
+    }
+}
+
+/// Which side of the read seam answered one candidate storage read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadOrigin {
+    /// The generation's chain held the entry (its own delta, a seeded write, or
+    /// an ancestor's settled word): answered with no RPC and nothing queued.
+    Snapshot,
+    /// The chain could not answer — unknown, or expired under retention — so the
+    /// read registered with the generation's [`ReadHub`] and a round answers it.
+    Hub,
+}
+
+/// One candidate storage read at a generation: a chain hit's value, or a hub
+/// round's pending answer.
+///
+/// Polling resolves the chain hit (stamping its recency on the spot) or the
+/// hub's answer (settling it into this generation's own map, then stamping
+/// recency). A failed or abandoned round settles nothing.
+#[must_use = "a read is settled by a `drain_round` call, or by the chain"]
+pub struct DeltaRead<'h, 'p> {
+    hub: &'h DeltaHub<'p>,
+    key: Slot,
+    origin: DeltaReadOrigin,
+}
+
+/// The read's answer source: a chain value, or the hub's channel.
+enum DeltaReadOrigin {
+    /// The chain answered at registration.
+    Chain(StorageValue),
+    /// The generation's hub owns the identity; its round answers this handle.
+    Hub(ReadFuture<StorageValue>),
+}
+
+impl DeltaRead<'_, '_> {
+    /// Whether the chain answered this read without any round.
+    #[must_use]
+    pub const fn is_chain_hit(&self) -> bool {
+        matches!(self.origin, DeltaReadOrigin::Chain(_))
+    }
+
+    /// Which side of the seam owns this read's answer.
+    #[must_use]
+    pub const fn origin(&self) -> ReadOrigin {
+        match self.origin {
+            DeltaReadOrigin::Chain(_) => ReadOrigin::Snapshot,
+            DeltaReadOrigin::Hub(_) => ReadOrigin::Hub,
+        }
+    }
+}
+
+impl Future for DeltaRead<'_, '_> {
+    type Output = Result<StorageValue, ReadHubError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        match &mut this.origin {
+            DeltaReadOrigin::Chain(value) => {
+                let value = *value;
+                this.hub.touch(this.key);
+                Poll::Ready(Ok(value))
+            }
+            DeltaReadOrigin::Hub(read) => match Pin::new(read).poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Ok(value)) => {
+                    this.hub.settle(this.key, value);
+                    Poll::Ready(Ok(value))
+                }
+                // A refused member and an abandoned round leave the generation
+                // untouched: the identity stays readable and a later read
+                // retries.
+                Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            },
+        }
     }
 }
 

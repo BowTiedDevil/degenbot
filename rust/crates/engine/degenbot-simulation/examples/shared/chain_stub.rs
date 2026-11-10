@@ -7,8 +7,8 @@
 //! when the test names the values.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -40,6 +40,11 @@ pub struct ChainStub {
     bal_unsupported: Arc<AtomicBool>,
     bal_null: Arc<AtomicBool>,
     values: Arc<Mutex<ChainValues>>,
+    refused: Arc<Mutex<HashSet<(u64, Address, U256)>>>,
+    hold: Arc<AtomicBool>,
+    slow: Arc<AtomicBool>,
+    storage_singles: Arc<AtomicUsize>,
+    storage_batched: Arc<AtomicUsize>,
 }
 
 impl ChainStub {
@@ -72,8 +77,49 @@ impl ChainStub {
         self.bal_null.store(null, Ordering::Relaxed);
     }
 
+    /// Refuse one storage word at one height the way a node that cannot serve
+    /// the slot answers — the member's own failure, not the round's.
+    pub fn refuse_at(&self, height: u64, address: Address, slot: U256) {
+        self.refused.lock().unwrap().insert((height, address, slot));
+    }
+
+    /// Serve a previously refused storage word again — the healed node a
+    /// retried identity reads from.
+    pub fn allow_at(&self, height: u64, address: Address, slot: U256) {
+        self.refused
+            .lock()
+            .unwrap()
+            .remove(&(height, address, slot));
+    }
+
+    /// Hold every request without answering: the round is genuinely in flight
+    /// and only a dropped caller ends it (the abandoned-round path).
+    pub fn set_hold(&self, hold: bool) {
+        self.hold.store(hold, Ordering::Relaxed);
+    }
+
+    /// Answer every request one cooperative yield later, so a round is
+    /// observably in flight across a poll (the in-flight coalescing path).
+    pub fn set_slow(&self, slow: bool) {
+        self.slow.store(slow, Ordering::Relaxed);
+    }
+
     pub fn clear(&self) {
         self.requests.lock().unwrap().clear();
+        self.storage_singles.store(0, Ordering::Relaxed);
+        self.storage_batched.store(0, Ordering::Relaxed);
+    }
+
+    /// Storage reads dispatched as their own single request — the shape a
+    /// serial fallback would produce.
+    pub fn storage_singles(&self) -> usize {
+        self.storage_singles.load(Ordering::Relaxed)
+    }
+
+    /// Storage reads dispatched as batch members — the shape the read hub's
+    /// rounds produce.
+    pub fn storage_batched(&self) -> usize {
+        self.storage_batched.load(Ordering::Relaxed)
     }
 
     /// BAL fetches dispatched.
@@ -161,6 +207,18 @@ impl ChainStub {
         let height = param(req, 2);
         let height =
             u64::from_str_radix(height.trim_start_matches("0x"), 16).expect("the block tag is hex");
+        if self
+            .refused
+            .lock()
+            .unwrap()
+            .contains(&(height, address, slot))
+        {
+            return ResponsePayload::Failure(ErrorPayload {
+                code: -32_000,
+                message: Cow::Borrowed("the node refuses this storage slot"),
+                data: None,
+            });
+        }
         let value = self
             .values
             .lock()
@@ -198,20 +256,39 @@ impl tower::Service<RequestPacket> for ChainStub {
 
     fn call(&mut self, req: RequestPacket) -> Self::Future {
         let stub = self.clone();
+        if stub.hold.load(Ordering::Relaxed) {
+            // A request the node never answers: the caller's round stays in
+            // flight until it is abandoned.
+            return Box::pin(std::future::pending());
+        }
+        let slow = stub.slow.load(Ordering::Relaxed);
         Box::pin(async move {
+            if slow {
+                tokio::task::yield_now().await;
+            }
             match req {
                 RequestPacket::Single(one) => {
                     stub.record(&one);
+                    if one.method() == "eth_getStorageAt" {
+                        stub.storage_singles.fetch_add(1, Ordering::Relaxed);
+                    }
                     Ok(ResponsePacket::Single(stub.answer(&one)))
                 }
-                RequestPacket::Batch(many) => Ok(ResponsePacket::Batch(
-                    many.iter()
-                        .map(|one| {
-                            stub.record(one);
-                            stub.answer(one)
-                        })
-                        .collect(),
-                )),
+                RequestPacket::Batch(many) => {
+                    for one in &many {
+                        if one.method() == "eth_getStorageAt" {
+                            stub.storage_batched.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    Ok(ResponsePacket::Batch(
+                        many.iter()
+                            .map(|one| {
+                                stub.record(one);
+                                stub.answer(one)
+                            })
+                            .collect(),
+                    ))
+                }
             }
         })
     }

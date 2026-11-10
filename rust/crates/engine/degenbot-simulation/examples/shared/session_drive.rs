@@ -15,16 +15,20 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
-use alloy::primitives::{keccak256, B256};
+use alloy::primitives::{keccak256, Address, StorageValue, B256, U256};
 
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 use degenbot_simulation::sim::evm2::async_fanout::{
     DrainOutcome, DrainPolicy, FanoutLimits, HubDrain, MAX_IDLE_ROUNDS,
 };
-use degenbot_simulation::sim::evm2::read_hub::{ReadHub, ReadHubStats};
+use degenbot_simulation::sim::evm2::delta_snapshot::{DeltaHub, DeltaRead, ReadOrigin};
+use degenbot_simulation::sim::evm2::read_hub::{
+    ReadFuture, ReadHub, ReadHubError, ReadHubStats, RoundReport,
+};
 use degenbot_simulation::sim::ReadAnchor;
 
 use crate::recorded_corpus::Recorded;
@@ -51,6 +55,119 @@ pub struct LegFacts {
     pub lanes: usize,
     pub slots: Option<usize>,
     pub digests: Digests,
+    /// Every storage read the leg traced, when its plan asked for the trace.
+    pub reads: Vec<ReadEvent>,
+}
+
+/// One candidate storage read as a leg answered it, when the leg traces reads:
+/// the anchor's block, the identity, the value it answered, and — for a delta
+/// lane — which side of its seam answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReadEvent {
+    /// The anchor block the read was made at.
+    pub block: u64,
+    /// The read identity.
+    pub key: (Address, U256),
+    /// The value the read answered.
+    pub value: StorageValue,
+    /// The delta seam's answer source; `None` for the full-clone lane, whose
+    /// hub does not classify a read's answer path.
+    pub origin: Option<ReadOrigin>,
+}
+
+/// One lane's collected read trace.
+#[derive(Default)]
+pub struct TraceLog {
+    events: Mutex<Vec<ReadEvent>>,
+}
+
+impl TraceLog {
+    /// Record one answered read.
+    pub fn push(&self, event: ReadEvent) {
+        self.events
+            .lock()
+            .expect("a trace log is never poisoned")
+            .push(event);
+    }
+
+    /// Take every traced read, in completion order.
+    pub fn take(&self) -> Vec<ReadEvent> {
+        std::mem::take(&mut *self.events.lock().expect("a trace log is never poisoned"))
+    }
+}
+
+/// One leg's read lane: the production per-anchor [`ReadHub`] (the cold, seed,
+/// and full-clone legs) or a delta generation's hub-backed seam (the delta
+/// leg).
+///
+/// Both answer storage and accounts through the same round machinery, so one
+/// schedule drives either lane unchanged: they differ only in where a storage
+/// answer resolves — the hub's anchor memo, or a delta generation's chain.
+#[derive(Clone, Copy)]
+pub enum ReadLane<'h, 'p> {
+    /// The production per-anchor hub, read directly.
+    Full(&'h ReadHub<'p>),
+    /// A delta generation: chain hits locally, misses through its own hub.
+    Delta(&'h DeltaHub<'p>),
+}
+
+impl<'h, 'p> ReadLane<'h, 'p> {
+    /// The hub this lane's rounds belong to — the lane's drain coordinator and
+    /// its counters both read it.
+    pub fn hub(self) -> &'h ReadHub<'p> {
+        match self {
+            Self::Full(hub) => hub,
+            Self::Delta(hub) => hub.read_hub(),
+        }
+    }
+
+    /// Register one account read on the lane's round.
+    pub fn read_account(self, address: Address) -> ReadFuture<AccountRead> {
+        self.hub().read_account(address)
+    }
+
+    /// Register one storage read on the lane's round.
+    pub fn read_storage(self, address: Address, index: U256) -> StorageRead<'h, 'p> {
+        match self {
+            Self::Full(hub) => StorageRead::Full(hub.read_storage(address, index)),
+            Self::Delta(hub) => StorageRead::Delta(hub.read_storage_handle(address, index)),
+        }
+    }
+
+    /// Drain one round of the lane's machinery.
+    pub async fn drain_round(self) -> RoundReport {
+        self.hub().drain_round().await
+    }
+}
+
+/// One lane's pending storage read, whichever lane registered it.
+pub enum StorageRead<'h, 'p> {
+    /// The production hub's read future.
+    Full(ReadFuture<StorageValue>),
+    /// A delta generation's read handle.
+    Delta(DeltaRead<'h, 'p>),
+}
+
+impl StorageRead<'_, '_> {
+    /// Which side of the lane's seam answered, when the lane classifies it.
+    #[must_use]
+    pub const fn origin(&self) -> Option<ReadOrigin> {
+        match self {
+            Self::Full(_) => None,
+            Self::Delta(read) => Some(read.origin()),
+        }
+    }
+}
+
+impl Future for StorageRead<'_, '_> {
+    type Output = Result<StorageValue, ReadHubError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut() {
+            Self::Full(read) => Pin::new(read).poll(cx),
+            Self::Delta(read) => Pin::new(read).poll(cx),
+        }
+    }
 }
 
 /// The session-wide in-flight gauge: the peak is a real temporal peak across
@@ -79,26 +196,38 @@ impl Gauge {
 pub type WalkFuture<'h> = Pin<Box<dyn Future<Output = Result<B256, String>> + 'h>>;
 
 /// One recorded candidate's read walk on one fiber: every read registers
-/// against the hub and parks until a round settles it, then the recorded
-/// execution is spent in the slot and recorded to the ledger.
+/// against the lane and parks until a round settles it, then the recorded
+/// execution is spent in the slot and recorded to the ledger. A traced leg
+/// records each answered storage read's block, identity, and — for a delta
+/// lane — its answer source.
 pub fn walk_fiber<'h>(
-    hub: &'h ReadHub<'_>,
+    lane: ReadLane<'h, '_>,
     row: &'h Recorded,
     ledger: &'h WallLedger,
+    trace: Option<&'h TraceLog>,
 ) -> WalkFuture<'h> {
     Box::pin(async move {
         let mut material: Vec<u8> = Vec::new();
         for (address, slots) in &row.reads {
-            let read = hub
+            let read = lane
                 .read_account(*address)
                 .await
                 .map_err(|error| format!("hub account read of {address}: {error}"))?;
             extend_account(&mut material, &read);
             for slot in slots {
-                let value = hub
-                    .read_storage(*address, *slot)
+                let pending = lane.read_storage(*address, *slot);
+                let origin = trace.and(pending.origin());
+                let value = pending
                     .await
                     .map_err(|error| format!("hub storage read of {address}/{slot}: {error}"))?;
+                if let Some(trace) = trace {
+                    trace.push(ReadEvent {
+                        block: row.block,
+                        key: (*address, *slot),
+                        value,
+                        origin,
+                    });
+                }
                 material.extend_from_slice(&value.to_be_bytes::<32>());
             }
         }
@@ -108,10 +237,10 @@ pub fn walk_fiber<'h>(
     })
 }
 
-/// Drain one round of a leg-owned hub and charge its modeled round trip.
+/// Drain one round of a leg-owned lane and charge its modeled round trip.
 /// `false` when nothing was queued.
-async fn settle(hub: &ReadHub<'_>, node: Node, ledger: &WallLedger) -> bool {
-    let report = hub.drain_round().await;
+async fn settle(lane: ReadLane<'_, '_>, node: Node, ledger: &WallLedger) -> bool {
+    let report = lane.drain_round().await;
     if report.is_empty() {
         return false;
     }
@@ -121,6 +250,33 @@ async fn settle(hub: &ReadHub<'_>, node: Node, ledger: &WallLedger) -> bool {
         ledger,
     );
     true
+}
+
+/// How much per-lane tracing a leg keeps: nothing, the periodic progress
+/// lines, or that plus the per-read trace the replay analyses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaneTrace {
+    /// No per-lane tracing.
+    Off,
+    /// The periodic lane progress lines.
+    Progress,
+    /// The progress lines plus every answered storage read.
+    Reads,
+}
+
+impl LaneTrace {
+    /// Whether the leg prints its periodic lane progress.
+    #[must_use]
+    const fn progress(self) -> bool {
+        matches!(self, Self::Progress)
+    }
+
+    /// Whether the leg records every answered storage read into
+    /// [`LegFacts::reads`].
+    #[must_use]
+    const fn reads(self) -> bool {
+        matches!(self, Self::Reads)
+    }
 }
 
 /// How a leg schedules its candidates.
@@ -134,8 +290,8 @@ pub struct LanePlan {
     /// The drain ownership the lanes take over a shared hub. The per-worker-hub
     /// legs own their rounds outright and ignore it.
     pub policy: DrainPolicy,
-    /// The lane progress trace.
-    pub debug: bool,
+    /// The lane's tracing level.
+    pub trace: LaneTrace,
 }
 
 /// One lane's inputs: its plan, its rows, and the read lane it shares.
@@ -145,10 +301,11 @@ struct LaneRun<'r, 'p> {
     rows: &'r [Recorded],
     node: Node,
     provider: &'p AlloyProvider,
-    shared: Option<&'r ReadHub<'p>>,
+    shared: Option<ReadLane<'r, 'p>>,
     drain: Option<&'r HubDrain<'r, 'p>>,
     gauge: &'r Gauge,
     ledger: &'r WallLedger,
+    trace: Option<&'r TraceLog>,
 }
 
 struct LaneOutcome {
@@ -159,7 +316,7 @@ struct LaneOutcome {
 /// Settle one round on the leg's read lane and report what it did — through the
 /// scheduler's own drain coordinator for a shared hub, or the leg-owned hub's
 /// own round for a per-worker-hub leg.
-async fn settle_lane_round(run: &LaneRun<'_, '_>, hub: &ReadHub<'_>) -> DrainOutcome {
+async fn settle_lane_round(run: &LaneRun<'_, '_>, lane: ReadLane<'_, '_>) -> DrainOutcome {
     match run.drain {
         Some(drain) => {
             let node = run.node;
@@ -175,7 +332,7 @@ async fn settle_lane_round(run: &LaneRun<'_, '_>, hub: &ReadHub<'_>) -> DrainOut
                 .await
         }
         None => {
-            if settle(hub, run.node, run.ledger).await {
+            if settle(lane, run.node, run.ledger).await {
                 DrainOutcome::Carried
             } else {
                 DrainOutcome::Idle
@@ -200,9 +357,9 @@ async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome,
             ReadAnchor::at(run.rows.first().map_or(0, |r| r.block)),
         )
     });
-    let hub: &ReadHub<'_> = run
+    let hub: ReadLane<'_, '_> = run
         .shared
-        .unwrap_or_else(|| local.as_ref().expect("a per-worker lane owns its hub"));
+        .unwrap_or_else(|| ReadLane::Full(local.as_ref().expect("a per-worker lane owns its hub")));
     // A no-op waker: this driver polls every parked fiber on every pass and
     // drains a round whenever the pass neither completed nor admitted anything,
     // so it never needs the wake hint. (A counting waker is unusable here:
@@ -215,7 +372,7 @@ async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome,
     let mut digests = Digests::new();
     let mut idle_rounds = 0usize;
     let mut passes = 0u64;
-    let debug = run.plan.debug;
+    let debug = run.plan.trace.progress();
     while !queue.is_empty() || !active.is_empty() {
         passes += 1;
         if debug && passes % 200 == 1 {
@@ -230,7 +387,10 @@ async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome,
             let Some(index) = queue.pop_front() else {
                 break;
             };
-            active.push((index, walk_fiber(hub, &run.rows[index], run.ledger)));
+            active.push((
+                index,
+                walk_fiber(hub, &run.rows[index], run.ledger, run.trace),
+            ));
             run.gauge.admitted();
         }
         let mut ready: Vec<(usize, usize, B256)> = Vec::new();
@@ -249,14 +409,14 @@ async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome,
             digests.insert((run.rows[index].block, run.base + index), digest);
         }
         if debug && passes % 200 == 1 {
-            let stats = hub.stats();
+            let stats = hub.hub().stats();
             println!(
                 "    debug: lane {worker} pass {passes} later completed={completed} \
                  rounds={} memo={} coalesced={} slots={}",
                 stats.rounds,
                 stats.memo_hits,
                 stats.coalesced,
-                hub.memoized_slots()
+                hub.hub().memoized_slots()
             );
         }
         if completed {
@@ -320,7 +480,7 @@ pub async fn drive_lanes(
     base: usize,
     provider: &AlloyProvider,
     node: Node,
-    external: Option<&ReadHub<'_>>,
+    external: Option<ReadLane<'_, '_>>,
     ledger: &WallLedger,
 ) -> Result<LegFacts, String> {
     let limits = plan.limits;
@@ -331,8 +491,10 @@ pub async fn drive_lanes(
     // hub is either the caller's (a seeded or carried snapshot) or a fresh one.
     let owned = (external.is_none() && plan.shared_hub)
         .then(|| ReadHub::new(provider, ReadAnchor::at(block)));
-    let shared = external.or(owned.as_ref());
-    let drain = shared.map(|hub| HubDrain::new(hub, plan.policy));
+    let shared = external.or(owned.as_ref().map(ReadLane::Full));
+    let drain = shared.map(|lane| HubDrain::new(lane.hub(), plan.policy));
+
+    let trace = plan.trace.reads().then(TraceLog::default);
     let run = LaneRun {
         plan,
         base,
@@ -341,6 +503,8 @@ pub async fn drive_lanes(
         provider,
         shared,
         drain: drain.as_ref(),
+
+        trace: trace.as_ref(),
         gauge: &gauge,
         ledger,
     };
@@ -379,10 +543,12 @@ pub async fn drive_lanes(
             stats = sum_stats(stats, lane_stats);
         }
     }
-    if let Some(hub) = shared {
+    if let Some(lane) = shared {
         // A shared hub's counters are already session-wide: read them once.
-        stats = hub.stats();
+        stats = lane.hub().stats();
     }
+    let reads = trace.map_or_else(Vec::new, |trace| trace.take());
+
     Ok(LegFacts {
         label,
         wall,
@@ -395,5 +561,6 @@ pub async fn drive_lanes(
         lanes,
         slots: plan.bounded.then_some(limits.slots()),
         digests,
+        reads,
     })
 }

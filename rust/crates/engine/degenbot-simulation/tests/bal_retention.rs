@@ -30,6 +30,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 #[path = "../examples/shared/chain_stub.rs"]
+#[expect(dead_code)]
 mod chain_stub;
 #[path = "../examples/shared/modeled_chain.rs"]
 #[expect(dead_code)]

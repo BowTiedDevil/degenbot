@@ -148,6 +148,7 @@ mod real_coverage;
 #[expect(dead_code)]
 mod recorded_corpus;
 #[path = "shared/session_drive.rs"]
+#[expect(dead_code)]
 mod session_drive;
 #[path = "shared/wall_ledger.rs"]
 #[expect(dead_code)]
@@ -165,7 +166,7 @@ use recorded_corpus::{
     read_call_counts, segments_by_density, shape, universe, AnchorProfile, CorpusShape,
     DensityRegime, Recorded, Segment, DEFAULT_TRACE,
 };
-use session_drive::{drive_lanes, LanePlan, LegFacts};
+use session_drive::{drive_lanes, LanePlan, LaneTrace, LegFacts, ReadLane};
 use wall_ledger::{
     completion_stats, reconcile, CompletionStats, Digests, Node, WallBucket, WallLedger, WallReport,
 };
@@ -607,7 +608,11 @@ fn leg_plan(config: &Config) -> LanePlan {
         shared_hub: true,
         bounded: true,
         policy: DrainPolicy::SessionWide,
-        debug: debug_enabled(),
+        trace: if debug_enabled() {
+            LaneTrace::Progress
+        } else {
+            LaneTrace::Off
+        },
     }
 }
 
@@ -634,7 +639,7 @@ async fn drive_cold(
             0,
             provider,
             node,
-            Some(&hub),
+            Some(ReadLane::Full(&hub)),
             &ledger,
         )
         .await?;
@@ -699,7 +704,7 @@ async fn drive_seed(
             0,
             provider,
             node,
-            Some(&hub),
+            Some(ReadLane::Full(&hub)),
             &ledger,
         )
         .await?;
@@ -826,7 +831,7 @@ async fn drive_carry(
                 0,
                 provider,
                 node,
-                Some(&hub),
+                Some(ReadLane::Full(hub.as_ref())),
                 &ledger,
             )
             .await?;

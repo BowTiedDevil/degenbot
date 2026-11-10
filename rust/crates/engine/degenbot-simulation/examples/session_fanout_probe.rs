@@ -123,6 +123,7 @@ mod real_coverage;
 #[expect(dead_code)]
 mod recorded_corpus;
 #[path = "shared/session_drive.rs"]
+#[expect(dead_code)]
 mod session_drive;
 #[path = "shared/wall_ledger.rs"]
 #[expect(dead_code)]
@@ -131,7 +132,7 @@ mod wall_ledger;
 use modeled_chain::{ChainState, StubChain};
 use probe_report::identity_gate;
 use recorded_corpus::{group_by_anchor, load_rows, Recorded, DEFAULT_TRACE};
-use session_drive::{drive_lanes, extend_account, LanePlan, LegFacts};
+use session_drive::{drive_lanes, extend_account, LanePlan, LaneTrace, LegFacts};
 use wall_ledger::{Digests, Node, ReadKind, WallLedger};
 
 // ── Configuration ─────────────────────────────────────────────────────────
@@ -161,6 +162,15 @@ fn env_count(name: &str, fallback: usize) -> usize {
 }
 
 /// Whether `SESSION_FANOUT_DEBUG` asks for the lane progress trace.
+/// The lane tracing level a leg's `debug` switch selects.
+fn lane_trace(debug: bool) -> LaneTrace {
+    if debug {
+        LaneTrace::Progress
+    } else {
+        LaneTrace::Off
+    }
+}
+
 fn debug_enabled() -> bool {
     std::env::var("SESSION_FANOUT_DEBUG").is_ok()
 }
@@ -307,6 +317,7 @@ async fn drive_serial(
         lanes: 1,
         slots: None,
         digests,
+        reads: Vec::new(),
     })
 }
 
@@ -338,7 +349,7 @@ async fn drive_fanout(
             shared_hub: false,
             bounded: false,
             policy: DrainPolicy::PerLane,
-            debug,
+            trace: lane_trace(debug),
         },
         rows,
         0,
@@ -355,7 +366,7 @@ async fn drive_fanout(
             shared_hub: true,
             bounded: false,
             policy: DrainPolicy::SessionWide,
-            debug,
+            trace: lane_trace(debug),
         },
         rows,
         0,
@@ -378,7 +389,7 @@ async fn drive_fanout(
             shared_hub: true,
             bounded: true,
             policy: DrainPolicy::SessionWide,
-            debug,
+            trace: lane_trace(debug),
         },
         rows,
         0,
@@ -401,7 +412,7 @@ async fn drive_fanout(
             shared_hub: true,
             bounded: true,
             policy: DrainPolicy::PerLane,
-            debug,
+            trace: lane_trace(debug),
         },
         rows,
         0,
@@ -524,7 +535,7 @@ async fn sensitivity(
             shared_hub: true,
             bounded: true,
             policy: DrainPolicy::SessionWide,
-            debug: debug_enabled(),
+            trace: lane_trace(debug_enabled()),
         };
         let facts = drive_lanes("session", plan, rows, 0, provider, node, None, &ledger).await?;
         if slots == 1 {
@@ -560,6 +571,7 @@ fn merge_legs(label: &'static str, facts: Vec<LegFacts>, lanes: usize, slots: us
         lanes,
         slots: Some(slots),
         digests: Digests::new(),
+        reads: Vec::new(),
     };
     for one in facts {
         merged.wall = merged.wall.max(one.wall);
@@ -592,7 +604,7 @@ async fn multi_fan_out(
         shared_hub: true,
         bounded: true,
         policy: DrainPolicy::SessionWide,
-        debug: debug_enabled(),
+        trace: lane_trace(debug_enabled()),
     };
     println!(
         "\nmulti-fan-out submission (anchor {block}: {} candidates as {} fan-outs of <= {chunk}):",

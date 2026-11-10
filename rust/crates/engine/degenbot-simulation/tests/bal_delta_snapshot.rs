@@ -31,6 +31,7 @@ use std::sync::Arc;
 // reads the scripted chain stub, the modeled list encoder, and the fixture
 // loader.
 #[path = "../examples/shared/chain_stub.rs"]
+#[expect(dead_code)]
 mod chain_stub;
 #[path = "../examples/shared/delta_parity.rs"]
 mod delta_parity;

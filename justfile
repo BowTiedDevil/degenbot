@@ -578,6 +578,29 @@ bal-retention-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example bal_retention_probe -- {{ ARGS }}
 
 
+
+
+
+# The round-coalesced delta read replay: both committed recorded scheduler
+# corpora (`/tmp/fanout_trace.log` and `/tmp/bal_broader_trace.log`, the same
+# `fanout-trace` streams the wall-ceiling legs replay) driven through the
+# full-clone control and the delta chain whose storage misses take the
+# production read hub's rounds, at `BAL_DELTA_ROUNDS_STORAGE_US` /
+# `BAL_DELTA_ROUNDS_ACCOUNT_US` (default both 200/400 and 700/1200 price
+# points) under `BAL_DELTA_ROUNDS_W` / `BAL_DELTA_ROUNDS_F` (default 2/8). The
+# third leg measures `Retention::IdleBlocks(BAL_DELTA_ROUNDS_IDLE)` (default 8)
+# against the observed candidate re-read gap distribution instead of assuming
+# it. The read-digest gate must agree across all three legs, and
+# `BAL_DELTA_ROUNDS_PLANT_DIVERGENCE=1` is the negative probe: a one-wei skew
+# armed on the delta legs' storage answers that the same gate must catch. Both
+# traces are required; `BAL_DELTA_ROUNDS_TRACES` / `BAL_DELTA_ROUNDS_FIXTURES`
+# relocate the corpora and their real-coverage captures. NOT modeled: dispatch,
+# production relevance derivation, EVM verdicts. Measurements:
+# `logs/bal_delta_rounds_result.md`.
+bal-delta-rounds-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example bal_delta_rounds_probe -- {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash

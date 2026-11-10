@@ -24,10 +24,11 @@
 //! (`tests/fixtures/bal_real_coverage.json`) replays through BOTH
 //! representations via [`delta_parity`]; any value or report mismatch is a
 //! hard failure (nonzero exit). `BAL_DELTA_PLANT_DIVERGENCE=1` arms a one-wei
-//! skew on the prototype's serial storage answers (the single
-//! `eth_getStorageAt` shape only its dynamic fallback uses — the control reads
-//! storage in batches), and the same replay must CATCH the planted divergence
-//! and exit nonzero, proving the comparison has teeth.
+//! skew on the prototype's storage answers — the ONE-member storage packet its
+//! sequential read seam issues (register, drain, await), a shape the control's
+//! rounds never produce because they batch a whole anchor's reads — and the
+//! same replay must CATCH the planted divergence and exit nonzero, proving the
+//! comparison has teeth.
 //!
 //! # Knobs
 //!
@@ -215,8 +216,10 @@ impl tower::Service<RequestPacket> for BenchStub {
     }
 }
 
-/// A transport wrapper that skews the prototype's serial storage answers by
-/// one wei when armed — the planted divergence the negative probe must catch.
+/// A transport wrapper that skews the prototype's storage answers by one wei
+/// when armed — the planted divergence the negative probe must catch. Only the
+/// one-member storage packets the prototype's sequential read seam issues are
+/// skewed; the control's rounds carry a whole anchor's reads in one batch.
 /// The control reads storage in JSON-RPC batches, so only the prototype's
 /// serial fallback is ever skewed.
 #[derive(Clone)]
@@ -243,16 +246,23 @@ impl tower::Service<RequestPacket> for SkewChain {
     }
 
     fn call(&mut self, req: RequestPacket) -> Self::Future {
-        let serial_storage =
-            matches!(&req, RequestPacket::Single(one) if one.method() == "eth_getStorageAt");
+        let sole_storage = match &req {
+            RequestPacket::Single(one) => one.method() == "eth_getStorageAt",
+            RequestPacket::Batch(many) => many.len() == 1 && many[0].method() == "eth_getStorageAt",
+        };
         let mut inner = self.inner.clone();
         let armed = Arc::clone(&self.armed);
         let pending = inner.call(req);
         Box::pin(async move {
             let mut packet = pending.await?;
-            if armed.load(Ordering::Relaxed) && serial_storage {
-                if let ResponsePacket::Single(response) = &mut packet {
-                    skew_response(response);
+            if armed.load(Ordering::Relaxed) && sole_storage {
+                match &mut packet {
+                    ResponsePacket::Single(response) => skew_response(response),
+                    ResponsePacket::Batch(responses) => {
+                        for response in responses {
+                            skew_response(response);
+                        }
+                    }
                 }
             }
             Ok(packet)
