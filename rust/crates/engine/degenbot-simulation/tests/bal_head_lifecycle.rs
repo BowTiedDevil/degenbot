@@ -1,0 +1,1431 @@
+//! Behavior pins for the asynchronous canonical-head lifecycle of the BAL delta
+//! snapshot (`degenbot_simulation::sim::evm2::delta_snapshot`): a head's BAL is
+//! prepared off the caller's critical path, applied only to the exact-hash head
+//! whose lineage it was prepared for, and a caller that arrives before the apply
+//! lands reads a cold generation with the reason reported.
+//!
+//! Every test name states the behavior it pins. The scripted chain stub answers
+//! one storage word per request and one raw list per exact block hash, so a
+//! dispatched member count is exactly what took the dynamic path.
+
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "the stub chain and its assertions fail loudly on a broken fixture"
+)]
+
+use alloy::primitives::{Address, B256, U256};
+use degenbot_simulation::sim::evm2::bal_prefetch::BalSkip;
+use degenbot_simulation::sim::evm2::delta_snapshot::{
+    BalHeadDriver, DeltaHub, DeltaReport, DeltaSnapshotCache, HeadCold, HeadOutcome, HeadReadiness,
+    Retention, DEFAULT_MAX_DEPTH,
+};
+use degenbot_simulation::sim::evm2::read_hub::{
+    CarryOutcome, CarryRefusal, PreparedBal, ReadHubCache,
+};
+use degenbot_simulation::sim::ReadAnchor;
+use std::collections::BTreeSet;
+use std::future::Future;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::task::{Context, Waker};
+use std::time::Duration;
+
+#[path = "../examples/shared/chain_stub.rs"]
+#[expect(dead_code)]
+mod chain_stub;
+#[path = "../examples/shared/delta_parity.rs"]
+#[expect(dead_code)]
+mod delta_parity;
+#[path = "../examples/shared/modeled_chain.rs"]
+#[expect(dead_code)]
+mod modeled_chain;
+#[path = "../examples/shared/real_coverage.rs"]
+#[expect(dead_code)]
+mod real_coverage;
+
+use chain_stub::ChainStub;
+use delta_parity::{real_keys, real_parity_blocks, ParityBlock};
+use modeled_chain::{bal_bytes, block_hash, ChainState, Coverage, Key, StubChain};
+use real_coverage::RealCoverage;
+
+/// The anchor height every test advances at, unless the test is about lineage.
+const HEIGHT: u64 = 100;
+
+/// A readiness deadline no test ever reaches: the cold path a caller takes is
+/// then only ever the unprepared one, never the deadline fallback.
+const PATIENT: Duration = Duration::from_secs(3600);
+
+/// An address distinct from the write fixtures' account.
+fn address(tag: u8) -> Address {
+    Address::new([tag; 20])
+}
+
+/// An exact-hash anchor.
+fn identified(number: u64, hash: B256) -> ReadAnchor {
+    ReadAnchor::identified(number, hash)
+}
+
+/// A hash no fixture links to, for the parent of a session's first head.
+fn genesis() -> B256 {
+    B256::new([0x99; 32])
+}
+
+/// The delta control's report and the lifecycle's report agree on everything but
+/// timing: the same transition, the same writes, the same retention counts, and
+/// the same compaction shape.
+fn assert_reports_agree(control: &DeltaReport, lifecycle: &DeltaReport) {
+    assert_eq!(
+        control.outcome, lifecycle.outcome,
+        "the same transition happened"
+    );
+    assert_eq!(control.writes, lifecycle.writes, "the same writes applied");
+    assert_eq!(
+        control.writes_overwritten, lifecycle.writes_overwritten,
+        "the same overwrite count"
+    );
+    assert_eq!(
+        control.writes_skipped, lifecycle.writes_skipped,
+        "the same skip count"
+    );
+    match (&control.compaction, &lifecycle.compaction) {
+        (None, None) => {}
+        (Some(left), Some(right)) => {
+            assert_eq!(left.nodes_merged, right.nodes_merged, "the same fold");
+            assert_eq!(left.entries, right.entries, "the same retained entries");
+            assert_eq!(left.dropped, right.dropped, "the same dropped entries");
+        }
+        (left, right) => panic!("compaction disagreed: {left:?} vs {right:?}"),
+    }
+}
+
+/// The control's generation and the lifecycle's hold the same entries and answer
+/// them alike — the loaded fixtures' write, the carried parent word, the relevant
+/// seed, and the identity neither representation knows.
+fn assert_same_snapshot(control: &DeltaHub<'_>, lifecycle: &DeltaHub<'_>) {
+    assert_eq!(
+        control.snapshot_len(),
+        lifecycle.snapshot_len(),
+        "the same live entries"
+    );
+    for (test_address, slot, expected) in [
+        (address(0x11), 1u64, 5u64),
+        (address(0x11), 2, 2),
+        (address(0x22), 9, 7),
+        (address(0x33), 4, 0),
+    ] {
+        let control_value = control.snapshot_value(test_address, U256::from(slot));
+        assert_eq!(
+            control_value,
+            lifecycle.snapshot_value(test_address, U256::from(slot)),
+            "the same answer for {test_address}/{slot}"
+        );
+        let expected = if expected == 0 {
+            None
+        } else {
+            Some(U256::from(expected))
+        };
+        assert_eq!(control_value, expected, "the expected answer at {slot}");
+    }
+}
+
+/// The settled report of one successful apply.
+fn settled(outcome: &HeadOutcome) -> Arc<DeltaReport> {
+    match outcome {
+        HeadOutcome::Settled(report) => Arc::clone(report),
+        other => panic!("expected a settled head, got {other:?}"),
+    }
+}
+
+/// A prepared list applies to its exact-hash head with the transition the
+/// synchronous control performs: the same lineage decision, the same writes
+/// under the same relevance rule, the same carried values, and the same
+/// compaction shape — and the apply itself fetches nothing.
+#[tokio::test]
+async fn applying_a_prepared_list_matches_the_synchronous_advance_item_for_item() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    stub.serve_at(HEIGHT, address(0x11), U256::from(2u64), 2);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(
+        child_hash,
+        bal_bytes(&[
+            (address(0x11), U256::from(1u64), U256::from(5u64)),
+            (address(0x22), U256::from(9u64), U256::from(7u64)),
+            (address(0x33), U256::from(4u64), U256::from(8u64)),
+        ]),
+    );
+    let relevance = [address(0x22)];
+
+    // The control: the synchronous advance over a parent generation that settled
+    // two words dynamically.
+    let control = DeltaSnapshotCache::new(&provider);
+    let control_parent = control.for_anchor(identified(HEIGHT, parent_hash));
+    for slot in [1u64, 2] {
+        control_parent
+            .read_storage(address(0x11), U256::from(slot))
+            .await
+            .expect("the stub answers");
+    }
+    stub.clear();
+    let (control_child, control_report) = control
+        .advance_bal(identified(HEIGHT + 1, child_hash), parent_hash, &relevance)
+        .await;
+    assert_eq!(
+        stub.bal_requests(),
+        1,
+        "the control fetched the child list once"
+    );
+
+    // The lifecycle: the same parent state reached through a delivered head, then
+    // the child's BAL prepared ahead of the head that will use it.
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    let parent_hub = driver.snapshot(identified(HEIGHT, parent_hash)).hub;
+    for slot in [1u64, 2] {
+        parent_hub
+            .read_storage(address(0x11), U256::from(slot))
+            .await
+            .expect("the stub answers");
+    }
+    stub.clear();
+
+    let child_ticket = driver.deliver(
+        identified(HEIGHT + 1, child_hash),
+        parent_hash,
+        relevance.to_vec(),
+    );
+    let prepared = driver.prepare(child_ticket).await;
+    assert!(prepared.is_decoded(), "the child list decoded");
+    assert_eq!(prepared.anchor(), identified(HEIGHT + 1, child_hash));
+    assert_eq!(
+        stub.bal_requests(),
+        1,
+        "the prepared phase fetched the list once"
+    );
+    let lifecycle_report = settled(&driver.apply(child_ticket, &prepared));
+    assert_eq!(stub.bal_requests(), 1, "the apply fetched nothing");
+
+    assert_reports_agree(&control_report, &lifecycle_report);
+    assert_eq!(
+        lifecycle_report.outcome,
+        CarryOutcome::Carried { carried_values: 2 },
+        "the parent chain carried"
+    );
+    assert_eq!(
+        lifecycle_report.bal_latency,
+        prepared.latency(),
+        "the report attributes the prepared cost"
+    );
+
+    let lifecycle_child = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    assert_same_snapshot(&control_child, &lifecycle_child);
+    assert_eq!(
+        driver
+            .snapshot(identified(HEIGHT + 1, child_hash))
+            .readiness,
+        HeadReadiness::Ready,
+        "the settled head is ready"
+    );
+}
+
+/// A delivered head serves nothing carried until its own BAL applies: callers at
+/// that head read a cold generation sharing one hub, the unwritten identity is
+/// answered dynamically, and only the apply makes the parent chain visible.
+#[tokio::test]
+async fn a_delivered_head_serves_the_cold_path_until_its_bal_applies() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(2u64), 9);
+    stub.serve_at(HEIGHT + 1, address(0x11), U256::from(3u64), 77);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    driver
+        .snapshot(identified(HEIGHT, parent_hash))
+        .hub
+        .read_storage(address(0x11), U256::from(2u64))
+        .await
+        .expect("the stub answers");
+    stub.clear();
+
+    let child_ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    assert_eq!(stub.bal_requests(), 0, "a delivery fetches nothing");
+
+    let view = driver.snapshot(identified(HEIGHT + 1, child_hash));
+    assert_eq!(
+        view.readiness,
+        HeadReadiness::Cold(HeadCold::Unprepared),
+        "an unprepared head reports the cold path"
+    );
+    assert_eq!(
+        view.hub.snapshot_value(address(0x11), U256::from(2u64)),
+        None,
+        "the parent's settled word is withheld at the unprepared head"
+    );
+    assert_eq!(view.hub.snapshot_len(), 0, "no value is carried yet");
+    assert!(
+        Arc::ptr_eq(
+            &view.hub,
+            &driver.snapshot(identified(HEIGHT + 1, child_hash)).hub
+        ),
+        "every caller at the head shares one cold generation"
+    );
+    let fresh = view
+        .hub
+        .read_storage(address(0x11), U256::from(3u64))
+        .await
+        .expect("the stub answers");
+    assert_eq!(fresh, U256::from(77u64), "the dynamic path answers");
+
+    let prepared = driver.prepare(child_ticket).await;
+    settled(&driver.apply(child_ticket, &prepared));
+    let view = driver.snapshot(identified(HEIGHT + 1, child_hash));
+    assert_eq!(view.readiness, HeadReadiness::Ready);
+    assert_eq!(
+        view.hub.snapshot_value(address(0x11), U256::from(2u64)),
+        Some(U256::from(9u64)),
+        "the settled head carries the parent's word"
+    );
+    assert_eq!(
+        driver.snapshot(ReadAnchor::at(HEIGHT + 5)).readiness,
+        HeadReadiness::Cold(HeadCold::Undelivered),
+        "a head never delivered reports itself"
+    );
+}
+
+/// A prepared list applies only to the exact header it was prepared for: a list
+/// fetched at another hash is discarded, installs nothing, and leaves the head
+/// free to settle with its own list.
+#[tokio::test]
+async fn a_prepared_list_applies_only_to_the_head_it_was_prepared_for() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    let other_hash = B256::new([0xcc; 32]);
+    stub.serve_bal_at(
+        other_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(7u64))]),
+    );
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    driver
+        .snapshot(identified(HEIGHT, parent_hash))
+        .hub
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+
+    let child_ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    let foreign = PreparedBal::prepare(&provider, identified(HEIGHT + 1, other_hash)).await;
+    assert_eq!(
+        driver.apply(child_ticket, &foreign),
+        HeadOutcome::Foreign {
+            prepared: identified(HEIGHT + 1, other_hash),
+            head: identified(HEIGHT + 1, child_hash),
+        },
+        "the foreign list is refused"
+    );
+    assert_eq!(
+        driver.installed(),
+        Some(identified(HEIGHT, parent_hash)),
+        "nothing was installed"
+    );
+    assert_eq!(
+        driver
+            .snapshot(identified(HEIGHT + 1, child_hash))
+            .readiness,
+        HeadReadiness::Cold(HeadCold::Unprepared),
+        "the head is still unprepared"
+    );
+    assert_eq!(driver.stats().discarded, 1, "the refusal is counted");
+
+    let own = driver.prepare(child_ticket).await;
+    let report = settled(&driver.apply(child_ticket, &own));
+    assert_eq!(
+        report.writes,
+        Vec::<(Address, U256)>::new(),
+        "the head's own empty list applied"
+    );
+    assert_eq!(
+        driver.installed(),
+        Some(identified(HEIGHT + 1, child_hash)),
+        "the head settled with its own list"
+    );
+}
+
+/// A preparation that finishes after a later head arrived installs nothing: the
+/// abandoned head stays dead, its values never enter the new branch, and the
+/// later head settles from the parent the abandoned one never replaced.
+#[tokio::test]
+async fn a_late_preparation_for_a_superseded_head_installs_nothing() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    let parent_hash = B256::new([0xaa; 32]);
+    let abandoned = B256::new([0xa1; 32]);
+    let replacement = B256::new([0xa2; 32]);
+    // The abandoned branch would have written a value the replacement never
+    // mentions: if the late list installed, that value would be served there.
+    stub.serve_bal_at(
+        abandoned,
+        bal_bytes(&[(address(0x33), U256::from(4u64), U256::from(666u64))]),
+    );
+    stub.serve_bal_at(replacement, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    driver
+        .snapshot(identified(HEIGHT, parent_hash))
+        .hub
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+
+    let abandoned_ticket = driver.deliver(
+        identified(HEIGHT + 1, abandoned),
+        parent_hash,
+        vec![address(0x33)],
+    );
+    let late = driver.prepare(abandoned_ticket).await;
+    assert!(late.is_decoded(), "the abandoned list decoded");
+
+    // The same-height reorg arrives while the abandoned list is in flight.
+    let replacement_ticket = driver.deliver(
+        identified(HEIGHT + 1, replacement),
+        parent_hash,
+        vec![address(0x33)],
+    );
+    assert_eq!(
+        driver.apply(abandoned_ticket, &late),
+        HeadOutcome::Superseded {
+            head: identified(HEIGHT + 1, replacement),
+        },
+        "the late response cannot install into the new head"
+    );
+    assert_eq!(
+        driver.installed(),
+        Some(identified(HEIGHT, parent_hash)),
+        "the abandoned head installed nothing"
+    );
+
+    let report = settled(&driver.advance(replacement_ticket).await);
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Carried { carried_values: 1 },
+        "the replacement head carries the installed parent"
+    );
+    let view = driver.snapshot(identified(HEIGHT + 1, replacement));
+    assert_eq!(view.readiness, HeadReadiness::Ready);
+    assert_eq!(
+        view.hub.snapshot_value(address(0x33), U256::from(4u64)),
+        None,
+        "the abandoned branch's write never reached the replacement"
+    );
+    assert_eq!(
+        driver.snapshot(identified(HEIGHT + 1, abandoned)).readiness,
+        HeadReadiness::Cold(HeadCold::Superseded),
+        "the abandoned head reports that it was superseded"
+    );
+    assert_eq!(driver.stats().superseded, 1);
+}
+
+/// A same-height reorg settles cold, and the head built on it re-establishes the
+/// chain: the new branch carries only its own generation, never the abandoned
+/// branch's settled values.
+#[tokio::test]
+async fn a_same_height_reorg_settles_cold_and_the_next_head_carries_only_the_new_branch() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT + 1, address(0x11), U256::from(1u64), 11);
+    stub.serve_at(HEIGHT + 1, address(0x11), U256::from(2u64), 12);
+    stub.serve_at(HEIGHT + 2, address(0x11), U256::from(1u64), 22);
+    stub.serve_at(HEIGHT + 2, address(0x11), U256::from(2u64), 13);
+    let parent_hash = B256::new([0xaa; 32]);
+    let first = B256::new([0xb1; 32]);
+    let reorg = B256::new([0xc1; 32]);
+    let successor = B256::new([0xc2; 32]);
+    stub.serve_bal_at(first, bal_bytes(&[]));
+    stub.serve_bal_at(reorg, bal_bytes(&[]));
+    stub.serve_bal_at(successor, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    let first_ticket = driver.deliver(identified(HEIGHT + 1, first), parent_hash, Vec::new());
+    settled(&driver.advance(first_ticket).await);
+    // The abandoned branch settles a value at its own anchor.
+    let first_view = driver.snapshot(identified(HEIGHT + 1, first)).hub;
+    let abandoned = first_view
+        .read_storage(address(0x11), U256::from(2u64))
+        .await
+        .expect("the stub answers");
+    assert_eq!(abandoned, U256::from(12u64));
+
+    // The reorg replaces the block at the same height: its parent is the
+    // installed block's own parent, so the installed anchor is not its parent.
+    let reorg_ticket = driver.deliver(identified(HEIGHT + 1, reorg), parent_hash, Vec::new());
+    let report = settled(&driver.advance(reorg_ticket).await);
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Cold {
+            lineage: Some(CarryRefusal::NotConsecutive),
+            bal: None,
+        },
+        "a same-height reorg never links the head it replaced"
+    );
+    assert_eq!(
+        driver.snapshot(identified(HEIGHT + 1, reorg)).readiness,
+        HeadReadiness::Cold(HeadCold::Settled {
+            lineage: Some(CarryRefusal::NotConsecutive),
+            bal: None,
+        }),
+        "the settled-cold head reports why it carries nothing"
+    );
+
+    // The next block links the reorged head and carries only ITS generation.
+    let successor_ticket = driver.deliver(identified(HEIGHT + 2, successor), reorg, Vec::new());
+    let report = settled(&driver.advance(successor_ticket).await);
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Carried { carried_values: 0 },
+        "the new branch's second block re-establishes the chain"
+    );
+    let view = driver.snapshot(identified(HEIGHT + 2, successor));
+    assert_eq!(
+        view.hub.snapshot_value(address(0x11), U256::from(2u64)),
+        None,
+        "the abandoned branch's settle never resurrects"
+    );
+    let value = view
+        .hub
+        .read_storage(address(0x11), U256::from(2u64))
+        .await
+        .expect("the stub answers");
+    assert_eq!(
+        value,
+        U256::from(13u64),
+        "a read takes the new branch's own word, not the abandoned value"
+    );
+}
+
+/// A gap cannot carry, and the next consecutive head re-establishes the chain.
+#[tokio::test]
+async fn a_gap_settles_cold_and_the_next_consecutive_head_re_establishes_the_chain() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    let parent_hash = B256::new([0xaa; 32]);
+    let skipped = B256::new([0xb1; 32]);
+    let next = B256::new([0xb2; 32]);
+    let after = B256::new([0xb3; 32]);
+    stub.serve_bal_at(skipped, bal_bytes(&[]));
+    stub.serve_bal_at(next, bal_bytes(&[]));
+    stub.serve_bal_at(after, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    driver
+        .snapshot(identified(HEIGHT, parent_hash))
+        .hub
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+
+    // Two blocks above the installed generation: a gap.
+    let skipped_ticket = driver.deliver(
+        identified(HEIGHT + 2, skipped),
+        B256::new([0xfe; 32]),
+        Vec::new(),
+    );
+    let report = settled(&driver.advance(skipped_ticket).await);
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Cold {
+            lineage: Some(CarryRefusal::NotConsecutive),
+            bal: None,
+        }
+    );
+
+    // The gap head is cold, and it settles a word of its own.
+    stub.serve_at(HEIGHT + 2, address(0x11), U256::from(2u64), 2);
+    driver
+        .snapshot(identified(HEIGHT + 2, skipped))
+        .hub
+        .read_storage(address(0x11), U256::from(2u64))
+        .await
+        .expect("the stub answers");
+
+    // The head above the gap is consecutive to what was installed, so it carries
+    // the gap head's own generation — and never the pre-gap head's value.
+    let next_ticket = driver.deliver(identified(HEIGHT + 3, next), skipped, Vec::new());
+    let report = settled(&driver.advance(next_ticket).await);
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Carried { carried_values: 1 },
+        "the head above the gap re-establishes the chain"
+    );
+    let view = driver.snapshot(identified(HEIGHT + 3, next));
+    assert_eq!(
+        view.hub.snapshot_value(address(0x11), U256::from(2u64)),
+        Some(U256::from(2u64)),
+        "the gap head's own settle carried forward"
+    );
+    assert_eq!(
+        view.hub.snapshot_value(address(0x11), U256::from(1u64)),
+        None,
+        "the pre-gap head's value never reappears"
+    );
+    let after_ticket = driver.deliver(identified(HEIGHT + 4, after), next, Vec::new());
+    let report = settled(&driver.advance(after_ticket).await);
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Carried { carried_values: 1 },
+        "the chain continues from the re-established head"
+    );
+}
+
+/// A number-only head prepares no list at all: it settles cold with the skip
+/// reported, and a read there takes the dynamic path.
+#[tokio::test]
+async fn a_number_only_head_prepares_no_list_and_settles_cold() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT + 1, address(0x11), U256::from(1u64), 5);
+    let parent_hash = B256::new([0xaa; 32]);
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    stub.clear();
+
+    let ticket = driver.deliver(ReadAnchor::at(HEIGHT + 1), parent_hash, Vec::new());
+    let prepared = driver.prepare(ticket).await;
+    assert_eq!(prepared.skip(), Some(&BalSkip::NoAnchorHash));
+    assert_eq!(prepared.hash(), None);
+    assert_eq!(stub.bal_requests(), 0, "no list can be requested");
+    let report = settled(&driver.apply(ticket, &prepared));
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Cold {
+            lineage: None,
+            bal: Some(BalSkip::NoAnchorHash),
+        }
+    );
+    let view = driver.snapshot(ReadAnchor::at(HEIGHT + 1));
+    assert_eq!(
+        view.readiness,
+        HeadReadiness::Cold(HeadCold::Settled {
+            lineage: None,
+            bal: Some(BalSkip::NoAnchorHash),
+        })
+    );
+    assert_eq!(view.hub.snapshot_len(), 0, "a cold head carries nothing");
+    let value = view
+        .hub
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+    assert_eq!(value, U256::from(5u64), "the dynamic path answers");
+}
+
+/// An unreadable list — missing, unsupported, or malformed — settles the head
+/// cold with the skip reported and no parent value served.
+#[tokio::test]
+async fn an_unreadable_list_settles_a_cold_head_with_the_skip_reported() {
+    for skip in [
+        ColdSkip::Missing,
+        ColdSkip::Null,
+        ColdSkip::Unsupported,
+        ColdSkip::Malformed,
+    ] {
+        cold_list_case(skip).await;
+    }
+}
+
+/// A list that cannot be read.
+enum ColdSkip {
+    /// No list at that hash: the node answers with a failure.
+    Missing,
+    /// The node answers the request with JSON `null`.
+    Null,
+    /// The node does not serve the method.
+    Unsupported,
+    /// The bytes are not one complete list.
+    Malformed,
+}
+
+/// One unreadable-list case: the head settles cold, reports the skip, and serves
+/// the dynamic word rather than a parent value.
+async fn cold_list_case(skip: ColdSkip) {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    stub.serve_at(HEIGHT + 1, address(0x11), U256::from(1u64), 77);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    match skip {
+        ColdSkip::Missing => {}
+        ColdSkip::Null => stub.set_bal_null(true),
+        ColdSkip::Unsupported => stub.set_bal_unsupported(true),
+        ColdSkip::Malformed => stub.serve_bal_at(child_hash, vec![0xff, 0x00]),
+    }
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    driver
+        .snapshot(identified(HEIGHT, parent_hash))
+        .hub
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+
+    let ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    let prepared = driver.prepare(ticket).await;
+    assert!(!prepared.is_decoded(), "the list did not decode");
+    let report = settled(&driver.apply(ticket, &prepared));
+    stub.set_bal_null(false);
+    stub.set_bal_unsupported(false);
+    let CarryOutcome::Cold {
+        lineage: None,
+        bal: Some(_),
+    } = &report.outcome
+    else {
+        panic!("an unreadable list settles cold: {:?}", report.outcome);
+    };
+    let view = driver.snapshot(identified(HEIGHT + 1, child_hash));
+    assert!(
+        matches!(
+            &view.readiness,
+            HeadReadiness::Cold(HeadCold::Settled { bal: Some(_), .. })
+        ),
+        "the settled head reports the skip: {:?}",
+        view.readiness
+    );
+    assert_eq!(view.hub.snapshot_len(), 0, "a cold head carries nothing");
+    let value = view
+        .hub
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+    assert_eq!(
+        value,
+        U256::from(77u64),
+        "the head's own word, never the parent's 1"
+    );
+}
+
+/// A head that stays unprepared past its readiness deadline reports the deadline
+/// fallback — counted once per head — and still settles when the list arrives.
+#[tokio::test]
+async fn a_head_past_its_readiness_deadline_reports_the_deadline_fallback_once() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, Duration::ZERO);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    let ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    for _ in 0..3 {
+        assert_eq!(
+            driver
+                .snapshot(identified(HEIGHT + 1, child_hash))
+                .readiness,
+            HeadReadiness::Cold(HeadCold::Deadline),
+            "a zero deadline is always past"
+        );
+    }
+    assert_eq!(
+        driver.stats().deadline_fallbacks,
+        1,
+        "the deadline fallback is counted once per head"
+    );
+    assert_eq!(driver.stats().cold_views, 3, "every cold view is counted");
+
+    let prepared = driver.prepare(ticket).await;
+    settled(&driver.apply(ticket, &prepared));
+    assert_eq!(
+        driver
+            .snapshot(identified(HEIGHT + 1, child_hash))
+            .readiness,
+        HeadReadiness::Ready,
+        "a late apply still settles the head"
+    );
+    assert_eq!(driver.stats().ready_views, 1);
+}
+
+/// Idempotent delivery and idempotent advance repeat no BAL work: a repeated
+/// delivery hands back the same ticket, and a settled head never fetches again.
+#[tokio::test]
+async fn an_idempotent_delivery_and_advance_repeat_no_bal_work() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    stub.clear();
+    let ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    assert_eq!(
+        driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new()),
+        ticket,
+        "the repeated delivery hands back the same ticket"
+    );
+    assert_eq!(driver.stats().repeated, 1);
+    assert_eq!(driver.stats().delivered, 2, "one per real head");
+    assert_eq!(stub.bal_requests(), 0, "no delivery fetched anything");
+
+    settled(&driver.advance(ticket).await);
+    assert_eq!(stub.bal_requests(), 1, "the head fetched once");
+    assert_eq!(
+        driver.advance(ticket).await,
+        HeadOutcome::AlreadySettled,
+        "the settled head is idempotent"
+    );
+    assert_eq!(
+        driver.stats().repeated,
+        1,
+        "an advance is not a delivery, so it is not counted as a repeat"
+    );
+    assert_eq!(
+        stub.bal_requests(),
+        1,
+        "the idempotent advance repeated no BAL work"
+    );
+}
+
+/// A settled head keeps answering after the next head arrives: a caller still
+/// working at it gets its generation (and its readiness), not a fresh cold one,
+/// while the new head stays cold until its own list applies.
+#[tokio::test]
+async fn a_settled_head_keeps_answering_after_the_next_head_arrives() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 7);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    let next_hash = B256::new([0xcc; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    stub.serve_bal_at(next_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    driver
+        .snapshot(identified(HEIGHT, parent_hash))
+        .hub
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+    let child_ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    settled(&driver.advance(child_ticket).await);
+    stub.clear();
+
+    // The next head arrives and is unprepared: the child keeps answering.
+    driver.deliver(identified(HEIGHT + 2, next_hash), child_hash, Vec::new());
+    let settled_view = driver.snapshot(identified(HEIGHT + 1, child_hash));
+    assert_eq!(
+        settled_view.readiness,
+        HeadReadiness::Ready,
+        "the settled head is still ready"
+    );
+    assert_eq!(
+        settled_view
+            .hub
+            .read_storage(address(0x11), U256::from(1u64))
+            .await
+            .expect("the stub answers"),
+        U256::from(7u64),
+        "the carried word still resolves from the settled generation"
+    );
+    assert_eq!(
+        stub.storage_members(),
+        0,
+        "a carried read costs no fetch after the head moved"
+    );
+    assert_eq!(
+        driver.snapshot(identified(HEIGHT + 2, next_hash)).readiness,
+        HeadReadiness::Cold(HeadCold::Unprepared),
+        "the new head is cold until its own list applies"
+    );
+}
+
+/// A delivery of a head the cache already has installed settles on the spot: a
+/// re-delivered installed block repeats no BAL work and answers ready.
+#[tokio::test]
+async fn a_delivery_of_the_installed_head_settles_without_bal_work() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let other_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(other_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    stub.clear();
+
+    // A head above the installed one is delivered and abandoned before it
+    // settles: the installed block is the head the stream returns to.
+    let _abandoned = driver.deliver(identified(HEIGHT + 1, other_hash), parent_hash, Vec::new());
+    let back = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    assert_eq!(
+        driver.stats().already_current,
+        1,
+        "the installed head settles on delivery"
+    );
+    assert_eq!(
+        driver.snapshot(identified(HEIGHT, parent_hash)).readiness,
+        HeadReadiness::Ready
+    );
+    assert_eq!(
+        driver.advance(back).await,
+        HeadOutcome::AlreadySettled,
+        "nothing to prepare for an installed head"
+    );
+    assert_eq!(stub.bal_requests(), 0, "no BAL work at all");
+}
+
+/// A cancelled preparation installs nothing and releases the claim: the head is
+/// still unprepared afterwards, and a later advance prepares and settles it.
+#[tokio::test]
+async fn a_cancelled_preparation_releases_the_claim_and_the_head_retries() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    let ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    stub.clear();
+    stub.set_slow(true);
+
+    let mut cancelled = Box::pin(driver.advance(ticket));
+    assert!(
+        cancelled
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "the held round keeps the advance pending"
+    );
+    drop(cancelled);
+    assert_eq!(
+        driver.installed(),
+        Some(identified(HEIGHT, parent_hash)),
+        "the cancelled preparation installed nothing"
+    );
+    assert_eq!(
+        driver
+            .snapshot(identified(HEIGHT + 1, child_hash))
+            .readiness,
+        HeadReadiness::Cold(HeadCold::Unprepared),
+        "the head is still unprepared"
+    );
+
+    stub.set_slow(false);
+    let report = settled(&driver.advance(ticket).await);
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Carried { carried_values: 0 },
+        "the retry settled the head against the installed parent"
+    );
+    assert_eq!(stub.bal_requests(), 1, "the retry fetched the list once");
+}
+
+/// Two concurrent advances for one head share a single fetch: the second caller
+/// is told the preparation is already owned instead of duplicating the request.
+#[tokio::test]
+async fn a_concurrent_advance_joins_the_claimed_preparation_without_a_second_fetch() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    let ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    stub.clear();
+    stub.set_slow(true);
+
+    let (first, second) = tokio::join!(driver.advance(ticket), driver.advance(ticket));
+    stub.set_slow(false);
+    assert!(
+        matches!(first, HeadOutcome::Settled(_)),
+        "the claiming call settles: {first:?}"
+    );
+    assert_eq!(
+        second,
+        HeadOutcome::InFlight,
+        "the second call neither waits nor fetches"
+    );
+    assert_eq!(stub.bal_requests(), 1, "one fetch for one head");
+    assert_eq!(driver.stats().settled, 2, "the parent and the child");
+}
+
+/// Concurrent reads at an unprepared head share one cold generation, so the
+/// hub's single flight still holds: one slot, two readers, one dispatched member.
+#[tokio::test]
+async fn concurrent_reads_at_an_unprepared_head_share_one_cold_generation() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT + 1, address(0x11), U256::from(1u64), 3);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+    driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    stub.clear();
+
+    let left = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    let right = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    assert!(Arc::ptr_eq(&left, &right), "one generation per head");
+    let first = left.read_storage_handle(address(0x11), U256::from(1u64));
+    let second = right.read_storage_handle(address(0x11), U256::from(1u64));
+    assert_eq!(
+        right.read_stats().coalesced,
+        1,
+        "the duplicate joined the queued identity"
+    );
+    left.drain_round().await;
+    assert_eq!(first.await.expect("the stub answers"), U256::from(3u64));
+    assert_eq!(second.await.expect("the stub answers"), U256::from(3u64));
+    assert_eq!(stub.storage_members(), 1, "one member for the pair");
+}
+
+/// A value a caller settles into the unprepared head's cold generation stays
+/// handle-local: the settled generation that replaces it never sees it, and the
+/// held handle keeps its own value.
+#[tokio::test]
+async fn a_settle_into_an_unprepared_head_stays_handle_local() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT + 1, address(0x11), U256::from(1u64), 4);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+
+    let ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash, Vec::new());
+    let held = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    let late_settle = held
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+    assert_eq!(late_settle, U256::from(4u64));
+
+    let prepared = driver.prepare(ticket).await;
+    settled(&driver.apply(ticket, &prepared));
+    let settled_hub = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    assert!(
+        !Arc::ptr_eq(&held, &settled_hub),
+        "the settled hub replaces it"
+    );
+    assert_eq!(
+        settled_hub.snapshot_value(address(0x11), U256::from(1u64)),
+        None,
+        "the provisional settle never crosses into the settled generation"
+    );
+    assert_eq!(
+        held.snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(4u64)),
+        "the held generation keeps its own settle"
+    );
+}
+
+/// The lifecycle compacts on the caller's threshold exactly as the synchronous
+/// control does: every head's report carries the same fold, the walk stays inside
+/// the bound, and the oldest settled value survives every compaction.
+#[tokio::test]
+async fn the_lifecycle_compacts_on_the_control_threshold() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let max_depth = 1u32;
+    let control = DeltaSnapshotCache::with_max_depth(&provider, max_depth);
+    let driver = BalHeadDriver::with_config(&provider, max_depth, Retention::Unbounded, PATIENT);
+    let hashes: Vec<B256> = (0..5u8)
+        .map(|index| B256::new([0xa0 + index; 32]))
+        .collect();
+    let first_slot = U256::from(1u64);
+    stub.serve_at(HEIGHT, address(0x11), first_slot, 1);
+    stub.serve_bal_at(hashes[0], bal_bytes(&[]));
+
+    let base = identified(HEIGHT, hashes[0]);
+    control
+        .for_anchor(base)
+        .read_storage(address(0x11), first_slot)
+        .await
+        .expect("the stub answers");
+    let base_ticket = driver.deliver(base, genesis(), Vec::new());
+    driver.advance(base_ticket).await;
+    driver
+        .snapshot(base)
+        .hub
+        .read_storage(address(0x11), first_slot)
+        .await
+        .expect("the stub answers");
+
+    let mut saw_compaction = false;
+    for step in 1..5usize {
+        let number = HEIGHT + u64::try_from(step).expect("the step fits");
+        let slot = U256::from(10 + u64::try_from(step).expect("the slot fits"));
+        let value = 100 + u64::try_from(step).expect("the value fits");
+        stub.serve_at(number, address(0x11), slot, value);
+        stub.serve_bal_at(
+            hashes[step],
+            bal_bytes(&[(address(0x11), slot, U256::from(value))]),
+        );
+        let anchor = identified(number, hashes[step]);
+        let parent = hashes[step - 1];
+        let (control_hub, control_report) =
+            control.advance_bal(anchor, parent, &[address(0x11)]).await;
+        let ticket = driver.deliver(anchor, parent, vec![address(0x11)]);
+        let lifecycle_report = settled(&driver.advance(ticket).await);
+        assert_reports_agree(&control_report, &lifecycle_report);
+        let view = driver.snapshot(anchor);
+        assert!(
+            view.hub.chain_depth() <= max_depth + 1,
+            "the walk stays inside the threshold: {}",
+            view.hub.chain_depth()
+        );
+        if let Some(fold) = &lifecycle_report.compaction {
+            saw_compaction = true;
+            assert_eq!(
+                fold.nodes_merged,
+                control_report
+                    .compaction
+                    .as_ref()
+                    .map_or(0, |c| c.nodes_merged)
+            );
+            assert!(fold.nodes_merged > 1);
+        }
+        assert_eq!(
+            control_hub.snapshot_value(address(0x11), first_slot),
+            view.hub.snapshot_value(address(0x11), first_slot),
+            "the oldest settled value survives the fold on both"
+        );
+    }
+    assert!(saw_compaction, "a threshold of one must fold every link");
+    assert_eq!(
+        driver
+            .snapshot(identified(HEIGHT + 4, hashes[4]))
+            .hub
+            .snapshot_value(address(0x11), first_slot),
+        Some(U256::from(1u64))
+    );
+}
+
+/// The lifecycle applies the caller's retention policy exactly as the
+/// synchronous control does: an entry the policy has expired at a later head is
+/// unknown again on both representations, and re-reading it settles a fresh
+/// window through the same hub round.
+#[tokio::test]
+async fn the_lifecycle_applies_the_callers_retention_policy() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    stub.serve_at(HEIGHT + 2, address(0x11), U256::from(1u64), 9);
+    let base = B256::new([0xaa; 32]);
+    let one = B256::new([0xb1; 32]);
+    let two = B256::new([0xb2; 32]);
+    for hash in [one, two] {
+        stub.serve_bal_at(hash, bal_bytes(&[]));
+    }
+    let retention = Retention::IdleBlocks(1);
+    let control = DeltaSnapshotCache::with_retention(&provider, retention);
+    let driver = BalHeadDriver::with_config(&provider, DEFAULT_MAX_DEPTH, retention, PATIENT);
+
+    let control_base = control.for_anchor(identified(HEIGHT, base));
+    assert_eq!(
+        control_base
+            .read_storage(address(0x11), U256::from(1u64))
+            .await
+            .expect("the stub answers"),
+        U256::from(1u64)
+    );
+    let base_ticket = driver.deliver(identified(HEIGHT, base), genesis(), Vec::new());
+    driver.advance(base_ticket).await;
+    assert_eq!(
+        driver
+            .snapshot(identified(HEIGHT, base))
+            .hub
+            .read_storage(address(0x11), U256::from(1u64))
+            .await
+            .expect("the stub answers"),
+        U256::from(1u64)
+    );
+
+    // One block on, the entry is still inside its idle window on both.
+    let control_one = control
+        .advance_bal(identified(HEIGHT + 1, one), base, &[])
+        .await
+        .0;
+    let one_ticket = driver.deliver(identified(HEIGHT + 1, one), base, Vec::new());
+    settled(&driver.advance(one_ticket).await);
+    let lifecycle_one = driver.snapshot(identified(HEIGHT + 1, one)).hub;
+    assert_eq!(
+        control_one.snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(1u64))
+    );
+    assert_eq!(
+        lifecycle_one.snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(1u64)),
+        "the idle window still serves the carried word"
+    );
+
+    // Two blocks on, the same entry has expired on both, and a read takes the
+    // dynamic path and re-settles.
+    let control_two = control
+        .advance_bal(identified(HEIGHT + 2, two), one, &[])
+        .await
+        .0;
+    let two_ticket = driver.deliver(identified(HEIGHT + 2, two), one, Vec::new());
+    settled(&driver.advance(two_ticket).await);
+    let lifecycle_two = driver.snapshot(identified(HEIGHT + 2, two)).hub;
+    assert_eq!(
+        control_two.snapshot_value(address(0x11), U256::from(1u64)),
+        None,
+        "the control expired the entry"
+    );
+    assert_eq!(
+        lifecycle_two.snapshot_value(address(0x11), U256::from(1u64)),
+        None,
+        "the lifecycle expired it on the same schedule"
+    );
+    stub.clear();
+    assert_eq!(
+        control_two
+            .read_storage(address(0x11), U256::from(1u64))
+            .await
+            .expect("the stub answers"),
+        U256::from(9u64)
+    );
+    assert_eq!(
+        lifecycle_two
+            .read_storage(address(0x11), U256::from(1u64))
+            .await
+            .expect("the stub answers"),
+        U256::from(9u64)
+    );
+    assert_eq!(
+        stub.storage_members(),
+        2,
+        "each representation paid exactly one dynamic read"
+    );
+    assert_eq!(
+        lifecycle_two.snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(9u64)),
+        "the re-read settled a fresh window"
+    );
+}
+
+/// Every generation of a modeled chain settles identically through the lifecycle
+/// and the synchronous control — reports, entry counts, and every resolved value
+/// — while each head is cold until its own list applies.
+#[tokio::test]
+async fn every_generation_of_a_modeled_chain_settles_identically_through_the_lifecycle() {
+    let first = 100u64;
+    let last = 105u64;
+    let keys: BTreeSet<Key> = [
+        (address(0x11), U256::from(1u64)),
+        (address(0x22), U256::from(1u64)),
+        (address(0x33), U256::from(1u64)),
+        (address(0x44), U256::from(1u64)),
+    ]
+    .into_iter()
+    .collect();
+    let chain = ChainState::build(&keys, first, last).expect("a modeled chain over the keys");
+    let stub = StubChain {
+        chain: Arc::new(chain),
+        plant: Arc::new(AtomicBool::new(false)),
+    };
+    let provider = stub.provider();
+    let reads: Vec<Key> = keys.iter().copied().collect();
+    let blocks: Vec<ParityBlock> = (first..=last)
+        .map(|number| ParityBlock {
+            anchor: identified(number, block_hash(number)),
+            parent_hash: block_hash(number - 1),
+            relevance: if number % 2 == 0 {
+                vec![address(0x11), address(0x22)]
+            } else {
+                vec![address(0x33)]
+            },
+            reads: reads.clone(),
+        })
+        .collect();
+    let result = lifecycle_replay(&provider, &blocks).await;
+    assert!(result.is_empty(), "{result:#?}");
+}
+
+/// The lifecycle replay: at every block, deliver the head, prove it is cold, then
+/// settle it and compare everything against the synchronous delta control.
+async fn lifecycle_replay(
+    provider: &degenbot_rpc::provider::AlloyProvider,
+    blocks: &[ParityBlock],
+) -> Vec<String> {
+    let control = DeltaSnapshotCache::new(provider);
+    let driver = BalHeadDriver::new(provider, PATIENT);
+    let mut mismatches = Vec::new();
+    for block in blocks {
+        let ticket = driver.deliver(block.anchor, block.parent_hash, block.relevance.clone());
+        let cold = driver.snapshot(block.anchor);
+        let is_cold = matches!(cold.readiness, HeadReadiness::Cold(_));
+        if !is_cold || cold.hub.snapshot_len() != 0 {
+            mismatches.push(format!(
+                "block {}: a delivered head served {:?} with {} entries",
+                block.anchor.number,
+                cold.readiness,
+                cold.hub.snapshot_len()
+            ));
+        }
+        let lifecycle = driver.advance(ticket).await;
+        let HeadOutcome::Settled(lifecycle_report) = lifecycle else {
+            mismatches.push(format!(
+                "block {}: the advance did not settle: {lifecycle:?}",
+                block.anchor.number
+            ));
+            continue;
+        };
+        let (control_hub, control_report) = control
+            .advance_bal(block.anchor, block.parent_hash, &block.relevance)
+            .await;
+        if control_report.outcome != lifecycle_report.outcome
+            || control_report.writes != lifecycle_report.writes
+            || control_report.writes_overwritten != lifecycle_report.writes_overwritten
+            || control_report.writes_skipped != lifecycle_report.writes_skipped
+        {
+            mismatches.push(format!(
+                "block {}: control {control_report:?} vs lifecycle {lifecycle_report:?}",
+                block.anchor.number
+            ));
+        }
+        let view = driver.snapshot(block.anchor);
+        if control_hub.snapshot_len() != view.hub.snapshot_len() {
+            mismatches.push(format!(
+                "block {}: control {} entries vs lifecycle {}",
+                block.anchor.number,
+                control_hub.snapshot_len(),
+                view.hub.snapshot_len()
+            ));
+        }
+        for &(address, slot) in &block.reads {
+            let control_value = control_hub.read_storage(address, slot).await;
+            let lifecycle_value = view.hub.read_storage(address, slot).await;
+            let same = match (control_value, lifecycle_value) {
+                (Ok(left), Ok(right)) => left == right,
+                _ => false,
+            };
+            if !same {
+                mismatches.push(format!(
+                    "block {} {address}/{slot}: control vs lifecycle disagreed",
+                    block.anchor.number
+                ));
+            }
+        }
+    }
+    mismatches
+}
+
+/// The committed real write-coverage capture settles every head through the
+/// lifecycle with zero divergence from the synchronous control, at every
+/// captured block and every captured identity.
+#[tokio::test]
+async fn the_real_coverage_capture_settles_every_head_with_zero_divergence() {
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/bal_real_coverage.json"
+    );
+    let real = RealCoverage::load(fixture).expect("the committed capture parses");
+    let keys = real_keys(&real);
+    assert!(!keys.is_empty(), "the capture wrote some identity");
+    let chain = ChainState::build_coverage(&keys, real.first(), real.last(), &real, Coverage::Real)
+        .expect("a chain over the captured stretch");
+    let stub = StubChain {
+        chain: Arc::new(chain),
+        plant: Arc::new(AtomicBool::new(false)),
+    };
+    let provider = stub.provider();
+    let blocks = real_parity_blocks(&real, &keys);
+    let mismatches = lifecycle_replay(&provider, &blocks).await;
+    assert!(
+        mismatches.is_empty(),
+        "{} disagreements over {} blocks: {mismatches:#?}",
+        mismatches.len(),
+        blocks.len()
+    );
+}
+
+/// The lifecycle's control comparison is the control's own report shapes: the
+/// full-clone cache reports the same transition the delta control does, so the
+/// parity claim above is not an artifact of comparing one representation to
+/// itself.
+#[tokio::test]
+async fn the_full_clone_control_agrees_with_the_lifecycle_transition() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(
+        child_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
+    );
+    let control = ReadHubCache::new(&provider);
+    let _ = control.for_anchor(identified(HEIGHT, parent_hash));
+    let driver = BalHeadDriver::new(&provider, PATIENT);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis(), Vec::new());
+    driver.advance(parent_ticket).await;
+
+    let ticket = driver.deliver(
+        identified(HEIGHT + 1, child_hash),
+        parent_hash,
+        vec![address(0x11)],
+    );
+    let prepared = driver.prepare(ticket).await;
+    let report = settled(&driver.apply(ticket, &prepared));
+    let (control_hub, carry) = control
+        .advance_bal(
+            identified(HEIGHT + 1, child_hash),
+            parent_hash,
+            &[address(0x11)],
+        )
+        .await;
+    assert_eq!(report.outcome, carry.outcome);
+    assert_eq!(report.writes, carry.writes);
+    assert_eq!(
+        driver
+            .snapshot(identified(HEIGHT + 1, child_hash))
+            .hub
+            .snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(5u64))
+    );
+    let _ = control_hub;
+}

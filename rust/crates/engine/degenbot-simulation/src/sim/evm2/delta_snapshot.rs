@@ -109,6 +109,82 @@
 //! at each handle's OWN anchor, so a child's clock never expires anything out
 //! of an older handle's view.
 //!
+//! # The asynchronous canonical-head lifecycle
+//!
+//! [`BalHeadDriver`] wraps one cache with the transition a head stream needs. A
+//! head arrives ([`BalHeadDriver::deliver`]) with its exact anchor, the parent
+//! hash from its header, and the caller's relevance set; the driver records it
+//! and mints ONE cold generation that every caller at that head reads until the
+//! apply lands. Its BAL is fetched and fully decoded separately
+//! ([`PreparedBal`], [`BalHeadDriver::prepare`]) — the stage that owns the RPC,
+//! so a caller runs it off its critical path — and applied in one synchronous
+//! transition ([`BalHeadDriver::apply`]) that is [`DeltaSnapshotCache::advance_bal`]
+//! with the fetch already done: same lineage classification, same sealed parent
+//! chain, same write policy, same retention and compaction transition.
+//!
+//! Readiness is keyed by the WHOLE anchor, never the number. A caller at a
+//! delivered head gets [`HeadReadiness::Cold`] with the reason until that exact
+//! head's list applied — so an unprepared head, a list the node cannot serve, a
+//! malformed list, and a head past its readiness deadline all take the cold
+//! path instead of ever serving a parent value at the wrong anchor. Once settled
+//! the head is [`HeadReadiness::Ready`], or cold-and-settled when the lineage
+//! refused or the list could not be read (the two ways the synchronous control
+//! also settles cold).
+//!
+//! Three fences keep a late or wrong response out of the snapshot: the prepared
+//! list must carry the ticket's exact anchor ([`HeadOutcome::Foreign`]), the
+//! ticket must still be the driver's head ([`HeadOutcome::Superseded`]), and the
+//! transition itself re-classifies lineage against whatever the cache has
+//! installed. A head that a same-height reorg, a gap, or a duplicate delivery
+//! replaced therefore installs nothing, and the abandoned branch's values never
+//! resurrect: the next head above the survivor is consecutive again and carries
+//! only the survivor's own generation.
+//!
+//! Nothing waits on a preparation. [`BalHeadDriver::snapshot`] is synchronous, so
+//! a candidate loop never blocks on a BAL; [`BalHeadDriver::advance`] is the
+//! claim-and-fetch form a caller spawns, it tells a second concurrent caller
+//! [`HeadOutcome::InFlight`] instead of duplicating the fetch, and a cancelled
+//! advance releases its claim so the head prepares normally next time.
+//!
+//! Two costs are deliberate and visible. The provisional generation is cold, so
+//! whatever it settles before the apply is dropped with it — a candidate that
+//! reads the same identity again pays one more dynamic read, and the settled
+//! generation never inherits a value it did not earn. And the driver keeps one
+//! head at a time: a caller holding a view keeps the generation it was handed
+//! (the sealed node is immutable), while a query for a superseded or never
+//! delivered anchor mints a fresh cold generation per call.
+//!
+//! # Migration onto the lifecycle
+//!
+//! A consumer moving onto the lifecycle keeps the cache's semantics and changes
+//! only WHO owns the clock. The synchronous [`DeltaSnapshotCache::advance_bal`]
+//! remains the control — one awaited call that fetches, applies, and installs —
+//! and [`BalHeadDriver`] is the same transition split across a head stream:
+//!
+//! 1. own the driver for the session instead of the cache
+//!    ([`BalHeadDriver::new`] / [`BalHeadDriver::with_config`], which fixes the
+//!    compaction threshold, the retention policy, and the readiness deadline);
+//! 2. on every canonical head, [`BalHeadDriver::deliver`] the anchor, the
+//!    header's parent hash, and the relevance set the caller derived — the
+//!    relevance input stays the CALLER's (production derivation is not part of
+//!    this seam);
+//! 3. run [`BalHeadDriver::prepare`] (or the whole [`BalHeadDriver::advance`])
+//!    wherever the caller keeps its background work, and read every identity
+//!    through [`BalHeadDriver::snapshot`]'s view — never through the parent
+//!    generation — so a head that is not ready cannot answer;
+//! 4. branch on [`HeadReadiness`]: `Ready` means the head's generation carries
+//!    its chain, `Cold(reason)` means the caller is on the existing cold path
+//!    and the reason is available for its own telemetry
+//!    ([`BalHeadDriver::stats`] counts the deadline fallbacks and the views).
+//!
+//! Nothing else changes: the write policy, zero-write lists, same-anchor
+//! idempotence, retention expiry, parent/child isolation, and the compaction
+//! bound are the ones the cache already had, and the existing delta suites are
+//! the evidence. Dispatch integration, production relevance derivation, and any
+//! retention redesign remain separate workstreams — this seam ends at the view.
+//! The live measurement of the stages is `just bal-head-lifecycle-probe`, and its
+//! report is `logs/bal_head_lifecycle_result.md`.
+//!
 //! # Development and migration notes
 //!
 //! A consumer opting in swaps its snapshot owner for a [`DeltaSnapshotCache`]
@@ -180,10 +256,11 @@ use parking_lot::Mutex;
 
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 
-use super::bal_prefetch::{decode_bal_seed, BalPlan, BalSkip};
+use super::bal_prefetch::BalSkip;
 
 use super::read_hub::{
-    classify_link, CarryOutcome, ReadFuture, ReadHub, ReadHubError, ReadHubStats, RoundReport,
+    classify_link, CarryOutcome, CarryRefusal, PreparedBal, ReadFuture, ReadHub, ReadHubError,
+    ReadHubStats, RoundReport,
 };
 
 use crate::sim::storage_memo::ReadAnchor;
@@ -1168,26 +1245,49 @@ impl<'p> DeltaSnapshotCache<'p> {
     ) -> (Arc<DeltaHub<'p>>, DeltaReport) {
         // Idempotence precedes any RPC: the same child anchor repeats no BAL
         // work, and no lock guard crosses the fetch.
-        {
-            let current = self.current.lock();
-
-            if let Some((installed, hub)) = current.as_ref() {
-                if *installed == child {
-                    return (
-                        Arc::clone(hub),
-                        DeltaReport::already_current(Duration::ZERO),
-                    );
-                }
-            }
+        if let Some(hub) = self.installed(child) {
+            return (hub, DeltaReport::already_current(Duration::ZERO));
         }
 
-        // The child BAL is fetched and FULLY decoded before anything links: a
-        // skip here can never return a child serving parent values.
-        let bal_started = Instant::now();
+        let prepared = PreparedBal::prepare(self.provider, child).await;
 
-        let (final_writes, bal) = self.fetch_child_writes(child).await;
+        self.apply_prepared(child, child_parent_hash, relevance, &prepared)
+    }
 
-        let bal_latency = bal_started.elapsed();
+    /// The generation installed at exactly `anchor`, when there is one.
+    fn installed(&self, anchor: ReadAnchor) -> Option<Arc<DeltaHub<'p>>> {
+        let current = self.current.lock();
+
+        current
+            .as_ref()
+            .filter(|(installed, _)| *installed == anchor)
+            .map(|(_, hub)| Arc::clone(hub))
+    }
+
+    /// Apply a prepared child BAL to `child` — the transition
+    /// [`Self::advance_bal`] performs with its fetch and decode already done,
+    /// item for item: the same exact lineage classification, the same sealed
+    /// parent chain linked only when the lineage matched and the list decoded,
+    /// the same write policy and relevance rule, the same retention/compaction
+    /// transition, and the same idempotent same-anchor report.
+    ///
+    /// `prepared` must have been prepared at `child`'s own anchor: the
+    /// [`BalHeadDriver`] enforces that exact-hash fence before calling here. The
+    /// report's `bal_latency` is the prepared phase's own wall time, so a
+    /// lifecycle report and a synchronous advance report are comparable field
+    /// for field.
+    fn apply_prepared(
+        &self,
+        child: ReadAnchor,
+        child_parent_hash: B256,
+        relevance: &[Address],
+        prepared: &PreparedBal,
+    ) -> (Arc<DeltaHub<'p>>, DeltaReport) {
+        let final_writes = prepared.final_writes();
+
+        let bal = prepared.skip().cloned();
+
+        let bal_latency = prepared.latency();
 
         // Link, seal, and install under one lock hold, so the lineage check
         // and the anchor move are one transition — and the link seals the same
@@ -1240,13 +1340,8 @@ impl<'p> DeltaSnapshotCache<'p> {
 
         let base = base.unwrap_or_else(|| Arc::new(DeltaSnapshot::root()));
 
-        let (values, used, applied) = seed_final_writes(
-            &final_writes,
-            relevance,
-            &base,
-            child.number,
-            self.retention,
-        );
+        let (values, used, applied) =
+            seed_final_writes(final_writes, relevance, &base, child.number, self.retention);
 
         let hub = Arc::new(DeltaHub::generation(
             self.provider,
@@ -1298,34 +1393,551 @@ impl<'p> DeltaSnapshotCache<'p> {
     pub fn anchor(&self) -> Option<ReadAnchor> {
         self.current.lock().as_ref().map(|(anchor, _)| *anchor)
     }
+}
 
-    /// The child list's final writes, or the skip that makes the child cold —
-    /// the control's fetch/decode stage, wholesale before anything links.
-    async fn fetch_child_writes(
+// ── The asynchronous canonical-head lifecycle ──────────────────────────────
+//
+// A canonical head arrives from outside (a block subscription, a poller, a
+// replay), and the BAL that makes the head's generation cheap to read is
+// fetched and decoded separately, possibly after candidates are already running
+// at that head. [`BalHeadDriver`] is the seam between those two clocks: it
+// records the delivered head by its exact hash, hands every caller at that head
+// a cold generation until the prepared list applies, and refuses any apply that
+// does not name the head the driver currently holds.
+
+/// The ticket one [`BalHeadDriver::deliver`] minted: the head identity a
+/// preparation is applied against, and the delivery sequence that says whether
+/// that head is still the driver's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeadTicket {
+    anchor: ReadAnchor,
+    seq: u64,
+}
+
+impl HeadTicket {
+    /// The exact-hash head this ticket names: readiness is keyed by this whole
+    /// anchor, never by the number alone.
+    #[must_use]
+    pub const fn anchor(&self) -> ReadAnchor {
+        self.anchor
+    }
+}
+
+/// Why a caller at one exact head got a cold generation instead of a settled
+/// one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadCold {
+    /// The head is delivered and its prepared BAL has not been applied yet:
+    /// parent values are withheld rather than served at the wrong anchor.
+    Unprepared,
+    /// The head is still unprepared and its readiness deadline elapsed: the
+    /// caller took the cold path instead of waiting for the BAL.
+    Deadline,
+    /// A later canonical head superseded this one before it settled. The
+    /// abandoned branch is never resurrected.
+    Superseded,
+    /// No head with this exact anchor was ever delivered to the driver.
+    Undelivered,
+    /// The head SETTLED at its exact hash and serves no parent value, for this
+    /// reason.
+    Settled {
+        /// Why the settled parent chain was not carried; `None` when the lineage
+        /// matched and the list is what stepped aside.
+        lineage: Option<CarryRefusal>,
+        /// Why the head's list was not applied; `None` when it decoded.
+        bal: Option<BalSkip>,
+    },
+}
+
+/// Whether a caller's snapshot at one exact head is that head's settled
+/// generation, or the cold path with the reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadReadiness {
+    /// The head settled: reads at the view's hub resolve from its own
+    /// generation, which carries the parent chain when the lineage matched.
+    Ready,
+    /// The cold path: the view's hub serves no parent value, and `reason` says
+    /// why.
+    Cold(HeadCold),
+}
+
+impl HeadReadiness {
+    /// Whether the head settled.
+    #[must_use]
+    pub const fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    /// Why the caller got a cold generation, when it did.
+    #[must_use]
+    pub const fn cold_reason(&self) -> Option<&HeadCold> {
+        match self {
+            Self::Ready => None,
+            Self::Cold(reason) => Some(reason),
+        }
+    }
+}
+
+/// The snapshot one exact head answers with: the generation to read, and
+/// whether that generation is the head's settled one.
+pub struct HeadView<'p> {
+    /// The generation to read. A settled head's own generation when
+    /// [`Self::readiness`] is [`HeadReadiness::Ready`]; otherwise a cold
+    /// generation pinned at the same anchor that carries nothing.
+    pub hub: Arc<DeltaHub<'p>>,
+    /// Whether the head settled, or why the cold path answered.
+    pub readiness: HeadReadiness,
+}
+
+/// What one apply — or one whole background advance — did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadOutcome {
+    /// The prepared list applied to the head it was prepared for: the
+    /// generation is installed and later reads at that exact hash are ready.
+    Settled(Arc<DeltaReport>),
+    /// The head was already settled: nothing was installed and nothing moved.
+    AlreadySettled,
+    /// Another caller already owns this head's preparation: this call fetched
+    /// nothing and waited for nothing.
+    InFlight,
+    /// The ticket names a head a later delivery superseded, so nothing was
+    /// installed.
+    Superseded {
+        /// The head the driver holds now.
+        head: ReadAnchor,
+    },
+    /// The prepared list was fetched at a different anchor than the ticket's
+    /// head: nothing was installed, whatever the list says.
+    Foreign {
+        /// The anchor the list was prepared at.
+        prepared: ReadAnchor,
+        /// The anchor the ticket names.
+        head: ReadAnchor,
+    },
+}
+
+/// The head driver's cumulative counters — the lifecycle's own profile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HeadStats {
+    /// Heads delivered (an idempotent repeat is not a delivery).
+    pub delivered: u64,
+    /// Deliveries that repeated the current head: no ticket minted, no work.
+    pub repeated: u64,
+    /// Delivered heads a later delivery superseded before they settled.
+    pub superseded: u64,
+    /// Heads this driver settled, carried or cold.
+    pub settled: u64,
+    /// Deliveries of a head whose anchor was already installed — a reorg back
+    /// to the installed block — settled on the spot with no BAL work.
+    pub already_current: u64,
+    /// Apply attempts discarded: a superseded ticket or a foreign list.
+    pub discarded: u64,
+    /// Callers served a settled head's generation.
+    pub ready_views: u64,
+    /// Callers served a cold generation.
+    pub cold_views: u64,
+    /// Heads whose readiness deadline elapsed before they settled.
+    pub deadline_fallbacks: u64,
+}
+
+/// One canonical head's delivery state.
+struct DeliveredHead<'p> {
+    anchor: ReadAnchor,
+    parent_hash: B256,
+    relevance: Arc<[Address]>,
+    seq: u64,
+    delivered_at: Instant,
+    /// The cold generation callers read while the head is unprepared, dropped
+    /// at settle so the settled generation replaces it wholesale.
+    provisional: Option<Arc<DeltaHub<'p>>>,
+    /// The report this driver's apply produced, once the head settled.
+    report: Option<Arc<DeltaReport>>,
+    /// Whether a caller already owns this head's preparation.
+    preparing: bool,
+    /// Whether the deadline fallback was already counted for this head.
+    deadline_counted: bool,
+}
+
+#[derive(Default)]
+struct DriverState<'p> {
+    head: Option<DeliveredHead<'p>>,
+    /// The anchor the last delivery superseded: one slot, so a caller still
+    /// working at the abandoned head learns why its snapshot is cold.
+    superseded: Option<ReadAnchor>,
+    /// The installed generation's readiness, kept after its head is superseded so
+    /// a caller still at that head gets the generation — and the truth about
+    /// whether it carries — rather than a fresh cold one.
+    installed: Option<(ReadAnchor, HeadReadiness)>,
+    seq: u64,
+    stats: HeadStats,
+}
+
+/// The asynchronous canonical-head lifecycle for one [`DeltaSnapshotCache`].
+///
+/// # Prepare, then apply
+///
+/// [`Self::deliver`] records a head by its exact anchor and mints the cold
+/// generation callers read until the apply lands. [`Self::prepare`] fetches and
+/// fully decodes that head's BAL — the stage that owns the RPC, so the caller
+/// runs it off its critical path — and [`Self::apply`] moves the snapshot in one
+/// synchronous transition: the exact lineage classification against the
+/// installed generation, the sealed parent chain linked only when the lineage
+/// matched and the list decoded, the final writes applied under the caller's
+/// relevance set, and the retention/compaction transition of
+/// [`DeltaSnapshotCache::advance_bal`] unchanged. [`Self::advance`] is the two
+/// stages together, for a caller that owns the whole background phase.
+///
+/// # What a caller is guaranteed
+///
+/// - A view at a delivered head is [`HeadReadiness::Cold`] — serving no parent
+///   value — until that exact head's prepared list applied. An unsupported,
+///   missing, malformed, or past-deadline list is the cold path with the reason
+///   reported, never a stale parent value.
+/// - A prepared list applies only to the head it was prepared for: the exact
+///   anchor is fenced, and a list whose head a later delivery superseded is
+///   discarded, so a late response can never install an abandoned branch.
+/// - A settled generation is installed under the same exact-hash lineage rule as
+///   the synchronous control, so the only ways a head settles cold are the ones
+///   `advance_bal` already has (a lineage refusal, an unreadable list, or both).
+/// - Reads are never blocked by a pending preparation: [`Self::snapshot`] is
+///   synchronous, and a caller that wants to wait owns the await on the
+///   preparation itself.
+///
+/// # Late settles, single flight, and what the cold generation costs
+///
+/// A caller that already holds a view keeps reading the generation it was handed
+/// when the head moves on: the sealed node is immutable, so a settle that lands
+/// after the apply stays in the handle that asked (the delta chain's existing
+/// late-settle locality). While a head is unprepared every caller at it shares
+/// ONE cold generation, so duplicate reads coalesce and distinct misses share
+/// one storage batch exactly as they do at any anchored hub; when the head
+/// settles, that provisional generation is dropped and values it settled are
+/// not carried into the settled one — a candidate that reads the same identity
+/// again pays a second dynamic read, which is the price of the cold path, not a
+/// correctness question, and a query for that same head after the next one
+/// arrived still answers with the generation that settled it. A view at an
+/// anchor no head ever answered (never delivered, or an abandoned head) mints a
+/// fresh cold generation per query: hold the earlier view for a stable hub.
+pub struct BalHeadDriver<'p> {
+    provider: &'p AlloyProvider,
+    cache: DeltaSnapshotCache<'p>,
+    retention: Retention,
+    readiness_deadline: Duration,
+    state: Mutex<DriverState<'p>>,
+}
+
+impl<'p> BalHeadDriver<'p> {
+    /// A driver over a fresh cache at [`DEFAULT_MAX_DEPTH`] and
+    /// [`Retention::Unbounded`], whose heads may stay unprepared for
+    /// `readiness_deadline` before callers are told the deadline elapsed.
+    #[must_use]
+    pub fn new(provider: &'p AlloyProvider, readiness_deadline: Duration) -> Self {
+        Self::with_config(
+            provider,
+            DEFAULT_MAX_DEPTH,
+            Retention::Unbounded,
+            readiness_deadline,
+        )
+    }
+
+    /// A driver whose cache uses `max_depth` and `retention` for every
+    /// generation it installs, and whose provisional generations match.
+    #[must_use]
+    pub fn with_config(
+        provider: &'p AlloyProvider,
+        max_depth: u32,
+        retention: Retention,
+        readiness_deadline: Duration,
+    ) -> Self {
+        Self {
+            provider,
+            cache: DeltaSnapshotCache::with_max_depth_and_retention(provider, max_depth, retention),
+            retention,
+            readiness_deadline,
+            state: Mutex::new(DriverState::default()),
+        }
+    }
+
+    /// Deliver one canonical head: its exact anchor, the parent hash its lineage
+    /// is verified against, and the caller's relevance set for its final writes.
+    ///
+    /// A delivery identical to the current head — same anchor and same parent
+    /// hash — is idempotent: the same ticket comes back and nothing is minted. A
+    /// delivery of a head whose anchor the cache already has installed settles on
+    /// the spot without any BAL work (a reorg back to the installed block).
+    /// Everything else minted a cold generation that callers at that head read
+    /// until [`Self::apply`] lands.
+    pub fn deliver(
         &self,
-
-        child: ReadAnchor,
-    ) -> (Vec<(Address, U256, U256)>, Option<BalSkip>) {
-        let fetched = match child.hash {
-            None => Err(BalSkip::NoAnchorHash),
-
-            Some(hash) => self
-                .provider
-                .get_raw_block_access_list(hash)
-                .await
-                .map_err(|error| BalSkip::Rpc(error.to_string())),
+        anchor: ReadAnchor,
+        parent_hash: B256,
+        relevance: Vec<Address>,
+    ) -> HeadTicket {
+        let mut state = self.state.lock();
+        let repeated = state
+            .head
+            .as_ref()
+            .filter(|head| head.anchor == anchor && head.parent_hash == parent_hash)
+            .map(|head| head.seq);
+        if let Some(seq) = repeated {
+            state.stats.repeated = state.stats.repeated.saturating_add(1);
+            return HeadTicket { anchor, seq };
+        }
+        state.seq = state.seq.saturating_add(1);
+        let seq = state.seq;
+        let installed = self.cache.anchor() == Some(anchor);
+        let provisional = if installed {
+            None
+        } else {
+            Some(cold_generation(self.provider, anchor, self.retention))
         };
+        if let Some(previous) = state.head.take() {
+            if previous.provisional.is_some() {
+                state.stats.superseded = state.stats.superseded.saturating_add(1);
+            }
+            state.superseded = Some(previous.anchor);
+        }
+        state.stats.delivered = state.stats.delivered.saturating_add(1);
+        if installed {
+            state.stats.already_current = state.stats.already_current.saturating_add(1);
+            state.installed = Some((anchor, HeadReadiness::Ready));
+        }
+        state.head = Some(DeliveredHead {
+            anchor,
+            parent_hash,
+            relevance: relevance.into(),
+            seq,
+            delivered_at: Instant::now(),
+            provisional,
+            report: None,
+            preparing: false,
+            deadline_counted: false,
+        });
+        HeadTicket { anchor, seq }
+    }
 
-        match fetched {
-            Err(skip) => (Vec::new(), Some(skip)),
+    /// Fetch and fully decode `ticket`'s head BAL — the prepared phase, which
+    /// moves no snapshot state. The caller owns the future, so this is what runs
+    /// off the critical path; the exact-hash fence is enforced by
+    /// [`Self::apply`].
+    pub async fn prepare(&self, ticket: HeadTicket) -> PreparedBal {
+        PreparedBal::prepare(self.provider, ticket.anchor).await
+    }
 
-            // Carry-forward is write-only: read-only identities are not
-            // prefetched here; unknown reads take the dynamic path.
-            Ok(raw) => match decode_bal_seed(&raw, &BalPlan::default()) {
-                Err(error) => (Vec::new(), Some(BalSkip::Decode(error.to_string()))),
+    /// Apply `prepared` to `ticket`'s head in one synchronous transition.
+    ///
+    /// The list applies only when the ticket names the head the driver still
+    /// holds and the list was prepared at that same exact anchor; a superseded
+    /// ticket and a foreign list install nothing. A head that is already settled
+    /// is idempotent: nothing moves and no write is re-applied.
+    pub fn apply(&self, ticket: HeadTicket, prepared: &PreparedBal) -> HeadOutcome {
+        let mut state = self.state.lock();
+        let Some(head) = state.head.as_ref() else {
+            state.stats.discarded = state.stats.discarded.saturating_add(1);
+            return HeadOutcome::Superseded {
+                head: ticket.anchor,
+            };
+        };
+        if head.seq != ticket.seq || head.anchor != ticket.anchor {
+            let current = head.anchor;
+            state.stats.discarded = state.stats.discarded.saturating_add(1);
+            return HeadOutcome::Superseded { head: current };
+        }
+        let current = head.anchor;
+        if prepared.anchor() != current {
+            state.stats.discarded = state.stats.discarded.saturating_add(1);
+            return HeadOutcome::Foreign {
+                prepared: prepared.anchor(),
+                head: current,
+            };
+        }
+        if self.cache.anchor() == Some(current) {
+            return HeadOutcome::AlreadySettled;
+        }
+        let (anchor, parent_hash, relevance) =
+            (head.anchor, head.parent_hash, Arc::clone(&head.relevance));
+        let (_hub, report) = self
+            .cache
+            .apply_prepared(anchor, parent_hash, &relevance, prepared);
+        let report = Arc::new(report);
+        state.stats.settled = state.stats.settled.saturating_add(1);
+        state.installed = Some((anchor, settled_readiness(Some(&report))));
+        if let Some(head) = state.head.as_mut() {
+            head.provisional = None;
+            head.report = Some(Arc::clone(&report));
+            head.preparing = false;
+        }
+        HeadOutcome::Settled(report)
+    }
 
-                Ok(seed) => (seed.writes, None),
-            },
+    /// The whole background phase: claim this head's preparation, fetch and
+    /// decode the list, and apply it — the shape a caller spawns or joins
+    /// against its candidate work.
+    ///
+    /// Only one caller prepares a given head: a second concurrent advance for the
+    /// same ticket returns [`HeadOutcome::InFlight`] instead of duplicating the
+    /// fetch, and a dropped (cancelled) advance releases the claim so a later
+    /// call prepares the head normally. A settled head repeats no work.
+    pub async fn advance(&self, ticket: HeadTicket) -> HeadOutcome {
+        {
+            let mut state = self.state.lock();
+            let Some(head) = state.head.as_mut() else {
+                return HeadOutcome::Superseded {
+                    head: ticket.anchor,
+                };
+            };
+            if head.seq != ticket.seq || head.anchor != ticket.anchor {
+                return HeadOutcome::Superseded { head: head.anchor };
+            }
+            if self.cache.anchor() == Some(head.anchor) {
+                return HeadOutcome::AlreadySettled;
+            }
+            if head.preparing {
+                return HeadOutcome::InFlight;
+            }
+            head.preparing = true;
+        }
+        let claim = PrepareClaim {
+            driver: self,
+            seq: ticket.seq,
+        };
+        let prepared = self.prepare(ticket).await;
+        drop(claim);
+        self.apply(ticket, &prepared)
+    }
+
+    /// The snapshot `anchor` answers with right now, never blocking: the
+    /// installed generation whenever that exact anchor settled — which keeps
+    /// answering after a later head was delivered — otherwise a cold generation
+    /// at the same anchor with the reason.
+    pub fn snapshot(&self, anchor: ReadAnchor) -> HeadView<'p> {
+        let mut state = self.state.lock();
+        let current = state
+            .head
+            .as_ref()
+            .is_some_and(|head| head.anchor == anchor);
+        let (hub, readiness) = if self.cache.anchor() == Some(anchor) {
+            // The exact anchor's generation is installed, so it keeps answering
+            // after the next head arrives; the readiness is the one its own
+            // settle reported.
+            let readiness = state
+                .installed
+                .as_ref()
+                .filter(|(settled, _)| *settled == anchor)
+                .map_or(HeadReadiness::Ready, |(_, readiness)| readiness.clone());
+            (self.cache.for_anchor(anchor), readiness)
+        } else if current {
+            let reason = if let Some(head) = state.head.as_mut() {
+                if head.delivered_at.elapsed() >= self.readiness_deadline {
+                    if !head.deadline_counted {
+                        head.deadline_counted = true;
+                        state.stats.deadline_fallbacks =
+                            state.stats.deadline_fallbacks.saturating_add(1);
+                    }
+                    HeadCold::Deadline
+                } else {
+                    HeadCold::Unprepared
+                }
+            } else {
+                HeadCold::Undelivered
+            };
+            let hub = state
+                .head
+                .as_ref()
+                .and_then(|head| head.provisional.as_ref())
+                .map_or_else(
+                    || cold_generation(self.provider, anchor, self.retention),
+                    Arc::clone,
+                );
+            (hub, HeadReadiness::Cold(reason))
+        } else {
+            let reason = if state.superseded == Some(anchor) {
+                HeadCold::Superseded
+            } else {
+                HeadCold::Undelivered
+            };
+            (
+                cold_generation(self.provider, anchor, self.retention),
+                HeadReadiness::Cold(reason),
+            )
+        };
+        if readiness.is_ready() {
+            state.stats.ready_views = state.stats.ready_views.saturating_add(1);
+        } else {
+            state.stats.cold_views = state.stats.cold_views.saturating_add(1);
+        }
+        HeadView { hub, readiness }
+    }
+
+    /// The head the driver holds — settled or still preparing.
+    #[must_use]
+    pub fn delivered(&self) -> Option<ReadAnchor> {
+        self.state.lock().head.as_ref().map(|head| head.anchor)
+    }
+
+    /// The generation the cache has installed, i.e. the last head that settled.
+    #[must_use]
+    pub fn installed(&self) -> Option<ReadAnchor> {
+        self.cache.anchor()
+    }
+
+    /// The report the driver's own apply produced for the head it holds, when it
+    /// applied one. A head that settled without this driver's apply (a delivery
+    /// of an already-installed anchor) has none.
+    #[must_use]
+    pub fn last_report(&self) -> Option<Arc<DeltaReport>> {
+        self.state
+            .lock()
+            .head
+            .as_ref()
+            .and_then(|head| head.report.as_ref())
+            .map(Arc::clone)
+    }
+
+    /// The lifecycle's cumulative counters.
+    #[must_use]
+    pub fn stats(&self) -> HeadStats {
+        self.state.lock().stats
+    }
+}
+
+/// The ownership of one head's preparation: dropping it — a cancelled advance
+/// included — releases the claim so a later call prepares that head normally.
+struct PrepareClaim<'a, 'p> {
+    driver: &'a BalHeadDriver<'p>,
+    seq: u64,
+}
+
+impl Drop for PrepareClaim<'_, '_> {
+    fn drop(&mut self) {
+        let mut state = self.driver.state.lock();
+        if let Some(head) = state.head.as_mut() {
+            if head.seq == self.seq {
+                head.preparing = false;
+            }
+        }
+    }
+}
+
+/// A cold generation at `anchor`: pinned at the caller's own anchor, carrying
+/// nothing, so no value can come from another head.
+fn cold_generation(
+    provider: &AlloyProvider,
+    anchor: ReadAnchor,
+    retention: Retention,
+) -> Arc<DeltaHub<'_>> {
+    Arc::new(DeltaHub::fresh(provider, anchor, retention))
+}
+
+/// Whether a settled head's report says its generation carries parent values.
+fn settled_readiness(report: Option<&DeltaReport>) -> HeadReadiness {
+    match report.map(|report| &report.outcome) {
+        Some(CarryOutcome::Cold { lineage, bal }) => HeadReadiness::Cold(HeadCold::Settled {
+            lineage: lineage.clone(),
+            bal: bal.clone(),
+        }),
+        Some(CarryOutcome::Carried { .. } | CarryOutcome::AlreadyCurrent) | None => {
+            HeadReadiness::Ready
         }
     }
 }

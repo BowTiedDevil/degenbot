@@ -854,6 +854,100 @@ pub enum CarryOutcome {
     },
 }
 
+/// One child BAL's fetch and full decode — the prepare phase of a parent-linked
+/// advance, runnable before the head that will use it is applied.
+///
+/// Nothing here moves snapshot state: the list is fetched at `anchor`'s exact
+/// block hash and decoded wholesale, so a prepared list that completes after its
+/// head was superseded is simply dropped. A list that cannot be read is carried
+/// as its [`BalSkip`], which is what makes the resulting child cold — the skip is
+/// prepared, never discovered at the apply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedBal {
+    anchor: ReadAnchor,
+    final_writes: Vec<(Address, U256, U256)>,
+    skip: Option<BalSkip>,
+    latency: Duration,
+}
+
+impl PreparedBal {
+    /// Fetch and FULLY decode the block access list at `anchor`'s exact block
+    /// hash — the fetch/decode stage of
+    /// [`ReadHubCache::advance_bal`] / [`DeltaSnapshotCache::advance_bal`](super::delta_snapshot::DeltaSnapshotCache::advance_bal),
+    /// with no snapshot moved.
+    ///
+    /// A number-only anchor ([`BalSkip::NoAnchorHash`]), a refused or failed
+    /// request ([`BalSkip::Rpc`]), and malformed bytes ([`BalSkip::Decode`]) are
+    /// all prepared as a skip with no writes: the caller that later applies them
+    /// gets exactly the cold child a synchronous advance would have produced.
+    ///
+    /// Carry-forward is write-only: read-only identities are not prefetched, so
+    /// unknown reads take the ordinary dynamic path.
+    pub async fn prepare(provider: &AlloyProvider, anchor: ReadAnchor) -> Self {
+        let started = Instant::now();
+        let fetched = match anchor.hash {
+            None => Err(BalSkip::NoAnchorHash),
+            Some(hash) => provider
+                .get_raw_block_access_list(hash)
+                .await
+                .map_err(|error| BalSkip::Rpc(error.to_string())),
+        };
+        let (final_writes, skip) = match fetched {
+            Err(skip) => (Vec::new(), Some(skip)),
+            Ok(raw) => match decode_bal_seed(&raw, &BalPlan::default()) {
+                Err(error) => (Vec::new(), Some(BalSkip::Decode(error.to_string()))),
+                Ok(seed) => (seed.writes, None),
+            },
+        };
+        Self {
+            anchor,
+            final_writes,
+            skip,
+            latency: started.elapsed(),
+        }
+    }
+
+    /// The exact anchor this list was fetched at: its number, and the hash the
+    /// request was made by.
+    #[must_use]
+    pub const fn anchor(&self) -> ReadAnchor {
+        self.anchor
+    }
+
+    /// The block hash the list was fetched by, when the anchor carried one.
+    #[must_use]
+    pub const fn hash(&self) -> Option<B256> {
+        self.anchor.hash
+    }
+
+    /// Why the list could not be read; `None` when it decoded. A prepared skip
+    /// is applied as a cold child, never as a missing one.
+    #[must_use]
+    pub const fn skip(&self) -> Option<&BalSkip> {
+        self.skip.as_ref()
+    }
+
+    /// Whether the list decoded: the final writes are this anchor's own
+    /// post-block words.
+    #[must_use]
+    pub const fn is_decoded(&self) -> bool {
+        self.skip.is_none()
+    }
+
+    /// Wall time of the fetch and the full decode — the cost the prepared phase
+    /// took off the applier's critical path.
+    #[must_use]
+    pub const fn latency(&self) -> Duration {
+        self.latency
+    }
+
+    /// The decoded final writes `(address, slot, value)`, in list order.
+    #[must_use]
+    pub fn final_writes(&self) -> &[(Address, U256, U256)] {
+        &self.final_writes
+    }
+}
+
 /// A snapshot's retention split — what candidates read, versus what only the
 /// BAL wrote (see [`ReadHub::snapshot_breakdown`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1033,25 +1127,10 @@ impl<'p> ReadHubCache<'p> {
 
         // The child BAL is fetched and FULLY decoded before anything is
         // cloned: a skip here can never return a child serving parent values.
-        let bal_started = Instant::now();
-        let fetched = match child.hash {
-            None => Err(BalSkip::NoAnchorHash),
-            Some(hash) => self
-                .provider
-                .get_raw_block_access_list(hash)
-                .await
-                .map_err(|error| BalSkip::Rpc(error.to_string())),
-        };
-        let (final_writes, bal) = match fetched {
-            Err(skip) => (Vec::new(), Some(skip)),
-            Ok(raw) => match decode_bal_seed(&raw, &BalPlan::default()) {
-                Err(error) => (Vec::new(), Some(BalSkip::Decode(error.to_string()))),
-                // V1 is write-only: read-only identities are not prefetched
-                // here; unknown reads take the ordinary dynamic path.
-                Ok(seed) => (seed.writes, None),
-            },
-        };
-        let bal_latency = bal_started.elapsed();
+        let prepared = PreparedBal::prepare(self.provider, child).await;
+        let final_writes = prepared.final_writes();
+        let bal = prepared.skip().cloned();
+        let bal_latency = prepared.latency();
 
         // Link, snapshot, and install under one lock hold, so the lineage check
         // and the anchor move are one transition. The clone reads the SAME
@@ -1091,7 +1170,7 @@ impl<'p> ReadHubCache<'p> {
                 clone_time = clone_started.elapsed();
             }
         }
-        let applied = hub.apply_final_writes(&final_writes, relevance);
+        let applied = hub.apply_final_writes(final_writes, relevance);
         let outcome = if linked {
             CarryOutcome::Carried { carried_values }
         } else {

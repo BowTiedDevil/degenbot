@@ -529,6 +529,34 @@ bal-carry-probe *ARGS:
     cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-simulation --example bal_carry_probe -- {{ ARGS }}
 
 
+# The canonical-head lifecycle probe: real mainnet heads driven through the
+# asynchronous head driver (`BalHeadDriver`), with each head delivered, proven
+# COLD before its list applies, prepared (BAL fetch + full decode) and applied
+# as separate timed stages, then cold-verified identity by identity against an
+# independent read at the same anchor. Two legs report separately: the
+# historical stretch `BAL_HEAD_FIRST`..`BAL_HEAD_LAST` (default
+# `26375033..=26375053`), where the node has no cached list and the first
+# request pays its cold list work, and the last `BAL_HEAD_FRESH` (default `6`)
+# canonical heads, whose lists reth precomputes with the block. Each head's
+# prepare wall is also reported against the readiness deadlines (25ms/100ms/
+# 500ms/1s/2s) as the fallback count a caller would have taken. Timing is
+# reported, never asserted; any settled value that disagrees with the cold read,
+# and any head that served a carried value before its apply, fails the run
+# (nonzero exit). `BAL_HEAD_PLANT_DIVERGENCE=1` is the negative probe: a one-wei
+# skew armed on the settled value the comparison reads, which it must catch.
+# Fails closed unless the machine DECLARES an endpoint (the conftest layers, the
+# same resolution `test-fork` probes). Measurements:
+# `logs/bal_head_lifecycle_result.md`.
+bal-head-lifecycle-probe *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC declared — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
+        exit 1
+    fi
+    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-simulation --example bal_head_lifecycle_probe -- {{ ARGS }}
+
 # The analytical BAL candidate-scaling report: the shared scaling model's
 # two-corpus calibration closure against the committed real-coverage
 # accounting and the measured storage-wait ceilings (11.7%/26.9% and
