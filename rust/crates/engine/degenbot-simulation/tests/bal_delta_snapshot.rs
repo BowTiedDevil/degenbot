@@ -16,13 +16,6 @@
 )]
 
 use alloy::primitives::{Address, B256, U256};
-use alloy::providers::RootProvider;
-use alloy::rpc::client::ClientBuilder;
-use alloy::rpc::json_rpc::{
-    ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
-};
-use alloy::transports::{TransportError, TransportFut};
-use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::delta_snapshot::{
     DeltaHub, DeltaReport, DeltaSnapshotCache, DEFAULT_MAX_DEPTH,
 };
@@ -30,16 +23,15 @@ use degenbot_simulation::sim::evm2::read_hub::{
     CarryOutcome, CarryRefusal, CarryReport, ReadHub, ReadHubCache,
 };
 use degenbot_simulation::sim::ReadAnchor;
-use serde_json::value::to_raw_value;
-use serde_json::Value;
-use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::collections::BTreeSet;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-// The shared benchmark modules carry more surface than one consumer drives;
-// this suite reads the modeled list encoder and the fixture loader.
+// The shared helpers carry more surface than one consumer drives; this suite
+// reads the scripted chain stub, the modeled list encoder, and the fixture
+// loader.
+#[path = "../examples/shared/chain_stub.rs"]
+mod chain_stub;
 #[path = "../examples/shared/delta_parity.rs"]
 mod delta_parity;
 #[path = "../examples/shared/modeled_chain.rs"]
@@ -49,16 +41,10 @@ mod modeled_chain;
 #[expect(dead_code)]
 mod real_coverage;
 
+use chain_stub::ChainStub;
 use delta_parity::{real_keys, real_parity_blocks, replay};
 use modeled_chain::{bal_bytes, block_hash, ChainState, Coverage, Key, StubChain};
 use real_coverage::RealCoverage;
-
-/// The stub's per-`(height, account, slot)` answer table — one block's chain
-/// truth.
-type ChainValues = HashMap<(u64, Address, U256), u64>;
-
-/// The value every unlisted storage word answers with.
-const SERVED: u64 = 42;
 
 /// The anchor height every test advances at, unless the test is about lineage.
 const HEIGHT: u64 = 100;
@@ -66,192 +52,6 @@ const HEIGHT: u64 = 100;
 /// An address distinct from the write fixtures' account.
 fn address(tag: u8) -> Address {
     Address::new([tag; 20])
-}
-
-/// A chain stub serving the serial storage read and the raw block access list
-/// at exact hashes, recording every dispatched request.
-#[derive(Debug, Clone, Default)]
-struct ChainStub {
-    requests: Arc<Mutex<Vec<String>>>,
-    bal_by_hash: Arc<Mutex<HashMap<B256, Vec<u8>>>>,
-    bal_unsupported: Arc<AtomicBool>,
-    bal_null: Arc<AtomicBool>,
-    values: Arc<Mutex<ChainValues>>,
-}
-
-impl ChainStub {
-    fn serving() -> Self {
-        Self::default()
-    }
-
-    /// Serve one storage word of one block's post state — the chain truth a
-    /// dynamic read at `height` returns.
-    fn serve_at(&self, height: u64, address: Address, slot: U256, value: u64) {
-        self.values
-            .lock()
-            .unwrap()
-            .insert((height, address, slot), value);
-    }
-
-    /// Serve `debug_getRawBlockAccessList` with these raw bytes at ONE exact
-    /// block hash.
-    fn serve_bal_at(&self, hash: B256, bytes: Vec<u8>) {
-        self.bal_by_hash.lock().unwrap().insert(hash, bytes);
-    }
-
-    /// Refuse the BAL method the way a node without it answers.
-    fn set_bal_unsupported(&self, unsupported: bool) {
-        self.bal_unsupported.store(unsupported, Ordering::Relaxed);
-    }
-
-    /// Answer the BAL request with JSON `null` — no list at that hash.
-    fn set_bal_null(&self, null: bool) {
-        self.bal_null.store(null, Ordering::Relaxed);
-    }
-
-    fn clear(&self) {
-        self.requests.lock().unwrap().clear();
-    }
-
-    /// BAL fetches dispatched.
-    fn bal_requests(&self) -> usize {
-        self.requests
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|request| request.starts_with("debug_getRawBlockAccessList"))
-            .count()
-    }
-
-    /// Storage reads dispatched — one `eth_getStorageAt` per dynamic miss.
-    fn storage_members(&self) -> usize {
-        self.requests
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|request| request.starts_with("eth_getStorageAt"))
-            .count()
-    }
-
-    fn provider(&self) -> AlloyProvider {
-        let client = ClientBuilder::default().transport(self.clone(), true);
-        let root: RootProvider = RootProvider::new(client);
-        AlloyProvider::from_provider(Arc::new(root))
-    }
-
-    /// Record one dispatched request's identity.
-    fn record(&self, one: &SerializedRequest) {
-        self.requests.lock().unwrap().push(format!(
-            "{} {}",
-            one.method(),
-            one.params()
-                .map_or_else(String::new, |p| p.get().to_string())
-        ));
-    }
-
-    /// One dispatched request's identity in wire form.
-    fn answer(&self, req: &SerializedRequest) -> Response {
-        let payload = if req.method() == "debug_getRawBlockAccessList" {
-            self.answer_bal(req)
-        } else if req.method() == "eth_getStorageAt" {
-            self.answer_storage(req)
-        } else {
-            panic!("a delta read must not issue {}", req.method())
-        };
-        Response {
-            id: req.id().clone(),
-            payload,
-        }
-    }
-
-    fn answer_bal(&self, req: &SerializedRequest) -> ResponsePayload {
-        if self.bal_unsupported.load(Ordering::Relaxed) {
-            return ResponsePayload::Failure(ErrorPayload {
-                code: -32_601,
-                message: Cow::Borrowed("the method debug_getRawBlockAccessList does not exist"),
-                data: None,
-            });
-        }
-        if self.bal_null.load(Ordering::Relaxed) {
-            return ResponsePayload::Success(to_raw_value(&Value::Null).unwrap());
-        }
-        let hash: B256 = first_param(req)
-            .parse()
-            .expect("the block hash is the first param");
-        match self.bal_by_hash.lock().unwrap().get(&hash) {
-            Some(raw) => ResponsePayload::Success(
-                to_raw_value(&alloy::primitives::Bytes::copy_from_slice(raw)).unwrap(),
-            ),
-            None => ResponsePayload::Failure(ErrorPayload {
-                code: -32_000,
-                message: Cow::Borrowed("no block access list at that hash"),
-                data: None,
-            }),
-        }
-    }
-
-    fn answer_storage(&self, req: &SerializedRequest) -> ResponsePayload {
-        let address = param(req, 0)
-            .parse()
-            .expect("the address is the first param");
-        let slot: U256 = param(req, 1).parse().expect("the slot is the second param");
-        let height = param(req, 2);
-        let height =
-            u64::from_str_radix(height.trim_start_matches("0x"), 16).expect("the block tag is hex");
-        let value = self
-            .values
-            .lock()
-            .unwrap()
-            .get(&(height, address, slot))
-            .copied()
-            .unwrap_or(SERVED);
-        ResponsePayload::Success(to_raw_value(&Value::String(format!("{value:#x}"))).unwrap())
-    }
-}
-
-/// The `n`th request param as raw text.
-fn param(req: &SerializedRequest, n: usize) -> String {
-    let params: Value = serde_json::from_str(req.params().expect("a member carries params").get())
-        .expect("member params are JSON");
-    params
-        .get(n)
-        .and_then(Value::as_str)
-        .expect("the member carries the param")
-        .to_string()
-}
-
-fn first_param(req: &SerializedRequest) -> String {
-    param(req, 0)
-}
-
-impl tower::Service<RequestPacket> for ChainStub {
-    type Response = ResponsePacket;
-    type Error = TransportError;
-    type Future = TransportFut<'static>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: RequestPacket) -> Self::Future {
-        let stub = self.clone();
-        Box::pin(async move {
-            match req {
-                RequestPacket::Single(one) => {
-                    stub.record(&one);
-                    Ok(ResponsePacket::Single(stub.answer(&one)))
-                }
-                RequestPacket::Batch(many) => Ok(ResponsePacket::Batch(
-                    many.iter()
-                        .map(|one| {
-                            stub.record(one);
-                            stub.answer(one)
-                        })
-                        .collect(),
-                )),
-            }
-        })
-    }
 }
 
 /// The delta child resolves its own final writes before ancestors, carries the

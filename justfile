@@ -561,6 +561,23 @@ bal-delta-snapshot-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example bal_delta_snapshot_probe -- {{ ARGS }}
 
 
+# The idle-block retention measurement: the delta-chain snapshot driven over
+# both committed real write-coverage captures and one synthetic long run, at
+# the unbounded control and at thresholds `BAL_RETENTION_THRESHOLDS` (default
+# `1,2,4,8`), reporting live entries, memory/allocations, advance/compaction
+# cost, carried-hit loss, and extra dynamic fetches. The cold-read replay
+# gates correctness first — every served value at every anchor equals an
+# independent cold read or nonzero exit — and
+# `BAL_RETENTION_PLANT_DIVERGENCE=1` is the negative probe: a one-wei skew
+# armed on the prototype's serial reads that the same comparison must catch.
+# `BAL_RETENTION_SYNTH_BLOCKS`, `BAL_RETENTION_SYNTH_KEYS`, and
+# `BAL_RETENTION_SYNTH_WAVE` size the synthetic run. NOT modeled: lock
+# contention, concurrent readers, dispatch. Measurements:
+# `logs/bal_retention_result.md`.
+bal-retention-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example bal_retention_probe -- {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash

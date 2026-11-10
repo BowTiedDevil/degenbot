@@ -47,9 +47,43 @@
 //! same-anchor idempotence, and cold children following the same new-write
 //! rule. Only settled storage words cross between generations. Accounts,
 //! waiters, pending reads, stats, and EVM overlays keep the existing semantics
-//! untouched — this prototype owns no dispatch, no coalescing, no retention
-//! policy, and no persistent-map/copy-on-write structure; those are separate
-//! workstreams.
+//! untouched — this prototype owns no dispatch, no coalescing, and no
+//! persistent-map/copy-on-write structure; those are separate workstreams.
+//! One retention policy IS prototyped here, opt-in and off by default (below).
+//!
+//! # Idle-block retention (opt-in)
+//!
+//! [`Retention::IdleBlocks`] expires entries candidates have not actually
+//! read: every entry carries the block of its last USE, and the policy stops
+//! serving it once it has survived `idle` blocks without a candidate read —
+//! used at block `u`, visible through `u + idle`, gone from `u + idle + 1` on.
+//! [`DeltaSnapshotCache::with_retention`] opts a session in;
+//! [`Retention::Unbounded`] (the default of [`DeltaSnapshotCache::new`]) is the
+//! unbounded delta control.
+//!
+//! What counts as use, and what does not:
+//!
+//! - A CANDIDATE READ ([`DeltaHub::read_storage`]) is use: it stamps the
+//!   entry's record with the reading generation, whether the answer came from
+//!   the chain or the dynamic fallback. [`DeltaHub::snapshot_value`] is an
+//!   inspection, not a candidate read, and refreshes nothing.
+//! - A BAL WRITE is never use. An overwrite of a still-served entry carries
+//!   the entry's record forward (the write changed the value, not the use), so
+//!   an entry candidates stop reading expires on its original schedule however
+//!   often the list rewrites it. A write that SEEDS an entry — an unknown
+//!   identity, or an expired one back under the relevance rule (expired is
+//!   unknown) — gives it a birth at the writing block: one idle window unless
+//!   a candidate reads it. The write policy itself is unchanged: a write to a
+//!   still-served key overwrites whatever `relevance` says.
+//!
+//! Expiry is invisibility, never staleness: an expired entry resolves as
+//! unknown through every ancestor and after every compaction, so a read of it
+//! takes the ordinary dynamic fallback and gets the chain's CURRENT word at
+//! the reader's own anchor. Compaction preserves each surviving entry's record
+//! (a fold gives no entry a new life) and drops expired values together with
+//! their metadata. Parent/child isolation is unchanged: visibility is judged
+//! at each handle's OWN anchor, so a child's clock never expires anything out
+//! of an older handle's view.
 //!
 //! # Development and migration notes
 //!
@@ -60,19 +94,27 @@
 //! / [`CarryRefusal`](super::read_hub::CarryRefusal) reports), and
 //! [`DeltaHub::read_storage`] is the dynamic read seam — a chain hit answers
 //! on the spot, a miss is the provider's serial slot read at the anchor and
-//! settles into the generation's own map. What a migrating consumer must
-//! decide for itself: reads at one generation coalesce through the production
-//! hub today (single-flight, batched rounds) and this prototype deliberately
-//! does not reimplement that; a production integration would route the miss
-//! through the hub's round machinery rather than a serial fetch. The
-//! representation question — whether the delta chain beats a full clone at
-//! realistic working-set sizes — is what
-//! `just bal-delta-snapshot-probe` measures (knobs: `BAL_DELTA_SIZES`,
-//! `BAL_DELTA_REPS`, `BAL_DELTA_LOOKUPS`, `BAL_DELTA_PLANT_DIVERGENCE`), with
-//! the absolute measurements and the go/no-go for a copy-on-write workstream
-//! recorded in `logs/bal_delta_snapshot_result.md`.
+//! settles into the generation's own map. Retention adds ONE configuration
+//! decision and no new seam: pick [`Retention::IdleBlocks`] with a threshold
+//! ([`DeltaSnapshotCache::with_retention`] / [`DeltaSnapshotCache::with_max_depth_and_retention`])
+//! and every read, write, and compaction keeps its meaning. What a migrating
+//! consumer must decide for itself: reads at one generation coalesce through
+//! the production hub today (single-flight, batched rounds) and this prototype
+//! deliberately does not reimplement that; a production integration would
+//! route the miss through the hub's round machinery rather than a serial
+//! fetch. Two questions are what the probes measure: whether the delta chain
+//! beats a full clone at realistic working-set sizes
+//! (`just bal-delta-snapshot-probe`, knobs `BAL_DELTA_SIZES`, `BAL_DELTA_REPS`,
+//! `BAL_DELTA_LOOKUPS`, `BAL_DELTA_PLANT_DIVERGENCE`), and which idle-block
+//! threshold (if any) bounds memory without burning the reuse the carry
+//! exists for (`just bal-retention-probe`, knobs `BAL_RETENTION_THRESHOLDS`,
+//! `BAL_RETENTION_SYNTH_BLOCKS`, `BAL_RETENTION_SYNTH_KEYS`,
+//! `BAL_RETENTION_SYNTH_WAVE`, `BAL_RETENTION_PLANT_DIVERGENCE`). The
+//! representation verdict is in `logs/bal_delta_snapshot_result.md`; the
+//! retention tradeoff and the threshold recommendation for the dispatch
+//! vertical slice are in `logs/bal_retention_result.md`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use std::sync::Arc;
 
@@ -100,6 +142,37 @@ pub type Slot = (Address, U256);
 /// carry before its next child compacts them into one root.
 pub const DEFAULT_MAX_DEPTH: u32 = 8;
 
+/// The retention policy a [`DeltaSnapshotCache`] applies to its chain: what a
+/// candidate read keeps alive, and for how long (see the module docs for what
+/// counts as use).
+///
+/// The clock is BLOCKS, never wall time or lookup counts: an entry records the
+/// block of its last use, and the policy is asked whether that entry is still
+/// served at the generation asking.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Retention {
+    /// No expiry: every settled word is retained until its generation is
+    /// retired — the unbounded delta control.
+    #[default]
+    Unbounded,
+    /// Idle-block expiry: an entry used at block `last_used` survives `idle`
+    /// blocks without a candidate read — visible through `last_used + idle`,
+    /// gone from `last_used + idle + 1` on. A threshold of 0 serves an entry
+    /// only in the generation that used it.
+    IdleBlocks(u64),
+}
+
+impl Retention {
+    /// Whether an entry last used at `last_used` is still served at `now`.
+    #[must_use]
+    pub const fn serves(self, last_used: u64, now: u64) -> bool {
+        match self {
+            Self::Unbounded => true,
+            Self::IdleBlocks(idle) => now.saturating_sub(last_used) <= idle,
+        }
+    }
+}
+
 /// One immutable generation node: this generation's delta over its parent
 /// chain.
 ///
@@ -107,11 +180,17 @@ pub const DEFAULT_MAX_DEPTH: u32 = 8;
 /// contributed — final writes applied at the transition and values its dynamic
 /// reads settled — never a copy of an ancestor's map. [`Self::get`] resolves
 /// the delta before the ancestors, which is the final-write precedence the
-/// full-clone control gets from one flat map.
+/// full-clone control gets from one flat map. The `used` map is recency
+/// metadata: every delta identity has a record there (its birth, or the record
+/// an overwrite carried forward) plus a record for every identity this
+/// generation READ whose value an ancestor holds — a refresh with no value of
+/// its own.
 pub struct DeltaSnapshot {
     parent: Option<Arc<DeltaSnapshot>>,
 
     delta: HashMap<Slot, StorageValue>,
+
+    used: HashMap<Slot, u64>,
 
     depth: u32,
 
@@ -126,6 +205,8 @@ impl DeltaSnapshot {
 
             delta: HashMap::new(),
 
+            used: HashMap::new(),
+
             depth: 0,
 
             entries: 0,
@@ -139,6 +220,8 @@ impl DeltaSnapshot {
 
         delta: HashMap<Slot, StorageValue>,
 
+        used: HashMap<Slot, u64>,
+
         new_keys: usize,
     ) -> Self {
         let (depth, base_entries) = parent
@@ -150,21 +233,73 @@ impl DeltaSnapshot {
 
             delta,
 
+            used,
+
             depth,
 
             entries: base_entries.saturating_add(new_keys),
         }
     }
 
-    /// Resolve one identity through this node and its ancestors — the child's
-    /// own writes and settles before any ancestor value.
+    /// Resolve one identity through this node and its ancestors under
+    /// `retention` at generation `now` — the child's own writes and settles
+    /// before any ancestor value, and [`Option::None`] for an entry the policy
+    /// has expired (which is unknown again: the dynamic fallback owns it).
     #[must_use]
-    pub fn get(&self, key: &Slot) -> Option<StorageValue> {
+    pub fn get(&self, key: &Slot, now: u64, retention: Retention) -> Option<StorageValue> {
+        let last_used = self.freshest_use(key)?;
+
+        if !retention.serves(last_used, now) {
+            return None;
+        }
+
+        self.held_value(key)
+    }
+
+    /// The value this chain holds for the identity, ignoring retention — the
+    /// youngest generation's value wins.
+    fn held_value(&self, key: &Slot) -> Option<StorageValue> {
         if let Some(value) = self.delta.get(key) {
             return Some(*value);
         }
 
-        self.parent.as_ref().and_then(|parent| parent.get(key))
+        self.parent
+            .as_ref()
+            .and_then(|parent| parent.held_value(key))
+    }
+
+    /// The freshest recency record anywhere in this chain for the identity.
+    ///
+    /// A record is written at its generation's block and a younger node's
+    /// record is never staler than an ancestor's — but a compacted root merges
+    /// records of many generations, so the walk takes the MAXIMUM rather than
+    /// trusting the order.
+    fn freshest_use(&self, key: &Slot) -> Option<u64> {
+        let own = self.used.get(key).copied();
+
+        let below = self
+            .parent
+            .as_ref()
+            .and_then(|parent| parent.freshest_use(key));
+
+        match (own, below) {
+            (Some(own), Some(below)) => Some(own.max(below)),
+            (own, below) => own.or(below),
+        }
+    }
+
+    /// Whether this chain holds a value for the identity, ignoring retention.
+    fn holds(&self, key: &Slot) -> bool {
+        self.held_value(key).is_some()
+    }
+
+    /// Every identity this chain holds a value for.
+    fn collect_value_keys(&self, keys: &mut HashSet<Slot>) {
+        keys.extend(self.delta.keys().copied());
+
+        if let Some(parent) = self.parent.as_deref() {
+            parent.collect_value_keys(keys);
+        }
     }
 
     /// The ancestor links a lookup at this node walks below its own map.
@@ -180,8 +315,9 @@ impl DeltaSnapshot {
         self.delta.len()
     }
 
-    /// Distinct identities visible from this node: its own delta plus every
-    /// ancestor's.
+    /// Distinct identities this chain holds a value for: its own delta plus
+    /// every ancestor's. Under retention some may already be expired at a
+    /// later generation — [`DeltaHub::live_len`] counts what is still served.
     #[must_use]
     pub const fn entries(&self) -> usize {
         self.entries
@@ -189,14 +325,18 @@ impl DeltaSnapshot {
 
     /// Whether this is the void root: nothing to compact, nothing to link.
     fn is_void(&self) -> bool {
-        self.parent.is_none() && self.delta.is_empty()
+        self.parent.is_none() && self.delta.is_empty() && self.used.is_empty()
     }
 
     /// Fold this node's whole ancestor chain into one compacted root: a fresh
     /// map with [`Option::None`] parent, built oldest-generation-first so a
-    /// later generation's value wins. Every ancestor keeps its own maps — an
-    /// older reader holding any of them is untouched.
-    fn compact(&self) -> (Arc<DeltaSnapshot>, CompactionReport) {
+    /// later generation's value and recency record win. Every ancestor keeps
+    /// its own maps — an older reader holding any of them is untouched.
+    ///
+    /// Under retention the fold drops every identity the policy has expired at
+    /// `now` (value and metadata together) and preserves each survivor's
+    /// record: compaction gives no entry a new life.
+    fn compact(&self, now: u64, retention: Retention) -> (Arc<DeltaSnapshot>, CompactionReport) {
         let started = Instant::now();
 
         let mut chain = Vec::new();
@@ -211,15 +351,31 @@ impl DeltaSnapshot {
 
         let mut merged = HashMap::with_capacity(self.entries);
 
+        let mut merged_used: HashMap<Slot, u64> = HashMap::with_capacity(self.entries);
+
         for node in chain.iter().rev() {
             merged.extend(node.delta.iter().map(|(key, value)| (*key, *value)));
+
+            merged_used.extend(node.used.iter().map(|(key, last_used)| (*key, *last_used)));
+        }
+
+        let expired: Vec<Slot> = merged_used
+            .iter()
+            .filter(|(_, last_used)| !retention.serves(**last_used, now))
+            .map(|(key, _)| *key)
+            .collect();
+
+        for key in &expired {
+            merged_used.remove(key);
+
+            merged.remove(key);
         }
 
         let entries = merged.len();
 
         let nodes_merged = chain.len();
 
-        let root = Arc::new(DeltaSnapshot::node(None, merged, entries));
+        let root = Arc::new(DeltaSnapshot::node(None, merged, merged_used, entries));
 
         (
             root,
@@ -227,6 +383,8 @@ impl DeltaSnapshot {
                 nodes_merged,
 
                 entries,
+
+                dropped: expired.len(),
 
                 elapsed: started.elapsed(),
             },
@@ -244,6 +402,10 @@ pub struct CompactionReport {
     /// Distinct identities the compacted root holds.
     pub entries: usize,
 
+    /// Identities dropped as expired — value and recency metadata together.
+    /// [`Retention::Unbounded`] drops nothing.
+    pub dropped: usize,
+
     /// Wall time of the fold.
     pub elapsed: Duration,
 }
@@ -253,7 +415,9 @@ struct AppliedWrites {
     /// The identities applied, in BAL order.
     applied: Vec<(Address, U256)>,
 
-    /// How many applied writes replaced a value the snapshot already held.
+    /// How many applied writes took the SERVED-key overwrite path. Under
+    /// retention a write to an expired-but-held identity re-seeds instead
+    /// (module docs) and is counted in neither `overwritten` nor `new_keys`.
     overwritten: usize,
 
     /// Unknown-slot writes left unknown: address outside the relevance set.
@@ -264,20 +428,35 @@ struct AppliedWrites {
 }
 
 /// Apply the child BAL's final writes to a fresh delta over `base` under the
-/// carry's write policy: a write to a slot the snapshot already holds
+/// carry's write policy: a write to a slot the snapshot still serves
 /// OVERWRITES it whatever `relevance` says (a stale carried value outliving
 /// the block that changed it is the one outcome the carry must never produce,
 /// a zero or deletion final included), and a write to an UNKNOWN slot seeds
 /// only when its address is in `relevance` — an irrelevant unknown write stays
 /// unknown (counted, never hidden) so a later read takes the dynamic path.
+/// Under retention an expired entry IS unknown (see the module docs): the
+/// write re-seeds under the same relevance rule and births a fresh window.
+///
+/// A write is never candidate use: an overwrite carries the entry's old
+/// recency record forward, and only a seeding write stamps a birth.
 fn seed_final_writes(
     writes: &[(Address, U256, U256)],
 
     relevance: &[Address],
 
     base: &DeltaSnapshot,
-) -> (HashMap<Slot, StorageValue>, AppliedWrites) {
+
+    now: u64,
+
+    retention: Retention,
+) -> (
+    HashMap<Slot, StorageValue>,
+    HashMap<Slot, u64>,
+    AppliedWrites,
+) {
     let mut values = HashMap::new();
+
+    let mut used = HashMap::new();
 
     let mut applied_writes = AppliedWrites {
         applied: Vec::new(),
@@ -292,26 +471,39 @@ fn seed_final_writes(
     for &(address, slot, value) in writes {
         let key = (address, slot);
 
-        let known = values.contains_key(&key) || base.get(&key).is_some();
+        let held = values.contains_key(&key) || base.holds(&key);
 
-        if !known && !relevance.contains(&address) {
+        let served = values.contains_key(&key) || base.get(&key, now, retention).is_some();
+
+        if !served && !relevance.contains(&address) {
             applied_writes.skipped = applied_writes.skipped.saturating_add(1);
 
             continue;
         }
 
+        let last_used = if served {
+            used.get(&key)
+                .copied()
+                .or_else(|| base.freshest_use(&key))
+                .unwrap_or(now)
+        } else {
+            now
+        };
+
         values.insert(key, value);
 
-        if known {
+        used.insert(key, last_used);
+
+        if served {
             applied_writes.overwritten = applied_writes.overwritten.saturating_add(1);
-        } else {
+        } else if !held {
             applied_writes.new_keys = applied_writes.new_keys.saturating_add(1);
         }
 
         applied_writes.applied.push(key);
     }
 
-    (values, applied_writes)
+    (values, used, applied_writes)
 }
 
 /// One generation's state: its own values over the chain below them.
@@ -319,6 +511,11 @@ struct GenState {
     /// This generation's own values — its delta while it is the chain head,
     /// its handle-local late settles once a child has sealed it.
     values: HashMap<Slot, StorageValue>,
+
+    /// Recency records for identities this generation used: candidate reads
+    /// (including reads of values an ancestor holds), and write births. Every
+    /// `values` identity has a record here.
+    used: HashMap<Slot, u64>,
 
     /// The chain below `values`: the base ancestors before sealing, this
     /// generation's own sealed node afterwards.
@@ -333,21 +530,58 @@ struct GenState {
 }
 
 impl GenState {
-    /// Resolve one identity: this generation's own map before the chain.
-    fn resolved(&self, key: &Slot) -> Option<StorageValue> {
-        self.values.get(key).copied().or_else(|| self.node.get(key))
+    /// Resolve one identity: this generation's own map before the chain, and
+    /// [`Option::None`] for an entry the policy has expired.
+    fn resolved(&self, key: &Slot, now: u64, retention: Retention) -> Option<StorageValue> {
+        let own = self.used.get(key).copied();
+
+        let below = self.node.freshest_use(key);
+
+        let last_used = match (own, below) {
+            (Some(own), Some(below)) => Some(own.max(below)),
+            (own, below) => own.or(below),
+        }?;
+
+        if !retention.serves(last_used, now) {
+            return None;
+        }
+
+        self.values
+            .get(key)
+            .copied()
+            .or_else(|| self.node.held_value(key))
+    }
+
+    /// Record one candidate read's use at `now` — the refresh a chain hit and
+    /// a dynamic settle share.
+    fn touch(&mut self, key: Slot, now: u64) {
+        self.used.insert(key, now);
     }
 
     /// Record one settled value, counting it only when neither this
     /// generation's map nor the chain below already held the identity.
-    fn settle(&mut self, key: Slot, value: StorageValue) {
-        let fresh = !self.values.contains_key(&key) && self.node.get(&key).is_none();
+    fn settle(&mut self, key: Slot, value: StorageValue, now: u64) {
+        let fresh = !self.values.contains_key(&key) && !self.node.holds(&key);
 
         self.values.insert(key, value);
+
+        self.used.insert(key, now);
 
         if fresh {
             self.new_keys = self.new_keys.saturating_add(1);
         }
+    }
+
+    /// The identities this state can serve at `now`: every held value whose
+    /// freshest record the policy still serves.
+    fn live_len(&self, now: u64, retention: Retention) -> usize {
+        let mut keys: HashSet<Slot> = self.values.keys().copied().collect();
+
+        self.node.collect_value_keys(&mut keys);
+
+        keys.into_iter()
+            .filter(|key| self.resolved(key, now, retention).is_some())
+            .count()
     }
 }
 
@@ -362,47 +596,50 @@ pub struct DeltaHub<'p> {
 
     anchor: ReadAnchor,
 
+    retention: Retention,
+
     state: Mutex<GenState>,
 }
 
 impl<'p> DeltaHub<'p> {
-    /// A generation over `base` whose own map starts at `values`.
+    /// A generation whose own state starts at `state`.
     fn generation(
         provider: &'p AlloyProvider,
 
         anchor: ReadAnchor,
 
-        base: Arc<DeltaSnapshot>,
+        retention: Retention,
 
-        values: HashMap<Slot, StorageValue>,
-
-        new_keys: usize,
+        state: GenState,
     ) -> Self {
         Self {
             provider,
 
             anchor,
 
-            state: Mutex::new(GenState {
-                values,
+            retention,
 
-                node: base,
-
-                sealed: false,
-
-                new_keys,
-            }),
+            state: Mutex::new(state),
         }
     }
 
     /// A fresh cold generation: nothing carried, nothing written.
-    fn fresh(provider: &'p AlloyProvider, anchor: ReadAnchor) -> Self {
+    fn fresh(provider: &'p AlloyProvider, anchor: ReadAnchor, retention: Retention) -> Self {
         Self::generation(
             provider,
             anchor,
-            Arc::new(DeltaSnapshot::root()),
-            HashMap::new(),
-            0,
+            retention,
+            GenState {
+                values: HashMap::new(),
+
+                used: HashMap::new(),
+
+                node: Arc::new(DeltaSnapshot::root()),
+
+                sealed: false,
+
+                new_keys: 0,
+            },
         )
     }
 
@@ -413,16 +650,20 @@ impl<'p> DeltaHub<'p> {
     }
 
     /// The snapshot's own answer for one identity — [`Option::None`] while the
-    /// identity is still unknown to this generation and every ancestor.
+    /// identity is still unknown to this generation and every ancestor, and
+    /// for an entry the retention policy has expired. A lookup, not a
+    /// candidate read: it refreshes no recency.
     #[must_use]
     pub fn snapshot_value(&self, address: Address, index: U256) -> Option<StorageValue> {
         let state = self.state.lock();
 
-        state.resolved(&(address, index))
+        state.resolved(&(address, index), self.anchor.number, self.retention)
     }
 
     /// Distinct identities the snapshot holds: this generation's own map plus
-    /// every ancestor's, the control's `memoized_slots` counterpart.
+    /// every ancestor's, the control's `memoized_slots` counterpart. Under
+    /// retention the count includes entries already expired at this
+    /// generation — [`Self::live_len`] counts what is still served.
     #[must_use]
     pub fn snapshot_len(&self) -> usize {
         let state = self.state.lock();
@@ -430,10 +671,21 @@ impl<'p> DeltaHub<'p> {
         state.node.entries().saturating_add(state.new_keys)
     }
 
-    /// How many identities this generation itself contributed — its own delta
-    /// while it is the head, its sealed delta plus its late settles after a
-    /// child sealed it. A delta child near this number and a `snapshot_len`
-    /// near its parent's is the no-full-copy shape.
+    /// Distinct identities this handle can actually serve at its generation:
+    /// [`Self::snapshot_len`] minus every entry the retention policy has
+    /// expired (equal to it under [`Retention::Unbounded`]).
+    #[must_use]
+    pub fn live_len(&self) -> usize {
+        let state = self.state.lock();
+
+        state.live_len(self.anchor.number, self.retention)
+    }
+
+    /// How many identities this generation itself contributed VALUES for — its
+    /// own delta while it is the head, its sealed delta plus its late settles
+    /// after a child sealed it. A recency-only record (a read of a value an
+    /// ancestor holds) is metadata, not a delta value. A delta child near this
+    /// number and a `snapshot_len` near its parent's is the no-full-copy shape.
     #[must_use]
     pub fn delta_len(&self) -> usize {
         let state = self.state.lock();
@@ -459,12 +711,16 @@ impl<'p> DeltaHub<'p> {
         }
     }
 
-    /// Read one storage word at this generation's anchor.
+    /// Read one storage word at this generation's anchor — the candidate-read
+    /// seam: whatever it answers stamps the entry's recency with this
+    /// generation's block.
     ///
     /// A chain hit answers on the spot; a miss is the provider's serial slot
     /// read at the anchor, and its answer settles into the generation's own
-    /// map so the next read — here or at any child — is a hit. The coalescing,
-    /// waiter, and stats semantics stay the production hub's (module docs).
+    /// map so the next read — here or at any child — is a hit. An entry the
+    /// retention policy has expired is a miss like any other: the fallback
+    /// answers the chain's CURRENT word. The coalescing, waiter, and stats
+    /// semantics stay the production hub's (module docs).
     ///
     /// # Errors
     ///
@@ -477,15 +733,23 @@ impl<'p> DeltaHub<'p> {
     ) -> ProviderResult<StorageValue> {
         let key = (address, index);
 
-        if let Some(value) = self.snapshot_value(address, index) {
-            return Ok(value);
+        let now = self.anchor.number;
+
+        {
+            let mut state = self.state.lock();
+
+            if let Some(value) = state.resolved(&key, now, self.retention) {
+                state.touch(key, now);
+
+                return Ok(value);
+            }
         }
 
         let fetched = self.fetch_one(address, index).await?;
 
         let mut state = self.state.lock();
 
-        state.settle(key, fetched);
+        state.settle(key, fetched, now);
 
         Ok(fetched)
     }
@@ -506,22 +770,40 @@ impl<'p> DeltaHub<'p> {
     /// The move is a take, never a copy: whatever this generation settles
     /// afterwards lands in its late map and stays invisible to every child,
     /// the exact visibility boundary of the control's clone-at-transition.
-    fn seal(&self, max_depth: u32) -> (Arc<DeltaSnapshot>, Option<CompactionReport>) {
+    /// Under retention the fold drops what the policy has expired at THIS
+    /// generation — the oldest generation that can still see the folded root.
+    fn seal(
+        &self,
+        max_depth: u32,
+        retention: Retention,
+    ) -> (Arc<DeltaSnapshot>, Option<CompactionReport>) {
         let mut state = self.state.lock();
 
         if state.sealed {
             return (Arc::clone(&state.node), None);
         }
 
-        let (base, compaction) = compact_base(Arc::clone(&state.node), max_depth);
+        let (base, compaction) = compact_base(
+            Arc::clone(&state.node),
+            max_depth,
+            self.anchor.number,
+            retention,
+        );
 
         let delta = std::mem::take(&mut state.values);
 
-        let new_keys = std::mem::take(&mut state.new_keys);
+        let used = std::mem::take(&mut state.used);
+
+        // The count is recomputed against the folded base: the fold may have
+        // dropped an expired record this generation re-settled or re-seeded,
+        // and that identity now lives only in `delta`.
+        let new_keys = delta.keys().filter(|key| !base.holds(key)).count();
+
+        state.new_keys = 0;
 
         let parent = if base.is_void() { None } else { Some(base) };
 
-        let sealed = Arc::new(DeltaSnapshot::node(parent, delta, new_keys));
+        let sealed = Arc::new(DeltaSnapshot::node(parent, delta, used, new_keys));
 
         state.node = Arc::clone(&sealed);
 
@@ -537,9 +819,13 @@ fn compact_base(
     base: Arc<DeltaSnapshot>,
 
     max_depth: u32,
+
+    now: u64,
+
+    retention: Retention,
 ) -> (Arc<DeltaSnapshot>, Option<CompactionReport>) {
     if base.depth().saturating_add(1) > max_depth {
-        let (root, report) = base.compact();
+        let (root, report) = base.compact(now, retention);
 
         (root, Some(report))
     } else {
@@ -559,7 +845,9 @@ pub struct DeltaReport {
     /// `(address, slot)`, in BAL order.
     pub writes: Vec<(Address, U256)>,
 
-    /// How many of `writes` replaced a value the snapshot already held.
+    /// How many of `writes` replaced a value the snapshot still served — the
+    /// known-key overwrite path, whatever `relevance` says. Under retention a
+    /// write to an expired entry takes the seeding path instead (module docs).
     pub writes_overwritten: usize,
 
     /// Final writes left UNKNOWN: address outside the relevance set.
@@ -604,26 +892,48 @@ pub struct DeltaSnapshotCache<'p> {
 
     max_depth: u32,
 
+    retention: Retention,
+
     current: Mutex<Option<(ReadAnchor, Arc<DeltaHub<'p>>)>>,
 }
 
 impl<'p> DeltaSnapshotCache<'p> {
-    /// An empty owner at [`DEFAULT_MAX_DEPTH`].
+    /// An empty owner at [`DEFAULT_MAX_DEPTH`] and [`Retention::Unbounded`].
     #[must_use]
     pub fn new(provider: &'p AlloyProvider) -> Self {
         Self::with_max_depth(provider, DEFAULT_MAX_DEPTH)
     }
 
     /// An empty owner whose compaction threshold bounds every node's
-    /// [`depth`](DeltaSnapshot::depth). A threshold below 1 is treated as 1:
-    /// every generation then keeps at most its own delta over one compacted
-    /// root.
+    /// [`depth`](DeltaSnapshot::depth), under [`Retention::Unbounded`]. A
+    /// threshold below 1 is treated as 1: every generation then keeps at most
+    /// its own delta over one compacted root.
     #[must_use]
     pub fn with_max_depth(provider: &'p AlloyProvider, max_depth: u32) -> Self {
+        Self::with_max_depth_and_retention(provider, max_depth, Retention::Unbounded)
+    }
+
+    /// An empty owner at [`DEFAULT_MAX_DEPTH`] under `retention`.
+    #[must_use]
+    pub fn with_retention(provider: &'p AlloyProvider, retention: Retention) -> Self {
+        Self::with_max_depth_and_retention(provider, DEFAULT_MAX_DEPTH, retention)
+    }
+
+    /// An empty owner whose compaction threshold bounds every node's
+    /// [`depth`](DeltaSnapshot::depth) and whose retention policy decides what
+    /// stays served (module docs). A threshold below 1 is treated as 1.
+    #[must_use]
+    pub fn with_max_depth_and_retention(
+        provider: &'p AlloyProvider,
+        max_depth: u32,
+        retention: Retention,
+    ) -> Self {
         Self {
             provider,
 
             max_depth: max_depth.max(1),
+
+            retention,
 
             current: Mutex::new(None),
         }
@@ -642,7 +952,7 @@ impl<'p> DeltaSnapshotCache<'p> {
             }
         }
 
-        let hub = Arc::new(DeltaHub::fresh(self.provider, anchor));
+        let hub = Arc::new(DeltaHub::fresh(self.provider, anchor, self.retention));
 
         *current = Some((anchor, Arc::clone(&hub)));
 
@@ -658,9 +968,9 @@ impl<'p> DeltaSnapshotCache<'p> {
     /// is exact (the installed anchor exactly one block below the child with
     /// the child's actual parent hash), the child BAL is fetched and fully
     /// decoded before anything links (a skip yields a cold child that serves
-    /// no parent values), the write policy is the control's (update known
-    /// keys, seed only relevant new ones), and a same-anchor call is
-    /// idempotent and repeats no BAL work.
+    /// no parent values), the write policy is the control's (update served
+    /// keys, seed only relevant new ones — under retention an expired entry is
+    /// new), and a same-anchor call is idempotent and repeats no BAL work.
     pub async fn advance_bal(
         &self,
 
@@ -724,7 +1034,7 @@ impl<'p> DeltaSnapshotCache<'p> {
             if let Some((_, parent_hub)) = current.as_ref() {
                 let link_started = Instant::now();
 
-                let (sealed, folded) = parent_hub.seal(self.max_depth);
+                let (sealed, folded) = parent_hub.seal(self.max_depth, self.retention);
 
                 let seal_elapsed = link_started.elapsed();
 
@@ -744,14 +1054,29 @@ impl<'p> DeltaSnapshotCache<'p> {
 
         let base = base.unwrap_or_else(|| Arc::new(DeltaSnapshot::root()));
 
-        let (values, applied) = seed_final_writes(&final_writes, relevance, &base);
+        let (values, used, applied) = seed_final_writes(
+            &final_writes,
+            relevance,
+            &base,
+            child.number,
+            self.retention,
+        );
 
         let hub = Arc::new(DeltaHub::generation(
             self.provider,
             child,
-            base,
-            values,
-            applied.new_keys,
+            self.retention,
+            GenState {
+                values,
+
+                used,
+
+                node: base,
+
+                sealed: false,
+
+                new_keys: applied.new_keys,
+            },
         ));
 
         let outcome = if linked {

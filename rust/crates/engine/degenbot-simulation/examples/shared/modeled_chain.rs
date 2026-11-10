@@ -89,6 +89,15 @@ pub fn write_selected(number: u64, address: Address, slot: U256) -> bool {
     keccak256(preimage("bal-wall-write", number, address, slot)).0[31] & 1 == 1
 }
 
+/// Whether a candidate reads one identity at `number` — one independent bit
+/// per `(block, identity)`, so a replay's candidate read stream is
+/// deterministic but partial: some identities are read again inside their
+/// idle window and some go quiet, the workload retention is measured against.
+#[must_use]
+pub fn read_selected(number: u64, address: Address, slot: U256) -> bool {
+    keccak256(preimage("bal-retention-read", number, address, slot)).0[31] & 1 == 1
+}
+
 /// The value a write at `number` sets.
 #[must_use]
 pub fn write_value(number: u64, address: Address, slot: U256) -> U256 {
