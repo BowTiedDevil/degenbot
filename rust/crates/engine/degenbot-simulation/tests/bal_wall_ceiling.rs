@@ -16,9 +16,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use alloy::primitives::{keccak256, Address, U256};
+use alloy::primitives::{keccak256, Address, B256, U256};
 
-use degenbot_simulation::sim::evm2::bal_prefetch::{decode_bal_seed, BalPlan};
+use degenbot_simulation::sim::evm2::bal_prefetch::{decode_bal_seed, BalPlan, BalSeed};
 
 // The shared benchmark modules carry more surface than one consumer drives
 // (the probes divide it); the pins below read the parts this suite owns.
@@ -28,6 +28,9 @@ mod modeled_chain;
 #[path = "../examples/shared/probe_report.rs"]
 #[expect(dead_code)]
 mod probe_report;
+#[path = "../examples/shared/real_coverage.rs"]
+#[expect(dead_code)]
+mod real_coverage;
 #[path = "../examples/shared/recorded_corpus.rs"]
 #[expect(dead_code)]
 mod recorded_corpus;
@@ -36,9 +39,14 @@ mod recorded_corpus;
 mod wall_ledger;
 
 use modeled_chain::{
-    bal_bytes, block_writes, modeled_value, write_selected, write_value, ChainState,
+    bal_bytes, block_writes, modeled_value, real_block_writes, shared_value, write_selected,
+    write_value, ChainState, Coverage,
 };
-use probe_report::{classify_hits, eliminable_ceiling, identity_gate, HitSplit};
+use probe_report::{
+    classify_hits, eliminable_ceiling, identity_gate, storage_accounting, HitSplit,
+    StorageAccounting,
+};
+use real_coverage::{fold_writes, RealBlock, RealCoverage};
 use recorded_corpus::{
     anchor_keys, candidate_addresses, group_by_anchor, parse_trace_line, read_call_counts,
     universe, Recorded,
@@ -58,6 +66,35 @@ fn span(bucket: WallBucket, start_ns: u64, end_ns: u64) -> Span {
 
 fn key(tag: u8) -> (Address, U256) {
     (Address::new([tag; 20]), U256::from(u64::from(tag)))
+}
+
+/// One captured block in the fixture's shape, linked to its predecessor.
+fn captured_block(number: u64, writes: Vec<(Address, U256)>) -> RealBlock {
+    RealBlock {
+        number,
+        hash: B256::repeat_byte(u8::try_from(number % 251).expect("a small test number")),
+        parent_hash: B256::repeat_byte(
+            u8::try_from((number - 1) % 251).expect("a small test number"),
+        ),
+        writes,
+        other_writes: 0,
+    }
+}
+
+/// The fixture over `first..=last` whose lists write exactly `writes`.
+fn fixture(first: u64, last: u64, writes: &[(u64, (Address, U256))]) -> RealCoverage {
+    let blocks = (first..=last)
+        .map(|number| {
+            let mut block_writes: Vec<(Address, U256)> = writes
+                .iter()
+                .filter(|(at, _)| *at == number)
+                .map(|(_, identity)| *identity)
+                .collect();
+            block_writes.sort_unstable();
+            captured_block(number, block_writes)
+        })
+        .collect();
+    RealCoverage::from_blocks(vec![key(0x11).0], blocks).expect("a linked captured stretch")
 }
 
 #[test]
@@ -530,5 +567,221 @@ fn the_identity_gate_names_the_diverged_candidate_and_refuses_an_empty_replay() 
         )
         .is_empty(),
         "an identical replay is green"
+    );
+}
+
+#[test]
+fn the_real_coverage_fixture_refuses_a_gap_or_parent_linkage_that_does_not_hold() {
+    let linked = vec![
+        captured_block(7, vec![]),
+        captured_block(8, vec![]),
+        captured_block(9, vec![]),
+    ];
+    assert!(
+        RealCoverage::from_blocks(vec![], linked).is_ok(),
+        "a contiguous stretch whose parents link is one captured fixture"
+    );
+    let gap = vec![captured_block(7, vec![]), captured_block(9, vec![])];
+    let error =
+        RealCoverage::from_blocks(vec![], gap).expect_err("a gap is never a captured stretch");
+    assert!(
+        error.contains("skips block 8"),
+        "the failure names the gap: {error}"
+    );
+    let mut broken = vec![captured_block(7, vec![]), captured_block(8, vec![])];
+    broken[1].parent_hash = B256::repeat_byte(0xEE);
+    let error = RealCoverage::from_blocks(vec![], broken)
+        .expect_err("a parent hash that does not link is never a captured stretch");
+    assert!(
+        error.contains("names parent"),
+        "the failure names the broken link: {error}"
+    );
+}
+
+#[test]
+fn the_real_coverage_fixture_round_trips_through_the_documented_format() {
+    let real = fixture(7, 9, &[(8, key(0x11)), (9, key(0x22))]);
+    let path = std::env::temp_dir().join(format!("bal_real_coverage_{}.json", std::process::id()));
+    let path = path.to_str().expect("a temp path is utf-8");
+    real.save(path).expect("the fixture writes");
+    let text = std::fs::read_to_string(path).expect("the fixture reads back");
+    assert!(
+        text.contains(r#""format": "bal-real-coverage-v1""#),
+        "the file carries the documented, versioned format tag: {text}"
+    );
+    let loaded = RealCoverage::load(path).expect("the fixture parses");
+    assert_eq!(
+        (loaded.first(), loaded.last()),
+        (7, 9),
+        "the captured stretch survives the round trip"
+    );
+    assert_eq!(
+        loaded.hash(8).expect("block 8 is captured"),
+        real.hash(8).expect("block 8 is captured"),
+        "the real block identities survive the round trip"
+    );
+    assert_eq!(
+        loaded.writes_at(8),
+        &[(key(0x11).0, key(0x11).1)],
+        "the exact write identities survive the round trip"
+    );
+    assert!(
+        loaded.is_write(9, key(0x22).0, key(0x22).1),
+        "the membership lookup reads the captured identities"
+    );
+    assert!(
+        !loaded.is_write(9, key(0x11).0, key(0x11).1),
+        "an identity the list did not write is not a captured write"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn the_capture_fold_keeps_the_tracked_addresses_writes_and_counts_the_rest() {
+    let (tracked, slot_one) = key(0x11);
+    let slot_two = U256::from(7u64);
+    let (untracked, slot_untracked) = key(0x33);
+    let seed = BalSeed {
+        writes: vec![
+            (tracked, slot_two, U256::from(2u64)),
+            (untracked, slot_untracked, U256::from(3u64)),
+            (tracked, slot_one, U256::from(1u64)),
+        ],
+        ..BalSeed::default()
+    };
+    let tracked_addresses = [tracked].into_iter().collect();
+    let (writes, other_writes) = fold_writes(&seed, &tracked_addresses);
+    assert_eq!(
+        writes,
+        vec![(tracked, slot_two), (tracked, slot_one)],
+        "the fold keeps exactly the tracked addresses' write identities, in key order"
+    );
+    assert_eq!(
+        other_writes, 1,
+        "writes outside the tracked addresses are counted, never kept"
+    );
+}
+
+#[test]
+fn the_distinct_key_storage_accounting_splits_keys_the_way_the_live_probe_counts() {
+    let keys: BTreeSet<(Address, U256)> = [key(0x11), key(0x22), key(0x33), key(0x44)]
+        .into_iter()
+        .collect();
+    let mut writes = BTreeSet::new();
+    writes.insert(key(0x11));
+    writes.insert(key(0x22)); // written AND carried: the write class wins
+    let mut snapshot = BTreeSet::new();
+    snapshot.insert(key(0x22));
+    snapshot.insert(key(0x33));
+    let accounting = storage_accounting(&keys, &writes, &snapshot);
+    assert_eq!(
+        accounting,
+        StorageAccounting {
+            keys: 4,
+            carried: 1,
+            final_write: 2,
+            dynamic: 1,
+        },
+        "every distinct key lands in exactly one class: {accounting:?}"
+    );
+}
+
+#[test]
+fn the_shared_chain_s_value_changes_only_at_a_block_both_coverages_write() {
+    let first = 100u64;
+    let last = 131u64;
+    let (address, slot) = key(0x11);
+    let base = write_value(first - 1, address, slot);
+    let selected: Vec<u64> = (first..=last)
+        .filter(|&number| write_selected(number, address, slot))
+        .collect();
+    let shared = selected[0];
+    let modeled_only = *selected
+        .iter()
+        .find(|&&number| number > shared)
+        .expect("the modeled bit selects later blocks too");
+    let real_only = (shared + 1..=last)
+        .find(|&number| !write_selected(number, address, slot))
+        .expect("the modeled bit leaves some later block alone");
+    let real = fixture(
+        first,
+        last,
+        &[(shared, (address, slot)), (real_only, (address, slot))],
+    );
+    assert_eq!(
+        shared_value(first, shared - 1, &real, address, slot),
+        base,
+        "before both coverages write, the identity holds its base value"
+    );
+    assert_eq!(
+        shared_value(first, shared, &real, address, slot),
+        write_value(shared, address, slot),
+        "the block both coverages write sets the shared value"
+    );
+    assert_eq!(
+        shared_value(first, modeled_only, &real, address, slot),
+        write_value(shared, address, slot),
+        "a block only the modeled bit writes leaves the shared value alone"
+    );
+    assert_eq!(
+        shared_value(first, real_only, &real, address, slot),
+        write_value(shared, address, slot),
+        "a block only the real list writes leaves the shared value alone"
+    );
+}
+
+#[test]
+fn both_coverage_modes_serve_identical_read_values() {
+    let first = 100u64;
+    let last = 104u64;
+    let keys: BTreeSet<(Address, U256)> = [key(0x11), key(0x22), key(0x33)].into_iter().collect();
+    let real = fixture(
+        first,
+        last,
+        &[(101, key(0x11)), (102, key(0x22)), (102, key(0x33))],
+    );
+    let synthetic = ChainState::build_coverage(&keys, first, last, &real, Coverage::Synthetic)
+        .expect("a chain");
+    let real_chain =
+        ChainState::build_coverage(&keys, first, last, &real, Coverage::Real).expect("a chain");
+    for &(address, slot) in &keys {
+        for number in first..=last {
+            assert_eq!(
+                synthetic.value_at(address, slot, number),
+                real_chain.value_at(address, slot, number),
+                "the shared chain serves one value per identity at a block whatever coverage's \
+                 lists the run replays"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_real_lists_carry_exactly_the_captured_write_identities_with_shared_values() {
+    let first = 100u64;
+    let last = 103u64;
+    let writes = [(101, key(0x11)), (101, key(0x22)), (102, key(0x33))];
+    let real = fixture(first, last, &writes);
+    let entries = real_block_writes(first, 101, &real);
+    assert_eq!(
+        entries
+            .iter()
+            .map(|(address, slot, _)| (*address, *slot))
+            .collect::<Vec<_>>(),
+        real.writes_at(101),
+        "the real list is exactly the captured write identities"
+    );
+    for &(address, slot, value) in &entries {
+        assert_eq!(
+            value,
+            shared_value(first, 101, &real, address, slot),
+            "each entry carries the shared chain's word after the block"
+        );
+    }
+    let seed = decode_bal_seed(&bal_bytes(&entries), &BalPlan::default())
+        .expect("the real-shaped bytes are one list");
+    assert_eq!(
+        seed.writes, entries,
+        "the production decoder reads back exactly the list's writes"
     );
 }

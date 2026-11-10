@@ -469,15 +469,39 @@ session-fanout-probe *ARGS:
 # cold + exact-anchor BAL write seeding / parent-linked carry-forward through
 # every intermediate block) under ONE modeled cost model with the recorded
 # execution spent as wall, candidate wall time attributed to six reconciled
-# buckets, and the eliminable storage-wait ceiling reported per price point.
-# Offline by construction; the corpus is the `fanout-trace` stream (default
-# `/tmp/fanout_trace.log`; `BAL_WALL_TRACE` overrides it, and its absence is a
-# hard failure). Knobs: `BAL_WALL_STORAGE_US` / `BAL_WALL_ACCOUNT_US` /
-# `BAL_WALL_W` / `BAL_WALL_F`, the negative probes
-# `BAL_WALL_PLANT_STORAGE_DELAY_US` (reports bucket/ceiling deltas) and
-# `BAL_WALL_PLANT_DIVERGENCE` (exits 1), and `BAL_WALL_DEBUG`.
+# buckets, and the eliminable storage-wait ceiling reported per price point —
+# in BOTH write-coverage modes (`BAL_WALL_COVERAGE=synthetic|real|both`, default
+# both): the modeled ~50%-per-block write bit beside the captured real write
+# identities (`BAL_WALL_FIXTURE`, default
+# `tests/fixtures/bal_real_coverage.json`), with identical candidates, order,
+# W/F, prices, and read values. Offline by construction; the corpus is the
+# `fanout-trace` stream (default `/tmp/fanout_trace.log`; `BAL_WALL_TRACE`
+# overrides it, and its absence is a hard failure). Knobs:
+# `BAL_WALL_STORAGE_US` / `BAL_WALL_ACCOUNT_US` / `BAL_WALL_W` / `BAL_WALL_F`,
+# the negative probes `BAL_WALL_PLANT_STORAGE_DELAY_US` (reports bucket/ceiling
+# deltas) and `BAL_WALL_PLANT_DIVERGENCE` (exits 1), and `BAL_WALL_DEBUG`.
 bal-wall-ceiling-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example bal_wall_ceiling_probe -- {{ ARGS }}
+
+
+# The real write-coverage fixture capture (dev-only; the measured replay's
+# offline input): every canonical block of the corpus stretch (default
+# 26375033..=26375053) is fetched at its exact hash, its block access list's
+# write identities over the corpus's addresses folded through the production
+# decoder, and the stretch's real parent linkage written to
+# `tests/fixtures/bal_real_coverage.json` (`BAL_WALL_FIXTURE` relocates it; the
+# raw multi-megabyte list responses are never stored). Fails closed unless the
+# machine DECLARES an endpoint (the conftest layers, the same resolution
+# `test-fork` probes).
+bal-real-coverage-capture *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC declared — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
+        exit 1
+    fi
+    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" BAL_WALL_FIXTURE_CAPTURE=1 cargo run --locked --release -p degenbot-simulation --example bal_wall_ceiling_probe -- {{ ARGS }}
 
 
 # The parent-linked BAL carry-forward live probe: EVERY canonical block of the

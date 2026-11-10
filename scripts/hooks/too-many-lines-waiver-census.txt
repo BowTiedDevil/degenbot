@@ -80,6 +80,8 @@ rust/crates/engine/degenbot-bot/src/bot_core/pool_builder/builder.rs::build_curv
 rust/crates/engine/degenbot-bot/src/instruments.rs::apply	the dispatch IS one flat 1:1 table over the closed census vocabulary; hiding rows in helpers would obscure the event→instrument map
 rust/crates/engine/degenbot-bot/src/instruments.rs::new	one instrument per block; splitting hides the inventory
 rust/crates/engine/degenbot-simulation/examples/bal_carry_probe.rs::run	the probe's corpus, replay, report, and scaling leg read top-down
+rust/crates/engine/degenbot-simulation/examples/bal_wall_ceiling_probe.rs::print_coverage_comparison	the comparison rows and the decomposition read top-down beside the tables
+rust/crates/engine/degenbot-simulation/examples/bal_wall_ceiling_probe.rs::run	the run's capture phase, mode replays, and gates read top-down
 rust/crates/engine/degenbot-simulation/examples/cold_miss_fanout_probe.rs::main	the probe's leg sequence reads top-down
 rust/crates/engine/degenbot-simulation/examples/mirror_coverage_probe.rs::!module
 rust/crates/engine/degenbot-simulation/examples/worker_fanout_probe.rs::build_candidate	the candidate's deploy + depth seeding + frame encode read top-down

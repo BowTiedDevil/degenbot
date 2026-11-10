@@ -111,10 +111,14 @@ use degenbot_simulation::sim::evm2::async_fanout::{DrainPolicy, FanoutLimits};
 // (the probes divide it); the parts this probe does not replay stay unmarked
 // only where every item has a caller here.
 #[path = "shared/modeled_chain.rs"]
+#[expect(dead_code)]
 mod modeled_chain;
 #[path = "shared/probe_report.rs"]
 #[expect(dead_code)]
 mod probe_report;
+#[path = "shared/real_coverage.rs"]
+#[expect(dead_code)]
+mod real_coverage;
 #[path = "shared/recorded_corpus.rs"]
 #[expect(dead_code)]
 mod recorded_corpus;

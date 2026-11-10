@@ -20,6 +20,21 @@
 //! parent-to-child like a real chain: `advance_bal` sees an unbroken parent
 //! chain through every intermediate block, and the list request is keyed by
 //! exact hash.
+//!
+//! # Real coverage, and the shared value chain
+//!
+//! A coverage comparison ([`Coverage`]) swaps WHICH write identities each
+//! block's list carries — the modeled write bit's, or the captured real
+//! fixture's exact identities at their real hashes — while candidate order,
+//! schedule, prices, and READ VALUES stay put. Values staying put is the hard
+//! part: an identity's value may change only where every served list carries
+//! the change, or one policy's snapshot serves a word another policy's fetch
+//! would not, and the cross-leg digest gate turns red. With both coverages in
+//! play the only drift set that satisfies both lists is the writes BOTH
+//! coverages make ([`shared_value`]) — the maximal such set, so the digest
+//! gate keeps teeth against a dropped write wherever the shared chain drifts.
+//! (Outside a coverage comparison, one coverage is the whole world and values
+//! drift at its writes: [`modeled_value`].)
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +54,8 @@ use serde_json::value::to_raw_value;
 use serde_json::{json, Value};
 
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
+
+use crate::real_coverage::RealCoverage;
 
 /// One tracked read identity.
 pub type Key = (Address, U256);
@@ -91,6 +108,26 @@ pub fn modeled_value(first: u64, block: u64, address: Address, slot: U256) -> U2
     write_value(first.saturating_sub(1), address, slot)
 }
 
+/// The shared chain's value of one identity after `block`: the value of the
+/// last block up to `block` that BOTH coverages wrote it, or the pre-chain base
+/// value when no such block exists. This is the value table a coverage
+/// comparison serves whatever lists it replays (module docs).
+#[must_use]
+pub fn shared_value(
+    first: u64,
+    block: u64,
+    real: &RealCoverage,
+    address: Address,
+    slot: U256,
+) -> U256 {
+    for number in (first..=block).rev() {
+        if write_selected(number, address, slot) && real.is_write(number, address, slot) {
+            return write_value(number, address, slot);
+        }
+    }
+    write_value(first.saturating_sub(1), address, slot)
+}
+
 /// One modeled block's final writes over the tracked identities, in key order:
 /// exactly the identities its write bit selects, each carrying the value the
 /// chain serves after it.
@@ -106,6 +143,86 @@ pub fn block_writes(first: u64, number: u64, keys: &BTreeSet<Key>) -> Vec<(Addre
             )
         })
         .collect()
+}
+
+/// One block's modeled final writes over the tracked identities under the
+/// SHARED chain: the same identities [`block_writes`] selects, each carrying
+/// the shared value chain's word after it (module docs).
+#[must_use]
+pub fn shared_block_writes(
+    first: u64,
+    number: u64,
+    keys: &BTreeSet<Key>,
+    real: &RealCoverage,
+) -> Vec<(Address, U256, U256)> {
+    keys.iter()
+        .filter(|(address, slot)| write_selected(number, *address, *slot))
+        .map(|(address, slot)| {
+            (
+                *address,
+                *slot,
+                shared_value(first, number, real, *address, *slot),
+            )
+        })
+        .collect()
+}
+
+/// One block's REAL final writes: exactly the captured fixture's write
+/// identities at that block (the applied set the live probe applied), each
+/// carrying the shared value chain's word after it.
+#[must_use]
+pub fn real_block_writes(
+    first: u64,
+    number: u64,
+    real: &RealCoverage,
+) -> Vec<(Address, U256, U256)> {
+    real.writes_at(number)
+        .iter()
+        .map(|&(address, slot)| {
+            (
+                address,
+                slot,
+                shared_value(first, number, real, address, slot),
+            )
+        })
+        .collect()
+}
+
+/// Which write identities one coverage mode's lists carry, and which block
+/// hashes key them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Coverage {
+    /// The modeled write bit's identities at the modeled block hashes.
+    Synthetic,
+    /// The captured real identities at their exact (real) hashes.
+    Real,
+}
+
+impl Coverage {
+    /// The block hash this coverage's anchors and lists are keyed by.
+    ///
+    /// # Errors
+    ///
+    /// Real coverage has no identity outside the captured stretch.
+    pub fn hash(self, real: &RealCoverage, number: u64) -> Result<B256, String> {
+        match self {
+            Self::Synthetic => Ok(block_hash(number)),
+            Self::Real => real.hash(number),
+        }
+    }
+
+    /// The parent hash a child at `number` names: its predecessor's hash —
+    /// the modeled chain's derived link, or the captured header's real one.
+    ///
+    /// # Errors
+    ///
+    /// Real coverage has no linkage outside the captured stretch.
+    pub fn parent_hash(self, real: &RealCoverage, number: u64) -> Result<B256, String> {
+        match self {
+            Self::Synthetic => Ok(block_hash(number.saturating_sub(1))),
+            Self::Real => real.parent_hash(number),
+        }
+    }
 }
 
 /// One block's modeled final writes as raw EIP-7928 list bytes — the exact
@@ -193,6 +310,49 @@ impl ChainState {
     #[must_use]
     pub fn bal_at(&self, hash: B256) -> Option<&[u8]> {
         self.bals.get(&hash).map(Vec::as_slice)
+    }
+
+    /// Build the COVERAGE-COMPARISON chain over `keys` for `first..=last`: one
+    /// shared value table (values drift only at writes both the modeled bit and
+    /// `real` make — [`shared_value`]) with `coverage`'s write identities
+    /// served at that coverage's block hashes. Whatever coverage's lists the
+    /// run replays, its reads return the same words (module docs).
+    ///
+    /// # Errors
+    ///
+    /// An empty key set or an empty block range is not a chain this benchmark
+    /// can define over.
+    pub fn build_coverage(
+        keys: &BTreeSet<Key>,
+        first: u64,
+        last: u64,
+        real: &RealCoverage,
+        coverage: Coverage,
+    ) -> Result<Self, String> {
+        if keys.is_empty() {
+            return Err("the modeled chain needs at least one tracked identity".to_string());
+        }
+        if first > last {
+            return Err(format!("the modeled block range {first}..={last} is empty"));
+        }
+        let mut values = HashMap::new();
+        let mut bals = HashMap::new();
+        for number in first..=last {
+            let writes = match coverage {
+                Coverage::Synthetic => shared_block_writes(first, number, keys, real),
+                Coverage::Real => real_block_writes(first, number, real),
+            };
+            for &key in keys {
+                let (address, slot) = key;
+                values.insert(
+                    (key, number),
+                    shared_value(first, number, real, address, slot),
+                );
+            }
+            let hash = coverage.hash(real, number)?;
+            bals.insert(hash, bal_bytes(&writes));
+        }
+        Ok(Self { values, bals })
     }
 }
 

@@ -41,9 +41,24 @@
 //! policies replay the same reads and that a carry never serves a stale parent
 //! value. What the replay does NOT establish is full EVM verdict parity: the
 //! corpus carries no calldata, no opcode runs, and the blocks' real write
-//! coverage is modeled (the corpus records reads only). Real write coverage,
-//! value drift, and verdict parity are the live probe's (`bal_carry_probe`) and
-//! the broader-corpus experiment's questions.
+//! coverage is modeled (the corpus records reads only). Value drift and verdict
+//! parity are the live probe's (`bal_carry_probe`) and the broader-corpus
+//! experiment's questions.
+//!
+//! # Coverage modes, and the real-coverage fixture
+//!
+//! The write coverage itself is the replay's one swapped variable: every run
+//! reports `synthetic` (the modeled write bit, ~half the tracked identities per
+//! block) beside `real` — the EXACT write identities of the 21 real block
+//! access lists, captured once from the live node into the dev-only fixture
+//! ([`real_coverage`]: format, regeneration command) and replayed offline at
+//! the blocks' real hashes with their real parent linkage. Candidate order,
+//! recorded `sim_ns`, W/F, the price points, and READ VALUES are identical
+//! across the modes — the shared value chain drifts only where both coverages
+//! write (see [`modeled_chain`]), so the comparison isolates write coverage and
+//! the cross-mode digest gate proves the values stayed put. The real mode's
+//! per-anchor storage/hit accounting is cross-checked against the live
+//! `bal_carry_probe`'s counts and fails loud on any discrepancy.
 //!
 //! # Wall-time attribution
 //!
@@ -69,31 +84,39 @@
 //!
 //! # Gates
 //!
-//! The cross-leg read-digest gate must be GREEN: every leg, every latency
-//! point, every recorded candidate. `BAL_WALL_PLANT_DIVERGENCE=1` answers
-//! storage one wei high during the carry leg only, which must turn the gate
-//! RED and the process exit nonzero. `BAL_WALL_PLANT_STORAGE_DELAY_US=500`
-//! plants an extra storage delay and runs the first latency point unplanted and
-//! planted, reporting the bucket and ceiling deltas (the planted delay lands
-//! only in the storage-wait bucket).
+//! The cross-leg read-digest gate must be GREEN in every coverage mode: every
+//! leg, every latency point, every recorded candidate — and the cross-mode gate
+//! must agree on the values (the cold baselines' digests are identical across
+//! the modes). `BAL_WALL_PLANT_DIVERGENCE=1` answers storage one wei high
+//! during the carry leg only, which must turn the gate RED and the process exit
+//! nonzero. `BAL_WALL_PLANT_STORAGE_DELAY_US=500` plants an extra storage delay
+//! and runs the first latency point unplanted and planted, reporting the bucket
+//! and ceiling deltas (the planted delay lands only in the storage-wait
+//! bucket).
 //!
 //! # Usage
 //!
 //! ```sh
-//! just bal-wall-ceiling-probe                     # both price points, unplanted
+//! just bal-wall-ceiling-probe                     # both modes x both price points, unplanted
+//! BAL_WALL_COVERAGE=real just bal-wall-ceiling-probe    # one mode (synthetic | real | both)
 //! BAL_WALL_TRACE=/tmp/fanout_trace.log \
 //! BAL_WALL_STORAGE_US=700 BAL_WALL_ACCOUNT_US=1200 \
 //! BAL_WALL_W=2 BAL_WALL_F=8 just bal-wall-ceiling-probe
 //! BAL_WALL_PLANT_STORAGE_DELAY_US=500 just bal-wall-ceiling-probe   # first point, with deltas
 //! BAL_WALL_PLANT_DIVERGENCE=1 just bal-wall-ceiling-probe           # exits 1
+//! just bal-real-coverage-capture                  # regenerate the fixture (live node, dev-only)
 //! ```
+//!
+//! `BAL_WALL_FIXTURE` relocates the fixture (default
+//! `tests/fixtures/bal_real_coverage.json` in this crate); `BAL_WALL_DEBUG`
+//! traces lane progress.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, B256};
 
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::async_fanout::{DrainPolicy, FanoutLimits};
@@ -102,9 +125,12 @@ use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, CarryReport, ReadHu
 use degenbot_simulation::sim::ReadAnchor;
 
 #[path = "shared/modeled_chain.rs"]
+#[expect(dead_code)]
 mod modeled_chain;
 #[path = "shared/probe_report.rs"]
 mod probe_report;
+#[path = "shared/real_coverage.rs"]
+mod real_coverage;
 #[path = "shared/recorded_corpus.rs"]
 #[expect(dead_code)]
 mod recorded_corpus;
@@ -114,8 +140,12 @@ mod session_drive;
 #[expect(dead_code)]
 mod wall_ledger;
 
-use modeled_chain::{block_hash, ChainState, Key, StubChain};
-use probe_report::{classify_hits, eliminable_ceiling, identity_gate, CeilingReport, HitSplit};
+use modeled_chain::{write_selected, ChainState, Coverage, Key, StubChain};
+use probe_report::{
+    classify_hits, eliminable_ceiling, identity_gate, storage_accounting, CeilingReport, HitSplit,
+    StorageAccounting,
+};
+use real_coverage::RealCoverage;
 use recorded_corpus::{
     anchor_keys, candidate_addresses, group_by_anchor, load_rows, read_call_counts, universe,
     Recorded, DEFAULT_TRACE,
@@ -132,6 +162,20 @@ const OPTIMISTIC: (u64, u64) = (200, 400);
 
 /// The pessimistic model's prices.
 const PESSIMISTIC: (u64, u64) = (700, 1200);
+
+/// The fixture's default home: the committed compact capture of the corpus
+/// stretch (the raw list responses are never stored).
+const DEFAULT_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/bal_real_coverage.json"
+);
+
+/// The live `bal_carry_probe` accounting this corpus produced — the real
+/// mode's cross-check. Any discrepancy is a failing gate, never a hidden one.
+const LIVE_ANCHOR_KEYS: usize = 5_938;
+const LIVE_CARRIED_HITS: usize = 3_261;
+const LIVE_FINAL_WRITE_HITS: usize = 136;
+const LIVE_DYNAMIC_MEMBERS: usize = 2_541;
 
 fn env_us(name: &str) -> Option<Duration> {
     std::env::var(name)
@@ -151,6 +195,14 @@ fn env_count(name: &str, fallback: usize) -> usize {
 /// What one invocation drives.
 struct Config {
     trace: String,
+    /// The real write-coverage fixture the `real` mode and the shared value
+    /// chain are built over.
+    fixture: String,
+    /// Set by the dev-only capture phase: write the fixture from the live node
+    /// and exit without replaying.
+    capture: bool,
+    /// The coverage modes to report, in report order.
+    modes: Vec<(&'static str, Coverage)>,
     /// The `(storage, account)` latency points to report.
     points: Vec<(Duration, Duration)>,
     limits: FanoutLimits,
@@ -161,8 +213,32 @@ struct Config {
     plant: Option<Arc<AtomicBool>>,
 }
 
+/// One replay mode's block identities: its coverage's hashes and the shared
+/// fixture.
+struct ModeChain<'a> {
+    label: &'static str,
+    coverage: Coverage,
+    real: &'a RealCoverage,
+}
+
+impl ModeChain<'_> {
+    fn hash(&self, number: u64) -> Result<B256, String> {
+        self.coverage.hash(self.real, number)
+    }
+
+    fn parent_hash(&self, number: u64) -> Result<B256, String> {
+        self.coverage.parent_hash(self.real, number)
+    }
+}
+
 impl Config {
-    fn from_env() -> Self {
+    /// Fold the invocation's env knobs into one configuration.
+    ///
+    /// # Errors
+    ///
+    /// A `BAL_WALL_COVERAGE` value that names no coverage mode is a broken
+    /// invocation, never a silent default.
+    fn from_env() -> Result<Self, String> {
         let storage = env_us("BAL_WALL_STORAGE_US");
         let account = env_us("BAL_WALL_ACCOUNT_US");
         let points = match (storage, account) {
@@ -180,15 +256,31 @@ impl Config {
                 ),
             ],
         };
-        Self {
+        let modes = match std::env::var("BAL_WALL_COVERAGE") {
+            Ok(value) if value == "synthetic" => vec![("synthetic", Coverage::Synthetic)],
+            Ok(value) if value == "real" => vec![("real", Coverage::Real)],
+            Ok(value) if value == "both" || value.is_empty() => {
+                vec![("synthetic", Coverage::Synthetic), ("real", Coverage::Real)]
+            }
+            Ok(value) => {
+                return Err(format!(
+                    "BAL_WALL_COVERAGE={value}: expected synthetic, real, or both"
+                ));
+            }
+            Err(_) => vec![("synthetic", Coverage::Synthetic), ("real", Coverage::Real)],
+        };
+        Ok(Self {
             trace: std::env::var("BAL_WALL_TRACE").unwrap_or_else(|_| DEFAULT_TRACE.into()),
+            fixture: std::env::var("BAL_WALL_FIXTURE").unwrap_or_else(|_| DEFAULT_FIXTURE.into()),
+            capture: std::env::var("BAL_WALL_FIXTURE_CAPTURE").is_ok(),
+            modes,
             points,
             limits: FanoutLimits::new(env_count("BAL_WALL_W", 2), env_count("BAL_WALL_F", 8)),
             plant_storage: env_us("BAL_WALL_PLANT_STORAGE_DELAY_US").unwrap_or(Duration::ZERO),
             plant: std::env::var("BAL_WALL_PLANT_DIVERGENCE")
                 .is_ok()
                 .then(|| Arc::new(AtomicBool::new(false))),
-        }
+        })
     }
 }
 
@@ -228,6 +320,8 @@ struct LegSummary {
     carried_values: u64,
     /// Block access lists fetched (seed: one per anchor; carry: one per block).
     bal_fetches: u64,
+    /// The distinct-key per-anchor storage accounting (the live probe's shape).
+    storage: StorageAccounting,
     digests: Digests,
 }
 
@@ -252,12 +346,13 @@ impl LegSummary {
             writes_skipped: 0,
             carried_values: 0,
             bal_fetches: 0,
+            storage: StorageAccounting::default(),
             digests: Digests::new(),
         }
     }
 
     /// Fold one anchor's drive into the leg.
-    fn fold(&mut self, facts: &LegFacts, hits: HitSplit) {
+    fn fold(&mut self, facts: &LegFacts, hits: HitSplit, storage: StorageAccounting) {
         assert_eq!(
             facts.label, self.label,
             "a drive's label names the leg it belongs to"
@@ -274,6 +369,7 @@ impl LegSummary {
         self.coalesced += facts.coalesced;
         self.memo_hits += facts.memo_hits;
         self.hits.add(hits);
+        self.storage.add(storage);
         self.digests.extend(facts.digests.clone());
     }
 
@@ -312,6 +408,7 @@ fn leg_plan(config: &Config) -> LanePlan {
 /// Cold per candidate anchor: a new empty hub for every anchor's fan-out.
 async fn drive_cold(
     config: &Config,
+    mode: &ModeChain<'_>,
     fanouts: &[(u64, Vec<Recorded>)],
     provider: &AlloyProvider,
     node: Node,
@@ -319,7 +416,7 @@ async fn drive_cold(
     let ledger = WallLedger::new();
     let mut summary = LegSummary::new("cold");
     for (block, rows) in fanouts {
-        let hub = ReadHub::new(provider, ReadAnchor::identified(*block, block_hash(*block)));
+        let hub = ReadHub::new(provider, ReadAnchor::identified(*block, mode.hash(*block)?));
         let facts = drive_lanes(
             "cold",
             leg_plan(config),
@@ -337,7 +434,8 @@ async fn drive_cold(
             &BTreeSet::new(),
             facts.memo_hits,
         );
-        summary.fold(&facts, hits);
+        let storage = storage_accounting(&anchor_keys(rows), &BTreeSet::new(), &BTreeSet::new());
+        summary.fold(&facts, hits, storage);
     }
     summary.finish(&ledger)
 }
@@ -347,6 +445,7 @@ async fn drive_cold(
 /// anchor's empty hub, timed into the fetch/decode and snapshot buckets.
 async fn drive_seed(
     config: &Config,
+    mode: &ModeChain<'_>,
     fanouts: &[(u64, Vec<Recorded>)],
     provider: &AlloyProvider,
     node: Node,
@@ -354,10 +453,10 @@ async fn drive_seed(
     let ledger = WallLedger::new();
     let mut summary = LegSummary::new("seed");
     for (block, rows) in fanouts {
-        let hub = ReadHub::new(provider, ReadAnchor::identified(*block, block_hash(*block)));
+        let hub = ReadHub::new(provider, ReadAnchor::identified(*block, mode.hash(*block)?));
         let started = Instant::now();
         let raw = provider
-            .get_raw_block_access_list(block_hash(*block))
+            .get_raw_block_access_list(mode.hash(*block)?)
             .await
             .map_err(|error| format!("list fetch at {block}: {error}"))?;
         let seed = decode_bal_seed(&raw, &BalPlan::default())
@@ -389,7 +488,8 @@ async fn drive_seed(
             &BTreeSet::new(),
             facts.memo_hits,
         );
-        summary.fold(&facts, hits);
+        let storage = storage_accounting(&anchor_keys(rows), &seeded_keys, &BTreeSet::new());
+        summary.fold(&facts, hits, storage);
     }
     summary.finish(&ledger)
 }
@@ -430,6 +530,7 @@ fn fold_advance(
 /// hub, and the MEV-relevant new-write rule left to the pipeline.
 async fn drive_carry(
     config: &Config,
+    mode: &ModeChain<'_>,
     fanouts: &[(u64, Vec<Recorded>)],
     provider: &AlloyProvider,
     node: Node,
@@ -454,8 +555,8 @@ async fn drive_carry(
         let started = Instant::now();
         let (hub, report) = cache
             .advance_bal(
-                ReadAnchor::identified(number, block_hash(number)),
-                block_hash(number.saturating_sub(1)),
+                ReadAnchor::identified(number, mode.hash(number)?),
+                mode.parent_hash(number)?,
                 &relevance,
             )
             .await;
@@ -474,14 +575,16 @@ async fn drive_carry(
                 &ledger,
             )
             .await?;
+            let keys = anchor_keys(rows);
             let hits = classify_hits(
                 &read_call_counts(rows),
                 &write_keys,
                 &snapshot_keys,
                 facts.memo_hits,
             );
-            summary.fold(&facts, hits);
-            snapshot_keys.extend(anchor_keys(rows));
+            let storage = storage_accounting(&keys, &write_keys, &snapshot_keys);
+            summary.fold(&facts, hits, storage);
+            snapshot_keys.extend(keys);
         }
         snapshot_keys.extend(write_keys);
     }
@@ -495,6 +598,7 @@ async fn drive_carry(
 )]
 async fn run_point(
     config: &Config,
+    mode: &ModeChain<'_>,
     fanouts: &[(u64, Vec<Recorded>)],
     provider: &AlloyProvider,
     storage: Duration,
@@ -504,12 +608,12 @@ async fn run_point(
     observed: &mut Vec<(String, Digests)>,
 ) -> Result<PointRun, String> {
     let node = Node::new(storage, account).with_plant(plant_storage);
-    let cold = drive_cold(config, fanouts, provider, node).await?;
-    let seed = drive_seed(config, fanouts, provider, node).await?;
+    let cold = drive_cold(config, mode, fanouts, provider, node).await?;
+    let seed = drive_seed(config, mode, fanouts, provider, node).await?;
     if let Some(flag) = plant {
         flag.store(true, Ordering::Relaxed);
     }
-    let carry = drive_carry(config, fanouts, provider, node).await;
+    let carry = drive_carry(config, mode, fanouts, provider, node).await;
     if let Some(flag) = plant {
         flag.store(false, Ordering::Relaxed);
     }
@@ -709,14 +813,27 @@ fn print_plant_delta(base: &PointRun, planted: &PointRun) {
     );
 }
 
-fn print_header(config: &Config, candidates: usize, anchors: usize, first: u64, last: u64) {
+fn print_header(
+    config: &Config,
+    mode: &ModeChain<'_>,
+    candidates: usize,
+    anchors: usize,
+    first: u64,
+    last: u64,
+) {
     println!(
-        "bal_wall_ceiling_probe: trace={} rows={candidates} anchors={anchors} blocks \
+        "bal_wall_ceiling_probe [{}/coverage]: trace={} rows={candidates} anchors={anchors} blocks \
          {first}..={last} W={} F={} planted storage delay {}us",
+        mode.label,
         config.trace,
         config.limits.workers(),
         config.limits.slots(),
         config.plant_storage.as_micros(),
+    );
+    println!(
+        "  coverage: {} write identities per block list (fixture {}); read values are the \
+         shared chain's, identical across coverage modes",
+        mode.label, config.fixture
     );
     println!(
         "  legs: cold = new empty hub per candidate anchor; seed = exact-anchor final writes into \
@@ -737,7 +854,11 @@ fn print_header(config: &Config, candidates: usize, anchors: usize, first: u64, 
 
 /// The cross-leg digest gate: every leg's every recorded candidate must carry
 /// the cold baseline's read-value digest.
-fn report_gate(observed: &[(String, Digests)], candidates: usize) -> Result<(), String> {
+fn report_gate(
+    observed: &[(String, Digests)],
+    candidates: usize,
+    label: &str,
+) -> Result<(), String> {
     let mut baseline = Digests::new();
     let mut legs: Vec<(String, Digests)> = Vec::new();
     for (label, digests) in observed {
@@ -757,38 +878,397 @@ fn report_gate(observed: &[(String, Digests)], candidates: usize) -> Result<(), 
     println!();
     if mismatches.is_empty() {
         println!(
-            "identity gate: GREEN ({} legs x {} candidates)",
+            "identity gate [{label}]: GREEN ({} legs x {} candidates)",
             legs.len(),
             baseline.len()
         );
         return Ok(());
     }
-    println!("identity gate: RED ({} mismatches)", mismatches.len());
+    println!(
+        "identity gate [{label}]: RED ({} mismatches)",
+        mismatches.len()
+    );
     for mismatch in mismatches.iter().take(5) {
         println!("  {mismatch}");
     }
     Err("replay identity gate red".to_string())
 }
 
+/// The distinct-key per-anchor storage accounting: the live probe's counts
+/// (one read per distinct recorded key), beside the call-level hit split the
+/// leg table carries.
+fn print_storage_accounting(label: &str, point: &PointRun) {
+    println!(
+        "  storage accounting [{label}] (distinct keys per anchor, the live bal_carry_probe's shape):"
+    );
+    for (leg, accounting) in [
+        ("cold", &point.cold.storage),
+        ("seed", &point.seed.storage),
+        ("carry", &point.carry.storage),
+    ] {
+        println!(
+            "    {leg:<5} keys {} carried {} final-write {} dynamic {}",
+            accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
+        );
+    }
+}
+
+/// The real mode's carry accounting must be the live `bal_carry_probe`'s
+/// counts for this corpus — a discrepancy is a failing gate, never hidden.
+fn cross_check_live(accounting: &StorageAccounting) -> Result<(), String> {
+    let matched = accounting.keys == LIVE_ANCHOR_KEYS
+        && accounting.carried == LIVE_CARRIED_HITS
+        && accounting.final_write == LIVE_FINAL_WRITE_HITS
+        && accounting.dynamic == LIVE_DYNAMIC_MEMBERS;
+    if matched {
+        println!(
+            "  live cross-check: GREEN (keys {}, carried {}, final-write {}, dynamic {} — the \
+             bal_carry_probe's counts)",
+            accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
+        );
+        return Ok(());
+    }
+    println!(
+        "  live cross-check: RED (replay keys {}, carried {}, final-write {}, dynamic {} vs live \
+         {LIVE_ANCHOR_KEYS}, {LIVE_CARRIED_HITS}, {LIVE_FINAL_WRITE_HITS}, {LIVE_DYNAMIC_MEMBERS})",
+        accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
+    );
+    Err(format!(
+        "real coverage's carry accounting (keys {}, carried {}, final-write {}, dynamic {}) does \
+         not match the live bal_carry_probe ({LIVE_ANCHOR_KEYS}, {LIVE_CARRIED_HITS}, \
+         {LIVE_FINAL_WRITE_HITS}, {LIVE_DYNAMIC_MEMBERS})",
+        accounting.keys, accounting.carried, accounting.final_write, accounting.dynamic
+    ))
+}
+
+/// The cross-mode value gate: the shared chain means both coverage modes
+/// replay IDENTICAL read values, so their cold baselines' digests match
+/// candidate for candidate.
+fn report_cross_mode_values(left: (&str, &Digests), right: (&str, &Digests)) -> Result<(), String> {
+    let mut mismatches = Vec::new();
+    for (key, digest) in left.1 {
+        match right.1.get(key) {
+            Some(other) if other == digest => {}
+            Some(other) => mismatches.push(format!(
+                "{} {key:?} digest {digest} != {} {other}",
+                left.0, right.0
+            )),
+            None => mismatches.push(format!(
+                "{} replayed {key:?} but {} did not",
+                left.0, right.0
+            )),
+        }
+    }
+    for key in right.1.keys() {
+        if !left.1.contains_key(key) {
+            mismatches.push(format!(
+                "{} replayed {key:?} but {} did not",
+                right.0, left.0
+            ));
+        }
+    }
+    if mismatches.is_empty() {
+        println!(
+            "cross-mode value gate: GREEN ({} candidates carry identical read values in {} and {})",
+            left.1.len(),
+            left.0,
+            right.0
+        );
+        return Ok(());
+    }
+    println!(
+        "cross-mode value gate: RED ({} mismatches)",
+        mismatches.len()
+    );
+    for mismatch in mismatches.iter().take(5) {
+        println!("  {mismatch}");
+    }
+    Err("cross-mode read values diverged".to_string())
+}
+
+/// Synthetic versus real coverage at one latency point: every quantity the
+/// comparison isolates, side by side (the per-mode tables above carry the full
+/// bucket splits and reconciliations).
+#[expect(
+    clippy::too_many_lines,
+    reason = "the comparison rows and the decomposition read top-down beside the tables"
+)]
+fn print_coverage_comparison(
+    storage: Duration,
+    account: Duration,
+    synthetic: &PointRun,
+    real: &PointRun,
+) {
+    println!(
+        "\ncoverage comparison at {}/{}us (synthetic modeled bits -> real captured identities):",
+        storage.as_micros(),
+        account.as_micros()
+    );
+    println!("  {:<44} {:>12} {:>12}", "metric", "synthetic", "real");
+    let us = |ns: u64| (ns / 1_000).to_string();
+    let row = |name: &str, left: String, right: String| {
+        println!("  {name:<44} {left:>12} {right:>12}");
+    };
+    let ceiling = |run: &PointRun| {
+        format!(
+            "{} {}.{:01}%",
+            run.ceiling.policy,
+            run.ceiling.share_thousandths / 10,
+            run.ceiling.share_thousandths % 10
+        )
+    };
+    let bucket = |run: &LegSummary, choice: WallBucket| us(run.wall.bucket(choice));
+    row(
+        "eliminable storage-wait ceiling",
+        ceiling(synthetic),
+        ceiling(real),
+    );
+    row(
+        "cold wall_us / storage_us",
+        format!(
+            "{}/{}",
+            us(synthetic.cold.wall_ns),
+            bucket(&synthetic.cold, WallBucket::StorageWait)
+        ),
+        format!(
+            "{}/{}",
+            us(real.cold.wall_ns),
+            bucket(&real.cold, WallBucket::StorageWait)
+        ),
+    );
+    for (name, left, right) in [
+        ("seed wall_us / storage_us", &synthetic.seed, &real.seed),
+        ("carry wall_us / storage_us", &synthetic.carry, &real.carry),
+    ] {
+        row(
+            name,
+            format!(
+                "{}/{}",
+                us(left.wall_ns),
+                bucket(left, WallBucket::StorageWait)
+            ),
+            format!(
+                "{}/{}",
+                us(right.wall_ns),
+                bucket(right, WallBucket::StorageWait)
+            ),
+        );
+    }
+    row(
+        "carry buckets us (exec/account/bal/other)",
+        format!(
+            "{}/{}/{}/{}",
+            bucket(&synthetic.carry, WallBucket::RecordedExec),
+            bucket(&synthetic.carry, WallBucket::AccountWait),
+            bucket(&synthetic.carry, WallBucket::BalFetchDecode),
+            bucket(&synthetic.carry, WallBucket::SchedulerOther),
+        ),
+        format!(
+            "{}/{}/{}/{}",
+            bucket(&real.carry, WallBucket::RecordedExec),
+            bucket(&real.carry, WallBucket::AccountWait),
+            bucket(&real.carry, WallBucket::BalFetchDecode),
+            bucket(&real.carry, WallBucket::SchedulerOther),
+        ),
+    );
+    row(
+        "carry snapshot_us / bal fetches",
+        format!(
+            "{}/{}",
+            bucket(&synthetic.carry, WallBucket::SnapshotCloneUpdate),
+            synthetic.carry.bal_fetches
+        ),
+        format!(
+            "{}/{}",
+            bucket(&real.carry, WallBucket::SnapshotCloneUpdate),
+            real.carry.bal_fetches
+        ),
+    );
+    row(
+        "carry completion us (first/p50/p95)",
+        format!(
+            "{}/{}/{}",
+            us(synthetic.carry.completions.first_ns),
+            us(synthetic.carry.completions.p50_ns),
+            us(synthetic.carry.completions.p95_ns),
+        ),
+        format!(
+            "{}/{}/{}",
+            us(real.carry.completions.first_ns),
+            us(real.carry.completions.p50_ns),
+            us(real.carry.completions.p95_ns),
+        ),
+    );
+    row(
+        "carry rounds / storage members",
+        format!(
+            "{}/{}",
+            synthetic.carry.rounds, synthetic.carry.storage_members
+        ),
+        format!("{}/{}", real.carry.rounds, real.carry.storage_members),
+    );
+    row(
+        "carry hits (calls: carried/final-write/other)",
+        format!(
+            "{}/{}/{}",
+            synthetic.carry.hits.carried,
+            synthetic.carry.hits.final_write,
+            synthetic.carry.hits.other
+        ),
+        format!(
+            "{}/{}/{}",
+            real.carry.hits.carried, real.carry.hits.final_write, real.carry.hits.other
+        ),
+    );
+    row(
+        "carry keys (distinct: carried/final-write/dyn)",
+        format!(
+            "{}/{}/{}",
+            synthetic.carry.storage.carried,
+            synthetic.carry.storage.final_write,
+            synthetic.carry.storage.dynamic
+        ),
+        format!(
+            "{}/{}/{}",
+            real.carry.storage.carried, real.carry.storage.final_write, real.carry.storage.dynamic
+        ),
+    );
+    row(
+        "carry writes applied / skipped",
+        format!(
+            "{}/{}",
+            synthetic.carry.writes_applied, synthetic.carry.writes_skipped
+        ),
+        format!(
+            "{}/{}",
+            real.carry.writes_applied, real.carry.writes_skipped
+        ),
+    );
+    row(
+        "seed keys (distinct: carried/final-write/dyn)",
+        format!(
+            "{}/{}/{}",
+            synthetic.seed.storage.carried,
+            synthetic.seed.storage.final_write,
+            synthetic.seed.storage.dynamic
+        ),
+        format!(
+            "{}/{}/{}",
+            real.seed.storage.carried, real.seed.storage.final_write, real.seed.storage.dynamic
+        ),
+    );
+
+    println!("  ceiling decomposition (carried reuse vs optimistic modeled write coverage):");
+    println!(
+        "    cold is coverage-independent: {} distinct keys, {}us of storage wait at this point",
+        real.cold.storage.keys,
+        us(real.cold.wall.bucket(WallBucket::StorageWait))
+    );
+    println!(
+        "    the anchors' own final writes answer {} distinct keys under the modeled ~50% \
+         coverage and {} under the real lists; carried reuse answers {} vs {}",
+        synthetic.carry.storage.final_write,
+        real.carry.storage.final_write,
+        synthetic.carry.storage.carried,
+        real.carry.storage.carried
+    );
+    println!(
+        "    so of the synthetic ceiling ({}.{:01}%), the optimistic write coverage's share is \
+         the {}.{:01} points the real ceiling loses; the surviving {}.{:01}% is carried reuse \
+         plus the real final writes",
+        synthetic.ceiling.share_thousandths / 10,
+        synthetic.ceiling.share_thousandths % 10,
+        synthetic
+            .ceiling
+            .share_thousandths
+            .saturating_sub(real.ceiling.share_thousandths)
+            / 10,
+        synthetic
+            .ceiling
+            .share_thousandths
+            .saturating_sub(real.ceiling.share_thousandths)
+            % 10,
+        real.ceiling.share_thousandths / 10,
+        real.ceiling.share_thousandths % 10
+    );
+}
+
+/// The node the dev-only capture phase dials: the chain-1 endpoint env family,
+/// or the conftest name. Neither means no declared endpoint — fail loud.
+fn rpc_url() -> Result<String, String> {
+    std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1")
+        .or_else(|_| std::env::var("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI"))
+        .map_err(|_| {
+            "set DEGENBOT_RPC_HTTP_CHAINID_1 (or TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI) \
+             to an archive mainnet endpoint"
+                .to_string()
+        })
+}
+
+/// The dev-only capture phase: dial the declared node, fold the corpus
+/// stretch's real write identities and parent linkage into the fixture, and
+/// exit — the measured replay itself never touches the network.
+async fn capture_fixture(
+    config: &Config,
+    keys: &BTreeSet<Key>,
+    first: u64,
+    last: u64,
+) -> Result<(), String> {
+    let tracked: BTreeSet<Address> = keys.iter().map(|(address, _)| *address).collect();
+    let url = rpc_url()?;
+    let provider = AlloyProvider::new(&url, 3)
+        .await
+        .map_err(|error| format!("connect {url}: {error}"))?;
+    println!(
+        "capturing the real write-coverage fixture for {first}..={last} from {url} ({} tracked \
+         addresses)",
+        tracked.len()
+    );
+    let real = real_coverage::capture(&provider, first, last, &tracked).await?;
+    real.save(&config.fixture)?;
+    let other: usize = (first..=last)
+        .filter_map(|number| real.block(number))
+        .map(|block| block.other_writes)
+        .sum();
+    println!(
+        "wrote {}: {} blocks, {} kept write identities over the tracked addresses ({} writes \
+         outside them, never applied by the carry's write policy)",
+        config.fixture,
+        last - first + 1,
+        real.write_count(),
+        other
+    );
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the run's capture phase, mode replays, and gates read top-down"
+)]
 async fn run() -> Result<(), String> {
-    let config = Config::from_env();
+    let config = Config::from_env()?;
     let rows = load_rows(&config.trace)?;
     let (keys, first, last) = universe(&rows);
-    let chain = Arc::new(ChainState::build(&keys, first, last)?);
     let fanouts = group_by_anchor(rows);
     let candidates: usize = fanouts.iter().map(|(_, rows)| rows.len()).sum();
+
+    if config.capture {
+        return capture_fixture(&config, &keys, first, last).await;
+    }
+
+    let real = RealCoverage::load(&config.fixture)?;
+    if real.first() > first || real.last() < last {
+        return Err(format!(
+            "the fixture covers {}..={} but the corpus replays {first}..={last}",
+            real.first(),
+            real.last()
+        ));
+    }
     let plant = config
         .plant
         .clone()
         .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-    let provider = StubChain {
-        chain,
-        plant: Arc::clone(&plant),
-    }
-    .provider();
-    print_header(&config, candidates, fanouts.len(), first, last);
 
-    let mut observed: Vec<(String, Digests)> = Vec::new();
     let mut runs: Vec<(Duration, Duration, Duration)> = Vec::new();
     if config.plant_storage.is_zero() && config.plant.is_none() {
         for &(storage, account) in &config.points {
@@ -803,28 +1283,107 @@ async fn run() -> Result<(), String> {
             runs.push((storage, account, config.plant_storage));
         }
     }
-    let mut completed: Vec<PointRun> = Vec::new();
-    for (storage, account, plant_storage) in runs {
-        let run = run_point(
-            &config,
-            &fanouts,
-            &provider,
-            storage,
-            account,
-            plant_storage,
-            config.plant.as_ref(),
-            &mut observed,
-        )
-        .await?;
-        print_point(&run);
-        completed.push(run);
-    }
-    if config.plant_storage > Duration::ZERO {
-        if let [base, planted] = completed.as_slice() {
-            print_plant_delta(base, planted);
+
+    // One replay per coverage mode: identical candidates, order, W/F, prices,
+    // and read values; only the block lists' write identities differ. Gates
+    // fail the process after every mode's report is printed, so a red gate
+    // never hides the other mode's numbers.
+    let mut failures: Vec<String> = Vec::new();
+    let mut modes: Vec<(&'static str, Vec<PointRun>, Digests)> = Vec::new();
+    for &(label, coverage) in &config.modes {
+        let mode = ModeChain {
+            label,
+            coverage,
+            real: &real,
+        };
+        let chain = Arc::new(ChainState::build_coverage(
+            &keys, first, last, &real, coverage,
+        )?);
+        let provider = StubChain {
+            chain,
+            plant: Arc::clone(&plant),
         }
+        .provider();
+        print_header(&config, &mode, candidates, fanouts.len(), first, last);
+
+        let mut observed: Vec<(String, Digests)> = Vec::new();
+        let mut completed: Vec<PointRun> = Vec::new();
+        for &(storage, account, plant_storage) in &runs {
+            let run = run_point(
+                &config,
+                &mode,
+                &fanouts,
+                &provider,
+                storage,
+                account,
+                plant_storage,
+                config.plant.as_ref(),
+                &mut observed,
+            )
+            .await?;
+            print_point(&run);
+            completed.push(run);
+        }
+        if config.plant_storage > Duration::ZERO {
+            if let [base, planted] = completed.as_slice() {
+                print_plant_delta(base, planted);
+            }
+        }
+        // The storage accounting is set arithmetic over one replay, identical
+        // at every point: read it off the first point's legs.
+        let mut cold_baseline = Digests::new();
+        for (leg, digests) in &observed {
+            if leg == "cold" {
+                cold_baseline.extend(digests.clone());
+            }
+        }
+        if let Some(point) = completed.first() {
+            let drift: usize = (first..=last)
+                .flat_map(|number| {
+                    real.writes_at(number)
+                        .iter()
+                        .map(move |&(address, slot)| (number, address, slot))
+                })
+                .filter(|&(number, address, slot)| write_selected(number, address, slot))
+                .count();
+            println!(
+                "  shared chain drift: {drift} captured writes the modeled bit also selects (the \
+                 digest gate's stale-carry teeth)"
+            );
+            print_storage_accounting(label, point);
+            if coverage == Coverage::Real {
+                if let Err(error) = cross_check_live(&point.carry.storage) {
+                    failures.push(error);
+                }
+            }
+        }
+        if let Err(error) = report_gate(&observed, candidates, label) {
+            failures.push(error);
+        }
+        modes.push((label, completed, cold_baseline));
     }
-    report_gate(&observed, candidates)
+
+    if let [(synthetic_label, synthetic, synthetic_values), (real_label, real_runs, real_values)] =
+        modes.as_slice()
+    {
+        for (index, (left, right)) in synthetic.iter().zip(real_runs.iter()).enumerate() {
+            let (storage, account, _) = runs[index];
+            print_coverage_comparison(storage, account, left, right);
+        }
+        if let Err(error) = report_cross_mode_values(
+            (*synthetic_label, synthetic_values),
+            (*real_label, real_values),
+        ) {
+            failures.push(error);
+        }
+    } else {
+        println!("\none coverage mode driven: no cross-mode comparison");
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 #[tokio::main]

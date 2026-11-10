@@ -56,6 +56,60 @@ pub fn classify_hits(
     split
 }
 
+/// One anchor's storage accounting in the LIVE probe's shape: the anchor's
+/// distinct recorded keys split by where their answer came from — the anchor's
+/// own final writes, the carried snapshot, or a dynamic fetch — so the replay's
+/// per-anchor counts are the same counts `bal_carry_probe` reports. (The
+/// call-level [`HitSplit`] is a different denominator: every recorded read
+/// call, repeats included.)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StorageAccounting {
+    /// The anchor's distinct recorded keys.
+    pub keys: usize,
+    /// Keys answered by a value the snapshot already held from earlier in the
+    /// run (the anchor's own writes excepted).
+    pub carried: usize,
+    /// Keys answered by the anchor block's own final writes.
+    pub final_write: usize,
+    /// Keys neither class explains: the dynamic batch members they cost.
+    pub dynamic: usize,
+}
+
+impl StorageAccounting {
+    /// Fold another anchor's accounting into a leg total.
+    pub fn add(&mut self, other: Self) {
+        self.keys += other.keys;
+        self.carried += other.carried;
+        self.final_write += other.final_write;
+        self.dynamic += other.dynamic;
+    }
+}
+
+/// Classify one anchor's distinct keys the way the live probe counts them: a
+/// key the anchor's own final writes carry is a final-write hit even when the
+/// snapshot also held it, every other key the snapshot held is a carried hit,
+/// and the rest are dynamic members.
+pub fn storage_accounting(
+    keys: &BTreeSet<(Address, U256)>,
+    final_write_keys: &BTreeSet<(Address, U256)>,
+    snapshot_keys: &BTreeSet<(Address, U256)>,
+) -> StorageAccounting {
+    let mut accounting = StorageAccounting {
+        keys: keys.len(),
+        ..StorageAccounting::default()
+    };
+    for key in keys {
+        if final_write_keys.contains(key) {
+            accounting.final_write += 1;
+        } else if snapshot_keys.contains(key) {
+            accounting.carried += 1;
+        } else {
+            accounting.dynamic += 1;
+        }
+    }
+    accounting
+}
+
 /// One latency point's eliminable storage-wait ceiling: the storage wait the
 /// best measured policy removes from the cold leg, absolute and as a share of
 /// the cold leg's wall. It is a CEILING because realized wall improvement can
