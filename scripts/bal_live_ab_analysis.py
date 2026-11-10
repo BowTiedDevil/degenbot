@@ -12,10 +12,12 @@ questions:
   fan-out and the inline hook re-quote arm). A row records the caller's head
   block and never the storage lane it read through.
 
-So this analysis attributes NOTHING per candidate: it reports the fenced
-fan-outs' lane selection as dispatch telemetry, and the candidate timing / read
-sets as whole-window numbers. Attributing trace rows to `delta` or `legacy` by
-block would coin a comparison the capture cannot carry.
+So a candidate is attributed only through the additive `fanout` key the dispatch
+fan-out stamps on every row it emits, which joins that fan-out's candidate rows
+to its own selection / prefetch / `cands=` rows. A candidate row WITHOUT the key
+— every inline hook re-quote row, and every row of a capture taken before the
+key existed — stays a whole-window number. No row is ever assigned to a lane by
+block number: that would coin a comparison the capture cannot carry.
 
 A second limit is the sink itself: the Python log layer's console queue is
 bounded and drops records under burst (`degenbot.log_dropped_total{sink="console"}`,
@@ -237,6 +239,7 @@ class SimSummary:
     total: int
     mean: float
     p50: float
+    p90: float
     p95: float
     maximum: int
 
@@ -504,7 +507,7 @@ def summarize(values: Sequence[int]) -> SimSummary:
     ordered = sorted(values)
     count = len(ordered)
     if count == 0:
-        return SimSummary(count=0, total=0, mean=0.0, p50=0.0, p95=0.0, maximum=0)
+        return SimSummary(count=0, total=0, mean=0.0, p50=0.0, p90=0.0, p95=0.0, maximum=0)
 
     def quantile(q: float) -> float:
         position = (count - 1) * q
@@ -519,6 +522,7 @@ def summarize(values: Sequence[int]) -> SimSummary:
         total=total,
         mean=total / count,
         p50=quantile(0.5),
+        p90=quantile(0.90),
         p95=quantile(0.95),
         maximum=ordered[-1],
     )
@@ -583,6 +587,51 @@ def fanout_attribution(capture: Capture) -> dict[int, FanoutAttribution]:
 def unattributed_traces(capture: Capture) -> list[TraceRow]:
     """The candidate rows that name no fan-out, and are therefore never assigned."""
     return [row for row in capture.trace if row.fanout is None]
+
+
+@dataclass(frozen=True)
+class LabLane:
+    """One `[sim] cands=` row joined to its lane and to the candidates it owns."""
+
+    lab: LabRow
+    lane: str | None
+    joined_by: str
+    attributed: int
+    candidate_ns: int
+
+
+def lab_lanes(capture: Capture) -> list[LabLane]:
+    """Join every fan-out row to a storage lane, through the `fanout` key first.
+
+    A keyed row is joined through that key alone: a fan-out whose selection row
+    the bounded sink dropped reads as lane-unknown rather than borrowing a
+    neighbour's lane from the same block. Only an unkeyed capture — one older
+    than the key, holding no `fanout` field anywhere — falls back to the block,
+    where the single selection row per fenced block makes the join unambiguous.
+    """
+    joined = fanout_attribution(capture)
+    by_block = {row.current_block: row for row in capture.selections}
+    lanes: list[LabLane] = []
+    for lab in capture.labs:
+        if lab.fanout is not None:
+            entry = joined.get(lab.fanout)
+            selection = entry.selection if entry is not None else None
+            traces = entry.traces if entry is not None else []
+            joined_by = "fanout"
+        else:
+            selection = by_block.get(lab.current_block)
+            traces = []
+            joined_by = "block" if selection is not None else "none"
+        lanes.append(
+            LabLane(
+                lab=lab,
+                lane=selection.storage if selection is not None else None,
+                joined_by=joined_by,
+                attributed=len(traces),
+                candidate_ns=sum(row.sim_ns for row in traces),
+            )
+        )
+    return lanes
 
 
 def rows_by_block(rows: Iterable[TraceRow]) -> dict[int, list[TraceRow]]:
@@ -908,6 +957,125 @@ def _read_table(capture: Capture) -> list[tuple[str, str]]:
     ]
 
 
+def _by_candidate_count(lanes: Sequence[LabLane]) -> dict[int, list[LabLane]]:
+    """Group fan-out rows by the candidate count each reported."""
+    grouped: dict[int, list[LabLane]] = {}
+    for entry in lanes:
+        grouped.setdefault(entry.lab.candidates, []).append(entry)
+    return grouped
+
+
+def _lane_cell(entry: LabLane) -> str:
+    """Return one fan-out's lane, `unknown` when its selection row did not survive."""
+    return entry.lane or "unknown"
+
+
+def _candidate_ms_cell(entry: LabLane) -> str:
+    """Return that fan-out's own candidate time, `—` when its candidates carry no key."""
+    return _ms(float(entry.candidate_ns)) if entry.attributed else "—"
+
+
+def _walls(entries: Sequence[LabLane]) -> str:
+    """Describe a group of fan-outs' `fanout_ms` walls and their candidate time."""
+    walls = ", ".join(str(entry.lab.fanout_ms) for entry in entries)
+    candidates = ", ".join(_candidate_ms_cell(entry) for entry in entries)
+    return f"{walls} ms of `fanout_ms` over {candidates} ms of candidate time"
+
+
+def _cross_lane_counts(
+    off_by_count: dict[int, list[LabLane]],
+    on_by_count: dict[int, list[LabLane]],
+    shared: Sequence[int],
+) -> list[tuple[int, list[LabLane], list[LabLane]]]:
+    """Find the counts where an OFF `legacy` fan-out meets an ON `delta` fan-out.
+
+    A cross-lane count is a count-match, never a pair: the two arms ran disjoint
+    heads over different candidate sets, so nothing here is a repeated
+    observation of one fan-out on two lanes.
+    """
+    cross: list[tuple[int, list[LabLane], list[LabLane]]] = []
+    for count in shared:
+        off_legacy = [entry for entry in off_by_count[count] if entry.lane == "legacy"]
+        on_delta = [entry for entry in on_by_count[count] if entry.lane == "delta"]
+        if off_legacy and on_delta:
+            cross.append((count, off_legacy, on_delta))
+    return cross
+
+
+def _matched_observations(
+    off_by_count: dict[int, list[LabLane]],
+    on_by_count: dict[int, list[LabLane]],
+    shared: Sequence[int],
+) -> list[str]:
+    """State the count matches as observations, never as pairs or speedups."""
+    lines: list[str] = []
+    cross = _cross_lane_counts(off_by_count, on_by_count, shared)
+    if cross:
+        lines += [
+            "OFF `legacy` and ON `delta` meet at candidate count(s) "
+            + ", ".join(str(count) for count, _, _ in cross)
+            + ":",
+            "",
+        ]
+        for count, off_legacy, on_delta in cross:
+            lines.append(
+                f"- count {count}: off legacy {_walls(off_legacy)}; on delta {_walls(on_delta)}."
+            )
+        lines += [
+            "",
+            "Each of those is a cross-lane count match, not a pair: the arms ran disjoint",
+            "block ranges, so no fan-out shares a head, a candidate set, or a block with its",
+            "counterpart, the sample is one or two fan-outs per arm, and `fanout_ms` is a",
+            "millisecond-resolution wall. Read them as an observational direction to test on",
+            "matched heads — never a paired head comparison and never a controlled speedup.",
+            "",
+        ]
+    else:
+        lines += [
+            "No candidate count matches an OFF `legacy` fan-out against an ON `delta`",
+            "fan-out, so this pair carries no cross-lane count observation.",
+            "",
+        ]
+    off_only = sorted(set(off_by_count) - set(shared))
+    on_only = sorted(set(on_by_count) - set(shared))
+    if off_only or on_only:
+        lines += [
+            "Counts one arm carries with no counterpart at all: "
+            + f"off {_count_list(off_only)}; on {_count_list(on_only)}.",
+            "",
+        ]
+    return lines
+
+
+def _us(microseconds: float) -> str:
+    """Convert one microsecond wall to milliseconds."""
+    return f"{microseconds / 1000:.2f}"
+
+
+def _head_wall_lines(capture: Capture) -> list[str]:
+    """Render the `bal-head` prepare/apply walls as one summary row each, in ms."""
+    lines: list[str] = []
+    prepare = [row.prepare_us for row in capture.heads if row.prepare_us is not None]
+    apply = [row.apply_us for row in capture.heads if row.apply_us is not None]
+    for label, values in (("prepare", prepare), ("apply", apply)):
+        summary = summarize(values)
+        lines.append(
+            f"| {label} | {summary.count} | {_us(summary.total)} | {_us(summary.p50)} | "
+            f"{_us(summary.p90)} | {_us(summary.maximum)} |"
+        )
+    return lines
+
+
+def _id_list(ids: Sequence[int]) -> str:
+    """List the fan-out ids a summary line names."""
+    return ", ".join(str(fanout) for fanout in ids)
+
+
+def _count_list(counts: Sequence[int]) -> str:
+    """List the candidate counts a summary line names."""
+    return ", ".join(str(count) for count in counts)
+
+
 def render_markdown(off: Capture, on: Capture) -> str:
     """Render the OFF/ON report: dispatch telemetry apart from window timing."""
     lines: list[str] = []
@@ -987,13 +1155,22 @@ def render_markdown(off: Capture, on: Capture) -> str:
             "| current_block | anchor | storage | reason | prefetch row | `cands=` row |",
             "| --- | --- | --- | --- | --- | --- |",
         ]
+        joined = fanout_attribution(capture)
         prefetch_blocks = {row.current_block for row in capture.prefetches}
         lab_blocks = {row.current_block for row in capture.labs}
         for row in capture.selections:
+            entry = joined.get(row.fanout) if row.fanout is not None else None
+            has_prefetch = (
+                entry.prefetch is not None
+                if entry is not None
+                else row.current_block in prefetch_blocks
+            )
+            has_lab = (
+                entry.lab is not None if entry is not None else row.current_block in lab_blocks
+            )
             lines.append(
                 f"| {row.current_block} | {row.anchor} | {row.storage} | {row.reason or '—'} | "
-                f"{'yes' if row.current_block in prefetch_blocks else 'no'} | "
-                f"{'yes' if row.current_block in lab_blocks else 'no'} |"
+                f"{'yes' if has_prefetch else 'no'} | {'yes' if has_lab else 'no'} |"
             )
         lines.append("")
 
@@ -1012,10 +1189,30 @@ def render_markdown(off: Capture, on: Capture) -> str:
         joined = fanout_attribution(capture)
         unattributed = unattributed_traces(capture)
         attributed = sum(len(entry.traces) for entry in joined.values())
+        keyed_selections = sum(1 for row in capture.selections if row.fanout is not None)
+        idless = sorted(fanout for fanout, entry in joined.items() if entry.selection is None)
         lines += [
             f"### {capture.label.upper()}",
             "",
-            f"fan-outs carrying a `fanout` key: {len(joined)} of {len(capture.selections)}; "
+            f"fanout ids observed: {len(joined)}; selection rows: {len(capture.selections)} "
+            f"({keyed_selections} keyed); prefetch rows: {len(capture.prefetches)}; "
+            f"`cands=` rows: {len(capture.labs)}.",
+            "",
+        ]
+        if idless:
+            lines += [
+                f"Fan-out ids with no surviving selection row: {len(idless)} "
+                f"({_id_list(idless)}) — the bounded sink dropped the row, so their lane is",
+                "unknown and is never borrowed from the block they ran under.",
+                "",
+            ]
+        if len(joined) and not keyed_selections:
+            lines += [
+                "No selection row carries the `fanout` key: this capture predates it, so the",
+                "lanes below come from the one selection row per fenced block.",
+                "",
+            ]
+        lines += [
             f"attributed candidates: {attributed} of {len(capture.trace)}; "
             f"unattributed candidates: {len(unattributed)}.",
             "",
@@ -1067,8 +1264,20 @@ def render_markdown(off: Capture, on: Capture) -> str:
             continue
         lines += [
             f"outcomes: {_counts_phrase(Counter(row.outcome for row in capture.heads))}; "
+            f"chain: {_counts_phrase(Counter(str(row.chain) for row in capture.heads))}; "
             f"refusals: {_counts_phrase(Counter(str(row.refusal) for row in capture.heads))}; "
             f"bal skips: {_counts_phrase(Counter(str(row.bal) for row in capture.heads))}.",
+            "",
+            "| wall | heads | total ms | median ms | p90 ms | max ms |",
+            "| --- | --- | --- | --- | --- | --- |",
+            *_head_wall_lines(capture),
+            "",
+            "`prepare` and `apply` are the head-arrival pipeline's BACKGROUND walls: the",
+            "transition that settles a head pays them on whichever task performs it, and",
+            "they are not part of a fan-out's `fanout_ms`. The two are therefore reported",
+            "apart and never combined — `fanout_ms` prices one dispatch's candidate work,",
+            "while the prepare wall prices a whole head's BAL readiness, ahead of and",
+            "concurrently with the dispatches of other heads.",
             "",
             "| anchor | hash | outcome | chain | refusal | bal | prepare_us | apply_us | carried | writes | overwritten | skipped |",
             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -1109,57 +1318,61 @@ def render_markdown(off: Capture, on: Capture) -> str:
             )
         lines += [
             "",
-            "| current_block | candidates | sims | sim_ms | builds | fanout_ms | b_slow | s_slow | slow_ms |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| current_block | lane | candidates | sims | sim_ms | builds | fanout_ms | b_slow | s_slow | slow_ms |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
-        for row in capture.labs:
+        for entry in lab_lanes(capture):
+            row = entry.lab
             lines.append(
-                f"| {row.current_block} | {row.candidates} | {row.sims} | {row.sim_ms} | "
-                f"{row.builds} | {row.fanout_ms} | {row.b_slow} | {row.s_slow} | {row.slow_ms} |"
+                f"| {row.current_block} | {_lane_cell(entry)} | {row.candidates} | {row.sims} | "
+                f"{row.sim_ms} | {row.builds} | {row.fanout_ms} | {row.b_slow} | "
+                f"{row.s_slow} | {row.slow_ms} |"
             )
         lines.append("")
 
     lines += [
-        "### Matched candidate counts",
+        "### Matched candidate counts (each arm's own lane)",
         "",
-        "The fenced fan-outs both captures ran at the same candidate count. Every row here",
-        "is a legacy-lane fan-out (OFF is flag-off, ON's large one is `lineage-refused`), so",
-        "a wall difference between the pair is a window difference, never a lane effect.",
+        "A shared candidate count does not make two fan-outs a pair: they ran at different",
+        "heads over different candidate sets, once each. Every row below names its own",
+        "arm's lane, the wall that fan-out paid (`fanout_ms`), and the candidate time of",
+        "the candidates that fan-out owns.",
         "",
-        "| candidates | off fanout_ms | on fanout_ms |",
-        "| --- | --- | --- |",
     ]
-    off_by_count: dict[int, list[int]] = {}
-    for row in off.labs:
-        off_by_count.setdefault(row.candidates, []).append(row.fanout_ms)
-    on_by_count: dict[int, list[int]] = {}
-    for row in on.labs:
-        on_by_count.setdefault(row.candidates, []).append(row.fanout_ms)
-    for count in sorted(set(off_by_count) & set(on_by_count)):
-        off_walls = ", ".join(str(value) for value in off_by_count[count])
-        on_walls = ", ".join(str(value) for value in on_by_count[count])
-        lines.append(f"| {count} | {off_walls} | {on_walls} |")
-    delta_labs = [
-        row
-        for row in on.labs
-        if any(
-            selection.current_block == row.current_block and selection.storage == "delta"
-            for selection in on.selections
-        )
-    ]
+    off_by_count = _by_candidate_count(lab_lanes(off))
+    on_by_count = _by_candidate_count(lab_lanes(on))
+    shared = sorted(set(off_by_count) & set(on_by_count))
+    if not shared:
+        lines += [
+            "No candidate count is shared by the two captures, so no count-matched row exists.",
+            "",
+        ]
+    else:
+        lines += [
+            "| candidates | arm | lane | current_block | fanout_ms | attributed | candidate ms |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for count in shared:
+            for arm, entries in (("off", off_by_count[count]), ("on", on_by_count[count])):
+                for entry in sorted(entries, key=lambda item: item.lab.current_block):
+                    lines.append(
+                        f"| {count} | {arm} | {_lane_cell(entry)} | {entry.lab.current_block} | "
+                        f"{entry.lab.fanout_ms} | {entry.attributed} of {entry.lab.candidates} | "
+                        f"{_candidate_ms_cell(entry)} |"
+                    )
+        lines.append("")
+        lines += _matched_observations(off_by_count, on_by_count, shared)
+    for capture, grouped in ((off, off_by_count), (on, on_by_count)):
+        census = Counter(_lane_cell(entry) for entries in grouped.values() for entry in entries)
+        lines += [
+            f"{capture.label.upper()} `cands=` rows by lane: {_counts_phrase(census)}.",
+            "",
+        ]
     lines += [
-        "",
-        "ON's ready delta fan-out(s): "
-        + (
-            ", ".join(
-                f"block {row.current_block} — {row.candidates} candidates, {row.fanout_ms} ms, "
-                "no prefetch batch"
-                for row in delta_labs
-            )
-            or "none"
-        )
-        + ". No OFF fan-out has a counterpart at a comparable candidate count and lane, "
-        "so the delta lane has no measured wall comparison in this capture pair.",
+        "OFF resolves no `delta` fan-out at all — the flag-off window selects `legacy` (or",
+        "`disabled`) on every fenced fan-out — so no same-lane OFF counterpart exists at any",
+        "candidate count. The cross-lane counts above are the only count-matched observations",
+        "this pair carries.",
         "",
     ]
 
@@ -1194,8 +1407,9 @@ def render_markdown(off: Capture, on: Capture) -> str:
         f"The whole-window candidate total is {_ms(off_total)} ms (off) against "
         f"{_ms(on_total)} ms (on), a {_percent_change(off_total, on_total)} change at "
         f"{len(off.trace)} vs {len(on.trace)} candidates. Reported as an observation, not a "
-        "speedup: the rows carry no lane, the mixes differ, and most of the ON window's "
-        "fenced fan-outs ran on the same legacy lane OFF used. The OFF total also carries "
+        "speedup: the rows carry no lane, the mixes differ, and the ON window resolved most "
+        "of its fenced fan-outs on `delta`, so the two windows are not the same workload. "
+        "The OFF total also carries "
         f"one {_ms(off_outlier)} ms candidate — {outlier_share}.",
         "**Sparse heads.** The sample is thin at the head level: "
         f"{len(off_heads)} heads of {off_span} blocks carry a simulated candidate (off) and "
@@ -1284,9 +1498,9 @@ def render_markdown(off: Capture, on: Capture) -> str:
         "density regimes do not align.",
         "3. **Different readiness.** OFF requests no BAL anywhere; ON resolved "
         f"{_counts_phrase(Counter(row.storage for row in on.selections))} across "
-        f"{len(on.selections)} fenced fan-outs, so most ON candidates read through the "
-        "same legacy lane OFF used and the delta lane is sampled only where a head "
-        "settled ready.",
+        f"{len(on.selections)} fenced fan-outs, so the two arms do not run the same lane "
+        "mix: the delta lane is sampled only where a head settled ready, and the "
+        "candidates the bounded sink left unattributed belong to neither lane.",
         "4. **Cordon episodes differ.** A cordon holds the deferrable intake and floors "
         f"sim intake: off {_cordon_phrase(off)}, on {_cordon_phrase(on)} (leading exits "
         "are the boot cordon lifting).",
@@ -1311,17 +1525,79 @@ def render_markdown(off: Capture, on: Capture) -> str:
         "(`skipped=None`). The fan-out row reports the collapsed label; the causes behind",
         "it are the head table's, whenever the capture carries `bal-head` rows.",
         "",
+    ]
+    cross = _cross_lane_counts(off_by_count, on_by_count, shared)
+    prepare = summarize([row.prepare_us for row in on.heads if row.prepare_us is not None])
+    prepare_clause = (
+        f"The background prepare wall ({prepare.count} heads, median {_us(prepare.p50)} ms, "
+        f"p90 {_us(prepare.p90)} ms) has no OFF counterpart, so its cost against the "
+        "flag-off window is still unmeasured. "
+        if prepare.count
+        else "Neither window carries `bal-head` rows, so the background prepare wall is "
+        "unmeasured on both sides. "
+    )
+    lanes_by_arm = ((off, lab_lanes(off)), (on, lab_lanes(on)))
+    largest = max((entry.lab.candidates for _, lanes in lanes_by_arm for entry in lanes), default=0)
+    largest_arms_used = [
+        capture
+        for capture, lanes in lanes_by_arm
+        if any(entry.lab.candidates == largest for entry in lanes)
+    ]
+    largest_arms = (
+        f"appears only in the {largest_arms_used[0].label.upper()} window"
+        if len(largest_arms_used) == 1
+        else "appears in both windows, but at different heads and candidate sets"
+    )
+    lines += [
         "## Verdict",
         "",
-        f"- **No speedup claim.** {len(ready)} ready delta fan-out(s) against "
-        f"{len(cold)} cold fallback(s), no matched candidate-count counterpart, and an "
-        "unattributed candidate stream: nothing here isolates the lane's cost.",
-        "- **Retention / longer soak: GO** on the conditions below. The flag left the "
-        "observable contract intact — the delta fan-out skipped its prefetch batch, every "
-        "fallback reported a closed-set cold reason, and both windows' candidate verdicts "
-        f"are {_counts_phrase(Counter(row.verdict for row in on.trace))} (on) against "
-        f"{_counts_phrase(Counter(row.verdict for row in off.trace))} (off). A longer soak "
-        "needs matched heads, a drop-free capture, and the same candidate set on both lanes.",
+        f"- **Readiness: verified — and it says nothing about cost.** {len(ready)} of "
+        f"{len(on.selections)} fenced fan-outs resolved `delta` under the flag; the "
+        f"{len(cold)} that did not fell back to `legacy` with a closed-set cold reason "
+        f"({_counts_phrase(Counter(str(row.reason) for row in cold))}), and every ready "
+        "delta fan-out skipped its prefetch batch.",
+    ]
+    if cross:
+        lines.append(
+            "- **Directional small-fan-out signal (non-paired).** At "
+            + "; at ".join(
+                f"{count} candidates OFF `legacy` paid {_walls(off_legacy)}"
+                for count, off_legacy, _ in cross
+            )
+            + ", against "
+            + "; at ".join(
+                f"{count} candidates ON `delta` paying {_walls(on_delta)}"
+                for count, _, on_delta in cross
+            )
+            + ". The direction is consistent, and it is all this pair supports: one or two "
+            "fan-outs per arm, different heads, different candidates, no repetition, and a "
+            "millisecond-resolution wall. It is not a paired head comparison and never a "
+            "controlled speedup."
+        )
+    else:
+        lines.append(
+            "- **No small-fan-out direction.** No candidate count matches an OFF `legacy` "
+            "fan-out against an ON `delta` one, so this pair carries no cross-lane count "
+            "observation."
+        )
+    lines += [
+        f"- **Still missing: controlled large-fan-out evidence.** The largest fan-out in "
+        f"the pair ({largest} candidates) {largest_arms}, so burst-scale dispatch has no "
+        "count-matched counterpart; OFF resolves no `delta` fan-out at all, so no same-lane "
+        "pair exists at any count. The lane's benefit at scale stays unmeasured.",
+        "- **No GO from whole-window totals.** The whole-window candidate total is "
+        f"{_ms(off_total)} ms (off) against {_ms(on_total)} ms (on), a "
+        f"{_percent_change(off_total, on_total)} change, but those rows carry no lane and "
+        "the windows hold different heads and candidate sets. It is an observation only: no "
+        "retention or retirement decision is drawn from it.",
+        "- **Retention / longer soak: GO on the contract, not on timing.** The flag left "
+        "the observable contract intact — the delta fan-out skipped its prefetch batch, "
+        "every fallback reported a closed-set cold reason, and both windows' candidate "
+        f"verdicts are {_counts_phrase(Counter(row.verdict for row in on.trace))} (on) "
+        f"against {_counts_phrase(Counter(row.verdict for row in off.trace))} (off). "
+        + prepare_clause
+        + "Pricing the lane needs matched heads, a drop-free capture, and the same "
+        "candidate set on both lanes.",
         f"- **Retirement of the dispatch path: NO-GO.** The evidence is {len(ready)} ready "
         f"fan-out and {on_totals.candidates} rendered candidates in the ON window "
         f"({on_totals.ok} ok, {on_totals.exceptions} exceptions), so the capture cannot "
@@ -1450,7 +1726,7 @@ def to_json(off: Capture, on: Capture) -> dict[str, object]:
             "boot": capture.boot,
             "executor": capture.executor,
             "trace_rows": len(capture.trace),
-            "heads": len(grouped),
+            "trace_head_blocks": len(grouped),
             "block_range": window_bounds(capture),
             "selections": [
                 {
@@ -1463,6 +1739,34 @@ def to_json(off: Capture, on: Capture) -> dict[str, object]:
                 for row in capture.selections
             ],
             "prefetches": len(capture.prefetches),
+            "selection_rows": len(capture.selections),
+            "keyed_selection_rows": sum(1 for row in capture.selections if row.fanout is not None),
+            "fanout_ids": sorted(fanout_attribution(capture)),
+            "fanout_ids_without_selection": sorted(
+                fanout
+                for fanout, entry in fanout_attribution(capture).items()
+                if entry.selection is None
+            ),
+            "fanout_walls": [
+                {
+                    "current_block": entry.lab.current_block,
+                    "lane": entry.lane,
+                    "joined_by": entry.joined_by,
+                    "candidates": entry.lab.candidates,
+                    "fanout_ms": entry.lab.fanout_ms,
+                    "attributed": entry.attributed,
+                    "candidate_ns": entry.candidate_ns,
+                }
+                for entry in lab_lanes(capture)
+            ],
+            "head_walls": {
+                "prepare": summarize([
+                    row.prepare_us for row in capture.heads if row.prepare_us is not None
+                ]).__dict__,
+                "apply": summarize([
+                    row.apply_us for row in capture.heads if row.apply_us is not None
+                ]).__dict__,
+            },
             "labs": [
                 {
                     "current_block": row.current_block,

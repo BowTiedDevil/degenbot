@@ -282,10 +282,68 @@ def test_relevance_coverage_counts_the_pre_simulation_addresses_the_reads_carrie
 
 
 def _write_capture(
-    path: Path, *, selections: list[str], traces: list[str], heads: list[str] | None = None
+    path: Path,
+    *,
+    selections: list[str],
+    traces: list[str],
+    heads: list[str] | None = None,
+    labs: list[str] | None = None,
+    prefetches: list[str] | None = None,
 ) -> Path:
-    path.write_text("\n".join([*(heads or []), *selections, *traces, ""]) + "\n")
+    path.write_text(
+        "\n".join([*(heads or []), *(prefetches or []), *(labs or []), *selections, *traces, ""])
+        + "\n"
+    )
     return path
+
+
+def _selection_row(block: int, storage: str, fanout: int | None, reason: str | None = None) -> str:
+    """One `fan-out storage selection` row, in the emitter's wire shape."""
+    reason_field = f'Some("{reason}")' if reason else "None"
+    tail = f", fanout={fanout}" if fanout is not None else ""
+    return (
+        f"DEBUG [sim] fan-out storage selection {{current_block={block}, anchor={block - 1}, "
+        f'anchor_fenced=true, storage="{storage}", reason={reason_field}{tail}}}'
+    )
+
+
+def _lab_row(block: int, candidates: int, wall_ms: int, fanout: int | None) -> str:
+    """One `[sim] cands=` row, in the emitter's wire shape."""
+    tail = f" fanout={fanout}" if fanout is not None else ""
+    return (
+        f"INFO [sim] cands={candidates} sims={candidates} sim_ms=1 builds=1 build_ms=0 "
+        "cold: b_fast=0 b_slow=0 b_ms=0 code=0 c_ms=0 s_fast=0 s_slow=0 s_ms=0 bh=0 "
+        f"warm_basic_hits=0 slow_ms=0{tail} {{current_block={block}, fanout_ms={wall_ms}}}"
+    )
+
+
+def _trace_row(block: int, cand: str, sim_ns: int, fanout: int | None) -> str:
+    """One `fanout-trace` row; `fanout=None` is the unkeyed (pre-key) shape."""
+    key = f',"fanout":{fanout}' if fanout is not None else ""
+    body = (
+        f'{{"block":{block},"cand":"{cand}","sim_ns":{sim_ns},"verdict":"none",'
+        f'"gas":0,"reads":[],"relevance":[]{key}}}'
+    )
+    return f"DEBUG [sim] fanout-trace {body}"
+
+
+def _head_row(
+    anchor: int,
+    *,
+    outcome: str,
+    prepare_us: int,
+    apply_us: int,
+    refusal: str | None = None,
+    chain: str = "carried",
+) -> str:
+    """One `bal-head {...}` row, in the emitter's wire shape."""
+    refusal_field = f'"{refusal}"' if refusal else "null"
+    return (
+        f'DEBUG [sim] bal-head {{"anchor":{anchor},"hash":"0x{"a" * 64}",'
+        f'"parent":"0x{"9" * 64}","outcome":"{outcome}","chain":"{chain}",'
+        f'"refusal":{refusal_field},"bal":null,"prepare_us":{prepare_us},'
+        f'"apply_us":{apply_us},"writes":1,"overwritten":0,"skipped":0}}'
+    )
 
 
 def test_a_trace_row_without_the_fanout_key_still_parses(analysis: ModuleType) -> None:
@@ -400,6 +458,8 @@ def test_the_report_reads_an_old_capture_pair_and_an_attributed_pair_alike(
     old_report = analysis.render_markdown(old_off, old_on)
     assert "No row in this capture carries a `fanout` key" in old_report
     assert "No `bal-head` rows" in old_report
+    assert "No candidate count is shared by the two captures" in old_report
+    assert "attributed candidates: 0 of 1" in old_report
 
     new_off = analysis.scan_capture(
         _write_capture(
@@ -513,3 +573,148 @@ def test_the_report_keeps_lane_selection_at_dispatch_level_and_timing_window_wid
     assert "lineage-refused" in report
     assert "delta" in report
     assert "unattributed" in report.lower()
+
+
+# ── the mixed-lane report (OFF legacy versus ON delta) ──────────────────────
+
+
+def test_a_matched_candidate_count_table_names_each_arms_own_lane(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    off = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "off.log",
+            selections=[_selection_row(100, "legacy", 1), _selection_row(101, "legacy", 2)],
+            labs=[_lab_row(100, 4, 7, 1), _lab_row(101, 6, 12, 2)],
+            traces=[
+                *(_trace_row(100, f"{cand}@1", 1_000_000, 1) for cand in range(1, 5)),
+                *(_trace_row(101, f"{cand}@1", 2_000_000, 2) for cand in range(5, 11)),
+            ],
+        )
+    )
+    on = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[_selection_row(200, "delta", 41)],
+            labs=[_lab_row(200, 4, 1, 41)],
+            traces=[*(_trace_row(200, f"{cand}@1", 500_000, 41) for cand in range(20, 24))],
+        )
+    )
+
+    report = analysis.render_markdown(off, on)
+
+    assert "| 4 | off | legacy | 100 | 7 | 4 of 4 | 4.00 |" in report
+    assert "| 4 | on | delta | 200 | 1 | 4 of 4 | 2.00 |" in report
+    matched = report.split("### Matched candidate counts", 1)[1].split("## Whole-window", 1)[0]
+    assert "| 6 |" not in matched, "a count only one arm carries is not count-matched"
+    assert "Every row here is a legacy-lane fan-out" not in report
+    assert "never a paired head comparison" in report
+    assert "controlled speedup" in report
+
+
+def test_the_attribution_summary_counts_ids_selections_and_missing_selection_rows(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[_selection_row(100, "delta", 1)],
+            labs=[_lab_row(100, 2, 3, 1), _lab_row(101, 2, 9, 2)],
+            traces=[
+                _trace_row(100, "1@1", 1_000_000, 1),
+                _trace_row(101, "2@1", 1_000_000, 2),
+            ],
+        )
+    )
+
+    report = analysis.render_markdown(capture, capture)
+
+    assert "fanout ids observed: 2" in report
+    assert "selection rows: 1" in report
+    assert "no surviving selection row: 1" in report, (
+        "the dropped selection row is named, not guessed"
+    )
+    assert "| 2 | on | delta | 100 | 3 | 1 of 2 | 1.00 |" in report
+    assert "| 2 | on | unknown | 101 | 9 | 1 of 2 | 1.00 |" in report
+    assert "fan-outs carrying a `fanout` key:" not in report
+
+
+def test_the_head_section_summarizes_prepare_and_apply_walls_apart_from_the_fanout_wall(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[_selection_row(100, "delta", 1)],
+            labs=[_lab_row(100, 4, 7, 1)],
+            traces=[_trace_row(100, "1@1", 1_000_000, 1)],
+            heads=[
+                _head_row(100, outcome="settled", prepare_us=300, apply_us=9),
+                _head_row(
+                    101,
+                    outcome="cold",
+                    prepare_us=700,
+                    apply_us=31,
+                    refusal="no-parent",
+                    chain="cold",
+                ),
+            ],
+        )
+    )
+
+    report = analysis.render_markdown(capture, capture)
+
+    assert "| prepare | 2 | 1.00 | 0.50 | 0.66 | 0.70 |" in report
+    assert "| apply | 2 | 0.04 | 0.02 | 0.03 | 0.03 |" in report
+    assert "settled=1" in report
+    assert "cold=1" in report
+    assert "no-parent=1" in report
+    assert "not part of a fan-out's" in report
+
+
+def test_the_verdict_separates_readiness_from_the_non_paired_wall_observation(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    off = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "off.log",
+            selections=[_selection_row(100, "legacy", 1), _selection_row(101, "legacy", 2)],
+            labs=[_lab_row(100, 2, 7, 1), _lab_row(101, 4, 7, 2)],
+            traces=[
+                *(_trace_row(100, f"{cand}@1", 1_000_000, 1) for cand in range(1, 3)),
+                *(_trace_row(101, f"{cand}@1", 1_000_000, 2) for cand in range(3, 7)),
+            ],
+        )
+    )
+    on = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[
+                _selection_row(200, "delta", 41),
+                _selection_row(201, "delta", 42),
+                _selection_row(202, "legacy", 43, reason="undelivered"),
+            ],
+            labs=[
+                _lab_row(200, 2, 1, 41),
+                _lab_row(201, 4, 2, 42),
+                _lab_row(202, 50, 113, 43),
+            ],
+            traces=[
+                *(_trace_row(200, f"{cand}@1", 500_000, 41) for cand in range(20, 22)),
+                *(_trace_row(201, f"{cand}@1", 500_000, 42) for cand in range(30, 34)),
+                *(_trace_row(202, f"{cand}@1", 2_000_000, 43) for cand in range(40, 90)),
+            ],
+        )
+    )
+
+    report = analysis.render_markdown(off, on)
+    verdict = report.split("## Verdict", 1)[1]
+
+    assert "Directional small-fan-out" in verdict
+    assert "non-paired" in verdict
+    assert "not a paired head comparison" in report
+    assert "Still missing: controlled large-fan-out evidence" in verdict
+    assert "50" in verdict, "the burst-scale fan-out has no counterpart in the OFF arm"
+    assert "No GO from whole-window totals" in verdict
+    assert "most ON candidates read through the same legacy lane" not in report
+    assert "most of the ON window's fenced fan-outs ran on the same legacy lane" not in report
