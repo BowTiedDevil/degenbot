@@ -19,8 +19,10 @@ workspace = true
 alloy = { version = "^2.5", features = ["full"] }
 # EIP-7928 block access lists — the CANONICAL decode for the opt-in BAL prefetch
 # (`sim::evm2::bal_prefetch`): the RLP types come from the same alloy family the
-# RPC layer speaks, never a hand-written parser.
-alloy-eip7928 = { version = "0.4.11", features = ["rlp"] }
+# RPC layer speaks, never a hand-written parser. `rlp` is the raw
+# `debug_getRawBlockAccessList` representation; `serde` the official
+# `eth_getBlockAccessList` JSON one — one type, two codecs.
+alloy-eip7928 = { version = "0.4.11", features = ["rlp", "serde"] }
 # evm2 — THE engine (ADR-089 cutover; ADR-091 retired revm), through the
 # vendored fork (rust/vendor/, ADR-096): imported as `evm2`, published as
 # `degenbot-evm2` because upstream's crate is unpublished. Features are the

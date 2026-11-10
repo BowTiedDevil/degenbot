@@ -6,14 +6,26 @@
 //! change is the anchor's post-block value (the exact answer
 //! `eth_getStorageAt` would give), and each read-only slot is a slot the fan-out
 //! is likely to ask for — an identity worth joining the hub's next batch. This
-//! module turns raw list bytes into those two sets; the hub's `seed_bal` /
+//! module turns a list into those two sets; the hub's `seed_bal` /
 //! `prefetch_bal` apply them through the ordinary memo and batch/drain paths.
+//!
+//! # One list, two official representations
+//!
+//! A node may serve the list as the RLP bytes of `debug_getRawBlockAccessList`
+//! or as the official JSON array of `eth_getBlockAccessList`. [`fetch_bal_seed`]
+//! is the ONE acquisition path both BAL consumers share — the read hub's
+//! best-effort prefetch and the canonical head's parent-linked prepare — so
+//! neither can be left on one representation. The provider prefers the raw
+//! representation and falls back to the JSON one only when the node does not
+//! serve the raw method; whichever answers, the SAME fold turns it into the same
+//! [`BalSeed`], so the two codecs ([`decode_bal_seed`], [`decode_bal_seed_json`])
+//! are interchangeable at every seam below them.
 //!
 //! # The contract is best-effort, all-or-nothing, storage-only
 //!
 //! Assistance never fails a read. A missing anchor hash (the request is
-//! exact-hash anchored, never a mutable tag), a refused or failed request, or
-//! malformed RLP is a [`BalSkip`] with NOTHING seeded: the input decodes
+//! exact-hash anchored, never a mutable tag), a refused or failed request, or a
+//! malformed list is a [`BalSkip`] with NOTHING seeded: the input decodes
 //! wholesale before any hub mutation, so a malformed list cannot half-seed the
 //! memo. Account entries are ignored — balance/nonce/code changes do not form
 //! an [`AccountRead`](degenbot_rpc::provider::AccountRead) — so accounts stay
@@ -28,8 +40,11 @@
 //! (counted, never hidden), and every omitted slot follows the ordinary dynamic
 //! read path with unchanged semantics.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, B256, U256};
 use alloy_eip7928::bal::{Bal, DecodedBal};
+use alloy_eip7928::AccountChanges;
+use degenbot_rpc::provider::{AlloyProvider, BlockAccessListResponse};
+use serde::Deserialize as _;
 
 /// Why a BAL assist stage seeded nothing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -37,12 +52,16 @@ pub enum BalSkip {
     /// The anchor carries no block hash, so the exact-hash request cannot be made.
     #[error("the anchor carries no block hash, so the exact-hash BAL request cannot be made")]
     NoAnchorHash,
-    /// The `debug_getRawBlockAccessList` request failed: unsupported method,
-    /// transport failure, no list at that hash — any classified provider error.
-    #[error("the raw block access list request failed: {0}")]
+    /// The block access list request failed: NEITHER representation served the
+    /// method, a transport failure, no list at that hash — any classified
+    /// provider error. A failure of the representation actually chosen is
+    /// reported as-is and never retried through the other one.
+    #[error("the block access list request failed: {0}")]
     Rpc(String),
-    /// The returned bytes did not decode as one complete EIP-7928 list.
-    #[error("the raw block access list did not decode: {0}")]
+    /// The answer did not decode as one complete EIP-7928 list: malformed RLP
+    /// from the raw representation, malformed or ill-typed JSON from the
+    /// official one. Nothing is seeded from either.
+    #[error("the block access list did not decode: {0}")]
     Decode(String),
 }
 
@@ -60,9 +79,9 @@ impl BalSkip {
     }
 }
 
-/// The bytes did not decode as one complete EIP-7928 block access list.
+/// The answer did not decode as one complete EIP-7928 block access list.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("malformed block access list RLP: {0}")]
+#[error("malformed block access list: {0}")]
 pub struct BalDecodeError(String);
 
 /// The bounded, optionally address-filtered seeding plan: what a full-block BAL
@@ -141,10 +160,45 @@ pub struct BalPrefetchReport {
     pub capped_entries: usize,
 }
 
-/// Decode one raw block access list and fold it into a [`BalSeed`] under
-/// `plan` — the decode-first, mutate-never seam. The whole input must decode
-/// (canonical [`DecodedBal`], trailing bytes rejected) before any entry is
-/// planned, so malformed bytes yield [`BalDecodeError`] and an empty seed.
+/// Acquire ONE exact block's block access list and decode it into a [`BalSeed`]
+/// under `plan` — the ONE acquisition path both production BAL consumers share.
+///
+/// The transport negotiation belongs to the provider
+/// ([`AlloyProvider::get_block_access_list`]): the raw RLP representation is
+/// asked first and the official JSON one only when the node does not serve the
+/// raw method, a classification that is sticky for the provider's session.
+/// Whichever representation answers, the decode is the same fold over the same
+/// account-change model, so a raw list and the JSON list of one block are
+/// indistinguishable below this function.
+///
+/// # Errors
+///
+/// [`BalSkip::Rpc`] when the acquisition itself failed — every failure of the
+/// representation actually chosen, a `null` answer included, is the
+/// acquisition's own and is NEVER retried through the other representation —
+/// and [`BalSkip::Decode`] when the answer is not one complete list, in either
+/// representation.
+pub async fn fetch_bal_seed(
+    provider: &AlloyProvider,
+    block_hash: B256,
+    plan: &BalPlan,
+) -> Result<BalSeed, BalSkip> {
+    let response = provider
+        .get_block_access_list(block_hash)
+        .await
+        .map_err(|error| BalSkip::Rpc(error.to_string()))?;
+    match response {
+        BlockAccessListResponse::Raw(raw) => decode_bal_seed(&raw, plan),
+        BlockAccessListResponse::Json(json) => decode_bal_seed_json(&json, plan),
+    }
+    .map_err(|error| BalSkip::Decode(error.to_string()))
+}
+
+/// Decode one RAW block access list (the `debug_getRawBlockAccessList`
+/// representation) and fold it into a [`BalSeed`] under `plan` — the
+/// decode-first, mutate-never seam. The whole input must decode (canonical
+/// [`DecodedBal`], trailing bytes rejected) before any entry is planned, so
+/// malformed bytes yield [`BalDecodeError`] and an empty seed.
 ///
 /// # Errors
 ///
@@ -153,8 +207,40 @@ pub fn decode_bal_seed(raw: &[u8], plan: &BalPlan) -> Result<BalSeed, BalDecodeE
     let decoded =
         DecodedBal::from_rlp_bytes_as::<Bal>(alloy::primitives::Bytes::copy_from_slice(raw))
             .map_err(|error| BalDecodeError(error.to_string()))?;
+    Ok(seed_from_accounts(decoded.as_bal(), plan))
+}
+
+/// Decode one OFFICIAL JSON block access list (the `eth_getBlockAccessList`
+/// representation) and fold it into a [`BalSeed`] under `plan` — the same fold,
+/// and therefore the same seed, as [`decode_bal_seed`]'s raw representation.
+///
+/// The official account shape carries all SIX fields (`address`,
+/// `storageChanges`, `storageReads`, `balanceChanges`, `nonceChanges`,
+/// `codeChanges`), and a missing field, a wrong type, or an unparseable quantity
+/// is a [`BalDecodeError`] with an empty seed — the same closed behavior
+/// malformed RLP gets. The three non-storage change lists are decoded (their
+/// presence must never fail the list) and then ignored: balance/nonce/code
+/// changes form no storage identity, so those accounts stay wholly on the
+/// dynamic path.
+///
+/// # Errors
+///
+/// [`BalDecodeError`] when `json` is not one official block access list.
+pub fn decode_bal_seed_json(
+    json: &serde_json::Value,
+    plan: &BalPlan,
+) -> Result<BalSeed, BalDecodeError> {
+    let bal = Bal::deserialize(json).map_err(|error| BalDecodeError(error.to_string()))?;
+    Ok(seed_from_accounts(&bal, plan))
+}
+
+/// Fold one decoded list into a [`BalSeed`] under `plan` — the ONE fold both
+/// representations share, so the raw bytes and the official JSON of one block
+/// yield identical seeds (the same final writes, zeros included, and the same
+/// read-only identities, in list order).
+fn seed_from_accounts(accounts: &[AccountChanges], plan: &BalPlan) -> BalSeed {
     let mut seed = BalSeed::default();
-    for account in decoded.as_bal() {
+    for account in accounts {
         let entries = account.storage_post_states().count() + account.storage_reads().len();
         if !plan.admits(account.address) {
             seed.filtered_entries += entries;
@@ -175,5 +261,5 @@ pub fn decode_bal_seed(raw: &[u8], plan: &BalPlan) -> Result<BalSeed, BalDecodeE
             seed.reads.push((account.address, slot));
         }
     }
-    Ok(seed)
+    seed
 }

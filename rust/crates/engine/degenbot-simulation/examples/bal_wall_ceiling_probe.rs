@@ -135,7 +135,7 @@ use alloy::primitives::{Address, B256};
 
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::async_fanout::{DrainPolicy, FanoutLimits};
-use degenbot_simulation::sim::evm2::bal_prefetch::{decode_bal_seed, BalPlan};
+use degenbot_simulation::sim::evm2::bal_prefetch::{fetch_bal_seed, BalPlan};
 use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, CarryReport, ReadHub, ReadHubCache};
 use degenbot_simulation::sim::ReadAnchor;
 
@@ -683,12 +683,9 @@ async fn drive_seed(
         let hub = ReadHub::new(provider, ReadAnchor::identified(*block, mode.hash(*block)?));
         let unit_start = ledger.spans().len();
         let unit_started = Instant::now();
-        let raw = provider
-            .get_raw_block_access_list(mode.hash(*block)?)
+        let seed = fetch_bal_seed(provider, mode.hash(*block)?, &BalPlan::default())
             .await
-            .map_err(|error| format!("list fetch at {block}: {error}"))?;
-        let seed = decode_bal_seed(&raw, &BalPlan::default())
-            .map_err(|error| format!("list decode at {block}: {error}"))?;
+            .map_err(|error| format!("list at {block}: {error}"))?;
         ledger.record_fixed(WallBucket::BalFetchDecode, node.bal());
         ledger.record_since(WallBucket::BalFetchDecode, unit_started);
         let seeded_keys: BTreeSet<Key> = seed.writes.iter().map(|&(a, s, _)| (a, s)).collect();

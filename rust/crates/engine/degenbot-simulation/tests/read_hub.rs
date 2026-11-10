@@ -22,11 +22,12 @@ use alloy::rpc::json_rpc::{
     ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
 };
 use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
+use alloy_eip7928::bal::{Bal, DecodedBal};
 use degenbot_core::errors::ProviderError;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::bal_prefetch::{BalPlan, BalSkip};
 use degenbot_simulation::sim::evm2::read_hub::{
-    CarryOutcome, CarryRefusal, ReadHub, ReadHubCache, ReadHubError, SnapshotRetention,
+    CarryOutcome, CarryRefusal, PreparedBal, ReadHub, ReadHubCache, ReadHubError, SnapshotRetention,
 };
 use degenbot_simulation::sim::ReadAnchor;
 use serde_json::value::to_raw_value;
@@ -82,6 +83,10 @@ struct ChainStub {
     bal_by_hash: Arc<Mutex<HashMap<B256, Vec<u8>>>>,
     /// Refuse the BAL method the way a node without it answers.
     bal_unsupported: Arc<AtomicBool>,
+    /// Serve the BAL ONLY through the official JSON method
+    /// (`eth_getBlockAccessList`), refusing the raw one the way an eth-only node
+    /// answers.
+    bal_eth_only: Arc<AtomicBool>,
     /// Answer the BAL request with JSON `null` — no list at that hash.
     bal_null: Arc<AtomicBool>,
     /// Per-`(height, account, slot)` storage answers — anything unlisted
@@ -102,6 +107,7 @@ impl ChainStub {
             bal: Arc::new(Mutex::new(Vec::new())),
             bal_by_hash: Arc::new(Mutex::new(HashMap::new())),
             bal_unsupported: Arc::new(AtomicBool::new(false)),
+            bal_eth_only: Arc::new(AtomicBool::new(false)),
             bal_null: Arc::new(AtomicBool::new(false)),
             values: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -117,6 +123,12 @@ impl ChainStub {
     /// Refuse the BAL method the way a node without it answers.
     fn set_bal_unsupported(&self, unsupported: bool) {
         self.bal_unsupported.store(unsupported, Ordering::Relaxed);
+    }
+
+    /// Serve the list only through `eth_getBlockAccessList` — the eth-only node
+    /// whose raw method is missing.
+    fn set_bal_eth_only(&self, eth_only: bool) {
+        self.bal_eth_only.store(eth_only, Ordering::Relaxed);
     }
     /// Answer the BAL request with JSON `null` — the node holds no list there.
     fn set_bal_null(&self, null: bool) {
@@ -185,12 +197,19 @@ impl ChainStub {
             .sum()
     }
 
-    /// BAL fetches dispatched.
+    /// BAL fetches dispatched, through EITHER official method.
     fn bal_requests(&self) -> usize {
+        self.bal_methods().len()
+    }
+
+    /// The BAL methods dispatched, in order — which representation the
+    /// negotiation chose.
+    fn bal_methods(&self) -> Vec<String> {
         self.packets()
             .iter()
-            .filter(|packet| packet.len() == 1 && packet[0].0 == "debug_getRawBlockAccessList")
-            .count()
+            .filter(|packet| packet.len() == 1 && is_bal_method(&packet[0].0))
+            .map(|packet| packet[0].0.clone())
+            .collect()
     }
 
     fn clear(&self) {
@@ -207,6 +226,9 @@ impl ChainStub {
     fn answer(&self, req: &SerializedRequest) -> Response {
         if req.method() == "debug_getRawBlockAccessList" {
             return self.answer_bal(req);
+        }
+        if req.method() == "eth_getBlockAccessList" {
+            return self.answer_bal_json(req);
         }
         let failed = self.refusing.load(Ordering::Relaxed) && Self::refused(req);
         if failed {
@@ -253,7 +275,9 @@ impl ChainStub {
 
     /// The BAL stage's own request: the raw list bytes, or the node's refusal.
     fn answer_bal(&self, req: &SerializedRequest) -> Response {
-        let payload = if self.bal_unsupported.load(Ordering::Relaxed) {
+        let payload = if self.bal_unsupported.load(Ordering::Relaxed)
+            || self.bal_eth_only.load(Ordering::Relaxed)
+        {
             ResponsePayload::Failure(ErrorPayload {
                 code: -32_601,
                 message: Cow::Borrowed("the method debug_getRawBlockAccessList does not exist"),
@@ -277,6 +301,35 @@ impl ChainStub {
             payload,
         }
     }
+
+    /// The same list through the OFFICIAL JSON method: the node's other
+    /// representation of one fixture, so a test can ask for either.
+    fn answer_bal_json(&self, req: &SerializedRequest) -> Response {
+        let payload = if self.bal_unsupported.load(Ordering::Relaxed) {
+            ResponsePayload::Failure(ErrorPayload {
+                code: -32_601,
+                message: Cow::Borrowed("the method eth_getBlockAccessList does not exist"),
+                data: None,
+            })
+        } else if self.bal_null.load(Ordering::Relaxed) {
+            ResponsePayload::Success(to_raw_value(&Value::Null).unwrap())
+        } else {
+            let hash = Self::bal_hash(req);
+            let raw = self
+                .bal_by_hash
+                .lock()
+                .unwrap()
+                .get(&hash)
+                .cloned()
+                .unwrap_or_else(|| self.bal.lock().unwrap().clone());
+            ResponsePayload::Success(to_raw_value(&bal_json(&raw)).unwrap())
+        };
+        Response {
+            id: req.id().clone(),
+            payload,
+        }
+    }
+
     /// A storage member's `(address, slot, height)` in wire form.
     fn storage_params(req: &SerializedRequest) -> (Address, U256, u64) {
         let params: Value =
@@ -1004,8 +1057,24 @@ fn is_storage_batch(req: &RequestPacket) -> bool {
 /// Whether this request is the BAL stage's own exact-hash fetch.
 fn is_bal_request(req: &RequestPacket) -> bool {
     match req {
-        RequestPacket::Single(one) => one.method() == "debug_getRawBlockAccessList",
+        RequestPacket::Single(one) => is_bal_method(one.method()),
         RequestPacket::Batch(_) => false,
+    }
+}
+
+/// Whether this method name is one of the two official BAL representations.
+fn is_bal_method(method: &str) -> bool {
+    method == "debug_getRawBlockAccessList" || method == "eth_getBlockAccessList"
+}
+
+/// The official `eth_getBlockAccessList` JSON equivalent of these raw list bytes
+/// — the SAME fixture in the node's other representation. Bytes that are not one
+/// complete list answer with a JSON list whose account carries an unparseable
+/// address, so a malformed fixture stays malformed in both representations.
+fn bal_json(raw: &[u8]) -> Value {
+    match DecodedBal::from_rlp_bytes_as::<Bal>(Bytes::copy_from_slice(raw)) {
+        Ok(decoded) => serde_json::to_value(decoded.as_bal()).expect("the list serializes"),
+        Err(_) => serde_json::json!([{"address": "0xnothex"}]),
     }
 }
 
@@ -2442,6 +2511,148 @@ async fn worked_bal_seeds_final_write_values_and_one_batch_for_read_only_slots()
         stub.packets()
     );
 }
+/// An ETH-ONLY node settles the SAME generation from the official JSON list: one
+/// list in two representations, identical seeds, identical memo answers — and the
+/// raw method's refusal is paid once for the provider session, never per fetch.
+#[tokio::test]
+async fn an_eth_only_node_seeds_the_same_values_from_the_official_json_list() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_bal(worked_bal());
+    stub.set_bal_eth_only(true);
+    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let hub = ReadHub::new(&provider, anchor);
+
+    let report = hub.prefetch_bal(&BalPlan::default()).await;
+    assert!(report.skip.is_none(), "the JSON list decoded: {report:?}");
+    assert_eq!(report.seeded.writes_seeded, 2, "{report:?}");
+    assert_eq!(report.seeded.reads_queued, 2, "{report:?}");
+    assert_eq!(
+        hub.memoized_slots(),
+        2,
+        "only final write values are memoized"
+    );
+    assert_eq!(
+        stub.bal_methods(),
+        vec![
+            "debug_getRawBlockAccessList".to_string(),
+            "eth_getBlockAccessList".to_string()
+        ],
+        "raw first, then the official JSON request: {:?}",
+        stub.packets()
+    );
+    stub.clear();
+
+    let first = hub.read_storage(address(0x11), U256::from(1u64));
+    let second = hub.read_storage(address(0x11), U256::from(2u64));
+    assert_eq!(first.await.unwrap(), StorageValue::from(42u64));
+    assert_eq!(second.await.unwrap(), StorageValue::from(42u64));
+    assert!(
+        stub.packets().is_empty(),
+        "seeded writes never reach the chain: {:?}",
+        stub.packets()
+    );
+
+    let third = hub.read_storage(address(0x11), U256::from(3u64));
+    let fourth = hub.read_storage(address(0x11), U256::from(4u64));
+    let round = hub.drain_round().await;
+    assert_eq!(
+        round.storage_members, 2,
+        "read-only slots join one round: {round:?}"
+    );
+    assert_eq!(third.await.unwrap(), served_value());
+    assert_eq!(fourth.await.unwrap(), served_value());
+    stub.clear();
+
+    // The refused raw request is not paid again on this provider session.
+    let again = hub.prefetch_bal(&BalPlan::default()).await;
+    assert!(again.skip.is_none(), "{again:?}");
+    assert_eq!(again.seeded.writes_seeded, 0, "{again:?}");
+    assert_eq!(again.seeded.writes_already_known, 2, "{again:?}");
+    assert_eq!(
+        stub.bal_methods(),
+        vec!["eth_getBlockAccessList".to_string()],
+        "a known-unsupported raw method is not asked again"
+    );
+
+    // An identity neither representation mentions still takes the dynamic path.
+    stub.clear();
+    let unknown = hub.read_storage(address(0x11), U256::from(9u64));
+    let round = hub.drain_round().await;
+    assert_eq!(round.storage_members, 1, "{round:?}");
+    assert_eq!(unknown.await.unwrap(), served_value());
+}
+
+/// The canonical-head prepare rides the SAME acquisition path: an eth-only node
+/// prepares the same final writes the raw representation yields, so the child
+/// carries them.
+#[tokio::test]
+async fn an_eth_only_node_prepares_the_same_final_writes() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_writes_x3());
+    stub.set_bal_eth_only(true);
+
+    let prepared =
+        PreparedBal::prepare(&provider, ReadAnchor::identified(HEIGHT + 1, child_hash)).await;
+    assert!(
+        prepared.is_decoded(),
+        "the official JSON list decoded: {:?}",
+        prepared.skip()
+    );
+    assert_eq!(
+        prepared.final_writes(),
+        &[(address(0x11), U256::from(1u64), U256::from(3u64))],
+        "the same final write the raw list yields"
+    );
+    assert_eq!(
+        stub.bal_methods(),
+        vec![
+            "debug_getRawBlockAccessList".to_string(),
+            "eth_getBlockAccessList".to_string()
+        ],
+        "one refused raw request, then the official JSON one"
+    );
+}
+
+/// A JSON list that is not one complete list is a closed DECODE skip: nothing is
+/// seeded, the payload is not retried through the other representation, and every
+/// read keeps the ordinary dynamic path.
+#[tokio::test]
+async fn a_malformed_json_list_seeds_nothing_and_the_plain_path_works() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    // The fixture is not one complete list in EITHER representation: the raw
+    // bytes fail to decode, so the stub's JSON counterpart is malformed too.
+    stub.serve_bal(vec![0xff, 0x00]);
+    stub.set_bal_eth_only(true);
+    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let hub = ReadHub::new(&provider, anchor);
+
+    let report = hub.prefetch_bal(&BalPlan::default()).await;
+    assert!(
+        matches!(report.skip, Some(BalSkip::Decode(_))),
+        "{report:?}"
+    );
+    assert_eq!(report.seeded.writes_seeded, 0, "{report:?}");
+    assert_eq!(hub.memoized_slots(), 0, "a decode failure seeds nothing");
+    assert_eq!(
+        stub.bal_methods(),
+        vec![
+            "debug_getRawBlockAccessList".to_string(),
+            "eth_getBlockAccessList".to_string()
+        ],
+        "one request per representation, then closed"
+    );
+
+    stub.clear();
+    let read = hub.read_storage(address(0x11), U256::from(1u64));
+    let round = hub.drain_round().await;
+    assert_eq!(round.storage_members, 1, "{round:?}");
+    assert_eq!(read.await.unwrap(), served_value());
+}
+
 /// A node that does not serve the method (or a transport failure) is a BAL
 /// stage SKIP: nothing is seeded, and ordinary hub reads still settle.
 #[tokio::test]

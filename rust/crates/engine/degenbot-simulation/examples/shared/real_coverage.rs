@@ -56,7 +56,7 @@ use alloy::primitives::{Address, B256, U256};
 use serde::{Deserialize, Serialize};
 
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm2::bal_prefetch::{decode_bal_seed, BalPlan, BalSeed};
+use degenbot_simulation::sim::evm2::bal_prefetch::{fetch_bal_seed, BalPlan, BalSeed};
 
 /// One tracked read identity.
 pub type Key = (Address, U256);
@@ -364,8 +364,10 @@ pub fn fold_writes(seed: &BalSeed, tracked: &BTreeSet<Address>) -> (Vec<Key>, us
 
 /// Capture the stretch `first..=last` from the live node: each block's real
 /// header identity and parent hash, and each exact-hash list's write identities
-/// over `tracked`, folded through the production decoder
-/// ([`decode_bal_seed`]) exactly as the replay's pipeline will read them.
+/// over `tracked`, acquired and folded through the production path
+/// ([`fetch_bal_seed`]) exactly as the replay's pipeline will read them — so a
+/// node serving only the official JSON BAL endpoint captures the same
+/// fixture.
 ///
 /// # Errors
 ///
@@ -388,12 +390,9 @@ pub async fn capture(
             .await
             .map_err(|error| format!("get_block({number}): {error}"))?
             .ok_or_else(|| format!("no canonical block at {number}"))?;
-        let raw = provider
-            .get_raw_block_access_list(block.header.hash)
+        let seed = fetch_bal_seed(provider, block.header.hash, &BalPlan::default())
             .await
-            .map_err(|error| format!("list fetch at {number}: {error}"))?;
-        let seed = decode_bal_seed(&raw, &BalPlan::default())
-            .map_err(|error| format!("list decode at {number}: {error}"))?;
+            .map_err(|error| format!("list at {number}: {error}"))?;
         let (writes, other_writes) = fold_writes(&seed, tracked);
         blocks.push(RealBlock {
             number,

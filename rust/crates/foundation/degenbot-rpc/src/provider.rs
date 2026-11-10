@@ -36,7 +36,7 @@ use crate::retry_policy::{
 };
 use std::num::NonZeroU32;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -1412,6 +1412,16 @@ pub struct AlloyProvider {
     /// about the handle: every clone reads the one verified value, and no
     /// hot-path call re-reads `eth_chainId`.
     verified_chain_id: Arc<OnceLock<u64>>,
+    /// Whether this endpoint is already KNOWN not to serve
+    /// `debug_getRawBlockAccessList` — the sticky half of the BAL transport
+    /// negotiation ([`Self::get_block_access_list`]).
+    /// Shared through an `Arc` because the classification is a fact about the
+    /// ENDPOINT, not about the handle: every clone — and therefore every
+    /// consumer sharing the session's provider, the read hub's prefetch and the
+    /// canonical-head prepare alike — reads the one bit, so an eth-only node
+    /// pays one refused raw request per session instead of one per block. An
+    /// atomic, never a lock: no guard may be held across an RPC await.
+    bal_raw_unsupported: Arc<AtomicBool>,
 }
 
 // Manual Clone impl makes Arc::clone sharing semantics explicit
@@ -1425,7 +1435,128 @@ impl Clone for AlloyProvider {
             call_timeout: self.call_timeout,
             retry_budget: self.retry_budget,
             verified_chain_id: Arc::clone(&self.verified_chain_id),
+            bal_raw_unsupported: Arc::clone(&self.bal_raw_unsupported),
         }
+    }
+}
+
+/// The BAL a node served, in whichever representation its endpoint supports.
+/// The two official EIP-7928 JSON-RPC methods answer ONE list in different
+/// shapes: `debug_getRawBlockAccessList` returns its RLP-encoded bytes,
+/// `eth_getBlockAccessList` the official JSON array of account changes. This is
+/// the acquisition seam's answer — still UNDECODED, because the codec that turns
+/// either shape into one semantic model belongs with the consumers that plan and
+/// seed it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlockAccessListResponse {
+    /// The RLP-encoded list from `debug_getRawBlockAccessList`.
+    Raw(Bytes),
+    /// The official JSON list from `eth_getBlockAccessList`: one JSON object per
+    /// touched account, in the method's own field names.
+    Json(serde_json::Value),
+}
+
+/// `-32601`: "method not found" (EIP-1474).
+const METHOD_NOT_FOUND: i64 = -32_601;
+
+/// `-32004`: "method not supported" (EIP-1474).
+///
+/// The endpoint classification claims this code for `QuickNode`'s rate-limit
+/// response, so a wire refusal normally arrives already wrapped as
+/// [`ProviderError::RateLimited`] — which stays closed — and this branch serves
+/// a node that answers it as a plain JSON-RPC error instead.
+const METHOD_NOT_SUPPORTED: i64 = -32_004;
+
+/// Absence phrases that can continue the word "method" and still mean the
+/// method itself is missing.
+const METHOD_ABSENCE_PHRASES: [&[&str]; 8] = [
+    &["not", "found"],
+    &["not", "supported"],
+    &["not", "available"],
+    &["does", "not", "exist"],
+    &["missing"],
+    &["unknown"],
+    &["unsupported"],
+    &["unavailable"],
+];
+
+/// Absence words that can precede "method" ("unknown method").
+const METHOD_ABSENCE_WORDS: [&str; 4] = ["unknown", "unsupported", "unavailable", "missing"];
+
+/// Whether this refusal says the node does not serve the method, as opposed to
+/// failing to serve ONE answer.
+///
+/// The two EIP-1474 codes above mean exactly that. Some nodes tunnel the same
+/// fact through a generic server-error code, so a message that names the method
+/// itself as absent counts too — and only that: the absence phrase has to
+/// continue the word "method" (a method's own qualified name or a copula may
+/// sit in between), so "invalid method parameter: block not found" and
+/// "method handler failed: unknown block" stay per-answer failures. Widening it
+/// to those would turn every pruning/reorg outage into a second BAL request.
+fn is_unsupported_method(error: &ProviderError) -> bool {
+    let ProviderError::RpcError { code, message } = error else {
+        return false;
+    };
+    if *code == METHOD_NOT_FOUND || *code == METHOD_NOT_SUPPORTED {
+        return true;
+    }
+    names_a_missing_method(message)
+}
+
+/// Whether `message` names the method as absent, never the block, slot or state
+/// it was asked about.
+fn names_a_missing_method(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    let tokens: Vec<&str> = lowered
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty())
+        .collect();
+    tokens.iter().enumerate().any(|(index, token)| {
+        *token == "method"
+            && (preceded_by_absence_word(&tokens, index)
+                || continues_with_absence_phrase(&tokens, index + 1))
+    })
+}
+
+/// "unknown method", "unsupported method": an absence word immediately before
+/// the word "method", with the phrase ending there or naming the method itself.
+fn preceded_by_absence_word(tokens: &[&str], index: usize) -> bool {
+    index > 0
+        && METHOD_ABSENCE_WORDS.contains(&tokens[index - 1])
+        && tokens.get(index + 1).is_none_or(|next| intervenes(next))
+}
+
+/// "method not found", "method <name> does not exist", "method is not
+/// supported". One ordinary word between "method" and the absence phrase means
+/// the sentence is about something else ("method parameter: block not found").
+fn continues_with_absence_phrase(tokens: &[&str], mut index: usize) -> bool {
+    let mut skipped = 0;
+    while index < tokens.len() && skipped < 2 && intervenes(tokens[index]) {
+        index += 1;
+        skipped += 1;
+    }
+    index < tokens.len()
+        && METHOD_ABSENCE_PHRASES
+            .iter()
+            .any(|phrase| tokens[index..].starts_with(phrase))
+}
+
+/// Whether this token can sit between "method" and its absence phrase: the
+/// method's own qualified name (`debug_getRawBlockAccessList`) or a copula.
+fn intervenes(token: &str) -> bool {
+    token.contains('_') || matches!(token, "is" | "was")
+}
+
+/// The JSON kind of a value, for an error message that must not print a whole
+/// block access list.
+fn json_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
     }
 }
 
@@ -1486,6 +1617,7 @@ impl AlloyProvider {
             call_timeout: SIM_CALL_TIMEOUT,
             retry_budget: self.retry_budget,
             verified_chain_id: Arc::clone(&self.verified_chain_id),
+            bal_raw_unsupported: Arc::clone(&self.bal_raw_unsupported),
         }
     }
 }
@@ -1740,6 +1872,7 @@ impl AlloyProvider {
             call_timeout: DEFAULT_CALL_TIMEOUT,
             retry_budget: configured_retry_budget(),
             verified_chain_id: Arc::new(OnceLock::new()),
+            bal_raw_unsupported: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -2636,6 +2769,106 @@ impl AlloyProvider {
         }
     }
 
+    /// Acquire ONE exact block's EIP-7928 block access list, preferring the
+    /// compact raw RLP response and falling back to the official JSON one.
+    ///
+    /// # Raw first, eth only when the raw method is missing
+    ///
+    /// `debug_getRawBlockAccessList` is the cheaper representation — RLP bytes,
+    /// no JSON tree — so it is tried first and its success issues NO
+    /// `eth_getBlockAccessList` request. The JSON representation is tried only
+    /// when the raw request is classified as the node not serving the method
+    /// ([`is_unsupported_method`]): a `-32601` method-not-found refusal, a
+    /// `-32004` method-not-supported code when the endpoint answers it as a plain
+    /// JSON-RPC error, or a refusal whose message names the method itself as
+    /// absent (never one about the block, slot, or state).
+    ///
+    /// That classification is STICKY on the provider: once an endpoint is known
+    /// not to serve the raw method, every later acquisition on this provider —
+    /// or on any clone sharing it, which is how one session's prefetch and
+    /// head-prepare consumers share the answer — goes straight to
+    /// `eth_getBlockAccessList`, so an eth-only node pays exactly one refused raw
+    /// request per session instead of one per block. The bit is an
+    /// [`AtomicBool`], never a lock: no guard is held across an RPC await, and
+    /// two concurrent first acquisitions may each pay the one refusal.
+    ///
+    /// # Every other failure stays closed
+    ///
+    /// A raw transport failure, a rate limit, a `null` answer, or a payload that
+    /// is not a hex byte string is the ACQUISITION's failure: it is returned
+    /// as-is and NO second request is made, so a real outage can never be masked
+    /// by — nor doubled into — a fallback. The same holds once the JSON
+    /// representation is selected: `null` or a non-array answer is that
+    /// request's own error. A node serving neither representation therefore
+    /// yields an error, never an empty list.
+    ///
+    /// Both requests carry the caller's block HASH as their only parameter —
+    /// never a `latest` or number tag — for the reorg-safety reason
+    /// [`Self::get_raw_block_access_list`] documents.
+    ///
+    /// Dispatch is a single attempt per representation: neither method is on
+    /// [`Self::make_request`]'s idempotent allowlist.
+    ///
+    /// # Errors
+    ///
+    /// The [`ProviderError`] classified from the failing request (see
+    /// [`Self::make_request`]); the JSON request additionally reports
+    /// [`ProviderError::InvalidResponse`] for a `null` or non-array answer.
+    pub async fn get_block_access_list(
+        &self,
+        block_hash: B256,
+    ) -> ProviderResult<BlockAccessListResponse> {
+        if !self.bal_raw_unsupported.load(Ordering::Relaxed) {
+            match self.get_raw_block_access_list(block_hash).await {
+                Ok(raw) => return Ok(BlockAccessListResponse::Raw(raw)),
+                Err(error) if is_unsupported_method(&error) => {
+                    self.bal_raw_unsupported.store(true, Ordering::Relaxed);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        self.get_block_access_list_json(block_hash)
+            .await
+            .map(BlockAccessListResponse::Json)
+    }
+
+    /// Fetch ONE exact block's EIP-7928 block access list as the OFFICIAL JSON
+    /// array (`eth_getBlockAccessList`).
+    ///
+    /// The explicit-representation accessor: it issues this method's request
+    /// whether or not the endpoint also serves the raw one, and it does not
+    /// touch the sticky negotiation [`Self::get_block_access_list`] owns. Its
+    /// caller is one that pins a representation deliberately — a parity check
+    /// fetching raw and JSON independently, say.
+    ///
+    /// Best-effort by contract at the BAL consumers' level: a refusal, a `null`
+    /// answer (no list at that hash), or a transport failure is a classified
+    /// error the caller reports as a skip. The answer is returned UNDECODED; the
+    /// account-change codec lives with the consumers that plan and seed it.
+    ///
+    /// # Errors
+    ///
+    /// The [`ProviderError`] classified from the request's own failure (see
+    /// [`Self::make_request`]), or [`ProviderError::InvalidResponse`] when the
+    /// node answers `null` or something that is not a JSON array.
+    pub async fn get_block_access_list_json(
+        &self,
+        block_hash: B256,
+    ) -> ProviderResult<serde_json::Value> {
+        let result = self
+            .make_request("eth_getBlockAccessList", serde_json::json!([block_hash]))
+            .await?;
+        if result.is_array() {
+            return Ok(result);
+        }
+        Err(ProviderError::InvalidResponse {
+            message: format!(
+                "eth_getBlockAccessList returned {} for {block_hash}, expected a JSON array of account changes",
+                json_kind(&result)
+            ),
+        })
+    }
+
     /// Make a raw JSON-RPC request.
     ///
     /// This method allows calling arbitrary RPC methods that don't have
@@ -2703,6 +2936,7 @@ impl AlloyProvider {
             call_timeout: DEFAULT_CALL_TIMEOUT,
             retry_budget: configured_retry_budget(),
             verified_chain_id: Arc::new(OnceLock::new()),
+            bal_raw_unsupported: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -4752,90 +4986,207 @@ mod block_lineage_tests {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::panic)]
-mod raw_block_access_list_tests {
+mod block_access_list_tests {
     use super::*;
     use alloy::providers::RootProvider;
-    use alloy::rpc::json_rpc::{Response, ResponsePayload, SerializedRequest};
+    use alloy::rpc::json_rpc::{ErrorPayload, Response, ResponsePayload, SerializedRequest};
     use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
     use serde_json::json;
     use serde_json::value::to_raw_value;
     use std::borrow::Cow;
     use std::sync::Mutex;
     use std::task::{Context, Poll};
+
     /// One dispatched request, recorded as its `(method, params)` pair.
     type Packet = (String, String);
+
     /// The raw block access list bytes the stub serves.
     const BAL: &[u8] = &[0xc8, 0x01, 0xc6, 0xc2, 0x80, 0x07, 0xc2, 0x02, 0x2a];
+
+    /// The raw RLP method's name.
+    const RAW: &str = "debug_getRawBlockAccessList";
+
+    /// The official JSON method's name.
+    const JSON: &str = "eth_getBlockAccessList";
+
     /// The exact-hash fetch's one block identity.
     fn block_hash() -> B256 {
         B256::new([0xaa; 32])
     }
-    /// A transport serving `debug_getRawBlockAccessList` only, recording every
-    /// request it is dispatched.
+
+    /// The official JSON list the stub serves: one account with one written
+    /// slot, in the field names `eth_getBlockAccessList` answers with.
+    fn served_json() -> serde_json::Value {
+        json!([{
+            "address": "0x1111111111111111111111111111111111111111",
+            "storageChanges": [{
+                "key": "0x1",
+                "changes": [{"index": "0x0", "value": "0x2a"}],
+            }],
+            "storageReads": [],
+            "balanceChanges": [],
+            "nonceChanges": [],
+            "codeChanges": [],
+        }])
+    }
+
+    /// What ONE representation answers.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Served {
+        /// The list itself.
+        List,
+        /// A JSON-RPC method-not-found refusal: the node does not serve it.
+        Unsupported,
+        /// `-32004`, the code `QuickNode` answers a rate limit with: this
+        /// endpoint classification turns it into `RateLimited`, never a
+        /// missing method.
+        RateLimitCode,
+        /// The same fact tunneled through the generic server-error code, which
+        /// some nodes answer an unknown method with.
+        UnsupportedTunneled,
+        /// A generic server error about the BLOCK, never about the method.
+        MissingBlock,
+        /// A real per-block failure that names a method PARAMETER and a block
+        /// that is not there: the block is missing, never the method.
+        MissingBlockUnderMethodParameter,
+        /// A real per-block failure that tunnels an unknown BLOCK through a
+        /// method handler: also the block, never the method.
+        UnknownBlockUnderMethodHandler,
+        /// A `null` result.
+        Null,
+        /// A payload that is not this representation's list shape.
+        NotAList,
+    }
+
+    /// A node serving one answer per representation and recording every request
+    /// it is dispatched.
     #[derive(Debug, Clone)]
     struct BalStub {
         packets: Arc<Mutex<Vec<Packet>>>,
-        /// Answer `null` instead of raw bytes (the node holds no BAL here).
-        empty: bool,
-        /// Answer with a JSON-RPC method-not-found refusal.
-        unsupported: bool,
-        /// Fail the transport instead of answering.
+        raw: Served,
+        json: Served,
+        /// Fail the transport instead of answering, for both representations.
         down: bool,
     }
+
     impl BalStub {
-        fn serving() -> Self {
+        fn serving(raw: Served, json: Served) -> Self {
             Self {
                 packets: Arc::new(Mutex::new(Vec::new())),
-                empty: false,
-                unsupported: false,
+                raw,
+                json,
                 down: false,
             }
         }
-        fn empty() -> Self {
-            Self {
-                empty: true,
-                ..Self::serving()
-            }
+
+        /// A node serving both representations.
+        fn both() -> Self {
+            Self::serving(Served::List, Served::List)
         }
-        fn unsupported() -> Self {
-            Self {
-                unsupported: true,
-                ..Self::serving()
-            }
+
+        /// A node serving only the raw RLP method.
+        fn raw_only() -> Self {
+            Self::serving(Served::List, Served::Unsupported)
         }
-        fn downed() -> Self {
-            Self {
-                down: true,
-                ..Self::serving()
-            }
+
+        /// A node serving only the official JSON method.
+        fn eth_only() -> Self {
+            Self::serving(Served::Unsupported, Served::List)
         }
+
+        /// A node serving neither method.
+        fn neither() -> Self {
+            Self::serving(Served::Unsupported, Served::Unsupported)
+        }
+
+        fn with_raw(self, raw: Served) -> Self {
+            Self { raw, ..self }
+        }
+
+        fn with_json(self, json: Served) -> Self {
+            Self { json, ..self }
+        }
+
+        fn downed(self) -> Self {
+            Self { down: true, ..self }
+        }
+
         fn packets(&self) -> Vec<Packet> {
             self.packets.lock().unwrap().clone()
         }
+
+        /// The methods dispatched, in order — what the negotiation chose.
+        fn methods(&self) -> Vec<String> {
+            self.packets()
+                .into_iter()
+                .map(|(method, _)| method)
+                .collect()
+        }
+
         fn provider(&self) -> AlloyProvider {
             let client = ClientBuilder::default().transport(self.clone(), true);
             let root: RootProvider = RootProvider::new(client);
             AlloyProvider::from_provider(Arc::new(root))
         }
+
         fn answer(&self, req: &SerializedRequest) -> Response {
-            assert_eq!(
-                req.method(),
-                "debug_getRawBlockAccessList",
-                "the exact-anchor fetch issues only its one method"
-            );
-            let payload = if self.unsupported {
-                ResponsePayload::Failure(alloy::rpc::json_rpc::ErrorPayload {
+            let served = match req.method() {
+                RAW => self.raw,
+                JSON => self.json,
+                other => panic!("the BAL acquisition issues only its two methods, got {other}"),
+            };
+            let payload = match served {
+                Served::List => {
+                    let result = if req.method() == RAW {
+                        json!(Bytes::copy_from_slice(BAL))
+                    } else {
+                        served_json()
+                    };
+                    ResponsePayload::Success(to_raw_value(&result).unwrap())
+                }
+                Served::Unsupported => ResponsePayload::Failure(ErrorPayload {
                     code: -32_601,
-                    message: Cow::Borrowed("the method debug_getRawBlockAccessList does not exist"),
+                    message: Cow::Owned(format!("the method {} does not exist", req.method())),
                     data: None,
-                })
-            } else {
-                let result = if self.empty {
-                    json!(null)
-                } else {
-                    json!(Bytes::copy_from_slice(BAL))
-                };
-                ResponsePayload::Success(to_raw_value(&result).unwrap())
+                }),
+                Served::RateLimitCode => ResponsePayload::Failure(ErrorPayload {
+                    code: -32_004,
+                    message: Cow::Borrowed("rate limit exceeded"),
+                    data: None,
+                }),
+                Served::UnsupportedTunneled => ResponsePayload::Failure(ErrorPayload {
+                    code: -32_000,
+                    message: Cow::Owned(format!("method {} not found", req.method())),
+                    data: None,
+                }),
+                Served::MissingBlock => ResponsePayload::Failure(ErrorPayload {
+                    code: -32_000,
+                    message: Cow::Borrowed("block not found"),
+                    data: None,
+                }),
+                Served::MissingBlockUnderMethodParameter => {
+                    ResponsePayload::Failure(ErrorPayload {
+                        code: -32_000,
+                        message: Cow::Borrowed("invalid method parameter: block not found"),
+                        data: None,
+                    })
+                }
+                Served::UnknownBlockUnderMethodHandler => ResponsePayload::Failure(ErrorPayload {
+                    code: -32_000,
+                    message: Cow::Borrowed("method handler failed: unknown block"),
+                    data: None,
+                }),
+                Served::Null => {
+                    ResponsePayload::Success(to_raw_value(&serde_json::Value::Null).unwrap())
+                }
+                Served::NotAList => {
+                    let result = if req.method() == RAW {
+                        json!("0xnothex")
+                    } else {
+                        json!({"not": "a list"})
+                    };
+                    ResponsePayload::Success(to_raw_value(&result).unwrap())
+                }
             };
             Response {
                 id: req.id().clone(),
@@ -4843,13 +5194,16 @@ mod raw_block_access_list_tests {
             }
         }
     }
+
     impl tower::Service<RequestPacket> for BalStub {
         type Response = ResponsePacket;
         type Error = TransportError;
         type Future = TransportFut<'static>;
+
         fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Ok(()))
         }
+
         fn call(&mut self, req: RequestPacket) -> Self::Future {
             let stub = self.clone();
             Box::pin(async move {
@@ -4859,7 +5213,7 @@ mod raw_block_access_list_tests {
                         one.params()
                             .map_or_else(String::new, |p| p.get().to_string()),
                     ),
-                    RequestPacket::Batch(_) => panic!("the exact-anchor fetch is never a batch"),
+                    RequestPacket::Batch(_) => panic!("the BAL acquisition is never a batch"),
                 };
                 stub.packets.lock().unwrap().push(recorded);
                 if stub.down {
@@ -4872,11 +5226,12 @@ mod raw_block_access_list_tests {
             })
         }
     }
-    /// The request pins the EXACT block hash as its only parameter: no
+
+    /// The raw fetch pins the EXACT block hash as its only parameter: no
     /// `latest`, no number tag, no second parameter.
     #[tokio::test]
     async fn get_raw_block_access_list_requests_the_exact_hash_never_a_tag() {
-        let stub = BalStub::serving();
+        let stub = BalStub::raw_only();
         let provider = stub.provider();
         let raw = provider
             .get_raw_block_access_list(block_hash())
@@ -4886,7 +5241,7 @@ mod raw_block_access_list_tests {
         let packets = stub.packets();
         assert_eq!(packets.len(), 1, "one request: {packets:?}");
         let (method, params) = &packets[0];
-        assert_eq!(method, "debug_getRawBlockAccessList");
+        assert_eq!(method, RAW);
         assert_eq!(
             params,
             &format!("[\"{:#x}\"]", block_hash()),
@@ -4894,10 +5249,11 @@ mod raw_block_access_list_tests {
         );
         assert!(!params.contains("latest"), "never a mutable tag: {params}");
     }
+
     /// A served raw list answers with the exact bytes.
     #[tokio::test]
     async fn get_raw_block_access_list_returns_the_served_bytes() {
-        let stub = BalStub::serving();
+        let stub = BalStub::raw_only();
         let provider = stub.provider();
         let raw = provider
             .get_raw_block_access_list(block_hash())
@@ -4905,11 +5261,12 @@ mod raw_block_access_list_tests {
             .unwrap();
         assert_eq!(raw, Bytes::copy_from_slice(BAL));
     }
+
     /// A node answer of `null` (no block access list at that hash) is an
     /// invalid response, not silently empty bytes.
     #[tokio::test]
     async fn get_raw_block_access_list_reports_a_missing_list_as_invalid_response() {
-        let stub = BalStub::empty();
+        let stub = BalStub::raw_only().with_raw(Served::Null);
         let provider = stub.provider();
         let result = provider.get_raw_block_access_list(block_hash()).await;
         assert!(
@@ -4917,10 +5274,11 @@ mod raw_block_access_list_tests {
             "a missing list is an invalid response, got {result:?}"
         );
     }
+
     /// A method-not-found refusal classifies like any JSON-RPC refusal.
     #[tokio::test]
     async fn get_raw_block_access_list_classifies_an_unsupported_method() {
-        let stub = BalStub::unsupported();
+        let stub = BalStub::neither();
         let provider = stub.provider();
         let result = provider.get_raw_block_access_list(block_hash()).await;
         match result {
@@ -4930,13 +5288,262 @@ mod raw_block_access_list_tests {
             other => panic!("the refusal must classify as RpcError, got {other:?}"),
         }
     }
+
     /// A transport failure surfaces as the provider's own classification, so
     /// the assist layer above sees a skip rather than bytes.
     #[tokio::test]
     async fn get_raw_block_access_list_surfaces_a_transport_failure() {
-        let stub = BalStub::downed();
+        let stub = BalStub::both().downed();
         let provider = stub.provider();
         let result = provider.get_raw_block_access_list(block_hash()).await;
+        match result {
+            Err(ProviderError::RpcError { code, message }) => {
+                assert_eq!(code, -1, "a custom transport error: {message}");
+            }
+            other => panic!("the transport failure classifies as RpcError, got {other:?}"),
+        }
+    }
+
+    /// RAW FIRST: a node serving both representations pays the compact RLP
+    /// request alone, every time.
+    #[tokio::test]
+    async fn a_node_serving_both_representations_never_issues_the_json_request() {
+        let stub = BalStub::both();
+        let provider = stub.provider();
+        for _ in 0..2 {
+            let acquired = provider.get_block_access_list(block_hash()).await.unwrap();
+            assert_eq!(
+                acquired,
+                BlockAccessListResponse::Raw(Bytes::copy_from_slice(BAL)),
+                "the raw bytes are the answer"
+            );
+        }
+        assert_eq!(
+            stub.methods(),
+            vec![RAW.to_string(), RAW.to_string()],
+            "no eth BAL request is ever issued"
+        );
+    }
+
+    /// An eth-only node: the raw method's refusal falls through to the official
+    /// JSON request, by the same exact hash, and its answer is returned still
+    /// undecoded.
+    #[tokio::test]
+    async fn an_eth_only_node_answers_through_the_official_json_method() {
+        let stub = BalStub::eth_only();
+        let provider = stub.provider();
+        let acquired = provider.get_block_access_list(block_hash()).await.unwrap();
+        assert_eq!(acquired, BlockAccessListResponse::Json(served_json()));
+        assert_eq!(
+            stub.methods(),
+            vec![RAW.to_string(), JSON.to_string()],
+            "raw first, then the official JSON request"
+        );
+        let packets = stub.packets();
+        assert_eq!(
+            packets[1].1,
+            format!("[\"{:#x}\"]", block_hash()),
+            "the JSON request is exact-hash anchored too: {:?}",
+            packets[1]
+        );
+        assert!(
+            !packets[1].1.contains("latest"),
+            "never a mutable tag: {:?}",
+            packets[1]
+        );
+    }
+
+    /// The classification is STICKY: once this endpoint is known not to serve
+    /// the raw method, every later acquisition — a clone sharing the provider
+    /// included — goes straight to the official JSON request.
+    #[tokio::test]
+    async fn an_unsupported_raw_method_is_classified_once_per_provider_session() {
+        let stub = BalStub::eth_only();
+        let provider = stub.provider();
+        assert!(matches!(
+            provider.get_block_access_list(block_hash()).await.unwrap(),
+            BlockAccessListResponse::Json(_)
+        ));
+        let shared = provider.clone();
+        for _ in 0..2 {
+            assert!(matches!(
+                shared.get_block_access_list(block_hash()).await.unwrap(),
+                BlockAccessListResponse::Json(_)
+            ));
+        }
+        assert_eq!(
+            stub.methods(),
+            vec![
+                RAW.to_string(),
+                JSON.to_string(),
+                JSON.to_string(),
+                JSON.to_string()
+            ],
+            "the refused raw request is paid exactly once"
+        );
+    }
+
+    /// A method-not-found tunneled through the generic server-error code is the
+    /// same classification.
+    #[tokio::test]
+    async fn a_tunneled_method_refusal_is_recognised_as_unsupported() {
+        let stub = BalStub::serving(Served::UnsupportedTunneled, Served::List);
+        let provider = stub.provider();
+        assert!(matches!(
+            provider.get_block_access_list(block_hash()).await.unwrap(),
+            BlockAccessListResponse::Json(_)
+        ));
+        assert_eq!(stub.methods(), vec![RAW.to_string(), JSON.to_string()]);
+    }
+
+    /// A `-32004` rate-limit refusal is not a missing method: it stays closed,
+    /// so a throttled node never doubles its BAL traffic.
+    #[tokio::test]
+    async fn a_rate_limit_refusal_is_not_a_missing_method() {
+        let stub = BalStub::both().with_raw(Served::RateLimitCode);
+        let provider = stub.provider();
+        let result = provider.get_block_access_list(block_hash()).await;
+        assert!(
+            matches!(result, Err(ProviderError::RateLimited { .. })),
+            "a throttled endpoint classifies as rate limited, got {result:?}"
+        );
+        assert_eq!(stub.methods(), vec![RAW.to_string()], "one request only");
+    }
+
+    /// The classification itself: the two EIP-1474 method codes and a message
+    /// that names the method as absent qualify; a per-answer refusal, a rate
+    /// limit, or a transport failure never does.
+    #[test]
+    fn only_method_absence_refusals_classify_as_unsupported() {
+        let refusal = |code: i64, message: &str| ProviderError::RpcError {
+            code,
+            message: message.to_string(),
+        };
+        for unsupported in [
+            refusal(-32_601, "method not found"),
+            refusal(-32_004, "method not supported"),
+            refusal(-32_000, "method debug_getRawBlockAccessList not found"),
+            refusal(-32_000, "method eth_getBlockAccessList is not supported"),
+            refusal(
+                -32_000,
+                "the method debug_getRawBlockAccessList does not exist",
+            ),
+            refusal(-32_000, "unknown method: debug_getRawBlockAccessList"),
+            refusal(-32_000, "Unsupported method eth_getBlockAccessList"),
+            refusal(-32_000, "method unavailable"),
+            refusal(-32_000, "Method not found."),
+        ] {
+            assert!(is_unsupported_method(&unsupported), "{unsupported:?}");
+        }
+        for closed in [
+            refusal(-32_000, "block not found"),
+            refusal(-32_000, "invalid method parameter: block not found"),
+            refusal(-32_000, "method handler failed: unknown block"),
+            refusal(-32_000, "unknown method parameter: block not found"),
+            refusal(-32_000, "Method parameter: block not found."),
+            refusal(-32_000, "missing trie node"),
+            refusal(
+                -32_000,
+                "method eth_getBlockAccessList returned no accounts",
+            ),
+            ProviderError::RateLimited {
+                message: "rate limit exceeded".to_string(),
+            },
+            ProviderError::Timeout {
+                message: "timed out".to_string(),
+            },
+        ] {
+            assert!(!is_unsupported_method(&closed), "{closed:?}");
+        }
+    }
+
+    /// A real per-block refusal that mentions a method PARAMETER is the answer's
+    /// own failure: NO eth request follows it, and it never becomes the sticky
+    /// eth-only mode — the next acquisition still asks the raw method first.
+    #[tokio::test]
+    async fn a_missing_block_named_under_a_method_parameter_is_not_a_missing_method() {
+        let stub = BalStub::both().with_raw(Served::MissingBlockUnderMethodParameter);
+        let provider = stub.provider();
+        for _ in 0..2 {
+            match provider.get_block_access_list(block_hash()).await {
+                Err(ProviderError::RpcError { code, .. }) => assert_eq!(code, -32_000),
+                other => panic!("the per-block refusal classifies as RpcError, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            stub.methods(),
+            vec![RAW.to_string(), RAW.to_string()],
+            "each acquisition fails on its own raw answer, never on a missing method"
+        );
+    }
+
+    /// The same for a block refusal tunneled through a method handler: the
+    /// unknown BLOCK is the failure, so no eth request and no sticky bit.
+    #[tokio::test]
+    async fn an_unknown_block_under_a_method_handler_is_not_a_missing_method() {
+        let stub = BalStub::both().with_raw(Served::UnknownBlockUnderMethodHandler);
+        let provider = stub.provider();
+        for _ in 0..2 {
+            match provider.get_block_access_list(block_hash()).await {
+                Err(ProviderError::RpcError { code, .. }) => assert_eq!(code, -32_000),
+                other => panic!("the per-block refusal classifies as RpcError, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            stub.methods(),
+            vec![RAW.to_string(), RAW.to_string()],
+            "each acquisition fails on its own raw answer, never on a missing method"
+        );
+    }
+
+    /// A generic server error about the BLOCK is a per-answer failure, never a
+    /// missing method: no JSON request follows it.
+    #[tokio::test]
+    async fn a_missing_block_is_not_a_missing_method() {
+        let stub = BalStub::both().with_raw(Served::MissingBlock);
+        let provider = stub.provider();
+        let result = provider.get_block_access_list(block_hash()).await;
+        match result {
+            Err(ProviderError::RpcError { code, .. }) => assert_eq!(code, -32_000),
+            other => panic!("the refusal classifies as RpcError, got {other:?}"),
+        }
+        assert_eq!(stub.methods(), vec![RAW.to_string()], "one request only");
+    }
+
+    /// A raw `null` answer (no list at that hash) stays closed: never a silent
+    /// second representation.
+    #[tokio::test]
+    async fn a_null_raw_answer_is_not_a_fallback() {
+        let stub = BalStub::both().with_raw(Served::Null);
+        let provider = stub.provider();
+        let result = provider.get_block_access_list(block_hash()).await;
+        assert!(
+            matches!(result, Err(ProviderError::InvalidResponse { .. })),
+            "a missing list is an invalid response, got {result:?}"
+        );
+        assert_eq!(stub.methods(), vec![RAW.to_string()], "one request only");
+    }
+
+    /// Raw bytes that are not a hex string stay closed too.
+    #[tokio::test]
+    async fn a_malformed_raw_payload_is_not_a_fallback() {
+        let stub = BalStub::both().with_raw(Served::NotAList);
+        let provider = stub.provider();
+        let result = provider.get_block_access_list(block_hash()).await;
+        assert!(
+            matches!(result, Err(ProviderError::InvalidResponse { .. })),
+            "a non-hex payload is an invalid response, got {result:?}"
+        );
+        assert_eq!(stub.methods(), vec![RAW.to_string()], "one request only");
+    }
+
+    /// A raw transport failure stays closed: a real outage must never be masked
+    /// by a fallback request.
+    #[tokio::test]
+    async fn a_raw_transport_failure_is_not_a_fallback() {
+        let stub = BalStub::both().downed();
+        let provider = stub.provider();
+        let result = provider.get_block_access_list(block_hash()).await;
         assert!(
             matches!(
                 result,
@@ -4946,5 +5553,61 @@ mod raw_block_access_list_tests {
             ),
             "the transport failure classifies, got {result:?}"
         );
+        assert_eq!(stub.methods(), vec![RAW.to_string()], "one request only");
+    }
+
+    /// Once the JSON representation is selected, its own failures stay closed.
+    #[tokio::test]
+    async fn a_null_json_answer_is_an_invalid_response() {
+        let stub = BalStub::eth_only().with_json(Served::Null);
+        let provider = stub.provider();
+        let result = provider.get_block_access_list(block_hash()).await;
+        assert!(
+            matches!(result, Err(ProviderError::InvalidResponse { .. })),
+            "a null list is an invalid response, got {result:?}"
+        );
+    }
+
+    /// An answer that is not a JSON array is an invalid response: the official
+    /// method lists accounts.
+    #[tokio::test]
+    async fn a_non_array_json_answer_is_an_invalid_response() {
+        let stub = BalStub::eth_only().with_json(Served::NotAList);
+        let provider = stub.provider();
+        let result = provider.get_block_access_list(block_hash()).await;
+        assert!(
+            matches!(result, Err(ProviderError::InvalidResponse { .. })),
+            "a non-array answer is an invalid response, got {result:?}"
+        );
+    }
+
+    /// A node serving neither representation is an error, never an empty list.
+    #[tokio::test]
+    async fn neither_representation_served_is_an_error() {
+        let stub = BalStub::neither();
+        let provider = stub.provider();
+        let result = provider.get_block_access_list(block_hash()).await;
+        match result {
+            Err(ProviderError::RpcError { code, .. }) => assert_eq!(code, -32_601),
+            other => panic!("both refusals classify as RpcError, got {other:?}"),
+        }
+        assert_eq!(stub.methods(), vec![RAW.to_string(), JSON.to_string()]);
+    }
+
+    /// The JSON accessor issues its own exact-hash request, so a caller can pin
+    /// one representation deliberately (the live raw-vs-JSON parity check).
+    #[tokio::test]
+    async fn get_block_access_list_json_requests_the_exact_hash() {
+        let stub = BalStub::eth_only();
+        let provider = stub.provider();
+        let json = provider
+            .get_block_access_list_json(block_hash())
+            .await
+            .unwrap();
+        assert_eq!(json, served_json());
+        let packets = stub.packets();
+        assert_eq!(packets.len(), 1, "one request: {packets:?}");
+        assert_eq!(packets[0].0, JSON);
+        assert_eq!(packets[0].1, format!("[\"{:#x}\"]", block_hash()));
     }
 }

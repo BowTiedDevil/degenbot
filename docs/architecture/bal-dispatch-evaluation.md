@@ -120,9 +120,19 @@ Readiness, retention and endpoint facts:
   size: a working set that keeps naming identities no candidate read inside
   eight blocks keeps seeding, so `held` tracks the eight-block active set plus
   the fold horizon and nothing caps it.
-- **The BAL source is reth's `debug_getRawBlockAccessList`.** An endpoint
-  without it yields `bal-unreadable` (unsupported method, RPC failure, or decode
-  failure) and the legacy lane — never a wrong value.
+- **The BAL source is either official EIP-7928 endpoint.** The raw
+  `debug_getRawBlockAccessList` RLP representation is asked first and, when the
+  node does not serve that method (`-32601`/`-32004`, or a refusal whose message
+  names the method itself as absent — never one about the block or the state),
+  the acquisition falls back to the official `eth_getBlockAccessList` JSON one at
+  the same exact block hash; the classification is sticky on the provider, so an
+  eth-only node pays one refused raw request per session rather than one per
+  head. Both representations decode through one codec into the same `BalSeed`
+  (final writes, zeros included, and read-only identities), so nothing below the
+  acquisition can tell which answered. Every other failure — a transport error, a
+  `null` answer, a payload that is not one complete list — is closed: it yields
+  `bal-unreadable` and the legacy lane, never a second request and never a wrong
+  value. An endpoint serving neither representation is the same closed failure.
 - **The lane is visible in telemetry.** Every opt-in fan-out reports
   `degenbot.dispatch.storage{mode,reason}` (`mode` = `delta` | `legacy`; `reason`
   = `none` or the closed cold set), and a ready `delta` fan-out leaves
@@ -411,9 +421,16 @@ are the epic's own ladder; this document does not re-derive them.
    tracks that set plus the fold horizon and long-run RSS stays unproven. The
    nearest proxy in the evidence is the retention replay's run allocations in
    KiB, and it is a replay.
-9. **The BAL source requires reth's `debug_getRawBlockAccessList`.** An endpoint
-   without it makes every head `bal-unreadable`, so the opt-in collapses to the
-   legacy lane — correctly, and at the cost of one failed request per head.
+9. **The BAL source requires ONE of the two official EIP-7928 endpoints.** An
+   endpoint serving neither `debug_getRawBlockAccessList` nor
+   `eth_getBlockAccessList` makes every head `bal-unreadable`, so the opt-in
+   collapses to the legacy lane — correctly, and at the cost of one failed
+   acquisition per head. There is no up-front probe and no in-flight wait. A
+   startup fail-fast check and a same-block readiness wait are future behaviour
+   this evaluation does not cover; the seam either of them would reuse is the
+   provider's `get_block_access_list` acquisition, which already reports the
+   same unsupported/closed classification per head, so a boot-time refusal needs
+   no new transport code.
 10. **`MarketContext` installs the flag but consumes no generation.** It passes
     the warm cache to its per-block frame handle
     (`rust/crates/engine/degenbot-strategy/src/frame_pipeline.rs:561`), never
@@ -444,7 +461,8 @@ a read-origin counter, an RSS sampler) instead of assuming it away.
    and per 1,000 fenced fan-outs. `undelivered`/`unprepared`/`deadline` should
    appear only at the boot edge (each later window had exactly one `undelivered`,
    at boot); a sustained `lineage-refused` rate means the pump is skipping headers
-   or reorging; `bal-unreadable` means the endpoint lost the method.
+   or reorging; `bal-unreadable` means the endpoint serves neither BAL
+   representation (or answered one unreadably).
 3. **Verdict and failure parity.** For matched heads — or, better, one replayed
    candidate set through both lanes — verdicts, failure buckets and per-candidate
    read sets are identical, as the controlled probe already pins at one head. Any

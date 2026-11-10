@@ -22,6 +22,8 @@ use alloy::transports::{TransportError, TransportFut};
 use serde_json::value::to_raw_value;
 use serde_json::Value;
 
+use alloy_eip7928::bal::{Bal, DecodedBal};
+
 use degenbot_rpc::provider::AlloyProvider;
 
 /// The stub's per-`(height, account, slot)` answer table — one block's chain
@@ -122,13 +124,16 @@ impl ChainStub {
         self.storage_batched.load(Ordering::Relaxed)
     }
 
-    /// BAL fetches dispatched.
+    /// BAL fetches dispatched, through EITHER official representation.
     pub fn bal_requests(&self) -> usize {
         self.requests
             .lock()
             .unwrap()
             .iter()
-            .filter(|request| request.starts_with("debug_getRawBlockAccessList"))
+            .filter(|request| {
+                request.starts_with("debug_getRawBlockAccessList")
+                    || request.starts_with("eth_getBlockAccessList")
+            })
             .count()
     }
 
@@ -162,6 +167,8 @@ impl ChainStub {
     fn answer(&self, req: &SerializedRequest) -> Response {
         let payload = if req.method() == "debug_getRawBlockAccessList" {
             self.answer_bal(req)
+        } else if req.method() == "eth_getBlockAccessList" {
+            self.answer_bal_json(req)
         } else if req.method() == "eth_getStorageAt" {
             self.answer_storage(req)
         } else {
@@ -199,6 +206,32 @@ impl ChainStub {
         }
     }
 
+    /// The same list through the OFFICIAL JSON method: one fixture, both
+    /// representations, so a scenario reads the same either way.
+    fn answer_bal_json(&self, req: &SerializedRequest) -> ResponsePayload {
+        if self.bal_unsupported.load(Ordering::Relaxed) {
+            return ResponsePayload::Failure(ErrorPayload {
+                code: -32_601,
+                message: Cow::Borrowed("the method eth_getBlockAccessList does not exist"),
+                data: None,
+            });
+        }
+        if self.bal_null.load(Ordering::Relaxed) {
+            return ResponsePayload::Success(to_raw_value(&Value::Null).unwrap());
+        }
+        let hash: B256 = first_param(req)
+            .parse()
+            .expect("the block hash is the first param");
+        match self.bal_by_hash.lock().unwrap().get(&hash) {
+            Some(raw) => ResponsePayload::Success(to_raw_value(&bal_json(raw)).unwrap()),
+            None => ResponsePayload::Failure(ErrorPayload {
+                code: -32_000,
+                message: Cow::Borrowed("no block access list at that hash"),
+                data: None,
+            }),
+        }
+    }
+
     fn answer_storage(&self, req: &SerializedRequest) -> ResponsePayload {
         let address = param(req, 0)
             .parse()
@@ -227,6 +260,17 @@ impl ChainStub {
             .copied()
             .unwrap_or(SERVED);
         ResponsePayload::Success(to_raw_value(&Value::String(format!("{value:#x}"))).unwrap())
+    }
+}
+
+/// The official `eth_getBlockAccessList` JSON equivalent of these raw list bytes
+/// — the SAME fixture in the node's other representation. Bytes that are not one
+/// complete list answer with a JSON list whose account carries an unparseable
+/// address, so a malformed fixture stays malformed in both representations.
+fn bal_json(raw: &[u8]) -> Value {
+    match DecodedBal::from_rlp_bytes_as::<Bal>(alloy::primitives::Bytes::copy_from_slice(raw)) {
+        Ok(decoded) => serde_json::to_value(decoded.as_bal()).expect("the list serializes"),
+        Err(_) => serde_json::json!([{"address": "0xnothex"}]),
     }
 }
 

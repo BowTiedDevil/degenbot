@@ -6,9 +6,12 @@
 //! # What is scripted, and what is not
 //!
 //! The chain answers the few methods a dispatch fan-out issues — the anchor's
-//! identity (`eth_getBlockByNumber`), account basics, storage words, and
-//! `debug_getRawBlockAccessList` — and refuses everything else, so an
-//! unexpected method fails the run instead of silently answering. It holds no
+//! identity (`eth_getBlockByNumber`), account basics, storage words, and the raw
+//! `debug_getRawBlockAccessList` representation — and refuses everything else,
+//! so an unexpected method fails the run instead of silently answering. The
+//! official `eth_getBlockAccessList` method is refused rather than served: the
+//! scripted node holds the raw bytes only, and the refusal keeps the
+//! acquisition's fallback visible in the wire census ([`BalMode`]). It holds no
 //! market state: the corpora driven through it are scripted candidates, and the
 //! only storage words a run scripts are the ones its frames read
 //! ([`DeltaRecorder::serve_storage`]); every other identity answers zero.
@@ -27,7 +30,6 @@
 //! Nothing here is a latency CLAIM about a live node — the durations are
 //! synthetic, deterministic inputs, and the report says so.
 
-use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -50,6 +52,19 @@ pub const BLOCK: u64 = 100;
 /// The empty EIP-7928 list: one complete, decodable list carrying no final
 /// write, so a head that serves it settles READY and carries nothing.
 pub const EMPTY_BAL: &[u8] = &[0xc0];
+
+/// The raw RLP BAL method the scripted node serves.
+const RAW_BAL_METHOD: &str = "debug_getRawBlockAccessList";
+
+/// The official JSON BAL method: refused here, so the acquisition's fallback to
+/// it is on the wire whenever the raw method is missing.
+const JSON_BAL_METHOD: &str = "eth_getBlockAccessList";
+
+/// Whether `method` is one of the two official block-access-list
+/// representations.
+fn is_bal_method(method: &str) -> bool {
+    method == RAW_BAL_METHOD || method == JSON_BAL_METHOD
+}
 
 /// One deterministic RPC latency model, in microseconds, for the packets a
 /// dispatch fan-out dispatches. NOT a measurement of any node.
@@ -104,7 +119,7 @@ pub struct WireCensus {
     pub storage_members: u64,
     /// Serial storage reads (the dynamic-fallback shape).
     pub storage_singles: u64,
-    /// BAL list fetches.
+    /// BAL list fetches, through EITHER official representation.
     pub bal_fetches: u64,
     /// Requests of any other method (account basics, code, ...).
     pub other_requests: u64,
@@ -134,11 +149,18 @@ impl WireCensus {
 type BalScript = Mutex<BalMode>;
 
 /// How the scripted BAL endpoint answers.
+///
+/// The scripted node holds the raw representation, so it serves
+/// `debug_getRawBlockAccessList` under every mode but [`BalMode::Unsupported`]
+/// and refuses the official JSON one; an unsupported endpoint refuses BOTH, as a
+/// node without the methods does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BalMode {
     /// Serve the configured raw list.
     Serving,
-    /// Refuse the method, as a node without the endpoint does.
+    /// Refuse BOTH official methods: the raw request is refused first and the
+    /// official JSON one it falls back to is refused too, so no successful
+    /// negotiation becomes sticky and every acquisition pays both refusals.
     Unsupported,
     /// Answer, but only after a delay past any readiness deadline under test.
     Slow,
@@ -377,14 +399,12 @@ fn block_number(req: &SerializedRequest) -> Option<u64> {
         .or_else(|| number.as_u64())
 }
 
-/// Whether this packet is the BAL fetch that must pay the slow endpoint's
-/// delay, so the readiness deadline has something outstanding to fire against.
+/// Whether this packet is a BAL fetch that must pay the slow endpoint's delay,
+/// so the readiness deadline has something outstanding to fire against.
 fn pays_slow_bal_delay(recorder: &DeltaRecorder, req: &RequestPacket) -> bool {
     let is_bal = match req {
-        RequestPacket::Single(one) => one.method() == "debug_getRawBlockAccessList",
-        RequestPacket::Batch(many) => many
-            .iter()
-            .any(|one| one.method() == "debug_getRawBlockAccessList"),
+        RequestPacket::Single(one) => is_bal_method(one.method()),
+        RequestPacket::Batch(many) => many.iter().any(|one| is_bal_method(one.method())),
     };
     is_bal && matches!(*recorder.bal.lock().expect("recorder mutex"), BalMode::Slow)
 }
@@ -397,7 +417,7 @@ fn packet_charges(req: &RequestPacket) -> (u64, u64, bool, u64) {
     match req {
         RequestPacket::Single(one) => {
             let serial = u64::from(one.method() == "eth_getStorageAt");
-            let bal = u64::from(one.method() == "debug_getRawBlockAccessList");
+            let bal = u64::from(is_bal_method(one.method()));
             (serial, 0, false, bal)
         }
         RequestPacket::Batch(many) => {
@@ -409,7 +429,7 @@ fn packet_charges(req: &RequestPacket) -> (u64, u64, bool, u64) {
             };
             let bal = u64::try_from(
                 many.iter()
-                    .filter(|one| one.method() == "debug_getRawBlockAccessList")
+                    .filter(|one| is_bal_method(one.method()))
                     .count(),
             )
             .unwrap_or(u64::MAX);
@@ -479,25 +499,24 @@ impl tower::Service<RequestPacket> for RecordingTransport {
                         .expect("valid JSON object");
                         ResponsePayload::Success(raw)
                     }
-                    "debug_getRawBlockAccessList" => {
+                    "debug_getRawBlockAccessList" | "eth_getBlockAccessList" => {
                         recorder.bal_requests.fetch_add(1, Ordering::Relaxed);
-                        match *recorder.bal.lock().expect("recorder mutex") {
-                            // The packet already paid the delay before this
-                            // response was built, so a slow endpoint answers
-                            // exactly like a serving one once it arrives.
-                            BalMode::Slow | BalMode::Serving => {}
-                            BalMode::Unsupported => {
-                                return Response {
-                                    id: req.id().clone(),
-                                    payload: ResponsePayload::Failure(ErrorPayload {
-                                        code: -32_601,
-                                        message: Cow::Borrowed(
-                                            "method not found: debug_getRawBlockAccessList",
-                                        ),
-                                        data: None,
-                                    }),
-                                };
-                            }
+                        let mode = *recorder.bal.lock().expect("recorder mutex");
+                        // The packet already paid the delay before this response
+                        // was built, so a slow endpoint answers exactly like a
+                        // serving one once it arrives. The scripted node holds
+                        // the raw bytes only, so the official JSON method is a
+                        // method absence here; an unsupported endpoint answers
+                        // that way for BOTH methods.
+                        if mode == BalMode::Unsupported || req.method() == JSON_BAL_METHOD {
+                            return Response {
+                                id: req.id().clone(),
+                                payload: ResponsePayload::Failure(ErrorPayload {
+                                    code: -32_601,
+                                    message: format!("method not found: {}", req.method()).into(),
+                                    data: None,
+                                }),
+                            };
                         }
                         let payload = recorder.bal_payload.lock().expect("recorder mutex").clone();
                         let raw: Box<RawValue> = to_raw_value(&serde_json::Value::String(

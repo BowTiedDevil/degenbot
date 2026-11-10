@@ -189,7 +189,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
 use super::bal_prefetch::{
-    decode_bal_seed, BalPlan, BalPrefetchReport, BalSeed, BalSeedReport, BalSkip,
+    fetch_bal_seed, BalPlan, BalPrefetchReport, BalSeed, BalSeedReport, BalSkip,
 };
 use crate::sim::storage_memo::ReadAnchor;
 
@@ -529,9 +529,12 @@ impl ReadHub {
         report
     }
 
-    /// The opt-in BAL-accelerated prefetch: fetch this anchor's EXACT-hash raw
-    /// block access list, decode it wholesale, and seed what the plan admits
-    /// (see [`Self::seed_bal`]).
+    /// The opt-in BAL-accelerated prefetch: fetch this anchor's EXACT-hash block
+    /// access list, decode it wholesale, and seed what the plan admits (see
+    /// [`Self::seed_bal`]). The list arrives in whichever official
+    /// representation the node serves — raw RLP preferred, the official JSON as
+    /// the automatic eth-only fallback — through the one acquisition path
+    /// [`fetch_bal_seed`] shares with the canonical-head prepare.
     ///
     /// Best-effort by contract — candidate execution is never failed and later
     /// reads are never poisoned. A number-only anchor (no hash to request by),
@@ -547,20 +550,11 @@ impl ReadHub {
                 ..BalPrefetchReport::default()
             };
         };
-        let raw = match self.provider.get_raw_block_access_list(hash).await {
-            Ok(raw) => raw,
-            Err(error) => {
-                return BalPrefetchReport {
-                    skip: Some(BalSkip::Rpc(error.to_string())),
-                    ..BalPrefetchReport::default()
-                };
-            }
-        };
-        let seed = match decode_bal_seed(&raw, plan) {
+        let seed = match fetch_bal_seed(&self.provider, hash, plan).await {
             Ok(seed) => seed,
-            Err(error) => {
+            Err(skip) => {
                 return BalPrefetchReport {
-                    skip: Some(BalSkip::Decode(error.to_string())),
+                    skip: Some(skip),
                     ..BalPrefetchReport::default()
                 };
             }
@@ -908,18 +902,11 @@ impl PreparedBal {
     /// unknown reads take the ordinary dynamic path.
     pub async fn prepare(provider: &AlloyProvider, anchor: ReadAnchor) -> Self {
         let started = Instant::now();
-        let fetched = match anchor.hash {
-            None => Err(BalSkip::NoAnchorHash),
-            Some(hash) => provider
-                .get_raw_block_access_list(hash)
-                .await
-                .map_err(|error| BalSkip::Rpc(error.to_string())),
-        };
-        let (final_writes, skip) = match fetched {
-            Err(skip) => (Vec::new(), Some(skip)),
-            Ok(raw) => match decode_bal_seed(&raw, &BalPlan::default()) {
-                Err(error) => (Vec::new(), Some(BalSkip::Decode(error.to_string()))),
+        let (final_writes, skip) = match anchor.hash {
+            None => (Vec::new(), Some(BalSkip::NoAnchorHash)),
+            Some(hash) => match fetch_bal_seed(provider, hash, &BalPlan::default()).await {
                 Ok(seed) => (seed.writes, None),
+                Err(skip) => (Vec::new(), Some(skip)),
             },
         };
         Self {

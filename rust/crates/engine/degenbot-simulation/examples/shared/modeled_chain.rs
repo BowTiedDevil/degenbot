@@ -419,6 +419,24 @@ impl StubChain {
                 .ok_or_else(|| format!("the modeled chain holds no list at {hash}"))?;
             return Ok(json!(format!("0x{}", alloy::hex::encode(raw))));
         }
+        if request.method() == "eth_getBlockAccessList" {
+            let hash = params
+                .get(0)
+                .and_then(Value::as_str)
+                .ok_or("the block hash is the first param")?
+                .parse::<B256>()
+                .map_err(|error| format!("member hash: {error}"))?;
+            let raw = self
+                .chain
+                .bal_at(hash)
+                .ok_or_else(|| format!("the modeled chain holds no list at {hash}"))?;
+            let decoded = alloy_eip7928::bal::DecodedBal::from_rlp_bytes_as::<
+                alloy_eip7928::bal::Bal,
+            >(alloy::primitives::Bytes::copy_from_slice(raw))
+            .map_err(|error| format!("the modeled list at {hash} does not decode: {error}"))?;
+            return Ok(serde_json::to_value(decoded.as_bal())
+                .expect("the modeled list serializes as the official JSON"));
+        }
         let address = params
             .get(0)
             .and_then(Value::as_str)

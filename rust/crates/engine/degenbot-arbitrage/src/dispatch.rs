@@ -2904,15 +2904,15 @@ mod delta_dispatch_tests {
         let provider = provider(&recorder);
         let rt = runtime();
         let rec = recorder.clone();
-        let (selection, bal) = std::thread::spawn(move || {
+        let (selection, bal, wire) = std::thread::spawn(move || {
             rt.block_on(async {
                 let cache = delta_cache(500);
                 let driver = session_driver(&cache, &provider);
                 settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
                 rec.set_bal_mode(BalMode::Unsupported);
                 settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
-                let bal = rec.bal_requests();
-                (select_dispatch_storage(&provider, &cache, BLOCK), bal)
+                let selection = select_dispatch_storage(&provider, &cache, BLOCK);
+                (selection, rec.bal_requests(), rec.wire())
             })
         })
         .join()
@@ -2923,9 +2923,28 @@ mod delta_dispatch_tests {
             "an unreadable list serves no parent value: the legacy lane answers"
         );
         assert_eq!(selection.outcome.reason(), Some("bal-unreadable"));
+        let bal_wire: Vec<&str> = wire
+            .iter()
+            .filter_map(|request| request.split(' ').next())
+            .filter(|method| {
+                *method == "debug_getRawBlockAccessList" || *method == "eth_getBlockAccessList"
+            })
+            .collect();
         assert_eq!(
-            bal, 2,
-            "one fetch per delivered head, and none from the query"
+            bal_wire,
+            vec![
+                "debug_getRawBlockAccessList",
+                "debug_getRawBlockAccessList",
+                "eth_getBlockAccessList",
+            ],
+            "the serving head fetched the raw list once; the unsupported head paid the \
+             refused raw request and then the refused official JSON fallback it selected, \
+             and the query fetched nothing: {wire:#?}"
+        );
+        assert_eq!(
+            bal, 3,
+            "BOTH official methods count as BAL fetches: one serving fetch, then the \
+             refused raw request plus its JSON fallback, and none from the query"
         );
     }
 
