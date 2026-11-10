@@ -112,15 +112,25 @@
 //! # The asynchronous canonical-head lifecycle
 //!
 //! [`BalHeadDriver`] wraps one cache with the transition a head stream needs. A
-//! head arrives ([`BalHeadDriver::deliver`]) with its exact anchor, the parent
-//! hash from its header, and the caller's relevance set; the driver records it
-//! and mints ONE cold generation that every caller at that head reads until the
-//! apply lands. Its BAL is fetched and fully decoded separately
-//! ([`PreparedBal`], [`BalHeadDriver::prepare`]) — the stage that owns the RPC,
-//! so a caller runs it off its critical path — and applied in one synchronous
-//! transition ([`BalHeadDriver::apply`]) that is [`DeltaSnapshotCache::advance_bal`]
-//! with the fetch already done: same lineage classification, same sealed parent
-//! chain, same write policy, same retention and compaction transition.
+//! head arrives ([`BalHeadDriver::deliver`]) with its exact anchor and the parent
+//! hash from its header — and NO relevance: a head comes off the block clock,
+//! which has no candidates, so the set only has to exist when the head's writes
+//! are APPLIED. The driver records the head and mints ONE cold generation that
+//! every caller at that head reads until the apply lands. Its BAL is fetched and
+//! fully decoded separately ([`PreparedBal`], [`BalHeadDriver::prepare`]) — the
+//! stage that owns the RPC, so a caller runs it off its critical path — and
+//! applied in one synchronous transition ([`BalHeadDriver::apply`]) that is
+//! [`DeltaSnapshotCache::advance_bal`] with the fetch already done: same lineage
+//! classification, same sealed parent chain, same write policy, same retention
+//! and compaction transition.
+//!
+//! The relevance a head's unknown keys seed under is the apply's argument, and
+//! [`BalHeadDriver::advance_with_relevance`] resolves it at the LATEST point the
+//! transition allows: after the list landed, immediately before the apply. A
+//! registration that committed during the fetch window is therefore included in
+//! this head's seeding, and one that commits after the apply seeds from the next
+//! head — without ever making a served value wrong, because relevance only gates
+//! seeding an unknown key.
 //!
 //! Readiness is keyed by the WHOLE anchor, never the number. A caller at a
 //! delivered head gets [`HeadReadiness::Cold`] with the reason until that exact
@@ -559,6 +569,78 @@ struct AppliedWrites {
     new_keys: usize,
 }
 
+/// The identities one head's unknown-slot writes may SEED, as MEMBERSHIP.
+///
+/// The write policy asks one question per BAL write — "is this write's address
+/// relevant?" — and answers it with a hash probe, never a scan: a live head's
+/// list carries on the order of 1.4 k writes and the session's set is bounded by
+/// the whole path registry, so a linear `contains` would spend 10⁶–10⁷ address
+/// comparisons on the apply path.
+///
+/// Two construction forms, ONE behaviour (pinned by
+/// `the_set_and_slice_relevance_inputs_produce_an_identical_report`):
+///
+/// - [`Self::from_slice`] converts a caller's address list once, before any
+///   write is examined — a per-fan-out derivation
+///   ([`path_relevance_addresses`](crate::sim::prefetch::path_relevance_addresses)),
+///   and the synchronous [`DeltaSnapshotCache::advance_bal`] callers;
+/// - [`Self::from_set`] hands over a membership the caller already materialized
+///   — the session's apply-time relevance, derived once per registry revision
+///   (see [`HeadRelevanceSource`](super::bal_heads::HeadRelevanceSource)).
+///
+/// Relevance only ever gates SEEDING an unknown key: a write to a key the
+/// generation still serves overwrites whatever the set says, and a skipped
+/// write's read takes the ordinary dynamic path at the reader's own anchor. A
+/// WIDER set therefore costs memory, never a value.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RelevanceSet {
+    addresses: HashSet<Address>,
+}
+
+impl RelevanceSet {
+    /// The membership `addresses` names — duplicates collapse, order is
+    /// irrelevant (nothing downstream reads a sequence).
+    #[must_use]
+    pub fn from_slice(addresses: &[Address]) -> Self {
+        Self {
+            addresses: addresses.iter().copied().collect(),
+        }
+    }
+
+    /// A membership the caller already materialized.
+    #[must_use]
+    pub fn from_set(addresses: HashSet<Address>) -> Self {
+        Self { addresses }
+    }
+
+    /// Whether `address`'s unknown slots may seed.
+    #[must_use]
+    pub fn contains(&self, address: &Address) -> bool {
+        self.addresses.contains(address)
+    }
+
+    /// How many identities the set names.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.addresses.len()
+    }
+
+    /// Whether the set names nothing — a session with no registered path and no
+    /// settled identity (§4.5 of the design), which seeds nothing of its own.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.addresses.is_empty()
+    }
+}
+
+impl FromIterator<Address> for RelevanceSet {
+    fn from_iter<I: IntoIterator<Item = Address>>(addresses: I) -> Self {
+        Self {
+            addresses: addresses.into_iter().collect(),
+        }
+    }
+}
+
 /// Apply the child BAL's final writes to a fresh delta over `base` under the
 /// carry's write policy: a write to a slot the snapshot still serves
 /// OVERWRITES it whatever `relevance` says (a stale carried value outliving
@@ -569,12 +651,15 @@ struct AppliedWrites {
 /// Under retention an expired entry IS unknown (see the module docs): the
 /// write re-seeds under the same relevance rule and births a fresh window.
 ///
+/// `relevance` is MEMBERSHIP ([`RelevanceSet`]): the per-write question is one
+/// hash probe, whatever shape the caller's own derivation had.
+///
 /// A write is never candidate use: an overwrite carries the entry's old
 /// recency record forward, and only a seeding write stamps a birth.
 fn seed_final_writes(
     writes: &[(Address, U256, U256)],
 
-    relevance: &[Address],
+    relevance: &RelevanceSet,
 
     base: &DeltaSnapshot,
 
@@ -1282,7 +1367,12 @@ impl DeltaSnapshotCache {
 
         let prepared = PreparedBal::prepare(&self.provider, child).await;
 
-        self.apply_prepared(child, child_parent_hash, relevance, &prepared)
+        self.apply_prepared(
+            child,
+            child_parent_hash,
+            &RelevanceSet::from_slice(relevance),
+            &prepared,
+        )
     }
 
     /// The generation installed at exactly `anchor`, when there is one.
@@ -1299,8 +1389,10 @@ impl DeltaSnapshotCache {
     /// [`Self::advance_bal`] performs with its fetch and decode already done,
     /// item for item: the same exact lineage classification, the same sealed
     /// parent chain linked only when the lineage matched and the list decoded,
-    /// the same write policy and relevance rule, the same retention/compaction
-    /// transition, and the same idempotent same-anchor report.
+    /// the same write policy and the same relevance MEMBERSHIP
+    /// ([`RelevanceSet`]: one hash probe per write), the same
+    /// retention/compaction transition, and the same idempotent same-anchor
+    /// report.
     ///
     /// `prepared` must have been prepared at `child`'s own anchor: the
     /// [`BalHeadDriver`] enforces that exact-hash fence before calling here. The
@@ -1311,7 +1403,7 @@ impl DeltaSnapshotCache {
         &self,
         child: ReadAnchor,
         child_parent_hash: B256,
-        relevance: &[Address],
+        relevance: &RelevanceSet,
         prepared: &PreparedBal,
     ) -> (Arc<DeltaHub>, DeltaReport) {
         let final_writes = prepared.final_writes();
@@ -1803,6 +1895,24 @@ impl BalHeadDriver {
         prepared: &PreparedBal,
         relevance: &[Address],
     ) -> HeadOutcome {
+        self.apply_members(ticket, prepared, &RelevanceSet::from_slice(relevance))
+    }
+
+    /// The transition with the relevance as a membership set the caller already
+    /// holds: the session's apply-time relevance is materialized once per
+    /// registry revision, so the head pipeline hands the set over and the apply
+    /// pays no conversion. [`Self::apply`] is this method with a caller's slice
+    /// converted first.
+    ///
+    /// Membership is the whole difference between the two, and it moves no
+    /// decision (pinned by
+    /// `the_set_and_slice_relevance_inputs_produce_an_identical_report`).
+    pub fn apply_members(
+        &self,
+        ticket: HeadTicket,
+        prepared: &PreparedBal,
+        relevance: &RelevanceSet,
+    ) -> HeadOutcome {
         let mut state = self.state.lock();
         let Some(head) = state.head.as_ref() else {
             state.stats.discarded = state.stats.discarded.saturating_add(1);
@@ -1879,6 +1989,25 @@ impl BalHeadDriver {
     /// fetch, and a dropped (cancelled) advance releases the claim so a later
     /// call prepares the head normally. A settled head repeats no work.
     pub async fn advance(&self, ticket: HeadTicket, relevance: &[Address]) -> HeadOutcome {
+        self.advance_with_relevance(ticket, || Arc::new(RelevanceSet::from_slice(relevance)))
+            .await
+    }
+
+    /// [`Self::advance`] with the head's relevance resolved by `resolve` AFTER
+    /// the list is prepared and immediately BEFORE it applies.
+    ///
+    /// That point is the whole reason this entry exists. Apply-time relevance
+    /// is a property of the SESSION, not of the head's producer, and it is read
+    /// as late as the transition allows: a path registered while the list was
+    /// still in flight is included in this head's seeding, and a path registered
+    /// after the apply seeds from the NEXT head (reading its own unknown slots
+    /// dynamically until then). `resolve` runs at most once per head, inside the
+    /// single-flight claim, so a repeat delivery that loses the claim never
+    /// derives anything.
+    pub async fn advance_with_relevance<F>(&self, ticket: HeadTicket, resolve: F) -> HeadOutcome
+    where
+        F: FnOnce() -> Arc<RelevanceSet>,
+    {
         {
             let mut state = self.state.lock();
             let Some(head) = state.head.as_mut() else {
@@ -1902,8 +2031,12 @@ impl BalHeadDriver {
             seq: ticket.seq,
         };
         let prepared = self.prepare(ticket).await;
+        // The relevance is read HERE: after the fetch landed, before the
+        // transition. Anything that registered during the fetch window is in
+        // the set this head applies with.
+        let relevance = resolve();
         drop(claim);
-        self.apply(ticket, &prepared, relevance)
+        self.apply_members(ticket, &prepared, &relevance)
     }
 
     /// The snapshot `anchor` answers with right now, never blocking.

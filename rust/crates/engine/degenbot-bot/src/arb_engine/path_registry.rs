@@ -22,6 +22,17 @@
 //! did not allocate, and is withdrawn with the path in `remove`. It exists so
 //! the session can hand out one canonical path object per route without a
 //! second store that could disagree with this one about which route is which.
+//!
+//! `revision` is the registry's IDENTITY CLOCK: a monotonic counter bumped by
+//! every `commit` (a new path is growth) and every `remove` that drops a path,
+//! and by nothing else. A consumer that derives a session-wide value from the
+//! registered paths — apply-time BAL relevance is the one caller today — keys
+//! its materialization by it, so the derivation runs once per registration
+//! burst instead of once per head, and a projection cannot be paired with a
+//! revision it was not read at: the id, the pools, and the revision are read
+//! under ONE engine hold. Reads (`lookup` / `get` / `paths_for` / `iter` /
+//! `dedups`), `note_dedup`, `set_cap`, and `canonical_path` move no identity,
+//! so they move no revision.
 use ::degenbot_pools::solve::{HopType, MixedPath, MixedPoolRef};
 use degenbot_substrate::session_registry::{PathIdentity, PathObject};
 use hashbrown::HashMap;
@@ -94,6 +105,11 @@ pub(crate) struct PathRegistry {
     path_cap: Option<usize>,
     /// Dedup hits counted engine-side (PRG-4).
     path_dedups: u64,
+    /// The identity clock: bumped by `commit` and by a `remove` that drops a
+    /// path, and by nothing else (see the module docs). A consumer keys its
+    /// derivation of a session-wide value by this, so it re-derives exactly when
+    /// the registered set moved.
+    revision: u64,
     /// The session's canonical path object per registered path id. An INDEX
     /// over `path_pools`: the ids are the ones this registry allocated, and
     /// the objects are minted on the session's first request for a route
@@ -117,6 +133,7 @@ impl PathRegistry {
             next_path_id: 1,
             path_cap: None,
             path_dedups: 0,
+            revision: 0,
             path_objects: HashMap::new(),
         }
     }
@@ -185,6 +202,16 @@ impl PathRegistry {
     pub(crate) fn dedups(&self) -> u64 {
         self.path_dedups
     }
+    /// The registry's identity clock (see the module docs): bumped by `commit`
+    /// and by a `remove` that drops a path.
+    ///
+    /// A derivation over `iter()` is only valid at the revision it read in the
+    /// SAME engine hold, which is why the projection helper pairs them
+    /// (`arb_engine::path_info::session_paths`).
+    #[must_use]
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
     /// Refuse a NEW registration once the cap is reached. A dedup hit never
     /// reaches this gate — an existing path is not growth.
     ///
@@ -220,6 +247,7 @@ impl PathRegistry {
             }),
         );
         self.path_signatures.insert(reg.signature, path_id);
+        self.revision = self.revision.saturating_add(1);
         path_id
     }
     /// Record a dedup hit (`register_path` returned an existing id).
@@ -247,6 +275,11 @@ impl PathRegistry {
             self.path_signatures.remove(&signature);
         }
         self.path_objects.remove(&path_id);
+        if removed.is_some() {
+            // A removal that found nothing moved no identity, so it moves no
+            // revision: a consumer's materialization stays valid.
+            self.revision = self.revision.saturating_add(1);
+        }
         removed
     }
     /// Set the registered-path cap (`None` = unlimited).
@@ -259,5 +292,70 @@ impl PathRegistry {
     #[must_use]
     pub(crate) fn cap(&self) -> Option<usize> {
         self.path_cap
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PathRegistration, PathRegistry};
+    use ::degenbot_pools::solve::MixedPoolRef;
+
+    fn registration(pool_key: u64) -> PathRegistration {
+        PathRegistration {
+            signature: vec![(pool_key, true)],
+            pool_refs: vec![MixedPoolRef {
+                hop_type: ::degenbot_pools::solve::HopType::V2,
+                pool_key,
+                zero_for_one: true,
+            }],
+        }
+    }
+
+    /// The identity clock: a commit moves it, a removal that drops a path moves
+    /// it, and nothing else does — the one property a revision-keyed
+    /// derivation depends on (a registry read cannot masquerade as a change,
+    /// and a no-op removal cannot invalidate a materialization).
+    #[test]
+    fn the_revision_moves_on_commit_and_on_a_removal_that_drops_a_path() {
+        let mut registry = PathRegistry::new();
+        assert_eq!(registry.revision(), 0, "a fresh registry is at revision 0");
+
+        let path_id = registry.commit(registration(1));
+        assert_eq!(
+            registry.revision(),
+            1,
+            "a commit is growth: it moves the clock"
+        );
+
+        // Reads, a dedup hit, a cap change, and a path-object mint move no
+        // identity, so none of them may move the clock.
+        let before = registry.revision();
+        let _ = registry.get(path_id);
+        let _ = registry.path_pools();
+        let _ = registry.iter().count();
+        registry.note_dedup();
+        registry.set_cap(Some(10));
+        assert_eq!(
+            registry.revision(),
+            before,
+            "reads and non-identity writes leave the clock alone"
+        );
+
+        assert!(
+            registry.remove(9_999).is_none(),
+            "a removal of an unknown path drops nothing"
+        );
+        assert_eq!(
+            registry.revision(),
+            before,
+            "a no-op removal leaves the clock alone"
+        );
+
+        assert!(registry.remove(path_id).is_some(), "the path is dropped");
+        assert_eq!(
+            registry.revision(),
+            before + 1,
+            "dropping a path moves the clock"
+        );
     }
 }

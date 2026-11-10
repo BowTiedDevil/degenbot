@@ -55,6 +55,37 @@ use degenbot_execution::PathInfo;
 use degenbot_submission::{PathSuppression, SubmissionTarget};
 use pyo3::types::{PyDict, PyList};
 
+/// The session's apply-time BAL relevance: the union of every REGISTERED path's
+/// addresses and the settlement deployment's identities (§4.5 of the design).
+///
+/// The two halves live on different owners and meet here, which is why the
+/// adapter is the shell's: the paths come from the engine's path registry
+/// ([`EngineStages::session_relevance`] hands up one coherent `(revision, paths)`
+/// pair) and the settlement identities come from the deployment composition
+/// ([`PySimulateContext::binding`], the same built-in deployment the batch
+/// executor runs). The BAL pipeline derives the address set from them once per
+/// registry revision — never per head — so this adapter projects and nothing
+/// more.
+///
+/// The DERIVATION is `degenbot-simulation`'s single statement of which addresses
+/// a path names (`path_relevance_addresses`); a second derivation here would be
+/// a second answer to the same question.
+struct SessionRelevanceAdapter {
+    stages: Arc<EngineStages>,
+    facts: degenbot_simulation::sim::prefetch::PrefetchFacts,
+}
+
+impl degenbot_simulation::sim::evm2::bal_heads::HeadRelevanceSource for SessionRelevanceAdapter {
+    fn session_relevance(&self) -> degenbot_simulation::sim::evm2::bal_heads::SessionRelevance {
+        let inputs = self.stages.session_relevance();
+        degenbot_simulation::sim::evm2::bal_heads::SessionRelevance {
+            revision: inputs.revision,
+            paths: inputs.paths,
+            facts: self.facts,
+        }
+    }
+}
+
 /// The core's `PathResolver` over the engine's stage surface.
 ///
 /// The projection is the engine registry's own ([`EngineStages::path_info_for`]):
@@ -632,6 +663,35 @@ pub fn build_batch_executor_py(
     // as the driver's `ValueError`, never as a Rust panic across the FFI.
     let config = ExecutorConfig::from_verdict(crate::config::installed_bot_config(), runtime)
         .map_err(|error| registry_error_to_py(&error))?;
+
+    // The session's apply-time relevance, installed on the pipeline the engine
+    // handed the batch executor: the registered paths (behind the stage surface)
+    // joined with the settlement deployment's own identities (the built-in
+    // deployment's WETH9 + `PoolManager`). OFF has no pipeline, so this is a
+    // no-op and the OFF session stays request-free and pipeline-free.
+    //
+    // Installed HERE because this is the one place both halves exist: the
+    // engine's path registry and the deployment composition. It lands before the
+    // executor's construction arms the pipeline, so no delivered head can apply
+    // before the session knows what is relevant.
+    {
+        // T1-scan-exempt: construction-time wiring — no Python object is created
+        // here, so no GIL can be held across this guard.
+        let cache = engine.warm_code_cache_arc();
+        let pipeline = cache.read().bal_head_pipeline();
+        if let Some(pipeline) = pipeline {
+            pipeline.install_relevance(Arc::new(SessionRelevanceAdapter {
+                stages: engine.stages_arc(),
+                facts: degenbot_simulation::sim::prefetch::PrefetchFacts {
+                    settlement: context
+                        .binding
+                        .deployment(degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID)
+                        .settlement(),
+                },
+            }));
+        }
+    }
+
     // The core constructor spawns the ordered submit loop, so it must run
     // inside the shared ambient runtime (the Python event-loop thread is not
     // itself in a tokio context).

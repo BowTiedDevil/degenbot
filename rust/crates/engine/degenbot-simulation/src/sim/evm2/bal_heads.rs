@@ -25,6 +25,7 @@
 //!        │ spawn                                        ← NEVER awaited by the producer
 //!        ▼
 //!   prepare(ticket) → relevance → apply(ticket, …)     ← the BAL fetch lives here
+//!                     ^ the SESSION's set, read after the fetch, before the apply
 //! ```
 //!
 //! The apply is fenced by the driver's own ticket (`delta_snapshot`), so a
@@ -47,37 +48,83 @@
 //! With the `simulation.delta_dispatch` opt-in OFF there is no pipeline to arm
 //! and no sink to install, so OFF remains request-free by construction.
 //!
-//! # Relevance
+//! # Relevance: the session's set, materialized once per registry revision
 //!
 //! A head's final writes seed under a relevance set (§4.5 of the design): a
 //! write to a key the generation already serves always overwrites, and an
-//! unknown key seeds only when its address is relevant. The pump edge has no
-//! candidates and therefore no relevance to hand over, so the set is a property
-//! of the APPLY: [`HeadRelevanceSource`] is the seam, and this card installs
-//! [`NoRelevance`] — a pipeline-settled generation carries the parent chain and
-//! answers everything else through the dynamic path. The session-wide
-//! derivation (registered paths ∪ settlement identities) plugs into the same
-//! seam without touching this lifecycle.
+//! unknown key seeds only when its address is relevant.
+//!
+//! The pump edge has no candidates and therefore no relevance to hand over, so
+//! the set is a property of the APPLY:
+//!
+//! - [`HeadRelevanceSource`] is where the SESSION's set comes from — the union
+//!   of every registered path's addresses and the deployment's settlement
+//!   identities, derived by [`path_relevance_addresses`] over the paths the
+//!   engine projects and the facts the deployment declares. [`NoRelevance`] is
+//!   what a session that installs no source keeps: its generations carry the
+//!   parent chain and answer everything else through the dynamic path, which
+//!   costs reuse and never a value.
+//! - The set is derived ONCE PER REGISTRY REVISION ([`SessionMembership`]) and
+//!   reused by every head while that revision holds, so a steady session pays
+//!   nothing per head. A newer revision derives once and swaps the whole
+//!   `(revision, membership)` pair, so a head never seeds from a half-derived
+//!   set.
+//! - It is read at the LATEST point the transition allows: inside the spawned
+//!   phase, after the head's list was fetched and immediately before it applies
+//!   ([`BalHeadDriver::advance_with_relevance`]). A path registered while the
+//!   list was in flight is therefore included in this head's seeding; a path
+//!   registered after the apply seeds from the NEXT head and reads its own
+//!   unknown slots dynamically until then. Neither can make a served value
+//!   wrong, because relevance only ever gates SEEDING an unknown key.
+//!
+//! [`path_relevance_addresses`]: crate::sim::prefetch::path_relevance_addresses
 
-use alloy::primitives::Address;
 use futures_util::future::BoxFuture;
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+use degenbot_execution::PathInfo;
 
-use crate::sim::evm2::delta_snapshot::{BalHeadDriver, HeadTicket};
+use crate::sim::evm2::delta_snapshot::{BalHeadDriver, HeadTicket, RelevanceSet};
+use crate::sim::prefetch::{path_relevance_addresses, PrefetchFacts};
 use crate::sim::ReadAnchor;
 
-/// The relevance set one head's final writes may seed under.
+/// The session's relevance inputs at one registry revision: the registered
+/// paths, projected, and the deployment facts the derivation reads.
 ///
-/// Resolved by the applier (never by the head's producer, which has no
-/// candidates). The session-wide derivation is the relevance card's; this trait
-/// is the seam it implements, and [`NoRelevance`] is what a session carries
-/// until then.
+/// One REVISION travels with the paths on purpose: the materialization swaps
+/// `(revision, membership)` as one value, so a registry that grew between two
+/// heads can never produce a half-derived set that mixes the old projection with
+/// the new revision.
+#[derive(Debug, Clone, Default)]
+pub struct SessionRelevance {
+    /// The registered-path revision these paths were projected at
+    /// (`PathRegistry::revision`, bumped by every commit and every removal).
+    pub revision: u64,
+    /// Every registered path, projected to its encoder form. A path whose
+    /// identity cannot be resolved contributes nothing (the engine drops it),
+    /// which costs a possible seed and never a value.
+    pub paths: Vec<PathInfo>,
+    /// The deployment facts the derivation joins: the settlement identities
+    /// (WETH9 + the V4 PoolManager) are inside `path_relevance_addresses`'s
+    /// derivation when the session declares them, and absent when it does not.
+    pub facts: PrefetchFacts,
+}
+
+/// Where a head's apply-time relevance comes from.
+///
+/// Resolved by the APPLIER, never by the head's producer: a head arrives on the
+/// block clock, which has no candidates and therefore no read set to hand over.
+///
+/// The derivation itself is the session's (`path_relevance_addresses` over the
+/// registered paths and the settlement identities, §4.5 of the design) and this
+/// trait is the seam a session implements it behind. A session that installs no
+/// source keeps [`NoRelevance`].
 pub trait HeadRelevanceSource: Send + Sync + 'static {
-    /// The identities this session treats as relevant right now.
-    fn relevance(&self) -> Vec<Address>;
+    /// The session's relevance inputs, read at ONE registry revision.
+    fn session_relevance(&self) -> SessionRelevance;
 }
 
 /// The relevance a session with no derivation carries: none.
@@ -90,8 +137,50 @@ pub trait HeadRelevanceSource: Send + Sync + 'static {
 pub struct NoRelevance;
 
 impl HeadRelevanceSource for NoRelevance {
-    fn relevance(&self) -> Vec<Address> {
-        Vec::new()
+    fn session_relevance(&self) -> SessionRelevance {
+        SessionRelevance::default()
+    }
+}
+
+/// The pipeline's revision-keyed materialization of a [`HeadRelevanceSource`].
+///
+/// Deriving the session's membership costs a projection of every registered
+/// path, and the registry only moves when a path is committed or removed. So the
+/// derivation is keyed by the revision the source reported: while it holds, every
+/// head reuses one `Arc<RelevanceSet>` and the apply pays nothing; a new revision
+/// derives once and swaps the WHOLE `(revision, membership)` pair under one lock
+/// hold (never a partially derived set).
+struct SessionMembership {
+    source: Arc<dyn HeadRelevanceSource>,
+    materialized: Mutex<Option<(u64, Arc<RelevanceSet>)>>,
+    /// Derivations performed — the white-box witness that the reuse is real
+    /// (`BalHeadPipeline::relevance_derivations`).
+    derivations: AtomicU64,
+}
+
+impl SessionMembership {
+    /// The session's membership right now, derived at most once per revision.
+    fn members(&self) -> Arc<RelevanceSet> {
+        let inputs = self.source.session_relevance();
+        let mut materialized = self.materialized.lock();
+        if let Some((revision, members)) = materialized.as_ref() {
+            if *revision == inputs.revision {
+                return Arc::clone(members);
+            }
+        }
+        let members = Arc::new(RelevanceSet::from_set(
+            path_relevance_addresses(&inputs.paths, &inputs.facts)
+                .into_iter()
+                .collect(),
+        ));
+        self.derivations.fetch_add(1, Ordering::Relaxed);
+        *materialized = Some((inputs.revision, Arc::clone(&members)));
+        members
+    }
+
+    /// How many derivations this materialization performed.
+    fn derivations(&self) -> u64 {
+        self.derivations.load(Ordering::Relaxed)
     }
 }
 
@@ -122,7 +211,11 @@ struct Armed {
 /// The session's canonical-head pipeline (see the module docs).
 pub struct BalHeadPipeline {
     spawn: HeadSpawn,
-    relevance: Arc<dyn HeadRelevanceSource>,
+    /// The session's apply-time relevance, as the revision-keyed materialization
+    /// every head shares. Swappable at construction time ([`Self::install_relevance`])
+    /// because the cache that mints the pipeline is not the composition that
+    /// knows the session's settlement identities.
+    relevance: Mutex<Arc<SessionMembership>>,
     armed: Mutex<Option<Armed>>,
 }
 
@@ -143,9 +236,39 @@ impl BalHeadPipeline {
     ) -> Arc<Self> {
         Arc::new(Self {
             spawn,
-            relevance,
+            relevance: Mutex::new(Arc::new(SessionMembership {
+                source: relevance,
+                materialized: Mutex::new(None),
+                derivations: AtomicU64::new(0),
+            })),
             armed: Mutex::new(None),
         })
+    }
+
+    /// Install the session's apply-time relevance source on this pipeline
+    /// (construction-time wiring).
+    ///
+    /// The cache mints the pipeline before any engine or deployment exists, and
+    /// the session's relevance is a property of both — the registered paths
+    /// (behind the engine's stage surface) and the settlement identities (behind
+    /// the deployment composition). So the composition hands the source over
+    /// here, exactly like [`Self::arm`] hands over the driver. A pipeline that is
+    /// never handed one keeps [`NoRelevance`], which costs reuse and never a
+    /// value.
+    pub fn install_relevance(&self, source: Arc<dyn HeadRelevanceSource>) {
+        *self.relevance.lock() = Arc::new(SessionMembership {
+            source,
+            materialized: Mutex::new(None),
+            derivations: AtomicU64::new(0),
+        });
+    }
+
+    /// How many times the pipeline materialized the session's relevance — the
+    /// white-box witness for "once per registry revision, not once per head"
+    /// (steady state: one per registration burst).
+    #[must_use]
+    pub fn relevance_derivations(&self) -> u64 {
+        self.relevance.lock().derivations()
     }
 
     /// Arm the pipeline with the session's one head driver.
@@ -194,6 +317,11 @@ impl BalHeadPipeline {
             let armed = self.armed.lock();
             Arc::clone(&armed.as_ref()?.driver)
         };
+        // The membership is resolved INSIDE the spawned phase, after the list is
+        // prepared and before it applies (`BalHeadDriver::advance_with_relevance`):
+        // the head's delivery must not derive anything, and a path registered
+        // while the list is in flight belongs to this head's seeding.
+        let relevance = Arc::clone(&self.relevance.lock());
         let ticket = driver.deliver(
             ReadAnchor::identified(head.number, head.hash),
             head.parent_hash,
@@ -202,10 +330,10 @@ impl BalHeadPipeline {
         // — not this seam — owns "already settled" and "another caller is
         // preparing this head", and both answer before any fetch, so a repeat
         // costs a task and no RPC.
-        let relevance = Arc::clone(&self.relevance);
         (self.spawn)(Box::pin(async move {
-            let relevance = relevance.relevance();
-            let _ = driver.advance(ticket, &relevance).await;
+            let _ = driver
+                .advance_with_relevance(ticket, move || relevance.members())
+                .await;
         }));
         Some(ticket)
     }

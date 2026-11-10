@@ -223,6 +223,7 @@ pub use inline_sim::{
 /// Path registration's rejection vocabulary — the typed refusal the drivers
 /// map onto their own error surfaces.
 pub use lifecycle::PathRegistrationError;
+pub use path_info::SessionRelevancePaths;
 pub use pump_session::{transition, CrawlExit, PumpDecline, PumpEvent, PumpExit, PumpPhase};
 pub use retune::EngineRetune;
 pub use session_end::{

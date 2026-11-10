@@ -68,6 +68,7 @@ use super::lifecycle::{
     set_event_buffer_max_age, set_last_processed_block, set_path_cap, solve_all_paths,
     v3_pool_count, v4_pool_count,
 };
+use super::path_info::SessionRelevancePaths;
 use super::path_registry::PathRegistrationError;
 use super::DiagnosticPathState;
 #[cfg(test)]
@@ -424,6 +425,29 @@ impl EngineStages {
     #[must_use]
     pub fn path_info_for(&self, path_id: u64) -> Option<Result<PathInfo, PathInfoBuildError>> {
         super::path_info::path_info_for(&self.engine.lock(), path_id)
+    }
+
+    /// The session's apply-time relevance inputs: every registered path,
+    /// projected, at ONE registry revision (the design's
+    /// `EngineStages::session_relevance()`).
+    ///
+    /// The caller is the session's `HeadRelevanceSource` adapter
+    /// (`degenbot_simulation::sim::evm2::bal_heads`), which adds the deployment
+    /// facts and lets the BAL pipeline derive the address set once per revision.
+    /// The ADDRESSES are not derived here because `path_relevance_addresses` is
+    /// `degenbot-simulation`'s single statement of which addresses a path names,
+    /// and that crate depends on this one — so this surface hands the projection
+    /// up and the derivation happens there.
+    ///
+    /// # Lock discipline
+    ///
+    /// One engine hold, and one core read lock inside it (engine-then-core, the
+    /// established order): the registered set and the revision it is reported at
+    /// cannot be read apart, so a registration landing mid-call is either in
+    /// both or in neither.
+    #[must_use]
+    pub fn session_relevance(&self) -> SessionRelevancePaths {
+        super::path_info::session_paths(&self.engine.lock())
     }
 
     /// Set the delivery profit thresholds.

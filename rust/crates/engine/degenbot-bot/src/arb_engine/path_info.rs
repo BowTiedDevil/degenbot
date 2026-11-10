@@ -16,6 +16,54 @@ use super::ArbitrageEngine;
 use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::BotState;
 
+/// The registered-path half of the session's apply-time relevance: every
+/// registered path, projected to its encoder form, at ONE registry revision.
+///
+/// This is the INPUT half on purpose. The derivation that turns paths (plus a
+/// deployment's settlement identities) into an address set is
+/// `degenbot-simulation`'s `path_relevance_addresses` — one statement of which
+/// addresses a path names — and that crate depends on this one, so the
+/// projection can travel up while the derivation cannot travel down.
+#[derive(Debug, Clone, Default)]
+pub struct SessionRelevancePaths {
+    /// The registry's identity clock at the projection
+    /// (`PathRegistry::revision`, bumped by every commit and every removal).
+    pub revision: u64,
+    /// Every registered path, projected, in registry iteration order.
+    ///
+    /// A path one of whose hops cannot be resolved contributes nothing: its
+    /// identities are unknown, so it can neither name an address to seed nor
+    /// make a served word wrong.
+    pub paths: Vec<PathInfo>,
+}
+
+/// Project every registered path at the registry's CURRENT revision.
+///
+/// The paths and the revision are read under ONE engine hold, so the pair is
+/// coherent by construction: no path can be committed between the revision read
+/// and the projection, which is what lets a consumer key its materialization by
+/// the revision without ever mixing a newer projection with an older clock.
+///
+/// # Lock discipline
+///
+/// Engine lock then ONE core read lock for the whole projection — the same
+/// engine-then-core order [`path_info_for`] takes, never the reverse.
+#[must_use]
+pub(crate) fn session_paths(engine: &ArbitrageEngine) -> SessionRelevancePaths {
+    let revision = engine.registry.revision();
+    let core = engine
+        .core
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+    let paths = engine
+        .registry
+        .iter()
+        .filter_map(|(_, path)| {
+            degenbot_substrate::path_info::build_path_info(&core, &path.pools).ok()
+        })
+        .collect();
+    SessionRelevancePaths { revision, paths }
+}
+
 /// Build the engine-facing `PathInfo` for `path_id` by
 /// resolving each registered hop's identity from the shared `BotState`.
 ///
