@@ -529,6 +529,22 @@ bal-carry-probe *ARGS:
     cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-simulation --example bal_carry_probe -- {{ ARGS }}
 
 
+# The analytical BAL candidate-scaling report: the shared scaling model's
+# two-corpus calibration closure against the committed real-coverage
+# accounting and the measured storage-wait ceilings (11.7%/26.9% and
+# 8.9%/22.0%, 10% relative tolerance), then the scenario matrix over candidate
+# counts 1k/10k/100k/1m x three families (exact repeated read sets,
+# steady-state age/survival, discovery-heavy novelty) with novelty varied
+# independently of the candidate count, at both calibrated price points and
+# under a documented W/F sensitivity rule. Formulas over committed aggregates:
+# no candidate is executed and nothing sleeps. Its red calibration probe:
+# `BAL_SCALING_PLANT_MISMATCH=1 just bal-candidate-scaling-probe` fails the
+# gate and exits nonzero. NOT modeled: actual p95 wall, lock contention,
+# allocation cost, economic outcomes.
+bal-candidate-scaling-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example bal_candidate_scaling_probe -- {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash
