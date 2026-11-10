@@ -93,11 +93,29 @@ dashboard's "Dispatch storage lane: delta vs legacy fallback" panel (Pump &
 Pipeline row of [`degenbot-overview.json`](grafana/degenbot-overview.json)),
 and `DegenbotDispatchStorageFallback` ([`ALERTS.md`](grafana/ALERTS.md)) pages
 when a cold fallback holds over half the fan-out rate for 10m. Off is the
-shipped posture: the legacy lane, and no BAL request anywhere. The flag is
-the whole switch — there is no retention or readiness knob, and the session's
-one driver is built at unbounded retention. Nothing else in the file or the
-environment changes shape, so an existing config keeps working and only gains
-the option.
+shipped posture: the legacy lane, and no BAL request anywhere.
+
+The flag is the whole switch: there is no retention knob and no readiness knob.
+On, the session's one driver keeps a **fixed eight-block idle window**
+(`Retention::IdleBlocks(8)`, the measured policy) at the default fold depth. An
+entry no candidate has READ for eight blocks stops being served; a BAL
+overwrite never refreshes that clock, a candidate read does, and a read of an
+expired entry takes the ordinary dynamic fallback — the exact anchor's CURRENT
+word through that generation's read hub, never a stale parent value. A lagging
+caller that still holds an older generation keeps its own clock and view, so one
+head's clock never expires anything out of another's. The window's memory effect
+is deferred rather than immediate: an expired entry becomes invisible at once
+(`live` falls), while its value is dropped by the next compaction fold, so the
+`held` count shrinks at the fold horizon and not at the instant of expiry. Those
+two identity counts are on the per-head `bal-head` row (`held`, `live`, and their
+`expired` difference) — counts of identities, never bytes, RSS, or a memory
+measurement.
+
+That window is the one behavior this development flag changed after the option
+landed: an opted-in session's cache lifecycle moved from explicitly unbounded to
+the fixed policy above. Nothing else in the file or the environment changes
+shape — no key was added, renamed, or retired — so an existing config keeps
+working and only gains the option.
 
 ## What is NOT retired
 

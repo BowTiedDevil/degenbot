@@ -394,7 +394,13 @@ impl std::fmt::Debug for BalHeadPipeline {
 ///   and `apply_us` is the apply transition's own wall (`DeltaReport::link_time`:
 ///   the parent seal, the link and the write pass, compaction excluded). Together
 ///   they are the "does preparation actually land before the fan-outs" evidence a
-///   re-capture needs.
+///   re-capture needs;
+/// - `held` / `live` / `expired` are the installed generation's IDENTITY counts
+///   after the transition (`expired = held - live`): what the chain holds, what it
+///   still serves at its own anchor under the idle window, and the garbage a fold
+///   will drop. Identity counts, never bytes — one entry is a value plus its
+///   recency record — and a `held` count that falls only at a compaction fold is
+///   exactly what this pair makes visible.
 ///
 /// One `bal-head {...}` JSON object per transition, on the same `sim` domain as
 /// the rest of the simulation telemetry: a reader treats any field it does not
@@ -460,6 +466,13 @@ fn head_row(head: CanonicalHead, outcome: &HeadOutcome) -> Option<String> {
             report.writes_overwritten,
             report.writes_skipped
         );
+        let _ = write!(
+            row,
+            ",\"held\":{},\"live\":{},\"expired\":{}",
+            report.held,
+            report.live,
+            report.held.saturating_sub(report.live)
+        );
     }
     row.push('}');
     Some(row)
@@ -499,6 +512,8 @@ mod tests {
             bal_latency: Duration::from_micros(700),
             link_time: Duration::from_micros(31),
             compaction: None,
+            held: 1_546,
+            live: 1_192,
         })
     }
 
@@ -552,6 +567,12 @@ mod tests {
                 && row.contains(r#""overwritten":1"#)
                 && row.contains(r#""skipped":2"#),
             "the write counts: {row}"
+        );
+        assert!(
+            row.contains(r#""held":1546"#)
+                && row.contains(r#""live":1192"#)
+                && row.contains(r#""expired":354"#),
+            "the generation's identity counts, expired derived: {row}"
         );
     }
 

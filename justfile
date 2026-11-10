@@ -704,7 +704,13 @@ bal-dispatch-scaling-probe *ARGS:
 # `RUST_LOG='degenbot=debug,degenbot=sim=trace'` so the trace
 # stream and the dispatch diag rows land in the same file. Every row count is a
 # lower bound: the console sink drops and counts records under burst (ADR-043
-# §6). Report: `logs/bal_live_ab_result.md`.
+# §6). The report also derives the per-read RE-READ GAP distribution (p50/p90/
+# p95/p99/max and the share beyond `GAP_WINDOW_BLOCKS`) from the `fanout-trace`
+# read walks — the measured input the idle window's threshold was chosen against
+# — and summarizes the `bal-head` rows' `held`/`live`/`expired` identity counts,
+# which are counts of identities, never bytes or RSS. Report:
+# `logs/bal_live_ab_result.md`; the v2 pair's report is
+# `logs/bal_live_ab_v2_result.md`.
 bal-live-ab-report off='logs/bal_dispatch_off.log' on='logs/bal_dispatch_on.log' out='logs/bal_live_ab_result.md' off_trace='logs/bal_dispatch_off_trace.log' on_trace='logs/bal_dispatch_on_trace.log' *ARGS:
     {{ py_run }} python scripts/bal_live_ab_analysis.py --off {{ off }} --on {{ on }} --out {{ out }} --off-trace {{ off_trace }} --on-trace {{ on_trace }} {{ ARGS }}
 

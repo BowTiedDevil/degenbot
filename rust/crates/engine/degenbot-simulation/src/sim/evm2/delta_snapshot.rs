@@ -5,8 +5,10 @@
 //! The production carry-forward ([`ReadHubCache::advance_bal`](super::read_hub::ReadHubCache::advance_bal))
 //! clones the parent's whole settled-storage map into every child. That is the
 //! full-clone CONTROL this prototype is measured against, and it is unchanged:
-//! this module is an additive alternative representation consumed only by
-//! tests and examples. It answers the same transition questions — what a child
+//! this module is an additive alternative representation consumed by the
+//! dispatch fan-out's development opt-in (`DEGENBOT_DELTA_DISPATCH`, whose
+//! session driver fixes [`Retention::IdleBlocks`] at the measured threshold)
+//! and by tests and examples. It answers the same transition questions — what a child
 //! may serve, when a link is refused, what a final write does — with a
 //! different snapshot shape.
 //!
@@ -1241,11 +1243,25 @@ pub struct DeltaReport {
 
     /// The compaction fold this transition paid, when one was due.
     pub compaction: Option<CompactionReport>,
+
+    /// The identities the installed generation HOLDS after the transition:
+    /// every value in its chain, including entries retention has already
+    /// expired but no fold has yet dropped. An identity count, never bytes —
+    /// one entry is a value plus its recency record, not a measured footprint.
+    pub held: usize,
+
+    /// The identities the installed generation still serves at its own anchor
+    /// after the transition — `held` minus the entries idle retention has
+    /// expired. `held - live` is what a fold will drop, so held memory shrinks
+    /// at compaction rather than at the instant an entry expires.
+    pub live: usize,
 }
 
 impl DeltaReport {
-    /// The no-op report of a same-anchor repeat: no BAL work, no link.
-    fn already_current(bal_latency: Duration) -> Self {
+    /// The no-op report of a same-anchor repeat: no BAL work, no link, and the
+    /// installed generation's sizes unchanged (reported all the same, so every
+    /// row of a transition carries them).
+    fn already_current(bal_latency: Duration, hub: &DeltaHub) -> Self {
         Self {
             outcome: CarryOutcome::AlreadyCurrent,
 
@@ -1260,6 +1276,10 @@ impl DeltaReport {
             link_time: Duration::ZERO,
 
             compaction: None,
+
+            held: hub.snapshot_len(),
+
+            live: hub.live_len(),
         }
     }
 }
@@ -1362,7 +1382,8 @@ impl DeltaSnapshotCache {
         // Idempotence precedes any RPC: the same child anchor repeats no BAL
         // work, and no lock guard crosses the fetch.
         if let Some(hub) = self.installed(child) {
-            return (hub, DeltaReport::already_current(Duration::ZERO));
+            let report = DeltaReport::already_current(Duration::ZERO, &hub);
+            return (hub, report);
         }
 
         let prepared = PreparedBal::prepare(&self.provider, child).await;
@@ -1419,7 +1440,8 @@ impl DeltaSnapshotCache {
 
         if let Some((installed, hub)) = current.as_ref() {
             if *installed == child {
-                return (Arc::clone(hub), DeltaReport::already_current(bal_latency));
+                let report = DeltaReport::already_current(bal_latency, hub);
+                return (Arc::clone(hub), report);
             }
         }
 
@@ -1489,6 +1511,10 @@ impl DeltaSnapshotCache {
             CarryOutcome::Cold { lineage, bal }
         };
 
+        // The installed generation's sizes, read before the handle is handed back:
+        // an identity count of what the chain holds and what it still serves.
+        let (held, live) = (hub.snapshot_len(), hub.live_len());
+
         *current = Some((child, Arc::clone(&hub)));
 
         (
@@ -1507,6 +1533,10 @@ impl DeltaSnapshotCache {
                 link_time,
 
                 compaction,
+
+                held,
+
+                live,
             },
         )
     }
@@ -1812,6 +1842,28 @@ impl BalHeadDriver {
             readiness_deadline,
             state: Mutex::new(DriverState::default()),
         }
+    }
+
+    /// The retention policy every generation this driver installs obeys.
+    ///
+    /// A reader surface, not a knob: the policy is chosen once at construction
+    /// ([`Self::new`] is the library default, [`Self::with_config`] is a
+    /// caller's choice), so the selection a session made is checkable without
+    /// reproducing a transition.
+    #[must_use]
+    pub const fn retention(&self) -> Retention {
+        self.retention
+    }
+
+    /// The compaction threshold every generation this driver installs obeys
+    /// (`DEFAULT_MAX_DEPTH` unless the caller passed another).
+    ///
+    /// The fold horizon is what bounds expired-but-undropped garbage, so the
+    /// threshold is part of the retention answer rather than a separate
+    /// tuning.
+    #[must_use]
+    pub const fn max_depth(&self) -> u32 {
+        self.cache.max_depth
     }
 
     /// Deliver one canonical head: its exact anchor and the parent hash its

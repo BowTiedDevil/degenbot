@@ -55,6 +55,20 @@ alike:
   (`carried` / `cold` / `already-current`), the detailed `refusal` and `bal`
   causes a fan-out's collapsed cold label hides, and the head's `prepare_us` /
   `apply_us` walls. An old capture carries none, and the report says so.
+
+# Migration notes (the additive `held` / `live` / `expired` fields)
+
+`bal-head` appended three integer identity counts after the write counts: `held`
+(every identity the generation's chain holds), `live` (the identities it still
+serves at its own anchor under the idle window) and `expired` (`held - live`, the
+garbage a compaction fold drops). A row written before they existed carries
+none, and a reader treats them as OPTIONAL: a missing count is `None` and the
+report says the capture cannot answer it rather than reporting zero. No existing
+field changed meaning — the keys are appended last, so an old reader of a new row
+and a new reader of an old row both keep working.
+
+The re-read gap distribution below needs no such migration: it is derived from
+the `fanout-trace` read walks, which every capture of this family carries.
 """
 
 from __future__ import annotations
@@ -75,6 +89,13 @@ if TYPE_CHECKING:
 TRACE_MARKER = "fanout-trace "
 SELECTION_MARKER = "fan-out storage selection "
 PREFETCH_MARKER = "storage prefetch "
+# The idle window, in blocks, an entry survives without a candidate READ — the
+# policy the development dispatch driver fixes
+# (`DeltaDispatchConfig::DEVELOPMENT_IDLE_BLOCKS` in the Rust core). Every
+# measured share below is derived from a capture against this one constant, so a
+# window change moves the counts, never the prose.
+GAP_WINDOW_BLOCKS = 8
+
 HEAD_MARKER = "bal-head "
 LAB_MARKER = "INFO [sim] "
 OUTCOME_MARKER = "[logging] [sim] "
@@ -135,6 +156,7 @@ class TraceRow:
     slots: int
     relevance: tuple[str, ...]
     fanout: int | None = None
+    identities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -206,6 +228,9 @@ class HeadRow:
     writes: int | None
     overwritten: int | None
     skipped: int | None
+    held: int | None = None
+    live: int | None = None
+    expired: int | None = None
 
 
 @dataclass(frozen=True)
@@ -233,7 +258,12 @@ class MemoRow:
 
 @dataclass(frozen=True)
 class SimSummary:
-    """A percentile summary over a nanosecond sample."""
+    """A percentile summary over a sample.
+
+    The sample's unit is the caller's: nanoseconds for a timing table, blocks for
+    a re-read gap distribution. `total` is the sample sum and `maximum` its
+    largest observation, so a caller formats in the unit it sampled.
+    """
 
     count: int
     total: int
@@ -241,6 +271,7 @@ class SimSummary:
     p50: float
     p90: float
     p95: float
+    p99: float
     maximum: int
 
 
@@ -279,6 +310,26 @@ def _payload(line: str, marker: str) -> str | None:
     return line[index + len(marker) :].strip()
 
 
+def read_identities(reads: Iterable[str]) -> tuple[str, ...]:
+    """Every identity a `reads` walk names, as `address|slot` in walk order.
+
+    An access-list entry with no storage keys is ONE account identity, rendered
+    with an empty slot so it never collides with a storage key. Addresses and
+    slots are lowercased: the same identity read at two blocks must compare
+    equal, and the emitter's own casing is not part of the identity.
+    """
+    identities: list[str] = []
+    for entry in reads:
+        address, _, keys = entry.partition("|")
+        address = address.lower()
+        slots = [key for key in keys.split(",") if key]
+        if not slots:
+            identities.append(f"{address}|")
+            continue
+        identities.extend(f"{address}|{slot.lower()}" for slot in slots)
+    return tuple(identities)
+
+
 def parse_trace_line(line: str) -> TraceRow | None:
     """Parse one `fanout-trace {...}` row; `None` for any other line."""
     body = _payload(line, TRACE_MARKER)
@@ -307,6 +358,7 @@ def parse_trace_line(line: str) -> TraceRow | None:
         # Absent for a caller outside any fan-out (the inline hook re-quote arm)
         # and for every pre-`fanout` row: both stay unattributed.
         fanout=int(row["fanout"]) if "fanout" in row else None,
+        identities=read_identities(reads),
     )
 
 
@@ -413,6 +465,11 @@ def parse_head_line(line: str) -> HeadRow | None:
         writes=optional_int("writes"),
         overwritten=optional_int("overwritten"),
         skipped=optional_int("skipped"),
+        # Absent from a row written before these counts existed: `None`, never
+        # zero, so a report can say the capture cannot answer it.
+        held=optional_int("held"),
+        live=optional_int("live"),
+        expired=optional_int("expired"),
     )
 
 
@@ -507,7 +564,7 @@ def summarize(values: Sequence[int]) -> SimSummary:
     ordered = sorted(values)
     count = len(ordered)
     if count == 0:
-        return SimSummary(count=0, total=0, mean=0.0, p50=0.0, p90=0.0, p95=0.0, maximum=0)
+        return SimSummary(count=0, total=0, mean=0.0, p50=0.0, p90=0.0, p95=0.0, p99=0.0, maximum=0)
 
     def quantile(q: float) -> float:
         position = (count - 1) * q
@@ -524,6 +581,7 @@ def summarize(values: Sequence[int]) -> SimSummary:
         p50=quantile(0.5),
         p90=quantile(0.90),
         p95=quantile(0.95),
+        p99=quantile(0.99),
         maximum=ordered[-1],
     )
 
@@ -544,6 +602,78 @@ def relevance_coverage(row: TraceRow) -> float:
     read_addresses = {address.lower() for address in row.addresses}
     relevant = {address.lower() for address in row.relevance}
     return len(read_addresses & relevant) / len(relevant)
+
+
+@dataclass(frozen=True)
+class ReadGaps:
+    """The re-read gap sample one capture's candidate read walks carry.
+
+    `read_events` counts identity READS (so it carries repeat frequency),
+    `distinct_identities` counts what was read at least once, and `re_reads` is
+    the number of reads that had a previous read — only those carry a gap. The
+    first read of an identity is excluded by construction: it has no distance
+    from anything.
+    """
+
+    read_events: int
+    distinct_identities: int
+    repeated_identities: int
+    busiest_identity_reads: int
+    re_reads: int
+    within_window: int
+    beyond_window: int
+    gaps: SimSummary
+
+    @property
+    def reads_per_identity(self) -> float:
+        """Read events per distinct identity — frequency, not distinctness."""
+        if not self.distinct_identities:
+            return 0.0
+        return self.read_events / self.distinct_identities
+
+    @property
+    def beyond_share(self) -> float:
+        """The share of re-reads whose gap exceeds the idle window."""
+        if not self.re_reads:
+            return 0.0
+        return self.beyond_window / self.re_reads
+
+    @property
+    def within_share(self) -> float:
+        """The share of re-reads the idle window still covers."""
+        return 1.0 - self.beyond_share if self.re_reads else 0.0
+
+
+def read_gaps(capture: Capture, window: int = GAP_WINDOW_BLOCKS) -> ReadGaps:
+    """Derive the per-read re-read gap distribution from a capture's trace reads.
+
+    Rows are read in file order and each identity's previous read block is
+    carried forward. A read at an EARLIER block than the identity's previous read
+    rebases it instead of producing a negative gap: a capture is a sequence of
+    heads, never a monotone guarantee, and a negative distance is not a gap.
+    Gap 0 means another candidate read the same identity at the same anchor.
+    """
+    last_block: dict[str, int] = {}
+    reads_per_identity: Counter[str] = Counter()
+    gaps: list[int] = []
+    for row in capture.trace:
+        for identity in row.identities:
+            reads_per_identity[identity] += 1
+            previous = last_block.get(identity)
+            if previous is not None and row.block >= previous:
+                gaps.append(row.block - previous)
+            last_block[identity] = row.block
+    within = sum(1 for gap in gaps if gap <= window)
+    return ReadGaps(
+        read_events=sum(reads_per_identity.values()),
+        distinct_identities=len(reads_per_identity),
+        repeated_identities=sum(1 for reads in reads_per_identity.values() if reads > 1),
+        busiest_identity_reads=max(reads_per_identity.values(), default=0),
+        re_reads=len(gaps),
+        within_window=within,
+        beyond_window=len(gaps) - within,
+        gaps=summarize(gaps),
+    )
 
 
 @dataclass
@@ -700,6 +830,7 @@ def scan_capture(
                             slots=row.slots,
                             relevance=row.relevance,
                             fanout=row.fanout,
+                            identities=row.identities,
                         )
                     )
                 continue
@@ -769,6 +900,9 @@ def scan_capture(
                         writes=head.writes,
                         overwritten=head.overwritten,
                         skipped=head.skipped,
+                        held=head.held,
+                        live=head.live,
+                        expired=head.expired,
                     )
                 )
                 continue
@@ -865,6 +999,18 @@ def validation_problems(off: Capture, on: Capture) -> list[str]:
 
 def _ms(nanoseconds: float) -> str:
     return f"{nanoseconds / 1e6:.2f}"
+
+
+def _blocks(value: float) -> str:
+    """Format one block distance (interpolated percentiles may be fractional)."""
+    return f"{value:.2f}"
+
+
+def _share(count: int, total: int) -> str:
+    """One count's share of a total as a percentage, `n/a` on an empty total."""
+    if not total:
+        return "n/a"
+    return f"{100 * count / total:.2f}%"
 
 
 def _percent_change(before: float, after: float) -> str:
@@ -1066,6 +1212,58 @@ def _head_wall_lines(capture: Capture) -> list[str]:
     return lines
 
 
+def _head_expired(row: HeadRow) -> int | None:
+    """The row's expired count, derived from `held - live` when it was not written."""
+    if row.expired is not None:
+        return row.expired
+    if row.held is None or row.live is None:
+        return None
+    return row.held - row.live
+
+
+def _head_sizes(capture: Capture) -> list[tuple[int, int, int]]:
+    """`(held, live, expired)` per head row that carries the identity counts."""
+    sizes: list[tuple[int, int, int]] = []
+    for row in capture.heads:
+        held, live = row.held, row.live
+        if held is None or live is None:
+            continue
+        expired = _head_expired(row)
+        sizes.append((held, live, expired if expired is not None else held - live))
+    return sizes
+
+
+def _head_size_lines(capture: Capture) -> list[str]:
+    """Render the head's generation sizes: identity counts, never bytes."""
+    sizes = _head_sizes(capture)
+    if not sizes:
+        return [
+            "These head rows carry no `held`/`live` counts — the capture predates those",
+            "fields, so what each generation held and still served is not recoverable from",
+            "it.",
+            "",
+        ]
+    lines = [
+        "| identities | heads | first | max | last |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for label, index in (("held", 0), ("live", 1), ("expired", 2)):
+        values = [size[index] for size in sizes]
+        lines.append(f"| {label} | {len(values)} | {values[0]} | {max(values)} | {values[-1]} |")
+    lines += [
+        "",
+        "`held` is every identity the installed generation's chain holds, `live` is what",
+        "it still serves at its own anchor under the idle window, and `expired` is their",
+        "difference. Expiry is immediate for service and deferred for memory: an expired",
+        "identity stops answering at once (`live` falls), while its value and recency",
+        "record are dropped by the next compaction fold, so `held` falls at the fold",
+        "horizon rather than at the instant of expiry. Identity counts, never bytes or",
+        "RSS — one entry is a value plus its recency record.",
+        "",
+    ]
+    return lines
+
+
 def _id_list(ids: Sequence[int]) -> str:
     """List the fan-out ids a summary line names."""
     return ", ".join(str(fanout) for fanout in ids)
@@ -1247,9 +1445,10 @@ def render_markdown(off: Capture, on: Capture) -> str:
         "## Head readiness detail (the `bal-head` rows)",
         "",
         "One row per head transition: the exact head, what the transition did, the",
-        "DETAILED cause behind the collapsed cold label a fan-out reports, and the",
-        "head's own prepare/apply walls. `lineage-refused` covers four refusals and",
-        "`bal-unreadable` three, so this section is what explains a fallback.",
+        "DETAILED cause behind the collapsed cold label a fan-out reports, the head's own",
+        "prepare/apply walls, and the generation's identity counts after the transition.",
+        "`lineage-refused` covers four refusals and `bal-unreadable` three, so this",
+        "section is what explains a fallback.",
         "",
     ]
     for capture in (off, on):
@@ -1279,8 +1478,9 @@ def render_markdown(off: Capture, on: Capture) -> str:
             "while the prepare wall prices a whole head's BAL readiness, ahead of and",
             "concurrently with the dispatches of other heads.",
             "",
-            "| anchor | hash | outcome | chain | refusal | bal | prepare_us | apply_us | carried | writes | overwritten | skipped |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            *_head_size_lines(capture),
+            "| anchor | hash | outcome | chain | refusal | bal | prepare_us | apply_us | carried | writes | overwritten | skipped | held | live | expired |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for row in capture.heads:
             lines.append(
@@ -1291,7 +1491,10 @@ def render_markdown(off: Capture, on: Capture) -> str:
                 f"{row.carried if row.carried is not None else '—'} | "
                 f"{row.writes if row.writes is not None else '—'} | "
                 f"{row.overwritten if row.overwritten is not None else '—'} | "
-                f"{row.skipped if row.skipped is not None else '—'} |"
+                f"{row.skipped if row.skipped is not None else '—'} | "
+                f"{row.held if row.held is not None else '—'} | "
+                f"{row.live if row.live is not None else '—'} | "
+                f"{_head_expired(row) if _head_expired(row) is not None else '—'} |"
             )
         lines.append("")
 
@@ -1465,6 +1668,58 @@ def render_markdown(off: Capture, on: Capture) -> str:
     for (label, off_cell), (_same, on_cell) in zip(off_read, on_read, strict=True):
         lines.append(f"| {label} | {off_cell} | {on_cell} |")
     lines.append("")
+
+    lines += [
+        "## Re-read gaps (the idle window's input)",
+        "",
+        "Every identity below is one `(address, slot)` from the post-execution `reads`",
+        "walk of a candidate's `fanout-trace` row; an access-list entry with no storage",
+        "keys is one account identity. The FIRST read of an identity carries no gap and",
+        "is excluded. Every LATER read is a RE-READ whose gap is the block distance from",
+        "that identity's previous read, so gap 0 is another candidate at the same anchor.",
+        "`read events` therefore counts repeat FREQUENCY while `distinct identities`",
+        "counts what was read at least once; the two are never the same number, and",
+        "neither is a byte count.",
+        "",
+        "| capture | read events | distinct identities | reads per identity | re-reads | gap p50 | gap p90 | gap p95 | gap p99 | gap max | re-reads > window | share |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    off_gaps = read_gaps(off)
+    on_gaps = read_gaps(on)
+    for capture, gaps in ((off, off_gaps), (on, on_gaps)):
+        lines.append(
+            f"| {capture.label.upper()} | {gaps.read_events} | {gaps.distinct_identities} | "
+            f"{gaps.reads_per_identity:.2f} | {gaps.re_reads} | {_blocks(gaps.gaps.p50)} | "
+            f"{_blocks(gaps.gaps.p90)} | {_blocks(gaps.gaps.p95)} | {_blocks(gaps.gaps.p99)} | "
+            f"{gaps.gaps.maximum} | {gaps.beyond_window} | "
+            f"{_share(gaps.beyond_window, gaps.re_reads)} |"
+        )
+    lines += [
+        "",
+        "The idle window serves an entry from its last candidate read through",
+        f"{GAP_WINDOW_BLOCKS} blocks; past that it stops being carried, and a read of it costs one",
+        "dynamic fetch that answers the exact anchor's CURRENT word. The measured input",
+        "for that policy is the tail:",
+        "",
+    ]
+    for capture, gaps in ((off, off_gaps), (on, on_gaps)):
+        holds = gaps.gaps.p99 <= GAP_WINDOW_BLOCKS
+        lines.append(
+            f"- {capture.label.upper()}: p99 {_blocks(gaps.gaps.p99)} blocks, "
+            f"{gaps.within_window} of {gaps.re_reads} re-reads "
+            f"({_share(gaps.within_window, gaps.re_reads)}) inside the window, "
+            f"{gaps.beyond_window} beyond it (max {gaps.gaps.maximum} blocks) — the "
+            f"idle window's precondition (p99 <= {GAP_WINDOW_BLOCKS} blocks) is "
+            f"{'met by this capture' if holds else 'NOT met by this capture'}."
+        )
+    lines += [
+        "",
+        "Both windows' numbers are derived from these read walks, not from an earlier",
+        "report, so a capture taken at other heads moves them. What they cannot say is",
+        "what a retained entry COSTS: these are identity counts and block distances —",
+        "never bytes, never RSS — and the window prices only the re-reads it converts.",
+        "",
+    ]
 
     lines += [
         "## Verdict and failure distribution",
@@ -1720,6 +1975,7 @@ def to_json(off: Capture, on: Capture) -> dict[str, object]:
 
     def capture_view(capture: Capture) -> dict[str, object]:
         grouped = rows_by_block(capture.trace)
+        gaps = read_gaps(capture)
         return {
             "label": capture.label,
             "path": capture.path,
@@ -1799,9 +2055,29 @@ def to_json(off: Capture, on: Capture) -> dict[str, object]:
                     "bal": row.bal,
                     "prepare_us": row.prepare_us,
                     "apply_us": row.apply_us,
+                    "held": row.held,
+                    "live": row.live,
+                    "expired": row.expired,
                 }
                 for row in capture.heads
             ],
+            "read_gaps": {
+                "read_events": gaps.read_events,
+                "distinct_identities": gaps.distinct_identities,
+                "repeated_identities": gaps.repeated_identities,
+                "busiest_identity_reads": gaps.busiest_identity_reads,
+                "reads_per_identity": gaps.reads_per_identity,
+                "re_reads": gaps.re_reads,
+                "within_window": gaps.within_window,
+                "beyond_window": gaps.beyond_window,
+                "beyond_share": gaps.beyond_share,
+                "window_blocks": GAP_WINDOW_BLOCKS,
+                "p50": gaps.gaps.p50,
+                "p90": gaps.gaps.p90,
+                "p95": gaps.gaps.p95,
+                "p99": gaps.gaps.p99,
+                "max": gaps.gaps.maximum,
+            },
             "sim_ns": summarize([row.sim_ns for row in capture.trace]).__dict__,
             "verdicts": dict(Counter(row.verdict for row in capture.trace)),
             "candidates": len({row.cand for row in capture.trace}),

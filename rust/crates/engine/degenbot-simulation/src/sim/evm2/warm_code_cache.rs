@@ -31,7 +31,7 @@ use ::evm2::evm::{AccountInfo, Database};
 use ::evm2::interpreter::Word;
 
 use crate::sim::evm2::bal_heads::BalHeadPipeline;
-use crate::sim::evm2::delta_snapshot::{BalHeadDriver, DeltaHub};
+use crate::sim::evm2::delta_snapshot::{BalHeadDriver, DeltaHub, Retention, DEFAULT_MAX_DEPTH};
 use crate::sim::evm2::hook_slots::HookSlotStore;
 use crate::sim::hot_slots::HotSlotStore;
 use crate::sim::prefetch::{block_on_ambient, resolve_read_anchor};
@@ -64,7 +64,14 @@ pub const WARM_CODE_CACHE_TTL_BLOCKS: u64 = 10_000;
 /// relevance set is the session's
 /// ([`path_relevance_addresses`](crate::sim::prefetch::path_relevance_addresses)
 /// over the registered paths and the settlement identities) and its retention is
-/// [`Retention::Unbounded`] — the flag adds no retention knob. A head that
+/// [`Retention::IdleBlocks(8)`](crate::sim::evm2::delta_snapshot::Retention) —
+/// the measured policy, FIXED, and not an operator knob: an entry candidates have
+/// not READ for eight blocks stops being served, an overwrite by the BAL list
+/// does not refresh that clock while a candidate read does, and a read of an
+/// expired entry takes the ordinary dynamic fallback — the exact anchor's
+/// CURRENT word through that generation's read hub, never a stale parent value.
+/// A lagging caller holding an older generation keeps its own clock and view, so
+/// one head's clock never expires anything out of another's. A head that
 /// settled READY answers candidate storage through its `DeltaHub` (a
 /// [`StorageView`](super::storage_view::StorageView)) and pays no prefetch
 /// batch; a head that is unprepared, past its readiness deadline, superseded,
@@ -86,8 +93,13 @@ pub const WARM_CODE_CACHE_TTL_BLOCKS: u64 = 10_000;
 /// [`WarmCodeCacheInner::shared_with_hook_slots_and_delta_dispatch`] where the
 /// owner also installs the durable hook store). There is no retention knob and
 /// no second switch: the driver is built at
-/// [`Retention::Unbounded`](crate::sim::evm2::delta_snapshot::Retention) and
-/// [`DEFAULT_MAX_DEPTH`](crate::sim::evm2::delta_snapshot::DEFAULT_MAX_DEPTH).
+/// [`DeltaDispatchConfig::DEVELOPMENT_IDLE_BLOCKS`] idle blocks and
+/// [`DEFAULT_MAX_DEPTH`](crate::sim::evm2::delta_snapshot::DEFAULT_MAX_DEPTH)
+/// folds. The idle window is what stops a session's carried values being
+/// retained forever, and its price is visible in the sizes: `held` (identities
+/// the chain holds) falls only at a compaction fold — every `max_depth + 1`
+/// links — so expired-but-undropped entries are bounded by the fold horizon and
+/// the held memory shrinks there, not at the instant an entry expires.
 ///
 /// The operator-facing switch is the typed `simulation.delta_dispatch`
 /// (`DEGENBOT_DELTA_DISPATCH`) key, default OFF. Both production owners read it
@@ -115,6 +127,22 @@ impl DeltaDispatchConfig {
     /// local node's BAL, short enough that a head still unprepared at a fan-out
     /// is labelled `deadline` rather than mistaken for an in-flight one.
     pub const DEVELOPMENT_READINESS_DEADLINE: Duration = Duration::from_millis(50);
+
+    /// The idle window, in blocks, the development opt-in's delta generations
+    /// use: an entry no candidate has READ for this many blocks stops being
+    /// served and a read of it falls back dynamically to the exact anchor's
+    /// current word.
+    ///
+    /// Fixed, measured, and deliberately NOT an operator knob. Eight is the
+    /// largest threshold the retention and round-coalesced replay probes
+    /// measured, and the live candidate re-read gap distributions put p99 at or
+    /// below it (`logs/bal_delta_rounds_result.md`,
+    /// `logs/bal_live_ab_v2_result.md`); a smaller window converted the same or
+    /// more reads for fewer saved entries, and nothing larger was measured.
+    /// The library default stays
+    /// [`Retention::Unbounded`](crate::sim::evm2::delta_snapshot::Retention) for
+    /// any caller constructing its own cache or driver.
+    pub const DEVELOPMENT_IDLE_BLOCKS: u64 = 8;
 
     /// The development opt-in at
     /// [`Self::DEVELOPMENT_READINESS_DEADLINE`].
@@ -425,7 +453,12 @@ impl WarmCodeCacheInner {
         let config = self.delta_dispatch?;
         let mut slot = self.delta_heads.lock();
         Some(Arc::clone(slot.get_or_insert_with(|| {
-            Arc::new(BalHeadDriver::new(provider, config.readiness_deadline))
+            Arc::new(BalHeadDriver::with_config(
+                provider,
+                DEFAULT_MAX_DEPTH,
+                Retention::IdleBlocks(DeltaDispatchConfig::DEVELOPMENT_IDLE_BLOCKS),
+                config.readiness_deadline,
+            ))
         })))
     }
 
@@ -776,6 +809,47 @@ mod tests {
             None,
             "installation delivers no head and fetches nothing"
         );
+    }
+
+    /// The production development driver binds the MEASURED policy: a fixed
+    /// eight-block idle window at the cache's default fold depth. It is not
+    /// unbounded (that was the pre-measurement posture, and it retained every
+    /// carried value for the session's life) and it is not a knob — the
+    /// constant is the whole selection, so an operator has nothing to set.
+    #[test]
+    fn the_development_driver_reads_a_fixed_eight_block_idle_window_at_the_default_fold_depth() {
+        assert_eq!(
+            DeltaDispatchConfig::DEVELOPMENT_IDLE_BLOCKS,
+            8,
+            "the measured window is eight idle blocks"
+        );
+        let inner =
+            WarmCodeCacheInner::shared_with_delta_dispatch(DeltaDispatchConfig::development());
+        let provider = forbidden_provider();
+        let driver = inner
+            .read()
+            .delta_heads(&provider)
+            .expect("the opt-in is on");
+        assert_eq!(
+            driver.retention(),
+            Retention::IdleBlocks(DeltaDispatchConfig::DEVELOPMENT_IDLE_BLOCKS),
+            "an unread carried entry must expire instead of living for the session"
+        );
+        assert_eq!(
+            driver.max_depth(),
+            DEFAULT_MAX_DEPTH,
+            "the fold horizon bounds expired-but-undropped entries; it is unchanged"
+        );
+    }
+
+    /// The LIBRARY default is untouched: a caller constructing its own driver or
+    /// cache still gets unbounded retention, so the prototype's control (and the
+    /// probe suites that opt into a threshold explicitly) keep their posture.
+    #[test]
+    fn the_library_defaults_stay_unbounded_at_the_default_fold_depth() {
+        let driver = BalHeadDriver::new(&forbidden_provider(), Duration::from_millis(1));
+        assert_eq!(driver.retention(), Retention::Unbounded);
+        assert_eq!(driver.max_depth(), DEFAULT_MAX_DEPTH);
     }
 
     /// The production construction shape carries the opt-in AND the durable

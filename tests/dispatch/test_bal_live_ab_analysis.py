@@ -317,12 +317,23 @@ def _lab_row(block: int, candidates: int, wall_ms: int, fanout: int | None) -> s
     )
 
 
-def _trace_row(block: int, cand: str, sim_ns: int, fanout: int | None) -> str:
-    """One `fanout-trace` row; `fanout=None` is the unkeyed (pre-key) shape."""
+def _trace_row(
+    block: int,
+    cand: str,
+    sim_ns: int,
+    fanout: int | None,
+    reads: Sequence[str] | None = None,
+) -> str:
+    """One `fanout-trace` row; `fanout=None` is the unkeyed (pre-key) shape.
+
+    `reads` entries are access-list entries in the emitter's `address|slot,slot`
+    shape, in the order the walk named them.
+    """
     key = f',"fanout":{fanout}' if fanout is not None else ""
+    walk = ",".join(f'"{entry}"' for entry in (reads or ()))
     body = (
         f'{{"block":{block},"cand":"{cand}","sim_ns":{sim_ns},"verdict":"none",'
-        f'"gas":0,"reads":[],"relevance":[]{key}}}'
+        f'"gas":0,"reads":[{walk}],"relevance":[]{key}}}'
     )
     return f"DEBUG [sim] fanout-trace {body}"
 
@@ -335,14 +346,28 @@ def _head_row(
     apply_us: int,
     refusal: str | None = None,
     chain: str = "carried",
+    held: int | None = None,
+    live: int | None = None,
+    expired: int | None = None,
 ) -> str:
-    """One `bal-head {...}` row, in the emitter's wire shape."""
+    """One `bal-head {...}` row, in the emitter's wire shape.
+
+    The size fields are omitted unless a caller passes them: a row written before
+    they existed carries none, and that shape stays the default here.
+    """
     refusal_field = f'"{refusal}"' if refusal else "null"
+    sizes = ""
+    if held is not None:
+        sizes += f',"held":{held}'
+    if live is not None:
+        sizes += f',"live":{live}'
+    if expired is not None:
+        sizes += f',"expired":{expired}'
     return (
         f'DEBUG [sim] bal-head {{"anchor":{anchor},"hash":"0x{"a" * 64}",'
         f'"parent":"0x{"9" * 64}","outcome":"{outcome}","chain":"{chain}",'
         f'"refusal":{refusal_field},"bal":null,"prepare_us":{prepare_us},'
-        f'"apply_us":{apply_us},"writes":1,"overwritten":0,"skipped":0}}'
+        f'"apply_us":{apply_us},"writes":1,"overwritten":0,"skipped":0{sizes}}}'
     )
 
 
@@ -718,3 +743,193 @@ def test_the_verdict_separates_readiness_from_the_non_paired_wall_observation(
     assert "No GO from whole-window totals" in verdict
     assert "most ON candidates read through the same legacy lane" not in report
     assert "most of the ON window's fenced fan-outs ran on the same legacy lane" not in report
+
+
+# ── the re-read gap distribution (the idle window's input) ──────────────────
+
+
+def test_a_re_read_gap_counts_the_block_distance_from_an_identities_previous_read(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "off.log",
+            selections=[_selection_row(100, "legacy", 1)],
+            traces=[
+                _trace_row(100, "1@1", 1_000_000, 1, reads=["0xaa|0x1"]),
+                _trace_row(100, "2@1", 1_000_000, 1, reads=["0xaa|0x1"]),
+                _trace_row(104, "3@1", 1_000_000, 1, reads=["0xaa|0x1"]),
+                _trace_row(200, "4@1", 1_000_000, 1, reads=["0xaa|0x1"]),
+            ],
+        )
+    )
+
+    gaps = analysis.read_gaps(capture)
+
+    assert gaps.read_events == 4, "every identity read is an event, repeats included"
+    assert gaps.distinct_identities == 1, "one identity, read four times"
+    assert gaps.re_reads == 3, "the first read carries no gap"
+    assert gaps.gaps.total == 100, "0 + 4 + 96 blocks"
+    assert (gaps.gaps.p50, gaps.gaps.p99, gaps.gaps.maximum) == (4.0, pytest.approx(94.16), 96)
+    assert (gaps.within_window, gaps.beyond_window) == (2, 1)
+    assert gaps.beyond_share == pytest.approx(1 / 3)
+
+
+def test_identity_is_the_address_and_slot_pair_so_two_slots_never_merge(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "off.log",
+            selections=[_selection_row(10, "legacy", 1)],
+            traces=[
+                _trace_row(10, "1@1", 1, 1, reads=["0xaa|0x1,0x2"]),
+                _trace_row(12, "2@1", 1, 1, reads=["0xaa|0x2"]),
+                _trace_row(13, "3@1", 1, 1, reads=["0xbb|"]),
+                _trace_row(20, "4@1", 1, 1, reads=["0xbb|"]),
+            ],
+        )
+    )
+
+    gaps = analysis.read_gaps(capture)
+
+    assert gaps.distinct_identities == 3, "two slots of one address are two identities"
+    assert gaps.read_events == 5, "an account entry with no slots is one identity"
+    assert gaps.re_reads == 2, "slot 0x2 (gap 2) and the bare account (gap 7)"
+    assert (gaps.within_window, gaps.beyond_window) == (2, 0)
+
+
+def test_a_read_at_an_earlier_block_rebases_instead_of_yielding_a_negative_gap(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "off.log",
+            selections=[_selection_row(100, "legacy", 1)],
+            traces=[
+                _trace_row(100, "1@1", 1, 1, reads=["0xaa|0x1"]),
+                _trace_row(90, "2@1", 1, 1, reads=["0xaa|0x1"]),
+                _trace_row(95, "3@1", 1, 1, reads=["0xaa|0x1"]),
+            ],
+        )
+    )
+
+    gaps = analysis.read_gaps(capture)
+
+    assert gaps.read_events == 3
+    assert gaps.re_reads == 1, "the 100 -> 90 read rebased; 90 -> 95 is the one gap"
+    assert gaps.gaps.maximum == 5
+    assert gaps.gaps.total == 5
+
+
+def test_the_report_derives_the_gap_tail_and_the_window_verdict_from_the_read_walks(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "off.log",
+            selections=[_selection_row(100, "legacy", 1)],
+            traces=[
+                _trace_row(100, "1@1", 1, 1, reads=["0xaa|0x1"]),
+                _trace_row(100, "2@1", 1, 1, reads=["0xaa|0x1"]),
+                _trace_row(109, "3@1", 1, 1, reads=["0xaa|0x1"]),
+            ],
+        )
+    )
+
+    report = analysis.render_markdown(capture, capture)
+    section = report.split("## Re-read gaps", 1)[1].split("## Verdict and failure", 1)[0]
+
+    assert "read events | distinct identities | reads per identity" in section
+    assert "| OFF | 3 | 1 | 3.00 | 2 |" in section
+    assert "1 of 2 re-reads (50.00%) inside the window, 1 beyond it (max 9 blocks)" in section
+    assert "precondition (p99 <= 8 blocks) is NOT met by this capture" in section, (
+        "the window verdict is derived, never assumed"
+    )
+    assert "never bytes" in section
+
+
+# ── the head's generation sizes (identity counts, never bytes) ──────────────
+
+
+def test_a_head_row_without_size_counts_parses_as_unknown_and_the_report_says_so(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    row = analysis.parse_head_line(HEAD_ROW)
+
+    assert row is not None
+    assert (row.held, row.live, row.expired) == (None, None, None), (
+        "a pre-size row reports unknown, never zero"
+    )
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[_selection_row(100, "delta", 1)],
+            traces=[_trace_row(100, "1@1", 1, 1)],
+            heads=[HEAD_ROW],
+        )
+    )
+    report = analysis.render_markdown(capture, capture)
+    assert "These head rows carry no `held`/`live` counts" in report
+    assert "| held | 1 |" not in report, "no size summary is invented for an old row"
+
+
+def test_the_report_summarizes_terminal_and_max_held_and_live_counts(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[_selection_row(100, "delta", 1)],
+            traces=[_trace_row(100, "1@1", 1, 1)],
+            heads=[
+                _head_row(100, outcome="settled", prepare_us=1, apply_us=1, held=100, live=90),
+                _head_row(
+                    101,
+                    outcome="settled",
+                    prepare_us=1,
+                    apply_us=1,
+                    held=260,
+                    live=120,
+                    expired=140,
+                ),
+            ],
+        )
+    )
+
+    report = analysis.render_markdown(capture, capture)
+
+    assert "| held | 2 | 100 | 260 | 260 |" in report
+    assert "| live | 2 | 90 | 120 | 120 |" in report
+    assert "| expired | 2 | 10 | 140 | 140 |" in report, "expired derives from held - live"
+    assert "Identity counts, never bytes or" in report
+    assert (
+        "| 100 | 0xaaaaaaaa… | settled | carried | — | — | 1 | 1 | — | 1 | 0 | 0 | 100 | 90 | 10 |"
+        in report
+    )
+
+
+def test_the_json_view_carries_the_gap_sample_and_the_head_sizes(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    capture = analysis.scan_capture(
+        _write_capture(
+            tmp_path / "on.log",
+            selections=[_selection_row(100, "delta", 1)],
+            traces=[
+                _trace_row(100, "1@1", 1, 1, reads=["0xaa|0x1"]),
+                _trace_row(108, "2@1", 1, 1, reads=["0xaa|0x1"]),
+            ],
+            heads=[
+                _head_row(100, outcome="settled", prepare_us=1, apply_us=1, held=7, live=5),
+            ],
+        )
+    )
+
+    payload = analysis.to_json(capture, capture)
+    gaps = payload["off"]["read_gaps"]
+    head = payload["off"]["heads"][0]
+
+    assert gaps["window_blocks"] == 8
+    assert (gaps["re_reads"], gaps["beyond_window"], gaps["p99"]) == (1, 0, 8.0)
+    assert (head["held"], head["live"], head["expired"]) == (7, 5, None)
