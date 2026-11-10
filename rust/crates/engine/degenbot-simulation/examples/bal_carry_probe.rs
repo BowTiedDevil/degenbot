@@ -104,6 +104,19 @@ const SET_ANALYSES: &[SetAnalysis] = &[
         estimated_fetches: Some(2_541),
     },
     SetAnalysis {
+        first: 26_382_028,
+        last: 26_382_051,
+        shape: CorpusShape {
+            candidates: 560,
+            candidate_anchors: 20,
+            candidate_anchor_keys: 31_714,
+            anchored_keys: 6_788,
+            global_keys: 2_615,
+            contracts: 89,
+        },
+        estimated_fetches: None,
+    },
+    SetAnalysis {
         first: 26_380_992,
         last: 26_381_018,
         shape: CorpusShape {

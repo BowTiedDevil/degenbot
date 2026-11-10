@@ -601,6 +601,30 @@ bal-delta-rounds-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example bal_delta_rounds_probe -- {{ ARGS }}
 
 
+# The paired relevance replay: one captured production-relevance corpus
+# (`/tmp/bal_production_trace.log`, 26382028..=26382051) replayed twice, changing
+# ONLY the set that scopes each anchor's snapshot — the pre-simulation production
+# `relevance` field versus the recorded-read-address oracle — over one committed
+# real write-coverage capture (`tests/fixtures/bal_real_coverage_production.json`,
+# captured by `just bal-real-coverage-capture` with `BAL_WALL_TRACE` and
+# `BAL_WALL_FIXTURE` set, the only live step). Identical candidates, order, W/F,
+# prices, and values; per anchor and per density regime it reports the relevance
+# sets and their differences, the excluded post-read-only addresses, seedable/
+# known/overwritten writes, carried/final-write/dynamic hits, fetch members,
+# rounds, wall buckets, snapshot entries, and re-read gaps, under
+# `Retention::Unbounded` and `Retention::IdleBlocks(BAL_PROD_IDLE)` (default 8).
+# Gates: cross-leg read-digest parity, each variant's unbounded delta accounting
+# against its full-clone control, and the production full-clone leg's exact
+# reconciliation with the committed live `bal_carry_probe` accounting
+# (`just bal-carry-probe` over the same range). `BAL_PROD_PLANT_DIVERGENCE=1`
+# skews the delta legs' storage answers by one wei and must exit 1. Knobs:
+# `BAL_PROD_TRACE`, `BAL_PROD_FIXTURE`, `BAL_PROD_STORAGE_US`,
+# `BAL_PROD_ACCOUNT_US`, `BAL_PROD_W`, `BAL_PROD_F`, `BAL_PROD_IDLE`.
+# Measurements: `logs/bal_production_relevance_result.md`.
+bal-production-relevance-probe *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example bal_production_relevance_probe -- {{ ARGS }}
+
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash
