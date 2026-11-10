@@ -108,6 +108,15 @@ pub const WARM_CODE_CACHE_TTL_BLOCKS: u64 = 10_000;
 /// installs the config on its own. Nothing re-reads the flag per fan-out, and a
 /// test-built cache ([`WarmCodeCacheInner::shared_default`]) stays OFF.
 ///
+/// ON requires a working EIP-7928 endpoint: the batch executor's construction
+/// probes the CURRENT canonical head's block access list and fully decodes it
+/// ([`probe_bal_capability`](crate::sim::evm2::bal_capability::probe_bal_capability))
+/// BEFORE it arms the pipeline, so an endpoint that serves neither official
+/// method, answers a list this build cannot decode, or cannot report its
+/// canonical head lineage refuses construction instead of letting every head
+/// collapse to the legacy lane. OFF issues no probe, no header read, and no BAL
+/// request.
+///
 /// Every opt-in fan-out reports its selection on
 /// `degenbot.dispatch.storage{mode,reason}` — `mode` is `delta` or `legacy`,
 /// and `reason` is the closed cold set (`unprepared`, `deadline`,

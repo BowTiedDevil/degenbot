@@ -3543,6 +3543,33 @@ mod delta_dispatch_tests {
         );
     }
 
+    /// Keeps a second [`tracing::Dispatch`] registered for the life of the test
+    /// binary, without ever installing it as any thread's default.
+    ///
+    /// `tracing` caches every callsite's `Interest` in **process-global** state,
+    /// and re-derives it from the *rebuilding thread's* default whenever exactly
+    /// one dispatch is registered (`tracing_core`'s single-dispatch fast path
+    /// reads `dispatcher::get_default`). A scoped `set_default` capture is
+    /// thread-local: the cargo test harness's other threads own no subscriber, so
+    /// the first hit of a fan-out callsite from one of them caches
+    /// `Interest::never()` for the whole process — and the subscribed thread's own
+    /// row is then dropped before dispatch. That is why the fan-out rows vanish
+    /// only under the parallel test harness, and different row families vanish on
+    /// different runs.
+    ///
+    /// A second live dispatch takes the interest cache off that single-dispatch
+    /// path: the rebuild combines both opinions (`never` vs `always` →
+    /// `sometimes`), so no callsite can be cached `never` and every event is
+    /// decided by the emitting thread's own subscriber. This dispatch is inert —
+    /// registered, never installed — so it swallows nothing and receives nothing.
+    fn keep_a_second_dispatch_registered() {
+        static SECOND_DISPATCH: std::sync::OnceLock<tracing::dispatcher::Dispatch> =
+            std::sync::OnceLock::new();
+        SECOND_DISPATCH.get_or_init(|| {
+            tracing::dispatcher::Dispatch::new(tracing::subscriber::NoSubscriber::default())
+        });
+    }
+
     /// A log buffer the test subscriber writes into.
     #[derive(Clone, Default)]
     struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
@@ -3589,6 +3616,9 @@ mod delta_dispatch_tests {
         recorder.serve_head(BLOCK, B256::new([0xa1; 32]), B256::new([0xa0; 32]));
         let provider = provider(&recorder);
         let rt = runtime();
+        // The capture is thread-local, so this binary's other test threads must
+        // not be able to cache these rows' callsites as uninteresting.
+        keep_a_second_dispatch_registered();
         let buffer = LogBuffer::default();
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)

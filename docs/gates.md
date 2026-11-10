@@ -523,5 +523,5 @@ the detector, the classes, the format, and the documented blind spots. Make the
 gate **bidirectional** (unlisted hit fails; stale listed entry fails). The
 workspace suite runs it; add a focused `check-*` alias when that aids diagnosis,
 without adding a duplicate pre-push execution. Use the `REGEN_*` opt-in pattern
-for any gate that regenerates an artifact (`just gen-stubs`,
-`REGEN_CONFIG_DOCS=1`).
+for any gate that regenerates an artifact, and name the justfile recipe as the
+caller (`just gen-stubs`, `just gen-config-docs`).

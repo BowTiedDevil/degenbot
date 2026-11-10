@@ -798,7 +798,8 @@ fn run() -> Result<(), String> {
         )
         .await
         .map_err(|e| format!("live construction provider from {http}: {e}"))?;
-        let (executor, dispatcher) = build_batch_executor(&cfg, &loaded, &provider, &bot, &driver)?;
+        let (executor, dispatcher) =
+            build_batch_executor(&cfg, &loaded, &provider, &bot, &driver).await?;
         // G5 row 20: the operator Unix-socket channel (`--operator-socket`).
         let operator = match cli.operator_socket.as_deref() {
             Some(path) => {
@@ -1138,7 +1139,7 @@ fn run() -> Result<(), String> {
 /// handles the verdict cannot name. The choreography itself (assembly
 /// policy, sim fan-out, ordered submit) is core-owned
 /// (`degenbot::batch_executor::BatchExecutor`).
-fn build_batch_executor(
+async fn build_batch_executor(
     cfg: &SettlementBotConfig,
     loaded: &degenbot::config::LoadedConfig,
     provider: &degenbot::rpc::provider::AlloyProvider,
@@ -1245,7 +1246,14 @@ fn build_batch_executor(
     )
     .map_err(|error| format!("session execution deployments: {error}"))?;
     Ok((
-        std::sync::Arc::new(degenbot::batch_executor::BatchExecutor::new(config)),
+        // Structural OFF (`warm_cache: None`): the fallible constructor's
+        // startup BAL capability probe is never reached, and its refusal would
+        // be a startup error anyway.
+        std::sync::Arc::new(
+            degenbot::batch_executor::BatchExecutor::new(config)
+                .await
+                .map_err(|error| format!("batch executor construction: {error}"))?,
+        ),
         dispatcher,
     ))
 }

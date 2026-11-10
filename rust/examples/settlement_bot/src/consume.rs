@@ -168,7 +168,13 @@ mod tests {
             },
         )
         .expect("the fixture's one-entry deployment registry is valid");
-        Arc::new(BatchExecutor::new(config))
+        // Structural OFF (`warm_cache: None`): no opt-in, so no capability
+        // probe and no refusal.
+        Arc::new(
+            BatchExecutor::new(config)
+                .await
+                .expect("an OFF session's construction cannot be refused"),
+        )
     }
 
     fn block(number: u64, timestamp: u64) -> BlockNotification {

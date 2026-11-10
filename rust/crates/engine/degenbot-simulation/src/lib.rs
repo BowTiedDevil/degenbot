@@ -22,6 +22,11 @@
 // to match the peer core crates.
 #![expect(clippy::doc_markdown)]
 
+/// The canonical EIP-7928 block-access-list types (`alloy-eip7928`) this engine
+/// decodes with, re-exported so a consumer or fixture names the SAME codec
+/// family instead of pinning a second copy of it.
+pub use alloy_eip7928;
+
 /// The in-process evm2 engine + its DB stack (the EVM handle, overrides,
 /// AL collector, warm cache). The settlement-arbitrage strategy relocated to
 /// `degenbot-arbitrage` (ADR-019 D4/D7, decision R).

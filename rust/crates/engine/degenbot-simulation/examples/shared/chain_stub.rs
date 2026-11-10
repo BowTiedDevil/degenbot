@@ -8,7 +8,7 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -22,7 +22,10 @@ use alloy::transports::{TransportError, TransportFut};
 use serde_json::value::to_raw_value;
 use serde_json::Value;
 
-use alloy_eip7928::bal::{Bal, DecodedBal};
+// The codec family the engine decodes with, named through the crate that OWNS
+// the BAL decode (`degenbot_simulation` re-exports it): a shared fixture that
+// pinned its own copy would let the two drift apart.
+use degenbot_simulation::alloy_eip7928::bal::{Bal, DecodedBal};
 
 use degenbot_rpc::provider::AlloyProvider;
 
@@ -33,14 +36,33 @@ pub type ChainValues = HashMap<(u64, Address, U256), u64>;
 /// The value every unlisted storage word answers with.
 pub const SERVED: u64 = 42;
 
+/// The worked EIP-7928 list the codec and capability suites share: one account,
+/// four slot changes, two read-only slots, and the three account-level change
+/// lists. Bytes this tree FULLY decodes, so a fixture serving them can only fail
+/// where the test means it to.
+pub fn worked_list() -> Vec<u8> {
+    alloy::hex::decode(concat!(
+        "f845f843941111111111111111111111111111111111111111d4c801c6c28007c2022aca02c8",
+        "c4018203e8c20380c20304cbca05880de0b6b3a7640000c3c2062ac5c407826000",
+    ))
+    .expect("the worked fixture is valid hex")
+}
+
 /// A chain stub serving the serial storage read and the raw block access list
 /// at exact hashes, recording every dispatched request.
 #[derive(Debug, Clone, Default)]
 pub struct ChainStub {
     requests: Arc<Mutex<Vec<String>>>,
     bal_by_hash: Arc<Mutex<HashMap<B256, Vec<u8>>>>,
-    bal_unsupported: Arc<AtomicBool>,
+    bal_json_by_hash: Arc<Mutex<HashMap<B256, Value>>>,
+    bal_raw_unsupported: Arc<AtomicBool>,
+    bal_json_unsupported: Arc<AtomicBool>,
     bal_null: Arc<AtomicBool>,
+    head: Arc<AtomicU64>,
+    lineage: Arc<Mutex<HashMap<u64, B256>>>,
+    head_unreadable: Arc<AtomicBool>,
+    lineage_unreadable: Arc<AtomicBool>,
+    down: Arc<AtomicBool>,
     values: Arc<Mutex<ChainValues>>,
     refused: Arc<Mutex<HashSet<(u64, Address, U256)>>>,
     hold: Arc<AtomicBool>,
@@ -69,9 +91,61 @@ impl ChainStub {
         self.bal_by_hash.lock().unwrap().insert(hash, bytes);
     }
 
-    /// Refuse the BAL method the way a node without it answers.
+    /// Serve `eth_getBlockAccessList` with this JSON value VERBATIM at ONE exact
+    /// block hash — the malformed / non-array / missing-field answers a raw
+    /// fixture cannot express.
+    pub fn serve_bal_json_at(&self, hash: B256, json: Value) {
+        self.bal_json_by_hash.lock().unwrap().insert(hash, json);
+    }
+
+    /// Serve the current canonical head: `eth_blockNumber` answers `number`, and
+    /// that number's header names `hash` (its parent is the zero hash).
+    pub fn serve_head(&self, number: u64, hash: B256) {
+        self.set_head_number(number);
+        self.lineage.lock().unwrap().insert(number, hash);
+    }
+
+    /// Report `number` as the head while serving NO header at it — a node whose
+    /// reported height has no canonical block.
+    pub fn set_head_number(&self, number: u64) {
+        self.head.store(number, Ordering::Relaxed);
+    }
+
+    /// Fail `eth_blockNumber` the way an endpoint that cannot report its head
+    /// answers.
+    pub fn set_head_unreadable(&self, unreadable: bool) {
+        self.head_unreadable.store(unreadable, Ordering::Relaxed);
+    }
+
+    /// Fail `eth_getBlockByNumber` the way a refused header read answers.
+    pub fn set_lineage_unreadable(&self, unreadable: bool) {
+        self.lineage_unreadable.store(unreadable, Ordering::Relaxed);
+    }
+
+    /// Fail EVERY request at the transport: a node that answers nothing at all.
+    pub fn set_down(&self, down: bool) {
+        self.down.store(down, Ordering::Relaxed);
+    }
+
+    /// Refuse BOTH BAL representations the way a node without EIP-7928 support
+    /// answers.
     pub fn set_bal_unsupported(&self, unsupported: bool) {
-        self.bal_unsupported.store(unsupported, Ordering::Relaxed);
+        self.set_bal_raw_unsupported(unsupported);
+        self.set_bal_json_unsupported(unsupported);
+    }
+
+    /// Refuse ONLY the raw RLP representation
+    /// (`debug_getRawBlockAccessList`) — the eth-only node.
+    pub fn set_bal_raw_unsupported(&self, unsupported: bool) {
+        self.bal_raw_unsupported
+            .store(unsupported, Ordering::Relaxed);
+    }
+
+    /// Refuse ONLY the official JSON representation
+    /// (`eth_getBlockAccessList`) — the raw-only node.
+    pub fn set_bal_json_unsupported(&self, unsupported: bool) {
+        self.bal_json_unsupported
+            .store(unsupported, Ordering::Relaxed);
     }
 
     /// Answer the BAL request with JSON `null` — no list at that hash.
@@ -137,6 +211,19 @@ impl ChainStub {
             .count()
     }
 
+    /// Every dispatched request's `method params` identity, in order.
+    pub fn dispatched(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+
+    /// Every dispatched method's name, in order — what the negotiation chose.
+    pub fn methods(&self) -> Vec<String> {
+        self.dispatched()
+            .into_iter()
+            .map(|request| request.split(' ').next().unwrap_or_default().to_string())
+            .collect()
+    }
+
     /// Storage reads dispatched — one `eth_getStorageAt` per dynamic miss.
     pub fn storage_members(&self) -> usize {
         self.requests
@@ -171,6 +258,10 @@ impl ChainStub {
             self.answer_bal_json(req)
         } else if req.method() == "eth_getStorageAt" {
             self.answer_storage(req)
+        } else if req.method() == "eth_blockNumber" {
+            self.answer_head()
+        } else if req.method() == "eth_getBlockByNumber" {
+            self.answer_lineage(req)
         } else {
             panic!("a scripted read must not issue {}", req.method())
         };
@@ -180,8 +271,39 @@ impl ChainStub {
         }
     }
 
+    /// The head number a probe reads: the stub's scripted canonical height.
+    fn answer_head(&self) -> ResponsePayload {
+        if self.head_unreadable.load(Ordering::Relaxed) {
+            return rpc_failure("the node cannot report its current head");
+        }
+        let head = self.head.load(Ordering::Relaxed);
+        ResponsePayload::Success(
+            to_raw_value(&Value::String(format!("{head:#x}"))).expect("a quantity serializes"),
+        )
+    }
+
+    /// One header read: the identity `(number, hash)` the cell's lineage names,
+    /// or JSON `null` for a number this chain has no block at.
+    fn answer_lineage(&self, req: &SerializedRequest) -> ResponsePayload {
+        if self.lineage_unreadable.load(Ordering::Relaxed) {
+            return rpc_failure("the node refuses this header");
+        }
+        let number = u64::from_str_radix(first_param(req).trim_start_matches("0x"), 16)
+            .expect("the block number is a hex quantity");
+        match self.lineage.lock().unwrap().get(&number) {
+            Some(hash) => ResponsePayload::Success(
+                to_raw_value(&serde_json::json!({
+                    "hash": hash,
+                    "parentHash": B256::ZERO,
+                }))
+                .expect("a header serializes"),
+            ),
+            None => ResponsePayload::Success(to_raw_value(&Value::Null).expect("null")),
+        }
+    }
+
     fn answer_bal(&self, req: &SerializedRequest) -> ResponsePayload {
-        if self.bal_unsupported.load(Ordering::Relaxed) {
+        if self.bal_raw_unsupported.load(Ordering::Relaxed) {
             return ResponsePayload::Failure(ErrorPayload {
                 code: -32_601,
                 message: Cow::Borrowed("the method debug_getRawBlockAccessList does not exist"),
@@ -209,7 +331,7 @@ impl ChainStub {
     /// The same list through the OFFICIAL JSON method: one fixture, both
     /// representations, so a scenario reads the same either way.
     fn answer_bal_json(&self, req: &SerializedRequest) -> ResponsePayload {
-        if self.bal_unsupported.load(Ordering::Relaxed) {
+        if self.bal_json_unsupported.load(Ordering::Relaxed) {
             return ResponsePayload::Failure(ErrorPayload {
                 code: -32_601,
                 message: Cow::Borrowed("the method eth_getBlockAccessList does not exist"),
@@ -222,6 +344,9 @@ impl ChainStub {
         let hash: B256 = first_param(req)
             .parse()
             .expect("the block hash is the first param");
+        if let Some(json) = self.bal_json_by_hash.lock().unwrap().get(&hash) {
+            return ResponsePayload::Success(to_raw_value(json).expect("a JSON answer"));
+        }
         match self.bal_by_hash.lock().unwrap().get(&hash) {
             Some(raw) => ResponsePayload::Success(to_raw_value(&bal_json(raw)).unwrap()),
             None => ResponsePayload::Failure(ErrorPayload {
@@ -261,6 +386,15 @@ impl ChainStub {
             .unwrap_or(SERVED);
         ResponsePayload::Success(to_raw_value(&Value::String(format!("{value:#x}"))).unwrap())
     }
+}
+
+/// A JSON-RPC failure payload: the node answered, and the answer is an error.
+fn rpc_failure(message: &str) -> ResponsePayload {
+    ResponsePayload::Failure(ErrorPayload {
+        code: -32_000,
+        message: Cow::Owned(message.to_string()),
+        data: None,
+    })
 }
 
 /// The official `eth_getBlockAccessList` JSON equivalent of these raw list bytes
@@ -304,6 +438,9 @@ impl tower::Service<RequestPacket> for ChainStub {
             // A request the node never answers: the caller's round stays in
             // flight until it is abandoned.
             return Box::pin(std::future::pending());
+        }
+        if stub.down.load(Ordering::Relaxed) {
+            return Box::pin(async { Err(TransportError::local_usage_str("the node is down")) });
         }
         let slow = stub.slow.load(Ordering::Relaxed);
         Box::pin(async move {

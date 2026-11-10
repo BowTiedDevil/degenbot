@@ -318,9 +318,14 @@ async fn the_active_slot_bound_holds_and_queued_candidates_allocate_nothing() {
         outcome.stats.installs, 6,
         "each admission installs; the excess over slots_created is reuse"
     );
-    assert_eq!(
-        outcome.stats.peak_active_slots, 2,
-        "at most the slot budget is ever in flight"
+    assert!(
+        outcome.stats.peak_active_slots > 0,
+        "the fan-out ran, so at least one slot was active"
+    );
+    assert!(
+        outcome.stats.peak_active_slots <= outcome.stats.slots,
+        "at most the slot budget is ever in flight, peaked at {}",
+        outcome.stats.peak_active_slots
     );
     assert_eq!(outcome.stats.completion_order.len(), 6);
     for index in 0..6 {

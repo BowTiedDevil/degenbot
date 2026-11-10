@@ -1711,7 +1711,38 @@ env-inventory:
         -g '!**/degenbot_env_inventory.txt' \
         -g '!**/degenbot-config/tests/**' | sort -u > "$target"
     echo "✓ inventory snapshot refreshed: $target ($(wc -l < "$target") keys)"
-    echo '  then: cd rust && REGEN_CONFIG_DOCS=1 cargo test -p degenbot-config'
+    echo '  then: just gen-config-docs'
+
+# Regenerate the committed operator key reference (`docs/rust-config-keys.md`)
+# from the ONE schema authority (`SCHEMA` in
+# `rust/crates/foundation/degenbot-config/src/schema.rs`). The `doc_generation`
+# test renders the reference from the schema and compares the committed file
+# byte-for-byte, so a hand-edited row is a drift failure; its
+# `REGEN_CONFIG_DOCS=1` opt-in is the in-place write, and this recipe is the
+# place a caller names it. Never hand-edit the generated output.
+#
+# `just gen-config-docs --check` regenerates in memory and fails on any drift
+# without writing — the read-only gate form.
+#
+# live-invariant gate (ADR-087 D2): watches the committed `docs/rust-config-keys.md` against the schema render; not tripwire precedent.
+gen-config-docs check="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    check=0
+    case "{{ check }}" in
+        "") ;;
+        --check) check=1 ;;
+        *) echo "usage: just gen-config-docs [--check]" >&2; exit 2 ;;
+    esac
+    if [[ "$check" == 1 ]]; then
+        cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-config \
+            --test doc_generation -- committed_doc_matches_schema --exact --nocapture
+    else
+        REGEN_CONFIG_DOCS=1 cargo test --locked --manifest-path rust/Cargo.toml \
+            -p degenbot-config --test doc_generation -- \
+            committed_doc_matches_schema --exact --nocapture
+    fi
+
 
 # Install prek git hooks and configure template.
 # Run this once after cloning. Commit MESSAGE lint runs at commit time (low
@@ -1837,8 +1868,7 @@ check-cancel-safety:
 # `just gen-stubs --check` (used by tests/ffi/test_ffi_stub_drift.py)
 # generates into a temp dir and FAILS on any diff against the committed tree
 # without writing; `REGEN_STUBS=1` opts the check into writing, mirroring
-# `REGEN_CONFIG_DOCS=1 cargo test -p degenbot-config` (the REGEN pattern of
-# docs/rust-config-keys.md). No hand edits over generated output, ever:
+# `just gen-config-docs` (the REGEN pattern of docs/rust-config-keys.md). No hand edits over generated output, ever:
 # generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 #
 # live-invariant gate (ADR-087 D2): watches the committed `src/degenbot/_ffi/` stub tree against this generator's output; not tripwire precedent.

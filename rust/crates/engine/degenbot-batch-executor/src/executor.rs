@@ -23,6 +23,7 @@ use degenbot_arbitrage::{
 use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_simulation::sim::evm2::bal_capability::{probe_bal_capability, BalCapabilityError};
 use degenbot_submission::{
     dispatch_and_submit, Dispatcher, EnqueueOutcome, PathSuppression, PipelineFailure,
     ReceiptProbe, SimFuture, SimLeaf, SimSubmitPipeline, SubmissionLedger, SubmissionTarget,
@@ -686,10 +687,48 @@ impl BatchExecutor {
     /// constructs no executor has no consumer and requests nothing. Arming is a
     /// no-op when the cache carries no opt-in (the shipped posture), and it
     /// fetches nothing — it only hands the pipeline the driver it will use.
-    #[must_use]
-    pub fn new(config: ExecutorConfig) -> Self {
+    ///
+    /// # The ON startup capability probe
+    ///
+    /// With the opt-in ON, construction first proves the endpoint can serve the
+    /// CURRENT canonical head's block access list AND that this tree fully
+    /// decodes it (`probe_bal_capability`). Only a proven capability arms the
+    /// pipeline: a node serving neither official EIP-7928 representation would
+    /// otherwise turn every head `bal-unreadable` and quietly collapse the flag
+    /// to the legacy lane, so an unusable endpoint is a CONSTRUCTION error
+    /// instead. The probe reads the warm cache's opt-in under its guard and
+    /// releases it before any provider I/O; nothing is fetched while a lock is
+    /// held. OFF never probes: no header read and no BAL request, ever.
+    ///
+    /// # Errors
+    ///
+    /// [`BalCapabilityError`] when the opt-in is ON and the probe fails — an
+    /// unreadable head, an unreadable lineage, no COMPLETE canonical lineage at
+    /// the head number (no block there, or a header missing its hash or parent
+    /// hash), or a list that cannot be acquired or decoded. The error names the
+    /// remediation its own stage can act on: check the node's health /
+    /// canonical-header availability for a lineage failure; enable EIP-7928 BAL
+    /// RPC support on the endpoint or disable `simulation.delta_dispatch` for an
+    /// acquisition/decode failure.
+    ///
+    /// # Async
+    ///
+    /// Construction is `async` because the probe is real provider I/O: a
+    /// pure-Rust caller awaits it on its own runtime, whatever that runtime's
+    /// flavor. A SYNCHRONOUS caller (the Python adapter) drives it through
+    /// `degenbot_core::runtime::bridged_block_on`, the one home of the
+    /// sync-over-async boundary — the constructor itself never blocks a runtime.
+    pub async fn new(config: ExecutorConfig) -> Result<Self, BalCapabilityError> {
         if let Some(cache) = config.warm_cache.as_ref() {
-            cache.read().arm_bal_heads(&config.provider);
+            // The opt-in is a flag read: take it under the guard, then drop the
+            // guard for the probe's I/O.
+            let on = cache.read().delta_dispatch().is_some();
+            if on {
+                // Awaited on the caller's runtime: no bridge, no block-in-place,
+                // so a current-thread runtime is a supported caller.
+                probe_bal_capability(&config.provider).await?;
+                cache.read().arm_bal_heads(&config.provider);
+            }
         }
         let (outcome_tx, outcome_rx) = mpsc::unbounded_channel();
         let config = Arc::new(config);
@@ -697,14 +736,14 @@ impl BatchExecutor {
             config: Arc::clone(&config),
             outcome_tx: outcome_tx.downgrade(),
         });
-        Self::from_leaves(
+        Ok(Self::from_leaves(
             config.sim_concurrency,
             ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
             Arc::clone(&leaves) as Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
             Arc::clone(&leaves) as Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,
             outcome_tx,
             outcome_rx,
-        )
+        ))
     }
 
     /// A drain handle over the record stream (see [`BatchDrain`]).

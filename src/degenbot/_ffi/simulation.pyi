@@ -819,6 +819,15 @@ def build_batch_executor_py(
     post-target row ambiguous, and a deployment whose owner is not the session
     signer's account could not be signed for. Both are the core
     [`degenbot_arbitrage::DeploymentRegistry`]'s refusals, mapped here.
+
+    `RuntimeError` when `simulation.delta_dispatch` is ON and the startup BAL
+    capability probe refuses — the session never gets an executor, an armed
+    pipeline, or a batch. A LINEAGE failure (an unreadable head number, or a head
+    with no complete canonical lineage) names the endpoint's health and
+    canonical-header availability, because it never reached a BAL method; an
+    ACQUISITION/DECODE failure names both official methods and the remediation —
+    enable EIP-7928 BAL RPC support on the endpoint, or disable
+    `simulation.delta_dispatch`. An OFF session never probes.
     """
 
 def builtin_deployment_id() -> int:

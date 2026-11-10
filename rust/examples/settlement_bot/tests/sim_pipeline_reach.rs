@@ -159,7 +159,11 @@ async fn offline_executor(resolver: HashMap<u64, degenbot::execution::PathInfo>)
         },
     )
     .expect("the fixture's one-entry deployment registry is valid");
+    // The fixture's cache is OFF, so the startup BAL capability probe is not
+    // reached; the fallible, async constructor's `Result` is mechanical here.
     BatchExecutor::new(config)
+        .await
+        .expect("an OFF session's construction cannot be refused")
 }
 
 /// The executor reach claim: construct through the umbrella, enqueue one

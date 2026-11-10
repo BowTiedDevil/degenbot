@@ -50,6 +50,13 @@ pub use assembly::{
     RawRowClass,
 };
 pub use executor::{BatchDrain, BatchExecutor, BatchOutcomeSet, BatchWork, ExecutorConfig};
+
+/// The startup capability refusal [`BatchExecutor::new`] reports when the
+/// `simulation.delta_dispatch` opt-in is ON and the endpoint cannot prove BAL
+/// capability — an unreadable head or canonical lineage, or an access list that
+/// cannot be acquired and decoded
+/// ([`degenbot_simulation::sim::evm2::bal_capability`]).
+pub use degenbot_simulation::sim::evm2::bal_capability::BalCapabilityError;
 pub use policy::{ExecutorPolicy, ExecutorRuntime};
 pub use record::{
     AssemblyVerdict, BatchOutcome, FailureDetail, FailureKind, PathInfoView, SimReceipt,

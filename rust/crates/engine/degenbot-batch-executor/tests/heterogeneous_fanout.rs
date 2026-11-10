@@ -356,12 +356,12 @@ impl ReceiptProbe for NoopProbe {
 /// registered after the built-in deployment. `dry_run` is on: the submit
 /// orchestration plans, orders, and arbitrates every candidate, then skips the
 /// broadcast.
-fn executor(additional: Vec<Arc<SimulationDeployment>>) -> BatchExecutor {
-    executor_with(additional, TargetSelection::AllTargets)
+async fn executor(additional: Vec<Arc<SimulationDeployment>>) -> BatchExecutor {
+    executor_with(additional, TargetSelection::AllTargets).await
 }
 
 /// The same executor under a named target-selection policy.
-fn executor_with(
+async fn executor_with(
     additional: Vec<Arc<SimulationDeployment>>,
     selection: TargetSelection,
 ) -> BatchExecutor {
@@ -408,6 +408,8 @@ fn executor_with(
         ExecutorConfig::from_verdict(&verdict, runtime)
             .expect("the fixture's three distinct deployments compose a valid registry"),
     )
+    .await
+    .expect("this fixture's cache carries no BAL opt-in, so no capability probe can refuse")
 }
 
 fn work() -> BatchWork {
@@ -539,7 +541,8 @@ async fn one_path_becomes_one_candidate_per_registered_deployment() {
                 gross: GROSS_B,
             },
         ),
-    ]);
+    ])
+    .await;
     let (records, submit_records) = run_batch(&executor).await;
 
     // Deployment-major: the built-in lane first, then the two registered
@@ -683,7 +686,7 @@ async fn the_default_policy_executes_only_at_the_first_compatible_deployment() {
         None,
         None,
     ));
-    let executor = executor_with(vec![foreign], TargetSelection::FirstCompatible);
+    let executor = executor_with(vec![foreign], TargetSelection::FirstCompatible).await;
     let (records, submit_records) = run_batch(&executor).await;
 
     assert_eq!(
@@ -717,7 +720,7 @@ async fn the_default_policy_executes_only_at_the_first_compatible_deployment() {
 /// exactly as before the registry existed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_one_entry_registry_keeps_the_single_target_behavior() {
-    let executor = executor(Vec::new());
+    let executor = executor(Vec::new()).await;
     let (records, _submit_records) = run_batch(&executor).await;
     assert_eq!(
         records.len(),
@@ -747,7 +750,8 @@ async fn a_builtin_payload_row_rides_only_its_own_lane() {
             value: PREPAY_A,
             gross: GROSS_A,
         },
-    )]);
+    )])
+    .await;
     let mut work = work();
     work.payloads = vec![degenbot_batch_executor::PayloadRow {
         candidate_id: CandidateId::new(PATH_ID, ExecutorConfig::BUILTIN_DEPLOYMENT_ID),

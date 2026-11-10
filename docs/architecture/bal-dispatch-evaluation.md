@@ -423,14 +423,19 @@ are the epic's own ladder; this document does not re-derive them.
    KiB, and it is a replay.
 9. **The BAL source requires ONE of the two official EIP-7928 endpoints.** An
    endpoint serving neither `debug_getRawBlockAccessList` nor
-   `eth_getBlockAccessList` makes every head `bal-unreadable`, so the opt-in
-   collapses to the legacy lane — correctly, and at the cost of one failed
-   acquisition per head. There is no up-front probe and no in-flight wait. A
-   startup fail-fast check and a same-block readiness wait are future behaviour
-   this evaluation does not cover; the seam either of them would reuse is the
-   provider's `get_block_access_list` acquisition, which already reports the
-   same unsupported/closed classification per head, so a boot-time refusal needs
-   no new transport code.
+   `eth_getBlockAccessList` makes every head `bal-unreadable`, and the evaluation
+   itself ran without an up-front check. That startup fail-fast check now exists
+   (`probe_bal_capability` in
+   `rust/crates/engine/degenbot-simulation/src/sim/evm2/bal_capability.rs`): an
+   ON session's batch-executor construction resolves the current canonical head's
+   exact `(number, hash)` and acquires + fully decodes its list through the
+   shared `fetch_bal_seed` seam BEFORE arming the pipeline, so an unusable
+   endpoint is a construction error instead of a per-head `bal-unreadable`
+   collapse to the legacy lane. OFF stays request-free, and no new transport code
+   was needed: the probe is the provider's `get_block_access_list` acquisition
+   under the same unsupported/closed classification. There is still no in-flight
+   wait, and a same-block readiness wait remains future behaviour this evaluation
+   does not cover; the seam it would reuse is the same acquisition.
 10. **`MarketContext` installs the flag but consumes no generation.** It passes
     the warm cache to its per-block frame handle
     (`rust/crates/engine/degenbot-strategy/src/frame_pipeline.rs:561`), never

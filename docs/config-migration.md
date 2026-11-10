@@ -95,6 +95,16 @@ and `DegenbotDispatchStorageFallback` ([`ALERTS.md`](grafana/ALERTS.md)) pages
 when a cold fallback holds over half the fan-out rate for 10m. Off is the
 shipped posture: the legacy lane, and no BAL request anywhere.
 
+Turning it on requires a working BAL endpoint, and the check needs no new
+setting. An ON session's batch-executor construction proves, before it arms
+anything, that the node serves the CURRENT canonical head's list in either
+official representation and that this build fully decodes it; it refuses to start
+otherwise rather than collapsing silently to the legacy lane. The key-by-key
+contract — including which failures name the node's health and canonical headers
+and which name the BAL remediation — is the generated
+[`rust-config-keys.md`](rust-config-keys.md) row for `simulation.delta_dispatch`.
+OFF issues no probe, no header read, and no BAL request.
+
 The flag is the whole switch: there is no retention knob and no readiness knob.
 On, the session's one driver keeps a **fixed eight-block idle window**
 (`Retention::IdleBlocks(8)`, the measured policy) at the default fold depth. An

@@ -563,6 +563,15 @@ impl PyBatchExecutor {
 /// post-target row ambiguous, and a deployment whose owner is not the session
 /// signer's account could not be signed for. Both are the core
 /// [`degenbot_arbitrage::DeploymentRegistry`]'s refusals, mapped here.
+///
+/// `RuntimeError` when `simulation.delta_dispatch` is ON and the startup BAL
+/// capability probe refuses — the session never gets an executor, an armed
+/// pipeline, or a batch. A LINEAGE failure (an unreadable head number, or a head
+/// with no complete canonical lineage) names the endpoint's health and
+/// canonical-header availability, because it never reached a BAL method; an
+/// ACQUISITION/DECODE failure names both official methods and the remediation —
+/// enable EIP-7928 BAL RPC support on the endpoint, or disable
+/// `simulation.delta_dispatch`. An OFF session never probes.
 #[pyfunction]
 #[pyo3(signature = (
     context,
@@ -692,13 +701,21 @@ pub fn build_batch_executor_py(
         }
     }
 
-    // The core constructor spawns the ordered submit loop, so it must run
-    // inside the shared ambient runtime (the Python event-loop thread is not
-    // itself in a tokio context).
-    let executor = {
-        let _guard = crate::runtime::get_runtime().enter();
-        Arc::new(BatchExecutor::new(config))
-    };
+    // The core constructor is `async` (with the opt-in ON it runs the startup
+    // BAL capability probe, real provider I/O) and spawns the ordered submit
+    // loop, which needs a runtime context. This seam is SYNCHRONOUS, so it is
+    // the one place the bridge belongs: `bridged_block_on` drives the future on
+    // the shared ambient runtime and owns the in-runtime hazard (the Python
+    // event-loop thread is not itself in a tokio context). The probe's refusal
+    // is the driver's `RuntimeError`, and the session never gets an executor, an
+    // armed pipeline, or a batch.
+    let executor = Arc::new(
+        crate::runtime::bridged_block_on(BatchExecutor::new(config)).map_err(|error| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "the batch executor could not start: {error}"
+            ))
+        })?,
+    );
     Ok(PyBatchExecutor {
         executor,
         dispatcher: dispatcher.inner_arc(),

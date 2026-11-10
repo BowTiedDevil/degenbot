@@ -209,10 +209,14 @@ async fn offline_executor() -> Arc<BatchExecutor> {
         extra_broadcast: Vec::new(),
         target: SubmissionTarget::Public,
     };
-    Arc::new(BatchExecutor::new(
-        ExecutorConfig::from_verdict(&verdict, runtime)
-            .expect("the fixture's one-entry deployment registry is valid"),
-    ))
+    Arc::new(
+        BatchExecutor::new(
+            ExecutorConfig::from_verdict(&verdict, runtime)
+                .expect("the fixture's one-entry deployment registry is valid"),
+        )
+        .await
+        .expect("this fixture constructs no warm cache, so no capability probe can refuse"),
+    )
 }
 
 fn block_notification(oracle: &Value, name: &str) -> BlockNotification {
