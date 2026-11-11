@@ -1,7 +1,11 @@
 #![expect(
     clippy::print_stdout,
     clippy::print_stderr,
-    reason = "a live probe prints its report and fails loudly on a broken fixture"
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a live probe prints its report, and the shared chain stub and capture \
+              fixtures it includes fail loudly on a broken fixture"
 )]
 
 //! The canonical-head lifecycle probe: real mainnet heads driven through
@@ -11,7 +15,8 @@
 //!
 //! # What is driven
 //!
-//! Two legs, both reading the node's canonical chain through real headers:
+//! Three legs. The first two read the node's canonical chain through real
+//! headers:
 //!
 //! - the HISTORICAL leg ([`BAL_HEAD_FIRST`](Config::from_env) ..
 //!   [`BAL_HEAD_LAST`](Config::from_env), default `26375033..=26375053`): blocks
@@ -19,15 +24,32 @@
 //!   the node's own cold list work and a repeated request pays its cache;
 //! - the FRESH-HEAD leg ([`BAL_HEAD_FRESH`](Config::from_env), default `6`): the
 //!   most recent canonical heads, whose lists reth precomputes as it processes
-//!   each block, so a first request is already warm.
+//!   each block, so a first request is already warm. `BAL_HEAD_FRESH=0` DISABLES
+//!   the leg: it selects no head and asks the node for no tip head at all.
 //!
-//! For every head the probe delivers it, proves the delivered head is COLD (its
-//! generation carries nothing — no parent value is served before the list
+//! The third is offline by construction:
+//!
+//! - the WAITER leg ([`BAL_HEAD_WAIT_SAMPLES`](Config::from_env), default `21`,
+//!   the capture's own stretch): the committed capture's heads over the chain
+//!   stub's controllably deferred transport — deliver, a CLAIMED advance parked on
+//!   the closed gate, a [`wait_for_head`](BalHeadDriver::wait_for_head) registered
+//!   on that live attempt, then the release. It reports the wait's resolution NET
+//!   of the prepare wall it overlapped, which the two live legs cannot see: a
+//!   same-block caller joins the head's preparation, and what it pays after that
+//!   preparation finishes is the settle, the wake, and its own re-read.
+//!
+//! For every live head the probe delivers it, proves the delivered head is COLD
+//! (its generation carries nothing — no parent value is served before the list
 //! applies), fetches and decodes the list, applies it, and reports the two stage
 //! walls plus the report the apply produced. Every identity the block's list
 //! wrote is then read through the SETTLED generation and compared against an
 //! independent cold read at the same anchor; any mismatch is a hard failure, as
 //! is any head that served a carried value before its apply.
+//!
+//! The historical leg's apply wall is the WHOLE [`driver.apply`](BalHeadDriver::apply)
+//! — the driver lock, the snapshot transition, and any compaction it pays — and
+//! the waiter leg's number is a real wait resolution over a transport this probe
+//! opens and closes, never a stand-in for one.
 //!
 //! # What this cannot prove
 //!
@@ -36,11 +58,18 @@
 //! what its generation answers, not how a candidate's wall time would change.
 //! No timing is asserted anywhere; the numbers are the report.
 //!
+//! The waiter leg dials no node: its heads, hashes, lists, and relevance set are
+//! the committed capture's, and its transport is the offline chain stub. It
+//! measures the lifecycle's settle/wake path, not a real block's list work — the
+//! historical leg owns that.
+//!
 //! # Usage
 //!
 //! ```sh
 //! just bal-head-lifecycle-probe
+//! BAL_HEAD_FRESH=0 BAL_HEAD_FIRST=26375033 BAL_HEAD_LAST=26375053 just bal-head-lifecycle-probe
 //! BAL_HEAD_FIRST=26382028 BAL_HEAD_LAST=26382051 BAL_HEAD_FRESH=6 just bal-head-lifecycle-probe
+//! BAL_HEAD_WAIT_SAMPLES=0 just bal-head-lifecycle-probe
 //! ```
 
 use std::time::{Duration, Instant};
@@ -48,6 +77,14 @@ use std::time::{Duration, Instant};
 use alloy::primitives::{Address, B256, U256};
 
 use degenbot_rpc::provider::AlloyProvider;
+#[path = "shared/chain_stub.rs"]
+#[expect(dead_code)]
+mod chain_stub;
+#[path = "shared/head_legs.rs"]
+mod head_legs;
+#[path = "shared/modeled_chain.rs"]
+#[expect(dead_code)]
+mod modeled_chain;
 #[path = "shared/real_coverage.rs"]
 #[expect(dead_code)]
 mod real_coverage;
@@ -55,6 +92,7 @@ use degenbot_simulation::sim::evm2::delta_snapshot::{
     BalHeadDriver, DeltaReport, HeadOutcome, HeadReadiness,
 };
 use degenbot_simulation::sim::ReadAnchor;
+use head_legs::{fresh_heads, percentile, waiter_leg, WaiterChain, WaiterSample};
 use real_coverage::RealCoverage;
 
 /// The default historical stretch: the committed carry probe's own 21 blocks.
@@ -63,6 +101,16 @@ const LAST_BLOCK: u64 = 26_375_053;
 
 /// The default fresh-head sample size.
 const FRESH_HEADS: u64 = 6;
+
+/// The default waiter-leg sample size: the committed capture's own stretch, so
+/// the leg walks every head that capture recorded. Capped by the capture.
+const WAIT_SAMPLES: u64 = 21;
+
+/// The default parked window each waiter sample waits out on the closed
+/// transport gate: long enough that the wait's registration is observable well
+/// before its notification, and neutral in the reported difference because it
+/// lands inside the wait and inside the prepare alike.
+const WAIT_HOLD_MS: u64 = 20;
 
 /// The prepare-wall thresholds the wait cost is reported against.
 const DEADLINES_MS: &[u64] = &[25, 100, 500, 1_000, 2_000];
@@ -166,6 +214,8 @@ struct Config {
     first: u64,
     last: u64,
     fresh: u64,
+    wait_samples: u64,
+    wait_hold: Duration,
 }
 
 impl Config {
@@ -175,7 +225,19 @@ impl Config {
             first: env_count("BAL_HEAD_FIRST", FIRST_BLOCK),
             last: env_count("BAL_HEAD_LAST", LAST_BLOCK),
             fresh: env_count("BAL_HEAD_FRESH", FRESH_HEADS),
+            wait_samples: env_count("BAL_HEAD_WAIT_SAMPLES", WAIT_SAMPLES),
+            wait_hold: Duration::from_millis(env_count("BAL_HEAD_WAIT_HOLD_MS", WAIT_HOLD_MS)),
         })
+    }
+}
+
+/// What the fresh knob asks for, as the header line states it: a zero sample
+/// size is the leg's OFF switch, not a window over the tip head.
+fn fresh_label(fresh: u64) -> String {
+    if fresh == 0 {
+        "disabled (BAL_HEAD_FRESH=0)".to_string()
+    } else {
+        format!("{fresh} heads")
     }
 }
 
@@ -187,18 +249,6 @@ async fn header(provider: &AlloyProvider, number: u64) -> Result<(B256, B256), S
         .map_err(|error| format!("get_block({number}): {error}"))?
         .ok_or_else(|| format!("no canonical block at {number}"))?;
     Ok((block.header.hash, block.header.inner.parent_hash))
-}
-
-/// A percentile of a duration series (nearest-rank over a sorted copy);
-/// `percent` in 1..=100.
-fn percentile(series: &[Duration], percent: usize) -> Duration {
-    let mut sorted = series.to_vec();
-    sorted.sort_unstable();
-    if sorted.is_empty() {
-        return Duration::ZERO;
-    }
-    let rank = (sorted.len() * percent).div_ceil(100).max(1);
-    sorted[rank.min(sorted.len()) - 1]
 }
 
 /// The outcome's one-word shape, for the table.
@@ -341,6 +391,9 @@ async fn historical_leg(
 
 /// The fresh-head leg: the most recent canonical heads, whose lists reth
 /// precomputed with the block.
+///
+/// A zero sample size returns here, BEFORE the tip head is selected or fetched:
+/// the disabled leg walks no head and dials nothing.
 async fn fresh_leg(
     config: &Config,
     driver: &BalHeadDriver,
@@ -348,16 +401,78 @@ async fn fresh_leg(
     relevance: &[Address],
     rows: &mut Vec<Row>,
 ) -> Result<(), String> {
-    let head = cold
-        .get_block_number()
-        .await
-        .map_err(|error| format!("eth_blockNumber: {error}"))?;
-    let first = head.saturating_sub(config.fresh.saturating_sub(1));
-    for number in first..=head {
+    let heads = fresh_heads(config.fresh, || async {
+        cold.get_block_number()
+            .await
+            .map_err(|error| format!("eth_blockNumber: {error}"))
+    })
+    .await?;
+    for number in heads {
         let row = walk_head(driver, cold, Leg::Fresh, number, relevance).await?;
         rows.push(row);
     }
     Ok(())
+}
+
+/// The waiter leg: one claimed advance per captured head over the deferred
+/// transport, with the wait that joined it.
+async fn wait_leg(config: &Config) -> Result<Vec<WaiterSample>, String> {
+    if config.wait_samples == 0 {
+        return Ok(Vec::new());
+    }
+    let chain = WaiterChain::load(RELEVANCE_CAPTURE, config.wait_samples)?;
+    let driver = BalHeadDriver::new(&chain.provider());
+    waiter_leg(&driver, &chain, config.wait_hold).await
+}
+
+/// The waiter leg's report: the wait's resolution against the prepare wall it
+/// overlapped, per head and in summary. The prepare is reported once, by the
+/// live legs; here it is only the wall the wait's own number is measured
+/// against.
+fn print_waiter(samples: &[WaiterSample], enabled: bool) {
+    println!();
+    if samples.is_empty() {
+        if enabled {
+            println!("waiter leg: no sample resolved (the leg failed above)");
+        } else {
+            println!("waiter leg: disabled (BAL_HEAD_WAIT_SAMPLES=0) — no wait was measured");
+        }
+        return;
+    }
+    let waits: Vec<Duration> = samples.iter().map(|sample| sample.wait).collect();
+    let prepares: Vec<Duration> = samples.iter().map(|sample| sample.prepare).collect();
+    let nets: Vec<Duration> = samples.iter().map(|sample| sample.net).collect();
+    let hold = samples.first().map_or(Duration::ZERO, |sample| sample.hold);
+    println!(
+        "waiter leg: {} heads, one claimed advance each over the deferred transport \
+         ({hold:?} parked), every wait resolved on its settle",
+        samples.len()
+    );
+    println!(
+        "  {:>8}  {:<11} {:>11} {:>11} {:>11}",
+        "head", "answered", "wait", "prepare", "resolve"
+    );
+    for sample in samples {
+        println!(
+            "  {:>8}  {:<11} {:>11.2?} {:>11.2?} {:>11.2?}",
+            sample.head, sample.readiness, sample.wait, sample.prepare, sample.net
+        );
+    }
+    println!(
+        "  prepare:  p50 {:.2?}  p95 {:.2?}  (the advance's own fetch and decode wall)",
+        percentile(&prepares, 50),
+        percentile(&prepares, 95)
+    );
+    println!(
+        "  wait:     p50 {:.2?}  p95 {:.2?}  (wait_for_head, registration to terminal answer)",
+        percentile(&waits, 50),
+        percentile(&waits, 95)
+    );
+    println!(
+        "  resolve:  p50 {:.2?}  p95 {:.2?}  (wait net of the prepare wall it overlapped)",
+        percentile(&nets, 50),
+        percentile(&nets, 95)
+    );
 }
 
 /// Per-leg walls and readiness: the measured prepare walls a same-block
@@ -406,7 +521,13 @@ fn print_leg(leg: Leg, rows: &[Row]) {
     println!();
 }
 
-fn main_body(rows: &[Row], mismatches: &[String], elapsed: Duration) -> Result<(), String> {
+fn main_body(
+    rows: &[Row],
+    waits: &[WaiterSample],
+    waiter_enabled: bool,
+    mismatches: &[String],
+    elapsed: Duration,
+) -> Result<(), String> {
     println!();
     println!(
         "  {:>8}  {:<9} {:<44} {:>8} {:>7} {:>9} {:>10} {:>10} {:>10} {:>9}",
@@ -438,6 +559,7 @@ fn main_body(rows: &[Row], mismatches: &[String], elapsed: Duration) -> Result<(
     }
     print_leg(Leg::Historical, rows);
     print_leg(Leg::Fresh, rows);
+    print_waiter(waits, waiter_enabled);
     println!();
     println!("total wall {elapsed:.2?} (timing is reported, never asserted)");
     if mismatches.is_empty() {
@@ -464,8 +586,12 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|error| format!("eth_chainId: {error}"))?;
     println!(
-        "node: {} (chain {chain_id}); historical {}..={}, fresh {} heads",
-        config.url, config.first, config.last, config.fresh
+        "node: {} (chain {chain_id}); historical {}..={}, fresh {}, waiter {} samples",
+        config.url,
+        config.first,
+        config.last,
+        fresh_label(config.fresh),
+        config.wait_samples
     );
     println!(
         "prepare walls are reported as observations, never asserted: a same-block caller joins \
@@ -489,7 +615,20 @@ async fn run() -> Result<(), String> {
             failures.push(error);
         }
     }
-    main_body(&rows, &failures, started.elapsed())
+    // The waiter leg owns its own driver over the offline chain stub: no node is
+    // dialled, and the fresh knob says nothing about it.
+    let mut waits = Vec::new();
+    match wait_leg(&config).await {
+        Ok(samples) => waits = samples,
+        Err(error) => failures.push(error),
+    }
+    main_body(
+        &rows,
+        &waits,
+        config.wait_samples != 0,
+        &failures,
+        started.elapsed(),
+    )
 }
 
 #[tokio::main]

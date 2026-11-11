@@ -571,14 +571,31 @@ bal-real-read-oracle-probe *ARGS:
 # request pays its cold list work, and the last `BAL_HEAD_FRESH` (default `6`)
 # canonical heads, whose lists reth precomputes with the block. Each head's
 # prepare wall is also reported against the readiness deadlines (25ms/100ms/
-# 500ms/1s/2s) as the fallback count a caller would have taken. Timing is
-# reported, never asserted; any settled value that disagrees with the cold read,
-# and any head that served a carried value before its apply, fails the run
-# (nonzero exit). `BAL_HEAD_PLANT_DIVERGENCE=1` is the negative probe: a one-wei
-# skew armed on the settled value the comparison reads, which it must catch.
-# Fails closed unless the machine DECLARES an endpoint (the conftest layers, the
-# same resolution `test-fork` probes). Measurements:
-# `logs/bal_head_lifecycle_result.md`.
+# 500ms/1s/2s) as the fallback count a caller would have taken. A third, offline
+# leg reports the WAIT: `BAL_HEAD_WAIT_SAMPLES` (default `21`, the committed
+# capture's own stretch) heads from the real-coverage capture, each with a
+# CLAIMED advance parked on the chain stub's controllably deferred transport and
+# a `wait_for_head` registered on that live attempt, reporting the wait's
+# resolution NET of the prepare wall it overlapped, with p50/p95 — the settle and
+# wake a same-block caller pays after the preparation it joined finishes.
+# Timing is reported, never asserted; any settled value that disagrees with the
+# cold read, and any head that served a carried value before its apply, fails the
+# run (nonzero exit). `BAL_HEAD_FRESH=0` disables the fresh-head leg entirely: it
+# selects no tip head and fetches no list (the pinned pre-migration baseline
+# invocation). `BAL_HEAD_WAIT_HOLD_MS` (default `20`) is the parked window each
+# waiter sample waits out; it lands inside the wait and inside the prepare alike,
+# so it cancels out of the reported resolution. `BAL_HEAD_PLANT_DIVERGENCE=1` is
+# the negative probe: a one-wei skew armed on the settled value the comparison
+# reads, which it must catch. Fails closed unless the machine DECLARES an
+# endpoint (the conftest layers, the same resolution `test-fork` probes).
+# Measurements: `logs/bal_head_lifecycle_result.md`.
+#
+# The BAL head-lifecycle representation comparison reads exactly two numbers
+# from this recipe: the historical leg's `apply:` p50/p95 line and the waiter
+# leg's `resolve:` p50/p95 line, before and after the state-machine migration,
+# at the pinned invocation
+# `BAL_HEAD_FRESH=0 BAL_HEAD_FIRST=26375033 BAL_HEAD_LAST=26375053`.
+
 bal-head-lifecycle-probe *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
