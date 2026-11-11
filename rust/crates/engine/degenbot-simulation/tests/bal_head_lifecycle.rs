@@ -2281,3 +2281,599 @@ async fn a_later_explicit_retry_settles_the_head_for_new_callers_only() {
     );
     assert_eq!(stub.bal_requests(), 1, "the retry fetched exactly once");
 }
+
+// ── Terminal completion is scoped to one preparation CLAIM ATTEMPT ────────
+//
+// A head is delivered once but can be claimed more than once: a dropped
+// (cancelled) advance releases its claim and a retry prepares the same anchor
+// again. Each attempt owns its waiters' terminal answer, so abandoning attempt N
+// stays `abandoned` for the waiters that joined it even when attempt N+1 settles
+// (is superseded, or is cancelled itself) before those waiters poll. The later
+// attempt's result is the CURRENT attempt's completion, never a rewrite of an
+// abandonment already decided.
+
+/// Regression: abandon attempt N, settle attempt N+1 on the same anchor, and
+/// poll attempt N's waiter only after that settle. The waiter still resolves
+/// `abandoned` at its exact anchor carrying nothing, while `completion(anchor)`
+/// reports the current attempt's `settled` and the snapshot is ready.
+#[tokio::test]
+async fn an_abandoned_claims_waiter_resolves_abandoned_even_when_the_retry_settles_first() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(2u64), 9);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(
+        child_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
+    );
+    let driver = BalHeadDriver::new(&provider);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+    driver
+        .snapshot(identified(HEIGHT, parent_hash))
+        .hub
+        .read_storage(address(0x11), U256::from(2u64))
+        .await
+        .expect("the stub answers");
+    stub.clear();
+    stub.defer_bal();
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    let mut cancelled = Box::pin(driver.advance(ticket, &[]));
+    assert!(
+        cancelled
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "attempt N's preparation is in flight"
+    );
+    let mut abandoned = Box::pin(driver.wait_for_head(anchor));
+    assert!(
+        abandoned
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "the waiter joins attempt N's live claim, not the bare anchor"
+    );
+
+    // Attempt N ends without applying; its waiter is deliberately left unpolled.
+    drop(cancelled);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Abandoned),
+        "attempt N publishes its own abandonment"
+    );
+    assert_eq!(
+        driver.deliver(anchor, parent_hash),
+        ticket,
+        "an abandonment mints no new public delivery: the retry reuses this ticket's seq"
+    );
+
+    // Attempt N+1 claims the same head at the same public seq and settles the
+    // anchor before attempt N's waiter polls.
+    stub.release_bal();
+    let retried = tokio::time::timeout(Duration::from_secs(5), driver.advance(ticket, &[]))
+        .await
+        .expect("the retry settles");
+    settled(&retried);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Settled),
+        "the CURRENT attempt's completion is its own settle"
+    );
+    assert_eq!(driver.snapshot(anchor).readiness, HeadReadiness::Ready);
+
+    let view = tokio::time::timeout(Duration::from_secs(5), abandoned)
+        .await
+        .expect("attempt N's waiter wakes on attempt N's end, not on the retry's");
+    assert_eq!(
+        view.readiness,
+        HeadReadiness::Cold(HeadCold::Abandoned),
+        "attempt N's abandonment is terminal for attempt N's waiters"
+    );
+    assert_eq!(
+        view.hub.snapshot_value(address(0x11), U256::from(2u64)),
+        None,
+        "the abandoned answer carries no parent value"
+    );
+    assert_eq!(
+        view.hub.snapshot_value(address(0x11), U256::from(1u64)),
+        None,
+        "nor the retry's generation write"
+    );
+}
+
+/// A repeat delivery of the live preparation reuses its claim attempt: the
+/// waiter already registered on it still resolves from the one settle, a waiter
+/// arriving after the repeat joins that same attempt, and the public ticket is
+/// unchanged — one fetch, one attempt, one terminal result.
+#[tokio::test]
+async fn a_repeat_delivery_of_a_live_preparation_reuses_its_claim_attempt_and_waiters() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+    stub.clear();
+    stub.defer_bal();
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    let mut prepare = Box::pin(driver.advance(ticket, &[]));
+    assert!(prepare
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    let mut joined_before = Box::pin(driver.wait_for_head(anchor));
+    assert!(joined_before
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+
+    assert_eq!(
+        driver.deliver(anchor, parent_hash),
+        ticket,
+        "the repeat delivery mints no new public ticket"
+    );
+    assert_eq!(
+        driver.stats().repeated,
+        1,
+        "the repeat is counted as a repeat delivery, not a delivery"
+    );
+
+    // A waiter arriving AFTER the repeat joins the same attempt — the repeat
+    // minted no second epoch, so both waiters wake on the one settle below.
+    let mut joined_after = Box::pin(driver.wait_for_head(anchor));
+    assert!(joined_after
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+
+    stub.release_bal();
+    let (outcome, before, after) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(prepare, joined_before, joined_after)
+    })
+    .await
+    .expect("the one attempt's settle wakes every waiter it owns");
+    settled(&outcome);
+    for view in [&before, &after] {
+        assert_eq!(view.readiness, HeadReadiness::Ready);
+    }
+    assert!(
+        Arc::ptr_eq(&before.hub, &after.hub),
+        "both waiters read the one settled generation"
+    );
+    assert_eq!(driver.completion(anchor), Some(HeadCompletion::Settled));
+    assert_eq!(
+        stub.bal_requests(),
+        1,
+        "the repeat delivery duplicated no fetch"
+    );
+}
+
+/// A cancelled retry is terminal for its own waiters: aborting attempt N leaves
+/// its waiter `abandoned`, attempt N+1 claims the same anchor with its own
+/// waiter, and aborting that leaves the second waiter `abandoned` too — each
+/// attempt publishing on its own epoch, and the current attempt's abandonment
+/// visible through `completion(anchor)`.
+#[tokio::test]
+async fn a_cancelled_retry_is_terminal_for_its_own_waiters() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+    stub.clear();
+    stub.defer_bal();
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    let mut first = Box::pin(driver.advance(ticket, &[]));
+    assert!(first
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    let mut first_waiter = Box::pin(driver.wait_for_head(anchor));
+    assert!(first_waiter
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    drop(first);
+
+    // The retry claims the same head; the gate is still armed, so attempt N+1 is
+    // genuinely in flight when its waiter joins it.
+    let mut retry = Box::pin(driver.advance(ticket, &[]));
+    assert!(retry
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    let mut second_waiter = Box::pin(driver.wait_for_head(anchor));
+    assert!(second_waiter
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    drop(retry);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Abandoned),
+        "the current attempt's own abandonment is what completion reports"
+    );
+
+    let (one, two) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(first_waiter, second_waiter)
+    })
+    .await
+    .expect("each attempt's end wakes its own waiters");
+    for view in [&one, &two] {
+        assert_eq!(view.readiness, HeadReadiness::Cold(HeadCold::Abandoned));
+    }
+    assert_eq!(
+        stub.bal_requests(),
+        0,
+        "neither attempt's fetch answered: both ended abandoned"
+    );
+}
+
+/// An apply keyed to the head's public ticket settles the CURRENT attempt: a
+/// caller that prepared the list out of band applies it while a retry holds the
+/// claim, the retry's waiter wakes to the settle, and the abandoned attempt's
+/// waiter keeps its abandonment — the released attempt's claim publishes nothing
+/// over the attempt that owns the head.
+#[tokio::test]
+async fn an_apply_settles_the_current_attempt_and_never_rewrites_an_earlier_abandonment() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    // The out-of-band list, prepared before the fetch gate arms.
+    stub.clear();
+    let prepared = PreparedBal::prepare(&provider, anchor).await;
+    stub.defer_bal();
+
+    let mut cancelled = Box::pin(driver.advance(ticket, &[]));
+    assert!(cancelled
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    let mut abandoned = Box::pin(driver.wait_for_head(anchor));
+    assert!(abandoned
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    drop(cancelled);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Abandoned),
+        "attempt N ended abandoned"
+    );
+
+    // Attempt N+1 claims the head and parks on the gate; its waiter joins it.
+    let mut retry = Box::pin(driver.advance(ticket, &[]));
+    assert!(retry
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    let mut current = Box::pin(driver.wait_for_head(anchor));
+    assert!(current
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+
+    // The out-of-band apply lands while attempt N+1 is still live: the shared
+    // public ticket settles the head, and the settle belongs to the CURRENT
+    // attempt.
+    let outcome = driver.apply(ticket, &prepared, &[]);
+    assert!(
+        matches!(outcome, HeadOutcome::Settled(_)),
+        "the shared ticket applies: {outcome:?}"
+    );
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Settled),
+        "the settle is the current attempt's completion"
+    );
+    let current_view = tokio::time::timeout(Duration::from_secs(5), current)
+        .await
+        .expect("the current attempt's waiter wakes on the settle");
+    assert_eq!(current_view.readiness, HeadReadiness::Ready);
+    let abandoned_view = tokio::time::timeout(Duration::from_secs(5), abandoned)
+        .await
+        .expect("the abandoned attempt's waiter wakes on its own end");
+    assert_eq!(
+        abandoned_view.readiness,
+        HeadReadiness::Cold(HeadCold::Abandoned),
+        "the settle never rewrites the abandonment attempt N published"
+    );
+
+    // The retry's own fetch still lands and installs nothing.
+    stub.release_bal();
+    let late = tokio::time::timeout(Duration::from_secs(5), retry)
+        .await
+        .expect("the retry's fetch resolves");
+    assert_eq!(
+        late,
+        HeadOutcome::AlreadySettled,
+        "a settled head is idempotent for the attempt that arrives late"
+    );
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Settled),
+        "the released attempt publishes nothing over the settle"
+    );
+    assert_eq!(
+        stub.bal_requests(),
+        2,
+        "one out-of-band prepare and one retry fetch; the cancelled attempt never answered"
+    );
+}
+
+/// A supersession while a retry owns the head is the CURRENT attempt's end: the
+/// retry's waiter resolves `superseded`, the abandoned attempt's waiter keeps
+/// its `abandoned`, and the delivery that replaced the head writes neither
+/// attempt's terminal answer over another's.
+#[tokio::test]
+async fn a_supersession_of_a_retried_attempt_leaves_the_earlier_abandonment_terminal() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    let replacement = B256::new([0xb2; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    stub.serve_bal_at(replacement, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+    stub.clear();
+    stub.defer_bal();
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    let mut first = Box::pin(driver.advance(ticket, &[]));
+    assert!(first
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    let mut abandoned = Box::pin(driver.wait_for_head(anchor));
+    assert!(abandoned
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    drop(first);
+
+    let mut retry = Box::pin(driver.advance(ticket, &[]));
+    assert!(retry
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    let mut superseded = Box::pin(driver.wait_for_head(anchor));
+    assert!(superseded
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+
+    // A same-height replacement supersedes the retried head.
+    driver.deliver(identified(HEIGHT + 1, replacement), parent_hash);
+    let superseded_view = tokio::time::timeout(Duration::from_secs(5), superseded)
+        .await
+        .expect("the supersession wakes the current attempt's waiter");
+    assert_eq!(
+        superseded_view.readiness,
+        HeadReadiness::Cold(HeadCold::Superseded)
+    );
+    let abandoned_view = tokio::time::timeout(Duration::from_secs(5), abandoned)
+        .await
+        .expect("the abandoned attempt's waiter wakes on its own end");
+    assert_eq!(
+        abandoned_view.readiness,
+        HeadReadiness::Cold(HeadCold::Abandoned),
+        "the replacement supersedes the current attempt, never the abandonment already published"
+    );
+    assert_eq!(
+        driver.snapshot(anchor).readiness,
+        HeadReadiness::Cold(HeadCold::Superseded)
+    );
+    drop(retry);
+}
+
+/// Regression: attempt N is abandoned, then the SAME anchor arrives again with a
+/// DIFFERENT parent — a new head identity — before any retry advance touches
+/// attempt N. The redelivery supersedes the head attempt N held, but a
+/// supersession is not a second terminal for an attempt that already ended: the
+/// waiter that joined attempt N still resolves `abandoned`, while the
+/// replacement head carries its own attempt, its own completion and its own
+/// lifecycle.
+#[tokio::test]
+async fn a_redelivery_with_a_different_parent_never_rewrites_an_abandoned_attempt() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    let alternate_parent = B256::new([0xab; 32]);
+    stub.serve_bal_at(
+        child_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
+    );
+    let driver = BalHeadDriver::new(&provider);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+    stub.clear();
+    stub.defer_bal();
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    let mut cancelled = Box::pin(driver.advance(ticket, &[]));
+    assert!(
+        cancelled
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "attempt N's preparation is in flight"
+    );
+    let mut abandoned = Box::pin(driver.wait_for_head(anchor));
+    assert!(
+        abandoned
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "the waiter joins attempt N's live claim, not the bare anchor"
+    );
+
+    // Attempt N ends without applying; its waiter is deliberately left unpolled.
+    drop(cancelled);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Abandoned),
+        "attempt N publishes its own abandonment"
+    );
+
+    // The same anchor arrives again with a DIFFERENT parent, before any retry
+    // advance: a distinct head identity, so it mints a new public ticket — and
+    // its delivery supersedes the head attempt N held.
+    let replacement = driver.deliver(anchor, alternate_parent);
+    assert_ne!(
+        replacement, ticket,
+        "a different parent is a different delivery, not a repeat"
+    );
+
+    // The replacement owns its own attempt and its own lifecycle: one fetch, one
+    // settle, and its own completion on the head it replaced attempt N on.
+    stub.release_bal();
+    let replacement_outcome =
+        tokio::time::timeout(Duration::from_secs(5), driver.advance(replacement, &[]))
+            .await
+            .expect("the replacement's preparation resolves");
+    settled(&replacement_outcome);
+    assert_eq!(
+        driver.delivered(),
+        Some(anchor),
+        "the replacement head is the driver's current one"
+    );
+    assert_eq!(
+        driver.installed(),
+        Some(anchor),
+        "the replacement's own apply installed its anchor"
+    );
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Settled),
+        "the CURRENT attempt's completion is the replacement's settle"
+    );
+    let replacement_view = driver.snapshot(anchor);
+    assert_ne!(
+        replacement_view.readiness,
+        HeadReadiness::Cold(HeadCold::Abandoned),
+        "the replacement's lifecycle is not an abandonment"
+    );
+
+    let view = tokio::time::timeout(Duration::from_secs(5), abandoned)
+        .await
+        .expect("attempt N's waiter wakes on attempt N's end");
+    assert_eq!(
+        view.readiness,
+        HeadReadiness::Cold(HeadCold::Abandoned),
+        "a supersession after the abandonment is not attempt N's terminal result"
+    );
+}
+
+/// Regression: attempt N is abandoned and NO retry ever claims the head. An
+/// out-of-band apply on the head's own public ticket settles that head anyway,
+/// so the settled truth has to reach the head's CURRENT completion: the settle
+/// mints a fresh private claim epoch/channel — the public `seq` is unchanged —
+/// instead of rewriting the abandonment attempt N published, which stays
+/// attempt N's waiters' answer.
+#[tokio::test]
+async fn an_out_of_band_apply_settles_an_abandoned_heads_current_completion() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    // The out-of-band list, prepared before the fetch gate arms.
+    stub.clear();
+    let prepared = PreparedBal::prepare(&provider, anchor).await;
+    stub.defer_bal();
+
+    let mut cancelled = Box::pin(driver.advance(ticket, &[]));
+    assert!(cancelled
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    let mut abandoned = Box::pin(driver.wait_for_head(anchor));
+    assert!(
+        abandoned
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "the waiter joins attempt N's live claim, not the bare anchor"
+    );
+
+    // Attempt N ends without applying, and no retry claims the head: its current
+    // claim is a non-live attempt that already published its end, and its waiter
+    // is deliberately left unpolled.
+    drop(cancelled);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Abandoned),
+        "attempt N publishes its own abandonment"
+    );
+
+    // The head settles out of band — no retry advance, no live claim.
+    let outcome = driver.apply(ticket, &prepared, &[]);
+    assert!(
+        matches!(outcome, HeadOutcome::Settled(_)),
+        "the abandoned head still applies: {outcome:?}"
+    );
+    assert_eq!(
+        driver.installed(),
+        Some(anchor),
+        "the settle installed the generation it applied"
+    );
+    assert_eq!(driver.snapshot(anchor).readiness, HeadReadiness::Ready);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Settled),
+        "the settled truth is the head's CURRENT completion, not attempt N's end"
+    );
+    assert_eq!(
+        driver.deliver(anchor, parent_hash),
+        ticket,
+        "the settlement minted no new public delivery: the ticket's seq is unchanged"
+    );
+
+    let mut late = Box::pin(driver.wait_for_head(anchor));
+    let late_view = match late.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(view) => view,
+        Poll::Pending => panic!("a settled head resolves a new wait immediately"),
+    };
+    assert_eq!(late_view.readiness, HeadReadiness::Ready);
+
+    let view = tokio::time::timeout(Duration::from_secs(5), abandoned)
+        .await
+        .expect("attempt N's waiter wakes on attempt N's end");
+    assert_eq!(
+        view.readiness,
+        HeadReadiness::Cold(HeadCold::Abandoned),
+        "the settle never rewrites the abandonment attempt N published"
+    );
+}

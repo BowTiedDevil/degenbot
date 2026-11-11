@@ -167,16 +167,19 @@
 //! A caller that wants the head's SETTLED answer joins that existing
 //! preparation instead of falling back while it runs:
 //! [`BalHeadDriver::wait_for_head`] registers on the exact `(anchor, seq)`
-//! generation — while its preparation is genuinely live — and waits for its
-//! per-head completion notification ([`HeadCompletion`]), then re-reads the
-//! exact anchor. The wait is bounded by real outcomes, never by a wall clock:
+//! generation's current preparation attempt — while it is genuinely live — and
+//! waits for that attempt's completion notification ([`HeadCompletion`]), then
+//! re-reads the exact anchor. Completion is scoped to the ATTEMPT: a retry after
+//! an abandoned attempt mints its own private epoch, so abandoning attempt N
+//! stays terminal for N's waiters even when N+1 settles the same anchor before
+//! they poll. The wait is bounded by real outcomes, never by a wall clock:
 //! a settle (a provider failure settling cold included), a supersession, or
 //! the preparation's abandonment — a generation no live preparation owns
 //! answers [`HeadCold::Abandoned`] and the caller takes its fallback lane, so
 //! nothing is ever parked on a preparation that is gone. The wait fetches
 //! nothing, claims nothing, and holds no lock across it. Every terminal path
 //! wakes its waiters, so no registration is stranded, and many waiters share
-//! one head's one completion.
+//! one attempt's one completion.
 //!
 //! Two costs are deliberate and visible. The provisional generation is cold, so
 //! whatever it settles before the apply is dropped with it — a candidate that
@@ -1722,18 +1725,26 @@ pub enum HeadOutcome {
     },
 }
 
-/// The per-head completion notification's terminal result: what one
-/// `(anchor, seq)` generation's waiters are woken with.
+/// One preparation CLAIM ATTEMPT's terminal result: what the waiters that
+/// joined that attempt are woken with.
 ///
-/// A generation reaches exactly one of these, and reaching one is what ends
-/// every wait registered on it ([`BalHeadDriver::wait_for_head`]): the head
-/// settled, a later delivery replaced it, or the preparation that owned it
-/// ended without applying. The first two re-read the exact anchor for the
-/// settled truth; `Abandoned` is itself the wait's terminal answer — the
-/// generation has no live preparation left to settle it — so its waiters
-/// resolve [`HeadCold::Abandoned`] instead of registering for one. A later
-/// explicit retry may still settle the head for NEW callers; a wait that
-/// already resolved is never retroactively changed.
+/// Completion is scoped to the attempt, not to the head, because a head can be
+/// claimed more than once: a dropped (cancelled) advance releases its claim and
+/// a retry prepares the same anchor again. An attempt reaches exactly one of
+/// these, and reaching one is what ends every wait registered on it
+/// ([`BalHeadDriver::wait_for_head`]): the head settled, a later delivery
+/// replaced it, or the preparation that owned the attempt ended without
+/// applying. The first two re-read the exact anchor for the settled truth;
+/// `Abandoned` is itself the wait's terminal answer — the attempt has no live
+/// preparation left to settle it — so its waiters resolve
+/// [`HeadCold::Abandoned`] instead of registering for one. Reaching one is
+/// final for that attempt — first terminal wins, for every variant — so a
+/// transition that arrives afterwards (the delivery that supersedes the head an
+/// abandoned attempt held included) never rewrites what the attempt already
+/// published. A retry publishes on its own private epoch, so it settles the head
+/// for NEW callers and for its own waiters while the abandonment an earlier
+/// attempt published stays that attempt's waiters' answer: a wait that already
+/// resolved is never retroactively changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadCompletion {
     /// The head's own list applied to its exact anchor — carried or cold. The
@@ -1772,41 +1783,133 @@ pub struct HeadStats {
     pub cold_views: u64,
 }
 
+/// One preparation claim attempt on one head — the private identity a wait is
+/// registered against.
+///
+/// A head is delivered once but can be claimed more than once: a dropped
+/// (cancelled) advance releases its claim and a later caller prepares the same
+/// anchor again. Completion is therefore scoped to the attempt, not the head: a
+/// fresh attempt mints its own epoch and its own completion channel, so a retry
+/// publishes on ITS channel and can never rewrite an abandonment an earlier
+/// attempt's waiters have not polled yet. Neither the epoch nor the channel is
+/// public — the ticket's `seq` is the only sequencing a caller sees, and a retry
+/// reuses it.
+struct Claim {
+    /// Distinguishes same-anchor attempts. `0` is the claim a delivery itself
+    /// owns, which no caller has taken; every taken attempt mints a larger
+    /// epoch, and the epoch is what keeps a released attempt's publication off
+    /// a later attempt's channel.
+    epoch: u64,
+    /// This attempt's terminal result, `None` until the attempt ends: the one
+    /// channel every waiter that joined THIS attempt is woken on.
+    completion: watch::Sender<Option<HeadCompletion>>,
+    /// Whether a caller currently owns the attempt — the genuinely-live state a
+    /// wait registers on. `false` means no preparation is in flight for this
+    /// attempt, so a wait resolves terminal instead of parking.
+    live: bool,
+}
+
+impl Claim {
+    /// The delivery's own claim: no caller owns it and nothing is published.
+    fn delivered() -> Self {
+        let (completion, _) = watch::channel(None);
+        Self {
+            epoch: 0,
+            completion,
+            live: false,
+        }
+    }
+
+    /// A fresh attempt's claim at `epoch`: its own channel, so the attempt's
+    /// terminal result is its own.
+    fn minted(epoch: u64) -> Self {
+        let (completion, _) = watch::channel(None);
+        Self {
+            epoch,
+            completion,
+            live: true,
+        }
+    }
+
+    /// The claim a head's settled truth is published on when the attempt that
+    /// owned the head already ended: `live` is already `false` and the terminal
+    /// result is published at creation, because nothing is left to prepare.
+    fn settled(epoch: u64) -> Self {
+        let (completion, _) = watch::channel(Some(HeadCompletion::Settled));
+        Self {
+            epoch,
+            completion,
+            live: false,
+        }
+    }
+
+    /// Publish the head's settled truth on this head's CURRENT claim.
+    ///
+    /// The ordinary settle publishes on the claim that did the work — the live
+    /// attempt that prepared the head, or the delivery's own epoch-0 claim — and
+    /// that claim's waiters wake to it.
+    ///
+    /// A head can also settle while its current claim is an attempt that already
+    /// ended: an out-of-band [`BalHeadDriver::apply`] on the head's ticket can
+    /// land after the attempt that claimed the head was dropped, before any
+    /// retry claims it. That attempt published `Abandoned`, and an attempt's
+    /// terminal result is never rewritten, so the settled truth mints a FRESH
+    /// private epoch and channel instead: the head's current completion is its
+    /// settle, a new wait resolves the settled generation, and the abandoned
+    /// attempt's waiters keep the abandonment they were woken with. Only the
+    /// private epoch moves — the public ticket's `seq` is untouched, so no
+    /// caller sees a new generation.
+    ///
+    /// An ordinary live-claim settle, a delivery's unsettled epoch-0 claim, and a
+    /// head that is already settled all publish on the claim they already have:
+    /// nothing was abandoned, so no new epoch is minted.
+    fn settle(&mut self, next_epoch: &mut u64) {
+        let ended_abandoned = !self.live
+            && self.epoch != 0
+            && matches!(*self.completion.borrow(), Some(HeadCompletion::Abandoned));
+        if ended_abandoned {
+            *next_epoch = next_epoch.saturating_add(1);
+            *self = Self::settled(*next_epoch);
+            return;
+        }
+        self.live = false;
+        self.complete(HeadCompletion::Settled);
+    }
+
+    /// Publish this attempt's terminal result — FIRST TERMINAL WINS, for every
+    /// variant.
+    ///
+    /// One attempt reaches exactly one terminal answer, and the first one
+    /// published is what the waiters that joined the attempt are woken with. A
+    /// later publication for the SAME attempt is dropped, whichever variant it
+    /// carries: a settle is not rewritten by the claim's release, a released
+    /// attempt's abandonment is not rewritten by the delivery that supersedes
+    /// the head it held, and a supersession is not rewritten by the release
+    /// that follows it. Nothing needs to republish over its own attempt — a
+    /// retry mints a new claim with its own epoch and channel and publishes
+    /// there, so a later attempt's real terminal never depends on overwriting
+    /// an earlier attempt's.
+    fn complete(&self, completion: HeadCompletion) {
+        if self.completion.borrow().is_none() {
+            self.completion.send_replace(Some(completion));
+        }
+    }
+}
+
 /// One canonical head's delivery state.
 struct DeliveredHead {
     anchor: ReadAnchor,
     parent_hash: B256,
     seq: u64,
-    /// The per-head completion notification: the terminal result every waiter
-    /// on this `(anchor, seq)` generation is woken with.
-    completion: watch::Sender<Option<HeadCompletion>>,
+    /// The claim attempt this head's waiters join. A retry after an abandoned
+    /// attempt replaces it wholesale, which is what entitles the retry to its
+    /// own terminal result without touching the one already published.
+    claim: Claim,
     /// The cold generation callers read while the head is unprepared, dropped
     /// at settle so the settled generation replaces it wholesale.
     provisional: Option<Arc<DeltaHub>>,
     /// The report this driver's apply produced, once the head settled.
     report: Option<Arc<DeltaReport>>,
-    /// Whether a caller already owns this head's preparation — the
-    /// genuinely-live state a wait registers on; `false` means no preparation
-    /// is in flight, so a wait resolves instead of parking.
-    preparing: bool,
-}
-
-impl DeliveredHead {
-    /// Publish this generation's terminal result: a real terminal (the head's
-    /// own settle, or its supersession) is the last word and is never
-    /// rewritten, while a dropped claim's abandonment publishes over anything
-    /// but a real terminal — a previous abandonment included — so every
-    /// claim's own waiters wake to its end.
-    fn complete(&self, completion: HeadCompletion) {
-        let published = *self.completion.borrow();
-        let already_terminal = matches!(
-            published,
-            Some(HeadCompletion::Settled | HeadCompletion::Superseded)
-        );
-        if !already_terminal {
-            self.completion.send_replace(Some(completion));
-        }
-    }
 }
 
 #[derive(Default)]
@@ -1831,6 +1934,9 @@ struct DriverState {
     /// empty handle-local map — not one snapshot.
     previous: Option<(ReadAnchor, Arc<DeltaHub>, HeadReadiness)>,
     seq: u64,
+    /// The epoch the next preparation claim attempt mints. Private: public
+    /// sequencing is the delivery `seq`, which a retry reuses.
+    claim_epoch: u64,
     stats: HeadStats,
 }
 
@@ -1972,20 +2078,20 @@ impl BalHeadDriver {
             }
             // The replaced generation is terminal for its waiters: the wake is
             // what makes a stale registration resolve instead of sleeping
-            // through its own abandonment.
-            previous.complete(HeadCompletion::Superseded);
+            // through its own abandonment. An attempt that already published
+            // its own end keeps it — this supersession is the HEAD's transition,
+            // not a second terminal for that attempt.
+            previous.claim.complete(HeadCompletion::Superseded);
             state.superseded = Some(previous.anchor);
         }
         state.stats.delivered = state.stats.delivered.saturating_add(1);
-        let (completion, _) = watch::channel(None);
         let head = DeliveredHead {
             anchor,
             parent_hash,
             seq,
-            completion,
+            claim: Claim::delivered(),
             provisional,
             report: None,
-            preparing: false,
         };
         if installed {
             state.stats.already_current = state.stats.already_current.saturating_add(1);
@@ -2000,7 +2106,7 @@ impl BalHeadDriver {
             state.installed = Some((anchor, readiness));
             // A delivery of an installed block settles on the spot: its
             // generation is terminal the moment it exists.
-            head.complete(HeadCompletion::Settled);
+            head.claim.complete(HeadCompletion::Settled);
         }
         state.head = Some(head);
         HeadTicket { anchor, seq }
@@ -2023,6 +2129,15 @@ impl BalHeadDriver {
     /// holds and the list was prepared at that same exact anchor; a superseded
     /// ticket and a foreign list install nothing. A head that is already settled
     /// is idempotent: nothing moves and no write is re-applied.
+    ///
+    /// A successful apply settles the head's CURRENT claim attempt, which is what
+    /// [`Self::completion`] and a new [`Self::wait_for_head`] report: a live
+    /// attempt publishes its own settle, while a head whose attempt was dropped
+    /// (cancelled) before it settled — no retry holding the head, so an apply can
+    /// land on a head whose only claim already ended — publishes the settle on a
+    /// FRESH private attempt epoch, leaving that abandonment as its own waiters'
+    /// answer. The replacement is not public sequencing: the ticket's `seq` is
+    /// unchanged and no caller sees a new generation.
     pub fn apply(
         &self,
         ticket: HeadTicket,
@@ -2069,9 +2184,13 @@ impl BalHeadDriver {
         }
         if self.cache.anchor() == Some(current) {
             // The head is already installed — this apply found it settled:
-            // its generation is terminal and its waiters wake.
-            if let Some(head) = state.head.as_mut() {
-                head.complete(HeadCompletion::Settled);
+            // its generation is terminal and its waiters wake on the head's
+            // current claim.
+            let DriverState {
+                head, claim_epoch, ..
+            } = &mut *state;
+            if let Some(head) = head.as_mut() {
+                head.claim.settle(claim_epoch);
             }
             return HeadOutcome::AlreadySettled;
         }
@@ -2111,11 +2230,16 @@ impl BalHeadDriver {
             CarryOutcome::AlreadyCurrent => {}
         }
         state.installed = Some((anchor, settled_readiness(Some(&report))));
-        if let Some(head) = state.head.as_mut() {
+        let DriverState {
+            head, claim_epoch, ..
+        } = &mut *state;
+        if let Some(head) = head.as_mut() {
             head.provisional = None;
             head.report = Some(Arc::clone(&report));
-            head.preparing = false;
-            head.complete(HeadCompletion::Settled);
+            // The settle is the head's CURRENT claim's terminal result: the
+            // attempt that just applied, or a fresh private attempt epoch when
+            // the claim that owned the head already ended abandoned.
+            head.claim.settle(claim_epoch);
         }
         HeadOutcome::Settled(report)
     }
@@ -2148,9 +2272,12 @@ impl BalHeadDriver {
     where
         F: FnOnce() -> Arc<RelevanceSet>,
     {
-        {
+        let epoch = {
             let mut state = self.state.lock();
-            let Some(head) = state.head.as_mut() else {
+            let DriverState {
+                head, claim_epoch, ..
+            } = &mut *state;
+            let Some(head) = head.as_mut() else {
                 return HeadOutcome::Superseded {
                     head: ticket.anchor,
                 };
@@ -2161,14 +2288,21 @@ impl BalHeadDriver {
             if self.cache.anchor() == Some(head.anchor) {
                 return HeadOutcome::AlreadySettled;
             }
-            if head.preparing {
+            if head.claim.live {
                 return HeadOutcome::InFlight;
             }
-            head.preparing = true;
-        }
+            // A fresh attempt on the same head: its own private epoch and
+            // channel, so its terminal result can never overwrite the one the
+            // attempt it replaces published. The public ticket is untouched —
+            // the retry prepares the same head identity at the same `seq`.
+            *claim_epoch = claim_epoch.saturating_add(1);
+            head.claim = Claim::minted(*claim_epoch);
+            *claim_epoch
+        };
         let claim = PrepareClaim {
             driver: self,
             seq: ticket.seq,
+            epoch,
         };
         let prepared = self.prepare(ticket).await;
         // The relevance is read HERE: after the fetch landed, before the
@@ -2299,9 +2433,19 @@ impl BalHeadDriver {
         self.state.lock().stats
     }
 
-    /// The terminal result the driver published for the head at `anchor`,
-    /// when the head it holds is that one and it has published one — the
-    /// per-head completion notification's value, readable without waiting.
+    /// The terminal result the CURRENT claim attempt on `anchor` published, when
+    /// the head the driver holds is that one and that attempt has published one
+    /// — the completion channel behind [`Self::wait_for_head`], readable without
+    /// waiting.
+    ///
+    /// A head claimed again after an abandonment answers with the new attempt's
+    /// result once that attempt ends (`None` while it is undecided), so an
+    /// abandonment an earlier attempt published stays that attempt's waiters'
+    /// answer without being the head's current one. An out-of-band
+    /// [`Self::apply`] that settles the head without any retry claims it answers
+    /// `Settled` the same way: the settle mints a fresh private attempt epoch on
+    /// the same public ticket, because the head's current claim moves to the
+    /// settled truth rather than the abandonment being rewritten.
     #[must_use]
     pub fn completion(&self, anchor: ReadAnchor) -> Option<HeadCompletion> {
         let state = self.state.lock();
@@ -2309,7 +2453,7 @@ impl BalHeadDriver {
         if head.anchor != anchor {
             return None;
         }
-        let published = *head.completion.borrow();
+        let published = *head.claim.completion.borrow();
         published
     }
 
@@ -2317,19 +2461,23 @@ impl BalHeadDriver {
     /// deterministic wait a same-block caller joins the head's EXISTING
     /// preparation with (see the module docs).
     ///
-    /// The wait registers on the exact `(anchor, seq)` generation — only while
-    /// that generation's preparation is genuinely live — and resolves on the
-    /// generation's per-head completion notification, then RE-READS the exact
-    /// anchor. The returned view is never [`HeadCold::Unprepared`] and never
-    /// parks without a live owner: a settle answers the settled generation
-    /// ([`HeadReadiness::Ready`]) or the settled-cold reason, a supersession
-    /// answers [`HeadCold::Superseded`], and a generation no live preparation
-    /// owns — dropped mid-flight, or delivered and never claimed — answers
-    /// [`HeadCold::Abandoned`] at that exact anchor, decided once and never
-    /// retroactively changed by a later retry. It fetches nothing, claims
-    /// nothing, applies nothing, and holds no lock across the wait; many
-    /// waiters share one head's one completion, and dropping one wait cancels
-    /// nothing. The wait ends on those real outcomes — never on a wall clock.
+    /// The wait registers on the exact `(anchor, seq)` generation's CURRENT
+    /// claim attempt — only while that attempt's preparation is genuinely live —
+    /// and resolves on that attempt's completion notification, then RE-READS the
+    /// exact anchor. Completion is attempt-scoped, so a retry that settles the
+    /// same anchor never rewrites the abandonment this wait joined: the
+    /// abandonment is terminal for the attempt that published it, and the
+    /// retry's settle is the next attempt's result. The returned view is never
+    /// [`HeadCold::Unprepared`] and never parks without a live owner: a settle
+    /// answers the settled generation ([`HeadReadiness::Ready`]) or the
+    /// settled-cold reason, a supersession answers [`HeadCold::Superseded`], and
+    /// a generation no live preparation owns — dropped mid-flight, or delivered
+    /// and never claimed — answers [`HeadCold::Abandoned`] at that exact anchor,
+    /// decided once and never retroactively changed by a later retry. It fetches
+    /// nothing, claims nothing, applies nothing, and holds no lock across the
+    /// wait; many waiters share one attempt's one completion, and dropping one
+    /// wait cancels nothing. The wait ends on those real outcomes — never on a
+    /// wall clock.
     pub async fn wait_for_head(&self, anchor: ReadAnchor) -> HeadView {
         loop {
             let registered = {
@@ -2388,13 +2536,13 @@ impl BalHeadDriver {
     /// The wait registration for `anchor`, under the state lock:
     /// [`Option::None`] when no LIVE preparation owns the exact anchor's
     /// unsettled generation — it settled, it is not the driver's current head
-    /// any more, or nothing has claimed it — otherwise the live claim's
+    /// any more, or nothing has claimed it — otherwise the live attempt's own
     /// completion signal.
     ///
-    /// Subscribing is reserved for a genuinely live preparation
-    /// ([`DeliveredHead::preparing`]): a delivered head nothing claimed yet,
-    /// and a head whose claim was dropped, have no future notification worth
-    /// waiting for, so the wait answers terminal instead of parking.
+    /// Subscribing is reserved for a genuinely live attempt ([`Claim::live`]): a
+    /// delivered head nothing claimed yet, and a head whose claim was dropped,
+    /// have no future notification worth waiting for, so the wait answers
+    /// terminal instead of parking.
     fn registration(
         cache: &DeltaSnapshotCache,
         state: &DriverState,
@@ -2404,32 +2552,39 @@ impl BalHeadDriver {
             return None;
         }
         let head = state.head.as_ref()?;
-        if head.anchor != anchor || !head.preparing {
+        if head.anchor != anchor || !head.claim.live {
             return None;
         }
-        Some(head.completion.subscribe())
+        Some(head.claim.completion.subscribe())
     }
 }
 
-/// The ownership of one head's preparation: dropping it — a cancelled advance
-/// included — releases the claim so a later call prepares that head normally.
+/// The ownership of one head's preparation ATTEMPT: dropping it — a cancelled
+/// advance included — releases the claim so a later call prepares that head
+/// normally.
 struct PrepareClaim<'a> {
     driver: &'a BalHeadDriver,
     seq: u64,
+    /// The attempt this claim took. A released attempt publishes only on its own
+    /// epoch's channel, so it can never write over the attempt that replaced it.
+    epoch: u64,
 }
 
 impl Drop for PrepareClaim<'_> {
     fn drop(&mut self) {
         let mut state = self.driver.state.lock();
-        if let Some(head) = state.head.as_mut() {
-            if head.seq == self.seq {
-                head.preparing = false;
-                // The claim's end is terminal for this generation's waiters:
-                // they wake to the abandoned cold answer instead of sleeping
-                // through a preparation that is gone.
-                head.complete(HeadCompletion::Abandoned);
-            }
+        let Some(head) = state.head.as_mut() else {
+            return;
+        };
+        if head.seq != self.seq || head.claim.epoch != self.epoch {
+            return;
         }
+        head.claim.live = false;
+        // The attempt's end is terminal for the waiters that joined it: they
+        // wake to the abandoned cold answer instead of sleeping through a
+        // preparation that is gone. Any terminal this attempt already published
+        // is its last word and stays.
+        head.claim.complete(HeadCompletion::Abandoned);
     }
 }
 

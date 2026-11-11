@@ -109,12 +109,20 @@ Readiness, retention and endpoint facts:
   result** (post-evaluation change, after `cfaf61199`). The same-block
   readiness wait this evaluation's limit 9 called future behaviour has since
   landed: the dispatch selection joins the head's EXISTING preparation through
-  the driver's per-head completion notification and re-reads the exact anchor
-  after the settle. The wait ends on real outcomes — a settle (carried or cold,
-  a provider failure included), a supersession, or the preparation's
-  abandonment — never on a timer, and a generation no live preparation owns
-  resolves terminal `abandoned` at that exact anchor instead of parking. The
-  fallback labels are `abandoned`, `superseded`, `undelivered`,
+  the driver's per-claim-attempt completion notification and re-reads the exact
+  anchor after the settle. Completion is scoped to the preparation ATTEMPT, not
+  the head: a head can be claimed again after a cancelled advance, and each
+  claim owns its waiters' one terminal answer, so an abandoned attempt's waiters
+  still resolve `abandoned` even when the retry settles the same anchor first.
+  A settle that lands on a head whose claim already ended (an out-of-band apply
+  before any retry) publishes on a fresh private attempt epoch, so the head's
+  current completion is that settle while the ended attempt's waiters keep their
+  `abandoned`; the ticket's `seq` never moves.
+  The wait ends on real outcomes — a settle (carried or cold, a provider failure
+  included), a supersession, or the preparation's abandonment — never on a
+  timer, and a generation no live preparation owns resolves terminal
+  `abandoned` at that exact anchor instead of parking. The fallback labels are
+  `abandoned`, `superseded`, `undelivered`,
   `lineage-refused`, `bal-unreadable`, `settled`, `lineage-unreadable` —
   `abandoned` means the head's preparation did not reach a BAL verdict and the
   fan-out used the legacy lane — and a fan-out one block behind the head still
@@ -453,8 +461,11 @@ are the epic's own ladder; this document does not re-derive them.
    under the same unsupported/closed classification. The same-block readiness
    wait this evaluation did not cover has since landed (post-evaluation
    change): a fan-out at the exact in-flight head joins the pipeline's
-   preparation through the driver's per-head completion notification and
-   re-reads the exact anchor after the settle — see the readiness facts above.
+   preparation through the driver's per-claim-attempt completion notification
+   and re-reads the exact anchor after the settle — see the readiness facts
+   above. The wait joins the attempt that is currently live on the head, so a
+   retry after an abandonment serves its own waiters without rewriting the
+   answer the abandoned attempt already gave.
 10. **`MarketContext` installs the flag but consumes no generation.** It passes
     the warm cache to its per-block frame handle
     (`rust/crates/engine/degenbot-strategy/src/frame_pipeline.rs:561`), never
