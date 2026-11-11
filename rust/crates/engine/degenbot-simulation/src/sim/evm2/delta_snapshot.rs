@@ -142,6 +142,13 @@
 //! or cold-and-settled when the lineage refused or the list could not be read
 //! (the two ways the synchronous control also settles cold).
 //!
+//! Readiness is decided ONCE, by the settle that produced it. Delivering a head
+//! whose anchor is already installed (a reorg back to the installed block)
+//! repeats no transition and therefore keeps that generation's settle-derived
+//! readiness: a head that settled cold answers cold with its exact reason after
+//! the redelivery too, never `Ready`. A caller's diagnostic line and its metric
+//! labels therefore never claim a carry that did not happen.
+//!
 //! Three fences keep a late or wrong response out of the snapshot: the prepared
 //! list must carry the ticket's exact anchor ([`HeadOutcome::Foreign`]), the
 //! ticket must still be the driver's head ([`HeadOutcome::Superseded`]), and the
@@ -1934,9 +1941,12 @@ impl BalHeadDriver {
     /// A delivery identical to the current head — same anchor and same parent
     /// hash — is idempotent: the same ticket comes back and nothing is minted. A
     /// delivery of a head whose anchor the cache already has installed settles on
-    /// the spot without any BAL work (a reorg back to the installed block).
-    /// Everything else minted a cold generation that callers at that head read
-    /// until [`Self::apply`] lands.
+    /// the spot without any BAL work (a reorg back to the installed block), and
+    /// answers that generation with the readiness its own settle derived, so a
+    /// head that settled cold stays cold with its reason instead of being
+    /// restated as [`HeadReadiness::Ready`] — a redelivery repeats no transition,
+    /// so it cannot restate one. Everything else minted a cold generation that
+    /// callers at that head read until [`Self::apply`] lands.
     pub fn deliver(&self, anchor: ReadAnchor, parent_hash: B256) -> HeadTicket {
         let mut state = self.state.lock();
         let repeated = state
@@ -1979,7 +1989,15 @@ impl BalHeadDriver {
         };
         if installed {
             state.stats.already_current = state.stats.already_current.saturating_add(1);
-            state.installed = Some((anchor, HeadReadiness::Ready));
+            // The readiness the installed generation's own settle derived — the
+            // same record `snapshot` reads — so a redelivery restates no
+            // transition it did not perform.
+            let readiness = state
+                .installed
+                .as_ref()
+                .filter(|(settled, _)| *settled == anchor)
+                .map_or(HeadReadiness::Ready, |(_, readiness)| readiness.clone());
+            state.installed = Some((anchor, readiness));
             // A delivery of an installed block settles on the spot: its
             // generation is terminal the moment it exists.
             head.complete(HeadCompletion::Settled);

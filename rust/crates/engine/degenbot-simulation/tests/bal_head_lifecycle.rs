@@ -816,26 +816,34 @@ async fn a_delivery_of_the_installed_head_settles_without_bal_work() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let parent_hash = B256::new([0xaa; 32]);
-    let other_hash = B256::new([0xbb; 32]);
-    stub.serve_bal_at(other_hash, bal_bytes(&[]));
+    let child_hash = B256::new([0xbb; 32]);
+    let other_hash = B256::new([0xcc; 32]);
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
     let driver = BalHeadDriver::new(&provider);
 
+    // A linked pair: the child carries the parent's generation, so the child is
+    // the installed head whose own settle made it ready.
     let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
     driver.advance(parent_ticket, &[]).await;
+    let child_ticket = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash);
+    settled(&driver.advance(child_ticket, &[]).await);
     stub.clear();
 
     // A head above the installed one is delivered and abandoned before it
     // settles: the installed block is the head the stream returns to.
-    let _abandoned = driver.deliver(identified(HEIGHT + 1, other_hash), parent_hash);
-    let back = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    let _abandoned = driver.deliver(identified(HEIGHT + 2, other_hash), child_hash);
+    let back = driver.deliver(identified(HEIGHT + 1, child_hash), parent_hash);
     assert_eq!(
         driver.stats().already_current,
         1,
         "the installed head settles on delivery"
     );
     assert_eq!(
-        driver.snapshot(identified(HEIGHT, parent_hash)).readiness,
-        HeadReadiness::Ready
+        driver
+            .snapshot(identified(HEIGHT + 1, child_hash))
+            .readiness,
+        HeadReadiness::Ready,
+        "a ready generation keeps answering ready"
     );
     assert_eq!(
         driver.advance(back, &[]).await,
@@ -843,6 +851,96 @@ async fn a_delivery_of_the_installed_head_settles_without_bal_work() {
         "nothing to prepare for an installed head"
     );
     assert_eq!(stub.bal_requests(), 0, "no BAL work at all");
+}
+
+/// A redelivered installed head keeps the readiness its own settle derived: a
+/// generation that settled COLD still reports its cold reason after the stream
+/// delivers that same installed anchor again, because a redelivery repeats no
+/// transition and therefore cannot substitute `Ready` for the one that happened.
+#[tokio::test]
+async fn a_redelivered_installed_cold_head_keeps_its_settle_derived_readiness() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xaa; 32]);
+    let cold_hash = B256::new([0xbb; 32]);
+    let later_hash = B256::new([0xcc; 32]);
+    stub.serve_bal_at(cold_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+
+    // Two blocks above the installed generation: the lineage cannot carry, so
+    // the head installs cold with that refusal as its readiness.
+    let cold_anchor = identified(HEIGHT + 2, cold_hash);
+    let cold_ticket = driver.deliver(cold_anchor, B256::new([0xfe; 32]));
+    let report = settled(&driver.advance(cold_ticket, &[]).await);
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Cold {
+            lineage: Some(CarryRefusal::NotConsecutive),
+            bal: None,
+        }
+    );
+    let cold_readiness = HeadReadiness::Cold(HeadCold::Settled {
+        lineage: Some(CarryRefusal::NotConsecutive),
+        bal: None,
+    });
+    let settled_view = driver.snapshot(cold_anchor);
+    assert_eq!(settled_view.readiness, cold_readiness);
+    assert_eq!(
+        settled_view.hub.snapshot_len(),
+        0,
+        "a settled-cold head carries nothing"
+    );
+
+    // The stream moves on and then returns to the installed cold block: the
+    // redelivery names the same anchor with another parent hash, so it is a
+    // real delivery — not the idempotent repeat — that answers the installed
+    // generation on the spot.
+    let _abandoned = driver.deliver(identified(HEIGHT + 3, later_hash), cold_hash);
+    stub.clear();
+    let back = driver.deliver(cold_anchor, genesis());
+    assert_eq!(driver.stats().repeated, 0, "the redelivery is not a repeat");
+    assert_eq!(
+        driver.stats().already_current,
+        1,
+        "the redelivery answers the installed generation on the spot"
+    );
+    assert_eq!(driver.stats().delivered, 4, "a real delivery was counted");
+    assert_eq!(stub.bal_requests(), 0, "the redelivery fetched nothing");
+
+    let before = driver.stats();
+    let view = driver.snapshot(cold_anchor);
+    assert_eq!(
+        view.readiness, cold_readiness,
+        "the redelivery keeps the settle-derived cold reason, never `Ready`"
+    );
+    assert!(
+        Arc::ptr_eq(&view.hub, &settled_view.hub),
+        "the redelivery answers the same installed cold generation"
+    );
+    assert_eq!(view.hub.snapshot_len(), 0, "still carrying nothing");
+    assert_eq!(
+        driver.installed(),
+        Some(cold_anchor),
+        "no other generation was installed"
+    );
+    assert_eq!(
+        driver.stats().cold_views,
+        before.cold_views + 1,
+        "the view at the redelivered cold anchor is a cold view"
+    );
+    assert_eq!(
+        driver.stats().ready_views,
+        before.ready_views,
+        "no view at the cold anchor became ready"
+    );
+    assert_eq!(
+        driver.advance(back, &[]).await,
+        HeadOutcome::AlreadySettled,
+        "nothing to prepare for an installed head"
+    );
 }
 
 /// A cancelled preparation installs nothing and releases the claim: the head is
