@@ -31,8 +31,8 @@ use scaling::{
     corpus, read_identity, run, Leg, Point, ScriptedWord, EXECUTOR, NONZERO_WORD, READ_SLOT,
 };
 
-/// Two fan-out sizes: one candidate, and one larger than the production cap so
-/// the cap's own effect is inside the slice.
+/// Two fan-out sizes — one candidate and four, both below the production cap —
+/// pinning the matrix's semantics on a small slice.
 const COUNTS: [usize; 2] = [1, 4];
 
 /// The zero-latency model: the CPU/scheduler/wire-construction cost alone.
@@ -220,6 +220,71 @@ fn every_leg_of_a_point_produces_the_same_candidate_verdicts() {
             assert_eq!(run.fail_buckets, reference.fail_buckets);
             assert_eq!(run.verdicts, reference.verdicts);
         }
+    }
+}
+
+#[test]
+fn a_planted_one_word_divergence_in_the_delta_generation_fails_the_parity_check() {
+    // The parity surface is only an oracle if it can go red: the delta
+    // generation's list is planted at the OTHER scripted word for the
+    // candidate's read identity while the chain serves the point's own, so the
+    // delta lane must answer the planted word and the legacy lane the chain's —
+    // a difference the matrix's own parity check has to report.
+    for chain_word in ScriptedWord::ALL {
+        let control = scaling::planted_divergence(COUNTS[1], chain_word, ZERO)
+            .expect("the scripted chain settles the planted heads");
+        let planted = chain_word.other();
+        let off = control
+            .point
+            .leg(Leg::OffLegacy)
+            .first()
+            .copied()
+            .expect("the legacy reference ran");
+        let ready = control
+            .point
+            .leg(Leg::ReadyCurrent)
+            .first()
+            .copied()
+            .expect("the planted leg ran");
+        assert_eq!(control.chain_word, chain_word);
+        assert_eq!(control.planted_word, planted);
+        // The plant reached the generation: the settled list serves the planted
+        // word at the read identity, not the chain's.
+        assert!(control.plant_applied, "chain word {}", chain_word.label());
+        assert_eq!(
+            ready
+                .generation
+                .as_ref()
+                .expect("a settled generation")
+                .read_value,
+            Some(planted.value())
+        );
+        // The matrix's own parity check reports the divergence.
+        assert!(
+            control.divergence_detected,
+            "chain word {}",
+            chain_word.label()
+        );
+        assert!(!control.point.parity(), "chain word {}", chain_word.label());
+        assert!(!ready.same_verdicts(off));
+        // The difference is exactly the value-sensitive category flip: each
+        // lane prices its own word's arm over the same simulated candidates.
+        assert_eq!(
+            off.profitable_rows,
+            if chain_word == ScriptedWord::Nonzero {
+                control.point.simulated
+            } else {
+                0
+            }
+        );
+        assert_eq!(
+            ready.profitable_rows,
+            if planted == ScriptedWord::Nonzero {
+                control.point.simulated
+            } else {
+                0
+            }
+        );
     }
 }
 

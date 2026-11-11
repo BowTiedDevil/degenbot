@@ -183,6 +183,16 @@ impl ScriptedWord {
         }
     }
 
+    /// The other word — what the planted-divergence control's list carries at
+    /// the read identity while the chain serves `self`.
+    #[must_use]
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Zero => Self::Nonzero,
+            Self::Nonzero => Self::Zero,
+        }
+    }
+
     /// The report's name for this word.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -1117,6 +1127,51 @@ pub fn run(
     Ok(Bench { points })
 }
 
+/// The one discovery fan-out: the PRODUCTION prefetch's own key set over
+/// `corpus`, recorded from the legacy lane's wire. Setup only — never timed, its
+/// wire discarded — with the fixture's own read identity dropped, since a
+/// derived prefetch member never names a frame's arbitrary slot.
+fn discover_prefetch(
+    provider: &AlloyProvider,
+    declaration: &SimulationDeployment,
+    corpus: &Corpus,
+    recorder: &DeltaRecorder,
+) -> Vec<(Address, U256)> {
+    recorder.clear_wire();
+    let _discovery = fan_out(
+        provider,
+        declaration,
+        &corpus.candidates,
+        Some(WarmCodeCacheInner::shared_default()),
+    );
+    let mut seen = HashSet::new();
+    recorder
+        .storage_identities()
+        .into_iter()
+        .filter(|key| *key != read_identity())
+        .filter(|key| seen.insert(*key))
+        .collect()
+}
+
+/// The production prefetch's derived key set for `count` corpus candidates over
+/// its own scripted chain: the exact identities ONE legacy fan-out's prefetch
+/// batch carries at that width, so a live probe can price that packet over the
+/// existing corpus's own members.
+#[must_use]
+pub fn prefetch_identity_set(count: usize) -> Vec<(Address, U256)> {
+    let corpus = corpus(count);
+    let runtime = crate::probe::runtime();
+    runtime.block_on(async {
+        let recorder = DeltaRecorder::default();
+        recorder.serve_head(BLOCK - 2, GRANDPARENT, GENESIS);
+        recorder.serve_head(BLOCK - 1, PREVIOUS, GRANDPARENT);
+        recorder.serve_head(BLOCK, CURRENT, PREVIOUS);
+        let provider = crate::probe::provider(&recorder);
+        let declaration = deployment();
+        discover_prefetch(&provider, &declaration, &corpus, &recorder)
+    })
+}
+
 /// Run one point, on its own runtime and its own scripted chain.
 ///
 /// # Errors
@@ -1148,20 +1203,7 @@ fn run_point(
         // read reaches the node as ONE serial read on this lane; it is the
         // fixture's read identity, not a derived prefetch member, so it is
         // dropped from the derived set and re-added only to the covered list.
-        recorder.clear_wire();
-        let _discovery = fan_out(
-            &provider,
-            &declaration,
-            &corpus.candidates,
-            Some(WarmCodeCacheInner::shared_default()),
-        );
-        let mut seen = HashSet::new();
-        let prefetch: Vec<(Address, U256)> = recorder
-            .storage_identities()
-            .into_iter()
-            .filter(|key| *key != read_identity())
-            .filter(|key| seen.insert(*key))
-            .collect();
+        let prefetch = discover_prefetch(&provider, &declaration, &corpus, &recorder);
         let mut covered: Vec<((Address, U256), U256)> =
             prefetch.iter().map(|&key| (key, U256::ZERO)).collect();
         covered.push((read_identity(), word.value()));
@@ -1201,6 +1243,153 @@ fn run_point(
             runs,
         })
     })
+}
+
+/// The planted-divergence negative control: the matrix's own parity surface
+/// driven against a delta generation whose settled list answers ONE word
+/// differently from the chain. The covered list's read entry carries the OTHER
+/// scripted word, so the delta lane prices the planted word's arm over the same
+/// candidates the legacy lane prices the chain's — a difference [`Point::parity`]
+/// must report. A parity check that cannot go red here is no oracle.
+#[derive(Clone)]
+pub struct PlantedControl {
+    /// The point the control ran, `OffLegacy` first: [`Point::parity`] is the
+    /// exact check the matrix's fixture gates use.
+    pub point: Point,
+    /// The word the scripted chain serves at the read identity.
+    pub chain_word: ScriptedWord,
+    /// The word the settled generation serves there instead.
+    pub planted_word: ScriptedWord,
+    /// Whether the settled generation actually served the planted word — the
+    /// plant reaching the generation, read back from the generation itself.
+    pub plant_applied: bool,
+    /// Whether the parity surface reported the difference.
+    pub divergence_detected: bool,
+}
+
+/// Run the control at `count` candidates: the chain serves `chain_word`, the
+/// delta generation's list plants `chain_word.other()`, and the two matched legs
+/// (`OffLegacy`, `ReadyCurrent`) run once each over the same head, candidates,
+/// deployment and provider state.
+///
+/// # Errors
+///
+/// A scripted chain that cannot settle the planted heads is a broken fixture,
+/// never a result.
+pub fn planted_divergence(
+    count: usize,
+    chain_word: ScriptedWord,
+    model: StorageLatency,
+) -> Result<PlantedControl, String> {
+    let planted_word = chain_word.other();
+    let corpus = corpus(count);
+    let runtime = crate::probe::runtime();
+    runtime.block_on(async move {
+        let recorder = DeltaRecorder::with_latency(model);
+        recorder.serve_head(BLOCK - 2, GRANDPARENT, GENESIS);
+        recorder.serve_head(BLOCK - 1, PREVIOUS, GRANDPARENT);
+        recorder.serve_head(BLOCK, CURRENT, PREVIOUS);
+        let provider = crate::probe::provider(&recorder);
+        let declaration = deployment();
+        recorder.serve_storage(EXECUTOR, READ_SLOT, chain_word.value());
+        let prefetch = discover_prefetch(&provider, &declaration, &corpus, &recorder);
+        // The plant is ONE entry: the read identity's final write carries the
+        // other word, everything else identical to the matched matrix's covered
+        // list.
+        let mut covered: Vec<((Address, U256), U256)> =
+            prefetch.iter().map(|&key| (key, U256::ZERO)).collect();
+        covered.push((read_identity(), planted_word.value()));
+        let plan = GenerationPlan {
+            prefetch,
+            covered,
+            unknown: Vec::new(),
+        };
+        let mut runs = Vec::new();
+        for leg in [Leg::OffLegacy, Leg::ReadyCurrent] {
+            runs.push(
+                run_leg(
+                    leg,
+                    &corpus,
+                    &recorder,
+                    &provider,
+                    &declaration,
+                    &plan,
+                    &model,
+                )
+                .await?,
+            );
+        }
+        let plant_applied = runs.iter().any(|run| {
+            run.leg == Leg::ReadyCurrent
+                && run
+                    .generation
+                    .as_ref()
+                    .is_some_and(|generation| generation.read_value == Some(planted_word.value()))
+        });
+        let point = Point {
+            count: corpus.count,
+            word: chain_word,
+            model,
+            prefetch_identities: plan.prefetch.len(),
+            pool_identities: corpus.pools.len(),
+            simulated: runs.first().map_or(0, |run| run.simulated),
+            runs,
+        };
+        let divergence_detected = !point.parity();
+        Ok(PlantedControl {
+            point,
+            chain_word,
+            planted_word,
+            plant_applied,
+            divergence_detected,
+        })
+    })
+}
+
+/// The negative-control table: what was planted, whether it reached the
+/// generation, and whether the matrix's own parity check reported it.
+#[must_use]
+pub fn render_planted(controls: &[PlantedControl]) -> String {
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "## Negative control: planted one-word divergence\n\n\
+         The parity check above is only an oracle if it can go red. Each row plants ONE\n\
+         storage word differently: the delta generation's list carries the OTHER scripted\n\
+         word at the candidate's read identity while the chain serves the point's own, so\n\
+         the delta lane must answer the planted word and the legacy lane the chain's.\n\
+         `plant applied` reads the settled generation back; `parity` is the same check the\n\
+         matrix gates use, and it MUST read MISMATCH here.\n\n\
+         | chain word | planted word | plant applied | parity | verdict rows differ |\n\
+         | --- | --- | --- | --- | --- |\n"
+    );
+    for control in controls {
+        let (Some(off), Some(ready)) = (
+            control.point.leg(Leg::OffLegacy).first().copied(),
+            control.point.leg(Leg::ReadyCurrent).first().copied(),
+        ) else {
+            continue;
+        };
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} |",
+            control.chain_word.label(),
+            control.planted_word.label(),
+            if control.plant_applied { "yes" } else { "NO" },
+            if control.divergence_detected {
+                "MISMATCH (required)"
+            } else {
+                "identical (WRONG)"
+            },
+            if ready.same_verdicts(off) {
+                "no"
+            } else {
+                "yes"
+            },
+        );
+    }
+    out.push('\n');
+    out
 }
 
 /// The median of `values`.
@@ -1701,6 +1890,10 @@ pub struct WaitShape {
     pub shape: &'static str,
     /// The lane the production selector resolved.
     pub lane: String,
+    /// The production selection's own wait figure — the `wait_us` the fan-out's
+    /// diagnostic row reports — which on the in-flight shape is the same-block
+    /// remaining wait the selection actually paid.
+    pub wait_us: u64,
     /// The selection's own wall, in microseconds.
     pub selection_us: u64,
     /// The background preparation's wall, in microseconds.
@@ -1792,6 +1985,7 @@ pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
             shapes.push(WaitShape {
                 shape,
                 lane,
+                wait_us: u64::try_from(selection.wait.as_micros()).unwrap_or(u64::MAX),
                 selection_us,
                 prepare_us: u64::try_from(prepare.as_micros()).unwrap_or(u64::MAX),
             });
@@ -1801,28 +1995,179 @@ pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
     })
 }
 
-/// The wait-shapes table: what each shape paid, wall for wall.
+/// The wait-shapes table: what each shape paid, wall for wall. `wait_us` is the
+/// production selection's own figure — the `wait_us` a fan-out's diagnostic row
+/// reports — and `selection wall` is the measured wall of the whole selection,
+/// its lineage read included.
 pub fn render_wait_shapes(shapes: &[WaitShape]) -> String {
     let mut out = String::new();
     let _ = write!(
         out,
         "## Same-block terminal wait\n\n\
          The three shapes the terminal-state wait distinguishes, each against a\n\
-         deliberately slow preparation. A selection at the exact in-flight head\n\
-         joins the head's EXISTING preparation, so its wall is the actual remaining wait\n\
-         it paid; the previous anchor never waits; an explicit terminal failure falls\n\
-         back after one wait. Walls are measured here and never asserted — no\n\
-         end-to-end speedup is claimed.\n\n\
-         | shape | lane | selection us | prepare us |\n\
-         | --- | --- | --- | --- |\n"
+         deliberately slow preparation. `wait_us` is the production selection's own\n\
+         wait figure — the one a fan-out's diagnostic row reports — and `selection wall`\n\
+         is the measured wall of the whole selection, its lineage read included. A\n\
+         selection at the exact in-flight head joins the head's EXISTING preparation,\n\
+         so its `wait_us` is the same-block remaining wait it actually paid; the\n\
+         previous anchor never waits; an explicit terminal failure falls back after one\n\
+         wait. Walls are measured here and never asserted — no end-to-end speedup is\n\
+         claimed.\n\n\
+         | shape | lane | wait_us | selection wall us | same-block remaining wait us | prepare us |\n\
+         | --- | --- | --- | --- | --- | --- |\n"
     );
     for shape in shapes {
+        let remaining = if shape.shape == "same-block-in-flight" {
+            shape.wait_us.to_string()
+        } else {
+            String::from("—")
+        };
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} |",
-            shape.shape, shape.lane, shape.selection_us, shape.prepare_us
+            "| {} | {} | {} | {} | {} | {} |",
+            shape.shape, shape.lane, shape.wait_us, shape.selection_us, remaining, shape.prepare_us
         );
     }
     out.push('\n');
     out
+}
+
+/// The cost attribution: the two RPC cost classes made explicit — one accepted
+/// head's fixed BAL work against the work every fan-out pays — with the wait
+/// figures the terminal wait adds. Wire counts are the absolute table's medians;
+/// `modeled us` is the point's own latency model over that wire, never a node
+/// measurement.
+#[must_use]
+pub fn render_cost_attribution(bench: &Bench, shapes: &[WaitShape]) -> String {
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "## Cost attribution: fixed per-head versus per-fan-out\n\n\
+         Two RPC cost classes, kept apart everywhere above:\n\n\
+         - **Fixed per-head** — one accepted canonical head's BAL work, independent of\n\
+           fan-out width and never on a fan-out's path: ONE BAL fetch per accepted head\n\
+           (the dispatch leg fetches none — `bal` is 0 on every measured leg), prepare\n\
+           (list fetch + full decode) and apply (the one synchronous transition).\n\
+         - **Per-fan-out** — what every dispatch pays at its anchor: ONE header/identity\n\
+           read (every leg), then the representation's own storage work — the legacy\n\
+           lane's ONE prefetch batch plus its members and ONE dynamic serial read the\n\
+           derivation cannot cover; the covered ready lane's zero batch and zero\n\
+           dynamic read; the unknown ready lane's ONE dynamic read. A wait is paid only\n\
+           at the exact in-flight head.\n\n\
+         In this harness the settled list scales with the corpus (it carries the derived\n\
+         prefetch identities), so a head's prepare/apply grow with the count; a real\n\
+         head's list is the block's own content, priced live at one fixed historical\n\
+         anchor in `docs/architecture/bal-matched-parity-result.md`. `wait_us` is 0 on\n\
+         every matrix leg by construction — the generation settles before the fan-out,\n\
+         so the wait path is untaken — and the nonzero waits are the shapes' own rows.\n\n"
+    );
+    render_fixed_per_head(bench, &mut out);
+    render_per_fan_out(bench, &mut out);
+    render_wait_figures(shapes, &mut out);
+    out
+}
+
+/// The fixed per-head table: one accepted head's BAL work, width independent.
+fn render_fixed_per_head(bench: &Bench, out: &mut String) {
+    let _ = write!(
+        out,
+        "### Fixed per head (width independent)\n\n\
+         | count | model | list | heads | prepare median us | prepare max us | apply median us | apply max us |\n\
+         | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+    );
+    let mut seen: Vec<(usize, String)> = Vec::new();
+    for point in &bench.points {
+        let key = (point.count, point.model.label());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        let generations: Vec<&Generation> = bench
+            .points
+            .iter()
+            .filter(|other| other.count == point.count && other.model == point.model)
+            .flat_map(|other| other.leg(Leg::ReadyCurrent))
+            .filter_map(|run| run.generation.as_ref())
+            .collect();
+        let prepares: Vec<u64> = generations
+            .iter()
+            .flat_map(|generation| generation.prepare_us.iter().copied())
+            .collect();
+        let applies: Vec<u64> = generations
+            .iter()
+            .flat_map(|generation| generation.apply_us.iter().copied())
+            .collect();
+        let heads = generations
+            .first()
+            .map_or(0, |generation| generation.anchors.len());
+        let _ = writeln!(
+            out,
+            "| {} | {} | covered | {} | {} | {} | {} | {} |",
+            point.count,
+            point.model.label(),
+            heads,
+            median(&prepares),
+            prepares.iter().copied().max().unwrap_or(0),
+            median(&applies),
+            applies.iter().copied().max().unwrap_or(0),
+        );
+    }
+}
+
+/// The per-fan-out table: what every dispatch pays at its anchor.
+fn render_per_fan_out(bench: &Bench, out: &mut String) {
+    let _ = write!(
+        out,
+        "\n### Per fan-out (grows with the input list)\n\n\
+         | count | model | lane | headers | prefetch batches | prefetch members | dynamic reads | wait_us | modeled us |\n\
+         | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+    );
+    let mut seen_points: Vec<(usize, String)> = Vec::new();
+    for point in &bench.points {
+        let key = (point.count, point.model.label());
+        if seen_points.contains(&key) {
+            continue;
+        }
+        seen_points.push(key);
+        for leg in [Leg::OffLegacy, Leg::ReadyCurrent, Leg::ReadyCurrentUnknown] {
+            let Some(summary) = point.summary(leg) else {
+                continue;
+            };
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} | {} | {} | {} | 0 | {} |",
+                point.count,
+                point.model.label(),
+                leg.label(),
+                summary.headers,
+                summary.batches,
+                summary.members,
+                summary.singles,
+                summary.modeled,
+            );
+        }
+    }
+}
+
+/// The terminal-wait figures the attribution closes on.
+fn render_wait_figures(shapes: &[WaitShape], out: &mut String) {
+    let figure = |shape: &str, pick: fn(&WaitShape) -> u64| -> String {
+        shapes
+            .iter()
+            .find(|row| row.shape == shape)
+            .map_or_else(|| String::from("—"), |row| pick(row).to_string())
+    };
+    let _ = write!(
+        out,
+        "\nWait figures, from the terminal-wait shapes (measured, never asserted): the\n\
+         same-block remaining wait is {inflight} us — the actual remaining wait a fan-out at\n\
+         the exact in-flight head paid (`wait_us` of the same-block-in-flight shape; its\n\
+         selection wall {wall} us includes the lineage read) — against the previous anchor's\n\
+         fast path ({previous} us) and the explicit terminal failure's one wait ({failure} us)\n\
+         before its legacy fallback.\n\n",
+        inflight = figure("same-block-in-flight", |shape| shape.wait_us),
+        wall = figure("same-block-in-flight", |shape| shape.selection_us),
+        previous = figure("previous-block", |shape| shape.wait_us),
+        failure = figure("explicit-failure", |shape| shape.wait_us),
+    );
 }

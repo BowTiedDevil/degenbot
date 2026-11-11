@@ -688,6 +688,33 @@ bal-dispatch-scaling-probe *ARGS:
     cd rust && cargo run --locked --release -p degenbot-arbitrage --example bal_dispatch_scaling_probe -- {{ ARGS }}
 
 
+# The live reth BAL acquisition probe: raw versus JSON acquisition of ONE fixed
+# historical block's EIP-7928 block access list — both representations' fetch
+# and decode walls at one fixed historical hash, their decode seeds and the seed
+# parity between them and the production negotiated acquisition, every decoded
+# final write cold-verified against an independent read, and the per-fan-out
+# packet prices at the same anchor (the header read, the dynamic serial read,
+# and the legacy prefetch batch over the existing corpus's derived identities at
+# every matrix width). Deliberately NOT a live fan-out comparison: the matched
+# corpus cannot be transplanted to a real hash without inventing state, so the
+# legacy-versus-delta comparison stays the modeled one the matched matrix
+# records. Timing is reported, never asserted; a seed mismatch, a cold-read
+# mismatch or an empty anchor list fails the run (nonzero exit). Knobs:
+# `BAL_ACQ_ANCHOR` (default 26375043), `BAL_ACQ_REPS` (default 7),
+# `BAL_ACQ_CORPUS_COUNTS` (default `1,4,16,50,100,500,1000`). Fails closed
+# unless the machine DECLARES an endpoint (the conftest layers, the same
+# resolution `test-fork` probes). Measurements: `logs/bal_live_acquisition_result.md`.
+bal-live-acquisition-probe *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC declared — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
+        exit 1
+    fi
+    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-arbitrage --example bal_live_acquisition_probe -- {{ ARGS }}
+
+
 # The live OFF/ON dispatch capture analysis: parse one pair of
 # `DEGENBOT_DELTA_DISPATCH` bot captures apart by evidence class. The per-fan-out
 # rows (`fan-out storage selection`, `storage prefetch`, `[sim] cands=`) are

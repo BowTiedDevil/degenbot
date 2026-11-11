@@ -43,7 +43,12 @@
 //! The matrix is followed by the same-block terminal-wait shapes
 //! ([`scaling::wait_shapes`]): the exact in-flight head, the previous anchor,
 //! and an explicit terminal failure, each against a deliberately slow
-//! preparation, with the measured walls reported.
+//! preparation, with the measured walls reported. The planted-divergence
+//! negative control ([`scaling::planted_divergence`]) then proves the parity
+//! gate can fail — one word in the delta generation's list differs from the
+//! chain and the same check must report MISMATCH — and the cost attribution
+//! ([`scaling::render_cost_attribution`]) splits fixed per-head BAL work from
+//! per-fan-out dispatch work, with the wait figures beside them.
 //!
 //! The generation's list carries exactly the identities the PRODUCTION prefetch
 //! derives on the legacy lane (learned by one discovery fan-out that is never
@@ -88,6 +93,10 @@ use scaling::{Bench, Leg, LegSummary, Point, RunMeasure, ScriptedWord};
 /// larger simulated set — the report says which.
 const DEFAULT_COUNTS: [usize; 7] = [1, 4, 16, 50, 100, 500, 1000];
 
+/// The negative control's fan-out size: large enough to cross the production
+/// cap, small enough to keep the control a check rather than a second matrix.
+const PLANTED_COUNT: usize = 4;
+
 fn main() {
     let counts = env_counts();
     let reps = env_reps();
@@ -118,15 +127,27 @@ fn main() {
         scaling::wait_shapes().expect("the scripted chain settles the wait shapes' heads");
     println!("{}", scaling::render_wait_shapes(&wait_shapes));
 
+    // The negative control, both words: the chain serves the point's word, the
+    // delta generation's list plants the OTHER one, and the matrix's own parity
+    // check has to report the difference.
+    let controls = ScriptedWord::ALL.map(|word| {
+        scaling::planted_divergence(PLANTED_COUNT, word, StorageLatency::ZERO)
+            .expect("the scripted chain settles the planted heads")
+    });
+    println!("{}", scaling::render_planted(&controls));
+    println!("{}", scaling::render_cost_attribution(&bench, &wait_shapes));
+
     let mut failures = fixture_failures(&bench);
     wait_shape_failures(&wait_shapes, &mut failures);
+    planted_failures(&controls, &mut failures);
     if failures.is_empty() {
         println!(
             "\nfixture gates: every leg on its lane, cold controls BAL-free, ready \
                   generations covering the prefetch set, covered legs serving the read \
                   key, unknown legs omitting it, every simulated candidate's access \
-                  list naming the read, verdicts identical, and every same-block wait \
-                  shape on its lane."
+                  list naming the read, verdicts identical, every same-block wait \
+                  shape on its lane, and the planted one-word divergence DETECTED \
+                  by the parity check."
         );
     } else {
         println!("\nfixture gates FAILED:");
@@ -155,6 +176,30 @@ fn wait_shape_failures(shapes: &[scaling::WaitShape], failures: &mut Vec<String>
                 row.lane
             )),
             None => failures.push(format!("wait shape {shape} did not run")),
+        }
+    }
+}
+
+/// The negative control's own gates: the plant must reach the settled
+/// generation, and the matrix's parity check must report the difference — a
+/// control the check passes is a tautological check.
+fn planted_failures(controls: &[scaling::PlantedControl], failures: &mut Vec<String>) {
+    for control in controls {
+        let at = format!(
+            "planted control chain word {} / planted {}",
+            control.chain_word.label(),
+            control.planted_word.label()
+        );
+        if !control.plant_applied {
+            failures.push(format!(
+                "{at}: the planted word never reached the generation"
+            ));
+        }
+        if !control.divergence_detected {
+            failures.push(format!(
+                "{at}: the parity check reported identical verdicts across a planted \
+                 one-word divergence"
+            ));
         }
     }
 }
@@ -208,6 +253,31 @@ fn fixture_failures(bench: &Bench) -> Vec<String> {
         }
         for run in &point.runs {
             generation_failures(point, run, &at, &mut failures);
+        }
+    }
+    // The exposed derived key set — what the live per-fan-out pricing runs
+    // over — is the matrix's own at every width.
+    let mut widths: Vec<usize> = Vec::new();
+    for point in &bench.points {
+        if widths.contains(&point.count) {
+            continue;
+        }
+        widths.push(point.count);
+        let derived = scaling::prefetch_identity_set(point.count);
+        for sibling in bench
+            .points
+            .iter()
+            .filter(|other| other.count == point.count)
+        {
+            if derived.len() != sibling.prefetch_identities {
+                failures.push(format!(
+                    "count {}: the exposed derived key set names {} identities, the matrix \
+                     learned {}",
+                    point.count,
+                    derived.len(),
+                    sibling.prefetch_identities
+                ));
+            }
         }
     }
     failures
