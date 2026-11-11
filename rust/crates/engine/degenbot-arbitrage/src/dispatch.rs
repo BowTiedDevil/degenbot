@@ -1,9 +1,9 @@
 //! The candidate-simulation fan-out + categorization.
 //!
-//! Owns the dispatch contract end to end: the per-block candidate fan-out, the
-//! thin-margin pre-filter, the categorization into gas-profitable /
-//! gas-unprofitable / exception tallies, and the suppression bookkeeping the
-//! next block's skip reads.
+//! Owns the dispatch contract end to end: the per-block candidate fan-out over
+//! the candidates the crate-internal `admission` pass admits, the categorization
+//! into gas-profitable / gas-unprofitable / exception tallies, and the
+//! suppression bookkeeping the next block's skip reads.
 //!
 //! This is the concurrency orchestration that owns the GIL release + the
 //! tokio fan-out over the per-path [`simulate_path_on_evm`] leaf. Owning
@@ -12,17 +12,15 @@
 //!
 //! # Ownership
 //!
-//! - **This leaf** — the fan-out + categorization: pure concurrency
-//!   orchestration over a `buffer_unordered(MAX_SIMULATE_CONCURRENT)` stream
-//!   (capped by `truncate` pre-fan-out) plus pure-int categorization.
+//! - **This leaf** — the fan-out + categorization: simulate the admitted
+//!   candidates, then tally them pure-int into the three categories.
 //! - **Consumed, not re-ported** — [`degenbot_submission::PathSuppression`]
 //!   (`record_success`/`record_failure`/`is_suppressed`/
 //!   `total_suppressed` + `PATH_SUPPRESS_THRESHOLD`).
-//! - **Here, by the standalone-core constraint** —
-//!   [`filter_thin_margin_results`]: small (20 lines, pure int) with a clean
-//!   standalone signature. A consumer (`cargo add degenbot`) must NOT have to
-//!   call into Python for the thin-margin pre-filter, so the leaf lives beside
-//!   the fan-out it filters.
+//! - **`admission`** (crate-internal) — the pre-simulation policy: the stamping
+//!   suppression read, divergence, fee-on-transfer, thin margin, staleness,
+//!   the optional order-index reorder, and the cap. Its drop tally feeds this
+//!   outcome's per-stage counters.
 //! - **The driver's** — the `[sim] ... by reason: {breakdown}` summary log
 //!   rendering (`format_failure_breakdown`). This leaf exposes the tally as a
 //!   typed [`FailBuckets`] (re-exported from `simulator` at this crate's root)
@@ -74,8 +72,8 @@
 
 use degenbot_core::diag;
 use degenbot_core::op_info;
-// Solidity/EVM + Rust-ecosystem identifiers (tokio, JoinSet, bps, PathSuppression,
-// MAX_SIMULATE_CONCURRENT, etc.) are ubiquitous here.
+// Solidity/EVM + Rust-ecosystem identifiers (tokio, JoinSet, SolverCalc,
+// PathSuppression, etc.) are ubiquitous here.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -87,11 +85,20 @@ use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
+use crate::admission;
 use crate::simulate_path_on_evm_prepared;
 use crate::{
-    diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token, hop_pool_key,
+    diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token,
     is_solver_calc_failure, FailBuckets, FeeOnTransferRegistry, PoolDivergence, SimFailure,
     SimResult, SimulateContext, SimulatePath,
+};
+
+// The pre-simulation leaf helpers live in the crate-internal `admission` module
+// but keep their published `degenbot_arbitrage::dispatch::*` paths (and, through
+// them, the crate root's): the module boundary is an implementation fact, not a
+// consumer-visible one.
+pub use crate::admission::{
+    candidate_is_stale, filter_thin_margin_results, BPS_DENOM, MAX_SIMULATE_CONCURRENT,
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -182,12 +189,6 @@ fn v2_calc_trace_body<S: V2ReservesReader>(session: &mut S, sim_path: &SimulateP
 // Dispatch + pre-filter constants
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The concurrent-simulation cap — the `truncate` pre-fan-out cap plus the
-/// `buffer_unordered` bound for the legacy RPC path. Candidates past the cap
-/// are NOT simulated: they are dropped from the batch, so the cap must sit
-/// above what a per-block candidate set realistically reaches.
-pub const MAX_SIMULATE_CONCURRENT: usize = 50;
-
 /// The min net-profit threshold — a gross-profitable result is "gas-profitable"
 /// iff `net_profit >= MIN_PROFIT_NET`.
 ///
@@ -209,65 +210,7 @@ pub fn is_gas_profitable(net_profit: U256) -> bool {
     net_profit >= U256::from(MIN_PROFIT_NET)
 }
 
-/// The basis-points denominator.
-pub const BPS_DENOM: u128 = 10_000;
-
 // ─────────────────────────────────────────────────────────────────────────
-// The thin-margin pre-filter (D3 — ported inline)
-// ─────────────────────────────────────────────────────────────────────────
-
-/// Drop solver results whose gross-profit margin is too low.
-///
-/// S1 found that the dominant IIA reverts in V3/V4-heavy perms are razor-thin
-/// arb (gross profit ≈ $0.001 on ≈ $0.06–$1.30 input = sub-0.2 bps margin)
-/// that cannot survive 1-block drift — the chain has already arbitraged these
-/// away by the time the sim runs. Filtering them pre-sim saves an RPC + a
-/// revert per attempt + keeps them out of the TSV `Reverts` column.
-///
-/// `min_profit_margin_bps` is in basis points of `optimal_input` (e.g. `50` =
-/// 0.5% — a result with profit < 0.5% of its input is dropped). `0` disables
-/// the filter (keeps all — backwards-compatible default).
-///
-/// Returns `(kept, dropped_count)` — pure int arithmetic (no float):
-/// a result is kept iff `profit * BPS_DENOM >= optimal_input *
-/// min_profit_margin_bps`, OR `optimal_input == 0` (no input basis to ratio
-/// against).
-///
-/// # Parity-gate note
-///
-/// Ports the reference from `examples/eth_backrun_helpers.py`. The leaf is
-/// standalone-usable (pure int + zero allocation beyond the kept vec); it is
-/// defined here so a standalone Rust consumer (`cargo add degenbot`) doesn't
-/// need Python for the pre-filter. It may later move to a shared crate if a
-/// second consumer emerges.
-#[must_use]
-pub fn filter_thin_margin_results(
-    results: Vec<DispatchCandidate>,
-    min_profit_margin_bps: u64,
-) -> (Vec<DispatchCandidate>, usize) {
-    if min_profit_margin_bps == 0 || results.is_empty() {
-        return (results, 0);
-    }
-    let threshold_num = U256::from(min_profit_margin_bps);
-    let denom = U256::from(BPS_DENOM);
-    let mut kept = Vec::with_capacity(results.len());
-    let mut dropped = 0usize;
-    for row in results {
-        let opt_input = U256::from(row.optimal_input);
-        let profit = U256::from(row.engine_profit);
-        // `profit * BPS_DENOM >= opt_input * min_profit_margin_bps` ⟺ kept.
-        // (integer math — no float rounding.) A zero `opt_input` is kept (no
-        // basis to ratio against — ports the `opt_input == 0` branch).
-        let is_enough_margin = !opt_input.is_zero() && profit * denom >= opt_input * threshold_num;
-        if opt_input.is_zero() || is_enough_margin {
-            kept.push(row);
-        } else {
-            dropped += 1;
-        }
-    }
-    (kept, dropped)
-}
-
 // ─────────────────────────────────────────────────────────────────────────
 // The candidate + outcome types (D1)
 // ─────────────────────────────────────────────────────────────────────────
@@ -415,46 +358,40 @@ impl DispatchOutcome {
 // The fan-out
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Fan out [`simulate_path_on_evm`] across a `buffer_unordered(MAX_SIMULATE_CONCURRENT)`
-/// stream (capped by `truncate` pre-fan-out), gather with exception tolerance,
-/// and categorize into gas-profitable / gas-unprofitable / exception.
+/// Fan out [`simulate_path_on_evm`] over the candidates the admission policy
+/// admitted, gather with exception tolerance, and categorize into
+/// gas-profitable / gas-unprofitable / exception.
 ///
 /// Pipeline:
-/// 1. **Pre-filter — suppression** — drop paths currently suppressed by
-///    `path_suppression.is_suppressed(pid, current_block)` (the retry-interval
-///    logic is owned by [`PathSuppression`]).
-/// 2. **Pre-filter — pool divergence** — drop candidates
-///    routing through a pool flagged `SolverCalc` within the decay window
-///    (counted in `divergent_dropped`). The memo is keyed by chain identity
-///    (V2/V3 address, V4 `poolId`) derivable from each hop's `HopInfo`.
-/// 3. **Pre-filter — thin-margin** — drop razor-thin arb via
-///    [`filter_thin_margin_results`] (`min_profit_margin_bps`; `0` disables).
-/// 4. **Cap** — take the first [`MAX_SIMULATE_CONCURRENT`] candidates (the
-///    list is expected pre-sorted by engine profit descending — the caller
-///    owns the sort, so the cap keeps the best-first prefix).
-/// 5. **Fan-out** — the in-process evm2 path: build ONE per-block
+/// 1. **Admission** — `admission::admit` runs the whole
+///    pre-simulation policy in one pass: the stamping suppression read (the
+///    retry-interval logic is owned by [`PathSuppression`]), pool divergence,
+///    fee-on-transfer, the thin-margin floor, and candidate staleness, then the
+///    optional order-index reorder and the cap. Its typed outcome carries the
+///    per-stage drop counters this outcome mirrors.
+/// 2. **Fan-out** — the in-process evm2 path: build ONE per-block
 ///    `Evm2BlockSimHandle` + simulate each candidate SERIALLY on the shared
 ///    `&mut evm` (Tier 1). `bot_state` is `Option` so that
-///    empty / pre-filtered-to-empty input (which short-circuits at step 5)
-///    need not construct an engine; the `None` arm is the unreachable
-///    anti-pattern guard for non-empty input without a `BotState` (ADR-019
-///    D1 makes the in-process evm2 path the sole executor).
-/// 6. **Gather** — collect the stream; a failed candidate is counted and
+///    empty / pre-filtered-to-empty input (which short-circuits after
+///    admission) need not construct an engine; the `None` arm is the
+///    unreachable anti-pattern guard for non-empty input without a `BotState`
+///    (ADR-019 D1 makes the in-process evm2 path the sole executor).
+/// 3. **Gather** — collect the stream; a failed candidate is counted and
 ///    skipped, never propagated: one broken path must not sink a batch.
-/// 7. **Feedback — pool divergence** — for each `SolverCalc`
+/// 4. **Feedback — pool divergence** — for each `SolverCalc`
 ///    failure, record divergence for the diverging hop's pool key (derived
-///    from `path_info.hops[i]`); the NEXT block's skip (step 2) drops paths
+///    from `path_info.hops[i]`); the NEXT block's admission drops paths
 ///    through it pre-sim.
-/// 8. **Categorize** — gas-profitable (the deployment's assessment passed and
+/// 5. **Categorize** — gas-profitable (the deployment's assessment passed and
 ///    `net ≥ MIN_PROFIT_NET`) / gas-unprofitable (returned, gross > 0, but
 ///    below the floor or declined by the deployment's verdict) / exception.
 ///    Sort both categories by net profit descending.
-/// 9. **Record suppression outcomes** — `record_success(pid)` for paths that
+/// 6. **Record suppression outcomes** — `record_success(pid)` for paths that
 ///    returned a result, `record_failure(pid)` for paths that didn't.
 ///
 /// `ctx` is the shared [`SimulateContext`] (provider, addresses, warmup,
 /// block context — see [`simulate_path_on_evm`]). `path_suppression` is
-/// mutated in place for the pre-filter + the outcome recording.
+/// mutated in place for the admission stage + the outcome recording.
 ///
 /// # Categorization contract (`docs/architecture/parity-gate.md`)
 ///
@@ -476,48 +413,20 @@ impl DispatchOutcome {
 ///
 /// # Panics
 ///
-/// Panics if the `path_suppression` OR `pool_divergence` mutex is poisoned (a
-/// peer task panicked while holding it). Both mutexes are locked ONLY at the
-/// bookends (the suppression + divergence pre-filters in steps 1/2 + the
-/// outcome recording + divergence feedback in steps 7/8) — both synchronous
-/// spans, no `.await` held under either guard — so a poison indicates a bug in
-/// a sibling task (the arcs are shared with the submission seam's accessors;
-/// never locked across an `.await`).
-/// Deterministically reorder `candidates` into the order index's net-profit
-/// ranking (profit descending, id ascending) before the `MAX_SIMULATE_CONCURRENT`
-/// cap — the `order-index` feature's substitute for the "candidates arrive
-/// pre-sorted" contract (see ADR-024). Today the solver emits no
-/// per-path gas, so `gas = 0` and `net == gross == engine_profit`; the seam
-/// becomes net-aware as soon as per-path gas is available.
-#[cfg(feature = "order-index")]
-fn order_index_top_selection(candidates: &mut [DispatchCandidate]) {
-    use degenbot_order_index::{EnvelopeIndex, OrderIndex};
-    let mut idx = EnvelopeIndex::<CandidateId>::new();
-    for c in candidates.iter() {
-        idx.insert(c.candidate_id, U256::ZERO, U256::from(c.engine_profit));
-    }
-    let ranked = idx.top_k(U256::ZERO, candidates.len());
-    // `ranked` is every id in (net desc, id asc) order. Safe-guard: only enforce
-    // when it covers every candidate (candidate ids are unique by construction).
-    if ranked.len() != candidates.len() {
-        return;
-    }
-    let pos: HashMap<CandidateId, usize> = ranked
-        .into_iter()
-        .enumerate()
-        .map(|(i, id)| (id, i))
-        .collect();
-    candidates.sort_by_key(|c| pos.get(&c.candidate_id).copied().unwrap_or(usize::MAX));
-}
-
+/// Panics if the `path_suppression`, `pool_divergence`, or `fot_registry` mutex
+/// is poisoned (a peer task panicked while holding it). Each is locked ONLY at
+/// a synchronous bookend — the admission pass (`admission::admit`) and
+/// the outcome recording / divergence / FoT feedback below — and no `.await` is
+/// ever held under a guard, so a poison indicates a bug in a sibling task (the
+/// arcs are shared with the submission seam's accessors; never locked across an
+/// `.await`).
 #[expect(
     clippy::too_many_arguments,
     clippy::too_many_lines,
-    clippy::missing_panics_doc,
     clippy::expect_used
 )] // faithful dispatch seam; mutex-poison guards panic loudly
 pub fn dispatch_profitable_results(
-    mut candidates: Vec<DispatchCandidate>,
+    candidates: Vec<DispatchCandidate>,
     ctx: &SimulateContext<'_>,
     path_suppression: &Arc<Mutex<PathSuppression>>,
     current_block: u64,
@@ -577,110 +486,41 @@ pub fn dispatch_profitable_results(
         arm: "fanout",
     });
 
-    // 1. Pre-filter — suppression. Lock the suppression arc
-    //    ONLY for this synchronous retain (the guard is dropped before the
-    //    fan-out `.await` so the future stays `Send` — a `std::sync::MutexGuard`
-    //    is not `Send`). A3 extracted `PathSuppression` onto its own
-    //    arc precisely so this bookend scope never contends with the
-    //    `Dispatcher` arc the monitor tasks lock.
-    {
-        let mut s = path_suppression.lock().expect("suppression mutex poisoned");
-        candidates.retain(|c| !s.is_suppressed(c.candidate_id, current_block));
-    }
-    outcome.suppressed_count = pre_filter_count - candidates.len();
+    // 1-4. Pre-simulation admission — the ONE home of the policy sequence:
+    //      the stamping suppression read, pool divergence, fee-on-transfer, the
+    //      thin-margin floor, and candidate staleness, then the optional
+    //      order-index reorder and the `MAX_SIMULATE_CONCURRENT` cap. The pass
+    //      holds each registry lock in a synchronous bookend scope (never
+    //      across the fan-out `.await`, so the future stays `Send`), and its
+    //      typed outcome carries the per-stage drop counters below.
+    let admitted = admission::admit(
+        candidates,
+        &admission::AdmissionPolicy {
+            suppression: path_suppression,
+            divergence: pool_divergence,
+            fee_on_transfer: fot_registry,
+            bot_state: bot_state.as_deref(),
+            current_block,
+            min_profit_margin_bps,
+        },
+    );
+    outcome.suppressed_count = admitted.skips.suppressed;
+    outcome.divergent_dropped = admitted.skips.divergent;
+    outcome.fot_dropped = admitted.skips.fee_on_transfer;
+    outcome.thin_dropped = admitted.skips.thin_margin;
+    outcome.stale_dropped = admitted.skips.stale;
+    let candidates = admitted.admitted;
+    outcome.candidate_count = candidates.len();
 
-    // 2. Pre-filter — pool divergence. Drop candidates
-    //    routing through a pool flagged `SolverCalc` within the decay window
-    //    (counted in `divergent_dropped`). The memo is keyed by chain
-    //    identity — V2/V3 pool address, V4 `poolId` bytes32 — derivable from
-    //    each hop's `HopInfo` with no engine lookup, so the skip is
-    //    standalone. Snapshot each candidate's `PathInfo` into a join map
-    //    first (the post-fan-out feedback path re-derives the diverging
-    //    hop's key from `hops[i]` — the V4 `CapturedSwap.emitter` is the
-    //    shared PoolManager, useless for per-pool attribution).
+    // The per-candidate `PathInfo` join map: the post-fan-out feedback
+    // (divergence + FoT attribution) and the success recording re-derive a
+    // hop's key from it — the V4 `CapturedSwap.emitter` is the shared
+    // PoolManager, useless for per-pool attribution. Only admitted candidates
+    // can be simulated, so only they need an entry.
     let path_info_by_id: HashMap<u64, PathInfo> = candidates
         .iter()
         .map(|c| (c.candidate_id.path_id(), c.path_info.clone()))
         .collect();
-    let divergent_before = candidates.len();
-    {
-        let pd = pool_divergence
-            .lock()
-            .expect("pool_divergence mutex poisoned");
-        candidates.retain(|c| {
-            !c.path_info
-                .hops
-                .iter()
-                .filter_map(hop_pool_key)
-                .any(|k| pd.is_divergent(k, current_block))
-        });
-        outcome.divergent_dropped = divergent_before - candidates.len();
-    }
-    // Bump the lifetime tally (mirrors `PathSuppression::total_suppressed`).
-    if outcome.divergent_dropped > 0 {
-        let mut pd = pool_divergence
-            .lock()
-            .expect("pool_divergence mutex poisoned");
-        for _ in 0..outcome.divergent_dropped {
-            pd.record_dropped();
-        }
-    }
-
-    // 2.5. Pre-filter — fee-on-transfer tokens. Drop
-    //      candidates whose any hop's input token is FoT-confirmed (counted
-    //      in `fot_dropped`). The registry is keyed by token `Address`;
-    //      the input token is derived from each hop's `HopInfo` via
-    //      `hop_input_token` (selected by `zfo`). Same standalone-arc
-    //      discipline as the divergence skip — locked only at this bookend,
-    //      never across the fan-out `.await`s.
-    let fot_before = candidates.len();
-    {
-        let fr = fot_registry.lock().expect("fot_registry mutex poisoned");
-        candidates.retain(|c| {
-            !c.path_info
-                .hops
-                .iter()
-                .any(|hop| fr.is_fot(hop_input_token(hop), current_block))
-        });
-        outcome.fot_dropped = fot_before - candidates.len();
-    }
-    if outcome.fot_dropped > 0 {
-        let mut fr = fot_registry.lock().expect("fot_registry mutex poisoned");
-        for _ in 0..outcome.fot_dropped {
-            fr.record_dropped();
-        }
-    }
-
-    // 3. Pre-filter — thin-margin.
-    let (kept, thin_dropped) = filter_thin_margin_results(candidates, min_profit_margin_bps);
-    outcome.thin_dropped = thin_dropped;
-    candidates = kept;
-
-    // 3.5. Pre-filter — stale solve results. The solver computed
-    //      each candidate's hop_outputs against pool state captured at
-    //      resolve time; the pump may have advanced a pool's state since (a
-    //      user swap landed between the solve and the sim). The executor
-    //      chains the solver's PREDICTED hop outputs as exact-in amounts for
-    //      downstream hops, so any per-hop over-prediction becomes an IIA
-    //      underpayment revert. Drop candidates whose any hop's current
-    //      state nonce has advanced past the snapshot captured at solve
-    //      time — the result is stale and would revert on-chain.
-    let stale_before = candidates.len();
-    if let Some(ref arc) = bot_state {
-        let guard = arc.read_at(degenbot_substrate::state_lock::LockSite::Sim);
-        candidates.retain(|c| !candidate_is_stale(&guard, c));
-    }
-    outcome.stale_dropped = stale_before - candidates.len();
-
-    // 4. Cap. With the `order-index` feature, the selection is made
-    //    deterministic by profit via the net-profit order index (see ADR-024)
-    //    instead of trusting the caller's pre-sort; otherwise the candidates
-    //    are expected pre-sorted by engine profit descending (the caller's
-    //    responsibility).
-    #[cfg(feature = "order-index")]
-    order_index_top_selection(&mut candidates);
-    candidates.truncate(MAX_SIMULATE_CONCURRENT);
-    outcome.candidate_count = candidates.len();
 
     // Empty-input short-circuit: with no candidates to simulate, the outcome
     // (all counters already set above) is complete. This avoids requiring a
@@ -691,9 +531,9 @@ pub fn dispatch_profitable_results(
         return outcome;
     }
 
-    // 5. Fan-out — build ONE per-block `Evm2BlockSimHandle` + simulate each
-    //    candidate SERIALLY on the shared `&mut evm` (Tier 1). The cap is
-    //    asserted at the truncate above; the in-process serial path uses a
+    // 2. Fan-out — build ONE per-block `Evm2BlockSimHandle` + simulate each
+    //    candidate SERIALLY on the shared `&mut evm` (Tier 1). The cap was
+    //    applied by the admission pass; the in-process serial path uses a
     //    plain `.map().collect()` over the borrowed `&mut evm`. Unlike
     //    `tokio::spawn`, neither borrows `'static` — the closure borrows
     //    `ctx` for its lifetime, and we collect within this fn (no task
@@ -1051,7 +891,7 @@ pub fn dispatch_profitable_results(
         );
     }
 
-    // 6. Categorize — gas-profitable / gas-unprofitable / exception.
+    // 3. Categorize — gas-profitable / gas-unprofitable / exception.
     //    `simulate_path_on_evm` returns `Ok(Some(result))` for gross-profitable
     //    paths; `Ok(None)` for revert/no-profit/overflow (tallied into
     //    `buckets`); `Err(_)` for an unrecoverable RPC failure (counted as an
@@ -1095,7 +935,7 @@ pub fn dispatch_profitable_results(
     // `fail_count = len(candidates) - sim_ok_count - exception_count`.
     outcome.fail_count = outcome.candidate_count - outcome.sim_ok_count() - outcome.exception_count;
 
-    // 7. Feedback — record divergence for `SolverCalc` failures' diverging
+    // 4. Feedback — record divergence for `SolverCalc` failures' diverging
     //    hops. A pool flagged this block stays divergent for
     //    `POOL_DIVERGENCE_DECAY_BLOCKS`; the NEXT block's skip drops paths
     //    routing through it pre-sim. The diverging hop's key is derived from
@@ -1123,7 +963,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 7.5. FoT feedback — record suspicions for FoT-suspected failures.
+    // 4.5. FoT feedback — record suspicions for FoT-suspected failures.
     //      The `fot_suspected_token` leaf returns `(token, pool_key)` for
     //      failures whose `reverting_frame.label` is in
     //      `FOT_REVERT_LABELS` (`IIA`, `CurrencyNotSettled`, `UniswapV2: K`).
@@ -1143,7 +983,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 8. Record suppression outcomes:
+    // 5. Record suppression outcomes:
     //    `record_success(pid)` for succeeded, `record_failure(pid)` for the
     //    rest (revert/no-profit/overflow/exception). Scope-locked (same
     //    bookend-only discipline as step 1 — the guard drops before any
@@ -1159,7 +999,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 8.5. FoT success recording. For every SUCCEEDED path,
+    // 5.5. FoT success recording. For every SUCCEEDED path,
     //      record `record_success(token)` for EVERY token on the path — each
     //      hop's input AND output (via `hop_input_token` + `hop_output_token`)
     //      the 0-success disambiguator. A true FoT token can never succeed
@@ -1187,7 +1027,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 9. Sort both categories by net profit descending.
+    // 6. Sort both categories by net profit descending.
     outcome
         .gas_profitable
         .sort_by_key(|r| std::cmp::Reverse(r.net_profit));
@@ -1206,48 +1046,6 @@ pub fn dispatch_profitable_results(
     degenbot_simulation::divergence_probe::dump_divergence_summary();
 
     outcome
-}
-
-/// Resolve a hop's `pool_id` on `BotState` and check whether its current
-/// `state_nonce` has advanced past the snapshot `candidate.state_nonces[hop]`.
-/// Returns `true` (stale) if ANY hop's nonce has advanced. A hop whose
-/// `pool_id` cannot be resolved is treated as fresh (the path-validity guard
-/// at resolve time already dropped unresolvable paths; a transient miss here
-/// is the registry's responsibility, not a staleness signal).
-///
-/// the executor chains the solver's predicted hop outputs as exact-in
-/// amounts, so a stale hop's over-prediction becomes an IIA underpayment
-/// revert. Dropping the candidate pre-sim avoids the revert.
-#[must_use]
-pub fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
-    use degenbot_execution::HopInfo;
-    for (i, hop) in candidate.path_info.hops.iter().enumerate() {
-        let Some(step) = candidate.steps.get(i) else {
-            return false; // Mismatched lengths — let the sim path handle it.
-        };
-        let snapshot_nonce = step.state_nonce;
-        let current_nonce = match hop {
-            HopInfo::V2(h) => core
-                .pool_id_by_address(&h.pool_address)
-                .map_or(0, |pid| core.pool_state_nonce(pid)),
-            HopInfo::V3(h) => core
-                .pool_id_by_address(&h.pool_address)
-                .map_or(0, |pid| core.pool_state_nonce(pid)),
-            HopInfo::V4(h) => match alloy::hex::decode(h.pool_id_hex.trim_start_matches("0x")) {
-                Ok(bytes) if bytes.len() == 32 => {
-                    let mut pid = [0u8; 32];
-                    pid.copy_from_slice(&bytes);
-                    core.pool_id_by_key(h.pool_manager_address, &pid)
-                        .map_or(0, |p| core.pool_state_nonce(p))
-                }
-                _ => 0,
-            },
-        };
-        if current_nonce != snapshot_nonce {
-            return true;
-        }
-    }
-    false
 }
 
 #[expect(clippy::unwrap_used)]
@@ -1409,19 +1207,6 @@ mod tests {
     /// path into the asserter.
     // ── D2: PathSuppression consumption (done-reference) ──────────────────
 
-    // ── D3: filter_thin_margin_results ────────────────────────────────────
-
-    #[test]
-    fn thin_margin_zero_bps_keeps_all() {
-        let cands = vec![
-            candidate(1, 1_000, 1),     // 0.1 bps — tiny
-            candidate(2, 1_000, 1_000), // 100 bps — huge
-        ];
-        let (kept, dropped) = filter_thin_margin_results(cands, 0);
-        assert_eq!(kept.len(), 2);
-        assert_eq!(dropped, 0);
-    }
-
     // ── the production axis chain (kwarg → intake → config) ────────
 
     #[test]
@@ -1476,66 +1261,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn thin_margin_50_bps_drops_low_profit() {
-        // 50 bps = 0.5%. profit * 10000 >= opt_input * 50.
-        // candidate A: opt=1_000_000, profit=4_999 → 4_999*10000=49_990_000;
-        //   opt*50=50_000_000 → 49_990_000 < 50_000_000 → DROPPED (< 0.5%).
-        // candidate B: opt=1_000_000, profit=5_000 → 50_000_000 >= 50_000_000 → KEPT.
-        // candidate C: opt=0, profit=any → kept (no basis).
-        let cands = vec![
-            candidate(1, 1_000_000, 4_999),
-            candidate(2, 1_000_000, 5_000),
-            candidate(3, 0, 100),
-        ];
-        let (kept, dropped) = filter_thin_margin_results(cands, 50);
-        assert_eq!(kept.len(), 2);
-        assert_eq!(dropped, 1);
-        // The dropped one is the sub-0.5% path 1.
-        let kept_ids: Vec<u64> = kept.iter().map(|c| c.candidate_id.path_id()).collect();
-        assert!(!kept_ids.contains(&1));
-        assert!(kept_ids.contains(&2));
-        assert!(kept_ids.contains(&3));
-    }
-
-    /// The SAME solver path twice — once per deployment — is two candidates.
-    ///
-    /// The pre-sim filters key on the candidate identity, so a filter pass can
-    /// never fold two deployments' candidates at one path into one row (the
-    /// collapse a path-only key produces).
-    #[test]
-    fn same_path_candidates_at_two_deployments_both_survive_the_pre_filters() {
-        let at = |deployment: u64| DispatchCandidate {
-            candidate_id: CandidateId::new(7, DeploymentId::new(deployment)),
-            optimal_input: 1_000_000,
-            engine_profit: 50_000,
-            steps: Box::new([]),
-            solve_block: 100,
-            path_info: two_v2_hops(),
-            prepared: None,
-        };
-
-        // A 0-bps floor keeps everything: two rows in, two rows out.
-        let (kept, dropped) = filter_thin_margin_results(vec![at(1), at(2)], 0);
-        assert_eq!(dropped, 0);
-        assert_eq!(kept.len(), 2, "both deployments' candidates survive");
-        let ids: Vec<CandidateId> = kept.iter().map(|c| c.candidate_id).collect();
-        assert_eq!(
-            ids,
-            vec![
-                CandidateId::new(7, DeploymentId::new(1)),
-                CandidateId::new(7, DeploymentId::new(2)),
-            ]
-        );
-
-        // A floor that drops the marginal row drops BOTH of its deployments'
-        // rows (the same economics), never one because the other was seen
-        // first.
-        let (kept, dropped) = filter_thin_margin_results(vec![at(1), at(2)], 1_000);
-        assert_eq!(dropped, 2);
-        assert!(kept.is_empty());
-    }
-
     /// Per-candidate failure attribution keeps the deployment half: two
     /// deployments failing the same path are two `[sim-fail]` records, not one
     /// overwritten row.
@@ -1559,25 +1284,6 @@ mod tests {
         assert_eq!(ids.len(), 2, "the records are distinct identities");
         assert!(ids.contains(&CandidateId::new(7, DeploymentId::new(1))));
         assert!(ids.contains(&CandidateId::new(7, DeploymentId::new(2))));
-    }
-
-    #[test]
-    fn thin_margin_empty_input_keeps() {
-        let (kept, dropped) = filter_thin_margin_results(Vec::new(), 50);
-        assert!(kept.is_empty());
-        assert_eq!(dropped, 0);
-    }
-
-    #[test]
-    fn thin_margin_uses_exact_integer_arithmetic() {
-        // 99 bps. profit=990 on opt=1_000_000 → 990*10000=9_900_000;
-        //   1_000_000*99=99_000_000 → DROPPED.
-        // profit=9_900 → 99_000_000 >= 99_000_000 → KEPT (exactly at threshold).
-        let cands = vec![candidate(1, 1_000_000, 990), candidate(2, 1_000_000, 9_900)];
-        let (kept, dropped) = filter_thin_margin_results(cands, 99);
-        assert_eq!(kept.len(), 1);
-        assert_eq!(dropped, 1);
-        assert_eq!(kept[0].candidate_id.path_id(), 2);
     }
 
     /// The dispatch floor has one home: `is_gas_profitable` is the single
@@ -2476,33 +2182,6 @@ mod tests {
                 .is_empty(),
             "non-SolverCalc failures must not record divergence"
         );
-    }
-
-    /// `order-index` feature: the pre-sim selection is deterministic (profit
-    /// desc, id-asc tie-break) regardless of the caller's order — parity with a
-    /// brute-force profit sort (ADR-024).
-    #[cfg(feature = "order-index")]
-    #[test]
-    fn order_index_top_selection_is_deterministic() {
-        let path = two_v2_hops();
-        let mk = |id: u64, profit: u128| DispatchCandidate {
-            candidate_id: CandidateId::new(id, deployment_id()),
-            optimal_input: 0,
-            engine_profit: profit,
-            steps: Box::new([]),
-            solve_block: 100,
-            path_info: path.clone(),
-            prepared: None,
-        };
-        // Deliberately passed in a non-sorted order, with a profit tie (100).
-        let mut cands = vec![mk(10, 100), mk(5, 500), mk(9, 100), mk(20, 300)];
-        order_index_top_selection(&mut cands);
-        let order: Vec<(u64, u128)> = cands
-            .iter()
-            .map(|c| (c.candidate_id.path_id(), c.engine_profit))
-            .collect();
-        // profit descending, then id ascending on the 100-tie.
-        assert_eq!(order, vec![(5, 500), (20, 300), (9, 100), (10, 100)]);
     }
 }
 

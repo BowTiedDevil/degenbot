@@ -66,8 +66,17 @@ pub mod selection;
 /// takes its bytes from here, so the pure-Rust path needs no driver shell.
 pub mod executor_runtime;
 
+// The standalone pre-simulation admission policy: the stamping suppression read,
+// pool divergence, fee-on-transfer, thin margin, candidate staleness, the
+// optional order-index reorder, and the cap — `dispatch_profitable_results`'
+// one home for which candidates reach simulation. Crate-internal: the leaf
+// helpers it owns keep their published `dispatch` and crate-root paths (see the
+// re-export below deferring to the dispatch module), so the public surface is
+// the one that existed before the move.
+mod admission;
+
 /// The dispatch fan-out + categorization policy (`dispatch_profitable_results`)
-/// + the candidate/outcome types + the thin-margin pre-filter.
+/// + the candidate/outcome types.
 pub mod dispatch;
 
 /// Per-pool solver-divergence tracking (`PoolDivergence` +
