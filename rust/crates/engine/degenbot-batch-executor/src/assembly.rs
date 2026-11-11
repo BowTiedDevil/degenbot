@@ -1,25 +1,79 @@
 //! Stage 1 — batch assembly: raw rows + payload rows → typed verdicts +
 //! sim-ready candidates.
 //!
-//! One home for the per-row pre-sim policy both consumers applied driftedly:
+//! One home for the per-row raw-row checks both consumers applied driftedly:
 //! the `PyO3` seam skipped empty-hops + payload-served silently and raised on a
 //! resolve miss; the settlement bot's `plan_batch` folded the resolve miss
 //! into `SkipEmptyHops` and pre-applied suppression + thin margin on top of
 //! the fan-out's own re-application (a double `is_suppressed` read whose
 //! retry-stamp side effect could re-suppress a path due for its interval
-//! retry). Here each policy applies EXACTLY ONCE, in the fan-out's documented
-//! order, and every skip emits a typed [`AssemblyVerdict`] record.
+//! retry). Here the raw checks run once, the pre-sim policy is projected early
+//! by its own owner (below) and re-checked authoritatively at simulation time,
+//! and every skip emits a typed [`AssemblyVerdict`] record.
 //!
 //! Policy inputs stay DISTINCT typed values (task decision b): the
 //! batch-local payload-served set and the cross-block `PathSuppression`
 //! registry are different decisions with different feedback loops, injected
 //! separately — never merged into one knob.
-
+//!
+//! # This stage PROJECTS the early half of the admission policy
+//!
+//! The batch's order is
+//!
+//! `raw checks -> non-stamping suppression projection -> divergence ->
+//! fee-on-transfer -> thin margin -> input-order per-lane cap -> pre-selection
+//! staleness -> shared target selection -> leaf finalization`
+//!
+//! The stages up to the cap are not implemented here: they are
+//! [`degenbot_arbitrage::project_early_admission`], the same predicates, floor,
+//! and cap the authoritative passes run, applied early and REPORTING each drop
+//! (candidate + stage) instead of only counting it. This stage supplies what is
+//! genuinely the batch's — the resolved rows, the caller's cap, and the
+//! [`AssemblyVerdict`]/record join per reported drop — and nothing else.
+//!
+//! Everything an early drop reports is an EARLY drop: it stays unstamped (the
+//! projection is the non-stamping read), it earns its typed
+//! [`AssemblyVerdict`], and it never reaches the fan-out. What survives is
+//! handed over as [`degenbot_arbitrage::AdmittedCandidate`] — the pre-admitted
+//! transport — to
+//! `degenbot_arbitrage::dispatch_admitted_across_deployments`, whose leaf
+//! finalizes it authoritatively at simulation time (`stamping suppression ->
+//! divergence -> fee-on-transfer -> staleness -> optional reorder -> same-cap
+//! truncation`).
+//!
+//! A projection is evidence about the block it read, never a promise: the leaf
+//! re-reads every mutable registry and the live nonces rather than trusting it,
+//! so a policy fact that moved between here and simulation drops the candidate
+//! THERE, and the retry stamp is the leaf's to write. A candidate this stage
+//! dropped before the cap FREES its slot — a clean sibling takes it — while a
+//! candidate the cap itself dropped is simply gone (the drain-invisible drop).
+//!
+//! # Migrating a consumer of this stage
+//!
+//! [`AssembledBatch::candidates`] is that transport
+//! ([`degenbot_arbitrage::AdmittedCandidate`]) rather than a plain
+//! [`DispatchCandidate`] list:
+//!
+//! - a consumer that only drains [`AssembledBatch::outcomes`] is unaffected —
+//!   the record vocabulary and the per-row verdicts keep their shapes;
+//! - a consumer that read the candidate list reads `candidate()` off each entry
+//!   and hands the list to
+//!   `degenbot_arbitrage::dispatch_admitted_across_deployments`, never to the
+//!   RAW entry (which would re-apply the whole admission policy to rows this
+//!   stage already projected).
+//!
+//! Everything else this module constructs keeps its shape: [`AssemblyInputs`],
+//! the [`AssemblyVerdict`] set, the payload-arm helpers
+//! ([`merge_payload_results`], [`join_sim_result`], [`derive_path_pools`]), and
+//! the [`AssembledBatch`] record/join fields.
+//!
 use std::collections::{HashMap, HashSet};
 
 use crate::record::PathInfoView;
 
-use degenbot_arbitrage::{DispatchCandidate, FeeOnTransferRegistry, PoolDivergence};
+use degenbot_arbitrage::{
+    AdmittedCandidate, DispatchCandidate, FeeOnTransferRegistry, PoolDivergence,
+};
 use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
 use degenbot_submission::{PoolKey, SubmitCandidate};
 
@@ -69,6 +123,22 @@ fn payload_deployment_mismatch(candidate_id: CandidateId, expected: DeploymentId
     }
 }
 
+/// The typed verdict this stage attributes to one early-projection drop.
+///
+/// `None` for [`degenbot_arbitrage::EarlyDropReason::OverCap`]: the cap is the
+/// one early drop the record fold has never carried (a capped row is
+/// drain-invisible — the batch's `candidate_count` excludes it).
+fn early_drop_verdict(reason: degenbot_arbitrage::EarlyDropReason) -> Option<AssemblyVerdict> {
+    use degenbot_arbitrage::EarlyDropReason;
+    match reason {
+        EarlyDropReason::Suppressed => Some(AssemblyVerdict::SkipSuppressed),
+        EarlyDropReason::DivergentPool => Some(AssemblyVerdict::SkipDivergentPool),
+        EarlyDropReason::FeeOnTransfer => Some(AssemblyVerdict::SkipFeeOnTransfer),
+        EarlyDropReason::ThinMargin => Some(AssemblyVerdict::SkipThinMargin),
+        EarlyDropReason::OverCap => None,
+    }
+}
+
 /// The stage-1 inputs — every policy value, injected.
 pub struct AssemblyInputs<'a> {
     /// The raw solver rows.
@@ -82,19 +152,24 @@ pub struct AssemblyInputs<'a> {
     /// simulated paths — an idempotency/dedup rule with no state of its own).
     pub payload_served: &'a HashSet<CandidateId>,
     /// The cross-block suppression registry (decision b: persistent feedback
-    /// state, read exactly once per batch — the retry stamp is a side effect).
+    /// state). The early projection reads it WITHOUT the retry stamp, so the
+    /// one stamping read stays the leaf's at simulation time.
     pub suppression: &'a mut degenbot_submission::PathSuppression,
-    /// The per-pool solver-divergence memo (skip + lifetime-tally read).
+    /// The per-pool solver-divergence memo (skip + lifetime-tally read). A
+    /// poisoned mutex is recovered here; the leaf keeps panicking.
     pub divergence: &'a std::sync::Mutex<PoolDivergence>,
-    /// The per-token fee-on-transfer registry (skip + lifetime-tally read).
+    /// The per-token fee-on-transfer registry (same skip + tally read, same
+    /// poison recovery).
     pub fot: &'a std::sync::Mutex<FeeOnTransferRegistry>,
     /// The block the batch is consumed at.
     pub current_block: u64,
     /// The thin-margin floor in bps (0 disables).
     pub min_profit_margin_bps: u64,
-    /// The per-batch sim cap (the plain count the driver injects; clamped to
-    /// the fan-out's own `MAX_SIMULATE_CONCURRENT` so the cap is applied once,
-    /// here, where the dropped rows are known).
+    /// The per-batch sim cap — the plain count the driver injects. The
+    /// projection clamps it to the fan-out's own `MAX_SIMULATE_CONCURRENT` and
+    /// bounds each lane in INPUT order, before the leaf's optional
+    /// simulation-order reorder, so the leaf's same-cap truncation only ever
+    /// preserves what this cap kept.
     pub max_candidates: usize,
     /// This lane's execution target — the deployment's own `to`, which the join
     /// stamps on every payload row the lane produces. It is a DEPLOYMENT fact:
@@ -120,8 +195,15 @@ pub struct AssembledBatch {
     /// fan-out (the sim leaf fills the verdicts); cap-dropped rows produce no
     /// record — the same drain-invisible drop today's truncate applies.
     pub outcomes: Vec<BatchOutcome>,
-    /// The sim-ready candidates, in input order, post cap.
-    pub candidates: Vec<DispatchCandidate>,
+    /// The sim-ready candidates as the PRE-ADMITTED transport, in input order,
+    /// post cap: each one owns the whole [`DispatchCandidate`] (identity,
+    /// per-hop rows, resolved path, economics), so the fan-out's finalization
+    /// never recovers a candidate from an ID-keyed side table.
+    ///
+    /// Every candidate this stage dropped is one it does NOT transport — and
+    /// every candidate it transports may still be dropped by the leaf, which
+    /// re-reads the same policy state authoritatively.
+    pub candidates: Vec<AdmittedCandidate>,
     /// The payload arm's joined submit rows (gas-profitable inline sims).
     pub payload_submits: Vec<SubmitCandidate>,
 }
@@ -151,6 +233,10 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
     // Every raw row this session assembles targets the session deployment.
     let candidate_id = |path_id: u64| CandidateId::new(path_id, inputs.deployment_id);
     let mut path_info_by_id: HashMap<u64, PathInfo> = HashMap::new();
+    // The resolved raw candidates the policy stages below project. They stay
+    // plain [`DispatchCandidate`]s until the cap, which is where this stage's
+    // product becomes the pre-admitted transport.
+    let mut candidates: Vec<DispatchCandidate> = Vec::new();
     // The solver request row per path — the figures the inline sim was issued
     // from. A payload row carries only its verdict, so a payload FAILURE's dump
     // reads `optimal_input`/`hop_outputs` off this map: the batch's own request
@@ -196,142 +282,53 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
         // shared with the PyO3 assembly delegate ([`build_raw_candidate`]).
         let candidate = build_raw_candidate(row, &path_info, inputs.deployment_id)?;
         path_info_by_id.insert(row.path_id, path_info.clone());
-        batch.candidates.push(candidate);
+        candidates.push(candidate);
     }
 
-    // ── Pre-sim policy, each applied exactly once, in fan-out order ──────
-
-    // Suppression. The read-only projection (no retry stamp) attributes the
-    // skip so the STAMPING read stays single-sited in the fan-out's step 1: a
-    // not-due suppressed path is skipped here (and again, identically, by the
-    // fan-out), while a retry-due path is admitted by BOTH reads — the Python
-    // retry semantics, with no double-read re-suppression. (`is_suppressed`
-    // stamps `last_retry_block` as a side effect; calling it here AND in the
-    // fan-out would re-suppress the path the first stamp just admitted.)
-    let mut divergence = inputs
-        .divergence
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut fot = inputs
-        .fot
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut survivors: Vec<DispatchCandidate> = Vec::with_capacity(batch.candidates.len());
-    for c in batch.candidates.drain(..) {
-        if inputs
-            .suppression
-            .is_suppressed_without_stamp(c.candidate_id, inputs.current_block)
-        {
-            batch.outcomes.push(BatchOutcome {
-                candidate_id: c.candidate_id,
-                block: inputs.current_block,
-                assembly: AssemblyVerdict::SkipSuppressed,
-                simulate: None,
-                submit: None,
-                path_info: PathInfoView::from(
-                    path_info_by_id
-                        .get(&c.candidate_id.path_id())
-                        .expect("resolved above"),
-                ),
-            });
-        } else {
-            survivors.push(c);
-        }
-    }
-
-    // Pool divergence — drop candidates routing through a pool flagged
-    // `SolverCalc` within the decay window; bump the lifetime tally per drop
-    // (mirrors the fan-out's bookend so the registry's counter stays fed).
-    let mut post_divergence: Vec<DispatchCandidate> = Vec::with_capacity(survivors.len());
-    for c in survivors.drain(..) {
-        let divergent = c
-            .path_info
-            .hops
-            .iter()
-            .filter_map(degenbot_arbitrage::hop_pool_key)
-            .any(|k| divergence.is_divergent(k, inputs.current_block));
-        if divergent {
-            divergence.record_dropped();
-            batch.outcomes.push(BatchOutcome {
-                candidate_id: c.candidate_id,
-                block: inputs.current_block,
-                assembly: AssemblyVerdict::SkipDivergentPool,
-                simulate: None,
-                submit: None,
-                path_info: PathInfoView::from(
-                    path_info_by_id
-                        .get(&c.candidate_id.path_id())
-                        .expect("resolved above"),
-                ),
-            });
-        } else {
-            post_divergence.push(c);
-        }
-    }
-
-    // Fee-on-transfer — drop candidates whose any hop's input token is
-    // FoT-confirmed (same lifetime-tally mirror).
-    let mut post_fot: Vec<DispatchCandidate> = Vec::with_capacity(post_divergence.len());
-    for c in post_divergence.drain(..) {
-        let is_fot = c.path_info.hops.iter().any(|hop| {
-            fot.is_fot(
-                degenbot_arbitrage::hop_input_token(hop),
-                inputs.current_block,
-            )
-        });
-        if is_fot {
-            fot.record_dropped();
-            batch.outcomes.push(BatchOutcome {
-                candidate_id: c.candidate_id,
-                block: inputs.current_block,
-                assembly: AssemblyVerdict::SkipFeeOnTransfer,
-                simulate: None,
-                submit: None,
-                path_info: PathInfoView::from(
-                    path_info_by_id
-                        .get(&c.candidate_id.path_id())
-                        .expect("resolved above"),
-                ),
-            });
-        } else {
-            post_fot.push(c);
-        }
-    }
-
-    // Thin margin — the core leaf, applied once (the fan-out re-applies as a
-    // no-op on the survivors). The leaf consumes its input vec, so the
-    // skip-attribution pass runs over a clone (bounded by the batch cap).
-    let (mut kept, _dropped) = degenbot_arbitrage::filter_thin_margin_results(
-        post_fot.clone(),
-        inputs.min_profit_margin_bps,
+    // ── The early admission projection ───────────────────────────────────
+    // The non-stamping half of the pre-simulation policy — suppression without
+    // the retry stamp, pool divergence, fee-on-transfer, thin margin, and this
+    // batch's input-order cap — is ONE implementation, in
+    // `degenbot_arbitrage::project_early_admission`. This stage hands it the
+    // resolved rows and turns its reported drops into typed records; what
+    // survives is the pre-admitted transport, and the fan-out's leaf finalizes
+    // it authoritatively at simulation time.
+    let projection = degenbot_arbitrage::project_early_admission(
+        candidates,
+        &degenbot_arbitrage::EarlyAdmissionPolicy {
+            suppression: inputs.suppression,
+            divergence: inputs.divergence,
+            fee_on_transfer: inputs.fot,
+            current_block: inputs.current_block,
+            min_profit_margin_bps: inputs.min_profit_margin_bps,
+            max_candidates: inputs.max_candidates,
+        },
     );
-    let kept_ids: HashSet<CandidateId> = kept.iter().map(|c| c.candidate_id).collect();
-    for c in &post_fot {
-        if !kept_ids.contains(&c.candidate_id) {
-            batch.outcomes.push(BatchOutcome {
-                candidate_id: c.candidate_id,
-                block: inputs.current_block,
-                assembly: AssemblyVerdict::SkipThinMargin,
-                simulate: None,
-                submit: None,
-                path_info: PathInfoView::from(
-                    path_info_by_id
-                        .get(&c.candidate_id.path_id())
-                        .expect("resolved above"),
-                ),
-            });
-        }
+    for dropped in projection.drops() {
+        // The cap is the one early drop the record fold never sees: the
+        // candidate_count the driver reports excludes it, exactly as today's
+        // `truncate` did, so cap-dropped rows stay drain-invisible.
+        let Some(assembly) = early_drop_verdict(dropped.reason()) else {
+            continue;
+        };
+        let candidate_id = dropped.candidate().candidate_id;
+        batch.outcomes.push(BatchOutcome {
+            candidate_id,
+            block: inputs.current_block,
+            assembly,
+            simulate: None,
+            submit: None,
+            path_info: PathInfoView::from(
+                path_info_by_id
+                    .get(&candidate_id.path_id())
+                    .expect("resolved above"),
+            ),
+        });
     }
-
-    // Cap — the driver-injected plain count, clamped to the fan-out's own
-    // ceiling so this is the ONLY truncation. Dropped rows produce no record
-    // (the drain-invisible drop today's `truncate` applies — today's
-    // candidate_count excludes them, so the record folds stay in parity).
-    let cap = inputs
-        .max_candidates
-        .min(degenbot_arbitrage::MAX_SIMULATE_CONCURRENT);
-    kept.truncate(cap);
-    batch.candidates = kept;
+    // The survivors ARE the pre-admitted transport: the fan-out finalizes them
+    // at simulation time (re-reading the same policy state), so what travels is
+    // the complete candidate.
+    batch.candidates = projection.into_admitted();
 
     // ── Payload rows ─────────────────────────────────────────────────────
     // The already-simulated arm: join each payload to the submit-lane shape
@@ -645,7 +642,9 @@ mod tests {
     use super::*;
     use crate::row::{PayloadFailure, PayloadRow};
     use alloy::primitives::Address;
-    use degenbot_arbitrage::{FeeOnTransferRegistry, PoolDivergence};
+    use degenbot_arbitrage::{
+        FeeOnTransferRegistry, PoolDivergence, PoolDivergenceKey, MAX_SIMULATE_CONCURRENT,
+    };
     use degenbot_core::address_utils::parse_address;
     use degenbot_execution::{HopInfo, V2HopInfo};
     use degenbot_submission::PathSuppression;
@@ -654,17 +653,45 @@ mod tests {
     const EXECUTOR: Address =
         alloy::primitives::address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
-    fn v2_path() -> PathInfo {
-        let pool = parse_address("0x1111111111111111111111111111111111111111").unwrap();
-        let t0 = parse_address("0x2222222222222222222222222222222222222222").unwrap();
-        let t1 = parse_address("0x3333333333333333333333333333333333333333").unwrap();
+    /// The fixture pools: one flaggable, one clean, and one that confirms a
+    /// second fee-on-transfer suspicion for the same input token.
+    const POOL_A: Address = alloy::primitives::address!("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1");
+    const POOL_B: Address = alloy::primitives::address!("b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2");
+    const POOL_C: Address = alloy::primitives::address!("c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3");
+
+    /// The fixture hop's input/output tokens. `zfo` is on, so the INPUT token —
+    /// the one the fee-on-transfer registry keys a suspicion on — is `token0`.
+    const TOKEN_IN: Address =
+        alloy::primitives::address!("2222222222222222222222222222222222222222");
+    const TOKEN_OUT: Address =
+        alloy::primitives::address!("3333333333333333333333333333333333333333");
+
+    /// A second pair's tokens — the clean sibling beside a fee-on-transfer
+    /// candidate, so a confirmed token drops one row and not both.
+    const OTHER_IN: Address =
+        alloy::primitives::address!("4444444444444444444444444444444444444444");
+    const OTHER_OUT: Address =
+        alloy::primitives::address!("5555555555555555555555555555555555555555");
+
+    /// One V2 hop through `pool` between the named tokens.
+    fn v2_path_between(pool: Address, token_in: Address, token_out: Address) -> PathInfo {
         PathInfo::new(vec![HopInfo::V2(V2HopInfo {
             pool_address: pool,
-            token0_address: t0,
-            token1_address: t1,
+            token0_address: token_in,
+            token1_address: token_out,
             fee: 30,
             zfo: true,
         })])
+    }
+
+    /// One V2 hop through `pool` with the fixture's default tokens.
+    fn v2_path_through(pool: Address) -> PathInfo {
+        v2_path_between(pool, TOKEN_IN, TOKEN_OUT)
+    }
+
+    /// The assembly tests' default path: one hop through the fixture pool.
+    fn v2_path() -> PathInfo {
+        v2_path_through(parse_address("0x1111111111111111111111111111111111111111").unwrap())
     }
 
     struct MapResolver(std::collections::HashMap<u64, PathInfo>);
@@ -681,6 +708,38 @@ mod tests {
 
     fn resolver(paths: &[u64]) -> MapResolver {
         MapResolver(paths.iter().map(|&p| (p, v2_path())).collect())
+    }
+
+    /// A resolver mapping each path id to its own path fixture (one path per
+    /// pool/token pair).
+    fn resolver_paths(paths: &[(u64, PathInfo)]) -> MapResolver {
+        MapResolver(paths.iter().cloned().collect())
+    }
+
+    /// The identities the assembly's transport carries, in order.
+    fn ids(batch: &AssembledBatch) -> Vec<CandidateId> {
+        batch
+            .candidates
+            .iter()
+            .map(|admitted| admitted.candidate().candidate_id)
+            .collect()
+    }
+
+    /// The stage-1 verdicts the batch emitted, in record order.
+    fn verdicts(batch: &AssembledBatch) -> Vec<AssemblyVerdict> {
+        batch.outcomes.iter().map(|o| o.assembly).collect()
+    }
+
+    /// Poison `ledger` the way a panicking peer task does (a guard held across
+    /// an unwind is the only way a std `Mutex` takes poison).
+    fn poison_under_guard<T>(ledger: &std::sync::Mutex<T>) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = ledger.lock().unwrap();
+            // The panic source is a genuinely fallible parse: an unwrapped
+            // `None` literal is the `unnecessary_literal_unwrap` lint.
+            let _: u8 = "not a number".parse().unwrap();
+        }));
+        assert!(ledger.is_poisoned(), "fixture poisons the ledger");
     }
 
     fn row(path_id: u64, optimal_input: u128, profit: u128) -> RawResult {
@@ -713,11 +772,28 @@ mod tests {
         }
     }
 
+    /// Assemble one batch at block 100 with no thin-margin floor and the
+    /// driver's default cap — the fixture's neutral shape.
     fn assemble(
         rows: &[RawResult],
         payloads: &[PayloadRow],
         res: &MapResolver,
         p: &Policy,
+    ) -> Result<AssembledBatch, AssemblyError> {
+        assemble_with(rows, payloads, res, p, 100, 0, 50)
+    }
+
+    /// Assemble one batch under an explicit block, floor, and cap: only the
+    /// suppression ledger is pre-locked here (the stage locks the divergence and
+    /// fee-on-transfer registries itself, so pre-locking them would deadlock).
+    fn assemble_with(
+        rows: &[RawResult],
+        payloads: &[PayloadRow],
+        res: &MapResolver,
+        p: &Policy,
+        current_block: u64,
+        min_profit_margin_bps: u64,
+        max_candidates: usize,
     ) -> Result<AssembledBatch, AssemblyError> {
         let served: HashSet<CandidateId> = payloads.iter().map(|x| x.candidate_id).collect();
         let mut suppression = p.suppression.lock().unwrap();
@@ -729,9 +805,9 @@ mod tests {
             suppression: &mut suppression,
             divergence: &p.divergence,
             fot: &p.fot,
-            current_block: 100,
-            min_profit_margin_bps: 0,
-            max_candidates: 50,
+            current_block,
+            min_profit_margin_bps,
+            max_candidates,
             target: EXECUTOR,
             deployment_id: deployment_id(),
         })
@@ -897,7 +973,7 @@ mod tests {
         // verdicts arrive only after the fan-out) — drain-invisible here.
         assert!(!by_id.contains_key(&2));
         assert_eq!(batch.candidates.len(), 1);
-        assert_eq!(batch.candidates[0].candidate_id.path_id(), 2);
+        assert_eq!(batch.candidates[0].candidate().candidate_id.path_id(), 2);
     }
 
     #[test]
@@ -930,6 +1006,216 @@ mod tests {
         // Rows the cap dropped produce NO record — the same drain-invisible
         // drop today's truncate applies (candidate_count excludes them).
         assert!(batch.outcomes.is_empty());
+    }
+
+    // -- the pre-admitted transport --------------------------------------
+
+    /// An empty batch transports nothing, records nothing, and resolves nothing
+    /// — the empty-input short-circuit the fan-out then sees as zero candidates.
+    #[test]
+    fn an_empty_batch_transports_nothing_and_records_nothing() {
+        let res = resolver(&[]);
+        let p = Policy::fresh();
+        let batch = assemble(&[], &[], &res, &p).unwrap();
+
+        assert!(batch.candidates.is_empty());
+        assert!(batch.outcomes.is_empty());
+        assert!(batch.payload_submits.is_empty());
+        assert!(batch.path_info_by_id.is_empty());
+    }
+
+    /// The survivors ARE the transport: each rides an `AdmittedCandidate` that
+    /// owns the complete row (identity, economics, per-hop rows, resolved path),
+    /// so the fan-out's finalization re-reads the policy without recovering
+    /// anything from an ID-keyed side table.
+    #[test]
+    fn survivors_ride_the_pre_admitted_transport_with_full_provenance() {
+        let res = resolver(&[7]);
+        let p = Policy::fresh();
+        let rows = [row(7, 1_234, 5_678)];
+        let batch = assemble(&rows, &[], &res, &p).unwrap();
+
+        assert_eq!(batch.candidates.len(), 1);
+        let carried = batch.candidates[0].candidate();
+        assert_eq!(carried.candidate_id, CandidateId::new(7, deployment_id()));
+        assert_eq!(carried.optimal_input, 1_234);
+        assert_eq!(carried.engine_profit, 5_678);
+        assert_eq!(carried.solve_block, 100);
+        assert_eq!(carried.steps.len(), 1);
+        assert_eq!(carried.steps[0].state_nonce, 1);
+        let view = PathInfoView::from(&carried.path_info);
+        assert_eq!(view.path_type, "V2");
+        assert_eq!(view.hops.len(), 1);
+        assert!(
+            matches!(
+                &carried.path_info.hops[0],
+                degenbot_execution::HopInfo::V2(hop)
+                    if hop.pool_address
+                        == parse_address("0x1111111111111111111111111111111111111111").unwrap()
+            ),
+            "the carried path is the resolved fixture path"
+        );
+        assert!(
+            carried.prepared.is_none(),
+            "the target-selection walk attaches the encoding, not the assembly"
+        );
+    }
+
+    /// The floor's duplicate-attribution quirk survives the shared projection:
+    /// a thin row whose identity a surviving twin also carries earns NO record —
+    /// it is dropped silently — because the projection reports thin drops by
+    /// KEPT identity, exactly as this stage's own fold always did.
+    #[test]
+    fn a_thin_duplicate_of_a_surviving_identity_earns_no_record() {
+        let res = resolver(&[7]);
+        let p = Policy::fresh();
+        // 1 bps (thin) and 100 bps (fat) at one identity, under a 50 bps floor.
+        let rows = [row(7, 1_000_000, 1), row(7, 1_000_000, 10_000)];
+        let batch = assemble_with(&rows, &[], &res, &p, 100, 50, 50).unwrap();
+
+        assert_eq!(ids(&batch), vec![CandidateId::new(7, deployment_id())]);
+        assert_eq!(
+            batch.candidates[0].candidate().engine_profit,
+            10_000,
+            "the row with margin survives its thin twin"
+        );
+        assert!(
+            batch.outcomes.is_empty(),
+            "the thin twin shares a kept identity, so it is dropped without a record"
+        );
+    }
+
+    /// Cap 1, the fan-out's order: the floor runs BEFORE the cap, so the thin
+    /// row's early drop FREES the one slot — the fat sibling takes it. Were the
+    /// cap first, the prefix would keep the thin row and starve the fat one.
+    #[test]
+    fn the_floor_runs_before_the_cap_so_a_thin_row_frees_its_slot() {
+        let res = resolver(&[1, 2]);
+        let p = Policy::fresh();
+        let rows = [row(1, 1_000_000, 1), row(2, 1_000_000, 10_000)];
+        let batch = assemble_with(&rows, &[], &res, &p, 100, 50, 1).unwrap();
+
+        assert_eq!(ids(&batch), vec![CandidateId::new(2, deployment_id())]);
+        assert_eq!(verdicts(&batch), vec![AssemblyVerdict::SkipThinMargin]);
+    }
+
+    /// Cap 1: divergence runs before the cap, so the divergent row's early drop
+    /// FREES the slot its clean sibling takes, and the drop both emits its typed
+    /// record and feeds the memo's lifetime tally.
+    #[test]
+    fn the_cap_runs_after_divergence_so_a_divergent_row_frees_its_slot() {
+        let res = resolver_paths(&[(1, v2_path_through(POOL_A)), (2, v2_path_through(POOL_B))]);
+        let p = Policy::fresh();
+        p.divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        let rows = [row(1, 1_000_000, 10_000), row(2, 1_000_000, 10_000)];
+        let batch = assemble_with(&rows, &[], &res, &p, 100, 0, 1).unwrap();
+
+        assert_eq!(ids(&batch), vec![CandidateId::new(2, deployment_id())]);
+        assert_eq!(verdicts(&batch), vec![AssemblyVerdict::SkipDivergentPool]);
+        assert_eq!(
+            p.divergence.lock().unwrap().total_divergent_dropped(),
+            1,
+            "the assembly stage feeds the same lifetime tally the leaf does"
+        );
+    }
+
+    /// Cap 1: fee-on-transfer runs before the cap too, so the confirmed row's
+    /// early drop FREES the slot its clean sibling takes. The sibling routes
+    /// through another input token, so only the confirmed token's row drops.
+    #[test]
+    fn the_cap_runs_after_fee_on_transfer_so_a_confirmed_token_frees_its_slot() {
+        let res = resolver_paths(&[
+            (1, v2_path_between(POOL_A, TOKEN_IN, TOKEN_OUT)),
+            (2, v2_path_between(POOL_B, OTHER_IN, OTHER_OUT)),
+        ]);
+        let p = Policy::fresh();
+        {
+            // One suspicion is not confirmation; the second distinct pool is.
+            let mut fot = p.fot.lock().unwrap();
+            fot.record_suspicion(TOKEN_IN, PoolDivergenceKey::V2(POOL_A), 100);
+            fot.record_suspicion(TOKEN_IN, PoolDivergenceKey::V2(POOL_C), 100);
+        }
+        let rows = [row(1, 1_000_000, 10_000), row(2, 1_000_000, 10_000)];
+        let batch = assemble_with(&rows, &[], &res, &p, 100, 0, 1).unwrap();
+
+        assert_eq!(ids(&batch), vec![CandidateId::new(2, deployment_id())]);
+        assert_eq!(verdicts(&batch), vec![AssemblyVerdict::SkipFeeOnTransfer]);
+        assert_eq!(
+            p.fot.lock().unwrap().total_fot_dropped(),
+            1,
+            "the assembly stage feeds the same lifetime tally the leaf does"
+        );
+    }
+
+    /// The driver's count is clamped to the fan-out ceiling, and the cap is
+    /// INPUT ORDER: the prefix survives whatever the profits are. With the
+    /// `order-index` feature on the leaf's reorder only moves the simulation
+    /// order — its same-cap truncation keeps every transported survivor.
+    #[test]
+    fn over_cap_rows_are_dropped_in_input_order_at_the_fan_out_ceiling() {
+        let ceiling = u64::try_from(MAX_SIMULATE_CONCURRENT).unwrap();
+        let over = ceiling + 10;
+        let path_ids: Vec<u64> = (1..=over).collect();
+        let res = resolver(&path_ids);
+        let p = Policy::fresh();
+        // Profit FALLS with the input position: a profit ranking would invert
+        // the surviving prefix.
+        let rows: Vec<RawResult> = path_ids
+            .iter()
+            .map(|&id| row(id, 1_000_000, u128::from(over - id + 1) * 1_000))
+            .collect();
+        let batch =
+            assemble_with(&rows, &[], &res, &p, 100, 0, MAX_SIMULATE_CONCURRENT + 100).unwrap();
+
+        let expected: Vec<CandidateId> = (1..=ceiling)
+            .map(|id| CandidateId::new(id, deployment_id()))
+            .collect();
+        assert_eq!(ids(&batch), expected, "the input prefix survives");
+        assert!(batch.outcomes.is_empty(), "cap-dropped rows hold no record");
+    }
+
+    /// Batch assembly RECOVERS a poisoned policy registry (the driver's frame
+    /// keeps running); the fan-out leaves keep panicking loudly, so a poisoned
+    /// ledger is never silently read as "nothing flagged".
+    #[test]
+    fn assembly_recovers_a_poisoned_divergence_registry() {
+        let res = resolver_paths(&[(1, v2_path_through(POOL_A)), (2, v2_path_through(POOL_B))]);
+        let p = Policy::fresh();
+        p.divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        poison_under_guard(&p.divergence);
+
+        let rows = [row(1, 1_000_000, 10_000), row(2, 1_000_000, 10_000)];
+        let batch = assemble(&rows, &[], &res, &p).unwrap();
+
+        assert_eq!(ids(&batch), vec![CandidateId::new(2, deployment_id())]);
+        assert_eq!(verdicts(&batch), vec![AssemblyVerdict::SkipDivergentPool]);
+    }
+
+    #[test]
+    fn assembly_recovers_a_poisoned_fee_on_transfer_registry() {
+        let res = resolver_paths(&[
+            (1, v2_path_between(POOL_A, TOKEN_IN, TOKEN_OUT)),
+            (2, v2_path_between(POOL_B, OTHER_IN, OTHER_OUT)),
+        ]);
+        let p = Policy::fresh();
+        {
+            let mut fot = p.fot.lock().unwrap();
+            fot.record_suspicion(TOKEN_IN, PoolDivergenceKey::V2(POOL_A), 100);
+            fot.record_suspicion(TOKEN_IN, PoolDivergenceKey::V2(POOL_C), 100);
+        }
+        poison_under_guard(&p.fot);
+
+        let rows = [row(1, 1_000_000, 10_000), row(2, 1_000_000, 10_000)];
+        let batch = assemble(&rows, &[], &res, &p).unwrap();
+
+        assert_eq!(ids(&batch), vec![CandidateId::new(2, deployment_id())]);
+        assert_eq!(verdicts(&batch), vec![AssemblyVerdict::SkipFeeOnTransfer]);
     }
 
     /// A payload row is ENGINE-BORN: it carries the identity of the deployment

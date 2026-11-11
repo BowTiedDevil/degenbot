@@ -6,11 +6,19 @@
 //!
 //! 1. **Assembly** ([`assembly`]) — raw solver rows + inline-sim payload rows
 //!    are shaped into pre-sim [`DispatchCandidate`]s / [`SubmitCandidate`]s.
-//!    Every pre-sim policy (payload-served, resolve miss, suppression, pool
-//!    divergence, fee-on-transfer, thin margin) applies HERE, exactly once,
-//!    and emits a typed [`AssemblyVerdict`] per row.
-//! 2. **Simulate** — the survivors ride the core fan-out
-//!    (`degenbot_arbitrage::dispatch_profitable_results`) and are categorized
+//!    The raw-row checks (empty hops, payload-served, resolve, shape) run here,
+//!    and the EARLY half of the pre-sim policy (non-stamping suppression, pool
+//!    divergence, fee-on-transfer, thin margin, the input-order per-lane cap) is
+//!    projected here by its one owner
+//!    (`degenbot_arbitrage::project_early_admission`). Every drop it reports
+//!    earns a typed [`AssemblyVerdict`]; the survivors leave as the pre-admitted
+//!    transport (`degenbot_arbitrage::AdmittedCandidate`).
+//! 2. **Simulate** — the survivors ride the core fan-out's PRE-ADMITTED entry
+//!    (`degenbot_arbitrage::dispatch_admitted_across_deployments`), whose leaf
+//!    finalizes them: it re-reads the same policy state authoritatively
+//!    (stamping suppression, divergence, fee-on-transfer, staleness) before the
+//!    shared simulation body, so the projection above is evidence about its own
+//!    block and never a promise of later admission. Survivors are categorized
 //!    into typed [`SimulateVerdict`]s.
 //! 3. **Submit** — the joined candidates ride the production submit
 //!    orchestration (`degenbot_submission::dispatch_and_submit`) and produce

@@ -53,6 +53,15 @@ tracing = { version = "^0.1" }
 # fixtures share with the other crates.
 degenbot-core.workspace = true
 
+[features]
+# Deterministic profit-descending (+ id tie-break) pre-sim selection, forwarded
+# to the arbitrage leaf's `order-index`. It changes ONLY the leaf's simulation
+# order: this crate's assembly cap stays INPUT order over the caller's count, and
+# the leaf's same-cap truncation then drops nobody, so the survivor set is
+# identical with the feature on or off. Default off — a direct crate build keeps
+# the caller's pre-sort contract (ADR-024).
+order-index = ["degenbot-arbitrage/order-index"]
+
 [dev-dependencies]
 # The shared event-sequence oracle (`tests/session_consumption.rs`) reads its
 # recorded expectation from the parity fixture directory as JSON.

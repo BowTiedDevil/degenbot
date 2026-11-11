@@ -19,7 +19,7 @@
 //! - the submit planning stamps each target's own `to`, calldata, and native
 //!   value.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -33,9 +33,11 @@ use alloy::rpc::json_rpc::{
 use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
-    CmdExecutorBinding, DeploymentRegistry, FeeOnTransferRegistry, PoolDivergence, SimulationBlock,
-    SimulationDeployment, TargetSelection,
+    AdmittedCandidate, CmdExecutorBinding, DeploymentRegistry, FeeOnTransferRegistry,
+    PoolDivergence, PoolDivergenceKey, SimulationBlock, SimulationDeployment, TargetSelection,
+    MAX_SIMULATE_CONCURRENT,
 };
+use degenbot_batch_executor::assembly::{assemble_batch, AssemblyInputs};
 use degenbot_batch_executor::{
     join_sim_result, BatchExecutor, BatchOutcome, BatchWork, ExecutorConfig, ExecutorRuntime,
     PathResolver, RawResult, SimulateVerdict, SubmitVerdict,
@@ -159,6 +161,50 @@ fn candidate(deployment_id: DeploymentId) -> degenbot_arbitrage::DispatchCandida
     }
     .to_candidate(v2_path(), deployment_id)
 }
+
+/// The V2 pool the fixture path's FIRST hop routes through — the pool key a
+/// lane-1 `SolverCalc` divergence flags, and the one every lane's candidates
+/// route through.
+const FLAGGED_POOL: Address = address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+/// A second distinct pool for the fee-on-transfer threshold's second suspicion.
+const SECOND_POOL: Address = address!("0xdddddddddddddddddddddddddddddddddddddddd");
+
+/// Lane 1's OWN path in the fee-on-transfer fixture: a token the suspicion leg
+/// never touches, so lane 1's same-batch success cannot clear lane 2's record
+/// through the registry's 0-success disambiguator.
+const QUIET_IN: Address = address!("0x8888888888888888888888888888888888888888");
+const QUIET_OUT: Address = address!("0x9999999999999999999999999999999999999999");
+const QUIET_POOL: Address = address!("0x7777777777777777777777777777777777777777");
+
+/// One V2 hop through the quiet pool, from `QUIET_IN` to `QUIET_OUT`.
+fn quiet_path() -> PathInfo {
+    PathInfo::new(vec![HopInfo::V2(V2HopInfo {
+        pool_address: QUIET_POOL,
+        token0_address: QUIET_IN,
+        token1_address: QUIET_OUT,
+        fee: 30,
+        zfo: true,
+    })])
+}
+
+/// The fixture's solved row expressed over the quiet path.
+fn quiet_candidate(deployment_id: DeploymentId) -> degenbot_arbitrage::DispatchCandidate {
+    RawResult {
+        path_id: PATH_ID,
+        optimal_input: OPTIMAL_INPUT,
+        profit: 1,
+        hop_outputs: vec![HOP],
+        consumed_inputs: vec![HOP],
+        solve_block: BLOCK,
+        state_nonces: vec![0],
+    }
+    .to_candidate(quiet_path(), deployment_id)
+}
+
+/// The fixture path's first-hop input token (`zfo`, so `token0`) — the token the
+/// fee-on-transfer registry keys its suspicions on.
+const FOT_TOKEN: Address = WETH;
 
 fn raw_row() -> RawResult {
     RawResult {
@@ -801,5 +847,564 @@ async fn a_builtin_payload_row_rides_only_its_own_lane() {
         set.submit_records.len(),
         2,
         "the built-in payload's join and the foreign lane's survivor both reach the lane"
+    );
+}
+
+// ── Same-batch cross-lane feedback + the leaf loud-failure contract ──────
+
+fn adapter_a() -> TargetAdapter {
+    TargetAdapter {
+        target: TARGET_A,
+        selector: prepay_selector(),
+        value: PREPAY_A,
+        gross: GROSS_A,
+    }
+}
+
+fn adapter_b() -> TargetAdapter {
+    TargetAdapter {
+        target: TARGET_B,
+        selector: settle_selector(),
+        value: U256::ZERO,
+        gross: GROSS_B,
+    }
+}
+
+/// One registered deployment over an arbitrary adapter (the feedback fixtures
+/// need a different adapter per lane).
+fn deployment_over(
+    id: DeploymentId,
+    adapter: Arc<dyn ExecutionAdapter + Send + Sync>,
+    target: Address,
+) -> Arc<SimulationDeployment> {
+    Arc::new(SimulationDeployment::new(
+        id,
+        adapter,
+        owner(),
+        target,
+        1_000_000,
+        None,
+        None,
+    ))
+}
+
+/// What a lane-1 adapter writes when its simulation is assessed: the same-block
+/// policy feedback a real `SolverCalc` / fee-on-transfer failure produces, which
+/// every lane that finalizes AFTER it reads.
+enum Feedback {
+    /// One `SolverCalc` divergence at `FLAGGED_POOL`.
+    Divergence(Arc<Mutex<PoolDivergence>>),
+    /// One fee-on-transfer suspicion per listed pool for `FOT_TOKEN`.
+    Suspicions {
+        registry: Arc<Mutex<FeeOnTransferRegistry>>,
+        pools: Vec<PoolDivergenceKey>,
+    },
+}
+
+/// A target adapter that prices like [`TargetAdapter`] AND writes one policy
+/// registry at assessment time.
+struct FeedbackAdapter {
+    inner: TargetAdapter,
+    feedback: Feedback,
+}
+
+impl ExecutionAdapter for FeedbackAdapter {
+    fn encode(
+        &self,
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Result<TransactionRequest, ComposeError> {
+        self.inner.encode(path, inputs)
+    }
+
+    fn probe_spec(&self) -> &ProbeSpecs {
+        self.inner.probe_spec()
+    }
+
+    fn assess(&self, observation: &ExecutionObservation) -> Result<ExecutionResult, AssessError> {
+        match &self.feedback {
+            Feedback::Divergence(memo) => {
+                memo.lock()
+                    .expect("divergence memo")
+                    .record_divergence(PoolDivergenceKey::V2(FLAGGED_POOL), BLOCK);
+            }
+            Feedback::Suspicions { registry, pools } => {
+                let mut registry = registry.lock().expect("fot registry");
+                for pool in pools {
+                    registry.record_suspicion(FOT_TOKEN, *pool, BLOCK);
+                }
+            }
+        }
+        self.inner.assess(observation)
+    }
+}
+
+/// One session's shared policy arcs — the state the batch's assembly and the
+/// fan-out's leaf both read.
+struct PolicyArcs {
+    suppression: Arc<Mutex<PathSuppression>>,
+    divergence: Arc<Mutex<PoolDivergence>>,
+    fot: Arc<Mutex<FeeOnTransferRegistry>>,
+}
+
+fn policy_arcs() -> PolicyArcs {
+    PolicyArcs {
+        suppression: Arc::new(Mutex::new(PathSuppression::new())),
+        divergence: Arc::new(Mutex::new(PoolDivergence::new())),
+        fot: Arc::new(Mutex::new(FeeOnTransferRegistry::new())),
+    }
+}
+
+/// Run one PRE-ADMITTED registry fan-out — the transport the batch's assembly
+/// produces — on the dedicated multi-thread runtime the engine's sync DB bridge
+/// requires.
+fn run_admitted_fanout(
+    registry: &DeploymentRegistry,
+    admitted: Vec<AdmittedCandidate>,
+    arcs: &PolicyArcs,
+) -> degenbot_arbitrage::DeploymentFanOutOutcome {
+    let provider = mock_provider();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("multi-thread runtime");
+    let state = Arc::new(StateLock::new(BotState::new()));
+    let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+    let block = block(&provider);
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                runtime.block_on(async {
+                    degenbot_arbitrage::dispatch_admitted_across_deployments(
+                        admitted,
+                        &block,
+                        registry,
+                        TargetSelection::AllTargets,
+                        &arcs.suppression,
+                        BLOCK,
+                        &arcs.divergence,
+                        &arcs.fot,
+                        Some(&state),
+                        Some(&warm_cache),
+                    )
+                })
+            })
+            .join()
+            .expect("fan-out thread")
+    })
+    .expect("every candidate names a registered deployment")
+}
+
+/// One lane's outcome, by deployment.
+fn lane(
+    outcome: &degenbot_arbitrage::DeploymentFanOutOutcome,
+    deployment: DeploymentId,
+) -> &degenbot_arbitrage::DispatchOutcome {
+    outcome
+        .lane(deployment)
+        .expect("the registry holds the lane")
+}
+
+/// The two-target registry with a lane-1 feedback adapter and a plain lane 2, in
+/// registry order.
+fn feedback_registry(feedback: Feedback) -> DeploymentRegistry {
+    DeploymentRegistry::new(vec![
+        deployment_over(
+            deployment_a(),
+            Arc::new(FeedbackAdapter {
+                inner: adapter_a(),
+                feedback,
+            }),
+            TARGET_A,
+        ),
+        deployment_over(deployment_b(), Arc::new(adapter_b()), TARGET_B),
+    ])
+    .expect("two distinct identities compose a valid registry")
+}
+
+/// Two transported candidates — one per registered deployment, both through the
+/// fixture path.
+fn transported_pair() -> Vec<AdmittedCandidate> {
+    vec![
+        AdmittedCandidate::new(candidate(deployment_a())),
+        AdmittedCandidate::new(candidate(deployment_b())),
+    ]
+}
+
+/// The fee-on-transfer pair: lane 1 rides the quiet path (its success touches no
+/// token under suspicion), lane 2 rides the fixture path whose input token is
+/// `FOT_TOKEN`.
+fn transported_pair_with_quiet_first_lane() -> Vec<AdmittedCandidate> {
+    vec![
+        AdmittedCandidate::new(quiet_candidate(deployment_a())),
+        AdmittedCandidate::new(candidate(deployment_b())),
+    ]
+}
+
+/// Lane 1's `SolverCalc` divergence still drops lane 2's affected candidates in
+/// the SAME batch: the lanes share one memo, lane 1 finalizes and simulates
+/// first, and lane 2's finalization re-reads that memo before it simulates.
+#[test]
+fn a_lane_one_divergence_drops_the_later_lanes_affected_candidates() {
+    let arcs = policy_arcs();
+    let registry = feedback_registry(Feedback::Divergence(Arc::clone(&arcs.divergence)));
+
+    let outcome = run_admitted_fanout(&registry, transported_pair(), &arcs);
+
+    let first = lane(&outcome, deployment_a());
+    assert_eq!(
+        first.candidate_count, 1,
+        "lane 1 finalizes before its own feedback lands"
+    );
+    assert_eq!(first.sim_ok_count(), 1);
+    assert_eq!(first.divergent_dropped, 0);
+
+    let second = lane(&outcome, deployment_b());
+    assert_eq!(
+        second.divergent_dropped, 1,
+        "the same batch's lane-1 divergence reached lane 2's final read"
+    );
+    assert_eq!(second.candidate_count, 0, "lane 2 simulated nothing");
+    assert_eq!(second.sim_ok_count(), 0);
+    assert!(outcome.retired.is_empty());
+}
+
+/// The fee-on-transfer feedback is threshold-confirmed per token: ONE failing
+/// pool is not enough for a later lane's finalization to drop its candidate, and
+/// the second DISTINCT pool is.
+#[test]
+fn a_later_lane_drops_only_once_the_feedback_confirms_the_token() {
+    // One suspicion: not confirmation — the later lane still simulates.
+    let arcs = policy_arcs();
+    let registry = feedback_registry(Feedback::Suspicions {
+        registry: Arc::clone(&arcs.fot),
+        pools: vec![PoolDivergenceKey::V2(FLAGGED_POOL)],
+    });
+    let unconfirmed =
+        run_admitted_fanout(&registry, transported_pair_with_quiet_first_lane(), &arcs);
+    assert_eq!(
+        lane(&unconfirmed, deployment_b()).fot_dropped,
+        0,
+        "one failing pool is not confirmation"
+    );
+    assert_eq!(lane(&unconfirmed, deployment_b()).candidate_count, 1);
+
+    // Two distinct failing pools: the token is confirmed, so the later lane's
+    // candidate drops at its final read.
+    let arcs = policy_arcs();
+    let registry = feedback_registry(Feedback::Suspicions {
+        registry: Arc::clone(&arcs.fot),
+        pools: vec![
+            PoolDivergenceKey::V2(FLAGGED_POOL),
+            PoolDivergenceKey::V2(SECOND_POOL),
+        ],
+    });
+    let confirmed = run_admitted_fanout(&registry, transported_pair_with_quiet_first_lane(), &arcs);
+    assert_eq!(lane(&confirmed, deployment_a()).candidate_count, 1);
+    assert_eq!(
+        lane(&confirmed, deployment_b()).fot_dropped,
+        1,
+        "the confirmed token reached lane 2's final read"
+    );
+    assert_eq!(lane(&confirmed, deployment_b()).candidate_count, 0);
+}
+
+/// Poison `ledger` the way a panicking peer task does (a guard held across an
+/// unwind is the only way a std `Mutex` takes poison).
+fn poisoned_ledger() -> Arc<Mutex<PathSuppression>> {
+    let ledger = Arc::new(Mutex::new(PathSuppression::new()));
+    let handle = Arc::clone(&ledger);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _guard = handle.lock().expect("suppression ledger");
+        // A genuinely fallible parse: the panic source a poisoned guard needs.
+        let _: u8 = "not a number".parse().expect("a number");
+    }));
+    assert!(ledger.is_poisoned(), "fixture poisons the ledger");
+    ledger
+}
+
+/// The batch's finalization leaf keeps the loud-failure contract: a poisoned
+/// policy ledger panics rather than reading as "nothing suppressed".
+#[test]
+#[should_panic(expected = "suppression mutex poisoned")]
+fn a_poisoned_ledger_panics_at_the_pre_admitted_leaf() {
+    let suppression = poisoned_ledger();
+    let registry = registry();
+    let provider = mock_provider();
+    let block = block(&provider);
+    let arcs = policy_arcs();
+    let state = Arc::new(StateLock::new(BotState::new()));
+    let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+    // The finalization pass runs before any simulation, so the panic lands
+    // inside this call — no runtime and no engine handle is needed for it.
+    let _ = degenbot_arbitrage::dispatch_admitted_across_deployments(
+        Vec::new(),
+        &block,
+        &registry,
+        TargetSelection::AllTargets,
+        &suppression,
+        BLOCK,
+        &arcs.divergence,
+        &arcs.fot,
+        Some(&state),
+        Some(&warm_cache),
+    );
+}
+
+/// The batch's leaf counters name only what FINALIZATION dropped. The assembly's
+/// own early drops never reach the fan-out (the transport carries survivors
+/// alone), and the leaf re-runs no thin-margin floor, so a batch whose floor
+/// dropped a row up front still reports `thin_dropped == 0` beside a clean
+/// `candidate_count` — one policy implementation, not two.
+#[test]
+fn the_leaf_counts_only_what_finalization_dropped() {
+    /// The second path id: same hops, fat economics.
+    const FAT_PATH: u64 = 8;
+
+    let arcs = policy_arcs();
+    let resolver = MapResolver(HashMap::from([(PATH_ID, v2_path()), (FAT_PATH, v2_path())]));
+    // The fixture row's profit is 1 wei on a 1e15 input: thin at a 50 bps floor.
+    let thin = raw_row();
+    let mut fat = raw_row();
+    fat.path_id = FAT_PATH;
+    fat.profit = HOP;
+    fat.hop_outputs = vec![HOP, HOP];
+
+    let assembled = {
+        let mut ledger = arcs.suppression.lock().expect("suppression ledger");
+        degenbot_batch_executor::assembly::assemble_batch(
+            &degenbot_batch_executor::assembly::AssemblyInputs {
+                rows: &[thin, fat],
+                payloads: &[],
+                resolver: &resolver,
+                payload_served: &HashSet::new(),
+                suppression: &mut ledger,
+                divergence: &arcs.divergence,
+                fot: &arcs.fot,
+                current_block: BLOCK,
+                min_profit_margin_bps: 50,
+                max_candidates: 50,
+                target: TARGET_A,
+                deployment_id: deployment_a(),
+            },
+        )
+        .expect("the fixture rows are well formed")
+    };
+
+    assert_eq!(
+        assembled
+            .candidates
+            .iter()
+            .map(|admitted| admitted.candidate().candidate_id.path_id())
+            .collect::<Vec<_>>(),
+        vec![FAT_PATH],
+        "the floor dropped the thin row before the fan-out"
+    );
+    assert_eq!(
+        assembled.outcomes.len(),
+        1,
+        "its typed record is the batch's"
+    );
+
+    let registry = registry();
+    let outcome = run_admitted_fanout(&registry, assembled.candidates, &arcs);
+
+    let lane = lane(&outcome, deployment_a());
+    assert_eq!(lane.candidate_count, 1, "one transported survivor");
+    assert_eq!(lane.sim_ok_count(), 1);
+    assert_eq!(
+        lane.thin_dropped, 0,
+        "the leaf has no thin stage: the floor is the assembly's verdict"
+    );
+    assert_eq!(lane.suppressed_count, 0);
+    assert_eq!(lane.divergent_dropped, 0);
+    assert_eq!(lane.fot_dropped, 0);
+    assert_eq!(lane.stale_dropped, 0);
+}
+
+// ── The batch cap under the leaf's optional profit reorder ───────────────
+
+/// The fixture's per-row input basis: `optimal_input` names the row, so an
+/// adapter that logs the input it composed for tells the simulation order.
+const ORDERED_INPUT: u128 = 1_000_000;
+
+/// A target adapter that prices like [`TargetAdapter`] AND logs the
+/// `optimal_input` of every candidate the leaf composed for — the composition
+/// happens inside the simulation body, so the log IS the simulation order.
+struct RecordingAdapter {
+    inner: TargetAdapter,
+    composed: Arc<Mutex<Vec<u128>>>,
+}
+
+impl ExecutionAdapter for RecordingAdapter {
+    fn encode(
+        &self,
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Result<TransactionRequest, ComposeError> {
+        self.composed
+            .lock()
+            .expect("compose log")
+            .push(inputs.optimal_input);
+        self.inner.encode(path, inputs)
+    }
+
+    fn probe_spec(&self) -> &ProbeSpecs {
+        self.inner.probe_spec()
+    }
+
+    fn assess(&self, observation: &ExecutionObservation) -> Result<ExecutionResult, AssessError> {
+        self.inner.assess(observation)
+    }
+}
+
+/// One raw solver row whose profit RISES with its input position (so a
+/// profit-ranked selection is the reverse of the caller's order) and whose
+/// `optimal_input` identifies the row.
+fn ordered_row(path_id: u64, solve_block: u64) -> RawResult {
+    RawResult {
+        path_id,
+        optimal_input: ORDERED_INPUT + u128::from(path_id),
+        profit: u128::from(path_id) * 1_000,
+        hop_outputs: vec![ORDERED_INPUT, ORDERED_INPUT],
+        consumed_inputs: vec![ORDERED_INPUT, ORDERED_INPUT],
+        solve_block,
+        state_nonces: vec![0, 0],
+    }
+}
+
+/// The assembly's cap is the caller's count in INPUT order — never a ranking —
+/// and the leaf's same-cap truncation over what the assembly transported drops
+/// nobody. The `order-index` feature moves ONLY the simulation order of those
+/// survivors: with it on, the leaf simulates them profit-descending (here the
+/// reverse of the input order, because profit rises with the input position);
+/// with it off the transported order is the simulation order.
+///
+/// The exact-order assertion is gated on THIS crate's `order-index` feature, the
+/// only reliable proxy at this layer: a `--workspace` build unifies the feature
+/// from the `degenbot` umbrella independently of this crate's own flag, and the
+/// leaf's default-lane order is pinned by `degenbot-arbitrage`'s own suite.
+#[test]
+fn an_over_cap_assembly_keeps_the_input_prefix_and_the_leaf_truncates_nobody() {
+    let cap = MAX_SIMULATE_CONCURRENT;
+    let cap_u64 = u64::try_from(cap).expect("the cap fits u64");
+    let over = cap_u64 + 10;
+    let rows: Vec<RawResult> = (1..=over).map(|id| ordered_row(id, BLOCK)).collect();
+    let resolver = MapResolver((1..=over).map(|id| (id, v2_path())).collect());
+
+    let composed = Arc::new(Mutex::new(Vec::new()));
+    let registry = DeploymentRegistry::new(vec![deployment_over(
+        deployment_a(),
+        Arc::new(RecordingAdapter {
+            inner: adapter_a(),
+            composed: Arc::clone(&composed),
+        }),
+        TARGET_A,
+    )])
+    .expect("one identity composes a valid registry");
+
+    let arcs = policy_arcs();
+    let assembled = {
+        let mut suppression = arcs.suppression.lock().expect("suppression ledger");
+        assemble_batch(&AssemblyInputs {
+            rows: &rows,
+            payloads: &[],
+            resolver: &resolver,
+            payload_served: &HashSet::new(),
+            suppression: &mut suppression,
+            divergence: &arcs.divergence,
+            fot: &arcs.fot,
+            current_block: BLOCK,
+            min_profit_margin_bps: 0,
+            max_candidates: cap,
+            target: TARGET_A,
+            deployment_id: deployment_a(),
+        })
+        .expect("the fixture rows are well formed")
+    };
+
+    let transported: Vec<u64> = assembled
+        .candidates
+        .iter()
+        .map(|admitted| admitted.candidate().candidate_id.path_id())
+        .collect();
+    assert_eq!(
+        transported,
+        (1..=cap_u64).collect::<Vec<u64>>(),
+        "the assembly cap keeps the INPUT prefix, whatever the profits are"
+    );
+    assert!(
+        assembled.outcomes.is_empty(),
+        "a cap-dropped row holds no record"
+    );
+
+    let outcome = run_admitted_fanout(&registry, assembled.candidates, &arcs);
+    let lane_a = lane(&outcome, deployment_a());
+    assert_eq!(
+        lane_a.candidate_count, cap,
+        "the leaf's same-cap truncation over the transported survivors drops nobody"
+    );
+    assert_eq!(
+        lane_a.suppressed_count
+            + lane_a.divergent_dropped
+            + lane_a.fot_dropped
+            + lane_a.stale_dropped,
+        0,
+        "no survivor was dropped at finalization"
+    );
+
+    let simulated = composed.lock().expect("compose log").clone();
+    assert_eq!(
+        simulated.len(),
+        cap,
+        "every transported survivor reached the simulation body"
+    );
+    let mut permutation = simulated.clone();
+    permutation.sort_unstable();
+    assert_eq!(
+        permutation,
+        (1..=cap_u64)
+            .map(|id| ORDERED_INPUT + u128::from(id))
+            .collect::<Vec<u128>>(),
+        "the simulated set is exactly the transported prefix"
+    );
+    if cfg!(feature = "order-index") {
+        assert_eq!(
+            simulated,
+            (1..=cap_u64)
+                .rev()
+                .map(|id| ORDERED_INPUT + u128::from(id))
+                .collect::<Vec<u128>>(),
+            "the feature reorders the simulation profit-descending (profit rises with the input position)"
+        );
+    }
+}
+
+/// The standalone leaf panics on the same ledger: the batch keeps the leaf that
+/// panics loudly and only its own ASSEMBLY recovers a poisoned registry.
+#[test]
+#[should_panic(expected = "suppression mutex poisoned")]
+fn a_poisoned_ledger_panics_at_the_standalone_leaf() {
+    let suppression = poisoned_ledger();
+    let registry = registry();
+    let provider = mock_provider();
+    let block = block(&provider);
+    let arcs = policy_arcs();
+    let deployment = registry.entries().first().expect("one entry").clone();
+    let ctx = degenbot_arbitrage::SimulateContext {
+        block,
+        deployment: &deployment,
+    };
+    let _ = degenbot_arbitrage::dispatch_profitable_results(
+        Vec::new(),
+        &ctx,
+        &suppression,
+        BLOCK,
+        0,
+        &arcs.divergence,
+        &arcs.fot,
+        None,
+        None,
     );
 }

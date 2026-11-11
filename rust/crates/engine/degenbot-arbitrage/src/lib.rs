@@ -23,9 +23,14 @@
 //!   caller already projected through its own pre-simulation admission, and
 //!   [`dispatch_admitted_across_deployments`] finalizes it authoritatively at
 //!   simulation time. The two entries share one target selection, one
-//!   deployment partition, one lane order, and one simulation body; they differ
-//!   in the policy pass in front of the simulation (see
-//!   [`dispatch`]'s "two entries, one simulation body").
+//!   deployment partition, one lane order, one policy implementation, and one
+//!   simulation body; they differ in which half of the policy runs in front of
+//!   the simulation (see [`dispatch`]'s "two entries, one simulation body").
+//! - the EARLY projection: [`project_early_admission`] is the caller-owned half
+//!   of that same policy — the non-stamping suppression read, divergence,
+//!   fee-on-transfer, thin margin, and the caller's input-order cap — which
+//!   reports every drop beside the candidate it dropped, so a batch's assembly
+//!   emits its records off this crate's stages instead of its own copies.
 //!
 //! The engine (evm2 executor, `Evm2BlockSimHandle`, `apply_simulation_overrides`,
 //! AL Inspector, `WarmCodeCache`) stays thin + generic in
@@ -77,10 +82,11 @@ pub mod executor_runtime;
 // divergence, fee-on-transfer, thin margin, candidate staleness, the optional
 // order-index reorder, and the cap — `dispatch_profitable_results`' one home for
 // which candidates reach simulation, plus the PRE-ADMITTED finalization pass the
-// pre-admitted fan-out entry runs. Crate-internal except for one type: the
-// `AdmittedCandidate` transport is re-exported at the crate root (see the
-// re-export below), while every leaf helper keeps its published `dispatch` and
-// crate-root path (deferred to the dispatch module).
+// pre-admitted fan-out entry runs and the EARLY projection a batch's assembly
+// runs before transporting survivors. The three passes are crate-internal
+// except for the transport and the early projection's vocabulary, re-exported at
+// the crate root (see the re-export below), while every leaf helper keeps its
+// published `dispatch` and crate-root path (deferred to the dispatch module).
 mod admission;
 
 /// The dispatch fan-out + categorization policy ([`dispatch_profitable_results`])
@@ -108,7 +114,17 @@ pub mod simulator;
 /// The pre-admitted candidate transport ([`AdmittedCandidate`]): a candidate a
 /// caller has already projected through its own pre-simulation admission, ready
 /// for the authoritative final read the pre-admitted fan-out entry performs.
-pub use admission::AdmittedCandidate;
+///
+/// [`project_early_admission`] is that projection's one home: it runs the early
+/// half of the same policy (non-stamping suppression, divergence,
+/// fee-on-transfer, thin margin, the caller's cap), reports every drop with the
+/// candidate and the stage that dropped it, and returns the survivors already
+/// wrapped as [`AdmittedCandidate`]s — so a caller emits one record per drop
+/// instead of re-implementing the predicates beside this crate's.
+pub use admission::{
+    project_early_admission, AdmittedCandidate, EarlyAdmissionPolicy, EarlyDrop, EarlyDropReason,
+    EarlyProjection,
+};
 pub use cmd_executor::{
     CmdExecutorBinding, CmdExecutorSimAdapter, ExecutionReceipt, InjectionAddressMismatch,
     EXECUTION_RECEIPT_LEN,

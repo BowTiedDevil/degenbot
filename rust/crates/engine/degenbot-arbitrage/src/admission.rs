@@ -23,35 +23,55 @@
 //! two rows sharing one candidate id only the first is admitted and stamped;
 //! the second is suppressed by the stamp the first just wrote.
 //!
-//! # Two entries over one policy
-//!
-//! [`admit`] is the RAW standalone pass: every stage, in the order above.
-//! [`finalize`] is the PRE-ADMITTED pass the registry fan-out's pre-admitted
-//! entry runs: the caller's assembly already applied its own non-stamping
-//! projection (divergence, fee-on-transfer, thin margin, its per-lane cap) and
-//! its pre-selection staleness gate, so finalization re-runs only the stages
-//! that must be AUTHORITATIVE at simulation time —
-//! `stamping suppression -> pool divergence -> fee-on-transfer -> candidate
-//! staleness -> optional order-index reorder -> same-cap truncation`.
+//! # Three entries over one policy
 //!
 //! Both passes run the same stage implementations; only the sequence and the
 //! thin-margin presence differ (thin margin reads nothing but the solver's own
 //! row, so its verdict cannot move between admission and simulation, and the
-//! pre-admitted leaf never sees the floor). Finalization never treats the
-//! caller's admission as a promise of later admission: it re-reads every
-//! mutable projection at its own block, so a ledger, memo, or registry that
-//! moved between admission and finalization drops the candidate exactly as the
-//! raw pass would — and a retry-due candidate is stamped before any final drop
-//! can happen.
+//! pre-admitted leaf never sees the floor).
+//!
+//! Finalization never treats the caller's admission as a promise of later
+//! admission: it re-reads every mutable projection at its own block, so a
+//! ledger, memo, or registry that moved between admission and finalization
+//! drops the candidate exactly as the raw pass would — and a retry-due
+//! candidate is stamped before any final drop can happen.
+//!
+//! # The early projection
+//!
+//! [`project_early_admission`] is the CALLER-OWNED early half of the same
+//! policy: the batch's assembly hands it its resolved rows and turns the drops
+//! it reports into typed records, then transports the survivors. It differs
+//! from [`admit`] in exactly two ways the caller owns:
+//!
+//! - suppression is the NON-STAMPING read ([`PathSuppression::is_suppressed_without_stamp`])
+//!   over a ledger the caller holds locked, because the retry stamp is the
+//!   leaf's to write at finalization time;
+//! - the cap is the caller's own count, clamped to
+//!   [`MAX_SIMULATE_CONCURRENT`] and applied in INPUT order, because the
+//!   caller's per-lane budget is the one that survives the fan-out's reorder
+//!   (see "Cap and order" below).
+//!
+//! It also REPORTS what it dropped (candidate + stage) instead of only
+//! counting, which is what lets a caller emit one record per drop. It is not a
+//! policy fork: the predicates, the partition loop, the thin-margin floor, and
+//! the cap are the same functions the two authoritative passes run.
 //!
 //! # Cap and order
 //!
-//! The cap ([`MAX_SIMULATE_CONCURRENT`]) is applied to the list the reorder
-//! produced: with the `order-index` feature the reorder is the net-profit
-//! ranking, so the cap keeps the profit prefix; without it the caller's own
-//! pre-sort is the contract and the cap keeps the input prefix. Dropping a
-//! candidate at the cap is silent — no tally — and frees no slot for a dropped
-//! sibling.
+//! On the authoritative passes the cap ([`MAX_SIMULATE_CONCURRENT`]) is applied
+//! to the list the reorder produced: with the `order-index` feature the reorder
+//! is the net-profit ranking, so the cap keeps the profit prefix; without it
+//! the caller's own pre-sort is the contract and the cap keeps the input
+//! prefix. Dropping a candidate at the cap is silent — no tally — and frees no
+//! slot for a dropped sibling, because the cap is the LAST stage.
+//!
+//! The caller's early cap is the first of those two facts applied early: it
+//! keeps its input prefix at its own (clamped) count, so the leaf's same-cap
+//! truncation over what it transports drops nobody. Because the early cap sits
+//! after divergence, fee-on-transfer, and thin margin, a candidate those
+//! stages dropped FREES its slot — its clean sibling takes it. Only a candidate
+//! the cap itself drops is lost to the prefix, and that drop is the one the
+//! batch's record fold never sees.
 //!
 //! # What this module does not own
 //!
@@ -62,10 +82,11 @@
 
 #[cfg(feature = "order-index")]
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
-use degenbot_execution::HopInfo;
+use degenbot_execution::{CandidateId, HopInfo};
 use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
@@ -208,8 +229,11 @@ pub(crate) struct Admission {
 ///
 /// # Building one
 ///
-/// A direct Rust consumer that owns its own pre-simulation projection constructs
-/// these itself, and every candidate it does NOT transport is one it dropped:
+/// A direct Rust consumer that owns its own pre-simulation projection asks
+/// [`project_early_admission`] for the list — it reports the drops and returns
+/// the survivors already wrapped — rather than reproducing the stages. A caller
+/// with a projection of its own constructs these directly, and every candidate
+/// it does NOT transport is one it dropped:
 ///
 /// ```
 /// use degenbot_arbitrage::{AdmittedCandidate, DispatchCandidate};
@@ -279,20 +303,20 @@ pub(crate) fn admit(
     let reads = policy.finalization();
 
     // 1. Suppression — the STAMPING read (see the module docs).
-    let suppressed = drop_suppressed(&mut candidates, &reads);
+    let suppressed = take_suppressed(&mut candidates, &reads).len();
 
     // 2. Pool divergence.
-    let divergent = drop_divergent(&mut candidates, &reads);
+    let divergent = take_divergent(&mut candidates, &reads).len();
 
     // 3. Fee-on-transfer.
-    let fee_on_transfer = drop_fee_on_transfer(&mut candidates, &reads);
+    let fee_on_transfer = take_fee_on_transfer(&mut candidates, &reads).len();
 
     // 4. Thin margin.
-    let (kept, thin_margin) = filter_thin_margin_results(candidates, policy.min_profit_margin_bps);
+    let (kept, thin) = partition_thin_margin(candidates, policy.min_profit_margin_bps);
     candidates = kept;
 
     // 5. Staleness.
-    let stale = drop_stale(&mut candidates, &reads);
+    let stale = take_stale(&mut candidates, &reads).len();
 
     // 6. Reorder, then cap what the reorder produced.
     reorder_and_cap(&mut candidates);
@@ -303,7 +327,7 @@ pub(crate) fn admit(
             suppressed,
             divergent,
             fee_on_transfer,
-            thin_margin,
+            thin_margin: thin.len(),
             stale,
         },
     }
@@ -345,16 +369,16 @@ pub(crate) fn finalize(
         .collect();
 
     // 1. Suppression — the STAMPING read, authoritative at finalization time.
-    let suppressed = drop_suppressed(&mut candidates, policy);
+    let suppressed = take_suppressed(&mut candidates, policy).len();
 
     // 2. Pool divergence — a pool flagged between admission and now drops here.
-    let divergent = drop_divergent(&mut candidates, policy);
+    let divergent = take_divergent(&mut candidates, policy).len();
 
     // 3. Fee-on-transfer — same authority for the token registry.
-    let fee_on_transfer = drop_fee_on_transfer(&mut candidates, policy);
+    let fee_on_transfer = take_fee_on_transfer(&mut candidates, policy).len();
 
     // 4. Staleness — the live nonce is the final word, whatever admission saw.
-    let stale = drop_stale(&mut candidates, policy);
+    let stale = take_stale(&mut candidates, policy).len();
 
     // 5. Reorder, then the SAME cap over the order it produced. The caller's
     //    assembly already capped its lanes at this cap, so with the `order-index`
@@ -377,54 +401,410 @@ pub(crate) fn finalize(
 }
 
 // -------------------------------------------------------------------------
+// The caller's early projection — the same policy, applied early
+// -------------------------------------------------------------------------
+
+/// Why the early projection dropped a candidate.
+///
+/// The variants are the batch's [`AssemblyVerdict`] sources: one typed drop
+/// reason per stage, so a caller maps reasons to its own verdict vocabulary
+/// instead of re-deriving the stage from a second predicate.
+///
+/// [`AssemblyVerdict`]: https://docs.rs/degenbot-batch-executor
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EarlyDropReason {
+    /// The retry-interval ledger holds this candidate and it is not due.
+    Suppressed,
+    /// A hop routes through a pool flagged `SolverCalc` inside the decay window.
+    DivergentPool,
+    /// A hop's input token is fee-on-transfer confirmed.
+    FeeOnTransfer,
+    /// The candidate's own margin is below the caller's floor.
+    ThinMargin,
+    /// The caller's per-lane cap left no room for this candidate.
+    OverCap,
+}
+
+/// One candidate the early projection dropped: the COMPLETE candidate plus the
+/// stage that dropped it, in the projection's stage-then-input order.
+///
+/// The candidate rides whole (identity, economics, per-hop rows, resolved path)
+/// so a caller attributes the drop without an ID-keyed side table, and two rows
+/// that share one identity stay two reported drops.
+#[derive(Debug, Clone)]
+pub struct EarlyDrop {
+    candidate: DispatchCandidate,
+    reason: EarlyDropReason,
+}
+
+impl EarlyDrop {
+    fn at(candidate: DispatchCandidate, reason: EarlyDropReason) -> Self {
+        Self { candidate, reason }
+    }
+
+    /// The dropped candidate — full provenance, exactly as it was projected.
+    #[must_use]
+    pub fn candidate(&self) -> &DispatchCandidate {
+        &self.candidate
+    }
+
+    /// The stage that dropped it.
+    #[must_use]
+    pub fn reason(&self) -> EarlyDropReason {
+        self.reason
+    }
+}
+
+/// The policy state and per-block facts ONE early projection reads.
+///
+/// This is the caller-owned half of [`AdmissionPolicy`]: the same three policy
+/// objects, minus the staleness gate (the caller applies that at its own
+/// pre-selection position, where a stale candidate cannot retire a fresh
+/// sibling) and with the retry stamp left to finalization.
+///
+/// [`AdmissionPolicy`] is crate-private on purpose — an external caller states
+/// its early inputs here and lets this module own the pass.
+pub struct EarlyAdmissionPolicy<'a> {
+    /// The retry-interval ledger, already locked by the caller: the projection
+    /// takes a shared reference so it can only perform the non-stamping read.
+    pub suppression: &'a PathSuppression,
+    /// Pools flagged `SolverCalc` within the decay window. A poisoned mutex is
+    /// RECOVERED here (the caller's frame keeps running); the authoritative
+    /// passes panic instead.
+    pub divergence: &'a Mutex<PoolDivergence>,
+    /// Tokens confirmed fee-on-transfer — same poison policy as `divergence`.
+    pub fee_on_transfer: &'a Mutex<FeeOnTransferRegistry>,
+    /// The block the projection reads for: the retry clock and the decay window.
+    pub current_block: u64,
+    /// The thin-margin floor in basis points of `optimal_input` (`0` disables).
+    pub min_profit_margin_bps: u64,
+    /// The caller's per-lane cap, clamped to [`MAX_SIMULATE_CONCURRENT`] and
+    /// applied in INPUT order (see the projection docs).
+    pub max_candidates: usize,
+}
+
+/// What one early projection produced: the pre-admitted survivors, and every
+/// drop it reported.
+#[derive(Debug)]
+pub struct EarlyProjection {
+    admitted: Vec<AdmittedCandidate>,
+    drops: Vec<EarlyDrop>,
+}
+
+impl EarlyProjection {
+    /// The survivors, in input order, as the pre-admitted transport.
+    #[must_use]
+    pub fn admitted(&self) -> &[AdmittedCandidate] {
+        &self.admitted
+    }
+
+    /// The survivors, consumed — what a caller hands the pre-admitted fan-out.
+    #[must_use]
+    pub fn into_admitted(self) -> Vec<AdmittedCandidate> {
+        self.admitted
+    }
+
+    /// Every reported drop, in stage-then-input order: suppression, divergence,
+    /// fee-on-transfer, thin margin, cap.
+    #[must_use]
+    pub fn drops(&self) -> &[EarlyDrop] {
+        &self.drops
+    }
+}
+
+/// Project `candidates` through the EARLY half of the admission policy — the
+/// caller-owned pass a batch's assembly runs before it transports survivors.
+///
+/// The order is fixed and is the batch's record order:
+///
+/// `non-stamping suppression -> pool divergence -> fee-on-transfer ->
+/// thin margin -> caller cap`
+///
+/// `candidates` are expected in the caller's input order and the survivors come
+/// back in that same order; the cap is applied LAST and in INPUT order, so the
+/// survivors are a sub-sequence of the input, never a ranking.
+///
+/// # What the projection does NOT decide
+///
+/// Two stages stay the caller's, at the caller's position, because they are the
+/// caller's facts and not this policy's:
+///
+/// - the PRE-SELECTION staleness gate (drop a candidate whose live hop nonce
+///   advanced BEFORE target selection — an examined stale candidate is composed
+///   and accepted, which retires a fresh sibling);
+/// - what to do with each report (the caller's own per-drop record type).
+///
+/// Nothing here is a promise of later admission: the pre-admitted leaf
+/// finalizes every survivor with the stamping suppression read, a fresh
+/// divergence/fee-on-transfer read, and the live nonces, so a ledger, memo, or
+/// registry that moved between this projection and simulation drops the
+/// candidate there.
+///
+/// # Reported drops are records, not tallies
+///
+/// Every drop comes back as an [`EarlyDrop`] carrying the whole candidate and
+/// the stage, which is what lets a caller emit one record per drop. Two
+/// exceptions are deliberate and preserve the batch's established record fold:
+///
+/// - the CAP reports its drops as [`EarlyDropReason::OverCap`], and callers that
+///   fold drops into records have always left cap drops out of that fold (a
+///   capped candidate is drain-invisible);
+/// - a thin row whose identity a SURVIVING row also carries
+///   ([`EarlyDropReason::ThinMargin`]) is dropped but NOT reported: the floor
+///   judges each row on its own margin, and the identity-keyed attribution that
+///   produced those records never attributed a drop whose identity survived. Two
+///   thin rows sharing one identity are two reported drops.
+///
+/// # Poisoned registries are recovered
+///
+/// The divergence and fee-on-transfer locks are taken with
+/// `PoisonError::into_inner`, so a registry poisoned by a panicking peer task is
+/// still read (the caller's frame keeps simulating). The authoritative passes
+/// keep panicking loudly — an early projection is best-effort, finalization is
+/// not.
+///
+/// Both registries are taken as ONE pair — divergence then fee-on-transfer,
+/// before the suppression read and held across the whole early sequence — so no
+/// concurrent writer can land between the early divergence read and the early
+/// fee-on-transfer read. Only the suppression ledger may be pre-locked by the
+/// caller; pre-locking either registry deadlocks.
+///
+/// # Migrating a caller onto this seam
+///
+/// A caller that used to hand raw rows to the RAW fan-out entry
+/// (`crate::dispatch_across_deployments`) and let the leaf apply the whole
+/// policy moves the early half here and transports the survivors to
+/// `crate::dispatch_admitted_across_deployments`:
+///
+/// ```
+/// # use std::sync::Mutex;
+/// # use degenbot_arbitrage::{
+/// #     project_early_admission, AdmittedCandidate, DispatchCandidate,
+/// #     EarlyAdmissionPolicy, EarlyDropReason, FeeOnTransferRegistry, PoolDivergence,
+/// # };
+/// # use degenbot_submission::PathSuppression;
+/// # fn project(
+/// #     candidates: Vec<DispatchCandidate>,
+/// #     suppression: &PathSuppression,
+/// #     divergence: &Mutex<PoolDivergence>,
+/// #     fee_on_transfer: &Mutex<FeeOnTransferRegistry>,
+/// # ) -> (Vec<AdmittedCandidate>, Vec<EarlyDropReason>) {
+/// let projection = project_early_admission(
+///     candidates,
+///     &EarlyAdmissionPolicy {
+///         suppression,
+///         divergence,
+///         fee_on_transfer,
+///         current_block: 100,
+///         min_profit_margin_bps: 50,
+///         max_candidates: 50,
+///     },
+/// );
+/// let reasons = projection.drops().iter().map(|drop| drop.reason()).collect();
+/// (projection.into_admitted(), reasons)
+/// # }
+/// ```
+///
+/// The passed ledger must already be locked by the caller (this function takes
+/// `&PathSuppression` and can only read it), and the thin-margin floor travels
+/// here — the pre-admitted leaf has no thin stage, so a caller that stops
+/// passing it anywhere silently disables it.
+#[must_use]
+pub fn project_early_admission(
+    mut candidates: Vec<DispatchCandidate>,
+    policy: &EarlyAdmissionPolicy<'_>,
+) -> EarlyProjection {
+    let mut drops: Vec<EarlyDrop> = Vec::new();
+
+    // Both registries are taken BEFORE the suppression read and held across the
+    // whole early sequence (suppression -> divergence -> fee-on-transfer): a
+    // concurrent writer must never land between the early divergence read and
+    // the early fee-on-transfer read, so the pair is one critical section in
+    // this fixed order, as the fan-out's own bookend pairs them.
+    let mut divergence = policy
+        .divergence
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut fee_on_transfer = policy
+        .fee_on_transfer
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    // 1. Suppression — the NON-STAMPING read over the caller's locked ledger:
+    //    a not-due benched candidate is dropped here AND at finalization, while
+    //    a retry-due one is admitted by both and stamped only by the leaf.
+    drops.extend(
+        retain_dropped(&mut candidates, |c| {
+            policy
+                .suppression
+                .is_suppressed_without_stamp(c.candidate_id, policy.current_block)
+        })
+        .into_iter()
+        .map(|c| EarlyDrop::at(c, EarlyDropReason::Suppressed)),
+    );
+
+    // 2. Pool divergence — a poisoned memo is recovered (see the docs).
+    let divergent = retain_dropped(&mut candidates, |c| {
+        candidate_is_divergent(c, &divergence, policy.current_block)
+    });
+    for _ in &divergent {
+        divergence.record_dropped();
+    }
+    drops.extend(
+        divergent
+            .into_iter()
+            .map(|c| EarlyDrop::at(c, EarlyDropReason::DivergentPool)),
+    );
+
+    // 3. Fee-on-transfer — same lifetime tally, same poison recovery.
+    let fot = retain_dropped(&mut candidates, |c| {
+        candidate_is_fee_on_transfer(c, &fee_on_transfer, policy.current_block)
+    });
+    for _ in &fot {
+        fee_on_transfer.record_dropped();
+    }
+    drops.extend(
+        fot.into_iter()
+            .map(|c| EarlyDrop::at(c, EarlyDropReason::FeeOnTransfer)),
+    );
+
+    // 4. Thin margin — the shared floor, attributed by IDENTITY: a thin row
+    //    whose identity a survivor carries earns no report (see the docs).
+    let (kept, thin) = partition_thin_margin(candidates, policy.min_profit_margin_bps);
+    let kept_ids: HashSet<CandidateId> = kept.iter().map(|c| c.candidate_id).collect();
+    drops.extend(
+        thin.into_iter()
+            .filter(|c| !kept_ids.contains(&c.candidate_id))
+            .map(|c| EarlyDrop::at(c, EarlyDropReason::ThinMargin)),
+    );
+    candidates = kept;
+
+    // 5. Cap — the caller's count clamped to the fan-out ceiling, in INPUT
+    //    order, so the leaf's same-cap truncation over these survivors is a
+    //    no-op.
+    let cap = policy.max_candidates.min(MAX_SIMULATE_CONCURRENT);
+    drops.extend(
+        cap_tail(&mut candidates, cap)
+            .into_iter()
+            .map(|c| EarlyDrop::at(c, EarlyDropReason::OverCap)),
+    );
+
+    EarlyProjection {
+        admitted: candidates.into_iter().map(AdmittedCandidate::new).collect(),
+        drops,
+    }
+}
+
+// -------------------------------------------------------------------------
 // The stages — ONE implementation each, whatever order the pass runs them in
 // -------------------------------------------------------------------------
+
+/// Partition `candidates` by `drop`, leaving the survivors in place and
+/// returning the dropped rows WHOLE, in input order.
+///
+/// The one traversal every stage of every entry runs: a pass that only counts,
+/// a pass that feeds the lifetime tallies, and the early projection that
+/// reports one record per drop all read the same partition, so no stage can
+/// drift into a second copy of its predicate.
+fn retain_dropped(
+    candidates: &mut Vec<DispatchCandidate>,
+    mut drop: impl FnMut(&DispatchCandidate) -> bool,
+) -> Vec<DispatchCandidate> {
+    let mut kept = Vec::with_capacity(candidates.len());
+    let mut dropped = Vec::new();
+    for candidate in candidates.drain(..) {
+        if drop(&candidate) {
+            dropped.push(candidate);
+        } else {
+            kept.push(candidate);
+        }
+    }
+    *candidates = kept;
+    dropped
+}
+
+/// Does this candidate route through a pool flagged `SolverCalc` inside the
+/// decay window?
+fn candidate_is_divergent(
+    candidate: &DispatchCandidate,
+    divergence: &PoolDivergence,
+    current_block: u64,
+) -> bool {
+    candidate
+        .path_info
+        .hops
+        .iter()
+        .filter_map(hop_pool_key)
+        .any(|key| divergence.is_divergent(key, current_block))
+}
+
+/// Is any hop's input token fee-on-transfer confirmed?
+fn candidate_is_fee_on_transfer(
+    candidate: &DispatchCandidate,
+    registry: &FeeOnTransferRegistry,
+    current_block: u64,
+) -> bool {
+    candidate
+        .path_info
+        .hops
+        .iter()
+        .any(|hop| registry.is_fot(hop_input_token(hop), current_block))
+}
+
+/// Take the candidates the cap leaves no room for, in input order.
+///
+/// The cap is a PREFIX rule: the tail is dropped, so this is `split_off` and
+/// never a sort. Both the authoritative passes (over the reorder's output) and
+/// the caller's early projection (over its input order) truncate here.
+fn cap_tail(candidates: &mut Vec<DispatchCandidate>, cap: usize) -> Vec<DispatchCandidate> {
+    if candidates.len() <= cap {
+        Vec::new()
+    } else {
+        candidates.split_off(cap)
+    }
+}
 
 /// The STAMPING suppression read (see the module docs): a retry-due benched
 /// candidate is admitted AND stamped with `policy.current_block`.
 #[expect(clippy::expect_used)] // the poison guard is the policy's loud-failure contract
-fn drop_suppressed(
+fn take_suppressed(
     candidates: &mut Vec<DispatchCandidate>,
     policy: &FinalizationPolicy<'_>,
-) -> usize {
-    let before = candidates.len();
-    {
-        let mut ledger = policy
-            .suppression
-            .lock()
-            .expect("suppression mutex poisoned");
-        candidates.retain(|c| !ledger.is_suppressed(c.candidate_id, policy.current_block));
-    }
-    before - candidates.len()
+) -> Vec<DispatchCandidate> {
+    let mut ledger = policy
+        .suppression
+        .lock()
+        .expect("suppression mutex poisoned");
+    retain_dropped(candidates, |c| {
+        ledger.is_suppressed(c.candidate_id, policy.current_block)
+    })
 }
 
 /// Pool divergence, plus the lifetime tally for what it dropped.
 #[expect(clippy::expect_used)]
-fn drop_divergent(
+fn take_divergent(
     candidates: &mut Vec<DispatchCandidate>,
     policy: &FinalizationPolicy<'_>,
-) -> usize {
-    let before = candidates.len();
-    {
+) -> Vec<DispatchCandidate> {
+    // TWO sequential scopes: the partition reads under the shared guard, the
+    // tally takes the mutable one afterwards, so a concurrent writer keeps its
+    // own window between the read and the recording instead of being blocked
+    // out of it by one long-held lock.
+    let dropped = {
         let divergence = policy
             .divergence
             .lock()
             .expect("pool_divergence mutex poisoned");
-        candidates.retain(|c| {
-            !c.path_info
-                .hops
-                .iter()
-                .filter_map(hop_pool_key)
-                .any(|k| divergence.is_divergent(k, policy.current_block))
-        });
-    }
-    let dropped = before - candidates.len();
-    if dropped > 0 {
+        retain_dropped(candidates, |c| {
+            candidate_is_divergent(c, &divergence, policy.current_block)
+        })
+    };
+    if !dropped.is_empty() {
         let mut divergence = policy
             .divergence
             .lock()
             .expect("pool_divergence mutex poisoned");
-        for _ in 0..dropped {
+        for _ in &dropped {
             divergence.record_dropped();
         }
     }
@@ -433,30 +813,26 @@ fn drop_divergent(
 
 /// Fee-on-transfer, plus the same lifetime tally.
 #[expect(clippy::expect_used)]
-fn drop_fee_on_transfer(
+fn take_fee_on_transfer(
     candidates: &mut Vec<DispatchCandidate>,
     policy: &FinalizationPolicy<'_>,
-) -> usize {
-    let before = candidates.len();
-    {
+) -> Vec<DispatchCandidate> {
+    // Same two sequential scopes as `take_divergent`.
+    let dropped = {
         let registry = policy
             .fee_on_transfer
             .lock()
             .expect("fot_registry mutex poisoned");
-        candidates.retain(|c| {
-            !c.path_info
-                .hops
-                .iter()
-                .any(|hop| registry.is_fot(hop_input_token(hop), policy.current_block))
-        });
-    }
-    let dropped = before - candidates.len();
-    if dropped > 0 {
+        retain_dropped(candidates, |c| {
+            candidate_is_fee_on_transfer(c, &registry, policy.current_block)
+        })
+    };
+    if !dropped.is_empty() {
         let mut registry = policy
             .fee_on_transfer
             .lock()
             .expect("fot_registry mutex poisoned");
-        for _ in 0..dropped {
+        for _ in &dropped {
             registry.record_dropped();
         }
     }
@@ -465,13 +841,15 @@ fn drop_fee_on_transfer(
 
 /// Candidate staleness — the solve-time hop nonce against the live state. The
 /// read guard covers this retain only, never the caller's provider I/O.
-fn drop_stale(candidates: &mut Vec<DispatchCandidate>, policy: &FinalizationPolicy<'_>) -> usize {
-    let before = candidates.len();
-    if let Some(state) = policy.bot_state {
-        let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Sim);
-        candidates.retain(|c| !candidate_is_stale(&guard, c));
-    }
-    before - candidates.len()
+fn take_stale(
+    candidates: &mut Vec<DispatchCandidate>,
+    policy: &FinalizationPolicy<'_>,
+) -> Vec<DispatchCandidate> {
+    let Some(state) = policy.bot_state else {
+        return Vec::new();
+    };
+    let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Sim);
+    retain_dropped(candidates, |c| candidate_is_stale(&guard, c))
 }
 
 /// The optional order-index reorder, then the [`MAX_SIMULATE_CONCURRENT`] cap
@@ -479,7 +857,9 @@ fn drop_stale(candidates: &mut Vec<DispatchCandidate>, policy: &FinalizationPoli
 fn reorder_and_cap(candidates: &mut Vec<DispatchCandidate>) {
     #[cfg(feature = "order-index")]
     order_index_top_selection(candidates);
-    candidates.truncate(MAX_SIMULATE_CONCURRENT);
+    // The authoritative passes report their cap drops through the caller's
+    // `candidate_count` rather than per row, so the tail is discarded here.
+    drop(cap_tail(candidates, MAX_SIMULATE_CONCURRENT));
 }
 
 // -------------------------------------------------------------------------
@@ -512,13 +892,30 @@ pub fn filter_thin_margin_results(
     results: Vec<DispatchCandidate>,
     min_profit_margin_bps: u64,
 ) -> (Vec<DispatchCandidate>, usize) {
-    if min_profit_margin_bps == 0 || results.is_empty() {
-        return (results, 0);
+    let (kept, dropped) = partition_thin_margin(results, min_profit_margin_bps);
+    (kept, dropped.len())
+}
+
+/// [`filter_thin_margin_results`] keeping the dropped rows themselves: the
+/// caller's early projection reports one record per drop, so it needs the rows
+/// the count-only entry discards.
+///
+/// The rows come back in input order. A caller attributing them by IDENTITY
+/// (the batch's record fold) must remember that two rows can share one
+/// candidate id: the floor judges each row on its own margin, so a fat twin
+/// leaves its thin twin's identity "kept" even though the thin row itself is
+/// gone.
+fn partition_thin_margin(
+    results: Vec<DispatchCandidate>,
+    min_profit_margin_bps: u64,
+) -> (Vec<DispatchCandidate>, Vec<DispatchCandidate>) {
+    if min_profit_margin_bps == 0 {
+        return (results, Vec::new());
     }
     let threshold_num = U256::from(min_profit_margin_bps);
     let denom = U256::from(BPS_DENOM);
     let mut kept = Vec::with_capacity(results.len());
-    let mut dropped = 0usize;
+    let mut dropped: Vec<DispatchCandidate> = Vec::new();
     for row in results {
         let opt_input = U256::from(row.optimal_input);
         let profit = U256::from(row.engine_profit);
@@ -529,7 +926,7 @@ pub fn filter_thin_margin_results(
         if opt_input.is_zero() || is_enough_margin {
             kept.push(row);
         } else {
-            dropped += 1;
+            dropped.push(row);
         }
     }
     (kept, dropped)
@@ -592,7 +989,6 @@ pub fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> boo
 /// seam becomes net-aware as soon as per-path gas is available.
 #[cfg(feature = "order-index")]
 fn order_index_top_selection(candidates: &mut [DispatchCandidate]) {
-    use degenbot_execution::CandidateId;
     use degenbot_order_index::{EnvelopeIndex, OrderIndex};
     let mut idx = EnvelopeIndex::<CandidateId>::new();
     for c in candidates.iter() {
@@ -1672,6 +2068,376 @@ mod tests {
             None,
             DUE_BLOCK,
             transport(vec![candidate(1, 1_000_000, 100_000)]),
+        );
+    }
+
+    // ── The caller's early projection ────────────────────────────────────
+
+    /// One V2 hop from `token_in` to `token_out` through `pool` — the
+    /// projection fixtures vary the pool and the input token independently, so a
+    /// stage's drop can be attributed to that stage alone.
+    fn single_v2_hop_over(pool: Address, token_in: Address, token_out: Address) -> PathInfo {
+        PathInfo::new(vec![HopInfo::V2(V2HopInfo {
+            pool_address: pool,
+            token0_address: token_in,
+            token1_address: token_out,
+            fee: 30,
+            zfo: true,
+        })])
+    }
+
+    /// One one-hop candidate through `pool` from `token_in`, with its own margin
+    /// (`optimal_input` = 1_000_000, so `profit` reads as basis points).
+    fn projected_candidate(
+        path_id: u64,
+        pool: Address,
+        token_in: Address,
+        profit: u128,
+    ) -> DispatchCandidate {
+        DispatchCandidate {
+            candidate_id: candidate_id(path_id),
+            optimal_input: 1_000_000,
+            engine_profit: profit,
+            steps: Box::new([step(0)]),
+            solve_block: 100,
+            path_info: single_v2_hop_over(pool, token_in, OTHER),
+            prepared: None,
+        }
+    }
+
+    /// One early projection, by the caller's rules: the suppression ledger is
+    /// locked by the CALLER (the projection can only read it) and the cap is the
+    /// caller's own count.
+    fn project(
+        ledger: &Registries,
+        block: u64,
+        min_profit_margin_bps: u64,
+        max_candidates: usize,
+        candidates: Vec<DispatchCandidate>,
+    ) -> EarlyProjection {
+        let suppression = ledger.suppression.lock().unwrap();
+        project_early_admission(
+            candidates,
+            &EarlyAdmissionPolicy {
+                suppression: &suppression,
+                divergence: &ledger.divergence,
+                fee_on_transfer: &ledger.fee_on_transfer,
+                current_block: block,
+                min_profit_margin_bps,
+                max_candidates,
+            },
+        )
+    }
+
+    /// The projection's survivor path ids, in transported order.
+    fn projected_ids(projection: &EarlyProjection) -> Vec<u64> {
+        projection
+            .admitted()
+            .iter()
+            .map(|admitted| admitted.candidate().candidate_id.path_id())
+            .collect()
+    }
+
+    /// The projection's reported reasons, in report order.
+    fn projected_reasons(projection: &EarlyProjection) -> Vec<EarlyDropReason> {
+        projection.drops().iter().map(EarlyDrop::reason).collect()
+    }
+
+    /// The projection's reported drop path ids, in report order.
+    fn dropped_ids(projection: &EarlyProjection) -> Vec<u64> {
+        projection
+            .drops()
+            .iter()
+            .map(|drop| drop.candidate().candidate_id.path_id())
+            .collect()
+    }
+
+    /// Stage order and drop provenance: one row per stage drops against its OWN
+    /// row, in pipeline order, and only the clean row is transported.
+    #[test]
+    fn the_projection_reports_each_stage_in_pipeline_order() {
+        let ledger = registries();
+        bench(&ledger, 1);
+        ledger
+            .divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        {
+            let mut registry = ledger.fee_on_transfer.lock().unwrap();
+            registry.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_A), 100);
+            registry.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_B), 100);
+        }
+        let rows = vec![
+            projected_candidate(1, POOL_B, OTHER, 100_000), // benched, not due
+            projected_candidate(2, POOL_A, OTHER, 100_000), // flagged pool
+            projected_candidate(3, POOL_B, WETH, 100_000),  // confirmed token
+            projected_candidate(4, POOL_B, OTHER, 100),     // 1 bps at a 50 bps floor
+            projected_candidate(5, POOL_B, OTHER, 100_000), // clean
+        ];
+        // One block inside the retry interval (the ledger's sentinel retry is 0).
+        let projection = project(&ledger, PATH_SUPPRESS_RETRY_INTERVAL - 1, 50, 50, rows);
+
+        assert_eq!(
+            projected_reasons(&projection),
+            vec![
+                EarlyDropReason::Suppressed,
+                EarlyDropReason::DivergentPool,
+                EarlyDropReason::FeeOnTransfer,
+                EarlyDropReason::ThinMargin,
+            ],
+            "suppression, divergence, fee-on-transfer, thin margin — in that order"
+        );
+        assert_eq!(
+            dropped_ids(&projection),
+            vec![1, 2, 3, 4],
+            "each report carries the row its own stage dropped"
+        );
+        assert_eq!(projected_ids(&projection), vec![5]);
+        assert_eq!(
+            ledger.divergence.lock().unwrap().total_divergent_dropped(),
+            1,
+            "the early projection feeds the same lifetime tally the leaf does"
+        );
+        assert_eq!(
+            ledger.fee_on_transfer.lock().unwrap().total_fot_dropped(),
+            1
+        );
+    }
+
+    /// The suppression read is the NON-STAMPING projection: a retry-due
+    /// candidate is admitted here and its retry stays unspent for the leaf.
+    #[test]
+    fn the_projection_admits_a_retry_due_candidate_without_spending_its_retry() {
+        let ledger = registries();
+        bench(&ledger, 9);
+
+        let projection = project(
+            &ledger,
+            DUE_BLOCK,
+            0,
+            50,
+            vec![projected_candidate(9, POOL_B, OTHER, 100_000)],
+        );
+        assert_eq!(projected_ids(&projection), vec![9]);
+        assert!(projection.drops().is_empty());
+
+        // One block later the projection of the ledger (no stamp, no retry
+        // spent) still admits: the projection wrote no `last_retry_block`.
+        let mut ledger_guard = ledger.suppression.lock().unwrap();
+        assert!(
+            !ledger_guard.is_suppressed_without_stamp(candidate_id(9), DUE_BLOCK + 1),
+            "the early read spent no retry"
+        );
+        // Contrast: the STAMPING read does spend it, leaving the same block
+        // suppressed one block later.
+        assert!(!ledger_guard.is_suppressed(candidate_id(9), DUE_BLOCK));
+        assert!(
+            ledger_guard.is_suppressed_without_stamp(candidate_id(9), DUE_BLOCK + 1),
+            "the leaf's stamp is what consumes the interval"
+        );
+    }
+
+    /// The thin-margin duplicate quirk, preserved exactly: a thin row whose
+    /// identity a SURVIVING twin carries is dropped but earns no report, because
+    /// the identity-keyed attribution that emits those records never attributed a
+    /// drop whose identity survived.
+    #[test]
+    fn a_thin_row_whose_twin_survives_is_dropped_without_a_report() {
+        let ledger = registries();
+        let projection = project(
+            &ledger,
+            100,
+            50,
+            50,
+            vec![
+                projected_candidate(7, POOL_B, OTHER, 1),      // 0 bps
+                projected_candidate(7, POOL_B, OTHER, 10_000), // 100 bps
+            ],
+        );
+
+        assert_eq!(projected_ids(&projection), vec![7]);
+        assert_eq!(
+            projection.admitted()[0].candidate().engine_profit,
+            10_000,
+            "the fat twin is what rides"
+        );
+        assert!(
+            projection.drops().is_empty(),
+            "the thin twin shares a kept identity, so it earns no report"
+        );
+    }
+
+    /// Two thin rows on ONE identity are two reports — each row is judged on its
+    /// own margin, so no survivor hides either drop.
+    #[test]
+    fn two_thin_duplicates_of_one_identity_are_two_reports() {
+        let ledger = registries();
+        let projection = project(
+            &ledger,
+            100,
+            50,
+            50,
+            vec![
+                projected_candidate(7, POOL_B, OTHER, 1),
+                projected_candidate(7, POOL_B, OTHER, 2),
+            ],
+        );
+
+        assert!(projection.admitted().is_empty());
+        assert_eq!(
+            projected_reasons(&projection),
+            vec![EarlyDropReason::ThinMargin, EarlyDropReason::ThinMargin]
+        );
+        assert_eq!(dropped_ids(&projection), vec![7, 7]);
+    }
+
+    /// The cap is the caller's count clamped to the fan-out ceiling and applied
+    /// LAST, in INPUT order, reporting the tail it dropped.
+    #[test]
+    fn the_projection_caps_in_input_order_and_reports_the_tail() {
+        let ledger = registries();
+        let ceiling = u64::try_from(MAX_SIMULATE_CONCURRENT).unwrap();
+        let over = ceiling + 10;
+        let rows: Vec<DispatchCandidate> = (1..=over)
+            .map(|path_id| projected_candidate(path_id, POOL_B, OTHER, 100_000))
+            .collect();
+
+        // A caller count ABOVE the ceiling still clamps to it.
+        let projection = project(&ledger, 100, 0, MAX_SIMULATE_CONCURRENT + 100, rows);
+        assert_eq!(
+            projected_ids(&projection),
+            (1..=ceiling).collect::<Vec<u64>>(),
+            "the cap keeps the input prefix"
+        );
+        assert_eq!(
+            projected_reasons(&projection),
+            vec![EarlyDropReason::OverCap; 10]
+        );
+        assert_eq!(
+            dropped_ids(&projection),
+            (ceiling + 1..=over).collect::<Vec<u64>>(),
+            "the reported tail is the input-order tail"
+        );
+        assert_eq!(
+            ledger.divergence.lock().unwrap().total_divergent_dropped(),
+            0,
+            "a capped drop is not a divergence drop"
+        );
+    }
+
+    /// The survivors ARE the pre-admitted transport: the complete candidate
+    /// rides, so the leaf needs no ID-keyed side table.
+    #[test]
+    fn the_projection_transports_the_complete_candidate() {
+        let ledger = registries();
+        let projection = project(&ledger, DUE_BLOCK, 0, 50, vec![candidate(7, 1_234, 5_678)]);
+
+        assert_eq!(projection.admitted().len(), 1);
+        let carried = projection.admitted()[0].candidate();
+        assert_eq!(carried.candidate_id, candidate_id(7));
+        assert_eq!(carried.optimal_input, 1_234);
+        assert_eq!(carried.engine_profit, 5_678);
+        assert_eq!(carried.solve_block, 100);
+        assert_eq!(carried.steps.len(), 2);
+        assert_eq!(carried.path_info.hops.len(), 2);
+        assert!(
+            carried.prepared.is_none(),
+            "the target-selection walk attaches the encoding, not the projection"
+        );
+    }
+
+    /// The projection RECOVERS a poisoned registry (the caller's frame keeps
+    /// simulating); the authoritative passes keep their loud failure on the same
+    /// state, so a poisoned ledger is never silently read as "nothing flagged".
+    #[test]
+    fn the_projection_recovers_poisoned_registries_the_authoritative_passes_panic_on() {
+        let ledger = registries();
+        ledger
+            .divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        {
+            let mut registry = ledger.fee_on_transfer.lock().unwrap();
+            registry.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_A), 100);
+            registry.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_B), 100);
+        }
+        poison_under_guard(&ledger.divergence);
+        poison_under_guard(&ledger.fee_on_transfer);
+
+        let projection = project(
+            &ledger,
+            100,
+            0,
+            50,
+            vec![
+                projected_candidate(1, POOL_A, OTHER, 100_000),
+                projected_candidate(2, POOL_B, WETH, 100_000),
+                projected_candidate(3, POOL_B, OTHER, 100_000),
+            ],
+        );
+        assert_eq!(
+            projected_reasons(&projection),
+            vec![
+                EarlyDropReason::DivergentPool,
+                EarlyDropReason::FeeOnTransfer
+            ],
+            "the poisoned memos are still READ, not treated as empty"
+        );
+        assert_eq!(projected_ids(&projection), vec![3]);
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = run(
+                &ledger,
+                None,
+                100,
+                0,
+                vec![projected_candidate(3, POOL_B, OTHER, 100_000)],
+            );
+        }));
+        assert!(
+            panicked.is_err(),
+            "the raw pass keeps panicking on a poisoned memo"
+        );
+    }
+
+    /// Feature off: the early projection and the RAW pass run the same policy,
+    /// so they admit the same rows in the same order — the projection only
+    /// REPORTS what the raw pass counts.
+    #[cfg(not(feature = "order-index"))]
+    #[test]
+    fn the_projection_and_the_raw_pass_admit_the_same_rows() {
+        let ledger = registries();
+        bench(&ledger, 1);
+        ledger
+            .divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        {
+            let mut registry = ledger.fee_on_transfer.lock().unwrap();
+            registry.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_A), 100);
+            registry.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_B), 100);
+        }
+        let rows = || {
+            vec![
+                projected_candidate(1, POOL_B, OTHER, 100_000),
+                projected_candidate(2, POOL_A, OTHER, 100_000),
+                projected_candidate(3, POOL_B, WETH, 100_000),
+                projected_candidate(4, POOL_B, OTHER, 100),
+                projected_candidate(5, POOL_B, OTHER, 100_000),
+            ]
+        };
+        let block = PATH_SUPPRESS_RETRY_INTERVAL - 1;
+        let projection = project(&ledger, block, 50, 50, rows());
+        let raw = run(&ledger, None, block, 50, rows());
+
+        assert_eq!(projected_ids(&projection), path_ids(&raw));
+        assert_eq!(
+            projection.drops().len(),
+            raw.skips.total(),
+            "the projection reports exactly the drops the raw pass counts"
         );
     }
 }

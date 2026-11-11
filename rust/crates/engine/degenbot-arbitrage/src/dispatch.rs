@@ -66,7 +66,8 @@
 //! thin margin -> staleness -> optional order-index reorder -> cap`) and then
 //! simulates. [`dispatch_admitted_profitable_results`] is the PRE-ADMITTED leaf
 //! the registry fan-out's pre-admitted entry reaches: the caller already
-//! projected its own non-stamping admission and transported
+//! projected its own non-stamping admission
+//! ([`crate::project_early_admission`]) and transported
 //! [`AdmittedCandidate`]s, so the leaf re-reads the policy AUTHORITATIVELY
 //! (`stamping suppression -> divergence -> fee-on-transfer -> staleness ->
 //! optional order-index reorder -> same-cap truncation`) before simulating.

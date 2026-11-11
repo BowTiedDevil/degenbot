@@ -278,6 +278,32 @@ struct EngineLeaves {
     outcome_tx: mpsc::WeakUnboundedSender<BatchOutcomeSet>,
 }
 
+/// The caller's PRE-SELECTION staleness gate over one assembled lane: drop every
+/// candidate whose any hop's live `state_nonce` advanced past its solve
+/// snapshot, plus any record the assembly already emitted for it.
+///
+/// The gate sits BEFORE the shared target-selection walk, which is what keeps a
+/// stale candidate from being composed, accepted, and thereby retiring a fresh
+/// sibling. It is not the last word: the pre-admitted leaf's finalization
+/// re-reads the same nonces (stamped, at its own position) so a state write
+/// after this gate still drops the candidate.
+fn drop_stale_survivors(lane: &mut AssembledBatch, state: &BotState) {
+    let stale_ids: Vec<CandidateId> = lane
+        .candidates
+        .iter()
+        .filter(|admitted| candidate_is_stale(state, admitted.candidate()))
+        .map(|admitted| admitted.candidate().candidate_id)
+        .collect();
+    if stale_ids.is_empty() {
+        return;
+    }
+    lane.candidates
+        .retain(|admitted| !stale_ids.contains(&admitted.candidate().candidate_id));
+    lane.outcomes.retain(|outcome| {
+        !(outcome.simulate.is_none() && stale_ids.contains(&outcome.candidate_id))
+    });
+}
+
 impl EngineLeaves {
     /// Stages 1 + 2: assemble, gate staleness, fan out, attribute, join.
     #[expect(
@@ -351,28 +377,18 @@ impl EngineLeaves {
                 .map_err(|e: AssemblyError| e.to_string())?
             };
 
-            // Staleness gate at SIM time (as close to the fan-out as the core's
-            // own step 3.5 sits): drop candidates whose any hop's state nonce
-            // advanced past the solve snapshot. Their records are dropped too —
-            // the same drain-invisible drop today's outcome applies (the Python
-            // `MergedOutcome` carries no stale count; `candidate_count` excludes
-            // them). The fan-out's re-check is a no-op: this span holds no
-            // `.await` between the check and the call, so no state can advance.
+            // The caller's PRE-SELECTION staleness gate, at SIM time (as close
+            // to the fan-out as the core's own step 3.5 sits): drop candidates
+            // whose any hop's state nonce advanced past the solve snapshot, so
+            // the target-selection walk never examines them (an examined stale
+            // candidate is composed and accepted, which retires its fresh
+            // sibling). Their records are dropped too — the same
+            // drain-invisible drop today's outcome applies (the Python
+            // `MergedOutcome` carries no stale count; `candidate_count`
+            // excludes them).
             if let Some(arc) = &cfg.bot_state {
-                let stale_ids: Vec<CandidateId> = {
-                    let guard = arc.read_at(LockSite::Sim);
-                    lane.candidates
-                        .iter()
-                        .filter(|c| candidate_is_stale(&guard, c))
-                        .map(|c| c.candidate_id)
-                        .collect()
-                };
-                if !stale_ids.is_empty() {
-                    lane.candidates
-                        .retain(|c| !stale_ids.contains(&c.candidate_id));
-                    lane.outcomes
-                        .retain(|o| !(o.simulate.is_none() && stale_ids.contains(&o.candidate_id)));
-                }
+                let guard = arc.read_at(LockSite::Sim);
+                drop_stale_survivors(&mut lane, &guard);
             }
 
             // Deployment-major merge: a lane's records, candidates, resolved
@@ -385,12 +401,15 @@ impl EngineLeaves {
             batch.path_info_by_id.extend(lane.path_info_by_id);
         }
 
-        // Stage 2 — the registry fan-out: one lane per registered deployment, in
-        // registry order, and each candidate simulated ONLY against the
-        // deployment its identity names. The leaf's own pre-filters (suppression,
-        // divergence, FoT, thin margin) are no-ops on the survivors: this same
-        // no-await span already applied each exactly once over the same
-        // registries, and the cap is already applied.
+        // Stage 2 — the registry fan-out over the PRE-ADMITTED transport: one
+        // lane per registered deployment, in registry order, and each candidate
+        // simulated ONLY against the deployment its identity names. Assembly
+        // PROJECTED the early half of the policy (`project_early_admission`);
+        // the leaf's finalization then re-reads the same registries
+        // authoritatively at simulation time (stamping suppression, divergence,
+        // fee-on-transfer, staleness) and never re-runs the thin-margin floor,
+        // so the projection is evidence, not a promise, and the batch carries
+        // one implementation of the common policy rather than two.
         //
         // The pre-fan-out identities are kept beside the fan-out's results: a
         // candidate the leaf counted as a per-path exception is re-emitted by
@@ -398,12 +417,13 @@ impl EngineLeaves {
         let entered: Vec<(CandidateId, alloy::primitives::Address)> = batch
             .candidates
             .iter()
-            .map(|c| {
+            .map(|admitted| {
+                let candidate_id = admitted.candidate().candidate_id;
                 let deployment = cfg
                     .deployments
-                    .get(c.candidate_id.deployment_id())
+                    .get(candidate_id.deployment_id())
                     .expect("assembly mints candidates only for registered deployments");
-                (c.candidate_id, deployment.target())
+                (candidate_id, deployment.target())
             })
             .collect();
         let provider = Arc::clone(&cfg.provider);
@@ -414,14 +434,13 @@ impl EngineLeaves {
             block_timestamp: work.block_timestamp,
             block_priority_fees: work.block_priority_fees.clone(),
         };
-        let fanout = degenbot_arbitrage::dispatch_across_deployments(
+        let fanout = degenbot_arbitrage::dispatch_admitted_across_deployments(
             std::mem::take(&mut batch.candidates),
             &block,
             &cfg.deployments,
             cfg.target_selection,
             &cfg.suppression,
             work.current_block,
-            cfg.min_profit_margin_bps,
             &cfg.divergence,
             &cfg.fot,
             cfg.bot_state.as_ref(),
@@ -1323,6 +1342,215 @@ mod tests {
             by_id[&4].simulate,
             Some(SimulateVerdict::GasUnprofitable(_))
         ));
+    }
+
+    // ── The caller's pre-selection staleness gate ────────────────────────
+
+    const LANE_POOL: alloy::primitives::Address =
+        alloy::primitives::address!("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1");
+    const LANE_TOKEN_IN: alloy::primitives::Address =
+        alloy::primitives::address!("2222222222222222222222222222222222222222");
+    const LANE_TOKEN_OUT: alloy::primitives::Address =
+        alloy::primitives::address!("3333333333333333333333333333333333333333");
+    const LANE_TARGET: alloy::primitives::Address =
+        alloy::primitives::address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+    /// The fixture path every row resolves to: one V2 hop through `LANE_POOL`.
+    fn lane_path() -> PathInfo {
+        PathInfo::new(vec![degenbot_execution::HopInfo::V2(
+            degenbot_execution::V2HopInfo {
+                pool_address: LANE_POOL,
+                token0_address: LANE_TOKEN_IN,
+                token1_address: LANE_TOKEN_OUT,
+                fee: 30,
+                zfo: true,
+            },
+        )])
+    }
+
+    struct LaneResolver(PathInfo);
+
+    impl PathResolver for LaneResolver {
+        fn resolve(&self, _path_id: u64) -> Option<PathInfo> {
+            Some(self.0.clone())
+        }
+    }
+
+    /// One raw solver row: one hop, snapshotting `state_nonce`.
+    fn lane_row(path_id: u64, state_nonce: u64, profit: u128) -> RawResult {
+        RawResult {
+            path_id,
+            optimal_input: 1_000_000,
+            profit,
+            hop_outputs: vec![profit],
+            consumed_inputs: vec![1_000_000],
+            solve_block: BASE_BLOCK,
+            state_nonces: vec![state_nonce],
+        }
+    }
+
+    /// A `BotState` with the fixture pool registered as a V2 pair.
+    fn lane_state() -> BotState {
+        let mut core = BotState::new();
+        core.register_v2_pool(&degenbot_pools::RegisterV2PoolParams {
+            address: LANE_POOL,
+            token0: LANE_TOKEN_IN,
+            token1: LANE_TOKEN_OUT,
+            reserve0: alloy::primitives::aliases::U112::from(1_000_000u64),
+            reserve1: alloy::primitives::aliases::U112::from(2_000_000u64),
+            fee_token0: degenbot_core::fee::FeeRatio::new(997, 1_000).unwrap(),
+            fee_token1: degenbot_core::fee::FeeRatio::new(997, 1_000).unwrap(),
+            factory: alloy::primitives::Address::ZERO,
+            deployer: alloy::primitives::Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            update_block: 1,
+            variant: degenbot_pools::DexVariant::UniswapV2,
+            stable_swap: false,
+        })
+        .unwrap();
+        core
+    }
+
+    /// The live `state_nonce` of the fixture pool — the value a fresh row
+    /// snapshots.
+    fn lane_nonce(core: &BotState) -> u64 {
+        let pid = core
+            .pool_id_by_address(&LANE_POOL)
+            .expect("the fixture pool is registered");
+        core.pool_state_nonce(pid)
+    }
+
+    /// Assemble one lane at the fixture block: the batch's own early admission
+    /// projection, exactly as the sim leaf builds it.
+    fn assemble_lane(
+        rows: &[RawResult],
+        p: &LanePolicy,
+        max_candidates: usize,
+        min_profit_margin_bps: u64,
+    ) -> AssembledBatch {
+        let mut suppression = p
+            .suppression
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assemble_batch(&AssemblyInputs {
+            rows,
+            payloads: &[],
+            resolver: &p.resolver,
+            payload_served: &HashSet::new(),
+            suppression: &mut suppression,
+            divergence: &p.divergence,
+            fot: &p.fot,
+            current_block: BASE_BLOCK,
+            min_profit_margin_bps,
+            max_candidates,
+            target: LANE_TARGET,
+            deployment_id: test_deployment_id(),
+        })
+        .expect("the fixture rows are well formed")
+    }
+
+    /// The three policy registries + resolver one assembled lane reads.
+    struct LanePolicy {
+        suppression: std::sync::Mutex<degenbot_submission::PathSuppression>,
+        divergence: std::sync::Mutex<degenbot_arbitrage::PoolDivergence>,
+        fot: std::sync::Mutex<degenbot_arbitrage::FeeOnTransferRegistry>,
+        resolver: LaneResolver,
+    }
+
+    impl LanePolicy {
+        fn fresh() -> Self {
+            Self {
+                suppression: std::sync::Mutex::new(degenbot_submission::PathSuppression::new()),
+                divergence: std::sync::Mutex::new(degenbot_arbitrage::PoolDivergence::new()),
+                fot: std::sync::Mutex::new(degenbot_arbitrage::FeeOnTransferRegistry::new()),
+                resolver: LaneResolver(lane_path()),
+            }
+        }
+    }
+
+    /// The ids one assembled lane transports, in order.
+    fn lane_ids(lane: &AssembledBatch) -> Vec<CandidateId> {
+        lane.candidates
+            .iter()
+            .map(|admitted| admitted.candidate().candidate_id)
+            .collect()
+    }
+
+    /// Cap 1 and `[stale, fresh]`: the cap runs in INPUT order and BEFORE the
+    /// staleness gate, so the kept row is the STALE one. The gate then drops it
+    /// and the fresh sibling never had a slot — nobody simulates. The stale row
+    /// frees no cap slot and earns no record (the drain-invisible drop), while
+    /// the leaf's finalization would re-read the same nonce.
+    #[test]
+    fn a_stale_kept_row_starves_a_fresh_sibling_at_cap_one() {
+        let p = LanePolicy::fresh();
+        let core = lane_state();
+        let fresh = lane_nonce(&core);
+        let rows = [
+            lane_row(1, fresh + 1, 10_000), // stale
+            lane_row(2, fresh, 10_000),     // fresh
+        ];
+        let mut lane = assemble_lane(&rows, &p, 1, 0);
+
+        assert_eq!(
+            lane_ids(&lane),
+            vec![CandidateId::new(1, test_deployment_id())],
+            "the cap keeps the input prefix, stale or not"
+        );
+
+        let state = StateLock::new(core);
+        {
+            let guard = state.read_at(LockSite::Sim);
+            drop_stale_survivors(&mut lane, &guard);
+        }
+
+        assert!(lane.candidates.is_empty(), "nobody simulates");
+        assert!(
+            lane.outcomes.is_empty(),
+            "a stale row is drain-invisible — no record"
+        );
+    }
+
+    /// The gate drops only the stale rows: a sibling's stage-1 record (here a
+    /// thin-margin drop) survives it untouched, and the fresh survivor is what
+    /// the fan-out would receive.
+    #[test]
+    fn the_staleness_gate_keeps_a_siblings_stage_one_record() {
+        let p = LanePolicy::fresh();
+        let core = lane_state();
+        let fresh = lane_nonce(&core);
+        let rows = [
+            lane_row(1, fresh, 1),          // thin at a 50 bps floor
+            lane_row(2, fresh + 1, 10_000), // stale
+            lane_row(3, fresh, 10_000),     // fresh
+        ];
+        let mut lane = assemble_lane(&rows, &p, 50, 50);
+
+        assert_eq!(
+            lane_ids(&lane),
+            vec![
+                CandidateId::new(2, test_deployment_id()),
+                CandidateId::new(3, test_deployment_id()),
+            ]
+        );
+        assert_eq!(lane.outcomes.len(), 1);
+
+        let state = StateLock::new(core);
+        {
+            let guard = state.read_at(LockSite::Sim);
+            drop_stale_survivors(&mut lane, &guard);
+        }
+
+        assert_eq!(
+            lane_ids(&lane),
+            vec![CandidateId::new(3, test_deployment_id())],
+            "only the stale row left"
+        );
+        assert_eq!(
+            lane.outcomes.len(),
+            1,
+            "the sibling's thin-margin record is not a stale record"
+        );
     }
 
     /// A gate-clearing candidate fixture for the forensic emission: the
