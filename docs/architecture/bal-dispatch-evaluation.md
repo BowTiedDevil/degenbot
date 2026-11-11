@@ -398,6 +398,7 @@ Claims and the pins or probes that carry them (test names are the contract):
 | An unsupported BAL endpoint, no parent, an explicit terminal failure and a superseded head each take the legacy lane with their own label | `an_unsupported_bal_endpoint_takes_the_legacy_path_with_its_reason`, `a_lineage_refused_head_takes_the_legacy_path_with_its_reason`, `an_explicit_failure_waits_once_then_the_legacy_prefetch_lane_works`, `the_cold_reason_vocabulary_is_the_closed_set` |
 | A same-block in-flight head waits for its settle and resolves delta; the previous anchor does not wait; duplicate fan-outs join one completion | `a_same_block_in_flight_head_waits_for_the_settle_and_resolves_delta`, `the_previous_block_does_not_wait_while_the_current_head_is_in_flight`, `duplicate_fan_outs_join_one_completion_without_duplicate_bal` |
 | Value-sensitive parity at dispatch scale, both words, every count | 8 pins in `rust/crates/engine/degenbot-arbitrage/tests/bal_dispatch_scaling.rs`; the probe's own fixture gates exit 1 on any divergence |
+| Diverse REAL-CANDIDATE read sets: every read answered by an exact-anchor BAL generation equals an independent cold read at the same block; unknown and expired identities take the dynamic fallback and match too; a planted one-wei skew is caught | 13 pins in `rust/crates/engine/degenbot-simulation/tests/bal_real_read_oracle.rs` (the planted-one-wei comparator pin included); `just bal-real-read-oracle-probe` over the post-fix soak's own rows, report [bal-real-read-oracle-result](bal-real-read-oracle-result.md) — storage reads, not verdicts |
 
 State of the suites at the evaluated commit: `degenbot-simulation` 478 passed,
 25 skipped; `degenbot-arbitrage` 193 passed, 0 skipped. The whole-workspace gate
@@ -410,7 +411,10 @@ are the epic's own ladder; this document does not re-derive them.
    single executor slot with a sub-100-byte runtime over repeated market paths
    with distinct pool identities: the scaling claim is about fan-out WIDTH, never
    about a candidate mix. A productive read set is many slots across pools,
-   tokens and hooks.
+   tokens and hooks. Diverse REAL-CANDIDATE read sets now have STORAGE-READ
+   parity evidence ([bal-real-read-oracle-result](bal-real-read-oracle-result.md));
+   the verdict side of that corpus stays scripted, because trace rows carry no
+   calldata, amounts or deployment state.
 2. **The receipt is synthetic.** `gross_profit` is the frame's answer to the
    scripted word, not a swap's retained profit; no gross/net figure in the probe
    is an economics claim.

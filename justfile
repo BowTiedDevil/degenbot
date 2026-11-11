@@ -529,6 +529,38 @@ bal-carry-probe *ARGS:
     cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-simulation --example bal_carry_probe -- {{ ARGS }}
 
 
+# The real-candidate READ-SET oracle replay: the post-fix soak's own
+# `fanout-trace` rows replayed through exact-anchor BAL generations and compared
+# identity by identity against independent cold reads at the same block. A
+# bounded selection (`BAL_READ_ORACLE_ANCHORS`, default 6, x
+# `BAL_READ_ORACLE_ROWS`, default 2) keeps each row's PRODUCTION relevance set
+# and recorded read identities; the trace is `BAL_READ_ORACLE_TRACE` (default
+# `logs/bal_postfix_soak_trace.log`). Every selected anchor's real list is
+# acquired through the production negotiation, seeded under the row's own
+# relevance set, and every read answered from the snapshot or the dynamic
+# fallback is compared against a separate provider's cold batch — any value
+# mismatch is a hard failure (nonzero exit). One anchor also proves the raw,
+# official JSON and negotiated seeds agree. The first anchor's two-generation
+# `IdleBlocks(0)` leg proves an expired identity takes the dynamic fallback and
+# still matches cold. `BAL_READ_ORACLE_PLANT_WEI=1` is the negative control: a
+# one-wei skew on each leg's first answer, which the comparison must catch
+# (nonzero exit is the expected result). Diverse real-candidate STORAGE-READ
+# parity, NOT executable path/verdict parity. Fails closed unless the machine
+# DECLARES an endpoint (the conftest layers, the same resolution `test-fork`
+# probes). Measurements: `docs/architecture/bal-real-read-oracle-result.md`.
+
+bal-real-read-oracle-probe *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC declared — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
+        exit 1
+    fi
+    export BAL_READ_ORACLE_TRACE="${BAL_READ_ORACLE_TRACE:-$PWD/logs/bal_postfix_soak_trace.log}"
+    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-simulation --example bal_real_read_oracle_probe -- {{ ARGS }}
+
+
 # The canonical-head lifecycle probe: real mainnet heads driven through the
 # asynchronous head driver (`BalHeadDriver`), with each head delivered, proven
 # COLD before its list applies, prepared (BAL fetch + full decode) and applied
