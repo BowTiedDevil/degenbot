@@ -46,10 +46,53 @@ use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
-use crate::deployment::{DeploymentRegistry, SimulateContext, SimulationBlock};
-use crate::dispatch::{dispatch_profitable_results, DispatchCandidate, DispatchOutcome};
+use crate::admission::AdmittedCandidate;
+use crate::deployment::{
+    DeploymentRegistry, SimulateContext, SimulationBlock, SimulationDeployment,
+};
+use crate::dispatch::{
+    dispatch_admitted_profitable_results, dispatch_profitable_results, DispatchCandidate,
+    DispatchOutcome,
+};
 use crate::selection::{select_first_compatible, TargetSelection};
 use crate::{FeeOnTransferRegistry, PoolDivergence};
+
+/// What the registry fan-out needs from one entry: the candidate it carries.
+///
+/// The choreography above the leaves — the unregistered-deployment check,
+/// target selection, the deployment partition, the registry lane order, and the
+/// per-lane span — is written ONCE over this trait, so the raw standalone entry
+/// and the pre-admitted entry cannot drift apart. A pre-admitted entry hands
+/// the walk the very candidate it transported, so nothing about the entry is
+/// recovered from an ID-keyed side table.
+pub(crate) trait FanOutEntry: Sized {
+    /// The candidate this entry carries.
+    fn candidate(&self) -> &DispatchCandidate;
+    /// The carried candidate, mutable for the walk's composed encoding.
+    fn candidate_mut(&mut self) -> &mut DispatchCandidate;
+}
+
+impl FanOutEntry for DispatchCandidate {
+    fn candidate(&self) -> &Self {
+        self
+    }
+
+    fn candidate_mut(&mut self) -> &mut Self {
+        self
+    }
+}
+
+impl FanOutEntry for AdmittedCandidate {
+    // The inherent accessors, not these trait methods: the transport owns the
+    // candidate, so the walk reads and annotates it without a side table.
+    fn candidate(&self) -> &DispatchCandidate {
+        AdmittedCandidate::candidate(self)
+    }
+
+    fn candidate_mut(&mut self) -> &mut DispatchCandidate {
+        AdmittedCandidate::candidate_mut(self)
+    }
+}
 
 /// One deployment's slice of the fan-out.
 #[derive(Debug)]
@@ -132,8 +175,84 @@ impl std::fmt::Display for DeploymentFanOutError {
 
 impl std::error::Error for DeploymentFanOutError {}
 
-/// Fan every candidate out to the deployment its identity names, one lane per
-/// registered deployment, in registry order.
+/// The registry choreography both entries share: validate the identities, run
+/// the target-selection policy, partition by deployment, then walk the registry
+/// in order and hand each lane's entries to `leaf`.
+///
+/// ONE implementation, whatever the entries are: the raw standalone candidates
+/// and the pre-admitted transport entries are partitioned, ordered, and spanned
+/// identically, and the only per-entry detail the kernel reads is the carried
+/// [`DispatchCandidate`]'s identity (and the encoding the selection walk
+/// attaches to it).
+fn fan_out_over<Entry: FanOutEntry>(
+    entries: Vec<Entry>,
+    deployments: &DeploymentRegistry,
+    target_selection: TargetSelection,
+    current_block: u64,
+    mut leaf: impl FnMut(&Arc<SimulationDeployment>, Vec<Entry>) -> DispatchOutcome,
+) -> Result<DeploymentFanOutOutcome, DeploymentFanOutError> {
+    // Every candidate the caller minted names a deployment this registry holds;
+    // checked ONCE, before either policy touches a candidate or an adapter.
+    for entry in &entries {
+        let candidate_id = entry.candidate().candidate_id;
+        if deployments.get(candidate_id.deployment_id()).is_none() {
+            return Err(DeploymentFanOutError::UnregisteredDeployment {
+                candidate_id,
+                registered: deployments.ids().collect(),
+            });
+        }
+    }
+
+    // Target selection. `AllTargets` keeps the caller's candidate set verbatim;
+    // `FirstCompatible` narrows it to the candidates its ordered walk examined
+    // (each carrying the deployment's own Encode decision, so a selected target
+    // is never composed twice) and reports the rest as retired.
+    let (examined, retired) = match target_selection {
+        TargetSelection::AllTargets => (entries, Vec::new()),
+        TargetSelection::FirstCompatible => {
+            let selection = select_first_compatible(entries, deployments);
+            (selection.examined, selection.retired)
+        }
+    };
+
+    // Partition by target. The order inside a lane is the caller's order (the
+    // assembly's cap-ordered candidate list), so a lane's survivors keep the
+    // best-first contract the leaf's cap expects.
+    let mut lanes: HashMap<DeploymentId, Vec<Entry>> = HashMap::with_capacity(deployments.len());
+    for entry in examined {
+        lanes
+            .entry(entry.candidate().candidate_id.deployment_id())
+            .or_default()
+            .push(entry);
+    }
+
+    let mut outcomes = Vec::with_capacity(deployments.len());
+    for deployment in deployments.entries() {
+        let lane_entries = lanes
+            .remove(&deployment.deployment_id())
+            .unwrap_or_default();
+        // ONE Jaeger span per deployment's simulate fan-out (ADR-043), entered
+        // only across the synchronous leaf call.
+        let outcome = {
+            let span =
+                degenbot_bot::telemetry::simulate_dispatch_span(current_block, lane_entries.len());
+            let _guard = span.enter();
+            leaf(deployment, lane_entries)
+        };
+        outcomes.push(DeploymentLane {
+            deployment_id: deployment.deployment_id(),
+            outcome,
+        });
+    }
+
+    Ok(DeploymentFanOutOutcome {
+        lanes: outcomes,
+        retired,
+    })
+}
+
+/// Fan every RAW standalone candidate out to the deployment its identity names,
+/// one lane per registered deployment, in registry order.
 ///
 /// `target_selection` decides which deployments each path is offered to
 /// ([`TargetSelection`]); the lanes are the same either way, and the policy
@@ -142,6 +261,12 @@ impl std::error::Error for DeploymentFanOutError {}
 /// policy state — while each lane reads and stamps them per candidate, so a
 /// suppression/failure entry keyed `(path, deployment)` never bleeds into
 /// another target.
+///
+/// Each lane runs the RAW standalone leaf
+/// ([`dispatch_profitable_results`]): the whole admission pipeline, in the
+/// standalone order, over that lane's candidates. A caller that has ALREADY
+/// applied its own admission projection transports its survivors to
+/// [`dispatch_admitted_across_deployments`] instead.
 ///
 /// # Errors
 ///
@@ -167,63 +292,18 @@ pub fn dispatch_across_deployments(
         &Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
     >,
 ) -> Result<DeploymentFanOutOutcome, DeploymentFanOutError> {
-    // Every candidate the caller minted names a deployment this registry holds;
-    // checked ONCE, before either policy touches a candidate or an adapter.
-    for candidate in &candidates {
-        if deployments
-            .get(candidate.candidate_id.deployment_id())
-            .is_none()
-        {
-            return Err(DeploymentFanOutError::UnregisteredDeployment {
-                candidate_id: candidate.candidate_id,
-                registered: deployments.ids().collect(),
-            });
-        }
-    }
-
-    // Target selection. `AllTargets` keeps the caller's candidate set verbatim;
-    // `FirstCompatible` narrows it to the candidates its ordered walk examined
-    // (each carrying the deployment's own Encode decision, so a selected target
-    // is never composed twice) and reports the rest as retired.
-    let (examined, retired) = match target_selection {
-        TargetSelection::AllTargets => (candidates, Vec::new()),
-        TargetSelection::FirstCompatible => {
-            let selection = select_first_compatible(candidates, deployments);
-            (selection.examined, selection.retired)
-        }
-    };
-
-    // Partition by target. The order inside a lane is the caller's order (the
-    // assembly's cap-ordered candidate list), so a lane's survivors keep the
-    // best-first contract the leaf's cap expects.
-    let mut lanes: HashMap<DeploymentId, Vec<DispatchCandidate>> =
-        HashMap::with_capacity(deployments.len());
-    for candidate in examined {
-        lanes
-            .entry(candidate.candidate_id.deployment_id())
-            .or_default()
-            .push(candidate);
-    }
-
-    let mut outcomes = Vec::with_capacity(deployments.len());
-    for deployment in deployments.entries() {
-        let lane_candidates = lanes
-            .remove(&deployment.deployment_id())
-            .unwrap_or_default();
-        // ONE Jaeger span per deployment's simulate fan-out (ADR-043), entered
-        // only across the synchronous leaf call.
-        let outcome = {
-            let span = degenbot_bot::telemetry::simulate_dispatch_span(
-                current_block,
-                lane_candidates.len(),
-            );
-            let _guard = span.enter();
+    fan_out_over(
+        candidates,
+        deployments,
+        target_selection,
+        current_block,
+        |deployment, lane| {
             let ctx = SimulateContext {
                 block: block.clone(),
                 deployment,
             };
             dispatch_profitable_results(
-                lane_candidates,
+                lane,
                 &ctx,
                 path_suppression,
                 current_block,
@@ -233,15 +313,108 @@ pub fn dispatch_across_deployments(
                 bot_state.cloned(),
                 warm_cache.cloned(),
             )
-        };
-        outcomes.push(DeploymentLane {
-            deployment_id: deployment.deployment_id(),
-            outcome,
-        });
-    }
+        },
+    )
+}
 
-    Ok(DeploymentFanOutOutcome {
-        lanes: outcomes,
-        retired,
-    })
+/// Fan every PRE-ADMITTED candidate out to the deployment its identity names,
+/// one lane per registered deployment, in registry order.
+///
+/// The pre-admitted entry: the caller has already run its own non-stamping
+/// admission projection (its divergence / fee-on-transfer / thin-margin
+/// stages, its per-lane cap, and its pre-selection staleness gate) and
+/// transports every survivor as an [`AdmittedCandidate`]. Everything the
+/// registry choreography owns is the SAME implementation the raw entry uses —
+/// one target-selection walk, one deployment partition, one lane order, one
+/// span per lane — and only the leaf differs: each lane runs the pre-admitted
+/// leaf, whose finalization re-reads the policy state authoritatively
+/// (`stamping suppression -> divergence -> fee-on-transfer -> staleness ->
+/// optional order-index reorder -> same-cap truncation`) before the shared
+/// simulation body runs.
+///
+/// There is no thin-margin argument here on purpose: the floor is early
+/// admission's verdict, so the leaf has no stage for it and
+/// `DispatchOutcome::thin_dropped` stays `0`.
+///
+/// # Migrating a direct Rust caller (raw -> pre-admitted)
+///
+/// A session that feeds every solved row to [`dispatch_across_deployments`]
+/// keeps working unchanged. A caller moving to the batch shape moves three
+/// things OUT of the leaf and into its own assembly, then transports the
+/// survivors:
+///
+/// 1. **Own the projection.** Apply the non-stamping half of the policy
+///    yourself: divergence, fee-on-transfer, thin margin, your own per-lane cap,
+///    and the PRE-SELECTION staleness gate. Drop a stale candidate BEFORE target
+///    selection — an examined stale candidate is composed and accepted, which
+///    retires its fresh sibling at a later target ([`crate::selection`]).
+///    Everything you drop is yours to tally; the leaf never sees it.
+/// 2. **Transport the survivors.** Wrap each in [`AdmittedCandidate::new`]. The
+///    transport owns the complete candidate, so no ID-keyed side table is
+///    needed and duplicate identities keep their transported order.
+/// 3. **Expect finalization to re-read.** The leaf stamps the suppression
+///    ledger, then re-reads divergence, fee-on-transfer, and the live state
+///    nonces at its own block. A candidate whose evidence moved since your
+///    projection is dropped there — `suppressed_count` / `divergent_dropped` /
+///    `fot_dropped` / `stale_dropped` on the lane's [`DispatchOutcome`] account
+///    for it — and a retry-due candidate is stamped even when a later final
+///    stage drops it. Admission is never a promise of later admission.
+///
+/// `DispatchOutcome::thin_dropped` is `0` on this entry because there is no thin
+/// stage; report your assembly's own thin drops beside it.
+///
+/// # Cap and order
+///
+/// The leaf truncates at the same [`crate::MAX_SIMULATE_CONCURRENT`] cap the raw
+/// leaf applies, AFTER its reorder. Your assembly already capped each lane at
+/// that cap, so the truncation preserves the survivors you transported: with
+/// the `order-index` feature on they are reordered into the net-profit ranking
+/// and ALL of them reach simulation in that order; with it off, your transported
+/// order IS the simulation order.
+///
+/// # Errors
+///
+/// [`DeploymentFanOutError::UnregisteredDeployment`] when a transported
+/// candidate names an identity the registry does not hold (checked before any
+/// selection or lane runs, under either policy).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the shared fan-out inputs are the pre-admitted leaf's, plus the registry and the selection policy"
+)]
+pub fn dispatch_admitted_across_deployments(
+    admitted: Vec<AdmittedCandidate>,
+    block: &SimulationBlock<'_>,
+    deployments: &DeploymentRegistry,
+    target_selection: TargetSelection,
+    path_suppression: &Arc<Mutex<PathSuppression>>,
+    current_block: u64,
+    pool_divergence: &Arc<Mutex<PoolDivergence>>,
+    fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
+    bot_state: Option<&Arc<StateLock<BotState>>>,
+    warm_cache: Option<
+        &Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
+    >,
+) -> Result<DeploymentFanOutOutcome, DeploymentFanOutError> {
+    fan_out_over(
+        admitted,
+        deployments,
+        target_selection,
+        current_block,
+        |deployment, lane| {
+            let ctx = SimulateContext {
+                block: block.clone(),
+                deployment,
+            };
+            dispatch_admitted_profitable_results(
+                lane,
+                &ctx,
+                path_suppression,
+                current_block,
+                pool_divergence,
+                fot_registry,
+                bot_state.cloned(),
+                warm_cache.cloned(),
+            )
+        },
+    )
 }

@@ -44,7 +44,7 @@
 #
 # reasonless-high-water: 100
 #
-rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::dispatch_profitable_results	faithful dispatch seam; mutex-poison guards panic loudly
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::simulate_leaf	the fan-out, feedback, and recording read best as one ordered pass
 rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::the_fanout_prefetches_the_anchors_slot_set_once	the three fan-outs' wire observations read top-down
 rust/crates/engine/degenbot-arbitrage/src/simulator.rs::simulate_path_on_evm_seam	the production seam's body
 rust/crates/engine/degenbot-batch-executor/src/assembly.rs::assemble_batch	the stage reads best as one ordered policy pass

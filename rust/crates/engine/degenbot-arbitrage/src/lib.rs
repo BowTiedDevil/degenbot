@@ -18,7 +18,14 @@
 //! - `dispatch_profitable_results` (the in-process fan-out) + its thin-margin /
 //!   suppression / categorization policy, and `dispatch_across_deployments`
 //!   (the explicit all-target fan-out over an ordered
-//!   [`deployment::DeploymentRegistry`]).
+//!   [`deployment::DeploymentRegistry`]),
+//! - the PRE-ADMITTED entry: [`AdmittedCandidate`] transports a candidate a
+//!   caller already projected through its own pre-simulation admission, and
+//!   [`dispatch_admitted_across_deployments`] finalizes it authoritatively at
+//!   simulation time. The two entries share one target selection, one
+//!   deployment partition, one lane order, and one simulation body; they differ
+//!   in the policy pass in front of the simulation (see
+//!   [`dispatch`]'s "two entries, one simulation body").
 //!
 //! The engine (evm2 executor, `Evm2BlockSimHandle`, `apply_simulation_overrides`,
 //! AL Inspector, `WarmCodeCache`) stays thin + generic in
@@ -66,16 +73,17 @@ pub mod selection;
 /// takes its bytes from here, so the pure-Rust path needs no driver shell.
 pub mod executor_runtime;
 
-// The standalone pre-simulation admission policy: the stamping suppression read,
-// pool divergence, fee-on-transfer, thin margin, candidate staleness, the
-// optional order-index reorder, and the cap — `dispatch_profitable_results`'
-// one home for which candidates reach simulation. Crate-internal: the leaf
-// helpers it owns keep their published `dispatch` and crate-root paths (see the
-// re-export below deferring to the dispatch module), so the public surface is
-// the one that existed before the move.
+// The pre-simulation admission policy: the stamping suppression read, pool
+// divergence, fee-on-transfer, thin margin, candidate staleness, the optional
+// order-index reorder, and the cap — `dispatch_profitable_results`' one home for
+// which candidates reach simulation, plus the PRE-ADMITTED finalization pass the
+// pre-admitted fan-out entry runs. Crate-internal except for one type: the
+// `AdmittedCandidate` transport is re-exported at the crate root (see the
+// re-export below), while every leaf helper keeps its published `dispatch` and
+// crate-root path (deferred to the dispatch module).
 mod admission;
 
-/// The dispatch fan-out + categorization policy (`dispatch_profitable_results`)
+/// The dispatch fan-out + categorization policy ([`dispatch_profitable_results`])
 /// + the candidate/outcome types.
 pub mod dispatch;
 
@@ -97,6 +105,10 @@ pub mod fot_registry;
 /// (`simulate_path_on_evm`).
 pub mod simulator;
 
+/// The pre-admitted candidate transport ([`AdmittedCandidate`]): a candidate a
+/// caller has already projected through its own pre-simulation admission, ready
+/// for the authoritative final read the pre-admitted fan-out entry performs.
+pub use admission::AdmittedCandidate;
 pub use cmd_executor::{
     CmdExecutorBinding, CmdExecutorSimAdapter, ExecutionReceipt, InjectionAddressMismatch,
     EXECUTION_RECEIPT_LEN,
@@ -122,7 +134,8 @@ pub use executor_runtime::{
     EXECUTOR_RUNTIME_FILE,
 };
 pub use fanout::{
-    dispatch_across_deployments, DeploymentFanOutError, DeploymentFanOutOutcome, DeploymentLane,
+    dispatch_across_deployments, dispatch_admitted_across_deployments, DeploymentFanOutError,
+    DeploymentFanOutOutcome, DeploymentLane,
 };
 
 pub use release_binding::{

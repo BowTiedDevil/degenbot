@@ -49,6 +49,7 @@ use degenbot_execution::{CandidateId, ComposeError, DeploymentId, TransactionReq
 
 use crate::deployment::DeploymentRegistry;
 use crate::dispatch::DispatchCandidate;
+use crate::fanout::FanOutEntry;
 use crate::simulator::compose_transaction;
 
 /// How a solved path chooses the deployment that executes it.
@@ -136,22 +137,39 @@ impl PreparedEncoding {
 }
 
 /// What one first-compatible walk produced.
-#[derive(Debug, Default)]
-pub struct SelectedCandidates {
+///
+/// Generic over the entry it walked: the raw standalone candidates and the
+/// pre-admitted transport entries travel the SAME walk, so a walk's product is
+/// whatever that caller transported. `T` defaults to
+/// [`DispatchCandidate`] — the raw entry's shape — so the spelling without a
+/// parameter keeps naming it.
+#[derive(Debug)]
+pub struct SelectedCandidates<T = DispatchCandidate> {
     /// The examined candidates, each carrying its [`PreparedEncoding`], in path
     /// order and registry order within a path.
-    pub examined: Vec<DispatchCandidate>,
+    pub examined: Vec<T>,
     /// The candidates the walk stopped short of: an earlier target accepted, or
     /// a hard encode error ended the walk. Never composed, never simulated, and
     /// they produce no record.
     pub retired: Vec<CandidateId>,
 }
 
+impl<T> Default for SelectedCandidates<T> {
+    fn default() -> Self {
+        Self {
+            examined: Vec::new(),
+            retired: Vec::new(),
+        }
+    }
+}
+
 /// Walk one batch's candidates in registry order, per path, and select the
 /// first deployment each path's composition accepts.
 ///
-/// `candidates` must name registered deployments only
-/// ([`crate::dispatch_across_deployments`] validates that before selecting);
+/// `candidates` must name registered deployments only (the fan-out entries —
+/// [`crate::dispatch_across_deployments`] and
+/// [`crate::dispatch_admitted_across_deployments`] — validate that before
+/// selecting);
 /// a candidate that names an unregistered one is retired unexamined rather than
 /// simulated against an identity the registry cannot describe.
 ///
@@ -159,10 +177,10 @@ pub struct SelectedCandidates {
 /// for: an offer the assembly already dropped (a cap truncation, a payload-served
 /// skip) is not re-derived here, because composition needs the solver's rows,
 /// not just the path.
-pub(crate) fn select_first_compatible(
-    candidates: Vec<DispatchCandidate>,
+pub(crate) fn select_first_compatible<T: FanOutEntry>(
+    candidates: Vec<T>,
     deployments: &DeploymentRegistry,
-) -> SelectedCandidates {
+) -> SelectedCandidates<T> {
     // Registry position is the walk's order, so a candidate list minted
     // deployment-major or path-major selects identically.
     let positions: HashMap<DeploymentId, usize> = deployments
@@ -174,9 +192,9 @@ pub(crate) fn select_first_compatible(
     // Group by path, keeping first-appearance order (the solver's order): the
     // walk is independent per path and paths never influence each other.
     let mut order: Vec<u64> = Vec::new();
-    let mut by_path: HashMap<u64, Vec<DispatchCandidate>> = HashMap::new();
+    let mut by_path: HashMap<u64, Vec<T>> = HashMap::new();
     for candidate in candidates {
-        let path_id = candidate.candidate_id.path_id();
+        let path_id = candidate.candidate().candidate_id.path_id();
         by_path.entry(path_id).or_insert_with(|| {
             order.push(path_id);
             Vec::new()
@@ -196,25 +214,26 @@ pub(crate) fn select_first_compatible(
         // the one the path executes.
         group.sort_by_key(|candidate| {
             positions
-                .get(&candidate.candidate_id.deployment_id())
+                .get(&candidate.candidate().candidate_id.deployment_id())
                 .copied()
                 .unwrap_or(usize::MAX)
         });
 
         let mut walk = group.into_iter();
         let mut decided = false;
-        for candidate in walk.by_ref() {
-            let Some(deployment) = deployments.get(candidate.candidate_id.deployment_id()) else {
-                selected.retired.push(candidate.candidate_id);
+        for mut candidate in walk.by_ref() {
+            let Some(deployment) =
+                deployments.get(candidate.candidate().candidate_id.deployment_id())
+            else {
+                selected.retired.push(candidate.candidate().candidate_id);
                 continue;
             };
-            let mut candidate = candidate;
             let prepared = PreparedEncoding::from_compose_result(compose_transaction(
                 deployment,
-                &candidate.to_simulate_path(),
+                &candidate.candidate().to_simulate_path(),
             ));
             decided = prepared.stops_walk();
-            candidate.prepared = Some(prepared);
+            candidate.candidate_mut().prepared = Some(prepared);
             selected.examined.push(candidate);
             if decided {
                 break;
@@ -225,7 +244,7 @@ pub(crate) fn select_first_compatible(
         if decided {
             selected
                 .retired
-                .extend(walk.map(|candidate| candidate.candidate_id));
+                .extend(walk.map(|candidate| candidate.candidate().candidate_id));
         }
     }
 

@@ -23,6 +23,27 @@
 //! two rows sharing one candidate id only the first is admitted and stamped;
 //! the second is suppressed by the stamp the first just wrote.
 //!
+//! # Two entries over one policy
+//!
+//! [`admit`] is the RAW standalone pass: every stage, in the order above.
+//! [`finalize`] is the PRE-ADMITTED pass the registry fan-out's pre-admitted
+//! entry runs: the caller's assembly already applied its own non-stamping
+//! projection (divergence, fee-on-transfer, thin margin, its per-lane cap) and
+//! its pre-selection staleness gate, so finalization re-runs only the stages
+//! that must be AUTHORITATIVE at simulation time —
+//! `stamping suppression -> pool divergence -> fee-on-transfer -> candidate
+//! staleness -> optional order-index reorder -> same-cap truncation`.
+//!
+//! Both passes run the same stage implementations; only the sequence and the
+//! thin-margin presence differ (thin margin reads nothing but the solver's own
+//! row, so its verdict cannot move between admission and simulation, and the
+//! pre-admitted leaf never sees the floor). Finalization never treats the
+//! caller's admission as a promise of later admission: it re-reads every
+//! mutable projection at its own block, so a ledger, memo, or registry that
+//! moved between admission and finalization drops the candidate exactly as the
+//! raw pass would — and a retry-due candidate is stamped before any final drop
+//! can happen.
+//!
 //! # Cap and order
 //!
 //! The cap ([`MAX_SIMULATE_CONCURRENT`]) is applied to the list the reorder
@@ -39,6 +60,7 @@
 //! candidates that actually ran, plus the divergence/FoT feedback) belong to
 //! the dispatch fan-out.
 
+#[cfg(feature = "order-index")]
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -88,7 +110,40 @@ pub(crate) struct AdmissionPolicy<'a> {
     pub(crate) min_profit_margin_bps: u64,
 }
 
-/// What one admission pass dropped, per stage, in pipeline order.
+/// The mutable policy state and per-block facts one FINALIZATION pass reads —
+/// the pre-admitted entry's authoritative re-read.
+///
+/// The same three registries as [`AdmissionPolicy`], minus the thin-margin
+/// floor: the floor belongs to the caller's early admission.
+pub(crate) struct FinalizationPolicy<'a> {
+    /// The retry-interval ledger. Read (and stamped) once per candidate.
+    pub(crate) suppression: &'a Arc<Mutex<PathSuppression>>,
+    /// Pools flagged `SolverCalc` within the decay window.
+    pub(crate) divergence: &'a Arc<Mutex<PoolDivergence>>,
+    /// Tokens confirmed fee-on-transfer.
+    pub(crate) fee_on_transfer: &'a Arc<Mutex<FeeOnTransferRegistry>>,
+    /// The engine's shared state owner — the staleness gate's sample source.
+    /// `None` skips the gate (the empty and pre-`BotState` callers).
+    pub(crate) bot_state: Option<&'a StateLock<BotState>>,
+    /// The block this pass finalizes for: the retry clock and the decay window.
+    pub(crate) current_block: u64,
+}
+
+impl AdmissionPolicy<'_> {
+    /// The finalization half of this pass: the same registries and block,
+    /// without the thin-margin floor.
+    fn finalization(&self) -> FinalizationPolicy<'_> {
+        FinalizationPolicy {
+            suppression: self.suppression,
+            divergence: self.divergence,
+            fee_on_transfer: self.fee_on_transfer,
+            bot_state: self.bot_state,
+            current_block: self.current_block,
+        }
+    }
+}
+
+/// What one pass dropped, per stage, in pipeline order.
 ///
 /// Mirrors the per-call drop counters on the dispatch outcome; the lifetime
 /// tallies live on the registries themselves.
@@ -117,8 +172,10 @@ impl AdmissionSkips {
     }
 }
 
-/// One admission pass' result: the candidates simulation receives, in
-/// simulation order, plus the per-stage drop tally.
+/// One pass' result: the candidates simulation receives, in simulation order,
+/// plus the per-stage drop tally. `finalize` reports through this same type, so
+/// the raw and pre-admitted entries share one outcome vocabulary and one
+/// mapping onto [`crate::DispatchOutcome`].
 #[derive(Debug)]
 pub(crate) struct Admission {
     /// The surviving candidates, already reordered and capped.
@@ -127,8 +184,83 @@ pub(crate) struct Admission {
     pub(crate) skips: AdmissionSkips,
 }
 
+/// A candidate a caller has ALREADY projected through its own pre-simulation
+/// admission, transported to the pre-admitted fan-out entry
+/// ([`crate::dispatch_admitted_across_deployments`]) for authoritative
+/// finalization at simulation time.
+///
+/// Construction ([`Self::new`]) is the caller's claim that it applied its own
+/// non-stamping admission projection; what travels is the COMPLETE
+/// [`DispatchCandidate`] — identity, solve block, per-hop rows, resolved path,
+/// economics, and any encoding a target-selection walk attached — so
+/// finalization never needs an ID-keyed side table to piece a candidate back
+/// together, and two candidates sharing one identity stay two rows in their
+/// carried order.
+///
+/// # Admission is not a promise of later admission
+///
+/// Finalization re-reads every mutable projection (the suppression ledger, the
+/// divergence memo, the fee-on-transfer registry, the live state nonces) at its
+/// own block, so a policy registry that moved after this candidate was admitted
+/// drops it exactly as the raw pass would. That is why the transport carries no
+/// admission-time verdict to trust: a projection is evidence about the block it
+/// read, never a licence to skip the final read.
+///
+/// # Building one
+///
+/// A direct Rust consumer that owns its own pre-simulation projection constructs
+/// these itself, and every candidate it does NOT transport is one it dropped:
+///
+/// ```
+/// use degenbot_arbitrage::{AdmittedCandidate, DispatchCandidate};
+/// # use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
+/// let candidate = DispatchCandidate {
+///     candidate_id: CandidateId::new(7, DeploymentId::new(1)),
+///     optimal_input: 1_000,
+///     engine_profit: 50,
+///     steps: Box::new([]),
+///     solve_block: 100,
+///     path_info: PathInfo::new(Vec::new()),
+///     prepared: None,
+/// };
+/// let admitted = AdmittedCandidate::new(candidate);
+/// assert_eq!(admitted.candidate().optimal_input, 1_000);
+/// ```
+#[derive(Debug, Clone)]
+pub struct AdmittedCandidate {
+    /// The complete candidate the transport carries.
+    candidate: DispatchCandidate,
+}
+
+impl AdmittedCandidate {
+    /// Transport `candidate` as pre-admitted: the caller has already applied
+    /// its own pre-simulation projection and this candidate is ready for the
+    /// authoritative final read at simulation time.
+    #[must_use]
+    pub fn new(candidate: DispatchCandidate) -> Self {
+        Self { candidate }
+    }
+
+    /// The candidate this transport carries.
+    #[must_use]
+    pub fn candidate(&self) -> &DispatchCandidate {
+        &self.candidate
+    }
+
+    /// The carried candidate, for the target-selection walk: an examined
+    /// candidate keeps the encoding that walk composed.
+    pub(crate) fn candidate_mut(&mut self) -> &mut DispatchCandidate {
+        &mut self.candidate
+    }
+
+    /// Unwrap the carried candidate — finalization's input.
+    pub(crate) fn into_candidate(self) -> DispatchCandidate {
+        self.candidate
+    }
+}
+
 /// Run the pre-simulation admission policy over `candidates` in their given
-/// order.
+/// order — the RAW standalone pass.
 ///
 /// The returned candidates are the ones to simulate, in the order to simulate
 /// them.
@@ -139,15 +271,122 @@ pub(crate) struct Admission {
 /// (a peer task panicked while holding it) — the same loud failure the fan-out
 /// bookends have always had, so a poisoned ledger is never silently read as
 /// "nothing suppressed".
-#[expect(clippy::expect_used)] // the poison guards are the policy's loud-failure contract
 #[must_use]
 pub(crate) fn admit(
     mut candidates: Vec<DispatchCandidate>,
     policy: &AdmissionPolicy<'_>,
 ) -> Admission {
-    let mut skips = AdmissionSkips::default();
+    let reads = policy.finalization();
 
     // 1. Suppression — the STAMPING read (see the module docs).
+    let suppressed = drop_suppressed(&mut candidates, &reads);
+
+    // 2. Pool divergence.
+    let divergent = drop_divergent(&mut candidates, &reads);
+
+    // 3. Fee-on-transfer.
+    let fee_on_transfer = drop_fee_on_transfer(&mut candidates, &reads);
+
+    // 4. Thin margin.
+    let (kept, thin_margin) = filter_thin_margin_results(candidates, policy.min_profit_margin_bps);
+    candidates = kept;
+
+    // 5. Staleness.
+    let stale = drop_stale(&mut candidates, &reads);
+
+    // 6. Reorder, then cap what the reorder produced.
+    reorder_and_cap(&mut candidates);
+
+    Admission {
+        admitted: candidates,
+        skips: AdmissionSkips {
+            suppressed,
+            divergent,
+            fee_on_transfer,
+            thin_margin,
+            stale,
+        },
+    }
+}
+
+/// Finalize PRE-ADMITTED candidates in the order their caller transported them.
+///
+/// The pre-admitted pass: the caller's assembly already applied its own
+/// non-stamping projection and the pre-selection staleness gate, so this pass
+/// re-runs only the stages whose verdict must be authoritative at simulation
+/// time, in a fixed order —
+///
+/// `stamping suppression -> pool divergence -> fee-on-transfer -> candidate
+/// staleness -> optional order-index reorder -> same-cap truncation`
+///
+/// It stops short of simulation: the admitted list is what the leaf simulates.
+/// `skips.thin_margin` is always `0` here — the thin floor is the caller's
+/// early admission, and no defensive second pass is invented for it.
+///
+/// Every stage consumes the list SEQUENTIALLY in transported order, so of two
+/// rows sharing one candidate id the first is stamped (and admitted, or dropped
+/// by a later stage) exactly as the raw pass does, and the second is suppressed
+/// by the stamp the first wrote. A retry-due candidate is stamped before any
+/// final drop, so a candidate this pass drops has still spent its retry
+/// interval.
+///
+/// # Panics
+///
+/// Panics if a policy mutex is poisoned — the same loud failure the raw pass
+/// has.
+#[must_use]
+pub(crate) fn finalize(
+    admitted: Vec<AdmittedCandidate>,
+    policy: &FinalizationPolicy<'_>,
+) -> Admission {
+    let mut candidates: Vec<DispatchCandidate> = admitted
+        .into_iter()
+        .map(AdmittedCandidate::into_candidate)
+        .collect();
+
+    // 1. Suppression — the STAMPING read, authoritative at finalization time.
+    let suppressed = drop_suppressed(&mut candidates, policy);
+
+    // 2. Pool divergence — a pool flagged between admission and now drops here.
+    let divergent = drop_divergent(&mut candidates, policy);
+
+    // 3. Fee-on-transfer — same authority for the token registry.
+    let fee_on_transfer = drop_fee_on_transfer(&mut candidates, policy);
+
+    // 4. Staleness — the live nonce is the final word, whatever admission saw.
+    let stale = drop_stale(&mut candidates, policy);
+
+    // 5. Reorder, then the SAME cap over the order it produced. The caller's
+    //    assembly already capped its lanes at this cap, so with the `order-index`
+    //    feature on the truncation preserves the survivors it was handed and
+    //    only the simulation order moves.
+    reorder_and_cap(&mut candidates);
+
+    Admission {
+        admitted: candidates,
+        // `thin_margin` is structurally zero: the pre-admitted pass has no thin
+        // stage (see the `finalize` docs).
+        skips: AdmissionSkips {
+            suppressed,
+            divergent,
+            fee_on_transfer,
+            thin_margin: 0,
+            stale,
+        },
+    }
+}
+
+// -------------------------------------------------------------------------
+// The stages — ONE implementation each, whatever order the pass runs them in
+// -------------------------------------------------------------------------
+
+/// The STAMPING suppression read (see the module docs): a retry-due benched
+/// candidate is admitted AND stamped with `policy.current_block`.
+#[expect(clippy::expect_used)] // the poison guard is the policy's loud-failure contract
+fn drop_suppressed(
+    candidates: &mut Vec<DispatchCandidate>,
+    policy: &FinalizationPolicy<'_>,
+) -> usize {
     let before = candidates.len();
     {
         let mut ledger = policy
@@ -156,9 +395,15 @@ pub(crate) fn admit(
             .expect("suppression mutex poisoned");
         candidates.retain(|c| !ledger.is_suppressed(c.candidate_id, policy.current_block));
     }
-    skips.suppressed = before - candidates.len();
+    before - candidates.len()
+}
 
-    // 2. Pool divergence, then the lifetime tally for what it dropped.
+/// Pool divergence, plus the lifetime tally for what it dropped.
+#[expect(clippy::expect_used)]
+fn drop_divergent(
+    candidates: &mut Vec<DispatchCandidate>,
+    policy: &FinalizationPolicy<'_>,
+) -> usize {
     let before = candidates.len();
     {
         let divergence = policy
@@ -172,19 +417,26 @@ pub(crate) fn admit(
                 .filter_map(hop_pool_key)
                 .any(|k| divergence.is_divergent(k, policy.current_block))
         });
-        skips.divergent = before - candidates.len();
     }
-    if skips.divergent > 0 {
+    let dropped = before - candidates.len();
+    if dropped > 0 {
         let mut divergence = policy
             .divergence
             .lock()
             .expect("pool_divergence mutex poisoned");
-        for _ in 0..skips.divergent {
+        for _ in 0..dropped {
             divergence.record_dropped();
         }
     }
+    dropped
+}
 
-    // 3. Fee-on-transfer, then the same lifetime tally.
+/// Fee-on-transfer, plus the same lifetime tally.
+#[expect(clippy::expect_used)]
+fn drop_fee_on_transfer(
+    candidates: &mut Vec<DispatchCandidate>,
+    policy: &FinalizationPolicy<'_>,
+) -> usize {
     let before = candidates.len();
     {
         let registry = policy
@@ -197,41 +449,37 @@ pub(crate) fn admit(
                 .iter()
                 .any(|hop| registry.is_fot(hop_input_token(hop), policy.current_block))
         });
-        skips.fee_on_transfer = before - candidates.len();
     }
-    if skips.fee_on_transfer > 0 {
+    let dropped = before - candidates.len();
+    if dropped > 0 {
         let mut registry = policy
             .fee_on_transfer
             .lock()
             .expect("fot_registry mutex poisoned");
-        for _ in 0..skips.fee_on_transfer {
+        for _ in 0..dropped {
             registry.record_dropped();
         }
     }
+    dropped
+}
 
-    // 4. Thin margin.
-    let (kept, dropped) = filter_thin_margin_results(candidates, policy.min_profit_margin_bps);
-    skips.thin_margin = dropped;
-    candidates = kept;
-
-    // 5. Staleness — the solve-time hop nonce against the live state. The read
-    //    guard covers this retain only, never the caller's provider I/O.
+/// Candidate staleness — the solve-time hop nonce against the live state. The
+/// read guard covers this retain only, never the caller's provider I/O.
+fn drop_stale(candidates: &mut Vec<DispatchCandidate>, policy: &FinalizationPolicy<'_>) -> usize {
     let before = candidates.len();
     if let Some(state) = policy.bot_state {
         let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Sim);
         candidates.retain(|c| !candidate_is_stale(&guard, c));
     }
-    skips.stale = before - candidates.len();
+    before - candidates.len()
+}
 
-    // 6. Reorder, then cap what the reorder produced.
+/// The optional order-index reorder, then the [`MAX_SIMULATE_CONCURRENT`] cap
+/// over the order it produced.
+fn reorder_and_cap(candidates: &mut Vec<DispatchCandidate>) {
     #[cfg(feature = "order-index")]
-    order_index_top_selection(&mut candidates);
+    order_index_top_selection(candidates);
     candidates.truncate(MAX_SIMULATE_CONCURRENT);
-
-    Admission {
-        admitted: candidates,
-        skips,
-    }
 }
 
 // -------------------------------------------------------------------------
@@ -520,6 +768,31 @@ mod tests {
                 bot_state: state,
                 current_block: block,
                 min_profit_margin_bps,
+            },
+        )
+    }
+
+    /// Transport raw rows the way a caller's assembly would: one
+    /// `AdmittedCandidate` per row it decided to carry.
+    fn transport(candidates: Vec<DispatchCandidate>) -> Vec<AdmittedCandidate> {
+        candidates.into_iter().map(AdmittedCandidate::new).collect()
+    }
+
+    /// One pre-admitted finalization pass over the transported rows.
+    fn run_finalize(
+        ledger: &Registries,
+        state: Option<&StateLock<BotState>>,
+        block: u64,
+        admitted: Vec<AdmittedCandidate>,
+    ) -> Admission {
+        finalize(
+            admitted,
+            &FinalizationPolicy {
+                suppression: &ledger.suppression,
+                divergence: &ledger.divergence,
+                fee_on_transfer: &ledger.fee_on_transfer,
+                bot_state: state,
+                current_block: block,
             },
         )
     }
@@ -1117,5 +1390,288 @@ mod tests {
             .collect();
         // profit descending, then id ascending on the 100-tie.
         assert_eq!(order, vec![(5, 500), (20, 300), (9, 100), (10, 100)]);
+    }
+
+    // -- the pre-admitted finalization pass ------------------------------
+
+    /// A clean transported candidate reaches simulation in its transported
+    /// order, with no stage claiming a drop.
+    #[test]
+    fn finalization_admits_a_clean_transported_candidate_unchanged() {
+        let ledger = registries();
+        let pass = run_finalize(
+            &ledger,
+            None,
+            DUE_BLOCK,
+            transport(vec![candidate(7, 1_000_000, 100_000)]),
+        );
+        assert_eq!(path_ids(&pass), vec![7]);
+        assert_eq!(pass.skips, AdmissionSkips::default());
+    }
+
+    #[test]
+    fn finalization_of_no_transported_candidates_tallies_nothing() {
+        let ledger = registries();
+        let pass = run_finalize(&ledger, None, DUE_BLOCK, Vec::new());
+        assert!(pass.admitted.is_empty());
+        assert_eq!(pass.skips, AdmissionSkips::default());
+    }
+
+    /// The thin-margin floor is EARLY admission's verdict: finalization has no
+    /// stage for it, so a row the caller transported reaches simulation even
+    /// when it would fail a 50 bps floor.
+    #[test]
+    fn finalization_applies_no_thin_margin_stage() {
+        let ledger = registries();
+        let pass = run_finalize(
+            &ledger,
+            None,
+            100,
+            transport(vec![candidate(7, 1_000_000, 1)]),
+        );
+        assert_eq!(path_ids(&pass), vec![7]);
+        assert_eq!(pass.skips.thin_margin, 0, "the leaf has no thin stage");
+    }
+
+    /// The retry stamp lands BEFORE the final divergence read, so a candidate
+    /// the final read drops has still spent its retry interval.
+    #[test]
+    fn finalization_stamps_a_retry_due_candidate_before_divergence_drops_it() {
+        let ledger = registries();
+        bench(&ledger, 5);
+        ledger
+            .divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        let pass = run_finalize(
+            &ledger,
+            None,
+            100,
+            transport(vec![candidate(5, 1_000_000, 100_000)]),
+        );
+        assert!(pass.admitted.is_empty(), "the final read dropped the row");
+        assert_eq!(pass.skips.divergent, 1);
+        assert_eq!(pass.skips.suppressed, 0, "the retry was admitted");
+        assert_eq!(
+            ledger.divergence.lock().unwrap().total_divergent_dropped(),
+            1,
+            "the final read feeds the same lifetime tally"
+        );
+        assert!(
+            suppressed_at(&ledger, 5, 100),
+            "the retry due at 100 is spent even though the final read dropped it"
+        );
+    }
+
+    /// The same stamp-then-drop, one stage later: a token the registry
+    /// confirmed between admission and finalization.
+    #[test]
+    fn finalization_stamps_a_retry_due_candidate_before_fee_on_transfer_drops_it() {
+        let ledger = registries();
+        bench(&ledger, 5);
+        {
+            let mut registry = ledger.fee_on_transfer.lock().unwrap();
+            registry.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_A), 100);
+            registry.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_B), 100);
+        }
+        let pass = run_finalize(
+            &ledger,
+            None,
+            100,
+            transport(vec![candidate(5, 1_000_000, 100_000)]),
+        );
+        assert!(
+            pass.admitted.is_empty(),
+            "the final FoT read dropped the row"
+        );
+        assert_eq!(pass.skips.fee_on_transfer, 1);
+        assert_eq!(pass.skips.suppressed, 0, "the retry was admitted");
+        assert!(
+            suppressed_at(&ledger, 5, 100),
+            "the retry due at 100 is spent even though the final FoT read dropped it"
+        );
+    }
+
+    /// And last: the live nonce is the final word, so a state write after
+    /// admission drops the candidate AFTER it has been stamped.
+    #[test]
+    fn finalization_stamps_a_retry_due_candidate_before_staleness_drops_it() {
+        let ledger = registries();
+        let core = bot_state_with(&[POOL_A]);
+        let stale_nonce = live_nonce(&core, POOL_A) + 1;
+        let state = StateLock::new(core);
+        bench(&ledger, 5);
+        let pass = run_finalize(
+            &ledger,
+            Some(&state),
+            100,
+            transport(vec![candidate_through_pool(5, POOL_A, stale_nonce)]),
+        );
+        assert!(
+            pass.admitted.is_empty(),
+            "the final staleness read dropped it"
+        );
+        assert_eq!(pass.skips.stale, 1);
+        assert_eq!(pass.skips.suppressed, 0, "the retry was admitted");
+        assert!(
+            suppressed_at(&ledger, 5, 100),
+            "the retry due at 100 is spent even though the final staleness read dropped it"
+        );
+    }
+
+    /// A registry write BETWEEN admission and finalization is authoritative: the
+    /// transported candidate was clean when it was admitted and is divergent
+    /// when it is finalized.
+    #[test]
+    fn a_registry_write_between_admission_and_finalization_drops_the_transported_candidate() {
+        let ledger = registries();
+        let admitted = transport(vec![candidate(5, 1_000_000, 100_000)]);
+        ledger
+            .divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        let pass = run_finalize(&ledger, None, 100, admitted);
+        assert!(pass.admitted.is_empty());
+        assert_eq!(pass.skips.divergent, 1);
+    }
+
+    /// Two transported rows sharing one identity keep the sequential read: the
+    /// first is stamped and admitted, the second is suppressed by that stamp.
+    #[test]
+    fn finalization_preserves_the_sequential_duplicate_read() {
+        let ledger = registries();
+        bench(&ledger, 11);
+        let first = candidate(11, 1_000_000, 100_000);
+        let second = candidate(11, 1_000_000, 200_000);
+        let pass = run_finalize(&ledger, None, DUE_BLOCK, transport(vec![first, second]));
+        assert_eq!(pass.skips.suppressed, 1);
+        assert_eq!(pass.admitted.len(), 1);
+        assert_eq!(
+            pass.admitted[0].engine_profit, 100_000,
+            "the FIRST transported row is the admitted one"
+        );
+    }
+
+    /// The stamp is written before a later stage can drop the row, so the
+    /// duplicate behind it is suppressed even when the stamped first row is
+    /// dropped afterwards.
+    #[test]
+    fn finalization_stamps_and_suppresses_duplicates_before_a_later_stage_drops_the_first() {
+        let ledger = registries();
+        bench(&ledger, 11);
+        ledger
+            .divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        let pass = run_finalize(
+            &ledger,
+            None,
+            100,
+            transport(vec![
+                candidate(11, 1_000_000, 100_000),
+                candidate(11, 1_000_000, 200_000),
+            ]),
+        );
+        assert_eq!(pass.skips.suppressed, 1, "the first row's stamp wins");
+        assert_eq!(pass.skips.divergent, 1, "then the stamped row is dropped");
+        assert!(pass.admitted.is_empty());
+        assert!(suppressed_at(&ledger, 11, 100));
+    }
+
+    /// Feature off: finalization is a simulation-order no-op — the transported
+    /// order IS the simulation order.
+    #[cfg(not(feature = "order-index"))]
+    #[test]
+    fn finalization_keeps_the_transported_order_when_the_reorder_is_off() {
+        let ledger = registries();
+        let pass = run_finalize(
+            &ledger,
+            None,
+            100,
+            transport(vec![
+                candidate(1, 1_000_000, 100),
+                candidate(2, 1_000_000, 300),
+                candidate(3, 1_000_000, 200),
+            ]),
+        );
+        assert_eq!(path_ids(&pass), vec![1, 2, 3]);
+    }
+
+    /// Feature on: the survivors the caller already capped are ALL preserved —
+    /// the same-cap truncation is a no-op — while the simulation order moves to
+    /// the profit ranking.
+    #[cfg(feature = "order-index")]
+    #[test]
+    fn finalization_reorders_the_already_capped_survivors_without_dropping_any() {
+        let ledger = registries();
+        let cap = u64::try_from(MAX_SIMULATE_CONCURRENT).unwrap();
+        let pass = run_finalize(
+            &ledger,
+            None,
+            100,
+            transport(candidates(cap, |path_id| 100_000 + u128::from(path_id))),
+        );
+        assert_eq!(
+            pass.admitted.len(),
+            MAX_SIMULATE_CONCURRENT,
+            "the caller's cap already bounded the transport"
+        );
+        let expected: Vec<u64> = (1..=cap).rev().collect();
+        assert_eq!(
+            path_ids(&pass),
+            expected,
+            "profit-descending simulation order"
+        );
+    }
+
+    /// Feature on: an over-cap transport truncates AFTER the reorder, exactly
+    /// like the raw pass, so the profit prefix survives.
+    #[cfg(feature = "order-index")]
+    #[test]
+    fn finalization_truncates_an_over_cap_transport_to_the_profit_prefix() {
+        let ledger = registries();
+        let cap = u64::try_from(MAX_SIMULATE_CONCURRENT).unwrap();
+        let over = cap + 10;
+        let pass = run_finalize(
+            &ledger,
+            None,
+            100,
+            transport(candidates(over, |path_id| 100_000 + u128::from(path_id))),
+        );
+        let expected: Vec<u64> = (over - cap + 1..=over).rev().collect();
+        assert_eq!(path_ids(&pass), expected);
+    }
+
+    #[cfg(not(feature = "order-index"))]
+    #[test]
+    fn finalization_truncates_an_over_cap_transport_to_the_input_prefix() {
+        let ledger = registries();
+        let cap = u64::try_from(MAX_SIMULATE_CONCURRENT).unwrap();
+        let pass = run_finalize(
+            &ledger,
+            None,
+            100,
+            transport(candidates(cap + 10, |path_id| {
+                100_000 + u128::from(path_id)
+            })),
+        );
+        let expected: Vec<u64> = (1..=cap).collect();
+        assert_eq!(path_ids(&pass), expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "suppression mutex poisoned")]
+    fn a_poisoned_suppression_registry_panics_at_finalization() {
+        let ledger = registries();
+        poison_under_guard(&ledger.suppression);
+        let _ = run_finalize(
+            &ledger,
+            None,
+            DUE_BLOCK,
+            transport(vec![candidate(1, 1_000_000, 100_000)]),
+        );
     }
 }

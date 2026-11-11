@@ -59,6 +59,24 @@
 //! execution, and the verdict are the flag's invariant, and the RPC fallback
 //! stays the authority for every word the selected view does not hold.
 //!
+//! # Two entries, one simulation body
+//!
+//! [`dispatch_profitable_results`] is the RAW standalone leaf: it runs the whole
+//! admission pipeline (`stamping suppression -> divergence -> fee-on-transfer ->
+//! thin margin -> staleness -> optional order-index reorder -> cap`) and then
+//! simulates. [`dispatch_admitted_profitable_results`] is the PRE-ADMITTED leaf
+//! the registry fan-out's pre-admitted entry reaches: the caller already
+//! projected its own non-stamping admission and transported
+//! [`AdmittedCandidate`]s, so the leaf re-reads the policy AUTHORITATIVELY
+//! (`stamping suppression -> divergence -> fee-on-transfer -> staleness ->
+//! optional order-index reorder -> same-cap truncation`) before simulating.
+//!
+//! Both leaves hand their survivors to the SAME private simulation body
+//! (`simulate_leaf`) — the fan-out, the categorization, the divergence/FoT
+//! feedback, the suppression recording, and the sorting have one
+//! implementation, and `leaf_outcome` maps a pass' drop tally to
+//! [`DispatchOutcome`] once. Only the pass in front of the simulation differs.
+//!
 //! # Attribution: one `fanout` identifier per fan-out
 //!
 //! [`dispatch_profitable_results`] mints one identifier per dispatch
@@ -86,6 +104,7 @@ use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
 use crate::admission;
+use crate::admission::AdmittedCandidate;
 use crate::simulate_path_on_evm_prepared;
 use crate::{
     diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token,
@@ -362,6 +381,12 @@ impl DispatchOutcome {
 /// admitted, gather with exception tolerance, and categorize into
 /// gas-profitable / gas-unprofitable / exception.
 ///
+/// This is the RAW standalone entry: it applies the whole admission pipeline,
+/// in the standalone order, to whatever it is handed. A caller that has already
+/// applied its own admission projection transports its survivors to the
+/// pre-admitted entry ([`crate::dispatch_admitted_across_deployments`]) instead,
+/// whose leaf finalizes them and reaches this same simulation body.
+///
 /// Pipeline:
 /// 1. **Admission** — `admission::admit` runs the whole
 ///    pre-simulation policy in one pass: the stamping suppression read (the
@@ -420,11 +445,7 @@ impl DispatchOutcome {
 /// ever held under a guard, so a poison indicates a bug in a sibling task (the
 /// arcs are shared with the submission seam's accessors; never locked across an
 /// `.await`).
-#[expect(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::expect_used
-)] // faithful dispatch seam; mutex-poison guards panic loudly
+#[expect(clippy::too_many_arguments)] // faithful dispatch seam
 pub fn dispatch_profitable_results(
     candidates: Vec<DispatchCandidate>,
     ctx: &SimulateContext<'_>,
@@ -477,7 +498,6 @@ pub fn dispatch_profitable_results(
         Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
     >,
 ) -> DispatchOutcome {
-    let mut outcome = DispatchOutcome::default();
     let pre_filter_count = candidates.len();
     // T3: candidates entering the fan-out (pre-filter sizes summed; the
     // per-stage drop counts live on `DispatchOutcome` for the logs).
@@ -504,13 +524,169 @@ pub fn dispatch_profitable_results(
             min_profit_margin_bps,
         },
     );
-    outcome.suppressed_count = admitted.skips.suppressed;
-    outcome.divergent_dropped = admitted.skips.divergent;
-    outcome.fot_dropped = admitted.skips.fee_on_transfer;
-    outcome.thin_dropped = admitted.skips.thin_margin;
-    outcome.stale_dropped = admitted.skips.stale;
-    let candidates = admitted.admitted;
-    outcome.candidate_count = candidates.len();
+    let outcome = leaf_outcome(admitted.skips, admitted.admitted.len());
+    simulate_leaf(
+        admitted.admitted,
+        outcome,
+        LeafInputs {
+            ctx,
+            path_suppression,
+            current_block,
+            pool_divergence,
+            fot_registry,
+            bot_state,
+            warm_cache,
+        },
+    )
+}
+
+/// Finalize PRE-ADMITTED candidates against the live policy state, then
+/// simulate them — the pre-admitted fan-out's leaf
+/// ([`crate::dispatch_admitted_across_deployments`]).
+///
+/// The caller's assembly already applied its own non-stamping projection
+/// (divergence, fee-on-transfer, thin margin, its per-lane cap) and its
+/// pre-selection staleness gate, and transported every survivor as an
+/// [`AdmittedCandidate`]. This leaf's finalization is the AUTHORITATIVE half of
+/// the same policy, in the fixed pre-admitted order:
+///
+/// `stamping suppression -> divergence -> fee-on-transfer -> staleness ->
+/// optional order-index reorder -> same-cap truncation -> simulation`
+///
+/// Nothing here trusts the caller's admission: a ledger, memo, or registry that
+/// moved between admission and this call drops the candidate with the matching
+/// per-stage counter, exactly as [`dispatch_profitable_results`] would, and a
+/// retry-due candidate is stamped even when a later final stage drops it. The
+/// thin-margin floor has no stage here (it belongs to the caller's early
+/// admission), so `thin_dropped` is always `0` and no defensive second pass is
+/// invented for it.
+///
+/// Simulation, categorization, the divergence/FoT feedback, the suppression
+/// outcome recording, and the sorting are the SAME body
+/// [`dispatch_profitable_results`] runs — one simulation implementation, two
+/// entry orders.
+///
+/// # Panics
+///
+/// Panics if a policy mutex is poisoned — the same loud failure the raw
+/// standalone leaf has.
+#[expect(clippy::too_many_arguments)] // the leaf's shared simulation inputs
+pub(crate) fn dispatch_admitted_profitable_results(
+    admitted: Vec<AdmittedCandidate>,
+    ctx: &SimulateContext<'_>,
+    path_suppression: &Arc<Mutex<PathSuppression>>,
+    current_block: u64,
+    // The per-pool solver-divergence memo: re-read here, so a pool flagged
+    // after admission drops its candidates before simulation.
+    pool_divergence: &Arc<Mutex<PoolDivergence>>,
+    // The per-token fee-on-transfer registry, re-read for the same reason.
+    fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
+    // The engine's shared state owner — the staleness gate's final read.
+    bot_state: Option<Arc<StateLock<BotState>>>,
+    // The cross-block bytecode cache the shared simulation body builds its
+    // handle with (see [`dispatch_profitable_results`]).
+    warm_cache: Option<
+        Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
+    >,
+) -> DispatchOutcome {
+    let entering = admitted.len();
+    // T3: the same census edge the raw leaf emits — the candidates THIS leaf
+    // considered, so a migrated caller's metric keeps its meaning.
+    degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::CandidatesEntered {
+        n: u64::try_from(entering).unwrap_or(u64::MAX),
+        arm: "fanout",
+    });
+
+    // 1-4. Finalization — the authoritative half of the policy, in the
+    //      pre-admitted order. Every lock is a synchronous bookend scope, so no
+    //      guard crosses the simulation body below.
+    let finalized = admission::finalize(
+        admitted,
+        &admission::FinalizationPolicy {
+            suppression: path_suppression,
+            divergence: pool_divergence,
+            fee_on_transfer: fot_registry,
+            bot_state: bot_state.as_deref(),
+            current_block,
+        },
+    );
+    let outcome = leaf_outcome(finalized.skips, finalized.admitted.len());
+    simulate_leaf(
+        finalized.admitted,
+        outcome,
+        LeafInputs {
+            ctx,
+            path_suppression,
+            current_block,
+            pool_divergence,
+            fot_registry,
+            bot_state,
+            warm_cache,
+        },
+    )
+}
+
+/// The empty dispatch outcome carrying one pass's per-stage drop counters and
+/// the count of candidates that reached simulation — the same mapping for both
+/// entries, so the two can never report a drop differently.
+fn leaf_outcome(skips: admission::AdmissionSkips, candidate_count: usize) -> DispatchOutcome {
+    DispatchOutcome {
+        suppressed_count: skips.suppressed,
+        thin_dropped: skips.thin_margin,
+        divergent_dropped: skips.divergent,
+        fot_dropped: skips.fee_on_transfer,
+        stale_dropped: skips.stale,
+        candidate_count,
+        ..DispatchOutcome::default()
+    }
+}
+
+/// The policy state, engine handles, and block facts ONE leaf simulates with.
+///
+/// Both entries build one after their own pass (admission for the raw
+/// standalone leaf, finalization for the pre-admitted one), so the simulation,
+/// categorization, feedback, recording, and sorting below have exactly one
+/// implementation.
+struct LeafInputs<'a> {
+    /// The block-wide facts and the deployment this lane simulates against.
+    ctx: &'a SimulateContext<'a>,
+    /// The retry-interval ledger — the outcome-recording bookend's target.
+    path_suppression: &'a Arc<Mutex<PathSuppression>>,
+    /// The block this fan-out runs at.
+    current_block: u64,
+    /// The per-pool solver-divergence memo — the feedback bookend's target.
+    pool_divergence: &'a Arc<Mutex<PoolDivergence>>,
+    /// The per-token fee-on-transfer registry — the feedback + success
+    /// recording bookend's target.
+    fot_registry: &'a Arc<Mutex<FeeOnTransferRegistry>>,
+    /// The engine's shared state owner (see [`dispatch_profitable_results`]).
+    bot_state: Option<Arc<StateLock<BotState>>>,
+    /// The cross-block bytecode cache (see [`dispatch_profitable_results`]).
+    warm_cache:
+        Option<Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>>,
+}
+
+/// Simulate `candidates` with `inputs`, then categorize, feed back, record, and
+/// sort them into `outcome`.
+#[expect(
+    clippy::too_many_lines,
+    clippy::expect_used,
+    reason = "the fan-out, feedback, and recording read best as one ordered pass"
+)]
+fn simulate_leaf(
+    candidates: Vec<DispatchCandidate>,
+    mut outcome: DispatchOutcome,
+    inputs: LeafInputs<'_>,
+) -> DispatchOutcome {
+    let LeafInputs {
+        ctx,
+        path_suppression,
+        current_block,
+        pool_divergence,
+        fot_registry,
+        bot_state,
+        warm_cache,
+    } = inputs;
 
     // The per-candidate `PathInfo` join map: the post-fan-out feedback
     // (divergence + FoT attribution) and the success recording re-derive a
