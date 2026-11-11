@@ -222,6 +222,16 @@ re-stamp on an orphaned submission or a revoked lease, re-evaluate at the decide
 a stale one, retire on a landed one.
 _Avoid_: "retry policy", "rebroadcast policy".
 
+**Pre-simulation admission**:
+The core policy deciding which candidates may enter simulation at the current block:
+suppression, pool divergence, fee-on-transfer, thin margin, staleness, and cap. One
+outcome vocabulary serves the Ordered sim-submit pipeline and the standalone simulation
+leaf. Batch assembly may project that policy early; finalization authoritatively rechecks
+mutable state and commits the retry stamp at the caller's established position, so an
+early projection is not a promise of later admission.
+_Avoid_: "pre-filter chain" (implementation-shaped); **Registration admission** (the pool
+lifecycle); duplicated driver-owned policy or treating an early projection as final proof.
+
 **Ordered sim-submit pipeline**:
 The one core owner of a block's concurrent simulate fan-out plus its submit lane: every
 batch's simulate work runs bounded by an injected in-flight cap, and a single submitter
@@ -247,6 +257,16 @@ Python companion's renderers. One record vocabulary, so a driver's remaining
 responsibility is display.
 _Avoid_: per-driver result tuples; renderers reading raw engine structures; an outcome
 callback seam.
+
+**BAL head lifecycle**:
+The session-scoped progression of an accepted canonical head from delivery through
+block-access-list preparation to a settled or cold storage generation, fenced by exact
+block identity. Readiness, abandonment, and the one-previous-anchor read window are
+facts of that progression, never independent clocks or per-fan-out preparation. Each
+preparation attempt owns its completion: a retry cannot rewrite an earlier waiter's
+terminal outcome, and redelivery cannot turn settle-derived cold readiness into Ready.
+_Avoid_: candidate-driven BAL preparation; inferring readiness from task completion;
+serving an abandoned branch or a parent value at an unlinked anchor.
 
 ## Session objects
 
