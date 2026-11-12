@@ -143,8 +143,14 @@ pub mod executor_runtime;
 // published `dispatch` and crate-root path (deferred to the dispatch module).
 mod admission;
 
+/// The candidate vocabulary (`DispatchCandidate`, `SolveStep`) the admission
+/// policy reads, the target-selection walk annotates, and the dispatch leaf
+/// simulates — neutral ground between them, so neither policy half owns the
+/// other's input. [`dispatch`] re-exports it at its published paths.
+pub mod candidate;
+
 /// The dispatch fan-out + categorization policy ([`dispatch_profitable_results`])
-/// + the candidate/outcome types.
+/// + the outcome types.
 pub mod dispatch;
 
 /// The dispatch identity contract — one [`degenbot_execution::CandidateId`] per
@@ -185,6 +191,7 @@ pub use admission::{
     project_early_admission, AdmittedCandidate, EarlyAdmissionPolicy, EarlyDrop, EarlyDropReason,
     EarlyProjection,
 };
+pub use candidate::{DispatchCandidate, SolveStep};
 pub use cmd_executor::{
     CmdExecutorBinding, CmdExecutorSimAdapter, ExecutionReceipt, InjectionAddressMismatch,
     EXECUTION_RECEIPT_LEN,
@@ -200,8 +207,7 @@ pub use deployment::{
 };
 pub use dispatch::{
     candidate_is_stale, dispatch_profitable_results, filter_thin_margin_results, is_gas_profitable,
-    DispatchCandidate, DispatchOutcome, SolveStep, BPS_DENOM, MAX_SIMULATE_CONCURRENT,
-    MIN_PROFIT_NET,
+    DispatchOutcome, BPS_DENOM, MAX_SIMULATE_CONCURRENT, MIN_PROFIT_NET,
 };
 /// The executor-runtime artifact loader — the engine's one resolution + read
 /// path for the bytecode the sim injects.

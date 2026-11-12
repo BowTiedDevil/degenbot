@@ -60,24 +60,14 @@ use crate::dispatch::{
     DispatchOutcome,
 };
 use crate::identity::{duplicate_candidate_id, DispatchRefusal};
-use crate::selection::{select_first_compatible, TargetSelection};
+use crate::selection::{select_first_compatible, FanOutEntry, TargetSelection};
 use crate::{FeeOnTransferRegistry, PoolDivergence};
 
-/// What the registry fan-out needs from one entry: the candidate it carries.
-///
-/// The choreography above the leaves — the unregistered-deployment check,
-/// target selection, the deployment partition, the registry lane order, and the
-/// per-lane span — is written ONCE over this trait, so the raw standalone entry
-/// and the pre-admitted entry cannot drift apart. A pre-admitted entry hands
-/// the walk the very candidate it transported, so nothing about the entry is
-/// recovered from an ID-keyed side table.
-pub(crate) trait FanOutEntry: Sized {
-    /// The candidate this entry carries.
-    fn candidate(&self) -> &DispatchCandidate;
-    /// The carried candidate, mutable for the walk's composed encoding.
-    fn candidate_mut(&mut self) -> &mut DispatchCandidate;
-}
-
+// The entries' side of the walk's interface ([`crate::selection::FanOutEntry`]):
+// the choreography above the leaves — the unregistered-deployment check, target
+// selection, the deployment partition, the registry lane order, and the
+// per-lane span — is written ONCE over it, so the raw standalone entry and the
+// pre-admitted entry cannot drift apart.
 impl FanOutEntry for DispatchCandidate {
     fn candidate(&self) -> &Self {
         self

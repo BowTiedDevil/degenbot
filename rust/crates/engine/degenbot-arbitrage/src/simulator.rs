@@ -64,8 +64,8 @@ use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_simulation::sim::production::{simulate_transaction, SimulationCapture};
 use degenbot_simulation::{CapturedSwap, ProductionSimContext, ProductionSimError};
 
+use crate::candidate::SolveStep;
 use crate::deployment::{FeeSizing, SimulateContext, SimulationDeployment};
-use crate::dispatch::SolveStep;
 use crate::selection::PreparedEncoding;
 
 // ─────────────────────────────────────────────────────────────────────────

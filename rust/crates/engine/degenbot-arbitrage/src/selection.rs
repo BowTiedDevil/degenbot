@@ -47,9 +47,8 @@ use std::collections::HashMap;
 
 use degenbot_execution::{CandidateId, ComposeError, DeploymentId, TransactionRequest};
 
+use crate::candidate::DispatchCandidate;
 use crate::deployment::DeploymentRegistry;
-use crate::dispatch::DispatchCandidate;
-use crate::fanout::FanOutEntry;
 use crate::simulator::compose_transaction;
 
 /// How a solved path chooses the deployment that executes it.
@@ -161,6 +160,21 @@ impl<T> Default for SelectedCandidates<T> {
             retired: Vec::new(),
         }
     }
+}
+
+/// What the walk needs from one candidate entry: the candidate it carries.
+///
+/// The walk is written once over this trait, so the raw standalone candidates
+/// and the pre-admitted transport entries travel the SAME policy — a
+/// pre-admitted entry hands the walk the very candidate it transported, so
+/// nothing about the entry is recovered from an ID-keyed side table. The
+/// interface lives beside the walk that requires it; [`crate::fanout`]
+/// implements it for the entries it carries.
+pub(crate) trait FanOutEntry: Sized {
+    /// The candidate this entry carries.
+    fn candidate(&self) -> &DispatchCandidate;
+    /// The carried candidate, mutable for the walk's composed encoding.
+    fn candidate_mut(&mut self) -> &mut DispatchCandidate;
 }
 
 /// Walk one batch's candidates in registry order, per path, and select the

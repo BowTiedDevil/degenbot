@@ -30,12 +30,12 @@ use degenbot_arbitrage::{
 use degenbot_core::fee::FeeRatio;
 use degenbot_execution::{
     AssessError, CandidateId, ComposeError, ComposerInputs, DeploymentId, ExecutionAdapter,
-    ExecutionObservation, ExecutionResult, FeePolicy, PathInfo, ProbeSpecs, TransactionRequest,
-    V2HopInfo,
+    ExecutionObservation, ExecutionResult, FeePolicy, HopInfo, PathInfo, ProbeSpecs,
+    TransactionRequest, V2HopInfo,
 };
 use degenbot_pools::{DexVariant, RegisterV2PoolParams};
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_submission::{PathSuppression, PATH_SUPPRESS_THRESHOLD};
+use degenbot_submission::{PathSuppression, PATH_SUPPRESS_RETRY_INTERVAL, PATH_SUPPRESS_THRESHOLD};
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
@@ -428,6 +428,8 @@ fn run_raw(
     registry: &DeploymentRegistry,
     candidates: Vec<DispatchCandidate>,
     selection: TargetSelection,
+    min_profit_margin_bps: u64,
+    current_block: u64,
     harness: &Harness,
 ) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
     let provider = mock_provider();
@@ -447,8 +449,8 @@ fn run_raw(
                         registry,
                         selection,
                         &harness.suppression,
-                        BLOCK,
-                        0,
+                        current_block,
+                        min_profit_margin_bps,
                         &harness.divergence,
                         &harness.fot,
                         Some(&harness.state),
@@ -737,6 +739,8 @@ fn a_stale_first_target_candidate_cannot_retire_a_fresh_second_target() {
             candidate(deployment_b(), fresh),
         ],
         TargetSelection::FirstCompatible,
+        0,
+        BLOCK,
         &harness,
     )
     .expect("both identities are registered");
@@ -895,4 +899,139 @@ fn a_clean_transported_candidate_simulates_and_tallies() {
     assert_eq!(simulated.exception_count, 0);
     assert_eq!(simulated.thin_dropped, 0);
     assert!(outcome.retired.is_empty());
+}
+
+// -- the projection and the RAW entry run one policy ------------------------
+
+/// One path's row through `pool`, buying from `token_in` on the FIRST deployment
+/// — `optimal_input` is `1_000_000`, so `engine_profit` reads as basis points and
+/// a floor can be stated in bps.
+fn policy_row(
+    path_id: u64,
+    pool: Address,
+    token_in: Address,
+    engine_profit: u128,
+    state_nonce: u64,
+) -> DispatchCandidate {
+    DispatchCandidate {
+        candidate_id: CandidateId::new(path_id, deployment_a()),
+        optimal_input: 1_000_000,
+        engine_profit,
+        steps: Box::new([SolveStep {
+            output: 1_100_000,
+            consumed_input: 1_000_000,
+            state_nonce,
+        }]),
+        solve_block: BLOCK,
+        path_info: PathInfo::new(vec![HopInfo::V2(V2HopInfo {
+            pool_address: pool,
+            token0_address: token_in,
+            token1_address: OTHER,
+            fee: 30,
+            zfo: true,
+        })]),
+        prepared: None,
+    }
+}
+
+/// The early projection and the RAW leaf run the SAME policy: over one fixture
+/// set at one block, the projection reports exactly the drops the raw pass
+/// counts — each against its own row — and transports exactly the rows the raw
+/// pass simulates. The projection only reports what the raw pass tallies.
+#[test]
+fn the_projection_and_the_raw_entry_admit_the_same_rows() {
+    let registry = two_target_registry();
+    let harness = Harness::new();
+
+    // One block inside the retry interval, so the benched row is suppressed and
+    // not yet due.
+    let current_block = PATH_SUPPRESS_RETRY_INTERVAL - 1;
+    // The divergence/FoT flags are inside their decay window at that block.
+    let flagged_at = current_block - 1;
+
+    harness.bench(CandidateId::new(1, deployment_a()));
+    harness
+        .divergence
+        .lock()
+        .expect("divergence memo")
+        .record_divergence(PoolDivergenceKey::V2(POOL_A), flagged_at);
+    {
+        let mut fot = harness.fot.lock().expect("fot registry");
+        fot.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_A), flagged_at);
+        fot.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_B), flagged_at);
+    }
+
+    let nonce_a = harness.live_nonce(POOL_A);
+    let nonce_b = harness.live_nonce(POOL_B);
+    let rows = || {
+        vec![
+            policy_row(1, POOL_B, OTHER, 100_000, nonce_b), // benched, not due
+            policy_row(2, POOL_A, OTHER, 100_000, nonce_a), // flagged pool
+            policy_row(3, POOL_B, WETH, 100_000, nonce_b),  // confirmed token
+            policy_row(4, POOL_B, OTHER, 100, nonce_b),     // 1 bps at a 50 bps floor
+            policy_row(5, POOL_B, OTHER, 100_000, nonce_b), // clean
+        ]
+    };
+
+    // The caller's projection first: it reads the ledger without stamping, so
+    // the raw pass below sees the same policy state it did.
+    let projection = {
+        let suppression = harness.suppression.lock().expect("suppression ledger");
+        project_early_admission(
+            rows(),
+            &EarlyAdmissionPolicy {
+                suppression: &suppression,
+                divergence: &harness.divergence,
+                fee_on_transfer: &harness.fot,
+                bot_state: Some(&harness.state),
+                current_block,
+                min_profit_margin_bps: 50,
+                max_candidates: MAX_SIMULATE_CONCURRENT,
+            },
+        )
+    };
+    assert_eq!(
+        projection
+            .drops()
+            .iter()
+            .map(|drop| (drop.reason(), drop.candidate().candidate_id.path_id()))
+            .collect::<Vec<_>>(),
+        vec![
+            (EarlyDropReason::Suppressed, 1),
+            (EarlyDropReason::DivergentPool, 2),
+            (EarlyDropReason::FeeOnTransfer, 3),
+            (EarlyDropReason::ThinMargin, 4),
+        ],
+        "one report per stage, each naming the row its own stage dropped"
+    );
+    let transported = projection.into_admitted();
+    assert_eq!(transported.len(), 1);
+    assert_eq!(transported[0].candidate().candidate_id.path_id(), 5);
+
+    let raw = run_raw(
+        &registry,
+        rows(),
+        TargetSelection::AllTargets,
+        50,
+        current_block,
+        &harness,
+    )
+    .expect("every identity is registered");
+    let raw_leaf = lane(&raw, deployment_a());
+    assert_eq!(
+        (
+            raw_leaf.suppressed_count,
+            raw_leaf.divergent_dropped,
+            raw_leaf.fot_dropped,
+            raw_leaf.thin_dropped,
+            raw_leaf.stale_dropped,
+        ),
+        (1, 1, 1, 1, 0),
+        "the raw pass counts the same four stage drops"
+    );
+    assert_eq!(
+        raw_leaf.candidate_count, 1,
+        "and simulates exactly the one row the projection transported"
+    );
+    assert_eq!(raw_leaf.sim_ok_count(), 1);
 }

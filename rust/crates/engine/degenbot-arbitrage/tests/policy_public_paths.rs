@@ -1,18 +1,26 @@
-//! The pre-simulation policy's leaf helpers resolve at BOTH published paths.
+//! The pre-simulation policy's vocabulary resolves at every published path.
 //!
 //! `candidate_is_stale`, `filter_thin_margin_results`, `BPS_DENOM`, and
-//! `MAX_SIMULATE_CONCURRENT` moved into the crate-internal `admission` module.
-//! The `degenbot_arbitrage::dispatch::*` paths they were published at stay
-//! valid, and so do the crate-root paths. This target is an EXTERNAL crate, so a
-//! path that stops resolving is a compile error here rather than a silent break
-//! for a `cargo add degenbot-arbitrage` consumer.
+//! `MAX_SIMULATE_CONCURRENT` live in the crate-internal `admission` module, and
+//! `DispatchCandidate` / `SolveStep` live in the `candidate` module. The
+//! `degenbot_arbitrage::dispatch::*` paths they were published at stay valid,
+//! `degenbot_arbitrage::candidate::*` names them directly, and so do the
+//! crate-root paths. This target is an EXTERNAL crate, so a path that stops
+//! resolving is a compile error here rather than a silent break for a
+//! `cargo add degenbot-arbitrage` consumer.
 
+use degenbot_arbitrage::candidate::{
+    DispatchCandidate as CandidateAtCandidate, SolveStep as SolveStepAtCandidate,
+};
 use degenbot_arbitrage::dispatch::{
     candidate_is_stale as candidate_is_stale_at_dispatch,
-    filter_thin_margin_results as filter_thin_margin_results_at_dispatch, BPS_DENOM,
+    filter_thin_margin_results as filter_thin_margin_results_at_dispatch,
+    DispatchCandidate as CandidateAtDispatch, SolveStep as SolveStepAtDispatch, BPS_DENOM,
     MAX_SIMULATE_CONCURRENT,
 };
-use degenbot_arbitrage::{candidate_is_stale, filter_thin_margin_results, DispatchCandidate};
+use degenbot_arbitrage::{
+    candidate_is_stale, filter_thin_margin_results, DispatchCandidate, SolveStep,
+};
 use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
 use degenbot_substrate::BotState;
 
@@ -59,5 +67,30 @@ fn the_policy_constants_are_one_value_at_both_public_paths() {
     assert_eq!(
         MAX_SIMULATE_CONCURRENT,
         degenbot_arbitrage::MAX_SIMULATE_CONCURRENT
+    );
+}
+
+/// The candidate vocabulary resolves at every published path — the neutral
+/// `candidate` module, the historical `dispatch` module, and the crate root —
+/// and a value built through one path IS the value the others name, so the
+/// three spellings are one type rather than three.
+#[test]
+fn the_candidate_vocabulary_resolves_at_every_published_path() {
+    let step_at_candidate: SolveStepAtCandidate = SolveStep {
+        output: 10,
+        consumed_input: 9,
+        state_nonce: 3,
+    };
+    let step_at_dispatch: SolveStepAtDispatch = step_at_candidate;
+    let step_at_root: SolveStep = step_at_dispatch;
+    assert_eq!(step_at_root.state_nonce, 3, "one per-hop row type");
+
+    let row_at_candidate: CandidateAtCandidate = hopless_candidate();
+    let row_at_dispatch: CandidateAtDispatch = row_at_candidate;
+    let row_at_root: DispatchCandidate = row_at_dispatch;
+    assert_eq!(row_at_root.steps.len(), 0);
+    assert!(
+        row_at_root.expected_outputs_vec().is_empty(),
+        "the shared type's accessor keeps resolving"
     );
 }
