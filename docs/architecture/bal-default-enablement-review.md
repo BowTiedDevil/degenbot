@@ -1,5 +1,13 @@
 # BAL delta-dispatch default-enablement review
 
+> **Historical context.** The `deadline` reason and the 50 ms readiness deadline
+> named in this review belong to the historical captures it cites, not to the
+> current driver: a same-block caller now joins the head's live claim attempt and
+> resolves terminal (settled, superseded, or abandoned), so there is no readiness
+> deadline and no timed fallback. The measurements and the decision here are
+> unchanged. The current lifecycle, its measurements, and its executable
+> comparison are [bal-head-lifecycle-result](bal-head-lifecycle-result.md).
+
 **Decision: NO-GO for unconditional default enablement. GO for continued
 explicit opt-in on validated nodes.**
 

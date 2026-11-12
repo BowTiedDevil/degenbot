@@ -71,6 +71,30 @@
 //! BAL_HEAD_FIRST=26382028 BAL_HEAD_LAST=26382051 BAL_HEAD_FRESH=6 just bal-head-lifecycle-probe
 //! BAL_HEAD_WAIT_SAMPLES=0 just bal-head-lifecycle-probe
 //! ```
+//!
+//! # The machine-readable summary
+//!
+//! The human report is the measurement; a caller that wants to COMPARE two
+//! sessions reads this summary instead. When `BAL_HEAD_SUMMARY_OUT` names a
+//! path, a successful run writes one JSON object there with the two stages the
+//! lifecycle's regression rule is stated over — the historical leg's apply
+//! p50/p95 and the waiter leg's resolve p50/p95 — in integer nanoseconds:
+//!
+//! ```json
+//! {
+//!   "schema": "bal-head-lifecycle/1",
+//!   "invocation": {"first": 26375033, "last": 26375053, "fresh": 0, "wait_samples": 21},
+//!   "historical": {"heads": 21, "apply_p50_ns": 519000, "apply_p95_ns": 1420000},
+//!   "waiter": {"samples": 21, "resolve_p50_ns": 48000, "resolve_p95_ns": 61000}
+//! }
+//! ```
+//!
+//! Adding a field is additive; changing what a field means bumps the version.
+//! The comparator that consumes exactly three before and three after summaries
+//! is `just bal-head-lifecycle-compare` (`scripts/bal_head_lifecycle_compare.py`),
+//! and it refuses any other schema identity, any missing field, and any leg that
+//! measured nothing. Nothing here compares timings itself: a single run reports
+//! its own numbers and never asserts one.
 
 use std::time::{Duration, Instant};
 
@@ -112,8 +136,20 @@ const WAIT_SAMPLES: u64 = 21;
 /// lands inside the wait and inside the prepare alike.
 const WAIT_HOLD_MS: u64 = 20;
 
-/// The prepare-wall thresholds the wait cost is reported against.
-const DEADLINES_MS: &[u64] = &[25, 100, 500, 1_000, 2_000];
+/// The prepare-wall thresholds a same-block caller's candidate window is
+/// reported against: a count of heads whose preparation would have outlasted
+/// the window. The driver itself waits on outcomes, never on a wall clock, so
+/// these are observations about the measurement, never driver state.
+const WINDOW_MS: &[u64] = &[25, 100, 500, 1_000, 2_000];
+
+/// The machine-readable summary's schema identity. The comparator reads
+/// exactly this identity and this field set; adding a field is additive, and
+/// changing what a field means bumps the version.
+const SUMMARY_SCHEMA: &str = "bal-head-lifecycle/1";
+
+/// The environment variable naming where the summary is written. Unset means
+/// no file: the human report is then the whole output.
+const SUMMARY_OUT: &str = "BAL_HEAD_SUMMARY_OUT";
 
 /// The committed real write-coverage capture whose write addresses stand in for
 /// the caller's relevance set: the same ORACLE-labelled input the live carry
@@ -475,9 +511,47 @@ fn print_waiter(samples: &[WaiterSample], enabled: bool) {
     );
 }
 
+/// The comparison-relevant numbers as the summary's stable fields: the
+/// historical leg's apply p50/p95 and the waiter leg's resolve p50/p95, in
+/// integer nanoseconds so a comparison never rounds twice.
+///
+/// The resolve series is [`WaiterSample::net`] — the wait net of the prepare
+/// wall it overlapped — which is the number the human report's `resolve:` line
+/// prints. A leg that measured nothing reports `0` samples with `0` percentiles;
+/// the comparator refuses that rather than reading a zero as fast.
+fn summary(config: &Config, rows: &[Row], waits: &[WaiterSample]) -> String {
+    let historical: Vec<&Row> = rows
+        .iter()
+        .filter(|row| row.leg == Leg::Historical)
+        .collect();
+    let applies: Vec<Duration> = historical.iter().map(|row| row.apply).collect();
+    let resolves: Vec<Duration> = waits.iter().map(|sample| sample.net).collect();
+    let nanos = |duration: Duration| u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
+    let value = serde_json::json!({
+        "schema": SUMMARY_SCHEMA,
+        "invocation": {
+            "first": config.first,
+            "last": config.last,
+            "fresh": config.fresh,
+            "wait_samples": config.wait_samples,
+        },
+        "historical": {
+            "heads": historical.len(),
+            "apply_p50_ns": nanos(percentile(&applies, 50)),
+            "apply_p95_ns": nanos(percentile(&applies, 95)),
+        },
+        "waiter": {
+            "samples": resolves.len(),
+            "resolve_p50_ns": nanos(percentile(&resolves, 50)),
+            "resolve_p95_ns": nanos(percentile(&resolves, 95)),
+        },
+    });
+    serde_json::to_string_pretty(&value).expect("a JSON object of numbers serializes")
+}
+
 /// Per-leg walls and readiness: the measured prepare walls a same-block
-/// caller now waits out (it joins the head's preparation instead of taking a
-/// timed fallback).
+/// caller now waits out (it joins the head's preparation instead of reading a
+/// cold generation for the rest of the block).
 fn print_leg(leg: Leg, rows: &[Row]) {
     let leg_rows: Vec<&Row> = rows.iter().filter(|row| row.leg == leg).collect();
     if leg_rows.is_empty() {
@@ -512,11 +586,11 @@ fn print_leg(leg: Leg, rows: &[Row]) {
         percentile(&applies, 95),
         percentile(&delivers, 50)
     );
-    print!("  prepare walls beyond a threshold (what a same-block wait pays):");
-    for deadline in DEADLINES_MS {
-        let deadline = Duration::from_millis(*deadline);
-        let count = leg_rows.iter().filter(|row| row.prepare > deadline).count();
-        print!(" {deadline:?}={count}/{}", leg_rows.len());
+    print!("  prepare walls beyond a candidate window (what a same-block wait pays):");
+    for window in WINDOW_MS {
+        let window = Duration::from_millis(*window);
+        let count = leg_rows.iter().filter(|row| row.prepare > window).count();
+        print!(" {window:?}={count}/{}", leg_rows.len());
     }
     println!();
 }
@@ -628,7 +702,17 @@ async fn run() -> Result<(), String> {
         config.wait_samples != 0,
         &failures,
         started.elapsed(),
-    )
+    )?;
+
+    // The machine-readable summary is written only for a run that measured a
+    // clean lifecycle: a failed run has no numbers a comparison may consume.
+    if let Ok(path) = std::env::var(SUMMARY_OUT) {
+        let document = summary(&config, &rows, &waits);
+        std::fs::write(&path, format!("{document}\n"))
+            .map_err(|error| format!("write summary {path}: {error}"))?;
+        println!("summary: wrote {path} (schema {SUMMARY_SCHEMA})");
+    }
+    Ok(())
 }
 
 #[tokio::main]

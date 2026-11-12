@@ -632,8 +632,8 @@ bal-real-read-oracle-probe *ARGS:
 # `26375033..=26375053`), where the node has no cached list and the first
 # request pays its cold list work, and the last `BAL_HEAD_FRESH` (default `6`)
 # canonical heads, whose lists reth precomputes with the block. Each head's
-# prepare wall is also reported against the readiness deadlines (25ms/100ms/
-# 500ms/1s/2s) as the fallback count a caller would have taken. A third, offline
+# prepare wall is also reported against candidate windows (25ms/100ms/500ms/1s/
+# 2s) as a count of preparations that would have outlasted them. A third, offline
 # leg reports the WAIT: `BAL_HEAD_WAIT_SAMPLES` (default `21`, the committed
 # capture's own stretch) heads from the real-coverage capture, each with a
 # CLAIMED advance parked on the chain stub's controllably deferred transport and
@@ -643,20 +643,20 @@ bal-real-read-oracle-probe *ARGS:
 # Timing is reported, never asserted; any settled value that disagrees with the
 # cold read, and any head that served a carried value before its apply, fails the
 # run (nonzero exit). `BAL_HEAD_FRESH=0` disables the fresh-head leg entirely: it
-# selects no tip head and fetches no list (the pinned pre-migration baseline
-# invocation). `BAL_HEAD_WAIT_HOLD_MS` (default `20`) is the parked window each
+# selects no tip head and fetches no list (the pinned steady-state invocation).
+# `BAL_HEAD_WAIT_HOLD_MS` (default `20`) is the parked window each
 # waiter sample waits out; it lands inside the wait and inside the prepare alike,
 # so it cancels out of the reported resolution. `BAL_HEAD_PLANT_DIVERGENCE=1` is
 # the negative probe: a one-wei skew armed on the settled value the comparison
 # reads, which it must catch. Fails closed unless the machine DECLARES an
 # endpoint (the conftest layers, the same resolution `test-fork` probes).
-# Measurements: `logs/bal_head_lifecycle_result.md`.
+# Measurements: `docs/architecture/bal-head-lifecycle-result.md`.
 #
-# The BAL head-lifecycle representation comparison reads exactly two numbers
-# from this recipe: the historical leg's `apply:` p50/p95 line and the waiter
-# leg's `resolve:` p50/p95 line, before and after the state-machine migration,
-# at the pinned invocation
-# `BAL_HEAD_FRESH=0 BAL_HEAD_FIRST=26375033 BAL_HEAD_LAST=26375053`.
+# `BAL_HEAD_SUMMARY_OUT=<path>` writes the machine-readable summary the
+# comparison rule reads: one JSON object (`schema` `bal-head-lifecycle/1`) with
+# the historical leg's apply p50/p95 and the waiter leg's resolve p50/p95 in
+# integer nanoseconds. The human report is unchanged and is the measurement; a
+# single run asserts no timing.
 
 bal-head-lifecycle-probe *ARGS:
     #!/usr/bin/env bash
@@ -667,6 +667,29 @@ bal-head-lifecycle-probe *ARGS:
         exit 1
     fi
     cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-simulation --example bal_head_lifecycle_probe -- {{ ARGS }}
+
+# The BAL head-lifecycle SUMMARY COMPARATOR: the executable form of the
+# lifecycle's regression rule, over exactly three `--before` and three `--after`
+# summaries written by `BAL_HEAD_SUMMARY_OUT` in the probe recipe above (no
+# node, no build, no timing of its own). Per metric it takes the median of each
+# side's three runs — the historical leg's apply p50/p95 and the waiter leg's
+# resolve p50/p95 — prints a review table, and passes while every after median
+# is <= the before median + 10%; growth strictly beyond 10% exits 1. Any
+# summary it cannot read (missing file, unparsable JSON, a foreign schema
+# identity, a missing field, a non-integer or negative count, a p95 below its
+# own p50, a leg that measured nothing, a zero before median, or a trio of the
+# wrong size) exits 2: the rule fails closed rather than read an unreadable
+# sample as fast. Absolute timings stay LOCAL artifacts — the rule compares
+# whatever summaries the caller points it at, and nothing here is committed as
+# a baseline. Rehearsal of the rule itself:
+# `just py pytest tests/dispatch/test_bal_head_lifecycle_compare.py`.
+#
+#   BAL_HEAD_SUMMARY_OUT=logs/before-1.json just bal-head-lifecycle-probe
+#   ... (three before runs, three after runs)
+#   just bal-head-lifecycle-compare --before logs/before-{1,2,3}.json --after logs/after-{1,2,3}.json
+
+bal-head-lifecycle-compare *ARGS:
+    {{ py_run }} python scripts/bal_head_lifecycle_compare.py {{ ARGS }}
 
 # The analytical BAL candidate-scaling report: the shared scaling model's
 # two-corpus calibration closure against the committed real-coverage

@@ -16,7 +16,7 @@ changed; the evidence is a review input.
 | `logs/bal_matched_parity_matrix.md` | full matched matrix + negative control + wait shapes + cost attribution (`just bal-dispatch-scaling-probe`, default knobs) | dispatch parity and wire behavior on the scripted chain; synthetic latency models |
 | `logs/bal_live_acquisition_result.md` | live reth probe at one fixed historical hash (`just bal-live-acquisition-probe`) | raw/JSON acquisition walls, decode seeds, real-node BAL cost, per-fan-out packet prices |
 | `rust/crates/engine/degenbot-arbitrage/tests/bal_dispatch_scaling.rs` | direct pins, including the planted-divergence test | the harness's own semantics, offline |
-| `logs/bal_head_lifecycle_result.md` | existing live prepare/apply lifecycle capture (cited, not re-run here) | live apply walls and readiness on real heads |
+| `docs/architecture/bal-head-lifecycle-result.md` | existing live prepare/apply lifecycle capture (cited, not re-run here) | live apply walls and readiness on real heads |
 
 `logs/` is gitignored, so the two new captures are local evidence beside the harness
 (`rust/crates/engine/degenbot-arbitrage/examples/shared/dispatch_probe.rs`,

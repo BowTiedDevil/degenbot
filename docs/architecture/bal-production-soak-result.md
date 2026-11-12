@@ -1,5 +1,13 @@
 # BAL delta dispatch production soak (opt-in ON)
 
+> **Historical capture.** The `deadline` reason and the 50 ms readiness deadline
+> read below belong to this capture, not to the current driver: the per-claim
+> lifecycle has no readiness deadline, and a same-block caller joins the head's
+> live claim attempt and resolves terminal (settled, superseded, or abandoned).
+> These measurements and the verdict are unchanged. The current seam, its
+> measurements, and its executable comparison are
+> [bal-head-lifecycle-result](bal-head-lifecycle-result.md).
+
 One 60-minute live capture of the Python-hosted settlement composition with
 `simulation.delta_dispatch` (the `DEGENBOT_DELTA_DISPATCH` opt-in) enabled, run
 against the established dry-run owner/executor identity. The capture reached

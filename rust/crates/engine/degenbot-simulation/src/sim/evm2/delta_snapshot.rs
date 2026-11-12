@@ -218,7 +218,7 @@
 //! the evidence. Dispatch integration, production relevance derivation, and any
 //! retention redesign remain separate workstreams — this seam ends at the view.
 //! The live measurement of the stages is `just bal-head-lifecycle-probe`, and its
-//! report is `logs/bal_head_lifecycle_result.md`.
+//! report is `docs/architecture/bal-head-lifecycle-result.md`.
 //!
 //! # Development and migration notes
 //!
