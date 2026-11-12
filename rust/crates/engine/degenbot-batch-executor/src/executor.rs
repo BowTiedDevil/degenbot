@@ -451,6 +451,13 @@ impl EngineLeaves {
         // Attribution — per-candidate simulate verdicts, deployment-major (the
         // order the lanes and their assemblies produced). Every map keys on
         // `CandidateId`, so two targets on one path stay two rows.
+        //
+        // These maps cannot silently overwrite a LIVE duplicate: the fan-out
+        // refuses a repeated identity before any lane runs
+        // (`degenbot_arbitrage::identity`), so one key here is one candidate.
+        // The `entered` walk below relies on the same fact — one identity is one
+        // submit row, never two rows the submit lane's mutual exclusion would
+        // have to hide.
         // The candidates the selection policy never examined (a path whose
         // earlier target accepted composition). They were never composed or
         // simulated, so they earn no record and no submit row: this batch's

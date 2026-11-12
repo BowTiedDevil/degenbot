@@ -17,7 +17,11 @@ The contract::
   semantics the mutual-exclusion guard reads);
 - a payload ``failure`` surfaces as a ``[sim-fail]`` record through the
   merged outcome's ``failures`` (revert detail carried through);
-- a mixed batch keeps the legacy FFI path for the payload-less entries.
+- a mixed batch keeps the legacy FFI path for the payload-less entries;
+- two rows that would BOTH join the submit lane for one candidate are refused
+  with the duplicate identity (one ``CandidateId`` is one live submit row),
+  while below-floor and failing rows for that same candidate keep their
+  per-row provenance.
 
 The engine is REAL (``ArbitrageEngine`` over a shared ``Bot``) with
 offline-registered V2/V4 pools and paths — no live RPC.
@@ -212,6 +216,79 @@ class TestPayloadSeamArms:
         # Control: the same path at the built-in deployment merges normally.
         out = merge_payload_results_py([inline_sim_payload(v2_pid)], engine, EXECUTOR)
         assert [c.candidate_id.path_id for c in out.candidates] == [v2_pid]
+
+
+# ── the identity contract at the merge boundary ─────────────────────────
+
+
+class TestMergeIdentityContract:
+    """One ``CandidateId`` is one live submit row.
+
+    The payload arm joins rows into the built-in submit lane, so a second
+    profitable row for one candidate would attach TWO live submit rows to one
+    identity — every post-join structure is identity-keyed and cannot tell them
+    apart. The crate refuses the set before the join with the identity and the
+    row count; it never silently deduplicates. Records keep per-row provenance,
+    so a below-floor or failing row for the same candidate stays accepted beside
+    its profitable sibling.
+    """
+
+    def test_two_profitable_rows_for_one_candidate_are_refused(
+        self, mixed_engine_and_paths
+    ) -> None:
+        engine, v2_pid, _v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
+        with pytest.raises(ValueError, match="one identity is one live row") as excinfo:
+            merge_payload_results_py(
+                [inline_sim_payload(v2_pid), inline_sim_payload(v2_pid)],
+                engine,
+                EXECUTOR,
+            )
+        message = str(excinfo.value)
+        # The identity Python must be able to act on, the row count, and the rule.
+        assert f"candidate {v2_pid}@1" in message, message
+        assert "2 rows" in message, message
+        assert "one identity is one live row" in message, message
+
+    def test_mixed_provenance_rows_for_one_candidate_stay_accepted(
+        self, mixed_engine_and_paths
+    ) -> None:
+        engine, v2_pid, _v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
+        out = merge_payload_results_py(
+            [
+                inline_sim_payload(v2_pid),
+                inline_sim_payload(v2_pid, net=0),
+                inline_sim_payload(
+                    v2_pid, failure={"fail_index": 1, "revert_data": "", "bucket": None}
+                ),
+            ],
+            engine,
+            EXECUTOR,
+        )
+        # Exactly ONE live submit row for the candidate, every record kept.
+        assert [c.candidate_id.path_id for c in out.candidates] == [v2_pid]
+        assert out.unprofitable_count == 1
+        assert len(out.failures) == 1
+        assert {v.kind for v in out.verdicts} == {"submit", "unprofitable"}
+
+    def test_corruption_message_is_unchanged_for_a_foreign_deployment(
+        self, mixed_engine_and_paths
+    ) -> None:
+        """The corruption arm's text stays the bare detail.
+
+        It is the message the seam raised before ``AssemblyError`` grew its
+        identity variant, with no ``batch assembly corrupt at path N:`` framing
+        — drivers and logs pin it.
+        """
+        engine, v2_pid, _v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
+        with pytest.raises(ValueError, match="carries deployment 2") as excinfo:
+            merge_payload_results_py(
+                [inline_sim_payload(v2_pid, deployment_id=2)],
+                engine,
+                EXECUTOR,
+            )
+        assert str(excinfo.value) == (
+            "payload row carries deployment 2, but this batch executes deployment 1"
+        )
 
 
 # ── THE PARITY GATE: one rule, byte-identical on both arms ───────

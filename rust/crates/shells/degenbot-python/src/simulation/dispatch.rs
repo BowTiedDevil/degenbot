@@ -16,7 +16,7 @@ use crate::conversion::alloy::{extract_python_i256, extract_python_u256};
 use crate::prelude::*;
 use crate::simulation::render::path_info_to_py_dict;
 use degenbot_arbitrage::CapturedSwap;
-use degenbot_batch_executor::assembly::{merge_payload_results, PayloadArm};
+use degenbot_batch_executor::assembly::{merge_payload_results, AssemblyError, PayloadArm};
 use degenbot_batch_executor::row::{PayloadFailure, PayloadRow};
 use degenbot_batch_executor::PathResolver;
 use degenbot_execution::{CandidateId, PathInfo};
@@ -92,9 +92,17 @@ impl PathResolver for ResolvedPaths<'_> {
 ///
 /// `ValueError`: a payload dict is missing a required field, the calldata is
 /// not bytes, a `path_id` is not registered in the engine (the pool-key
-/// derivation needs the typed hops), or a payload's `deployment_id` is not
-/// this session's built-in deployment — a foreign payload would carry another
-/// deployment's calldata into the built-in submit lane.
+/// derivation needs the typed hops), a payload's `deployment_id` is not this
+/// session's built-in deployment — a foreign payload would carry another
+/// deployment's calldata into the built-in submit lane — or two payload rows for
+/// one candidate would BOTH join that lane: one `CandidateId` is one live submit
+/// row (`AssemblyError::DuplicateCandidateId`), so Python reads the identity and
+/// the row count instead of receiving two submit rows for one candidate.
+///
+/// The corruption arm's message is the bare `detail` (`payload row carries
+/// deployment 2, but this batch executes deployment 1`), exactly as before the
+/// error grew a second variant; only the identity refusal renders the crate's
+/// `Display`.
 #[pyfunction]
 #[pyo3(signature = (payloads, engine, executor_address))]
 pub fn merge_payload_results_py(
@@ -154,7 +162,18 @@ pub fn merge_payload_results_py(
         executor,
         degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
     )
-    .map_err(|e| PyValueError::new_err(e.detail))?;
+    .map_err(|e| match e {
+        // The corruption arm keeps the seam's PRE-EXISTING message: Python has
+        // always read the bare `detail` here, and the crate `Display` prefix
+        // (`batch assembly corrupt at path N: …`) is crate-side framing the
+        // driver's logs and tests never carried.
+        AssemblyError::Corrupt { detail, .. } => PyValueError::new_err(detail),
+        // The identity refusal is NEW on this surface, so its message is the
+        // crate's own: the identity, the row count, and the rule.
+        refusal @ AssemblyError::DuplicateCandidateId { .. } => {
+            PyValueError::new_err(refusal.to_string())
+        }
+    })?;
 
     // The [profit]-render path_info dicts — the ONE serializer shape
     // (`path_info_to_py_dict`) both outcomes' path_infos emit, in

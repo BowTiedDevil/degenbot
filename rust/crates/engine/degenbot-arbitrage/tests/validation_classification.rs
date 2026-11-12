@@ -20,9 +20,9 @@ use alloy::rpc::json_rpc::{
 use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
-    dispatch_across_deployments, DeploymentFanOutError, DeploymentFanOutOutcome,
-    DeploymentRegistry, DispatchCandidate, PoolDivergence, SimulationBlock, SimulationDeployment,
-    SolveStep, TargetSelection,
+    dispatch_across_deployments, DeploymentFanOutOutcome, DeploymentRegistry, DispatchCandidate,
+    DispatchRefusal, PoolDivergence, SimulationBlock, SimulationDeployment, SolveStep,
+    TargetSelection,
 };
 use degenbot_execution::{
     AssessError, CandidateId, ComposeError, ComposerInputs, ContractInterface, DeploymentId,
@@ -287,7 +287,7 @@ fn run_fanout(
     registry: &DeploymentRegistry,
     candidates: Vec<DispatchCandidate>,
     selection: TargetSelection,
-) -> Result<DeploymentFanOutOutcome, DeploymentFanOutError> {
+) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
     let provider = mock_provider();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

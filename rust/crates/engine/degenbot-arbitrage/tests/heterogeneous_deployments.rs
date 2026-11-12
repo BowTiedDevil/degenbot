@@ -283,8 +283,7 @@ fn block(provider: &AlloyProvider) -> SimulationBlock<'_> {
 fn run_fanout(
     registry: &DeploymentRegistry,
     candidates: Vec<DispatchCandidate>,
-) -> Result<degenbot_arbitrage::DeploymentFanOutOutcome, degenbot_arbitrage::DeploymentFanOutError>
-{
+) -> Result<degenbot_arbitrage::DeploymentFanOutOutcome, degenbot_arbitrage::DispatchRefusal> {
     run_fanout_with(registry, candidates, TargetSelection::AllTargets)
 }
 
@@ -295,8 +294,7 @@ fn run_fanout_with(
     registry: &DeploymentRegistry,
     candidates: Vec<DispatchCandidate>,
     selection: TargetSelection,
-) -> Result<degenbot_arbitrage::DeploymentFanOutOutcome, degenbot_arbitrage::DeploymentFanOutError>
-{
+) -> Result<degenbot_arbitrage::DeploymentFanOutOutcome, degenbot_arbitrage::DispatchRefusal> {
     let provider = mock_provider();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -597,6 +595,7 @@ fn a_one_entry_registry_matches_the_single_deployment_leaf() {
                         Some(Arc::new(StateLock::new(BotState::new()))),
                         Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
                     )
+                    .expect("the fixture carries one row per candidate identity")
                 });
                 (registry_run, leaf_run)
             })
@@ -636,7 +635,7 @@ fn an_unregistered_candidate_deployment_is_refused() {
         .expect_err("deployment 99 is not registered");
     assert_eq!(
         error,
-        degenbot_arbitrage::DeploymentFanOutError::UnregisteredDeployment {
+        degenbot_arbitrage::DispatchRefusal::UnregisteredDeployment {
             candidate_id: CandidateId::new(7, DeploymentId::new(99)),
             registered: vec![deployment_a(), deployment_b()],
         }

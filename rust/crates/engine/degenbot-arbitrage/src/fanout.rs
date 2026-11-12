@@ -15,6 +15,11 @@
 //!   `candidate_id.deployment_id()`, so an adapter only ever encodes its own
 //!   candidates; a candidate naming an unregistered deployment is a wiring bug
 //!   and is refused before any lane runs.
+//! - **One identity, one row.** A set carrying one [`CandidateId`] twice is
+//!   refused ([`crate::DispatchRefusal::DuplicateCandidateId`]) before the
+//!   selection walk composes anything, because composition, the ledger stamp,
+//!   the lane's result map, and the submit lane all key on that identity and
+//!   cannot tell its two rows apart (see [`crate::identity`]).
 //! - **Isolation.** A lane's refusals (an adapter that will not encode, a
 //!   revert, a failed assessment) stay that lane's rows. The other lanes'
 //!   candidates for the same path are simulated, categorized, and submitted
@@ -54,6 +59,7 @@ use crate::dispatch::{
     dispatch_admitted_profitable_results, dispatch_profitable_results, DispatchCandidate,
     DispatchOutcome,
 };
+use crate::identity::{duplicate_candidate_id, DispatchRefusal};
 use crate::selection::{select_first_compatible, TargetSelection};
 use crate::{FeeOnTransferRegistry, PoolDivergence};
 
@@ -134,47 +140,6 @@ impl DeploymentFanOutOutcome {
     }
 }
 
-/// Why the registry fan-out refused to run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeploymentFanOutError {
-    /// A candidate named a deployment the session never registered: its
-    /// [`CandidateId`] cannot be simulated (there is no adapter, target, or
-    /// owner for it) and cannot be joined to a submit lane.
-    UnregisteredDeployment {
-        /// The offending candidate.
-        candidate_id: CandidateId,
-        /// The identities the registry actually holds.
-        registered: Vec<DeploymentId>,
-    },
-}
-
-impl std::fmt::Display for DeploymentFanOutError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnregisteredDeployment {
-                candidate_id,
-                registered,
-            } => {
-                write!(
-                    f,
-                    "candidate {} targets deployment {}, which is not registered (registered: ",
-                    candidate_id,
-                    candidate_id.deployment_id()
-                )?;
-                for (index, id) in registered.iter().enumerate() {
-                    if index > 0 {
-                        f.write_str(", ")?;
-                    }
-                    write!(f, "{id}")?;
-                }
-                f.write_str(")")
-            }
-        }
-    }
-}
-
-impl std::error::Error for DeploymentFanOutError {}
-
 /// The registry choreography both entries share: validate the identities, run
 /// the target-selection policy, partition by deployment, then walk the registry
 /// in order and hand each lane's entries to `leaf`.
@@ -184,19 +149,40 @@ impl std::error::Error for DeploymentFanOutError {}
 /// identically, and the only per-entry detail the kernel reads is the carried
 /// [`DispatchCandidate`]'s identity (and the encoding the selection walk
 /// attaches to it).
+///
+/// Both identity checks are INPUT refusals and run before anything else: the
+/// [`CandidateId`] row contract (a repeated identity, so no adapter composes and
+/// no ledger stamp or tally is spent on a set the lanes could not keep apart)
+/// and then the registry membership. Only then does the selection walk reach an
+/// adapter.
 fn fan_out_over<Entry: FanOutEntry>(
     entries: Vec<Entry>,
     deployments: &DeploymentRegistry,
     target_selection: TargetSelection,
     current_block: u64,
-    mut leaf: impl FnMut(&Arc<SimulationDeployment>, Vec<Entry>) -> DispatchOutcome,
-) -> Result<DeploymentFanOutOutcome, DeploymentFanOutError> {
+    mut leaf: impl FnMut(
+        &Arc<SimulationDeployment>,
+        Vec<Entry>,
+    ) -> Result<DispatchOutcome, DispatchRefusal>,
+) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
+    // One identity, one row (see `crate::identity`): the composition the walk
+    // below performs and the map every lane joins its results through are
+    // identity-keyed, so a repeated identity is refused before either runs.
+    if let Some((candidate_id, occurrences)) =
+        duplicate_candidate_id(entries.iter().map(|entry| entry.candidate().candidate_id))
+    {
+        return Err(DispatchRefusal::DuplicateCandidateId {
+            candidate_id,
+            occurrences,
+        });
+    }
+
     // Every candidate the caller minted names a deployment this registry holds;
     // checked ONCE, before either policy touches a candidate or an adapter.
     for entry in &entries {
         let candidate_id = entry.candidate().candidate_id;
         if deployments.get(candidate_id.deployment_id()).is_none() {
-            return Err(DeploymentFanOutError::UnregisteredDeployment {
+            return Err(DispatchRefusal::UnregisteredDeployment {
                 candidate_id,
                 registered: deployments.ids().collect(),
             });
@@ -237,7 +223,7 @@ fn fan_out_over<Entry: FanOutEntry>(
             let span =
                 degenbot_bot::telemetry::simulate_dispatch_span(current_block, lane_entries.len());
             let _guard = span.enter();
-            leaf(deployment, lane_entries)
+            leaf(deployment, lane_entries)?
         };
         outcomes.push(DeploymentLane {
             deployment_id: deployment.deployment_id(),
@@ -270,9 +256,11 @@ fn fan_out_over<Entry: FanOutEntry>(
 ///
 /// # Errors
 ///
-/// [`DeploymentFanOutError::UnregisteredDeployment`] when a candidate names an
-/// identity the registry does not hold (checked before any selection or lane
-/// runs, under either policy).
+/// [`DispatchRefusal::DuplicateCandidateId`] when two rows carry one
+/// [`CandidateId`] — the identity contract (see [`crate::identity`]) — and
+/// [`DispatchRefusal::UnregisteredDeployment`] when a candidate names an
+/// identity the registry does not hold. Both are checked before any selection,
+/// composition, or lane runs, under either policy.
 #[expect(
     clippy::too_many_arguments,
     reason = "the shared fan-out inputs are the one-deployment leaf's, plus the registry and the selection policy"
@@ -291,7 +279,7 @@ pub fn dispatch_across_deployments(
     warm_cache: Option<
         &Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
     >,
-) -> Result<DeploymentFanOutOutcome, DeploymentFanOutError> {
+) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
     fan_out_over(
         candidates,
         deployments,
@@ -351,7 +339,11 @@ pub fn dispatch_across_deployments(
 ///    Everything you drop is yours to tally; the leaf never sees it.
 /// 2. **Transport the survivors.** Wrap each in [`AdmittedCandidate::new`]. The
 ///    transport owns the complete candidate, so no ID-keyed side table is
-///    needed and duplicate identities keep their transported order.
+///    needed — and one candidate id may appear only ONCE in the transported
+///    set: this entry refuses a repeated [`CandidateId`]
+///    ([`DispatchRefusal::DuplicateCandidateId`]) before the walk composes
+///    anything, because the ledger, the lane's result map, and the submit row
+///    are all identity-keyed (see [`crate::identity`]).
 /// 3. **Expect finalization to re-read.** The leaf stamps the suppression
 ///    ledger, then re-reads divergence, fee-on-transfer, and the live state
 ///    nonces at its own block. A candidate whose evidence moved since your
@@ -374,9 +366,10 @@ pub fn dispatch_across_deployments(
 ///
 /// # Errors
 ///
-/// [`DeploymentFanOutError::UnregisteredDeployment`] when a transported
-/// candidate names an identity the registry does not hold (checked before any
-/// selection or lane runs, under either policy).
+/// [`DispatchRefusal::DuplicateCandidateId`] when two transported rows carry one
+/// [`CandidateId`], and [`DispatchRefusal::UnregisteredDeployment`] when a
+/// transported candidate names an identity the registry does not hold — both
+/// checked before any selection, composition, or lane runs, under either policy.
 #[expect(
     clippy::too_many_arguments,
     reason = "the shared fan-out inputs are the pre-admitted leaf's, plus the registry and the selection policy"
@@ -394,7 +387,7 @@ pub fn dispatch_admitted_across_deployments(
     warm_cache: Option<
         &Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
     >,
-) -> Result<DeploymentFanOutOutcome, DeploymentFanOutError> {
+) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
     fan_out_over(
         admitted,
         deployments,

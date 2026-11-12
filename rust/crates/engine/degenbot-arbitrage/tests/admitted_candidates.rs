@@ -22,7 +22,7 @@ use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
     candidate_is_stale, dispatch_admitted_across_deployments, AdmittedCandidate,
-    DeploymentFanOutError, DeploymentFanOutOutcome, DeploymentRegistry, DispatchCandidate,
+    DeploymentFanOutOutcome, DeploymentRegistry, DispatchCandidate, DispatchRefusal,
     FeeOnTransferRegistry, PoolDivergence, PoolDivergenceKey, SimulationBlock,
     SimulationDeployment, SolveStep, TargetSelection,
 };
@@ -329,6 +329,15 @@ impl Harness {
         }
     }
 
+    /// Is `candidate_id` suppressed at `block` — asked WITHOUT the retry stamp,
+    /// so the probe cannot spend the interval it is checking.
+    fn suppressed_without_stamp(&self, candidate_id: CandidateId, block: u64) -> bool {
+        self.suppression
+            .lock()
+            .expect("suppression ledger")
+            .is_suppressed_without_stamp(candidate_id, block)
+    }
+
     /// Does the ledger hold a retry stamp that suppresses `candidate_id` at
     /// `block`?
     fn suppressed_at(&self, candidate_id: CandidateId, block: u64) -> bool {
@@ -339,6 +348,12 @@ impl Harness {
     }
 }
 
+/// Is the candidate's retry interval still UNSPENT at `block`? The stamping
+/// read spends it; the non-stamping read does not.
+fn retry_due(harness: &Harness, candidate_id: CandidateId, block: u64) -> bool {
+    !harness.suppressed_without_stamp(candidate_id, block)
+}
+
 /// Run one pre-admitted registry fan-out on a dedicated multi-thread runtime
 /// (the engine's sync DB bridge requires the ambient runtime).
 fn run_admitted(
@@ -346,7 +361,7 @@ fn run_admitted(
     admitted: Vec<AdmittedCandidate>,
     selection: TargetSelection,
     harness: &Harness,
-) -> Result<DeploymentFanOutOutcome, DeploymentFanOutError> {
+) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
     let provider = mock_provider();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -453,7 +468,7 @@ fn an_unregistered_deployment_is_refused_before_any_lane_runs() {
     );
     assert_eq!(
         outcome.err(),
-        Some(DeploymentFanOutError::UnregisteredDeployment {
+        Some(DispatchRefusal::UnregisteredDeployment {
             candidate_id: CandidateId::new(7, unregistered),
             registered: vec![deployment_a(), deployment_b()],
         })
@@ -571,22 +586,21 @@ fn a_state_write_after_admission_drops_the_transported_candidate_as_stale() {
     assert_eq!(lane(&outcome, deployment_a()).candidate_count, 0);
 }
 
-/// Two transported rows sharing one identity keep the sequential read: the first
-/// is stamped, the second is suppressed by that stamp, and the later stage drops
-/// the first — so the duplicate never gets a second admission.
+/// One identity, one transported row: a repeated `CandidateId` is REFUSED
+/// before the target-selection walk, and the refusal spends nothing — the
+/// retry-due ledger entry is still due afterwards, so no stamping read ran.
 #[test]
-fn sequential_duplicates_keep_the_transported_order() {
+fn a_repeated_transported_identity_is_refused_without_stamping() {
     let registry = two_target_registry();
     let harness = Harness::new();
     let id = CandidateId::new(7, deployment_a());
     harness.bench(id);
-    harness
-        .divergence
-        .lock()
-        .expect("divergence memo")
-        .record_divergence(PoolDivergenceKey::V2(POOL_A), BLOCK);
+    assert!(
+        retry_due(&harness, id, BLOCK),
+        "the fixture benches a retry-due candidate"
+    );
 
-    let outcome = run_admitted(
+    let error = run_admitted(
         &registry,
         transport(vec![
             candidate(deployment_a(), 0),
@@ -595,13 +609,19 @@ fn sequential_duplicates_keep_the_transported_order() {
         TargetSelection::AllTargets,
         &harness,
     )
-    .expect("the identity is registered");
+    .expect_err("one identity may ride the transport once");
 
-    let dropped = lane(&outcome, deployment_a());
-    assert_eq!(dropped.suppressed_count, 1, "the first row's stamp wins");
-    assert_eq!(dropped.divergent_dropped, 1, "then the stamped row drops");
-    assert_eq!(dropped.candidate_count, 0);
-    assert!(harness.suppressed_at(id, BLOCK));
+    assert_eq!(
+        error,
+        DispatchRefusal::DuplicateCandidateId {
+            candidate_id: id,
+            occurrences: 2,
+        }
+    );
+    assert!(
+        retry_due(&harness, id, BLOCK),
+        "the refusal precedes the stamping read"
+    );
 }
 
 // -- the shared selection seam --------------------------------------------

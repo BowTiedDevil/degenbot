@@ -17,6 +17,19 @@
 //!   candidate's result map entry, simulation record, batch outcome, and
 //!   submission record.
 //!
+//! # One identity, one live row
+//!
+//! Because every consumer above keys on [`CandidateId`], the identity is a ROW
+//! identity rather than a label a set of rows may share: a candidate set
+//! carries at most one row per id, and one id names at most one live submit
+//! row. A boundary that turns rows into execution — the settlement-arbitrage
+//! dispatch entries and the batch executor's assembly stage — refuses a set that
+//! repeats an identity instead of deduplicating it, so a result map can never
+//! silently overwrite a live duplicate and one candidate can never be attached
+//! to two submit rows. Records stay per-row: several rows of PROVENANCE for one
+//! candidate (an inline sim's failure row beside its profitable retry) are
+//! evidence about it, not slots in execution.
+//!
 //! Everything BEFORE target selection stays path-keyed: the solver's result,
 //! the path registry/resolver, and the discovery surface name a path, not a
 //! deployment. `CandidateId` is minted where a path is bound to the deployment

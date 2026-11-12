@@ -419,6 +419,7 @@ fn run_fanout(deployment: &SimulationDeployment) -> DispatchOutcome {
                         Some(bot_state),
                         Some(warm_cache),
                     )
+                    .expect("the fixture carries one row per candidate identity")
                 })
             })
             .join()

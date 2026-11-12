@@ -902,9 +902,17 @@ def merge_payload_results_py(
 
     `ValueError`: a payload dict is missing a required field, the calldata is
     not bytes, a `path_id` is not registered in the engine (the pool-key
-    derivation needs the typed hops), or a payload's `deployment_id` is not
-    this session's built-in deployment — a foreign payload would carry another
-    deployment's calldata into the built-in submit lane.
+    derivation needs the typed hops), a payload's `deployment_id` is not this
+    session's built-in deployment — a foreign payload would carry another
+    deployment's calldata into the built-in submit lane — or two payload rows for
+    one candidate would BOTH join that lane: one `CandidateId` is one live submit
+    row (`AssemblyError::DuplicateCandidateId`), so Python reads the identity and
+    the row count instead of receiving two submit rows for one candidate.
+
+    The corruption arm's message is the bare `detail` (`payload row carries
+    deployment 2, but this batch executes deployment 1`), exactly as before the
+    error grew a second variant; only the identity refusal renders the crate's
+    `Display`.
     """
 
 def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: bytes) -> dict:

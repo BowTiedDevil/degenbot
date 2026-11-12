@@ -19,9 +19,11 @@
 //! retry interval. Because the stamp happens at the first stage, a candidate
 //! that a LATER stage drops (divergence, fee-on-transfer, thin margin,
 //! staleness, cap) still spends its retry — that is the intended retry
-//! cadence, not a leak. The read is sequential over the candidate list, so of
-//! two rows sharing one candidate id only the first is admitted and stamped;
-//! the second is suppressed by the stamp the first just wrote.
+//! cadence, not a leak. The read is sequential over the candidate list, and one
+//! candidate id reaches it at most once per pass: the dispatch entries refuse a
+//! repeated identity before this pass runs (`crate::identity`), so a pass can
+//! never stamp one identity twice — or record a success and a failure against
+//! the same row of the ledger.
 //!
 //! # Three entries over one policy
 //!
@@ -215,8 +217,16 @@ pub(crate) struct Admission {
 /// [`DispatchCandidate`] — identity, solve block, per-hop rows, resolved path,
 /// economics, and any encoding a target-selection walk attached — so
 /// finalization never needs an ID-keyed side table to piece a candidate back
-/// together, and two candidates sharing one identity stay two rows in their
-/// carried order.
+/// together.
+///
+/// # One identity, one transported row
+///
+/// A transported set carries each [`CandidateId`] ONCE. The entry that
+/// finalizes these rows (`crate::dispatch_admitted_across_deployments`) refuses
+/// a repeated identity before the target-selection walk composes anything
+/// (`crate::DispatchRefusal::DuplicateCandidateId`), because the retry ledger,
+/// the lane's result map, and the submit row are identity-keyed and cannot tell
+/// two rows of one identity apart — see [`crate::identity`].
 ///
 /// # Admission is not a promise of later admission
 ///
@@ -347,12 +357,11 @@ pub(crate) fn admit(
 /// `skips.thin_margin` is always `0` here — the thin floor is the caller's
 /// early admission, and no defensive second pass is invented for it.
 ///
-/// Every stage consumes the list SEQUENTIALLY in transported order, so of two
-/// rows sharing one candidate id the first is stamped (and admitted, or dropped
-/// by a later stage) exactly as the raw pass does, and the second is suppressed
-/// by the stamp the first wrote. A retry-due candidate is stamped before any
-/// final drop, so a candidate this pass drops has still spent its retry
-/// interval.
+/// Every stage consumes the list SEQUENTIALLY in transported order. A
+/// retry-due candidate is stamped before any final drop, so a candidate this
+/// pass drops has still spent its retry interval — once: the entry above refuses
+/// a transported set that repeats an identity (`crate::identity`), so no
+/// identity is stamped twice in one pass.
 ///
 /// # Panics
 ///
@@ -429,8 +438,9 @@ pub enum EarlyDropReason {
 /// stage that dropped it, in the projection's stage-then-input order.
 ///
 /// The candidate rides whole (identity, economics, per-hop rows, resolved path)
-/// so a caller attributes the drop without an ID-keyed side table, and two rows
-/// that share one identity stay two reported drops.
+/// so a caller attributes the drop without an ID-keyed side table. A drop is a
+/// RECORD; the live rows the projection's survivors become are what must be
+/// identity-unique (`crate::identity`).
 #[derive(Debug, Clone)]
 pub struct EarlyDrop {
     candidate: DispatchCandidate,
@@ -553,7 +563,19 @@ impl EarlyProjection {
 ///   ([`EarlyDropReason::ThinMargin`]) is dropped but NOT reported: the floor
 ///   judges each row on its own margin, and the identity-keyed attribution that
 ///   produced those records never attributed a drop whose identity survived. Two
-///   thin rows sharing one identity are two reported drops.
+///   thin rows sharing one identity are two reported drops. This describes a
+///   HAND-BUILT duplicate set only: the entry a projection's survivors are
+///   handed to refuses a repeated [`CandidateId`] before it simulates anything
+///   (`crate::identity`), so the quirk cannot reach execution.
+///
+/// # One identity, one transported row
+///
+/// This pass does not refuse anything on identity grounds — it is a projection,
+/// not an admission to execution, and it reports rows rather than simulating
+/// them. The uniqueness rule is enforced by the entry its survivors go to
+/// (`crate::dispatch_admitted_across_deployments`), which refuses a repeated
+/// [`CandidateId`] before the target-selection walk: a caller that hand-builds a
+/// duplicate set gets a typed refusal there, never a doubled simulation.
 ///
 /// # Poisoned registries are recovered
 ///
@@ -901,8 +923,10 @@ pub fn filter_thin_margin_results(
 /// the count-only entry discards.
 ///
 /// The rows come back in input order. A caller attributing them by IDENTITY
-/// (the batch's record fold) must remember that two rows can share one
-/// candidate id: the floor judges each row on its own margin, so a fat twin
+/// (the batch's record fold) must remember that a HAND-BUILT set can carry one
+/// candidate id twice — the dispatch boundary refuses such a set before it
+/// simulates, so this only describes a direct caller of this leaf: the floor
+/// judges each row on its own margin, so a fat twin
 /// leaves its thin twin's identity "kept" even though the thin row itself is
 /// gone.
 fn partition_thin_margin(
@@ -996,7 +1020,10 @@ fn order_index_top_selection(candidates: &mut [DispatchCandidate]) {
     }
     let ranked = idx.top_k(U256::ZERO, candidates.len());
     // `ranked` is every id in (net desc, id asc) order. Safe-guard: only enforce
-    // when it covers every candidate (candidate ids are unique by construction).
+    // when it covers every candidate. Candidate ids ARE unique here — the
+    // dispatch entries refuse a repeated identity before this pass runs
+    // (`crate::identity`) — so a short ranking means the index dropped an entry,
+    // and falling back to the caller's order is the honest response.
     if ranked.len() != candidates.len() {
         return;
     }
@@ -1393,6 +1420,11 @@ mod tests {
     }
 
     // -- sequential duplicates -------------------------------------------
+    //
+    // These pin the PASS's own sequential read over a hand-built duplicate set.
+    // No dispatch entry feeds it one: both refuse a repeated `CandidateId`
+    // before this pass runs (see `crate::identity`), so the behavior below is
+    // the pass's local contract, not a supported public input.
 
     #[test]
     fn the_first_retry_due_duplicate_is_stamped_and_admitted_and_the_second_is_suppressed() {
@@ -1933,8 +1965,10 @@ mod tests {
         assert_eq!(pass.skips.divergent, 1);
     }
 
-    /// Two transported rows sharing one identity keep the sequential read: the
-    /// first is stamped and admitted, the second is suppressed by that stamp.
+    /// Two hand-built transported rows sharing one identity keep the sequential
+    /// read: the first is stamped and admitted, the second is suppressed by that
+    /// stamp. (The pre-admitted entry refuses a repeated identity before this
+    /// pass — `crate::identity` — so this is the pass's local contract.)
     #[test]
     fn finalization_preserves_the_sequential_duplicate_read() {
         let ledger = registries();

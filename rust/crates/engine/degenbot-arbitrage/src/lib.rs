@@ -31,6 +31,12 @@
 //!   fee-on-transfer, thin margin, and the caller's input-order cap — which
 //!   reports every drop beside the candidate it dropped, so a batch's assembly
 //!   emits its records off this crate's stages instead of its own copies.
+//! - the IDENTITY contract ([`identity`]): one [`CandidateId`] is one row. Every
+//!   entry that turns caller rows into execution refuses a repeated identity
+//!   before it stamps a ledger, records a tally, composes an encoding, or
+//!   simulates ([`DispatchRefusal::DuplicateCandidateId`]).
+//!
+//! [`CandidateId`]: degenbot_execution::CandidateId
 //!
 //! The engine (evm2 executor, `Evm2BlockSimHandle`, `apply_simulation_overrides`,
 //! AL Inspector, `WarmCodeCache`) stays thin + generic in
@@ -38,6 +44,31 @@
 //! `Evm2BlockSimHandle::build` and hands a session's `run_sequence` verb its calls.
 //! Other searcher strategies (sandwich, JIT-L, liquidation)
 //! would be sibling crates over the same engine.
+//!
+//! # Migrating a caller onto the identity contract
+//!
+//! The three dispatch entries now REFUSE a candidate set that carries one
+//! [`CandidateId`] twice, and the raw leaf returns a `Result` so a refusal has
+//! somewhere to go:
+//!
+//! - `dispatch_profitable_results(...) -> DispatchOutcome` becomes
+//!   `-> Result<DispatchOutcome, DispatchRefusal>`. The per-candidate failure
+//!   tolerance is unchanged (a revert, a no-profit, or an RPC failure is still
+//!   an outcome record, never an `Err`); the one `Err` is the input refusal.
+//! - `DeploymentFanOutError` is now [`DispatchRefusal`] — the same type serves
+//!   the registry entries and the leaves — with its existing
+//!   `UnregisteredDeployment` variant plus `DuplicateCandidateId { candidate_id,
+//!   occurrences }`.
+//! - `dispatch_across_deployments` and `dispatch_admitted_across_deployments`
+//!   refuse duplicates BEFORE the target-selection walk, so no adapter composes
+//!   an encoding for a set that would be refused. Their `Err` type is the same
+//!   [`DispatchRefusal`].
+//!
+//! A caller that produced duplicate rows now gets the id and the row count back
+//! instead of two simulated rows joined through an identity-keyed map (one
+//! result silently overwriting the other) and two submit rows. Fix the emitter:
+//! the solver emits one result per solved path and an inline sim emits one
+//! payload row per candidate.
 //!
 //! # Standalone-Rust consumer
 //!
@@ -92,6 +123,11 @@ mod admission;
 /// The dispatch fan-out + categorization policy ([`dispatch_profitable_results`])
 /// + the candidate/outcome types.
 pub mod dispatch;
+
+/// The dispatch identity contract — one [`degenbot_execution::CandidateId`] per
+/// row — plus the [`duplicate_candidate_id`] scan every boundary that turns rows
+/// into execution runs, and the [`DispatchRefusal`] they report.
+pub mod identity;
 
 /// Per-pool solver-divergence tracking (`PoolDivergence` +
 /// `is_solver_calc_failure`) — a stateful per-pool memo consumed by the
@@ -150,9 +186,11 @@ pub use executor_runtime::{
     EXECUTOR_RUNTIME_FILE,
 };
 pub use fanout::{
-    dispatch_across_deployments, dispatch_admitted_across_deployments, DeploymentFanOutError,
-    DeploymentFanOutOutcome, DeploymentLane,
+    dispatch_across_deployments, dispatch_admitted_across_deployments, DeploymentFanOutOutcome,
+    DeploymentLane,
 };
+
+pub use identity::{duplicate_candidate_id, DispatchRefusal};
 
 pub use release_binding::{
     read_metadata, BindingError, BoundCmdExecutor, BoundRuntimeError, ReleaseSource,

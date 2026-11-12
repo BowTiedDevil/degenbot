@@ -6,6 +6,14 @@
 //!
 //! 1. **Assembly** ([`assembly`]) — raw solver rows + inline-sim payload rows
 //!    are shaped into pre-sim [`DispatchCandidate`]s / [`SubmitCandidate`]s.
+//!    ONE identity names at most one live row throughout
+//!    (`degenbot_arbitrage::identity`): the sim fan-out refuses a repeated
+//!    `CandidateId` before it simulates, and this stage refuses a batch whose
+//!    RAW rows would simulate one identity twice or whose PAYLOAD rows would
+//!    attach two LIVE submit rows to one identity
+//!    ([`AssemblyError::DuplicateCandidateId`]), before any resolve or registry
+//!    read — per-row records keep their own provenance, and nothing is silently
+//!    deduplicated.
 //!    The raw-row checks (empty hops, payload-served, resolve, shape) run here,
 //!    and the EARLY half of the pre-sim policy (non-stamping suppression, pool
 //!    divergence, fee-on-transfer, thin margin, the input-order per-lane cap) is

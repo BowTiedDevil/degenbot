@@ -106,6 +106,7 @@ use parking_lot::RwLock;
 
 use crate::admission;
 use crate::admission::AdmittedCandidate;
+use crate::identity::{duplicate_candidate_id, DispatchRefusal};
 use crate::simulate_path_on_evm_prepared;
 use crate::{
     diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token,
@@ -430,12 +431,21 @@ impl DispatchOutcome {
 ///
 /// # Failure model
 ///
-/// Infallible — returns `DispatchOutcome` directly (not a `Result`). Every
-/// per-path failure (revert / no-profit / rpc-failed / int128-overflow) is
-/// tallied into `outcome.fail_buckets` + recorded as a per-candidate
-/// [`SimFailure`] — no failure propagates as an `Err`. The
+/// Every per-path failure (revert / no-profit / rpc-failed / int128-overflow)
+/// is tallied into `outcome.fail_buckets` + recorded as a per-candidate
+/// [`SimFailure`] — no SIMULATION verdict propagates as an `Err`. The
 /// `exception_count` field captures `simulate_path_on_evm` `Err` returns (the
 /// rare defensive `?` on the execute() ABI encode), counted not propagated.
+///
+/// # Errors
+///
+/// [`DispatchRefusal::DuplicateCandidateId`] for an input set that carries one
+/// [`CandidateId`] twice. The identity is a ROW identity (see
+/// [`crate::identity`]), so the check runs FIRST — before the census instrument
+/// and before any admission stage — and a refusal spends no suppression retry
+/// stamp, no divergence/fee-on-transfer tally, and no simulation. Silently
+/// keeping one of the two rows is never the answer: the caller would never
+/// learn which of its candidates ran.
 ///
 /// # Panics
 ///
@@ -498,7 +508,10 @@ pub fn dispatch_profitable_results(
     warm_cache: Option<
         Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
     >,
-) -> DispatchOutcome {
+) -> Result<DispatchOutcome, DispatchRefusal> {
+    // 0. Identity — one row per `CandidateId`, refused before any other stage.
+    refuse_duplicate_candidate_ids(&candidates)?;
+
     let pre_filter_count = candidates.len();
     // T3: candidates entering the fan-out (pre-filter sizes summed; the
     // per-stage drop counts live on `DispatchOutcome` for the logs).
@@ -526,7 +539,7 @@ pub fn dispatch_profitable_results(
         },
     );
     let outcome = leaf_outcome(admitted.skips, admitted.admitted.len());
-    simulate_leaf(
+    Ok(simulate_leaf(
         admitted.admitted,
         outcome,
         LeafInputs {
@@ -538,7 +551,7 @@ pub fn dispatch_profitable_results(
             bot_state,
             warm_cache,
         },
-    )
+    ))
 }
 
 /// Finalize PRE-ADMITTED candidates against the live policy state, then
@@ -567,6 +580,16 @@ pub fn dispatch_profitable_results(
 /// [`dispatch_profitable_results`] runs — one simulation implementation, two
 /// entry orders.
 ///
+/// # Errors
+///
+/// [`DispatchRefusal::DuplicateCandidateId`] for a transported set that carries
+/// one [`CandidateId`] twice, checked before finalization touches a ledger (see
+/// [`crate::identity`]). The registry entry
+/// ([`crate::dispatch_admitted_across_deployments`]) checks the same rule before
+/// the target-selection walk composes anything; the check here is the invariant
+/// of the simulation body itself, so no future caller can reach it with a set
+/// the lanes could not tell apart.
+///
 /// # Panics
 ///
 /// Panics if a policy mutex is poisoned — the same loud failure the raw
@@ -589,7 +612,11 @@ pub(crate) fn dispatch_admitted_profitable_results(
     warm_cache: Option<
         Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
     >,
-) -> DispatchOutcome {
+) -> Result<DispatchOutcome, DispatchRefusal> {
+    // 0. Identity — one row per `CandidateId`, before finalization reads or
+    //    stamps any registry.
+    refuse_duplicate_candidate_ids(admitted.iter().map(AdmittedCandidate::candidate))?;
+
     let entering = admitted.len();
     // T3: the same census edge the raw leaf emits — the candidates THIS leaf
     // considered, so a migrated caller's metric keeps its meaning.
@@ -612,7 +639,7 @@ pub(crate) fn dispatch_admitted_profitable_results(
         },
     );
     let outcome = leaf_outcome(finalized.skips, finalized.admitted.len());
-    simulate_leaf(
+    Ok(simulate_leaf(
         finalized.admitted,
         outcome,
         LeafInputs {
@@ -624,7 +651,62 @@ pub(crate) fn dispatch_admitted_profitable_results(
             bot_state,
             warm_cache,
         },
+    ))
+}
+
+/// The raw leaf over a candidate set a TEST fixture built, unwrapped: the test
+/// suites assert on an outcome, and the duplicate-identity refusal has its own
+/// tests, so a fixture that accidentally repeats an identity fails loudly here
+/// instead of skewing an unrelated assertion. Test-only, so the public entry
+/// keeps its `Result`.
+#[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    clippy::expect_used,
+    reason = "the leaf's own signature, forwarded; a fixture that repeats an identity must fail loudly"
+)]
+fn dispatch_test_leaf(
+    candidates: Vec<DispatchCandidate>,
+    ctx: &SimulateContext<'_>,
+    path_suppression: &Arc<Mutex<PathSuppression>>,
+    current_block: u64,
+    min_profit_margin_bps: u64,
+    pool_divergence: &Arc<Mutex<PoolDivergence>>,
+    fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
+    bot_state: Option<Arc<StateLock<BotState>>>,
+    warm_cache: Option<
+        Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
+    >,
+) -> DispatchOutcome {
+    dispatch_profitable_results(
+        candidates,
+        ctx,
+        path_suppression,
+        current_block,
+        min_profit_margin_bps,
+        pool_divergence,
+        fot_registry,
+        bot_state,
+        warm_cache,
     )
+    .expect("the fixture carries one row per candidate identity")
+}
+
+/// Refuse a candidate set that carries one [`CandidateId`] twice — the input
+/// check both leaves run before any other stage, because every structure below
+/// (the ledger, the divergence/FoT feedback's path join, the suppression outcome
+/// recording, and the submit row) is identity-keyed and cannot tell two rows of
+/// one identity apart (see [`crate::identity`]).
+fn refuse_duplicate_candidate_ids<'a>(
+    candidates: impl IntoIterator<Item = &'a DispatchCandidate>,
+) -> Result<(), DispatchRefusal> {
+    match duplicate_candidate_id(candidates.into_iter().map(|c| c.candidate_id)) {
+        Some((candidate_id, occurrences)) => Err(DispatchRefusal::DuplicateCandidateId {
+            candidate_id,
+            occurrences,
+        }),
+        None => Ok(()),
+    }
 }
 
 /// The empty dispatch outcome carrying one pass's per-stage drop counters and
@@ -693,7 +775,9 @@ fn simulate_leaf(
     // (divergence + FoT attribution) and the success recording re-derive a
     // hop's key from it — the V4 `CapturedSwap.emitter` is the shared
     // PoolManager, useless for per-pool attribution. Only admitted candidates
-    // can be simulated, so only they need an entry.
+    // can be simulated, so only they need an entry. Its key is the solver
+    // path id, and one identity per row (enforced by both leaves' entry check)
+    // means two rows can never overwrite each other's entry.
     let path_info_by_id: HashMap<u64, PathInfo> = candidates
         .iter()
         .map(|c| (c.candidate_id.path_id(), c.path_info.clone()))
@@ -715,6 +799,10 @@ fn simulate_leaf(
     //    `tokio::spawn`, neither borrows `'static` — the closure borrows
     //    `ctx` for its lifetime, and we collect within this fn (no task
     //    outlives the call).
+    // One id per simulated row: the entry check refused a repeated identity, so
+    // the outcome recording below moves each candidate's ledger state at most
+    // once per pass — a duplicated id could otherwise record both a success and
+    // a failure against it, or count one failure twice toward suppression.
     let candidate_ids: Vec<CandidateId> = candidates.iter().map(|c| c.candidate_id).collect();
     // SIMPIPE T1 lab baseline: snapshot BEFORE the fan-out so the exit log
     // carries this fan-out's cold-fetch/build/sim deltas.
@@ -1560,7 +1648,7 @@ mod tests {
             ];
             let deployment = deployment(Bytes::from_static(&[0xfe]));
             rt.block_on(async {
-                dispatch_profitable_results(
+                dispatch_test_leaf(
                     cands,
                     &ctx(&provider, &deployment),
                     &suppression,
@@ -1891,7 +1979,7 @@ mod tests {
         ) = std::thread::spawn(move || {
             rt.block_on(async {
                 let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
-                let first = dispatch_profitable_results(
+                let first = dispatch_test_leaf(
                     cands.clone(),
                     &ctx(&provider, &deployment),
                     &suppression,
@@ -1904,7 +1992,7 @@ mod tests {
                 );
                 let first_batches = recorder.storage_batches();
                 let first_members = recorder.storage_members();
-                let _second = dispatch_profitable_results(
+                let _second = dispatch_test_leaf(
                     cands,
                     &ctx(&provider, &deployment),
                     &suppression,
@@ -1916,7 +2004,7 @@ mod tests {
                     Some(Arc::clone(&warm)),
                 );
                 let second_batches = recorder.storage_batches();
-                let moved_run = dispatch_profitable_results(
+                let moved_run = dispatch_test_leaf(
                     moved,
                     &ctx(&provider, &deployment),
                     &suppression,
@@ -2025,7 +2113,7 @@ mod tests {
                 rt.block_on(async {
                     let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
 
-                    let _first = dispatch_profitable_results(
+                    let _first = dispatch_test_leaf(
                         cands.clone(),
                         &ctx(&provider, &deployment),
                         &suppression,
@@ -2041,7 +2129,7 @@ mod tests {
 
                     // Same height, same block: the installed memo serves, so the
                     // fan-out dispatches no batch at all.
-                    let _second = dispatch_profitable_results(
+                    let _second = dispatch_test_leaf(
                         cands.clone(),
                         &ctx(&provider, &deployment),
                         &suppression,
@@ -2057,7 +2145,7 @@ mod tests {
                     // Same height, DIFFERENT block: a reorg the anchor number
                     // alone cannot see.
                     recorder.reorg_at_same_height(B256::new([0xb2; 32]));
-                    let reorg_run = dispatch_profitable_results(
+                    let reorg_run = dispatch_test_leaf(
                         cands,
                         &ctx(&provider, &deployment),
                         &suppression,
@@ -2134,7 +2222,7 @@ mod tests {
         let sim_thread = std::thread::spawn(move || {
             let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
             rt.block_on(async {
-                dispatch_profitable_results(
+                dispatch_test_leaf(
                     cands,
                     &ctx(&provider, &deployment),
                     &suppression,
@@ -2204,7 +2292,7 @@ mod tests {
             candidate(41, 1_000_000_000_000_000_000u128, 1_000),
         ];
         let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
-        let outcome = dispatch_profitable_results(
+        let outcome = dispatch_test_leaf(
             cands,
             &ctx(&provider, &deployment),
             &suppression,
@@ -2276,7 +2364,7 @@ mod tests {
             candidate_through_pool(51, POOL_B), // clean → reaches sim
         ];
         let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
-        let outcome = dispatch_profitable_results(
+        let outcome = dispatch_test_leaf(
             cands,
             &ctx(&provider, &deployment),
             &suppression,
@@ -2335,7 +2423,7 @@ mod tests {
             address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
         )];
         let deployment = deployment(Bytes::from_static(&[0xfe])); // INVALID
-        let outcome = dispatch_profitable_results(
+        let outcome = dispatch_test_leaf(
             cands,
             &ctx(&provider, &deployment),
             &suppression,
@@ -2651,7 +2739,7 @@ mod delta_dispatch_tests {
                 let divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
                 let fot = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
                 let bot_state = Arc::new(StateLock::new(BotState::new()));
-                let outcome = dispatch_profitable_results(
+                let outcome = dispatch_test_leaf(
                     cands,
                     &super::tests::ctx(&provider, &deployment),
                     &suppression,
@@ -2790,7 +2878,7 @@ mod delta_dispatch_tests {
                     let bot_state = Arc::new(StateLock::new(BotState::new()));
                     let fetches_before = rec.bal_requests();
                     let batches_before = rec.storage_batches();
-                    let outcome = dispatch_profitable_results(
+                    let outcome = dispatch_test_leaf(
                         cands,
                         &super::tests::ctx(&provider, &deployment),
                         &suppression,
@@ -2978,7 +3066,7 @@ mod delta_dispatch_tests {
                 let bot_state = Arc::new(StateLock::new(BotState::new()));
                 let fetches_before = rec.bal_requests();
                 let batches_before = rec.storage_batches();
-                let outcome = dispatch_profitable_results(
+                let outcome = dispatch_test_leaf(
                     cands,
                     &super::tests::ctx(&provider, &deployment),
                     &suppression,
@@ -3479,7 +3567,7 @@ mod delta_dispatch_tests {
                     let run =
                         |cands: Vec<crate::DispatchCandidate>,
                          cache: Option<Arc<RwLock<WarmCodeCacheInner>>>| {
-                            dispatch_profitable_results(
+                            dispatch_test_leaf(
                                 cands,
                                 &ctx,
                                 &suppression,
@@ -3637,7 +3725,7 @@ mod delta_dispatch_tests {
         cache: Option<Arc<RwLock<WarmCodeCacheInner>>>,
     ) -> DispatchOutcome {
         let filters = fresh_filters();
-        dispatch_profitable_results(
+        dispatch_test_leaf(
             parity_candidates(),
             &super::tests::ctx(provider, deployment),
             &filters.suppression,
@@ -4033,7 +4121,7 @@ mod delta_dispatch_tests {
                 let bot_state = Arc::new(StateLock::new(BotState::new()));
                 // The legacy lane: this fan-out pays the prefetch batch, so all
                 // four row families exist in ONE fan-out's log.
-                dispatch_profitable_results(
+                dispatch_test_leaf(
                     cands,
                     &super::tests::ctx(&provider, &deployment),
                     &suppression,

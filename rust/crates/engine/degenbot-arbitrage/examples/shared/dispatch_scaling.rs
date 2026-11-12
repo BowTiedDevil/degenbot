@@ -537,6 +537,7 @@ fn fan_out(
         Some(filters.bot_state),
         cache,
     )
+    .expect("the fixture carries one row per candidate identity")
 }
 
 /// One candidate's verdict: the bucket that claimed it, or the priced figures

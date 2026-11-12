@@ -16,6 +16,23 @@
 //! registry are different decisions with different feedback loops, injected
 //! separately — never merged into one knob.
 //!
+//! # One identity, one row
+//!
+//! Stage 0 refuses a batch whose rows would carry one [`CandidateId`] twice, in
+//! BOTH of the batch's row kinds: the rows that would be SIMULATED (raw solver
+//! rows, whose identity is the row's path id bound to
+//! [`AssemblyInputs::deployment_id`]) and the rows that would be SUBMITTED
+//! (payload rows above the shared profit floor). Both scans run before the raw
+//! checks, the path resolve, any policy-registry read or stamp, and any record
+//! ([`AssemblyError::DuplicateCandidateId`]) — a refused batch produces no
+//! partial side effect and can never reach the fan-out.
+//!
+//! Records are not rows of execution: several PROVENANCE rows for one candidate
+//! (an inline sim's failure beside its profitable retry) stay legal, because a
+//! record is evidence ABOUT a candidate rather than a slot in execution. The
+//! rule itself, and why refusal rather than deduplication is the outcome, live
+//! in `degenbot_arbitrage::identity`.
+//!
 //! # This stage PROJECTS the early half of the admission policy
 //!
 //! The batch's order is
@@ -87,24 +104,70 @@ pub trait PathResolver: Send + Sync {
     fn resolve(&self, path_id: u64) -> Option<PathInfo>;
 }
 
-/// A batch-structure corruption: a row whose per-hop lengths disagree with the
-/// resolved path's hop count. The assembly stage aborts the whole batch (the
-/// loud-abort rule — see the resolve-miss note on [`AssemblyVerdict`]).
+/// Why the assembly stage refused to produce a batch — the loud-abort rule (see
+/// the resolve-miss note on [`AssemblyVerdict`]): both arms refuse the WHOLE
+/// batch rather than folding the problem into a per-row skip, because neither is
+/// a property of one row's economics.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssemblyError {
-    /// The offending row's path id.
-    pub path_id: u64,
-    /// The mismatch detail.
-    pub detail: String,
+pub enum AssemblyError {
+    /// A row's per-hop lengths disagree with its resolved path's hop count, a
+    /// payload belongs to another deployment, or a payload's path is not
+    /// registered: the batch and the registry have diverged.
+    Corrupt {
+        /// The offending row's path id.
+        path_id: u64,
+        /// What diverged.
+        detail: String,
+    },
+    /// Two rows for one [`CandidateId`] would both reach EXECUTION — either two
+    /// raw solver rows the batch would resolve and simulate, or two payload rows
+    /// that would both join a live submit row. The batch's enforcement of the
+    /// identity contract ([`degenbot_arbitrage::identity`]: one identity names
+    /// one live row), checked at the top of the stage for both row kinds.
+    ///
+    /// Records keep per-row provenance (an inline sim's failure row and its
+    /// profitable retry are different evidence about ONE candidate), so this is
+    /// about the rows that would execute or reach the submit lane, never about
+    /// the batch's records.
+    DuplicateCandidateId {
+        /// The identity the rows share.
+        candidate_id: CandidateId,
+        /// How many rows carried it.
+        occurrences: usize,
+    },
+}
+
+impl AssemblyError {
+    /// The path id the refusal names — the row-level handle a driver logs.
+    #[must_use]
+    pub fn path_id(&self) -> u64 {
+        match self {
+            Self::Corrupt { path_id, .. } => *path_id,
+            Self::DuplicateCandidateId { candidate_id, .. } => candidate_id.path_id(),
+        }
+    }
+
+    /// A batch-structure corruption at `path_id`.
+    fn corrupt(path_id: u64, detail: String) -> Self {
+        Self::Corrupt { path_id, detail }
+    }
 }
 
 impl std::fmt::Display for AssemblyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "batch assembly corrupt at path {}: {}",
-            self.path_id, self.detail
-        )
+        match self {
+            Self::Corrupt { path_id, detail } => {
+                write!(f, "batch assembly corrupt at path {path_id}: {detail}")
+            }
+            Self::DuplicateCandidateId {
+                candidate_id,
+                occurrences,
+            } => write!(
+                f,
+                "candidate {candidate_id} arrived on {occurrences} rows that would all execute: \
+                 one identity is one live row"
+            ),
+        }
     }
 }
 
@@ -114,13 +177,60 @@ impl std::error::Error for AssemblyError {}
 /// deployment whose submit lane would receive it — one home for the message
 /// both payload arms raise (stage-1 assembly and the standalone merge).
 fn payload_deployment_mismatch(candidate_id: CandidateId, expected: DeploymentId) -> AssemblyError {
-    AssemblyError {
-        path_id: candidate_id.path_id(),
-        detail: format!(
+    AssemblyError::corrupt(
+        candidate_id.path_id(),
+        format!(
             "payload row carries deployment {}, but this batch executes deployment {expected}",
             candidate_id.deployment_id()
         ),
+    )
+}
+
+/// The identities the payload arm would join to a LIVE submit row: no failure
+/// detail, and a net profit at or above the shared floor. Rows outside that set
+/// (failures, below-floor sims) keep their own records and claim no submit slot,
+/// so several of them for one candidate are legal provenance.
+fn submit_row_identities(payloads: &[PayloadRow]) -> impl Iterator<Item = CandidateId> + '_ {
+    payloads
+        .iter()
+        .filter(|p| p.failure.is_none() && degenbot_arbitrage::is_gas_profitable(p.net_profit))
+        .map(|p| p.candidate_id)
+}
+
+/// Refuse a row set that repeats one [`CandidateId`] — the batch's enforcement
+/// of the dispatch identity contract ([`degenbot_arbitrage::identity`]), shared
+/// by the batch's two row kinds so the rule has one implementation.
+fn refuse_duplicate_candidate_id<I>(ids: I) -> Result<(), AssemblyError>
+where
+    I: IntoIterator<Item = CandidateId>,
+{
+    match degenbot_arbitrage::duplicate_candidate_id(ids) {
+        Some((candidate_id, occurrences)) => Err(AssemblyError::DuplicateCandidateId {
+            candidate_id,
+            occurrences,
+        }),
+        None => Ok(()),
     }
+}
+
+/// Refuse a raw row set that repeats one [`CandidateId`]. A raw solver row is
+/// path-keyed (the solver has no deployment in view), so its identity is the
+/// row's path id bound to the assembly's deployment — the same derivation
+/// [`classify_raw_row`] and [`build_raw_candidate`] apply.
+fn refuse_duplicate_raw_rows(
+    rows: &[RawResult],
+    deployment_id: DeploymentId,
+) -> Result<(), AssemblyError> {
+    refuse_duplicate_candidate_id(
+        rows.iter()
+            .map(|row| CandidateId::new(row.path_id, deployment_id)),
+    )
+}
+
+/// Refuse a payload set that would attach two live submit rows to one
+/// [`CandidateId`] — run BEFORE any record or submit row is emitted.
+fn refuse_duplicate_submit_rows(payloads: &[PayloadRow]) -> Result<(), AssemblyError> {
+    refuse_duplicate_candidate_id(submit_row_identities(payloads))
 }
 
 /// The typed verdict this stage attributes to one early-projection drop.
@@ -213,8 +323,12 @@ pub struct AssembledBatch {
 ///
 /// # Errors
 ///
-/// [`AssemblyError`] when a row's hop lengths disagree with its resolved
-/// path's hop count (batch corruption — the loud-abort rule).
+/// [`AssemblyError::Corrupt`] when a row's hop lengths disagree with its
+/// resolved path's hop count, or a payload names a foreign deployment or an
+/// unregistered path (batch corruption — the loud-abort rule), and
+/// [`AssemblyError::DuplicateCandidateId`] when the batch would simulate two raw
+/// rows for one candidate id, or attach two LIVE submit rows to one candidate
+/// id.
 ///
 /// # Panics
 ///
@@ -229,6 +343,16 @@ pub struct AssembledBatch {
     reason = "the join map holds every resolved candidate — internal invariant"
 )]
 pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, AssemblyError> {
+    // 0. The identity checks run FIRST, before a raw row is classified or
+    //    resolved, before a record is emitted, and before a policy registry is
+    //    read or stamped, so a refused batch leaves nothing behind (see
+    //    [`degenbot_arbitrage::identity`]). The rows that would be SIMULATED
+    //    come first: a duplicate there would reach the fan-out as two rows one
+    //    identity-keyed result map cannot tell apart.
+    refuse_duplicate_raw_rows(inputs.rows, inputs.deployment_id)?;
+    // Then the rows that would be SUBMITTED: one identity, one live submit row.
+    refuse_duplicate_submit_rows(inputs.payloads)?;
+
     let mut batch = AssembledBatch::default();
     // Every raw row this session assembles targets the session deployment.
     let candidate_id = |path_id: u64| CandidateId::new(path_id, inputs.deployment_id);
@@ -349,14 +473,14 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
             ));
         }
         let Some(path_info) = inputs.resolver.resolve(p.candidate_id.path_id()) else {
-            return Err(AssemblyError {
-                path_id: p.candidate_id.path_id(),
-                detail: format!(
+            return Err(AssemblyError::corrupt(
+                p.candidate_id.path_id(),
+                format!(
                     "path_id {} is not registered in this engine; \
                      the payload pool keys cannot be derived",
                     p.candidate_id.path_id()
                 ),
-            });
+            ));
         };
         let view = PathInfoView::from(&path_info);
         if let Some(detail) =
@@ -502,34 +626,34 @@ pub fn build_raw_candidate(
 ) -> Result<DispatchCandidate, AssemblyError> {
     let hops = path_info.hops.len();
     if row.hop_outputs.len() != hops {
-        return Err(AssemblyError {
-            path_id: row.path_id,
-            detail: format!(
+        return Err(AssemblyError::corrupt(
+            row.path_id,
+            format!(
                 "hop_outputs length ({}) != path {} hops ({hops})",
                 row.hop_outputs.len(),
                 row.path_id
             ),
-        });
+        ));
     }
     if row.consumed_inputs.len() != hops {
-        return Err(AssemblyError {
-            path_id: row.path_id,
-            detail: format!(
+        return Err(AssemblyError::corrupt(
+            row.path_id,
+            format!(
                 "consumed_inputs length ({}) != path {} hops ({hops})",
                 row.consumed_inputs.len(),
                 row.path_id
             ),
-        });
+        ));
     }
     if row.state_nonces.len() != hops {
-        return Err(AssemblyError {
-            path_id: row.path_id,
-            detail: format!(
+        return Err(AssemblyError::corrupt(
+            row.path_id,
+            format!(
                 "state_nonces length ({}) != path {} hops ({hops})",
                 row.state_nonces.len(),
                 row.path_id
             ),
-        });
+        ));
     }
     Ok(row.to_candidate(path_info.clone(), deployment_id))
 }
@@ -582,15 +706,21 @@ pub struct MergedPayloadOutcome {
 ///
 /// # Errors
 ///
-/// [`AssemblyError`] when a payload's `deployment_id` differs from
+/// [`AssemblyError::Corrupt`] when a payload's `deployment_id` differs from
 /// `deployment_id`, or its `path_id` is not registered (the corruption arm
-/// above).
+/// above), and [`AssemblyError::DuplicateCandidateId`] when two payload rows
+/// would attach two LIVE submit rows to one candidate id — the join never
+/// silently deduplicates and never leans on the submit lane's mutual exclusion.
 pub fn merge_payload_results(
     payloads: &[PayloadRow],
     resolver: &dyn PathResolver,
     target: alloy::primitives::Address,
     deployment_id: DeploymentId,
 ) -> Result<MergedPayloadOutcome, AssemblyError> {
+    // One `CandidateId`, one live submit row — checked before the join emits
+    // anything (see [`degenbot_arbitrage::identity`]).
+    refuse_duplicate_submit_rows(payloads)?;
+
     let mut merged = MergedPayloadOutcome::default();
     let mut seen: HashSet<u64> = HashSet::with_capacity(payloads.len());
     for p in payloads {
@@ -598,14 +728,14 @@ pub fn merge_payload_results(
             return Err(payload_deployment_mismatch(p.candidate_id, deployment_id));
         }
         let Some(path_info) = resolver.resolve(p.candidate_id.path_id()) else {
-            return Err(AssemblyError {
-                path_id: p.candidate_id.path_id(),
-                detail: format!(
+            return Err(AssemblyError::corrupt(
+                p.candidate_id.path_id(),
+                format!(
                     "path_id {} is not registered in this engine; \
                      the payload pool keys cannot be derived",
                     p.candidate_id.path_id()
                 ),
-            });
+            ));
         };
         // One resolve per DISTINCT path id (multiple entries may share a
         // path), in first-appearance order.
@@ -701,6 +831,20 @@ mod tests {
         }
     }
 
+    /// A map resolver that counts its own calls — the lever proving a refusal
+    /// happened BEFORE the path resolve.
+    struct CountingResolver {
+        paths: std::collections::HashMap<u64, PathInfo>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl PathResolver for CountingResolver {
+        fn resolve(&self, path_id: u64) -> Option<PathInfo> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.paths.get(&path_id).cloned()
+        }
+    }
+
     /// The assembly tests' one deployment identity.
     fn deployment_id() -> DeploymentId {
         DeploymentId::new(1)
@@ -777,7 +921,7 @@ mod tests {
     fn assemble(
         rows: &[RawResult],
         payloads: &[PayloadRow],
-        res: &MapResolver,
+        res: &dyn PathResolver,
         p: &Policy,
     ) -> Result<AssembledBatch, AssemblyError> {
         assemble_with(rows, payloads, res, p, 100, 0, 50)
@@ -789,7 +933,7 @@ mod tests {
     fn assemble_with(
         rows: &[RawResult],
         payloads: &[PayloadRow],
-        res: &MapResolver,
+        res: &dyn PathResolver,
         p: &Policy,
         current_block: u64,
         min_profit_margin_bps: u64,
@@ -836,7 +980,7 @@ mod tests {
         let mut bad = row(7, 1_000, 100);
         bad.hop_outputs.push(999); // 3 outputs vs 1 resolved hop
         let err = assemble(&[bad], &[], &res, &p).unwrap_err();
-        assert_eq!(err.path_id, 7);
+        assert_eq!(err.path_id(), 7);
     }
 
     #[test]
@@ -1061,28 +1205,109 @@ mod tests {
         );
     }
 
-    /// The floor's duplicate-attribution quirk survives the shared projection:
-    /// a thin row whose identity a surviving twin also carries earns NO record —
-    /// it is dropped silently — because the projection reports thin drops by
-    /// KEPT identity, exactly as this stage's own fold always did.
+    /// The batch's EXECUTION half of the identity contract: two raw solver rows
+    /// carrying one [`CandidateId`] are refused at stage 0 — before the raw
+    /// checks, the path resolve, the projection's policy-registry reads, and any
+    /// record — so a duplicate row can never be simulated, never collapse in an
+    /// identity-keyed result map, and never reach the fan-out as two rows.
+    ///
+    /// This also retires the thin-margin sibling quirk this stage could exhibit
+    /// over a duplicate set (a thin row whose identity a fat twin also carried
+    /// earned no record): no duplicate row reaches the projection, so the quirk
+    /// is not an input this boundary can be handed. The projection's own
+    /// sequential contract over a HAND-BUILT duplicate set is pinned in
+    /// `degenbot-arbitrage`'s admission tests.
     #[test]
-    fn a_thin_duplicate_of_a_surviving_identity_earns_no_record() {
-        let res = resolver(&[7]);
+    fn raw_duplicate_rows_are_refused_before_resolution_and_registries() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let res = CountingResolver {
+            paths: [(7, v2_path_through(POOL_A))].into_iter().collect(),
+            calls: Arc::clone(&calls),
+        };
         let p = Policy::fresh();
-        // 1 bps (thin) and 100 bps (fat) at one identity, under a 50 bps floor.
+        // A divergent pool the projection would drop AND tally if it ran at all.
+        p.divergence
+            .lock()
+            .unwrap()
+            .record_divergence(PoolDivergenceKey::V2(POOL_A), 100);
+        // One thin row (1 bps) and one fat (100 bps) at ONE identity, under a
+        // 50 bps floor: had both reached the projection, the fat twin would have
+        // survived carrying the thin twin's identity.
         let rows = [row(7, 1_000_000, 1), row(7, 1_000_000, 10_000)];
-        let batch = assemble_with(&rows, &[], &res, &p, 100, 50, 50).unwrap();
 
-        assert_eq!(ids(&batch), vec![CandidateId::new(7, deployment_id())]);
+        let err = assemble_with(&rows, &[], &res, &p, 100, 50, 50).unwrap_err();
         assert_eq!(
-            batch.candidates[0].candidate().engine_profit,
-            10_000,
-            "the row with margin survives its thin twin"
+            err,
+            AssemblyError::DuplicateCandidateId {
+                candidate_id: CandidateId::new(7, deployment_id()),
+                occurrences: 2,
+            }
+        );
+        assert_eq!(err.path_id(), 7);
+        assert!(
+            err.to_string().contains("one identity is one live row"),
+            "the refusal states the rule: {err}"
+        );
+        // Nothing ran and nothing was written: no path was resolved, no
+        // divergence or fee-on-transfer tally was recorded, no suppression was
+        // read — and the stage produced no batch at all, so no record was
+        // emitted and no candidate could reach the fan-out.
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the refusal precedes the resolve"
+        );
+        assert_eq!(p.divergence.lock().unwrap().total_divergent_dropped(), 0);
+        assert_eq!(p.fot.lock().unwrap().total_fot_dropped(), 0);
+        assert_eq!(p.suppression.lock().unwrap().total_suppressed(), 0);
+    }
+
+    /// The identity check is an INPUT judgement, never a policy verdict: a
+    /// retry-due benched identity arriving twice is refused exactly as a healthy
+    /// pair is, and the refusal spends nothing — the stamping read never ran, so
+    /// the retry interval is still due. ONE row for that same identity still
+    /// assembles and is admitted by the projection's single non-stamping read.
+    #[test]
+    fn a_retry_due_duplicate_is_refused_and_a_single_row_still_admits() {
+        let res = resolver(&[5]);
+        let p = Policy::fresh();
+        let candidate_id = CandidateId::new(5, deployment_id());
+        let due = degenbot_submission::PATH_SUPPRESS_RETRY_INTERVAL;
+        for _ in 0..degenbot_submission::PATH_SUPPRESS_THRESHOLD {
+            p.suppression.lock().unwrap().record_failure(candidate_id);
+        }
+
+        let err = assemble_with(
+            &[row(5, 1_000, 10_000), row(5, 1_000, 10_000)],
+            &[],
+            &res,
+            &p,
+            due,
+            0,
+            50,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            AssemblyError::DuplicateCandidateId {
+                candidate_id,
+                occurrences: 2,
+            }
         );
         assert!(
-            batch.outcomes.is_empty(),
-            "the thin twin shares a kept identity, so it is dropped without a record"
+            !p.suppression
+                .lock()
+                .unwrap()
+                .is_suppressed_without_stamp(candidate_id, due),
+            "the refusal precedes the suppression read, so the retry is unspent"
         );
+
+        let batch = assemble_with(&[row(5, 1_000, 10_000)], &[], &res, &p, due, 0, 50).unwrap();
+        assert_eq!(ids(&batch), vec![candidate_id]);
+        assert!(batch
+            .outcomes
+            .iter()
+            .all(|o| o.assembly != AssemblyVerdict::SkipSuppressed));
     }
 
     /// Cap 1, the fan-out's order: the floor runs BEFORE the cap, so the thin
@@ -1240,11 +1465,11 @@ mod tests {
         };
 
         let err = assemble(&[], &[payload], &res, &p).unwrap_err();
-        assert_eq!(err.path_id, 7);
+        assert_eq!(err.path_id(), 7);
+        let detail = err.to_string();
         assert!(
-            err.detail.contains("deployment 2") && err.detail.contains("deployment 1"),
-            "the refusal names both deployments: {}",
-            err.detail
+            detail.contains("deployment 2") && detail.contains("deployment 1"),
+            "the refusal names both deployments: {detail}"
         );
     }
 
@@ -1286,6 +1511,99 @@ mod tests {
             batch.outcomes[1].simulate,
             Some(SimulateVerdict::GasUnprofitable(_))
         ));
+    }
+
+    /// One identity, one LIVE submit row: two payload rows that would both
+    /// submit are refused — the identity contract
+    /// (`degenbot_arbitrage::identity`) — before the stage emits a record or a
+    /// submit row. The batch never leans on the submit lane's mutual exclusion
+    /// to hide the second row, and it never silently deduplicates.
+    #[test]
+    fn two_live_submit_rows_for_one_identity_are_refused() {
+        let res = resolver(&[7]);
+        let p = Policy::fresh();
+        let row = |net: u64| PayloadRow {
+            candidate_id: CandidateId::new(7, deployment_id()),
+            gross_profit: alloy::primitives::U256::from(net + 100),
+            net_profit: alloy::primitives::U256::from(net),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
+            access_list: None,
+            failure: None,
+            captured_swaps: Vec::new(),
+        };
+
+        let err = assemble(&[], &[row(500), row(700)], &res, &p).unwrap_err();
+        assert_eq!(
+            err,
+            AssemblyError::DuplicateCandidateId {
+                candidate_id: CandidateId::new(7, deployment_id()),
+                occurrences: 2,
+            }
+        );
+        assert_eq!(err.path_id(), 7);
+        assert!(
+            err.to_string().contains("one identity is one live row"),
+            "the refusal states the rule: {err}"
+        );
+
+        // No side effect: neither policy registry was written.
+        assert_eq!(p.divergence.lock().unwrap().total_divergent_dropped(), 0);
+        assert_eq!(p.fot.lock().unwrap().total_fot_dropped(), 0);
+        assert_eq!(p.suppression.lock().unwrap().total_suppressed(), 0);
+    }
+
+    /// Records keep PER-ROW provenance: one profitable row, one below the floor,
+    /// and one failure for the same identity are three records and exactly ONE
+    /// live submit row — the batch shape the inline arm produces.
+    #[test]
+    fn one_live_submit_row_per_identity_keeps_every_record() {
+        let res = resolver(&[7]);
+        let p = Policy::fresh();
+        let payload = |net: u64, failure: Option<PayloadFailure>| PayloadRow {
+            candidate_id: CandidateId::new(7, deployment_id()),
+            gross_profit: alloy::primitives::U256::from(net + 100),
+            net_profit: alloy::primitives::U256::from(net),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
+            access_list: None,
+            failure,
+            captured_swaps: Vec::new(),
+        };
+
+        let batch = assemble(
+            &[],
+            &[
+                payload(500, None),
+                payload(0, None),
+                payload(
+                    0,
+                    Some(PayloadFailure {
+                        bucket: "inline-fail".to_string(),
+                        fail_index: None,
+                        revert_data: alloy::primitives::Bytes::new(),
+                    }),
+                ),
+            ],
+            &res,
+            &p,
+        )
+        .unwrap();
+
+        assert_eq!(batch.outcomes.len(), 3, "one record per payload row");
+        assert_eq!(
+            batch.payload_submits.len(),
+            1,
+            "exactly one of them joins a live submit row"
+        );
+        assert_eq!(
+            batch.payload_submits[0].candidate_id,
+            CandidateId::new(7, deployment_id())
+        );
     }
 
     #[test]
@@ -1639,8 +1957,8 @@ mod tests {
             captured_swaps: Vec::new(),
         }];
         let err = merge_payload_results(&payloads, &res, EXECUTOR, deployment_id()).unwrap_err();
-        assert_eq!(err.path_id, 11);
-        assert!(err.detail.contains("not registered in this engine"));
+        assert_eq!(err.path_id(), 11);
+        assert!(err.to_string().contains("not registered in this engine"));
     }
 
     /// The standalone merge refuses a row minted by another deployment BEFORE
@@ -1665,16 +1983,15 @@ mod tests {
         }];
         let err = merge_payload_results(&payloads, &res, EXECUTOR, deployment_id()).unwrap_err();
         // The path id survives, and both identities are named.
-        assert_eq!(err.path_id, 7);
+        assert_eq!(err.path_id(), 7);
+        let detail = err.to_string();
         assert!(
-            err.detail.contains("carries deployment 2"),
-            "detail must name the actual deployment: {}",
-            err.detail
+            detail.contains("carries deployment 2"),
+            "detail must name the actual deployment: {detail}"
         );
         assert!(
-            err.detail.contains("deployment 1"),
-            "detail must name the expected deployment: {}",
-            err.detail
+            detail.contains("deployment 1"),
+            "detail must name the expected deployment: {detail}"
         );
     }
 }
