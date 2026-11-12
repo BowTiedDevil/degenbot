@@ -3382,6 +3382,90 @@ async fn an_installed_redelivery_stores_no_report_of_its_own() {
     );
 }
 
+/// Under unbounded retention the installed generation's two report counts are
+/// one number: nothing has expired, so the live count is the held count and
+/// both are the hub's own `snapshot_len` — before a fold, after one, and after
+/// a settle lands in a generation a child already sealed.
+#[tokio::test]
+async fn an_unbounded_chain_reports_held_equal_to_live_at_every_head() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let max_depth = 1u32;
+    let driver = BalHeadDriver::with_config(&provider, max_depth, Retention::Unbounded);
+    let hashes: Vec<B256> = (0..5u8)
+        .map(|index| B256::new([0xb0 + index; 32]))
+        .collect();
+    let first_slot = U256::from(1u64);
+    stub.serve_at(HEIGHT, address(0x11), first_slot, 1);
+    stub.serve_bal_at(hashes[0], bal_bytes(&[]));
+
+    let base = identified(HEIGHT, hashes[0]);
+    let base_ticket = driver.deliver(base, genesis());
+    let base_report = settled(&driver.advance(base_ticket, &[]).await);
+    assert_eq!((base_report.held, base_report.live), (0, 0));
+    driver
+        .snapshot(base)
+        .hub
+        .read_storage(address(0x11), first_slot)
+        .await
+        .expect("the stub answers");
+
+    let mut saw_compaction = false;
+    for step in 1..5usize {
+        let number = HEIGHT + u64::try_from(step).expect("the step fits");
+        let slot = U256::from(10 + u64::try_from(step).expect("the slot fits"));
+        let value = 100 + u64::try_from(step).expect("the value fits");
+        stub.serve_at(number, address(0x11), slot, value);
+        stub.serve_bal_at(
+            hashes[step],
+            bal_bytes(&[(address(0x11), slot, U256::from(value))]),
+        );
+        let anchor = identified(number, hashes[step]);
+        let ticket = driver.deliver(anchor, hashes[step - 1]);
+        let report = settled(&driver.advance(ticket, &[address(0x11)]).await);
+        let view = driver.snapshot(anchor);
+        assert!(view.readiness.is_ready(), "head {number} settled ready");
+        assert_eq!(
+            report.held, report.live,
+            "head {number}: unbounded retention expires nothing"
+        );
+        assert_eq!(
+            report.held,
+            view.hub.snapshot_len(),
+            "head {number}: the report counts what the chain holds"
+        );
+        assert_eq!(
+            report.live,
+            view.hub.live_len(),
+            "head {number}: the report counts what the chain serves"
+        );
+        saw_compaction = saw_compaction || report.compaction.is_some();
+    }
+    assert!(saw_compaction, "a threshold of one must fold every link");
+
+    // A settle that lands after a child sealed the generation stays in that
+    // handle's late map: it is held and served, so both counts agree there too.
+    let sealed = driver.snapshot(identified(HEIGHT + 1, hashes[1])).hub;
+    let late_slot = U256::from(77u64);
+    stub.serve_at(HEIGHT + 1, address(0x22), late_slot, 5);
+    let (held_before, live_before) = (sealed.snapshot_len(), sealed.live_len());
+    sealed
+        .read_storage(address(0x22), late_slot)
+        .await
+        .expect("the stub answers");
+    let (held_after, live_after) = (sealed.snapshot_len(), sealed.live_len());
+    assert_eq!(
+        held_after,
+        held_before + 1,
+        "the settle joined the late map"
+    );
+    assert_eq!(
+        live_after, held_after,
+        "a late settle is held and served alike"
+    );
+    assert_eq!(live_after, live_before + 1);
+}
+
 /// The readiness a chain's FIRST head settles with: nothing was installed to
 /// carry from, so it settles cold and says so.
 fn cold_first_head() -> HeadReadiness {

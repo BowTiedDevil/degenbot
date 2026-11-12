@@ -19,8 +19,11 @@
 //!
 //! [`WaiterSample::net`] is that resolution with the prepare wall it overlapped
 //! subtracted: the settle, the wake, and the wait's own re-read, with the fetch
-//! and decode the wait joined never counted a second time. The controlled
-//! parked window enters both windows and so cancels out of the difference.
+//! and decode the wait joined never counted a second time. Both windows share
+//! ONE clock origin, taken before the advance that carries the preparation is
+//! constructed and first polled, so the prepare is a sub-interval of the wait
+//! rather than a window that starts after it. The controlled parked window
+//! enters both windows and so cancels out of the difference.
 //!
 //! The leg reads no node: the heads, hashes, lists, and relevance set come from
 //! the committed capture, so the apply it times is production-shaped and the run
@@ -176,17 +179,20 @@ impl WaiterChain {
 pub struct WaiterSample {
     /// The head the sample delivered.
     pub head: u64,
-    /// The wait's whole wall: from its first poll, where it registers on the
-    /// LIVE attempt, to its terminal answer.
+    /// The wait's whole wall: from the sample's common clock origin, which
+    /// precedes the advance's construction and first poll, to its terminal
+    /// answer. Its own first poll is where it registers on the LIVE attempt.
     pub wait: Duration,
     /// The advance's own prepare wall — the fetch and full decode the wait
-    /// overlapped.
+    /// overlapped, measured from that same origin (inside the advance's first
+    /// poll), so it is a sub-interval of [`Self::wait`].
     pub prepare: Duration,
     /// The parked window the sample waited out on the closed gate: the control
     /// that makes the wait's registration observable before its notification.
     pub hold: Duration,
     /// [`Self::wait`] net of [`Self::prepare`]: what a caller that joined the
-    /// preparation pays once that preparation finishes.
+    /// preparation pays once that preparation finishes, plus the advance's own
+    /// construction between the shared origin and the prepare's start.
     pub net: Duration,
     /// What the wait answered: `ready` for a carried settle, or the settled-cold
     /// reason the leg's first head reports (it has no parent to carry from).
@@ -204,7 +210,9 @@ async fn poll_once<F: Future>(mut future: Pin<&mut F>) -> Poll<F::Output> {
 /// are parked.
 ///
 /// `hold` is the parked window both futures wait out; it is inside the wait and
-/// inside the prepare alike, so it cancels out of [`WaiterSample::net`].
+/// inside the prepare alike, so it cancels out of [`WaiterSample::net`]. The
+/// clock origin both samples share is taken before the advance is constructed,
+/// so the wait always covers the whole prepare wall it subtracts.
 ///
 /// # Errors
 ///
@@ -224,6 +232,12 @@ pub async fn waiter_leg(
         chain.stub().defer_bal();
         let ticket = driver.deliver(anchor, head.parent_hash);
 
+        // The sample's ONE clock origin. The prepare clock starts inside the
+        // advance's first poll below, so starting the wait before that future
+        // even exists makes the prepare a sub-interval of the wait instead of a
+        // window that begins after the wait has already been measured.
+        let wait_started = Instant::now();
+
         // One poll: the advance mints its claim attempt and parks on the closed
         // transport gate, so the wait below joins a genuinely LIVE preparation.
         let mut advance = Box::pin(driver.advance(ticket, &relevance));
@@ -234,7 +248,6 @@ pub async fn waiter_leg(
             ));
         }
 
-        let wait_started = Instant::now();
         let mut waiter = Box::pin(driver.wait_for_head(anchor));
         if poll_once(waiter.as_mut()).await.is_ready() {
             return Err(format!(

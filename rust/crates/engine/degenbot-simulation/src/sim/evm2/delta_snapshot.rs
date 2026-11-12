@@ -775,7 +775,35 @@ struct GenState {
 impl GenState {
     /// Resolve one identity: this generation's own map before the chain, and
     /// [`Option::None`] for an entry the policy has expired.
+    ///
+    /// [`Retention::Unbounded`] serves every record at every block, so recency
+    /// cannot change a value: the answer is the value lookup alone. Every held
+    /// identity carries a record (see [`Self::values`]), which is all the
+    /// policy path's record probe can find, so skipping it skips no expiry.
     fn resolved(&self, key: &Slot, now: u64, retention: Retention) -> Option<StorageValue> {
+        match retention {
+            Retention::Unbounded => self
+                .values
+                .get(key)
+                .copied()
+                .or_else(|| self.node.held_value(key)),
+            Retention::IdleBlocks(_) => self.resolved_through_policy(key, now, retention),
+        }
+    }
+
+    /// The general read path: the freshest recency record this generation and
+    /// its chain hold, the policy's question about it, and only then the value
+    /// — the reference [`Self::resolved`]'s unbounded arm is pinned against
+    /// (`the_unbounded_read_answers_exactly_what_the_policy_path_answers`).
+    fn resolved_through_policy(
+        &self,
+
+        key: &Slot,
+
+        now: u64,
+
+        retention: Retention,
+    ) -> Option<StorageValue> {
         let own = self.used.get(key).copied();
 
         let below = self.node.freshest_use(key);
@@ -817,13 +845,26 @@ impl GenState {
 
     /// The identities this state can serve at `now`: every held value whose
     /// freshest record the policy still serves.
+    ///
+    /// [`Retention::Unbounded`] expires nothing, so the answer is the chain's
+    /// own identity count — the arithmetic [`DeltaHub::snapshot_len`] reports —
+    /// instead of collecting every chain key and re-resolving each one.
     fn live_len(&self, now: u64, retention: Retention) -> usize {
+        match retention {
+            Retention::Unbounded => self.node.entries().saturating_add(self.new_keys),
+            Retention::IdleBlocks(_) => self.live_len_through_policy(now, retention),
+        }
+    }
+
+    /// The general live count: every identity this generation and its chain
+    /// hold, counted only when the policy still serves it.
+    fn live_len_through_policy(&self, now: u64, retention: Retention) -> usize {
         let mut keys: HashSet<Slot> = self.values.keys().copied().collect();
 
         self.node.collect_value_keys(&mut keys);
 
         keys.into_iter()
-            .filter(|key| self.resolved(key, now, retention).is_some())
+            .filter(|key| self.resolved_through_policy(key, now, retention).is_some())
             .count()
     }
 }
@@ -2920,5 +2961,271 @@ fn settled_readiness(report: Option<&DeltaReport>) -> HeadReadiness {
         Some(CarryOutcome::Carried { .. } | CarryOutcome::AlreadyCurrent) | None => {
             HeadReadiness::Ready
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One storage identity: one word of one account.
+    fn slot(tag: u8, index: u64) -> Slot {
+        (Address::new([tag; 20]), U256::from(index))
+    }
+
+    /// One storage word.
+    fn value(word: u64) -> StorageValue {
+        U256::from(word)
+    }
+
+    /// The identities every pose is probed for: a local value, a shadowed
+    /// value, an inherited value, a late settle, and an identity nobody holds.
+    fn probes() -> [Slot; 5] {
+        [
+            slot(0xaa, 1),
+            slot(0xaa, 2),
+            slot(0xbb, 1),
+            slot(0xcc, 1),
+            slot(0xdd, 1),
+        ]
+    }
+
+    /// The node a seal derives from a generation's own maps: the delta with one
+    /// recency record per value, and the `new_keys` count of identities the
+    /// parent chain does not already hold.
+    fn node(
+        parent: Option<Arc<DeltaSnapshot>>,
+        values: &[(Slot, StorageValue)],
+        used: &[(Slot, u64)],
+    ) -> Arc<DeltaSnapshot> {
+        let delta: HashMap<Slot, StorageValue> = values.iter().copied().collect();
+        let new_keys = delta
+            .keys()
+            .filter(|key| parent.as_ref().is_none_or(|parent| !parent.holds(key)))
+            .count();
+        Arc::new(DeltaSnapshot::node(
+            parent,
+            delta,
+            used.iter().copied().collect(),
+            new_keys,
+        ))
+    }
+
+    /// A generation's own state over `node`: its values and records on top of
+    /// the chain, with `new_keys` counted the way a settle and a seeded write
+    /// count it. `sealed` marks the pose a child's link leaves behind, where
+    /// `node` already holds `values`.
+    fn state(
+        node: Arc<DeltaSnapshot>,
+        values: &[(Slot, StorageValue)],
+        used: &[(Slot, u64)],
+        sealed: bool,
+    ) -> GenState {
+        let own: HashMap<Slot, StorageValue> = values.iter().copied().collect();
+        let new_keys = own.keys().filter(|key| !node.holds(key)).count();
+        GenState {
+            values: own,
+            used: used.iter().copied().collect(),
+            node,
+            sealed,
+            new_keys,
+        }
+    }
+
+    /// One chain pose and what it must answer, in [`probes`] order, plus the
+    /// identities it can serve.
+    struct Pose {
+        label: &'static str,
+        generation: GenState,
+        answers: [Option<StorageValue>; 5],
+        live: usize,
+    }
+
+    /// The poses a chain can be in: a first head over the void root, a
+    /// generation holding its own value over a two-link chain, a generation
+    /// whose whole chain was folded into one root, a sealed generation
+    /// answering a late settle, and a generation refreshing an inherited word.
+    fn poses() -> [Pose; 5] {
+        let [local, shadowed, inherited, late, ..] = probes();
+
+        let root = node(
+            None,
+            &[(shadowed, value(8)), (inherited, value(7))],
+            &[(shadowed, 10), (inherited, 10)],
+        );
+
+        // A two-link chain: the tip's own value plus a record for an inherited
+        // word it was read at — a refresh that carries no value of its own.
+        let tip = node(
+            Some(Arc::clone(&root)),
+            &[(local, value(5))],
+            &[(local, 11), (inherited, 12)],
+        );
+
+        // A fold of several generations into one root: no parent, many entries.
+        let compacted = node(
+            None,
+            &[(local, value(5)), (inherited, value(7))],
+            &[(local, 11), (inherited, 12)],
+        );
+
+        // The pose a child's link leaves: the sealed node holds everything this
+        // generation had published, and a settle that landed afterwards stays
+        // handle-local.
+        let sealed = node(
+            Some(Arc::clone(&root)),
+            &[(local, value(5)), (shadowed, value(9))],
+            &[(local, 11), (shadowed, 13)],
+        );
+
+        [
+            Pose {
+                label: "a first head over the void root",
+                generation: state(Arc::new(DeltaSnapshot::root()), &[], &[], false),
+                answers: [None; 5],
+                live: 0,
+            },
+            Pose {
+                label: "a generation holding its own value over a two-link chain",
+                generation: state(
+                    Arc::clone(&tip),
+                    &[(shadowed, value(9))],
+                    &[(shadowed, 13), (local, 13), (inherited, 13)],
+                    false,
+                ),
+                answers: [Some(value(5)), Some(value(9)), Some(value(7)), None, None],
+                live: 3,
+            },
+            Pose {
+                label: "a generation whose whole chain was compacted into one root",
+                generation: state(
+                    Arc::clone(&compacted),
+                    &[(shadowed, value(9))],
+                    &[(shadowed, 13)],
+                    false,
+                ),
+                answers: [Some(value(5)), Some(value(9)), Some(value(7)), None, None],
+                live: 3,
+            },
+            Pose {
+                label: "a sealed generation answering its own late settle",
+                generation: state(
+                    Arc::clone(&sealed),
+                    &[(late, value(4))],
+                    &[(late, 20)],
+                    true,
+                ),
+                answers: [
+                    Some(value(5)),
+                    Some(value(9)),
+                    Some(value(7)),
+                    Some(value(4)),
+                    None,
+                ],
+                live: 4,
+            },
+            Pose {
+                label: "a generation refreshing an inherited word with no value of its own",
+                generation: state(Arc::clone(&root), &[], &[(inherited, 20)], false),
+                answers: [None, Some(value(8)), Some(value(7)), None, None],
+                live: 2,
+            },
+        ]
+    }
+
+    /// The unbounded read fast path answers exactly what the retention-policy
+    /// path answers in every chain pose: a local hit, an ancestor hit, a
+    /// shadowed value, a miss, a compacted root, and a sealed generation's late
+    /// settle.
+    ///
+    /// The reading generation is far past every record in these fixtures, so a
+    /// path that consulted recency would have something to expire.
+    #[test]
+    fn the_unbounded_read_answers_exactly_what_the_policy_path_answers() {
+        let now = 40;
+
+        for pose in &poses() {
+            for (key, expected) in probes().iter().zip(pose.answers) {
+                let fast = pose.generation.resolved(key, now, Retention::Unbounded);
+                assert_eq!(
+                    fast,
+                    pose.generation
+                        .resolved_through_policy(key, now, Retention::Unbounded),
+                    "{}: the fast read disagreed with the policy path for {key:?}",
+                    pose.label
+                );
+                assert_eq!(fast, expected, "{}: {key:?}", pose.label);
+            }
+        }
+    }
+
+    /// The unbounded live count answers exactly what the retention-policy path
+    /// counts in every chain pose, and equals the snapshot count: with nothing
+    /// expiring, every held identity is a served one.
+    #[test]
+    fn the_unbounded_live_count_answers_exactly_what_the_policy_path_counts() {
+        let now = 40;
+
+        for pose in &poses() {
+            let live = pose.generation.live_len(now, Retention::Unbounded);
+            assert_eq!(
+                live,
+                pose.generation
+                    .live_len_through_policy(now, Retention::Unbounded),
+                "{}: the fast live count disagreed with the policy path",
+                pose.label
+            );
+            assert_eq!(live, pose.live, "{}: the live count", pose.label);
+            assert_eq!(
+                live,
+                pose.generation
+                    .node
+                    .entries()
+                    .saturating_add(pose.generation.new_keys),
+                "{}: the fast live count is the snapshot count",
+                pose.label
+            );
+        }
+    }
+
+    /// Idle retention still expires what the unbounded path serves: the fast
+    /// paths are the unbounded branch only, so an entry past its window stays
+    /// unknown and uncounted at the reading generation.
+    #[test]
+    fn idle_retention_still_expires_what_the_unbounded_read_path_serves() {
+        let stale = slot(0xaa, 1);
+        let fresh = slot(0xbb, 1);
+        let base = node(
+            None,
+            &[(stale, value(7)), (fresh, value(8))],
+            &[(stale, 10), (fresh, 40)],
+        );
+        let generation = state(base, &[], &[], false);
+
+        // Far past the stale entry's window, one block into the fresh one's.
+        let now = 41;
+
+        assert_eq!(
+            generation.resolved(&stale, now, Retention::Unbounded),
+            Some(value(7)),
+            "unbounded retains every settled word"
+        );
+        assert_eq!(
+            generation.resolved(&stale, now, Retention::IdleBlocks(0)),
+            None,
+            "an entry past its window is unknown again"
+        );
+        assert_eq!(
+            generation.resolved(&fresh, now, Retention::IdleBlocks(10)),
+            Some(value(8)),
+            "an entry inside its window is still served"
+        );
+        assert_eq!(generation.live_len(now, Retention::Unbounded), 2);
+        assert_eq!(
+            generation.live_len(now, Retention::IdleBlocks(10)),
+            1,
+            "only the entry inside its window is counted"
+        );
+        assert_eq!(generation.live_len(now, Retention::IdleBlocks(0)), 0);
     }
 }
