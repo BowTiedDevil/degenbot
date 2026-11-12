@@ -31,18 +31,18 @@ evm2-jit-builtins = { workspace = true, features = ["ir"] }
 evm2-jit-context.workspace = true
 evm2-jit-llvm = { workspace = true, optional = true }
 
-alloy-primitives = { version = "1.5.7", default-features = false, features = ["std", "map-fxhash"] }
+alloy-primitives = { version = "1.7.3", default-features = false, features = ["std", "map-fxhash"] }
 
-bitflags = "2.5"
+bitflags = "2.13"
 derive_more = { version = "2", default-features = false, features = ["debug"] }
-bitvec = "1.0"
-either = "1.13"
-tempfile = "3.10"
+bitvec = "1.1"
+either = "1.19"
+tempfile = "3.27"
 tracing = { version = "0.1" }
 
-smallvec = "1.15.1"
+smallvec = "1.16.5"
 oxc_index = { version = "5.0.0", features = ["nonmax"] }
-indexmap = "2.13.0"
+indexmap = "2.14.2"
 
 [build-dependencies]
 evm2-jit-build.workspace = true

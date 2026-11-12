@@ -24,7 +24,7 @@ alloy = { version = "^2.5" }
 # species key fails at first use. `toml` already resolves in the workspace
 # graph (degenbot-config / degenbot-python), so this grows no new crate.
 serde = { version = "^1.0", features = ["derive"] }
-toml = "1.2.0"
+toml = "1.2.1"
 # `op_info!` / `op_warn!` telemetry — the ADR-052 D1 heal-at-open report.
 # Pyo3-free and already in this crate's graph via `degenbot-math` (which
 # depends on `degenbot-core`), so this direct edge only names the macros the
@@ -43,7 +43,7 @@ parking_lot = { version = "^0.13" }
 # only here so libsqlite3-sys is compiled once for the whole workspace.
 # See ADR-010/ADR-011 before reining this in — the on-disk SQLite version
 # this ships is the one creating/reading the Alembic-era .db files.
-rusqlite = { version = "^0.41", features = ["bundled", "backup"] }
+rusqlite = { version = "^0.42", features = ["bundled", "backup"] }
 # Golden-artifact serialization for the `sql-ledger` feature (the canonical
 # statement-ledger + DB-dump JSON writers). Optional: production builds never
 # enable the feature, so serde_json stays out of the default dependency graph

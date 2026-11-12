@@ -24,8 +24,8 @@ doctest = false
 evm2-jit-backend.workspace = true
 
 llvm-sys = "231"
-alloy-primitives = { version = "1.5.7", default-features = false, features = ["std", "map-fxhash"] }
-object = { version = "0.40", default-features = false, features = ["read_core", "elf"] }
+alloy-primitives = { version = "1.7.3", default-features = false, features = ["std", "map-fxhash"] }
+object = { version = "0.41", default-features = false, features = ["read_core", "elf"] }
 tracing = { version = "0.1" }
 
 [build-dependencies]

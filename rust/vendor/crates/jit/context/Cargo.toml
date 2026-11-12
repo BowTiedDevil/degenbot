@@ -21,7 +21,7 @@ test = false
 doctest = false
 
 [dependencies]
-alloy-primitives = { version = "1.5.7", default-features = false }
+alloy-primitives = { version = "1.7.3", default-features = false }
 evm2.workspace = true
 ruint = { version = "1.21.1", default-features = false }
 

@@ -32,7 +32,7 @@ evm2-jit-context.workspace = true
 evm2-jit-llvm = { workspace = true, optional = true }
 evm2-jit-builtins = { workspace = true, features = ["ir"] }
 
-alloy-primitives = { version = "1.5.7", default-features = false, features = ["std", "map-fxhash"] }
+alloy-primitives = { version = "1.7.3", default-features = false, features = ["std", "map-fxhash"] }
 
 crossbeam-channel = { version = "0.5" }
 crossbeam-queue = { version = "0.3" }
@@ -40,12 +40,12 @@ dashmap = "6"
 derive_more = { version = "2", default-features = false, features = ["debug"] }
 eyre = { version = "0.6" }
 libc = { version = "0.2" }
-tempfile = "3.10"
+tempfile = "3.27"
 quanta = { version = "0.13" }
-rayon = { version = "1.10" }
+rayon = { version = "1.12" }
 tracing = { version = "0.1" }
 wait-timeout = { version = "0.2" }
-wincode = { version = "0.6.0", default-features = false, features = ["derive", "std"] }
+wincode = { version = "0.6.3", default-features = false, features = ["derive", "std"] }
 
 [features]
 default = ["llvm"]

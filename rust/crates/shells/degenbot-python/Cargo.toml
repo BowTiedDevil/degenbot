@@ -83,7 +83,7 @@ tracing-log = { version = "^0.2" }
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "ansi", "env-filter", "registry", "alloc"] }
 serde_json = { version = "^1.0" }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "sync"] }
-toml = "1.2.0"
+toml = "1.2.1"
 degenbot-eventhub.workspace = true
 
 # The JIT's forward is TARGET-SCOPED, not a feature list above: features on a

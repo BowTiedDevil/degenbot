@@ -24,7 +24,7 @@ doctest = false
 evm2.workspace = true
 evm2-jit-context.workspace = true
 
-alloy-primitives = { version = "1.5.7", default-features = false }
+alloy-primitives = { version = "1.7.3", default-features = false }
 paste = { version = "1.0", default-features = false }
 
 evm2-jit-backend = { workspace = true, optional = true }

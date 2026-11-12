@@ -22,7 +22,7 @@ alloy = { version = "^2.5", features = ["full"] }
 # RPC layer speaks, never a hand-written parser. `rlp` is the raw
 # `debug_getRawBlockAccessList` representation; `serde` the official
 # `eth_getBlockAccessList` JSON one — one type, two codecs.
-alloy-eip7928 = { version = "0.4.11", features = ["rlp", "serde"] }
+alloy-eip7928 = { version = "0.4.12", features = ["rlp", "serde"] }
 # evm2 — THE engine (ADR-089 cutover; ADR-091 retired revm), through the
 # vendored fork (rust/vendor/, ADR-096): imported as `evm2`, published as
 # `degenbot-evm2` because upstream's crate is unpublished. Features are the
