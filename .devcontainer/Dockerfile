@@ -111,6 +111,16 @@ ENV PATH="/home/${USERNAME}/go/bin:/home/${USERNAME}/.foundry/bin:/home/${USERNA
 # CI's runners are manylinux-compatible and keep the wheel.
 ENV UV_NO_BINARY_PACKAGE=pydantic-core
 
+# vsce-sign — VSCode's extension signature verifier, a self-contained .NET
+# binary spawned on every extension install — aborts with SIGABRT
+# ("No usable version of libssl was found"), so every install fails with
+# "Signature verification failed with 'UnknownError' error": Fedora 45 ships
+# OpenSSL 4 (libssl.so.4) while .NET's libssl probe only tries sonames up to
+# libssl.so.3. The override is the soname suffix .NET should probe
+# (libssl.so.$CLR_OPENSSL_VERSION_OVERRIDE); bump it if Fedora bumps the
+# OpenSSL soname again.
+ENV CLR_OPENSSL_VERSION_OVERRIDE=4
+
 # Configure npm's global prefix to a user-writable dir so `npm i -g`
 # (agent-browser, below) needs no sudo, and the bins land in ~/.local/bin
 # (already on PATH via ENV above).
