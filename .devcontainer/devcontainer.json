@@ -280,8 +280,7 @@
     // T5 (RMH23E): OTLP span export target for DEGENBOT_OTEL=1 runs. Jaeger
     // (ethereum pod) publishes 4318 to the host; the code default is the
     // container's own loopback, which has no collector.
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://host.containers.internal:4318",
-    "DEGENBOT_MAX_PATHS": "5000000"
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://host.containers.internal:4318"
   },
   // Extensions auto-installed into the container on first launch. The interpreter
   // is pinned to the container-local venv (UV_PROJECT_ENVIRONMENT above), NOT the
@@ -291,16 +290,13 @@
     "vscode": {
       "extensions": [
         "astral-sh.ty",
-        "bierner.markdown-mermaid",
         "charliermarsh.ruff",
-        "davidanson.vscode-markdownlint",
         "github.vscode-github-actions",
         "huff-language.huff-language",
         "ms-python.python",
         "ms-python.vscode-pylance",
         "pkief.material-icon-theme",
         "rust-lang.rust-analyzer",
-        "sandover.ergo-backlog",
         "tintinweb.vscode-vyper"
       ],
       "settings": {
