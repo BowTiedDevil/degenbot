@@ -97,15 +97,11 @@ fn v4v4_arm(
         let open_weth = batch && capture == ProfitCapture::Erc6909 && out_b == weth;
         let explicit_take = out_b != NATIVE_CURRENCY_ADDRESS && out_b != weth;
         let steps: Plan = if batch {
-            vec![mechanics::v4_batch(
-                &mut at,
-                fa,
-                vec![
-                    mechanics::v4_batch_entry(fa, c0_a, c1_a, optimal, fwd, fa.in_currency),
-                    mechanics::v4_batch_entry(fb, c0_b, c1_b, b_swap_in, b_out, out_a),
-                ],
-                open_weth,
-            )]
+            let entries = vec![
+                mechanics::v4_batch_entry(&mut at, fa, c0_a, c1_a, optimal, fwd, fa.in_currency)?,
+                mechanics::v4_batch_entry(&mut at, fb, c0_b, c1_b, b_swap_in, b_out, out_a)?,
+            ];
+            vec![mechanics::v4_batch(&mut at, fa, entries, open_weth)]
         } else {
             vec![
                 mechanics::v4_swap(&mut at, fa, optimal, fwd)?,

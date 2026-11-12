@@ -143,6 +143,8 @@ pub struct HopFacts {
     pub pool_address: Address,
     /// V4 only — the pool-id hex. `None` for V2/V3.
     pub pool_id_hex: Option<String>,
+    /// V4 hook identity; zero for hookless V4 pools and for V2/V3.
+    pub hook_address: Address,
     /// V4 only — currency0 / currency1.
     pub currency0_address: Address,
     pub currency1_address: Address,
@@ -161,7 +163,7 @@ pub struct HopFacts {
 /// `v3_v4_v3` shape exercises is implemented; A2 generalizes.
 mod mechanics {
     use super::{AddressTable, HopFacts, OutDest};
-    use crate::encoders::{SENTINEL_NATIVE, SENTINEL_PM, SENTINEL_SELF};
+    use crate::encoders::{SENTINEL_PM, SENTINEL_SELF};
     use crate::grammar_ledger::Prot;
     use crate::grammar_plan::{Plan, PlanStep, V4BatchSwap};
     use alloy::primitives::Address;
@@ -305,12 +307,13 @@ mod mechanics {
         amount_in: u128,
         out_amount: u128,
     ) -> Option<PlanStep> {
+        let hooks_idx = at.add(facts.hook_address).ok()?;
         Some(PlanStep::V4Swap {
             c0_idx: at.add(facts.currency0_address).ok()?,
             c1_idx: at.add(facts.currency1_address).ok()?,
             fee: facts.swap_fee,
             tick_spacing: facts.tick_spacing,
-            hooks_idx: SENTINEL_NATIVE,
+            hooks_idx,
             zfo: facts.zfo,
             amount: amount_in,
             in_currency: facts.in_currency,
@@ -447,26 +450,27 @@ mod mechanics {
     /// tick_spacing / zfo / out-currency; the shape stages the table and
     /// passes the pair indices + the (possibly bridged) input currency.
     pub fn v4_batch_entry(
+        at: &mut AddressTable,
         facts: &HopFacts,
         c0_idx: u8,
         c1_idx: u8,
         amount: u128,
         out_amount: u128,
         in_currency: Address,
-    ) -> V4BatchSwap {
-        V4BatchSwap {
+    ) -> Option<V4BatchSwap> {
+        Some(V4BatchSwap {
             c0_idx,
             c1_idx,
             fee: facts.swap_fee,
             tick_spacing: facts.tick_spacing,
-            hooks_idx: SENTINEL_NATIVE,
+            hooks_idx: at.add(facts.hook_address).ok()?,
             zfo: facts.zfo,
             amount,
             in_currency,
             in_amount: amount,
             out_currency: facts.out_currency,
             out_amount,
-        }
+        })
     }
 
     /// Deposit WETH into the V4 pool (the v2v4 native-out in-callback arm).
@@ -637,6 +641,7 @@ pub(crate) fn v3_hop_facts(h: &V3HopInfo) -> HopFacts {
         repay: Repay::SelfRefund,
         pool_address: h.pool_address,
         pool_id_hex: None,
+        hook_address: Address::ZERO,
         terminal_form: None,
         repay_mechanism: None,
         seed_delivery: None,
@@ -662,6 +667,7 @@ pub(crate) fn v2_hop_facts(h: &V2HopInfo) -> HopFacts {
         repay: Repay::SelfRefund,
         pool_address: h.pool_address,
         pool_id_hex: None,
+        hook_address: Address::ZERO,
         terminal_form: None,
         repay_mechanism: None,
         seed_delivery: None,
@@ -684,6 +690,7 @@ pub(crate) fn v4_hop_facts(h: &V4HopInfo) -> HopFacts {
         repay: Repay::Offstream,
         pool_address: h.pool_manager_address,
         pool_id_hex: Some(h.pool_id_hex.clone()),
+        hook_address: h.hook_address,
         terminal_form: None,
         repay_mechanism: None,
         seed_delivery: None,

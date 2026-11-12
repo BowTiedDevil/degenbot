@@ -106,7 +106,7 @@ fn encode_cmd_stream_routes_two_hop_v2_v3_via_the_intake_pair() {
 // validator keeps the composed stream checkable.
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn v4_hop(c0: Address, c1: Address, zfo: bool) -> HopInfo {
+fn v4_hop_with_hook(c0: Address, c1: Address, zfo: bool, hook_address: Address) -> HopInfo {
     HopInfo::V4(V4HopInfo {
         pool_manager_address: PM,
         pool_id_hex: "0x0".into(),
@@ -114,9 +114,241 @@ fn v4_hop(c0: Address, c1: Address, zfo: bool) -> HopInfo {
         currency1_address: c1,
         fee: 3000,
         tick_spacing: 60,
-        hook_address: Address::ZERO,
+        hook_address,
         zfo,
     })
+}
+
+fn v4_hop(c0: Address, c1: Address, zfo: bool) -> HopInfo {
+    v4_hop_with_hook(c0, c1, zfo, Address::ZERO)
+}
+
+#[test]
+fn v4_compact_swaps_encode_declared_hooks() {
+    let hook_a = Address::repeat_byte(0x11);
+    let hook_b = Address::repeat_byte(0x22);
+    let path = PathInfo::new(vec![
+        v4_hop_with_hook(WETH, USDC, true, hook_a),
+        v4_hop_with_hook(USDC, WETH, true, hook_b),
+    ]);
+    let req = EncodeRequest::new(
+        path,
+        1_000_000_000_000_000_000,
+        vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
+        vec![999_999_999_999_999_999, 999_999_999_999_999_999],
+        EncodeOptions::default(),
+    );
+    let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
+        .unwrap_or_else(|| panic!("hooked V4 path must encode"));
+    assert!(bytes.len() <= 288, "hooked two-hop stream exceeds the contract bound: {}", bytes.len());
+
+    let mut addresses = Vec::new();
+    let mut offset = 0;
+    while bytes[offset] == 0x00 {
+        addresses.push(Address::from_slice(&bytes[offset + 1..offset + 21]));
+        offset += 21;
+    }
+    assert_eq!(bytes[offset], 0xff, "preprocessing separator");
+    offset += 1;
+    assert_eq!(bytes[offset], 0x50, "V4_UNLOCK");
+    offset += 2;
+
+    for expected_hook in [hook_a, hook_b] {
+        assert_eq!(bytes[offset], 0x40, "V4_SWAP_COMPACT");
+        let hook_idx = bytes[offset + 7];
+        assert_ne!(hook_idx, 0xff, "hook must not use the no-hooks sentinel");
+        assert_eq!(addresses[usize::from(hook_idx)], expected_hook);
+        offset += 21;
+    }
+}
+
+#[test]
+fn v4_compact_swaps_in_three_hop_paths_encode_declared_hooks() {
+    let hook_a = Address::repeat_byte(0x33);
+    let hook_b = Address::repeat_byte(0x44);
+    let path = PathInfo::new(vec![
+        v4_hop_with_hook(WETH, TOK2, true, hook_a),
+        v4_hop_with_hook(TOK2, USDC, true, hook_b),
+        HopInfo::V2(V2HopInfo {
+            pool_address: Address::repeat_byte(0xcc),
+            token0_address: USDC,
+            token1_address: WETH,
+            fee: 30,
+            zfo: true,
+        }),
+    ]);
+    let req = EncodeRequest::new(
+        path,
+        1_000_000_000_000_000_000,
+        vec![
+            1_000_000_000_000_000_000,
+            1_100_000_000_000_000_000,
+            1_300_000_000_000_000_000,
+        ],
+        vec![999_999_999_999_999_999; 3],
+        EncodeOptions::default(),
+    );
+    let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
+        .unwrap_or_else(|| panic!("hooked V4-V4-V2 path must encode"));
+    assert!(bytes.len() <= 288, "hooked V4-V4-V2 stream exceeds the contract bound: {}", bytes.len());
+
+    let mut addresses = Vec::new();
+    let mut offset = 0;
+    while bytes[offset] == 0x00 {
+        addresses.push(Address::from_slice(&bytes[offset + 1..offset + 21]));
+        offset += 21;
+    }
+    assert_eq!(bytes[offset], 0xff, "preprocessing separator");
+    offset += 1;
+    assert_eq!(bytes[offset], 0x50, "V4_UNLOCK");
+    offset += 2;
+
+    for expected_hook in [hook_a, hook_b] {
+        assert_eq!(bytes[offset], 0x40, "V4_SWAP_COMPACT");
+        let hook_idx = bytes[offset + 7];
+        assert_ne!(hook_idx, 0xff, "hook must not use the no-hooks sentinel");
+        assert_eq!(addresses[usize::from(hook_idx)], expected_hook);
+        offset += 21;
+    }
+}
+
+#[test]
+fn v4_compact_swaps_in_pure_v4_three_hop_paths_encode_declared_hooks() {
+    let hook_a = Address::repeat_byte(0x77);
+    let hook_b = Address::repeat_byte(0x88);
+    let hook_c = Address::repeat_byte(0x99);
+    let path = PathInfo::new(vec![
+        v4_hop_with_hook(WETH, TOK2, true, hook_a),
+        v4_hop_with_hook(TOK2, USDC, true, hook_b),
+        v4_hop_with_hook(USDC, WETH, true, hook_c),
+    ]);
+    let req = EncodeRequest::new(
+        path,
+        1_000_000_000_000_000_000,
+        vec![
+            1_000_000_000_000_000_000,
+            1_100_000_000_000_000_000,
+            1_300_000_000_000_000_000,
+        ],
+        vec![999_999_999_999_999_999; 3],
+        EncodeOptions::default(),
+    );
+    let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
+        .unwrap_or_else(|| panic!("hooked V4-V4-V4 path must encode"));
+    assert!(bytes.len() <= 288, "hooked V4-V4-V4 stream exceeds the contract bound: {}", bytes.len());
+
+    let mut addresses = Vec::new();
+    let mut offset = 0;
+    while bytes[offset] == 0x00 {
+        addresses.push(Address::from_slice(&bytes[offset + 1..offset + 21]));
+        offset += 21;
+    }
+    assert_eq!(bytes[offset], 0xff, "preprocessing separator");
+    offset += 1;
+    assert_eq!(bytes[offset], 0x50, "V4_UNLOCK");
+    offset += 2;
+
+    for expected_hook in [hook_a, hook_b, hook_c] {
+        assert_eq!(bytes[offset], 0x40, "V4_SWAP_COMPACT");
+        let hook_idx = bytes[offset + 7];
+        assert_ne!(hook_idx, 0xff, "hook must not use the no-hooks sentinel");
+        assert_eq!(addresses[usize::from(hook_idx)], expected_hook);
+        offset += 21;
+    }
+}
+
+#[test]
+fn v4_batch_entries_encode_declared_hooks() {
+    let hook_a = Address::repeat_byte(0x55);
+    let hook_b = Address::repeat_byte(0x66);
+    let path = PathInfo::new(vec![
+        v4_hop_with_hook(WETH, USDC, true, hook_a),
+        v4_hop_with_hook(USDC, WETH, true, hook_b),
+    ]);
+    let req = EncodeRequest::new(
+        path,
+        1_000_000_000_000_000_000,
+        vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
+        vec![999_999_999_999_999_999, 999_999_999_999_999_999],
+        EncodeOptions {
+            use_v4_batch: true,
+            ..EncodeOptions::default()
+        },
+    );
+    let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
+        .unwrap_or_else(|| panic!("hooked V4 batch must encode"));
+    assert!(bytes.len() <= 288, "hooked two-hop batch exceeds the contract bound: {}", bytes.len());
+
+    let mut addresses = Vec::new();
+    let mut offset = 0;
+    while bytes[offset] == 0x00 {
+        addresses.push(Address::from_slice(&bytes[offset + 1..offset + 21]));
+        offset += 21;
+    }
+    assert_eq!(bytes[offset], 0xff, "preprocessing separator");
+    offset += 1;
+    assert_eq!(bytes[offset], 0x50, "V4_UNLOCK");
+    offset += 2;
+    assert_eq!(bytes[offset], 0x42, "V4_BATCH");
+    assert_eq!(bytes[offset + 1], 2);
+    offset += 2;
+
+    for expected_hook in [hook_a, hook_b] {
+        let hook_idx = bytes[offset + 6];
+        assert_ne!(hook_idx, 0xff, "hook must not use the no-hooks sentinel");
+        assert_eq!(addresses[usize::from(hook_idx)], expected_hook);
+        offset += 20;
+    }
+}
+
+#[test]
+fn v4_batch_entries_in_pure_v4_three_hop_paths_encode_declared_hooks() {
+    let hook_a = Address::repeat_byte(0xaa);
+    let hook_b = Address::repeat_byte(0xbb);
+    let hook_c = Address::repeat_byte(0xcc);
+    let path = PathInfo::new(vec![
+        v4_hop_with_hook(WETH, TOK2, true, hook_a),
+        v4_hop_with_hook(TOK2, USDC, true, hook_b),
+        v4_hop_with_hook(USDC, WETH, true, hook_c),
+    ]);
+    let req = EncodeRequest::new(
+        path,
+        1_000_000_000_000_000_000,
+        vec![
+            1_000_000_000_000_000_000,
+            1_100_000_000_000_000_000,
+            1_300_000_000_000_000_000,
+        ],
+        vec![999_999_999_999_999_999; 3],
+        EncodeOptions {
+            use_v4_batch: true,
+            ..EncodeOptions::default()
+        },
+    );
+    let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
+        .unwrap_or_else(|| panic!("hooked V4-V4-V4 batch must encode"));
+    assert!(bytes.len() <= 288, "hooked V4-V4-V4 batch exceeds the contract bound: {}", bytes.len());
+
+    let mut addresses = Vec::new();
+    let mut offset = 0;
+    while bytes[offset] == 0x00 {
+        addresses.push(Address::from_slice(&bytes[offset + 1..offset + 21]));
+        offset += 21;
+    }
+    assert_eq!(bytes[offset], 0xff, "preprocessing separator");
+    offset += 1;
+    assert_eq!(bytes[offset], 0x50, "V4_UNLOCK");
+    offset += 2;
+    assert_eq!(bytes[offset], 0x42, "V4_BATCH");
+    assert_eq!(bytes[offset + 1], 3);
+    offset += 2;
+
+    for expected_hook in [hook_a, hook_b, hook_c] {
+        let hook_idx = bytes[offset + 6];
+        assert_ne!(hook_idx, 0xff, "hook must not use the no-hooks sentinel");
+        assert_eq!(addresses[usize::from(hook_idx)], expected_hook);
+        offset += 20;
+    }
 }
 
 /// A WETH-terminal 2-hop V4 path (WETH → USDC → WETH), consistent amounts.
