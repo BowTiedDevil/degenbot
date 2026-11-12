@@ -47,19 +47,26 @@ solve's anchor on every quote — values are never cached across anchors.
    frame, any leg through an amount-modifying hooked pool is re-quoted
    black-box: the real PoolManager and hook contracts execute under evm2 at
    the solve's anchor block (Quoter pattern — execute-then-revert), and the
-   candidate's expected output is replaced with the exact figure. Candidates
-   whose exact quote no longer clears the bar die here instead of wasting a
-   verification slot.
+   candidate's expected output is replaced with the exact figure. The
+   canonical Quoter runtime runs at a neutral scratch address, because a hook
+   can special-case the canonical Quoter address and behave differently for
+   the executor. Candidates whose exact quote no longer clears the bar die
+   here instead of wasting a verification slot. A reverted quote rejects the
+   candidate; an unavailable quoting capability does not fabricate an exact
+   figure or authorize approximate execution.
 3. **Hook state freshness.** The first black-box quote for a hook captures
    its touched-slot set (the access-list capture); the set persists keyed by
    hook (and spec) so steady-state re-quotes join the one-batch prefetch.
    Values come from the node at the anchor, every time.
-4. **Caveat semantics.** `Caveats::HOOKED_POOL` remains on the search-tier
-   approximation and on any path whose hooked legs were *not* black-box
-   re-quoted (tier unavailable, hook not yet learned). A finalist whose
-   hooked legs were all re-quoted at the anchor carries an exact quote; the
-   caveat no longer applies to the quote (settlement risk is the
-   verification frame's domain, unchanged).
+4. **Caveat and execution semantics.** `Caveats::HOOKED_POOL` remains on the
+   search-tier approximation and on any path whose hooked legs were *not*
+   black-box re-quoted (tier unavailable, hook not yet learned). A finalist
+   whose hooked legs were all re-quoted at the anchor carries an exact quote;
+   the caveat no longer applies to the quote (settlement risk is the
+   verification frame's domain, unchanged). Execution requires every hooked
+   leg to carry an exact, sender-honest quote. Approximate, unavailable,
+   refused, and cold-start-empty plans are search-only and cannot enter the
+   verification frame or delivery.
 
 Rejected alternatives: admission-only (A — ranking distortion wastes finalist
 slots on hook-fee paths and misses hook-discount alpha), black-box in the
@@ -71,7 +78,10 @@ candidates still compete.
 
 ## Consequences
 
-- ~24% of V4 liquidity becomes solvable (44,344 pools at the census date).
+- ~24% of V4 liquidity becomes eligible for exact quoting (44,344 pools at
+  the census date). Sender-dependent, reverting, or otherwise non-executable
+  directions are rejected rather than admitted under a canonical-Quoter
+  illusion.
 - The tier is the first production use of the ADR-089 fidelity machinery and
   creates the seam the dynamic-fee unlock (~489k path-facing pools, rejected
   at registration today) plugs into as a later phase: `beforeSwap`-computed

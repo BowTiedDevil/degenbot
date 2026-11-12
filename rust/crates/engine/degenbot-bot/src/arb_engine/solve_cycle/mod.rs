@@ -1243,7 +1243,8 @@ impl SolveCycle {
                             // a hook reading `block.timestamp` would be priced
                             // against a fabricated one. Hooked legs keep the
                             // white-box figure and the path keeps
-                            // `Caveats::HOOKED_POOL`; nothing is refused.
+                            // `Caveats::HOOKED_POOL`; the exact-only clamp
+                            // keeps the cold-start result out of execution.
                             let plan = HookedLegPlan::empty();
                             let _ = clamp_result_with_state(
                                 &core_read,

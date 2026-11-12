@@ -19,14 +19,14 @@
 //! anchor-pinned scratch EVM and installs it; a composition root without one
 //! simply never re-quotes, and every hooked leg stays approximate.
 //!
-//! # Fail-soft (ADR-089's pilot philosophy, ADR-090 §4)
+//! # Search fail-soft, execution fail-closed (ADR-090 §4)
 //!
-//! Nothing here can fail a candidate or a cycle. No installed tier, or a
-//! quoter refusal (no scratch EVM, a foreign `PoolManager`, a hook the frame
-//! cannot execute) leaves the leg
-//! [`Approximate`](HookedLegStage::Approximate): the clamp keeps the
-//! white-box figure and the path keeps `Caveats::HOOKED_POOL`, byte-identical
-//! to the pre-ADR-090 behavior.
+//! An unavailable tier leaves the leg
+//! [`Approximate`](HookedLegStage::Approximate): search keeps the white-box
+//! figure and the path keeps `Caveats::HOOKED_POOL`. That approximation is
+//! not executable. Only an exact, sender-honest quote for every hooked leg
+//! admits the candidate to verification and delivery; a chain refusal
+//! rejects it outright.
 //!
 //! # The quote carries the leg's GAS too
 //!
@@ -190,11 +190,11 @@ pub enum HookedLegStage {
     /// The chain's own answer at the anchor — exact by construction, with the
     /// quote frame's measured gas riding along.
     Exact(HookedLegQuote),
-    /// The chain refused the leg. The white-box figure stands for this pass (no
-    /// output exists to commit) and the path keeps its caveat, but the refusal
-    /// is recorded and the direction leaves the search tier.
+    /// The chain refused the leg. The current candidate is rejected and the
+    /// refusal is recorded so the direction leaves the search tier.
     Refused,
-    /// The white-box approximation stands; the path keeps its caveat.
+    /// The white-box approximation remains search-only; the candidate is not
+    /// executable until every hooked leg has an exact re-quote.
     Approximate,
 }
 

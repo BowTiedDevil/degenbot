@@ -86,6 +86,12 @@ pub(crate) fn clamp_result_with_state(
     plan: &HookedLegPlan,
     result: &mut SolvePathResult,
 ) -> u64 {
+    if result.caveats.contains(Caveats::HOOKED_POOL) && !plan.lifts_caveat() {
+        result.profit = U256::ZERO;
+        // The result changed, so merge must not clamp it again with an
+        // approximate plan and recompute the dropped profit.
+        return 1;
+    }
     // ADR-090 H3 → the admission floor: a hooked leg the finalist re-quote
     // priced exact at the anchor commits its MEASURED frame gas onto this
     // result's floor profiles. The clamp IS the re-quote's commit point, so the
@@ -162,9 +168,9 @@ pub(crate) fn clamp_result_with_state(
                 // input bound to derive from it — the exact output is the
                 // authority, and a candidate whose exact figure no longer
                 // clears the bar falls through the profit recompute below
-                // like any other. A hooked leg with NO exact quote (tier
-                // unavailable or refusing) takes the white-box twin, exactly
-                // as it would without the tier.
+                // like any other. A hooked leg with NO exact quote was
+                // rejected above; this arm is reachable only for hookless
+                // paths and legacy result fixtures.
                 if let Some(exact) = plan.exact_out(i) {
                     twins_executed += 1;
                     (exact, None)

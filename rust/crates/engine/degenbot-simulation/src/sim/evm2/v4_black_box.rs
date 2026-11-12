@@ -88,6 +88,11 @@ pub const V4_POOL_MANAGER: Address = address!("000000000004444c5dc75cB358380D2e3
 /// leg primitive.
 pub const V4_QUOTER: Address = address!("52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203");
 
+/// Scratch-only address used for production quotes. Hooks observe this
+/// address instead of the canonical quoter, whose special treatment would
+/// otherwise make a sender-dependent hook look executable.
+pub const V4_EXECUTION_QUOTER: Address = address!("000000000000000000000000000000000000dEaD");
+
 /// `quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes))`
 /// (`cast sig`); the module tests re-derive it from the signature.
 const QUOTE_EXACT_INPUT_SINGLE_SELECTOR: [u8; 4] = [0xaa, 0x9d, 0x21, 0xcb];
@@ -468,7 +473,10 @@ pub struct V4BlackBoxQuoter {
 
 impl Default for V4BlackBoxQuoter {
     fn default() -> Self {
-        Self::new(V4QuoterConfig::default())
+        Self::new(V4QuoterConfig {
+            quoter: V4_EXECUTION_QUOTER,
+            ..V4QuoterConfig::default()
+        })
     }
 }
 
@@ -587,12 +595,13 @@ impl V4BlackBoxQuoter {
     ///
     /// [`V4QuoteError::ManagerMismatch`] for a foreign manager; otherwise
     /// whatever [`quote_exact_in`] reports.
-    pub fn quote<Ext: Database>(
+    pub fn quote<Ext: ::evm2::evm::DynDatabase>(
         &mut self,
-        scratch: &mut Evm2ScratchEvm<Ext>,
+        scratch: &mut Evm2ScratchEvm<::evm2::evm::CacheDB<Ext>>,
         leg: &V4Leg,
         amount_in: U256,
     ) -> Result<V4BlackBoxQuote, V4QuoteError> {
+        install_execution_quoter(scratch, &self.config)?;
         let bound = if let Some(bound) = self.manager {
             bound
         } else {
@@ -660,6 +669,55 @@ impl V4BlackBoxQuoter {
             hookless_out: twin.amount_out,
         }))
     }
+}
+
+/// Install the canonical quoter runtime at the neutral production address.
+/// The override belongs to this scratch EVM and remains in place for the
+/// hook-fee twin, so neither the chain nor the next anchor inherits it.
+fn install_execution_quoter<Ext: ::evm2::evm::DynDatabase>(
+    scratch: &mut Evm2ScratchEvm<::evm2::evm::CacheDB<Ext>>,
+    config: &V4QuoterConfig,
+) -> Result<(), V4QuoteError> {
+    if config.quoter != V4_EXECUTION_QUOTER {
+        return Ok(());
+    }
+    let canonical = scratch.ext_mut().get_account(&V4_QUOTER).map_err(|error| {
+        V4QuoteError::Frame(ReplayFrameError::Other {
+            raw: format!("canonical quoter account read: {error}"),
+        })
+    })?;
+    let code_hash = canonical.map(|account| account.code_hash).ok_or_else(|| {
+        V4QuoteError::Frame(ReplayFrameError::Other {
+            raw: "canonical quoter has no runtime code".into(),
+        })
+    })?;
+    let code = scratch
+        .ext_mut()
+        .get_code_by_hash(&code_hash)
+        .map_err(|error| {
+            V4QuoteError::Frame(ReplayFrameError::Other {
+                raw: format!("canonical quoter code read: {error}"),
+            })
+        })?;
+    if code.is_empty() {
+        return Err(V4QuoteError::Frame(ReplayFrameError::Other {
+            raw: "canonical quoter has no runtime code".into(),
+        }));
+    }
+    let neutral = scratch
+        .ext_mut()
+        .get_account(&V4_EXECUTION_QUOTER)
+        .map_err(|error| {
+            V4QuoteError::Frame(ReplayFrameError::Other {
+                raw: format!("execution quoter account read: {error}"),
+            })
+        })?
+        .unwrap_or_default()
+        .with_code(code);
+    scratch
+        .ext_mut()
+        .insert_account_info(&V4_EXECUTION_QUOTER, neutral);
+    Ok(())
 }
 
 /// Replace the hook's code with [`NOOP_HOOK`], returning the account it
@@ -863,6 +921,30 @@ mod tests {
         db
     }
 
+    /// The canonical quoter runtime answers with its own address. A caller
+    /// that impersonates the canonical deployment therefore returns a
+    /// different amount from an execution-shaped sender.
+    fn address_sensitive_quoter_db() -> InMemoryDB {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0x60, 0x00, 0x35, 0x60, 0xE0, 0x1C]);
+        code.push(0x63);
+        code.extend_from_slice(&QUOTE_EXACT_INPUT_SINGLE_SELECTOR);
+        code.extend_from_slice(&[0x14, 0x60, 0x2C, 0x57]);
+        code.push(0x73);
+        code.extend_from_slice(STUB_MANAGER.as_slice());
+        code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3]);
+        code.extend_from_slice(&[
+            0x5B, 0x30, 0x60, 0x00, 0x52, 0x60, 0x07, 0x60, 0x20, 0x52, 0x60, 0x40, 0x60, 0x00,
+            0xF3,
+        ]);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            &V4_QUOTER,
+            AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from(code))),
+        );
+        db
+    }
+
     fn scratch(db: InMemoryDB) -> Evm2ScratchEvm<InMemoryDB> {
         Evm2ScratchEvm::new(
             db,
@@ -959,6 +1041,23 @@ mod tests {
             super::resolve_pool_manager(&mut scratch, &stub_config()).unwrap(),
             STUB_MANAGER
         );
+    }
+
+    /// Production must not inherit the canonical quoter's sender-dependent
+    /// hook behavior. The neutral address is execution-shaped: the canonical
+    /// runtime still answers the quote, but `ADDRESS` is no longer the value
+    /// hooks special-case.
+    #[test]
+    fn default_quote_uses_an_execution_shaped_sender() {
+        let neutral = address!("000000000000000000000000000000000000dEaD");
+        let mut scratch = scratch(address_sensitive_quoter_db());
+        let leg = V4Leg::canonical(usdc_weth_key(Address::ZERO), true);
+
+        let quote = V4BlackBoxQuoter::default()
+            .quote(&mut scratch, &leg, U256::from(1_500))
+            .unwrap();
+
+        assert_eq!(quote.amount_out, U256::from_be_slice(neutral.as_slice()));
     }
 
     /// A leg on a manager the quoter is not bound to is refused before any

@@ -1465,6 +1465,10 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
         approximate.caveats.contains(Caveats::HOOKED_POOL),
         "an approximate hooked leg keeps the caveat"
     );
+    assert!(
+        approximate.profit.is_zero(),
+        "an approximate hooked leg is not executable"
+    );
     assert_eq!(
         approximate.gas_hops,
         vec![HopGasProfile::V4 { census: None }, HopGasProfile::V2],
@@ -1473,7 +1477,7 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
 
     // ── TIER PRESENT: the exact figure commits, the caveat lifts ─────────
     let mut exact = staged.clone();
-    let present = HookedLegPlan::requote(facts, anchor, Some(&tier));
+    let present = HookedLegPlan::requote(facts.clone(), anchor, Some(&tier));
     assert_eq!(
         present.stage(0),
         Some(HookedLegStage::Exact(HookedLegQuote {
@@ -1523,6 +1527,33 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
         ],
         "the same clamp commits the quote's MEASURED gas onto the floor's          profile for that hop — and only that hop"
     );
+
+    // A chain refusal is an execution fact, not a pricing fallback. The
+    // current candidate must die before its inline simulation or delivery.
+    let mut refused_result = staged;
+    let refused = HookedLegPlan::requote(
+        facts,
+        anchor,
+        Some(&CensusTier {
+            reading: degenbot_pools::HookFeeReading::Refused,
+        }),
+    );
+    let refused_twins = {
+        let core = engine
+            .core
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+        let path = engine.registry.get(path_id).unwrap();
+        clamp_result_with_state(
+            &core,
+            path_id,
+            &path.pools,
+            U256::from(1u128),
+            &refused,
+            &mut refused_result,
+        )
+    };
+    assert!(refused_result.profit.is_zero());
+    assert_eq!(refused_twins, 1, "the refusal is already clamp-committed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────

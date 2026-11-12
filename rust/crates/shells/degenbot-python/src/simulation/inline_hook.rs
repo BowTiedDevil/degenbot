@@ -863,28 +863,27 @@ fn quote_leg_at_anchor(
                 hook_fee,
             })
         }
-        // Fail-soft (ADR-090 §4): a refusal is the honest report that this
-        // anchor cannot price the leg (a foreign manager, a frame limit, a
-        // hook that needs settlement inside the swap). The clamp keeps the
-        // white-box figure and the path keeps its caveat. F2 splits the chain's
-        // own `Reverted` answer out: that IS a pool fact (the direction cannot be
-        // traded), while a frame/halt/malformed failure is not.
+        // A chain revert is an execution refusal: reject this candidate and
+        // record the direction. Transport, frame, and availability failures
+        // remain fail-soft because they say nothing about executability.
         Err(err) => {
+            let refused = matches!(
+                err,
+                degenbot_simulation::sim::evm2::v4_black_box::V4QuoteError::Reverted { .. }
+            );
             op_info!(
                 domain = sim,
                 block = anchor.block,
                 hooks = %leg.pool_key.hooks,
                 zero_for_one = leg.zero_for_one,
                 error = %err,
-                "hooked leg re-quote refused — the approximation stands"
+                refused,
+                "hooked leg re-quote did not produce an exact figure"
             );
-            match err {
-                degenbot_simulation::sim::evm2::v4_black_box::V4QuoteError::Reverted { .. }
-                    if degenbot_pools::charge_is_hook_carried(&leg.pool_key) =>
-                {
-                    HookedLegAnswer::Refused
-                }
-                _ => HookedLegAnswer::Unavailable,
+            if refused {
+                HookedLegAnswer::Refused
+            } else {
+                HookedLegAnswer::Unavailable
             }
         }
     }
