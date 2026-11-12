@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use alloy::primitives::Bytes;
 
-use degenbot_execution::{PathInfo, V2HopInfo, V4HopInfo};
-use degenbot_executor::composers::{resolve_axes, EncodeOptions};
+use degenbot_execution::{ComposeError, PathInfo, V2HopInfo, V4HopInfo};
+use degenbot_executor::composers::{resolve_axes, EncodeContext, EncodeOptions, EncodeRequest};
 use degenbot_executor::discovery::{classify_getter, GetterAnswers, GetterCall, METADATA_GETTERS};
 use degenbot_executor::release::{
     capability, CapabilityId, GetterOutcome, ManifestError, ReleaseManifest, METADATA_GETTER_NAMES,
@@ -146,8 +146,12 @@ fn the_production_encoding_names_its_own_release() {
 }
 
 fn v2_hop() -> degenbot_execution::HopInfo {
+    v2_hop_at(alloy::primitives::Address::repeat_byte(0x11))
+}
+
+fn v2_hop_at(pool_address: alloy::primitives::Address) -> degenbot_execution::HopInfo {
     degenbot_execution::HopInfo::V2(V2HopInfo {
-        pool_address: alloy::primitives::Address::repeat_byte(0x11),
+        pool_address,
         token0_address: alloy::primitives::Address::repeat_byte(0x22),
         token1_address: alloy::primitives::Address::repeat_byte(0x33),
         fee: 30,
@@ -166,6 +170,60 @@ fn v4_hop() -> degenbot_execution::HopInfo {
         hook_address: alloy::primitives::Address::ZERO,
         zfo: true,
     })
+}
+
+#[test]
+fn primitive_emission_overflow_is_a_typed_encode_error() {
+    let path = PathInfo::new(vec![v4_hop(), v4_hop()]);
+    let request = EncodeRequest::new(
+        path,
+        1u128 << 96,
+        vec![1u128 << 96, 1u128 << 96],
+        vec![1u128 << 96, 1u128 << 96],
+        EncodeOptions::default(),
+    );
+    let context = EncodeContext::new(
+        alloy::primitives::Address::repeat_byte(0x99),
+        alloy::primitives::Address::repeat_byte(0x44),
+        alloy::primitives::Address::repeat_byte(0x22),
+    );
+
+    let error = CmdStreamV1Encoding
+        .encode(&context, &request)
+        .expect_err("uint96 overflow must be returned, not panic");
+    assert!(
+        matches!(&error, ComposeError::Encode(message) if message.contains("uint96")),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn a_stream_above_the_release_bound_is_a_per_candidate_decline() {
+    let path = PathInfo::new(
+        (1..=9)
+            .map(|index| v2_hop_at(alloy::primitives::Address::repeat_byte(index)))
+            .collect(),
+    );
+    let request = EncodeRequest::new(
+        path,
+        1_000,
+        vec![1_000; 9],
+        vec![1_000; 9],
+        EncodeOptions::default(),
+    );
+    let context = EncodeContext::new(
+        alloy::primitives::Address::repeat_byte(0x99),
+        alloy::primitives::Address::repeat_byte(0x44),
+        alloy::primitives::Address::repeat_byte(0x22),
+    );
+
+    let error = CmdStreamV1Encoding
+        .encode(&context, &request)
+        .expect_err("a 308-byte stream exceeds the release's 288-byte bound");
+    assert!(
+        matches!(&error, ComposeError::Unsupported(message) if message.contains("288") && message.contains("308")),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]

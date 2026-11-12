@@ -30,7 +30,7 @@
 use alloy::primitives::{Address, U256};
 
 use crate::composers::NATIVE_CURRENCY_ADDRESS;
-use crate::encoders::{self, AddressTable, SENTINEL_PM, SENTINEL_SELF};
+use crate::encoders::{self, AddressTable, EncoderError, SENTINEL_PM, SENTINEL_SELF};
 use crate::grammar_ledger::{LedgerOp, SwapRecipient};
 use degenbot_execution::{V2HopInfo, V3HopInfo};
 
@@ -731,14 +731,15 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
 /// wraps its callback's bytes as the swap's callback payload). Mirrors the
 /// proven hand-written emitter's `enc_*` calls — byte-parity with it is the
 /// guard that this Plan-derived encoder reproduces the exact proven bytes.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns the first primitive range or length error rather than panicking on
+/// a representable Plan that cannot fit the command wire format.
 #[expect(clippy::too_many_lines)]
-pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
-    #[expect(clippy::too_many_lines, clippy::expect_used)]
-    fn walk(plan: &Plan, at: &AddressTable, out: &mut Vec<u8>) {
-        // The plan is LedgerValidator-validated before encoding, so the encoder
-        // range checks below are unreachable; the `.expect()`s are deliberate
-        // documentation of that invariant (args are in range by construction).
+pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Result<Vec<u8>, EncoderError> {
+    #[expect(clippy::too_many_lines)]
+    fn walk(plan: &Plan, at: &AddressTable, out: &mut Vec<u8>) -> Result<(), EncoderError> {
         for step in plan {
             match step {
                 PlanStep::FlashSwap {
@@ -752,29 +753,23 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                     callback,
                     ..
                 } => {
-                    let cb = plan_to_bytes(callback, at);
+                    let cb = plan_to_bytes(callback, at)?;
                     match protocol {
-                        Prot::V2 => out.extend_from_slice(
-                            &encoders::enc_v2_swap_compact(
-                                *pool_idx,
-                                *zfo,
-                                *out_amount,
-                                *recipient_idx,
-                                *fee,
-                                &cb,
-                            )
-                            .expect("V2 swap compact args in range"),
-                        ),
-                        Prot::V3 => out.extend_from_slice(
-                            &encoders::enc_v3_swap_compact(
-                                *pool_idx,
-                                *zfo,
-                                *in_amount,
-                                *recipient_idx,
-                                &cb,
-                            )
-                            .expect("V3 swap compact args in range"),
-                        ),
+                        Prot::V2 => out.extend_from_slice(&encoders::enc_v2_swap_compact(
+                            *pool_idx,
+                            *zfo,
+                            *out_amount,
+                            *recipient_idx,
+                            *fee,
+                            &cb,
+                        )?),
+                        Prot::V3 => out.extend_from_slice(&encoders::enc_v3_swap_compact(
+                            *pool_idx,
+                            *zfo,
+                            *in_amount,
+                            *recipient_idx,
+                            &cb,
+                        )?),
                         Prot::V4 => unreachable!("V4 flash is not a FlashSwap"),
                     }
                 }
@@ -783,10 +778,11 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                     recipient_idx,
                     amount,
                     ..
-                } => out.extend_from_slice(
-                    &encoders::enc_erc20_transfer(*token_idx, *recipient_idx, *amount)
-                        .expect("ERC20 transfer amount in range"),
-                ),
+                } => out.extend_from_slice(&encoders::enc_erc20_transfer(
+                    *token_idx,
+                    *recipient_idx,
+                    *amount,
+                )?),
                 PlanStep::V2SwapCalc {
                     pool_idx,
                     zfo,
@@ -808,20 +804,19 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                     out_amount,
                     recipient_idx,
                     ..
-                } => out.extend_from_slice(
-                    &encoders::enc_v2_swap_direct(*pool_idx, *zfo, *out_amount, *recipient_idx)
-                        .expect("V2 swap direct exact-out in range"),
-                ),
+                } => out.extend_from_slice(&encoders::enc_v2_swap_direct(
+                    *pool_idx,
+                    *zfo,
+                    *out_amount,
+                    *recipient_idx,
+                )?),
                 // V4 container: encode inner, wrap in V4_UNLOCK.
                 PlanStep::V4Unlock {
                     inner,
                     pool_manager_idx: _,
                 } => {
-                    let inner_bytes = plan_to_bytes(inner, at);
-                    out.extend_from_slice(
-                        &encoders::enc_v4_unlock(&inner_bytes)
-                            .expect("V4 unlock forward_data in range"),
-                    );
+                    let inner_bytes = plan_to_bytes(inner, at)?;
+                    out.extend_from_slice(&encoders::enc_v4_unlock(&inner_bytes)?);
                 }
                 PlanStep::V4Swap {
                     c0_idx,
@@ -832,18 +827,15 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                     zfo,
                     amount,
                     ..
-                } => out.extend_from_slice(
-                    &encoders::enc_v4_swap_compact(
-                        *c0_idx,
-                        *c1_idx,
-                        *fee,
-                        *tick_spacing,
-                        *hooks_idx,
-                        *zfo,
-                        *amount,
-                    )
-                    .expect("V4 swap compact args in range"),
-                ),
+                } => out.extend_from_slice(&encoders::enc_v4_swap_compact(
+                    *c0_idx,
+                    *c1_idx,
+                    *fee,
+                    *tick_spacing,
+                    *hooks_idx,
+                    *zfo,
+                    *amount,
+                )?),
                 PlanStep::V4TakeDelta {
                     currency_idx,
                     recipient_idx,
@@ -856,10 +848,11 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                     recipient_idx,
                     amount,
                     ..
-                } => out.extend_from_slice(
-                    &encoders::enc_v4_take_compact(*currency_idx, *recipient_idx, *amount)
-                        .expect("V4 take compact amount in range"),
-                ),
+                } => out.extend_from_slice(&encoders::enc_v4_take_compact(
+                    *currency_idx,
+                    *recipient_idx,
+                    *amount,
+                )?),
                 PlanStep::V4SettleDelta { currency_idx, .. } => {
                     out.extend_from_slice(&encoders::enc_v4_settle_delta(*currency_idx));
                 }
@@ -892,8 +885,7 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                         encoders::enc_v4_batch_open_weth(&batch)
                     } else {
                         encoders::enc_v4_batch(&batch)
-                    }
-                    .expect("V4 batch <= 8 entries + uint96 amounts");
+                    }?;
                     out.extend_from_slice(&encoded);
                 }
                 PlanStep::V4Mint {
@@ -901,16 +893,18 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                     recipient_idx,
                     amount,
                     ..
-                } => out.extend_from_slice(
-                    &encoders::enc_v4_mint_compact(*currency_idx, *recipient_idx, *amount)
-                        .expect("V4 mint compact uint96 amount in range"),
-                ),
+                } => out.extend_from_slice(&encoders::enc_v4_mint_compact(
+                    *currency_idx,
+                    *recipient_idx,
+                    *amount,
+                )?),
             }
         }
+        Ok(())
     }
     let mut out = Vec::new();
-    walk(plan, at, &mut out);
-    out
+    walk(plan, at, &mut out)?;
+    Ok(out)
 }
 #[cfg(test)]
 mod tests {

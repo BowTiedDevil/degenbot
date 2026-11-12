@@ -39,22 +39,57 @@
 //! capability commitment is a binding-time verification fact, never a planning
 //! input.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use alloy::primitives::{Bytes, U256};
 
 use degenbot_execution::{ComposeError, PathInfo};
 
 use crate::composers::{
-    config_for_options, encode_cmd_stream, encode_execute_call, resolve_axes, EncodeContext,
-    EncodeOptions, EncodeRequest,
+    config_for_options, encode_cmd_stream_detailed, encode_execute_call, resolve_axes,
+    EncodeContext, EncodeOptions, EncodeRequest,
 };
 use crate::grammar_ledger::{Bribe, ProfitCapture};
+use crate::grammar_shape::Derive;
 use crate::receipt::ExecutionReceipt;
 use crate::release::{
     capability, CapabilityId, ManifestError, ReleaseManifest, RELEASE_ID_TAG, RELEASE_MANIFEST_V2,
     SUPPORTED_PROTOCOL_MAJORS,
 };
+
+#[expect(
+    clippy::expect_used,
+    reason = "the embedded production manifest is a build-time invariant validated by ReleaseRegistry::production"
+)]
+static CMD_STREAM_V1_MANIFEST: LazyLock<ReleaseManifest> = LazyLock::new(|| {
+    ReleaseManifest::parse(RELEASE_MANIFEST_V2)
+        .expect("embedded cmd_executor/2 manifest must validate")
+});
+
+fn enforce_stream_length(commands: &[u8], max: u32) -> Result<(), ComposeError> {
+    let max = usize::try_from(max)
+        .map_err(|error| ComposeError::encode(format!("invalid stream-length bound: {error}")))?;
+    if commands.len() > max {
+        return Err(ComposeError::unsupported(format!(
+            "command stream length {} exceeds the release maximum of {max} bytes",
+            commands.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Enforce the command-stream bound declared by the embedded cmd_executor/2
+/// manifest for callers that compose directly rather than through a bound release.
+///
+/// # Errors
+///
+/// [`ComposeError::Unsupported`] when the complete stream exceeds the declared bound.
+pub fn enforce_cmd_stream_v1_length(commands: &[u8]) -> Result<(), ComposeError> {
+    enforce_stream_length(
+        commands,
+        CMD_STREAM_V1_MANIFEST.call_encoding.max_stream_length,
+    )
+}
 
 /// One release's complete encoding of a solved path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,16 +166,33 @@ impl ReleaseEncoding for CmdStreamV1Encoding {
         RELEASE_ID_TAG
     }
 
+    #[expect(
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        reason = "ADR-030: a validator Reject is a fatal internal invariant, not a candidate decline"
+    )]
     fn encode(
         &self,
         context: &EncodeContext,
         request: &EncodeRequest,
     ) -> Result<ReleaseCall, ComposeError> {
-        let Some(commands) = encode_cmd_stream(context, request) else {
-            return Err(ComposeError::unsupported(
-                "the command grammar has no producer for this path",
-            ));
+        let commands = match encode_cmd_stream_detailed(context, request) {
+            Derive::Encoded(commands) => commands,
+            Derive::Declined => {
+                return Err(ComposeError::unsupported(
+                    "the command grammar has no producer for this path",
+                ));
+            }
+            Derive::EncodingFailed(error) => {
+                return Err(ComposeError::encode(format!(
+                    "command stream emission failed: {error}"
+                )));
+            }
+            Derive::Rejected(error) => panic!(
+                "executor derivation REJECT (a latent bug, ADR-030): the encoder wrote a Plan the ledger validator rejected: {error:?}"
+            ),
         };
+        enforce_cmd_stream_v1_length(&commands)?;
         let config = config_for_options(request.opts, U256::ZERO)
             .map_err(|error| ComposeError::encode(format!("config_for_options failed: {error}")))?;
         let call = encode_execute_call(context.executor, &commands, config);
@@ -482,5 +534,20 @@ impl ReleaseRegistry {
         majors.sort_unstable();
         majors.dedup();
         majors
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_bound_accepts_exact_and_rejects_one_over() {
+        let commands = [0u8; 289];
+        assert!(enforce_stream_length(&commands[..288], 288).is_ok());
+        assert!(matches!(
+            enforce_stream_length(&commands, 288),
+            Err(ComposeError::Unsupported(_))
+        ));
     }
 }

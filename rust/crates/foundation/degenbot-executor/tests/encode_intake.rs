@@ -140,7 +140,11 @@ fn v4_compact_swaps_encode_declared_hooks() {
     );
     let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
         .unwrap_or_else(|| panic!("hooked V4 path must encode"));
-    assert!(bytes.len() <= 288, "hooked two-hop stream exceeds the contract bound: {}", bytes.len());
+    assert!(
+        bytes.len() <= 288,
+        "hooked two-hop stream exceeds the contract bound: {}",
+        bytes.len()
+    );
 
     let mut addresses = Vec::new();
     let mut offset = 0;
@@ -190,7 +194,11 @@ fn v4_compact_swaps_in_three_hop_paths_encode_declared_hooks() {
     );
     let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
         .unwrap_or_else(|| panic!("hooked V4-V4-V2 path must encode"));
-    assert!(bytes.len() <= 288, "hooked V4-V4-V2 stream exceeds the contract bound: {}", bytes.len());
+    assert!(
+        bytes.len() <= 288,
+        "hooked V4-V4-V2 stream exceeds the contract bound: {}",
+        bytes.len()
+    );
 
     let mut addresses = Vec::new();
     let mut offset = 0;
@@ -235,7 +243,11 @@ fn v4_compact_swaps_in_pure_v4_three_hop_paths_encode_declared_hooks() {
     );
     let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
         .unwrap_or_else(|| panic!("hooked V4-V4-V4 path must encode"));
-    assert!(bytes.len() <= 288, "hooked V4-V4-V4 stream exceeds the contract bound: {}", bytes.len());
+    assert!(
+        bytes.len() <= 288,
+        "hooked V4-V4-V4 stream exceeds the contract bound: {}",
+        bytes.len()
+    );
 
     let mut addresses = Vec::new();
     let mut offset = 0;
@@ -277,7 +289,11 @@ fn v4_batch_entries_encode_declared_hooks() {
     );
     let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
         .unwrap_or_else(|| panic!("hooked V4 batch must encode"));
-    assert!(bytes.len() <= 288, "hooked two-hop batch exceeds the contract bound: {}", bytes.len());
+    assert!(
+        bytes.len() <= 288,
+        "hooked two-hop batch exceeds the contract bound: {}",
+        bytes.len()
+    );
 
     let mut addresses = Vec::new();
     let mut offset = 0;
@@ -327,7 +343,11 @@ fn v4_batch_entries_in_pure_v4_three_hop_paths_encode_declared_hooks() {
     );
     let bytes = encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req)
         .unwrap_or_else(|| panic!("hooked V4-V4-V4 batch must encode"));
-    assert!(bytes.len() <= 288, "hooked V4-V4-V4 batch exceeds the contract bound: {}", bytes.len());
+    assert!(
+        bytes.len() <= 288,
+        "hooked V4-V4-V4 batch exceeds the contract bound: {}",
+        bytes.len()
+    );
 
     let mut addresses = Vec::new();
     let mut offset = 0;
@@ -354,6 +374,65 @@ fn v4_batch_entries_in_pure_v4_three_hop_paths_encode_declared_hooks() {
 /// A WETH-terminal 2-hop V4 path (WETH → USDC → WETH), consistent amounts.
 fn v4v4_weth_terminal() -> PathInfo {
     PathInfo::new(vec![v4_hop(WETH, USDC, true), v4_hop(USDC, WETH, true)])
+}
+
+#[test]
+fn v4_fee_above_the_wire_range_declines_at_public_intake() {
+    let mut path = v4v4_weth_terminal();
+    let HopInfo::V4(hop) = &mut path.hops[0] else {
+        unreachable!()
+    };
+    hop.fee = u32::from(u16::MAX) + 1;
+    let req = EncodeRequest::new(
+        path,
+        1_000_000_000_000_000_000,
+        vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
+        vec![999_999_999_999_999_999, 999_999_999_999_999_999],
+        EncodeOptions::default(),
+    );
+
+    assert!(encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req).is_none());
+}
+
+#[test]
+fn v4_tick_spacing_outside_the_wire_range_declines_at_public_intake() {
+    for tick_spacing in [i32::from(i16::MAX) + 1, i32::from(i16::MIN) - 1] {
+        let mut path = v4v4_weth_terminal();
+        let HopInfo::V4(hop) = &mut path.hops[0] else {
+            unreachable!()
+        };
+        hop.tick_spacing = tick_spacing;
+        let req = EncodeRequest::new(
+            path,
+            1_000_000_000_000_000_000,
+            vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
+            vec![999_999_999_999_999_999, 999_999_999_999_999_999],
+            EncodeOptions::default(),
+        );
+
+        assert!(
+            encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req).is_none(),
+            "tick spacing {tick_spacing} must not collapse to zero"
+        );
+    }
+}
+
+#[test]
+fn v4_pool_manager_mismatch_declines_at_public_intake() {
+    let mut path = v4v4_weth_terminal();
+    let HopInfo::V4(hop) = &mut path.hops[0] else {
+        unreachable!()
+    };
+    hop.pool_manager_address = Address::repeat_byte(0x99);
+    let req = EncodeRequest::new(
+        path,
+        1_000_000_000_000_000_000,
+        vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
+        vec![999_999_999_999_999_999, 999_999_999_999_999_999],
+        EncodeOptions::default(),
+    );
+
+    assert!(encode_cmd_stream(&EncodeContext::new(EXECUTOR, PM, WETH), &req).is_none());
 }
 
 #[test]

@@ -63,7 +63,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [025](ADR-025-execution-strategy-seam.md) | The `ExecutionAdapter` seam | accepted |
 | [026](ADR-026-backrun-to-settlement-arbitrage-terminology.md) | Retire the "backrun" label — "settlement arbitrage" | accepted |
 | [029](ADR-029-executor-command-grammar-axes.md) | The executor command grammar | accepted |
-| [030](ADR-030-derivation-outcome-tri-state.md) | The derivation outcome is a tri-state | accepted |
+| [030](ADR-030-derivation-outcome-tri-state.md) | Derivation distinguishes decline and encoding failure; validator Reject is fatal | accepted |
 | [031](ADR-031-executor-plan-walker.md) | The executor grammar as a facts-driven Plan walker | accepted; implemented |
 | [032](ADR-032-pyclass-python-naming.md) | `#[pyclass]` Python naming convention | accepted |
 | [033](ADR-033-encode-funnel-intake-contract.md) | The encode funnel's intake contract | accepted |

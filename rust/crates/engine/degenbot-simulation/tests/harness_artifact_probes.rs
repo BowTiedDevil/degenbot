@@ -141,7 +141,7 @@ fn probe_setup() -> (
     };
     let ref_payload = {
         let mut p = preamble.clone();
-        p.extend(plan_to_bytes(&ref_plan, &at));
+        p.extend(plan_to_bytes(&ref_plan, &at).expect("reference Plan must encode"));
         p
     };
     (h, hops, hop_outputs, preamble, s1, s2, mint, ref_payload)

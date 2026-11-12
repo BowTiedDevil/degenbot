@@ -9,6 +9,7 @@ use degenbot_executor::composers::{
     config_for_options, encode_execute_call, ComposerInputs, EncodeOptions, EncodeRequest,
 };
 use degenbot_executor::grammar_shape::{derive_all_v2_detailed, derive_shape_detailed, Derive};
+use degenbot_executor::release_registry::enforce_cmd_stream_v1_length;
 
 /// A routine refusal from the built-in command encoder.
 ///
@@ -126,10 +127,22 @@ impl CmdExecutorAdapter {
             Derive::Declined => {
                 return CmdExecutorOutcome::Declined(CmdExecutorDecline::CommandStream)
             }
+            Derive::EncodingFailed(error) => {
+                let decline = match error {
+                    degenbot_executor::encoders::EncoderError::Uint96Overflow(_) => {
+                        CmdExecutorDecline::AmountExceedsUint96
+                    }
+                    _ => CmdExecutorDecline::CommandStream,
+                };
+                return CmdExecutorOutcome::Declined(decline);
+            }
             Derive::Rejected(_) => {
                 return CmdExecutorOutcome::Rejected(CmdExecutorRejection::LedgerValidation);
             }
         };
+        if enforce_cmd_stream_v1_length(&commands).is_err() {
+            return CmdExecutorOutcome::Declined(CmdExecutorDecline::CommandStream);
+        }
 
         let Ok(config) = config_for_options(opts, U256::ZERO) else {
             return CmdExecutorOutcome::Declined(CmdExecutorDecline::ExecuteCall);

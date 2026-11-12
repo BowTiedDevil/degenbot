@@ -289,6 +289,33 @@ fn routine_declines_keep_the_existing_jsonl_labels() {
 }
 
 #[test]
+fn direct_adapter_declines_a_stream_above_the_release_bound() {
+    let path = PathInfo::new(
+        (1..=9)
+            .map(|index| {
+                HopInfo::V2(V2HopInfo {
+                    pool_address: Address::repeat_byte(index),
+                    token0_address: WETH,
+                    token1_address: USDC,
+                    fee: 30,
+                    zfo: true,
+                })
+            })
+            .collect(),
+    );
+    let result = solve_result(&path, 1_000, vec![1_000; 9], vec![1_000; 9]);
+
+    assert_eq!(
+        CmdExecutorAdapter::new(ExecutionContext::new(EXECUTOR, PM, WETH)).compose(
+            &path,
+            &result,
+            options(0),
+        ),
+        CmdExecutorOutcome::Declined(CmdExecutorDecline::CommandStream)
+    );
+}
+
+#[test]
 fn validator_rejection_is_not_a_routine_decline() {
     let path = v2_path();
     let result = solve_result(&path, 100_000, vec![80_000, 60_000], vec![50_000, 80_000]);

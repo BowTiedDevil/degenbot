@@ -11,7 +11,7 @@
 //!   `execute` config packing ([`config`]), and the public intake —
 //!   [`composers::EncodeContext`] + [`composers::EncodeRequest`] →
 //!   [`composers::encode_cmd_stream`] (ADR-033). The ADR-029/030/031 record
-//!   records own the grammar's invariants (axes, tri-state outcomes, the
+//!   records own the grammar's invariants (axes, derivation outcomes, the
 //!   facts-driven walker).
 //! - **The release identity** ([`release`]): the on-chain metadata getters'
 //!   strict decoders, the getterless/legacy distinction, and the committed

@@ -203,8 +203,8 @@ pub(crate) type BuildPlan =
 /// projected ledger trace, and fold `preamble + plan_to_bytes(&plan, &at)`
 /// into the full payload.
 ///
-/// The derivation outcome — a tri-state so a routine decline is never
-/// conflated with a would-be-bug validator reject (ADR-030).
+/// The derivation outcome keeps routine declines and primitive encoding
+/// failures distinct from a would-be-bug validator reject (ADR-030).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Derive {
     /// The family encoded as executable command bytes.
@@ -214,11 +214,13 @@ pub enum Derive {
     /// A Plan was *built* but the ledger validator rejected it — a latent bug.
     /// Always fatal (ADR-030): never swallowed into a decline or a `None`.
     Rejected(crate::grammar_ledger::ValidationError),
+    /// A primitive could not represent the validated Plan on the command wire.
+    EncodingFailed(crate::encoders::EncoderError),
 }
 
-/// Map a [`Derive`] onto the public `Option` seam: `Declined → None`, and a
-/// `Rejected` is **always fatal** — it panics (ADR-030: a Reject is a would-be
-/// bug and must never be silently dropped). [`Derive::Encoded`] yields the bytes.
+/// Map a [`Derive`] onto the public `Option` seam: `Declined` and
+/// `EncodingFailed` produce `None`, and a `Rejected` is **always fatal** — it
+/// panics (ADR-030: a Reject is a would-be bug and must never be silently dropped). [`Derive::Encoded`] yields the bytes.
 #[must_use]
 #[expect(
     clippy::panic,
@@ -227,7 +229,7 @@ pub enum Derive {
 pub(crate) fn derive_option(d: Derive) -> Option<Vec<u8>> {
     match d {
         Derive::Encoded(bytes) => Some(bytes),
-        Derive::Declined => None,
+        Derive::Declined | Derive::EncodingFailed(_) => None,
         Derive::Rejected(e) => panic!(
             "executor derivation REJECT (a latent bug, ADR-030): the encoder wrote a Plan the ledger validator rejected: {e:?}"
         ),
@@ -255,8 +257,12 @@ fn build_plan_bytes(path: &PathInfo, build: BuildPlan, inputs: &ComposerInputs<'
     if let Err(e) = v.validate_full(&ops) {
         return Derive::Rejected(e);
     }
+    let encoded = match plan_to_bytes(&plan, &at) {
+        Ok(encoded) => encoded,
+        Err(error) => return Derive::EncodingFailed(error),
+    };
     let mut out = preamble;
-    out.extend_from_slice(&plan_to_bytes(&plan, &at));
+    out.extend_from_slice(&encoded);
     Derive::Encoded(out)
 }
 
@@ -265,14 +271,15 @@ fn build_plan_bytes(path: &PathInfo, build: BuildPlan, inputs: &ComposerInputs<'
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] → `plan_to_bytes`
 /// (A3 routes it through the shared [`derive_shape_detailed`] dispatch).
 /// Returns `None` on a routine decline; a validator `Reject` is **fatal**
-/// (panics, ADR-030). See [`derive_all_v2_detailed`] for the tri-state.
+/// (panics, ADR-030). See [`derive_all_v2_detailed`] for the detailed outcome.
 #[must_use]
 pub fn derive_all_v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     derive_option(derive_all_v2_detailed(path, inputs))
 }
 
-/// The tri-state form of [`derive_all_v2`] (ADR-030): `Declined` vs `Rejected`
-/// are distinguished instead of collapsed into `None`. Delegates to the shared
+/// The detailed form of [`derive_all_v2`] (ADR-030): `Declined`,
+/// `EncodingFailed`, and `Rejected` are not collapsed into `None`. Delegates to
+/// the shared
 /// [`derive_shape_detailed`] dispatch (its `(V2,V2,V2|None)` row is the all-V2
 /// walker), so the all-V2 stream shares the single producer path.
 #[must_use]
@@ -296,15 +303,15 @@ fn prot_of(h: Option<&HopInfo>) -> Option<Prot> {
 /// (`build_walk` → [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
 /// gate → `plan_to_bytes`) — the sole production producer. Returns `None` on a routine decline (an unsupported
 /// family → the strategy skips); a validator `Reject` is **fatal** (panics,
-/// ADR-030). See [`derive_shape_detailed`] for the tri-state.
+/// ADR-030). See [`derive_shape_detailed`] for the detailed outcome.
 #[must_use]
 pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     derive_option(derive_shape_detailed(path, inputs))
 }
 
-/// The tri-state form of [`derive_shape`] (ADR-030): a routine `Declined` is
-/// distinguished from a would-be-bug `Rejected`, instead of both collapsing to
-/// `None`. Routed through [`crate::grammar_walker::build_walk`] (the single
+/// The detailed form of [`derive_shape`] (ADR-030): routine `Declined` and
+/// `EncodingFailed` outcomes remain distinct from a would-be-bug `Rejected`.
+/// Routed through [`crate::grammar_walker::build_walk`] (the single
 /// facts → derive_plan → enc_preamble pipeline) then the shared
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate.
 #[must_use]
@@ -325,8 +332,12 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
     if let Err(e) = v.validate_full(&ops) {
         return Derive::Rejected(e);
     }
+    let encoded = match plan_to_bytes(&plan, &at) {
+        Ok(encoded) => encoded,
+        Err(error) => return Derive::EncodingFailed(error),
+    };
     let mut out = preamble;
-    out.extend_from_slice(&plan_to_bytes(&plan, &at));
+    out.extend_from_slice(&encoded);
     Derive::Encoded(out)
 }
 
@@ -428,7 +439,7 @@ mod tests {
         build_walk(path, inputs)
     }
 
-    // ── Derive tri-state (ADR-030) ──
+    // ── Derive outcomes (ADR-030) ──
 
     /// A deliberately-invalid build: a `V4TakeDelta` before any PM credit. The
     /// ledger validator must surface `Reject(TakeBeforeCredit)`, not `None`.
@@ -1070,7 +1081,7 @@ mod tests {
                 );
                 // ADR-030: the validator rejection of a *built* Plan is a
                 // would-be-bug, not a silent skip. It now surfaces as a
-                // `Reject` (tri-state) and the public seam is FATAL (panics),
+                // `Reject` and the public seam is FATAL (panics),
                 // where the old code swallowed it to `None` — this documents
                 // a latent builder defect the facts-walker will make
                 // unrepresentable.

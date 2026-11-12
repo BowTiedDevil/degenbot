@@ -550,9 +550,7 @@ pub(crate) fn facts_of_v3v4v3(
     };
     let mut fa = v3_hop_facts_strict(a)?;
     fa.out_dest = OutDest::PoolManager; // the leading V3 seeds the PM for the unlock
-    let mut fb = v4_hop_facts_netzero(b);
-    fb.swap_fee = u16::try_from(b.fee).ok()?;
-    fb.tick_spacing = i16::try_from(b.tick_spacing).ok()?;
+    let mut fb = v4_hop_facts_netzero(b)?;
     fb.out_dest = OutDest::Repay(c.pool_address); // take to the terminal V3, repaying its flash
     let mut fc = v3_hop_facts_strict(c)?;
     fc.repay = Repay::Offstream; // the terminal borrows nothing (the default is SelfRefund)
@@ -677,13 +675,13 @@ pub(crate) fn v2_hop_facts(h: &V2HopInfo) -> HopFacts {
 }
 
 /// A V4 hop's facts (shared by the V4-crossing shape derivers).
-pub(crate) fn v4_hop_facts(h: &V4HopInfo) -> HopFacts {
+pub(crate) fn v4_hop_facts(h: &V4HopInfo) -> Option<HopFacts> {
     let (fwd, inv) = v4_hop_currencies(h);
-    HopFacts {
+    Some(HopFacts {
         prot: Prot::V4,
         zfo: h.zfo,
-        swap_fee: u16::try_from(h.fee).unwrap_or(0),
-        tick_spacing: i16::try_from(h.tick_spacing).unwrap_or(0),
+        swap_fee: u16::try_from(h.fee).ok()?,
+        tick_spacing: i16::try_from(h.tick_spacing).ok()?,
         out_currency: fwd,
         in_currency: inv,
         out_dest: OutDest::Executor,
@@ -696,24 +694,24 @@ pub(crate) fn v4_hop_facts(h: &V4HopInfo) -> HopFacts {
         seed_delivery: None,
         currency0_address: h.currency0_address,
         currency1_address: h.currency1_address,
-    }
+    })
 }
 
 /// `v4_hop_facts` with `repay: Repay::NetZero` (the characteristic tag of the
 /// 2-hop V4-crossing families v3v4/v2v4/v4v4/v4v3/v4v2).
-pub(crate) fn v4_hop_facts_netzero(h: &V4HopInfo) -> HopFacts {
-    let mut f = v4_hop_facts(h);
+pub(crate) fn v4_hop_facts_netzero(h: &V4HopInfo) -> Option<HopFacts> {
+    let mut f = v4_hop_facts(h)?;
     f.repay = Repay::NetZero;
-    f
+    Some(f)
 }
 
 /// Map a [`HopInfo`] to its [`HopFacts`] using the default per-protocol
 /// mapping: V2→[`v2_hop_facts`], V3→[`v3_hop_facts`], V4→[`v4_hop_facts_netzero`].
 /// Used by [`facts_for`] for families without per-position overrides.
-fn hop_facts(h: &HopInfo) -> HopFacts {
+fn hop_facts(h: &HopInfo) -> Option<HopFacts> {
     match h {
-        HopInfo::V2(a) => v2_hop_facts(a),
-        HopInfo::V3(a) => v3_hop_facts(a),
+        HopInfo::V2(a) => Some(v2_hop_facts(a)),
+        HopInfo::V3(a) => Some(v3_hop_facts(a)),
         HopInfo::V4(a) => v4_hop_facts_netzero(a),
     }
 }
@@ -748,6 +746,14 @@ fn hop_prot(h: &HopInfo) -> Prot {
 ///   mapping: V4 hops tagged `Repay::NetZero`).
 /// - `len < 2` or `len > 3` (non-all-V2) → `None` (no producer).
 pub(crate) fn facts_for(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<HopFacts>> {
+    if path.hops.iter().any(|hop| {
+        matches!(
+            hop,
+            HopInfo::V4(hop) if hop.pool_manager_address != inputs.pool_manager_address
+        )
+    }) {
+        return None;
+    }
     let n = path.hops.len();
     let prots: Vec<Prot> = path.hops.iter().map(hop_prot).collect();
     if n >= 2 && prots.iter().all(|p| *p == Prot::V2) {
@@ -762,7 +768,11 @@ pub(crate) fn facts_for(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<
         [Prot::V2, Prot::V3] => facts_of_v2v3(path, inputs)?,
         [Prot::V3, Prot::V3] => facts_of_v3v3(path, inputs)?,
         [Prot::V3, Prot::V2] => facts_of_v3v2(path, inputs)?,
-        _ if (2..=3).contains(&n) => path.hops.iter().map(hop_facts).collect(),
+        _ if (2..=3).contains(&n) => path
+            .hops
+            .iter()
+            .map(hop_facts)
+            .collect::<Option<Vec<_>>>()?,
         _ => return None,
     };
     if prots.len() == 3 && prots[0] == Prot::V3 && prots[1] == Prot::V4 {

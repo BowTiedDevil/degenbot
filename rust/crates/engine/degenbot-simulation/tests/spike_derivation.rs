@@ -114,7 +114,7 @@ fn v4v2_native_input_plan_byte_parity_validates_and_executes() {
     let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("[v4_v2 native-input] derive_shape None"));
     let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("golden Plan must encode"));
     assert_eq!(
         plan_bytes, reference,
         "[v4_v2 native-input] Plan bytes != proven emitter"
@@ -191,7 +191,7 @@ fn v4v2_native_output_plan_byte_parity_validates_and_executes() {
     let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("[v4_v2 native-output] derive_shape None"));
     let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("golden Plan must encode"));
     assert_eq!(
         plan_bytes, reference,
         "[v4_v2 native-output] Plan bytes != proven emitter"
@@ -284,7 +284,7 @@ fn v2v4_native_input_plan_byte_parity_validates_and_executes() {
     let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("[v2_v4 native-input] derive_shape None"));
     let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("golden Plan must encode"));
     assert_eq!(
         plan_bytes, reference,
         "[v2_v4 native-input] Plan bytes != proven emitter"
@@ -369,7 +369,7 @@ fn v2v4_native_output_plan_byte_parity_validates_and_executes() {
     let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("[v2_v4 native-output] derive_shape None"));
     let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("golden Plan must encode"));
     assert_eq!(
         plan_bytes, reference,
         "[v2_v4 native-output] Plan bytes != proven emitter"
@@ -471,7 +471,7 @@ fn v3v4_native_input_plan_byte_parity_validates_and_executes() {
     let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("[v3_v4 native-input] derive_shape None"));
     let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("golden Plan must encode"));
     assert_eq!(
         plan_bytes, reference,
         "[v3_v4 native-input] Plan bytes != proven emitter"
@@ -554,7 +554,7 @@ fn v3v4_native_output_plan_byte_parity_validates_and_executes() {
     let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("[v3_v4 native-output] derive_shape None"));
     let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("golden Plan must encode"));
     assert_eq!(
         plan_bytes, reference,
         "[v3_v4 native-output] Plan bytes != proven emitter"
@@ -662,7 +662,7 @@ fn v4v3_native_input_plan_byte_parity_validates_and_executes() {
     let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("[v4_v3 native-input] derive_shape None"));
     let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("golden Plan must encode"));
     assert_eq!(
         plan_bytes, reference,
         "[v4_v3 native-input] Plan bytes != proven emitter"
@@ -743,7 +743,7 @@ fn v4v3_native_output_plan_byte_parity_validates_and_executes() {
     let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("[v4_v3 native-output] derive_shape None"));
     let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("golden Plan must encode"));
     assert_eq!(
         plan_bytes, reference,
         "[v4_v3 native-output] Plan bytes != proven emitter"

@@ -1,4 +1,4 @@
-# ADR-030: The derivation outcome is a tri-state; a validator Reject is always fatal
+# ADR-030: Derivation distinguishes decline and encoding failure; a validator Reject is always fatal
 
 **Status: accepted.**
 
@@ -15,11 +15,15 @@ profitable path with no diagnostic.
 
 ## Decision
 
-The derivation result is a tri-state `Encoded / Decline / Reject`. The public
-seams (`encode_cmd_stream` / `encode_grammar`) keep returning `Option<Vec<u8>>`:
-Decline maps to `None` (a routine no-path). A **Reject is always fatal** — the
-revm matrix and honesty suite hard-fail on it, and a live run aborts. It is
-never swallowed, never degraded to a skip.
+The derivation result distinguishes `Encoded`, `Declined`, `EncodingFailed`,
+and `Rejected`. The public seams (`encode_cmd_stream` / `encode_grammar`) keep
+returning `Option<Vec<u8>>`: Decline and primitive encoding failure map to
+`None`. Detailed adapters preserve the distinction: an unsupported path is a
+per-candidate decline, while a primitive range or length failure is a typed
+encoding error. Neither case panics.
+
+A **Reject is always fatal** — the revm matrix and honesty suite hard-fail on
+it, and a live run aborts. It is never swallowed, never degraded to a skip.
 
 ## Considered options
 
@@ -35,6 +39,10 @@ never swallowed, never degraded to a skip.
 
 ## Consequences
 
+- Primitive encoding failure is separate from validator Reject: representable
+  caller input may exceed a wire field even when ledger ordering is valid, so
+  the emitter returns its primitive error instead of asserting that validation
+  proved all wire ranges.
 - A validator Reject is reachable even after the grammar generalizes to a
   facts-driven walker (ADR-030's companion deepening): the net-zero invariants
   (PM-at-unlock-close, flash-debt-at-finish) accumulate solver-derived amounts

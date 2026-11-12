@@ -420,6 +420,15 @@ pub struct ComposerInputs<'a> {
 ///   ([`crate::grammar_shape::derive_shape`])
 #[must_use]
 pub fn encode_cmd_stream(ctx: &EncodeContext, req: &EncodeRequest) -> Option<Vec<u8>> {
+    crate::grammar_shape::derive_option(encode_cmd_stream_detailed(ctx, req))
+}
+
+/// Detailed intake for adapters that distinguish an unsupported path from a
+/// primitive encoding failure.
+pub(crate) fn encode_cmd_stream_detailed(
+    ctx: &EncodeContext,
+    req: &EncodeRequest,
+) -> crate::grammar_shape::Derive {
     let num_hops = req.path.hops.len();
     let inputs = ComposerInputs {
         executor_address: ctx.executor,
@@ -437,9 +446,9 @@ pub fn encode_cmd_stream(ctx: &EncodeContext, req: &EncodeRequest) -> Option<Vec
     // the Plan + validator path (`derive_all_v2` → `build_walk` → gate
     // → `plan_to_bytes`); other 2/3-hop paths use the combo grammar walk.
     if num_hops >= 2 && req.path.hops.iter().all(|h| matches!(h, HopInfo::V2(_))) {
-        crate::grammar_shape::derive_all_v2(&req.path, &inputs)
+        crate::grammar_shape::derive_all_v2_detailed(&req.path, &inputs)
     } else {
-        crate::grammar_shape::derive_shape(&req.path, &inputs)
+        crate::grammar_shape::derive_shape_detailed(&req.path, &inputs)
     }
 }
 

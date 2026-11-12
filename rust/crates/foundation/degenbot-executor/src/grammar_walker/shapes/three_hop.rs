@@ -1966,7 +1966,7 @@ mod rule_walker_tests {
 
     fn full_bytes(plan: &crate::grammar_plan::Plan, at: &crate::encoders::AddressTable) -> Vec<u8> {
         let mut b = enc_preamble(at);
-        b.extend_from_slice(&plan_to_bytes(plan, at));
+        b.extend_from_slice(&plan_to_bytes(plan, at).expect("test plan must encode"));
         b
     }
 
