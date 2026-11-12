@@ -40,6 +40,7 @@ pub mod bot_state_db;
 pub mod delta_snapshot;
 pub mod frame_replay;
 pub mod handle;
+pub mod head_lifecycle;
 pub mod hook_slots;
 pub mod inspectors;
 pub mod jit;

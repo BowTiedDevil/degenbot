@@ -28,20 +28,16 @@
     reason = "the stub chain and its assertions fail loudly on a broken fixture"
 )]
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{B256, U256};
 use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
-use degenbot_simulation::sim::evm2::bal_heads::{
-    ambient_spawn, BalHeadPipeline, HeadSpawn, NoRelevance,
-};
+use degenbot_simulation::sim::evm2::bal_heads::{ambient_spawn, BalHeadPipeline, NoRelevance};
 use degenbot_simulation::sim::evm2::delta_snapshot::{
     BalHeadDriver, DeltaReport, HeadCold, HeadCompletion, HeadOutcome, HeadReadiness,
 };
 use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, CarryRefusal, PreparedBal};
-use degenbot_simulation::sim::ReadAnchor;
-use futures_util::future::BoxFuture;
 use std::collections::BTreeSet;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Waker};
 use std::time::Duration;
 
@@ -57,73 +53,16 @@ mod modeled_chain;
 #[path = "../examples/shared/real_coverage.rs"]
 #[expect(dead_code)]
 mod real_coverage;
+#[path = "../examples/shared/scripted_head.rs"]
+#[expect(dead_code)]
+mod scripted_head;
 
 use chain_stub::ChainStub;
 use modeled_chain::{bal_bytes, block_hash, ChainState, Key, StubChain};
+use scripted_head::{address, genesis, identified, SpawnQueue};
 
 /// The height every test advances from, unless the test is about lineage.
 const HEIGHT: u64 = 100;
-
-/// The deterministic spawn seam: every phase the pipeline spawns parks here
-/// until the test drains it, in the order the test chooses.
-#[derive(Clone, Default)]
-struct SpawnQueue {
-    parked: Arc<Mutex<Vec<BoxFuture<'static, ()>>>>,
-}
-
-impl SpawnQueue {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    /// The [`HeadSpawn`] the pipeline is constructed with.
-    fn spawner(&self) -> HeadSpawn {
-        let parked = Arc::clone(&self.parked);
-        Arc::new(move |phase: BoxFuture<'static, ()>| parked.lock().unwrap().push(phase))
-    }
-
-    /// Phases spawned and not yet run.
-    fn len(&self) -> usize {
-        self.parked.lock().unwrap().len()
-    }
-
-    /// Take the oldest parked phase WITHOUT running it: the test decides when a
-    /// head's preparation lands, and in which order.
-    fn take(&self) -> Option<BoxFuture<'static, ()>> {
-        let mut parked = self.parked.lock().unwrap();
-        if parked.is_empty() {
-            None
-        } else {
-            Some(parked.remove(0))
-        }
-    }
-
-    /// Run the oldest parked phase to completion.
-    async fn run_one(&self) -> bool {
-        match self.take() {
-            Some(phase) => {
-                phase.await;
-                true
-            }
-            None => false,
-        }
-    }
-}
-
-/// A hash no fixture links to, for the parent of a session's first head.
-fn genesis() -> B256 {
-    B256::new([0x99; 32])
-}
-
-/// An address distinct from the fixtures' other identities.
-fn address(tag: u8) -> Address {
-    Address::new([tag; 20])
-}
-
-/// One exact-hash anchor.
-fn identified(number: u64, hash: B256) -> ReadAnchor {
-    ReadAnchor::identified(number, hash)
-}
 
 /// One accepted canonical head.
 fn head(number: u64, hash: B256, parent_hash: B256) -> CanonicalHead {

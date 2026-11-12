@@ -31,18 +31,16 @@ use degenbot_core::fee::fee_ratio;
 use degenbot_pools::solve::PoolHop;
 use degenbot_pools::RegisterV2PoolParams;
 use degenbot_simulation::sim::evm2::bal_heads::{
-    BalHeadPipeline, HeadRelevanceSource, HeadSpawn, SessionRelevance,
+    BalHeadPipeline, HeadRelevanceSource, SessionRelevance,
 };
 use degenbot_simulation::sim::evm2::delta_snapshot::{BalHeadDriver, DeltaReport, RelevanceSet};
 use degenbot_simulation::sim::prefetch::PrefetchFacts;
-use degenbot_simulation::sim::ReadAnchor;
 use degenbot_simulation::sim::SettlementWarmup;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::{BotState, EpochDelta};
 use degenbot_uniswap::dex_identity::DexVariant;
-use futures_util::future::BoxFuture;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Waker};
 
 #[path = "../examples/shared/chain_stub.rs"]
@@ -54,16 +52,16 @@ mod modeled_chain;
 #[path = "../examples/shared/real_coverage.rs"]
 #[expect(dead_code)]
 mod real_coverage;
+#[path = "../examples/shared/scripted_head.rs"]
+#[expect(dead_code)]
+mod scripted_head;
 
 use chain_stub::ChainStub;
 use modeled_chain::bal_bytes;
+use scripted_head::{address, genesis, identified, settled, ScriptedHead, SpawnQueue};
 
 /// The height every test advances from, unless the test is about lineage.
 const HEIGHT: u64 = 200;
-
-fn address(tag: u8) -> Address {
-    Address::new([tag; 20])
-}
 
 /// The session's WETH9 identity — a settlement address no fixture path names.
 fn weth() -> Address {
@@ -90,43 +88,6 @@ fn settlement_facts() -> PrefetchFacts {
             pool_manager_address: Some(pool_manager()),
             slots: degenbot_executor::compute_simulation_warmup_slots(executor(), weth()),
         }),
-    }
-}
-
-/// The deterministic spawn seam: every phase the pipeline spawns parks here
-/// until the test drains it.
-#[derive(Clone, Default)]
-struct SpawnQueue {
-    parked: Arc<Mutex<Vec<BoxFuture<'static, ()>>>>,
-}
-
-impl SpawnQueue {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn spawner(&self) -> HeadSpawn {
-        let parked = Arc::clone(&self.parked);
-        Arc::new(move |phase: BoxFuture<'static, ()>| parked.lock().unwrap().push(phase))
-    }
-
-    fn take(&self) -> Option<BoxFuture<'static, ()>> {
-        let mut parked = self.parked.lock().unwrap();
-        if parked.is_empty() {
-            None
-        } else {
-            Some(parked.remove(0))
-        }
-    }
-
-    async fn run_one(&self) -> bool {
-        match self.take() {
-            Some(phase) => {
-                phase.await;
-                true
-            }
-            None => false,
-        }
     }
 }
 
@@ -228,14 +189,6 @@ fn armed_pipeline(
 
 fn head(number: u64, hash: B256, parent_hash: B256) -> CanonicalHead {
     CanonicalHead::new(number, hash, parent_hash)
-}
-
-fn identified(number: u64, hash: B256) -> ReadAnchor {
-    ReadAnchor::identified(number, hash)
-}
-
-fn genesis() -> B256 {
-    B256::new([0x99; 32])
 }
 
 fn report_of(driver: &BalHeadDriver) -> Arc<DeltaReport> {
@@ -488,7 +441,7 @@ async fn the_set_and_slice_relevance_inputs_produce_an_identical_report() {
         );
         let provider = stub.provider();
         let driver = Arc::new(BalHeadDriver::new(&provider));
-        let ticket = driver.deliver(identified(HEIGHT, hash), genesis());
+        let head = ScriptedHead::of(&driver, driver.deliver(identified(HEIGHT, hash), genesis()));
         let outcome = if by_set {
             // The set is built from a REVERSED iterator: membership carries no
             // order, so a set that disagrees with the slice's order must not
@@ -497,15 +450,12 @@ async fn the_set_and_slice_relevance_inputs_produce_an_identical_report() {
             reversed.reverse();
             let members = RelevanceSet::from_set(reversed.into_iter().collect::<HashSet<_>>());
             driver
-                .advance_with_relevance(ticket, || Arc::new(members.clone()))
+                .advance_with_relevance(head.ticket(), || Arc::new(members.clone()))
                 .await
         } else {
-            driver.advance(ticket, &addresses).await
+            head.advance(&addresses).await
         };
-        let report = match outcome {
-            degenbot_simulation::sim::evm2::delta_snapshot::HeadOutcome::Settled(report) => report,
-            other => panic!("the head settles: {other:?}"),
-        };
+        let report = settled(&outcome);
         reports.push((
             report.writes.clone(),
             report.writes_overwritten,

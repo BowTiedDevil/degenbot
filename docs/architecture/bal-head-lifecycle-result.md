@@ -15,6 +15,20 @@ contract.
 `BalHeadDriver` owns one `DeltaSnapshotCache` and drives its transition across a
 head stream. The synchronous `advance_bal` is unchanged and stays the control.
 
+The lifecycle is its own module: `sim/evm2/head_lifecycle.rs` owns
+`BalHeadDriver`, the `HeadLifecycle` machine and its poses (`CurrentHead`,
+`ClaimAttempt`, `PrepareClaim`), and the public ticket/readiness/outcome types;
+`sim/evm2/delta_snapshot.rs` owns the representation, the retention policy, the
+cache and the synchronous control, and reexports every lifecycle type, so every
+consumer path (`delta_snapshot::BalHeadDriver`, `delta_snapshot::HeadCold`, …)
+is unchanged. The split follows that ownership, never a line count: the driver
+still calls the cache's one `apply_prepared` transition under its own lock, no RPC
+runs under any lock, and the cache install stays nested inside the driver's own
+lock hold. `tests/bal_head_lifecycle_public_paths.rs` is the external evidence:
+a separate crate that names every public lifecycle type and every driver entry
+point through BOTH paths and proves each pair is one type, so no consumer's
+import can move with the module.
+
 | surface | what it does |
 | --- | --- |
 | `deliver(anchor, parent_hash) -> HeadTicket` | records the head by its **exact anchor** and mints the one cold generation callers read until the apply lands. A repeat of the current head (same anchor, same parent hash) returns the same ticket and does no work; a head whose anchor the cache already has installed settles on the spot with the readiness its own settle derived, so a cold head stays cold with its reason |
@@ -70,7 +84,11 @@ attempt without retroactively reversing the earlier abandonment.
 
 ## Correctness evidence
 
-`tests/bal_head_lifecycle.rs` — 55 pins, every name stating the behavior:
+`tests/bal_head_lifecycle.rs` — 54 pins, every name stating the behavior, driven
+through the shared scripted-head fixture (`examples/shared/scripted_head.rs`):
+one `ScriptedHead` spells the deliver → prepare → apply → release choreography,
+`SpawnQueue` is its pipeline-seam form, and the pipeline and relevance pins drive
+the same two pieces:
 
 - **transition parity** — `applying_a_prepared_list_matches_the_synchronous_advance_item_for_item`,
   `a_prepared_list_applies_only_to_the_head_it_was_prepared_for`,
@@ -122,15 +140,22 @@ attempt without retroactively reversing the earlier abandonment.
   `an_advance_stores_the_report_it_settled_with`,
   `a_retry_settles_an_abandoned_head_with_its_own_report`,
   `an_out_of_band_apply_stores_the_report_it_settled_with`,
-  `a_second_settle_at_the_same_head_never_keeps_the_older_report`,
   `an_installed_redelivery_stores_no_report_of_its_own`.
+- **the machine's own pins** (`src/sim/evm2/head_lifecycle.rs`, synchronous):
+  `a_settle_stores_the_report_it_just_produced_over_the_one_the_head_held` — the
+  report-assignment rule the public driver cannot reach twice, executed on the
+  pose: a settle that lands on a head already carrying a report replaces it,
+  while the delivery that found its generation installed never holds one;
+  `a_read_at_an_anchor_the_installed_generation_does_not_back_answers_cold_without_installing`
+  — the cache/lifecycle disagreement, answered cold with nothing installed.
 - **the unbounded read fast path and installed-handle reads** —
   `an_unbounded_chain_reports_held_equal_to_live_at_every_head`,
   `repeated_reads_at_the_installed_head_share_one_handle_and_move_nothing`,
   `a_cold_read_at_an_undelivered_anchor_installs_and_evicts_nothing`.
 
 The unchanged suites stay green and are the evidence that the transition did not
-move: `tests/bal_delta_snapshot.rs` (11 pins, full-clone parity),
+move: `tests/bal_head_lifecycle_public_paths.rs` (2 pins, the reexport's public
+surface), `tests/bal_delta_snapshot.rs` (11 pins, full-clone parity),
 `tests/bal_retention.rs` (14 pins, retention semantics), and
 `tests/bal_delta_rounds.rs` (11 pins, the round-coalesced read seam). The control
 itself (`ReadHubCache::advance_bal` and `DeltaSnapshotCache::advance_bal`) runs
