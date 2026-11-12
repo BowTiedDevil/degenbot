@@ -1783,7 +1783,7 @@ pub struct HeadStats {
     pub cold_views: u64,
 }
 
-/// One preparation claim attempt on one head — the private identity a wait is
+/// One preparation CLAIM ATTEMPT on one head — the private identity a wait is
 /// registered against.
 ///
 /// A head is delivered once but can be claimed more than once: a dropped
@@ -1794,8 +1794,8 @@ pub struct HeadStats {
 /// attempt's waiters have not polled yet. Neither the epoch nor the channel is
 /// public — the ticket's `seq` is the only sequencing a caller sees, and a retry
 /// reuses it.
-struct Claim {
-    /// Distinguishes same-anchor attempts. `0` is the claim a delivery itself
+struct ClaimAttempt {
+    /// Distinguishes same-anchor attempts. `0` is the attempt a delivery itself
     /// owns, which no caller has taken; every taken attempt mints a larger
     /// epoch, and the epoch is what keeps a released attempt's publication off
     /// a later attempt's channel.
@@ -1803,77 +1803,39 @@ struct Claim {
     /// This attempt's terminal result, `None` until the attempt ends: the one
     /// channel every waiter that joined THIS attempt is woken on.
     completion: watch::Sender<Option<HeadCompletion>>,
-    /// Whether a caller currently owns the attempt — the genuinely-live state a
-    /// wait registers on. `false` means no preparation is in flight for this
-    /// attempt, so a wait resolves terminal instead of parking.
-    live: bool,
 }
 
-impl Claim {
-    /// The delivery's own claim: no caller owns it and nothing is published.
+impl ClaimAttempt {
+    /// The attempt a delivery owns: no caller has taken it and nothing is
+    /// published.
     fn delivered() -> Self {
-        let (completion, _) = watch::channel(None);
-        Self {
-            epoch: 0,
-            completion,
-            live: false,
-        }
+        Self::undecided(0)
     }
 
-    /// A fresh attempt's claim at `epoch`: its own channel, so the attempt's
-    /// terminal result is its own.
+    /// A fresh attempt at `epoch`: its own channel, so the attempt's terminal
+    /// result is its own.
     fn minted(epoch: u64) -> Self {
-        let (completion, _) = watch::channel(None);
-        Self {
-            epoch,
-            completion,
-            live: true,
-        }
+        Self::undecided(epoch)
     }
 
-    /// The claim a head's settled truth is published on when the attempt that
-    /// owned the head already ended: `live` is already `false` and the terminal
-    /// result is published at creation, because nothing is left to prepare.
+    /// The attempt a head's settled truth is published on when the attempt that
+    /// owned the head already ended: its terminal result is published at
+    /// creation, because nothing is left to prepare.
     fn settled(epoch: u64) -> Self {
         let (completion, _) = watch::channel(Some(HeadCompletion::Settled));
-        Self {
-            epoch,
-            completion,
-            live: false,
-        }
+        Self { epoch, completion }
     }
 
-    /// Publish the head's settled truth on this head's CURRENT claim.
-    ///
-    /// The ordinary settle publishes on the claim that did the work — the live
-    /// attempt that prepared the head, or the delivery's own epoch-0 claim — and
-    /// that claim's waiters wake to it.
-    ///
-    /// A head can also settle while its current claim is an attempt that already
-    /// ended: an out-of-band [`BalHeadDriver::apply`] on the head's ticket can
-    /// land after the attempt that claimed the head was dropped, before any
-    /// retry claims it. That attempt published `Abandoned`, and an attempt's
-    /// terminal result is never rewritten, so the settled truth mints a FRESH
-    /// private epoch and channel instead: the head's current completion is its
-    /// settle, a new wait resolves the settled generation, and the abandoned
-    /// attempt's waiters keep the abandonment they were woken with. Only the
-    /// private epoch moves — the public ticket's `seq` is untouched, so no
-    /// caller sees a new generation.
-    ///
-    /// An ordinary live-claim settle, a delivery's unsettled epoch-0 claim, and a
-    /// head that is already settled all publish on the claim they already have:
-    /// nothing was abandoned, so no new epoch is minted.
-    fn settle(&mut self, next_epoch: &mut u64) {
-        let ended_abandoned = !self.live
-            && self.epoch != 0
-            && matches!(*self.completion.borrow(), Some(HeadCompletion::Abandoned));
-        if ended_abandoned {
-            *next_epoch = next_epoch.saturating_add(1);
-            *self = Self::settled(*next_epoch);
-            return;
-        }
-        self.live = false;
-        self.complete(HeadCompletion::Settled);
+    /// An attempt nothing has decided yet — the shape a delivery and a fresh
+    /// claim attempt share.
+    fn undecided(epoch: u64) -> Self {
+        let (completion, _) = watch::channel(None);
+        Self { epoch, completion }
+    }
+
+    /// The terminal result this attempt published, if it has one.
+    fn published(&self) -> Option<HeadCompletion> {
+        *self.completion.borrow()
     }
 
     /// Publish this attempt's terminal result — FIRST TERMINAL WINS, for every
@@ -1886,58 +1848,618 @@ impl Claim {
     /// attempt's abandonment is not rewritten by the delivery that supersedes
     /// the head it held, and a supersession is not rewritten by the release
     /// that follows it. Nothing needs to republish over its own attempt — a
-    /// retry mints a new claim with its own epoch and channel and publishes
+    /// retry mints a new attempt with its own epoch and channel and publishes
     /// there, so a later attempt's real terminal never depends on overwriting
     /// an earlier attempt's.
-    fn complete(&self, completion: HeadCompletion) {
+    fn publish(&self, completion: HeadCompletion) {
         if self.completion.borrow().is_none() {
             self.completion.send_replace(Some(completion));
         }
     }
+
+    /// This attempt's completion channel, for a waiter joining a genuinely live
+    /// preparation.
+    fn subscribe(&self) -> watch::Receiver<Option<HeadCompletion>> {
+        self.completion.subscribe()
+    }
 }
 
-/// One canonical head's delivery state.
-struct DeliveredHead {
+/// The delivery identity every pose of the current head carries: the exact-hash
+/// anchor, the parent hash its lineage is verified against, and the public
+/// delivery sequence its ticket names.
+struct HeadDelivery {
     anchor: ReadAnchor,
     parent_hash: B256,
     seq: u64,
-    /// The claim attempt this head's waiters join. A retry after an abandoned
-    /// attempt replaces it wholesale, which is what entitles the retry to its
-    /// own terminal result without touching the one already published.
-    claim: Claim,
-    /// The cold generation callers read while the head is unprepared, dropped
-    /// at settle so the settled generation replaces it wholesale.
-    provisional: Option<Arc<DeltaHub>>,
-    /// The report this driver's apply produced, once the head settled.
-    report: Option<Arc<DeltaReport>>,
 }
 
+/// A delivered head that has not settled: the ONE cold generation every caller
+/// at it shares until its BAL applies, and the claim attempt that owns — or,
+/// once released, owned — its preparation.
+struct UnsettledHead {
+    delivery: HeadDelivery,
+    /// The cold generation callers read while the head is unprepared, dropped at
+    /// settle so the settled generation replaces it wholesale.
+    provisional: Arc<DeltaHub>,
+    attempt: ClaimAttempt,
+}
+
+/// A settled head: from here the anchor's generation is the cache's, so the cold
+/// generation is gone. `report` is the transition this driver ran, absent when a
+/// delivery found the generation already installed.
+struct SettledHead {
+    delivery: HeadDelivery,
+    report: Option<Arc<DeltaReport>>,
+    attempt: ClaimAttempt,
+}
+
+/// The head the driver holds, in exactly one pose.
+///
+/// The pose is what the payload combinations make type-safe: an unsettled head
+/// always carries the cold generation its callers share and a settled one never
+/// does, and "a caller owns the preparation" is a pose rather than a flag — so
+/// the liveness a wait registers on and the data the state carries cannot
+/// disagree.
+enum CurrentHead {
+    /// Delivered with nothing owning its preparation: a direct `prepare` +
+    /// `apply` moves it, and a released (cancelled) attempt leaves it here with
+    /// that attempt's own terminal result already published.
+    Unclaimed(UnsettledHead),
+    /// A live claim attempt owns the preparation: the state a wait registers on
+    /// and a second concurrent advance joins as `InFlight`.
+    Preparing(UnsettledHead),
+    /// The head settled, carried or cold.
+    Settled(SettledHead),
+}
+
+impl CurrentHead {
+    fn delivery(&self) -> &HeadDelivery {
+        match self {
+            Self::Unclaimed(head) | Self::Preparing(head) => &head.delivery,
+            Self::Settled(head) => &head.delivery,
+        }
+    }
+
+    fn anchor(&self) -> ReadAnchor {
+        self.delivery().anchor
+    }
+
+    fn attempt(&self) -> &ClaimAttempt {
+        match self {
+            Self::Unclaimed(head) | Self::Preparing(head) => &head.attempt,
+            Self::Settled(head) => &head.attempt,
+        }
+    }
+
+    /// The cold generation the head shares with its callers, while it has one.
+    fn provisional(&self) -> Option<&Arc<DeltaHub>> {
+        match self {
+            Self::Unclaimed(head) | Self::Preparing(head) => Some(&head.provisional),
+            Self::Settled(_) => None,
+        }
+    }
+
+    /// The report this driver's apply produced, once the head settled.
+    fn report(&self) -> Option<Arc<DeltaReport>> {
+        match self {
+            Self::Settled(head) => head.report.as_ref().map(Arc::clone),
+            Self::Unclaimed(_) | Self::Preparing(_) => None,
+        }
+    }
+
+    /// Whether the head's current attempt already published its own end, so a
+    /// settle must mint a fresh private epoch instead of rewriting it.
+    fn published_abandonment(&self) -> bool {
+        matches!(
+            self,
+            Self::Unclaimed(head)
+                if matches!(head.attempt.published(), Some(HeadCompletion::Abandoned))
+        )
+    }
+
+    /// Take the live claim `epoch` on an unclaimed head: the pose a caller owns
+    /// the preparation in.
+    fn claimed(self, epoch: u64) -> Self {
+        match self {
+            Self::Unclaimed(head) => Self::Preparing(UnsettledHead {
+                attempt: ClaimAttempt::minted(epoch),
+                ..head
+            }),
+            other => other,
+        }
+    }
+
+    /// Release the live claim attempt `epoch` on the head `seq` delivered —
+    /// publishing its own end — and leave the pose unclaimed, so a later caller
+    /// prepares the same head normally. Any other pose is untouched: a settle or
+    /// a supersession already decided that attempt's waiters' answer, and a
+    /// release never rewrites it.
+    fn released(self, seq: u64, epoch: u64) -> Self {
+        match self {
+            Self::Preparing(head) if head.delivery.seq == seq && head.attempt.epoch == epoch => {
+                head.attempt.publish(HeadCompletion::Abandoned);
+                Self::Unclaimed(head)
+            }
+            other => other,
+        }
+    }
+
+    /// Publish the settle on this pose's attempt: the live attempt's own channel,
+    /// the delivery's undecided one, or — when the attempt that held the head
+    /// already published its own end — the `fresh` private epoch.
+    fn publish_settle(&mut self, fresh: Option<u64>) {
+        match self {
+            Self::Unclaimed(head) => match fresh {
+                Some(epoch) => head.attempt = ClaimAttempt::settled(epoch),
+                None => head.attempt.publish(HeadCompletion::Settled),
+            },
+            Self::Preparing(head) => head.attempt.publish(HeadCompletion::Settled),
+            Self::Settled(head) => head.attempt.publish(HeadCompletion::Settled),
+        }
+    }
+
+    /// The settled pose, holding the report of the transition that settled it.
+    ///
+    /// A settle ALWAYS stores the report it just produced: the settled pose never
+    /// keeps an older transition's report, whichever pose the settle found. `None`
+    /// belongs to the delivery that found its generation already installed — it
+    /// runs no transition, so it passes through no settle and can never overwrite
+    /// the report of one that did.
+    fn settled(self, report: Arc<DeltaReport>) -> Self {
+        match self {
+            Self::Settled(head) => Self::Settled(SettledHead {
+                report: Some(report),
+                ..head
+            }),
+            Self::Unclaimed(head) | Self::Preparing(head) => Self::Settled(SettledHead {
+                delivery: head.delivery,
+                report: Some(report),
+                attempt: head.attempt,
+            }),
+        }
+    }
+}
+
+/// The installed generation: the anchor the cache has installed and the readiness
+/// its OWN settle derived. The cache owns the hub; the lifecycle owns why it
+/// carries — one settle-derived readiness, never re-derived from a hub.
+struct InstalledGeneration {
+    anchor: ReadAnchor,
+    readiness: HeadReadiness,
+}
+
+/// The one previous anchor a lagging caller can still read: the generation the
+/// installing transition replaced, with the handle that was installed there and
+/// the readiness it reported.
+///
+/// Set only by a transition that linked (the new head was exactly the previous
+/// anchor + 1 with a matching parent hash), and cleared by any settle that did
+/// not, so a gap makes the window smaller, never wrong. This is a window, not
+/// retention: the handle is the generation the seal already folded into the new
+/// head's node, so it costs one `Arc` and an empty handle-local map — not one
+/// snapshot.
+struct PreviousGeneration {
+    anchor: ReadAnchor,
+    hub: Arc<DeltaHub>,
+    readiness: HeadReadiness,
+}
+
+/// What one snapshot at an anchor reads, decided by the lifecycle under its lock.
+enum Lookup {
+    /// The anchor is the installed generation: the hub is the cache's, and the
+    /// readiness is the one that generation's settle derived.
+    Installed { readiness: HeadReadiness },
+    /// The driver's current head settled but its anchor is not the installed
+    /// generation: the generation is still the cache's, and the readiness is the
+    /// one the head's settle derived.
+    Settled { readiness: HeadReadiness },
+    /// The current head is unprepared: every caller at it shares this one cold
+    /// generation.
+    Unprepared { hub: Arc<DeltaHub> },
+    /// The anchor outside the installed head that the window still covers.
+    Previous {
+        hub: Arc<DeltaHub>,
+        readiness: HeadReadiness,
+    },
+    /// Nothing the lifecycle knows answers at this anchor.
+    Cold { reason: HeadCold },
+}
+
+/// What one claim attempt's prologue decided.
+enum ClaimStart {
+    /// The head is this caller's to prepare now, on this private epoch.
+    Claimed(u64),
+    /// Nothing was claimed; this is the answer the advance returns.
+    Refused(HeadOutcome),
+}
+
+/// What one apply decided before the cache is touched.
+enum ApplyPlan {
+    /// Nothing is installed; this is the answer the apply returns.
+    Refused(HeadOutcome),
+    /// Install `anchor`'s prepared list over the verified parent lineage.
+    Admitted {
+        anchor: ReadAnchor,
+        parent_hash: B256,
+        /// The installed anchor the transition seals over, when there is one.
+        prior: Option<ReadAnchor>,
+    },
+}
+
+/// The BAL head LIFECYCLE: the driver's one authority over a stream of canonical
+/// heads.
+///
+/// # The three poses
+///
+/// The head the driver holds — `current` — is in exactly one of
+/// [`CurrentHead::Unclaimed`], [`CurrentHead::Preparing`] or
+/// [`CurrentHead::Settled`]. Unclaimed and Preparing carry the delivery identity,
+/// the one cold generation their callers share and the claim attempt a wait
+/// registers against; Settled carries the delivery identity, the report of the
+/// transition that settled it and the attempt its waiters were woken on. A
+/// cancelled preparation returns the head to Unclaimed — the same head, not a
+/// new pose — and a spawned phase's release stays a spawned-phase concept, never
+/// a driver pose.
+///
+/// # The projections
+///
+/// Everything else a caller can observe is an orthogonal projection of that pose
+/// plus the generation history: [`InstalledGeneration`] (the readiness the
+/// installed head's own settle derived), [`PreviousGeneration`] (the one anchor
+/// the read window still covers), the superseded anchor (the one abandoned head a
+/// lagging caller learns about), the per-attempt completion, the public ticket
+/// sequence and the counters. Cold is a readiness value, abandonment is one
+/// attempt's terminal result, and none of them is a second lifecycle authority:
+/// the cache installs hubs, this machine is the only lifecycle writer.
 #[derive(Default)]
-struct DriverState {
-    head: Option<DeliveredHead>,
+struct HeadLifecycle {
+    current: Option<CurrentHead>,
     /// The anchor the last delivery superseded: one slot, so a caller still
     /// working at the abandoned head learns why its snapshot is cold.
     superseded: Option<ReadAnchor>,
     /// The installed generation's readiness, kept after its head is superseded so
     /// a caller still at that head gets the generation — and the truth about
     /// whether it carries — rather than a fresh cold one.
-    installed: Option<(ReadAnchor, HeadReadiness)>,
-    /// The anchor the installed generation replaced, with the handle that was
-    /// installed there and the readiness it reported: the one previous anchor a
-    /// lagging caller can still read.
-    ///
-    /// Set only by a transition that linked (the new head was exactly the
-    /// previous anchor + 1 with a matching parent hash), and cleared by any
-    /// settle that did not, so a gap makes the window smaller, never wrong.
-    /// This is a window, not retention: the handle is the generation the seal
-    /// already folded into the new head's node, so it costs one `Arc` and an
-    /// empty handle-local map — not one snapshot.
-    previous: Option<(ReadAnchor, Arc<DeltaHub>, HeadReadiness)>,
+    installed: Option<InstalledGeneration>,
+    previous: Option<PreviousGeneration>,
     seq: u64,
     /// The epoch the next preparation claim attempt mints. Private: public
     /// sequencing is the delivery `seq`, which a retry reuses.
     claim_epoch: u64,
     stats: HeadStats,
+}
+
+impl HeadLifecycle {
+    /// The readiness the `anchor`'s own settle derived; a generation the machine
+    /// holds no settle for is the ready one.
+    fn readiness_of(&self, anchor: ReadAnchor) -> HeadReadiness {
+        self.installed
+            .as_ref()
+            .filter(|generation| generation.anchor == anchor)
+            .map_or(HeadReadiness::Ready, |generation| {
+                generation.readiness.clone()
+            })
+    }
+
+    /// Deliver one head: mint the public delivery sequence, retire the head it
+    /// replaces, and put the new head in the pose its installation calls for.
+    fn deliver(
+        &mut self,
+        anchor: ReadAnchor,
+        parent_hash: B256,
+        installed: Option<ReadAnchor>,
+        cold: impl FnOnce() -> Arc<DeltaHub>,
+    ) -> u64 {
+        if let Some(seq) = self
+            .current
+            .as_ref()
+            .map(CurrentHead::delivery)
+            .filter(|held| held.anchor == anchor && held.parent_hash == parent_hash)
+            .map(|held| held.seq)
+        {
+            self.stats.repeated = self.stats.repeated.saturating_add(1);
+            return seq;
+        }
+        self.seq = self.seq.saturating_add(1);
+        let seq = self.seq;
+        if let Some(replaced) = self.current.take() {
+            if replaced.provisional().is_some() {
+                self.stats.superseded = self.stats.superseded.saturating_add(1);
+            }
+            // The replaced generation is terminal for its waiters: the wake is
+            // what makes a stale registration resolve instead of sleeping through
+            // its own abandonment. An attempt that already published its own end
+            // keeps it — this supersession is the HEAD's transition, not a second
+            // terminal for that attempt.
+            replaced.attempt().publish(HeadCompletion::Superseded);
+            self.superseded = Some(replaced.anchor());
+        }
+        self.stats.delivered = self.stats.delivered.saturating_add(1);
+        let delivery = HeadDelivery {
+            anchor,
+            parent_hash,
+            seq,
+        };
+        self.current = Some(if installed == Some(anchor) {
+            self.stats.already_current = self.stats.already_current.saturating_add(1);
+            // The readiness the installed generation's own settle derived — the
+            // same record `lookup` reads — so a redelivery restates no transition
+            // it did not perform.
+            let readiness = self.readiness_of(anchor);
+            self.installed = Some(InstalledGeneration { anchor, readiness });
+            // A delivery of an installed block settles on the spot: its generation
+            // is terminal the moment it exists.
+            CurrentHead::Settled(SettledHead {
+                delivery,
+                report: None,
+                attempt: ClaimAttempt::settled(0),
+            })
+        } else {
+            CurrentHead::Unclaimed(UnsettledHead {
+                delivery,
+                provisional: cold(),
+                attempt: ClaimAttempt::delivered(),
+            })
+        });
+        seq
+    }
+
+    /// Take the live preparation claim on the ticket's head.
+    ///
+    /// Only one caller prepares a given head: a second concurrent advance on the
+    /// same ticket is `InFlight`, an installed or settled head is
+    /// `AlreadySettled`, and a ticket a later delivery superseded installs
+    /// nothing. A fresh attempt on an unclaimed head mints its own private epoch
+    /// and channel — its terminal result can never overwrite the one the attempt
+    /// it replaces published — while the public ticket is untouched.
+    fn claim(&mut self, anchor: ReadAnchor, seq: u64, installed: Option<ReadAnchor>) -> ClaimStart {
+        let Some(current) = self.current.as_ref() else {
+            return ClaimStart::Refused(HeadOutcome::Superseded { head: anchor });
+        };
+        let held = current.delivery();
+        if held.seq != seq || held.anchor != anchor {
+            return ClaimStart::Refused(HeadOutcome::Superseded { head: held.anchor });
+        }
+        if installed == Some(anchor) {
+            return ClaimStart::Refused(HeadOutcome::AlreadySettled);
+        }
+        match current {
+            CurrentHead::Preparing(_) => return ClaimStart::Refused(HeadOutcome::InFlight),
+            // A settled head the cache no longer holds has nothing left to
+            // prepare: the answer is the one an installed head gives.
+            CurrentHead::Settled(_) => return ClaimStart::Refused(HeadOutcome::AlreadySettled),
+            CurrentHead::Unclaimed(_) => {}
+        }
+        self.claim_epoch = self.claim_epoch.saturating_add(1);
+        let epoch = self.claim_epoch;
+        self.current = self.current.take().map(|current| current.claimed(epoch));
+        ClaimStart::Claimed(epoch)
+    }
+
+    /// Release the live claim attempt a dropped preparation owned.
+    fn release(&mut self, seq: u64, epoch: u64) {
+        if let Some(head) = self.current.take() {
+            self.current = Some(head.released(seq, epoch));
+        }
+    }
+
+    /// Decide one apply under the lock: the exact-hash fence, the foreign-list
+    /// fence, the installed head's idempotence, and which generation the
+    /// transition seals over. A refusal is counted here and installs nothing.
+    fn plan_apply(
+        &mut self,
+        anchor: ReadAnchor,
+        seq: u64,
+        prepared: ReadAnchor,
+        installed: Option<ReadAnchor>,
+    ) -> ApplyPlan {
+        let Some(current) = self.current.as_ref() else {
+            self.stats.discarded = self.stats.discarded.saturating_add(1);
+            return ApplyPlan::Refused(HeadOutcome::Superseded { head: anchor });
+        };
+        let (held_anchor, held_seq, parent_hash) = {
+            let held = current.delivery();
+            (held.anchor, held.seq, held.parent_hash)
+        };
+        if held_seq != seq || held_anchor != anchor {
+            self.stats.discarded = self.stats.discarded.saturating_add(1);
+            return ApplyPlan::Refused(HeadOutcome::Superseded { head: held_anchor });
+        }
+        if prepared != held_anchor {
+            self.stats.discarded = self.stats.discarded.saturating_add(1);
+            return ApplyPlan::Refused(HeadOutcome::Foreign {
+                prepared,
+                head: held_anchor,
+            });
+        }
+        if installed == Some(held_anchor) {
+            // The head is already installed — this apply found it settled: its
+            // generation is terminal and its waiters wake on the head's current
+            // attempt.
+            self.publish_settle();
+            return ApplyPlan::Refused(HeadOutcome::AlreadySettled);
+        }
+        ApplyPlan::Admitted {
+            anchor: held_anchor,
+            parent_hash,
+            prior: installed,
+        }
+    }
+
+    /// Record one installed generation: the counters, the read window, and the
+    /// readiness the transition derived from its own report.
+    fn record_settle(
+        &mut self,
+        anchor: ReadAnchor,
+        report: &Arc<DeltaReport>,
+        prior: Option<(ReadAnchor, Arc<DeltaHub>)>,
+    ) {
+        self.stats.settled = self.stats.settled.saturating_add(1);
+        // The two-anchor window: a linked transition makes the generation it just
+        // sealed the previous anchor a lagging caller may read. A settle that did
+        // not link (no parent, not consecutive, a mismatched parent hash, or an
+        // unreadable list) leaves no previous slot, so the window shrinks across a
+        // gap instead of pointing at a generation that never was this chain's
+        // parent.
+        match &report.outcome {
+            CarryOutcome::Carried { .. } => {
+                if let Some((prior_anchor, prior_hub)) = prior {
+                    let readiness = self.readiness_of(prior_anchor);
+                    self.previous = Some(PreviousGeneration {
+                        anchor: prior_anchor,
+                        hub: prior_hub,
+                        readiness,
+                    });
+                }
+            }
+            CarryOutcome::Cold { .. } => self.previous = None,
+            CarryOutcome::AlreadyCurrent => {}
+        }
+        self.installed = Some(InstalledGeneration {
+            anchor,
+            readiness: settled_readiness(Some(report.as_ref())),
+        });
+    }
+
+    /// Publish the settle and move the current head to its settled pose — the
+    /// cold generation dropped, the report and the attempt kept.
+    ///
+    /// A head can settle while its current attempt already published its own end:
+    /// an out-of-band [`BalHeadDriver::apply`] on the head's ticket can land after
+    /// the attempt that claimed the head was dropped, before any retry claims it.
+    /// That attempt published `Abandoned`, and an attempt's terminal result is
+    /// never rewritten, so [`Self::publish_settle`] mints a fresh private epoch
+    /// and channel for the settle. Only the private epoch moves — the public
+    /// ticket's `seq` is untouched, so no caller sees a new generation.
+    fn settle_current(&mut self, report: Arc<DeltaReport>) {
+        self.publish_settle();
+        if let Some(current) = self.current.take() {
+            self.current = Some(current.settled(report));
+        }
+    }
+
+    /// Publish the head's settled truth on its current attempt without moving the
+    /// pose (an apply that found the generation already installed).
+    ///
+    /// An ordinary live-claim settle, a delivery's undecided attempt, and a head
+    /// that is already settled all publish on the attempt they already have:
+    /// nothing was abandoned, so no new epoch is minted.
+    fn publish_settle(&mut self) {
+        let fresh = if self
+            .current
+            .as_ref()
+            .is_some_and(CurrentHead::published_abandonment)
+        {
+            self.claim_epoch = self.claim_epoch.saturating_add(1);
+            Some(self.claim_epoch)
+        } else {
+            None
+        };
+        if let Some(current) = self.current.as_mut() {
+            current.publish_settle(fresh);
+        }
+    }
+
+    /// What one snapshot at `anchor` reads, from the pose and the history alone.
+    fn lookup(&self, anchor: ReadAnchor, installed: Option<ReadAnchor>) -> Lookup {
+        if installed == Some(anchor) {
+            return Lookup::Installed {
+                readiness: self.readiness_of(anchor),
+            };
+        }
+        match self.current.as_ref().filter(|head| head.anchor() == anchor) {
+            Some(CurrentHead::Unclaimed(head) | CurrentHead::Preparing(head)) => {
+                Lookup::Unprepared {
+                    hub: Arc::clone(&head.provisional),
+                }
+            }
+            Some(CurrentHead::Settled(_)) => Lookup::Settled {
+                readiness: self.readiness_of(anchor),
+            },
+            None => match self
+                .previous
+                .as_ref()
+                .filter(|previous| previous.anchor == anchor)
+            {
+                Some(previous) => Lookup::Previous {
+                    hub: Arc::clone(&previous.hub),
+                    readiness: previous.readiness.clone(),
+                },
+                None => Lookup::Cold {
+                    reason: if self.superseded == Some(anchor) {
+                        HeadCold::Superseded
+                    } else {
+                        HeadCold::Undelivered
+                    },
+                },
+            },
+        }
+    }
+
+    /// Count one served view on whichever counter its readiness belongs to.
+    fn record_view(&mut self, ready: bool) {
+        if ready {
+            self.stats.ready_views = self.stats.ready_views.saturating_add(1);
+        } else {
+            self.stats.cold_views = self.stats.cold_views.saturating_add(1);
+        }
+    }
+
+    /// The wait registration for `anchor`, under the state lock: [`Option::None`]
+    /// when no LIVE preparation owns the exact anchor's unsettled generation — it
+    /// settled, it is not the driver's current head any more, or nothing has
+    /// claimed it — otherwise the live attempt's own completion signal.
+    ///
+    /// Subscribing is reserved for a genuinely live attempt (the `Preparing`
+    /// pose): a delivered head nothing claimed yet, and a head whose claim was
+    /// dropped, have no future notification worth waiting for, so the wait
+    /// answers terminal instead of parking.
+    fn registration(
+        &self,
+        anchor: ReadAnchor,
+        installed: Option<ReadAnchor>,
+    ) -> Option<watch::Receiver<Option<HeadCompletion>>> {
+        if installed == Some(anchor) {
+            return None;
+        }
+        match self.current.as_ref() {
+            Some(CurrentHead::Preparing(head)) if head.delivery.anchor == anchor => {
+                Some(head.attempt.subscribe())
+            }
+            _ => None,
+        }
+    }
+
+    /// The terminal result the CURRENT attempt on `anchor` published, when the
+    /// head the driver holds is that one.
+    fn completion(&self, anchor: ReadAnchor) -> Option<HeadCompletion> {
+        let current = self.current.as_ref()?;
+        if current.anchor() != anchor {
+            return None;
+        }
+        current.attempt().published()
+    }
+
+    /// The head the driver holds — settled or still preparing.
+    fn delivered(&self) -> Option<ReadAnchor> {
+        self.current.as_ref().map(CurrentHead::anchor)
+    }
+
+    /// The previous anchor the read window covers, when the installing transition
+    /// linked.
+    fn previous_anchor(&self) -> Option<ReadAnchor> {
+        self.previous.as_ref().map(|previous| previous.anchor)
+    }
+
+    /// The report this driver's own apply produced for the head it holds.
+    fn last_report(&self) -> Option<Arc<DeltaReport>> {
+        self.current.as_ref().and_then(CurrentHead::report)
+    }
+
+    /// The lifecycle's cumulative counters.
+    fn stats(&self) -> HeadStats {
+        self.stats
+    }
 }
 
 /// The asynchronous canonical-head lifecycle for one [`DeltaSnapshotCache`].
@@ -1990,7 +2512,7 @@ pub struct BalHeadDriver {
     provider: AlloyProvider,
     cache: DeltaSnapshotCache,
     retention: Retention,
-    state: Mutex<DriverState>,
+    state: Mutex<HeadLifecycle>,
 }
 
 impl BalHeadDriver {
@@ -2009,7 +2531,7 @@ impl BalHeadDriver {
             provider: provider.clone(),
             cache: DeltaSnapshotCache::with_max_depth_and_retention(provider, max_depth, retention),
             retention,
-            state: Mutex::new(DriverState::default()),
+            state: Mutex::new(HeadLifecycle::default()),
         }
     }
 
@@ -2055,60 +2577,10 @@ impl BalHeadDriver {
     /// callers at that head read until [`Self::apply`] lands.
     pub fn deliver(&self, anchor: ReadAnchor, parent_hash: B256) -> HeadTicket {
         let mut state = self.state.lock();
-        let repeated = state
-            .head
-            .as_ref()
-            .filter(|head| head.anchor == anchor && head.parent_hash == parent_hash)
-            .map(|head| head.seq);
-        if let Some(seq) = repeated {
-            state.stats.repeated = state.stats.repeated.saturating_add(1);
-            return HeadTicket { anchor, seq };
-        }
-        state.seq = state.seq.saturating_add(1);
-        let seq = state.seq;
-        let installed = self.cache.anchor() == Some(anchor);
-        let provisional = if installed {
-            None
-        } else {
-            Some(cold_generation(&self.provider, anchor, self.retention))
-        };
-        if let Some(previous) = state.head.take() {
-            if previous.provisional.is_some() {
-                state.stats.superseded = state.stats.superseded.saturating_add(1);
-            }
-            // The replaced generation is terminal for its waiters: the wake is
-            // what makes a stale registration resolve instead of sleeping
-            // through its own abandonment. An attempt that already published
-            // its own end keeps it — this supersession is the HEAD's transition,
-            // not a second terminal for that attempt.
-            previous.claim.complete(HeadCompletion::Superseded);
-            state.superseded = Some(previous.anchor);
-        }
-        state.stats.delivered = state.stats.delivered.saturating_add(1);
-        let head = DeliveredHead {
-            anchor,
-            parent_hash,
-            seq,
-            claim: Claim::delivered(),
-            provisional,
-            report: None,
-        };
-        if installed {
-            state.stats.already_current = state.stats.already_current.saturating_add(1);
-            // The readiness the installed generation's own settle derived — the
-            // same record `snapshot` reads — so a redelivery restates no
-            // transition it did not perform.
-            let readiness = state
-                .installed
-                .as_ref()
-                .filter(|(settled, _)| *settled == anchor)
-                .map_or(HeadReadiness::Ready, |(_, readiness)| readiness.clone());
-            state.installed = Some((anchor, readiness));
-            // A delivery of an installed block settles on the spot: its
-            // generation is terminal the moment it exists.
-            head.claim.complete(HeadCompletion::Settled);
-        }
-        state.head = Some(head);
+        let installed = self.cache.anchor();
+        let seq = state.deliver(anchor, parent_hash, installed, || {
+            cold_generation(&self.provider, anchor, self.retention)
+        });
         HeadTicket { anchor, seq }
     }
 
@@ -2163,84 +2635,32 @@ impl BalHeadDriver {
         relevance: &RelevanceSet,
     ) -> HeadOutcome {
         let mut state = self.state.lock();
-        let Some(head) = state.head.as_ref() else {
-            state.stats.discarded = state.stats.discarded.saturating_add(1);
-            return HeadOutcome::Superseded {
-                head: ticket.anchor,
-            };
+        let plan = state.plan_apply(
+            ticket.anchor,
+            ticket.seq,
+            prepared.anchor(),
+            self.cache.anchor(),
+        );
+        let (anchor, parent_hash, prior) = match plan {
+            ApplyPlan::Refused(outcome) => return outcome,
+            ApplyPlan::Admitted {
+                anchor,
+                parent_hash,
+                prior,
+            } => (anchor, parent_hash, prior),
         };
-        if head.seq != ticket.seq || head.anchor != ticket.anchor {
-            let current = head.anchor;
-            state.stats.discarded = state.stats.discarded.saturating_add(1);
-            return HeadOutcome::Superseded { head: current };
-        }
-        let current = head.anchor;
-        if prepared.anchor() != current {
-            state.stats.discarded = state.stats.discarded.saturating_add(1);
-            return HeadOutcome::Foreign {
-                prepared: prepared.anchor(),
-                head: current,
-            };
-        }
-        if self.cache.anchor() == Some(current) {
-            // The head is already installed — this apply found it settled:
-            // its generation is terminal and its waiters wake on the head's
-            // current claim.
-            let DriverState {
-                head, claim_epoch, ..
-            } = &mut *state;
-            if let Some(head) = head.as_mut() {
-                head.claim.settle(claim_epoch);
-            }
-            return HeadOutcome::AlreadySettled;
-        }
-        let (anchor, parent_hash) = (head.anchor, head.parent_hash);
         // The generation this transition is about to seal, held before the move:
         // `for_anchor` on the installed anchor hands back the installed handle
         // (and never installs a new one), and after the seal that same handle
         // answers every value it served at its own anchor — the parent chain
         // moved into the sealed node the child now owns.
-        let prior = self
-            .cache
-            .anchor()
-            .map(|installed| (installed, self.cache.for_anchor(installed)));
+        let prior = prior.map(|installed| (installed, self.cache.for_anchor(installed)));
         let (_hub, report) = self
             .cache
             .apply_prepared(anchor, parent_hash, relevance, prepared);
         let report = Arc::new(report);
-        state.stats.settled = state.stats.settled.saturating_add(1);
-        // The two-anchor window: a linked transition makes the generation it
-        // just sealed the previous anchor a lagging caller may read. A settle
-        // that did not link (no parent, not consecutive, a mismatched parent
-        // hash, or an unreadable list) leaves no previous slot, so the window
-        // shrinks across a gap instead of pointing at a generation that never
-        // was this chain's parent.
-        match &report.outcome {
-            CarryOutcome::Carried { .. } => {
-                if let Some((prior_anchor, prior_hub)) = prior {
-                    let readiness = state
-                        .installed
-                        .as_ref()
-                        .filter(|(settled, _)| *settled == prior_anchor)
-                        .map_or(HeadReadiness::Ready, |(_, readiness)| readiness.clone());
-                    state.previous = Some((prior_anchor, prior_hub, readiness));
-                }
-            }
-            CarryOutcome::Cold { .. } => state.previous = None,
-            CarryOutcome::AlreadyCurrent => {}
-        }
-        state.installed = Some((anchor, settled_readiness(Some(&report))));
-        let DriverState {
-            head, claim_epoch, ..
-        } = &mut *state;
-        if let Some(head) = head.as_mut() {
-            head.provisional = None;
-            head.report = Some(Arc::clone(&report));
-            // The settle is the head's CURRENT claim's terminal result: the
-            // attempt that just applied, or a fresh private attempt epoch when
-            // the claim that owned the head already ended abandoned.
-            head.claim.settle(claim_epoch);
-        }
+        state.record_settle(anchor, &report, prior);
+        state.settle_current(Arc::clone(&report));
         HeadOutcome::Settled(report)
     }
 
@@ -2274,30 +2694,10 @@ impl BalHeadDriver {
     {
         let epoch = {
             let mut state = self.state.lock();
-            let DriverState {
-                head, claim_epoch, ..
-            } = &mut *state;
-            let Some(head) = head.as_mut() else {
-                return HeadOutcome::Superseded {
-                    head: ticket.anchor,
-                };
-            };
-            if head.seq != ticket.seq || head.anchor != ticket.anchor {
-                return HeadOutcome::Superseded { head: head.anchor };
+            match state.claim(ticket.anchor, ticket.seq, self.cache.anchor()) {
+                ClaimStart::Claimed(epoch) => epoch,
+                ClaimStart::Refused(outcome) => return outcome,
             }
-            if self.cache.anchor() == Some(head.anchor) {
-                return HeadOutcome::AlreadySettled;
-            }
-            if head.claim.live {
-                return HeadOutcome::InFlight;
-            }
-            // A fresh attempt on the same head: its own private epoch and
-            // channel, so its terminal result can never overwrite the one the
-            // attempt it replaces published. The public ticket is untouched —
-            // the retry prepares the same head identity at the same `seq`.
-            *claim_epoch = claim_epoch.saturating_add(1);
-            head.claim = Claim::minted(*claim_epoch);
-            *claim_epoch
         };
         let claim = PrepareClaim {
             driver: self,
@@ -2332,67 +2732,26 @@ impl BalHeadDriver {
     ///    `Undelivered`).
     pub fn snapshot(&self, anchor: ReadAnchor) -> HeadView {
         let mut state = self.state.lock();
-        let current = state
-            .head
-            .as_ref()
-            .is_some_and(|head| head.anchor == anchor);
-        let (hub, readiness) = if self.cache.anchor() == Some(anchor) {
-            // The exact anchor's generation is installed, so it keeps answering
-            // after the next head arrives; the readiness is the one its own
-            // settle reported.
-            let readiness = state
-                .installed
-                .as_ref()
-                .filter(|(settled, _)| *settled == anchor)
-                .map_or(HeadReadiness::Ready, |(_, readiness)| readiness.clone());
-            (self.cache.for_anchor(anchor), readiness)
-        } else if current {
-            let reason = if state.head.is_some() {
-                HeadCold::Unprepared
-            } else {
-                HeadCold::Undelivered
-            };
-            let hub = state
-                .head
-                .as_ref()
-                .and_then(|head| head.provisional.as_ref())
-                .map_or_else(
-                    || cold_generation(&self.provider, anchor, self.retention),
-                    Arc::clone,
-                );
-            (hub, HeadReadiness::Cold(reason))
-        } else if let Some((_, hub, readiness)) = state
-            .previous
-            .as_ref()
-            .filter(|(previous, _, _)| *previous == anchor)
-        {
-            // The anchor the installed head replaced: the generation that was
-            // installed there (its values moved into the sealed node the new
-            // head owns), with the readiness it reported at its own settle.
-            (Arc::clone(hub), readiness.clone())
-        } else {
-            let reason = if state.superseded == Some(anchor) {
-                HeadCold::Superseded
-            } else {
-                HeadCold::Undelivered
-            };
-            (
+        let lookup = state.lookup(anchor, self.cache.anchor());
+        let (hub, readiness) = match lookup {
+            Lookup::Installed { readiness } | Lookup::Settled { readiness } => {
+                (self.cache.for_anchor(anchor), readiness)
+            }
+            Lookup::Unprepared { hub } => (hub, HeadReadiness::Cold(HeadCold::Unprepared)),
+            Lookup::Previous { hub, readiness } => (hub, readiness),
+            Lookup::Cold { reason } => (
                 cold_generation(&self.provider, anchor, self.retention),
                 HeadReadiness::Cold(reason),
-            )
+            ),
         };
-        if readiness.is_ready() {
-            state.stats.ready_views = state.stats.ready_views.saturating_add(1);
-        } else {
-            state.stats.cold_views = state.stats.cold_views.saturating_add(1);
-        }
+        state.record_view(readiness.is_ready());
         HeadView { hub, readiness }
     }
 
     /// The head the driver holds — settled or still preparing.
     #[must_use]
     pub fn delivered(&self) -> Option<ReadAnchor> {
-        self.state.lock().head.as_ref().map(|head| head.anchor)
+        self.state.lock().delivered()
     }
 
     /// The generation the cache has installed, i.e. the last head that settled.
@@ -2407,11 +2766,7 @@ impl BalHeadDriver {
     /// anchors or one, never a policy.
     #[must_use]
     pub fn previous(&self) -> Option<ReadAnchor> {
-        self.state
-            .lock()
-            .previous
-            .as_ref()
-            .map(|(anchor, _, _)| *anchor)
+        self.state.lock().previous_anchor()
     }
 
     /// The report the driver's own apply produced for the head it holds, when it
@@ -2419,18 +2774,13 @@ impl BalHeadDriver {
     /// of an already-installed anchor) has none.
     #[must_use]
     pub fn last_report(&self) -> Option<Arc<DeltaReport>> {
-        self.state
-            .lock()
-            .head
-            .as_ref()
-            .and_then(|head| head.report.as_ref())
-            .map(Arc::clone)
+        self.state.lock().last_report()
     }
 
     /// The lifecycle's cumulative counters.
     #[must_use]
     pub fn stats(&self) -> HeadStats {
-        self.state.lock().stats
+        self.state.lock().stats()
     }
 
     /// The terminal result the CURRENT claim attempt on `anchor` published, when
@@ -2448,13 +2798,7 @@ impl BalHeadDriver {
     /// settled truth rather than the abandonment being rewritten.
     #[must_use]
     pub fn completion(&self, anchor: ReadAnchor) -> Option<HeadCompletion> {
-        let state = self.state.lock();
-        let head = state.head.as_ref()?;
-        if head.anchor != anchor {
-            return None;
-        }
-        let published = *head.claim.completion.borrow();
-        published
+        self.state.lock().completion(anchor)
     }
 
     /// Wait until `anchor` reaches a terminal state, then answer it: the
@@ -2482,7 +2826,7 @@ impl BalHeadDriver {
         loop {
             let registered = {
                 let state = self.state.lock();
-                Self::registration(&self.cache, &state, anchor)
+                state.registration(anchor, self.cache.anchor())
             };
             if let Some(mut signal) = registered {
                 // The subscription was taken under the same lock hold that
@@ -2532,31 +2876,6 @@ impl BalHeadDriver {
             readiness: HeadReadiness::Cold(HeadCold::Abandoned),
         }
     }
-
-    /// The wait registration for `anchor`, under the state lock:
-    /// [`Option::None`] when no LIVE preparation owns the exact anchor's
-    /// unsettled generation — it settled, it is not the driver's current head
-    /// any more, or nothing has claimed it — otherwise the live attempt's own
-    /// completion signal.
-    ///
-    /// Subscribing is reserved for a genuinely live attempt ([`Claim::live`]): a
-    /// delivered head nothing claimed yet, and a head whose claim was dropped,
-    /// have no future notification worth waiting for, so the wait answers
-    /// terminal instead of parking.
-    fn registration(
-        cache: &DeltaSnapshotCache,
-        state: &DriverState,
-        anchor: ReadAnchor,
-    ) -> Option<watch::Receiver<Option<HeadCompletion>>> {
-        if cache.anchor() == Some(anchor) {
-            return None;
-        }
-        let head = state.head.as_ref()?;
-        if head.anchor != anchor || !head.claim.live {
-            return None;
-        }
-        Some(head.claim.completion.subscribe())
-    }
 }
 
 /// The ownership of one head's preparation ATTEMPT: dropping it — a cancelled
@@ -2572,19 +2891,12 @@ struct PrepareClaim<'a> {
 
 impl Drop for PrepareClaim<'_> {
     fn drop(&mut self) {
-        let mut state = self.driver.state.lock();
-        let Some(head) = state.head.as_mut() else {
-            return;
-        };
-        if head.seq != self.seq || head.claim.epoch != self.epoch {
-            return;
-        }
-        head.claim.live = false;
-        // The attempt's end is terminal for the waiters that joined it: they
-        // wake to the abandoned cold answer instead of sleeping through a
-        // preparation that is gone. Any terminal this attempt already published
-        // is its last word and stays.
-        head.claim.complete(HeadCompletion::Abandoned);
+        // The attempt's end is terminal for the waiters that joined it: they wake
+        // to the abandoned cold answer instead of sleeping through a preparation
+        // that is gone. Any terminal this attempt already published is its last
+        // word and stays, so a release that no longer owns the head's live
+        // attempt leaves the pose — and that attempt's result — alone.
+        self.driver.state.lock().release(self.seq, self.epoch);
     }
 }
 

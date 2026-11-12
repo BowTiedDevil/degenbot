@@ -19,7 +19,7 @@ use alloy::primitives::{Address, B256, U256};
 use degenbot_simulation::sim::evm2::bal_prefetch::BalSkip;
 use degenbot_simulation::sim::evm2::delta_snapshot::{
     BalHeadDriver, DeltaHub, DeltaReport, DeltaSnapshotCache, HeadCold, HeadCompletion,
-    HeadOutcome, HeadReadiness, Retention, DEFAULT_MAX_DEPTH,
+    HeadOutcome, HeadReadiness, HeadStats, Retention, DEFAULT_MAX_DEPTH,
 };
 use degenbot_simulation::sim::evm2::read_hub::{
     CarryOutcome, CarryRefusal, PreparedBal, ReadHubCache,
@@ -2876,4 +2876,517 @@ async fn an_out_of_band_apply_settles_an_abandoned_heads_current_completion() {
         HeadReadiness::Cold(HeadCold::Abandoned),
         "the settle never rewrites the abandonment attempt N published"
     );
+}
+
+// ── The three current-head poses and the projections they feed ──────────────
+//
+// A head the driver holds is in exactly one pose: delivered and UNCLAIMED, owned
+// by a live PREPARING attempt, or SETTLED. Everything a caller can observe about
+// it — the shared cold generation, the settle-derived readiness, the completion
+// its waiters wake on, the read window — is a projection of that pose plus the
+// generation history, never a fourth pose and never a second source of truth.
+
+/// A delivered head nobody has claimed accepts a DIRECT prepare: the caller
+/// fetches and applies the list itself, so no preparation is ever in flight,
+/// nothing is abandoned, and the head's current completion is the settle.
+#[tokio::test]
+async fn a_direct_prepare_settles_an_unclaimed_head_without_a_claim_attempt() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    let parent_hash = B256::new([0xaa; 32]);
+    let child_hash = B256::new([0xbb; 32]);
+    stub.serve_bal_at(
+        child_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
+    );
+    let driver = BalHeadDriver::new(&provider);
+    let parent_ticket = driver.deliver(identified(HEIGHT, parent_hash), genesis());
+    driver.advance(parent_ticket, &[]).await;
+    driver
+        .snapshot(identified(HEIGHT, parent_hash))
+        .hub
+        .read_storage(address(0x11), U256::from(1u64))
+        .await
+        .expect("the stub answers");
+    stub.clear();
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    assert_eq!(
+        driver.completion(anchor),
+        None,
+        "a delivered head that nothing claimed has published no terminal result"
+    );
+    assert_eq!(
+        driver.snapshot(anchor).readiness,
+        HeadReadiness::Cold(HeadCold::Unprepared),
+        "the unclaimed pose reads unprepared, never abandoned"
+    );
+
+    // The caller's own fetch-and-apply: no advance, no claim, no waiter.
+    let prepared = driver.prepare(ticket).await;
+    assert!(prepared.is_decoded(), "the head's own list decoded");
+    let report = settled(&driver.apply(ticket, &prepared, &[address(0x11)]));
+    assert_eq!(
+        report.outcome,
+        CarryOutcome::Carried { carried_values: 1 },
+        "the direct apply runs the same settle a claimed advance would"
+    );
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Settled),
+        "the settle is the unclaimed head's own terminal answer"
+    );
+    assert_eq!(driver.snapshot(anchor).readiness, HeadReadiness::Ready);
+    assert_eq!(
+        driver.stats().settled,
+        2,
+        "the parent and the directly prepared child settled"
+    );
+
+    let mut late = Box::pin(driver.wait_for_head(anchor));
+    match late.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(view) => assert_eq!(
+            view.readiness,
+            HeadReadiness::Ready,
+            "a wait on a settled head answers the settled generation"
+        ),
+        Poll::Pending => panic!("a settled head resolves a wait immediately"),
+    }
+}
+
+/// Supersession history is ONE slot: only the anchor the latest delivery
+/// replaced reports `superseded`, an older abandoned anchor reports
+/// `undelivered`, and every abandoned head's late list installs nothing.
+#[tokio::test]
+async fn a_distant_supersession_keeps_only_the_last_abandoned_anchor() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let hashes = [
+        B256::new([0xc0; 32]),
+        B256::new([0xc1; 32]),
+        B256::new([0xc2; 32]),
+    ];
+    for hash in hashes {
+        stub.serve_bal_at(hash, bal_bytes(&[]));
+    }
+    let driver = BalHeadDriver::new(&provider);
+
+    let first = driver.deliver(identified(HEIGHT + 1, hashes[0]), genesis());
+    let second = driver.deliver(identified(HEIGHT + 1, hashes[1]), genesis());
+    assert_eq!(
+        driver.snapshot(identified(HEIGHT + 1, hashes[0])).readiness,
+        HeadReadiness::Cold(HeadCold::Superseded),
+        "the anchor the latest delivery replaced reports itself"
+    );
+    let third = driver.deliver(identified(HEIGHT + 1, hashes[2]), genesis());
+    assert_eq!(
+        driver.stats().superseded,
+        2,
+        "each replacement of an unsettled head is counted"
+    );
+    assert_eq!(
+        driver.snapshot(identified(HEIGHT + 1, hashes[1])).readiness,
+        HeadReadiness::Cold(HeadCold::Superseded),
+        "the newest replacement is the one the history names"
+    );
+    assert_eq!(
+        driver.snapshot(identified(HEIGHT + 1, hashes[0])).readiness,
+        HeadReadiness::Cold(HeadCold::Undelivered),
+        "the older abandoned anchor is outside the one-slot history"
+    );
+
+    // Both abandoned lists are dead, and they are discarded without moving the
+    // generation the driver still holds.
+    let abandoned = driver.prepare(first).await;
+    assert_eq!(
+        driver.apply(first, &abandoned, &[]),
+        HeadOutcome::Superseded {
+            head: identified(HEIGHT + 1, hashes[2]),
+        }
+    );
+    let stale = driver.prepare(second).await;
+    assert_eq!(
+        driver.apply(second, &stale, &[]),
+        HeadOutcome::Superseded {
+            head: identified(HEIGHT + 1, hashes[2]),
+        }
+    );
+    assert_eq!(driver.stats().discarded, 2, "both refusals are counted");
+    assert_eq!(driver.installed(), None, "neither abandoned list installed");
+
+    settled(&driver.advance(third, &[]).await);
+    assert_eq!(
+        driver.installed(),
+        Some(identified(HEIGHT + 1, hashes[2])),
+        "the head the driver holds still settles"
+    );
+}
+
+/// The previous-window slot restates the readiness the generation ITSELF settled
+/// with: a parent that settled cold answers its cold reason through the window
+/// once a child it links installs over it.
+#[tokio::test]
+async fn the_previous_window_reports_the_cold_readiness_its_generation_settled_with() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let base_hash = B256::new([0xd5; 32]);
+    let cold_hash = B256::new([0xd6; 32]);
+    let heir_hash = B256::new([0xd7; 32]);
+    stub.serve_bal_at(base_hash, bal_bytes(&[]));
+    // No list is served at `cold_hash`: that head settles cold.
+    stub.serve_bal_at(heir_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+
+    let base = driver.deliver(identified(HEIGHT, base_hash), genesis());
+    settled(&driver.advance(base, &[]).await);
+
+    let cold = identified(HEIGHT + 1, cold_hash);
+    let cold_ticket = driver.deliver(cold, base_hash);
+    let report = settled(&driver.advance(cold_ticket, &[]).await);
+    let CarryOutcome::Cold {
+        lineage: None,
+        bal: Some(bal),
+    } = &report.outcome
+    else {
+        panic!(
+            "an unreadable list settles the head cold: {:?}",
+            report.outcome
+        );
+    };
+    let cold_readiness = HeadReadiness::Cold(HeadCold::Settled {
+        lineage: None,
+        bal: Some(bal.clone()),
+    });
+    assert_eq!(
+        driver.snapshot(cold).readiness,
+        cold_readiness,
+        "the settled cold head reports its own reason"
+    );
+
+    let heir = driver.deliver(identified(HEIGHT + 2, heir_hash), cold_hash);
+    settled(&driver.advance(heir, &[]).await);
+    assert_eq!(
+        driver.previous(),
+        Some(cold),
+        "the child that linked the cold head puts it in the window"
+    );
+    let view = driver.snapshot(cold);
+    assert_eq!(
+        view.readiness, cold_readiness,
+        "the window restates the cold reason, never `ready` for a generation that \
+         carried nothing"
+    );
+    assert_eq!(
+        view.hub.snapshot_len(),
+        0,
+        "the cold generation carried nothing and still carries nothing"
+    );
+}
+
+/// The lifecycle's counters count exactly the transitions it ran — no transition
+/// is counted twice and none is invented: one delivery per head, one repeat per
+/// repeated delivery, one supersession per unsettled head replaced, one settle
+/// per installed generation, one already-current delivery, one discarded apply
+/// per refusal, and one view per snapshot answer.
+#[tokio::test]
+async fn the_lifecycle_counters_count_exactly_the_transitions_it_ran() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let base_hash = B256::new([0xe0; 32]);
+    let skipped_hash = B256::new([0xe1; 32]);
+    let sibling_hash = B256::new([0xe2; 32]);
+    let heir_hash = B256::new([0xe3; 32]);
+    let next_hash = B256::new([0xe4; 32]);
+    for hash in [base_hash, sibling_hash, heir_hash, next_hash] {
+        stub.serve_bal_at(hash, bal_bytes(&[]));
+    }
+    let driver = BalHeadDriver::new(&provider);
+    let base = identified(HEIGHT, base_hash);
+    let skipped = identified(HEIGHT + 1, skipped_hash);
+    let sibling = identified(HEIGHT + 1, sibling_hash);
+    let heir = identified(HEIGHT + 2, heir_hash);
+    let next = identified(HEIGHT + 3, next_hash);
+
+    // One delivery, one cold view, one settle (the first head is lineage-refused
+    // and therefore settles cold), one cold view of that settled generation.
+    let base_ticket = driver.deliver(base, genesis());
+    assert_eq!(
+        driver.snapshot(base).readiness,
+        HeadReadiness::Cold(HeadCold::Unprepared)
+    );
+    settled(&driver.advance(base_ticket, &[]).await);
+    assert_eq!(
+        driver.snapshot(base).readiness.cold_reason(),
+        Some(&HeadCold::Settled {
+            lineage: Some(CarryRefusal::NoParent),
+            bal: None,
+        })
+    );
+
+    // An idempotent repeat delivers nothing new.
+    assert_eq!(driver.deliver(base, genesis()), base_ticket);
+
+    // A head above the installed one, replaced by a delivery of the installed
+    // anchor: one supersession, one already-current delivery. The delivered
+    // installed anchor keeps answering cold, so its snapshot is a cold view.
+    let skipped_ticket = driver.deliver(skipped, base_hash);
+    assert_eq!(
+        driver.snapshot(skipped).readiness,
+        HeadReadiness::Cold(HeadCold::Unprepared)
+    );
+    driver.deliver(base, genesis());
+    assert_eq!(
+        driver.snapshot(base).readiness.cold_reason(),
+        Some(&HeadCold::Settled {
+            lineage: Some(CarryRefusal::NoParent),
+            bal: None,
+        }),
+        "an already-current delivery restates the readiness the generation settled with"
+    );
+    let abandoned = driver.prepare(skipped_ticket).await;
+    assert_eq!(
+        driver.apply(skipped_ticket, &abandoned, &[]),
+        HeadOutcome::Superseded { head: base },
+        "the replaced head's list is discarded"
+    );
+
+    // A sibling that links the installed generation settles ready, and one cold
+    // view of it while it is unprepared.
+    let sibling_ticket = driver.deliver(sibling, base_hash);
+    assert_eq!(
+        driver.snapshot(sibling).readiness,
+        HeadReadiness::Cold(HeadCold::Unprepared)
+    );
+    settled(&driver.advance(sibling_ticket, &[]).await);
+    assert_eq!(
+        driver.snapshot(sibling).readiness,
+        HeadReadiness::Ready,
+        "the linked sibling carries the installed parent"
+    );
+
+    // Two more heads, each settled ready and read once.
+    for (anchor, parent) in [(heir, sibling_hash), (next, heir_hash)] {
+        let ticket = driver.deliver(anchor, parent);
+        settled(&driver.advance(ticket, &[]).await);
+        assert_eq!(driver.snapshot(anchor).readiness, HeadReadiness::Ready);
+    }
+
+    assert_eq!(
+        driver.stats(),
+        HeadStats {
+            delivered: 6,
+            repeated: 1,
+            superseded: 1,
+            settled: 4,
+            already_current: 1,
+            discarded: 1,
+            ready_views: 3,
+            cold_views: 5,
+        },
+        "every counter counts exactly the transitions this driver ran"
+    );
+}
+
+/// The head reports the transition the caller just got back, and names the
+/// generation that transition installed: one settle, one report.
+fn assert_head_reports(settled: &Arc<DeltaReport>, driver: &BalHeadDriver, anchor: ReadAnchor) {
+    assert!(
+        Arc::ptr_eq(
+            settled,
+            &driver
+                .last_report()
+                .expect("a settle stores the report it returned")
+        ),
+        "the head reports the transition the driver just ran"
+    );
+    assert_eq!(
+        driver.installed(),
+        Some(anchor),
+        "a settle always names the generation it installed"
+    );
+}
+
+/// An ordinary advance stores the report it returned: `last_report()` is
+/// Arc-identical to the `DeltaReport` inside the `HeadOutcome::Settled` the
+/// caller just got, and the head names the generation that settle installed.
+#[tokio::test]
+async fn an_advance_stores_the_report_it_settled_with() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let hash = B256::new([0xa8; 32]);
+    stub.serve_bal_at(hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let anchor = identified(HEIGHT, hash);
+
+    let ticket = driver.deliver(anchor, genesis());
+    let report = settled(&driver.advance(ticket, &[]).await);
+    assert_head_reports(&report, &driver, anchor);
+}
+
+/// A retry that settles a head whose earlier attempt was abandoned stores ITS
+/// report: the abandoned attempt produced none, so the head's `last_report()` is
+/// the retry's transition.
+#[tokio::test]
+async fn a_retry_settles_an_abandoned_head_with_its_own_report() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xa9; 32]);
+    let child_hash = B256::new([0xaa; 32]);
+    stub.serve_bal_at(parent_hash, bal_bytes(&[]));
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let parent = identified(HEIGHT, parent_hash);
+    settled(&driver.advance(driver.deliver(parent, genesis()), &[]).await);
+
+    stub.defer_bal();
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    let mut cancelled = Box::pin(driver.advance(ticket, &[]));
+    assert!(
+        cancelled
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "the first attempt is in flight"
+    );
+    drop(cancelled);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Abandoned),
+        "the abandoned attempt published its own end"
+    );
+    assert_eq!(
+        driver.last_report(),
+        None,
+        "the abandoned attempt settled nothing, so it left no report"
+    );
+
+    stub.release_bal();
+    let retried = settled(&driver.advance(ticket, &[]).await);
+    assert_head_reports(&retried, &driver, anchor);
+}
+
+/// An out-of-band apply on a released claim stores the report of the settle it
+/// ran, on the fresh private attempt epoch, with the public ticket unchanged.
+#[tokio::test]
+async fn an_out_of_band_apply_stores_the_report_it_settled_with() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let parent_hash = B256::new([0xab; 32]);
+    let child_hash = B256::new([0xac; 32]);
+    stub.serve_bal_at(parent_hash, bal_bytes(&[]));
+    stub.serve_bal_at(child_hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let parent = identified(HEIGHT, parent_hash);
+    settled(&driver.advance(driver.deliver(parent, genesis()), &[]).await);
+
+    let anchor = identified(HEIGHT + 1, child_hash);
+    let ticket = driver.deliver(anchor, parent_hash);
+    let prepared = PreparedBal::prepare(&provider, anchor).await;
+    stub.defer_bal();
+    let mut released = Box::pin(driver.advance(ticket, &[]));
+    assert!(
+        released
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "a claimed preparation owns the head before the release"
+    );
+    drop(released);
+    stub.release_bal();
+
+    let out_of_band = settled(&driver.apply(ticket, &prepared, &[]));
+    assert_head_reports(&out_of_band, &driver, anchor);
+    assert_eq!(
+        driver.deliver(anchor, parent_hash),
+        ticket,
+        "the out-of-band settle minted no new public delivery"
+    );
+}
+
+/// A repeat apply at the settled head repeats no transition. If a future change
+/// ever lets a settle land on a head that already carries a report, that head
+/// must report the new transition's report — never the older one it was holding.
+/// The precondition is unreachable today: a settled pose always names the
+/// generation the cache has installed, and no public driver call moves that
+/// generation, so this pin is green on both sides of the report-assignment fix
+/// and guards the shape if the precondition ever becomes reachable.
+#[tokio::test]
+async fn a_second_settle_at_the_same_head_never_keeps_the_older_report() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let hash = B256::new([0xad; 32]);
+    stub.serve_bal_at(hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let anchor = identified(HEIGHT, hash);
+    let ticket = driver.deliver(anchor, genesis());
+    let prepared = PreparedBal::prepare(&provider, anchor).await;
+    let first = settled(&driver.apply(ticket, &prepared, &[]));
+    assert_head_reports(&first, &driver, anchor);
+
+    match driver.apply(ticket, &prepared, &[]) {
+        HeadOutcome::AlreadySettled => {}
+        HeadOutcome::Settled(report) => assert!(
+            Arc::ptr_eq(
+                &report,
+                &driver
+                    .last_report()
+                    .expect("a settle always stores its own report")
+            ),
+            "a second settle replaces the head's report instead of keeping the older one"
+        ),
+        other => panic!("a settled head repeats no transition, got {other:?}"),
+    }
+    assert_eq!(
+        driver.installed(),
+        Some(anchor),
+        "the settled head still names the generation it installed"
+    );
+}
+
+/// A delivery of an installed anchor with a different parent hash runs no
+/// transition, so it is the one head with no report of its own, while the
+/// generation keeps the readiness its own settle derived.
+#[tokio::test]
+async fn an_installed_redelivery_stores_no_report_of_its_own() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let hash = B256::new([0xae; 32]);
+    stub.serve_bal_at(hash, bal_bytes(&[]));
+    let driver = BalHeadDriver::new(&provider);
+    let anchor = identified(HEIGHT, hash);
+    settled(&driver.advance(driver.deliver(anchor, genesis()), &[]).await);
+    assert!(
+        driver.last_report().is_some(),
+        "the advance stored its report"
+    );
+
+    driver.deliver(anchor, B256::new([0xfe; 32]));
+    assert_eq!(
+        driver.stats().already_current,
+        1,
+        "the installed head settled on delivery"
+    );
+    assert_eq!(
+        driver.last_report(),
+        None,
+        "an already-current delivery ran no transition, so it has no report"
+    );
+    assert_eq!(
+        driver.snapshot(anchor).readiness,
+        cold_first_head(),
+        "the generation keeps the readiness its own settle derived, exactly as \
+         before the redelivery"
+    );
+}
+
+/// The readiness a chain's FIRST head settles with: nothing was installed to
+/// carry from, so it settles cold and says so.
+fn cold_first_head() -> HeadReadiness {
+    HeadReadiness::Cold(HeadCold::Settled {
+        lineage: Some(CarryRefusal::NoParent),
+        bal: None,
+    })
 }

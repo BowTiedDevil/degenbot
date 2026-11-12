@@ -30,17 +30,20 @@
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
-use degenbot_simulation::sim::evm2::bal_heads::{BalHeadPipeline, HeadSpawn, NoRelevance};
-use degenbot_simulation::sim::evm2::delta_snapshot::{
-    BalHeadDriver, DeltaReport, HeadCold, HeadReadiness,
+use degenbot_simulation::sim::evm2::bal_heads::{
+    ambient_spawn, BalHeadPipeline, HeadSpawn, NoRelevance,
 };
-use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, CarryRefusal};
+use degenbot_simulation::sim::evm2::delta_snapshot::{
+    BalHeadDriver, DeltaReport, HeadCold, HeadCompletion, HeadOutcome, HeadReadiness,
+};
+use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, CarryRefusal, PreparedBal};
 use degenbot_simulation::sim::ReadAnchor;
 use futures_util::future::BoxFuture;
 use std::collections::BTreeSet;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
+use std::time::Duration;
 
 #[path = "../examples/shared/chain_stub.rs"]
 #[expect(dead_code)]
@@ -772,5 +775,176 @@ async fn the_chain_survives_the_abandoned_list(
             .expect("the stub answers"),
         U256::from(888u64),
         "the survivor's chain answers, never the abandoned value"
+    );
+}
+
+// ── The spawned phase's two lifecycles: released, and production-spawned ────
+
+/// A spawned phase RELEASED mid-flight leaves its head unclaimed, so an
+/// out-of-band list still settles it: the release publishes the abandonment the
+/// phase's own waiters would wake on, and the settle moves the head's current
+/// completion to `settled` without rewriting that abandonment. Nothing is left
+/// parked or running.
+#[tokio::test]
+async fn a_released_spawned_phase_still_leaves_its_head_appliable_out_of_band() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let base = B256::new([0xf0; 32]);
+    let child = B256::new([0xf1; 32]);
+    let slot = U256::from(1u64);
+    stub.serve_bal_at(base, bal_bytes(&[]));
+    stub.serve_bal_at(child, bal_bytes(&[(address(0x11), slot, U256::from(5u64))]));
+    let driver = Arc::new(BalHeadDriver::new(&provider));
+    let queue = SpawnQueue::new();
+    let pipeline = armed_pipeline(&driver, &queue);
+
+    let base_head = head(HEIGHT, base, genesis());
+    pipeline.on_canonical_head(base_head);
+    assert!(queue.run_one().await);
+    assert_eq!(
+        driver.installed(),
+        Some(identified(HEIGHT, base)),
+        "the session has its parent generation"
+    );
+
+    let anchor = identified(HEIGHT + 1, child);
+    let child_head = head(HEIGHT + 1, child, base);
+    let ticket = pipeline
+        .deliver_head(child_head)
+        .expect("the armed pipeline mints a ticket");
+    // The list is prepared out of band BEFORE the fetch gate arms, so the
+    // released phase's own fetch never has to answer.
+    let prepared = PreparedBal::prepare(&provider, anchor).await;
+    stub.clear();
+    stub.defer_bal();
+
+    // The phase claims the head and parks on the closed transport gate: this is
+    // the genuinely in-flight preparation the release interrupts.
+    let mut phase = queue.take().expect("the child's phase is parked");
+    assert!(
+        phase
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "the spawned phase is in flight"
+    );
+    drop(phase);
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Abandoned),
+        "the released phase's attempt publishes its own end"
+    );
+    assert_eq!(queue.len(), 0, "nothing is left parked or running");
+
+    // The out-of-band list settles the head on a fresh private attempt.
+    assert!(
+        matches!(
+            driver.apply(ticket, &prepared, &[]),
+            HeadOutcome::Settled(_)
+        ),
+        "a released phase does not make its head unsettleable"
+    );
+    assert_eq!(
+        driver.completion(anchor),
+        Some(HeadCompletion::Settled),
+        "the settle is the head's current completion"
+    );
+    assert_eq!(readiness(&driver, child_head), HeadReadiness::Ready);
+    assert_eq!(
+        driver.installed(),
+        Some(anchor),
+        "the out-of-band list installed the generation it applied"
+    );
+}
+
+/// The PRODUCTION spawner settles a delivered head with nothing draining it and
+/// no candidate ever running: the phase runs on the ambient runtime, so the head
+/// reaches `ready` on its own, and the delivery itself requested no list.
+#[tokio::test]
+async fn the_production_spawner_settles_a_delivered_head_on_the_ambient_runtime() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let base = B256::new([0xf2; 32]);
+    let child = B256::new([0xf3; 32]);
+    let slot = U256::from(1u64);
+    stub.serve_bal_at(base, bal_bytes(&[]));
+    stub.serve_bal_at(child, bal_bytes(&[(address(0x11), slot, U256::from(5u64))]));
+    stub.serve_at(HEIGHT, address(0x11), slot, 1);
+    let driver = Arc::new(BalHeadDriver::new(&provider));
+    let pipeline =
+        BalHeadPipeline::with_spawn_and_relevance(ambient_spawn(), Arc::new(NoRelevance));
+    assert!(
+        pipeline.arm(Arc::clone(&driver)),
+        "the session arms it once"
+    );
+
+    // The parent generation settles synchronously, so the child's transition is
+    // decided by the ambient phase alone.
+    let base_ticket = driver.deliver(identified(HEIGHT, base), genesis());
+    driver.advance(base_ticket, &[]).await;
+    assert_eq!(
+        driver.installed(),
+        Some(identified(HEIGHT, base)),
+        "the parent generation is installed"
+    );
+    // The parent serves the word dynamically, so the child's list WRITES it:
+    // an overwrite of a served key needs no relevance, which is what lets the
+    // ambient phase apply with [`NoRelevance`].
+    assert_eq!(
+        driver
+            .snapshot(identified(HEIGHT, base))
+            .hub
+            .read_storage(address(0x11), slot)
+            .await
+            .expect("the stub answers"),
+        U256::from(1u64),
+        "the parent generation serves the pre-head word"
+    );
+    stub.clear();
+
+    let anchor = identified(HEIGHT + 1, child);
+    let child_head = head(HEIGHT + 1, child, base);
+    let ticket = pipeline
+        .deliver_head(child_head)
+        .expect("the armed pipeline mints a ticket");
+    assert_eq!(
+        stub.bal_requests(),
+        0,
+        "the delivery requested nothing: the spawned phase owns the fetch"
+    );
+
+    // The ambient phase is never polled or awaited by this test; the head
+    // reaches its terminal answer on its own.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while driver.completion(anchor) != Some(HeadCompletion::Settled) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("the production spawner settles the head it was handed");
+
+    assert_eq!(
+        stub.bal_requests(),
+        1,
+        "the spawned phase fetched the head's list exactly once"
+    );
+    assert_eq!(
+        driver.installed(),
+        Some(anchor),
+        "the phase applied its head"
+    );
+    assert_eq!(readiness(&driver, child_head), HeadReadiness::Ready);
+    assert_eq!(
+        driver
+            .snapshot(anchor)
+            .hub
+            .snapshot_value(address(0x11), slot),
+        Some(U256::from(5u64)),
+        "the settled generation serves the head's own list"
+    );
+    assert_eq!(
+        driver.deliver(anchor, base),
+        ticket,
+        "the ambient settle minted no new public delivery"
     );
 }
