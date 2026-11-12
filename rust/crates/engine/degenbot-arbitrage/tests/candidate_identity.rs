@@ -23,7 +23,7 @@ use alloy::transports::{TransportError, TransportFut};
 use degenbot_arbitrage::{
     dispatch_across_deployments, dispatch_admitted_across_deployments, dispatch_profitable_results,
     project_early_admission, AdmittedCandidate, DeploymentFanOutOutcome, DeploymentRegistry,
-    DispatchCandidate, DispatchRefusal, EarlyAdmissionPolicy, FeeOnTransferRegistry,
+    DispatchCandidate, DispatchRefusal, EarlyAdmissionPolicy, FanOutInputs, FeeOnTransferRegistry,
     PoolDivergence, SimulateContext, SimulationBlock, SimulationDeployment, SolveStep,
     TargetSelection, MAX_SIMULATE_CONCURRENT,
 };
@@ -301,23 +301,22 @@ fn run_fan_out(
         .expect("multi-thread runtime");
     let block = block(&provider);
     let state: Option<&Arc<StateLock<BotState>>> = None;
+    let inputs = FanOutInputs {
+        deployments: registry,
+        block: &block,
+        current_block: BLOCK,
+        target_selection: selection,
+        path_suppression: &harness.suppression,
+        pool_divergence: &harness.divergence,
+        fot_registry: &harness.fot,
+        bot_state: state,
+        warm_cache: None,
+    };
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
                 runtime.block_on(async {
-                    dispatch_across_deployments(
-                        candidates,
-                        &block,
-                        registry,
-                        selection,
-                        &harness.suppression,
-                        BLOCK,
-                        0,
-                        &harness.divergence,
-                        &harness.fot,
-                        state,
-                        None,
-                    )
+                    dispatch_across_deployments(candidates, inputs.with_thin_margin(0))
                 })
             })
             .join()
@@ -339,23 +338,21 @@ fn run_admitted_fan_out(
         .expect("multi-thread runtime");
     let block = block(&provider);
     let state: Option<&Arc<StateLock<BotState>>> = None;
+    let inputs = FanOutInputs {
+        deployments: registry,
+        block: &block,
+        current_block: BLOCK,
+        target_selection: TargetSelection::AllTargets,
+        path_suppression: &harness.suppression,
+        pool_divergence: &harness.divergence,
+        fot_registry: &harness.fot,
+        bot_state: state,
+        warm_cache: None,
+    };
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
-                runtime.block_on(async {
-                    dispatch_admitted_across_deployments(
-                        admitted,
-                        &block,
-                        registry,
-                        TargetSelection::AllTargets,
-                        &harness.suppression,
-                        BLOCK,
-                        &harness.divergence,
-                        &harness.fot,
-                        state,
-                        None,
-                    )
-                })
+                runtime.block_on(async { dispatch_admitted_across_deployments(admitted, inputs) })
             })
             .join()
             .expect("fan-out thread")

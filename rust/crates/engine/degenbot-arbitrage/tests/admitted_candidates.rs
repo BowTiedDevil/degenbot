@@ -23,9 +23,9 @@ use alloy::transports::{TransportError, TransportFut};
 use degenbot_arbitrage::{
     dispatch_across_deployments, dispatch_admitted_across_deployments, project_early_admission,
     AdmittedCandidate, DeploymentFanOutOutcome, DeploymentRegistry, DispatchCandidate,
-    DispatchRefusal, EarlyAdmissionPolicy, EarlyDropReason, EarlyProjection, FeeOnTransferRegistry,
-    PoolDivergence, PoolDivergenceKey, SimulationBlock, SimulationDeployment, SolveStep,
-    TargetSelection, MAX_SIMULATE_CONCURRENT,
+    DispatchRefusal, EarlyAdmissionPolicy, EarlyDropReason, EarlyProjection, FanOutInputs,
+    FeeOnTransferRegistry, PoolDivergence, PoolDivergenceKey, SimulationBlock,
+    SimulationDeployment, SolveStep, TargetSelection, MAX_SIMULATE_CONCURRENT,
 };
 use degenbot_core::fee::FeeRatio;
 use degenbot_execution::{
@@ -373,20 +373,18 @@ fn run_admitted(
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
-                runtime.block_on(async {
-                    dispatch_admitted_across_deployments(
-                        admitted,
-                        &block,
-                        registry,
-                        selection,
-                        &harness.suppression,
-                        BLOCK,
-                        &harness.divergence,
-                        &harness.fot,
-                        Some(&harness.state),
-                        Some(&harness.warm_cache),
-                    )
-                })
+                let inputs = FanOutInputs {
+                    deployments: registry,
+                    block: &block,
+                    current_block: BLOCK,
+                    target_selection: selection,
+                    path_suppression: &harness.suppression,
+                    pool_divergence: &harness.divergence,
+                    fot_registry: &harness.fot,
+                    bot_state: Some(&harness.state),
+                    warm_cache: Some(&harness.warm_cache),
+                };
+                runtime.block_on(async { dispatch_admitted_across_deployments(admitted, inputs) })
             })
             .join()
             .expect("fan-out thread")
@@ -442,19 +440,21 @@ fn run_raw(
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
+                let inputs = FanOutInputs {
+                    deployments: registry,
+                    block: &block,
+                    current_block,
+                    target_selection: selection,
+                    path_suppression: &harness.suppression,
+                    pool_divergence: &harness.divergence,
+                    fot_registry: &harness.fot,
+                    bot_state: Some(&harness.state),
+                    warm_cache: Some(&harness.warm_cache),
+                };
                 runtime.block_on(async {
                     dispatch_across_deployments(
                         candidates,
-                        &block,
-                        registry,
-                        selection,
-                        &harness.suppression,
-                        current_block,
-                        min_profit_margin_bps,
-                        &harness.divergence,
-                        &harness.fot,
-                        Some(&harness.state),
-                        Some(&harness.warm_cache),
+                        inputs.with_thin_margin(min_profit_margin_bps),
                     )
                 })
             })
@@ -471,6 +471,137 @@ fn lane(
     outcome
         .lane(deployment)
         .expect("the registry holds the lane")
+}
+
+// -- the call shape -------------------------------------------------------
+
+/// Drive one fan-out call on a dedicated multi-thread runtime in its own thread
+/// (the engine's sync DB bridge requires the ambient runtime) — the entry
+/// helpers' runtime shape, for a caller that builds its own inputs.
+fn fan_out_on_runtime<T: Send>(call: impl FnOnce() -> T + Send) -> T {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("multi-thread runtime");
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| runtime.block_on(async { call() }))
+            .join()
+            .expect("fan-out thread")
+    })
+}
+
+/// ONE named configuration serves BOTH entries. The shared inputs are a literal
+/// here — an external caller's construction, field by field — and the same value
+/// drives the raw call (`with_thin_margin`) and the pre-admitted call, which take
+/// two different row types and differ only in which half of the policy runs in
+/// front of the simulation.
+#[test]
+fn one_named_configuration_serves_both_entries() {
+    let registry = two_target_registry();
+    let harness = Harness::new();
+    let provider = mock_provider();
+    let block = block(&provider);
+    let nonce = harness.live_nonce(POOL_B);
+    let row = || policy_row(1, POOL_B, OTHER, 100_000, nonce);
+
+    let inputs = FanOutInputs {
+        deployments: &registry,
+        block: &block,
+        current_block: BLOCK,
+        target_selection: TargetSelection::AllTargets,
+        path_suppression: &harness.suppression,
+        pool_divergence: &harness.divergence,
+        fot_registry: &harness.fot,
+        bot_state: Some(&harness.state),
+        warm_cache: Some(&harness.warm_cache),
+    };
+
+    // RAW: the whole policy in the leaf, with the caller's floor (0 keeps all).
+    let raw =
+        fan_out_on_runtime(|| dispatch_across_deployments(vec![row()], inputs.with_thin_margin(0)))
+            .expect("every identity is registered");
+
+    // PRE-ADMITTED: the SAME configuration, and no floor to pass — the entry does
+    // not take one, so the projection's floor (0 here) is the only one.
+    let admitted = transport(&harness, vec![row()]);
+    let pre = fan_out_on_runtime(|| dispatch_admitted_across_deployments(admitted, inputs))
+        .expect("every identity is registered");
+
+    // Both entries walk the registry in order, one lane per deployment.
+    for outcome in [&raw, &pre] {
+        let ids: Vec<DeploymentId> = outcome.lanes.iter().map(|l| l.deployment_id).collect();
+        assert_eq!(ids, vec![deployment_a(), deployment_b()]);
+        assert!(outcome.retired.is_empty());
+    }
+
+    let raw_a = lane(&raw, deployment_a());
+    let pre_a = lane(&pre, deployment_a());
+    assert_eq!(raw_a.candidate_count, 1, "the raw leaf simulated the row");
+    assert_eq!(
+        pre_a.candidate_count, 1,
+        "the pre-admitted leaf simulated it"
+    );
+    assert_eq!(raw_a.sim_ok_count(), 1);
+    assert_eq!(pre_a.sim_ok_count(), 1);
+    assert_eq!(raw_a.fail_count, 0);
+    assert_eq!(pre_a.fail_count, 0);
+    assert_eq!(raw_a.thin_dropped, 0);
+    assert_eq!(pre_a.thin_dropped, 0);
+}
+
+/// The thin floor rides the RAW shape alone: `with_thin_margin` is a field of
+/// `RawFanOutInputs`, and `FanOutInputs` — the type the pre-admitted entry takes —
+/// has no such field. The SAME shared configuration therefore drops the row on
+/// the raw entry and keeps it on the pre-admitted one, whose floor is the
+/// projection's business and whose `thin_dropped` stays `0`.
+#[test]
+fn the_thin_floor_rides_the_raw_shape_only() {
+    let registry = two_target_registry();
+    let harness = Harness::new();
+    let provider = mock_provider();
+    let block = block(&provider);
+    let nonce = harness.live_nonce(POOL_B);
+    // 100 wei of profit on 1_000_000 of input is 1 bps — under a 50 bps floor.
+    let row = || policy_row(1, POOL_B, OTHER, 100, nonce);
+
+    let inputs = FanOutInputs {
+        deployments: &registry,
+        block: &block,
+        current_block: BLOCK,
+        target_selection: TargetSelection::AllTargets,
+        path_suppression: &harness.suppression,
+        pool_divergence: &harness.divergence,
+        fot_registry: &harness.fot,
+        bot_state: Some(&harness.state),
+        warm_cache: Some(&harness.warm_cache),
+    };
+
+    let raw = fan_out_on_runtime(|| {
+        dispatch_across_deployments(vec![row()], inputs.with_thin_margin(50))
+    })
+    .expect("every identity is registered");
+    let dropped = lane(&raw, deployment_a());
+    assert_eq!(
+        dropped.thin_dropped, 1,
+        "the raw leaf's own floor dropped it"
+    );
+    assert_eq!(dropped.candidate_count, 0, "nothing reached simulation");
+
+    let admitted = transport(&harness, vec![row()]);
+    let pre = fan_out_on_runtime(|| dispatch_admitted_across_deployments(admitted, inputs))
+        .expect("every identity is registered");
+    let kept = lane(&pre, deployment_a());
+    assert_eq!(
+        kept.thin_dropped, 0,
+        "the pre-admitted leaf has no thin stage"
+    );
+    assert_eq!(
+        kept.candidate_count, 1,
+        "the shared inputs carried no floor"
+    );
+    assert_eq!(kept.sim_ok_count(), 1);
 }
 
 // -- the public transport -------------------------------------------------

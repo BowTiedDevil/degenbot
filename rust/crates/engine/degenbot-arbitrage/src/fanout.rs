@@ -41,6 +41,44 @@
 //! Selection decides WHO runs; the lanes below still decide whether the chosen
 //! target's candidate survives the pre-sim policy, and a lane's refusals stay
 //! that lane's rows either way.
+//!
+//! # Call shape
+//!
+//! Both entries take one named [`FanOutInputs`] — registry, block, block number,
+//! selection policy, the three policy registries, `BotState`, and the warm cache
+//! — so no argument order can transpose two inputs of the same shape, and a new
+//! shared input is one field rather than a signature-wide rewrite. The
+//! CANDIDATES stay outside it, because the entries take different kinds of row.
+//!
+//! The raw entry takes [`RawFanOutInputs`]: those same named inputs plus the
+//! thin-margin floor its own admission pass applies. The pre-admitted entry
+//! takes [`FanOutInputs`], so a pre-admitted caller cannot hand a thin floor to
+//! a leaf that has no thin stage — the floor belongs to that caller's early
+//! projection ([`crate::project_early_admission`]).
+//!
+//! ```text
+//! let inputs = FanOutInputs {
+//!     deployments: &registry,
+//!     block: &block,
+//!     current_block: BLOCK,
+//!     target_selection: TargetSelection::AllTargets,
+//!     path_suppression: &suppression,
+//!     pool_divergence: &divergence,
+//!     fot_registry: &fot,
+//!     bot_state: Some(&bot_state),
+//!     warm_cache: Some(&warm_cache),
+//! };
+//!
+//! // RAW: whole policy in the leaf, thin floor included.
+//! let raw = dispatch_across_deployments(candidates, inputs.with_thin_margin(50))?;
+//!
+//! // PRE-ADMITTED: same configuration, no thin floor; the leaf re-reads.
+//! let admitted = dispatch_admitted_across_deployments(transported, inputs)?;
+//! ```
+//!
+//! Both calls audit NOTHING in the other entry's shape: the raw call's floor is
+//! a field of [`RawFanOutInputs`] alone, and the pre-admitted call's rows are
+//! [`AdmittedCandidate`]s only [`crate::project_early_admission`] can mint.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -128,6 +166,120 @@ impl DeploymentFanOutOutcome {
             .find(|lane| lane.deployment_id == deployment_id)
             .map(|lane| &lane.outcome)
     }
+}
+
+/// The shared configuration ONE registry fan-out runs with: the ordered
+/// registry, the simulated block and its number, the target-selection policy,
+/// the three policy registries, and the engine handles.
+///
+/// Every field is NAMED at the call site. The two positional hazards the old
+/// signatures carried are gone: the simulated block [`Self::block`] and the
+/// block number [`Self::current_block`] can no longer be transposed, and the
+/// suppression ledger, divergence memo, and fee-on-transfer registry cannot be
+/// passed in each other's slot. Adding a shared input adds a field.
+///
+/// The CANDIDATES are deliberately absent: they are the entry's own subject,
+/// and the two entries take different kinds of row ([`DispatchCandidate`] for
+/// the raw entry, [`AdmittedCandidate`] for the pre-admitted one). The raw
+/// entry's thin-margin floor is absent for the mirror-image reason — it is
+/// [`RawFanOutInputs`], which the pre-admitted entry does not take.
+///
+/// # Construction
+///
+/// A literal, one field per input:
+///
+/// ```text
+/// let inputs = FanOutInputs {
+///     deployments: &registry,
+///     block: &block,
+///     current_block: BLOCK,
+///     target_selection: TargetSelection::AllTargets,
+///     path_suppression: &suppression,
+///     pool_divergence: &divergence,
+///     fot_registry: &fot,
+///     bot_state: Some(&bot_state),
+///     warm_cache: Some(&warm_cache),
+/// };
+/// ```
+///
+/// The policy registries are borrowed as `&Arc<Mutex<_>>` and the engine
+/// handles as `Option<&Arc<_>>`: the fan-out borrows them for its own duration
+/// and clones the `Arc`s into each lane's leaf, so one configuration serves
+/// every lane and the caller keeps ownership. [`Clone`] and [`Copy`] are
+/// derived, so one built configuration serves EITHER entry.
+#[derive(Clone, Copy)]
+pub struct FanOutInputs<'a> {
+    /// The ordered deployment registry: one lane per entry, in this order.
+    pub deployments: &'a DeploymentRegistry,
+    /// The simulated block's facts; every lane clones them into its
+    /// [`SimulateContext`].
+    pub block: &'a SimulationBlock<'a>,
+    /// The block this fan-out runs at — the policy's clock (suppression retry,
+    /// divergence decay, staleness) and the per-lane span's block.
+    ///
+    /// A session normally passes the block [`Self::block`] was built for, but
+    /// the two are separate inputs: the policy clock is not read off the block
+    /// facts.
+    pub current_block: u64,
+    /// Which deployments each path is offered to ([`TargetSelection`]).
+    pub target_selection: TargetSelection,
+    /// The retry-interval ledger: the admission/finalization read stamps it and
+    /// the outcome recording writes it.
+    pub path_suppression: &'a Arc<Mutex<PathSuppression>>,
+    /// The per-pool solver-divergence memo: read at the pre-sim skip and written
+    /// by the `SolverCalc` feedback.
+    pub pool_divergence: &'a Arc<Mutex<PoolDivergence>>,
+    /// The per-token fee-on-transfer registry: read at the pre-sim skip and
+    /// written by the failure/success feedback.
+    pub fot_registry: &'a Arc<Mutex<FeeOnTransferRegistry>>,
+    /// The engine's shared state owner (ADR-003), the staleness gate's final
+    /// read. `None` skips the gate; non-empty input without it hits the leaf's
+    /// unreachable guard.
+    pub bot_state: Option<&'a Arc<StateLock<BotState>>>,
+    /// The cross-block persistent bytecode cache the lane's sim handle is built
+    /// with. `None` degrades to Tier-1-only behavior (no cross-block
+    /// persistence, no panic).
+    pub warm_cache: Option<
+        &'a Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
+    >,
+}
+
+impl<'a> FanOutInputs<'a> {
+    /// The RAW entry's inputs: this shared configuration plus the thin-margin
+    /// floor the raw leaf applies inside its admission pass.
+    ///
+    /// `min_profit_margin_bps` is in basis points of each candidate's
+    /// `optimal_input` — the same floor
+    /// [`crate::EarlyAdmissionPolicy::min_profit_margin_bps`] takes. The
+    /// pre-admitted entry has no counterpart: moving a caller onto it means
+    /// passing the floor to [`crate::project_early_admission`], where the drops
+    /// become the caller's own records and
+    /// [`crate::DispatchOutcome::thin_dropped`] stays `0`.
+    ///
+    /// ```text
+    /// dispatch_across_deployments(candidates, inputs.with_thin_margin(50))
+    /// ```
+    #[must_use]
+    pub fn with_thin_margin(self, min_profit_margin_bps: u64) -> RawFanOutInputs<'a> {
+        RawFanOutInputs {
+            shared: self,
+            min_profit_margin_bps,
+        }
+    }
+}
+
+/// The RAW entry's inputs: the shared [`FanOutInputs`] plus the thin-margin
+/// floor, built by [`FanOutInputs::with_thin_margin`].
+///
+/// A distinct type on purpose: [`dispatch_admitted_across_deployments`] takes
+/// [`FanOutInputs`] and so cannot accept a thin floor at all, accidentally or
+/// otherwise.
+#[derive(Clone, Copy)]
+pub struct RawFanOutInputs<'a> {
+    /// The configuration every fan-out shares.
+    shared: FanOutInputs<'a>,
+    /// The thin floor, in basis points of each candidate's `optimal_input`.
+    min_profit_margin_bps: u64,
 }
 
 /// The registry choreography both entries share: validate the identities, run
@@ -230,11 +382,17 @@ fn fan_out_over<Entry: FanOutEntry>(
 /// Fan every RAW standalone candidate out to the deployment its identity names,
 /// one lane per registered deployment, in registry order.
 ///
-/// `target_selection` decides which deployments each path is offered to
-/// ([`TargetSelection`]); the lanes are the same either way, and the policy
-/// registries (`path_suppression`, `pool_divergence`, `fot_registry`) and the
-/// engine handles are SHARED across them — one simulated block, one set of
-/// policy state — while each lane reads and stamps them per candidate, so a
+/// The shared configuration arrives as [`RawFanOutInputs`] — one named
+/// [`FanOutInputs`] field per input, plus the thin-margin floor
+/// [`FanOutInputs::with_thin_margin`] attaches — so a caller cannot transpose
+/// the block for the block number, or the suppression ledger for the divergence
+/// memo. [`FanOutInputs::target_selection`] decides which deployments each path
+/// is offered to ([`TargetSelection`]); the lanes are the same either way, and
+/// the policy registries ([`FanOutInputs::path_suppression`],
+/// [`FanOutInputs::pool_divergence`], [`FanOutInputs::fot_registry`]) and the
+/// engine handles ([`FanOutInputs::bot_state`], [`FanOutInputs::warm_cache`])
+/// are SHARED across them — one simulated block, one set of policy state —
+/// while each lane reads and stamps them per candidate, so a
 /// suppression/failure entry keyed `(path, deployment)` never bleeds into
 /// another target.
 ///
@@ -252,45 +410,34 @@ fn fan_out_over<Entry: FanOutEntry>(
 /// [`DispatchRefusal::UnregisteredDeployment`] when a candidate names an
 /// identity the registry does not hold. Both are checked before any selection,
 /// composition, or lane runs, under either policy.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the shared fan-out inputs are the one-deployment leaf's, plus the registry and the selection policy"
-)]
 pub fn dispatch_across_deployments(
     candidates: Vec<DispatchCandidate>,
-    block: &SimulationBlock<'_>,
-    deployments: &DeploymentRegistry,
-    target_selection: TargetSelection,
-    path_suppression: &Arc<Mutex<PathSuppression>>,
-    current_block: u64,
-    min_profit_margin_bps: u64,
-    pool_divergence: &Arc<Mutex<PoolDivergence>>,
-    fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
-    bot_state: Option<&Arc<StateLock<BotState>>>,
-    warm_cache: Option<
-        &Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
-    >,
+    inputs: RawFanOutInputs<'_>,
 ) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
+    let RawFanOutInputs {
+        shared,
+        min_profit_margin_bps,
+    } = inputs;
     fan_out_over(
         candidates,
-        deployments,
-        target_selection,
-        current_block,
+        shared.deployments,
+        shared.target_selection,
+        shared.current_block,
         |deployment, lane| {
             let ctx = SimulateContext {
-                block: block.clone(),
+                block: shared.block.clone(),
                 deployment,
             };
             dispatch_profitable_results(
                 lane,
                 &ctx,
-                path_suppression,
-                current_block,
+                shared.path_suppression,
+                shared.current_block,
                 min_profit_margin_bps,
-                pool_divergence,
-                fot_registry,
-                bot_state.cloned(),
-                warm_cache.cloned(),
+                shared.pool_divergence,
+                shared.fot_registry,
+                shared.bot_state.cloned(),
+                shared.warm_cache.cloned(),
             )
         },
     )
@@ -315,17 +462,26 @@ pub fn dispatch_across_deployments(
 /// optional order-index reorder -> same-cap truncation`) before the shared
 /// simulation body runs.
 ///
-/// There is no thin-margin argument here on purpose: the floor is early
-/// admission's verdict, so the leaf has no stage for it and
-/// `DispatchOutcome::thin_dropped` stays `0`.
+/// There is no thin-margin field on [`FanOutInputs`] on purpose: the floor is
+/// early admission's verdict, so the leaf has no stage for it and
+/// `DispatchOutcome::thin_dropped` stays `0`. The raw entry's floor rides
+/// [`RawFanOutInputs`], a type this entry does not take — a pre-admitted caller
+/// cannot express the floor here by accident.
 ///
 /// # Migrating a direct Rust caller (raw -> pre-admitted)
 ///
-/// A session that feeds every solved row to [`dispatch_across_deployments`]
-/// keeps working unchanged. A caller moving to the batch shape moves three
-/// things OUT of the leaf and into its own assembly, then transports the
-/// survivors:
+/// The raw call already builds the shared configuration — it passes
+/// [`RawFanOutInputs`], i.e. the same [`FanOutInputs`] plus its thin floor — and
+/// that configuration carries over unchanged (it is [`Copy`], so one literal
+/// serves either entry). What moves is the floor and the rows: the floor becomes
+/// the projection's input, the candidates pass through the projection, and the
+/// survivors are transported.
 ///
+/// 0. **Drop the floor from the call.** `inputs.with_thin_margin(bps)` becomes
+///    plain `inputs`, and `bps` becomes the projection's
+///    `min_profit_margin_bps` in step 1. There is no floor to pass here — the
+///    type does not have one — and `DispatchOutcome::thin_dropped` is `0` from
+///    then on.
 /// 1. **Project early.** Call [`crate::project_early_admission`] with your
 ///    resolved rows and a [`crate::EarlyAdmissionPolicy`] — the non-stamping
 ///    suppression read, divergence, fee-on-transfer, your thin margin, your own
@@ -370,43 +526,29 @@ pub fn dispatch_across_deployments(
 /// [`CandidateId`], and [`DispatchRefusal::UnregisteredDeployment`] when a
 /// transported candidate names an identity the registry does not hold — both
 /// checked before any selection, composition, or lane runs, under either policy.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the shared fan-out inputs are the pre-admitted leaf's, plus the registry and the selection policy"
-)]
 pub fn dispatch_admitted_across_deployments(
     admitted: Vec<AdmittedCandidate>,
-    block: &SimulationBlock<'_>,
-    deployments: &DeploymentRegistry,
-    target_selection: TargetSelection,
-    path_suppression: &Arc<Mutex<PathSuppression>>,
-    current_block: u64,
-    pool_divergence: &Arc<Mutex<PoolDivergence>>,
-    fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
-    bot_state: Option<&Arc<StateLock<BotState>>>,
-    warm_cache: Option<
-        &Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>,
-    >,
+    inputs: FanOutInputs<'_>,
 ) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
     fan_out_over(
         admitted,
-        deployments,
-        target_selection,
-        current_block,
+        inputs.deployments,
+        inputs.target_selection,
+        inputs.current_block,
         |deployment, lane| {
             let ctx = SimulateContext {
-                block: block.clone(),
+                block: inputs.block.clone(),
                 deployment,
             };
             dispatch_admitted_profitable_results(
                 lane,
                 &ctx,
-                path_suppression,
-                current_block,
-                pool_divergence,
-                fot_registry,
-                bot_state.cloned(),
-                warm_cache.cloned(),
+                inputs.path_suppression,
+                inputs.current_block,
+                inputs.pool_divergence,
+                inputs.fot_registry,
+                inputs.bot_state.cloned(),
+                inputs.warm_cache.cloned(),
             )
         },
     )

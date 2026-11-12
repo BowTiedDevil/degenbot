@@ -21,7 +21,7 @@ use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
     dispatch_across_deployments, dispatch_profitable_results, DeploymentRegistry,
-    DeploymentRegistryError, DispatchCandidate, SimulateContext, SimulationBlock,
+    DeploymentRegistryError, DispatchCandidate, FanOutInputs, SimulateContext, SimulationBlock,
     SimulationDeployment, SolveStep, TargetSelection,
 };
 use degenbot_execution::{
@@ -310,20 +310,19 @@ fn run_fanout_with(
                 let fot = Arc::new(Mutex::new(degenbot_arbitrage::FeeOnTransferRegistry::new()));
                 let bot_state = Arc::new(StateLock::new(BotState::new()));
                 let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+                let inputs = FanOutInputs {
+                    deployments: registry,
+                    block: &block,
+                    current_block: BLOCK,
+                    target_selection: selection,
+                    path_suppression: &suppression,
+                    pool_divergence: &divergence,
+                    fot_registry: &fot,
+                    bot_state: Some(&bot_state),
+                    warm_cache: Some(&warm_cache),
+                };
                 runtime.block_on(async {
-                    dispatch_across_deployments(
-                        candidates,
-                        &block,
-                        registry,
-                        selection,
-                        &suppression,
-                        BLOCK,
-                        0,
-                        &divergence,
-                        &fot,
-                        Some(&bot_state),
-                        Some(&warm_cache),
-                    )
+                    dispatch_across_deployments(candidates, inputs.with_thin_margin(0))
                 })
             })
             .join()
@@ -562,19 +561,23 @@ fn a_one_entry_registry_matches_the_single_deployment_leaf() {
                 let suppression = Arc::new(Mutex::new(PathSuppression::new()));
                 let divergence = Arc::new(Mutex::new(degenbot_arbitrage::PoolDivergence::new()));
                 let fot = Arc::new(Mutex::new(degenbot_arbitrage::FeeOnTransferRegistry::new()));
+                let state = Arc::new(StateLock::new(BotState::new()));
+                let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+                let inputs = FanOutInputs {
+                    deployments: &registry,
+                    block: &block,
+                    current_block: BLOCK,
+                    target_selection: TargetSelection::AllTargets,
+                    path_suppression: &suppression,
+                    pool_divergence: &divergence,
+                    fot_registry: &fot,
+                    bot_state: Some(&state),
+                    warm_cache: Some(&warm_cache),
+                };
                 let registry_run = runtime.block_on(async {
                     dispatch_across_deployments(
                         vec![candidate(deployment_a())],
-                        &block,
-                        &registry,
-                        TargetSelection::AllTargets,
-                        &suppression,
-                        BLOCK,
-                        0,
-                        &divergence,
-                        &fot,
-                        Some(&Arc::new(StateLock::new(BotState::new()))),
-                        Some(&degenbot_simulation::WarmCodeCacheInner::shared_default()),
+                        inputs.with_thin_margin(0),
                     )
                 });
                 let ctx = SimulateContext {

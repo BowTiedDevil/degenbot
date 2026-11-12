@@ -499,19 +499,23 @@ fn the_submit_plan_carries_each_targets_own_transaction() {
                 let suppression = Arc::new(Mutex::new(PathSuppression::new()));
                 let divergence = Arc::new(Mutex::new(PoolDivergence::new()));
                 let fot = Arc::new(Mutex::new(FeeOnTransferRegistry::new()));
+                let state = Arc::new(StateLock::new(BotState::new()));
+                let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+                let inputs = degenbot_arbitrage::FanOutInputs {
+                    deployments: &registry,
+                    block: &block,
+                    current_block: BLOCK,
+                    target_selection: degenbot_arbitrage::TargetSelection::AllTargets,
+                    path_suppression: &suppression,
+                    pool_divergence: &divergence,
+                    fot_registry: &fot,
+                    bot_state: Some(&state),
+                    warm_cache: Some(&warm_cache),
+                };
                 runtime.block_on(async {
                     degenbot_arbitrage::dispatch_across_deployments(
                         vec![candidate(deployment_a()), candidate(deployment_b())],
-                        &block,
-                        &registry,
-                        degenbot_arbitrage::TargetSelection::AllTargets,
-                        &suppression,
-                        BLOCK,
-                        0,
-                        &divergence,
-                        &fot,
-                        Some(&Arc::new(StateLock::new(BotState::new()))),
-                        Some(&degenbot_simulation::WarmCodeCacheInner::shared_default()),
+                        inputs.with_thin_margin(0),
                     )
                 })
             })
@@ -979,15 +983,17 @@ fn run_admitted_fanout(
                 runtime.block_on(async {
                     degenbot_arbitrage::dispatch_admitted_across_deployments(
                         admitted,
-                        &block,
-                        registry,
-                        TargetSelection::AllTargets,
-                        &arcs.suppression,
-                        BLOCK,
-                        &arcs.divergence,
-                        &arcs.fot,
-                        Some(&state),
-                        Some(&warm_cache),
+                        degenbot_arbitrage::FanOutInputs {
+                            deployments: registry,
+                            block: &block,
+                            current_block: BLOCK,
+                            target_selection: TargetSelection::AllTargets,
+                            path_suppression: &arcs.suppression,
+                            pool_divergence: &arcs.divergence,
+                            fot_registry: &arcs.fot,
+                            bot_state: Some(&state),
+                            warm_cache: Some(&warm_cache),
+                        },
                     )
                 })
             })
@@ -1169,15 +1175,17 @@ fn a_poisoned_ledger_panics_at_the_pre_admitted_leaf() {
     // inside this call — no runtime and no engine handle is needed for it.
     let _ = degenbot_arbitrage::dispatch_admitted_across_deployments(
         Vec::new(),
-        &block,
-        &registry,
-        TargetSelection::AllTargets,
-        &suppression,
-        BLOCK,
-        &arcs.divergence,
-        &arcs.fot,
-        Some(&state),
-        Some(&warm_cache),
+        degenbot_arbitrage::FanOutInputs {
+            deployments: &registry,
+            block: &block,
+            current_block: BLOCK,
+            target_selection: TargetSelection::AllTargets,
+            path_suppression: &suppression,
+            pool_divergence: &arcs.divergence,
+            fot_registry: &arcs.fot,
+            bot_state: Some(&state),
+            warm_cache: Some(&warm_cache),
+        },
     );
 }
 

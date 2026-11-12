@@ -406,15 +406,17 @@ impl EngineLeaves {
         };
         let fanout = degenbot_arbitrage::dispatch_admitted_across_deployments(
             std::mem::take(&mut batch.candidates),
-            &block,
-            &cfg.deployments,
-            cfg.target_selection,
-            &cfg.suppression,
-            work.current_block,
-            &cfg.divergence,
-            &cfg.fot,
-            cfg.bot_state.as_ref(),
-            cfg.warm_cache.as_ref(),
+            degenbot_arbitrage::FanOutInputs {
+                deployments: &cfg.deployments,
+                block: &block,
+                current_block: work.current_block,
+                target_selection: cfg.target_selection,
+                path_suppression: &cfg.suppression,
+                pool_divergence: &cfg.divergence,
+                fot_registry: &cfg.fot,
+                bot_state: cfg.bot_state.as_ref(),
+                warm_cache: cfg.warm_cache.as_ref(),
+            },
         )
         .map_err(|error| error.to_string())?;
 

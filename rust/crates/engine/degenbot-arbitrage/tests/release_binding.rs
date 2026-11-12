@@ -34,8 +34,8 @@ use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
     dispatch_across_deployments, BindingError, BoundCmdExecutor, CmdExecutorBinding,
-    DeploymentRegistry, FeeOnTransferRegistry, PoolDivergence, ReleaseSource, SimulationBlock,
-    SimulationDeployment, TargetSelection,
+    DeploymentRegistry, FanOutInputs, FeeOnTransferRegistry, PoolDivergence, ReleaseSource,
+    SimulationBlock, SimulationDeployment, TargetSelection,
 };
 use degenbot_execution::{
     AssessError, CandidateId, ComposeError, ComposerInputs, DeploymentId, ExecutionAdapter,
@@ -1486,20 +1486,19 @@ fn run_fanout(
                 let fot = Arc::new(Mutex::new(FeeOnTransferRegistry::new()));
                 let bot_state = Arc::new(StateLock::new(BotState::new()));
                 let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+                let inputs = FanOutInputs {
+                    deployments: registry,
+                    block: &block,
+                    current_block: BLOCK,
+                    target_selection: selection,
+                    path_suppression: &suppression,
+                    pool_divergence: &divergence,
+                    fot_registry: &fot,
+                    bot_state: Some(&bot_state),
+                    warm_cache: Some(&warm_cache),
+                };
                 block_on(async {
-                    dispatch_across_deployments(
-                        candidates,
-                        &block,
-                        registry,
-                        selection,
-                        &suppression,
-                        BLOCK,
-                        0,
-                        &divergence,
-                        &fot,
-                        Some(&bot_state),
-                        Some(&warm_cache),
-                    )
+                    dispatch_across_deployments(candidates, inputs.with_thin_margin(0))
                 })
             })
             .join()

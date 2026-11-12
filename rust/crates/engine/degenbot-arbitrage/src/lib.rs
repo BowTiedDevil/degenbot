@@ -93,6 +93,34 @@
 //! old shape) and drops any staleness pass of its own: the batch maps a
 //! projection's `EarlyDropReason::Stale` to its record-invisible outcome.
 //!
+//! # Migrating a direct Rust caller onto [`FanOutInputs`]
+//!
+//! Both registry entries took roughly ten positional arguments; each now takes
+//! one NAMED configuration and its own candidates (see [`fanout`] for the
+//! construction snippet and the raw/pre-admitted contrast):
+//!
+//! - `dispatch_across_deployments(candidates, block, registry, selection,
+//!   suppression, current_block, min_profit_margin_bps, divergence, fot_registry,
+//!   bot_state, warm_cache)` becomes
+//!   `dispatch_across_deployments(candidates, inputs.with_thin_margin(min_profit_margin_bps))`;
+//! - `dispatch_admitted_across_deployments(admitted, block, registry, selection,
+//!   suppression, current_block, divergence, fot_registry, bot_state,
+//!   warm_cache)` becomes `dispatch_admitted_across_deployments(admitted, inputs)`.
+//!
+//! `inputs` is a [`FanOutInputs`] literal naming every shared input: the ordered
+//! registry, the simulated [`SimulationBlock`], the block this fan-out runs at,
+//! the [`TargetSelection`] policy, the three policy registries, the engine's
+//! `BotState` owner, and the warm cache. The candidates stay outside it (the two
+//! entries take different row types), and so does the raw entry's thin-margin
+//! floor: it rides [`RawFanOutInputs`], which
+//! [`dispatch_admitted_across_deployments`] cannot accept.
+//!
+//! Nothing about admission, the caps, the lane order, or the side effects
+//! changes. The raw entry still applies the whole policy inside its leaf,
+//! stamping the suppression ledger there; the pre-admitted entry still
+//! re-reads every policy registry before simulation and reports
+//! `thin_dropped == 0`.
+//!
 //! # Standalone-Rust consumer
 //!
 //! `cargo add degenbot-arbitrage` reaches the settlement-arbitrage strategy with
@@ -217,7 +245,7 @@ pub use executor_runtime::{
 };
 pub use fanout::{
     dispatch_across_deployments, dispatch_admitted_across_deployments, DeploymentFanOutOutcome,
-    DeploymentLane,
+    DeploymentLane, FanOutInputs, RawFanOutInputs,
 };
 
 pub use identity::{duplicate_candidate_id, DispatchRefusal};
