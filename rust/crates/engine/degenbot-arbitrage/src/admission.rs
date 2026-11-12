@@ -43,7 +43,7 @@
 //! [`project_early_admission`] is the CALLER-OWNED early half of the same
 //! policy: the batch's assembly hands it its resolved rows and turns the drops
 //! it reports into typed records, then transports the survivors. It differs
-//! from [`admit`] in exactly two ways the caller owns:
+//! from [`admit`] in exactly three ways the caller owns:
 //!
 //! - suppression is the NON-STAMPING read ([`PathSuppression::is_suppressed_without_stamp`])
 //!   over a ledger the caller holds locked, because the retry stamp is the
@@ -51,12 +51,19 @@
 //! - the cap is the caller's own count, clamped to
 //!   [`MAX_SIMULATE_CONCURRENT`] and applied in INPUT order, because the
 //!   caller's per-lane budget is the one that survives the fan-out's reorder
-//!   (see "Cap and order" below).
+//!   (see "Cap and order" below);
+//! - the pre-selection staleness gate runs INSIDE the projection, between that
+//!   cap and the transported survivors, because it is the caller's position:
+//!   an examined stale candidate is composed and ACCEPTED by the
+//!   target-selection walk, which retires its fresh sibling. The gate reads the
+//!   live nonces through [`EarlyAdmissionPolicy::bot_state`] (a `None` owner
+//!   skips it, exactly as it does at finalization).
 //!
 //! It also REPORTS what it dropped (candidate + stage) instead of only
 //! counting, which is what lets a caller emit one record per drop. It is not a
-//! policy fork: the predicates, the partition loop, the thin-margin floor, and
-//! the cap are the same functions the two authoritative passes run.
+//! policy fork: the predicates, the partition loop, the thin-margin floor, the
+//! cap, and the staleness gate are the same functions the two authoritative
+//! passes run.
 //!
 //! # Cap and order
 //!
@@ -207,17 +214,23 @@ pub(crate) struct Admission {
     pub(crate) skips: AdmissionSkips,
 }
 
-/// A candidate a caller has ALREADY projected through its own pre-simulation
-/// admission, transported to the pre-admitted fan-out entry
-/// ([`crate::dispatch_admitted_across_deployments`]) for authoritative
-/// finalization at simulation time.
+/// A candidate a caller has ALREADY early-projected, transported to the
+/// pre-admitted fan-out entry ([`crate::dispatch_admitted_across_deployments`])
+/// for authoritative finalization at simulation time.
 ///
-/// Construction ([`Self::new`]) is the caller's claim that it applied its own
-/// non-stamping admission projection; what travels is the COMPLETE
-/// [`DispatchCandidate`] — identity, solve block, per-hop rows, resolved path,
-/// economics, and any encoding a target-selection walk attached — so
-/// finalization never needs an ID-keyed side table to piece a candidate back
-/// together.
+/// "Transported" means exactly one thing: the candidate came through
+/// [`project_early_admission`] — the non-stamping suppression read, divergence,
+/// fee-on-transfer, the caller's thin floor, the caller's input-order cap, and
+/// the PRE-SELECTION staleness gate, in that order. It is not a claim that
+/// finalization will admit it, and never a licence to skip the final read. The
+/// type's constructor is crate-private so the claim is structural: a caller
+/// cannot wrap an arbitrary row in this type and re-implement the projection's
+/// stages beside this crate's.
+///
+/// What travels is the COMPLETE [`DispatchCandidate`] — identity, solve block,
+/// per-hop rows, resolved path, economics, and any encoding a target-selection
+/// walk attached — so finalization never needs an ID-keyed side table to piece a
+/// candidate back together.
 ///
 /// # One identity, one transported row
 ///
@@ -239,26 +252,46 @@ pub(crate) struct Admission {
 ///
 /// # Building one
 ///
-/// A direct Rust consumer that owns its own pre-simulation projection asks
-/// [`project_early_admission`] for the list — it reports the drops and returns
-/// the survivors already wrapped — rather than reproducing the stages. A caller
-/// with a projection of its own constructs these directly, and every candidate
-/// it does NOT transport is one it dropped:
+/// A direct Rust consumer asks [`project_early_admission`] for the list: it
+/// applies the early half of the policy (the pre-selection staleness gate
+/// included) and returns the survivors already wrapped, every drop reported
+/// beside the row it dropped. There is no other public construction.
 ///
 /// ```
-/// use degenbot_arbitrage::{AdmittedCandidate, DispatchCandidate};
-/// # use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
-/// let candidate = DispatchCandidate {
-///     candidate_id: CandidateId::new(7, DeploymentId::new(1)),
-///     optimal_input: 1_000,
-///     engine_profit: 50,
-///     steps: Box::new([]),
-///     solve_block: 100,
-///     path_info: PathInfo::new(Vec::new()),
-///     prepared: None,
+/// use std::sync::Mutex;
+/// use degenbot_arbitrage::{
+///     project_early_admission, DispatchCandidate, EarlyAdmissionPolicy,
+///     FeeOnTransferRegistry, PoolDivergence,
 /// };
-/// let admitted = AdmittedCandidate::new(candidate);
-/// assert_eq!(admitted.candidate().optimal_input, 1_000);
+/// # use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
+/// # use degenbot_submission::PathSuppression;
+/// # let candidate = DispatchCandidate {
+/// #     candidate_id: CandidateId::new(7, DeploymentId::new(1)),
+/// #     optimal_input: 1_000,
+/// #     engine_profit: 50,
+/// #     steps: Box::new([]),
+/// #     solve_block: 100,
+/// #     path_info: PathInfo::new(Vec::new()),
+/// #     prepared: None,
+/// # };
+/// # let suppression = PathSuppression::new();
+/// # let divergence = Mutex::new(PoolDivergence::new());
+/// # let fee_on_transfer = Mutex::new(FeeOnTransferRegistry::new());
+/// let projection = project_early_admission(
+///     vec![candidate],
+///     &EarlyAdmissionPolicy {
+///         suppression: &suppression,
+///         divergence: &divergence,
+///         fee_on_transfer: &fee_on_transfer,
+///         bot_state: None,
+///         current_block: 100,
+///         min_profit_margin_bps: 0,
+///         max_candidates: 50,
+///     },
+/// );
+/// assert_eq!(projection.admitted().len(), 1);
+/// assert_eq!(projection.admitted()[0].candidate().optimal_input, 1_000);
+/// assert!(projection.drops().is_empty());
 /// ```
 #[derive(Debug, Clone)]
 pub struct AdmittedCandidate {
@@ -267,11 +300,16 @@ pub struct AdmittedCandidate {
 }
 
 impl AdmittedCandidate {
-    /// Transport `candidate` as pre-admitted: the caller has already applied
-    /// its own pre-simulation projection and this candidate is ready for the
-    /// authoritative final read at simulation time.
+    /// Transport `candidate` as pre-admitted — CRATE-PRIVATE on purpose: the one
+    /// way a caller obtains a transport is [`project_early_admission`], so no
+    /// caller can wrap an arbitrary row in this type and re-implement the
+    /// projection's stages (the pre-selection staleness gate included) beside
+    /// this crate's.
+    ///
+    /// The in-crate callers are the projection itself and the crate's own test
+    /// seam, which builds an UNGATED transport to prove what the gate prevents.
     #[must_use]
-    pub fn new(candidate: DispatchCandidate) -> Self {
+    pub(crate) fn new(candidate: DispatchCandidate) -> Self {
         Self { candidate }
     }
 
@@ -430,6 +468,15 @@ pub enum EarlyDropReason {
     FeeOnTransfer,
     /// The candidate's own margin is below the caller's floor.
     ThinMargin,
+    /// The candidate's `state_nonce` snapshot is no longer the live one at the
+    /// caller's PRE-SELECTION position.
+    ///
+    /// This is the one early drop that landed after the cap, and the one a
+    /// record fold has never carried: a batch keeps it unseen (drain-invisible),
+    /// reporting no record for a row whose stale evidence never reached
+    /// selection. It is reported here anyway, because a projection's product is
+    /// provenance — a caller that wants the row knows exactly why it stopped.
+    Stale,
     /// The caller's per-lane cap left no room for this candidate.
     OverCap,
 }
@@ -468,9 +515,9 @@ impl EarlyDrop {
 /// The policy state and per-block facts ONE early projection reads.
 ///
 /// This is the caller-owned half of [`AdmissionPolicy`]: the same three policy
-/// objects, minus the staleness gate (the caller applies that at its own
-/// pre-selection position, where a stale candidate cannot retire a fresh
-/// sibling) and with the retry stamp left to finalization.
+/// objects and the same state owner, with the retry stamp left to finalization
+/// and the staleness gate run one stage earlier — after the caller's cap, before
+/// the survivors are transported (see the projection docs).
 ///
 /// [`AdmissionPolicy`] is crate-private on purpose — an external caller states
 /// its early inputs here and lets this module own the pass.
@@ -484,6 +531,13 @@ pub struct EarlyAdmissionPolicy<'a> {
     pub divergence: &'a Mutex<PoolDivergence>,
     /// Tokens confirmed fee-on-transfer — same poison policy as `divergence`.
     pub fee_on_transfer: &'a Mutex<FeeOnTransferRegistry>,
+    /// The engine's shared state owner — the PRE-SELECTION staleness gate's
+    /// sample source, read at [`LockSite::Sim`] for one retain. `None` skips the
+    /// gate (the empty and pre-`BotState` callers), exactly as `None` skips it
+    /// at finalization.
+    ///
+    /// [`LockSite::Sim`]: degenbot_substrate::state_lock::LockSite::Sim
+    pub bot_state: Option<&'a StateLock<BotState>>,
     /// The block the projection reads for: the retry clock and the decay window.
     pub current_block: u64,
     /// The thin-margin floor in basis points of `optimal_input` (`0` disables).
@@ -515,7 +569,7 @@ impl EarlyProjection {
     }
 
     /// Every reported drop, in stage-then-input order: suppression, divergence,
-    /// fee-on-transfer, thin margin, cap.
+    /// fee-on-transfer, thin margin, cap, pre-selection staleness.
     #[must_use]
     pub fn drops(&self) -> &[EarlyDrop] {
         &self.drops
@@ -528,21 +582,33 @@ impl EarlyProjection {
 /// The order is fixed and is the batch's record order:
 ///
 /// `non-stamping suppression -> pool divergence -> fee-on-transfer ->
-/// thin margin -> caller cap`
+/// thin margin -> caller cap -> pre-selection staleness`
 ///
 /// `candidates` are expected in the caller's input order and the survivors come
-/// back in that same order; the cap is applied LAST and in INPUT order, so the
-/// survivors are a sub-sequence of the input, never a ranking.
+/// back in that same order; the cap is applied in INPUT order, so the survivors
+/// are a sub-sequence of the input, never a ranking — and the staleness gate runs
+/// AFTER it, so a stale row the cap kept frees no slot for the sibling it starved.
+///
+/// # The pre-selection staleness gate
+///
+/// The gate sits here, not in the authoritative leaf, because target selection is
+/// between them: an examined stale candidate is composed and ACCEPTED, which
+/// retires its fresh sibling at a later target ([`crate::selection`]). It reads
+/// the live hop nonces through [`EarlyAdmissionPolicy::bot_state`] for one retain
+/// ([`candidate_is_stale`], the same predicate finalization runs) and reports
+/// every row it drops as [`EarlyDropReason::Stale`].
+///
+/// `bot_state: None` skips the gate — the same `None` finalization skips — so a
+/// caller without a state owner keeps the gate out of the projection and owns it
+/// itself. A stale drop was never a record in a batch's fold: see the reason's
+/// own docs.
 ///
 /// # What the projection does NOT decide
 ///
-/// Two stages stay the caller's, at the caller's position, because they are the
-/// caller's facts and not this policy's:
-///
-/// - the PRE-SELECTION staleness gate (drop a candidate whose live hop nonce
-///   advanced BEFORE target selection — an examined stale candidate is composed
-///   and accepted, which retires a fresh sibling);
-/// - what to do with each report (the caller's own per-drop record type).
+/// What to do with each report is the caller's (the caller's own per-drop record
+/// type): the projection reports, the caller emits records, and two reasons
+/// ([`EarlyDropReason::OverCap`], [`EarlyDropReason::Stale`]) are deliberately
+/// record-invisible to the batch's fold.
 ///
 /// Nothing here is a promise of later admission: the pre-admitted leaf
 /// finalizes every survivor with the stamping suppression read, a fresh
@@ -553,12 +619,15 @@ impl EarlyProjection {
 /// # Reported drops are records, not tallies
 ///
 /// Every drop comes back as an [`EarlyDrop`] carrying the whole candidate and
-/// the stage, which is what lets a caller emit one record per drop. Two
+/// the stage, which is what lets a caller emit one record per drop. Three
 /// exceptions are deliberate and preserve the batch's established record fold:
 ///
 /// - the CAP reports its drops as [`EarlyDropReason::OverCap`], and callers that
 ///   fold drops into records have always left cap drops out of that fold (a
 ///   capped candidate is drain-invisible);
+/// - the staleness gate reports its drops as [`EarlyDropReason::Stale`], and the
+///   batch's fold leaves those out too (a pre-selection stale row never reached a
+///   record);
 /// - a thin row whose identity a SURVIVING row also carries
 ///   ([`EarlyDropReason::ThinMargin`]) is dropped but NOT reported: the floor
 ///   judges each row on its own margin, and the identity-keyed attribution that
@@ -586,10 +655,15 @@ impl EarlyProjection {
 /// not.
 ///
 /// Both registries are taken as ONE pair — divergence then fee-on-transfer,
-/// before the suppression read and held across the whole early sequence — so no
+/// before the suppression read and held across the early sequence — so no
 /// concurrent writer can land between the early divergence read and the early
 /// fee-on-transfer read. Only the suppression ledger may be pre-locked by the
-/// caller; pre-locking either registry deadlocks.
+/// caller (the projection takes `&PathSuppression`); pre-locking either registry
+/// deadlocks. The pair is RELEASED before the staleness gate, which takes its own
+/// state read guard, so no policy-registry guard is held across a state read. The
+/// caller's suppression lock stays held for the whole projection by construction,
+/// so that state read nests inside it for one synchronous retain and never
+/// crosses a policy-registry scope or an `await`.
 ///
 /// # Migrating a caller onto this seam
 ///
@@ -617,6 +691,7 @@ impl EarlyProjection {
 ///         suppression,
 ///         divergence,
 ///         fee_on_transfer,
+///         bot_state: None,
 ///         current_block: 100,
 ///         min_profit_margin_bps: 50,
 ///         max_candidates: 50,
@@ -709,6 +784,22 @@ pub fn project_early_admission(
         cap_tail(&mut candidates, cap)
             .into_iter()
             .map(|c| EarlyDrop::at(c, EarlyDropReason::OverCap)),
+    );
+
+    // The policy pair's critical section ends here: the gate below reads the
+    // state owner, and no registry guard is held across a state read.
+    drop(divergence);
+    drop(fee_on_transfer);
+
+    // 6. Staleness — the PRE-SELECTION gate, after the cap (a stale row the cap
+    //    kept frees no slot) and before these survivors are transported, so no
+    //    stale candidate reaches the target-selection walk that would compose
+    //    and accept it and retire a fresh sibling. The same predicate
+    //    finalization runs; `None` skips it there and here.
+    drops.extend(
+        drop_stale(&mut candidates, policy.bot_state)
+            .into_iter()
+            .map(|c| EarlyDrop::at(c, EarlyDropReason::Stale)),
     );
 
     EarlyProjection {
@@ -861,17 +952,30 @@ fn take_fee_on_transfer(
     dropped
 }
 
-/// Candidate staleness — the solve-time hop nonce against the live state. The
-/// read guard covers this retain only, never the caller's provider I/O.
-fn take_stale(
+/// Candidate staleness — the solve-time hop nonce against the live state, in ONE
+/// implementation for both positions: the authoritative pass (after
+/// fee-on-transfer) and the caller's early projection (after its cap, in front of
+/// target selection).
+///
+/// The read guard covers this retain only, never the caller's provider I/O, and
+/// `None` (no state owner) drops nothing.
+fn drop_stale(
     candidates: &mut Vec<DispatchCandidate>,
-    policy: &FinalizationPolicy<'_>,
+    bot_state: Option<&StateLock<BotState>>,
 ) -> Vec<DispatchCandidate> {
-    let Some(state) = policy.bot_state else {
+    let Some(state) = bot_state else {
         return Vec::new();
     };
     let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Sim);
     retain_dropped(candidates, |c| candidate_is_stale(&guard, c))
+}
+
+/// The authoritative staleness stage: [`drop_stale`] over the pass' own policy.
+fn take_stale(
+    candidates: &mut Vec<DispatchCandidate>,
+    policy: &FinalizationPolicy<'_>,
+) -> Vec<DispatchCandidate> {
+    drop_stale(candidates, policy.bot_state)
 }
 
 /// The optional order-index reorder, then the [`MAX_SIMULATE_CONCURRENT`] cap
@@ -2140,10 +2244,12 @@ mod tests {
     }
 
     /// One early projection, by the caller's rules: the suppression ledger is
-    /// locked by the CALLER (the projection can only read it) and the cap is the
-    /// caller's own count.
-    fn project(
+    /// locked by the CALLER (the projection can only read it), the cap is the
+    /// caller's own count, and `state` is the pre-selection staleness gate's
+    /// sample source.
+    fn project_with_state(
         ledger: &Registries,
+        state: Option<&StateLock<BotState>>,
         block: u64,
         min_profit_margin_bps: u64,
         max_candidates: usize,
@@ -2156,10 +2262,29 @@ mod tests {
                 suppression: &suppression,
                 divergence: &ledger.divergence,
                 fee_on_transfer: &ledger.fee_on_transfer,
+                bot_state: state,
                 current_block: block,
                 min_profit_margin_bps,
                 max_candidates,
             },
+        )
+    }
+
+    /// The same projection with no state owner: the staleness gate is skipped.
+    fn project(
+        ledger: &Registries,
+        block: u64,
+        min_profit_margin_bps: u64,
+        max_candidates: usize,
+        candidates: Vec<DispatchCandidate>,
+    ) -> EarlyProjection {
+        project_with_state(
+            ledger,
+            None,
+            block,
+            min_profit_margin_bps,
+            max_candidates,
+            candidates,
         )
     }
 
@@ -2379,6 +2504,115 @@ mod tests {
             carried.prepared.is_none(),
             "the target-selection walk attaches the encoding, not the projection"
         );
+    }
+
+    /// The PRE-SELECTION staleness gate is part of the shared projection: a row
+    /// whose hop nonce turned over is reported as `Stale` and never transported,
+    /// while its fresh sibling rides.
+    #[test]
+    fn the_projection_drops_a_stale_row_at_the_pre_selection_position() {
+        let ledger = registries();
+        let core = bot_state_with(&[POOL_A, POOL_B]);
+        let fresh_a = live_nonce(&core, POOL_A);
+        let fresh_b = live_nonce(&core, POOL_B);
+        let state = Arc::new(StateLock::new(core));
+
+        let projection = project_with_state(
+            &ledger,
+            Some(&state),
+            100,
+            0,
+            50,
+            vec![
+                candidate_through_pool(1, POOL_A, fresh_a + 1), // advanced
+                candidate_through_pool(2, POOL_B, fresh_b),     // current
+            ],
+        );
+
+        assert_eq!(projected_ids(&projection), vec![2]);
+        assert_eq!(projected_reasons(&projection), vec![EarlyDropReason::Stale]);
+        assert_eq!(
+            dropped_ids(&projection),
+            vec![1],
+            "the report carries the row the gate dropped"
+        );
+    }
+
+    /// The caller's cap runs BEFORE the gate, in input order: with cap 1 over
+    /// `[stale, fresh]` the STALE row keeps the slot, the fresh row is the cap's
+    /// own drop, and the gate then empties the transport — a stale row frees no
+    /// slot for the sibling it starved.
+    #[test]
+    fn the_projection_caps_before_it_gates_staleness() {
+        let ledger = registries();
+        let core = bot_state_with(&[POOL_A, POOL_B]);
+        let fresh_a = live_nonce(&core, POOL_A);
+        let fresh_b = live_nonce(&core, POOL_B);
+        let state = Arc::new(StateLock::new(core));
+
+        let projection = project_with_state(
+            &ledger,
+            Some(&state),
+            100,
+            0,
+            1,
+            vec![
+                candidate_through_pool(1, POOL_A, fresh_a + 1), // stale, keeps the slot
+                candidate_through_pool(2, POOL_B, fresh_b),     // fresh, past the cap
+            ],
+        );
+
+        assert!(projection.admitted().is_empty(), "nobody rides");
+        assert_eq!(
+            projected_reasons(&projection),
+            vec![EarlyDropReason::OverCap, EarlyDropReason::Stale],
+            "the cap reports its input-order tail first, the gate runs after it"
+        );
+        assert_eq!(
+            dropped_ids(&projection),
+            vec![2, 1],
+            "the capped sibling is reported before the stale row"
+        );
+    }
+
+    /// No state owner, no gate: the projection transports the stale row. This is
+    /// the UNGATED control at the private seam — it proves the stale evidence has
+    /// exactly one pre-selection home, so a caller that forgets the state owner
+    /// gets the old, ungated behavior rather than a silent second gate.
+    #[test]
+    fn the_projection_without_a_state_owner_transports_a_stale_row() {
+        let ledger = registries();
+        let core = bot_state_with(&[POOL_A]);
+        let stale_nonce = live_nonce(&core, POOL_A) + 1;
+
+        let projection = project(
+            &ledger,
+            100,
+            0,
+            50,
+            vec![candidate_through_pool(1, POOL_A, stale_nonce)],
+        );
+
+        assert_eq!(
+            projected_ids(&projection),
+            vec![1],
+            "no owner means no pre-selection gate"
+        );
+        assert!(projection.drops().is_empty());
+
+        // The same row IS stale, and the projection says so the moment it has
+        // the owner: the gate a caller skips is the one it runs.
+        let state = Arc::new(StateLock::new(core));
+        let gated = project_with_state(
+            &ledger,
+            Some(&state),
+            100,
+            0,
+            50,
+            vec![candidate_through_pool(1, POOL_A, stale_nonce)],
+        );
+        assert!(gated.admitted().is_empty());
+        assert_eq!(projected_reasons(&gated), vec![EarlyDropReason::Stale]);
     }
 
     /// The projection RECOVERS a poisoned registry (the caller's frame keeps

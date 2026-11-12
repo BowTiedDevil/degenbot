@@ -41,16 +41,18 @@
 //! fee-on-transfer -> thin margin -> input-order per-lane cap -> pre-selection
 //! staleness -> shared target selection -> leaf finalization`
 //!
-//! The stages up to the cap are not implemented here: they are
-//! [`degenbot_arbitrage::project_early_admission`], the same predicates, floor,
-//! and cap the authoritative passes run, applied early and REPORTING each drop
-//! (candidate + stage) instead of only counting it. This stage supplies what is
-//! genuinely the batch's — the resolved rows, the caller's cap, and the
-//! [`AssemblyVerdict`]/record join per reported drop — and nothing else.
+//! The stages through the pre-selection staleness gate are not implemented here:
+//! they are [`degenbot_arbitrage::project_early_admission`], the same
+//! predicates, floor, cap, and staleness gate the authoritative passes run,
+//! applied early and REPORTING each drop (candidate + stage) instead of only
+//! counting it. This stage supplies what is genuinely the batch's — the resolved
+//! rows, the caller's cap, the state owner, and the [`AssemblyVerdict`]/record
+//! join per reported drop — and nothing else.
 //!
 //! Everything an early drop reports is an EARLY drop: it stays unstamped (the
-//! projection is the non-stamping read), it earns its typed
-//! [`AssemblyVerdict`], and it never reaches the fan-out. What survives is
+//! projection is the non-stamping read), it never reaches the fan-out, and only
+//! the stages a record fold carries earn their typed [`AssemblyVerdict`] — a cap
+//! drop and a pre-selection stale drop stay drain-invisible. What survives is
 //! handed over as [`degenbot_arbitrage::AdmittedCandidate`] — the pre-admitted
 //! transport — to
 //! `degenbot_arbitrage::dispatch_admitted_across_deployments`, whose leaf
@@ -61,9 +63,11 @@
 //! A projection is evidence about the block it read, never a promise: the leaf
 //! re-reads every mutable registry and the live nonces rather than trusting it,
 //! so a policy fact that moved between here and simulation drops the candidate
-//! THERE, and the retry stamp is the leaf's to write. A candidate this stage
-//! dropped before the cap FREES its slot — a clean sibling takes it — while a
-//! candidate the cap itself dropped is simply gone (the drain-invisible drop).
+//! THERE, and the retry stamp is the leaf's to write. A candidate a stage before
+//! the cap dropped FREES its slot — a clean sibling takes it — while a candidate
+//! the cap itself dropped is simply gone (the drain-invisible drop), and a
+//! candidate the staleness gate dropped after it keeps the slot it already
+//! occupied.
 //!
 //! # Migrating a consumer of this stage
 //!
@@ -79,10 +83,15 @@
 //!   RAW entry (which would re-apply the whole admission policy to rows this
 //!   stage already projected).
 //!
-//! Everything else this module constructs keeps its shape: [`AssemblyInputs`],
-//! the [`AssemblyVerdict`] set, the payload-arm helpers
-//! ([`merge_payload_results`], [`join_sim_result`], [`derive_path_pools`]), and
-//! the [`AssembledBatch`] record/join fields.
+//! [`AssemblyInputs`] gains one field, `bot_state`: pass the engine's shared
+//! state owner to have the projection run its PRE-SELECTION staleness gate in
+//! front of target selection, or `None` to skip the gate and own it yourself (the
+//! pre-admitted leaf's finalization skips the same `None`).
+//!
+//! Everything else this module constructs keeps its shape: the
+//! [`AssemblyVerdict`] set, the payload-arm helpers ([`merge_payload_results`],
+//! [`join_sim_result`], [`derive_path_pools`]), and the [`AssembledBatch`]
+//! record/join fields.
 //!
 use std::collections::{HashMap, HashSet};
 
@@ -93,6 +102,8 @@ use degenbot_arbitrage::{
 };
 use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
 use degenbot_submission::{PoolKey, SubmitCandidate};
+use degenbot_substrate::state_lock::StateLock;
+use degenbot_substrate::BotState;
 
 use crate::record::{AssemblyVerdict, BatchOutcome, SimReceipt, SimulateVerdict};
 use crate::row::{PayloadFailure, PayloadRow, RawResult};
@@ -235,9 +246,12 @@ fn refuse_duplicate_submit_rows(payloads: &[PayloadRow]) -> Result<(), AssemblyE
 
 /// The typed verdict this stage attributes to one early-projection drop.
 ///
-/// `None` for [`degenbot_arbitrage::EarlyDropReason::OverCap`]: the cap is the
-/// one early drop the record fold has never carried (a capped row is
-/// drain-invisible — the batch's `candidate_count` excludes it).
+/// `None` for the two drops the record fold has never carried, both of which are
+/// drain-invisible (the batch's `candidate_count` excludes them):
+/// [`degenbot_arbitrage::EarlyDropReason::OverCap`] (a row the caller's cap left
+/// no room for) and [`degenbot_arbitrage::EarlyDropReason::Stale`] (a row the
+/// projection's PRE-SELECTION staleness gate dropped: a stale row never earned a
+/// record, so nothing is emitted for it here).
 fn early_drop_verdict(reason: degenbot_arbitrage::EarlyDropReason) -> Option<AssemblyVerdict> {
     use degenbot_arbitrage::EarlyDropReason;
     match reason {
@@ -245,7 +259,7 @@ fn early_drop_verdict(reason: degenbot_arbitrage::EarlyDropReason) -> Option<Ass
         EarlyDropReason::DivergentPool => Some(AssemblyVerdict::SkipDivergentPool),
         EarlyDropReason::FeeOnTransfer => Some(AssemblyVerdict::SkipFeeOnTransfer),
         EarlyDropReason::ThinMargin => Some(AssemblyVerdict::SkipThinMargin),
-        EarlyDropReason::OverCap => None,
+        EarlyDropReason::OverCap | EarlyDropReason::Stale => None,
     }
 }
 
@@ -271,6 +285,11 @@ pub struct AssemblyInputs<'a> {
     /// The per-token fee-on-transfer registry (same skip + tally read, same
     /// poison recovery).
     pub fot: &'a std::sync::Mutex<FeeOnTransferRegistry>,
+    /// The engine's shared state owner — the projection's PRE-SELECTION staleness
+    /// gate reads it (one retain, at `LockSite::Sim`) in front of the target
+    /// selection this stage's survivors reach. `None` skips the gate, and the
+    /// pre-admitted leaf's own finalization skips it for the same `None`.
+    pub bot_state: Option<&'a StateLock<BotState>>,
     /// The block the batch is consumed at.
     pub current_block: u64,
     /// The thin-margin floor in bps (0 disables).
@@ -302,13 +321,14 @@ pub struct AssembledBatch {
     pub path_info_by_id: HashMap<u64, PathInfo>,
     /// One record per processed row, in input order (raw rows, then payload
     /// rows). Candidates that reach the sim stage get their record AFTER the
-    /// fan-out (the sim leaf fills the verdicts); cap-dropped rows produce no
-    /// record — the same drain-invisible drop today's truncate applies.
+    /// fan-out (the sim leaf fills the verdicts); cap-dropped rows and
+    /// pre-selection stale rows produce no record — both are drain-invisible.
     pub outcomes: Vec<BatchOutcome>,
     /// The sim-ready candidates as the PRE-ADMITTED transport, in input order,
-    /// post cap: each one owns the whole [`DispatchCandidate`] (identity,
-    /// per-hop rows, resolved path, economics), so the fan-out's finalization
-    /// never recovers a candidate from an ID-keyed side table.
+    /// post cap and post staleness gate: each one owns the whole
+    /// [`DispatchCandidate`] (identity, per-hop rows, resolved path, economics),
+    /// so the fan-out's finalization never recovers a candidate from an ID-keyed
+    /// side table.
     ///
     /// Every candidate this stage dropped is one it does NOT transport — and
     /// every candidate it transports may still be dropped by the leaf, which
@@ -423,15 +443,16 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
             suppression: inputs.suppression,
             divergence: inputs.divergence,
             fee_on_transfer: inputs.fot,
+            bot_state: inputs.bot_state,
             current_block: inputs.current_block,
             min_profit_margin_bps: inputs.min_profit_margin_bps,
             max_candidates: inputs.max_candidates,
         },
     );
     for dropped in projection.drops() {
-        // The cap is the one early drop the record fold never sees: the
-        // candidate_count the driver reports excludes it, exactly as today's
-        // `truncate` did, so cap-dropped rows stay drain-invisible.
+        // The cap and the pre-selection staleness gate are the two early drops
+        // the record fold never sees: the candidate_count the driver reports
+        // excludes them.
         let Some(assembly) = early_drop_verdict(dropped.reason()) else {
             continue;
         };
@@ -949,12 +970,65 @@ mod tests {
             suppression: &mut suppression,
             divergence: &p.divergence,
             fot: &p.fot,
+            bot_state: None,
             current_block,
             min_profit_margin_bps,
             max_candidates,
             target: EXECUTOR,
             deployment_id: deployment_id(),
         })
+    }
+
+    /// [`assemble_with`] plus the engine's state owner, for the fixtures that
+    /// exercise the projection's PRE-SELECTION staleness gate.
+    fn assemble_with_state(
+        rows: &[RawResult],
+        res: &dyn PathResolver,
+        p: &Policy,
+        state: &StateLock<BotState>,
+    ) -> Result<AssembledBatch, AssemblyError> {
+        let mut suppression = p.suppression.lock().unwrap();
+        assemble_batch(&AssemblyInputs {
+            rows,
+            payloads: &[],
+            resolver: res,
+            payload_served: &HashSet::new(),
+            suppression: &mut suppression,
+            divergence: &p.divergence,
+            fot: &p.fot,
+            bot_state: Some(state),
+            current_block: 100,
+            min_profit_margin_bps: 0,
+            max_candidates: 50,
+            target: EXECUTOR,
+            deployment_id: deployment_id(),
+        })
+    }
+
+    /// A `BotState` holding the fixture path's pool as a V2 pair, plus that
+    /// pool's live `state_nonce` (the value a fresh row snapshots).
+    fn state_with_fixture_pool() -> (StateLock<BotState>, u64) {
+        let pool = parse_address("0x1111111111111111111111111111111111111111").unwrap();
+        let mut core = BotState::new();
+        core.register_v2_pool(&degenbot_pools::RegisterV2PoolParams {
+            address: pool,
+            token0: TOKEN_IN,
+            token1: TOKEN_OUT,
+            reserve0: alloy::primitives::aliases::U112::from(1_000_000u64),
+            reserve1: alloy::primitives::aliases::U112::from(2_000_000u64),
+            fee_token0: degenbot_core::fee::FeeRatio::new(997, 1_000).unwrap(),
+            fee_token1: degenbot_core::fee::FeeRatio::new(997, 1_000).unwrap(),
+            factory: Address::ZERO,
+            deployer: Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            update_block: 1,
+            variant: degenbot_pools::DexVariant::UniswapV2,
+            stable_swap: false,
+        })
+        .unwrap();
+        let pid = core.pool_id_by_address(&pool).unwrap();
+        let live = core.pool_state_nonce(pid);
+        (StateLock::new(core), live)
     }
 
     /// Decision (a): a resolve miss is a typed skip + counted — the unification
@@ -1068,6 +1142,7 @@ mod tests {
                 suppression: &mut suppression,
                 divergence: &p.divergence,
                 fot: &p.fot,
+                bot_state: None,
                 current_block: 50,
                 min_profit_margin_bps: 0,
                 max_candidates: 50,
@@ -1100,6 +1175,7 @@ mod tests {
             suppression: &mut suppression,
             divergence: &p.divergence,
             fot: &p.fot,
+            bot_state: None,
             current_block: 100,
             min_profit_margin_bps: 50,
             max_candidates: 50,
@@ -1139,6 +1215,7 @@ mod tests {
             suppression: &mut suppression,
             divergence: &p.divergence,
             fot: &p.fot,
+            bot_state: None,
             current_block: 100,
             min_profit_margin_bps: 0,
             max_candidates: 2,
@@ -1308,6 +1385,36 @@ mod tests {
             .outcomes
             .iter()
             .all(|o| o.assembly != AssemblyVerdict::SkipSuppressed));
+    }
+
+    /// The PRE-SELECTION staleness gate is the projection's, so this stage runs
+    /// it: a row whose hop nonce turned over is not transported and earns NO
+    /// record (the drain-invisible stale drop), while its fresh sibling rides.
+    #[test]
+    fn a_stale_row_is_not_transported_and_earns_no_record() {
+        let res = resolver(&[7, 8]);
+        let p = Policy::fresh();
+        let (owner, live) = state_with_fixture_pool();
+        let advanced = RawResult {
+            state_nonces: vec![live + 1],
+            ..row(7, 1_000, 10_000)
+        };
+        let current = RawResult {
+            state_nonces: vec![live],
+            ..row(8, 1_000, 10_000)
+        };
+
+        let batch = assemble_with_state(&[advanced, current], &res, &p, &owner).unwrap();
+
+        assert_eq!(
+            ids(&batch),
+            vec![CandidateId::new(8, deployment_id())],
+            "only the fresh row rides"
+        );
+        assert!(
+            batch.outcomes.is_empty(),
+            "a stale row is drain-invisible — no record"
+        );
     }
 
     /// Cap 1, the fan-out's order: the floor runs BEFORE the cap, so the thin

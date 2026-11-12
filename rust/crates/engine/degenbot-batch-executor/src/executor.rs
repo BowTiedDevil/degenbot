@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use degenbot_arbitrage::{
-    candidate_is_stale, DeploymentRegistry, FeeOnTransferRegistry, PoolDivergence, SimulationBlock,
+    DeploymentRegistry, FeeOnTransferRegistry, PoolDivergence, SimulationBlock,
 };
 use degenbot_execution::{CandidateId, DeploymentId, PathInfo};
 use degenbot_executor::composers::EncodeOptions;
@@ -30,7 +30,7 @@ use degenbot_submission::{
     SubmitLeaf, SubmitRecord, TxSigner,
 };
 use degenbot_substrate::nonce::NonceLane;
-use degenbot_substrate::state_lock::{LockSite, StateLock};
+use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
@@ -278,34 +278,9 @@ struct EngineLeaves {
     outcome_tx: mpsc::WeakUnboundedSender<BatchOutcomeSet>,
 }
 
-/// The caller's PRE-SELECTION staleness gate over one assembled lane: drop every
-/// candidate whose any hop's live `state_nonce` advanced past its solve
-/// snapshot, plus any record the assembly already emitted for it.
-///
-/// The gate sits BEFORE the shared target-selection walk, which is what keeps a
-/// stale candidate from being composed, accepted, and thereby retiring a fresh
-/// sibling. It is not the last word: the pre-admitted leaf's finalization
-/// re-reads the same nonces (stamped, at its own position) so a state write
-/// after this gate still drops the candidate.
-fn drop_stale_survivors(lane: &mut AssembledBatch, state: &BotState) {
-    let stale_ids: Vec<CandidateId> = lane
-        .candidates
-        .iter()
-        .filter(|admitted| candidate_is_stale(state, admitted.candidate()))
-        .map(|admitted| admitted.candidate().candidate_id)
-        .collect();
-    if stale_ids.is_empty() {
-        return;
-    }
-    lane.candidates
-        .retain(|admitted| !stale_ids.contains(&admitted.candidate().candidate_id));
-    lane.outcomes.retain(|outcome| {
-        !(outcome.simulate.is_none() && stale_ids.contains(&outcome.candidate_id))
-    });
-}
-
 impl EngineLeaves {
-    /// Stages 1 + 2: assemble, gate staleness, fan out, attribute, join.
+    /// Stages 1 + 2: assemble (which projects the early policy, the
+    /// pre-selection staleness gate included), fan out, attribute, join.
     #[expect(
         clippy::too_many_lines,
         reason = "the leaf reads best as one ordered stage pass"
@@ -368,6 +343,15 @@ impl EngineLeaves {
                     suppression: &mut suppression,
                     divergence: &cfg.divergence,
                     fot: &cfg.fot,
+                    // The state owner rides the ASSEMBLY: the projection's
+                    // PRE-SELECTION staleness gate runs inside it, after the
+                    // caller's input-order cap and before the survivors reach
+                    // the target-selection walk — that is what keeps a stale
+                    // candidate from being composed, accepted, and thereby
+                    // retiring a fresh sibling. The pre-admitted leaf's
+                    // finalization re-reads the same nonces afterwards, so a
+                    // state write past this gate still drops the candidate.
+                    bot_state: cfg.bot_state.as_deref(),
                     current_block: work.current_block,
                     min_profit_margin_bps: cfg.min_profit_margin_bps,
                     max_candidates: cfg.max_candidates,
@@ -376,20 +360,6 @@ impl EngineLeaves {
                 })
                 .map_err(|e: AssemblyError| e.to_string())?
             };
-
-            // The caller's PRE-SELECTION staleness gate, at SIM time (as close
-            // to the fan-out as the core's own step 3.5 sits): drop candidates
-            // whose any hop's state nonce advanced past the solve snapshot, so
-            // the target-selection walk never examines them (an examined stale
-            // candidate is composed and accepted, which retires its fresh
-            // sibling). Their records are dropped too — the same
-            // drain-invisible drop today's outcome applies (the Python
-            // `MergedOutcome` carries no stale count; `candidate_count`
-            // excludes them).
-            if let Some(arc) = &cfg.bot_state {
-                let guard = arc.read_at(LockSite::Sim);
-                drop_stale_survivors(&mut lane, &guard);
-            }
 
             // Deployment-major merge: a lane's records, candidates, resolved
             // paths, and payload joins append in registry order, and that order
@@ -1434,6 +1404,7 @@ mod tests {
         p: &LanePolicy,
         max_candidates: usize,
         min_profit_margin_bps: u64,
+        bot_state: Option<&StateLock<BotState>>,
     ) -> AssembledBatch {
         let mut suppression = p
             .suppression
@@ -1447,6 +1418,7 @@ mod tests {
             suppression: &mut suppression,
             divergence: &p.divergence,
             fot: &p.fot,
+            bot_state,
             current_block: BASE_BLOCK,
             min_profit_margin_bps,
             max_candidates,
@@ -1483,11 +1455,12 @@ mod tests {
             .collect()
     }
 
-    /// Cap 1 and `[stale, fresh]`: the cap runs in INPUT order and BEFORE the
-    /// staleness gate, so the kept row is the STALE one. The gate then drops it
-    /// and the fresh sibling never had a slot — nobody simulates. The stale row
-    /// frees no cap slot and earns no record (the drain-invisible drop), while
-    /// the leaf's finalization would re-read the same nonce.
+    /// Cap 1 and `[stale, fresh]`: the caller's cap runs in INPUT order and
+    /// BEFORE the projection's staleness gate, so the kept row is the STALE one.
+    /// The gate then drops it and the fresh sibling never had a slot — nobody
+    /// simulates, and the stale row earns no record (the drain-invisible drop).
+    /// One slot more and the fresh sibling is what rides, which is what makes the
+    /// cap's position observable here.
     #[test]
     fn a_stale_kept_row_starves_a_fresh_sibling_at_cap_one() {
         let p = LanePolicy::fresh();
@@ -1497,30 +1470,29 @@ mod tests {
             lane_row(1, fresh + 1, 10_000), // stale
             lane_row(2, fresh, 10_000),     // fresh
         ];
-        let mut lane = assemble_lane(&rows, &p, 1, 0);
+        let state = StateLock::new(core);
 
-        assert_eq!(
-            lane_ids(&lane),
-            vec![CandidateId::new(1, test_deployment_id())],
-            "the cap keeps the input prefix, stale or not"
+        let at_cap_one = assemble_lane(&rows, &p, 1, 0, Some(&state));
+        assert!(
+            at_cap_one.candidates.is_empty(),
+            "the cap's one slot went to the stale row, which the gate then dropped"
+        );
+        assert!(
+            at_cap_one.outcomes.is_empty(),
+            "a stale row is drain-invisible — no record"
         );
 
-        let state = StateLock::new(core);
-        {
-            let guard = state.read_at(LockSite::Sim);
-            drop_stale_survivors(&mut lane, &guard);
-        }
-
-        assert!(lane.candidates.is_empty(), "nobody simulates");
-        assert!(
-            lane.outcomes.is_empty(),
-            "a stale row is drain-invisible — no record"
+        let with_a_slot_for_both = assemble_lane(&rows, &p, 2, 0, Some(&state));
+        assert_eq!(
+            lane_ids(&with_a_slot_for_both),
+            vec![CandidateId::new(2, test_deployment_id())],
+            "the fresh sibling rides when the cap leaves it a slot"
         );
     }
 
     /// The gate drops only the stale rows: a sibling's stage-1 record (here a
     /// thin-margin drop) survives it untouched, and the fresh survivor is what
-    /// the fan-out would receive.
+    /// the fan-out receives.
     #[test]
     fn the_staleness_gate_keeps_a_siblings_stage_one_record() {
         let p = LanePolicy::fresh();
@@ -1531,32 +1503,22 @@ mod tests {
             lane_row(2, fresh + 1, 10_000), // stale
             lane_row(3, fresh, 10_000),     // fresh
         ];
-        let mut lane = assemble_lane(&rows, &p, 50, 50);
-
-        assert_eq!(
-            lane_ids(&lane),
-            vec![
-                CandidateId::new(2, test_deployment_id()),
-                CandidateId::new(3, test_deployment_id()),
-            ]
-        );
-        assert_eq!(lane.outcomes.len(), 1);
-
         let state = StateLock::new(core);
-        {
-            let guard = state.read_at(LockSite::Sim);
-            drop_stale_survivors(&mut lane, &guard);
-        }
+        let lane = assemble_lane(&rows, &p, 50, 50, Some(&state));
 
         assert_eq!(
             lane_ids(&lane),
             vec![CandidateId::new(3, test_deployment_id())],
-            "only the stale row left"
+            "only the stale row left the transport"
         );
         assert_eq!(
             lane.outcomes.len(),
             1,
             "the sibling's thin-margin record is not a stale record"
+        );
+        assert_eq!(
+            lane.outcomes[0].candidate_id,
+            CandidateId::new(1, test_deployment_id())
         );
     }
 

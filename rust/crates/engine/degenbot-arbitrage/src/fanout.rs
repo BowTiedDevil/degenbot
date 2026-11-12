@@ -250,9 +250,10 @@ fn fan_out_over<Entry: FanOutEntry>(
 ///
 /// Each lane runs the RAW standalone leaf
 /// ([`dispatch_profitable_results`]): the whole admission pipeline, in the
-/// standalone order, over that lane's candidates. A caller that has ALREADY
-/// applied its own admission projection transports its survivors to
-/// [`dispatch_admitted_across_deployments`] instead.
+/// standalone order, over that lane's candidates — no pre-selection staleness
+/// gate, so an examined stale candidate still retires a fresh sibling. A caller
+/// that projected its rows early ([`crate::project_early_admission`]) transports
+/// its survivors to [`dispatch_admitted_across_deployments`] instead.
 ///
 /// # Errors
 ///
@@ -308,11 +309,15 @@ pub fn dispatch_across_deployments(
 /// Fan every PRE-ADMITTED candidate out to the deployment its identity names,
 /// one lane per registered deployment, in registry order.
 ///
-/// The pre-admitted entry: the caller has already run its own non-stamping
-/// admission projection (its divergence / fee-on-transfer / thin-margin
-/// stages, its per-lane cap, and its pre-selection staleness gate) and
-/// transports every survivor as an [`AdmittedCandidate`]. Everything the
-/// registry choreography owns is the SAME implementation the raw entry uses —
+/// The pre-admitted entry: the caller obtained its survivors from
+/// [`crate::project_early_admission`] — the shared early projection, whose
+/// stages are the non-stamping suppression read, divergence, fee-on-transfer,
+/// the caller's thin floor, the caller's input-order cap, and the
+/// PRE-SELECTION staleness gate — and transports them as
+/// [`AdmittedCandidate`]s. "Transported" therefore means early-projected and
+/// pre-selection-staleness-gated, never guaranteed admitted at finalization.
+/// Everything the registry choreography owns is the SAME implementation the
+/// raw entry uses —
 /// one target-selection walk, one deployment partition, one lane order, one
 /// span per lane — and only the leaf differs: each lane runs the pre-admitted
 /// leaf, whose finalization re-reads the policy state authoritatively
@@ -331,16 +336,21 @@ pub fn dispatch_across_deployments(
 /// things OUT of the leaf and into its own assembly, then transports the
 /// survivors:
 ///
-/// 1. **Own the projection.** Apply the non-stamping half of the policy
-///    yourself: divergence, fee-on-transfer, thin margin, your own per-lane cap,
-///    and the PRE-SELECTION staleness gate. Drop a stale candidate BEFORE target
-///    selection — an examined stale candidate is composed and accepted, which
-///    retires its fresh sibling at a later target ([`crate::selection`]).
-///    Everything you drop is yours to tally; the leaf never sees it.
-/// 2. **Transport the survivors.** Wrap each in [`AdmittedCandidate::new`]. The
-///    transport owns the complete candidate, so no ID-keyed side table is
-///    needed — and one candidate id may appear only ONCE in the transported
-///    set: this entry refuses a repeated [`CandidateId`]
+/// 1. **Project early.** Call [`crate::project_early_admission`] with your
+///    resolved rows and a [`crate::EarlyAdmissionPolicy`] — the non-stamping
+///    suppression read, divergence, fee-on-transfer, your thin margin, your own
+///    per-lane cap, and the PRE-SELECTION staleness gate (pass your state owner;
+///    `None` skips the gate). It sits in front of target selection on purpose:
+///    an examined stale candidate is composed and accepted, which retires its
+///    fresh sibling at a later target ([`crate::selection`]). Every drop comes
+///    back beside the row it dropped, which is yours to record; the leaf never
+///    sees it.
+/// 2. **Transport the survivors.** [`crate::project_early_admission`] is the ONE
+///    construction: [`AdmittedCandidate`]'s unchecked constructor is
+///    crate-private, so a caller cannot wrap an arbitrary row in it and
+///    re-implement these stages. The transport owns the complete candidate, so
+///    no ID-keyed side table is needed — and one candidate id may appear only
+///    ONCE in the transported set: this entry refuses a repeated [`CandidateId`]
 ///    ([`DispatchRefusal::DuplicateCandidateId`]) before the walk composes
 ///    anything, because the ledger, the lane's result map, and the submit row
 ///    are all identity-keyed (see [`crate::identity`]).

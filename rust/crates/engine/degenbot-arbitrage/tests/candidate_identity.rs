@@ -22,9 +22,10 @@ use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
     dispatch_across_deployments, dispatch_admitted_across_deployments, dispatch_profitable_results,
-    AdmittedCandidate, DeploymentFanOutOutcome, DeploymentRegistry, DispatchCandidate,
-    DispatchRefusal, FeeOnTransferRegistry, PoolDivergence, SimulateContext, SimulationBlock,
-    SimulationDeployment, SolveStep, TargetSelection,
+    project_early_admission, AdmittedCandidate, DeploymentFanOutOutcome, DeploymentRegistry,
+    DispatchCandidate, DispatchRefusal, EarlyAdmissionPolicy, FeeOnTransferRegistry,
+    PoolDivergence, SimulateContext, SimulationBlock, SimulationDeployment, SolveStep,
+    TargetSelection, MAX_SIMULATE_CONCURRENT,
 };
 use degenbot_execution::{
     AssessError, CandidateId, ComposeError, ComposerInputs, DeploymentId, ExecutionAdapter,
@@ -261,6 +262,27 @@ impl Harness {
 /// The refusal a duplicate-carrying candidate set earns, unwrapped.
 fn refusal_of(result: Result<DeploymentFanOutOutcome, DispatchRefusal>) -> DispatchRefusal {
     result.expect_err("the entry refuses a repeated candidate identity")
+}
+
+/// Project raw rows through the shared EARLY projection — the one public way a
+/// caller obtains the pre-admitted transport, since the unchecked constructor is
+/// crate-private. No state owner here: this fixture exercises the entry's own
+/// identity refusal, not the projection's staleness gate.
+fn transport(harness: &Harness, candidates: Vec<DispatchCandidate>) -> Vec<AdmittedCandidate> {
+    let suppression = harness.suppression.lock().expect("suppression ledger");
+    project_early_admission(
+        candidates,
+        &EarlyAdmissionPolicy {
+            suppression: &suppression,
+            divergence: &harness.divergence,
+            fee_on_transfer: &harness.fot,
+            bot_state: None,
+            current_block: BLOCK,
+            min_profit_margin_bps: 0,
+            max_candidates: MAX_SIMULATE_CONCURRENT,
+        },
+    )
+    .into_admitted()
 }
 
 /// Run one registry fan-out on a dedicated multi-thread runtime (the engine's
@@ -510,10 +532,10 @@ fn the_pre_admitted_fan_out_refuses_duplicates_before_any_composition() {
     let registry = counted_registry(&calls);
     let refusal = refusal_of(run_admitted_fan_out(
         &registry,
-        vec![
-            AdmittedCandidate::new(candidate(deployment_id())),
-            AdmittedCandidate::new(candidate(deployment_id())),
-        ],
+        transport(
+            &harness,
+            vec![candidate(deployment_id()), candidate(deployment_id())],
+        ),
         &harness,
     ));
     assert_eq!(

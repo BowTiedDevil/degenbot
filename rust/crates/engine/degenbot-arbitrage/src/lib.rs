@@ -19,8 +19,8 @@
 //!   suppression / categorization policy, and `dispatch_across_deployments`
 //!   (the explicit all-target fan-out over an ordered
 //!   [`deployment::DeploymentRegistry`]),
-//! - the PRE-ADMITTED entry: [`AdmittedCandidate`] transports a candidate a
-//!   caller already projected through its own pre-simulation admission, and
+//! - the PRE-ADMITTED entry: [`AdmittedCandidate`] transports a candidate the
+//!   shared early projection produced, and
 //!   [`dispatch_admitted_across_deployments`] finalizes it authoritatively at
 //!   simulation time. The two entries share one target selection, one
 //!   deployment partition, one lane order, one policy implementation, and one
@@ -28,9 +28,13 @@
 //!   the simulation (see [`dispatch`]'s "two entries, one simulation body").
 //! - the EARLY projection: [`project_early_admission`] is the caller-owned half
 //!   of that same policy — the non-stamping suppression read, divergence,
-//!   fee-on-transfer, thin margin, and the caller's input-order cap — which
-//!   reports every drop beside the candidate it dropped, so a batch's assembly
-//!   emits its records off this crate's stages instead of its own copies.
+//!   fee-on-transfer, thin margin, the caller's input-order cap, and the
+//!   PRE-SELECTION staleness gate — which reports every drop beside the
+//!   candidate it dropped and returns the survivors already wrapped, so a
+//!   batch's assembly emits its records off this crate's stages instead of its
+//!   own copies. It is the ONLY public way to obtain an [`AdmittedCandidate`]:
+//!   "transported" means early-projected and pre-selection-staleness-gated,
+//!   never guaranteed admitted at finalization.
 //! - the IDENTITY contract ([`identity`]): one [`CandidateId`] is one row. Every
 //!   entry that turns caller rows into execution refuses a repeated identity
 //!   before it stamps a ledger, records a tally, composes an encoding, or
@@ -69,6 +73,25 @@
 //! result silently overwriting the other) and two submit rows. Fix the emitter:
 //! the solver emits one result per solved path and an inline sim emits one
 //! payload row per candidate.
+//!
+//! # Migrating a caller onto the early projection
+//!
+//! [`EarlyAdmissionPolicy`] now carries the engine's state owner
+//! (`bot_state: Option<&StateLock<BotState>>`), and the projection runs the
+//! PRE-SELECTION staleness gate inside itself — after the caller's input-order
+//! cap, before it returns survivors. Two consequences for a direct Rust caller:
+//!
+//! - pass `Some(owner)` to keep the gate (or `None` to skip it, the same `None`
+//!   finalization skips); a caller that ran `candidate_is_stale` itself beside a
+//!   projection deletes that copy;
+//! - obtain [`AdmittedCandidate`]s only from [`project_early_admission`]: the
+//!   unchecked constructor is crate-private, so a caller can no longer wrap an
+//!   arbitrary row in the transport and re-implement the projection's stages.
+//!
+//! A `degenbot-batch-executor` consumer that builds
+//! `assembly::AssemblyInputs` gains the same `bot_state` field (`None` keeps the
+//! old shape) and drops any staleness pass of its own: the batch maps a
+//! projection's `EarlyDropReason::Stale` to its record-invisible outcome.
 //!
 //! # Standalone-Rust consumer
 //!
@@ -148,15 +171,16 @@ pub mod fot_registry;
 pub mod simulator;
 
 /// The pre-admitted candidate transport ([`AdmittedCandidate`]): a candidate a
-/// caller has already projected through its own pre-simulation admission, ready
-/// for the authoritative final read the pre-admitted fan-out entry performs.
+/// caller has already early-projected, ready for the authoritative final read
+/// the pre-admitted fan-out entry performs.
 ///
-/// [`project_early_admission`] is that projection's one home: it runs the early
-/// half of the same policy (non-stamping suppression, divergence,
-/// fee-on-transfer, thin margin, the caller's cap), reports every drop with the
-/// candidate and the stage that dropped it, and returns the survivors already
-/// wrapped as [`AdmittedCandidate`]s — so a caller emits one record per drop
-/// instead of re-implementing the predicates beside this crate's.
+/// [`project_early_admission`] is that projection's one home AND the transport's
+/// only public construction: it runs the early half of the same policy
+/// (non-stamping suppression, divergence, fee-on-transfer, thin margin, the
+/// caller's cap, and the PRE-SELECTION staleness gate), reports every drop with
+/// the candidate and the stage that dropped it, and returns the survivors
+/// already wrapped as [`AdmittedCandidate`]s — so a caller emits one record per
+/// drop instead of re-implementing the predicates beside this crate's.
 pub use admission::{
     project_early_admission, AdmittedCandidate, EarlyAdmissionPolicy, EarlyDrop, EarlyDropReason,
     EarlyProjection,

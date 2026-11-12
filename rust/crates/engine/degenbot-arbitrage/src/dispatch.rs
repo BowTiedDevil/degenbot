@@ -65,9 +65,9 @@
 //! admission pipeline (`stamping suppression -> divergence -> fee-on-transfer ->
 //! thin margin -> staleness -> optional order-index reorder -> cap`) and then
 //! simulates. [`dispatch_admitted_profitable_results`] is the PRE-ADMITTED leaf
-//! the registry fan-out's pre-admitted entry reaches: the caller already
-//! projected its own non-stamping admission
-//! ([`crate::project_early_admission`]) and transported
+//! the registry fan-out's pre-admitted entry reaches: the caller already ran
+//! [`crate::project_early_admission`] — the early half of the same policy, the
+//! pre-selection staleness gate included — and transported
 //! [`AdmittedCandidate`]s, so the leaf re-reads the policy AUTHORITATIVELY
 //! (`stamping suppression -> divergence -> fee-on-transfer -> staleness ->
 //! optional order-index reorder -> same-cap truncation`) before simulating.
@@ -558,11 +558,11 @@ pub fn dispatch_profitable_results(
 /// simulate them — the pre-admitted fan-out's leaf
 /// ([`crate::dispatch_admitted_across_deployments`]).
 ///
-/// The caller's assembly already applied its own non-stamping projection
-/// (divergence, fee-on-transfer, thin margin, its per-lane cap) and its
-/// pre-selection staleness gate, and transported every survivor as an
-/// [`AdmittedCandidate`]. This leaf's finalization is the AUTHORITATIVE half of
-/// the same policy, in the fixed pre-admitted order:
+/// The caller's assembly already ran [`crate::project_early_admission`] — the
+/// non-stamping half of this policy (divergence, fee-on-transfer, thin margin,
+/// its per-lane cap) and the pre-selection staleness gate — and transported
+/// every survivor as an [`AdmittedCandidate`]. This leaf's finalization is the
+/// AUTHORITATIVE half of the same policy, in the fixed pre-admitted order:
 ///
 /// `stamping suppression -> divergence -> fee-on-transfer -> staleness ->
 /// optional order-index reorder -> same-cap truncation -> simulation`

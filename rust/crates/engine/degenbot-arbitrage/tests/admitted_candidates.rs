@@ -21,10 +21,11 @@ use alloy::rpc::json_rpc::{
 use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
-    candidate_is_stale, dispatch_admitted_across_deployments, AdmittedCandidate,
-    DeploymentFanOutOutcome, DeploymentRegistry, DispatchCandidate, DispatchRefusal,
-    FeeOnTransferRegistry, PoolDivergence, PoolDivergenceKey, SimulationBlock,
-    SimulationDeployment, SolveStep, TargetSelection,
+    dispatch_across_deployments, dispatch_admitted_across_deployments, project_early_admission,
+    AdmittedCandidate, DeploymentFanOutOutcome, DeploymentRegistry, DispatchCandidate,
+    DispatchRefusal, EarlyAdmissionPolicy, EarlyDropReason, EarlyProjection, FeeOnTransferRegistry,
+    PoolDivergence, PoolDivergenceKey, SimulationBlock, SimulationDeployment, SolveStep,
+    TargetSelection, MAX_SIMULATE_CONCURRENT,
 };
 use degenbot_core::fee::FeeRatio;
 use degenbot_execution::{
@@ -392,9 +393,72 @@ fn run_admitted(
     })
 }
 
-/// Transport raw rows the way a caller's assembly would.
-fn transport(candidates: Vec<DispatchCandidate>) -> Vec<AdmittedCandidate> {
-    candidates.into_iter().map(AdmittedCandidate::new).collect()
+/// Project raw rows through the shared EARLY projection — the one public way a
+/// caller obtains the pre-admitted transport — over this session's policy state
+/// at `BLOCK`, with no thin floor.
+fn project(
+    harness: &Harness,
+    candidates: Vec<DispatchCandidate>,
+    max_candidates: usize,
+) -> EarlyProjection {
+    let suppression = harness.suppression.lock().expect("suppression ledger");
+    project_early_admission(
+        candidates,
+        &EarlyAdmissionPolicy {
+            suppression: &suppression,
+            divergence: &harness.divergence,
+            fee_on_transfer: &harness.fot,
+            bot_state: Some(&harness.state),
+            current_block: BLOCK,
+            min_profit_margin_bps: 0,
+            max_candidates,
+        },
+    )
+}
+
+/// Project under the fan-out ceiling and keep the survivors: the transported
+/// set a caller hands the pre-admitted entry.
+fn transport(harness: &Harness, candidates: Vec<DispatchCandidate>) -> Vec<AdmittedCandidate> {
+    project(harness, candidates, MAX_SIMULATE_CONCURRENT).into_admitted()
+}
+
+/// Run one RAW registry fan-out — the entry with NO pre-selection staleness
+/// gate, so its leaf is the only place a stale candidate can be dropped.
+fn run_raw(
+    registry: &DeploymentRegistry,
+    candidates: Vec<DispatchCandidate>,
+    selection: TargetSelection,
+    harness: &Harness,
+) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
+    let provider = mock_provider();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("multi-thread runtime");
+    let block = block(&provider);
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                runtime.block_on(async {
+                    dispatch_across_deployments(
+                        candidates,
+                        &block,
+                        registry,
+                        selection,
+                        &harness.suppression,
+                        BLOCK,
+                        0,
+                        &harness.divergence,
+                        &harness.fot,
+                        Some(&harness.state),
+                        Some(&harness.warm_cache),
+                    )
+                })
+            })
+            .join()
+            .expect("fan-out thread")
+    })
 }
 
 /// One lane's outcome, by deployment.
@@ -409,12 +473,17 @@ fn lane(
 
 // -- the public transport -------------------------------------------------
 
-/// `AdmittedCandidate` is a crate-root name whose accessor hands back the WHOLE
-/// candidate — no ID-keyed side table, no re-derivation.
+/// The ONE public construction: `AdmittedCandidate` is a crate-root name its
+/// accessor hands the WHOLE candidate back from — no ID-keyed side table, no
+/// re-derivation — and the shared projection is the only way to obtain one (the
+/// unchecked constructor is crate-private).
 #[test]
-fn the_transport_carries_the_complete_candidate() {
+fn the_projection_is_the_public_construction_and_carries_the_complete_candidate() {
+    let harness = Harness::new();
     let raw = candidate(deployment_a(), 0);
-    let admitted = AdmittedCandidate::new(raw);
+    let projection = project(&harness, vec![raw], MAX_SIMULATE_CONCURRENT);
+    assert!(projection.drops().is_empty(), "a clean row rides whole");
+    let admitted = &projection.admitted()[0];
     let carried = admitted.candidate();
     assert_eq!(carried.candidate_id, CandidateId::new(7, deployment_a()));
     assert_eq!(carried.optimal_input, OPTIMAL_INPUT);
@@ -427,14 +496,24 @@ fn the_transport_carries_the_complete_candidate() {
     assert!(format!("{admitted:?}").contains("AdmittedCandidate"));
 }
 
-/// An empty transport fans out to one empty lane per registered deployment, in
-/// registry order, with every counter zero.
+/// An empty projection admits nothing and reports nothing, and its empty
+/// transport fans out to one empty lane per registered deployment, in registry
+/// order, with every counter zero.
 #[test]
-fn an_empty_transport_fans_out_to_empty_lanes() {
+fn an_empty_projection_fans_out_to_empty_lanes() {
     let registry = two_target_registry();
     let harness = Harness::new();
-    let outcome = run_admitted(&registry, Vec::new(), TargetSelection::AllTargets, &harness)
-        .expect("no candidates to refuse");
+    let projection = project(&harness, Vec::new(), MAX_SIMULATE_CONCURRENT);
+    assert!(projection.admitted().is_empty());
+    assert!(projection.drops().is_empty());
+
+    let outcome = run_admitted(
+        &registry,
+        projection.into_admitted(),
+        TargetSelection::AllTargets,
+        &harness,
+    )
+    .expect("no candidates to refuse");
 
     let ids: Vec<DeploymentId> = outcome.lanes.iter().map(|l| l.deployment_id).collect();
     assert_eq!(ids, vec![deployment_a(), deployment_b()]);
@@ -462,7 +541,7 @@ fn an_unregistered_deployment_is_refused_before_any_lane_runs() {
     let unregistered = DeploymentId::new(9);
     let outcome = run_admitted(
         &registry,
-        transport(vec![candidate(unregistered, 0)]),
+        transport(&harness, vec![candidate(unregistered, 0)]),
         TargetSelection::AllTargets,
         &harness,
     );
@@ -485,19 +564,23 @@ fn a_retry_due_candidate_is_stamped_then_dropped_by_the_final_divergence_read() 
     let harness = Harness::new();
     let id = CandidateId::new(7, deployment_a());
     harness.bench(id);
+
+    // The projection admits the retry-due row (a non-stamping read: no retry
+    // spent) and no divergence is flagged yet; the memo moves AFTER it.
+    let admitted = transport(&harness, vec![candidate(deployment_a(), 0)]);
+    assert_eq!(admitted.len(), 1, "the projection admitted the row");
+    assert!(
+        retry_due(&harness, id, BLOCK),
+        "the projection spent no retry"
+    );
     harness
         .divergence
         .lock()
         .expect("divergence memo")
         .record_divergence(PoolDivergenceKey::V2(POOL_A), BLOCK);
 
-    let outcome = run_admitted(
-        &registry,
-        transport(vec![candidate(deployment_a(), 0)]),
-        TargetSelection::AllTargets,
-        &harness,
-    )
-    .expect("the identity is registered");
+    let outcome = run_admitted(&registry, admitted, TargetSelection::AllTargets, &harness)
+        .expect("the identity is registered");
 
     let dropped = lane(&outcome, deployment_a());
     assert_eq!(dropped.divergent_dropped, 1, "the final read dropped it");
@@ -524,7 +607,7 @@ fn a_retry_due_candidate_is_stamped_then_dropped_by_the_final_divergence_read() 
 fn a_divergence_written_after_admission_drops_the_transported_candidate() {
     let registry = two_target_registry();
     let harness = Harness::new();
-    let admitted = transport(vec![candidate(deployment_a(), 0)]);
+    let admitted = transport(&harness, vec![candidate(deployment_a(), 0)]);
     // The concurrent writer: a SolverCalc divergence lands after admission.
     harness
         .divergence
@@ -544,7 +627,7 @@ fn a_divergence_written_after_admission_drops_the_transported_candidate() {
 fn a_fee_on_transfer_confirmation_after_admission_drops_the_transported_candidate() {
     let registry = two_target_registry();
     let harness = Harness::new();
-    let admitted = transport(vec![candidate(deployment_a(), 0)]);
+    let admitted = transport(&harness, vec![candidate(deployment_a(), 0)]);
     {
         let mut fot = harness.fot.lock().expect("fot registry");
         fot.record_suspicion(WETH, PoolDivergenceKey::V2(POOL_A), BLOCK);
@@ -572,7 +655,10 @@ fn a_fee_on_transfer_confirmation_after_admission_drops_the_transported_candidat
 fn a_state_write_after_admission_drops_the_transported_candidate_as_stale() {
     let registry = two_target_registry();
     let harness = Harness::new();
-    let admitted = transport(vec![candidate(deployment_a(), harness.live_nonce(POOL_A))]);
+    let admitted = transport(
+        &harness,
+        vec![candidate(deployment_a(), harness.live_nonce(POOL_A))],
+    );
     harness.advance(POOL_A);
     assert_ne!(
         harness.live_nonce(POOL_A),
@@ -602,10 +688,10 @@ fn a_repeated_transported_identity_is_refused_without_stamping() {
 
     let error = run_admitted(
         &registry,
-        transport(vec![
-            candidate(deployment_a(), 0),
-            candidate(deployment_a(), 0),
-        ]),
+        transport(
+            &harness,
+            vec![candidate(deployment_a(), 0), candidate(deployment_a(), 0)],
+        ),
         TargetSelection::AllTargets,
         &harness,
     )
@@ -626,11 +712,13 @@ fn a_repeated_transported_identity_is_refused_without_stamping() {
 
 // -- the shared selection seam --------------------------------------------
 
-/// The FIRST-COMPATIBLE seam: a stale first-target candidate the caller's
-/// pre-selection gate dropped cannot retire the fresh second-target candidate.
+/// The FIRST-COMPATIBLE seam, both sides of the pre-selection staleness gate.
 ///
-/// Both cases run the SAME selection implementation the raw entry uses, so this
-/// pins where the pre-selection staleness gate has to sit: before selection.
+/// The UNGATED control is the RAW entry: it has no pre-selection gate, so the
+/// stale first-target candidate is composed and ACCEPTED by the selection walk,
+/// which retires the fresh second-target candidate, and only then does the leaf
+/// drop the stale row — nobody simulates. The GATED case is the shared
+/// projection, whose gate sits in front of selection.
 #[test]
 fn a_stale_first_target_candidate_cannot_retire_a_fresh_second_target() {
     let registry = two_target_registry();
@@ -638,15 +726,16 @@ fn a_stale_first_target_candidate_cannot_retire_a_fresh_second_target() {
     let fresh = harness.live_nonce(POOL_A);
     let stale = fresh + 1;
 
-    // Without the gate: the stale first-target candidate is composed and
-    // ACCEPTED, which retires the fresh second-target candidate; finalization
-    // then drops the stale one and nobody simulates.
-    let ungated = run_admitted(
+    // Ungated (the raw entry, which has no pre-selection gate): the stale
+    // first-target candidate is composed and ACCEPTED, which retires the fresh
+    // second-target candidate; the leaf's admission then drops the stale one and
+    // nobody simulates.
+    let ungated = run_raw(
         &registry,
-        transport(vec![
+        vec![
             candidate(deployment_a(), stale),
             candidate(deployment_b(), fresh),
-        ]),
+        ],
         TargetSelection::FirstCompatible,
         &harness,
     )
@@ -660,19 +749,27 @@ fn a_stale_first_target_candidate_cannot_retire_a_fresh_second_target() {
     assert_eq!(lane(&ungated, deployment_a()).candidate_count, 0);
     assert_eq!(lane(&ungated, deployment_b()).candidate_count, 0);
 
-    // With the gate (the caller's assembly drops stale candidates BEFORE
-    // selection): the fresh second-target candidate is examined and simulated.
-    let admitted: Vec<AdmittedCandidate> = {
-        let guard = harness.state.read_at(LockSite::Sim);
+    // Gated (the shared projection's pre-selection staleness read): the stale
+    // first-target candidate never rides the transport, so the fresh
+    // second-target candidate is examined and simulated.
+    let projection = project(
+        &harness,
         vec![
             candidate(deployment_a(), stale),
             candidate(deployment_b(), fresh),
-        ]
-        .into_iter()
-        .filter(|c| !candidate_is_stale(&guard, c))
-        .map(AdmittedCandidate::new)
-        .collect()
-    };
+        ],
+        MAX_SIMULATE_CONCURRENT,
+    );
+    assert_eq!(
+        projection
+            .drops()
+            .iter()
+            .map(|drop| (drop.reason(), drop.candidate().candidate_id))
+            .collect::<Vec<_>>(),
+        vec![(EarlyDropReason::Stale, CandidateId::new(7, deployment_a()))],
+        "the gate drops the stale first-target row before selection"
+    );
+    let admitted = projection.into_admitted();
     assert_eq!(admitted.len(), 1, "the gate dropped the stale candidate");
 
     let gated = run_admitted(
@@ -700,6 +797,80 @@ fn a_stale_first_target_candidate_cannot_retire_a_fresh_second_target() {
     assert_eq!(lane(&gated, deployment_a()).candidate_count, 0);
 }
 
+/// The pre-selection staleness gate is part of the SHARED projection, not the
+/// caller's: a hop nonce that turned over is reported as `Stale` — provenance a
+/// caller maps onto its own record vocabulary — and never transported.
+#[test]
+fn the_projection_reports_a_stale_row_and_transports_only_the_fresh_one() {
+    let harness = Harness::new();
+    let fresh = harness.live_nonce(POOL_A);
+    let projection = project(
+        &harness,
+        vec![
+            candidate(deployment_a(), fresh + 1), // the state moved since solve
+            candidate(deployment_b(), fresh),     // still current
+        ],
+        MAX_SIMULATE_CONCURRENT,
+    );
+
+    assert_eq!(
+        projection
+            .admitted()
+            .iter()
+            .map(|admitted| admitted.candidate().candidate_id)
+            .collect::<Vec<_>>(),
+        vec![CandidateId::new(7, deployment_b())],
+        "only the fresh row rides"
+    );
+    assert_eq!(projection.drops().len(), 1);
+    let drop = &projection.drops()[0];
+    assert_eq!(drop.reason(), EarlyDropReason::Stale);
+    assert_eq!(
+        drop.candidate().candidate_id,
+        CandidateId::new(7, deployment_a())
+    );
+    assert_eq!(
+        drop.candidate().steps[0].state_nonce,
+        fresh + 1,
+        "the report carries the whole row, snapshot included"
+    );
+}
+
+/// The caller's cap runs BEFORE the staleness gate, in input order: with cap 1
+/// over `[stale, fresh]` the STALE row keeps the slot, the fresh row is the
+/// cap's `OverCap` drop, and the gate then empties the transport — the stale row
+/// frees no slot and earns no record.
+#[test]
+fn the_caller_cap_runs_before_the_staleness_gate() {
+    let harness = Harness::new();
+    let fresh = harness.live_nonce(POOL_A);
+    let projection = project(
+        &harness,
+        vec![
+            candidate(deployment_a(), fresh + 1), // stale, keeps the input-order slot
+            candidate(deployment_b(), fresh),     // fresh, past the cap
+        ],
+        1,
+    );
+
+    assert!(
+        projection.admitted().is_empty(),
+        "nobody rides: the cap's one slot went to the stale row"
+    );
+    assert_eq!(
+        projection
+            .drops()
+            .iter()
+            .map(|drop| (drop.reason(), drop.candidate().candidate_id.deployment_id()))
+            .collect::<Vec<_>>(),
+        vec![
+            (EarlyDropReason::OverCap, deployment_b()),
+            (EarlyDropReason::Stale, deployment_a()),
+        ],
+        "the cap reports its input-order tail first, the gate runs after it"
+    );
+}
+
 /// A clean transported candidate reaches simulation through the shared body, and
 /// the survival counters agree with it.
 #[test]
@@ -708,7 +879,10 @@ fn a_clean_transported_candidate_simulates_and_tallies() {
     let harness = Harness::new();
     let outcome = run_admitted(
         &registry,
-        transport(vec![candidate(deployment_a(), harness.live_nonce(POOL_A))]),
+        transport(
+            &harness,
+            vec![candidate(deployment_a(), harness.live_nonce(POOL_A))],
+        ),
         TargetSelection::AllTargets,
         &harness,
     )

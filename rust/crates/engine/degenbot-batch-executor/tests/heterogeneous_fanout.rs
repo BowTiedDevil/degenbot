@@ -33,8 +33,9 @@ use alloy::rpc::json_rpc::{
 use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
-    AdmittedCandidate, CmdExecutorBinding, DeploymentRegistry, FeeOnTransferRegistry,
-    PoolDivergence, PoolDivergenceKey, SimulationBlock, SimulationDeployment, TargetSelection,
+    project_early_admission, AdmittedCandidate, CmdExecutorBinding, DeploymentRegistry,
+    DispatchCandidate, EarlyAdmissionPolicy, FeeOnTransferRegistry, PoolDivergence,
+    PoolDivergenceKey, SimulationBlock, SimulationDeployment, TargetSelection,
     MAX_SIMULATE_CONCURRENT,
 };
 use degenbot_batch_executor::assembly::{assemble_batch, AssemblyInputs};
@@ -1023,23 +1024,44 @@ fn feedback_registry(feedback: Feedback) -> DeploymentRegistry {
     .expect("two distinct identities compose a valid registry")
 }
 
+/// Project raw rows through the shared EARLY projection — the one public way a
+/// caller obtains the pre-admitted transport the batch's assembly produces (the
+/// unchecked constructor is crate-private). No state owner: these fixtures assert
+/// on the leaf's finalization, not on the projection's staleness gate.
+fn transport(arcs: &PolicyArcs, candidates: Vec<DispatchCandidate>) -> Vec<AdmittedCandidate> {
+    let suppression = arcs.suppression.lock().expect("suppression ledger");
+    project_early_admission(
+        candidates,
+        &EarlyAdmissionPolicy {
+            suppression: &suppression,
+            divergence: &arcs.divergence,
+            fee_on_transfer: &arcs.fot,
+            bot_state: None,
+            current_block: BLOCK,
+            min_profit_margin_bps: 0,
+            max_candidates: MAX_SIMULATE_CONCURRENT,
+        },
+    )
+    .into_admitted()
+}
+
 /// Two transported candidates — one per registered deployment, both through the
 /// fixture path.
-fn transported_pair() -> Vec<AdmittedCandidate> {
-    vec![
-        AdmittedCandidate::new(candidate(deployment_a())),
-        AdmittedCandidate::new(candidate(deployment_b())),
-    ]
+fn transported_pair(arcs: &PolicyArcs) -> Vec<AdmittedCandidate> {
+    transport(
+        arcs,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+    )
 }
 
 /// The fee-on-transfer pair: lane 1 rides the quiet path (its success touches no
 /// token under suspicion), lane 2 rides the fixture path whose input token is
 /// `FOT_TOKEN`.
-fn transported_pair_with_quiet_first_lane() -> Vec<AdmittedCandidate> {
-    vec![
-        AdmittedCandidate::new(quiet_candidate(deployment_a())),
-        AdmittedCandidate::new(candidate(deployment_b())),
-    ]
+fn transported_pair_with_quiet_first_lane(arcs: &PolicyArcs) -> Vec<AdmittedCandidate> {
+    transport(
+        arcs,
+        vec![quiet_candidate(deployment_a()), candidate(deployment_b())],
+    )
 }
 
 /// Lane 1's `SolverCalc` divergence still drops lane 2's affected candidates in
@@ -1050,7 +1072,7 @@ fn a_lane_one_divergence_drops_the_later_lanes_affected_candidates() {
     let arcs = policy_arcs();
     let registry = feedback_registry(Feedback::Divergence(Arc::clone(&arcs.divergence)));
 
-    let outcome = run_admitted_fanout(&registry, transported_pair(), &arcs);
+    let outcome = run_admitted_fanout(&registry, transported_pair(&arcs), &arcs);
 
     let first = lane(&outcome, deployment_a());
     assert_eq!(
@@ -1081,8 +1103,11 @@ fn a_later_lane_drops_only_once_the_feedback_confirms_the_token() {
         registry: Arc::clone(&arcs.fot),
         pools: vec![PoolDivergenceKey::V2(FLAGGED_POOL)],
     });
-    let unconfirmed =
-        run_admitted_fanout(&registry, transported_pair_with_quiet_first_lane(), &arcs);
+    let unconfirmed = run_admitted_fanout(
+        &registry,
+        transported_pair_with_quiet_first_lane(&arcs),
+        &arcs,
+    );
     assert_eq!(
         lane(&unconfirmed, deployment_b()).fot_dropped,
         0,
@@ -1100,7 +1125,11 @@ fn a_later_lane_drops_only_once_the_feedback_confirms_the_token() {
             PoolDivergenceKey::V2(SECOND_POOL),
         ],
     });
-    let confirmed = run_admitted_fanout(&registry, transported_pair_with_quiet_first_lane(), &arcs);
+    let confirmed = run_admitted_fanout(
+        &registry,
+        transported_pair_with_quiet_first_lane(&arcs),
+        &arcs,
+    );
     assert_eq!(lane(&confirmed, deployment_a()).candidate_count, 1);
     assert_eq!(
         lane(&confirmed, deployment_b()).fot_dropped,
@@ -1182,6 +1211,7 @@ fn the_leaf_counts_only_what_finalization_dropped() {
                 suppression: &mut ledger,
                 divergence: &arcs.divergence,
                 fot: &arcs.fot,
+                bot_state: None,
                 current_block: BLOCK,
                 min_profit_margin_bps: 50,
                 max_candidates: 50,
@@ -1315,6 +1345,7 @@ fn an_over_cap_assembly_keeps_the_input_prefix_and_the_leaf_truncates_nobody() {
             suppression: &mut suppression,
             divergence: &arcs.divergence,
             fot: &arcs.fot,
+            bot_state: None,
             current_block: BLOCK,
             min_profit_margin_bps: 0,
             max_candidates: cap,

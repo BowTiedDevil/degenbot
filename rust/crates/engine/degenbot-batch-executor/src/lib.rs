@@ -16,11 +16,13 @@
 //!    deduplicated.
 //!    The raw-row checks (empty hops, payload-served, resolve, shape) run here,
 //!    and the EARLY half of the pre-sim policy (non-stamping suppression, pool
-//!    divergence, fee-on-transfer, thin margin, the input-order per-lane cap) is
-//!    projected here by its one owner
+//!    divergence, fee-on-transfer, thin margin, the input-order per-lane cap,
+//!    and the PRE-SELECTION staleness gate) is projected here by its one owner
 //!    (`degenbot_arbitrage::project_early_admission`). Every drop it reports
-//!    earns a typed [`AssemblyVerdict`]; the survivors leave as the pre-admitted
-//!    transport (`degenbot_arbitrage::AdmittedCandidate`).
+//!    earns a typed [`AssemblyVerdict`] except the cap's and the staleness
+//!    gate's, which stay drain-invisible; the survivors leave as the
+//!    pre-admitted transport (`degenbot_arbitrage::AdmittedCandidate`), whose
+//!    only public construction is that projection.
 //! 2. **Simulate** — the survivors ride the core fan-out's PRE-ADMITTED entry
 //!    (`degenbot_arbitrage::dispatch_admitted_across_deployments`), whose leaf
 //!    finalizes them: it re-reads the same policy state authoritatively
