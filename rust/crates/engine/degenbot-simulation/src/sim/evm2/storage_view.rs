@@ -42,7 +42,7 @@
 //! Choosing a representation is a construction-site decision, and that is all
 //! of it: the legacy path passes `StorageMemoCache::for_anchor`'s
 //! `Arc<StorageMemo>`, a delta path passes the anchor generation it already
-//! reads through ([`DeltaSnapshotCache::for_anchor`](super::delta_snapshot::DeltaSnapshotCache::for_anchor)
+//! reads through ([`DeltaSnapshotCache::installed_hub`](super::delta_snapshot::DeltaSnapshotCache::installed_hub)
 //! or [`BalHeadDriver::snapshot`](super::delta_snapshot::BalHeadDriver::snapshot)),
 //! and both coerce to the trait object handed to
 //! [`BotStateDb::with_storage_view`](super::bot_state_db::BotStateDb::with_storage_view).

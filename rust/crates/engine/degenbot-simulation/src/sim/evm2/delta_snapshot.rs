@@ -222,6 +222,15 @@
 //!
 //! # Development and migration notes
 //!
+//! Reading an installed generation and installing one are two calls, because
+//! they are two decisions: [`DeltaSnapshotCache::installed_hub`] is the READ
+//! (exact anchor, the cache's own handle cloned, [`Option::None`] when no
+//! generation is installed there), while `for_anchor`, `advance_bal`, and
+//! [`BalHeadDriver::apply`] are the INSTALLS. A consumer that reached for
+//! `for_anchor` only to read the current generation switches to `installed_hub`
+//! and changes nothing else; a lifecycle/cache pair that disagrees then answers
+//! cold instead of quietly replacing the generation that was asked about.
+//!
 //! A consumer opting in swaps its snapshot owner for a [`DeltaSnapshotCache`]
 //! and its per-anchor read handle for a [`DeltaHub`]: `for_anchor` and
 //! `advance_bal` keep the signatures and semantics the hub cache taught it
@@ -1407,6 +1416,12 @@ impl DeltaSnapshotCache {
     /// (number AND hash) is unchanged, otherwise a fresh cold generation that
     /// becomes the installed one — the control's `for_anchor` contract, where
     /// a replacement drops the retired generation's values with it.
+    ///
+    /// This is the EXPLICIT installing control: a mismatched anchor REPLACES the
+    /// installed generation and retires the old one's values. A caller that only
+    /// wants the generation the cache already has takes [`Self::installed_hub`]
+    /// instead, which clones that handle or answers [`Option::None`] and never
+    /// installs, replaces, or evicts anything.
     pub fn for_anchor(&self, anchor: ReadAnchor) -> Arc<DeltaHub> {
         let mut current = self.current.lock();
 
@@ -1446,7 +1461,7 @@ impl DeltaSnapshotCache {
     ) -> (Arc<DeltaHub>, DeltaReport) {
         // Idempotence precedes any RPC: the same child anchor repeats no BAL
         // work, and no lock guard crosses the fetch.
-        if let Some(hub) = self.installed(child) {
+        if let Some(hub) = self.installed_hub(child) {
             let report = DeltaReport::already_current(Duration::ZERO, &hub);
             return (hub, report);
         }
@@ -1461,8 +1476,17 @@ impl DeltaSnapshotCache {
         )
     }
 
-    /// The generation installed at exactly `anchor`, when there is one.
-    fn installed(&self, anchor: ReadAnchor) -> Option<Arc<DeltaHub>> {
+    /// The generation the cache has installed at exactly `anchor`, when there is
+    /// one — the read-only counterpart of [`Self::for_anchor`].
+    ///
+    /// Clones the existing handle and touches nothing else: an anchor the cache
+    /// does not hold installed answers [`Option::None`] instead of minting a
+    /// generation, so this lookup can never install, replace, or evict one. A
+    /// caller that needs a generation to exist asks for one explicitly
+    /// ([`Self::for_anchor`] for a cold one, `apply_prepared` for a linked one);
+    /// a reader never does.
+    #[must_use]
+    pub fn installed_hub(&self, anchor: ReadAnchor) -> Option<Arc<DeltaHub>> {
         let current = self.current.lock();
 
         current
@@ -2085,15 +2109,15 @@ struct PreviousGeneration {
     readiness: HeadReadiness,
 }
 
-/// What one snapshot at an anchor reads, decided by the lifecycle under its lock.
+/// What one snapshot reads at an anchor the cache has installed NO generation
+/// at, decided by the lifecycle under its lock.
+///
+/// The installed generation is deliberately not one of the answers: a read asks
+/// the cache for it first ([`DeltaSnapshotCache::installed_hub`]) and reads the
+/// handle that lookup returns. No lifecycle verdict can therefore stand in for
+/// an installed generation, and there is no pose from which a read could mint
+/// one.
 enum Lookup {
-    /// The anchor is the installed generation: the hub is the cache's, and the
-    /// readiness is the one that generation's settle derived.
-    Installed { readiness: HeadReadiness },
-    /// The driver's current head settled but its anchor is not the installed
-    /// generation: the generation is still the cache's, and the readiness is the
-    /// one the head's settle derived.
-    Settled { readiness: HeadReadiness },
     /// The current head is unprepared: every caller at it shares this one cold
     /// generation.
     Unprepared { hub: Arc<DeltaHub> },
@@ -2102,7 +2126,7 @@ enum Lookup {
         hub: Arc<DeltaHub>,
         readiness: HeadReadiness,
     },
-    /// Nothing the lifecycle knows answers at this anchor.
+    /// Nothing the driver holds answers at this anchor.
     Cold { reason: HeadCold },
 }
 
@@ -2401,23 +2425,22 @@ impl HeadLifecycle {
         }
     }
 
-    /// What one snapshot at `anchor` reads, from the pose and the history alone.
-    fn lookup(&self, anchor: ReadAnchor, installed: Option<ReadAnchor>) -> Lookup {
-        if installed == Some(anchor) {
-            return Lookup::Installed {
-                readiness: self.readiness_of(anchor),
-            };
-        }
+    /// What one snapshot at `anchor` reads from the pose and the history alone,
+    /// for an anchor the cache has installed no generation at.
+    ///
+    /// A SETTLED head the cache does not hold installed is not an installed
+    /// generation: the cache owns one installed generation and it is at another
+    /// anchor, so this anchor's values went with it. The caller reads cold — the
+    /// one answer that neither serves another anchor's values nor installs the
+    /// generation back to make the pose look consistent again.
+    fn lookup(&self, anchor: ReadAnchor) -> Lookup {
         match self.current.as_ref().filter(|head| head.anchor() == anchor) {
             Some(CurrentHead::Unclaimed(head) | CurrentHead::Preparing(head)) => {
                 Lookup::Unprepared {
                     hub: Arc::clone(&head.provisional),
                 }
             }
-            Some(CurrentHead::Settled(_)) => Lookup::Settled {
-                readiness: self.readiness_of(anchor),
-            },
-            None => match self
+            Some(CurrentHead::Settled(_)) | None => match self
                 .previous
                 .as_ref()
                 .filter(|previous| previous.anchor == anchor)
@@ -2690,12 +2713,19 @@ impl BalHeadDriver {
                 prior,
             } => (anchor, parent_hash, prior),
         };
-        // The generation this transition is about to seal, held before the move:
-        // `for_anchor` on the installed anchor hands back the installed handle
-        // (and never installs a new one), and after the seal that same handle
-        // answers every value it served at its own anchor — the parent chain
-        // moved into the sealed node the child now owns.
-        let prior = prior.map(|installed| (installed, self.cache.for_anchor(installed)));
+        // The generation this transition is about to seal, captured BEFORE the
+        // move by the read-only lookup: the cache's installed handle, never a
+        // minted one. A prior anchor the cache does not hold captures nothing —
+        // the read window stays shut rather than being filled with a fresh cold
+        // generation that would answer `Ready` under the parent's anchor. After
+        // the seal that same handle answers every value it served at its own
+        // anchor, because the parent chain moved into the sealed node the child
+        // now owns.
+        let prior = prior.and_then(|installed| {
+            self.cache
+                .installed_hub(installed)
+                .map(|hub| (installed, hub))
+        });
         let (_hub, report) = self
             .cache
             .apply_prepared(anchor, parent_hash, relevance, prepared);
@@ -2771,19 +2801,30 @@ impl BalHeadDriver {
     ///    through, and it answers with the readiness that generation reported);
     /// 4. a fresh cold generation with the reason (`Superseded` /
     ///    `Undelivered`).
+    ///
+    /// Answers 1 and 3 are reads of a generation that already exists — the
+    /// installed one from the cache's own handle, the previous one from the
+    /// handle the installing transition captured — so no snapshot can install,
+    /// replace, or evict a generation. Answer 4 mints a generation per call and
+    /// installs nothing: a caller that wants an installed generation asks the
+    /// cache for one ([`DeltaSnapshotCache::for_anchor`]).
     pub fn snapshot(&self, anchor: ReadAnchor) -> HeadView {
         let mut state = self.state.lock();
-        let lookup = state.lookup(anchor, self.cache.anchor());
-        let (hub, readiness) = match lookup {
-            Lookup::Installed { readiness } | Lookup::Settled { readiness } => {
-                (self.cache.for_anchor(anchor), readiness)
-            }
-            Lookup::Unprepared { hub } => (hub, HeadReadiness::Cold(HeadCold::Unprepared)),
-            Lookup::Previous { hub, readiness } => (hub, readiness),
-            Lookup::Cold { reason } => (
-                cold_generation(&self.provider, anchor, self.retention),
-                HeadReadiness::Cold(reason),
-            ),
+        // The installed generation answers first, and only the cache can say so:
+        // the read CLONES its handle and never mints one. An anchor the cache has
+        // not installed therefore cannot be answered by installing it here — the
+        // read falls through to what the lifecycle holds, and answers cold when
+        // that is nothing.
+        let (hub, readiness) = match self.cache.installed_hub(anchor) {
+            Some(hub) => (hub, state.readiness_of(anchor)),
+            None => match state.lookup(anchor) {
+                Lookup::Unprepared { hub } => (hub, HeadReadiness::Cold(HeadCold::Unprepared)),
+                Lookup::Previous { hub, readiness } => (hub, readiness),
+                Lookup::Cold { reason } => (
+                    cold_generation(&self.provider, anchor, self.retention),
+                    HeadReadiness::Cold(reason),
+                ),
+            },
         };
         state.record_view(readiness.is_ready());
         HeadView { hub, readiness }
@@ -2965,6 +3006,11 @@ fn settled_readiness(report: Option<&DeltaReport>) -> HeadReadiness {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "the pose assertions and the forbidden transport fail loudly on a broken fixture"
+)]
 mod tests {
     use super::*;
 
@@ -3227,5 +3273,99 @@ mod tests {
             "only the entry inside its window is counted"
         );
         assert_eq!(generation.live_len(now, Retention::IdleBlocks(0)), 0);
+    }
+
+    /// A provider no request may reach: a snapshot answers from state already in
+    /// memory, so any dispatch here is a bug and panics.
+    #[derive(Debug, Clone)]
+    struct ForbiddenTransport;
+
+    impl tower::Service<alloy::rpc::json_rpc::RequestPacket> for ForbiddenTransport {
+        type Response = alloy::rpc::json_rpc::ResponsePacket;
+        type Error = alloy::transports::TransportError;
+        type Future = alloy::transports::TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _req: alloy::rpc::json_rpc::RequestPacket) -> Self::Future {
+            panic!("a snapshot read dispatches no request");
+        }
+    }
+
+    /// The provider behind [`ForbiddenTransport`].
+    fn forbidden_provider() -> AlloyProvider {
+        let client =
+            alloy::rpc::client::ClientBuilder::default().transport(ForbiddenTransport, true);
+        let root: alloy::providers::RootProvider = alloy::providers::RootProvider::new(client);
+        AlloyProvider::from_provider(Arc::new(root))
+    }
+
+    /// The cache holds ONE installed generation and the lifecycle remembers the
+    /// head that settled; a read at an anchor only one of the two names answers
+    /// cold instead of reconciling them by installing. The cache's anchor, the
+    /// handle behind it and the values it serves stay exactly where they were,
+    /// and every cold answer is its own generation.
+    #[test]
+    fn a_read_at_an_anchor_the_installed_generation_does_not_back_answers_cold_without_installing()
+    {
+        let provider = forbidden_provider();
+        let (address, index) = slot(0xaa, 1);
+        let installed = ReadAnchor::identified(10, B256::new([0xaa; 32]));
+        let named = ReadAnchor::identified(11, B256::new([0xbb; 32]));
+
+        let driver = BalHeadDriver::new(&provider);
+        let installed_hub = driver.cache.for_anchor(installed);
+        installed_hub.put(address, index, value(5));
+
+        // The degraded pose: the head the lifecycle holds settled at an anchor
+        // the cache has not installed a generation for.
+        driver.state.lock().current = Some(CurrentHead::Settled(SettledHead {
+            delivery: HeadDelivery {
+                anchor: named,
+                parent_hash: B256::new([0xcc; 32]),
+                seq: 1,
+            },
+            report: None,
+            attempt: ClaimAttempt::settled(1),
+        }));
+
+        let view = driver.snapshot(named);
+        assert!(
+            !view.readiness.is_ready(),
+            "a generation the cache does not hold backs no readiness, got {:?}",
+            view.readiness
+        );
+        assert_eq!(
+            view.hub.snapshot_value(address, index),
+            None,
+            "the cold answer carries nothing"
+        );
+        assert_eq!(
+            driver.installed(),
+            Some(installed),
+            "the read installed nothing and evicted nothing"
+        );
+        let survivor = driver
+            .cache
+            .installed_hub(installed)
+            .expect("the installed generation survives a read it did not back");
+        assert!(
+            Arc::ptr_eq(&installed_hub, &survivor),
+            "the same handle, not a replacement"
+        );
+        assert_eq!(
+            survivor.snapshot_value(address, index),
+            Some(value(5)),
+            "and it still serves its own values"
+        );
+
+        let again = driver.snapshot(named);
+        assert!(
+            !Arc::ptr_eq(&view.hub, &again.hub),
+            "a cold answer is minted per call, never installed"
+        );
+        assert_eq!(driver.installed(), Some(installed));
     }
 }

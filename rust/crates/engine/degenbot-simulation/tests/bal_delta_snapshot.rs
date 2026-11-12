@@ -869,3 +869,70 @@ async fn compaction_bounds_the_walk_preserves_values_and_never_mutates_ancestors
         compaction_case(max_depth).await;
     }
 }
+
+/// The installed-generation read is a read: it clones the cache's own handle at
+/// the exact anchor — the same `Arc` on every call, with the anchor and the
+/// generation's state untouched — while an anchor the cache does not hold
+/// installed answers `None` without installing it or evicting what the cache
+/// holds.
+#[tokio::test]
+async fn the_installed_generation_read_clones_the_handle_and_installs_nothing() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
+    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let cache = DeltaSnapshotCache::new(&provider);
+
+    assert!(
+        cache.installed_hub(anchor).is_none(),
+        "an empty cache installs nothing for a read"
+    );
+    assert_eq!(cache.anchor(), None);
+
+    let installed = cache.for_anchor(anchor);
+    let x = installed
+        .read_storage(address(0x11), U256::from(1u64))
+        .await;
+    assert_eq!(x.expect("the stub answers"), U256::from(1u64));
+    stub.clear();
+
+    let first = cache
+        .installed_hub(anchor)
+        .expect("the installed anchor answers");
+    let second = cache
+        .installed_hub(anchor)
+        .expect("... on every read of it");
+    assert!(
+        Arc::ptr_eq(&installed, &first) && Arc::ptr_eq(&first, &second),
+        "the cache's own handle, cloned - never a copy and never a replacement"
+    );
+    assert_eq!(cache.anchor(), Some(anchor), "the read moved no anchor");
+    assert_eq!(
+        first.snapshot_len(),
+        1,
+        "and the generation's state is untouched"
+    );
+
+    // An anchor the cache does not hold answers None and touches nothing: the
+    // installed generation keeps its anchor, its handle and its values.
+    let other = ReadAnchor::identified(HEIGHT + 1, B256::new([0xbb; 32]));
+    assert!(
+        cache.installed_hub(other).is_none(),
+        "an anchor the cache does not hold is not installed by being read"
+    );
+    assert_eq!(cache.anchor(), Some(anchor), "no install and no eviction");
+    assert!(
+        Arc::ptr_eq(&installed, &cache.for_anchor(anchor)),
+        "the installed generation survived the miss"
+    );
+    assert_eq!(
+        first.snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(1u64)),
+        "and it still serves its own value"
+    );
+    assert_eq!(
+        stub.storage_members(),
+        0,
+        "no read of the installed generation dispatched a request"
+    );
+}

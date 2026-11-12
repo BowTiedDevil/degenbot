@@ -3466,6 +3466,205 @@ async fn an_unbounded_chain_reports_held_equal_to_live_at_every_head() {
     assert_eq!(live_after, live_before + 1);
 }
 
+/// Every read at the installed head answers the SAME generation and moves
+/// nothing: the handle the settle installed, the cache's anchor, the delivered
+/// head, the read window and the generation's own state are all exactly as the
+/// settle left them — only the view counters advance.
+#[tokio::test]
+async fn repeated_reads_at_the_installed_head_share_one_handle_and_move_nothing() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let base_hash = B256::new([0xa0; 32]);
+    let head_hash = B256::new([0xa1; 32]);
+    stub.serve_bal_at(
+        base_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(1u64))]),
+    );
+    stub.serve_bal_at(
+        head_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
+    );
+    let driver = BalHeadDriver::new(&provider);
+    let base = identified(HEIGHT, base_hash);
+    let base_ticket = driver.deliver(base, genesis());
+    settled(&driver.advance(base_ticket, &[address(0x11)]).await);
+    let head = identified(HEIGHT + 1, head_hash);
+    let ticket = driver.deliver(head, base_hash);
+    settled(&driver.advance(ticket, &[address(0x11)]).await);
+    stub.clear();
+
+    let first = driver.snapshot(head);
+    assert_eq!(first.readiness, HeadReadiness::Ready);
+    let before = driver.stats();
+    let second = driver.snapshot(head);
+    let third = driver.snapshot(head);
+
+    assert!(
+        Arc::ptr_eq(&first.hub, &second.hub) && Arc::ptr_eq(&first.hub, &third.hub),
+        "the same generation on every read, never a fresh one"
+    );
+    assert_eq!(driver.installed(), Some(head), "the reads moved no anchor");
+    assert_eq!(driver.delivered(), Some(head), "and no head");
+    assert_eq!(driver.previous(), Some(base), "and no window moved");
+    assert_eq!(
+        third.hub.snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(5u64)),
+        "the generation's own state survived being read"
+    );
+    assert_eq!(
+        third.hub.snapshot_len(),
+        first.hub.snapshot_len(),
+        "reading installs no entry either"
+    );
+    let after = driver.stats();
+    assert_eq!(
+        HeadStats {
+            ready_views: before.ready_views,
+            cold_views: before.cold_views,
+            ..after
+        },
+        before,
+        "nothing but the view counters moved"
+    );
+    assert_eq!(
+        after.ready_views,
+        before.ready_views + 2,
+        "each read after the first is one ready view"
+    );
+    assert_eq!(
+        stub.storage_members() + stub.bal_requests(),
+        0,
+        "an installed read dispatched nothing"
+    );
+}
+
+/// A read at an anchor no generation is installed for answers a cold generation
+/// and installs nothing: the installed anchor, the handle behind it and its
+/// values stay exactly where they were, and the cold answer is minted per call
+/// instead of installed for the next reader.
+#[tokio::test]
+async fn a_cold_read_at_an_undelivered_anchor_installs_and_evicts_nothing() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let base_hash = B256::new([0xb0; 32]);
+    let head_hash = B256::new([0xb1; 32]);
+    stub.serve_bal_at(
+        base_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(1u64))]),
+    );
+    stub.serve_bal_at(
+        head_hash,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
+    );
+    let driver = BalHeadDriver::new(&provider);
+    let base = identified(HEIGHT, base_hash);
+    let base_ticket = driver.deliver(base, genesis());
+    settled(&driver.advance(base_ticket, &[address(0x11)]).await);
+    let head = identified(HEIGHT + 1, head_hash);
+    let ticket = driver.deliver(head, base_hash);
+    settled(&driver.advance(ticket, &[address(0x11)]).await);
+    let installed_handle = driver.snapshot(head).hub;
+
+    let stranger = identified(HEIGHT + 9, B256::new([0xee; 32]));
+    let view = driver.snapshot(stranger);
+    assert_eq!(
+        view.readiness,
+        HeadReadiness::Cold(HeadCold::Undelivered),
+        "nothing was delivered at the stranger's anchor"
+    );
+    assert_eq!(
+        view.hub.snapshot_len(),
+        0,
+        "the cold answer carries nothing"
+    );
+    assert_eq!(driver.installed(), Some(head), "the miss installed nothing");
+    assert_eq!(driver.delivered(), Some(head), "and superseded nothing");
+
+    let again = driver.snapshot(head);
+    assert!(
+        Arc::ptr_eq(&installed_handle, &again.hub),
+        "the installed generation survived the miss"
+    );
+    assert_eq!(
+        again.hub.snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(5u64)),
+        "and still serves its own value"
+    );
+    let second_miss = driver.snapshot(stranger);
+    assert!(
+        !Arc::ptr_eq(&view.hub, &second_miss.hub),
+        "a cold answer is a per-call generation, never an installed one"
+    );
+    assert_eq!(driver.installed(), Some(head));
+}
+
+/// The apply captures the handle it seals: the read window at the anchor below
+/// the installed head answers with the very generation the caller held before
+/// the transition — the same `Arc`, the cache's installed handle, never a copy
+/// and never a freshly minted one.
+#[tokio::test]
+async fn the_apply_captures_the_parent_handle_it_seals() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let h0 = B256::new([0xc0; 32]);
+    let h1 = B256::new([0xc1; 32]);
+    let h2 = B256::new([0xc2; 32]);
+    stub.serve_bal_at(
+        h0,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(1u64))]),
+    );
+    stub.serve_bal_at(
+        h1,
+        bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
+    );
+    stub.serve_bal_at(
+        h2,
+        bal_bytes(&[(address(0x11), U256::from(2u64), U256::from(7u64))]),
+    );
+    let driver = BalHeadDriver::new(&provider);
+    let relevance = [address(0x11)];
+    let base = identified(HEIGHT, h0);
+    let parent = identified(HEIGHT + 1, h1);
+    let child = identified(HEIGHT + 2, h2);
+
+    let base_ticket = driver.deliver(base, genesis());
+    settled(&driver.advance(base_ticket, &relevance).await);
+    let parent_ticket = driver.deliver(parent, h0);
+    settled(&driver.advance(parent_ticket, &relevance).await);
+    // The handle a caller holds at the parent, captured BEFORE the child's
+    // apply: the generation the transition is about to seal.
+    let parent_handle = driver.snapshot(parent).hub;
+    assert_eq!(driver.installed(), Some(parent));
+
+    let ticket = driver.deliver(child, h1);
+    let prepared = driver.prepare(ticket).await;
+    settled(&driver.apply(ticket, &prepared, &relevance));
+
+    assert_eq!(driver.installed(), Some(child));
+    assert_eq!(
+        driver.previous(),
+        Some(parent),
+        "the linked transition puts the anchor it sealed in the window"
+    );
+    let window = driver.snapshot(parent);
+    assert_eq!(window.readiness, HeadReadiness::Ready);
+    assert!(
+        Arc::ptr_eq(&parent_handle, &window.hub),
+        "the window answers with the generation the transition sealed - the \
+         same handle the caller held"
+    );
+    assert_eq!(
+        window.hub.snapshot_value(address(0x11), U256::from(1u64)),
+        Some(U256::from(5u64)),
+        "its own head's write"
+    );
+    assert_eq!(
+        window.hub.snapshot_value(address(0x11), U256::from(2u64)),
+        None,
+        "and not the child's"
+    );
+}
+
 /// The readiness a chain's FIRST head settles with: nothing was installed to
 /// carry from, so it settles cold and says so.
 fn cold_first_head() -> HeadReadiness {
