@@ -325,6 +325,68 @@ test-rust-nextest *args: check-toolchain
     fi
     cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast $feature_flag "$@"
 
+# Policy-configuration lane: run one crate's suite under ONE of its two
+# supported public configurations. `degenbot-arbitrage` and
+# `degenbot-batch-executor` each ship one policy feature, `order-index`
+# (ADR-024): off, the caller's pre-sort IS the simulation order and the
+# pre-sim cap keeps the input prefix; on, a deterministic profit-descending
+# reorder runs before the SAME cap, so cap-binding survivor selection may differ
+# and those survivors simulate in that reordered sequence. Each configuration
+# owns tests the other cannot even compile (`#[cfg(feature = "order-index")]` /
+# `#[cfg(not(feature = "order-index"))]`).
+#
+# The workspace lanes cannot cover that pair. Resolver v3 unifies features
+# across a `--workspace` build, and BOTH consumers enable the feature on their
+# dep edges (the `degenbot` umbrella and the `degenbot_rs` cdylib), so a
+# workspace run compiles the leaf with `order-index` ON: the default-
+# configuration tests are not in that build at all, and its feature lane is
+# indistinguishable from the default one. A direct `-p` selection drops those
+# consumers and resolves the package's own features alone.
+#
+# The resolved feature graph is then asserted against the configuration the
+# lane claims, before the suite runs: `degenbot-order-index` is the optional
+# dependency the feature switches on, so its presence in `cargo tree` IS the
+# feature's presence. Without that read, a lane could pass green while its
+# configuration was unified back on (default) or its `--features` selection
+# never reached the graph (order-index) — argument forwarding through this
+# recipe and nextest is invisible to crates whose test names are the same in
+# both configurations.
+#
+# Usage: `just test-rust-policy-lane <package> [default|order-index]`. CI
+# schedules both configurations for each of the two policy crates.
+test-rust-policy-lane package policy='default':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    package="{{ package }}"
+    policy="{{ policy }}"
+    case "$policy" in
+        default)
+            tree="$(cargo tree --locked --manifest-path rust/Cargo.toml -e features -p "$package")"
+            case "$tree" in
+                *"degenbot-order-index v"*)
+                    echo "ERROR: $package resolved order-index, but this lane selects the default configuration (another selected package unified it on)" >&2
+                    exit 1
+                    ;;
+            esac
+            exec just test-rust-nextest -p "$package"
+            ;;
+        order-index)
+            tree="$(cargo tree --locked --manifest-path rust/Cargo.toml -e features -p "$package" --features "$package/order-index")"
+            case "$tree" in
+                *"degenbot-order-index v"*) ;;
+                *)
+                    echo "ERROR: $package/order-index did not reach the resolved graph, so this lane would test the default configuration" >&2
+                    exit 1
+                    ;;
+            esac
+            exec just test-rust-nextest -p "$package" --features "$package/order-index"
+            ;;
+        *)
+            echo "ERROR: unknown policy '$policy' (expected 'default' or 'order-index')" >&2
+            exit 1
+            ;;
+    esac
+
 # Release-profile leg: the shipped artifacts (the `degenbot_rs` cdylib, every
 # pure-Rust release binary) are built with `debug_assertions` OFF, so a side
 # effect parked inside a `debug_assert!` *vanishes* there. `PoolTable::allocate`

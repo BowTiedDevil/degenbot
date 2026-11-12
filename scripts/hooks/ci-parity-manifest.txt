@@ -4,6 +4,7 @@ commitlint|local|scripts/hooks/commitlint-push.sh|push range
 markdownlint|local||just lint-markdown-check
 msrv|local||just check-msrv
 rust|local||just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-dev-features, just check-rust-extension-release, just test-rust, just test-rust-ci (CI build env), just test-golden-replay, just build-rust-extension, just publish-dry-run --no-verify
+rust-policy-lanes|local||just test-rust-policy-lane (both policy configurations of degenbot-arbitrage and degenbot-batch-executor; CI-scheduled because the workspace lanes unify order-index on and cannot select the default configuration)
 cli-no-python|local|just ci-no-python-cli-gate|just ci-no-python-cli-gate
 tier3-oracle|local||just verify-tier3-artifacts, just verify-tier3-executor-artifact
 python|local||just check-uv-lock, just fmt-check-python, just lint-python, just test-python-noise-gate

@@ -320,6 +320,78 @@ jobs:
       - name: Dry-run publish of every member that can package
         run: just publish-dry-run --no-verify
 
+  rust-policy-lanes:
+    # The two public policy configurations, scheduled: `degenbot-arbitrage` and
+    # `degenbot-batch-executor` each ship one policy feature, `order-index`
+    # (ADR-024). Off, the caller's pre-sort IS the simulation order and the
+    # pre-sim cap keeps the input prefix; on, a deterministic profit-descending
+    # reorder runs before the SAME cap, so cap-binding survivor selection may
+    # differ and those survivors simulate in that reordered sequence. Both are
+    # supported public configurations, and each owns tests the other cannot
+    # compile — which is exactly what the
+    # workspace test lane in the `rust` job cannot reach: the `degenbot`
+    # umbrella and the `degenbot_rs` cdylib enable the feature on their dep
+    # edges, and resolver v3 unifies that across `--workspace`, so a workspace
+    # build compiles the default-configuration tests out and its feature lane
+    # would be indistinguishable from the default one.
+    #
+    # One leg per package runs BOTH configurations through
+    # `test-rust-policy-lane`: the recipe narrows the selection to a direct
+    # `-p` run (nextest gives --workspace precedence over -p, so the narrowing
+    # is the recipe's job, not the caller's) and asserts the resolved feature
+    # graph against the configuration before the suite runs. Two configurations
+    # in one target dir means the second rebuilds only the policy crate and its
+    # index dep. No evm2 JIT toolchain: `evm2-jit` is opt-in and no selected
+    # package enables it. No node and no Foundry: these suites are offline.
+    name: "Rust (policy lanes: ${{ matrix.package }})"
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      # Independent packages: one leg failing must not cancel the other's
+      # signal. Within a leg the two configurations run in sequence (each is
+      # the same package's policy pair).
+      fail-fast: false
+      matrix:
+        package:
+          - degenbot-arbitrage
+          - degenbot-batch-executor
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
+
+      - name: Cache Cargo
+        # Shares the ci-rust prefix so the common workspace deps are reused.
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: ci-rust
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      # `test-rust-nextest` is uv-required by design: it exports the venv
+      # python's LIBDIR for test binaries that link libpython. The locked venv
+      # is all this job needs — no extension build (that is `just dev`).
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+
+      - name: Sync the uv environment (no extension build)
+        run: uv sync --locked --dev --no-install-project
+
+      - name: Default configuration (order-index off)
+        run: just test-rust-policy-lane ${{ matrix.package }}
+
+      - name: order-index configuration (order-index on)
+        run: just test-rust-policy-lane ${{ matrix.package }} order-index
+
   cli-no-python:
     # ADR-051 D10: the console must build and run with NO Python
     # anywhere. This job deliberately does NOT provision Python (no
@@ -648,7 +720,7 @@ jobs:
     # needed job failed - otherwise it would skip and report green.
     name: CI (aggregate)
     if: always()
-    needs: [changes, commitlint, markdownlint, msrv, rust, cli-no-python, tier3-oracle, python, stub-drift]
+    needs: [changes, commitlint, markdownlint, msrv, rust, rust-policy-lanes, cli-no-python, tier3-oracle, python, stub-drift]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
