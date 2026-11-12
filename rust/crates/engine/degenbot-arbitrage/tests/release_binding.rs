@@ -83,7 +83,8 @@ const OPTIMAL_INPUT: u128 = 1_000_000_000_000_000_000;
 /// for `two_v2_hops()` with default options: `0xab5898e8` (selector), `0x1`
 /// (packed config), and the v1 command stream. Pinned so the metadata cutover
 /// cannot move an encoder byte.
-const CUTOVER_CALL_DATA: &str = "0xab5898e800000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000007700bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00cccccccccccccccccccccccccccccccccccccccc00a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48ff200001000000000de0b6b3a7640000fd001e24100201000000000de0b6b3a7640000210101fd001e10fe00000000000de0b6b3a7640000000000000000000000";
+const CUTOVER_CALL_DATA: &str =
+    include_str!("../../../foundation/degenbot-executor/releases/v2/golden_calldata.hex");
 
 const GROSS_2: u64 = 2_000_000_000_000_000;
 const GROSS_3: u64 = 3_000_000_000_000_000;
@@ -454,6 +455,15 @@ fn registry_all() -> ReleaseRegistry {
 
 fn registry_production() -> ReleaseRegistry {
     ReleaseRegistry::production().expect("production ships the validated v1 release")
+}
+
+#[test]
+fn direct_production_adapter_retains_release_capability_policy() {
+    let adapter = binding(EXECUTOR_V1).adapter();
+    let release = adapter
+        .release()
+        .expect("the production adapter retains its release for capability planning");
+    assert_eq!(release.release_id(), RELEASE_ID_TAG);
 }
 
 // ── paths and candidates ─────────────────────────────────────────────────
@@ -1108,7 +1118,7 @@ fn the_production_release_loads_its_committed_artifact() {
     );
     assert_eq!(
         bound.release().runtime_artifact_path(),
-        "tier3-oracle/artifacts/executor/cmd_executor.runtime.hex",
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.runtime.hex",
         "the manifest names the compiler artifact the tier3 gate verifies"
     );
     // Any other bytes are refused, including a valid contract's.

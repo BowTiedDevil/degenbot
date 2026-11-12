@@ -5,7 +5,7 @@
 # rebuild+re-publish fails CI.
 #
 # Covered:
-#   - contracts/vyper/cmd_executor.vy       (vyper 0.5.0b2)   -> artifacts/executor/cmd_executor.*
+#   - rust/crates/foundation/degenbot-executor/releases/v2/contract.vy       (vyper 0.5.0b2)   -> artifacts/executor/cmd_executor.*
 #   - src-executor/ExecutorV3Harness.sol      (solc 0.7.6)      -> artifacts/executor/ExecutorV3Harness.sol/ExecutorV3Harness.json
 #
 # REQUIRES the toolchain: the root uv project (vyper ==0.5.0b2) + solc 0.7.6 (svm cache). Runs in the CI `tier3-oracle`
@@ -14,6 +14,8 @@
 set -euo pipefail
 TD="$(cd "$(dirname "$0")" && pwd)"
 cd "${TD}"
+REPO_ROOT="$(cd "${TD}/.." && pwd)"
+ARTIFACT_ROOT="${REPO_ROOT}/rust/crates/foundation/degenbot-executor/releases/v2/artifacts"
 
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "${SCRATCH}"' EXIT
@@ -24,7 +26,7 @@ OUT_DIR="${SCRATCH}" PUBLISH=0 "${TD}/build-tier3-executor-harness.sh" >/dev/nul
 fail=0
 check() {
     local rel="$1" how="$2"
-    if ! cmp -s "artifacts/executor/${rel}" "${SCRATCH}/executor/${rel}"; then
+    if ! cmp -s "${ARTIFACT_ROOT}/${rel}" "${SCRATCH}/executor/${rel}"; then
         echo "  ✗ executor/${rel}: committed ≠ fresh ${how} compile"
         fail=1
     else

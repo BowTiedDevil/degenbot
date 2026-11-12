@@ -3,11 +3,11 @@
 //!
 //! The tier-3b executor tests (S2/S3) run in the default
 //! `cargo test --workspace` suite and load the canonical executor bytecode from
-//! the COMMITTED `tier3-oracle/artifacts/executor/` tree, so no vyper is needed
+//! the COMMITTED `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/` tree, so no vyper is needed
 //! to RUN the suite. This test closes the drift hole that committed-binary
 //! decision opens: it recomputes the sha256 of the git-tracked executor
 //! sources (REPO-ROOT-relative `source` paths recorded in the manifest —
-//! `contracts/vyper/cmd_executor.vy` for the Vyper source, the oracle-side
+//! `rust/crates/foundation/degenbot-executor/releases/v2/contract.vy` for the Vyper source, the oracle-side
 //! `.sol` for the V3 topology harness) and compares against
 //! `artifacts/executor/manifest.json`, asserting each committed artifact is
 //! present (with non-empty hex bytecode for the `.hex` files). A tracked
@@ -37,9 +37,9 @@ fn repo_root() -> PathBuf {
         .expect("canonicalize repo root")
 }
 
-/// The oracle root: `tier3-oracle/` under the repo root.
+/// The accepted executor release's compiler-artifact root.
 fn oracle_root() -> PathBuf {
-    repo_root().join("tier3-oracle")
+    repo_root().join("rust/crates/foundation/degenbot-executor/releases/v2/artifacts")
 }
 
 /// sha256 hex of a file's bytes.
@@ -61,7 +61,7 @@ fn sha256_hex(path: &Path) -> String {
 #[test]
 fn committed_executor_artifacts_match_tracked_source() {
     let root = oracle_root();
-    let manifest_path = root.join("artifacts/executor/manifest.json");
+    let manifest_path = root.join("manifest.json");
     let manifest_raw = std::fs::read_to_string(&manifest_path)
         .unwrap_or_else(|e| panic!("missing {}: {e}", manifest_path.display()));
     let manifest: Value = serde_json::from_str(&manifest_raw)
@@ -103,7 +103,7 @@ fn committed_executor_artifacts_match_tracked_source() {
 
         // 2. The committed artifact must exist. Bytecode hex must be even-length
         //    and non-empty.
-        let artifact_path = root.join("artifacts").join(artifact);
+        let artifact_path = root.join(artifact.strip_prefix("executor/").unwrap_or(artifact));
         let raw = std::fs::read_to_string(&artifact_path).unwrap_or_else(|e| {
             panic!(
                 "missing committed artifact {}: {e}",

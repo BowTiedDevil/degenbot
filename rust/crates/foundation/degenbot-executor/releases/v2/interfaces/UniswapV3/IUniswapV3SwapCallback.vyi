@@ -1,0 +1,9 @@
+# Uniswap V3 swap callback — matches IUniswapV3SwapCallback.sol.
+# `bytes` in Solidity is unbounded, so the Vyper mirror uses Bytes[INF].
+
+
+def uniswapV3SwapCallback(
+    amount0Delta: int256,
+    amount1Delta: int256,
+    data: Bytes[INF]
+): ...

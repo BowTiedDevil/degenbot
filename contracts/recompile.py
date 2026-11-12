@@ -3,7 +3,7 @@
 
 Usage:
     uv run python contracts/recompile.py            # bake from the committed
-                                                    #   tier3-oracle/artifacts/executor/
+                                                    #   rust/crates/foundation/degenbot-executor/releases/v2/artifacts/
                                                     #   (toolchain-free, default)
     uv run python contracts/recompile.py --compile  # additionally run the
                                                     #   AUTHORITATIVE compile-vs-use gate
@@ -72,10 +72,11 @@ from degenbot.crypto import keccak256
 
 # ── Paths ──────────────────────────────────────────────────────────
 DEGENBOT_ROOT = pathlib.Path(__file__).resolve().parent.parent
-CONTRACTS_DIR = DEGENBOT_ROOT / "contracts"
-ARTIFACTS_DIR = DEGENBOT_ROOT / "tier3-oracle" / "artifacts" / "executor"
+RELEASE_DIR = DEGENBOT_ROOT / "rust/crates/foundation/degenbot-executor/releases/v2"
+CONTRACTS_DIR = RELEASE_DIR / "deployment"
+ARTIFACTS_DIR = RELEASE_DIR / "artifacts"
 EXECUTOR_DIR = DEGENBOT_ROOT
-VYPER_SOURCE = EXECUTOR_DIR / "contracts" / "vyper" / "cmd_executor.vy"
+VYPER_SOURCE = RELEASE_DIR / "contract.vy"
 
 # ── Mainnet immutable values ───────────────────────────────────────
 OWNER_ADDR = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
@@ -187,7 +188,9 @@ def main() -> None:
 
     tail = runtime_baked[-IMMUTABLE_HEX_LEN:]
     print()
-    print("Baked into contracts/ (from tier3-oracle/artifacts/executor/):")
+    print(
+        "Baked into contracts/ (from rust/crates/foundation/degenbot-executor/releases/v2/artifacts/):"
+    )
     print(f"  runtime (code+CBOR): {len(runtime) // 2} B")
     print(
         f"  immutables:          {IMMUTABLE_HEX_LEN // 2} B (first CODECOPY tail offset {hex(len(runtime) // 2)})"

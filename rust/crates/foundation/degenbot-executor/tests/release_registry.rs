@@ -14,18 +14,19 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::Bytes;
+use alloy::primitives::{Bytes, U256};
 
 use degenbot_execution::{ComposeError, PathInfo, V2HopInfo, V4HopInfo};
 use degenbot_executor::composers::{resolve_axes, EncodeContext, EncodeOptions, EncodeRequest};
 use degenbot_executor::discovery::{classify_getter, GetterAnswers, GetterCall, METADATA_GETTERS};
+use degenbot_executor::receipt::ExecutionReceipt;
 use degenbot_executor::release::{
     capability, CapabilityId, GetterOutcome, ManifestError, ReleaseManifest, METADATA_GETTER_NAMES,
     RELEASE_ID_TAG, RELEASE_MANIFEST_V2, SUPPORTED_PROTOCOL_MAJORS,
 };
 use degenbot_executor::release_registry::{
-    required_capabilities, CmdStreamV1Encoding, Release, ReleaseEncoding, ReleaseError,
-    ReleaseRegistry,
+    required_capabilities, CmdStreamV1Encoding, Release, ReleaseCall, ReleaseEncoding,
+    ReleaseError, ReleaseRegistry,
 };
 
 fn committed_manifest() -> ReleaseManifest {
@@ -40,6 +41,70 @@ fn production_release() -> Release {
         None,
     )
     .expect("the committed release pairs with the production encoding")
+}
+
+const ALTERNATE_TAG: &str = "test_executor/2";
+const ALTERNATE_MAX_STREAM_LENGTH: u32 = 4;
+
+#[derive(Debug)]
+struct AlternateGrammarEncoding;
+
+fn alternate_release() -> Release {
+    let mut manifest = committed_manifest();
+    ALTERNATE_TAG.clone_into(&mut manifest.release_id);
+    manifest.protocol.major = 2;
+    manifest.call_encoding.version = 2;
+    manifest.call_encoding.max_stream_length = ALTERNATE_MAX_STREAM_LENGTH;
+    manifest
+        .validate_within(&[1, 2])
+        .expect("the alternate grammar manifest validates");
+    Release::new(manifest, &[1, 2], Arc::new(AlternateGrammarEncoding), None)
+        .expect("the alternate grammar pairs with its manifest")
+}
+
+impl ReleaseEncoding for AlternateGrammarEncoding {
+    fn release_id(&self) -> &str {
+        ALTERNATE_TAG
+    }
+
+    fn encode(
+        &self,
+        _context: &EncodeContext,
+        request: &EncodeRequest,
+    ) -> Result<ReleaseCall, ComposeError> {
+        let mut commands = Vec::with_capacity(request.path.hops.len() * 3);
+        for (index, _) in request.path.hops.iter().enumerate() {
+            let raw = if index == 0 {
+                request.optimal_input
+            } else {
+                request.hop_outputs[index]
+            };
+            let amount = u16::try_from(raw).map_err(|_| {
+                ComposeError::Encode(format!("alternate u16 operand overflows: {raw}"))
+            })?;
+            commands.push(0xa5);
+            commands.extend_from_slice(&amount.to_le_bytes());
+        }
+        let length = u32::try_from(commands.len())
+            .map_err(|error| ComposeError::Encode(format!("alternate stream length: {error}")))?;
+        if length > ALTERNATE_MAX_STREAM_LENGTH {
+            return Err(ComposeError::Unsupported(format!(
+                "alternate command stream length {length} exceeds 4 bytes"
+            )));
+        }
+        Ok(ReleaseCall {
+            data: Bytes::from(commands),
+            value: U256::ZERO,
+            requires: Vec::new(),
+        })
+    }
+
+    fn decode_receipt(
+        &self,
+        return_data: Option<&Bytes>,
+    ) -> Result<ExecutionReceipt, degenbot_execution::AssessError> {
+        ExecutionReceipt::decode(return_data)
+    }
 }
 
 #[test]
@@ -370,4 +435,64 @@ fn getter_answers_preserve_what_the_transport_returned() {
     assert_eq!(one.answered_count(), 1);
     assert_eq!(one.observations().release_id, GetterOutcome::Answered(&[7]));
     assert_eq!(one.observations().capabilities_hash, GetterOutcome::Absent);
+}
+
+#[test]
+fn release_selection_supports_a_genuinely_different_command_grammar() {
+    let registry = ReleaseRegistry::with_releases(vec![production_release(), alternate_release()])
+        .expect("the test grammar coexists with production");
+    let selected = registry
+        .get(ALTERNATE_TAG)
+        .expect("the alternate grammar is selected by its release tag");
+    assert_eq!(selected.manifest().call_encoding.max_stream_length, 4);
+
+    let context = EncodeContext::new(
+        alloy::primitives::Address::repeat_byte(0x99),
+        alloy::primitives::Address::repeat_byte(0x44),
+        alloy::primitives::Address::repeat_byte(0x22),
+    );
+    let one_hop = EncodeRequest::new(
+        PathInfo::new(vec![v2_hop()]),
+        1_000,
+        vec![1_000],
+        vec![999],
+        EncodeOptions::default(),
+    );
+    let call = selected
+        .encoding()
+        .encode(&context, &one_hop)
+        .expect("one alternate-grammar command fits exactly");
+    assert_eq!(call.data.to_vec(), vec![0xa5, 0xe8, 0x03]);
+
+    let two_hops = EncodeRequest::new(
+        PathInfo::new(vec![v2_hop(), v2_hop()]),
+        1_000,
+        vec![1_000, 1_000],
+        vec![999, 999],
+        EncodeOptions::default(),
+    );
+    let oversize = selected
+        .encoding()
+        .encode(&context, &two_hops)
+        .expect_err("two three-byte commands exceed the alternate four-byte bound");
+    assert!(
+        matches!(&oversize, ComposeError::Unsupported(message) if message.contains("4 bytes")),
+        "unexpected error: {oversize}"
+    );
+
+    let overflow = EncodeRequest::new(
+        PathInfo::new(vec![v2_hop()]),
+        u128::from(u16::MAX) + 1,
+        vec![u128::from(u16::MAX) + 1],
+        vec![999],
+        EncodeOptions::default(),
+    );
+    let primitive = selected
+        .encoding()
+        .encode(&context, &overflow)
+        .expect_err("the alternate operand is a checked u16");
+    assert!(
+        matches!(&primitive, ComposeError::Encode(message) if message.contains("u16")),
+        "unexpected error: {primitive}"
+    );
 }

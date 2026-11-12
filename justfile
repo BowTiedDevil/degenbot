@@ -498,7 +498,7 @@ bench-sim-modes *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example sim_mode_bench --features evm2-jit -- {{ ARGS }}
 
 # The production executor's AOT prep lane: compile
-# `contracts/cmd_executor_runtime_bytecode.txt` into the durable artifact store
+# `rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt` into the durable artifact store
 # the JIT holder opens at `<persistence.state_dir>/aot-artifacts`, proving the
 # artifact loads back as `ProgramKind::Aot`. Idempotent; an alternate artifact
 # path may be passed as ARGS.
@@ -1276,8 +1276,17 @@ check-uv-lock:
 # develop`) so the suite always exercises the current Rust sources. This replaces
 # the retired runtime build-receipt/staleness gate: freshness is guaranteed by
 # building the thing we test, not by inspecting whether a build happened.
-test-python: dev
+test-python: dev check-executor-release-ratchet
     {{ pytest_run }} -x -q --no-header
+
+
+# Accepted cmd_executor release packages are append-only. The generator proves
+# current file hashes; the base index prevents regeneration from laundering a
+# frozen-release edit. The pytest probes prove both red paths and the next-tag path.
+# live-invariant gate (ADR-087 D2): watches accepted cmd_executor release packages and their sequential release index; not tripwire precedent.
+check-executor-release-ratchet:
+    {{ py_run }} scripts/executor_release_ratchet.py check
+    {{ pytest_run }} tests/test_executor_release_ratchet.py -q --no-header
 
 
 # The root project's Ape suite (tests/executor) — the canonical wrapper for
@@ -1658,9 +1667,9 @@ verify-tier3-artifacts:
     tier3-oracle/verify-tier3-artifacts.sh
 
 # Validate the committed Vyper executor artifact (tier-3b): recompile
-# contracts/vyper/cmd_executor.vy with the pinned vyper 0.5.0b2 (into a
+# rust/crates/foundation/degenbot-executor/releases/v2/contract.vy with the pinned vyper 0.5.0b2 (into a
 # throwaway dir, PUBLISH=0) and byte-compare against what the Rust tier-3b tests
-# load from `tier3-oracle/artifacts/executor/`. This is the authoritative
+# load from `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/`. This is the authoritative
 # compile-vs-use check for the vyper artifact; the toolchain-free complement
 # `tier3_executor_artifacts.rs` runs in the default suite. Requires the
 # toolchain: the root uv project (vyper ==0.5.0b2). Wired into

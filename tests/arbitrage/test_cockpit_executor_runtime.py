@@ -130,5 +130,11 @@ class TestTheEngineLoadsTheArtifact:
         The candidate is the committed artifact in this checkout, so the
         default configuration boots without any operator input.
         """
-        assert Path(__file__).resolve().parents[2].joinpath("contracts", FILE).exists()
+        assert (
+            Path(__file__)
+            .resolve()
+            .parents[2]
+            .joinpath("rust/crates/foundation/degenbot-executor/releases/v2/deployment", FILE)
+            .exists()
+        )
         assert isinstance(_ctx(), SimulateContext)

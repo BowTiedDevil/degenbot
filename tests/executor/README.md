@@ -23,7 +23,7 @@ worker a separate Foundry host so accounts, nonces, and fork state do not race.
 
 ## Layout
 
-- `contracts/vyper/cmd_executor.vy` — command-stream executor under active
+- `rust/crates/foundation/degenbot-executor/releases/v2/contract.vy` — command-stream executor under active
   development.
 - `contracts/vyper/fake_*.vy` — ERC-20, WETH, V2 pair, V3 pool, and V4
   PoolManager test doubles.

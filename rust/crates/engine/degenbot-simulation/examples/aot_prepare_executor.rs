@@ -13,7 +13,7 @@
 //! executor's compiled program from its first simulated candidate instead
 //! of paying the compile stall on the hottest contract in the system.
 //!
-//! The artifact is `contracts/cmd_executor_runtime_bytecode.txt` — the
+//! The artifact is `rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt` — the
 //! PRODUCTION runtime with its five immutables baked in (the code the sim
 //! injects verbatim), not the tier-3 oracle's test artifact. The code hash
 //! the runner keys its lookup on is `keccak256(injected bytecode)`, so this
@@ -39,7 +39,7 @@ use degenbot_simulation::sim::evm2::aot_store::{default_artifact_dir, DurableArt
 use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
 
 /// The production executor runtime artifact, repo-relative.
-const EXECUTOR_RUNTIME_ARTIFACT: &str = "contracts/cmd_executor_runtime_bytecode.txt";
+const EXECUTOR_RUNTIME_ARTIFACT: &str = "rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../..")

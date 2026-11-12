@@ -6,7 +6,7 @@ D5): a deployment declares its release tag, protocol major, whole call-encoding
 version, and the commitment to its capability ID list (ADR-099). The complete
 encoding description (command stream, packed config, execute ABI) and the
 capability list itself live in the off-chain release manifest, and artifact
-integrity stays with `tier3-oracle/artifacts/executor/manifest.json`.
+integrity stays with `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json`.
 
 Both sides are pinned here: the deployed contract is the authority for what it
 declares, the committed manifest must agree with it, and the capability
@@ -59,11 +59,12 @@ from .conftest_shared import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ABI_ARTIFACT = REPO_ROOT / "tier3-oracle/artifacts/executor/cmd_executor.abi.json"
-RELEASE_MANIFEST = (
-    REPO_ROOT / "rust/crates/foundation/degenbot-executor/releases/cmd_executor.v2.json"
+ABI_ARTIFACT = (
+    REPO_ROOT
+    / "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.abi.json"
 )
-VYPER_SOURCE = REPO_ROOT / "contracts/vyper/cmd_executor.vy"
+RELEASE_MANIFEST = REPO_ROOT / "rust/crates/foundation/degenbot-executor/releases/v2/manifest.json"
+VYPER_SOURCE = REPO_ROOT / "rust/crates/foundation/degenbot-executor/releases/v2/contract.vy"
 
 # "cmd_executor/2" right-padded to bytes32: the ASCII tag *is* the identity, so
 # an operator can read a deployment's release without a lookup table.

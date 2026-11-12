@@ -511,7 +511,9 @@ fn deploy_world(setup: &mut Evm<'static, BaseEvmTypes>, nonce: &mut u64) -> Resu
         Bytes::from(load_stub_creation("PoolManager")),
         take(nonce),
     )?;
-    let mut executor_init = load_hex("tier3-oracle/artifacts/executor/cmd_executor.creation.hex");
+    let mut executor_init = load_hex(
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.creation.hex",
+    );
     executor_init.extend_from_slice(
         &(
             weth.address,

@@ -71,7 +71,9 @@ fn executor_deploys_with_four_constructor_args_and_embeds_computed_immutables() 
     let stablecoin0 = Address::repeat_byte(0x33);
     let stablecoin1 = Address::repeat_byte(0x44);
 
-    let mut init = load_hex("tier3-oracle/artifacts/executor/cmd_executor.creation.hex");
+    let mut init = load_hex(
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.creation.hex",
+    );
     init.extend_from_slice(&deploy_args(weth, pool_manager, stablecoin0, stablecoin1));
 
     let mut evm = oracle::new_fixture_evm();

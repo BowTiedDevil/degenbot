@@ -79,7 +79,7 @@ target chain by patching slot 2 of the 224-byte tail — no re-bake needed:
 pm = "0x000000000004444C5dc75cB358380D2e3De08A90"  # mainnet PM
 pm_padded = "0" * 24 + pm[2:].lower()  # left-pad to 32 bytes
 
-with open("contracts/cmd_executor_runtime_bytecode.txt") as f:
+with open("rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt") as f:
     code = f.read().strip()[2:]  # strip 0x
 
 # Last 448 hex chars = 7 × 32-byte immutable slots
@@ -88,7 +88,7 @@ tail = code[-448:]
 pm_offset = 2 * 64  # slot index 2, each slot is 64 hex chars
 new_tail = tail[:pm_offset] + pm_padded + tail[pm_offset + 64:]
 
-with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
+with open("rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt", "w") as f:
     f.write("0x" + code[:-448] + new_tail + "\n")
 ```
 
@@ -100,7 +100,7 @@ and the two delta slots are computed on-chain from the deployed address.
 
 `contracts/recompile.py` bakes the `contracts/cmd_executor_*` files from the
 COMMITTED tier-3 artifacts (toolchain-free): the runtime file is `0x` +
-`tier3-oracle/artifacts/executor/cmd_executor.runtime.hex` + the 7 x 32-byte
+`rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.runtime.hex` + the 7 x 32-byte
 immutable slots (mainnet values, delta slots precomputed for
 `INJECTED_EXECUTOR_ADDRESS`); the two init/bytecode files are the artifact
 creation hex; the ABI is copied verbatim. Before writing, it pins the
@@ -121,7 +121,7 @@ The previous pipeline compiled from the retired `~/code/executor/` path
 ## cmd_executor — Command-Stream Executor
 
 **Vyper**: 0.5.0b2 | **EVM**: Cancun | **Runtime**: 18,638 bytes of code + CBOR, plus the 224-byte immutable tail (18,862 B deployed)
-**Source**: in-repo `contracts/vyper/cmd_executor.vy` (vendored); committed artifacts in `tier3-oracle/artifacts/executor/` (vyper 0.5.0b2, compile-vs-use gate: `just verify-tier3-executor-artifact`)
+**Source**: in-repo `rust/crates/foundation/degenbot-executor/releases/v2/contract.vy` (vendored); committed artifacts in `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/` (vyper 0.5.0b2, compile-vs-use gate: `just verify-tier3-executor-artifact`)
 **Tests**: in-repo `tests/executor/` (Ape + Foundry)
 
 Compact command-stream executor. All execution decisions are made off-chain and encoded as a byte stream; the contract is a pure command interpreter. Two modes are freely mixed:
@@ -166,7 +166,7 @@ which binds the declared tag, protocol major, and capability IDs to the complete
 call encoding (command stream, packed config, execute ABI) and the runtime
 artifact location. Whole-bytecode hashes are deliberately NOT the release
 identity: Vyper immutables differ per deployment, so artifact integrity stays
-with `tier3-oracle/artifacts/executor/manifest.json`. A deployment compiled
+with `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json`. A deployment compiled
 before these getters answers nothing, and naming it requires an explicit
 operator legacy mapping — never a guess at the latest release. Details and the
 migration policy: `docs/executor/releases.md`.

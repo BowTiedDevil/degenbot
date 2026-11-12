@@ -26,8 +26,8 @@ about itself, not how to encode for it.
 | Protocol major | `1` | `protocol_major()` |
 | Call-encoding version | `1` | `call_encoding_version()` |
 | Capability commitment | `0x9cce…bcbf` (see below) | `capabilities_hash()` |
-| Off-chain manifest | `rust/crates/foundation/degenbot-executor/releases/cmd_executor.v2.json` | this repository |
-| Artifact | `tier3-oracle/artifacts/executor/` | `artifact.*` in the manifest |
+| Off-chain manifest | `rust/crates/foundation/degenbot-executor/releases/v2/manifest.json` | this repository |
+| Artifact | `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/` | `artifact.*` in the manifest |
 
 The tag moved from `cmd_executor/1` when the capability getter changed shape
 (ADR-099 D5): a deployment's metadata ABI is part of what it declares. The
@@ -111,7 +111,7 @@ storage slot, no constructor argument, no proxy, no upgrade path:
 | `call_encoding_version` | `call_encoding_version()` | `0x76c4345b` | one word, `uint32` |
 | `capabilities_hash` | `capabilities_hash()` | `0xb8ca459e` | one word, `bytes32` commitment |
 
-The values are constants in `contracts/vyper/cmd_executor.vy`, so a deployment's
+The values are constants in `rust/crates/foundation/degenbot-executor/releases/v2/contract.vy`, so a deployment's
 identity is fixed at compile time and readable by anyone, forever. The
 `CAPABILITY_*` ID constants stay in the source as its human-auditable
 declaration of the set; they emit no code, and the gates below require them to
@@ -228,7 +228,7 @@ runtime, so two faithful deployments of the same release have different runtime
 code. A whole-runtime hash would therefore make identity deployment-specific.
 
 Artifact integrity and provenance stay where they belong:
-`tier3-oracle/artifacts/executor/manifest.json` pins each committed artifact to
+`rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json` pins each committed artifact to
 the sha256 of its git-tracked source, `just verify-tier3-executor-artifact`
 recompiles and byte-compares, and the toolchain-free
 `tier3_executor_artifacts.rs` guard runs in the default cargo suite. The release
@@ -407,7 +407,7 @@ capability decline.
 - **Where the bytes come from.** A release definition that ships its artifact in
   memory (an injected test release, an undeployed build) answers from memory.
   Otherwise the committed DEPLOYMENT artifact is read through the one
-  executor-runtime precedence chain (`contracts/cmd_executor_runtime_bytecode.txt`,
+  executor-runtime precedence chain (`rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt`,
   overridable by the operator's artifact keys). The manifest separately names the
   COMPILER artifact (`artifact.runtime_code`), which
   `just verify-tier3-executor-artifact` compiles and byte-compares; it is
@@ -415,54 +415,74 @@ capability decline.
 
 ## Versioning policy
 
-- **Additive getter** (a new `@external @view`) — additive ABI surface. Existing
-  getters keep their selectors and values; nothing else moves.
-- **New capability** — a new unused ID, added to the contract's `CAPABILITY_*`
-  constants (which changes `CAPABILITIES_HASH`, hence a redeploy and a release
-  bump) and to the manifest's `capabilities.ids` with its name and description.
-  Never reuse or renumber an ID. The stable ID → name catalog
-  (`degenbot_executor::release::capability`) is what lets diagnostics name a
-  capability a release does *not* declare.
-- **The capability commitment itself** — one value with one documented
-  derivation. Changing the scheme string is a new derivation and therefore a new
-  format version; there is no second getter and no accepted alternative shape.
-- **The metadata ABI** — replacing or adding a getter is a release bump, because
-  the declared identity is part of the deployment. A metadata-only bump leaves
-  `call_encoding_version()` alone: it claims a wire change that did not
-  happen.
-- **Any change to the command stream, the packed config layout, or the execute
-  ABI/receipt** — one release bump: a new `RELEASE_ID`, a new
-  `CALL_ENCODING_VERSION`, a new manifest file, and (when the wire format is
-  incompatible) a new `PROTOCOL_MAJOR`. The three parts are versioned together
-  on purpose: a stream that grew a new command means nothing to an encoder that
-  cannot pack the matching config.
-- **Multi-major support** grows `SUPPORTED_PROTOCOL_MAJORS` and adds one manifest
-  *plus one `ReleaseEncoding`* per major, registered in
-  `ReleaseRegistry::production()`. The bounded set, the per-release manifests,
-  and the per-release encodings are the only extension points; no generic crate
-  changes (ADR-098 D4/D5).
+[ADR-101](../adr/ADR-101-immutable-typed-executor-release-packages.md) makes
+`cmd_executor/2` the first tracked package and keeps the four version axes
+independent:
 
-## Adding a future major (runbook)
+| Change | Release tag | Call encoding | Capability set | Protocol |
+|---|---|---|---|---|
+| Documentation or tests only | unchanged | unchanged | unchanged | unchanged |
+| Off-chain-only compatible planning change | unchanged | unchanged | unchanged | minor may increase |
+| Encoder conformance fix with runtime proof | unchanged | unchanged | unchanged | unchanged |
+| Compiler or runtime-bytecode change | **next tag** | unchanged if the wire is unchanged | unchanged | unchanged |
+| Metadata getter change | **next tag** | unchanged | changes only if the set changes | unchanged |
+| Command-stream, config, or receipt change | **next tag** | **next version** | update affected capabilities | usually unchanged |
+| Capability removal or semantic change | **next tag** | bump when the wire changes | **new ID; retire the old ID; new hash** | usually unchanged |
+| Neutral engine cannot dispatch old and new under one model | **next tag** | usually bumped | as required | **next major** |
 
-1. **Contract.** Change the Vyper source under a new `PROTOCOL_MAJOR` and bump
-   `call_encoding_version()` in the same edit: they are one release.
-2. **Capability IDs.** Add new IDs; never reuse or renumber an existing one.
-   Add the ID to the stable catalog (`release::capability`, including its
-   `name()` arm) — the catalog is release-independent.
-3. **Manifest.** Add `rust/crates/foundation/degenbot-executor/releases/cmd_executor.vN.json`
-   describing the whole call encoding. Insert it into the registry's production
-   set; extend `SUPPORTED_PROTOCOL_MAJORS` in the same change.
-4. **Encoding.** Implement `ReleaseEncoding` for the new release (stream, config,
-   `execute` ABI, receipt) and pair it in `Release::new`. The registry refuses a
-   mismatched pairing, so the two halves cannot drift.
-5. **Artifacts.** Re-bake the tier3 artifacts so `artifact.*` paths are real, and
-   pin them through the existing verification gate.
-6. **Goldens.** Add the new release's per-release golden (exact `to`/`data`/
-   `value`) and its receipt-shape test beside
-   `degenbot-arbitrage/tests/release_binding.rs`. The existing release's goldens
-   stay untouched: one release's bytes never move because another landed.
-7. **Do not** add version, capability, or release fields to a generic crate. The
-   generic seam stays `to` + `data` + `value` plus Assess (ADR-098 D2/D4).
+A conformance fix aligns the off-chain implementation with behavior the deployed
+contract and its declarations already defined. It is not a way to avoid a release
+bump for a semantic change. Capability IDs stay ascending, unique, non-zero, and
+never reused. The stable ID → name catalog
+(`degenbot_executor::release::capability`) names IDs in diagnostics, while the
+manifest and `capabilities_hash()` commit to the complete set.
+
+## Immutable release packages
+
+`rust/crates/foundation/degenbot-executor/releases/v2/` owns the accepted
+contract and its interfaces, manifest, compiler and deployment artifacts,
+encoding, and normative calldata golden. Accepted package contents are
+append-only. `scripts/executor_release_ratchet.py` regenerates the deterministic
+index and checks it against both current files and the base index, so
+regenerating cannot launder a frozen-release edit. Run:
+
+```bash
+just check-executor-release-ratchet
+just verify-tier3-executor-artifact
+```
+
+Production uses release-bound adapters with capability planning. The explicit
+`ProductionRelease` enumeration is the bounded registry; there is no latest-tag
+inference or unbound current-encoding shortcut.
+
+## Adding a future release (runbook)
+
+1. **Freeze the previous package.** Do not edit its contract, manifest,
+   artifacts, or normative goldens. Run the ratchet before starting the new
+   package.
+2. **Create the next sequential package.** Add `releases/vN/contract.vy`, its
+   interfaces, `manifest.json`, `encoding.rs`, and normative goldens. Apply the
+   version matrix above to the release tag, call encoding, capability set, and
+   protocol fields.
+3. **Register the type.** Add the sealed release definition and the exhaustive
+   `ProductionRelease` variant/build arm. Incomplete registration is a compile
+   error. Extend `SUPPORTED_PROTOCOL_MAJORS` only when the neutral dispatch
+   model actually adds a major.
+4. **Build the artifacts.** Re-bake the package's compiler and deployment
+   artifacts so every `artifact.*` path is real. Include the V3 harness and all
+   interface inputs. Run `just verify-tier3-executor-artifact` and the deployment
+   rebake; both must be byte-identical.
+5. **Index and certify.** Add the package descriptor, regenerate
+   `releases/index.json`, and run the ratchet. Add exact `to`/`data`/`value` and
+   receipt-shape tests beside `degenbot-arbitrage/tests/release_binding.rs`, plus
+   representative execution against the new package's own artifact. Existing
+   release goldens do not move.
+6. **Select deliberately.** Change the composition-root production selection
+   only when the new release is the intended operational target. Unknown or
+   incomplete releases fail closed; no fallback selects the newest one.
+7. **Keep the generic seam neutral.** Do not add version, capability, or release
+   fields to a generic crate. It stays `to` + `data` + `value` plus Assess
+   (ADR-098 D2/D4).
 
 ## Migrating a deployment to `cmd_executor/2`
 
@@ -480,9 +500,9 @@ release bump ([execution adapters](../execution-adapters.md)).
 
 **1. Pin the build.** Record the commit, then confirm the artifacts are the ones
 that commit ships: `just verify-tier3-executor-artifact` recompiles the tracked
-`contracts/vyper/cmd_executor.vy` with the pinned Vyper 0.5.0b2 into a throwaway
+`rust/crates/foundation/degenbot-executor/releases/v2/contract.vy` with the pinned Vyper 0.5.0b2 into a throwaway
 directory and byte-compares the result against the committed artifacts, while
-`tier3-oracle/artifacts/executor/manifest.json` pins each artifact's sha256 to
+`rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json` pins each artifact's sha256 to
 its tracked source. Nothing in this step reads the chain.
 
 **2. Redeploy the immutable code.** The constructor is unchanged —
@@ -491,7 +511,7 @@ deploy arguments appended to creation code that is identical for every
 deployment of the release:
 
 ```bash
-DEPLOY_INPUT="$(cat tier3-oracle/artifacts/executor/cmd_executor.creation.hex)$(cast abi-encode 'f(address,address,address,address)' "$WETH" "$POOL_MANAGER" "$USDC" "$USDT")"
+DEPLOY_INPUT="$(cat rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.creation.hex)$(cast abi-encode 'f(address,address,address,address)' "$WETH" "$POOL_MANAGER" "$USDC" "$USDT")"
 ```
 
 There is no proxy, no upgrade, and no migration call: the new artifact is a new
@@ -505,8 +525,8 @@ post-deploy state.
 **4. Reconcile the runtime bytes.** `eth_getCode(address, block)` must equal the
 compiler artifact runtime — code plus CBOR metadata, 18,524 B, no immutables —
 followed by the 224-byte immutable tail, one 32-byte word each, in the layout
-`tier3-oracle/artifacts/executor/cmd_executor.immutables.json` declares. (The
-deployment artifact `contracts/cmd_executor_runtime_bytecode.txt` is those
+`rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.immutables.json` declares. (The
+deployment artifact `rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt` is those
 18,524 bytes with one concrete deployment's tail already appended, 18,748 B
 total; only the tail differs between two deployments of the release.)
 
@@ -636,6 +656,7 @@ does. It is mandatory for every new deployment.
 ```bash
 just test-executor-offline                     # contract tests (Ape, offline)
 just verify-tier3-executor-artifact            # compile-vs-use, needs vyper + solc
+just check-executor-release-ratchet           # append-only package + mutation probes
 just test-rust-nextest -p degenbot-executor    # strict decoders, manifest validation, the bounded registry
 just test-rust-nextest -p degenbot-arbitrage   # validating binding + per-release goldens + capability planning
 just lint-rust-check lint-comment-hygiene fmt-check lint-markdown-check
@@ -650,8 +671,10 @@ metadata cutover cannot move an encoder byte, and pins every fail-closed case
 above — including a superset and a subset capability commitment.
 `rust/crates/foundation/degenbot-executor/tests/release_registry.rs` covers the
 registry bound, the capability catalog, the getter selectors, and the getter
-classification; the `degenbot-executor` unit suite covers manifest validation and
-commitment derivation (including a 48-ID list, above the retired bound).
+classification, and a test-only alternate command grammar with its own opcode,
+operand width, and stream bound; the `degenbot-executor` unit suite covers
+manifest validation and commitment derivation (including a 48-ID list, above
+the retired bound).
 `tests/executor/test_release_metadata.py` is the three-way drift gate: the
 deployed getter, the source's `CAPABILITY_*` constants plus `CAPABILITIES_HASH`,
 and the manifest's `ids` plus `commitment` must all agree.

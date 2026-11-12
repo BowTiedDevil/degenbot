@@ -1,0 +1,11 @@
+# Velodrome/Aerodrome callee — matches IPoolCallee.sol
+# (velodrome-finance/contracts, contracts/interfaces/IPoolCallee.sol).
+# `bytes` in Solidity is unbounded, so the Vyper mirror uses Bytes[INF].
+
+
+def hook(
+    sender: address,
+    amount0Out: uint256,
+    amount1Out: uint256,
+    data: Bytes[INF]
+): ...

@@ -431,8 +431,9 @@ impl BoundCmdExecutor {
             .artifact_root
             .clone()
             .unwrap_or_else(default_artifact_root);
-        let contracts = root.join("contracts");
-        let runtime = load_executor_runtime(None, Some(contracts.as_path()))?;
+        let deployment =
+            root.join("rust/crates/foundation/degenbot-executor/releases/v2/deployment");
+        let runtime = load_executor_runtime(None, Some(deployment.as_path()))?;
         Ok(runtime.bytecode)
     }
 

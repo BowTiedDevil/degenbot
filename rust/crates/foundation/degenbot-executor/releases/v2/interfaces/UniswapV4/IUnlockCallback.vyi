@@ -1,0 +1,9 @@
+# PoolManager unlock callback — matches Uniswap V4's IUnlockCallback.sol:
+# unlockCallback(bytes data) returns (bytes). Solidity `bytes` is unbounded,
+# so the Vyper mirror uses Bytes[INF]; implementers widen from their own
+# bounded stream types at the call boundary.
+
+
+@nonpayable
+def unlockCallback(data: Bytes[INF]) -> Bytes[INF]:
+    ...

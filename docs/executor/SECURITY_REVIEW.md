@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-29  
 **Reviewer**: AI-assisted audit  
-**Contract**: `contracts/vyper/cmd_executor.vy` (18,956 bytes runtime, Venom codegen, `optimize gas`)
+**Contract**: `rust/crates/foundation/degenbot-executor/releases/v2/contract.vy` (18,956 bytes runtime, Venom codegen, `optimize gas`)
 **Scope**: Security vulnerabilities, logical correctness, performance regressions, edge-case handling  
 
 ---

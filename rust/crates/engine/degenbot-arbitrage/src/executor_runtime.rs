@@ -98,7 +98,7 @@ impl std::error::Error for ExecutorRuntimeError {
     }
 }
 
-/// The source-layout candidate: `<repo-root>/contracts/<file>`.
+/// The source-layout candidate: `<repo-root>/rust/crates/foundation/degenbot-executor/releases/v2/deployment/<file>`.
 ///
 /// `CARGO_MANIFEST_DIR` is this crate's compile-time location, so the hop to
 /// the repository root is fixed rather than a search:
@@ -107,7 +107,10 @@ impl std::error::Error for ExecutorRuntimeError {
 /// the package ships no contracts directory and the operator supplies the
 /// artifact through one of the two keys.
 fn source_layout_candidate() -> Option<PathBuf> {
-    repository_root().map(|root| root.join("contracts").join(EXECUTOR_RUNTIME_FILE))
+    repository_root().map(|root| {
+        root.join("rust/crates/foundation/degenbot-executor/releases/v2/deployment")
+            .join(EXECUTOR_RUNTIME_FILE)
+    })
 }
 
 /// The checkout root this crate was compiled in, when there is one.
@@ -320,8 +323,8 @@ mod tests {
                 .parent()
                 .and_then(Path::file_name)
                 .and_then(|name| name.to_str()),
-            Some("contracts"),
-            "the fixed hop lands in the checkout's contracts/ directory"
+            Some("deployment"),
+            "the fixed hop lands in the accepted release's deployment/ directory"
         );
     }
 

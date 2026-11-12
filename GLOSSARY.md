@@ -1160,6 +1160,25 @@ per-adapter version policy; canonical dispatch drives it through an injected ada
 _Avoid_: calling it a strategy, an executor, or a simulation loop — it carries exactly one
 opportunity's one transaction.
 
+**Implementation release**:
+One immutable executor implementation and its complete declared behavior, distinct from
+any deployment of that implementation and from other implementations driven by the same
+engine. A release tag counts implementation definitions, not deployment addresses.
+_Avoid_: treating an older contract with a different execution ABI as a deployment of the
+current release, or inferring the release from whichever definition is newest.
+
+**Call-encoding version**:
+The version of an implementation release's complete execution wire format: command stream,
+packed configuration, and execute ABI with receipt. It is independent of the release tag,
+protocol version, and metadata-only declarations.
+_Avoid_: using it as a deployment counter or bumping it for a metadata-only change.
+
+**Conformance fix**:
+An off-chain correction that aligns an implementation with behavior the deployed contract
+and its declarations already defined. It changes no contract, manifest, capability meaning,
+or accepted interface and requires focused regression plus execution-backed proof.
+_Avoid_: reclassifying a semantic change as a conformance fix to avoid a release bump.
+
 **Deployment identity**:
 The executor-neutral identity of one configured contract instance, distinct from the
 implementation release running there and from other deployments of that same release.

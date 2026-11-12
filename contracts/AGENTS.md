@@ -140,7 +140,7 @@ Before committing to a code change, you can inspect Venom's intermediate represe
 # Generate the Venom IR (after Venom passes, before EVM code generation)
 # This reveals: inlining decisions, control-flow structure, alloca placement,
 # redundant operation elimination, and why certain patterns compile well or badly.
-uv run --no-sync vyper -f ir_runtime contracts/vyper/cmd_executor.vy > /tmp/venom_ir.vy
+uv run --no-sync vyper -f ir_runtime rust/crates/foundation/degenbot-executor/releases/v2/contract.vy > /tmp/venom_ir.vy
 ```
 
 **How to use this in practice:**

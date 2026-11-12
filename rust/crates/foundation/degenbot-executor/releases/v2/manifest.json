@@ -1,13 +1,13 @@
 {
   "artifact": {
-    "abi": "tier3-oracle/artifacts/executor/cmd_executor.abi.json",
-    "creation_code": "tier3-oracle/artifacts/executor/cmd_executor.creation.hex",
+    "abi": "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.abi.json",
+    "creation_code": "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.creation.hex",
     "deployment_form": "creation_code ++ abi_encode(weth, pool_manager, usdc, usdt); the owner is the deployer and the two V4 delta slots are computed in __init__",
-    "error_map": "tier3-oracle/artifacts/executor/cmd_executor.error_map.json",
-    "immutables": "tier3-oracle/artifacts/executor/cmd_executor.immutables.json",
-    "method_identifiers": "tier3-oracle/artifacts/executor/cmd_executor.method_identifiers.json",
-    "provenance": "tier3-oracle/artifacts/executor/manifest.json",
-    "runtime_code": "tier3-oracle/artifacts/executor/cmd_executor.runtime.hex"
+    "error_map": "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.error_map.json",
+    "immutables": "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.immutables.json",
+    "method_identifiers": "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.method_identifiers.json",
+    "provenance": "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json",
+    "runtime_code": "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.runtime.hex"
   },
   "call_encoding": {
     "address_resolution": {

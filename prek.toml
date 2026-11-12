@@ -254,6 +254,10 @@ hooks = [
   # live-invariant gate (ADR-087 D2): watches the present test/gate surface for the tripwire signatures ADR-087 D1 bans; not tripwire precedent.
   { id = "tripwire-ratchet", name = "Retirement-tripwire ratchet", language = "system", entry = "just lint-tripwire-ratchet", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
+  # ADR-101 D5 — accepted cmd_executor release packages are append-only.
+  # live-invariant gate (ADR-087 D2): watches accepted cmd_executor release packages and their sequential release index; not tripwire precedent.
+  { id = "executor-release-ratchet", name = "Executor release ratchet", language = "system", entry = "just check-executor-release-ratchet", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+
   # Rust track (mirrors ci.yml: rust-build, rust-test).
   { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "rust-test",  name = "Rust tests", language = "system", entry = "just test-rust",             stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },

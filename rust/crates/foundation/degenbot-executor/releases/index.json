@@ -1,0 +1,39 @@
+{
+  "packages": [
+    {
+      "files": {
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/ExecutorV3Harness.sol/ExecutorV3Harness.json": "b99b577d01a01c809f89cba3ac5c84641144af1991b96262a6ef58228be6358a",
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.abi.json": "d064bdf218a104e8773f8610ffd7d13dcc084b37943dffd9696155decb75baef",
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.creation.hex": "026d7df0c92645800abe09a0e861aa28aade8847855287fc88765613bc4a69e4",
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.error_map.json": "acd8a6e150141dafcb7e503fdba9201e3dd95e04d003a345be1a184ef8681f0e",
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.immutables.json": "36ae9287ae08fbc6d3a410997be17bf2d1401973348707002db883d9abbbf24e",
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.method_identifiers.json": "2f5c59f5188b223db8a1380ac14c79701e9438978b762f9db38dd25571e34beb",
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.runtime.hex": "fd6980f20bcce579539f5d440ee0d6e8793dc245f41bc2ea1fa415c76b2e5ec6",
+        "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json": "4f1f2151fa4fea497c8d89d8bbc4b9eb7c7c60a269d689e025f061f22efc826f",
+        "rust/crates/foundation/degenbot-executor/releases/v2/contract.vy": "baabeb3b788cfb0cbbac92081e3ff6559f839448f0f1459d94a52709fab77666",
+        "rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_abi.json": "d064bdf218a104e8773f8610ffd7d13dcc084b37943dffd9696155decb75baef",
+        "rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_bytecode.txt": "1e3d8e426b823db5ca8658373279bff646ecc72d9384095ba1fd9dfa8d8febb5",
+        "rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt": "31fb27babbf8c02c000d1cc69bde179bf8b16ad837ed3bc13e20bd218a4e605b",
+        "rust/crates/foundation/degenbot-executor/releases/v2/golden_calldata.hex": "1d561ccc885610bad3f2408a46cd13155aa310c9ac4ab7772597d24e0191e75a",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/IWETH.vyi": "2c618e566779f23ddc61d5d9cb3c094a1132accc426bc4d48d01e3f62c8198f9",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV2/IHookCallee.vyi": "f0bf958e20bb004e21fb3047a6f138eceb196d08eb97bb2be614530d55d6af88",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV2/IPancakeCallee.vyi": "da75f8b26e723a462e206c4371de670267bfcdc81758fff2df9150199cfad7e3",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV2/IUniswapV2Callee.vyi": "7809b9ceb18836c7172c9c6fe8a9bdc06184fb231c8ee56bd0b756b2f9d72059",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV2/IUniswapV2Pair.vyi": "bac9cfb85d16bbfe37f18a910f808e838ac0e6054dfe29d33e2508da38de94e4",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV3/IPancakeV3SwapCallback.vyi": "4f08880e1e46f76ce020c0713e3f9cce788118d7dbe1cc0001c98eeb62e29868",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV3/IUniswapV3Pool.vyi": "bb8f326364efbaf1a70bf74147af184d725885580e749e634a16ec760a9f414d",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV3/IUniswapV3SwapCallback.vyi": "4361e1a205b4ac4ba6693e53fe605254b118328890dd462974db03e2a9670f37",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IERC6909Claims.vyi": "9628b44d97cc53876d9de01241a7a3e1be8e522270e99293e42b1e92e44bb690",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IPoolManager.vyi": "7dd84442a82a5d6b9f874075e04d0a9ea6274f557813a44a2af32d1ed64d3924",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IPoolManagerExttload.vyi": "b05dd17a89c90286a31f1a1de6241d951f4d23f1fba0d173c26a1f90b89143f0",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IPoolManagerExttloadBatch.vyi": "19ee4c1e9d9285f8ad2a0b2ef239ef0f0ad6282e20d24ff80d17ed01a6902a1d",
+        "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IUnlockCallback.vyi": "adefb2f56ee0e846c2f3e1d37ab45d64c7cbd4120b9d4ce0eab1374d318c4272",
+        "rust/crates/foundation/degenbot-executor/releases/v2/manifest.json": "915a8ee8589ed0d486de059148a6e593caaff372beaa3ac9687984deb3a7d329",
+        "rust/crates/foundation/degenbot-executor/releases/v2/package.json": "6cdb9c47b0398b97142d8e1ff6a0b375edce5330592ae2daef33c1cd496e058d"
+      },
+      "ordinal": 2,
+      "release_id": "cmd_executor/2"
+    }
+  ],
+  "schema_version": 1
+}

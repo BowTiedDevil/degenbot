@@ -31,7 +31,7 @@
 //! and the two precomputed V4 delta slots) differ per deployment, so two
 //! faithful deployments of one release have different runtime code. Artifact
 //! integrity and provenance stay with
-//! `tier3-oracle/artifacts/executor/manifest.json`, which the release manifest
+//! `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json`, which the release manifest
 //! *references* (`artifact.provenance`) rather than absorbs.
 //!
 //! # The capability set is one commitment on chain, one list off chain
@@ -66,7 +66,7 @@ use serde::Deserialize;
 pub const RELEASE_ID_TAG: &str = "cmd_executor/2";
 
 /// The committed release manifest for [`RELEASE_ID_TAG`].
-pub const RELEASE_MANIFEST_V2: &str = include_str!("../releases/cmd_executor.v2.json");
+pub const RELEASE_MANIFEST_V2: &str = include_str!("../releases/v2/manifest.json");
 
 /// The preimage prefix of a [`CapabilityCommitment`], verbatim.
 ///

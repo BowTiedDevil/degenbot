@@ -1,0 +1,10 @@
+# Separate interface for exttload (batch) — Vyper does not support
+# function overloading, so the single-slot and batch-slot signatures need
+# distinct interface names even though both target the same PoolManager
+# address. Matches v4-core IExttload.sol: exttload(bytes32[] slots) returns
+# (bytes32[] values) — Solidity arrays are unbounded, hence DynArray[_, INF].
+
+
+@view
+def exttload(slots: DynArray[bytes32, INF]) -> DynArray[bytes32, INF]:
+    ...

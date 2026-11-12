@@ -175,7 +175,7 @@ impl Harness {
             Bytes::from(load_stub_creation("PoolManager")),
             8_000_000,
         )?;
-        let mut init = load_hex("tier3-oracle/artifacts/executor/cmd_executor.creation.hex");
+        let mut init = load_hex("rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.creation.hex");
         init.extend_from_slice(&executor_deploy_args(
             weth,
             pm,

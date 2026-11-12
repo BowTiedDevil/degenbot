@@ -2,7 +2,7 @@
 # Build the committed Vyper executor artifact for the tier-3b oracle
 # (deterministic evm2 replay of the V3->V4->V3 sim-Halt against real bytecode).
 #
-# Compiles `contracts/vyper/cmd_executor.vy` with the PINNED
+# Compiles `rust/crates/foundation/degenbot-executor/releases/v2/contract.vy` with the PINNED
 # vyper 0.5.0b2 (the root uv lock version), emits creation + runtime bytecode + ABI + method identifiers +
 # error map + immutable-deploy layout, and writes the artifact + manifest under
 # `artifacts/executor/`. The compiled output is byte-for-byte deterministic
@@ -27,9 +27,12 @@ cd "${TD}"
 REPO_ROOT="$(cd "${TD}/.." && pwd)"
 EXECUTOR_DIR="${EXECUTOR_DIR:-${REPO_ROOT}}"
 VYPROOT="${VYPROOT:-${EXECUTOR_DIR}}"
-VYPER_SRC="${EXECUTOR_DIR}/contracts/vyper/cmd_executor.vy"
-OUT_ROOT="${OUT_DIR:-${TD}/artifacts}"
-OUT="${OUT_ROOT}/executor"
+VYPER_SRC="${REPO_ROOT}/rust/crates/foundation/degenbot-executor/releases/v2/contract.vy"
+if [[ -n "${OUT_DIR:-}" ]]; then
+    OUT="${OUT_DIR}/executor"
+else
+    OUT="${REPO_ROOT}/rust/crates/foundation/degenbot-executor/releases/v2/artifacts"
+fi
 
 # The V3 topology harness (solc 0.7.6) stays oracle-side; the Vyper executor
 # source + interfaces live in the root contracts tree.

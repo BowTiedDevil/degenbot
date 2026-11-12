@@ -1,0 +1,10 @@
+# UniswapV2Callee — matches UniswapV2Periphery's IUniswapV2Callee.sol.
+# `bytes` in Solidity is unbounded, so the Vyper mirror uses Bytes[INF].
+
+
+def uniswapV2Call(
+    sender: address,
+    amount0Out: uint256,
+    amount1Out: uint256,
+    data: Bytes[INF]
+): ...

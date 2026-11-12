@@ -74,6 +74,7 @@ pub mod grammar_plan;
 pub mod grammar_shape;
 pub mod receipt;
 pub mod release;
+mod release_package;
 pub mod release_registry;
 
 pub mod grammar_walker;

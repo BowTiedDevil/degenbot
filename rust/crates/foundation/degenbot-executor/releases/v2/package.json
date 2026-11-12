@@ -1,0 +1,33 @@
+{
+  "release_id": "cmd_executor/2",
+  "ordinal": 2,
+  "files": [
+    "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.abi.json",
+    "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.creation.hex",
+    "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.error_map.json",
+    "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.immutables.json",
+    "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.method_identifiers.json",
+    "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.runtime.hex",
+    "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/ExecutorV3Harness.sol/ExecutorV3Harness.json",
+    "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json",
+    "rust/crates/foundation/degenbot-executor/releases/v2/contract.vy",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/IWETH.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV2/IHookCallee.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV2/IPancakeCallee.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV2/IUniswapV2Callee.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV2/IUniswapV2Pair.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV3/IPancakeV3SwapCallback.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV3/IUniswapV3Pool.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV3/IUniswapV3SwapCallback.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IERC6909Claims.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IPoolManager.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IPoolManagerExttload.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IPoolManagerExttloadBatch.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/interfaces/UniswapV4/IUnlockCallback.vyi",
+    "rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_abi.json",
+    "rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_bytecode.txt",
+    "rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt",
+    "rust/crates/foundation/degenbot-executor/releases/v2/golden_calldata.hex",
+    "rust/crates/foundation/degenbot-executor/releases/v2/manifest.json"
+  ]
+}

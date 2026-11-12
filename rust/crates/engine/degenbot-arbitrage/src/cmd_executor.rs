@@ -41,7 +41,8 @@ use degenbot_execution::{
 };
 use degenbot_executor::composers::{EncodeContext, EncodeOptions, EncodeRequest};
 use degenbot_executor::compute_simulation_warmup_slots;
-use degenbot_executor::release_registry::{CmdStreamV1Encoding, Release, ReleaseEncoding};
+use degenbot_executor::release::RELEASE_ID_TAG;
+use degenbot_executor::release_registry::{Release, ReleaseEncoding, ReleaseRegistry};
 use degenbot_simulation::{DeclaredCode, SettlementWarmup};
 
 use crate::deployment::SimulationDeployment;
@@ -109,17 +110,33 @@ impl CmdExecutorBinding {
     }
 
     /// The built-in adapter over this build's explicit current release
-    /// (`cmd_executor/2`), with no release-capability planning.
+    /// (`cmd_executor/2`), including its release-capability planning.
     ///
-    /// This is the offline/current consumer's mapping: the session already
-    /// names the release by construction, so nothing is discovered and no
-    /// release is chosen. A deployment whose release must be *validated* from
-    /// declared metadata binds through
-    /// [`crate::release_binding::BoundCmdExecutor`], whose adapter carries the
-    /// selected [`Release`] and declines a path the release cannot run.
+    /// This is the offline/current consumer's mapping: the session names the
+    /// release by construction, so no chain metadata discovery is needed. The
+    /// validated production registry still supplies the complete release and
+    /// its capability policy. A deployment whose release must be validated
+    /// from declared metadata binds through
+    /// [`crate::release_binding::BoundCmdExecutor`].
+    ///
+    /// # Panics
+    ///
+    /// Panics when the embedded production registry is invalid or omits the
+    /// explicit current release. Either condition is a build-time package
+    /// definition defect, not a deployment or candidate outcome.
+    #[expect(
+        clippy::expect_used,
+        reason = "embedded release-package completeness is a build-time invariant"
+    )]
     #[must_use]
     pub fn adapter(&self) -> CmdExecutorSimAdapter {
-        CmdExecutorSimAdapter::new(self, Arc::new(CmdStreamV1Encoding), None)
+        let registry = ReleaseRegistry::production()
+            .expect("the built-in production release registry must validate");
+        let release = registry
+            .get(RELEASE_ID_TAG)
+            .expect("the explicit current release must be registered");
+        let encoding = release.encoding();
+        CmdExecutorSimAdapter::new(self, encoding, Some(release))
     }
 
     /// The deployment of the ACTUAL deployed contract: production sims the code

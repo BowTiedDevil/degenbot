@@ -121,7 +121,7 @@ path = "examples/sim_mode_bench.rs"
 required-features = ["evm2-jit"]
 
 # The production executor's AOT prep lane: compiles
-# `contracts/cmd_executor_runtime_bytecode.txt` into the durable artifact store
+# `rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt` into the durable artifact store
 # the process-shared JIT holder opens, and proves the artifact loads back as
 # `ProgramKind::Aot`.
 [[example]]
