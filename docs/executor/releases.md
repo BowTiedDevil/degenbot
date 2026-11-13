@@ -391,6 +391,29 @@ suppresses another target's execution. A hard `ComposeError::Encode` failure is
 that candidate's own unrecoverable error — it is never reclassified as a
 capability decline.
 
+## A zero-capital refusal is its own routine arm
+
+An encoder that runs the stream's ledger under a capital policy
+(`EncodeOptions::initial_capital = InitialCapital::Zero`) can find a *built,
+structurally sound* Plan unfundable: the entry capital the policy grants cannot
+pay the first uncovered debit. That answer is not a capability decline and not an
+encoding failure:
+
+```rust
+Err(ComposeError::InsolventZeroCapital(ZeroCapitalDeficit {
+    asset, required, available,
+}))
+```
+
+It is routine in exactly the way `Unsupported` is — the target-selection walk
+advances past it (no deployment can lend the path the withheld capital) and, in
+an all-target fan-out, the lane records it as its own `insolvent-zero-capital`
+bucket — but it carries the deficit as data, so the candidate's record, the probe
+report, and the operator wire name the asset, the amount required, and the
+path-generated credit available instead of a message someone has to parse. A
+stream the policy finds solvent encodes the production bytes; release identity and
+the `cmd_executor/2` call encoding are untouched.
+
 ## Artifacts: deployed code, and an injected build
 
 - **Production simulates deployed code.** `BoundCmdExecutor::deployment(id)`

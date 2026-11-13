@@ -2582,7 +2582,7 @@ mod rule_walker_tests {
                 PM,
                 WETH,
                 EncodeOptions {
-                    zero_balance: true,
+                    initial_capital: crate::grammar_ledger::InitialCapital::Zero,
                     ..Default::default()
                 },
             )

@@ -221,20 +221,27 @@ pub struct EncodeOptions {
     /// If `true`, use `V4_BATCH` instead of individual `V4_SWAP_COMPACT`/`_DYNAMIC`
     /// for pure-V4 paths (single PM extcall).
     pub use_v4_batch: bool,
-    /// Explicit zero-capital execution probe: the executor holds **no** token
-    /// balance when the stream starts, so every input must come from the path's
-    /// own credit graph ([`InitialCapital::Zero`]).
+    /// The **capital-validation policy** the built Plan's ledger is evaluated
+    /// under ([`InitialCapital`](crate::grammar_ledger::InitialCapital)).
     ///
-    /// This bool is the caller-facing spelling of the ledger's
-    /// [`InitialCapital`] policy ([`Self::initial_capital`]); the policy is
-    /// evaluated ONCE inside the Plan's
-    /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] pass, which
-    /// returns a typed
-    /// [`InsolventZeroCapital`][crate::grammar_ledger::InsolventZeroCapital]
-    /// deficit instead of a family-specific refusal. It never changes the
-    /// bytes: a stream the policy finds solvent encodes exactly what production
-    /// encodes. Production encoding is unchanged.
-    pub zero_balance: bool,
+    /// A validation stance, not a stream axis: it never reaches the bytes.
+    /// [`InitialCapital::Held`](crate::grammar_ledger::InitialCapital::Held) (the
+    /// default) is the production model — a `SelfFund` seed names capital the
+    /// executor genuinely holds — while
+    /// [`InitialCapital::Zero`](crate::grammar_ledger::InitialCapital::Zero)
+    /// withholds that seed, so the ONE evaluation inside the Plan's ledger pass
+    /// answers what the path's own credit graph funds and returns a typed
+    /// [`InsolventZeroCapital`](crate::grammar_ledger::InsolventZeroCapital)
+    /// deficit instead of a family-specific refusal.
+    ///
+    /// Deliberately a separate field from the `funding` axis: `funding` says
+    /// where a family's stream declares its entry capital
+    /// ([`FundingSource::SelfFund`](crate::grammar_ledger::FundingSource::SelfFund)
+    /// vs `InPathFlash`) and IS a stream axis, while this says what the validator
+    /// grants. The session's composition seam projects ONE mode onto both
+    /// (`ProbeCapital::initial_capital`), and a stream the policy finds solvent
+    /// encodes exactly the production bytes.
+    pub initial_capital: crate::grammar_ledger::InitialCapital,
     /// Declared origin of the stream's entry (seed) capital (ADR-029 D1).
     /// Branched IN THE STREAM only by the families whose dispatch row declares
     /// `funding` ([`crate::grammar_shape::family_axis_support`]); every other
@@ -247,20 +254,6 @@ pub struct EncodeOptions {
     /// Whether/how a builder bribe is paid (ADR-029 D1/Q3). Not yet honored by
     /// the encoder; wiring lands in a subsequent increment.
     pub bribe: crate::grammar_ledger::Bribe,
-}
-
-impl EncodeOptions {
-    /// The stream's [`InitialCapital`] policy — the internal mapping the
-    /// zero-capital probe stance is evaluated under.
-    ///
-    /// [`InitialCapital::Held`] (production) grants a `SelfFund` seed; the
-    /// zero-capital probe ([`Self::zero_balance`]) becomes
-    /// [`InitialCapital::Zero`], which withholds the seed so the ledger's one
-    /// evaluation can answer what the path's own credit funds.
-    #[must_use]
-    pub const fn initial_capital(&self) -> crate::grammar_ledger::InitialCapital {
-        crate::grammar_ledger::InitialCapital::from_zero_balance(self.zero_balance)
-    }
 }
 
 /// Resolve the per-path output axes (ADR-029 D1) from [`EncodeOptions`],

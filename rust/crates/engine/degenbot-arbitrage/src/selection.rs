@@ -13,8 +13,12 @@
 //! deployment that declines for want of capability
 //! ([`degenbot_execution::ComposeError::Unsupported`]) is the routine case: the
 //! walk advances to the next target without failing or suppressing anything.
-//! Every target declining is that path having no selected deployment, not an
-//! error: each examined candidate keeps its own refusal.
+//! A typed capital-policy refusal
+//! ([`degenbot_execution::ComposeError::InsolventZeroCapital`]) is the same
+//! routine case — no target can lend a path the entry capital the policy
+//! withholds — and the walk carries the deficit's data into the candidate's own
+//! record. Every target declining is that path having no selected deployment, not
+//! an error: each examined candidate keeps its own refusal.
 //!
 //! [`TargetSelection::AllTargets`] is the explicit fan-out: every registered
 //! deployment is offered every path and each runs its own independent
@@ -30,7 +34,9 @@
 //!
 //! # What is NOT a capability decline
 //!
-//! Only [`degenbot_execution::ComposeError::Unsupported`] advances the walk. A
+//! Only a routine refusal — [`degenbot_execution::ComposeError::Unsupported`] or
+//! the typed [`degenbot_execution::ComposeError::InsolventZeroCapital`] — advances
+//! the walk. A
 //! [`degenbot_execution::ComposeError::Encode`] failure is a primitive encoding
 //! error: it is unrecoverable for that candidate, so it ends the walk instead of
 //! being reclassified as "this target cannot" — another target would not make
@@ -104,6 +110,13 @@ pub enum PreparedEncoding {
     /// ([`degenbot_execution::ComposeError::Unsupported`]) — a routine refusal
     /// the walk advanced past.
     Declined(String),
+    /// The deployment refused the path as **insolvent under the caller's capital
+    /// policy** (`ComposeError::InsolventZeroCapital`) — likewise a routine
+    /// refusal the walk advances past, but it keeps the deficit's typed data
+    /// (`asset` / `required` / `available`) so the candidate's record, the probe
+    /// report, and the operator wire can name the shortfall instead of a
+    /// sentence.
+    InsolventZeroCapital(degenbot_execution::ZeroCapitalDeficit),
     /// A primitive encoding step failed ([`degenbot_execution::ComposeError::Encode`]),
     /// or the produced transaction violated the interface its adapter declared
     /// ([`degenbot_execution::ComposeError::Validation`]): this candidate's own
@@ -118,6 +131,10 @@ impl PreparedEncoding {
         match result {
             Ok(transaction) => Self::Accepted(transaction),
             Err(ComposeError::Unsupported(detail)) => Self::Declined(detail),
+            // A typed capital-policy refusal is the same routine decline for the
+            // WALK (another target cannot lend the path capital either), but its
+            // deficit rides along as data rather than as a rendered sentence.
+            Err(ComposeError::InsolventZeroCapital(deficit)) => Self::InsolventZeroCapital(deficit),
             Err(ComposeError::Encode(detail)) => Self::Failed(detail),
             // A declared-interface violation is that same verdict: the adapter's
             // own calldata contradicts its declaration, so the walk stops here
@@ -131,7 +148,7 @@ impl PreparedEncoding {
     /// only a capability decline leaves the path looking for another target.
     #[must_use]
     const fn stops_walk(&self) -> bool {
-        !matches!(self, Self::Declined(_))
+        !matches!(self, Self::Declined(_) | Self::InsolventZeroCapital(_))
     }
 }
 

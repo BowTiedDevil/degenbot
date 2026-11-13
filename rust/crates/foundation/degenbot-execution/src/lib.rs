@@ -84,6 +84,9 @@ pub use interface::{
 };
 pub use observation::{CapturedEvent, ExecutionObservation, ExecutionStatus, ProbeReading};
 pub use path::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
-pub use payload::{ComposeError, ComposeOptions, ComposerInputs, PayloadAdapter, PayloadComposer};
+pub use payload::{
+    ComposeError, ComposeOptions, ComposerInputs, PayloadAdapter, PayloadComposer,
+    ZeroCapitalDeficit,
+};
 pub use solve_result::SolveResult;
 pub use transaction::TransactionRequest;

@@ -348,6 +348,7 @@ mod tests {
             optimal_input: 1000,
             hop_outputs,
             call_trace: Vec::new(),
+            zero_capital: None,
         }
     }
 

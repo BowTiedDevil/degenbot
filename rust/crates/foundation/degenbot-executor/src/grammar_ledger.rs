@@ -224,17 +224,6 @@ pub enum InitialCapital {
 }
 
 impl InitialCapital {
-    /// The zero-capital probe stance's spelling ([`crate::composers::EncodeOptions::zero_balance`])
-    /// mapped onto the policy — the internal seam this core slice evaluates.
-    #[must_use]
-    pub const fn from_zero_balance(zero_balance: bool) -> Self {
-        if zero_balance {
-            Self::Zero
-        } else {
-            Self::Held
-        }
-    }
-
     /// `true` for [`Self::Zero`] — the stance that withholds `SelfFund` seeds.
     #[must_use]
     pub const fn is_zero(self) -> bool {
@@ -260,6 +249,20 @@ pub struct InsolventZeroCapital {
     pub required: u128,
     /// The path-generated credit available at that point.
     pub available: u128,
+}
+
+/// The deficit's crossing onto the neutral execution seam
+/// ([`degenbot_execution::ZeroCapitalDeficit`]): the release encoder, the probe
+/// report, and the operator wire name the same three fields, so nothing
+/// downstream re-derives a shortfall from a rendered sentence.
+impl From<InsolventZeroCapital> for degenbot_execution::ZeroCapitalDeficit {
+    fn from(deficit: InsolventZeroCapital) -> Self {
+        Self {
+            asset: deficit.asset,
+            required: deficit.required,
+            available: deficit.available,
+        }
+    }
 }
 
 /// Why a capital-policy evaluation stopped.

@@ -45,6 +45,27 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **A zero-capital refusal is typed data, and `EncodeOptions::zero_balance` is
+  gone.** `degenbot_execution::ComposeError` gained a routine
+  `InsolventZeroCapital(ZeroCapitalDeficit { asset, required, available })` arm:
+  the core ledger's typed deficit now crosses the release encoder, the
+  target-selection walk (`PreparedEncoding::InsolventZeroCapital`), the
+  candidate record (`SimFailure::zero_capital`, bucket
+  `insolvent-zero-capital`), the PyO3 `FailureDetail.zero_capital`, the operator
+  probe response (`"zero_capital": {asset, required, available}`), and the
+  three-hop matrix rows as fields, instead of a
+  `ComposeError::Unsupported` sentence recorded as `encode-failed`.
+  `ComposeError::Unsupported` keeps its own meaning (a capability/grammar gap),
+  so a funding answer is never reported as an encoder defect. On the encode
+  policy, the retired `EncodeOptions::zero_balance` bool and
+  `InitialCapital::from_zero_balance(bool)` are replaced by
+  `EncodeOptions::initial_capital: InitialCapital`, projected from the ONE
+  capital mode by `ProbeCapital::initial_capital()` (`production`/`self_fund` →
+  `Held`, `zero_balance` → `Zero`). The stream's `funding` axis stays a separate
+  field, so capital validation can no longer be spelled as a stream axis. Valid
+  streams emit the production bytes unchanged, and the `cmd_executor/2` call
+  encoding and release identity do not move. No compatibility alias remains.
+
 - **`ExecutorConfig::from_verdict` reports registry composition errors instead
   of panicking.** It returns `Result<Self, DeploymentRegistryError>`: an empty
   registry, a duplicate deployment identity, and an owner the configured signer

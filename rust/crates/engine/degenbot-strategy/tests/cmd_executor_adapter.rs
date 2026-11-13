@@ -11,7 +11,7 @@ use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions,
     EncodeRequest,
 };
-use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
+use degenbot_executor::grammar_ledger::{Bribe, FundingSource, InitialCapital, ProfitCapture};
 use degenbot_simulation::sim::journal_pools::{PoolFamily, V4PoolDescriptor};
 use degenbot_strategy::cmd_executor_adapter::{
     CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome, CmdExecutorRejection,
@@ -29,7 +29,7 @@ fn options(bribe_bips: u16) -> EncodeOptions {
     EncodeOptions {
         erc6909_profit: false,
         use_v4_batch: false,
-        zero_balance: false,
+        initial_capital: InitialCapital::Held,
         funding: FundingSource::InPathFlash,
         capture: ProfitCapture::Custody,
         bribe: Bribe::Some {
@@ -355,8 +355,7 @@ fn a_zero_capital_deficit_is_a_routine_decline_beside_the_fatal_reject() {
             &path,
             &result,
             EncodeOptions {
-                zero_balance: true,
-
+                initial_capital: InitialCapital::Zero,
                 ..options(0)
             },
         ),

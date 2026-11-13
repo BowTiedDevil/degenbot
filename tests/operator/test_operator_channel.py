@@ -269,6 +269,52 @@ def test_execution_probe_response_preserves_economic_failure_without_broadcast()
     }
 
 
+def test_execution_probe_response_carries_a_typed_zero_capital_refusal() -> None:
+    """A capital-policy refusal crosses the wire as data, not as a sentence.
+
+    The bucket says which answer this is (`insolvent-zero-capital`); the
+    `zero_capital` object says what the stream could not fund. An ordinary
+    `encode-failed` refusal carries no such object, so the two stay distinct.
+    """
+    from types import SimpleNamespace
+
+    from degenbot.operator.operator_channel import execution_probe_response
+
+    detail = SimpleNamespace(
+        bucket="insolvent-zero-capital",
+        zero_capital=SimpleNamespace(
+            asset="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            required=1_000_000,
+            available=250_000,
+        ),
+    )
+    verdict = SimpleNamespace(kind=lambda: "failed", detail=detail)
+    record = SimpleNamespace(
+        candidate_id=SimpleNamespace(path_id=11, deployment_id=1),
+        path_type="V4-V4-V4",
+        assembly_label="assembled",
+        submit=None,
+        simulate=verdict,
+    )
+    report = SimpleNamespace(capital="zero_balance", records=[record], encoded=[])
+
+    response = execution_probe_response(11, report)
+
+    assert response == {
+        "path_id": 11,
+        "permutation": "V4-V4-V4",
+        "capital": "zero_balance",
+        "outcome": "failed",
+        "bucket": "insolvent-zero-capital",
+        "zero_capital": {
+            "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "required": 1_000_000,
+            "available": 250_000,
+        },
+    }, "the deficit's three fields ride the wire unchanged"
+    assert response["zero_capital"]["required"] > response["zero_capital"]["available"]
+
+
 def test_execution_probe_response_accepts_valid_below_threshold_receipt() -> None:
     """A gas-unprofitable receipt is `sim_ok` — and it carries its planning row."""
     from types import SimpleNamespace

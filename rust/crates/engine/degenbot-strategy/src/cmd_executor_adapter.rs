@@ -124,10 +124,20 @@ impl CmdExecutorAdapter {
         };
         let commands = match derived {
             Derive::Encoded(commands) => commands,
-            // A routine skip: no producer for this shape, OR a typed
-            // zero-capital deficit (the stream cannot be funded without entry
-            // capital — the same outcome the retired family-specific pre-checks
-            // produced, now carrying the ledger's deficit).
+            // A routine skip: no producer for this shape, OR a zero-capital
+            // deficit (the stream cannot be funded without entry capital — the
+            // same outcome the retired family-specific pre-checks produced).
+            //
+            // This adapter reports a `CmdExecutorDecline`, a copyable label
+            // taxonomy whose spellings are the backrun trace's stable JSONL
+            // boundary, so the deficit's `asset` / `required` / `available` are
+            // NOT carried here: this lane runs no capital policy (a session
+            // encodes under the bounded `backrun_encode_options`, which is
+            // `InitialCapital::Held`), so a deficit is unreachable for its
+            // callers. The typed refusal crosses the `ExecutionAdapter` seam
+            // (`ComposeError::InsolventZeroCapital`) instead, which is what the
+            // release-bound encoder, the probe report, and the operator wire
+            // read.
             Derive::Declined | Derive::InsolventZeroCapital(_) => {
                 return CmdExecutorOutcome::Declined(CmdExecutorDecline::CommandStream)
             }

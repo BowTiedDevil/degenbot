@@ -719,17 +719,19 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
     )
     .with_capital(degenbot_simulation::ProbeCapital::ZeroBalance);
     // The SAME binding's encoder axes: the zero-balance capital value supplies
-    // the funding axis and the grammar's zero-balance stance, exactly as the
+    // the funding axis and the capital-validation policy, exactly as the
     // self-funded binding below derives its own pair. Nothing beside the capital
-    // value is asked to name either axis.
+    // value is asked to name either one — and the two are DISTINCT: `funding` is
+    // a stream axis while `initial_capital` is a validation stance.
     assert_eq!(
         zero_balance.opts().funding,
         degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
         "the zero-balance capital value derives the in-path-flash funding axis"
     );
-    assert!(
-        zero_balance.opts().zero_balance,
-        "the zero-balance capital value derives the grammar's zero-balance stance"
+    assert_eq!(
+        zero_balance.opts().initial_capital,
+        degenbot_executor::grammar_ledger::InitialCapital::Zero,
+        "the zero-balance capital value derives the foundation's zero-capital policy"
     );
     assert_eq!(
         zero_balance.capital(),
@@ -781,9 +783,10 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
         degenbot_executor::grammar_ledger::FundingSource::SelfFund,
         "the self-funded capital value derives the stream's funding axis"
     );
-    assert!(
-        !self_funded.opts().zero_balance,
-        "a self-funded probe is not the zero-balance probe"
+    assert_eq!(
+        self_funded.opts().initial_capital,
+        degenbot_executor::grammar_ledger::InitialCapital::Held,
+        "a self-funded probe validates against held capital, not the zero policy"
     );
     let declared = self_funded
         .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
@@ -817,7 +820,11 @@ fn the_default_production_deployment_enables_no_probe_capital() {
         degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
         "the default session funds its entry in-path, never from the executor's USDC"
     );
-    assert!(!opts.zero_balance, "the default session is not a probe");
+    assert_eq!(
+        opts.initial_capital,
+        degenbot_executor::grammar_ledger::InitialCapital::Held,
+        "the default session's capital policy is ordinary validation"
+    );
 
     let binding = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, POOL_MANAGER, opts);
     assert_eq!(binding.owner(), OWNER);
@@ -832,9 +839,10 @@ fn the_default_production_deployment_enables_no_probe_capital() {
         degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
         "the production capital value keeps the in-path-flash funding axis"
     );
-    assert!(
-        !binding.opts().zero_balance,
-        "the production capital value keeps the grammar's ordinary stance"
+    assert_eq!(
+        binding.opts().initial_capital,
+        degenbot_executor::grammar_ledger::InitialCapital::Held,
+        "the production capital value keeps ordinary capital validation"
     );
 
     let default_slots = compute_simulation_warmup_slots(EXECUTOR, WETH);

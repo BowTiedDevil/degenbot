@@ -23,15 +23,19 @@
 //! [`ProbeCapital::override_plan`] is the whole mode→plan conversion, and it is
 //! the only one: a deployment stores the plan, the override application reads
 //! it, and nothing re-derives a "self-fund" or "zero-balance" boolean from a
-//! neighbouring axis. The encode axes a mode implies (`funding` and the grammar's
-//! zero-balance stance) are derived from the SAME value at the same composition
-//! point, so a session can never fund one posture and override another.
+//! neighbouring axis. The two encode-side projections a mode implies — the
+//! stream's `funding` axis and the capital-validation policy
+//! ([`ProbeCapital::initial_capital`]) — are derived from the SAME value at the
+//! same composition point, so a session can never fund one posture, validate
+//! another, and override a third.
 //!
 //! The modes are mutually exclusive BY CONSTRUCTION: they are variants, not a
 //! pair of booleans, so "self-fund AND zero-balance" has no representation to
 //! refuse.
 
 use alloy::primitives::Address;
+
+use degenbot_executor::grammar_ledger::InitialCapital;
 
 /// The capital posture one session — or one explicit execution probe — assumes
 /// for its execution target.
@@ -78,6 +82,29 @@ impl ProbeCapital {
             Self::Production => "production",
             Self::SelfFund => "self_fund",
             Self::ZeroBalance => "zero_balance",
+        }
+    }
+
+    /// The **capital-validation policy** this mode declares — the ONE
+    /// mode→policy projection, read where the encode policy is composed.
+    ///
+    /// `Production` and `SelfFund` are both ordinary validation
+    /// ([`InitialCapital::Held`]): the stream's `SelfFund` seed names capital the
+    /// executor genuinely holds, which is what makes a losing self-funded stream
+    /// execute to its economic receipt instead of being refused.
+    /// `ZeroBalance` is the foundation's zero-capital policy
+    /// ([`InitialCapital::Zero`]): the executor holds nothing, so only the path's
+    /// own credit graph can fund a debit and a stream that still needs external
+    /// capital reports a typed deficit.
+    ///
+    /// This is a *validation* stance and never a stream axis: the mode's
+    /// `funding` axis is projected separately beside it, and a stream the policy
+    /// finds solvent encodes exactly the production bytes.
+    #[must_use]
+    pub const fn initial_capital(self) -> InitialCapital {
+        match self {
+            Self::Production | Self::SelfFund => InitialCapital::Held,
+            Self::ZeroBalance => InitialCapital::Zero,
         }
     }
 
@@ -158,6 +185,26 @@ mod tests {
         assert_eq!(ProbeCapital::from_name("self-funded"), None);
         assert_eq!(ProbeCapital::from_name("self_fund "), None);
         assert_eq!(ProbeCapital::from_name(""), None);
+    }
+
+    /// Production and SelfFund are ordinary validation; only ZeroBalance
+    /// withholds the external seed. The policy is a validation stance, so no
+    /// mode can spell it through the stream's funding axis.
+    #[test]
+    fn the_zero_balance_mode_is_the_only_zero_capital_policy() {
+        assert_eq!(
+            ProbeCapital::Production.initial_capital(),
+            InitialCapital::Held
+        );
+        assert_eq!(
+            ProbeCapital::SelfFund.initial_capital(),
+            InitialCapital::Held,
+            "a self-funded stream declares held entry capital"
+        );
+        assert_eq!(
+            ProbeCapital::ZeroBalance.initial_capital(),
+            InitialCapital::Zero
+        );
     }
 
     #[test]

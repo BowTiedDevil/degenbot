@@ -347,8 +347,9 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 /// [`LedgerOp`][crate::grammar_ledger::LedgerOp] trace is evaluated through
 /// [`LedgerValidator::validate_capital`][crate::grammar_ledger::LedgerValidator::validate_capital]
 /// under the stream's [`InitialCapital`][crate::grammar_ledger::InitialCapital]
-/// policy ([`EncodeOptions::zero_balance`][crate::composers::EncodeOptions::zero_balance]
-/// spells the zero-capital stance). There is deliberately no family-, currency-,
+/// policy ([`EncodeOptions::initial_capital`][crate::composers::EncodeOptions::initial_capital]
+/// declares it; the `funding` axis is a stream axis and says nothing about what
+/// the validator grants). There is deliberately no family-, currency-,
 /// or closure-specific pre-check: the validator's ledger already distinguishes
 /// an external `SelfFund` seed from path-generated credit, so the same one
 /// evaluation answers `Declined` / `Rejected` / `InsolventZeroCapital` /
@@ -370,7 +371,7 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
     };
     let ops = plan_to_ledger_ops(&plan);
     let mut v = crate::grammar_ledger::LedgerValidator::default()
-        .with_initial_capital(inputs.opts.initial_capital());
+        .with_initial_capital(inputs.opts.initial_capital);
     match v.validate_capital(&ops) {
         Ok(()) => {}
         Err(crate::grammar_ledger::CapitalError::InsolventZeroCapital(deficit)) => {
@@ -1115,9 +1116,16 @@ mod tests {
         let path = PathInfo::new(all_v2_chain_hops(2));
         let outs: Vec<u128> = vec![80_000, 60_000]; // terminal 60k < optimal 100k — losing
         let consumed: Vec<u128> = vec![50_000, 80_000];
-        for (flabel, funding) in [
-            ("InPathFlash", FundingSource::InPathFlash),
-            ("SelfFund", FundingSource::SelfFund),
+        // The two axes are DISTINCT: `funding` picks the stream's declaration,
+        // and `initial_capital` picks what the validator grants. The zero-capital
+        // stance is spelled by the policy alone (never by the funding axis).
+        for (flabel, funding, capital) in [
+            (
+                "InPathFlash",
+                FundingSource::InPathFlash,
+                InitialCapital::Zero,
+            ),
+            ("SelfFund", FundingSource::SelfFund, InitialCapital::Held),
         ] {
             let inputs = ComposerInputs {
                 executor_address: address!("00000000000000000000000000000000000000ee"),
@@ -1128,7 +1136,7 @@ mod tests {
                 consumed_inputs: &consumed,
                 opts: crate::composers::EncodeOptions {
                     funding,
-                    zero_balance: flabel == "InPathFlash",
+                    initial_capital: capital,
                     ..Default::default()
                 },
             };

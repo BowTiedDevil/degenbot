@@ -949,6 +949,7 @@ mod tests {
                         optimal_input: 0,
                         hop_outputs: Vec::new(),
                         call_trace: Vec::new(),
+                        zero_capital: None,
                     };
                     let outcomes = vec![
                         BatchOutcome {

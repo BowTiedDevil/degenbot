@@ -189,6 +189,11 @@ impl PayloadRow {
             optimal_input: request.map_or(0, |r| r.optimal_input),
             hop_outputs: request.map_or_else(Vec::new, |r| r.hop_outputs.clone()),
             call_trace: Vec::new(),
+            // The payload arm runs the inline sim, which composes and measures
+            // its own stream: a capital-policy refusal comes from the release
+            // encoder (the FFI/fan-out arm), so this record carries no typed
+            // deficit.
+            zero_capital: None,
         })
     }
 }

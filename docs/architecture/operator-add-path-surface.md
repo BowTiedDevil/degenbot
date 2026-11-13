@@ -121,6 +121,39 @@ An absent `capital` keeps the historical behavior — the self-funded probe.
 {production,self_fund,zero_balance}`, default `self_fund`, replacing
 `--zero-balance`).
 
+### Migration: a zero-capital refusal is typed data, not an `Unsupported` string
+
+The zero-capital probe's losing answer used to arrive as an encoder refusal: the
+release turned the core ledger's typed deficit into a `ComposeError::Unsupported`
+message, so every consumer saw the same `encode-failed` bucket a grammar gap
+produces and the asset, the amount required, and the credit available were only
+readable by parsing prose. One value now crosses every surface as data:
+
+| Surface | Retired | Now |
+
+| --- | --- | --- |
+| Core derivation (`degenbot_executor::grammar_shape::Derive`) | `InsolventZeroCapital` collapsed into the public `Option`/`Declined` seam | `Derive::InsolventZeroCapital(InsolventZeroCapital { asset, required, available })` |
+| Release encoding (`CmdStreamV1Encoding::encode`) | `ComposeError::Unsupported("the path is insolvent at zero initial capital: …")` | `ComposeError::InsolventZeroCapital(ZeroCapitalDeficit { asset, required, available })` — its OWN routine arm; `Unsupported` still means "no representation for this path" |
+| Target-selection walk (`PreparedEncoding`) | `Declined(String)` for both | `Declined(String)` for a capability gap, `InsolventZeroCapital(deficit)` for a capital-policy refusal; both advance the walk |
+| Candidate record (`SimFailure`) | bucket `encode-failed`, no detail | bucket `insolvent-zero-capital` + `zero_capital: Option<ZeroCapitalDeficit>` |
+| PyO3 (`FailureDetail`) | — (nothing to read) | `FailureDetail.zero_capital -> ZeroCapitalDeficit \| None` (`asset` checksummed, `required`, `available`), and the render dict carries the same three fields under `"zero_capital"` |
+| Operator wire (`probe_path` response) | `{"bucket": "encode-failed"}` | `{"bucket": "insolvent-zero-capital", "zero_capital": {"asset": …, "required": …, "available": …}}` |
+| Matrix report (`scripts/executor_three_hop_matrix.py probe`) | counted as `encode_failed` | its own `summary.insolvent_zero_capital` counter, and each row keeps the typed `zero_capital` object |
+
+`EncodeOptions.zero_balance` — the public bool that spelled the stance — is gone.
+The policy is the field `EncodeOptions.initial_capital`
+(`degenbot_executor::grammar_ledger::InitialCapital`), projected from the ONE
+capital mode by `ProbeCapital::initial_capital`: `production` and `self_fund`
+map to `InitialCapital::Held` (ordinary validation), `zero_balance` maps to
+`InitialCapital::Zero` (the foundation's zero-capital policy). The stream's
+`funding` axis stays a separate field: it says where a family's stream declares
+its entry capital, never what the validator grants. There is no alias for the
+retired bool, and no consumer keeps a second copy of the stance.
+
+Valid streams are untouched: a stream the policy finds solvent emits exactly the
+production bytes and the same `cmd_executor/2` call encoding, so release identity
+and bytes are unchanged. Only the refusal's representation is new.
+
 ### The `probe_path` op is non-submitting by construction
 
 An execution probe quotes one explicit amount vector and runs it through the

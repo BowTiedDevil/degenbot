@@ -77,6 +77,7 @@ from degenbot._ffi.simulation import (
     SimulateVerdict,
     SimulationDeployment,
     SubmitVerdict,
+    ZeroCapitalDeficit,
     builtin_deployment_id,
 )
 from degenbot._ffi.simulation import CandidateId as CandidateId
@@ -200,6 +201,7 @@ __all__ = [
     "SubmitVerdict",
     "SubmittedRecord",
     "TxSigner",
+    "ZeroCapitalDeficit",
     "build_batch_executor",
     "build_probe_executor",
     "builtin_deployment_id",

@@ -57,13 +57,14 @@ use crate::executor_runtime::{load_executor_runtime, ExecutorRuntimeError};
 ///
 /// # The capital value owns the capital-derived encode axes
 ///
-/// [`Self::capital`] is the only authority for the two axes a capital posture
-/// implies — the stream's `funding` axis and the grammar's zero-balance stance —
-/// and for the deployment's simulation override plan. [`Self::opts`] therefore
-/// returns the caller's axes WITH the capital-derived pair applied, rather than
-/// keeping a second copy a caller could disagree with; `with_opts` sets the
-/// remaining axes (`erc6909_profit`, `use_v4_batch`, `capture`, `bribe`) and
-/// takes no position on those two.
+/// [`Self::capital`] is the only authority for the two encode-side values a
+/// capital posture implies — the stream's `funding` axis and the
+/// capital-validation policy (`EncodeOptions::initial_capital`) — and for the
+/// deployment's simulation override plan. [`Self::opts`] therefore returns the
+/// caller's axes WITH the capital-derived pair applied, rather than keeping a
+/// second copy a caller could disagree with; `with_opts` sets the remaining axes
+/// (`erc6909_profit`, `use_v4_batch`, `capture`, `bribe`) and takes no position
+/// on those two.
 #[derive(Clone, Copy, Debug)]
 pub struct CmdExecutorBinding {
     owner: Address,
@@ -111,21 +112,26 @@ impl CmdExecutorBinding {
     /// axes applied ONCE from [`Self::capital`].
     ///
     /// The projection is read-time, so the answer never depends on whether a
-    /// caller set `with_opts` before or after [`Self::with_capital`], and a
-    /// caller-side `funding`/`zero_balance` value can never contradict the
-    /// session's capital posture.
+    /// caller set `with_opts` before or after [`Self::with_capital`]. The two
+    /// capital-derived fields come from the one mode: `funding` is the STREAM
+    /// axis the family branches on, while `initial_capital` is the validation
+    /// policy the ledger is evaluated under — [`ProbeCapital::initial_capital`]
+    /// is that mode→policy projection. `Production` declares no capital override
+    /// and therefore keeps the caller's baseline axes as they are; the two probe
+    /// modes overwrite both fields, so a caller-supplied value cannot contradict
+    /// the posture they name.
     #[must_use]
     pub const fn opts(&self) -> EncodeOptions {
         match self.capital {
             ProbeCapital::Production => self.opts,
             ProbeCapital::SelfFund => EncodeOptions {
                 funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
-                zero_balance: false,
+                initial_capital: ProbeCapital::SelfFund.initial_capital(),
                 ..self.opts
             },
             ProbeCapital::ZeroBalance => EncodeOptions {
                 funding: degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
-                zero_balance: true,
+                initial_capital: ProbeCapital::ZeroBalance.initial_capital(),
                 ..self.opts
             },
         }

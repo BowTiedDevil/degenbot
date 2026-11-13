@@ -1,6 +1,6 @@
 //! Zero-capital solvency: the `InitialCapital` policy's derivation outcomes.
 //!
-//! The zero-capital stance (`EncodeOptions::zero_balance`) asks one question —
+//! The zero-capital stance (`EncodeOptions::initial_capital`) asks one question —
 //! *can this built Plan run with no pre-existing token balance?* — and the
 //! ledger answers it in ONE `LedgerValidator::validate_capital` pass over the
 //! projected `LedgerOp` trace. There is no family-, currency-, or
@@ -38,7 +38,7 @@ use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 use degenbot_executor::composers::{
     encode_cmd_stream, ComposerInputs, EncodeContext, EncodeOptions, EncodeRequest,
 };
-use degenbot_executor::grammar_ledger::{FundingSource, InsolventZeroCapital};
+use degenbot_executor::grammar_ledger::{FundingSource, InitialCapital, InsolventZeroCapital};
 use degenbot_executor::grammar_shape::{derive_shape, derive_shape_detailed, Derive};
 
 /// The `{V2,V3,V4}³` base of the permutation index (three protocols per hop).
@@ -141,7 +141,7 @@ fn inputs<'a>(
 fn zero_capital_opts() -> EncodeOptions {
     EncodeOptions {
         funding: FundingSource::InPathFlash,
-        zero_balance: true,
+        initial_capital: InitialCapital::Zero,
         ..Default::default()
     }
 }
@@ -149,7 +149,7 @@ fn zero_capital_opts() -> EncodeOptions {
 fn production_opts() -> EncodeOptions {
     EncodeOptions {
         funding: FundingSource::InPathFlash,
-        zero_balance: false,
+        initial_capital: InitialCapital::Held,
         ..Default::default()
     }
 }
@@ -157,7 +157,7 @@ fn production_opts() -> EncodeOptions {
 fn self_fund_opts() -> EncodeOptions {
     EncodeOptions {
         funding: FundingSource::SelfFund,
-        zero_balance: false,
+        initial_capital: InitialCapital::Held,
         ..Default::default()
     }
 }

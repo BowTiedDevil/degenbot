@@ -618,7 +618,7 @@ fn full_three_hop_zero_balance_matrix_executes_without_token_funding() {
                 &outputs,
                 &consumed,
                 degenbot_executor::composers::EncodeOptions {
-                    zero_balance: true,
+                    initial_capital: degenbot_executor::grammar_ledger::InitialCapital::Zero,
                     ..Default::default()
                 },
             )

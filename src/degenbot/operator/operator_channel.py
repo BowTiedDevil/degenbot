@@ -318,7 +318,9 @@ def execution_probe_response(path_id: int, report: ProbeReport) -> dict[str, Any
 
     Returns:
         The wire response: path id, permutation, capital, outcome, and the
-        failure bucket or the encoded planning summary when one applies.
+        failure bucket — plus, for a capital-policy refusal, the deficit's typed
+        ``zero_capital`` object (``asset`` / ``required`` / ``available``) and,
+        when the production encoder composed a row, the encoded planning summary.
 
     Raises:
         RuntimeError: If the report does not carry exactly one outcome, or if a
@@ -345,10 +347,41 @@ def execution_probe_response(path_id: int, report: ProbeReport) -> dict[str, Any
     response["outcome"] = "sim_ok" if kind in {"profitable", "gas_unprofitable"} else kind
     if kind == "failed":
         response["bucket"] = verdict.detail.bucket
+        # A refusal's DATA half: the typed deficit a capital-policy refusal
+        # carries. `bucket == "insolvent-zero-capital"` says which answer this
+        # is; these three fields say what the stream could not fund, so no client
+        # parses the rendered message. Ordinary failures (`encode-failed`, a
+        # revert, `no-profit`) have no deficit and project no key at all, which
+        # is what keeps the two refused-stream kinds distinct on the wire.
+        deficit = _zero_capital_field(getattr(verdict.detail, "zero_capital", None))
+        if deficit is not None:
+            response["zero_capital"] = deficit
     planning = _encoded_plan(report, record)
     if planning is not None:
         response["planning"] = planning
     return response
+
+
+def _zero_capital_field(deficit: object) -> dict[str, int | str] | None:
+    """Project one typed zero-capital deficit onto its wire object.
+
+    Args:
+        deficit: The report's ``FailureDetail.zero_capital`` (a typed
+            ``ZeroCapitalDeficit``), or ``None`` when the failure is not a
+            capital-policy refusal.
+
+    Returns:
+        ``{"asset", "required", "available"}`` — the deficit's own three fields,
+        never a re-derived shortfall — or ``None``.
+
+    """
+    if deficit is None:
+        return None
+    return {
+        "asset": deficit.asset,
+        "required": int(deficit.required),
+        "available": int(deficit.available),
+    }
 
 
 def _encoded_plan(report: ProbeReport, record: BatchOutcome) -> dict[str, Any] | None:

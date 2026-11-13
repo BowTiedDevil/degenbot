@@ -39,6 +39,7 @@ from degenbot.dispatch import (
     SimulationDeployment,
     SimulateVerdict,
     TxSigner,
+    ZeroCapitalDeficit,
 )
 from tests.dispatch.test_custom_executor_contract import (
     # The certified profitable fixture, reused rather than re-minted: the
@@ -247,6 +248,29 @@ async def test_a_profitable_probe_reports_its_plan_and_never_submits(
     assert "eth_sendRawTransaction" not in canned_chain.methods, (
         f"nothing was broadcast: {canned_chain.methods!r}"
     )
+
+
+async def test_a_failed_probe_record_carries_no_typed_deficit(
+    nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int],
+) -> None:
+    """An ordinary failure is NOT a capital-policy refusal.
+
+    The typed `zero_capital` slot is a refusal's DATA half: a sim/encoder failure
+    carries `None`, which is what keeps a plain failure distinct from
+    `insolvent-zero-capital` on the typed surface (and in the render dict) without
+    a caller matching on the bucket string.
+    """
+    engine, path_id = nxm2bf_v2_engine_and_path
+    executor = _probe_executor(engine)
+
+    report = await executor.probe(_request(path_id))
+
+    (record,) = report.records
+    assert isinstance(record.simulate, SimulateVerdict.Failed)
+    detail = record.simulate.detail
+    assert detail.zero_capital is None, "no deficit is fabricated for a plain failure"
+    assert detail.record()["zero_capital"] is None
+    assert isinstance(ZeroCapitalDeficit, type), "the typed refusal class crosses the FFI"
 
 
 async def test_the_ordinary_production_lane_remains_available(

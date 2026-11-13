@@ -347,6 +347,19 @@ class FailureDetail:
         """
         The full render record — the `[sim-fail]`/`[sim-diag]` dict shape.
         """
+    @property
+    def zero_capital(self, /) -> ZeroCapitalDeficit | None:
+        """
+        The typed **capital-policy deficit** this refusal carries
+        (`ZeroCapitalDeficit(asset, required, available)`), or `None` for every
+        ordinary failure.
+
+        This is the refusal's DATA half: the `bucket` says which kind of answer
+        this is (`insolvent-zero-capital` vs `encode-failed` — a grammar gap — vs
+        a simulation verdict), and this object says what the stream could not
+        fund. The probe report, the operator wire, and the matrix rows all read
+        it here rather than parsing the rendered record.
+        """
 
 @final
 class FailureKind:
@@ -955,6 +968,44 @@ class SubmitVerdict:
         def __len__(self, /) -> int: ...
         def __new__(cls, /) -> SubmitVerdict.Submitted: ...
 
+@final
+class ZeroCapitalDeficit:
+    """
+    A **typed zero-capital deficit** — the capital-policy refusal a stream's
+    ledger evaluation answers with when the executor's declared entry capital
+    cannot fund it.
+
+    The three fields are the whole answer, so a consumer reports *what is
+    missing* instead of parsing a message: `asset` is the currency the stream
+    could not fund (checksummed, the same spelling every operator/diagnostic
+    surface uses), `required` is the amount the failing step demanded, and
+    `available` is the path-generated credit on hand at that point. It rides
+    [`PyFailureDetail::zero_capital`], `None` for every ordinary failure (a
+    revert, `no-profit`, an `encode-failed` grammar gap, an orchestration skip),
+    so the two refused-stream kinds stay distinguishable by data.
+    """
+    @property
+    def asset(self, /) -> str:
+        """
+        The currency the stream could not fund (native is the zero address),
+        checksummed.
+        """
+    @property
+    def available(self, /) -> int:
+        """
+        The path-generated credit available at that point.
+        """
+    def record(self, /) -> dict:
+        """
+        The record dict this deficit crosses the renderer/diagnostic boundary as
+        (the same three fields, never a prose sentence).
+        """
+    @property
+    def required(self, /) -> int:
+        """
+        The amount the failing step demanded.
+        """
+
 def build_batch_executor_py(
     context: SimulateContext,
     dispatcher: Dispatcher,
@@ -1298,6 +1349,7 @@ __all__ = [
     "SimulateVerdict",
     "SimulationDeployment",
     "SubmitVerdict",
+    "ZeroCapitalDeficit",
     "build_batch_executor_py",
     "build_probe_executor_py",
     "builtin_deployment_id",

@@ -72,6 +72,11 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     (_DISPATCH, "ProbeExecutor", _SIM, "ProbeExecutor"),
     (_DISPATCH, "ProbeReport", _SIM, "ProbeReport"),
     (_DISPATCH, "ProbeEncodedCall", _SIM, "ProbeEncodedCall"),
+    # The typed zero-capital refusal a probe report carries: a report's failure
+    # exposes ``zero_capital`` (asset / required / available) instead of a bare
+    # encode-failed string, so a driver reads the deficit class by this
+    # companion name -- and it must stay the exact Rust pyclass.
+    (_DISPATCH, "ZeroCapitalDeficit", _SIM, "ZeroCapitalDeficit"),
     # The probe's quote entry point: one registered path's fixed-input amount
     # vector at one block, derived by the core and narrowed into the request
     # above, so the operator handler quotes through this companion name rather
@@ -182,7 +187,11 @@ def test_dispatch_all_pins_public_surface() -> None:
     ``quote_execution_probe`` joined with the core's exact-input quote
     interface: the operator surface's only quote call returns the very
     ``ExecutionProbeRequest`` the executor runs, so a driver quotes and probes
-    by the same companion names.
+    by the same companion names. ``ZeroCapitalDeficit`` joined with the
+    ledger-native zero-capital refusal: a probe report's failure carries the
+    typed deficit (asset, required, available) instead of a bare encode-failed
+    string, so a driver reads the refusal by this name beside the report that
+    annotates it.
     """
 
     d = degenbot.dispatch
@@ -218,6 +227,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "SubmitVerdict",
         "SubmittedRecord",
         "TxSigner",
+        "ZeroCapitalDeficit",
         "build_batch_executor",
         "build_probe_executor",
         "builtin_deployment_id",

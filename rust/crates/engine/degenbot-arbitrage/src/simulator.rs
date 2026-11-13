@@ -331,6 +331,17 @@ pub struct SimFailure {
     /// `no-profit` where hop0 + mid hops emit but the outermost V3 swap does
     /// not. Empty when no trace was captured.
     pub call_trace: Vec<String>,
+    /// The **typed capital-policy deficit** when this record is a zero-capital
+    /// refusal ([`INSOLVENT_ZERO_CAPITAL_BUCKET`]) rather than a simulation
+    /// verdict.
+    ///
+    /// The bucket label alone cannot say which asset the stream could not fund,
+    /// how much it needed, or how much path-generated credit it had, and a
+    /// consumer that re-derives those from the rendered sentence is parsing
+    /// prose. `None` for every ordinary failure (revert, `no-profit`,
+    /// `encode-failed`, an orchestration skip), so the two refusals stay
+    /// distinguishable by data.
+    pub zero_capital: Option<degenbot_execution::ZeroCapitalDeficit>,
 }
 
 /// The inspector-captured attribution of a failing `execute()` frame — the
@@ -435,6 +446,18 @@ pub struct FailBuckets {
     failures: Vec<SimFailure>,
 }
 
+/// The bucket label of a **capital-policy refusal**: the built Plan is sound, but
+/// under the stream's `InitialCapital` policy it cannot be funded, so the ledger
+/// answered with a typed deficit instead of bytes.
+///
+/// Distinct from `encode-failed` on purpose. `encode-failed` says "the encoder has
+/// no representation for this path" (a grammar/capability gap); this says "this
+/// path needs more entry capital than the policy grants", and the record carries
+/// the deficit's `asset` / `required` / `available` so a consumer never has to
+/// parse the sentence. A zero-capital probe therefore reports a *funding* answer,
+/// not an encoder defect, and the two never collapse into one counter.
+pub const INSOLVENT_ZERO_CAPITAL_BUCKET: &str = "insolvent-zero-capital";
+
 impl FailBuckets {
     /// Construct an empty tally.
     #[must_use]
@@ -484,6 +507,7 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace: Vec::new(),
+            zero_capital: None,
         });
     }
 
@@ -524,6 +548,7 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace,
+            zero_capital: None,
         });
     }
 
@@ -555,6 +580,46 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace: Vec::new(),
+            zero_capital: None,
+        });
+    }
+
+    /// Record a per-path **capital-policy refusal**: the built Plan is sound but
+    /// the stream's `InitialCapital` policy cannot fund it, so the ledger answered
+    /// with a typed deficit.
+    ///
+    /// The record's bucket is [`INSOLVENT_ZERO_CAPITAL_BUCKET`] — distinct from
+    /// `encode-failed` — and [`SimFailure::zero_capital`] carries the deficit's
+    /// `asset` / `required` / `available`, so the probe report and the operator
+    /// wire name the shortfall as data instead of parsing a message.
+    pub fn record_insolvent_zero_capital(
+        &mut self,
+        candidate_id: CandidateId,
+        deficit: degenbot_execution::ZeroCapitalDeficit,
+        optimal_input: u128,
+        hop_outputs: Vec<u128>,
+    ) {
+        self.tally(INSOLVENT_ZERO_CAPITAL_BUCKET);
+        degenbot_bot::telemetry::record_exception(
+            degenbot_bot::telemetry::error_kind::SIM_FAILURE,
+            format_args!(
+                "path {candidate_id} bucket {INSOLVENT_ZERO_CAPITAL_BUCKET} asset {} required {} available {}",
+                deficit.asset, deficit.required, deficit.available
+            ),
+        );
+        self.failures.push(SimFailure {
+            candidate_id,
+            bucket: INSOLVENT_ZERO_CAPITAL_BUCKET.to_string(),
+            fail_index: None,
+            revert_data: alloy::primitives::Bytes::new(),
+            reverting_frame: None,
+            captured_swaps: Vec::new(),
+            log_full_count: 0,
+            reverted_swaps: Vec::new(),
+            optimal_input,
+            hop_outputs,
+            call_trace: Vec::new(),
+            zero_capital: Some(deficit),
         });
     }
 
@@ -1083,7 +1148,9 @@ fn simulate_path_on_evm_in_span_prepared(
 /// # Errors
 ///
 /// The adapter's own [`ComposeError`]: [`ComposeError::Unsupported`] when the
-/// path is outside the contract's capability, [`ComposeError::Encode`] when a
+/// path is outside the contract's capability,
+/// [`ComposeError::InsolventZeroCapital`] when the stream cannot be funded under
+/// the caller's capital policy, [`ComposeError::Encode`] when a
 /// primitive encoding step failed, [`ComposeError::Validation`] when the produced
 /// transaction violates the interface its adapter declared (ADR-100 D5).
 pub fn compose_transaction(
@@ -1178,11 +1245,30 @@ fn simulate_path_on_evm_seam(
     let encoding = match prepared {
         Some(PreparedEncoding::Accepted(transaction)) => Ok(transaction.clone()),
         Some(PreparedEncoding::Declined(detail)) => Err(ComposeError::Unsupported(detail.clone())),
+        Some(PreparedEncoding::InsolventZeroCapital(deficit)) => {
+            Err(ComposeError::InsolventZeroCapital(*deficit))
+        }
         Some(PreparedEncoding::Failed(detail)) => Err(ComposeError::Encode(detail.clone())),
         None => compose_transaction(ctx.deployment, path),
     };
     let transaction = match encoding {
         Ok(transaction) => transaction,
+        // A capital-policy refusal is the path's typed ANSWER, not an encoder
+        // defect: the candidate keeps a record whose bucket names the policy and
+        // whose typed deficit carries `asset` / `required` / `available`. It is
+        // routine, exactly like the capability decline below — nothing here can
+        // fund a stream the policy says is insolvent — but it stays a distinct
+        // bucket so the probe report never reports a funding answer as an
+        // encoding failure.
+        Err(ComposeError::InsolventZeroCapital(deficit)) => {
+            fail_buckets.record_insolvent_zero_capital(
+                path.candidate_id,
+                deficit,
+                path.optimal_input,
+                path.expected_outputs_vec(),
+            );
+            return Ok(None);
+        }
         Err(ComposeError::Unsupported(_decline)) => {
             // A routine encode decline is a bucket, never an exception.
             fail_buckets.record(

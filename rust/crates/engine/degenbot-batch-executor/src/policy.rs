@@ -106,14 +106,16 @@ impl SubmissionPolicy {
 /// The session's capital posture for its execution target, re-exported from the
 /// simulation crate that also owns the override plan it projects to.
 ///
-/// One value drives both halves of a capital posture — the stream's funding axis
-/// and the deployment's simulation override plan — so a driver never names a
-/// `self_fund` / `zero_balance` boolean pair. See
-/// [`degenbot_simulation::ProbeCapital`]: `Production` installs and strips
+/// One value drives every projection of a capital posture — the stream's
+/// `funding` axis, the capital-validation policy the built Plan's ledger is
+/// evaluated under (`initial_capital`), and the deployment's simulation override
+/// plan — so a driver never names a `self_fund` / `zero_balance` boolean pair.
+/// See [`degenbot_simulation::ProbeCapital`]: `Production` installs and strips
 /// nothing, `SelfFund` installs the known asset set at the executor with the
-/// self-funded encoding, and `ZeroBalance` strips that set with the
-/// in-path-flash encoding. The two probe modes exclude each other by
-/// construction.
+/// self-funded encoding and ordinary validation, and `ZeroBalance` strips that
+/// set with the in-path-flash encoding and the zero-capital policy (so an
+/// unfundable stream reports the ledger's typed deficit). The two probe modes
+/// exclude each other by construction.
 pub use degenbot_simulation::ProbeCapital;
 
 /// The injected runtime handles: everything the resolved verdict CANNOT name

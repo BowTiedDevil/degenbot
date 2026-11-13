@@ -8,10 +8,12 @@ record appears in what is required to be a dry-run log.
 
 The ``probe`` command drives the operator's explicit execution probe: the host
 answers with its typed probe report's projection (``outcome``, ``bucket``, the
-``capital`` posture the call ran under, and — when the production encoder
-composed a row — a ``planning`` summary), and this client keeps those fields in
-its per-path rows so a fail-closed report can state the posture it probed and
-whether a plan was actually encoded.
+``capital`` posture the call ran under, the typed ``zero_capital`` deficit when
+the stream was refused for want of entry capital, and — when the production
+encoder composed a row — a ``planning`` summary), and this client keeps those
+fields in its per-path rows so a fail-closed report can state the posture it
+probed, what a capital-policy refusal could not fund, and whether a plan was
+actually encoded.
 """
 
 from __future__ import annotations
@@ -39,6 +41,16 @@ DIRECTED_PATH_COUNT = 27
 #: the host validates (`degenbot.operator.operator_channel.capital_from_wire`).
 CAPITAL_MODES = ("production", "self_fund", "zero_balance")
 DEFAULT_CAPITAL = "self_fund"
+
+#: The failure bucket of a **capital-policy refusal** — the core ledger answered
+#: that the stream cannot be funded under the probed posture
+#: (`degenbot_arbitrage::INSOLVENT_ZERO_CAPITAL_BUCKET`).
+#:
+#: Distinct from ``encode-failed``, which means "the encoder has no representation
+#: for this path". A zero-capital probe over a losing permutation produces THIS
+#: bucket, and the row keeps the deficit's typed ``zero_capital`` details
+#: (``asset`` / ``required`` / ``available``) rather than only a label.
+INSOLVENT_ZERO_CAPITAL_BUCKET = "insolvent-zero-capital"
 
 
 def load_manifest() -> dict[str, Any]:
@@ -229,6 +241,12 @@ def build_probe_report(responses: list[dict[str, Any]]) -> dict[str, Any]:
     far. A probe response has no submission record to look for: the executor has
     no submit lane.
 
+    A **capital-policy refusal** (``bucket == INSOLVENT_ZERO_CAPITAL_BUCKET``)
+    is neither an execution nor an encoder defect. Its row carries the wire's
+    typed ``zero_capital`` object — ``asset``, ``required``, ``available`` — and
+    the summary counts it under ``insolvent_zero_capital``, never under
+    ``encode_failed`` or ``failed``.
+
     Returns:
         A summary and one row per directed execution probe.
 
@@ -237,7 +255,7 @@ def build_probe_report(responses: list[dict[str, Any]]) -> dict[str, Any]:
     for item in responses:
         response = item["response"]
         outcome = response["outcome"]
-        paths.append({
+        row = {
             "permutation": item["permutation"],
             "direction": item["direction"],
             "path_id": item["path_id"],
@@ -246,11 +264,24 @@ def build_probe_report(responses: list[dict[str, Any]]) -> dict[str, Any]:
             "bucket": response.get("bucket"),
             "planned": "planning" in response,
             **({"error": response["error"]} if "error" in response else {}),
-        })
+        }
+        # A capital-policy refusal keeps its TYPED details: the asset the stream
+        # could not fund, the amount it needed, and the path-generated credit it
+        # had. The row never re-derives them from the bucket label.
+        zero_capital = response.get("zero_capital")
+        if zero_capital is not None:
+            row["zero_capital"] = zero_capital
+        paths.append(row)
+    # Three distinct answers, never one counter: an economic revert executed, an
+    # encode refusal never got bytes, and a capital-policy refusal is the funding
+    # question answered "no".
     economic_failures = sum(
-        row["outcome"] == "failed" and row["bucket"] != "encode-failed" for row in paths
+        row["outcome"] == "failed"
+        and row["bucket"] not in {"encode-failed", INSOLVENT_ZERO_CAPITAL_BUCKET}
+        for row in paths
     )
     encode_failures = sum(row["bucket"] == "encode-failed" for row in paths)
+    insolvent = sum(row["bucket"] == INSOLVENT_ZERO_CAPITAL_BUCKET for row in paths)
     sim_ok = sum(row["outcome"] == "sim_ok" for row in paths)
     return {
         "summary": {
@@ -259,6 +290,7 @@ def build_probe_report(responses: list[dict[str, Any]]) -> dict[str, Any]:
             "failed": economic_failures,
             "planned": sum(row["planned"] for row in paths),
             "encode_failed": encode_failures,
+            "insolvent_zero_capital": insolvent,
             "exceptions": sum(row["outcome"] == "exception" for row in paths),
             "missing": sum(
                 row["outcome"] not in {"sim_ok", "failed", "exception"} for row in paths

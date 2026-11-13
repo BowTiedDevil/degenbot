@@ -1885,7 +1885,7 @@ fn a_zero_capital_deficit_is_a_release_bound_decline() {
         ..Default::default()
     };
     let zero_capital = EncodeOptions {
-        zero_balance: true,
+        initial_capital: degenbot_executor::grammar_ledger::InitialCapital::Zero,
         ..in_path_flash
     };
     let self_funded = EncodeOptions {
@@ -1928,17 +1928,24 @@ fn a_zero_capital_deficit_is_a_release_bound_decline() {
     );
 
     // Losing: the terminal hop returns less than the entry, so the settle needs
-    // external capital. The zero-capital binding declines it with the typed
-    // deficit's message; the funded binding still encodes it.
+    // external capital. The zero-capital binding refuses it with the TYPED
+    // deficit — asset, required, and available as data — never as an
+    // `Unsupported` string; the funded binding still encodes it.
     let losing = [OPTIMAL_INPUT / 2, OPTIMAL_INPUT / 3, OPTIMAL_INPUT / 4];
     let losing_consumed = [OPTIMAL_INPUT, OPTIMAL_INPUT / 2, OPTIMAL_INPUT / 3];
     let losing_inputs = combo_inputs(&losing, &losing_consumed);
     match bind(zero_capital).adapter().encode(&path, &losing_inputs) {
-        Err(ComposeError::Unsupported(message)) => assert!(
-            message.contains("insolvent at zero initial capital"),
-            "the decline must name the typed deficit: {message}"
-        ),
-        Err(other) => panic!("a deficit is a decline, not an encode failure: {other:?}"),
+        Err(ComposeError::InsolventZeroCapital(deficit)) => {
+            assert!(
+                [WETH, USDC, WBTC].contains(&deficit.asset),
+                "the deficit names a currency the path moves: {deficit:?}"
+            );
+            assert!(
+                deficit.required > deficit.available,
+                "a deficit is a real shortfall, never a silent approval: {deficit:?}"
+            );
+        }
+        Err(other) => panic!("a deficit is a typed capital-policy refusal: {other:?}"),
         Ok(_) => panic!("a losing zero-capital stream must not encode"),
     }
     assert!(
@@ -1954,6 +1961,100 @@ fn a_zero_capital_deficit_is_a_release_bound_decline() {
             .encode(&path, &losing_inputs)
             .is_ok(),
         "a self-funded losing stream still encodes to its economic receipt"
+    );
+}
+
+/// The typed deficit reaches the CANDIDATE RECORD — the shape the probe report
+/// and the operator wire read. Its own bucket says which answer this is; the
+/// deficit's `asset` / `required` / `available` say what the stream could not
+/// fund; and `encode-failed` is untouched, so a funding answer is never counted
+/// as a grammar gap.
+#[test]
+fn a_zero_capital_deficit_reaches_the_candidate_record_as_typed_data() {
+    const WBTC: Address = address!("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599");
+    let registry = registry_production();
+    let zero_capital = EncodeOptions {
+        funding: degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
+        initial_capital: degenbot_executor::grammar_ledger::InitialCapital::Zero,
+        ..Default::default()
+    };
+    let bound = BoundCmdExecutor::bind(
+        binding_with(EXECUTOR_V1, zero_capital),
+        &declared_answers(&committed_manifest()),
+        None,
+        &registry,
+    )
+    .expect("the current release binds");
+    let deployments = DeploymentRegistry::new(vec![Arc::new(bound.deployment(deployment_id_v1()))])
+        .expect("one deployment is a valid registry");
+
+    // The same pure-V4 WETH cycle the encoder test above refuses: the terminal
+    // hop returns less than the entry, so the settle needs external capital.
+    let path = PathInfo::new(vec![
+        v4_hop(WETH, USDC),
+        v4_hop(USDC, WBTC),
+        v4_hop(WBTC, WETH),
+    ]);
+    let losing = [OPTIMAL_INPUT / 2, OPTIMAL_INPUT / 3, OPTIMAL_INPUT / 4];
+    let outcome = run_fanout(
+        &deployments,
+        TargetSelection::FirstCompatible,
+        vec![degenbot_arbitrage::DispatchCandidate {
+            candidate_id: CandidateId::new(7, deployment_id_v1()),
+            optimal_input: OPTIMAL_INPUT,
+            engine_profit: 1,
+            steps: path
+                .hops
+                .iter()
+                .enumerate()
+                .map(|(i, _)| degenbot_arbitrage::SolveStep {
+                    output: losing[i],
+                    consumed_input: if i == 0 { OPTIMAL_INPUT } else { losing[i - 1] },
+                    state_nonce: 0,
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            solve_block: BLOCK,
+            path_info: path,
+            prepared: None,
+        }],
+    );
+
+    let lane = outcome
+        .lane(deployment_id_v1())
+        .expect("one bound deployment is one lane");
+    assert_eq!(
+        lane.fail_buckets
+            .buckets()
+            .get(degenbot_arbitrage::INSOLVENT_ZERO_CAPITAL_BUCKET)
+            .copied(),
+        Some(1),
+        "the capital-policy refusal is its own bucket: {:?}",
+        lane.fail_buckets.buckets()
+    );
+    assert_eq!(
+        lane.fail_buckets.buckets().get("encode-failed"),
+        None,
+        "a funding answer is never recorded as an encoder gap"
+    );
+    let (failure,) = match lane.failures.as_slice() {
+        [only] => (only,),
+        other => panic!("one candidate, one failure record: {other:?}"),
+    };
+    assert_eq!(
+        failure.bucket,
+        degenbot_arbitrage::INSOLVENT_ZERO_CAPITAL_BUCKET
+    );
+    let deficit = failure
+        .zero_capital
+        .expect("the record carries the ledger's typed deficit");
+    assert!(
+        [WETH, USDC, WBTC].contains(&deficit.asset),
+        "the deficit names a currency the path moves: {deficit:?}"
+    );
+    assert!(
+        deficit.required > deficit.available,
+        "a deficit is a real shortfall: {deficit:?}"
     );
 }
 
@@ -1985,7 +2086,7 @@ fn a_declared_capture_shortfall_is_a_release_bound_decline() {
         ..Default::default()
     };
     let zero_capital = EncodeOptions {
-        zero_balance: true,
+        initial_capital: degenbot_executor::grammar_ledger::InitialCapital::Zero,
         ..in_path_flash
     };
     let self_funded = EncodeOptions {
@@ -2025,11 +2126,17 @@ fn a_declared_capture_shortfall_is_a_release_bound_decline() {
     }
     // Zero capital: the same decline, now carrying the ledger's typed deficit.
     match bind(zero_capital).adapter().encode(&path, &losing_inputs) {
-        Err(ComposeError::Unsupported(message)) => assert!(
-            message.contains("insolvent at zero initial capital"),
-            "the decline must name the typed deficit: {message}"
-        ),
-        Err(other) => panic!("a deficit is a decline, not an encode failure: {other:?}"),
+        Err(ComposeError::InsolventZeroCapital(deficit)) => {
+            assert!(
+                [WETH, USDC, WBTC].contains(&deficit.asset),
+                "the deficit names a currency the path moves: {deficit:?}"
+            );
+            assert!(
+                deficit.required > deficit.available,
+                "a deficit is a real shortfall, never a silent approval: {deficit:?}"
+            );
+        }
+        Err(other) => panic!("a deficit is a typed capital-policy refusal: {other:?}"),
         Ok(_) => panic!("a losing zero-capital stream must not encode"),
     }
     // Self-funded: the Plan declares the entry, so the loss is measured on-chain.

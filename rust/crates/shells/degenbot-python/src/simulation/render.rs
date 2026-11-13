@@ -159,6 +159,16 @@ pub(crate) fn sim_failure_to_dict<'py>(
         hop_outputs_list.append(v)?;
     }
     dict.set_item("hop_outputs", hop_outputs_list)?;
+    // The typed capital-policy deficit, or `None`: the same three fields the
+    // `FailureDetail.zero_capital` getter returns, so the renderer dict and the
+    // typed report never disagree about a refusal's data.
+    match f.zero_capital {
+        Some(deficit) => dict.set_item(
+            "zero_capital",
+            crate::simulation::batch::zero_capital_to_dict(py, deficit)?,
+        )?,
+        None => dict.set_item("zero_capital", py.None())?,
+    }
     Ok(dict)
 }
 

@@ -16,7 +16,7 @@ use crate::project_candidate;
 use alloy::primitives::{address, Address, Bytes, U256};
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
-use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
+use degenbot_executor::grammar_ledger::{Bribe, FundingSource, InitialCapital, ProfitCapture};
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::state::slot_layout;
 use degenbot_pools::TickInfo;
@@ -108,7 +108,9 @@ pub const fn backrun_encode_options(bribe_bips: u16) -> EncodeOptions {
     EncodeOptions {
         erc6909_profit: false,
         use_v4_batch: false,
-        zero_balance: false,
+        // Ordinary validation: the built-in production policy grants the
+        // `SelfFund` seed an in-path-flash stream may declare.
+        initial_capital: InitialCapital::Held,
         funding: FundingSource::InPathFlash,
         capture: ProfitCapture::Custody,
         bribe: Bribe::Some {

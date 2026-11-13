@@ -131,6 +131,7 @@ def test_probe_report_counts_economic_reverts_as_executed() -> None:
         "failed": 54,
         "planned": 0,
         "encode_failed": 0,
+        "insolvent_zero_capital": 0,
         "exceptions": 0,
         "missing": 0,
     }
@@ -138,6 +139,55 @@ def test_probe_report_counts_economic_reverts_as_executed() -> None:
     assert {row["capital"] for row in report["paths"]} == {"self_fund"}, (
         "the report keeps the posture each probe ran under"
     )
+
+
+def test_probe_report_keeps_a_typed_zero_capital_refusal_distinct() -> None:
+    """A capital-policy refusal is neither an execution nor an encoder defect.
+
+    The row keeps the wire's typed deficit (asset / required / available), so the
+    report states WHAT the stream could not fund; the summary counts it under its
+    own key rather than folding it into `encode_failed` (a grammar gap) or into
+    the executed economic failures (a stream that really ran and lost).
+    """
+    responses = [
+        {
+            "permutation": "V2-V3-V4",
+            "direction": "forward",
+            "path_id": 5,
+            "response": {
+                "ok": True,
+                "outcome": "failed",
+                "capital": "zero_balance",
+                "bucket": matrix.INSOLVENT_ZERO_CAPITAL_BUCKET,
+                "zero_capital": {
+                    "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "required": 1_000,
+                    "available": 400,
+                },
+            },
+        }
+    ]
+
+    report = matrix.build_probe_report(responses)
+
+    assert report["summary"] == {
+        "executed": 0,
+        "sim_ok": 0,
+        "failed": 0,
+        "planned": 0,
+        "encode_failed": 0,
+        "insolvent_zero_capital": 1,
+        "exceptions": 0,
+        "missing": 0,
+    }
+    (row,) = report["paths"]
+    assert row["bucket"] == "insolvent-zero-capital"
+    assert row["zero_capital"] == {
+        "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "required": 1_000,
+        "available": 400,
+    }
+    assert row["zero_capital"]["required"] > row["zero_capital"]["available"]
 
 
 def test_probe_report_does_not_count_an_encode_refusal_as_execution() -> None:
@@ -161,6 +211,7 @@ def test_probe_report_does_not_count_an_encode_refusal_as_execution() -> None:
         "failed": 0,
         "planned": 0,
         "encode_failed": 1,
+        "insolvent_zero_capital": 0,
         "exceptions": 0,
         "missing": 0,
     }
@@ -201,6 +252,7 @@ def test_probe_report_counts_a_planned_execution_separately() -> None:
         "failed": 0,
         "planned": 1,
         "encode_failed": 0,
+        "insolvent_zero_capital": 0,
         "exceptions": 0,
         "missing": 0,
     }

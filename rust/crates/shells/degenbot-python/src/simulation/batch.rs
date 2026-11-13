@@ -177,10 +177,100 @@ impl PyFailureDetail {
         &self.inner.bucket
     }
 
+    /// The typed **capital-policy deficit** this refusal carries
+    /// (`ZeroCapitalDeficit(asset, required, available)`), or `None` for every
+    /// ordinary failure.
+    ///
+    /// This is the refusal's DATA half: the `bucket` says which kind of answer
+    /// this is (`insolvent-zero-capital` vs `encode-failed` — a grammar gap — vs
+    /// a simulation verdict), and this object says what the stream could not
+    /// fund. The probe report, the operator wire, and the matrix rows all read
+    /// it here rather than parsing the rendered record.
+    #[getter]
+    fn zero_capital(&self) -> Option<PyZeroCapitalDeficit> {
+        self.inner.zero_capital.map(PyZeroCapitalDeficit::wrap)
+    }
+
     /// The full render record — the `[sim-fail]`/`[sim-diag]` dict shape.
     fn record<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         sim_failure_to_dict(py, &self.inner)
     }
+}
+
+/// A **typed zero-capital deficit** — the capital-policy refusal a stream's
+/// ledger evaluation answers with when the executor's declared entry capital
+/// cannot fund it.
+///
+/// The three fields are the whole answer, so a consumer reports *what is
+/// missing* instead of parsing a message: `asset` is the currency the stream
+/// could not fund (checksummed, the same spelling every operator/diagnostic
+/// surface uses), `required` is the amount the failing step demanded, and
+/// `available` is the path-generated credit on hand at that point. It rides
+/// [`PyFailureDetail::zero_capital`], `None` for every ordinary failure (a
+/// revert, `no-profit`, an `encode-failed` grammar gap, an orchestration skip),
+/// so the two refused-stream kinds stay distinguishable by data.
+#[pyclass(name = "ZeroCapitalDeficit", module = "degenbot._ffi.simulation")]
+#[derive(Clone, Copy)]
+pub struct PyZeroCapitalDeficit {
+    inner: degenbot_execution::ZeroCapitalDeficit,
+}
+
+impl PyZeroCapitalDeficit {
+    pub(crate) const fn wrap(inner: degenbot_execution::ZeroCapitalDeficit) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl PyZeroCapitalDeficit {
+    /// The currency the stream could not fund (native is the zero address),
+    /// checksummed.
+    #[getter]
+    fn asset(&self) -> String {
+        crate::address_utils::address_to_checksum_string(&self.inner.asset)
+    }
+
+    /// The amount the failing step demanded.
+    #[getter]
+    const fn required(&self) -> u128 {
+        self.inner.required
+    }
+
+    /// The path-generated credit available at that point.
+    #[getter]
+    const fn available(&self) -> u128 {
+        self.inner.available
+    }
+
+    /// The record dict this deficit crosses the renderer/diagnostic boundary as
+    /// (the same three fields, never a prose sentence).
+    fn record<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        zero_capital_to_dict(py, self.inner)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ZeroCapitalDeficit(asset={}, required={}, available={})",
+            crate::address_utils::address_to_checksum_string(&self.inner.asset),
+            self.inner.required,
+            self.inner.available
+        )
+    }
+}
+
+/// The deficit's dict shape (asset / required / available).
+pub(crate) fn zero_capital_to_dict(
+    py: Python<'_>,
+    deficit: degenbot_execution::ZeroCapitalDeficit,
+) -> PyResult<Bound<'_, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item(
+        "asset",
+        crate::address_utils::address_to_checksum_string(&deficit.asset),
+    )?;
+    dict.set_item("required", deficit.required)?;
+    dict.set_item("available", deficit.available)?;
+    Ok(dict)
 }
 
 /// Stage 1 — the assembly verdict (the core's typed skip taxonomy).

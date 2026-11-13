@@ -69,12 +69,54 @@ pub struct ComposerInputs<'a> {
     pub opts: ComposeOptions,
 }
 
+/// A **typed zero-capital deficit**: the stream needs `required` of `asset` at a
+/// point where the caller's capital policy grants only `available`.
+///
+/// The neutral crossing of the core ledger's own `InsolventZeroCapital` deficit
+/// through this seam, so a refusal reaches an adapter's caller, the probe report,
+/// and the operator wire as data — `asset` / `required` / `available` — rather
+/// than as a sentence someone has to parse. It is the *capital-policy* answer
+/// ("this path needs more entry capital than the policy grants"), which is why it
+/// is a distinct arm from [`ComposeError::Unsupported`] (a capability/grammar
+/// gap) and from [`ComposeError::Encode`] (a primitive encoding failure).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ZeroCapitalDeficit {
+    /// The currency the stream could not fund (native is the zero address).
+    pub asset: Address,
+    /// The amount the failing step demanded.
+    pub required: u128,
+    /// The path-generated credit on hand at that point.
+    pub available: u128,
+}
+
+impl std::fmt::Display for ZeroCapitalDeficit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} requires {} but only {} is path-funded",
+            self.asset, self.required, self.available
+        )
+    }
+}
+
 /// Failure modes for the Encode part (payload composition).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ComposeError {
     /// The path/arity/amount combination is unsupported by this composer.
     #[error("unsupported path or hop mix: {0}")]
     Unsupported(String),
+    /// The stream cannot be funded under the caller's capital policy: the
+    /// deficit names the asset, the amount required, and the amount of
+    /// path-generated credit available.
+    ///
+    /// A **routine, typed refusal** — the target-selection walk advances past it
+    /// exactly like [`Self::Unsupported`], and a probe reports it as the
+    /// candidate's own answer — but it is never folded into
+    /// [`Self::Unsupported`]: "this path needs entry capital the policy does not
+    /// grant" is a different answer from "this contract has no representation for
+    /// this path", and a caller that cannot tell them apart cannot report either.
+    #[error("insolvent at zero initial capital: {0}")]
+    InsolventZeroCapital(ZeroCapitalDeficit),
     /// A primitive encoding step failed (e.g. int128 overflow).
     #[error("encode failure: {0}")]
     Encode(String),
