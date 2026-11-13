@@ -1289,6 +1289,12 @@ check-executor-release-ratchet:
     {{ pytest_run }} tests/test_executor_release_ratchet.py -q --no-header
 
 
+# Build the pure-Rust production-encoder consumer used by the three-hop
+# production-calldata execution matrix. Keeping the build here ensures tests
+# never invoke cargo directly or test a stale helper binary.
+build-executor-three-hop-encoder:
+    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-executor --example encode_three_hop
+
 # The root project's Ape suite (tests/executor) — the canonical wrapper for
 # testing the Vyper executor contracts under contracts/vyper. The root uv lock
 # owns Ape and vyper ==0.5.0b2, so the suite uses the same environment as every

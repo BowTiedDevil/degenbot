@@ -34,6 +34,36 @@ worker a separate Foundry host so accounts, nonces, and fork state do not race.
 - `tests/executor/cmd_stream.py` — command-stream parsing and transfer-count
   assertions.
 
+## Three-hop coverage
+
+Three execution layers deliberately answer different questions:
+
+- `test_cmd_executor_three_hop_optimized.py` proves all 27 contract-mechanics
+  orderings with the test encoder.
+- `test_cmd_executor_three_hop_production_calldata.py` encodes every ordering
+  through `degenbot_executor::composers::encode_cmd_3_hop` and executes those
+  exact production bytes, checking transfer counts and token conservation.
+  Its pure-Rust helper is built only through
+  `just build-executor-three-hop-encoder`.
+- `degenbot-simulation/tests/harness_declarative.rs` executes all 27 through
+  EVM2 with the real executor bytecode and exact predicted-profit deltas.
+
+Run both Ape matrices serially with:
+
+```bash
+just test-executor tests/executor/test_cmd_executor_three_hop_optimized.py -q -n0
+just test-executor tests/executor/test_cmd_executor_three_hop_production_calldata.py -q -n0
+```
+
+Run the EVM2 matrix and its completeness guard with:
+
+```bash
+just test-rust-nextest -p degenbot-simulation -E 'test(full_matrix_executes_with_expected_profit) or test(matrix_covers_full_reachable_grammar)'
+```
+
+The Rust `glopcn_byte_identity_is_pinned` test separately pins every
+permutation under 12 amount/option configurations.
+
 The fakes enforce the behavior the executor depends on: V2's K invariant,
 V3's balance-delta input check and reentrancy guard, V4's delta settlement,
 ERC-6909 accounting, and callback variants. They isolate executor routing and
