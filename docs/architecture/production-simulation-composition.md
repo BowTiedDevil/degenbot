@@ -192,6 +192,68 @@ exactly, and the golden fixtures pin them:
 | Python `SubmitCandidate(executor_address=...)` | `SubmitCandidate(execution_target=..., value=None)`; the retired keyword raises `TypeError` | the same two facts at the Python seam; `value` defaults to `0`, the built-in `execute` call's native value |
 | `AssemblyInputs.executor_address`; `merge_payload_results(payloads, resolver, executor_address, deployment_id)` | `AssemblyInputs.target`; `merge_payload_results(payloads, resolver, target, deployment_id)` | each lane's join stamps THAT lane's deployment target |
 
+### Internal override ownership (no consumer-visible transition)
+
+One correction under this seam is INTERNAL: no name, signature, argument, or wire
+shape changed, so a consumer supplies nothing new and no record moved. It is not
+a no-op for the deployed arm, though: the production path's own warmup slots
+change which account they name, and the note at the end of this section says so
+plainly.
+
+The capital overrides (`SimulationOverrideParams::self_fund_usdc` and
+`zero_balance`) and the settlement warmup a deployment declares were answering
+"which account?" differently in the two deployment arms. A declared-code build
+(`CmdExecutorBinding::injected`) keyed its WETH9 / PoolManager ERC6909 warmup
+slots on the executor — the account the transaction targets and whose capital
+the contract spends — while the deployed build
+(`CmdExecutorBinding::deployment`, the production arm) keyed them on the OWNER,
+the gas account that holds none of the contract's working capital. The native ETH
+clear was also skipped whenever a deployment declared no code, so a deployed
+executor kept whatever ETH the chain held at it.
+
+Two facts are independent by construction now:
+
+- **Warmup.** The built-in binding derives `SettlementWarmup::slots` from the
+  EXECUTOR in both arms, so they carry the deployment's own WETH9 working balance
+  and the three warmup touches at the account the transaction targets. That is
+  the binding's declaration, not a property of the type: the override
+  application must survive a warmup keyed on any account, which
+  `...::tests::clearing_follows_the_capital_target_not_the_warmup_subject` pins.
+  For the deployed arm the subject is CORRECTED — those slots used to name the
+  owner's account.
+- **Capital.** Each capital parameter names its own target, and
+  `degenbot_simulation::apply_simulation_overrides` derives the WETH9 balance and
+  the two PoolManager claim slots from THAT account instead of borrowing the
+  warmup's key. A zero-balance probe therefore clears native ETH, USDC, and WBTC
+  at the executor in both arms, plus that executor's WETH9 balance word and both
+  ERC6909 claims whenever the deployment declares the settlement identities; a
+  self-funded probe funds the executor's mainnet USDC — the only balance
+  `self_fund_usdc` writes. The owner's own slots are never a capital target.
+
+A deployed executor is the one case where the override application reads the
+chain: clearing its native balance has to preserve the code hash the chain holds,
+so the account is materialized exactly as the EVM's own first read would
+(`sim::evm2::state_override::clear_native_balance`); a declared-code build keeps
+the runtime its override installed.
+
+UNCHANGED: owner gas funding, the declared code (or the deployed code the EVM
+reads), an unrelated account's balance/code/storage, the identities the warmup
+declares (WETH9 + PoolManager), and the fact that ordinary production enables no
+probe capital at all. CHANGED ON PURPOSE: the deployed arm's warmup slots now key
+on the executor rather than the owner, so a deployed settlement sim touches the
+executor's WETH9 balance word (1 wei, then the operational amount) and its two
+ERC6909 claim words instead of the owner's — the deployed arm was warming an
+account that holds none of the contract's working capital. Owner gas funding
+itself is untouched. Pinned by the
+table-driven
+`degenbot-simulation::sim::evm2::state_override::tests::capital_overrides_target_the_executor_in_both_deployment_arms`
+(the code-present × code-absent × native/WETH9/USDC/WBTC/PoolManager-claim matrix
+with distinct owner and executor addresses),
+`...::tests::clearing_follows_the_capital_target_not_the_warmup_subject`,
+`degenbot-arbitrage::tests::production_adapter::capital_overrides_name_the_executor_in_both_deployment_arms`,
+and the ordinary-production stance beside them,
+`degenbot-arbitrage::tests::production_adapter::the_default_production_deployment_enables_no_probe_capital`.
+
 The Python `SimulateContext` pyclass builds the built-in binding and loads the
 artifact through it: `multicall3_address` is refused at construction
 (`TypeError`), and the rest of the constructor's order is unchanged. The other

@@ -11,6 +11,19 @@
 //! PoolManager identities; a foreign contract declares none, and
 //! [`SimulationOverrideParams::settlement`] is then `None` rather than a
 //! placeholder address.
+//!
+//! # Capital targeting is selected independently of both
+//!
+//! The capital overrides (native ETH, WETH9, USDC, WBTC, and PoolManager
+//! ERC6909 claims) name the account they fund or clear THEMSELVES:
+//! [`SimulationOverrideParams::self_fund_usdc`] and
+//! [`SimulationOverrideParams::zero_balance`] each carry the executor they
+//! apply to, and the override application derives the account-keyed slots from
+//! that address. Neither arm of the declared-code / deployed-code split inherits
+//! a target from the other, and no capital slot is keyed on the warmup's own
+//! derivation: a deployment whose warmup slots name one account and whose probe
+//! names another still clears the probe's account. The owner's gas funding and
+//! every account the overrides do not name are left alone.
 
 use alloy::primitives::{address, Address, Bytes, U256};
 
@@ -55,6 +68,15 @@ pub struct DeclaredCode {
 /// identities its execution contract accounts against, plus the slots that
 /// contract touches on its first run.
 ///
+/// The built-in binding keys them on the deployment's EXECUTOR — the account the
+/// deployment's transaction targets, whose capital the contract spends — in both
+/// deployment arms, whether the deployment declares its code or executes the
+/// code the chain holds. That subject is the binding's declaration, not an
+/// invariant of this type. The slots are a warmup fact, not a capital target:
+/// the override application derives its own capital slots from the account each
+/// capital parameter names, so a warmup keyed on some other account can never
+/// redirect a probe's funding or clearing.
+///
 /// A deployment with neither identity (a foreign contract) declares no
 /// settlement warmup at all — see [`SimulationOverrideParams::settlement`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +107,12 @@ pub struct SimulationOverrideParams {
     /// never an ordinary solver-candidate assumption.
     pub self_fund_usdc: Option<Address>,
     /// Force native ETH, WETH, USDC, WBTC, and PoolManager claims to zero at
-    /// the declared executor. Owner gas funding and injected code are retained.
+    /// the declared executor. Owner gas funding is retained.
+    ///
+    /// The address here IS the capital target: every clearing slot is derived
+    /// from it, in both deployment arms. A declared-code override keeps the
+    /// runtime it installed; a deployed executor keeps the code the chain holds
+    /// — clearing touches the balance and the account's token/claim slots,
+    /// never the code.
     pub zero_balance: Option<Address>,
 }

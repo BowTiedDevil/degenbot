@@ -44,6 +44,7 @@ use degenbot_execution::{
 use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest,
 };
+use degenbot_executor::compute_simulation_warmup_slots;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
@@ -692,6 +693,158 @@ fn the_builtin_binding_injects_code_only_when_declared() {
     let code = injected.code().expect("the declared override is explicit");
     assert_eq!(code.address, EXECUTOR);
     assert_eq!(code.runtime.as_ref(), &[0xfe]);
+}
+
+/// The capital-targeting parity (the task's acceptance): the settlement warmup
+/// a built-in deployment declares keys its WETH9 / ERC6909 slots on the
+/// EXECUTOR in BOTH arms — a declared-code build and the deployed contract —
+/// never on the owner, who only funds gas. The probe overrides name that same
+/// executor, so the deployed arm can no longer follow the owner by accident.
+#[test]
+fn capital_overrides_name_the_executor_in_both_deployment_arms() {
+    let executor_slots = compute_simulation_warmup_slots(EXECUTOR, WETH);
+    let owner_slots = compute_simulation_warmup_slots(OWNER, WETH);
+    assert_ne!(
+        executor_slots, owner_slots,
+        "the fixture's owner and executor are distinct accounts, so their slots differ"
+    );
+
+    // A zero-balance probe: the clearing must land on the executor.
+    let zero_balance = CmdExecutorBinding::new(
+        OWNER,
+        EXECUTOR,
+        WETH,
+        POOL_MANAGER,
+        EncodeOptions::default(),
+    )
+    .with_zero_balance(true);
+    let declared = zero_balance
+        .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
+        .expect("the declared override names the executor");
+    let deployed = zero_balance.deployment(test_deployment_id());
+
+    for (arm, deployment) in [("declared", declared), ("deployed", deployed)] {
+        let settlement = deployment
+            .settlement()
+            .expect("both arms declare the settlement identities");
+        assert_eq!(
+            settlement.slots, executor_slots,
+            "{arm}: the warmup slots key on the executor, not the owner"
+        );
+        assert_eq!(
+            deployment.override_params().zero_balance,
+            Some(EXECUTOR),
+            "{arm}: the clearing target is the executor"
+        );
+        assert_eq!(
+            deployment.target(),
+            EXECUTOR,
+            "{arm}: the deployment executes at the executor the capital names"
+        );
+    }
+
+    // A self-funded probe: the funded USDC holder is the same executor.
+    let self_funded = CmdExecutorBinding::new(
+        OWNER,
+        EXECUTOR,
+        WETH,
+        POOL_MANAGER,
+        EncodeOptions {
+            funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+            ..EncodeOptions::default()
+        },
+    );
+    let declared = self_funded
+        .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
+        .expect("the declared override names the executor");
+    let deployed = self_funded.deployment(test_deployment_id());
+    for (arm, deployment) in [("declared", declared), ("deployed", deployed)] {
+        assert_eq!(
+            deployment.settlement().map(|settlement| settlement.slots),
+            Some(executor_slots),
+            "{arm}: the warmup slots key on the executor, not the owner"
+        );
+        assert_eq!(
+            deployment.override_params().self_fund_usdc,
+            Some(EXECUTOR),
+            "{arm}: self-funded probe capital targets the executor"
+        );
+    }
+}
+
+/// The ordinary production stance, pinned beside the probe arms above: a default
+/// session enables no probe capital at all — no self-funded USDC holder and no
+/// zero-balance clearing — while still keeping its real owner and its executor
+/// target and declaring the CORRECTED settlement warmup on the executor. The
+/// probe overrides are explicit session choices, so production can never acquire
+/// one by inheriting a warmup subject.
+#[test]
+fn the_default_production_deployment_enables_no_probe_capital() {
+    let opts = EncodeOptions::default();
+    assert_eq!(
+        opts.funding,
+        degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
+        "the default session funds its entry in-path, never from the executor's USDC"
+    );
+    assert!(!opts.zero_balance, "the default session is not a probe");
+
+    let binding = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, POOL_MANAGER, opts);
+    assert_eq!(binding.owner(), OWNER);
+    assert_eq!(binding.executor(), EXECUTOR);
+
+    let default_slots = compute_simulation_warmup_slots(EXECUTOR, WETH);
+    assert_ne!(
+        default_slots,
+        compute_simulation_warmup_slots(OWNER, WETH),
+        "the fixture's owner and executor are distinct accounts, so their slots differ"
+    );
+
+    let arms = [
+        ("deployed", binding.deployment(test_deployment_id()), false),
+        (
+            "declared",
+            binding
+                .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
+                .expect("the declared override names the executor"),
+            true,
+        ),
+    ];
+
+    for (arm, deployment, declares_code) in arms {
+        let overrides = deployment.override_params();
+        assert_eq!(
+            overrides.self_fund_usdc, None,
+            "{arm}: ordinary production funds no executor USDC"
+        );
+        assert_eq!(
+            overrides.zero_balance, None,
+            "{arm}: ordinary production clears no executor capital"
+        );
+        assert_eq!(
+            overrides.owner, OWNER,
+            "{arm}: the owner is the gas account"
+        );
+        assert_eq!(
+            deployment.target(),
+            EXECUTOR,
+            "{arm}: the transaction targets the executor"
+        );
+        assert_eq!(
+            deployment.code().is_some(),
+            declares_code,
+            "{arm}: only an explicit declaration installs code"
+        );
+
+        let settlement = deployment
+            .settlement()
+            .expect("the built-in deployment declares its settlement identities");
+        assert_eq!(settlement.weth_address, WETH);
+        assert_eq!(settlement.pool_manager_address, Some(POOL_MANAGER));
+        assert_eq!(
+            settlement.slots, default_slots,
+            "{arm}: the warmup keys on the executor, not the owner, and enables no probe"
+        );
+    }
 }
 
 /// Pins the declared-override boundary: the built-in adapter encodes every

@@ -236,14 +236,17 @@ impl CmdExecutorBinding {
         runtime: Option<Bytes>,
         adapter: CmdExecutorSimAdapter,
     ) -> SimulationDeployment {
-        // The warmup slots key on the account whose ledger the contract touches:
-        // the injected address for a declared build, else the owner (the
-        // session's funding account).
-        let warmup_subject = injected.unwrap_or(self.owner);
+        // The warmup slots key on the account whose ledger the contract
+        // touches: the EXECUTOR, in both deployment arms. A declared build
+        // installs its runtime at that same address (`injected` is refused
+        // otherwise), and a deployed build executes the chain's code there, so
+        // the WETH9 balance and the PoolManager ERC6909 claims the contract
+        // spends are the executor's — never the owner's, who only funds gas and
+        // never holds the contract's working capital.
         let settlement = SettlementWarmup {
             weth_address: self.weth,
             pool_manager_address: Some(self.pool_manager),
-            slots: compute_simulation_warmup_slots(warmup_subject, self.weth),
+            slots: compute_simulation_warmup_slots(self.executor, self.weth),
         };
         let code = match (injected, runtime) {
             (Some(address), Some(runtime)) => Some(DeclaredCode { address, runtime }),

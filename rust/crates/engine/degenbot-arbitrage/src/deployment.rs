@@ -204,13 +204,24 @@ impl SimulationDeployment {
     }
 
     /// Enable mainnet USDC capital for an explicit self-fund execution probe.
+    ///
+    /// The funded holder is this deployment's execution target — the executor —
+    /// never its owner, who only funds gas.
     #[must_use]
     pub const fn with_self_fund_usdc(mut self, enabled: bool) -> Self {
         self.self_fund_usdc = if enabled { Some(self.target) } else { None };
         self
     }
 
-    /// Force the executor's token balances to zero for an explicit probe.
+    /// Force the executor's native and token balances to zero for an explicit
+    /// probe.
+    ///
+    /// The cleared account is this deployment's execution target — the executor
+    /// — in both deployment arms: a declared-code build keeps the runtime its
+    /// override installed and a deployed contract keeps the code the chain
+    /// holds. The target is never inherited from the settlement warmup: the
+    /// warmup's slot subject is a separate fact, and this parameter names the
+    /// account it clears. The owner's account is never a capital target.
     #[must_use]
     pub const fn with_zero_balance(mut self, enabled: bool) -> Self {
         self.zero_balance = if enabled { Some(self.target) } else { None };
@@ -267,6 +278,13 @@ impl SimulationDeployment {
     }
 
     /// The settlement warmup this deployment declares, if any.
+    ///
+    /// The built-in binding keys the slots it carries on this deployment's
+    /// [`Self::target`] (the executor) in both deployment arms; nothing in the
+    /// type enforces that subject. Whatever account they name, they stay a
+    /// settlement-warmup fact rather than a capital target: the capital
+    /// overrides ([`Self::with_self_fund_usdc`], [`Self::with_zero_balance`])
+    /// name their own target and never inherit this one.
     ///
     /// `None` is a complete answer: a foreign contract with no WETH or
     /// PoolManager identity declares none, and the fetch/prewarm lanes derive
