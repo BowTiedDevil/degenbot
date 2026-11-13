@@ -579,7 +579,7 @@ const GOLDEN: &[&str] = &[
 ];
 
 #[test]
-fn glopcn_byte_identity_is_pinned() {
+fn command_stream_byte_identity_is_pinned() {
     let fams = ["V2", "V3", "V4"];
     let mut lines = Vec::new();
     for n in [2usize, 3] {

@@ -61,7 +61,7 @@ Run the EVM2 matrix and its completeness guard with:
 just test-rust-nextest -p degenbot-simulation -E 'test(full_matrix_executes_with_expected_profit) or test(matrix_covers_full_reachable_grammar)'
 ```
 
-The Rust `glopcn_byte_identity_is_pinned` test separately pins every
+The Rust `command_stream_byte_identity_is_pinned` test separately pins every
 permutation under 12 amount/option configurations.
 
 The fakes enforce the behavior the executor depends on: V2's K invariant,

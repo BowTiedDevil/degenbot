@@ -11,7 +11,7 @@
 //! differ when an axis toggles, the builder honors that axis; if identical, it
 //! doesn't. The None-decline partition counts as a distinct outcome (a
 //! decline-vs-encode toggle is honoring too). Inputs are realistic-but-fixed
-//! (the `glopcn_bytepin` fixture shape: WETH/USDC/WBTC cycle, 1e18 amounts) —
+//! (the `command_stream_bytepin` fixture shape: WETH/USDC/WBTC cycle, 1e18 amounts) —
 //! no production RPC state.
 //!
 //! If this test fails, do NOT "fix" it by editing the declaration to match a
@@ -54,14 +54,14 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// non-WETH terminal declines).
 const DECLINE: u64 = 0xDEAD_BEEF_DEAD_BEEF;
 
-/// Fixed baseline amounts (the `glopcn_bytepin` shape): a 1e18 entry, 1e18
+/// Fixed baseline amounts (the `command_stream_bytepin` shape): a 1e18 entry, 1e18
 /// hop outputs, and consumed inputs one wei under (so every family encodes).
 static OPTIMAL: u128 = 1_000_000_000_000_000_000;
 static OUTS: [u128; 3] = [1_000_000_000_000_000_000; 3];
 static CONSUMED: [u128; 3] = [999_999_999_999_999_999; 3];
 
 /// Build the family's hops over the WETH/USDC/WBTC cycle (hop `i` is
-/// `cycle[i%3] → cycle[(i+1)%3]`), mirroring the `glopcn_bytepin` fixtures so
+/// `cycle[i%3] → cycle[(i+1)%3]`), mirroring the `command_stream_bytepin` fixtures so
 /// every family encodes under the baseline amounts.
 fn combo_hops(prots: &[Prot]) -> Vec<HopInfo> {
     (0..prots.len())

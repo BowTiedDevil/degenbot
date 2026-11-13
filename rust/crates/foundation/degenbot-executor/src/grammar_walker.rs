@@ -175,7 +175,7 @@ mod mechanics {
     /// families (T5) route a flash's repayment to a downstream recipient pool
     /// (`pool_repays`), which the out-derivation cannot express.
     /// Single primitive since T2  folded the old
-    /// `v3_flash`/`v3_flash_to` pair; byte-identity pinned by the glopcn
+    /// `v3_flash`/`v3_flash_to` pair; byte-identity pinned by the command_stream
     /// goldens.
     pub fn v3_flash(
         at: &mut AddressTable,

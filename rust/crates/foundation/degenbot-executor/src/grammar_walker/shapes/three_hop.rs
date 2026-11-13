@@ -21,7 +21,7 @@ pub(crate) fn derive(
         // rule-driven walker (`rule_walk_v2v3`) — R1 (enclosure root) + R2
         // (repay-graph nest) + R3 (leaf + WETH-seed placement) + the
         // V2-flash upgrade — instead of 7 hand-written arms. Byte-identity
-        // is pinned by `glopcn_bytepin` + the `degenbot-simulation` evm2
+        // is pinned by `command_stream_bytepin` + the `degenbot-simulation` evm2
         // matrix; the per-family golden-ordered AddressTable staging lives
         // in `stage_pools`.
         return rule_walk_v2v3(facts, inputs);
@@ -43,7 +43,7 @@ pub(crate) fn derive(
             // unlock) + R3 (finish = SettleAll when a downstream hop is V4
             // else SettleΔ(WETH); capture only for the pure-V4 family) —
             // instead of 9 hand-written arms. Byte-identity is pinned by
-            // `glopcn_bytepin` + the `degenbot-simulation` evm2 matrix;
+            // `command_stream_bytepin` + the `degenbot-simulation` evm2 matrix;
             // the per-family golden-ordered AddressTable staging lives
             // inside `rule_walk_v4_led`.
             return rule_walk_v4_led(facts, inputs);
@@ -70,7 +70,7 @@ pub(crate) fn derive(
             //     pool is a plain `Erc20Transfer`, EXCEPT v2v3v4 where
             //     `fa.seed_delivery = V4TakeCompact` emits it as a
             //     `V4TakeCompact` inside the unlock plus a profit take to SELF.
-            // Byte-identity is pinned by `glopcn_bytepin` + the
+            // Byte-identity is pinned by `command_stream_bytepin` + the
             // `degenbot-simulation` evm2 matrix; the per-family golden-ordered
             // AddressTable staging lives inside `rule_walk_v2v3_v4_mixed`.
             return rule_walk_v2v3_v4_mixed(facts, inputs);
@@ -576,7 +576,7 @@ fn stage_pools(at: &mut AddressTable, hops: &[&HopFacts; 3]) -> Option<(u8, u8, 
 //
 // The irreducible per-family residue is the `AddressTable` staging ORDER
 // (the preamble dumps addresses in insertion order and every `pool_idx` /
-// currency reference rides on it) — byte-pinned by `glopcn_bytepin` + the
+// currency reference rides on it) — byte-pinned by `command_stream_bytepin` + the
 // `degenbot-simulation` evm2 matrix. Each family reproduces its hand-authored
 // staging sequence exactly (the `at.add` calls below mirror the arms 1:1;
 // `mechanics::v4_swap` / `v2_swap` / `v3_flash` dedup against the
@@ -1269,7 +1269,7 @@ fn rule_walk_v4_led(
 //
 // The irreducible per-family residue is the `AddressTable` staging ORDER
 // (the preamble dumps addresses in insertion order and every `pool_idx` /
-// currency reference rides on it) — byte-pinned by `glopcn_bytepin` + the
+// currency reference rides on it) — byte-pinned by `command_stream_bytepin` + the
 // `degenbot-simulation` evm2 matrix. Each family reproduces its hand-authored
 // staging sequence exactly.
 /// `rule_walk_v2v3_v4_mixed` — the rule-driven walker over the group-C
@@ -2014,7 +2014,7 @@ mod rule_walker_tests {
             [Prot::V2, Prot::V3, Prot::V3],
             [Prot::V2, Prot::V3, Prot::V2],
         ];
-        // (optimal, [outs], [consumed]) grid — mirrors glopcn_bytepin.
+        // (optimal, [outs], [consumed]) grid — mirrors command_stream_bytepin.
         let configs: [(u128, [u128; 3], [u128; 3]); 4] = [
             (
                 1_000_000_000_000_000_000,
@@ -2063,7 +2063,7 @@ mod rule_walker_tests {
         }
     }
 
-    /// Mirror of `glopcn_bytepin`'s V4-led slice: a 3-hop WETH/USDC/WBTC cycle
+    /// Mirror of `command_stream_bytepin`'s V4-led slice: a 3-hop WETH/USDC/WBTC cycle
     /// where each slot is independently V4-led (`hop0 == V4`).
     fn v4_led_hops(prots: &[Prot]) -> Vec<HopInfo> {
         let cycle = [WETH, USDC, WBTC];
@@ -2104,7 +2104,7 @@ mod rule_walker_tests {
     /// Shadow gate: the rule-driven walker produces byte-identical output to
     /// the hand-authored V4-led arms (pre-cutover) / routes through the walker
     /// (post-cutover) for every V4-led 3-hop family, across the same amount +
-    /// `EncodeOptions` grid `glopcn_bytepin` pins. Byte-identity is the cutover
+    /// `EncodeOptions` grid `command_stream_bytepin` pins. Byte-identity is the cutover
     /// contract. (The validator `Reject` partition the bytepin also pins is a
     /// post-`derive` concern; this gate compares the produced Plan bytes, which
     /// the validator then rejects identically for both paths.)
@@ -2122,7 +2122,7 @@ mod rule_walker_tests {
             [Prot::V4, Prot::V2, Prot::V3],
             [Prot::V4, Prot::V3, Prot::V2],
         ];
-        // (optimal, [outs], [consumed]) grid — mirrors glopcn_bytepin.
+        // (optimal, [outs], [consumed]) grid — mirrors command_stream_bytepin.
         let configs: [(u128, [u128; 3], [u128; 3]); 4] = [
             (
                 1_000_000_000_000_000_000,
@@ -2203,7 +2203,7 @@ mod rule_walker_tests {
     /// Shadow gate: the rule-driven walker produces byte-identical output to
     /// `derive` for every group-C 3-hop family (hop0 ∈ {V2,V3}, some hop V4,
     /// not the v4-led block, not the v3v4 terminal-form merge), across the same
-    /// amount + `EncodeOptions` grid `glopcn_bytepin` pins. Byte-identity is the
+    /// amount + `EncodeOptions` grid `command_stream_bytepin` pins. Byte-identity is the
     /// cutover contract. Post-cutover this is a routing tautology (`derive`
     /// routes through the walker); it stays as the per-family guard regression
     /// pin, mirroring the T6a/T6b shadow gates.
@@ -2220,7 +2220,7 @@ mod rule_walker_tests {
             [Prot::V2, Prot::V4, Prot::V2],
             [Prot::V2, Prot::V4, Prot::V3],
         ];
-        // (optimal, [outs], [consumed]) grid — mirrors glopcn_bytepin.
+        // (optimal, [outs], [consumed]) grid — mirrors command_stream_bytepin.
         let configs: [(u128, [u128; 3], [u128; 3]); 4] = [
             (
                 1_000_000_000_000_000_000,

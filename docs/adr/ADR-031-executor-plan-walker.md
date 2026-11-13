@@ -148,7 +148,7 @@ hand-built Plan body:
   before commit).
 
 **Byte-transparency proof:** zero golden-hash edits across all per-shape
-pin tables and `glopcn_bytepin` (every family × amount set × both entry
+pin tables and `command_stream_bytepin` (every family × amount set × both entry
 points); the executor suite ends all-green (118 lib tests) with no RED
 probes remaining. Net across T2–T5: ~1,100 lines removed.
 

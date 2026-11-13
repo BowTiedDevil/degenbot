@@ -1,6 +1,6 @@
 //! Shared fixtures for the per-shape walk probes .
 //!
-//! Mirrors `tests/glopcn_bytepin.rs` (addresses, hop builders, amount sets,
+//! Mirrors `tests/command_stream_bytepin.rs` (addresses, hop builders, amount sets,
 //! option matrix, FNV-1a hash) so each shape file pins the same stream space
 //! at per-file granularity. Test-only; compiled under `cfg(test)` via
 //! `shapes.rs`.
@@ -11,7 +11,7 @@
 #![expect(clippy::doc_markdown, reason = "plan-step / ADR identifiers in docs")]
 #![expect(
     clippy::unreadable_literal,
-    reason = "amount literals intentionally mirror the glopcn fixtures"
+    reason = "amount literals intentionally mirror the command_stream fixtures"
 )]
 
 use crate::composers::{encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest};
@@ -68,7 +68,7 @@ pub fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 /// The frozen amount sets (optimal_input, hop_outputs, consumed_inputs) —
-/// same four as the glopcn fixture.
+/// same four as the command_stream fixture.
 pub fn configs() -> Vec<(u128, Vec<u128>, Vec<u128>)> {
     vec![
         (
@@ -94,7 +94,7 @@ pub fn configs() -> Vec<(u128, Vec<u128>, Vec<u128>)> {
     ]
 }
 
-/// The frozen option matrix (same labels as the glopcn fixture).
+/// The frozen option matrix (same labels as the command_stream fixture).
 pub fn opts() -> Vec<(&'static str, EncodeOptions)> {
     vec![
         ("base", EncodeOptions::default()),
