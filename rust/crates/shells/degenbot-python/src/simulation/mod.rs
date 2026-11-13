@@ -49,6 +49,7 @@ pub mod dispatch;
 pub mod identity;
 pub mod in_process_probe;
 mod inline_hook;
+pub mod probe;
 pub mod render;
 pub mod session;
 
@@ -69,6 +70,12 @@ pub mod simulation {
         build_batch_executor_py, executor_policy_py, ExecutorPolicyValues, PyAssemblyVerdict,
         PyBatchExecutor, PyBatchOutcome, PyBatchOutcomeSet, PyFailureDetail, PyFailureKind,
         PySimReceipt, PySimulateVerdict, PySubmitVerdict,
+    };
+
+    #[pymodule_export]
+    use super::probe::{
+        build_probe_executor_py, PyExecutionProbeRequest, PyProbeEncodedCall, PyProbeExecutor,
+        PyProbeReport,
     };
 
     #[pymodule_export]

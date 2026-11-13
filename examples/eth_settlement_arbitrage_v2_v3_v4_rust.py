@@ -101,12 +101,15 @@ async def main() -> None:
                         # One capital spelling, validated here: absent keeps the
                         # historical self-funded probe, and an unknown spelling is
                         # refused by wrap_handler as {"ok": false, "error": ...}.
-                        outcome = await session.probe_path(
+                        # The session hands back the probe executor's own typed
+                        # report (records + encoded planning rows), which the
+                        # response projection reads without re-deriving anything.
+                        report = await session.probe_path(
                             payload["path_id"],
                             optimal_input=int(payload.get("optimal_input", 1_000_000_000_000_000)),
                             capital=capital_from_wire(payload),
                         )
-                        return execution_probe_response(payload["path_id"], outcome)
+                        return execution_probe_response(payload["path_id"], report)
                     if op == "discover":
                         bound = payload.get("bound")
                         n = await session.trigger_discovery(bound=bound)

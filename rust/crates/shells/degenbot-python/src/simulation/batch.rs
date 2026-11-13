@@ -48,8 +48,7 @@ use degenbot_batch_executor::record::{
     FailureDetail, FailureKind, SimReceipt, SimulateVerdict, SubmitVerdict,
 };
 use degenbot_batch_executor::{
-    BatchExecutor, BatchOutcome, BatchOutcomeSet, BatchWork, ExecutorConfig, ExecutorRuntime,
-    PathResolver, RawResult,
+    BatchExecutor, BatchOutcome, BatchOutcomeSet, ExecutorConfig, ExecutorRuntime, PathResolver,
 };
 use degenbot_bot::arb_engine::EngineStages;
 use degenbot_execution::PathInfo;
@@ -94,7 +93,14 @@ impl degenbot_simulation::sim::evm2::bal_heads::HeadRelevanceSource for SessionR
 /// assembler can read it from any worker. A projection BUILD error reads as a
 /// resolve miss here — a raw row folds it as the typed skip, and a payload row
 /// (which must resolve) is the assembly's loud-abort arm either way.
-struct EngineResolver(Arc<EngineStages>);
+pub(crate) struct EngineResolver(Arc<EngineStages>);
+
+impl EngineResolver {
+    /// Project the engine's stage surface as the assembly's path resolver.
+    pub(crate) fn new(stages: Arc<EngineStages>) -> Self {
+        Self(stages)
+    }
+}
 
 impl PathResolver for EngineResolver {
     fn resolve(&self, path_id: u64) -> Option<PathInfo> {
@@ -322,6 +328,14 @@ pub struct PyBatchOutcome {
     inner: BatchOutcome,
 }
 
+impl PyBatchOutcome {
+    /// Wrap one core record: the probe report reuses the record vocabulary the
+    /// renderers already read, so both surfaces render from ONE projection.
+    pub(crate) const fn wrap(inner: BatchOutcome) -> Self {
+        Self { inner }
+    }
+}
+
 #[pymethods]
 impl PyBatchOutcome {
     /// The candidate identity — the solver path bound to the deployment that
@@ -457,7 +471,6 @@ impl PyBatchOutcomeSet {
 #[pyclass(name = "BatchExecutor", module = "degenbot._ffi.simulation")]
 pub struct PyBatchExecutor {
     executor: Arc<BatchExecutor>,
-    stages: Arc<EngineStages>,
     dispatcher: Arc<std::sync::Mutex<degenbot_submission::Dispatcher>>,
     suppression: Arc<std::sync::Mutex<PathSuppression>>,
 }
@@ -498,85 +511,6 @@ impl PyBatchExecutor {
                 .next()
                 .await
                 .map(|set| PyBatchOutcomeSet { inner: set }))
-        })
-    }
-
-    /// Execute one explicit amount vector as a dry-run probe. The ordinary
-    /// assembly, production encoding, EVM2, and receipt stages answer the row.
-    ///
-    /// A probe is NON-SUBMITTING. The driver builds its probe pipeline with
-    /// submission disabled (the FFI's `dry_run`, and no relay fan-out), and this
-    /// entry refuses outright on an executor whose submission policy permits
-    /// signing and broadcast, before the row enters the lane. A live session's
-    /// executor therefore answers `RuntimeError` rather than running the probe.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one path plus its amount and block vectors"
-    )]
-    fn probe_path<'py>(
-        &self,
-        py: Python<'py>,
-        path_id: u64,
-        optimal_input: u128,
-        hop_outputs: Vec<u128>,
-        consumed_inputs: Vec<u128>,
-        current_block: u64,
-        base_fee_next: u128,
-        block_timestamp: u64,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let state_nonces = self.stages.path_nonces_for(path_id).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "probe_path: path {path_id} is not registered"
-            ))
-        })?;
-        if state_nonces.len() != hop_outputs.len() || hop_outputs.len() != consumed_inputs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "probe_path: hop output and consumed-input lengths must match the path",
-            ));
-        }
-        let work = BatchWork {
-            rows: vec![RawResult {
-                path_id,
-                optimal_input,
-                profit: 0,
-                hop_outputs,
-                consumed_inputs,
-                solve_block: current_block,
-                state_nonces,
-            }],
-            payloads: Vec::new(),
-            current_block,
-            base_fee_next,
-            block_timestamp,
-            block_priority_fees: None,
-        };
-        let executor = Arc::clone(&self.executor);
-        crate::ambient_runtime::future_into_py(py, async move {
-            // The probe entry refuses a submission-capable executor BEFORE the
-            // row enters the lane, so the guarantee is preventive (no probe row
-            // can reach the nonce lease, the signer, or the broadcast arm) and
-            // never a post-hoc read of the records that came back. The enqueue
-            // itself runs here: the lane spawns on the ambient runtime.
-            match executor.enqueue_probe(work) {
-                Ok(degenbot_submission::EnqueueOutcome::Accepted) => {}
-                Ok(degenbot_submission::EnqueueOutcome::Declined(decline)) => {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "probe_path enqueue refused: {decline:?}"
-                    )));
-                }
-                Err(refusal) => {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "probe_path refused: {refusal}"
-                    )));
-                }
-            }
-            let mut drain = executor.drain_handle();
-            let outcome = drain.next().await.ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err(
-                    "probe_path executor closed without an outcome",
-                )
-            })?;
-            Ok(PyBatchOutcomeSet { inner: outcome })
         })
     }
 
@@ -635,15 +569,10 @@ impl PyBatchExecutor {
 ///         every path. One registered deployment selects the same target either
 ///         way.
 ///
-///     `capital`: the session's ONE capital posture — `"production"` (the
-///         default: the account's real balances, no capital override),
-///         `"self_fund"` (the known asset set installed at the executor, with
-///         the self-funded encoding), or `"zero_balance"` (that set stripped
-///         from the executor, with the in-path-flash encoding). The one value
-///         supplies the stream's `funding` / zero-balance axes AND the
-///         deployment's simulation override plan, which is why the retired
-///         `self_fund` / `zero_balance` boolean pair is gone: the two probe
-///         modes can no longer be requested together.
+/// This constructor builds the SUBMITTING lane over the session's own capital
+/// (`Production`), so it takes no capital posture: an explicit execution probe
+/// is [`crate::simulation::probe::build_probe_executor_py`]'s value, which has
+/// no signer, nonce lane, or broadcast arm to arm.
 ///
 /// # Errors
 ///
@@ -677,7 +606,6 @@ impl PyBatchExecutor {
     broadcast_providers = None,
     deployments = None,
     target_selection = None,
-    capital = None,
 ))]
 #[expect(
     clippy::too_many_arguments,
@@ -695,7 +623,6 @@ pub fn build_batch_executor_py(
     broadcast_providers: Option<Vec<PyRef<'_, PyAsyncAlloyProvider>>>,
     deployments: Option<Vec<PyRef<'_, PySimulationDeployment>>>,
     target_selection: Option<&str>,
-    capital: Option<&str>,
 ) -> PyResult<PyBatchExecutor> {
     crate::ambient_runtime::ensure_async_runtime_bound();
     let suppression = dispatcher.suppression_arc();
@@ -711,19 +638,13 @@ pub fn build_batch_executor_py(
             ))
         })?,
     };
-    // The capital posture is ONE validated value; a misspelling is refused here
-    // rather than silently defaulting to a posture the caller did not name, and
-    // the two probe modes exclude each other by construction (a boolean pair that
-    // could name both is gone).
-    let probe_capital = match capital {
-        None => degenbot_batch_executor::ProbeCapital::Production,
-        Some(name) => degenbot_batch_executor::ProbeCapital::from_name(name).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "unknown capital {name:?}: expected one of {}",
-                degenbot_batch_executor::ProbeCapital::NAMES.join(", ")
-            ))
-        })?,
-    };
+    // The capital posture of a PRODUCTION executor is `Production` and nothing
+    // else: the ordinary lane simulates the session account's real balances. The
+    // probe postures belong to the probe construction
+    // ([`crate::simulation::probe::build_probe_executor_py`]), which cannot build
+    // a submitting lane — the two halves cannot be crossed, so no caller can ask
+    // this executor for a posture its lane would then submit under.
+    let probe_capital = degenbot_batch_executor::ProbeCapital::Production;
     let runtime = ExecutorRuntime {
         // `0` = no cap: the cockpit never carried a per-batch cap (the
         // fan-out's own `MAX_SIMULATE_CONCURRENT` bound always applied).
@@ -826,7 +747,6 @@ pub fn build_batch_executor_py(
     );
     Ok(PyBatchExecutor {
         executor,
-        stages: engine.stages_arc(),
         dispatcher: dispatcher.inner_arc(),
         suppression,
     })

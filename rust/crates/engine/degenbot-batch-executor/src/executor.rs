@@ -26,7 +26,7 @@ use degenbot_submission::{
 };
 use degenbot_substrate::nonce::NonceLane;
 
-use crate::policy::{ExecutorPolicy, ExecutorRuntime, ProbeRefusal, SubmissionPolicy};
+use crate::policy::{ExecutorPolicy, ExecutorRuntime, SubmissionPolicy};
 use crate::record::{BatchOutcome, SubmitVerdict};
 use crate::row::{PayloadRow, RawResult};
 use crate::stage::SimStage;
@@ -528,30 +528,15 @@ impl BatchExecutor {
         self.pipeline.enqueue(work)
     }
 
-    /// This executor's submission policy — the value the probe entry reads
-    /// before a row enters the lane.
+    /// This executor's submission policy — the ONE value the submit leaf reads
+    /// before it leases a nonce, signs, or broadcasts.
+    ///
+    /// It is a read surface only: this executor has no probe entry to refuse,
+    /// because an execution probe is [`crate::probe::ProbeExecutor`]'s, not the
+    /// ordered lane's.
     #[must_use]
     pub const fn submission(&self) -> SubmissionPolicy {
         self.submission
-    }
-
-    /// Enqueue ONE explicit execution-probe batch.
-    ///
-    /// A probe row is a driver-supplied amount vector run through the ordinary
-    /// assembly, production encoding, and sim stages for observation only. It is
-    /// refused on an executor whose policy permits submission, and BEFORE the
-    /// row enters the ordered lane, so no probe can reach the nonce lease, the
-    /// signer, or the broadcast arm whatever the caller believes it holds.
-    ///
-    /// # Errors
-    ///
-    /// [`ProbeRefusal::SubmissionCapable`] when [`Self::submission`] permits
-    /// submission.
-    pub fn enqueue_probe(&self, work: BatchWork) -> Result<EnqueueOutcome, ProbeRefusal> {
-        if self.submission.permits_submission() {
-            return Err(ProbeRefusal::SubmissionCapable);
-        }
-        Ok(self.enqueue(work))
     }
 
     /// Await the next batch's outcome set (`None` when the lane is closed
@@ -805,62 +790,6 @@ mod tests {
             tx,
             rx,
         )
-    }
-
-    /// A probe is REFUSED on a submission-capable executor, and the refusal
-    /// fires BEFORE the row enters the lane: nothing is counted, simulated, or
-    /// queued, so the probe can never reach the nonce lease, the signer, or the
-    /// broadcast arm.
-    #[tokio::test]
-    async fn a_probe_is_refused_on_a_submission_capable_executor() {
-        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (tx, rx) = mpsc::unbounded_channel();
-        let executor = BatchExecutor::from_leaves(
-            1,
-            test_deployment_id(),
-            SubmissionPolicy::Submitting,
-            Arc::new(ReversedFinishSim { fail_block: None }),
-            Arc::new(StampingSubmit {
-                order,
-                tx: tx.downgrade(),
-            }),
-            tx,
-            rx,
-        );
-        assert!(executor.submission().permits_submission());
-        assert_eq!(
-            executor.enqueue_probe(work(BASE_BLOCK)),
-            Err(ProbeRefusal::SubmissionCapable)
-        );
-        assert_eq!(executor.enqueued(), 0, "the refusal fires before the lane");
-    }
-
-    /// The same probe enters a NON-submitting executor's lane: the probe entry
-    /// refuses only the executor that could sign and broadcast, so a dry-run
-    /// lane still answers probes.
-    #[tokio::test]
-    async fn a_probe_enters_a_non_submitting_executor_lane() {
-        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (tx, rx) = mpsc::unbounded_channel();
-        let executor = BatchExecutor::from_leaves(
-            1,
-            test_deployment_id(),
-            SubmissionPolicy::NonSubmitting,
-            Arc::new(ReversedFinishSim { fail_block: None }),
-            Arc::new(StampingSubmit {
-                order,
-                tx: tx.downgrade(),
-            }),
-            tx,
-            rx,
-        );
-        assert!(!executor.submission().permits_submission());
-        assert_eq!(
-            executor.enqueue_probe(work(BASE_BLOCK)),
-            Ok(EnqueueOutcome::Accepted)
-        );
-        assert_eq!(executor.enqueued(), 1);
-        executor.shutdown().await.expect("no failure");
     }
 
     /// Lane ordering: submission order is ARRIVAL (FIFO = nonce) order even

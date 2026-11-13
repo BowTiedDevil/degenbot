@@ -118,6 +118,7 @@ def test_probe_report_counts_economic_reverts_as_executed() -> None:
             "response": {
                 "ok": True,
                 "outcome": "failed",
+                "capital": "self_fund",
                 "bucket": "InsufficientProfit",
             },
         })
@@ -128,11 +129,15 @@ def test_probe_report_counts_economic_reverts_as_executed() -> None:
         "executed": 54,
         "sim_ok": 0,
         "failed": 54,
+        "planned": 0,
         "encode_failed": 0,
         "exceptions": 0,
         "missing": 0,
     }
     assert len(report["paths"]) == 54
+    assert {row["capital"] for row in report["paths"]} == {"self_fund"}, (
+        "the report keeps the posture each probe ran under"
+    )
 
 
 def test_probe_report_does_not_count_an_encode_refusal_as_execution() -> None:
@@ -141,7 +146,12 @@ def test_probe_report_does_not_count_an_encode_refusal_as_execution() -> None:
             "permutation": "V2-V2-V4",
             "direction": "forward",
             "path_id": 3,
-            "response": {"ok": True, "outcome": "failed", "bucket": "encode-failed"},
+            "response": {
+                "ok": True,
+                "outcome": "failed",
+                "capital": "zero_balance",
+                "bucket": "encode-failed",
+            },
         }
     ]
 
@@ -149,10 +159,53 @@ def test_probe_report_does_not_count_an_encode_refusal_as_execution() -> None:
         "executed": 0,
         "sim_ok": 0,
         "failed": 0,
+        "planned": 0,
         "encode_failed": 1,
         "exceptions": 0,
         "missing": 0,
     }
+
+
+def test_probe_report_counts_a_planned_execution_separately() -> None:
+    """A probe that really produced an encoder plan is counted as `planned`.
+
+    The typed probe report carries the production encoder's joined row; the wire
+    response carries a summary of it, so the matrix can tell an executed plan
+    from a simulation that composed neither a plan nor a submission (the probe
+    executor has no submit lane at all — there is no submission record to look
+    for).
+    """
+    responses = [
+        {
+            "permutation": "V2-V3-V4",
+            "direction": "forward",
+            "path_id": 7,
+            "response": {
+                "ok": True,
+                "outcome": "sim_ok",
+                "capital": "production",
+                "planning": {
+                    "execution_target": "0x00000000000000000000000000000000000000C0",
+                    "value": 0,
+                    "calldata_len": 68,
+                },
+            },
+        }
+    ]
+
+    report = matrix.build_probe_report(responses)
+
+    assert report["summary"] == {
+        "executed": 1,
+        "sim_ok": 1,
+        "failed": 0,
+        "planned": 1,
+        "encode_failed": 0,
+        "exceptions": 0,
+        "missing": 0,
+    }
+    assert report["paths"][0]["planned"] is True
+    assert report["paths"][0]["capital"] == "production"
 
 
 def test_probe_requests_carry_one_capital_mode_in_the_shared_vocabulary() -> None:

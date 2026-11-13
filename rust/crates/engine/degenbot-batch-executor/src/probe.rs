@@ -43,18 +43,16 @@
 //!   `SimStage` value type the production lane drives. No second
 //!   pricing or encoder path exists for probes.
 //!
-//! # What the later public adapter consumes
+//! # What the public adapter consumes
 //!
-//! The Python/operator surface is NOT migrated in this slice; the temporary
-//! public adapter (`BatchExecutor::enqueue_probe` + the shared-drain drain, and
-//! the session's probe lock/reap) stays exactly as it is until its own chunk
-//! retires it. That adapter will consume this seam directly:
+//! The Python/operator surface consumes this seam directly (the `PyO3` shell's
+//! `ProbeExecutor` / `ExecutionProbeRequest` / `ProbeReport`):
 //!
 //! 1. build ONE [`ProbeExecutor`] per capital posture with
 //!    [`ProbeConfig::from_verdict`] over the session's sim-side handles
 //!    (`SimRuntime` — no signer, no nonce lane, no relay URLs are needed, so the
-//!    current "build a submission-capable executor and refuse at the entry"
-//!    dance disappears);
+//!    retired "build a submission-capable executor and refuse at the entry"
+//!    dance has no replacement);
 //! 2. hand it a [`BatchWork`] carrying the caller's one raw row (path id, fixed
 //!    input, its hop outputs / consumed inputs, the block facts) and no payload
 //!    rows;
@@ -64,9 +62,10 @@
 //!    `encoded` carries the planning evidence (calldata, native value, target).
 //!
 //! Because the call owns its outcome, the session lock and the abandoned-probe
-//! reaping become unnecessary rather than merely correct; concurrent probes no
-//! longer need serializing, and dotting a probe call with `asyncio.shield` stops
-//! being a correctness requirement.
+//! reaping are unnecessary rather than merely correct: concurrent probes are
+//! not serialized, nothing is shielded against cancellation for correctness,
+//! and the ordered lane has no probe entry to refuse (`enqueue_probe`,
+//! `ProbeRefusal`, and the shared-drain drain are gone).
 
 use std::sync::Arc;
 

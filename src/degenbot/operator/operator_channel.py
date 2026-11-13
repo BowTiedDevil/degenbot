@@ -74,13 +74,16 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from degenbot import fleet
 from degenbot.logging import logger
 from degenbot.pathfinding import POOL_KIND_BY_LABEL, POOL_KIND_LABELS, PoolKind
 from degenbot.runner._sim_submit import ProbeCapital
 from degenbot.utils.tasks import cancel_and_reap
+
+if TYPE_CHECKING:
+    from degenbot.dispatch import BatchOutcome, ProbeReport
 
 #: Map the PUBLIC wire labels (`V2`/`V3`/`V4`) to the typed pool families used
 #: by pathfinding, minted from the core's exported label list
@@ -299,20 +302,42 @@ def _decode_request(line: bytes) -> tuple[str, dict[str, Any]]:
     return op, payload
 
 
-def execution_probe_response(path_id: int, outcome: Any) -> dict[str, Any]:
-    """Project one batch outcome into the operator's dry-run probe response."""
-    if any(record.get("kind") == "submitted" for record in outcome.submit_records):
-        msg = "dry-run execution probe produced a submission record"
+def execution_probe_response(path_id: int, report: ProbeReport) -> dict[str, Any]:
+    """Project one typed probe report into the operator's dry-run probe response.
+
+    The report is the probe executor's own: ``records`` carry the assembly and
+    simulate verdicts, ``encoded`` carries the production encoder's planning
+    rows, and ``capital`` names the funding posture the call ran under. There is
+    no submit-record list to screen: a probe has no submit lane, so the
+    non-submission claim is structural (and the ``submit`` slot below must stay
+    empty, which is the one assertion left to make).
+
+    Args:
+        path_id: The probed path (the wire's own id, echoed back).
+        report: The typed `ProbeReport` the probe executor returned.
+
+    Returns:
+        The wire response: path id, permutation, capital, outcome, and the
+        failure bucket or the encoded planning summary when one applies.
+
+    Raises:
+        RuntimeError: If the report does not carry exactly one outcome, or if a
+            record somehow carries a submit verdict.
+
+    """
+    if len(report.records) != 1:
+        msg = f"execution probe expected one outcome, got {len(report.records)}"
         raise RuntimeError(msg)
-    if len(outcome.records) != 1:
-        msg = f"execution probe expected one outcome, got {len(outcome.records)}"
+    record = report.records[0]
+    if record.submit is not None:
+        msg = "execution probe reported a submit verdict; the probe executor has no submit lane"
         raise RuntimeError(msg)
-    record = outcome.records[0]
-    verdict = record.simulate
-    response = {
+    response: dict[str, Any] = {
         "path_id": path_id,
         "permutation": record.path_type,
+        "capital": report.capital,
     }
+    verdict = record.simulate
     if verdict is None:
         response["outcome"] = record.assembly_label
         return response
@@ -320,7 +345,34 @@ def execution_probe_response(path_id: int, outcome: Any) -> dict[str, Any]:
     response["outcome"] = "sim_ok" if kind in {"profitable", "gas_unprofitable"} else kind
     if kind == "failed":
         response["bucket"] = verdict.detail.bucket
+    planning = _encoded_plan(report, record)
+    if planning is not None:
+        response["planning"] = planning
     return response
+
+
+def _encoded_plan(report: ProbeReport, record: BatchOutcome) -> dict[str, Any] | None:
+    """Summarize the production encoder's row for ``record``'s candidate.
+
+    The planner's evidence is kept to what a fail-closed report needs to tell a
+    real encode from a missing one — the target, the native value, and the
+    calldata length (the bytes themselves stay on the typed report).
+
+    Returns:
+        The planning summary, or ``None`` when this call composed no row for the
+        record (an assembly skip or a failed simulation).
+
+    """
+    candidate = record.candidate_id
+    for encoded in report.encoded:
+        row = encoded.candidate_id
+        if (row.path_id, row.deployment_id) == (candidate.path_id, candidate.deployment_id):
+            return {
+                "execution_target": encoded.execution_target,
+                "value": int(encoded.value),
+                "calldata_len": len(encoded.execute_calldata),
+            }
+    return None
 
 
 class OperatorServer:

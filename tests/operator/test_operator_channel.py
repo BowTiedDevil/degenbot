@@ -242,39 +242,125 @@ def test_wrap_handler_normalizes_detail_and_error() -> None:
 
 
 def test_execution_probe_response_preserves_economic_failure_without_broadcast() -> None:
+    """A typed report projects to the wire's failure shape, with its posture."""
     from types import SimpleNamespace
 
     from degenbot.operator.operator_channel import execution_probe_response
 
     detail = SimpleNamespace(bucket="InsufficientProfit")
     verdict = SimpleNamespace(kind=lambda: "failed", detail=detail)
-    record = SimpleNamespace(path_type="V2-V3-V4", assembly_label="assembled", simulate=verdict)
-    outcome = SimpleNamespace(records=[record], submit_records=[{"kind": "skipped"}])
+    record = SimpleNamespace(
+        candidate_id=SimpleNamespace(path_id=7, deployment_id=1),
+        path_type="V2-V3-V4",
+        assembly_label="assembled",
+        submit=None,
+        simulate=verdict,
+    )
+    report = SimpleNamespace(capital="self_fund", records=[record], encoded=[])
 
-    response = execution_probe_response(7, outcome)
+    response = execution_probe_response(7, report)
 
     assert response == {
         "path_id": 7,
         "permutation": "V2-V3-V4",
+        "capital": "self_fund",
         "outcome": "failed",
         "bucket": "InsufficientProfit",
     }
 
 
 def test_execution_probe_response_accepts_valid_below_threshold_receipt() -> None:
+    """A gas-unprofitable receipt is `sim_ok` — and it carries its planning row."""
     from types import SimpleNamespace
 
     from degenbot.operator.operator_channel import execution_probe_response
 
     verdict = SimpleNamespace(kind=lambda: "gas_unprofitable")
-    record = SimpleNamespace(path_type="V4-V4-V4", assembly_label="assembled", simulate=verdict)
-    outcome = SimpleNamespace(records=[record], submit_records=[])
+    record = SimpleNamespace(
+        candidate_id=SimpleNamespace(path_id=9, deployment_id=1),
+        path_type="V4-V4-V4",
+        assembly_label="assembled",
+        submit=None,
+        simulate=verdict,
+    )
+    encoded = SimpleNamespace(
+        candidate_id=SimpleNamespace(path_id=9, deployment_id=1),
+        execution_target="0x00000000000000000000000000000000000000C0",
+        value=0,
+        execute_calldata=b"\xde\xad",
+    )
+    report = SimpleNamespace(capital="production", records=[record], encoded=[encoded])
 
-    assert execution_probe_response(9, outcome) == {
+    assert execution_probe_response(9, report) == {
         "path_id": 9,
         "permutation": "V4-V4-V4",
+        "capital": "production",
         "outcome": "sim_ok",
+        "planning": {
+            "execution_target": "0x00000000000000000000000000000000000000C0",
+            "value": 0,
+            "calldata_len": 2,
+        },
     }
+
+
+def test_an_assembly_skip_projects_its_skip_label() -> None:
+    """A row that never reached the sim reports its stage-1 label and no plan."""
+    from types import SimpleNamespace
+
+    from degenbot.operator.operator_channel import execution_probe_response
+
+    record = SimpleNamespace(
+        candidate_id=SimpleNamespace(path_id=4, deployment_id=1),
+        path_type="V2",
+        assembly_label="skip-thin-margin",
+        submit=None,
+        simulate=None,
+    )
+    report = SimpleNamespace(capital="zero_balance", records=[record], encoded=[])
+
+    assert execution_probe_response(4, report) == {
+        "path_id": 4,
+        "permutation": "V2",
+        "capital": "zero_balance",
+        "outcome": "skip-thin-margin",
+    }
+
+
+def test_a_report_carrying_a_submit_verdict_is_refused() -> None:
+    """The detective check beside the structural guarantee.
+
+    A probe executor has no submit lane, so a report carrying a submit verdict
+    means the surface was short-circuited — refused loudly rather than rendered
+    as a dry-run success.
+    """
+    from types import SimpleNamespace
+
+    from degenbot.operator.operator_channel import execution_probe_response
+
+    record = SimpleNamespace(
+        candidate_id=SimpleNamespace(path_id=7, deployment_id=1),
+        path_type="V2-V3-V4",
+        assembly_label="assembled",
+        submit=SimpleNamespace(kind=lambda: "submitted"),
+        simulate=SimpleNamespace(kind=lambda: "profitable"),
+    )
+    report = SimpleNamespace(capital="self_fund", records=[record], encoded=[])
+
+    with pytest.raises(RuntimeError, match="submit verdict"):
+        execution_probe_response(7, report)
+
+
+def test_a_report_with_no_outcome_is_refused() -> None:
+    """An empty report is a bug, not an "unknown" probe."""
+    from types import SimpleNamespace
+
+    from degenbot.operator.operator_channel import execution_probe_response
+
+    report = SimpleNamespace(capital="self_fund", records=[], encoded=[])
+
+    with pytest.raises(RuntimeError, match="expected one outcome, got 0"):
+        execution_probe_response(7, report)
 
 
 def test_the_probe_payload_names_one_capital_mode() -> None:

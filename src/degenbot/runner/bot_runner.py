@@ -37,6 +37,7 @@ from degenbot.runner._sim_submit import ProbeCapital
 from degenbot.runner.session import InjectedActors, Session
 
 if TYPE_CHECKING:
+    from degenbot.dispatch import ProbeReport
     from degenbot.runner._session_watch import SessionEndVerdict
     from degenbot.runner.config import ArbitrageConfig
 
@@ -119,14 +120,18 @@ class BotRunner:
         *,
         optimal_input: int,
         capital: ProbeCapital = ProbeCapital.SELF_FUND,
-    ) -> Any:
-        """Execute one explicit amount vector through the session's dry-run probe.
+    ) -> ProbeReport:
+        """Execute one explicit amount vector through the session's probe executor.
 
         ``capital`` is the ONE capital posture value (:class:`ProbeCapital`):
         ``SELF_FUND`` (the default), ``ZERO_BALANCE``, or ``PRODUCTION``.
 
+        The call is non-submitting by construction (the probe executor has no
+        signer, nonce lane, or broadcast arm) and correlated by construction
+        (each call owns its outcome).
+
         Returns:
-            The row's own outcome set from the batch executor.
+            The call's own typed probe report.
 
         """
         return await self.session.probe_path(path_id, optimal_input=optimal_input, capital=capital)

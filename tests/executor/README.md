@@ -111,12 +111,22 @@ just py python scripts/executor_three_hop_matrix.py report \
 
 Registration is not simulation coverage: live pools may have no profitable
 input. `probe` supplies a small fixed input, quotes through the canonical V3/V4
-quoters, and runs each path through the self-funded production batch executor.
-`InsufficientProfit` is an executed economic outcome; `encode-failed` is a
-clean refusal. Assembly misses and exceptions fail the report. Any `Submitted
-path` record fails the report. Never add `--live`: dry-run skips signing and
-executor-code injection independently gates submission. `--sparse-registration`
-avoids stale tracked tick fixtures; it does not relax simulation checks.
+quoters, and runs each path through the session's dedicated execution-probe
+executor. `InsufficientProfit` is an executed economic outcome; `encode-failed`
+is a clean refusal. Assembly misses and exceptions fail the report. Any
+`Submitted path` record fails the report. Never add `--live`: the probe
+executor has no submit lane at all (no signer, nonce lease, relay, or
+broadcast), and executor-code injection is what makes the injected runtime
+simulable. `--sparse-registration` avoids stale tracked tick fixtures; it does
+not relax simulation checks.
+
+The probe answer is the session's typed `ProbeReport`, projected onto the wire
+by `execution_probe_response`: each row carries the `capital` posture the call
+ran under and a `planning` summary (execution target, native value, calldata
+length) whenever the production encoder composed a row, so the report can tell
+an executed plan from a sim that never got that far. There is no submission
+record to look for — the retired shared-drain probe entry (and its dry-run skip
+record) is gone.
 
 Pass `--capital zero_balance` to `probe` (the flag replaced `--zero-balance`) to
 use ordinary in-path-flash encoding with zero executor native ETH, WETH, USDC,

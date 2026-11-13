@@ -5,6 +5,13 @@ The injection command proves registration only. The report command correlates
 returned engine path IDs with production solver/simulation logs and fails until
 all 27 permutations have a valid execution receipt. It also fails if a submission
 record appears in what is required to be a dry-run log.
+
+The ``probe`` command drives the operator's explicit execution probe: the host
+answers with its typed probe report's projection (``outcome``, ``bucket``, the
+``capital`` posture the call ran under, and — when the production encoder
+composed a row — a ``planning`` summary), and this client keeps those fields in
+its per-path rows so a fail-closed report can state the posture it probed and
+whether a plan was actually encoded.
 """
 
 from __future__ import annotations
@@ -216,6 +223,12 @@ def probe_paths(
 def build_probe_report(responses: list[dict[str, Any]]) -> dict[str, Any]:
     """Count economic reverts as executions, not as missing or exceptional probes.
 
+    Each row keeps the response's own ``capital`` posture and whether the report
+    carried encoder planning (``planned``), so the summary can distinguish a
+    probe that really produced an execution plan from one that never got that
+    far. A probe response has no submission record to look for: the executor has
+    no submit lane.
+
     Returns:
         A summary and one row per directed execution probe.
 
@@ -229,7 +242,9 @@ def build_probe_report(responses: list[dict[str, Any]]) -> dict[str, Any]:
             "direction": item["direction"],
             "path_id": item["path_id"],
             "outcome": outcome,
+            "capital": response.get("capital"),
             "bucket": response.get("bucket"),
+            "planned": "planning" in response,
             **({"error": response["error"]} if "error" in response else {}),
         })
     economic_failures = sum(
@@ -242,6 +257,7 @@ def build_probe_report(responses: list[dict[str, Any]]) -> dict[str, Any]:
             "executed": sim_ok + economic_failures,
             "sim_ok": sim_ok,
             "failed": economic_failures,
+            "planned": sum(row["planned"] for row in paths),
             "encode_failed": encode_failures,
             "exceptions": sum(row["outcome"] == "exception" for row in paths),
             "missing": sum(

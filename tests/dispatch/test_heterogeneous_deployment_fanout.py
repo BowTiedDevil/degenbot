@@ -55,7 +55,9 @@ from tests.helpers.seam import (
     AlloyProvider,
     AsyncAlloyProvider,
     PayloadAdapter,
+    ProbeExecutor,
     build_batch_executor_py,
+    build_probe_executor_py,
 )
 
 if TYPE_CHECKING:
@@ -207,7 +209,6 @@ def _executor(
     dry_run: bool = True,
     rpc_url: str = _RPC_URL,
     target_selection: str | None = None,
-    capital: str | None = None,
 ) -> BatchExecutor:
     """Build the session executor over the offline fixture engine."""
     return build_batch_executor_py(
@@ -221,6 +222,25 @@ def _executor(
         broadcast_providers=None,
         deployments=deployments,
         target_selection=target_selection,
+    )
+
+
+def _probe_executor(
+    engine: ArbitrageEngine,
+    *,
+    rpc_url: str = _RPC_URL,
+    capital: str | None = None,
+) -> ProbeExecutor:
+    """Build the PROBE executor over the offline fixture engine.
+
+    The sim half of `_executor`'s construction and nothing else: no signer, no
+    nonce seed, no submit provider, no relay fan-out, and no run-mode stance.
+    """
+    return build_probe_executor_py(
+        context=_ctx(rpc_url),
+        dispatcher=Dispatcher.for_block(0),
+        engine=engine,
+        provider=_provider(rpc_url),
         capital=capital,
     )
 
@@ -390,14 +410,19 @@ class TestCompositionRefusals:
 
 
 class TestCapitalPostureRefusal:
-    """The FFI's `capital` parameter is validated at the construction seam.
+    """The probe construction's `capital` parameter is validated at its own seam.
 
-    `build_batch_executor_py` converts the ONE capital spelling into the core's
+    `build_probe_executor_py` converts the ONE capital spelling into the core's
     posture before it builds anything, so a caller who misspells a mode is told
     so instead of silently receiving the production default. The loopback stub
     is the spy that makes "before construction" observable: an executor that had
     been built first would have dialed its chain reads, and the refusal records
     no request at all.
+
+    The SUBMITTING construction takes no capital posture at all: its lane
+    simulates the session account's real balances, and the probe postures belong
+    to the probe executor (whose construction cannot sign, lease a nonce, or
+    broadcast).
     """
 
     @pytest.mark.parametrize(
@@ -412,11 +437,12 @@ class TestCapitalPostureRefusal:
     ) -> None:
         engine, _path_id = nxm2bf_v2_engine_and_path
 
-        # `_executor` forwards `capital` verbatim to `build_batch_executor_py`
-        # (the same construction every test in this suite uses), so the refusal
-        # below IS the FFI's own validation — no wrapper of ours screens it.
+        # `_probe_executor` forwards `capital` verbatim to
+        # `build_probe_executor_py` (the same probe construction every case in
+        # this class uses), so the refusal below IS the FFI's own validation —
+        # no wrapper of ours screens it.
         with pytest.raises(ValueError, match="unknown capital") as refused:
-            _executor(engine, rpc_url=canned_chain.url, capital=misspelling)
+            _probe_executor(engine, rpc_url=canned_chain.url, capital=misspelling)
 
         message = str(refused.value)
         for mode in ProbeCapital:
@@ -437,15 +463,11 @@ class TestCapitalPostureRefusal:
         # The public seam itself, so the refusal is the FFI's argument check and
         # not a helper's guard: a mode is a spelling, never a number or a bool.
         with pytest.raises(TypeError):
-            build_batch_executor_py(
+            build_probe_executor_py(
                 context=_ctx(canned_chain.url),
                 dispatcher=Dispatcher.for_block(0),
                 engine=engine,
-                signer=TxSigner(key="0x" + "11" * 32, chain_id=1),
-                submit_provider=_provider(canned_chain.url),
-                operator_nonce=5,
-                dry_run=True,
-                broadcast_providers=None,
+                provider=_provider(canned_chain.url),
                 capital=not_a_spelling,
             )
 

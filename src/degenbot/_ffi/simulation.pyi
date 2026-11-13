@@ -69,27 +69,6 @@ class BatchExecutor:
         session consumer quiesces the lane when its loop ends, which closes this
         stream: the drain terminates on its own.
         """
-    def probe_path(
-        self,
-        /,
-        path_id: SupportsIndex,
-        optimal_input: SupportsIndex,
-        hop_outputs: SupportsGetItem[int, SupportsIndex],
-        consumed_inputs: SupportsGetItem[int, SupportsIndex],
-        current_block: SupportsIndex,
-        base_fee_next: SupportsIndex,
-        block_timestamp: SupportsIndex,
-    ) -> Any:
-        """
-        Execute one explicit amount vector as a dry-run probe. The ordinary
-        assembly, production encoding, EVM2, and receipt stages answer the row.
-
-        A probe is NON-SUBMITTING. The driver builds its probe pipeline with
-        submission disabled (the FFI's `dry_run`, and no relay fan-out), and this
-        entry refuses outright on an executor whose submission policy permits
-        signing and broadcast, before the row enters the lane. A live session's
-        executor therefore answers `RuntimeError` rather than running the probe.
-        """
     @property
     def submitted(self, /) -> int:
         """
@@ -231,6 +210,87 @@ class ConsumerErrorKind:
     def __ne__(self, value: object, /) -> bool: ...
 
 @final
+class ExecutionProbeRequest:
+    """
+    One probe call's typed ask: the path, the caller's fixed input, the amount
+    vector the caller computed for it, and the block it belongs to.
+
+    This is the ONE request shape the public probe surface accepts. It carries
+    no deployment, no signer, no nonce seed, no relay endpoint, and no
+    submission stance — a probe cannot ask to be submitted because the request
+    has no field for it, and neither does the executor it is handed to.
+
+    The vector fields are the caller's, not derived here: the Python boundary
+    keeps its exact-input quote derivation (one amount per hop, quoted at the
+    current pool state), and this value only states what the stages must
+    simulate. `hop_outputs` and `consumed_inputs` are one entry per hop, in
+    path order; `optimal_input` is the probe's fixed input (hop 1's consumed
+    amount).
+    """
+    def __new__(
+        cls,
+        /,
+        path_id: SupportsIndex,
+        optimal_input: SupportsIndex,
+        hop_outputs: SupportsGetItem[int, SupportsIndex],
+        consumed_inputs: SupportsGetItem[int, SupportsIndex],
+        current_block: SupportsIndex,
+        base_fee_next: SupportsIndex,
+        block_timestamp: SupportsIndex,
+    ) -> ExecutionProbeRequest:
+        """
+        Build one probe request.
+
+        Args:
+            `path_id`: The registered engine path to execute.
+            `optimal_input`: The fixed swap input (wei); must be positive.
+            `hop_outputs`: One expected output per hop, in path order.
+            `consumed_inputs`: One consumed input per hop, in path order.
+            `current_block`: The block the vector was quoted at.
+            `base_fee_next`: The next block's base fee (wei).
+            `block_timestamp`: The quoted block's timestamp.
+
+        Raises:
+            `ValueError`: If `optimal_input` is not positive, or the two per-hop
+                vectors are empty or of different lengths.
+        """
+    @property
+    def base_fee_next(self, /) -> int:
+        """
+        The next block's base fee (wei).
+        """
+    @property
+    def block_timestamp(self, /) -> int:
+        """
+        The quoted block's timestamp.
+        """
+    @property
+    def consumed_inputs(self, /) -> list[int]:
+        """
+        Per-hop consumed inputs, in path order.
+        """
+    @property
+    def current_block(self, /) -> int:
+        """
+        The block the vector was quoted at.
+        """
+    @property
+    def hop_outputs(self, /) -> list[int]:
+        """
+        Per-hop expected outputs, in path order.
+        """
+    @property
+    def optimal_input(self, /) -> int:
+        """
+        The fixed swap input (wei).
+        """
+    @property
+    def path_id(self, /) -> int:
+        """
+        The registered engine path this probe executes.
+        """
+
+@final
 class ExecutorPolicyValues:
     """
     The converted executor policy (see [`executor_policy_py`]). A frozen
@@ -354,6 +414,126 @@ class PayloadVerdict:
         """
         "submit" | "unprofitable" — the arm tag (the threshold comparison ran
         Rust-side; Python renders the branch, it does not re-apply the rule).
+        """
+
+@final
+class ProbeEncodedCall:
+    """
+    One production-encoded row the probe's own pass composed: the planning
+    evidence a report keeps ("what would have been sent, at which target, with
+    which value"), never something anything can send.
+    """
+    @property
+    def base_fee_next(self, /) -> int:
+        """
+        The base fee the encoder stamped (wei).
+        """
+    @property
+    def candidate_id(self, /) -> CandidateId:
+        """
+        The candidate identity (path + the deployment that composed the row).
+        """
+    @property
+    def execute_calldata(self, /) -> bytes:
+        """
+        The composed `execute(...)` calldata the production encoder produced.
+        """
+    @property
+    def execution_target(self, /) -> str:
+        """
+        The encoded transaction's `to` — the deployment target, checksummed.
+        """
+    @property
+    def gas_used(self, /) -> int:
+        """
+        The simulate's raw `gasUsed`.
+        """
+    @property
+    def gross_profit(self, /) -> Any:
+        """
+        The simulated gross profit (wei).
+        """
+    @property
+    def net_profit(self, /) -> Any:
+        """
+        The simulated net profit (wei) — what a submit floor would read.
+        """
+    @property
+    def value(self, /) -> Any:
+        """
+        The encoded transaction's native value (wei).
+        """
+
+@final
+class ProbeExecutor:
+    """
+    The public execution-probe executor: the core correlated
+    [`ProbeExecutor`] plus the engine's path registry (the one thing the request
+    cannot carry — a path's solve-time state nonces).
+
+    Construct ONE per capital posture with [`build_probe_executor_py`]. The value
+    holds no queue, no drain, and no session state: concurrent calls are
+    independent, and a dropped call aborts its own stage instead of leaving an
+    outcome for a successor.
+    """
+    @property
+    def capital(self, /) -> str:
+        """
+        The capital posture every call on this executor runs under.
+        """
+    def probe(self, /, request: ExecutionProbeRequest) -> Any:
+        """
+        Run ONE probe call and return ITS OWN report.
+
+        Each call owns its channel, so concurrent calls are independent however
+        they interleave: no call can observe another's outcome. A dropped call
+        aborts the stage task it spawned, so nothing is queued for a successor
+        and no task is left detached — the cancellation needs no session lock and
+        no reaping.
+
+        Args:
+            `request`: The typed [`PyExecutionProbeRequest`].
+
+        Raises:
+            `ValueError`: If the request's path is not registered, or its per-hop
+                vectors do not match the path's hop count.
+            `RuntimeError`: If the stages refuse the row, or the stage task ends
+                without producing an outcome.
+        """
+
+@final
+class ProbeReport:
+    """
+    One probe call's typed answer — and only that call can observe it.
+
+    The value is the core [`ProbeOutcome`] plus the capital posture the executor
+    ran under, so a report is self-describing: the records say what the assembly
+    and the simulation decided, the encoded rows say what the production encoder
+    would have sent, and `capital` says which funding posture the simulation
+    assumed. There is no submit-record list and no submit verdict to find — the
+    executor has no submit stage.
+    """
+    @property
+    def capital(self, /) -> str:
+        """
+        The capital posture this call ran under (`"production"`, `"self_fund"`,
+        or `"zero_balance"`).
+        """
+    @property
+    def encoded(self, /) -> list[ProbeEncodedCall]:
+        """
+        The production encoder's joined rows for the very candidates above —
+        the planning evidence (calldata, native value, execution target).
+        """
+    @property
+    def records(self, /) -> list[BatchOutcome]:
+        """
+        The per-candidate records: the assembly verdict (stage 1) and the
+        simulate verdict (stage 2, with the receipt or the typed failure).
+
+        Each record's `submit` slot is `None` — there is no submit stage to fill
+        it — and the slot is kept only so the record vocabulary stays the one the
+        renderers already read.
         """
 
 @final
@@ -787,7 +967,6 @@ def build_batch_executor_py(
     broadcast_providers: SupportsGetItem[int, AsyncAlloyProvider] | None = None,
     deployments: SupportsGetItem[int, SimulationDeployment] | None = None,
     target_selection: str | None = None,
-    capital: str | None = None,
 ) -> BatchExecutor:
     """
     Construct the session executor: the core's value-configured module over
@@ -832,15 +1011,10 @@ def build_batch_executor_py(
             every path. One registered deployment selects the same target either
             way.
 
-        `capital`: the session's ONE capital posture — `"production"` (the
-            default: the account's real balances, no capital override),
-            `"self_fund"` (the known asset set installed at the executor, with
-            the self-funded encoding), or `"zero_balance"` (that set stripped
-            from the executor, with the in-path-flash encoding). The one value
-            supplies the stream's `funding` / zero-balance axes AND the
-            deployment's simulation override plan, which is why the retired
-            `self_fund` / `zero_balance` boolean pair is gone: the two probe
-            modes can no longer be requested together.
+    This constructor builds the SUBMITTING lane over the session's own capital
+    (`Production`), so it takes no capital posture: an explicit execution probe
+    is [`crate::simulation::probe::build_probe_executor_py`]'s value, which has
+    no signer, nonce lane, or broadcast arm to arm.
 
     # Errors
 
@@ -861,6 +1035,52 @@ def build_batch_executor_py(
     ACQUISITION/DECODE failure names both official methods and the remediation —
     enable EIP-7928 BAL RPC support on the endpoint, or disable
     `simulation.delta_dispatch`. An OFF session never probes.
+    """
+
+def build_probe_executor_py(
+    context: SimulateContext,
+    dispatcher: Dispatcher,
+    engine: ArbitrageEngine,
+    provider: AsyncAlloyProvider,
+    *,
+    capital: str | None = None,
+    deployments: SupportsGetItem[int, SimulationDeployment] | None = None,
+    target_selection: str | None = None,
+) -> ProbeExecutor:
+    """
+    Construct a probe executor for ONE capital posture.
+
+    The construction is the sim half of the session executor's and nothing else:
+    no signer, no nonce seed, no submit provider, no relay endpoints, and no
+    run-mode stance cross this boundary, because a probe has no submit lane to
+    arm. The verdict still supplies every policy value (the thin-margin floor,
+    the ERC6909 encode axis, the inject stance) through the core's own
+    conversion, so a probe's answers are the session's answers.
+
+    Args:
+        `context`: The session `SimulateContext` (provider, addresses, the
+            inject stance's runtime facts, runtime bytecode, warmup slots).
+        `dispatcher`: The session `Dispatcher` (suppression, divergence, `FoT`,
+            priority-fee ring).
+        `engine`: The `ArbEngine` (the path resolver projection, the path
+            registry the nonce lookup reads, `BotState`/warm-code arcs).
+        `provider`: The sim provider handle (`AsyncAlloyProvider`).
+        `capital`: The ONE capital posture: `"production"` (default),
+            `"self_fund"`, or `"zero_balance"`.
+        `deployments`: The session's ADDITIONAL execution deployments, offered
+            after the built-in settlement deployment in the order given.
+        `target_selection`: `"first_compatible"` (the default) or
+            `"all_targets"` — which deployments each path is offered to.
+
+    Raises:
+    # Errors
+
+    `ValueError` on an unknown `capital`/`target_selection` spelling, or when the
+    composed registry is refused (an empty registry, two deployments with one
+    identity, or a deployment owned by another account).
+
+    `RuntimeError` when `simulation.delta_dispatch` is ON and the startup BAL
+    capability probe refuses.
     """
 
 def builtin_deployment_id() -> int:
@@ -1020,11 +1240,15 @@ __all__ = [
     "BatchOutcomeSet",
     "CandidateId",
     "ConsumerErrorKind",
+    "ExecutionProbeRequest",
     "ExecutorPolicyValues",
     "FailureDetail",
     "FailureKind",
     "PayloadOutcome",
     "PayloadVerdict",
+    "ProbeEncodedCall",
+    "ProbeExecutor",
+    "ProbeReport",
     "SessionConsumer",
     "SessionConsumerError",
     "SimReceipt",
@@ -1033,6 +1257,7 @@ __all__ = [
     "SimulationDeployment",
     "SubmitVerdict",
     "build_batch_executor_py",
+    "build_probe_executor_py",
     "builtin_deployment_id",
     "executor_policy_py",
     "merge_payload_results_py",

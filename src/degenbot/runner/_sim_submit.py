@@ -16,11 +16,13 @@ The boundary reads ONE :class:`ExecutorInputs` record (resolved from a session
 by :meth:`ExecutorInputs.from_session`), never the session itself, so the
 constructor's inputs are named in one place.
 
-The executor's capital posture crosses the same boundary as ONE value
-(:class:`ProbeCapital`): the FFI converts it once into the core's capital mode,
-which supplies both the stream's funding axis and the deployment's simulation
-override plan. The retired ``self_fund`` / ``zero_balance`` boolean pair is
-gone, so a construction cannot ask for both probe modes at once.
+An explicit execution probe does NOT ride this constructor. It has its own
+boundary (:func:`build_probe_executor`) over the core's dedicated, correlated
+``ProbeExecutor``: no signer, no nonce seed, no submit provider, no relay
+fan-out, and no run-mode stance cross it, because a probe has no submit lane to
+arm. The probe's capital posture still crosses as ONE value
+(:class:`ProbeCapital`), which the FFI converts once into the core's capital
+mode (the stream's funding axis AND the deployment's simulation override plan).
 
 Submission order is nonce order because the core lane drains batches in
 arrival order (FIFO). The cap VALUE (``DEGENBOT_SIM_PIPELINE_CONCURRENCY``,
@@ -35,14 +37,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from degenbot.dispatch import BatchExecutor, SessionConsumer, TxSigner
+from degenbot.dispatch import BatchExecutor, ProbeExecutor, SessionConsumer, TxSigner
 from degenbot.dispatch import (
     build_batch_executor as build_batch_executor_py,
 )
+from degenbot.dispatch import build_probe_executor as build_probe_executor_py
 from degenbot.runner._dispatch import _resolve_relay_providers
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
     from typing import Any
 
     from degenbot.dispatch import Dispatcher, SimulateContext, SimulationDeployment
@@ -50,50 +53,6 @@ if TYPE_CHECKING:
     from degenbot.runner._relay_posture import RelayPosture
     from degenbot.runner.config import ArbitrageConfig
     from degenbot.runner.session import Session
-
-
-class SubmissionStance(Enum):
-    """The submission policy one executor construction asks for.
-
-    A construction names its stance, and the boundary derives both
-    submission-side inputs from that one value: the FFI's ``dry_run`` flag and
-    the relay fan-out. A caller therefore cannot ask for one half — an executor
-    that skips the live submission but still dials relays, or one that obeys the
-    run mode but keeps a broadcast posture it was told to drop.
-    """
-
-    #: The session's own executor: obeys the run mode, broadcasts through the
-    #: relay posture when the session is live.
-    PRODUCTION = "production"
-    #: An execution probe's executor: never signs, broadcasts, or leases a
-    #: nonce, whatever the run mode, and dials no relay.
-    PROBE = "probe"
-
-    def dry_run(self, *, run_mode_dry_run: bool) -> bool:
-        """Return the FFI ``dry_run`` flag this stance selects.
-
-        Args:
-            run_mode_dry_run: The session's own run-mode stance.
-
-        Returns:
-            ``True`` for a probe (unconditionally non-submitting), else the
-            session's run mode.
-
-        """
-        return self is SubmissionStance.PROBE or run_mode_dry_run
-
-    def fan_out_urls(self, relay_urls: Sequence[str]) -> list[str]:
-        """Return the relay endpoints this stance broadcasts through.
-
-        Args:
-            relay_urls: The session's resolved relay posture.
-
-        Returns:
-            The endpoints for a production construction; none for a probe,
-            whose lane carries no broadcast fan-out at all.
-
-        """
-        return [] if self is SubmissionStance.PROBE else list(relay_urls)
 
 
 class ProbeCapital(Enum):
@@ -147,10 +106,11 @@ class ExecutorInputs:
     #: the explicit fan-out to every registered deployment. The walk itself is
     #: the Rust core's; this field only names the policy.
     target_selection: str = "first_compatible"
-    #: The executor's ONE capital posture (:class:`ProbeCapital`). Production is
-    #: the ordinary solver candidate's answer and the session default; an
-    #: explicit execution probe names the probe mode it wants, and the pipeline
-    #: that carries it replaces this field (see ``Session.probe_path``).
+    #: The ONE capital posture a PROBE construction assumes (:class:`ProbeCapital`).
+    #: It is read by :func:`build_probe_executor` only — the submitting
+    #: constructor always simulates the session account's real balances
+    #: (``Production``), and a probe names its mode here, in ONE place
+    #: (see ``Session.probe_path``).
     capital: ProbeCapital = ProbeCapital.PRODUCTION
 
     @classmethod
@@ -193,7 +153,6 @@ async def build_batch_executor(
     inputs: ExecutorInputs,
     *,
     engine_builder: Callable[..., BatchExecutor] | None = None,
-    submission: SubmissionStance = SubmissionStance.PRODUCTION,
 ) -> BatchExecutor:
     """Build the core batch executor over one session's resolved policy.
 
@@ -209,22 +168,15 @@ async def build_batch_executor(
     production default is the companion package's FFI ``build_batch_executor``,
     so the uninjected path stays Rust-bound.
 
-    ``submission`` names the stance and nothing else: the boundary derives the
-    FFI's ``dry_run`` flag AND the relay fan-out from it, so a probe executor is
-    non-submitting by construction — no live stance, no broadcast posture, no
-    relay dial — whatever run mode the session resolved.
-
-    The capital posture rides ``inputs.capital`` (one :class:`ProbeCapital`
-    value) and is handed to the FFI as its wire spelling, so a caller states the
-    posture in ONE place and cannot pass a second, contradictory flag beside it.
+    The run mode and the relay posture decide the submit stance: there is no
+    stance argument to pass, because a submitting lane is the only thing this
+    constructor builds. An explicit execution probe is
+    :func:`build_probe_executor`'s value, which has no submit lane at all.
 
     Args:
-        inputs: The construction boundary's resolved inputs (including the
-            capital posture).
+        inputs: The construction boundary's resolved inputs.
         engine_builder: The construction override; defaults to the FFI
             ``build_batch_executor``.
-        submission: The construction's submission stance
-            (:class:`SubmissionStance`).
 
     Returns:
         The constructed batch executor.
@@ -240,12 +192,9 @@ async def build_batch_executor(
         raise RuntimeError(msg)
 
     # The relay posture value resolved once at session start (see
-    # _relay_posture): its endpoints are a PRODUCTION construction's broadcast
-    # fan-out. A probe stance answers none, so no relay is dialed.
+    # _relay_posture): its endpoints are this construction's broadcast fan-out.
     relay_posture = inputs.relay_posture
-    relay_urls = submission.fan_out_urls(
-        relay_posture.relay_urls if relay_posture is not None else []
-    )
+    relay_urls = list(relay_posture.relay_urls) if relay_posture is not None else []
     broadcast_providers = await _resolve_relay_providers(relay_urls, None) if relay_urls else None
 
     operator_nonce = int(await inputs.provider.get_transaction_count(inputs.cfg.operator_address))
@@ -258,11 +207,67 @@ async def build_batch_executor(
         signer=signer,
         submit_provider=async_alloy,
         operator_nonce=operator_nonce,
-        dry_run=submission.dry_run(run_mode_dry_run=inputs.cfg.dry_run),
+        dry_run=inputs.cfg.dry_run,
         broadcast_providers=broadcast_providers,
         deployments=list(inputs.deployments) or None,
         target_selection=inputs.target_selection,
+    )
+
+
+def build_probe_executor(
+    inputs: ExecutorInputs,
+    *,
+    probe_builder: Callable[..., ProbeExecutor] | None = None,
+) -> ProbeExecutor:
+    """Build a correlated, NON-SUBMITTING execution probe executor.
+
+    The boundary is the sim half of :func:`build_batch_executor`'s and nothing
+    else. NOTHING submission-shaped crosses it: no ``TxSigner`` is minted from
+    the operator key, no ``get_transaction_count`` seeds a nonce lane, no
+    ``submit_provider`` is handed over, no relay endpoint is dialed, and no
+    ``dry_run`` stance is passed — the core's probe construction cannot name a
+    signer, a nonce lease, or a broadcast target at all, so non-submission is a
+    missing field rather than a flag this function sets.
+
+    The capital posture rides ``inputs.capital`` (one :class:`ProbeCapital`
+    value) and is handed to the FFI as its wire spelling, so a caller states the
+    posture in ONE place.
+
+    ``probe_builder`` is the construction seam: a caller injects its own
+    constructor to observe exactly which values cross this boundary. The default
+    is the companion package's FFI ``build_probe_executor``, so the uninjected
+    path stays Rust-bound.
+
+    Args:
+        inputs: The construction boundary's resolved inputs (its ``capital`` is
+            the probe's ONE posture).
+        probe_builder: The construction override; defaults to the FFI
+            ``build_probe_executor``.
+
+    Returns:
+        The constructed probe executor (one per capital posture).
+
+    Raises:
+        RuntimeError: If the session's provider is not Alloy-backed (the sim
+            stage needs one).
+
+    A refused deployment registry surfaces as the FFI's ``ValueError``.
+
+    """
+    async_alloy = inputs.provider.as_async_alloy()
+    if async_alloy is None:
+        msg = "async_w3 is not an Alloy-backed provider; cannot simulate"
+        raise RuntimeError(msg)
+
+    construct = probe_builder or build_probe_executor_py
+    return construct(
+        context=inputs.sim_ctx,
+        dispatcher=inputs.dispatcher,
+        engine=inputs.engine,
+        provider=async_alloy,
         capital=inputs.capital.value,
+        deployments=list(inputs.deployments) or None,
+        target_selection=inputs.target_selection,
     )
 
 

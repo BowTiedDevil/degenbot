@@ -64,6 +64,14 @@ _V2_MATH = "degenbot._ffi.v2_math"
 ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     # degenbot.dispatch — simulation seam
     (_DISPATCH, "build_batch_executor", _SIM, "build_batch_executor_py"),
+    # The explicit execution probe's own protocol values: the typed request, the
+    # report it answers, the planning row, and the correlated executor they run
+    # on. Driver code (the operator handler, the matrix client) reads them here.
+    (_DISPATCH, "build_probe_executor", _SIM, "build_probe_executor_py"),
+    (_DISPATCH, "ExecutionProbeRequest", _SIM, "ExecutionProbeRequest"),
+    (_DISPATCH, "ProbeExecutor", _SIM, "ProbeExecutor"),
+    (_DISPATCH, "ProbeReport", _SIM, "ProbeReport"),
+    (_DISPATCH, "ProbeEncodedCall", _SIM, "ProbeEncodedCall"),
     # The session consumer is the ONE consume loop's door: the driver reaches it
     # through the companion name, and its abort type must stay the exact Rust
     # exception so a driver's ``except`` keeps matching what the core raises.
@@ -161,7 +169,11 @@ def test_dispatch_all_pins_public_surface() -> None:
     the batch was counted. ``SimulationDeployment`` and the core's
     ``builtin_deployment_id`` joined with the heterogeneous deployment registry:
     a driver declares foreign execution deployments here and hands them to the
-    same executor constructor.
+    same executor constructor. The probe protocol values
+    (``build_probe_executor``, ``ExecutionProbeRequest``, ``ProbeReport``,
+    ``ProbeEncodedCall``, ``ProbeExecutor``) joined when the public probe moved to
+    the core's dedicated correlated executor: the operator handler builds the
+    request and reads the report through these names, never through `_ffi`.
     """
 
     d = degenbot.dispatch
@@ -174,10 +186,14 @@ def test_dispatch_all_pins_public_surface() -> None:
         "ConsumerErrorKind",
         "Dispatcher",
         "EnqueueDecline",
+        "ExecutionProbeRequest",
         "FailureDetail",
         "FailureKind",
         "PayloadOutcome",
         "PayloadVerdict",
+        "ProbeEncodedCall",
+        "ProbeExecutor",
+        "ProbeReport",
         "SessionConsumer",
         "SessionConsumerError",
         "SimReceipt",
@@ -194,6 +210,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "SubmittedRecord",
         "TxSigner",
         "build_batch_executor",
+        "build_probe_executor",
         "builtin_deployment_id",
         "candidate_id_from_mapping",
         "dispatch_and_submit",

@@ -31,6 +31,14 @@ Symbol map (FFI name → stable companion name):
 - SimulateContext → SimulateContext
 - TxSigner → TxSigner
 - build_batch_executor_py → build_batch_executor
+
+- build_probe_executor_py → build_probe_executor (the explicit execution
+  probe's sim-half construction: no signer, nonce lane, submit provider, relay
+  fan-out, or broadcast target)
+
+- ExecutionProbeRequest / ProbeReport / ProbeEncodedCall / ProbeExecutor → the
+  same names (the correlated, non-submitting probe protocol the operator
+  handler and the matrix client drive)
 - SimulationDeployment → SimulationDeployment
 - builtin_deployment_id → builtin_deployment_id
 - merge_payload_results_py → merge_payload_results
@@ -49,10 +57,14 @@ from degenbot._ffi.simulation import (
     BatchOutcome,
     BatchOutcomeSet,
     ConsumerErrorKind,
+    ExecutionProbeRequest,
     FailureDetail,
     FailureKind,
     PayloadOutcome,
     PayloadVerdict,
+    ProbeEncodedCall,
+    ProbeExecutor,
+    ProbeReport,
     SessionConsumer,
     SessionConsumerError,
     SimReceipt,
@@ -64,6 +76,7 @@ from degenbot._ffi.simulation import (
 )
 from degenbot._ffi.simulation import CandidateId as CandidateId
 from degenbot._ffi.simulation import build_batch_executor_py as build_batch_executor
+from degenbot._ffi.simulation import build_probe_executor_py as build_probe_executor
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
 from degenbot._ffi.submission import (
     Dispatcher,
@@ -158,10 +171,14 @@ __all__ = [
     "ConsumerErrorKind",
     "Dispatcher",
     "EnqueueDecline",
+    "ExecutionProbeRequest",
     "FailureDetail",
     "FailureKind",
     "PayloadOutcome",
     "PayloadVerdict",
+    "ProbeEncodedCall",
+    "ProbeExecutor",
+    "ProbeReport",
     "SessionConsumer",
     "SessionConsumerError",
     "SimReceipt",
@@ -178,6 +195,7 @@ __all__ = [
     "SubmittedRecord",
     "TxSigner",
     "build_batch_executor",
+    "build_probe_executor",
     "builtin_deployment_id",
     "candidate_id_from_mapping",
     "dispatch_and_submit",

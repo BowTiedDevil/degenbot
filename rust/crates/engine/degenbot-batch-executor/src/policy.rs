@@ -63,10 +63,10 @@ impl From<&degenbot_config::BotConfig> for ExecutorPolicy {
 ///
 /// It is converted ONCE, from the driver's run-mode stance
 /// ([`ExecutorRuntime::dry_run`]), and no later reader re-derives it: the submit
-/// leaf's dry-run flag and the probe entry's refusal
-/// ([`crate::executor::BatchExecutor::enqueue_probe`]) both read this value, so
-/// a driver that builds a non-submitting executor (an execution probe) cannot
-/// hold one whose lane can sign or broadcast.
+/// leaf reads this value and nothing else decides whether the lane may lease a
+/// nonce, sign, or broadcast. An execution probe never consults it, because a
+/// probe has no submit lane to hold at all
+/// ([`crate::probe::ProbeExecutor`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SubmissionPolicy {
     /// The production stance: the submit arm runs its whole choreography
@@ -75,7 +75,7 @@ pub enum SubmissionPolicy {
     Submitting,
     /// The non-submitting stance: every candidate stops at the dry-run guard,
     /// before the nonce lease and the signer, so nothing is leased, signed, or
-    /// broadcast. An execution probe's lane carries this policy.
+    /// broadcast. A dry-run session's executor carries this policy.
     NonSubmitting,
 }
 
@@ -102,28 +102,6 @@ impl SubmissionPolicy {
         !self.permits_submission()
     }
 }
-
-/// The refusal an explicit execution probe meets on an executor whose
-/// [`SubmissionPolicy`] permits submission.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProbeRefusal {
-    /// The executor may sign and broadcast, so a probe row entering its lane
-    /// could reach the submit arm.
-    SubmissionCapable,
-}
-
-impl std::fmt::Display for ProbeRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SubmissionCapable => f.write_str(
-                "this executor's submission policy permits signing and broadcast, so its lane is \
-                 not an execution probe's",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ProbeRefusal {}
 
 /// The session's capital posture for its execution target, re-exported from the
 /// simulation crate that also owns the override plan it projects to.

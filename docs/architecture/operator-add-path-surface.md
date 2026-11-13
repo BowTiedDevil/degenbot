@@ -101,9 +101,10 @@ end — operator wire, Python construction boundary, FFI, and deployment:
 | --- | --- | --- |
 | Operator wire (`probe_path` payload) | `"zero_balance": false` | `"capital": "production"\|"self_fund"\|"zero_balance"` |
 | Python operator verb (`Session.probe_path` / `BotRunner.probe_path`) | `zero_balance: bool = False` | `capital: ProbeCapital = ProbeCapital.SELF_FUND` |
-| Python construction boundary (`build_batch_executor`) | `self_fund=`, `zero_balance=` | `ExecutorInputs.capital` (one `ProbeCapital`) |
-| FFI (`degenbot._ffi.simulation.build_batch_executor`) | `self_fund=False, zero_balance=False` | `capital: str \| None = None` |
-| Session probe bookkeeping | `Session.probe_zero_balance` | `Session.probe_capital` |
+| Python probe construction boundary (`build_probe_executor`) | `self_fund=`, `zero_balance=` | `ExecutorInputs.capital` (one `ProbeCapital`) |
+| FFI (`degenbot._ffi.simulation.build_probe_executor_py`) | `self_fund=False, zero_balance=False` | `capital: str \| None = None` |
+| FFI (`degenbot._ffi.simulation.build_batch_executor_py`, the SUBMITTING lane) | `self_fund=False, zero_balance=False` | no capital parameter at all: its lane simulates the session account's real balances, and a probe posture cannot be smuggled into a lane that can submit |
+| Session probe bookkeeping | `Session.probe_zero_balance` | `Session.probe_executors` (a dict: ONE executor per `ProbeCapital`) |
 
 The modes are `production` (the account's real balances — no capital override at
 all), `self_fund` (the known asset set installed at the executor, with the
@@ -120,64 +121,67 @@ An absent `capital` keeps the historical behavior — the self-funded probe.
 {production,self_fund,zero_balance}`, default `self_fund`, replacing
 `--zero-balance`).
 
-### The `probe_path` op never submits
+### The `probe_path` op is non-submitting by construction
 
 An execution probe quotes one explicit amount vector and runs it through the
-ordinary assembly, encoding, and simulation stages for observation only. Its
-executor is built with the probe submission stance, so the pipeline is
-non-submitting by construction even when the bot runs live: no relay fan-out is
-dialed, nothing is signed, nothing is broadcast, and no operator nonce is
-leased. The core additionally refuses the direct
-`BatchExecutor.probe_path` entry on any executor whose submission policy permits
-signing and broadcast, so a caller holding a live executor's handle gets
-`RuntimeError` instead of a submitted probe. `execution_probe_response`'s
-rejection of a returned submission record stays as the detective check beside
-that preventive guard.
+ordinary assembly, production encoding, and EVM2 simulation stages for
+observation only. It does so on the core's DEDICATED probe executor
+(`degenbot_batch_executor::ProbeExecutor`), whose construction takes only
+sim-side handles: no `SubmitLeaf`, no signer, no nonce lane, no relay fan-out,
+no receipt probe, and no broadcast target. Non-submission is therefore a missing
+field rather than a dry-run flag, a policy check, or a refused enqueue — there is
+no submit stage to reach, so nothing has to be screened afterwards.
 
-### Probes serialize, and a cancelled probe cannot be consumed by the next one
+The retired surfaces are DELETED, not aliased:
 
-The probe path is one operator-triggered critical section (`Session.probe_path`)
-over ONE executor whose outcome stream is a shared, single-consumer channel. The
-session serializes the whole mode-select / pipeline-build / quote / enqueue /
-drain operation under its own async lock, which buys the surface two properties
-it otherwise cannot promise:
+| Retired | Why it is gone |
+| --- | --- |
+| `BatchExecutor.probe_path` (FFI) / `BatchExecutor::enqueue_probe` + `ProbeRefusal` (core) | A probe used to ride the ordered lane and then find its own record on the shared drain. The dedicated executor returns each call's own outcome instead. |
+| `SubmissionStance.PROBE` and the `submission=` argument on `build_batch_executor` | The stance existed only to build a submission-capable executor and then refuse probes at the entry. The probe constructor has no submit half to switch off. |
+| `capital=` on `build_batch_executor_py` (the submitting constructor) | A production lane simulates the session account's real balances; the probe postures belong to the probe constructor, so the two halves cannot be crossed. |
+| `Session._probe_lock`, the serialized critical section, `PROBE_REAP_TIMEOUT_S`, and the abandoned-probe reaper | Correctness no longer depends on them: correlation is per call, and a dropped call aborts its own stage (see below). |
 
-- **Response identity.** Concurrent probes never interleave on that lane, and each
-  caller drains the outcome its own row produced — its own `path_id` and capital
-  mode come back, whichever probe the lane happened to settle first.
-- **Safe capital-mode replacement.** The self-funded and zero-balance executors
-  are swapped only while no probe is in flight, so a zero-balance probe arriving
-  during a self-funded one waits for it instead of replacing the executor that
-  holds the queued row.
+### The typed probe protocol
 
-**Cancellation and timeouts (migration note — no wire change).** A caller that is
-cancelled or timed out while awaiting its outcome cannot simply drop the drain:
-the core's `BatchDrain` is cancel-safe in the *stream* direction, so a dropped
-drain leaves the outcome queued for the next reader — which would hand that
-caller's result to the next probe request. The enqueue+drain therefore runs on a
-task the cancellation never reaches, and the cancelled caller reaps that task's
-own drain before the lock is released. The protocol is unchanged: a probe that
-returns still answers the same `{path_id, permutation, outcome[, bucket]}` shape,
-and a cancelled or timed-out request answers nothing at all, exactly as before.
+One design problem, one protocol pair, shared by the FFI, the session, and the
+operator:
 
-The one operator-visible refusal is a log line rather than a protocol message: if
-an abandoned probe's row cannot be drained within `PROBE_REAP_TIMEOUT_S` (30s — a
-wedged lane), the session **drops** the probe pipeline, **cancels** the abandoned
-probe task, and logs
-`[probe] an abandoned execution probe did not drain within ...`. The stranded
-outcome's channel is then unreachable, so no later probe can receive it, and the
-next probe builds a fresh executor.
+| Value | Fields |
+| --- | --- |
+| `ExecutionProbeRequest` (pyclass) | `path_id`, `optimal_input`, `hop_outputs`, `consumed_inputs`, `current_block`, `base_fee_next`, `block_timestamp` — validated at construction (positive input, at least one hop, one output/consumed entry per hop) |
+| `ProbeReport` (pyclass) | `capital` (the posture the call ran under) + `records` (the assembly verdict, the simulate verdict with its receipt or typed failure) + `encoded` (`ProbeEncodedCall`: calldata, native value, target, gross/net profit, gas) |
+| `ProbeExecutor` (pyclass) | `capital`, `async probe(request) -> ProbeReport` |
+| `build_probe_executor(context, dispatcher, engine, provider, *, capital=None, deployments=None, target_selection=None)` | the sim-half construction, ONE per capital posture |
 
-The give-up is terminal, not a retained task: dropping the session's pipeline
-reference only prevents *outcome theft*, so the session also cancels the
-abandoned probe and waits for it to reach a terminal state before it releases the
-probe lane. A probe that outlived its call would otherwise keep its drain future
-— and the executor, EVM, and runtime work behind it — alive for the rest of the
-process. The settle is bounded by the same constant, so a task wedged inside an
-uninterruptible call cannot hold the lane either; the one case cancellation cannot
-reach is collected by a done-callback instead of being reported as an unretrieved
-task exception. A second cancellation of the already-unwinding caller cannot skip
-either move: the cleanup's waits swallow the extra request and run to the end.
+`degenbot.dispatch` re-exports all five under their stable names, and
+`Session.probe_path` / `BotRunner.probe_path` return the `ProbeReport` (not a
+`BatchOutcomeSet`). The request's per-hop vectors stay the Python boundary's own
+exact-input quote derivation; the request only states what the stages must
+simulate.
+
+### Correlation replaces serialization
+
+Each call owns a `oneshot` channel and spawns its own stage task behind an
+abort-on-drop guard, so:
+
+- **Response identity** needs no lock: concurrent probes overlap freely and each
+  caller reads the report its own call produced. There is no drain to
+  interleave, so no caller can take another's outcome.
+- **A capital-mode change** builds (and caches, in `Session.probe_executors`) one
+  executor per posture. The in-flight call holds its own reference, so a later
+  posture's construction cannot strand it.
+- **Cancellation** cancels the call's own stage. The abandoned result is
+  discarded where it is produced and no task is detached, so nothing is queued
+  for a successor and no reaper is needed. Abort is not preemption: a stage body
+  inside a synchronous span finishes that span and has its future dropped at the
+  next yield.
+
+**Wire shape.** A probe that returns answers
+`{path_id, permutation, capital, outcome[, bucket][, planning]}`;
+`planning` is the encoder summary (`execution_target`, `value`, `calldata_len`)
+whenever a row was composed. There is no submission record in the response, and
+`execution_probe_response` still refuses a record carrying a submit verdict as
+the detective check beside the structural guarantee.
 
 ## 3. The CLI client
 
@@ -212,9 +216,17 @@ is a tiny versioned protocol a client of any vintage can talk to.
 - `tests/arbitrage/test_arbitrage_session.py` — programmatic surface raises
   without a live pipeline; a mid-run add during an advancing consumer does not
   stall or abort dispatch.
-- `tests/arbitrage/test_execution_probe.py` — the probe's dry-run encoding plus
-  the concurrency/cancellation contract: concurrent probes keep their own path
-  IDs and capital modes, a capital-mode swap waits for the in-flight probe, and a
-  cancelled or timed-out probe reaps its own queued row (including the bounded
-  give-up that drops the pipeline, cancels the abandoned probe to a terminal
-  state, and warns).
+- `tests/arbitrage/test_execution_probe.py` — the typed request the session
+  builds (quote derivation, block facts, validation refusals), the
+  non-submitting construction (no signer, nonce read, submit provider, relay
+  dial, or run-mode stance crosses it), one executor per capital posture, and
+  the correlation contract: concurrent probes overlap and each keeps its own
+  report, a capital-mode swap strands nothing, a cancelled probe cancels its own
+  call, and a cancel during quoting never reaches the executor.
+- `tests/dispatch/test_probe_submission_safety.py` — the FFI-level end state: a
+  POWERED profitable probe produces a record + an encoder planning row and NO
+  submit verdict, submission record, access-list call, or broadcast; malformed
+  requests, unknown paths, hop-count mismatches, and every capital posture and
+  misspelling are refused or accepted as named; concurrent and cancelled calls
+  never take one another's outcome; the retired `probe_path` / `enqueue_probe`
+  entries are absent.
