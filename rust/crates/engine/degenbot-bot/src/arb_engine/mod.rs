@@ -123,6 +123,7 @@ mod hooked_leg_requote;
 mod lifecycle;
 mod path_info;
 mod path_lifecycle;
+mod probe_quote;
 pub mod pump_session;
 // The engine-session end DETECTION facts: the cause vocabulary, the heartbeat
 // stall watchdog, and the once-only delivery channel shared by both drivers.
@@ -224,6 +225,11 @@ pub use inline_sim::{
 /// map onto their own error surfaces.
 pub use lifecycle::PathRegistrationError;
 pub use path_info::SessionRelevancePaths;
+pub use probe_quote::{
+    quote_exact_input_hops, ExactInputHop, ExactInputQuote, ExactInputQuoteError,
+    ExactInputQuotePlan, InProcessHop, ProbeBlockContext, ProbeQuoteTransport, V3ExactInputHop,
+    V4ExactInputHop,
+};
 pub use pump_session::{transition, CrawlExit, PumpDecline, PumpEvent, PumpExit, PumpPhase};
 pub use retune::EngineRetune;
 pub use session_end::{

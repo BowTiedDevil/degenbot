@@ -33,10 +33,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self, cast
 
-from degenbot.abi import decode_single, encode, encode_single
 from degenbot.arbitrage import session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.crypto import keccak256
 from degenbot.dispatch import (
     BatchExecutor,
     Dispatcher,
@@ -44,6 +42,7 @@ from degenbot.dispatch import (
     ProbeExecutor,
     ProbeReport,
     SimulateContext,
+    quote_execution_probe,
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._actors import (
@@ -69,51 +68,6 @@ from degenbot.runner.build_paths import build_paths
 from degenbot.runner.diag import arm_diagnostics
 from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
-
-_V3_QUOTER = "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
-_V4_QUOTER = "0x99bd42B2B22e531f283b7F8a86dFf631EB16A9D1"
-_V3_QUOTE_SELECTOR = keccak256(b"quoteExactInputSingle(address,address,uint24,uint256,uint160)")[:4]
-_V4_QUOTE_SELECTOR = keccak256(
-    b"quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes))"
-)[:4]
-
-
-async def _quote_concentrated_hop(
-    provider: Any, hop: dict[str, Any], amount_in: int, block: int
-) -> int:
-    """Quote one V3/V4 exact input through the canonical on-chain quoter."""
-    token0_key = "currency0_address" if hop["family"] == "v4" else "token0_address"
-    token1_key = "currency1_address" if hop["family"] == "v4" else "token1_address"
-    token_in = hop[token0_key] if hop["zfo"] else hop[token1_key]
-    token_out = hop[token1_key] if hop["zfo"] else hop[token0_key]
-    if hop["family"] == "v3":
-        calldata = _V3_QUOTE_SELECTOR + encode(
-            ["address", "address", "uint24", "uint256", "uint160"],
-            [token_in, token_out, hop["fee"], amount_in, 0],
-        )
-        target = _V3_QUOTER
-    else:
-        pool_key = (
-            hop["currency0_address"],
-            hop["currency1_address"],
-            hop["fee"],
-            hop["tick_spacing"],
-            hop["hook_address"],
-        )
-        calldata = (
-            _V4_QUOTE_SELECTOR
-            + encode_single("uint256", 0x20)
-            + encode(
-                ["address", "address", "uint24", "int24", "address", "bool", "uint128"],
-                [*pool_key, hop["zfo"], amount_in],
-            )
-            + encode_single("uint256", 0x100)
-            + encode_single("uint256", 0)
-        )
-        target = _V4_QUOTER
-    result = await provider.call(target, calldata, block=block)
-    return int(decode_single("uint256", result[:32]))
-
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
@@ -760,10 +714,22 @@ class Session:
     ) -> ExecutionProbeRequest:
         """Quote the path's exact-input vector and state it as one typed request.
 
-        The amount vector is this chunk's quote derivation, unchanged: each hop's
-        output is quoted at the current pool state (an in-process V2 pool read, or
-        the canonical on-chain quoter for V3/V4), and the request carries the
-        resulting per-hop outputs, consumed inputs, and block facts.
+        The derivation is the CORE's (``EngineStages::quote_exact_input_path``,
+        reached through the FFI's ``quote_execution_probe``): each hop's output is
+        priced by its own family's owner — a V2 hop through the production pool
+        math over the state snapshotted for the quote, a V3/V4 hop through the
+        canonical on-chain quoter at this session's current block, a hooked V4
+        pool carrying its hook in its key — and the answer is the request's
+        per-hop outputs, consumed inputs, and ONE block context.
+
+        This adapter therefore names only what the session knows: the engine, the
+        provider, the path, the fixed input, and the block. It derives no amount
+        and holds no per-hop branch. The quote seam's own refusals cross the
+        boundary unchanged: a malformed ask (a non-positive input, an
+        unregistered path, a hop with no exact-input arm, an amount wider than
+        the request's 128-bit fields) arrives as the FFI's ``ValueError``, and a
+        refusal the world produced (a missing pool, a pool-math refusal, a
+        quoter revert, an unreadable block) as its ``RuntimeError``.
 
         Args:
             actors: The session's resolved actors.
@@ -773,47 +739,16 @@ class Session:
         Returns:
             The typed request the probe executor runs.
 
-        Raises:
-            ValueError: If the path is not registered.
-            RuntimeError: If a pool on the path is not registered.
-
         """
-        path_info = actors.engine_registry.engine.payload_path_info(path_id)
-        if path_info is None:
-            msg = f"probe_path: path {path_id} is not registered"
-            raise ValueError(msg)
-        engine = actors.engine_registry.engine
-        # ruff:ignore[private-member-access] - core pool-read seam
-        bot = actors.bot._py_bot
-        current_block = self.current_block
-        outputs: list[int] = []
-        consumed: list[int] = []
-        amount_in = optimal_input
-        for hop in path_info["hops"]:
-            consumed.append(amount_in)
-            if hop["family"] == "v2":
-                pool_id = engine.pool_id_for_pool("v2", hop["pool_address"])
-                pool = bot.get_pool(pool_id)
-                if pool is None:
-                    msg = f"probe_path: pool {pool_id} for path {path_id} is not registered"
-                    raise RuntimeError(msg)
-                amount_in = int(
-                    await asyncio.to_thread(pool.calculate_tokens_out, hop["zfo"], amount_in)
-                )
-            else:
-                amount_in = await _quote_concentrated_hop(
-                    actors.async_w3, hop, amount_in, current_block
-                )
-            outputs.append(amount_in)
-        block = await actors.async_w3.get_block(current_block)
-        return ExecutionProbeRequest(
-            path_id=path_id,
-            optimal_input=optimal_input,
-            hop_outputs=outputs,
-            consumed_inputs=consumed,
-            current_block=current_block,
-            base_fee_next=int(block["base_fee_per_gas"]),
-            block_timestamp=int(block["timestamp"]),
+        return cast(
+            "ExecutionProbeRequest",
+            await quote_execution_probe(
+                actors.engine_registry.engine,
+                actors.async_w3.as_async_alloy(),
+                path_id=path_id,
+                optimal_input=optimal_input,
+                current_block=self.current_block,
+            ),
         )
 
     # ── Operator add-a-path surface ─────────────────────────────────

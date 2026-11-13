@@ -70,6 +70,7 @@ use super::lifecycle::{
 };
 use super::path_info::SessionRelevancePaths;
 use super::path_registry::PathRegistrationError;
+use super::probe_quote::{ExactInputQuote, ExactInputQuoteError, ProbeQuoteTransport};
 use super::DiagnosticPathState;
 #[cfg(test)]
 use super::ResultBatch;
@@ -431,6 +432,38 @@ impl EngineStages {
     #[must_use]
     pub fn path_nonces_for(&self, path_id: u64) -> Option<Vec<u64>> {
         super::path_info::path_nonces_for(&self.engine.lock(), path_id)
+    }
+
+    /// Quote one registered path's FIXED input at ONE block — the core's
+    /// exact-input quote interface.
+    ///
+    /// The answer is the per-hop amount vector the input produces plus the
+    /// anchor's block context, derived by each family's own owner: a
+    /// reserve-pair hop through the production pool math over the state
+    /// snapshotted for this call, a V3/V4 hop through the chain's canonical
+    /// quoter at `block` (a V4 hop carrying its whole pool key, hook included).
+    ///
+    /// The engine lock is held only for the plan (one core read), never across
+    /// the quoter awaits, so a slow node never blocks the pump.
+    ///
+    /// # Errors
+    ///
+    /// [`ExactInputQuoteError`]: the path is unregistered, a hop's pool is
+    /// unregistered, a hop has no exact-input arm, the in-process math refuses a
+    /// hop, the canonical quoter refuses a hop, or the anchor's block context
+    /// cannot be read.
+    pub async fn quote_exact_input_path<T: ProbeQuoteTransport>(
+        &self,
+        transport: &T,
+        path_id: u64,
+        amount_in: alloy::primitives::U256,
+        block: u64,
+    ) -> Result<ExactInputQuote, ExactInputQuoteError> {
+        let plan = {
+            let engine = self.engine.lock();
+            super::path_info::exact_input_quote_plan(&engine, path_id, block)?
+        };
+        super::probe_quote::quote_exact_input_hops(&plan, transport, amount_in).await
     }
 
     /// The session's apply-time relevance inputs: every registered path,

@@ -51,7 +51,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use alloy::dyn_abi::{DynSolType, DynSolValue};
-use alloy::primitives::{Address, Bytes, I256, U128, U256};
+use alloy::primitives::{address, Address, Bytes, I256, U128, U160, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 
@@ -277,6 +277,46 @@ alloy::sol! {
         function factory() external view returns (address);
         function token0() external view returns (address);
         function token1() external view returns (address);
+    }
+    /// Uniswap-V3-periphery `Quoter`: the canonical exact-input single-pool
+    /// read for a v3-family pool. The quoter performs the swap itself (inside
+    /// its own `try`/`catch`) and returns the pool's own answer, so the amount
+    /// it reports is the chain's arithmetic, never this crate's.
+    interface IUniswapV3Quoter {
+        function quoteExactInputSingle(
+            address tokenIn,
+            address tokenOut,
+            uint24 fee,
+            uint256 amountIn,
+            uint160 sqrtPriceLimitX96
+        ) external returns (uint256 amountOut);
+    }
+
+    /// Uniswap-V4-periphery `Quoter`: the execute-then-answer single-pool read
+    /// over the canonical `PoolManager`.
+    ///
+    /// Its `PoolKey` carries the HOOK address, so a hooked pool is priced with
+    /// its hook attached — the reason a hooked leg must never be priced by
+    /// in-process math (ADR-090 §1/§2).
+    interface IUniswapV4Quoter {
+        struct PoolKey {
+            address currency0;
+            address currency1;
+            uint24 fee;
+            int24 tickSpacing;
+            address hooks;
+        }
+
+        struct QuoteExactSingleParams {
+            PoolKey poolKey;
+            bool zeroForOne;
+            uint128 exactAmount;
+            bytes hookData;
+        }
+
+        function quoteExactInputSingle(QuoteExactSingleParams params)
+            external
+            returns (uint256 amountOut, uint256 gasEstimate);
     }
 }
 
@@ -516,6 +556,209 @@ impl TickLiquidity {
         Ok(Self {
             gross,
             net: i128::from_be_bytes(low),
+        })
+    }
+}
+
+/// The canonical mainnet Uniswap-V3-periphery `Quoter` — the deployment the
+/// V3 exact-input quote reads (`quoteExactInputSingle`).
+///
+/// Its `quoteExactInputSingle` performs the pool's own `swap` inside a
+/// `try`/`catch` and returns the amount the pool produced, so a quote is the
+/// chain's answer at that block rather than a model of it.
+pub const V3_QUOTER: Address = address!("b27308F9F90D607463bb33eA1BeBb41C27CE5AB6");
+
+/// The canonical mainnet Uniswap-V4-periphery `Quoter` — the deployment the V4
+/// exact-input quote reads, bound immutably to the canonical `PoolManager`.
+///
+/// The same deployment `degenbot_simulation::sim::evm2::v4_black_box` drives
+/// inside an anchor-pinned scratch EVM; there the frame is local, here the
+/// answer is the node's at a pinned block.
+pub const V4_QUOTER: Address = address!("52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203");
+
+/// `TickMath.MIN_SQRT_RATIO + 1` — the lowest price a `zeroForOne` swap may
+/// walk to.
+pub const MIN_SQRT_RATIO_PLUS_ONE: U256 = U256::from_limbs([4_295_128_740, 0, 0, 0]);
+
+/// `TickMath.MAX_SQRT_RATIO - 1` — the highest price a `oneForZero` swap may
+/// walk to.
+pub const MAX_SQRT_RATIO_MINUS_ONE: U256 = U256::from_limbs([
+    6_743_328_256_752_651_557,
+    17_280_870_778_742_802_505,
+    4_294_805_859,
+    0,
+]);
+
+/// The `sqrtPriceLimitX96` a V3 quote hands the quoter for one direction.
+///
+/// `Quoter.quoteExactInputSingle` substitutes `MIN_SQRT_RATIO + 1` /
+/// `MAX_SQRT_RATIO - 1` when its caller passes `0` ("no limit"). Encoding the
+/// substituted value directly is the SAME quote — the substitution is the
+/// quoter's own arithmetic — and it keeps the calldata byte-stable for every
+/// caller of this seam (the recorded `py_oracle` quoter corpora carry exactly
+/// these words), so a replay transport answers it.
+#[must_use]
+pub fn v3_quote_sqrt_price_limit(zero_for_one: bool) -> U160 {
+    if zero_for_one {
+        U160::from_limbs([4_295_128_740, 0, 0])
+    } else {
+        U160::from_limbs([
+            6_743_328_256_752_651_557,
+            17_280_870_778_742_802_505,
+            4_294_805_859,
+        ])
+    }
+}
+
+/// One V3 exact-input single-pool quote: the pool's fee tier, the direction's
+/// token pair, and the canonical quoter's answer.
+///
+/// The amount is the quoter's, never the concentrated-liquidity walk's, so a
+/// ramp of ticks, a fee-tier override, or a pool that the in-process math
+/// models imperfectly all price the way the chain does at that block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V3Quote {
+    /// The pool's fee tier (hundredths of a bip).
+    pub fee: u32,
+    /// The output amount the quoter reported.
+    pub amount_out: U256,
+}
+
+/// One V3 exact-input single-pool quote request: the pool's fee tier, the
+/// direction's token pair, the exact input, and the block it prices at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V3QuoteRequest {
+    /// The token the hop spends (the pool's `token0` or `token1`).
+    pub token_in: Address,
+    /// The token the hop receives.
+    pub token_out: Address,
+    /// The pool's fee tier (hundredths of a bip).
+    pub fee: u32,
+    /// The exact input, in `token_in`'s units.
+    pub amount_in: U256,
+    /// `true` when `token_in` is the pool's `token0`.
+    pub zero_for_one: bool,
+    /// The block the quote prices at.
+    pub block: u64,
+}
+
+impl V3Quote {
+    /// Quote one request through `quoter` at the request's block.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] from the underlying `eth_call` (a quoter
+    /// revert — a partial fill, a stalled price limit — surfaces as
+    /// [`ProviderError::ExecutionReverted`]), [`ProviderError::InvalidParams`]
+    /// when the fee tier does not fit the quoter's `uint24` field, or
+    /// [`ProviderError::DecodingError`] when the return is not one word.
+    pub async fn quote_exact_in(
+        transport: &impl ContractRead,
+        quoter: Address,
+        request: &V3QuoteRequest,
+    ) -> ProviderResult<Self> {
+        let call = IUniswapV3Quoter::quoteExactInputSingleCall {
+            tokenIn: request.token_in,
+            tokenOut: request.token_out,
+            fee: request
+                .fee
+                .try_into()
+                .map_err(|_| ProviderError::InvalidParams {
+                    message: format!("fee {} outside the uint24 range", request.fee),
+                })?,
+            amountIn: request.amount_in,
+            sqrtPriceLimitX96: v3_quote_sqrt_price_limit(request.zero_for_one),
+        };
+        let amount_out = transport.read(quoter, call, Some(request.block)).await?;
+        Ok(Self {
+            fee: request.fee,
+            amount_out,
+        })
+    }
+}
+
+/// One V4 exact-input single-pool quote over the canonical quoter: the pool's
+/// key (HOOK INCLUDED), the direction, and the quoter's answer.
+///
+/// The key is carried whole rather than rebuilt from parts: a V4 pool's
+/// identity IS its key, and its hook address is part of it, so a quote can never
+/// silently price a hooked pool as its unhooked twin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct V4Quote {
+    /// The pool's immutable key (currencies, fee, tick spacing, hook address).
+    pub pool_key: degenbot_pools::V4PoolKey,
+    /// The output amount the quoter reported.
+    pub amount_out: U256,
+    /// The gas the quoter's own swap frame measured.
+    pub gas_estimate: U256,
+}
+
+/// One V4 exact-input single-pool quote request: the pool's key (HOOK
+/// INCLUDED), the direction, the exact input, and the block it prices at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct V4QuoteRequest {
+    /// The pool's immutable key — currencies, fee, tick spacing, hook address.
+    pub pool_key: degenbot_pools::V4PoolKey,
+    /// `true` when currency0 is the input.
+    pub zero_for_one: bool,
+    /// The exact input, in the input currency's units.
+    pub amount_in: U256,
+    /// The block the quote prices at.
+    pub block: u64,
+}
+
+impl V4Quote {
+    /// Quote one request through `quoter` at the request's block.
+    ///
+    /// `hook_data` is empty: a quoter call cannot supply the hook data a real
+    /// swap would carry, and the canonical quoter prices the pool with its hook
+    /// attached regardless (that is the point of quoting it rather than
+    /// modelling it).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] from the underlying `eth_call` (a quoter
+    /// revert — a hook that demands settlement, a pool with no liquidity —
+    /// surfaces as [`ProviderError::ExecutionReverted`]), or
+    /// [`ProviderError::InvalidParams`] when `amount_in` does not fit the
+    /// quoter's `uint128` field or the key's fee does not fit `uint24`.
+    pub async fn quote_exact_in(
+        transport: &impl ContractRead,
+        quoter: Address,
+        request: &V4QuoteRequest,
+    ) -> ProviderResult<Self> {
+        let pool_key = &request.pool_key;
+        let exact_amount =
+            u128::try_from(request.amount_in).map_err(|_| ProviderError::InvalidParams {
+                message: format!(
+                    "V4 quote amount {} outside the uint128 range",
+                    request.amount_in
+                ),
+            })?;
+        let call = IUniswapV4Quoter::quoteExactInputSingleCall {
+            params: IUniswapV4Quoter::QuoteExactSingleParams {
+                poolKey: IUniswapV4Quoter::PoolKey {
+                    currency0: pool_key.currency0,
+                    currency1: pool_key.currency1,
+                    fee: pool_key
+                        .fee
+                        .try_into()
+                        .map_err(|_| ProviderError::InvalidParams {
+                            message: format!("fee {} outside the uint24 range", pool_key.fee),
+                        })?,
+                    tickSpacing: int24(pool_key.tick_spacing)?,
+                    hooks: pool_key.hooks,
+                },
+                zeroForOne: request.zero_for_one,
+                exactAmount: exact_amount,
+                hookData: Bytes::new(),
+            },
+        };
+        let answer = transport.read(quoter, call, Some(request.block)).await?;
+        Ok(Self {
+            pool_key: request.pool_key.clone(),
+            amount_out: answer.amountOut,
+            gas_estimate: answer.gasEstimate,
         })
     }
 }
@@ -1481,5 +1724,173 @@ mod tests {
         assert_eq!(&calldata[4..36][12..], pool.as_slice());
         assert_eq!(calldata[4 + 32..].len(), 32);
         assert_eq!(u8::from(calldata[4 + 63] == 1), 1, "the bool is word two");
+    }
+
+    // ── the concentrated-liquidity quoter reads ──
+
+    /// The two quoter interfaces declare the canonical signatures — the
+    /// selectors are re-derived from the Solidity text, never hard-coded.
+    #[test]
+    fn quoter_interfaces_declare_the_canonical_selectors() {
+        assert_eq!(
+            IUniswapV3Quoter::quoteExactInputSingleCall::SELECTOR,
+            selector(b"quoteExactInputSingle(address,address,uint24,uint256,uint160)"),
+        );
+        assert_eq!(
+            IUniswapV4Quoter::quoteExactInputSingleCall::SELECTOR,
+            selector(b"quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes))"),
+        );
+    }
+
+    /// A V3 quote hands the quoter the pool's own fee tier, its direction's
+    /// token pair, the exact input, and the quoter's documented limit
+    /// substitution — for BOTH directions, at the pinned block.
+    #[tokio::test]
+    async fn a_v3_quote_encodes_the_limit_for_each_direction() {
+        let token_in = alloy::primitives::address!("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599");
+        let token_out = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+        let answer = uint_return(U256::from(1_234u64));
+
+        for (zero_for_one, limit) in [
+            (true, MIN_SQRT_RATIO_PLUS_ONE),
+            (false, MAX_SQRT_RATIO_MINUS_ONE),
+        ] {
+            // The canned answer is keyed on the calldata the seam produces, so a
+            // green read proves the encoding this case asserts below.
+            let calldata = IUniswapV3Quoter::quoteExactInputSingleCall {
+                tokenIn: token_in,
+                tokenOut: token_out,
+                fee: 3_000u32.try_into().unwrap(),
+                amountIn: U256::from(1_000_000u64),
+                sqrtPriceLimitX96: v3_quote_sqrt_price_limit(zero_for_one),
+            }
+            .abi_encode();
+            assert_eq!(
+                U256::from_be_slice(&calldata[4 + 4 * 32..]),
+                limit,
+                "the substituted limit is in the fifth argument"
+            );
+            assert_eq!(
+                U256::from_be_slice(&calldata[4 + 2 * 32..4 + 3 * 32]),
+                U256::from(3_000u64),
+                "the fee tier is the third argument"
+            );
+            let transport = TableTransport::new().answer(calldata.clone(), answer.clone());
+            let quote = V3Quote::quote_exact_in(
+                &transport,
+                V3_QUOTER,
+                &V3QuoteRequest {
+                    token_in,
+                    token_out,
+                    fee: 3_000,
+                    amount_in: U256::from(1_000_000u64),
+                    zero_for_one,
+                    block: 24_407_242,
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(quote.amount_out, U256::from(1_234u64));
+            assert_eq!(quote.fee, 3_000);
+            let (to, sent, block) = transport.calls().remove(0);
+            assert_eq!(to, V3_QUOTER, "the canonical v3-periphery quoter");
+            assert_eq!(sent.as_ref(), calldata.as_slice());
+            assert_eq!(block, Some(24_407_242), "quoted at the caller's block");
+        }
+    }
+
+    /// A V4 quote carries the WHOLE pool key — hook address included — so a
+    /// hooked pool can never be priced as its unhooked twin, and the direction
+    /// and exact amount ride the word layout the recorded corpora carry.
+    #[tokio::test]
+    async fn a_v4_quote_carries_the_pool_key_and_its_hook() {
+        let hook = alloy::primitives::address!("0x00000000000000000000000000000000000000c4");
+        let pool_key = degenbot_pools::V4PoolKey {
+            currency0: alloy::primitives::address!("0x0000000000000000000000000000000000000000"),
+            currency1: alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+            fee: 500,
+            tick_spacing: 10,
+            hooks: hook,
+        };
+        let answer = DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(777u64), 256),
+            DynSolValue::Uint(U256::from(31_000u64), 256),
+        ])
+        .abi_encode();
+
+        for zero_for_one in [true, false] {
+            let calldata = IUniswapV4Quoter::quoteExactInputSingleCall {
+                params: IUniswapV4Quoter::QuoteExactSingleParams {
+                    poolKey: IUniswapV4Quoter::PoolKey {
+                        currency0: pool_key.currency0,
+                        currency1: pool_key.currency1,
+                        fee: pool_key.fee.try_into().unwrap(),
+                        tickSpacing: int24(pool_key.tick_spacing).unwrap(),
+                        hooks: hook,
+                    },
+                    zeroForOne: zero_for_one,
+                    exactAmount: 1_000_000u128,
+                    hookData: Bytes::new(),
+                },
+            }
+            .abi_encode();
+            assert_eq!(calldata.len(), 4 + 10 * 32, "the dynamic params tuple");
+            assert_eq!(
+                U256::from_be_slice(&calldata[4..4 + 32]),
+                U256::from(0x20u64),
+                "one dynamic tuple argument"
+            );
+            assert_eq!(
+                &calldata[4 + 5 * 32 + 12..4 + 6 * 32],
+                hook.as_slice(),
+                "the hook address is the key's fifth word"
+            );
+            let transport = TableTransport::new().answer(calldata, answer.clone());
+            let quote = V4Quote::quote_exact_in(
+                &transport,
+                V4_QUOTER,
+                &V4QuoteRequest {
+                    pool_key: pool_key.clone(),
+                    zero_for_one,
+                    amount_in: U256::from(1_000_000u64),
+                    block: 24_407_242,
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(quote.amount_out, U256::from(777u64));
+            assert_eq!(quote.gas_estimate, U256::from(31_000u64));
+            assert_eq!(quote.pool_key, pool_key, "the answer names its own key");
+        }
+    }
+
+    /// A V4 amount the quoter's `uint128` field cannot hold is refused before
+    /// the call, never truncated into a wrong quote.
+    #[tokio::test]
+    async fn a_v4_quote_refuses_an_amount_wider_than_uint128() {
+        let transport = TableTransport::new();
+        let error = V4Quote::quote_exact_in(
+            &transport,
+            V4_QUOTER,
+            &V4QuoteRequest {
+                pool_key: degenbot_pools::V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: OTHER,
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                zero_for_one: true,
+                amount_in: U256::from(u128::MAX) + U256::from(1u8),
+                block: 24_407_242,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, ProviderError::InvalidParams { .. }));
+        assert!(
+            transport.calls().is_empty(),
+            "no call crossed the transport"
+        );
     }
 }

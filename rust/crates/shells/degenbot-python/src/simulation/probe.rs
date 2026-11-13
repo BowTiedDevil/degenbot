@@ -51,6 +51,7 @@ use degenbot_batch_executor::{
     BatchWork, ProbeCapital, ProbeConfig, ProbeError, ProbeExecutor, ProbeOutcome, RawResult,
     SimRuntime,
 };
+use degenbot_bot::arb_engine::ExactInputQuoteError;
 use degenbot_submission::SubmitCandidate;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::types::PyBytes;
@@ -419,6 +420,119 @@ impl PyProbeExecutor {
             }
         })
     }
+}
+
+/// Price one registered path's FIXED input at ONE block and state the result as
+/// the typed [`PyExecutionProbeRequest`] the probe executor runs.
+///
+/// This is the operator surface's only quote call: the core's exact-input quote
+/// interface does the derivation (`EngineStages::quote_exact_input_path`) — the
+/// reserve-pair hop through the production pool math, the V3/V4 hops through the
+/// canonical on-chain quoters at `current_block` — and this wrapper only narrows
+/// the answer into the request the typed probe protocol already accepts.
+///
+/// The returned request's `hop_outputs` / `consumed_inputs` are one entry per
+/// hop in path order, and its block context is the SAME block the vector was
+/// quoted at. A refusal (an unregistered path, an unregistered pool, a hop with
+/// no quote arm, a quoter revert) is typed here rather than surfacing as a blank
+/// vector: a probe cannot run on a partial quote.
+///
+/// Args:
+///     `engine`: The `ArbEngine` (the path registry + shared pool state).
+///     `provider`: The session provider handle (the quoter transport).
+///     `path_id`: The registered engine path to quote.
+///     `optimal_input`: The fixed swap input (wei); must be positive.
+///     `current_block`: The ONE block the vector and its context belong to.
+///
+/// Raises:
+/// # Errors
+///
+/// `ValueError`: `optimal_input` is not positive, the path is not registered,
+/// a hop has no exact-input arm, or a quoted amount exceeds the request's
+/// 128-bit fields.
+///
+/// `RuntimeError`: A hop's pool is not registered, the in-process pool math
+/// refuses a hop, the canonical quoter refuses a hop, or the block context
+/// cannot be read.
+#[pyfunction]
+#[pyo3(signature = (engine, provider, path_id, optimal_input, current_block))]
+pub fn quote_execution_probe_py<'py>(
+    py: Python<'py>,
+    engine: &PyArbEngine,
+    provider: &PyAsyncAlloyProvider,
+    path_id: u64,
+    optimal_input: u128,
+    current_block: u64,
+) -> PyResult<Bound<'py, PyAny>> {
+    if optimal_input == 0 {
+        return Err(PyValueError::new_err(
+            "probe_path: optimal_input must be positive",
+        ));
+    }
+    let stages = engine.stages_arc();
+    let provider = provider.provider_arc();
+    crate::ambient_runtime::future_into_py(py, async move {
+        let quote = stages
+            .quote_exact_input_path(
+                &*provider,
+                path_id,
+                alloy::primitives::U256::from(optimal_input),
+                current_block,
+            )
+            .await
+            .map_err(|error| quote_error_to_py(&error))?;
+        Ok(PyExecutionProbeRequest {
+            inner: ExecutionProbeRequest {
+                path_id: quote.path_id,
+                optimal_input,
+                hop_outputs: narrow_amounts(&quote.hop_outputs, quote.path_id)?,
+                consumed_inputs: narrow_amounts(&quote.consumed_inputs, quote.path_id)?,
+                current_block: quote.block_context.block,
+                base_fee_next: quote.block_context.base_fee_next,
+                block_timestamp: quote.block_context.timestamp,
+            },
+        })
+    })
+}
+
+/// Translate one exact-input quote refusal into the Python exception its
+/// operator surface expects.
+///
+/// A malformed ASK (an unregistered path, a family with no quote arm, an amount
+/// the protocol cannot carry) is a `ValueError`; a refusal the WORLD produced (a
+/// missing pool, a pool-math refusal, a quoter revert, an unreadable block) is a
+/// `RuntimeError`. The distinction is the caller's: the first is a request the
+/// operator can correct, the second is an answer they cannot.
+fn quote_error_to_py(error: &ExactInputQuoteError) -> PyErr {
+    match error {
+        ExactInputQuoteError::PathNotRegistered { path_id } => {
+            PyValueError::new_err(format!("probe_path: path {path_id} is not registered"))
+        }
+        ExactInputQuoteError::UnsupportedHop { .. }
+        | ExactInputQuoteError::PoolNotRegistered { .. }
+        | ExactInputQuoteError::PoolMath { .. }
+        | ExactInputQuoteError::HopQuote { .. }
+        | ExactInputQuoteError::BlockContext { .. } => PyRuntimeError::new_err(format!(
+            "probe_path: the exact-input quote was refused: {error}"
+        )),
+    }
+}
+
+/// Narrow a quoted amount vector into the request's `u128` fields.
+///
+/// A pool whose answer exceeds `u128::MAX` cannot be stated in the typed request
+/// (the probe protocol's width), so it is refused here instead of truncating.
+fn narrow_amounts(amounts: &[alloy::primitives::U256], path_id: u64) -> PyResult<Vec<u128>> {
+    amounts
+        .iter()
+        .map(|amount| {
+            u128::try_from(*amount).map_err(|_| {
+                PyValueError::new_err(format!(
+                    "probe_path: path {path_id} quoted an amount wider than the request's 128-bit fields"
+                ))
+            })
+        })
+        .collect()
 }
 
 /// Construct a probe executor for ONE capital posture.

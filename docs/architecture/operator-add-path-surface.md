@@ -155,9 +155,96 @@ operator:
 
 `degenbot.dispatch` re-exports all five under their stable names, and
 `Session.probe_path` / `BotRunner.probe_path` return the `ProbeReport` (not a
-`BatchOutcomeSet`). The request's per-hop vectors stay the Python boundary's own
-exact-input quote derivation; the request only states what the stages must
-simulate.
+`BatchOutcomeSet`). The request states what the stages must simulate; the
+VECTORS it carries are quoted by the core (see below), never by the driver.
+
+### The exact-input quote lives in the core
+
+The fixed-input amount vector is derived by ONE Rust exact-input quote interface,
+`EngineStages::quote_exact_input_path` (`degenbot_bot::arb_engine::probe_quote`),
+reached from Python through `degenbot.dispatch.quote_execution_probe`
+(`degenbot._ffi.simulation.quote_execution_probe_py`). Each hop is priced by its
+own family's owner:
+
+| Hop family | Owner |
+| --- | --- |
+| Reserve pair (V2 / Aerodrome V2) | `degenbot_pools::simulate_swap` over the pool entry SNAPSHOTTED when the quote's plan was built — the same production pool math the solver and the Python companion read |
+| V3 | the canonical v3-periphery `Quoter` (`0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6`) at the quote's block |
+| V4 (hook included) | the canonical v4-periphery `Quoter` (`0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203`) at the quote's block, with the pool's WHOLE key — hook address included — in the calldata |
+
+The vector and its block context belong to ONE block: every quoter call is pinned
+to it, the reserve-pair snapshot is taken for it, and the request's
+`current_block` / `base_fee_next` / `block_timestamp` are read at it. A refusal
+(a quoter revert, a partial fill, an unregistered pool) is typed and stops the
+call — a probe never runs on a partial vector.
+
+The Python adapter this replaced is DELETED, not aliased:
+
+| Retired | Why it is gone |
+| --- | --- |
+| `degenbot.runner.session._quote_concentrated_hop` and its `v2`/`v3`/`v4` family branches in `Session._probe_request` | A driver-side copy of each family's pricing. The core owns the derivation, so the operator adapter names only the engine, the provider, the path, the fixed input, and the block. |
+| The Python `_V3_QUOTER` / `_V4_QUOTER` / `_V3_QUOTE_SELECTOR` / `_V4_QUOTE_SELECTOR` constants and their hand-rolled ABI encoding | The quoter interfaces are declared once in `degenbot_rpc::abi` as typed `sol!` reads (`IUniswapV3Quoter` / `IUniswapV4Quoter`), so a selector is derived from the Solidity signature and the call is one typed read. |
+| The Python `pool.calculate_tokens_out` call (an `asyncio.to_thread` hop into a Python pool object) | The production math runs in the core over the shared state, so the probe no longer needs Python pool objects at all. |
+
+Two deliberate fidelity notes:
+
+- **V3 price limit.** `Quoter.quoteExactInputSingle` substitutes
+  `MIN_SQRT_RATIO + 1` / `MAX_SQRT_RATIO - 1` when its caller passes `0` ("no
+  limit"). The core encodes the SUBSTITUTED value directly: identical quote (the
+  substitution is the quoter's own arithmetic), and byte-stable calldata — which
+  is what lets the committed `py_oracle` quoter corpora replay offline as
+  pinned-block parity fixtures.
+- **V4 quoter address.** The deleted Python path quoted V4 through
+  `0x99bd42B2B22e531f283b7F8a86dFf631EB16A9D1`; the core uses the canonical
+  v4-periphery deployment `0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203` — the same
+  one `degenbot_simulation::sim::evm2::v4_black_box` drives in an anchor-pinned
+  scratch EVM and the one the committed quoter corpora were recorded under. This
+  is a BEHAVIOR CHANGE for V4 probe quotes: the retired literal named a
+  different address, and nothing in the tree records a quote — or a pinned
+  corpus — through it.
+
+What did NOT change: the op is still a FIXED-INPUT probe; consumed inputs are
+still the previous hop's output with the fixed input first; reverse directions
+still flip the token pair (V3) and `zeroForOne` (V4); a refusal still stops the
+call rather than producing a partial vector; and the request's shape, validation,
+and the executor's stage semantics are untouched.
+
+#### Hooked V4 parity is proven LIVE, at a pinned block
+
+The committed quoter corpora record an UNHOOKED V4 pool, so they are never hooked
+evidence. Hooked parity is proven by an `#[ignore]`d Rust leg — no offline gate
+needs a node — that quotes a REAL mainnet hooked pool through
+`EngineStages::quote_exact_input_path` and compares the whole request vector
+against an INDEPENDENTLY hand-encoded canonical-quoter `eth_call` at the SAME
+block, in BOTH directions
+(`rust/crates/engine/degenbot-bot/tests/probe_quote_live.rs` —
+`live_hooked_v4_quote_matches_the_canonical_quoter_both_directions`. The leg is an
+INTEGRATION test because an opt-in run reads its endpoint from the environment,
+and ADR-062 D7 keeps `std::env::var` out of `src/`; it drives only the public
+stage surface):
+
+| Fact | Value |
+| --- | --- |
+| Pinned block | `26_320_000` (slot0 / liquidity read AT it: the pool is initialized there because the chain says so) |
+| Pool key | `hooks 0x322dcEc4958C14e021A9F1cD49DF11b9457968cC`, `0x4E67db19044549ff420860834c91b45bad298722` / `0xAe5b1b51ECB247218157ddc6f1E457db25F971d7`, fee `0`, tick spacing `200` |
+| Pool id | `0x004de370c1ef268265d1f3f8a91d00bd4bc2d97699f9877dc3d81286fb657bf3` |
+| Fixed input | `1_000_000_000_000_000_000` (one 18-decimal unit) |
+| Chain answer, zero for one | `4_854_067_101_419_274_970_894` — the core's `hop_outputs` matches |
+| Chain answer, one for zero | `201_912_091_397_373` — the core's `hop_outputs` matches |
+| Unhooked twin key (`hooks = 0`) | REFUSED by the chain in both directions — the answer is hook-specific |
+| The pool's own white-box walk | `4_903_097_821_562_843_550_261` / `203_951_607_472_093` — a different number; that substitution is the one this seam never makes |
+
+The run also pins the block's own context: the core's `ProbeBlockContext` reports
+`block 26_320_000`, timestamp `1_793_537_051`, and base fee `40_859_637` — the
+values the node reports for that block.
+
+The registered path is a two-hop ROUND TRIP on the pinned pool, because
+`EngineStages::register_path` structurally refuses a one-hop path: the fixed
+input enters in the direction under test, and the second hop re-quotes the
+opposite direction with the chained amount at the same pin. The two chain answers
+above are the FIRST hop's (the fixed input's, exactly as recorded); the reverse
+hop is held against its own independent `eth_call` rather than a second
+hand-copied constant.
 
 ### Correlation replaces serialization
 

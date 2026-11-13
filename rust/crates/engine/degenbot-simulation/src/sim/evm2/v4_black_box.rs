@@ -86,7 +86,12 @@ pub const V4_POOL_MANAGER: Address = address!("000000000004444c5dc75cB358380D2e3
 /// The canonical mainnet V4 `Quoter` (v4-periphery `Quoter`, bound to
 /// [`V4_POOL_MANAGER`]). Its `quoteExactInputSingle` is the execute-then-revert
 /// leg primitive.
-pub const V4_QUOTER: Address = address!("52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203");
+///
+/// Re-exported from [`degenbot_rpc::abi::V4_QUOTER`] — the ONE declaration of
+/// the deployment in the tree, shared with the core's `eth_call` quoter
+/// ([`degenbot_rpc::abi::V4Quote`]) so the scratch-EVM leg and the node leg can
+/// never drift onto different deployments.
+pub use degenbot_rpc::abi::V4_QUOTER;
 
 /// Scratch-only address used for production quotes. Hooks observe this
 /// address instead of the canonical quoter, whose special treatment would

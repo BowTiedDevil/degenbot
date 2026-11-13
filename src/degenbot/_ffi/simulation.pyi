@@ -1168,6 +1168,48 @@ def merge_payload_results_py(
     `Display`.
     """
 
+def quote_execution_probe_py(
+    engine: ArbitrageEngine,
+    provider: AsyncAlloyProvider,
+    path_id: SupportsIndex,
+    optimal_input: SupportsIndex,
+    current_block: SupportsIndex,
+) -> Any:
+    """
+    Price one registered path's FIXED input at ONE block and state the result as
+    the typed [`PyExecutionProbeRequest`] the probe executor runs.
+
+    This is the operator surface's only quote call: the core's exact-input quote
+    interface does the derivation (`EngineStages::quote_exact_input_path`) — the
+    reserve-pair hop through the production pool math, the V3/V4 hops through the
+    canonical on-chain quoters at `current_block` — and this wrapper only narrows
+    the answer into the request the typed probe protocol already accepts.
+
+    The returned request's `hop_outputs` / `consumed_inputs` are one entry per
+    hop in path order, and its block context is the SAME block the vector was
+    quoted at. A refusal (an unregistered path, an unregistered pool, a hop with
+    no quote arm, a quoter revert) is typed here rather than surfacing as a blank
+    vector: a probe cannot run on a partial quote.
+
+    Args:
+        `engine`: The `ArbEngine` (the path registry + shared pool state).
+        `provider`: The session provider handle (the quoter transport).
+        `path_id`: The registered engine path to quote.
+        `optimal_input`: The fixed swap input (wei); must be positive.
+        `current_block`: The ONE block the vector and its context belong to.
+
+    Raises:
+    # Errors
+
+    `ValueError`: `optimal_input` is not positive, the path is not registered,
+    a hop has no exact-input arm, or a quoted amount exceeds the request's
+    128-bit fields.
+
+    `RuntimeError`: A hop's pool is not registered, the in-process pool math
+    refuses a hop, the canonical quoter refuses a hop, or the block context
+    cannot be read.
+    """
+
 def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: bytes) -> dict:
     """
     Drive the `0xcafebabe`-style REVERT fixture (executor injected with
@@ -1261,6 +1303,7 @@ __all__ = [
     "builtin_deployment_id",
     "executor_policy_py",
     "merge_payload_results_py",
+    "quote_execution_probe_py",
     "simulate_in_process_revert_probe",
     "simulate_in_process_success_probe",
 ]

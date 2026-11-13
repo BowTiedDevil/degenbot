@@ -9,9 +9,14 @@
 //! ([`path_info_for`]) and the telemetry hop description — both ride the
 //! engine's path registry and core read lock.
 
-use ::degenbot_pools::solve::HopType;
+use ::degenbot_pools::solve::{HopType, MixedPoolRef};
 use degenbot_execution::PathInfo;
+use degenbot_pools::PoolEntry;
 
+use super::probe_quote::{
+    ExactInputHop, ExactInputQuoteError, ExactInputQuotePlan, InProcessHop, V3ExactInputHop,
+    V4ExactInputHop,
+};
 use super::ArbitrageEngine;
 use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::BotState;
@@ -91,6 +96,108 @@ pub(crate) fn path_info_for(
         &core,
         &path.pools,
     ))
+}
+
+/// Build one registered path's exact-input quote plan at `block` — the family
+/// adapters behind [`EngineStages::quote_exact_input_path`].
+///
+/// Each hop is projected by its OWN family: a reserve-pair hop carries the pool
+/// state SNAPSHOT it prices against (one clone, taken under this call's one core
+/// read), a V3 hop carries its direction's token pair and fee tier, and a V4 hop
+/// carries its whole pool key — hook address included — so the on-chain quoter
+/// prices the hooked pool itself.
+///
+/// # Errors
+///
+/// [`ExactInputQuoteError::PathNotRegistered`] when `path_id` was never
+/// registered, [`ExactInputQuoteError::PoolNotRegistered`] when a hop's pool has
+/// no entry of its family in the shared state, and
+/// [`ExactInputQuoteError::UnsupportedHop`] when a hop's family has no
+/// exact-input arm at all.
+///
+/// # Lock discipline
+///
+/// Engine lock then ONE core read for the whole projection — the established
+/// order (engine-then-core, never the reverse), the same one
+/// [`path_info_for`] takes.
+pub(crate) fn exact_input_quote_plan(
+    engine: &ArbitrageEngine,
+    path_id: u64,
+    block: u64,
+) -> Result<ExactInputQuotePlan, ExactInputQuoteError> {
+    let path = engine
+        .registry
+        .get(path_id)
+        .ok_or(ExactInputQuoteError::PathNotRegistered { path_id })?;
+    let core = engine
+        .core
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+    let mut hops = Vec::with_capacity(path.pools.len());
+    for (index, pool_ref) in path.pools.iter().enumerate() {
+        hops.push(exact_input_hop(&core, path_id, index, pool_ref)?);
+    }
+    Ok(ExactInputQuotePlan {
+        path_id,
+        block,
+        hops,
+    })
+}
+
+/// Project ONE registered hop onto its exact-input quote spec.
+fn exact_input_hop(
+    core: &BotState,
+    path_id: u64,
+    hop: usize,
+    pool_ref: &MixedPoolRef,
+) -> Result<ExactInputHop, ExactInputQuoteError> {
+    let pool_id = pool_ref.pool_key;
+    match pool_ref.hop_type {
+        HopType::V2 => {
+            // The reserve-pair families (Uniswap V2 and Aerodrome V2) share the
+            // `HopType::V2` tag, so the entry — not the tag — names the state
+            // the production math reads.
+            let entry = core
+                .pool_entry(pool_id)
+                .filter(|entry| matches!(entry, PoolEntry::V2(_) | PoolEntry::AerodromeV2(_)))
+                .cloned()
+                .ok_or(ExactInputQuoteError::PoolNotRegistered { path_id, pool_id })?;
+            Ok(ExactInputHop::InProcess(InProcessHop {
+                pool_id,
+                zero_for_one: pool_ref.zero_for_one,
+                entry,
+            }))
+        }
+        HopType::V3 => {
+            let identity = core
+                .pool_slice::<degenbot_pools::V3PoolIdentity>(pool_id)
+                .ok_or(ExactInputQuoteError::PoolNotRegistered { path_id, pool_id })?;
+            let (token_in, token_out) = if pool_ref.zero_for_one {
+                (identity.token0, identity.token1)
+            } else {
+                (identity.token1, identity.token0)
+            };
+            Ok(ExactInputHop::V3(V3ExactInputHop {
+                token_in,
+                token_out,
+                fee: identity.fee,
+                zero_for_one: pool_ref.zero_for_one,
+            }))
+        }
+        HopType::V4 => {
+            let identity = core
+                .pool_slice::<degenbot_pools::V4PoolIdentity>(pool_id)
+                .ok_or(ExactInputQuoteError::PoolNotRegistered { path_id, pool_id })?;
+            Ok(ExactInputHop::V4(V4ExactInputHop {
+                pool_key: identity.pool_key.clone(),
+                zero_for_one: pool_ref.zero_for_one,
+            }))
+        }
+        other => Err(ExactInputQuoteError::UnsupportedHop {
+            path_id,
+            hop,
+            hop_type: other,
+        }),
+    }
 }
 
 /// Read the current state nonce for every hop in a registered path.

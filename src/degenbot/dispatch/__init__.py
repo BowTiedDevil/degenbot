@@ -39,6 +39,11 @@ Symbol map (FFI name → stable companion name):
 - ExecutionProbeRequest / ProbeReport / ProbeEncodedCall / ProbeExecutor → the
   same names (the correlated, non-submitting probe protocol the operator
   handler and the matrix client drive)
+
+- quote_execution_probe_py → quote_execution_probe (the core's exact-input
+  quote interface: one registered path's fixed-input amount vector at one
+  block, with the V2 hop priced by production pool math and the V3/V4 hops by
+  the canonical on-chain quoters)
 - SimulationDeployment → SimulationDeployment
 - builtin_deployment_id → builtin_deployment_id
 - merge_payload_results_py → merge_payload_results
@@ -78,6 +83,7 @@ from degenbot._ffi.simulation import CandidateId as CandidateId
 from degenbot._ffi.simulation import build_batch_executor_py as build_batch_executor
 from degenbot._ffi.simulation import build_probe_executor_py as build_probe_executor
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
+from degenbot._ffi.simulation import quote_execution_probe_py as quote_execution_probe
 from degenbot._ffi.submission import (
     Dispatcher,
     EnqueueDecline,
@@ -201,5 +207,6 @@ __all__ = [
     "dispatch_and_submit",
     "fetch_fee_history",
     "merge_payload_results",
+    "quote_execution_probe",
     "typed_submit_record",
 ]

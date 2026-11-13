@@ -74,8 +74,8 @@ pub mod simulation {
 
     #[pymodule_export]
     use super::probe::{
-        build_probe_executor_py, PyExecutionProbeRequest, PyProbeEncodedCall, PyProbeExecutor,
-        PyProbeReport,
+        build_probe_executor_py, quote_execution_probe_py, PyExecutionProbeRequest,
+        PyProbeEncodedCall, PyProbeExecutor, PyProbeReport,
     };
 
     #[pymodule_export]

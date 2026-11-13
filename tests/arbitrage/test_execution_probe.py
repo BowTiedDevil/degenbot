@@ -9,6 +9,15 @@ The probe now runs on the core's DEDICATED, correlated probe executor:
   reply is that call's own `ProbeReport` — so concurrent probes need no lock and
   a cancelled probe leaves nothing for the next caller to take.
 
+The REQUEST's amount vector is quoted by the CORE, not here: the operator
+adapter forwards the engine, the provider, the path, the fixed input, and the
+block to `degenbot.dispatch.quote_execution_probe` (`EngineStages::
+quote_exact_input_path` behind it), which prices a V2 hop with the production
+pool math and a V3/V4 hop with the canonical on-chain quoter at that block. The
+vector-parity proof lives in the Rust crate's pinned-quoter tests
+(`arb_engine::probe_quote`); what this file pins is the ADAPTER — one call, the
+session's own block, and the typed request handed to the executor unchanged.
+
 The temporary `SubmissionStance.PROBE` + shared-drain `BatchExecutor.probe_path`
 path, the session probe lock, and the abandoned-probe reaper are GONE; nothing
 here can reinstate them without failing a test.
@@ -18,11 +27,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
-from degenbot.dispatch import ExecutionProbeRequest
+from degenbot.dispatch import ExecutionProbeRequest, quote_execution_probe
 from degenbot.runner._sim_submit import (
     ExecutorInputs,
     ProbeCapital,
@@ -31,139 +40,74 @@ from degenbot.runner._sim_submit import (
 )
 from degenbot.runner.session import Session, SessionPhase
 from tests.deadlock_guard import DEADLOCK_GUARD_S
+from tests.helpers.seam import quote_execution_probe_py
 from tests.helpers.session import OFFLINE_RELAY, offline_cfg, session_for_test
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+#: The block the standard fake dispatcher clocks the session at.
+SESSION_BLOCK = 12_345
 
 
-class _Pool:
-    def __init__(self, ratio: int) -> None:
-        self.ratio = ratio
+class _QuoteSeam:
+    """The core quote seam's Python stand-in: records the ask, answers one vector.
 
-    def calculate_tokens_out(self, zero_for_one: bool, amount_in: int) -> int:
-        assert isinstance(zero_for_one, bool)
-        return amount_in * self.ratio
+    The REAL seam derives the vector (production V2 math, canonical on-chain
+    V3/V4 quotes) and refuses an unregistered path. This double does the same
+    shape of work with fixed numbers so the adapter's contract — one call, the
+    session's block, the request handed on unchanged — is what the assertions
+    read. A ``gate`` parks the call inside its own await, which is how the
+    cancellation tests observe the quoting phase.
+    """
 
-
-class _PyBot:
-    def get_pool(self, pool_id: int) -> _Pool:
-        return {12: _Pool(10), 13: _Pool(20), 14: _Pool(30)}[pool_id]
-
-
-class _Bot:
-    _py_bot = _PyBot()
-
-
-class _Engine:
-    def pool_id_for_pool(self, family: str, address: str) -> int:
-        return {"v2": 12, "v3": 13}[family]
-
-    def pool_id_for_v4_pool(self, manager: str, pool_id: str) -> int:
-        return 14
-
-    def payload_path_info(self, path_id: int) -> dict[str, Any] | None:
-        # Path 7 is the full V2-V3-V4 route. The concurrency tests drive their
-        # second probe over path 8, a single V3 hop, so its quote takes no thread
-        # hop and "the second probe is in flight too" is a pure-asyncio fact.
-        if path_id == 8:
-            return {
-                "path_type": "V3",
-                "hops": [
-                    {
-                        "family": "v3",
-                        "pool_address": "0x0000000000000000000000000000000000000003",
-                        "token0_address": "0x0000000000000000000000000000000000000010",
-                        "token1_address": "0x0000000000000000000000000000000000000011",
-                        "fee": 3000,
-                        "zfo": False,
-                    },
-                ],
-            }
-        if path_id != 7:
-            return None
-        return {
-            "path_type": "V2-V3-V4",
-            "hops": [
-                {
-                    "family": "v2",
-                    "pool_address": "0x0000000000000000000000000000000000000002",
-                    "zfo": True,
-                },
-                {
-                    "family": "v3",
-                    "pool_address": "0x0000000000000000000000000000000000000003",
-                    "token0_address": "0x0000000000000000000000000000000000000010",
-                    "token1_address": "0x0000000000000000000000000000000000000011",
-                    "fee": 3000,
-                    "zfo": False,
-                },
-                {
-                    "family": "v4",
-                    "pool_manager_address": "0x0000000000000000000000000000000000000004",
-                    "pool_id_hex": "0x1234",
-                    "currency0_address": "0x0000000000000000000000000000000000000011",
-                    "currency1_address": "0x0000000000000000000000000000000000000012",
-                    "fee": 3000,
-                    "tick_spacing": 60,
-                    "hook_address": "0x0000000000000000000000000000000000000000",
-                    "zfo": True,
-                },
-            ],
-        }
-
-
-class _Registry:
-    engine = _Engine()
-
-
-class _Provider:
-    def __init__(self) -> None:
-        self.quotes = iter([20_000, 600_000])
-
-    async def get_block(self, block: int) -> dict[str, int]:
-        assert block == 12_345
-        return {"base_fee_per_gas": 77, "timestamp": 1_700_000_001}
-
-    async def call(self, target: str, data: bytes, block: int) -> bytes:
-        assert block == 12_345
-        from degenbot.abi import encode_single
-
-        return encode_single("uint256", next(self.quotes))
-
-
-class _EchoProvider:
-    """A provider whose quoter answers independently, so N probes can share it."""
-
-    async def get_block(self, block: int) -> dict[str, int]:
-        assert block == 12_345
-        return {"base_fee_per_gas": 77, "timestamp": 1_700_000_001}
-
-    async def call(self, target: str, data: bytes, block: int) -> bytes:
-        assert block == 12_345
-        from degenbot.abi import encode_single
-
-        return encode_single("uint256", 1_000_000)
-
-
-class _GatedProvider:
-    """A provider whose quoter call parks until the test releases it."""
-
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        gate: asyncio.Event | None = None,
+        provider: Any = None,
+    ) -> None:
+        self.gate = gate
+        self.provider = provider
+        self.asks: list[dict[str, Any]] = []
         self.entered = asyncio.Event()
-        self.release = asyncio.Event()
 
-    async def get_block(self, block: int) -> dict[str, int]:
-        assert block == 12_345
-        return {"base_fee_per_gas": 77, "timestamp": 1_700_000_001}
-
-    async def call(self, target: str, data: bytes, block: int) -> bytes:
-        assert block == 12_345
+    async def __call__(
+        self,
+        engine: Any,
+        provider: Any,
+        *,
+        path_id: int,
+        optimal_input: int,
+        current_block: int,
+    ) -> ExecutionProbeRequest:
+        self.asks.append({
+            "engine": engine,
+            "provider": provider,
+            "path_id": path_id,
+            "optimal_input": optimal_input,
+            "current_block": current_block,
+        })
         self.entered.set()
-        await self.release.wait()
-        from degenbot.abi import encode_single
-
-        return encode_single("uint256", 1_000_000)
+        if self.gate is not None:
+            await self.gate.wait()
+        if path_id == 999:
+            msg = f"probe_path: path {path_id} is not registered"
+            raise ValueError(msg)
+        if path_id == 7:
+            # The three-hop shape: a V2 hop at 10x, then the two concentrated
+            # hops at their fixed prices.
+            consumed = [optimal_input, optimal_input * 10, 20_000]
+            outputs = [optimal_input * 10, 20_000, 600_000]
+        else:
+            consumed = [optimal_input]
+            outputs = [1_000_000]
+        return ExecutionProbeRequest(
+            path_id=path_id,
+            optimal_input=optimal_input,
+            hop_outputs=outputs,
+            consumed_inputs=consumed,
+            current_block=current_block,
+            base_fee_next=77,
+            block_timestamp=1_700_000_001,
+        )
 
 
 class _FakeReport:
@@ -231,12 +175,8 @@ async def _guarded(awaitable: Any) -> Any:
     return await asyncio.wait_for(awaitable, DEADLOCK_GUARD_S)
 
 
-def _session(provider: Any = None) -> Session:
-    session = session_for_test(
-        bot=_Bot(),
-        engine_registry=_Registry(),
-        async_w3=provider if provider is not None else _Provider(),
-    )
+def _session() -> Session:
+    session = session_for_test()
     session.phase = SessionPhase.RUNNING
     return session
 
@@ -248,35 +188,59 @@ def _install(
     session.probe_executors[capital] = executor
 
 
+def _install_quote_seam(monkeypatch: pytest.MonkeyPatch, seam: _QuoteSeam) -> _QuoteSeam:
+    """Point the session's quote seam at this test's double."""
+    monkeypatch.setattr("degenbot.runner.session.quote_execution_probe", seam)
+    return seam
+
+
 @pytest.mark.asyncio
-async def test_probe_path_quotes_exact_inputs_into_one_typed_request() -> None:
-    """The exact-input quote derivation rides the typed request, per hop."""
+async def test_probe_path_quotes_exact_inputs_into_one_typed_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adapter asks the core ONCE, at the session's block, and hands on its vector."""
     executor = _ProbeExecutor()
     session = _session()
     _install(session, executor)
+    seam = _install_quote_seam(monkeypatch, _QuoteSeam())
 
     report = await session.probe_path(7, optimal_input=100)
+
+    (ask,) = seam.asks
+    assert ask["engine"] is session.actors.engine_registry.engine, (
+        "the ask names the session's engine"
+    )
+    assert ask["provider"] is session.actors.async_w3.as_async_alloy(), (
+        "the ask names the session's provider, unwrapped to the Rust handle"
+    )
+    assert (ask["path_id"], ask["optimal_input"]) == (7, 100)
+    assert ask["current_block"] == SESSION_BLOCK, "the ask is pinned to the session's block"
 
     (request,) = executor.requests
     assert request.path_id == 7
     assert request.optimal_input == 100
     assert request.hop_outputs == [1000, 20_000, 600_000]
     assert request.consumed_inputs == [100, 1000, 20_000]
-    assert request.current_block == 12_345
+    assert request.current_block == SESSION_BLOCK
     assert request.base_fee_next == 77
     assert request.block_timestamp == 1_700_000_001
     assert report.path_id == 7, "the caller receives ITS call's report"
 
 
 @pytest.mark.asyncio
-async def test_probe_path_refuses_invalid_inputs_before_any_call() -> None:
-    """Input validation is the probe surface's, and it fires before the executor."""
+async def test_probe_path_refuses_invalid_inputs_before_any_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Input validation is the probe surface's, and it fires before the quote seam."""
     executor = _ProbeExecutor()
     session = _session()
     _install(session, executor)
+    seam = _install_quote_seam(monkeypatch, _QuoteSeam())
 
     with pytest.raises(ValueError, match="optimal_input must be positive"):
         await session.probe_path(7, optimal_input=0)
+    assert seam.asks == [], "a non-positive input never reaches the quote seam"
+
     with pytest.raises(ValueError, match="not registered"):
         await session.probe_path(999, optimal_input=100)
 
@@ -284,30 +248,26 @@ async def test_probe_path_refuses_invalid_inputs_before_any_call() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_pool_that_is_not_registered_refuses_without_a_call() -> None:
-    """A missing pool refuses during quoting, so no request reaches the executor."""
+async def test_a_core_quote_refusal_reaches_the_caller_and_dispatches_no_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A quote the core refuses (a missing pool, a quoter revert) stops the call."""
 
-    class _MissEngine(_Engine):
-        def pool_id_for_pool(self, family: str, address: str) -> int:
-            return 999
-
-    class _MissRegistry:
-        engine = _MissEngine()
-
-    class _EmptyBot:
-        _py_bot = type("_Py", (), {"get_pool": lambda self, pool_id: None})()
+    class _RefusingSeam(_QuoteSeam):
+        async def __call__(self, engine: Any, provider: Any, **ask: Any) -> ExecutionProbeRequest:
+            await super().__call__(engine, provider, **ask)
+            msg = "probe_path: pool 999 for path 7 is not registered"
+            raise RuntimeError(msg)
 
     executor = _ProbeExecutor()
-    session = session_for_test(
-        bot=_EmptyBot(), engine_registry=_MissRegistry(), async_w3=_Provider()
-    )
-    session.phase = SessionPhase.RUNNING
+    session = _session()
     _install(session, executor)
+    _install_quote_seam(monkeypatch, _RefusingSeam())
 
     with pytest.raises(RuntimeError, match="is not registered"):
         await session.probe_path(7, optimal_input=100)
 
-    assert executor.requests == []
+    assert executor.requests == [], "a refused quote dispatches nothing"
 
 
 # ── Construction: nothing submission-shaped crosses the boundary ──────
@@ -464,7 +424,8 @@ async def test_the_session_builds_one_probe_executor_per_capital_posture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """All three modes are representable, each built once, and a repeat reuses it."""
-    session = _session(_EchoProvider())
+    session = _session()
+    _install_quote_seam(monkeypatch, _QuoteSeam())
     builds: list[ProbeCapital] = []
 
     def build(inputs: Any, **kwargs: Any) -> _ProbeExecutor:
@@ -501,7 +462,9 @@ async def test_the_session_builds_one_probe_executor_per_capital_posture(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_probes_overlap_and_each_owns_its_report() -> None:
+async def test_concurrent_probes_overlap_and_each_owns_its_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """No lock: two probes are in flight TOGETHER and each gets its own report.
 
     The retired serialization existed only because the shared drain could hand a
@@ -509,9 +472,10 @@ async def test_concurrent_probes_overlap_and_each_owns_its_report() -> None:
     so the session lets the calls overlap — and each caller still receives the
     path and amount it asked for.
     """
+    _install_quote_seam(monkeypatch, _QuoteSeam())
     hold = asyncio.Event()
     executor = _ProbeExecutor(hold=hold)
-    session = _session(_EchoProvider())
+    session = _session()
     _install(session, executor)
 
     first = asyncio.create_task(_guarded(session.probe_path(7, optimal_input=100)))
@@ -533,16 +497,19 @@ async def test_concurrent_probes_overlap_and_each_owns_its_report() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_probe_aborts_its_own_call_and_leaves_nothing_behind() -> None:
+async def test_a_cancelled_probe_aborts_its_own_call_and_leaves_nothing_behind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A cancelled caller cancels ITS call; the next probe still gets its own report.
 
     Nothing is queued and no task is retained: the call's await is the whole
     operation, so cancelling it aborts the stage instead of abandoning a result
     for a successor — the reason the session reaper is gone.
     """
+    _install_quote_seam(monkeypatch, _QuoteSeam())
     hold = asyncio.Event()
     executor = _ProbeExecutor(hold=hold)
-    session = _session(_EchoProvider())
+    session = _session()
     _install(session, executor)
 
     first = asyncio.create_task(_guarded(session.probe_path(7, optimal_input=100)))
@@ -572,10 +539,11 @@ async def test_a_capital_swap_during_an_in_flight_probe_strands_nothing(
     in-flight call holds its own executor reference (and its own channel), so a
     new posture's construction cannot disturb it.
     """
+    _install_quote_seam(monkeypatch, _QuoteSeam())
     hold = asyncio.Event()
     self_funded = _ProbeExecutor(hold=hold)
     flash_funded = _ProbeExecutor()
-    session = _session(_EchoProvider())
+    session = _session()
     _install(session, self_funded)
     builds: list[ProbeCapital] = []
 
@@ -607,22 +575,35 @@ async def test_a_capital_swap_during_an_in_flight_probe_strands_nothing(
 
 
 @pytest.mark.asyncio
-async def test_a_cancel_while_quoting_never_reaches_the_executor() -> None:
+async def test_a_cancel_while_quoting_never_reaches_the_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A cancel during quoting dispatches no probe, so there is nothing to abort."""
-    provider = _GatedProvider()
+    gate = asyncio.Event()
+    seam = _install_quote_seam(monkeypatch, _QuoteSeam(gate=gate))
     executor = _ProbeExecutor()
-    session = _session(provider)
+    session = _session()
     _install(session, executor)
 
     quoting = asyncio.create_task(_guarded(session.probe_path(7, optimal_input=100)))
-    await _guarded(provider.entered.wait())
+    await _guarded(seam.entered.wait())
     quoting.cancel()
     with pytest.raises(asyncio.CancelledError):
         await quoting
 
     assert executor.requests == [], "no request reached the executor"
 
-    provider.release.set()
+    gate.set()
     result = await _guarded(session.probe_path(8, optimal_input=250))
     assert (result.path_id, result.optimal_input) == (8, 250)
     assert [request.path_id for request in executor.requests] == [8]
+
+
+def test_the_adapter_names_the_core_quote_seam_it_forwards_to() -> None:
+    """The session's quote seam IS the core's exact-input quote interface.
+
+    Nothing in the operator layer may re-derive an amount: the name the session
+    imports is the FFI function the dispatch package exports, so a driver-side
+    re-derivation would have to replace the import (and fail this pin).
+    """
+    assert quote_execution_probe is quote_execution_probe_py

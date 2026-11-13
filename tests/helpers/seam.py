@@ -154,7 +154,8 @@ from degenbot._ffi.execution import (
 # provider: the transport the offline harnesses stub.
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider, is_local_rpc_url
 
-# simulation: the batch executor and dispatch surface.
+# simulation: the batch executor, the dispatch surface, and the exact-input
+# probe quote seam the operator adapter forwards to.
 from degenbot._ffi.simulation import (
     CandidateId,
     ExecutionProbeRequest,
@@ -167,6 +168,7 @@ from degenbot._ffi.simulation import (
     builtin_deployment_id,
     executor_policy_py,
     merge_payload_results_py,
+    quote_execution_probe_py,
     simulate_in_process_revert_probe,
     simulate_in_process_success_probe,
 )
@@ -277,6 +279,7 @@ __all__ = [
     "merge_payload_results_py",
     "pool_family_tags",
     "pool_kind_labels",
+    "quote_execution_probe_py",
     "reinstall_config_holder_for_tests",
     "resolve_deployer",
     "resolve_hypothetical",

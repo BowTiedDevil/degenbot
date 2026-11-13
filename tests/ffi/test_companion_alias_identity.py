@@ -72,6 +72,11 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     (_DISPATCH, "ProbeExecutor", _SIM, "ProbeExecutor"),
     (_DISPATCH, "ProbeReport", _SIM, "ProbeReport"),
     (_DISPATCH, "ProbeEncodedCall", _SIM, "ProbeEncodedCall"),
+    # The probe's quote entry point: one registered path's fixed-input amount
+    # vector at one block, derived by the core and narrowed into the request
+    # above, so the operator handler quotes through this companion name rather
+    # than reaching for `_ffi` itself.
+    (_DISPATCH, "quote_execution_probe", _SIM, "quote_execution_probe_py"),
     # The session consumer is the ONE consume loop's door: the driver reaches it
     # through the companion name, and its abort type must stay the exact Rust
     # exception so a driver's ``except`` keeps matching what the core raises.
@@ -174,6 +179,10 @@ def test_dispatch_all_pins_public_surface() -> None:
     ``ProbeEncodedCall``, ``ProbeExecutor``) joined when the public probe moved to
     the core's dedicated correlated executor: the operator handler builds the
     request and reads the report through these names, never through `_ffi`.
+    ``quote_execution_probe`` joined with the core's exact-input quote
+    interface: the operator surface's only quote call returns the very
+    ``ExecutionProbeRequest`` the executor runs, so a driver quotes and probes
+    by the same companion names.
     """
 
     d = degenbot.dispatch
@@ -216,6 +225,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "dispatch_and_submit",
         "fetch_fee_history",
         "merge_payload_results",
+        "quote_execution_probe",
         "typed_submit_record",
     }
     assert expected.issubset(set(dir(d)))
