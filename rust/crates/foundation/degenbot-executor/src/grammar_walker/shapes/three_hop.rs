@@ -3,7 +3,7 @@
 use super::super::{fits_i128, mechanics, HopFacts, RepayMechanism, SeedDelivery, TerminalForm};
 use crate::composers::{resolve_axes, ComposerInputs, CurrencyBridge, NATIVE_CURRENCY_ADDRESS};
 use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
-use crate::grammar_ledger::Prot;
+use crate::grammar_ledger::{FundingSource, Prot};
 use crate::grammar_plan::{Plan, PlanStep, V4BatchSwap};
 use crate::grammar_shape::{
     native_capture_declines, v4_bridge_steps, v4_scaffold_table, v4_terminal_capture_steps,
@@ -170,6 +170,7 @@ pub(crate) fn derive(
                 }
                 TerminalForm::UnlockInternal => {
                     let c_in = c_swap_in.unwrap_or_default();
+                    let self_funded = inputs.opts.funding == FundingSource::SelfFund;
                     let mut inner = v4_unlock_inner_start;
                     inner.push(PlanStep::V4Swap {
                         c0_idx: c0_c.unwrap_or_default(),
@@ -184,19 +185,38 @@ pub(crate) fn derive(
                         out_currency: fc.out_currency,
                         out_amount: out_c,
                     });
+                    if self_funded {
+                        inner.push(PlanStep::Erc20Transfer {
+                            token_idx: at.add(fa.in_currency).ok()?,
+                            token_addr: fa.in_currency,
+                            recipient_idx: v3a,
+                            amount: optimal_input,
+                            seeds_pool: None,
+                            repays_flash: Some(fa.pool_address),
+                        });
+                    } else {
+                        inner.push(PlanStep::V4TakeCompact {
+                            currency_idx: SENTINEL_WETH,
+                            currency_addr: weth,
+                            recipient_idx: v3a,
+                            amount: optimal_input,
+                            seeds_pool: None,
+                            repays_flash: Some(fa.pool_address),
+                        });
+                    }
                     inner.push(PlanStep::V4TakeCompact {
-                        currency_idx: SENTINEL_WETH,
-                        currency_addr: weth,
-                        recipient_idx: v3a,
-                        amount: optimal_input,
-                        seeds_pool: None,
-                        repays_flash: Some(fa.pool_address),
-                    });
-                    inner.push(PlanStep::V4TakeCompact {
-                        currency_idx: SENTINEL_WETH,
-                        currency_addr: weth,
+                        currency_idx: if self_funded {
+                            at.add(fc.out_currency).ok()?
+                        } else {
+                            SENTINEL_WETH
+                        },
+                        currency_addr: if self_funded { fc.out_currency } else { weth },
                         recipient_idx: SENTINEL_SELF,
-                        amount: out_c.checked_sub(optimal_input)?,
+                        amount: if self_funded {
+                            out_c
+                        } else {
+                            out_c.checked_sub(optimal_input)?
+                        },
                         seeds_pool: None,
                         repays_flash: None,
                     });
@@ -247,6 +267,9 @@ pub(crate) fn derive(
                         amount: optimal_input,
                     },
                 );
+            }
+            if terminal_form == TerminalForm::UnlockInternal {
+                plan.insert(0, mechanics::self_fund(fa.in_currency, optimal_input));
             }
             Some((plan, at))
         } else {
@@ -1049,6 +1072,11 @@ fn rule_walk_v4_led(
         // + V4SettleAll. hop1=V4 ⇒ consumed[0] seed. hop2=V3 ⇒ SettleAll.
         // flash_c borrows forward_b (not fc.in_currency) ⇒ inline FlashSwap.
         [Prot::V4, Prot::V3] => {
+            // The trailing V3 flash can require an intermediate-currency
+            // repayment, which a WETH-only self-fund cannot guarantee.
+            if inputs.opts.funding == FundingSource::SelfFund {
+                return rule_walk_v4_v4_v3_self_fund(facts, inputs);
+            }
             if inputs.hop_outputs.contains(&0) {
                 return None;
             }
@@ -1307,6 +1335,9 @@ fn rule_walk_v2v3_v4_mixed(
         // V4Sync(fwd_b), b_direct→PM, V4Settle, profit take]. The terminal V4
         // delta funds the leading pool; both V2 swaps use excess-balance custody.
         [Prot::V2, Prot::V2, Prot::V4] => {
+            if inputs.opts.funding == FundingSource::SelfFund {
+                return rule_walk_v2_terminal_v4_self_fund(facts, inputs);
+            }
             if inputs.hop_outputs.contains(&0) || !fits_i128(optimal_input) {
                 return None;
             }
@@ -1389,6 +1420,9 @@ fn rule_walk_v2v3_v4_mixed(
         // V4TakeCompact→v2a, a_direct→PM, V4Settle, profit take]. V4 credit
         // precedes the seed take; the V2 output settles the first V4 input.
         [Prot::V2, Prot::V4, Prot::V4] => {
+            if inputs.opts.funding == FundingSource::SelfFund {
+                return rule_walk_v2_terminal_v4_self_fund(facts, inputs);
+            }
             if inputs.hop_outputs.contains(&0) || !fits_i128(optimal_input) {
                 return None;
             }
@@ -1490,8 +1524,10 @@ fn rule_walk_v2v3_v4_mixed(
             if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
                 return None;
             }
-            // The T6c fact: the seed must be a V4-take (decline if absent).
-            if fa.seed_delivery != Some(SeedDelivery::V4TakeCompact) {
+            // The V4-take seed is mandatory only for flash-funded streams.
+            if inputs.opts.funding != FundingSource::SelfFund
+                && fa.seed_delivery != Some(SeedDelivery::V4TakeCompact)
+            {
                 return None;
             }
             let fwd_b = fb.out_currency;
@@ -1507,7 +1543,7 @@ fn rule_walk_v2v3_v4_mixed(
             let c0 = at.add(fc.currency0_address).ok()?;
             let c1 = at.add(fc.currency1_address).ok()?;
             let forward_b = at.add(fwd_b).ok()?;
-            let v4_inner: Plan = vec![
+            let mut v4_inner: Plan = vec![
                 PlanStep::V4Settle {
                     currency_addr: fwd_b,
                     amount: c_swap_in,
@@ -1525,28 +1561,43 @@ fn rule_walk_v2v3_v4_mixed(
                     out_currency: output_c,
                     out_amount: out_c,
                 },
-                PlanStep::V4TakeCompact {
-                    currency_idx: SENTINEL_WETH,
-                    currency_addr: weth,
-                    recipient_idx: v2a,
-                    amount: optimal_input,
-                    seeds_pool: Some(fa.pool_address),
-                    repays_flash: None,
-                },
-                PlanStep::V4TakeCompact {
+            ];
+            if inputs.opts.funding == FundingSource::SelfFund {
+                v4_inner.push(PlanStep::V4TakeCompact {
                     currency_idx: SENTINEL_WETH,
                     currency_addr: weth,
                     recipient_idx: SENTINEL_SELF,
-                    amount: out_c - optimal_input,
+                    amount: out_c,
                     seeds_pool: None,
                     repays_flash: None,
-                },
+                });
+            } else {
+                v4_inner.extend([
+                    PlanStep::V4TakeCompact {
+                        currency_idx: SENTINEL_WETH,
+                        currency_addr: weth,
+                        recipient_idx: v2a,
+                        amount: optimal_input,
+                        seeds_pool: Some(fa.pool_address),
+                        repays_flash: None,
+                    },
+                    PlanStep::V4TakeCompact {
+                        currency_idx: SENTINEL_WETH,
+                        currency_addr: weth,
+                        recipient_idx: SENTINEL_SELF,
+                        amount: out_c.checked_sub(optimal_input)?,
+                        seeds_pool: None,
+                        repays_flash: None,
+                    },
+                ]);
+            }
+            v4_inner.extend([
                 PlanStep::V4Sync {
                     currency_idx: SENTINEL_WETH,
                     currency_addr: weth,
                 },
                 PlanStep::V4SettleAll,
-            ];
+            ]);
             let cb: Plan = vec![
                 PlanStep::V4Unlock {
                     inner: v4_inner,
@@ -1562,7 +1613,25 @@ fn rule_walk_v2v3_v4_mixed(
                     true,
                 )?,
             ];
-            let plan: Plan = vec![
+            let mut plan: Plan = if inputs.opts.funding == FundingSource::SelfFund {
+                vec![
+                    PlanStep::SelfFund {
+                        currency: weth,
+                        amount: optimal_input,
+                    },
+                    PlanStep::Erc20Transfer {
+                        token_idx: SENTINEL_WETH,
+                        token_addr: weth,
+                        recipient_idx: v2a,
+                        amount: optimal_input,
+                        seeds_pool: Some(fa.pool_address),
+                        repays_flash: None,
+                    },
+                ]
+            } else {
+                Vec::new()
+            };
+            plan.extend([
                 PlanStep::V4Sync {
                     currency_idx: forward_b,
                     currency_addr: fwd_b,
@@ -1576,7 +1645,7 @@ fn rule_walk_v2v3_v4_mixed(
                     Some((pm_idx, None, false)),
                     cb,
                 )?,
-            ];
+            ]);
             Some((plan, at))
         }
         // ── v3v2v4: SelfFund + fa-flash[v2-flash(auto_repay=true)[Unlock[
@@ -1689,6 +1758,9 @@ fn rule_walk_v2v3_v4_mixed(
         // rpr=true][Unlock[V4Settle, V4Swap(c), V4TakeCompact→v3a(repays fa),
         // V4SettleAll]]. Reverse V3↔V3 nest (the inner flash repays the outer).
         [Prot::V3, Prot::V3, Prot::V4] => {
+            if inputs.opts.funding == FundingSource::SelfFund {
+                return rule_walk_v3_v3_v4_self_fund(facts, inputs);
+            }
             if inputs.hop_outputs.contains(&0) || !fits_i128(optimal_input) {
                 return None;
             }
@@ -1952,11 +2024,267 @@ fn rule_walk_v2v3_v4_mixed(
     }
 }
 
+/// Self-funded V2-led terminal-V4 paths pay the entry seed from held capital.
+/// They never fund that seed by taking the not-yet-earned terminal V4 output.
+fn rule_walk_v2_terminal_v4_self_fund(
+    facts: &[HopFacts],
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Plan, AddressTable)> {
+    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+    let optimal = inputs.optimal_input;
+    let out_a = inputs.hop_outputs[0];
+    let out_c = inputs.hop_outputs[2];
+    let b_input = *inputs.consumed_inputs.get(1)?;
+    let c_input = *inputs.consumed_inputs.get(2)?;
+    if inputs.hop_outputs.contains(&0)
+        || !fits_i128(optimal)
+        || !fits_i128(b_input)
+        || !fits_i128(c_input)
+        || fa.out_currency != fb.in_currency
+        || fc.in_currency != fb.out_currency
+    {
+        return None;
+    }
+    let mut at = v4_scaffold_table(inputs);
+    let pm = at.add(inputs.pool_manager_address).ok()?;
+    let v2a = at.add(fa.pool_address).ok()?;
+    let forward = at.add(fb.out_currency).ok()?;
+    let entry = at.add(fa.in_currency).ok()?;
+    let terminal = at.add(fc.out_currency).ok()?;
+    let mut inner = Vec::new();
+    if fb.prot == Prot::V2 {
+        let v2b = at.add(fb.pool_address).ok()?;
+        inner.extend([
+            PlanStep::V4Sync {
+                currency_idx: forward,
+                currency_addr: fb.out_currency,
+            },
+            PlanStep::Erc20Transfer {
+                token_idx: entry,
+                token_addr: fa.in_currency,
+                recipient_idx: v2a,
+                amount: optimal,
+                seeds_pool: Some(fa.pool_address),
+                repays_flash: None,
+            },
+            mechanics::v2_swap(&mut at, fa, out_a, v2b, Some(fb.pool_address), false)?,
+            mechanics::v2_swap(&mut at, fb, c_input, pm, None, false)?,
+            PlanStep::V4Settle {
+                currency_addr: fb.out_currency,
+                amount: c_input,
+            },
+        ]);
+    } else {
+        let second_input = at.add(fb.in_currency).ok()?;
+        inner.extend([
+            PlanStep::V4Sync {
+                currency_idx: second_input,
+                currency_addr: fb.in_currency,
+            },
+            PlanStep::Erc20Transfer {
+                token_idx: entry,
+                token_addr: fa.in_currency,
+                recipient_idx: v2a,
+                amount: optimal,
+                seeds_pool: Some(fa.pool_address),
+                repays_flash: None,
+            },
+            mechanics::v2_swap_direct(&mut at, fa, b_input, fa.out_currency, pm, None, false)?,
+            mechanics::v4_swap(&mut at, fb, b_input, inputs.hop_outputs[1])?,
+            PlanStep::V4Settle {
+                currency_addr: fb.in_currency,
+                amount: b_input,
+            },
+        ]);
+    }
+    inner.extend([
+        mechanics::v4_swap(&mut at, fc, c_input, out_c)?,
+        PlanStep::V4TakeCompact {
+            currency_idx: terminal,
+            currency_addr: fc.out_currency,
+            recipient_idx: SENTINEL_SELF,
+            amount: out_c,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        PlanStep::V4SettleAll,
+    ]);
+    Some((
+        vec![
+            mechanics::self_fund(fa.in_currency, optimal),
+            mechanics::v4_unlock(inner, pm),
+        ],
+        at,
+    ))
+}
+
+/// Self-funded V4→V4→V3 pays each V4 debt from held capital or the terminal
+/// swap output. The terminal V3 auto-pays its callback delta, so no flash debt
+/// or profit-dependent terminal take is needed.
+fn rule_walk_v4_v4_v3_self_fund(
+    facts: &[HopFacts],
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Plan, AddressTable)> {
+    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+    let a_input = *inputs.consumed_inputs.first()?;
+    let b_input = *inputs.consumed_inputs.get(1)?;
+    let c_input = *inputs.consumed_inputs.get(2)?;
+    let out_b = inputs.hop_outputs[1];
+    let out_c = inputs.hop_outputs[2];
+    if inputs.hop_outputs.contains(&0)
+        || !fits_i128(a_input)
+        || !fits_i128(b_input)
+        || !fits_i128(c_input)
+        || c_input > out_b
+        || fa.out_currency != fb.in_currency
+        || fc.in_currency != fb.out_currency
+    {
+        return None;
+    }
+    let mut at = v4_scaffold_table(inputs);
+    let forward = at.add(fb.out_currency).ok()?;
+    let first_input = at.add(fa.in_currency).ok()?;
+    let second_input = at.add(fb.in_currency).ok()?;
+    let v3c = at.add(fc.pool_address).ok()?;
+    let pm = at.add(inputs.pool_manager_address).ok()?;
+    let inner = vec![
+        mechanics::v4_swap(&mut at, fa, a_input, inputs.hop_outputs[0])?,
+        PlanStep::V4Sync {
+            currency_idx: second_input,
+            currency_addr: fb.in_currency,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: second_input,
+            token_addr: fb.in_currency,
+            recipient_idx: pm,
+            amount: b_input,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        mechanics::v4_swap(&mut at, fb, b_input, out_b)?,
+        PlanStep::V4Settle {
+            currency_addr: fb.in_currency,
+            amount: b_input,
+        },
+        PlanStep::V4TakeCompact {
+            currency_idx: forward,
+            currency_addr: fb.out_currency,
+            recipient_idx: SENTINEL_SELF,
+            amount: c_input,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        PlanStep::V3Direct {
+            pool_idx: v3c,
+            zfo: fc.zfo,
+            in_currency: fc.in_currency,
+            in_amount: c_input,
+            out_currency: fc.out_currency,
+            out_amount: out_c,
+            recipient_idx: SENTINEL_SELF,
+        },
+        PlanStep::V4SettleDelta {
+            currency_idx: first_input,
+            currency_addr: fa.in_currency,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    Some((
+        vec![
+            mechanics::self_fund(fa.in_currency, a_input),
+            mechanics::self_fund(fb.in_currency, b_input),
+            mechanics::v4_unlock(inner, pm),
+        ],
+        at,
+    ))
+}
+
+/// Self-funded V3→V3→V4 pays both V3 callback deltas from held capital.
+/// The second swap feeds PoolManager settlement directly; no nested flash
+/// creates an intermediate-currency repayment or requires terminal profit.
+fn rule_walk_v3_v3_v4_self_fund(
+    facts: &[HopFacts],
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Plan, AddressTable)> {
+    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+    let optimal = inputs.optimal_input;
+    let b_input = *inputs.consumed_inputs.get(1)?;
+    let c_input = *inputs.consumed_inputs.get(2)?;
+    let out_a = inputs.hop_outputs[0];
+    let out_b = inputs.hop_outputs[1];
+    let out_c = inputs.hop_outputs[2];
+    if inputs.hop_outputs.contains(&0)
+        || !fits_i128(optimal)
+        || !fits_i128(b_input)
+        || !fits_i128(c_input)
+        || b_input > out_a
+        || fa.out_currency != fb.in_currency
+        || fc.in_currency != fb.out_currency
+    {
+        return None;
+    }
+    let mut at = v4_scaffold_table(inputs);
+    let pm = at.add(inputs.pool_manager_address).ok()?;
+    let v3a = at.add(fa.pool_address).ok()?;
+    let v3b = at.add(fb.pool_address).ok()?;
+    let forward = at.add(fb.out_currency).ok()?;
+    let terminal = at.add(fc.out_currency).ok()?;
+    let inner = vec![
+        PlanStep::V3Direct {
+            pool_idx: v3a,
+            zfo: fa.zfo,
+            in_currency: fa.in_currency,
+            in_amount: optimal,
+            out_currency: fa.out_currency,
+            out_amount: out_a,
+            recipient_idx: SENTINEL_SELF,
+        },
+        PlanStep::V3Direct {
+            pool_idx: v3b,
+            zfo: fb.zfo,
+            in_currency: fb.in_currency,
+            in_amount: b_input,
+            out_currency: fb.out_currency,
+            out_amount: out_b,
+            recipient_idx: pm,
+        },
+        mechanics::v4_swap(&mut at, fc, c_input, out_c)?,
+        PlanStep::V4Settle {
+            currency_addr: fb.out_currency,
+            amount: c_input,
+        },
+        PlanStep::V4TakeCompact {
+            currency_idx: terminal,
+            currency_addr: fc.out_currency,
+            recipient_idx: SENTINEL_SELF,
+            amount: out_c,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    Some((
+        vec![
+            mechanics::self_fund(fa.in_currency, optimal),
+            mechanics::self_fund(fb.in_currency, b_input),
+            PlanStep::V4Sync {
+                currency_idx: forward,
+                currency_addr: fb.out_currency,
+            },
+            mechanics::v4_unlock(inner, pm),
+        ],
+        at,
+    ))
+}
+
 #[cfg(test)]
 mod rule_walker_tests {
     #![expect(clippy::cast_possible_truncation, clippy::expect_used)]
-    use super::{derive, rule_walk_v2v3, rule_walk_v2v3_v4_mixed, rule_walk_v4_led};
-    use crate::composers::{ComposerInputs, EncodeOptions};
+    use super::{
+        derive, rule_walk_v2v3, rule_walk_v2v3_v4_mixed, rule_walk_v4_led, FundingSource,
+        SeedDelivery,
+    };
+    use crate::composers::{encode_cmd_3_hop, ComposerInputs, EncodeOptions};
     use crate::encoders::enc_preamble;
     use crate::grammar_ledger::Prot;
     use crate::grammar_plan::plan_to_bytes;
@@ -2198,6 +2526,154 @@ mod rule_walker_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn losing_v3_v3_v4_inpathflash_is_a_typed_encode_refusal() {
+        let hops = v4_led_hops(&[Prot::V3, Prot::V3, Prot::V4]);
+        assert!(
+            encode_cmd_3_hop(
+                &PathInfo::new(hops),
+                1_000,
+                &[900, 900, 900],
+                &[1_000, 900, 900],
+                EXEC,
+                PM,
+                WETH,
+                EncodeOptions {
+                    zero_balance: true,
+                    ..Default::default()
+                },
+            )
+            .is_none(),
+            "a losing WETH cycle cannot repay every flash with zero capital"
+        );
+    }
+
+    #[test]
+    fn discontinuous_v3_v3_v4_is_a_typed_encode_refusal() {
+        let mut hops = v4_led_hops(&[Prot::V3, Prot::V3, Prot::V4]);
+        for hop in &mut hops {
+            match hop {
+                HopInfo::V2(h) => h.zfo = false,
+                HopInfo::V3(h) => h.zfo = false,
+                HopInfo::V4(h) => h.zfo = false,
+            }
+        }
+        assert!(
+            crate::grammar_shape::derive_shape(
+                &PathInfo::new(hops),
+                &ComposerInputs {
+                    executor_address: EXEC,
+                    pool_manager_address: PM,
+                    weth_address: WETH,
+                    optimal_input: 1_000,
+                    hop_outputs: &[900, 900, 900],
+                    consumed_inputs: &[1_000, 900, 900],
+                    opts: EncodeOptions {
+                        funding: FundingSource::SelfFund,
+                        ..Default::default()
+                    },
+                },
+            )
+            .is_none(),
+            "a path whose hop currencies do not connect must be refused"
+        );
+    }
+
+    #[test]
+    fn losing_v4_v4_v4_self_funds_before_the_profit_assert() {
+        let mut hops = v4_led_hops(&[Prot::V4, Prot::V4, Prot::V4]);
+        for hop in &mut hops {
+            match hop {
+                HopInfo::V2(h) => h.zfo = false,
+                HopInfo::V3(h) => h.zfo = false,
+                HopInfo::V4(h) => h.zfo = false,
+            }
+        }
+        assert!(
+            encode_cmd_3_hop(
+                &PathInfo::new(hops),
+                1_000,
+                &[900, 900, 900],
+                &[1_000, 900, 900],
+                EXEC,
+                PM,
+                WETH,
+                EncodeOptions {
+                    funding: FundingSource::SelfFund,
+                    ..Default::default()
+                },
+            )
+            .is_some(),
+            "pure V4 must self-fund the entry swap and leave loss rejection on-chain"
+        );
+    }
+
+    #[test]
+    fn discontinuous_v4_v4_v3_is_a_typed_encode_refusal() {
+        let mut hops = v4_led_hops(&[Prot::V4, Prot::V4, Prot::V3]);
+        for hop in &mut hops {
+            match hop {
+                HopInfo::V2(h) => h.zfo = false,
+                HopInfo::V3(h) => h.zfo = false,
+                HopInfo::V4(h) => h.zfo = false,
+            }
+        }
+        assert!(
+            crate::grammar_shape::derive_shape(
+                &PathInfo::new(hops),
+                &ComposerInputs {
+                    executor_address: EXEC,
+                    pool_manager_address: PM,
+                    weth_address: WETH,
+                    optimal_input: 1_000,
+                    hop_outputs: &[900, 900, 900],
+                    consumed_inputs: &[1_000, 900, 900],
+                    opts: EncodeOptions {
+                        funding: FundingSource::SelfFund,
+                        ..Default::default()
+                    },
+                },
+            )
+            .is_none(),
+            "a path whose hop currencies do not connect must be refused"
+        );
+    }
+
+    #[test]
+    fn losing_v2_v3_v4_self_funds_before_the_profit_assert() {
+        let mut hops = v4_led_hops(&[Prot::V2, Prot::V3, Prot::V4]);
+        for hop in &mut hops {
+            match hop {
+                HopInfo::V2(h) => h.zfo = false,
+                HopInfo::V3(h) => h.zfo = false,
+                HopInfo::V4(h) => h.zfo = false,
+            }
+        }
+        let path = PathInfo::new(hops);
+        let inputs = ComposerInputs {
+            executor_address: EXEC,
+            pool_manager_address: PM,
+            weth_address: WETH,
+            optimal_input: 1_000,
+            hop_outputs: &[900, 900, 900],
+            consumed_inputs: &[1_000, 900, 900],
+            opts: EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        };
+        let facts = facts_for(&path, &inputs).expect("facts exist");
+        assert_eq!(
+            facts[0].seed_delivery,
+            Some(SeedDelivery::V4TakeCompact),
+            "the regression must exercise the V4-take funding arm"
+        );
+        assert!(
+            derive(&facts, &inputs).is_some(),
+            "self-funding must produce a solvent plan and leave loss rejection on-chain"
+        );
     }
 
     /// Shadow gate: the rule-driven walker produces byte-identical output to

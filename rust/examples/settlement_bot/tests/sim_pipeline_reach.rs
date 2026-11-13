@@ -116,6 +116,7 @@ async fn offline_executor(resolver: HashMap<u64, degenbot::execution::PathInfo>)
         ExecutorRuntime {
             max_candidates: 50,
             use_v4_batch: false,
+            probe_capital: degenbot::batch_executor::ProbeCapital::Production,
             dry_run: true,
             resolver: Arc::new(MapResolver(resolver)),
             suppression: Arc::new(Mutex::new(PathSuppression::new())),

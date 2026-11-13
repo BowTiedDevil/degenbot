@@ -75,7 +75,7 @@ pub use executor::{BatchDrain, BatchExecutor, BatchOutcomeSet, BatchWork, Execut
 /// cannot be acquired and decoded
 /// ([`degenbot_simulation::sim::evm2::bal_capability`]).
 pub use degenbot_simulation::sim::evm2::bal_capability::BalCapabilityError;
-pub use policy::{ExecutorPolicy, ExecutorRuntime};
+pub use policy::{ExecutorPolicy, ExecutorRuntime, ProbeCapital};
 pub use record::{
     AssemblyVerdict, BatchOutcome, FailureDetail, FailureKind, PathInfoView, SimReceipt,
     SimulateVerdict, SubmitVerdict,

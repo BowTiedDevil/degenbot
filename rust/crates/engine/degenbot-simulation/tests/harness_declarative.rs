@@ -1,5 +1,6 @@
 #![expect(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::panic,
     clippy::print_stdout,
     clippy::doc_markdown,
@@ -367,6 +368,288 @@ fn full_three_hop_matrix_executes_production_solver_amounts() {
             i128::try_from(solution.profit.to::<u128>()).unwrap(),
             "{} solver profit differs from the executed amount chain",
             c.name
+        );
+    }
+}
+
+/// Self-funding must not turn a money-losing amount chain into an encoder
+/// underflow. The executor holds the entry WETH, so the full terminal output
+/// can be captured and the contract's InsufficientProfit check can classify
+/// the economics. V2→V2→V4 is the minimal terminal-V4 case that previously
+/// returned no calldata at `out_c.checked_sub(optimal_input)`.
+#[test]
+fn losing_v2_v2_v4_self_fund_executes_to_profit_assert() {
+    use degenbot_executor::grammar_ledger::FundingSource;
+
+    let mut h = Harness::new().unwrap();
+    let hops = build_family(&mut h, &[Prot::V2, Prot::V2, Prot::V4]);
+    let optimal_input = 100_000;
+    let hop_outputs = vec![90_000, 80_000, 70_000];
+    let consumed_inputs = vec![optimal_input, 90_000, 80_000];
+    let result = h
+        .run_chain_with_consumed(
+            &hops,
+            optimal_input,
+            &hop_outputs,
+            &consumed_inputs,
+            40_000_000,
+            degenbot_executor::composers::EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("a losing self-funded V2-V2-V4 chain must produce executable calldata");
+    assert!(
+        result.outcome.executed(3),
+        "all three swaps must execute; the mainnet probe checks InsufficientProfit: {result:?}"
+    );
+}
+
+#[test]
+fn losing_v2_v4_v4_self_fund_executes_to_profit_assert() {
+    use degenbot_executor::grammar_ledger::FundingSource;
+    let mut h = Harness::new().unwrap();
+    let hops = build_family(&mut h, &[Prot::V2, Prot::V4, Prot::V4]);
+    let result = h
+        .run_chain_with_consumed(
+            &hops,
+            100_000,
+            &[90_000, 80_000, 70_000],
+            &[100_000, 90_000, 80_000],
+            40_000_000,
+            degenbot_executor::composers::EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("a losing self-funded V2-V4-V4 chain must produce executable calldata");
+    assert!(
+        result.outcome.executed(3),
+        "all three swaps must execute: {result:?}"
+    );
+}
+
+#[test]
+fn losing_v3_v4_v4_self_fund_executes_to_profit_assert() {
+    use degenbot_executor::grammar_ledger::FundingSource;
+    let mut h = Harness::new().unwrap();
+    let hops = build_family(&mut h, &[Prot::V3, Prot::V4, Prot::V4]);
+    let result = h
+        .run_chain_with_consumed(
+            &hops,
+            100_000,
+            &[90_000, 80_000, 70_000],
+            &[100_000, 90_000, 80_000],
+            40_000_000,
+            degenbot_executor::composers::EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("a losing self-funded V3-V4-V4 chain must produce executable calldata");
+    assert!(
+        result.outcome.executed(3),
+        "all three swaps must execute: {result:?}"
+    );
+
+    // Mainnet A/B are the reverse orientation: WETH/USDC then WBTC/USDC.
+    let mut h = Harness::new().unwrap();
+    let hops = build_family(&mut h, &[Prot::V3, Prot::V3, Prot::V4]);
+    let weth = h.weth;
+    let t1 = hops[0].dst;
+    let t2 = hops[1].dst;
+    let reserve = 1_000_000_000_000_000_000_000_000_000_000;
+    let reverse = vec![
+        Hop {
+            src: weth,
+            dst: t1,
+            pool: HopPool::V3(
+                h.add_v3_pool(t1, weth, 3000, q96_one(), liq(), reserve, reserve)
+                    .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V3(
+                h.add_v3_pool(t2, t1, 3000, q96_one(), liq(), reserve, reserve)
+                    .unwrap(),
+            ),
+        },
+        hops[2],
+    ];
+    let t1_for_funding = hops[0].dst;
+    h.fund(t1_for_funding, h.executor, 1_000_000).unwrap();
+    let result = h
+        .run_chain_with_consumed(
+            &reverse,
+            100_000,
+            &[90_000, 80_000, 70_000],
+            &[100_000, 90_000, 80_000],
+            40_000_000,
+            degenbot_executor::composers::EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("reverse V3-V3-V4 must produce executable calldata");
+    assert!(
+        result.outcome.executed(3),
+        "reverse V3 directions must execute: {result:?}"
+    );
+}
+
+#[test]
+fn losing_v4_v4_v3_self_fund_executes_to_profit_assert() {
+    use degenbot_executor::grammar_ledger::FundingSource;
+    let mut h = Harness::new().unwrap();
+    let hops = build_family(&mut h, &[Prot::V4, Prot::V4, Prot::V3]);
+    let weth = h.weth;
+    let intermediate = hops[1].dst;
+    // The mainnet terminal WBTC/WETH V3 pool is token0=WBTC, token1=WETH.
+    // Cover that reverse direction explicitly; pool_for's forward-only
+    // fixture would otherwise hide this command-dispatch axis.
+    let hops_for_amounts = hops.clone();
+    let _terminal = HopPool::V3(
+        h.add_v3_pool(
+            intermediate,
+            weth,
+            3000,
+            sqrt_x(3),
+            liq(),
+            1_000_000_000_000_000_000_000_000_000_000,
+            1_000_000_000_000_000_000_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let usdc = hops[0].dst;
+    // Match production's explicit probe capital: WETH and the second V4's
+    // USDC input, not a magical WBTC buffer supplied by the generic harness.
+    h.fund(usdc, h.executor, 1_000_000).unwrap();
+    let (path, _, _) = h.path_and_amounts(&hops_for_amounts, 100_000);
+    let hop_outputs = [90_000, 80_000, 70_000];
+    let consumed_inputs = [100_000, 90_000, 80_000];
+    let opts = degenbot_executor::composers::EncodeOptions {
+        funding: FundingSource::SelfFund,
+        ..Default::default()
+    };
+    let payload = h
+        .encode_path_with_consumed(&path, 100_000, &hop_outputs, &consumed_inputs, opts)
+        .expect("V4-V4-V3 must encode with only its declared capital");
+    h.fund(weth, h.executor, 200_000).unwrap();
+    let outcome = h.execute_payload(&payload, 40_000_000).unwrap();
+    assert!(
+        outcome.executed(3),
+        "WETH + USDC alone must execute: {outcome:?}"
+    );
+}
+
+#[test]
+fn losing_v3_v3_v4_self_fund_executes_to_profit_assert() {
+    use degenbot_executor::grammar_ledger::FundingSource;
+    let mut h = Harness::new().unwrap();
+    let hops = build_family(&mut h, &[Prot::V3, Prot::V3, Prot::V4]);
+    let result = h
+        .run_chain_with_consumed(
+            &hops,
+            100_000,
+            &[90_000, 80_000, 70_000],
+            &[100_000, 90_000, 80_000],
+            40_000_000,
+            degenbot_executor::composers::EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("a losing self-funded V3-V3-V4 chain must produce executable calldata");
+    assert!(
+        result.outcome.executed(3),
+        "all three swaps must execute: {result:?}"
+    );
+}
+
+/// Zero-balance counterpart to the production-solver matrix. No WETH or
+/// intermediate-token funding is installed: every input must come from the
+/// path's own flash/V4 credit graph. This is the positive robustness proof
+/// for profitable cycles, complementing the typed refusal for losing cycles.
+#[test]
+fn full_three_hop_zero_balance_matrix_executes_without_token_funding() {
+    for c in cases()
+        .into_iter()
+        .filter(|c| c.name.matches('_').count() == 2)
+    {
+        let mut h = Harness::new().unwrap();
+        let hops = (c.build)(&mut h);
+        let solution = solve_hops(&hops);
+        let optimal_input = solution.optimal_input.to::<u128>();
+        let outputs: Vec<u128> = solution.hop_outputs.iter().map(U256::to::<u128>).collect();
+        let consumed: Vec<u128> = solution
+            .consumed_inputs
+            .iter()
+            .map(U256::to::<u128>)
+            .collect();
+        let (path, _, _) = h.path_and_amounts(&hops, optimal_input);
+        for hop in &hops {
+            assert_eq!(
+                h.balance_of(hop.src, h.executor).unwrap(),
+                U256::ZERO,
+                "{} starts with unexpected capital in {:?}",
+                c.name,
+                hop.src,
+            );
+        }
+        let payload = h
+            .encode_path_with_consumed(
+                &path,
+                optimal_input,
+                &outputs,
+                &consumed,
+                degenbot_executor::composers::EncodeOptions::default(),
+            )
+            .unwrap_or_else(|e| panic!("[{}] zero-balance encode: {e}", c.name));
+        let before =
+            i128::try_from(h.balance_of(h.weth, h.executor).unwrap().to::<u128>()).unwrap();
+        let outcome = h
+            .execute_payload_config(
+                &payload,
+                c.gas,
+                degenbot_executor::composers::config_for_options(
+                    degenbot_executor::composers::EncodeOptions::default(),
+                    U256::ZERO,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        if !outcome.executed(3) {
+            let (verdict, trace) = degenbot_simulation::oracle::transact_with_trace(
+                &mut h.evm,
+                degenbot_simulation::oracle::TxSpec::Call {
+                    to: h.executor,
+                    data: degenbot_simulation::harness::execute_data_config(
+                        &payload,
+                        degenbot_executor::composers::config_for_options(
+                            degenbot_executor::composers::EncodeOptions::default(),
+                            U256::ZERO,
+                        )
+                        .unwrap(),
+                    ),
+                    gas: c.gas,
+                },
+            );
+            panic!(
+                "{} zero-balance failure: {outcome:?}; replay={verdict:?};\n{}",
+                c.name,
+                trace.render_debug(),
+            );
+        }
+        let after = i128::try_from(h.balance_of(h.weth, h.executor).unwrap().to::<u128>()).unwrap();
+        let predicted = i128::try_from(solution.profit.to::<u128>()).unwrap();
+        let delta = after - before;
+        let tolerance = (predicted.abs() / 1000).max(64);
+        assert!(
+            (delta - predicted).abs() <= tolerance,
+            "{} zero-balance delta {delta} != predicted {predicted}",
+            c.name,
         );
     }
 }

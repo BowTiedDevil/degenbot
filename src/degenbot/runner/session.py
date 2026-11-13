@@ -33,8 +33,10 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self, cast
 
+from degenbot.abi import decode_single, encode, encode_single
 from degenbot.arbitrage import session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
+from degenbot.crypto import keccak256
 from degenbot.dispatch import BatchExecutor, Dispatcher, SimulateContext
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._actors import (
@@ -49,11 +51,61 @@ from degenbot.runner._dispatch import SubmissionSmoke
 from degenbot.runner._render import DisplayPolicy
 from degenbot.runner._run_ritual import RunRitual
 from degenbot.runner._session_watch import SessionWatch
-from degenbot.runner._sim_submit import build_executor_for, build_session_consumer
+from degenbot.runner._sim_submit import (
+    ExecutorInputs,
+    build_batch_executor,
+    build_executor_for,
+    build_session_consumer,
+)
 from degenbot.runner.build_paths import build_paths
 from degenbot.runner.diag import arm_diagnostics
 from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
+
+_V3_QUOTER = "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
+_V4_QUOTER = "0x99bd42B2B22e531f283b7F8a86dFf631EB16A9D1"
+_V3_QUOTE_SELECTOR = keccak256(b"quoteExactInputSingle(address,address,uint24,uint256,uint160)")[:4]
+_V4_QUOTE_SELECTOR = keccak256(
+    b"quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes))"
+)[:4]
+
+
+async def _quote_concentrated_hop(
+    provider: Any, hop: dict[str, Any], amount_in: int, block: int
+) -> int:
+    """Quote one V3/V4 exact input through the canonical on-chain quoter."""
+    token0_key = "currency0_address" if hop["family"] == "v4" else "token0_address"
+    token1_key = "currency1_address" if hop["family"] == "v4" else "token1_address"
+    token_in = hop[token0_key] if hop["zfo"] else hop[token1_key]
+    token_out = hop[token1_key] if hop["zfo"] else hop[token0_key]
+    if hop["family"] == "v3":
+        calldata = _V3_QUOTE_SELECTOR + encode(
+            ["address", "address", "uint24", "uint256", "uint160"],
+            [token_in, token_out, hop["fee"], amount_in, 0],
+        )
+        target = _V3_QUOTER
+    else:
+        pool_key = (
+            hop["currency0_address"],
+            hop["currency1_address"],
+            hop["fee"],
+            hop["tick_spacing"],
+            hop["hook_address"],
+        )
+        calldata = (
+            _V4_QUOTE_SELECTOR
+            + encode_single("uint256", 0x20)
+            + encode(
+                ["address", "address", "uint24", "int24", "address", "bool", "uint128"],
+                [*pool_key, hop["zfo"], amount_in],
+            )
+            + encode_single("uint256", 0x100)
+            + encode_single("uint256", 0)
+        )
+        target = _V4_QUOTER
+    result = await provider.call(target, calldata, block=block)
+    return int(decode_single("uint256", result[:32]))
+
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
@@ -393,6 +445,10 @@ class Session:
     #: The concurrent sim fan-out + single ordered submitter, attached by
     #: :meth:`build_pipeline` when the run ritual starts the consumer.
     sim_submit_pipeline: BatchExecutor | None = None
+    #: Executor used only for explicit dry-run execution probes.
+    probe_pipeline: BatchExecutor | None = None
+    #: Capital stance of the current probe pipeline; None before construction.
+    probe_zero_balance: bool | None = None
     #: The session's core event consumer (the ONE consume loop), attached by
     #: :meth:`build_consumer`; ``None`` before the run ritual builds it.
     consumer: Any | None = None
@@ -587,6 +643,73 @@ class Session:
 
         """
         await self.close()
+
+    # ── Operator add-a-path and dry-run execution probes ─────────────
+    async def probe_path(
+        self, path_id: int, *, optimal_input: int, zero_balance: bool = False
+    ) -> Any:
+        """Quote and execute one explicit amount vector through the batch executor.
+
+        This is a dry-run encoding/execution probe, not a solver admission. It
+        derives exact-input hop outputs at the current pool state and lets the
+        ordinary receipt report any economic failure.
+        """
+        self.phase = self.phase.on_query("probe_path")
+        if optimal_input <= 0:
+            msg = "probe_path optimal_input must be positive"
+            raise ValueError(msg)
+        actors = self.actors
+        if actors is None:
+            msg = "probe_path requires a started sim/submit pipeline"
+            raise RuntimeError(msg)
+        if self.probe_pipeline is None or (
+            self.probe_zero_balance is not None and self.probe_zero_balance != zero_balance
+        ):
+            self.probe_pipeline = await build_batch_executor(
+                ExecutorInputs.from_session(self),
+                self_fund=not zero_balance,
+                zero_balance=zero_balance,
+            )
+            self.probe_zero_balance = zero_balance
+        pipeline = self.probe_pipeline
+        path_info = actors.engine_registry.engine.payload_path_info(path_id)
+        if path_info is None:
+            msg = f"probe_path: path {path_id} is not registered"
+            raise ValueError(msg)
+        engine = actors.engine_registry.engine
+        bot = actors.bot._py_bot  # ruff:ignore[private-member-access] - core pool-read seam
+
+        current_block = self.current_block
+        outputs: list[int] = []
+        consumed: list[int] = []
+        amount_in = optimal_input
+        for hop in path_info["hops"]:
+            consumed.append(amount_in)
+            if hop["family"] == "v2":
+                pool_id = engine.pool_id_for_pool("v2", hop["pool_address"])
+                pool = bot.get_pool(pool_id)
+                if pool is None:
+                    msg = f"probe_path: pool {pool_id} for path {path_id} is not registered"
+                    raise RuntimeError(msg)
+                amount_in = int(
+                    await asyncio.to_thread(pool.calculate_tokens_out, hop["zfo"], amount_in)
+                )
+            else:
+                amount_in = await _quote_concentrated_hop(
+                    actors.async_w3, hop, amount_in, current_block
+                )
+            outputs.append(amount_in)
+
+        block = await actors.async_w3.get_block(current_block)
+        return await pipeline.probe_path(
+            path_id=path_id,
+            optimal_input=optimal_input,
+            hop_outputs=outputs,
+            consumed_inputs=consumed,
+            current_block=current_block,
+            base_fee_next=int(block["base_fee_per_gas"]),
+            block_timestamp=int(block["timestamp"]),
+        )
 
     # ── Operator add-a-path surface ─────────────────────────────────
     async def enqueue_path(

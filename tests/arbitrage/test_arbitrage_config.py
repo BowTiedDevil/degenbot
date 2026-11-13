@@ -37,6 +37,8 @@ _OVERRIDE = RpcCascadeOverrides(chain_id=1, node=_NODE)
 def test_fixed_only_mode_disables_startup_discovery() -> None:
     assert _cfg(startup_discovery=False).startup_discovery is False
     assert _cfg().startup_discovery is True
+    assert _cfg(registration_snapshot=False).registration_snapshot is False
+    assert _cfg().registration_snapshot is True
 
 
 def test_discovery_batch_size_clamps_to_a_positive_batch() -> None:
@@ -51,7 +53,13 @@ def test_discovery_batch_size_clamps_to_a_positive_batch() -> None:
 
 
 def _cfg(
-    env=None, *, live=False, permutation=None, rpc=None, startup_discovery=True
+    env=None,
+    *,
+    live=False,
+    permutation=None,
+    rpc=None,
+    startup_discovery=True,
+    registration_snapshot=True,
 ) -> ArbitrageConfig:
     """Build a config with the identity in the env layer and the RPC override pinned.
 
@@ -65,6 +73,7 @@ def _cfg(
         live=live,
         permutation=permutation,
         startup_discovery=startup_discovery,
+        registration_snapshot=registration_snapshot,
         rpc=rpc if rpc is not None else _OVERRIDE,
         values=probe.hypothetical_values(env),
     )

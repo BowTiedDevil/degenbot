@@ -77,8 +77,8 @@ permutation under 12 amount/option configurations.
 
 `scripts/executor_three_hop_matrix.json` names a mainnet WETH/USDC/WBTC
 triangle with V2, V3, and V4 pools on every edge. The companion Python tool
-injects both token-cycle directions (54 directed paths) and aggregates their
-exact engine path IDs into 27 protocol rows.
+injects the forward token cycle and records exact engine path IDs for all 27
+protocol rows.
 
 Start an operator-only, zero-floor, injected-executor dry run (set the owner,
 injected address, and runtime artifact for the release under test):
@@ -90,7 +90,7 @@ export INJECTED_EXECUTOR_ADDRESS=0x...
 export EXECUTOR_RUNTIME=/path/to/cmd_executor_runtime.txt
 export DEGENBOT_MIN_PROFIT_WEI=0
 export DEGENBOT_MIN_PROFIT_MARGIN_BPS=0
-./run_bot.sh foreground -- --skip-discovery --operator-socket /tmp/degenbot-27.sock
+./run_bot.sh foreground -- --skip-discovery --sparse-registration --operator-socket /tmp/degenbot-27.sock
 ```
 
 From another shell, inject and then render the fail-closed report:
@@ -99,6 +99,10 @@ From another shell, inject and then render the fail-closed report:
 just py python scripts/executor_three_hop_matrix.py inject \
   --socket /tmp/degenbot-27.sock \
   --output logs/executor_solver_sim_27_registrations.json
+just py python scripts/executor_three_hop_matrix.py probe \
+  --socket /tmp/degenbot-27.sock \
+  --registrations logs/executor_solver_sim_27_registrations.json \
+  --output logs/executor_solver_sim_27_report.json
 just py python scripts/executor_three_hop_matrix.py report \
   --log logs/bot_run.log \
   --registrations logs/executor_solver_sim_27_registrations.json \
@@ -106,11 +110,26 @@ just py python scripts/executor_three_hop_matrix.py report \
 ```
 
 Registration is not simulation coverage: live pools may have no profitable
-input in either direction. `report` marks those rows `missing` and exits
-nonzero. Valid receipts emit `[sim-ok]`; failures and exceptions remain
-separate. Any `Submitted path` record fails the report. Never add `--live`:
-dry-run skips signing and executor-code injection independently gates
-submission.
+input. `probe` supplies a small fixed input, quotes through the canonical V3/V4
+quoters, and runs each path through the self-funded production batch executor.
+`InsufficientProfit` is an executed economic outcome; `encode-failed` is a
+clean refusal. Assembly misses and exceptions fail the report. Any `Submitted
+path` record fails the report. Never add `--live`: dry-run skips signing and
+executor-code injection independently gates submission. `--sparse-registration`
+avoids stale tracked tick fixtures; it does not relax simulation checks.
+
+Append `--zero-balance` to `probe` to use ordinary in-path-flash encoding with
+zero executor native ETH, WETH, USDC, WBTC, and PoolManager claims (owner gas
+funding and injected code remain). A losing WETH cycle is then a typed
+planning refusal, never a validator panic. The deterministic
+`full_three_hop_zero_balance_matrix_executes_without_token_funding` test proves
+all 27 profitable shapes without minting any path-token capital.
+
+After editing the fake Uniswap contracts, run
+`just rebuild-tier3-executor-stubs`. The recipe republishes
+`tier3-oracle/artifacts/harness` and their source hashes. In particular, the
+fake PoolManager's synced-reserve settlement mirrors real V4: a pre-swap token
+payment is credited by `settle()` before the swap creates its debt.
 
 The fakes enforce the behavior the executor depends on: V2's K invariant,
 V3's balance-delta input check and reentrancy guard, V4's delta settlement,

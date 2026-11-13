@@ -119,6 +119,7 @@ fn override_params() -> SimulationOverrideParams {
                 erc6909_native: U256::from(3),
             },
         }),
+        ..Default::default()
     }
 }
 

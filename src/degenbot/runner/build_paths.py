@@ -419,6 +419,7 @@ class BuildPathsOptions:
     context: ConstructionContext | None = None
     permutation_filter: frozenset[str] | None = None
     startup_discovery: bool = True
+    registration_snapshot: bool = True
 
 
 async def build_paths(
@@ -489,7 +490,11 @@ async def build_paths(
     # The engine takes the core bot handle (the Python companion's ``_py_bot``):
     # its cached snapshot tick-map handle is what a head-stamped V3/V4
     # construction reads.
-    engine_bot = bot._py_bot  # ruff:ignore[private-member-access]
+    engine_bot = (
+        bot._py_bot  # ruff:ignore[private-member-access]
+        if options.registration_snapshot
+        else None
+    )
     session = engine_registry.engine.begin_crawl(config, bot=engine_bot)
     constr_ctx.session = session
     completed = False

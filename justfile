@@ -1699,6 +1699,11 @@ rebuild-tier3-artifacts:
     tier3-oracle/build-tier3-pancake-v3-swap-harness.sh
     tier3-oracle/build-tier3-pancake-v2-swap-harness.sh
 
+# Rebuild + publish only the executor's fake Uniswap fixtures. This keeps
+# artifacts/harness and their source hashes synchronized after a stub edit.
+rebuild-tier3-executor-stubs:
+    tier3-oracle/build-tier3-executor-stubs.sh
+
 # ========== Code Coverage ==========
 #
 # `scripts/coverage.sh` runs three arms over LLVM instrumentation, all writing

@@ -106,6 +106,8 @@ pub struct SimulationDeployment {
     gas_limit: u64,
     code: Option<DeclaredCode>,
     settlement: Option<SettlementWarmup>,
+    self_fund_usdc: Option<Address>,
+    zero_balance: Option<Address>,
     fee_sizing: FeeSizing,
 }
 
@@ -143,6 +145,8 @@ impl std::fmt::Debug for SimulationDeployment {
             .field("gas_limit", &self.gas_limit)
             .field("code", &self.code)
             .field("settlement", &self.settlement)
+            .field("self_fund_usdc", &self.self_fund_usdc)
+            .field("zero_balance", &self.zero_balance)
             .field("fee_sizing", &self.fee_sizing)
             .finish()
     }
@@ -186,6 +190,8 @@ impl SimulationDeployment {
             gas_limit,
             code,
             settlement,
+            self_fund_usdc: None,
+            zero_balance: None,
             fee_sizing: FeeSizing::default(),
         }
     }
@@ -194,6 +200,20 @@ impl SimulationDeployment {
     #[must_use]
     pub const fn with_fee_sizing(mut self, fee_sizing: FeeSizing) -> Self {
         self.fee_sizing = fee_sizing;
+        self
+    }
+
+    /// Enable mainnet USDC capital for an explicit self-fund execution probe.
+    #[must_use]
+    pub const fn with_self_fund_usdc(mut self, enabled: bool) -> Self {
+        self.self_fund_usdc = if enabled { Some(self.target) } else { None };
+        self
+    }
+
+    /// Force the executor's token balances to zero for an explicit probe.
+    #[must_use]
+    pub const fn with_zero_balance(mut self, enabled: bool) -> Self {
+        self.zero_balance = if enabled { Some(self.target) } else { None };
         self
     }
 
@@ -263,6 +283,8 @@ impl SimulationDeployment {
             owner: self.owner,
             code: self.code.clone(),
             settlement: self.settlement,
+            self_fund_usdc: self.self_fund_usdc,
+            zero_balance: self.zero_balance,
         }
     }
 }

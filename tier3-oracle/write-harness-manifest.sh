@@ -26,6 +26,11 @@ MAP = {
     "BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json": "src-balancer/BalancerSwapOracleHarness.sol",
     "PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json": "src-pancake-v3/PancakeV3SwapOracleHarness.sol",
     "PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json": "src-pancake-v2/PancakeV2SwapOracleHarness.sol",
+    "harness/Pair.json": "src-harness/V2ExecutorStub.sol",
+    "harness/Token.json": "src-harness/StubToken.sol",
+    "harness/PoolV3.json": "src-harness/V3ExecutorStub.sol",
+    "harness/TestV3SwapDriver.json": "src-harness/V3ExecutorStub.sol",
+    "harness/PoolManager.json": "src-harness/V4ExecutorStub.sol",
 }
 
 manifest = {}

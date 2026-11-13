@@ -174,9 +174,17 @@ impl ExecutorConfig {
                 let opts = EncodeOptions {
                     erc6909_profit: policy.erc6909_profit,
                     use_v4_batch: runtime.use_v4_batch,
+                    funding: if runtime.probe_capital.is_self_funded() {
+                        degenbot_executor::grammar_ledger::FundingSource::SelfFund
+                    } else {
+                        EncodeOptions::default().funding
+                    },
                     ..EncodeOptions::default()
                 };
-                let binding = runtime.binding.with_opts(opts);
+                let binding = runtime
+                    .binding
+                    .with_opts(opts)
+                    .with_zero_balance(runtime.probe_capital.is_zero_balance());
                 let builtin = if policy.inject_code {
                     #[expect(clippy::expect_used)] // the declared inject stance names its address
                     let address = runtime.injected_address.expect(

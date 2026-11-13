@@ -26,6 +26,7 @@ MANIFEST_PATH = Path(__file__).with_suffix(".json")
 FAMILIES = ("V2", "V3", "V4")
 EDGE_ORDER = ("A", "B", "C")
 PERMUTATION_COUNT = 27
+DIRECTED_PATH_COUNT = 27
 
 
 def load_manifest() -> dict[str, Any]:
@@ -91,10 +92,10 @@ def send_command(
 def inject_paths(
     socket_path: Path, output_path: Path, ready_timeout: float = 120.0
 ) -> list[dict[str, Any]]:
-    """Register all 54 directed paths, retrying only the crawl's pre-boot refusal.
+    """Register all 27 forward paths, retrying only the crawl's pre-boot refusal.
 
     Returns:
-        The requests and successful registration responses, including path IDs.
+        The forward requests and successful registration responses, including path IDs.
 
     Raises:
         TimeoutError: If the operator socket or crawl is not ready in time.
@@ -110,7 +111,7 @@ def inject_paths(
         time.sleep(0.1)
 
     results = []
-    for item in path_requests(bidirectional=True):
+    for item in path_requests():
         while True:
             response = send_command(socket_path, item["request"])
             transient = "no live crawl session" in response.get("error", "")
@@ -131,6 +132,96 @@ def inject_paths(
         sys.stdout.flush()
     output_path.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
     return results
+
+
+def probe_paths(
+    socket_path: Path,
+    registrations: list[dict[str, Any]],
+    output_path: Path,
+    *,
+    zero_balance: bool = False,
+) -> dict[str, Any]:
+    """Execute every registered path with an explicit small WETH input.
+
+    Returns:
+        A per-directed-path execution report.
+
+    Raises:
+        RuntimeError: If the operator refuses a probe.
+
+    """
+    responses = []
+    for registration in registrations:
+        path_id = registration["response"]["path_id"]
+        try:
+            response = send_command(
+                socket_path,
+                {
+                    "op": "probe_path",
+                    "payload": {"path_id": path_id, "zero_balance": zero_balance},
+                },
+            )
+            if not response.get("ok"):
+                response = {
+                    "outcome": "exception",
+                    "bucket": "operator-error",
+                    "error": str(response.get("error", response)),
+                }
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            response = {"outcome": "exception", "bucket": type(exc).__name__, "error": str(exc)}
+        responses.append({
+            "permutation": registration["permutation"],
+            "direction": registration["direction"],
+            "path_id": path_id,
+            "response": response,
+        })
+        sys.stdout.write(
+            f"{registration['permutation']} {registration['direction']} "
+            f"{response.get('outcome')} {response.get('bucket', '')}\n"
+        )
+        sys.stdout.flush()
+    report = build_probe_report(responses)
+    output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return report
+
+
+def build_probe_report(responses: list[dict[str, Any]]) -> dict[str, Any]:
+    """Count economic reverts as executions, not as missing or exceptional probes.
+
+    Returns:
+        A summary and one row per directed execution probe.
+
+    """
+    paths = []
+    for item in responses:
+        response = item["response"]
+        outcome = response["outcome"]
+        paths.append({
+            "permutation": item["permutation"],
+            "direction": item["direction"],
+            "path_id": item["path_id"],
+            "outcome": outcome,
+            "bucket": response.get("bucket"),
+            **({"error": response["error"]} if "error" in response else {}),
+        })
+    economic_failures = sum(
+        row["outcome"] == "failed" and row["bucket"] != "encode-failed" for row in paths
+    )
+    encode_failures = sum(row["bucket"] == "encode-failed" for row in paths)
+    sim_ok = sum(row["outcome"] == "sim_ok" for row in paths)
+    return {
+        "summary": {
+            "executed": sim_ok + economic_failures,
+            "sim_ok": sim_ok,
+            "failed": economic_failures,
+            "encode_failed": encode_failures,
+            "exceptions": sum(row["outcome"] == "exception" for row in paths),
+            "missing": sum(
+                row["outcome"] not in {"sim_ok", "failed", "exception"} for row in paths
+            ),
+        },
+        "paths": paths,
+    }
 
 
 def build_report(lines: Iterable[str], registrations: list[dict[str, Any]]) -> dict[str, Any]:
@@ -209,6 +300,11 @@ def main() -> int:
     inject.add_argument("--socket", type=Path, required=True)
     inject.add_argument("--output", type=Path, required=True)
     inject.add_argument("--ready-timeout", type=float, default=120.0)
+    probe = subcommands.add_parser("probe")
+    probe.add_argument("--socket", type=Path, required=True)
+    probe.add_argument("--registrations", type=Path, required=True)
+    probe.add_argument("--output", type=Path, required=True)
+    probe.add_argument("--zero-balance", action="store_true")
     report = subcommands.add_parser("report")
     report.add_argument("--log", type=Path, required=True)
     report.add_argument("--registrations", type=Path, required=True)
@@ -221,6 +317,13 @@ def main() -> int:
     if args.command == "inject":
         inject_paths(args.socket, args.output, args.ready_timeout)
         return 0
+
+    registrations = json.loads(args.registrations.read_text(encoding="utf-8"))
+    if args.command == "probe":
+        result = probe_paths(
+            args.socket, registrations, args.output, zero_balance=args.zero_balance
+        )
+        return 0 if result["summary"]["executed"] == DIRECTED_PATH_COUNT else 1
 
     registrations = json.loads(args.registrations.read_text(encoding="utf-8"))
     result = build_report(

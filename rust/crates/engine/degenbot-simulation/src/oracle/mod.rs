@@ -201,6 +201,52 @@ pub fn transact_with_gas(evm: &mut FixtureEvm, spec: TxSpec) -> (Verdict, u64) {
     run(evm, spec)
 }
 
+/// Execute a call with the simulation inspector attached, returning its call
+/// trace for funding-topology failures that a bare revert string cannot name.
+pub fn transact_with_trace(
+    evm: &mut FixtureEvm,
+    spec: TxSpec,
+) -> (Verdict, crate::sim::capture::CallTrace) {
+    let nonce = caller_nonce(evm);
+    let (kind, tx) = match spec {
+        TxSpec::Deploy { init_code, gas } => (
+            TxKind::Create,
+            envelope(TxKind::Create, init_code, gas, nonce),
+        ),
+        TxSpec::Call { to, data, gas } => (
+            TxKind::Call(to),
+            envelope(TxKind::Call(to), data, gas, nonce),
+        ),
+    };
+    let mut inspector = crate::sim::evm2::inspectors::Evm2SimInspector::default();
+    let executed = match evm.evm.transact_with_inspector(&tx, &mut inspector) {
+        Ok(executed) => executed,
+        Err(e) => {
+            return (
+                Verdict::Halted(format!("transact error: {e:?}")),
+                inspector.take_trace(),
+            );
+        }
+    };
+    let result = executed.commit();
+    let trace = inspector.take_trace();
+    let verdict = if result.status {
+        let output = match kind {
+            TxKind::Create => Output::Create(result.output, result.created_address),
+            TxKind::Call(_) => Output::Call(result.output),
+        };
+        Verdict::Accepted {
+            output,
+            logs: result.logs,
+        }
+    } else if result.is_revert() {
+        Verdict::Reverted(result.output)
+    } else {
+        Verdict::Halted(format!("halted: {:?}", result.stop))
+    };
+    (verdict, trace)
+}
+
 /// One transaction (`spec`) through `evm`, settled and committed: the verdict
 /// plus the gas it used. Both `transact` verbs are this function's halves.
 fn run(evm: &mut FixtureEvm, spec: TxSpec) -> (Verdict, u64) {

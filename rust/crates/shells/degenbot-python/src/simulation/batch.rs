@@ -48,7 +48,8 @@ use degenbot_batch_executor::record::{
     FailureDetail, FailureKind, SimReceipt, SimulateVerdict, SubmitVerdict,
 };
 use degenbot_batch_executor::{
-    BatchExecutor, BatchOutcome, BatchOutcomeSet, ExecutorConfig, ExecutorRuntime, PathResolver,
+    BatchExecutor, BatchOutcome, BatchOutcomeSet, BatchWork, ExecutorConfig, ExecutorRuntime,
+    PathResolver, RawResult,
 };
 use degenbot_bot::arb_engine::EngineStages;
 use degenbot_execution::PathInfo;
@@ -456,6 +457,7 @@ impl PyBatchOutcomeSet {
 #[pyclass(name = "BatchExecutor", module = "degenbot._ffi.simulation")]
 pub struct PyBatchExecutor {
     executor: Arc<BatchExecutor>,
+    stages: Arc<EngineStages>,
     dispatcher: Arc<std::sync::Mutex<degenbot_submission::Dispatcher>>,
     suppression: Arc<std::sync::Mutex<PathSuppression>>,
 }
@@ -496,6 +498,69 @@ impl PyBatchExecutor {
                 .next()
                 .await
                 .map(|set| PyBatchOutcomeSet { inner: set }))
+        })
+    }
+
+    /// Execute one explicit amount vector as a dry-run probe. The ordinary
+    /// assembly, production encoding, EVM2, and receipt stages answer the row.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one path plus its amount and block vectors"
+    )]
+    fn probe_path<'py>(
+        &self,
+        py: Python<'py>,
+        path_id: u64,
+        optimal_input: u128,
+        hop_outputs: Vec<u128>,
+        consumed_inputs: Vec<u128>,
+        current_block: u64,
+        base_fee_next: u128,
+        block_timestamp: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let state_nonces = self.stages.path_nonces_for(path_id).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "probe_path: path {path_id} is not registered"
+            ))
+        })?;
+        if state_nonces.len() != hop_outputs.len() || hop_outputs.len() != consumed_inputs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "probe_path: hop output and consumed-input lengths must match the path",
+            ));
+        }
+        let work = BatchWork {
+            rows: vec![RawResult {
+                path_id,
+                optimal_input,
+                profit: 0,
+                hop_outputs,
+                consumed_inputs,
+                solve_block: current_block,
+                state_nonces,
+            }],
+            payloads: Vec::new(),
+            current_block,
+            base_fee_next,
+            block_timestamp,
+            block_priority_fees: None,
+        };
+        let executor = Arc::clone(&self.executor);
+        crate::ambient_runtime::future_into_py(py, async move {
+            match executor.enqueue(work) {
+                degenbot_submission::EnqueueOutcome::Accepted => {}
+                degenbot_submission::EnqueueOutcome::Declined(decline) => {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "probe_path enqueue refused: {decline:?}"
+                    )));
+                }
+            }
+            let mut drain = executor.drain_handle();
+            let outcome = drain.next().await.ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "probe_path executor closed without an outcome",
+                )
+            })?;
+            Ok(PyBatchOutcomeSet { inner: outcome })
         })
     }
 
@@ -585,6 +650,8 @@ impl PyBatchExecutor {
     broadcast_providers = None,
     deployments = None,
     target_selection = None,
+    self_fund = false,
+    zero_balance = false,
 ))]
 #[expect(
     clippy::too_many_arguments,
@@ -602,6 +669,8 @@ pub fn build_batch_executor_py(
     broadcast_providers: Option<Vec<PyRef<'_, PyAsyncAlloyProvider>>>,
     deployments: Option<Vec<PyRef<'_, PySimulationDeployment>>>,
     target_selection: Option<&str>,
+    self_fund: bool,
+    zero_balance: bool,
 ) -> PyResult<PyBatchExecutor> {
     crate::ambient_runtime::ensure_async_runtime_bound();
     let suppression = dispatcher.suppression_arc();
@@ -617,12 +686,25 @@ pub fn build_batch_executor_py(
             ))
         })?,
     };
+    if self_fund && zero_balance {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "self_fund and zero_balance are mutually exclusive",
+        ));
+    }
+    let probe_capital = if zero_balance {
+        degenbot_batch_executor::ProbeCapital::ZeroBalance
+    } else if self_fund {
+        degenbot_batch_executor::ProbeCapital::SelfFund
+    } else {
+        degenbot_batch_executor::ProbeCapital::Production
+    };
     let runtime = ExecutorRuntime {
         // `0` = no cap: the cockpit never carried a per-batch cap (the
         // fan-out's own `MAX_SIMULATE_CONCURRENT` bound always applied).
         max_candidates: 0,
         // The v4-batch axis has no declared key yet (a runtime value).
         use_v4_batch: false,
+        probe_capital,
         dry_run,
         // The path resolver is the engine stage surface itself: the projection
         // is GIL-free, so no cell of the pipeline re-enters Python.
@@ -718,6 +800,7 @@ pub fn build_batch_executor_py(
     );
     Ok(PyBatchExecutor {
         executor,
+        stages: engine.stages_arc(),
         dispatcher: dispatcher.inner_arc(),
         suppression,
     })

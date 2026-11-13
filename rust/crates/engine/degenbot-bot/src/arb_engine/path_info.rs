@@ -93,6 +93,21 @@ pub(crate) fn path_info_for(
     ))
 }
 
+/// Read the current state nonce for every hop in a registered path.
+#[must_use]
+pub(crate) fn path_nonces_for(engine: &ArbitrageEngine, path_id: u64) -> Option<Vec<u64>> {
+    let path = engine.registry.get(path_id)?;
+    let core = engine
+        .core
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+    Some(
+        path.pools
+            .iter()
+            .map(|hop| core.pool_state_nonce(hop.pool_key))
+            .collect(),
+    )
+}
+
 /// Telemetry helper: render one hop as `FAMILY:pool(zfo=N)`. Unresolvable
 /// identities degrade to the raw `pool_id` rather than failing — this only
 /// ever feeds trace fields, never solver or encoder logic.

@@ -580,6 +580,7 @@ pub async fn build_block_handle<'a>(
                 erc6909_native: U256::ZERO,
             },
         }),
+        ..Default::default()
     };
     Evm2BlockSimHandle::build(
         provider,

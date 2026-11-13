@@ -114,6 +114,8 @@ async def build_batch_executor(
     inputs: ExecutorInputs,
     *,
     engine_builder: Callable[..., BatchExecutor] | None = None,
+    self_fund: bool = False,
+    zero_balance: bool = False,
 ) -> BatchExecutor:
     """Build the core batch executor over one session's resolved policy.
 
@@ -170,6 +172,8 @@ async def build_batch_executor(
         broadcast_providers=broadcast_providers,
         deployments=list(inputs.deployments) or None,
         target_selection=inputs.target_selection,
+        self_fund=self_fund,
+        zero_balance=zero_balance,
     )
 
 

@@ -185,6 +185,7 @@ class ArbitrageConfig:
     # Path discovery
     permutation_filter: frozenset[str] | None
     startup_discovery: bool
+    registration_snapshot: bool
     # Bounded retry-with-backoff for transient verification RPC failures
     # (per-call transport / provider-init). Mismatch stays fatal.
     verification_retry_policy: RetryPolicy
@@ -272,6 +273,7 @@ class ArbitrageConfig:
         live: bool,
         permutation: str | None,
         startup_discovery: bool = True,
+        registration_snapshot: bool = True,
         rpc: RpcCascadeOverrides | None = None,
         values: ConfigValues | None = None,
     ) -> "ArbitrageConfig":
@@ -391,6 +393,7 @@ class ArbitrageConfig:
             injected_address=injected_address,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             startup_discovery=startup_discovery,
+            registration_snapshot=registration_snapshot,
             dry_run=not live,
             erc6909_profit=resolved_values.dispatch.erc6909_profit,
             reg_progress_secs=resolved_values.pathfinding.reg_progress_secs,

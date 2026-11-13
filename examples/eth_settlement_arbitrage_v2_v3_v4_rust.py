@@ -62,6 +62,7 @@ async def main() -> None:
             live=not dry_run,
             permutation=args.permutation,
             startup_discovery=not args.skip_discovery,
+            registration_snapshot=not args.sparse_registration,
             rpc=RpcCascadeOverrides(node=args.node),
         )
     except ValueError as exc:
@@ -80,6 +81,7 @@ async def main() -> None:
             if args.operator_socket:
                 from degenbot.operator.operator_channel import (
                     OperatorServer,
+                    execution_probe_response,
                     handle_fleet_posture_op,
                     step_from_wire,
                 )
@@ -94,6 +96,13 @@ async def main() -> None:
                             "sequence": sequence,
                             "path_id": path_id,
                         }
+                    if op == "probe_path":
+                        outcome = await session.probe_path(
+                            payload["path_id"],
+                            optimal_input=int(payload.get("optimal_input", 1_000_000_000_000_000)),
+                            zero_balance=bool(payload.get("zero_balance", False)),
+                        )
+                        return execution_probe_response(payload["path_id"], outcome)
                     if op == "discover":
                         bound = payload.get("bound")
                         n = await session.trigger_discovery(bound=bound)

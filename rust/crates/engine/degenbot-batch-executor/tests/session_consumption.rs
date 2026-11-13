@@ -173,6 +173,7 @@ async fn offline_executor() -> Arc<BatchExecutor> {
     let runtime = ExecutorRuntime {
         max_candidates: 50,
         use_v4_batch: false,
+        probe_capital: degenbot_batch_executor::ProbeCapital::Production,
         dry_run: true,
         resolver: Arc::new(MapResolver(HashMap::from([(PATH_A, two_hop_path())]))),
         suppression: Arc::new(Mutex::new(PathSuppression::new())),

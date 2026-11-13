@@ -69,6 +69,21 @@ class BatchExecutor:
         session consumer quiesces the lane when its loop ends, which closes this
         stream: the drain terminates on its own.
         """
+    def probe_path(
+        self,
+        /,
+        path_id: SupportsIndex,
+        optimal_input: SupportsIndex,
+        hop_outputs: SupportsGetItem[int, SupportsIndex],
+        consumed_inputs: SupportsGetItem[int, SupportsIndex],
+        current_block: SupportsIndex,
+        base_fee_next: SupportsIndex,
+        block_timestamp: SupportsIndex,
+    ) -> Any:
+        """
+        Execute one explicit amount vector as a dry-run probe. The ordinary
+        assembly, production encoding, EVM2, and receipt stages answer the row.
+        """
     @property
     def submitted(self, /) -> int:
         """
@@ -766,6 +781,8 @@ def build_batch_executor_py(
     broadcast_providers: SupportsGetItem[int, AsyncAlloyProvider] | None = None,
     deployments: SupportsGetItem[int, SimulationDeployment] | None = None,
     target_selection: str | None = None,
+    self_fund: bool = False,
+    zero_balance: bool = False,
 ) -> BatchExecutor:
     """
     Construct the session executor: the core's value-configured module over

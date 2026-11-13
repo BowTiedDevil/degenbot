@@ -192,6 +192,18 @@ pub enum PlanStep {
         /// over-debiting).
         repays_flash: Option<Address>,
     },
+    /// A direct exact-input V3 swap with an empty callback. The executor pays
+    /// the pool's callback delta from its own ERC-20 balance, so this creates
+    /// no flash debt. Its output is credited to the executor.
+    V3Direct {
+        pool_idx: u8,
+        zfo: bool,
+        in_currency: Address,
+        in_amount: u128,
+        out_currency: Address,
+        out_amount: u128,
+        recipient_idx: u8,
+    },
     /// A `V2_SWAP_CALC(pool, zfo, recipient, fee)` — the terminal-V2 pre-fund
     /// rule: swap from whatever the feeder delivered to the pair,
     /// never an exact-out `V2_SWAP_COMPACT` (over-drains 1 wei → `UniswapV2: K`).
@@ -511,6 +523,26 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                         });
                     }
                 }
+                PlanStep::V3Direct {
+                    in_currency,
+                    in_amount,
+                    out_currency,
+                    out_amount,
+                    recipient_idx,
+                    ..
+                } => {
+                    ops.push(LedgerOp::Erc20Transfer {
+                        currency: *in_currency,
+                        amount: *in_amount,
+                        repays_flash: None,
+                    });
+                    if *recipient_idx != SENTINEL_PM {
+                        ops.push(LedgerOp::Erc20Credit {
+                            currency: *out_currency,
+                            amount: *out_amount,
+                        });
+                    }
+                }
                 PlanStep::V2SwapCalc {
                     pool_addr,
                     recipient_idx,
@@ -782,6 +814,19 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Result<Vec<u8>, EncoderE
                     *token_idx,
                     *recipient_idx,
                     *amount,
+                )?),
+                PlanStep::V3Direct {
+                    pool_idx,
+                    zfo,
+                    in_amount,
+                    recipient_idx,
+                    ..
+                } => out.extend_from_slice(&encoders::enc_v3_swap_compact(
+                    *pool_idx,
+                    *zfo,
+                    *in_amount,
+                    *recipient_idx,
+                    &[],
                 )?),
                 PlanStep::V2SwapCalc {
                     pool_idx,

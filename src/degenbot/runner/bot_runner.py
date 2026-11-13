@@ -112,6 +112,14 @@ class BotRunner:
         """
         return await self.session.run()
 
+    async def probe_path(
+        self, path_id: int, *, optimal_input: int, zero_balance: bool = False
+    ) -> Any:
+        """Execute one explicit amount vector through the session's dry-run probe."""
+        return await self.session.probe_path(
+            path_id, optimal_input=optimal_input, zero_balance=zero_balance
+        )
+
     async def enqueue_path(
         self,
         path_steps: Any,

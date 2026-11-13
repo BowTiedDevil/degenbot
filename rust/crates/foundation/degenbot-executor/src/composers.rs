@@ -221,11 +221,13 @@ pub struct EncodeOptions {
     /// If `true`, use `V4_BATCH` instead of individual `V4_SWAP_COMPACT`/`_DYNAMIC`
     /// for pure-V4 paths (single PM extcall).
     pub use_v4_batch: bool,
+    /// Explicit zero-capital execution probe. Only this stance applies the
+    /// losing-WETH-cycle solvency refusal; production encoding is unchanged.
+    pub zero_balance: bool,
     /// Declared origin of the stream's entry (seed) capital (ADR-029 D1).
     /// Branched IN THE STREAM only by the families whose dispatch row declares
-    /// `funding` ([`crate::grammar_shape::family_axis_support`]: `v2_v3` and
-    /// any-N all-V2); every other family derives `InPathFlash`. Honoring it as
-    /// a runtime economic knob across ALL families is separate follow-up work.
+    /// `funding` ([`crate::grammar_shape::family_axis_support`]); every other
+    /// family derives `InPathFlash`.
     pub funding: crate::grammar_ledger::FundingSource,
     /// Declared destination of the stream's terminal profit (ADR-029 D1).
     /// Honored via [`resolve_axes`] (takes precedence over the legacy

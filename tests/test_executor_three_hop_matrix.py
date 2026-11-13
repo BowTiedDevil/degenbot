@@ -104,3 +104,50 @@ def test_report_aggregates_both_directions_into_27_permutations() -> None:
     assert report["summary"]["valid"] == 1
     assert report["summary"]["missing"] == 26
     assert len(report["paths"][0]["path_ids"]) == 2
+
+
+def test_probe_report_counts_economic_reverts_as_executed() -> None:
+    responses = []
+    for index, request in enumerate(matrix.path_requests(bidirectional=True), start=1):
+        responses.append({
+            "permutation": request["permutation"],
+            "direction": request["direction"],
+            "path_id": index,
+            "response": {
+                "ok": True,
+                "outcome": "failed",
+                "bucket": "InsufficientProfit",
+            },
+        })
+
+    report = matrix.build_probe_report(responses)
+
+    assert report["summary"] == {
+        "executed": 54,
+        "sim_ok": 0,
+        "failed": 54,
+        "encode_failed": 0,
+        "exceptions": 0,
+        "missing": 0,
+    }
+    assert len(report["paths"]) == 54
+
+
+def test_probe_report_does_not_count_an_encode_refusal_as_execution() -> None:
+    responses = [
+        {
+            "permutation": "V2-V2-V4",
+            "direction": "forward",
+            "path_id": 3,
+            "response": {"ok": True, "outcome": "failed", "bucket": "encode-failed"},
+        }
+    ]
+
+    assert matrix.build_probe_report(responses)["summary"] == {
+        "executed": 0,
+        "sim_ok": 0,
+        "failed": 0,
+        "encode_failed": 1,
+        "exceptions": 0,
+        "missing": 0,
+    }

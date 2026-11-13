@@ -38,5 +38,25 @@
   "V4SwapOracleHarness.sol/V4SwapOracleHarness.json": {
     "sha256": "a5c362fe2ae2aff407449a533172031627b2d39fb097c6f1c981cb012b0748d3",
     "source": "src-v4/V4SwapOracleHarness.sol"
+  },
+  "harness/Pair.json": {
+    "sha256": "ce3b262395281624d25f0e49210a5f0260760785de2e7ba02dc459e6833522bd",
+    "source": "src-harness/V2ExecutorStub.sol"
+  },
+  "harness/PoolManager.json": {
+    "sha256": "964cead54842e62f2d89a170b9a9d0acfe66a34613f7f5d76b1549fae936a5c0",
+    "source": "src-harness/V4ExecutorStub.sol"
+  },
+  "harness/PoolV3.json": {
+    "sha256": "537faa11e95e0c2d187ec4cfb466cba8192cf343489a18826f653d52a9d93085",
+    "source": "src-harness/V3ExecutorStub.sol"
+  },
+  "harness/TestV3SwapDriver.json": {
+    "sha256": "537faa11e95e0c2d187ec4cfb466cba8192cf343489a18826f653d52a9d93085",
+    "source": "src-harness/V3ExecutorStub.sol"
+  },
+  "harness/Token.json": {
+    "sha256": "380c3829f238f4b81d72dd475ced2251a29496c814d159f81e9b58bee9d35762",
+    "source": "src-harness/StubToken.sol"
   }
 }

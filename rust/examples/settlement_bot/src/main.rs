@@ -1186,6 +1186,7 @@ async fn build_batch_executor(
             // inject guards convert inside the boundary.
             max_candidates: usize::try_from(MAX_SIMULATE_CONCURRENT).unwrap_or(usize::MAX),
             use_v4_batch: false,
+            probe_capital: degenbot::batch_executor::ProbeCapital::Production,
             dry_run: cfg.dry_run,
             resolver: std::sync::Arc::new(dispatch::StagesResolver {
                 stages: std::sync::Arc::clone(driver.stages()),

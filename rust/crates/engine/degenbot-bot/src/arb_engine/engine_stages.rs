@@ -427,6 +427,12 @@ impl EngineStages {
         super::path_info::path_info_for(&self.engine.lock(), path_id)
     }
 
+    /// Read the current state nonce for every hop in `path_id`.
+    #[must_use]
+    pub fn path_nonces_for(&self, path_id: u64) -> Option<Vec<u64>> {
+        super::path_info::path_nonces_for(&self.engine.lock(), path_id)
+    }
+
     /// The session's apply-time relevance inputs: every registered path,
     /// projected, at ONE registry revision (the design's
     /// `EngineStages::session_relevance()`).

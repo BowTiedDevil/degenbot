@@ -61,6 +61,7 @@ pub struct CmdExecutorBinding {
     weth: Address,
     pool_manager: Address,
     opts: EncodeOptions,
+    zero_balance: bool,
 }
 
 impl CmdExecutorBinding {
@@ -79,6 +80,7 @@ impl CmdExecutorBinding {
             weth,
             pool_manager,
             opts,
+            zero_balance: false,
         }
     }
 
@@ -178,6 +180,14 @@ impl CmdExecutorBinding {
         Ok(self.build_deployment(deployment_id, Some(address), Some(runtime)))
     }
 
+    /// Select a genuinely empty executor for an explicit zero-balance probe.
+    #[must_use]
+    pub const fn with_zero_balance(mut self, enabled: bool) -> Self {
+        self.zero_balance = enabled;
+        self.opts.zero_balance = enabled;
+        self
+    }
+
     /// Resolve + load the executor runtime artifact for a declared build.
     ///
     /// The artifact selection (one precedence chain, one validated read) is the
@@ -256,6 +266,11 @@ impl CmdExecutorBinding {
         // gross evidence and the operator's gas/priority policy lands once, above
         // the seam. Every other deployment keeps its adapter's own Fee decision.
         .with_fee_sizing(crate::deployment::FeeSizing::MarketAware)
+        .with_self_fund_usdc(
+            self.opts.funding == degenbot_executor::grammar_ledger::FundingSource::SelfFund
+                && !self.zero_balance,
+        )
+        .with_zero_balance(self.zero_balance)
     }
 }
 

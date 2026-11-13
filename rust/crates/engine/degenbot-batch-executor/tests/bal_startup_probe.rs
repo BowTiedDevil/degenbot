@@ -102,6 +102,7 @@ fn executor_config(
         ExecutorRuntime {
             max_candidates: 0,
             use_v4_batch: false,
+            probe_capital: degenbot_batch_executor::ProbeCapital::Production,
             dry_run: true,
             resolver: Arc::new(NoopResolver),
             suppression: Arc::new(Mutex::new(PathSuppression::new())),

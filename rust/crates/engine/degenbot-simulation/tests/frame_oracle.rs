@@ -1428,6 +1428,7 @@ macro_rules! live_scratch {
             owner: Address::ZERO,
             code: None,
             settlement: None,
+            ..Default::default()
         };
         let anchor = degenbot_substrate::SimAnchorState::default();
         let warm_cache = WarmCodeCacheInner::shared_default();

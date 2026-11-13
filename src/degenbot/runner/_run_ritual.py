@@ -340,6 +340,7 @@ class RunRitual:
                     context=registration_context,
                     permutation_filter=session.cfg.permutation_filter,
                     startup_discovery=session.cfg.startup_discovery,
+                    registration_snapshot=session.cfg.registration_snapshot,
                 ),
             )
             session.trim_python_state()

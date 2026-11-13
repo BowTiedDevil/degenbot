@@ -239,3 +239,39 @@ def test_wrap_handler_normalizes_detail_and_error() -> None:
         "ok": False,
         "error": "nope",
     }
+
+
+def test_execution_probe_response_preserves_economic_failure_without_broadcast() -> None:
+    from types import SimpleNamespace
+
+    from degenbot.operator.operator_channel import execution_probe_response
+
+    detail = SimpleNamespace(bucket="InsufficientProfit")
+    verdict = SimpleNamespace(kind=lambda: "failed", detail=detail)
+    record = SimpleNamespace(path_type="V2-V3-V4", assembly_label="assembled", simulate=verdict)
+    outcome = SimpleNamespace(records=[record], submit_records=[{"kind": "skipped"}])
+
+    response = execution_probe_response(7, outcome)
+
+    assert response == {
+        "path_id": 7,
+        "permutation": "V2-V3-V4",
+        "outcome": "failed",
+        "bucket": "InsufficientProfit",
+    }
+
+
+def test_execution_probe_response_accepts_valid_below_threshold_receipt() -> None:
+    from types import SimpleNamespace
+
+    from degenbot.operator.operator_channel import execution_probe_response
+
+    verdict = SimpleNamespace(kind=lambda: "gas_unprofitable")
+    record = SimpleNamespace(path_type="V4-V4-V4", assembly_label="assembled", simulate=verdict)
+    outcome = SimpleNamespace(records=[record], submit_records=[])
+
+    assert execution_probe_response(9, outcome) == {
+        "path_id": 9,
+        "permutation": "V4-V4-V4",
+        "outcome": "sim_ok",
+    }

@@ -58,6 +58,33 @@ impl From<&degenbot_config::BotConfig> for ExecutorPolicy {
     }
 }
 
+/// Capital posture for an explicit execution probe. Ordinary solver candidates
+/// always use `Production`; the two probe modes are mutually exclusive.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProbeCapital {
+    /// Production in-path-flash encoding with normal simulation overrides.
+    #[default]
+    Production,
+    /// Executor-held capital with self-funded encoding.
+    SelfFund,
+    /// In-path-flash encoding with every executor token balance forced to zero.
+    ZeroBalance,
+}
+
+impl ProbeCapital {
+    /// Whether to install self-funded token capital.
+    #[must_use]
+    pub const fn is_self_funded(self) -> bool {
+        matches!(self, Self::SelfFund)
+    }
+
+    /// Whether to strip all executor token capital.
+    #[must_use]
+    pub const fn is_zero_balance(self) -> bool {
+        matches!(self, Self::ZeroBalance)
+    }
+}
+
 /// The injected runtime handles: everything the resolved verdict CANNOT name
 /// (the session arcs, identity addresses, relay posture, the driver's
 /// run-mode stance, and the values with no declared key yet). A driver
@@ -71,6 +98,8 @@ pub struct ExecutorRuntime {
     pub max_candidates: usize,
     /// The v4-batch encode axis (no declared key yet — a runtime value).
     pub use_v4_batch: bool,
+    /// Capital posture for an explicit dry-run execution probe.
+    pub probe_capital: ProbeCapital,
     /// The driver's run-mode stance (the live-submission skip; a CLI fact,
     /// not a declared key).
     pub dry_run: bool,
@@ -236,6 +265,7 @@ mod tests {
         ExecutorRuntime {
             max_candidates: 0,
             use_v4_batch: false,
+            probe_capital: ProbeCapital::Production,
             dry_run: false,
             resolver: Arc::new(EmptyResolver),
             suppression: Arc::new(Mutex::new(PathSuppression::new())),

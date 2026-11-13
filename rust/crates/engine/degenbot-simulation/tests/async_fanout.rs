@@ -142,6 +142,7 @@ fn candidate_a_overrides() -> SimulationOverrideParams {
             runtime: store_runtime(STORED_BY_A),
         }),
         settlement: None,
+        ..Default::default()
     }
 }
 
@@ -152,6 +153,7 @@ fn candidate_b_overrides() -> SimulationOverrideParams {
         owner: OWNER_B,
         code: None,
         settlement: None,
+        ..Default::default()
     }
 }
 
@@ -679,6 +681,7 @@ fn hub_overrides() -> SimulationOverrideParams {
             runtime: emit_and_read_runtime(),
         }),
         settlement: None,
+        ..Default::default()
     }
 }
 
@@ -688,6 +691,7 @@ fn settlement_overrides() -> SimulationOverrideParams {
         owner: OWNER_B,
         code: None,
         settlement: None,
+        ..Default::default()
     }
 }
 
@@ -1034,6 +1038,7 @@ async fn two_candidates_on_one_slot_share_no_writes() {
                     runtime: store_runtime(STORED_BY_A),
                 }),
                 settlement: None,
+                ..Default::default()
             },
         ),
         PreparedCandidate::new(
@@ -1045,6 +1050,7 @@ async fn two_candidates_on_one_slot_share_no_writes() {
                     runtime: read_slot_runtime(),
                 }),
                 settlement: None,
+                ..Default::default()
             },
         ),
     ];

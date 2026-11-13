@@ -44,8 +44,8 @@ contract Pair {
     }
 
     function sync() external {
-        reserve0 = uint112(Token(token0).balanceOf(address(this)));
-        reserve1 = uint112(Token(token1).balanceOf(address(this)));
+        reserve0 = uint112(Token(payable(token0)).balanceOf(address(this)));
+        reserve1 = uint112(Token(payable(token1)).balanceOf(address(this)));
         emit Sync(reserve0, reserve1);
     }
 
@@ -58,14 +58,14 @@ contract Pair {
         require(amount0Out < _r0 && amount1Out < _r1, "U:IL");
         require(to != token0 && to != token1, "U:IT");
 
-        if (amount0Out > 0) Token(token0).transfer(to, amount0Out);
-        if (amount1Out > 0) Token(token1).transfer(to, amount1Out);
+        if (amount0Out > 0) Token(payable(token0)).transfer(to, amount0Out);
+        if (amount1Out > 0) Token(payable(token1)).transfer(to, amount1Out);
         if (data.length > 0) {
             IUniswapV2Callee(to).uniswapV2Call(msg.sender, amount0Out, amount1Out, data);
         }
 
-        uint256 balance0 = Token(token0).balanceOf(address(this));
-        uint256 balance1 = Token(token1).balanceOf(address(this));
+        uint256 balance0 = Token(payable(token0)).balanceOf(address(this));
+        uint256 balance1 = Token(payable(token1)).balanceOf(address(this));
         uint256 amount0In =
             balance0 > _r0 - amount0Out ? balance0 - (_r0 - amount0Out) : 0;
         uint256 amount1In =

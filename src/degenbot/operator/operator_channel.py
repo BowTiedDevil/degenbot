@@ -215,7 +215,7 @@ def wrap_handler(
         # The fleet-posture ops echo the effective policy: pass the
         # "effective" key through (handlers that don't return one are
         # unchanged — the wire gains no empty key).
-        for key in ("effective", "sequence", "path_id"):
+        for key in ("effective", "sequence", "path_id", "permutation", "outcome", "bucket"):
             if key in resp:
                 ok[key] = resp[key]
         return ok
@@ -251,6 +251,30 @@ def _decode_request(line: bytes) -> tuple[str, dict[str, Any]]:
         msg = "'payload' must be a dict"
         raise TypeError(msg)
     return op, payload
+
+
+def execution_probe_response(path_id: int, outcome: Any) -> dict[str, Any]:
+    """Project one batch outcome into the operator's dry-run probe response."""
+    if any(record.get("kind") == "submitted" for record in outcome.submit_records):
+        msg = "dry-run execution probe produced a submission record"
+        raise RuntimeError(msg)
+    if len(outcome.records) != 1:
+        msg = f"execution probe expected one outcome, got {len(outcome.records)}"
+        raise RuntimeError(msg)
+    record = outcome.records[0]
+    verdict = record.simulate
+    response = {
+        "path_id": path_id,
+        "permutation": record.path_type,
+    }
+    if verdict is None:
+        response["outcome"] = record.assembly_label
+        return response
+    kind = verdict.kind()
+    response["outcome"] = "sim_ok" if kind in {"profitable", "gas_unprofitable"} else kind
+    if kind == "failed":
+        response["bucket"] = verdict.detail.bucket
+    return response
 
 
 class OperatorServer:

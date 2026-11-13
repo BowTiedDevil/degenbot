@@ -130,6 +130,7 @@ mod tests {
             degenbot::batch_executor::ExecutorRuntime {
                 max_candidates: 50,
                 use_v4_batch: false,
+                probe_capital: degenbot::batch_executor::ProbeCapital::Production,
                 dry_run: true,
                 resolver: Arc::new(crate::dispatch::MapResolver(resolver)),
                 suppression: Arc::new(Mutex::new(PathSuppression::new())),

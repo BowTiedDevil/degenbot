@@ -159,6 +159,7 @@ contract PoolManager {
     // Transient delta slots (tstore/tload) keyed like v4-core CurrencyDelta.
     bool private _unlocked;
     address private _pendingSettle;
+    mapping(address => uint256) private _syncedReserves;
 
     constructor() {}
 
@@ -234,9 +235,11 @@ contract PoolManager {
 
     // ── the executor's command surface ──
     function sync(address currency) external {
-        // Executor always calls sync() immediately before an ERC20 settle();
-        // record which currency so the next settle() knows what to zero.
+        // Match v4-core CurrencyReserves.syncCurrencyAndReserves: settle()
+        // credits the actual balance increase since this sync, whether or not
+        // a debt already exists (flash output -> settle -> swap is valid).
         _pendingSettle = currency;
+        _syncedReserves[currency] = Token(payable(currency)).balanceOf(address(this));
     }
 
     // Matches v4-core main: `function settle() external payable returns (uint256 paid)`.
@@ -250,16 +253,19 @@ contract PoolManager {
             // a negative debt to zero). Matches v4-core `_settle` / the
             // executor's proven fake PM (`_account_delta(account, NATIVE, +paid)`).
             _accountDelta(msg.sender, NATIVE, int256(uint256(msg.value)));
+            tokenBalance[NATIVE] += msg.value;
             paid = msg.value;
         } else {
             address c = _pendingSettle;
-            bytes32 s = _slot(msg.sender, c);
-            int256 cur; assembly { cur := tload(s) }
-            if (cur < 0) {
-                paid = uint256(-cur);
-                assembly { tstore(s, 0) }
+            uint256 reservesBefore = _syncedReserves[c];
+            uint256 reservesNow = Token(payable(c)).balanceOf(address(this));
+            paid = reservesNow - reservesBefore;
+            if (paid > 0) {
+                _accountDelta(msg.sender, c, int256(paid));
+                tokenBalance[c] += paid;
             }
             _pendingSettle = address(0);
+            _syncedReserves[c] = 0;
         }
     }
 

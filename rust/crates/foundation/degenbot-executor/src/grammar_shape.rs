@@ -129,7 +129,7 @@ pub(crate) fn v4_terminal_capture_steps(
                 amount: profit,
             });
         }
-    } else if !use_v4_batch || any_gap {
+    } else if (!use_v4_batch || any_gap) && profit > 0 {
         steps.push(PlanStep::V4TakeDelta {
             currency_idx: terminal_idx,
             currency_addr: terminal,
@@ -324,6 +324,21 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
     if !crate::grammar_walker::recognized_key(key) {
         return Derive::Declined;
     }
+    if inputs.opts.zero_balance
+        && inputs
+            .hop_outputs
+            .last()
+            .is_some_and(|out| *out < inputs.optimal_input)
+        && crate::grammar_walker::facts_for(path, inputs)
+            .and_then(|facts| facts.last().map(|hop| hop.out_currency))
+            == Some(inputs.weth_address)
+    {
+        // A zero-capital WETH cycle cannot finish below its entry repayment:
+        // every flash/V4 debt must still be settled inside the transaction.
+        // Refuse at planning time instead of panicking in the validator or
+        // reverting opaquely in a pool callback.
+        return Derive::Declined;
+    }
     let Some((preamble, plan, at)) = crate::grammar_walker::build_walk(path, inputs) else {
         return Derive::Declined;
     };
@@ -370,11 +385,19 @@ pub fn family_axis_support(path: &PathInfo) -> Option<AxisSupport> {
     }
     // capture: the pure-V4 families (every hop is V4).
     let capture = matches!(key, (Some(Prot::V4), Some(Prot::V4), Some(Prot::V4) | None));
-    // funding: `v2_v3` (2-hop V2→V3) and the any-N all-V2 family.
+    // funding: V2-led flash/self-fund families plus three-hop families that
+    // explicitly seed a self-funded stream. Pure V4 also branches capture.
     let funding = matches!(
         key,
-        (Some(Prot::V2), Some(Prot::V3), None)
-            | (Some(Prot::V2), Some(Prot::V2), Some(Prot::V2) | None)
+        (Some(Prot::V2), Some(Prot::V3), None | Some(Prot::V4))
+            | (
+                Some(Prot::V2),
+                Some(Prot::V2),
+                Some(Prot::V2 | Prot::V4) | None
+            )
+            | (Some(Prot::V2 | Prot::V3), Some(Prot::V4), Some(Prot::V4))
+            | (Some(Prot::V3), Some(Prot::V3), Some(Prot::V4))
+            | (Some(Prot::V4), Some(Prot::V4), Some(Prot::V3))
     );
     Some(AxisSupport {
         funding,
@@ -931,7 +954,7 @@ mod tests {
 
     #[test]
     fn family_axis_support_declares_the_honoring_surface() {
-        // funding is branched by exactly v2_v3 + any-N all-V2.
+        // V2-led funding plus the self-fundable three-hop families.
         assert_eq!(
             family_axis_support(&axis_path(&[Prot::V2, Prot::V3])).unwrap(),
             AxisSupport::funding()
@@ -944,7 +967,8 @@ mod tests {
             family_axis_support(&axis_path(&[Prot::V2, Prot::V2, Prot::V2])).unwrap(),
             AxisSupport::funding()
         );
-        // capture is branched by exactly the pure-V4 families.
+        // Capture is branched by the pure-V4 families; the three-hop family
+        // also seeds self-funded entry capital.
         assert_eq!(
             family_axis_support(&axis_path(&[Prot::V4, Prot::V4])).unwrap(),
             AxisSupport::capture()
@@ -953,12 +977,16 @@ mod tests {
             family_axis_support(&axis_path(&[Prot::V4, Prot::V4, Prot::V4])).unwrap(),
             AxisSupport::capture()
         );
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V4, Prot::V4, Prot::V3])).unwrap(),
+            AxisSupport::funding()
+        );
         // V4-involving but NOT pure-V4: capture is NOT varied in the stream
         // (physical take only; `profit_mode` is config) — the surfaced
         // asymmetry the declaration makes explicit.
         assert_eq!(
             family_axis_support(&axis_path(&[Prot::V2, Prot::V2, Prot::V4])).unwrap(),
-            AxisSupport::none()
+            AxisSupport::funding()
         );
         assert_eq!(
             family_axis_support(&axis_path(&[Prot::V4, Prot::V2, Prot::V4])).unwrap(),
@@ -1059,53 +1087,26 @@ mod tests {
                 consumed_inputs: &consumed,
                 opts: crate::composers::EncodeOptions {
                     funding,
+                    zero_balance: flabel == "InPathFlash",
                     ..Default::default()
                 },
             };
+            if flabel == "InPathFlash" {
+                assert!(
+                    matches!(derive_all_v2_detailed(&path, &inputs), Derive::Declined),
+                    "an insolvent zero-balance flash must be a typed planning refusal"
+                );
+                assert!(derive_all_v2(&path, &inputs).is_none());
+                continue;
+            }
             let (_preamble, plan, _at) = build_all_v2_chain(&path, &inputs)
                 .unwrap_or_else(|| panic!("[{flabel}] build None"));
             let ops = plan_to_ledger_ops(&plan);
             let mut v = crate::grammar_ledger::LedgerValidator::default();
-            if flabel == "InPathFlash" {
-                let err = v
-                    .validate_full(&ops)
-                    .expect_err("losing InPathFlash stream must be rejected");
-                // The exact invariant fired: the flash repay tries to debit
-                // more WETH than the stream generated (terminal 60k < 100k owed).
-                assert!(
-                    matches!(
-                        err,
-                        crate::grammar_ledger::ValidationError::Erc20TransferBeforeCredit { .. }
-                    ),
-                    "expected Erc20TransferBeforeCredit, got {err:?}"
-                );
-                // ADR-030: the validator rejection of a *built* Plan is a
-                // would-be-bug, not a silent skip. It now surfaces as a
-                // `Reject` and the public seam is FATAL (panics),
-                // where the old code swallowed it to `None` — this documents
-                // a latent builder defect the facts-walker will make
-                // unrepresentable.
-                let d = derive_all_v2_detailed(&path, &inputs);
-                assert!(
-                    matches!(
-                        d,
-                        Derive::Rejected(
-                            crate::grammar_ledger::ValidationError::Erc20TransferBeforeCredit { .. }
-                        )
-                    ),
-                    "expected Reject(Erc20TransferBeforeCredit), got {d:?}"
-                );
-                let r = std::panic::catch_unwind(|| derive_all_v2(&path, &inputs));
-                assert!(
-                    r.is_err(),
-                    "a validator Reject must be fatal (panic), never None (ADR-030)"
-                );
-            } else {
-                assert!(
-                    v.validate_full(&ops).is_ok(),
-                    "losing SelfFund stream must still validate (no flash debt)"
-                );
-            }
+            assert!(
+                v.validate_full(&ops).is_ok(),
+                "losing SelfFund stream must still validate (no flash debt)"
+            );
         }
     }
 

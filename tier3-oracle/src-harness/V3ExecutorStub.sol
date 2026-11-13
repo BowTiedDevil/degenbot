@@ -216,11 +216,11 @@ contract PoolV3 {
         if (zeroForOne) {
             amount0 = int256(amountSpecified);
             amount1 = -int256(amountOut);
-            Token(token1).transfer(recipient, amountOut); // pool sends output
+            Token(payable(token1)).transfer(recipient, amountOut); // pool sends output
         } else {
             amount0 = -int256(amountOut);
             amount1 = int256(amountSpecified);
-            Token(token0).transfer(recipient, amountOut);
+            Token(payable(token0)).transfer(recipient, amountOut);
         }
 
         sqrtPriceX96 = next;
@@ -262,9 +262,9 @@ contract TestV3SwapDriver {
         address t0 = IV3ExecLike(msg.sender).token0();
         address t1 = IV3ExecLike(msg.sender).token1();
         if (amount0Delta > 0) {
-            Token(t0).transfer(msg.sender, uint256(amount0Delta));
+            Token(payable(t0)).transfer(msg.sender, uint256(amount0Delta));
         } else {
-            Token(t1).transfer(msg.sender, uint256(amount1Delta));
+            Token(payable(t1)).transfer(msg.sender, uint256(amount1Delta));
         }
     }
     function doSwap(address pool, bool zfo, int256 amount, bool zfoLimit) external returns (int256, int256) {

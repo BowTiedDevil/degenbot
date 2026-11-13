@@ -12,7 +12,7 @@
 //! [`SimulationOverrideParams::settlement`] is then `None` rather than a
 //! placeholder address.
 
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::primitives::{address, Address, Bytes, U256};
 
 use degenbot_executor::WarmupSlots;
 
@@ -26,6 +26,16 @@ pub const EXECUTOR_FUND_ETH: u64 = 10;
 
 /// One wei — the warmup touch amount.
 pub const ONE_WEI: U256 = U256::from_limbs([1, 0, 0, 0]);
+
+/// Circle FiatToken V2's `balances` mapping base on Ethereum mainnet,
+/// independently verified against the USDC/WETH 0.05% pool's live balance.
+pub const USDC_MAINNET_BALANCE_SLOT: u64 = 9;
+/// The mainnet USDC token named by the executor's deployment configuration.
+pub const USDC_MAINNET: Address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+/// Wrapped BTC's `balances` mapping base on Ethereum mainnet, independently
+/// verified against the WBTC/WETH 0.3% pool's live balance.
+pub const WBTC_MAINNET_BALANCE_SLOT: u64 = 0;
+pub const WBTC_MAINNET: Address = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
 
 /// A deployment's declared development code override: `runtime` is installed at
 /// `address` in the simulated block.
@@ -60,7 +70,7 @@ pub struct SettlementWarmup {
 }
 
 /// The override inputs (see the module doc).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SimulationOverrideParams {
     /// The simulated sender, funded with [`OWNER_FUND_ETH`] ETH for gas.
     pub owner: Address,
@@ -70,4 +80,11 @@ pub struct SimulationOverrideParams {
     /// The settlement warmup this deployment declares; `None` = the deployment
     /// has no WETH/PoolManager identity to warm.
     pub settlement: Option<SettlementWarmup>,
+    /// The executor receiving self-funded mainnet USDC for an explicit
+    /// execution probe. `None` disables the override; this is test capital,
+    /// never an ordinary solver-candidate assumption.
+    pub self_fund_usdc: Option<Address>,
+    /// Force native ETH, WETH, USDC, WBTC, and PoolManager claims to zero at
+    /// the declared executor. Owner gas funding and injected code are retained.
+    pub zero_balance: Option<Address>,
 }

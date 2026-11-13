@@ -26,7 +26,7 @@
       "pair": ["WBTC", "WETH"],
       "pools": {
         "V2": {"address": "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"},
-        "V3": {"address": "0x4585FE77225b41b697C938B018E2Ac67Ac5a20c0"},
+        "V3": {"address": "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"},
         "V4": {"address": "0x000000000004444c5dc75cB358380D2e3dE08A90", "hash": "0x0df29494f2ef2d3249f8b99e2a12d35970076a50d0c5b15a481d38fac1c3d940"}
       }
     }

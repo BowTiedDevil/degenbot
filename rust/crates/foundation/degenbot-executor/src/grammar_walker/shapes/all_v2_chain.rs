@@ -11,15 +11,15 @@ pub(crate) fn derive(
     facts: &[HopFacts],
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Plan, AddressTable)> {
-    if inputs.hop_outputs.contains(&0) {
+    if inputs.hop_outputs.contains(&0) || !fits_i128(inputs.optimal_input) {
         return None;
     }
     let n = facts.len();
     let optimal_input = inputs.optimal_input;
-    if !fits_i128(optimal_input) {
+    let closing = facts[n - 1].out_currency;
+    if inputs.opts.zero_balance && inputs.hop_outputs[n - 1] < optimal_input {
         return None;
     }
-    let closing = facts[n - 1].out_currency;
     let weth = inputs.weth_address;
 
     let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);

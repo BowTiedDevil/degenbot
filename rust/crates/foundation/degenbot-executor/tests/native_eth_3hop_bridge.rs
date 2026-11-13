@@ -128,8 +128,7 @@ fn v4_v4_v4_wrap_at_ab_boundary() {
     inner.extend_from_slice(
         &encoders::enc_v4_swap_compact(usdc_idx, weth_idx, 500, 10, zero_idx, true, OUT_B).unwrap(),
     );
-    // 6. Profit capture: output=WETH → TAKE_DELTA(WETH, executor)
-    inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
+    // 6. Zero-profit fixture: no terminal TAKE_DELTA.
     // 7. V4_SETTLE_ALL
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
@@ -233,8 +232,7 @@ fn v4_v4_v4_unwrap_at_ab_boundary() {
         &encoders::enc_v4_swap_compact(usdc_idx, native_idx, 500, 10, zero_idx, true, OUT_B)
             .unwrap(),
     );
-    // Profit capture: output=native
-    inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, executor_idx));
+    // Zero-profit fixture: no terminal TAKE_DELTA.
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let commands = encoders::enc_v4_unlock(&inner).unwrap();

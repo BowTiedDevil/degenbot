@@ -108,6 +108,7 @@ pub const fn backrun_encode_options(bribe_bips: u16) -> EncodeOptions {
     EncodeOptions {
         erc6909_profit: false,
         use_v4_batch: false,
+        zero_balance: false,
         funding: FundingSource::InPathFlash,
         capture: ProfitCapture::Custody,
         bribe: Bribe::Some {
