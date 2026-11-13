@@ -288,6 +288,15 @@ fn run_fanout(
     candidates: Vec<DispatchCandidate>,
     selection: TargetSelection,
 ) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
+    run_fanout_with_subscriber(registry, candidates, selection, None)
+}
+
+fn run_fanout_with_subscriber(
+    registry: &DeploymentRegistry,
+    candidates: Vec<DispatchCandidate>,
+    selection: TargetSelection,
+    subscriber: Option<&tracing::Dispatch>,
+) -> Result<DeploymentFanOutOutcome, DispatchRefusal> {
     let provider = mock_provider();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -304,6 +313,7 @@ fn run_fanout(
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
+                let _guard = subscriber.map(tracing::dispatcher::set_default);
                 let suppression = Arc::new(Mutex::new(PathSuppression::new()));
                 let divergence = Arc::new(Mutex::new(PoolDivergence::new()));
                 let fot = Arc::new(Mutex::new(degenbot_arbitrage::FeeOnTransferRegistry::new()));
@@ -406,6 +416,65 @@ fn a_validation_failure_is_a_hard_encode_failure_not_a_capability_decline() {
         "the healthy target still produces its own result: buckets {:?}",
         lane_b.fail_buckets.buckets()
     );
+}
+
+#[test]
+fn a_hard_encode_exception_preserves_its_path_and_cause_in_the_sim_log() {
+    #[derive(Clone, Default)]
+    struct Buffer(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Buffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log buffer").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    static SECOND_DISPATCH: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+    SECOND_DISPATCH
+        .get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
+
+    let buffer = Buffer::default();
+    let subscriber = tracing::Dispatch::new(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(buffer.clone())
+            .finish(),
+    );
+    let calls_a = calls_arc();
+    let calls_b = calls_arc();
+    let registry = two_target_registry(Answer::Accept(undeclared_selector()), &calls_a, &calls_b);
+    let outcome = run_fanout_with_subscriber(
+        &registry,
+        vec![candidate(deployment_a()), candidate(deployment_b())],
+        TargetSelection::AllTargets,
+        Some(&subscriber),
+    )
+    .expect("every candidate names a registered deployment");
+
+    assert_eq!(
+        outcome
+            .lane(deployment_a())
+            .expect("lane A")
+            .exception_count,
+        1
+    );
+    let text = String::from_utf8_lossy(&buffer.0.lock().expect("log buffer")).into_owned();
+    assert!(
+        text.contains("candidate simulation raised an exception"),
+        "{text}"
+    );
+    assert!(text.contains("path_id=7"), "{text}");
+    assert!(text.contains("is not declared by the interface"), "{text}");
 }
 
 /// The untouched contrast case: `ComposeError::Unsupported` under a declared

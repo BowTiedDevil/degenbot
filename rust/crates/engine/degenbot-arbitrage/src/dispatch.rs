@@ -90,7 +90,7 @@
 //! identifier at all and stay unattributed.
 
 use degenbot_core::diag;
-use degenbot_core::op_info;
+use degenbot_core::{op_info, op_warn};
 // Solidity/EVM + Rust-ecosystem identifiers (tokio, JoinSet, SolverCalc,
 // PathSuppression, etc.) are ubiquitous here.
 
@@ -1124,7 +1124,13 @@ fn simulate_leaf(
             Ok(None) => {
                 // Already tallied into `buckets` above.
             }
-            Err(_msg) => {
+            Err(msg) => {
+                op_warn!(
+                    domain = sim,
+                    path_id = cid.path_id(),
+                    error = %msg,
+                    "candidate simulation raised an exception"
+                );
                 outcome.exception_count += 1;
             }
         }
