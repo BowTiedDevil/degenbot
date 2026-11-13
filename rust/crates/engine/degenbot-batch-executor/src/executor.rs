@@ -37,7 +37,7 @@ use parking_lot::RwLock;
 use crate::assembly::{
     assemble_batch, join_sim_result, AssembledBatch, AssemblyError, AssemblyInputs, PathResolver,
 };
-use crate::policy::{ExecutorPolicy, ExecutorRuntime};
+use crate::policy::{ExecutorPolicy, ExecutorRuntime, ProbeRefusal, SubmissionPolicy};
 use crate::record::{AssemblyVerdict, BatchOutcome, SimulateVerdict, SubmitVerdict};
 use crate::row::{PayloadRow, RawResult};
 
@@ -100,9 +100,11 @@ pub struct ExecutorConfig {
     pub(crate) probe: Arc<dyn ReceiptProbe + Send + Sync>,
     /// The host-minted sign-time nonce lane.
     pub(crate) nonce_lane: Arc<NonceLane<SubmissionLedger>>,
-    /// The live-submission skip (a safety policy value, S3 — the driver's
-    /// run-mode stance).
-    pub(crate) dry_run: bool,
+    /// The submission policy: whether the submit arm may lease a nonce, sign,
+    /// and broadcast. Converted ONCE from the driver's run-mode stance
+    /// ([`SubmissionPolicy::from_dry_run`]) — the submit leaf's dry-run flag and
+    /// the probe entry's refusal both read this value, never a second stance.
+    pub(crate) submission: SubmissionPolicy,
     /// The submit-side `inject_code` guard (the injected contract doesn't
     /// exist on-chain — live submission is unsafe). The SAME declared inject
     /// stance as `inject_code`, converted once.
@@ -226,7 +228,7 @@ impl ExecutorConfig {
             signer: runtime.signer,
             probe: runtime.probe,
             nonce_lane: runtime.nonce_lane,
-            dry_run: runtime.dry_run,
+            submission: SubmissionPolicy::from_dry_run(runtime.dry_run),
             inject_code_guard: policy.inject_code_guard,
             extra_broadcast: runtime.extra_broadcast,
             target: runtime.target,
@@ -581,7 +583,7 @@ impl SubmitLeaf<BatchWork, SimStageOutput> for EngineLeaves {
                 Arc::clone(&cfg.probe),
                 &cfg.nonce_lane,
                 current_block,
-                cfg.dry_run,
+                cfg.submission.dry_run(),
                 cfg.inject_code_guard,
                 &cfg.extra_broadcast,
                 cfg.target.clone(),
@@ -666,6 +668,8 @@ impl BatchDrain {
 
 /// The core batch executor.
 pub struct BatchExecutor {
+    /// This executor's submission policy (see [`BatchExecutor::submission`]).
+    submission: SubmissionPolicy,
     /// The deployment the session's ENGINE-BORN rows name — the built-in
     /// settlement deployment, whose inline sim produces the payload rows a
     /// batch carries. A heterogeneous session fans the batch's raw rows out to
@@ -745,6 +749,7 @@ impl BatchExecutor {
         Ok(Self::from_leaves(
             config.sim_concurrency,
             ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
+            config.submission,
             Arc::clone(&leaves) as Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
             Arc::clone(&leaves) as Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,
             outcome_tx,
@@ -765,10 +770,13 @@ impl BatchExecutor {
     /// over the SAME `BatchWork` / `SimStageOutput` types so the lane's
     /// ordering + loud-abort contract is exercised at the executor boundary.
     /// The strong record-sender half moves here (dropped at `shutdown`); the
-    /// leaves receive a weak downgrade of it.
+    /// leaves receive a weak downgrade of it. The `submission` policy is the
+    /// caller's: the production constructor reads it off the config, and a
+    /// fake-leaf lane carries the non-submitting one.
     pub(crate) fn from_leaves(
         concurrency: usize,
         inline_deployment_id: DeploymentId,
+        submission: SubmissionPolicy,
         sim: Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
         submit: Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,
         outcome_tx: mpsc::UnboundedSender<BatchOutcomeSet>,
@@ -776,6 +784,7 @@ impl BatchExecutor {
     ) -> Self {
         let pipeline = SimSubmitPipeline::new(concurrency, sim, submit);
         Self {
+            submission,
             inline_deployment_id,
             pipeline,
             outcome_tx: std::sync::Mutex::new(Some(outcome_tx)),
@@ -803,6 +812,32 @@ impl BatchExecutor {
     /// queued), and the caller decides what a stopped lane means for it.
     pub fn enqueue(&self, work: BatchWork) -> EnqueueOutcome {
         self.pipeline.enqueue(work)
+    }
+
+    /// This executor's submission policy — the value the probe entry reads
+    /// before a row enters the lane.
+    #[must_use]
+    pub const fn submission(&self) -> SubmissionPolicy {
+        self.submission
+    }
+
+    /// Enqueue ONE explicit execution-probe batch.
+    ///
+    /// A probe row is a driver-supplied amount vector run through the ordinary
+    /// assembly, production encoding, and sim stages for observation only. It is
+    /// refused on an executor whose policy permits submission, and BEFORE the
+    /// row enters the ordered lane, so no probe can reach the nonce lease, the
+    /// signer, or the broadcast arm whatever the caller believes it holds.
+    ///
+    /// # Errors
+    ///
+    /// [`ProbeRefusal::SubmissionCapable`] when [`Self::submission`] permits
+    /// submission.
+    pub fn enqueue_probe(&self, work: BatchWork) -> Result<EnqueueOutcome, ProbeRefusal> {
+        if self.submission.permits_submission() {
+            return Err(ProbeRefusal::SubmissionCapable);
+        }
+        Ok(self.enqueue(work))
     }
 
     /// Await the next batch's outcome set (`None` when the lane is closed
@@ -1039,6 +1074,7 @@ mod tests {
         BatchExecutor::from_leaves(
             4,
             test_deployment_id(),
+            SubmissionPolicy::NonSubmitting,
             Arc::new(sim),
             Arc::new(StampingSubmit {
                 order,
@@ -1047,6 +1083,62 @@ mod tests {
             tx,
             rx,
         )
+    }
+
+    /// A probe is REFUSED on a submission-capable executor, and the refusal
+    /// fires BEFORE the row enters the lane: nothing is counted, simulated, or
+    /// queued, so the probe can never reach the nonce lease, the signer, or the
+    /// broadcast arm.
+    #[tokio::test]
+    async fn a_probe_is_refused_on_a_submission_capable_executor() {
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let executor = BatchExecutor::from_leaves(
+            1,
+            test_deployment_id(),
+            SubmissionPolicy::Submitting,
+            Arc::new(ReversedFinishSim { fail_block: None }),
+            Arc::new(StampingSubmit {
+                order,
+                tx: tx.downgrade(),
+            }),
+            tx,
+            rx,
+        );
+        assert!(executor.submission().permits_submission());
+        assert_eq!(
+            executor.enqueue_probe(work(BASE_BLOCK)),
+            Err(ProbeRefusal::SubmissionCapable)
+        );
+        assert_eq!(executor.enqueued(), 0, "the refusal fires before the lane");
+    }
+
+    /// The same probe enters a NON-submitting executor's lane: the probe entry
+    /// refuses only the executor that could sign and broadcast, so a dry-run
+    /// lane still answers probes.
+    #[tokio::test]
+    async fn a_probe_enters_a_non_submitting_executor_lane() {
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let executor = BatchExecutor::from_leaves(
+            1,
+            test_deployment_id(),
+            SubmissionPolicy::NonSubmitting,
+            Arc::new(ReversedFinishSim { fail_block: None }),
+            Arc::new(StampingSubmit {
+                order,
+                tx: tx.downgrade(),
+            }),
+            tx,
+            rx,
+        );
+        assert!(!executor.submission().permits_submission());
+        assert_eq!(
+            executor.enqueue_probe(work(BASE_BLOCK)),
+            Ok(EnqueueOutcome::Accepted)
+        );
+        assert_eq!(executor.enqueued(), 1);
+        executor.shutdown().await.expect("no failure");
     }
 
     /// Lane ordering: submission order is ARRIVAL (FIFO = nonce) order even
@@ -1285,6 +1377,7 @@ mod tests {
         let executor = BatchExecutor::from_leaves(
             1,
             test_deployment_id(),
+            SubmissionPolicy::NonSubmitting,
             Arc::new(MixedSim),
             Arc::new(PartialSubmit { tx: tx.downgrade() }),
             tx,

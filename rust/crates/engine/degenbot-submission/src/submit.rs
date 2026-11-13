@@ -1708,6 +1708,135 @@ mod tests {
         assert_eq!(outcome.submitted_count(), 0);
     }
 
+    /// The dry-run skip is a NONCE fact, not only a record count: the guard runs
+    /// BEFORE the lane stamps, so the shared authority is exactly where it
+    /// started — no lease, no occupant, no ledger record — and the operator's
+    /// first nonce is still issuable.
+    ///
+    /// The live control below is this test's red path: the SAME books and the
+    /// SAME candidate with the guard off stamp and hold that nonce, so a dry-run
+    /// path that leased one (or stamped and released one) cannot pass here.
+    #[tokio::test]
+    async fn a_dry_run_submission_leaves_the_nonce_authority_untouched() {
+        let (authority, ledger, lane, strategy) = books(7);
+        let asserter = Asserter::new();
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+
+        let outcome = dispatch_and_submit(
+            // A gate-clearing candidate: the skip below is the dry-run guard,
+            // never an economic or fee refusal ahead of it.
+            vec![candidate(1, 5_000_000_000u128, &[POOL_A])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            &lane,
+            100,
+            true, // dry_run
+            false,
+            &[],
+            SubmissionTarget::Public,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.submitted_count(), 0);
+        assert_eq!(
+            outcome.records,
+            vec![SubmitRecord::Skipped {
+                candidate_id: CandidateId::new(1, deployment_id()),
+                reason: SkipReason::DryRun
+            }],
+            "the candidate reaches the dry-run guard and stops there"
+        );
+
+        // The authority book: unmoved, unleased, unoccupied.
+        assert_eq!(authority.confirmed(), 7, "the chain nonce never moves");
+        assert_eq!(
+            authority.lease_of(&strategy),
+            None,
+            "the dry-run guard runs before the nonce lease"
+        );
+        assert_eq!(
+            authority.outstanding_nonces(),
+            Vec::<u64>::new(),
+            "no lease, broadcast, or hold occupies a slot"
+        );
+        assert!(!authority.has_outstanding());
+        assert_eq!(
+            authority.occupant(7),
+            None,
+            "the operator's next nonce is not even reserved"
+        );
+
+        // The ledger book: nothing was signed, so nothing is recorded.
+        assert!(
+            ledger.is_empty(),
+            "no signed record exists for a candidate the lane never signed"
+        );
+        assert!(!ledger.has_outstanding());
+
+        // ... and the nonce is still ISSUABLE: the untouched lane's next stamp
+        // is that same nonce, so the dry run consumed none of it.
+        let lease = lane.stamp().expect("the untouched lane still stamps");
+        assert_eq!(lease.nonce(), 7, "the dry run spent no nonce");
+        lane.release(&lease).expect("release the probe's own stamp");
+    }
+
+    /// The red control for the test above: identical authority, identical
+    /// candidate, the guard OFF — the nonce IS stamped, held, and recorded.
+    /// Without it, "the authority is untouched" would also hold on a lane that
+    /// never stamps anything, which is exactly the vacuous shape.
+    #[tokio::test]
+    async fn a_live_submission_stamps_the_nonce_the_dry_run_left_free() {
+        let (authority, ledger, lane, strategy) = books(7);
+        let asserter = Asserter::new();
+        asserter.push_success(&empty_access_list_response());
+        let fake_hash = B256::repeat_byte(0xdd);
+        asserter.push_success(&tx_hash_response(&format!("{fake_hash:?}")));
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+
+        let outcome = dispatch_and_submit(
+            vec![candidate(1, 5_000_000_000u128, &[POOL_A])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            &lane,
+            100,
+            false, // live: the guard is off
+            false,
+            &[],
+            SubmissionTarget::Public,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.submitted_count(), 1);
+        assert_eq!(
+            authority.confirmed(),
+            7,
+            "the confirmed chain nonce is the chain's; the lease is the lane's"
+        );
+        assert_eq!(
+            authority.outstanding_nonces(),
+            vec![7],
+            "the live path stamps and holds the very nonce the dry run left free"
+        );
+        assert_eq!(
+            ledger.state_of(&strategy, 7),
+            Some(SubmissionState::Broadcast),
+            "the signed submission is recorded against the stamped nonce"
+        );
+        dispatcher.lock().unwrap().abort_all_tasks();
+    }
+
     #[tokio::test]
     async fn submit_skips_on_inject_code() {
         let asserter = Asserter::new();

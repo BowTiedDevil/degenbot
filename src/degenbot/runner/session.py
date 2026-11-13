@@ -53,6 +53,7 @@ from degenbot.runner._run_ritual import RunRitual
 from degenbot.runner._session_watch import SessionWatch
 from degenbot.runner._sim_submit import (
     ExecutorInputs,
+    SubmissionStance,
     build_batch_executor,
     build_executor_for,
     build_session_consumer,
@@ -653,6 +654,10 @@ class Session:
         This is a dry-run encoding/execution probe, not a solver admission. It
         derives exact-input hop outputs at the current pool state and lets the
         ordinary receipt report any economic failure.
+
+        The probe's executor is built with the probe submission stance, so it is
+        non-submitting by construction under a LIVE session too: no relay
+        fan-out, no signature, no broadcast, and no nonce lease.
         """
         self.phase = self.phase.on_query("probe_path")
         if optimal_input <= 0:
@@ -669,6 +674,7 @@ class Session:
                 ExecutorInputs.from_session(self),
                 self_fund=not zero_balance,
                 zero_balance=zero_balance,
+                submission=SubmissionStance.PROBE,
             )
             self.probe_zero_balance = zero_balance
         pipeline = self.probe_pipeline

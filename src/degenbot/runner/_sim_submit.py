@@ -26,6 +26,7 @@ reads the same answer the executor was built from.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from degenbot.dispatch import BatchExecutor, SessionConsumer, TxSigner
@@ -35,7 +36,7 @@ from degenbot.dispatch import (
 from degenbot.runner._dispatch import _resolve_relay_providers
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from typing import Any
 
     from degenbot.dispatch import Dispatcher, SimulateContext, SimulationDeployment
@@ -43,6 +44,50 @@ if TYPE_CHECKING:
     from degenbot.runner._relay_posture import RelayPosture
     from degenbot.runner.config import ArbitrageConfig
     from degenbot.runner.session import Session
+
+
+class SubmissionStance(Enum):
+    """The submission policy one executor construction asks for.
+
+    A construction names its stance, and the boundary derives both
+    submission-side inputs from that one value: the FFI's ``dry_run`` flag and
+    the relay fan-out. A caller therefore cannot ask for one half — an executor
+    that skips the live submission but still dials relays, or one that obeys the
+    run mode but keeps a broadcast posture it was told to drop.
+    """
+
+    #: The session's own executor: obeys the run mode, broadcasts through the
+    #: relay posture when the session is live.
+    PRODUCTION = "production"
+    #: An execution probe's executor: never signs, broadcasts, or leases a
+    #: nonce, whatever the run mode, and dials no relay.
+    PROBE = "probe"
+
+    def dry_run(self, *, run_mode_dry_run: bool) -> bool:
+        """Return the FFI ``dry_run`` flag this stance selects.
+
+        Args:
+            run_mode_dry_run: The session's own run-mode stance.
+
+        Returns:
+            ``True`` for a probe (unconditionally non-submitting), else the
+            session's run mode.
+
+        """
+        return self is SubmissionStance.PROBE or run_mode_dry_run
+
+    def fan_out_urls(self, relay_urls: Sequence[str]) -> list[str]:
+        """Return the relay endpoints this stance broadcasts through.
+
+        Args:
+            relay_urls: The session's resolved relay posture.
+
+        Returns:
+            The endpoints for a production construction; none for a probe,
+            whose lane carries no broadcast fan-out at all.
+
+        """
+        return [] if self is SubmissionStance.PROBE else list(relay_urls)
 
 
 @dataclass(frozen=True)
@@ -116,6 +161,7 @@ async def build_batch_executor(
     engine_builder: Callable[..., BatchExecutor] | None = None,
     self_fund: bool = False,
     zero_balance: bool = False,
+    submission: SubmissionStance = SubmissionStance.PRODUCTION,
 ) -> BatchExecutor:
     """Build the core batch executor over one session's resolved policy.
 
@@ -131,10 +177,19 @@ async def build_batch_executor(
     production default is the companion package's FFI ``build_batch_executor``,
     so the uninjected path stays Rust-bound.
 
+    ``submission`` names the stance and nothing else: the boundary derives the
+    FFI's ``dry_run`` flag AND the relay fan-out from it, so a probe executor is
+    non-submitting by construction — no live stance, no broadcast posture, no
+    relay dial — whatever run mode the session resolved.
+
     Args:
         inputs: The construction boundary's resolved inputs.
         engine_builder: The construction override; defaults to the FFI
             ``build_batch_executor``.
+        self_fund: Install self-funded token capital for the probe's encoding.
+        zero_balance: Strip every executor token balance for the probe.
+        submission: The construction's submission stance
+            (:class:`SubmissionStance`).
 
     Returns:
         The constructed batch executor.
@@ -150,13 +205,13 @@ async def build_batch_executor(
         raise RuntimeError(msg)
 
     # The relay posture value resolved once at session start (see
-    # _relay_posture): its endpoints are this session's broadcast fan-out.
+    # _relay_posture): its endpoints are a PRODUCTION construction's broadcast
+    # fan-out. A probe stance answers none, so no relay is dialed.
     relay_posture = inputs.relay_posture
-    broadcast_providers = (
-        await _resolve_relay_providers(relay_posture.relay_urls, None)
-        if relay_posture is not None and relay_posture.relay_urls
-        else None
+    relay_urls = submission.fan_out_urls(
+        relay_posture.relay_urls if relay_posture is not None else []
     )
+    broadcast_providers = await _resolve_relay_providers(relay_urls, None) if relay_urls else None
 
     operator_nonce = int(await inputs.provider.get_transaction_count(inputs.cfg.operator_address))
     signer = TxSigner(key=inputs.cfg.operator_private_key, chain_id=inputs.cfg.chain_id)
@@ -168,7 +223,7 @@ async def build_batch_executor(
         signer=signer,
         submit_provider=async_alloy,
         operator_nonce=operator_nonce,
-        dry_run=inputs.cfg.dry_run,
+        dry_run=submission.dry_run(run_mode_dry_run=inputs.cfg.dry_run),
         broadcast_providers=broadcast_providers,
         deployments=list(inputs.deployments) or None,
         target_selection=inputs.target_selection,

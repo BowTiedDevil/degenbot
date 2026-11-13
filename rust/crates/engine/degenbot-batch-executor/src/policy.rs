@@ -58,6 +58,73 @@ impl From<&degenbot_config::BotConfig> for ExecutorPolicy {
     }
 }
 
+/// The executor's submission policy: the ONE value answering whether the submit
+/// lane may reach its nonce lease, signer, and broadcast arm.
+///
+/// It is converted ONCE, from the driver's run-mode stance
+/// ([`ExecutorRuntime::dry_run`]), and no later reader re-derives it: the submit
+/// leaf's dry-run flag and the probe entry's refusal
+/// ([`crate::executor::BatchExecutor::enqueue_probe`]) both read this value, so
+/// a driver that builds a non-submitting executor (an execution probe) cannot
+/// hold one whose lane can sign or broadcast.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SubmissionPolicy {
+    /// The production stance: the submit arm runs its whole choreography
+    /// (mutual exclusion, nonce lease, sign, broadcast, monitor).
+    #[default]
+    Submitting,
+    /// The non-submitting stance: every candidate stops at the dry-run guard,
+    /// before the nonce lease and the signer, so nothing is leased, signed, or
+    /// broadcast. An execution probe's lane carries this policy.
+    NonSubmitting,
+}
+
+impl SubmissionPolicy {
+    /// Reads the driver's run-mode stance into the policy.
+    #[must_use]
+    pub const fn from_dry_run(dry_run: bool) -> Self {
+        if dry_run {
+            Self::NonSubmitting
+        } else {
+            Self::Submitting
+        }
+    }
+
+    /// Whether the submit lane may lease a nonce, sign, and broadcast.
+    #[must_use]
+    pub const fn permits_submission(self) -> bool {
+        matches!(self, Self::Submitting)
+    }
+
+    /// The `dispatch_and_submit` dry-run flag this policy maps to.
+    #[must_use]
+    pub const fn dry_run(self) -> bool {
+        !self.permits_submission()
+    }
+}
+
+/// The refusal an explicit execution probe meets on an executor whose
+/// [`SubmissionPolicy`] permits submission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProbeRefusal {
+    /// The executor may sign and broadcast, so a probe row entering its lane
+    /// could reach the submit arm.
+    SubmissionCapable,
+}
+
+impl std::fmt::Display for ProbeRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SubmissionCapable => f.write_str(
+                "this executor's submission policy permits signing and broadcast, so its lane is \
+                 not an execution probe's",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ProbeRefusal {}
+
 /// Capital posture for an explicit execution probe. Ordinary solver candidates
 /// always use `Production`; the two probe modes are mutually exclusive.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -320,7 +387,11 @@ mod tests {
         assert_eq!(config.sim_concurrency, 8);
         assert_eq!(config.max_candidates, usize::MAX, "0 = uncapped");
         assert_eq!(config.min_profit_margin_bps, 0);
-        assert!(!config.dry_run);
+        assert_eq!(
+            config.submission,
+            SubmissionPolicy::Submitting,
+            "the live run mode converts to the submitting policy"
+        );
         assert_eq!(
             config.deployments.len(),
             1,
@@ -338,6 +409,32 @@ mod tests {
             Some(BUILTIN_EXECUTOR),
             "the built-in deployment executes at the executor it encodes to"
         );
+    }
+
+    /// The run mode DECIDES the submission policy, and that one value is what
+    /// the submit leaf and the probe entry read: a dry-run executor cannot lease
+    /// a nonce, sign, or broadcast.
+    #[tokio::test]
+    async fn the_run_mode_decides_the_submission_policy() {
+        let verdict = degenbot_config::BotConfig::default();
+
+        let mut dry_runtime = runtime(Vec::new()).await;
+        dry_runtime.dry_run = true;
+        let dry = crate::executor::ExecutorConfig::from_verdict(&verdict, dry_runtime)
+            .expect("the built-in session composes a one-entry registry");
+        assert_eq!(dry.submission, SubmissionPolicy::NonSubmitting);
+        assert!(!dry.submission.permits_submission());
+        assert!(
+            dry.submission.dry_run(),
+            "the submit lane's dry-run flag reads the policy, never a second stance"
+        );
+
+        let live =
+            crate::executor::ExecutorConfig::from_verdict(&verdict, runtime(Vec::new()).await)
+                .expect("the built-in session composes a one-entry registry");
+        assert_eq!(live.submission, SubmissionPolicy::Submitting);
+        assert!(live.submission.permits_submission());
+        assert!(!live.submission.dry_run());
     }
 
     /// The target-selection policy rides the runtime verbatim into the config:

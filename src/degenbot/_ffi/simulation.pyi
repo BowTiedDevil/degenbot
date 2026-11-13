@@ -83,6 +83,12 @@ class BatchExecutor:
         """
         Execute one explicit amount vector as a dry-run probe. The ordinary
         assembly, production encoding, EVM2, and receipt stages answer the row.
+
+        A probe is NON-SUBMITTING. The driver builds its probe pipeline with
+        submission disabled (the FFI's `dry_run`, and no relay fan-out), and this
+        entry refuses outright on an executor whose submission policy permits
+        signing and broadcast, before the row enters the lane. A live session's
+        executor therefore answers `RuntimeError` rather than running the probe.
         """
     @property
     def submitted(self, /) -> int:

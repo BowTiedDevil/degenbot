@@ -1257,6 +1257,7 @@ mod tests {
         Arc::new(BatchExecutor::from_leaves(
             1,
             deployment_id(),
+            crate::policy::SubmissionPolicy::NonSubmitting,
             Arc::new(SignallingSim { fail_on, passed }),
             Arc::new(NoopSubmit),
             tx,

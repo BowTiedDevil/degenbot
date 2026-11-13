@@ -65,6 +65,10 @@ Requests / responses (one JSON object per line):
  "directions": [true, false]}           # optional; auto-resolved if absent
 {"op": "discover", "bound": 5}
 
+{"op": "probe_path",
+ "path_id": 42,
+ "zero_balance": false}                 # optional; false = self-funded encoding
+
 {"ok": true,  "detail": "..."}
 {"ok": false, "error": "..."}
 ```
@@ -83,6 +87,20 @@ Key properties:
 
 The example bot hosts the server when launched with `--operator-socket <path>`,
 routing commands into `session.enqueue_path` / `session.trigger_discovery`.
+
+### The `probe_path` op never submits
+
+An execution probe quotes one explicit amount vector and runs it through the
+ordinary assembly, encoding, and simulation stages for observation only. Its
+executor is built with the probe submission stance, so the pipeline is
+non-submitting by construction even when the bot runs live: no relay fan-out is
+dialed, nothing is signed, nothing is broadcast, and no operator nonce is
+leased. The core additionally refuses the direct
+`BatchExecutor.probe_path` entry on any executor whose submission policy permits
+signing and broadcast, so a caller holding a live executor's handle gets
+`RuntimeError` instead of a submitted probe. `execution_probe_response`'s
+rejection of a returned submission record stays as the detective check beside
+that preventive guard.
 
 ## 3. The CLI client
 

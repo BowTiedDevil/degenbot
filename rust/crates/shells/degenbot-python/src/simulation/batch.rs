@@ -503,6 +503,12 @@ impl PyBatchExecutor {
 
     /// Execute one explicit amount vector as a dry-run probe. The ordinary
     /// assembly, production encoding, EVM2, and receipt stages answer the row.
+    ///
+    /// A probe is NON-SUBMITTING. The driver builds its probe pipeline with
+    /// submission disabled (the FFI's `dry_run`, and no relay fan-out), and this
+    /// entry refuses outright on an executor whose submission policy permits
+    /// signing and broadcast, before the row enters the lane. A live session's
+    /// executor therefore answers `RuntimeError` rather than running the probe.
     #[expect(
         clippy::too_many_arguments,
         reason = "one path plus its amount and block vectors"
@@ -546,11 +552,21 @@ impl PyBatchExecutor {
         };
         let executor = Arc::clone(&self.executor);
         crate::ambient_runtime::future_into_py(py, async move {
-            match executor.enqueue(work) {
-                degenbot_submission::EnqueueOutcome::Accepted => {}
-                degenbot_submission::EnqueueOutcome::Declined(decline) => {
+            // The probe entry refuses a submission-capable executor BEFORE the
+            // row enters the lane, so the guarantee is preventive (no probe row
+            // can reach the nonce lease, the signer, or the broadcast arm) and
+            // never a post-hoc read of the records that came back. The enqueue
+            // itself runs here: the lane spawns on the ambient runtime.
+            match executor.enqueue_probe(work) {
+                Ok(degenbot_submission::EnqueueOutcome::Accepted) => {}
+                Ok(degenbot_submission::EnqueueOutcome::Declined(decline)) => {
                     return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                         "probe_path enqueue refused: {decline:?}"
+                    )));
+                }
+                Err(refusal) => {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "probe_path refused: {refusal}"
                     )));
                 }
             }
