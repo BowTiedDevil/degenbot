@@ -102,6 +102,51 @@ signing and broadcast, so a caller holding a live executor's handle gets
 rejection of a returned submission record stays as the detective check beside
 that preventive guard.
 
+### Probes serialize, and a cancelled probe cannot be consumed by the next one
+
+The probe path is one operator-triggered critical section (`Session.probe_path`)
+over ONE executor whose outcome stream is a shared, single-consumer channel. The
+session serializes the whole mode-select / pipeline-build / quote / enqueue /
+drain operation under its own async lock, which buys the surface two properties
+it otherwise cannot promise:
+
+- **Response identity.** Concurrent probes never interleave on that lane, and each
+  caller drains the outcome its own row produced — its own `path_id` and capital
+  mode come back, whichever probe the lane happened to settle first.
+- **Safe capital-mode replacement.** The self-funded and zero-balance executors
+  are swapped only while no probe is in flight, so a zero-balance probe arriving
+  during a self-funded one waits for it instead of replacing the executor that
+  holds the queued row.
+
+**Cancellation and timeouts (migration note — no wire change).** A caller that is
+cancelled or timed out while awaiting its outcome cannot simply drop the drain:
+the core's `BatchDrain` is cancel-safe in the *stream* direction, so a dropped
+drain leaves the outcome queued for the next reader — which would hand that
+caller's result to the next probe request. The enqueue+drain therefore runs on a
+task the cancellation never reaches, and the cancelled caller reaps that task's
+own drain before the lock is released. The protocol is unchanged: a probe that
+returns still answers the same `{path_id, permutation, outcome[, bucket]}` shape,
+and a cancelled or timed-out request answers nothing at all, exactly as before.
+
+The one operator-visible refusal is a log line rather than a protocol message: if
+an abandoned probe's row cannot be drained within `PROBE_REAP_TIMEOUT_S` (30s — a
+wedged lane), the session **drops** the probe pipeline, **cancels** the abandoned
+probe task, and logs
+`[probe] an abandoned execution probe did not drain within ...`. The stranded
+outcome's channel is then unreachable, so no later probe can receive it, and the
+next probe builds a fresh executor.
+
+The give-up is terminal, not a retained task: dropping the session's pipeline
+reference only prevents *outcome theft*, so the session also cancels the
+abandoned probe and waits for it to reach a terminal state before it releases the
+probe lane. A probe that outlived its call would otherwise keep its drain future
+— and the executor, EVM, and runtime work behind it — alive for the rest of the
+process. The settle is bounded by the same constant, so a task wedged inside an
+uninterruptible call cannot hold the lane either; the one case cancellation cannot
+reach is collected by a done-callback instead of being reported as an unretrieved
+task exception. A second cancellation of the already-unwinding caller cannot skip
+either move: the cleanup's waits swallow the extra request and run to the end.
+
 ## 3. The CLI client
 
 `degenbot path` in `src/degenbot/cli/path.py` is a thin client over
@@ -135,3 +180,9 @@ is a tiny versioned protocol a client of any vintage can talk to.
 - `tests/arbitrage/test_arbitrage_session.py` — programmatic surface raises
   without a live pipeline; a mid-run add during an advancing consumer does not
   stall or abort dispatch.
+- `tests/arbitrage/test_execution_probe.py` — the probe's dry-run encoding plus
+  the concurrency/cancellation contract: concurrent probes keep their own path
+  IDs and capital modes, a capital-mode swap waits for the in-flight probe, and a
+  cancelled or timed-out probe reaps its own queued row (including the bounded
+  give-up that drops the pipeline, cancels the abandoned probe to a terminal
+  state, and warns).

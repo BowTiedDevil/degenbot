@@ -71,6 +71,95 @@ _V4_QUOTE_SELECTOR = keccak256(
 )[:4]
 
 
+#: How long a cancelled probe's abandoned row is waited for before the session
+#: gives up on the probe pipeline (see :meth:`Session.probe_path`).
+#:
+#: The wait is normally the abandoned row's own completion: the core's drain is
+#: cancel-safe in the STREAM direction (a dropped drain leaves the message
+#: queued), which for a one-shot probe is a leak, so the row must be consumed by
+#: the call that enqueued it before another caller can take it. The bound exists
+#: only so a wedged lane cannot pin the probe lock forever; when it expires the
+#: session DROPS the pipeline, whose channel is then unreachable — the stranded
+#: outcome cannot be handed to anyone — then CANCELS the abandoned probe task and
+#: waits a second bound of the same length for it to reach a terminal state. The
+#: next probe builds a fresh executor.
+PROBE_REAP_TIMEOUT_S = 30.0
+
+
+def _discard_probe_result(probe: asyncio.Future[Any]) -> None:
+    """Consume an abandoned probe task's outcome so asyncio never reports it.
+
+    A probe abandoned past :data:`PROBE_REAP_TIMEOUT_S` has already had its
+    pipeline dropped, so its outcome is unreachable from the session. Reading
+    the result here is what keeps asyncio from logging an unretrieved task
+    exception when that drain finally lands — or when a task that could not be
+    interrupted at all ends instead of unwinding as cancelled.
+    """
+    with contextlib.suppress(asyncio.CancelledError):
+        _ = probe.exception()
+
+
+async def _await_probe_terminal(probe: asyncio.Task[Any], budget: float) -> bool:
+    """Wait up to ``budget`` seconds for ``probe`` to reach a terminal state.
+
+    Never cancels the task — the caller decides that; this only waits and
+    reports.
+
+    A ``CancelledError`` landing on THIS wait is a SECOND cancellation of a caller
+    that is already unwinding, not a request to abandon cleanup: the abandoned row
+    must be reaped (or its probe terminated) before the probe lock is released, so
+    the request is swallowed and the wait resumes.
+
+    Args:
+        probe: The abandoned probe task to wait on.
+        budget: The bound, in seconds. Named for the budget rather than a
+            ``timeout`` to keep this a plain wait: only the caller decides to
+            cancel.
+
+    Returns:
+        True when the task is done — answered, failed, or cancelled; False when
+        the bound expired with the task still running.
+
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget
+    while not probe.done():
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False
+        with contextlib.suppress(asyncio.CancelledError):
+            # ``asyncio.wait`` never cancels its tasks on timeout, and a
+            # suppressed cancellation leaves the probe alone too: a timeout here
+            # hands the still-running task back to the caller to terminate.
+            await asyncio.wait({probe}, timeout=remaining)
+    return True
+
+
+async def _terminate_abandoned_probe(probe: asyncio.Task[Any]) -> None:
+    """Cancel an abandoned probe task, then reap its terminal state.
+
+    Dropping the session's pipeline reference makes the stranded row unreachable,
+    but it does not finish the operation: a probe task that outlives its call
+    keeps its drain future — and the executor, EVM, and runtime work behind it —
+    alive for the rest of the process. Cancelling it is what ends the operation;
+    waiting for it here is what makes "terminal" a fact the caller can rely on
+    before the probe lock is released.
+
+    The settle carries a bound of :data:`PROBE_REAP_TIMEOUT_S` for the one case
+    cancellation cannot reach: a wedge inside a synchronous FFI call rather than
+    at an ``await``. The done-callback is registered FIRST, so such a task's
+    terminal state is still collected rather than reported as an unretrieved task
+    exception, and the pipeline it borrows is already unreachable.
+
+    Args:
+        probe: The abandoned probe task to cancel and reap.
+
+    """
+    probe.add_done_callback(_discard_probe_result)
+    probe.cancel()
+    await _await_probe_terminal(probe, PROBE_REAP_TIMEOUT_S)
+
+
 async def _quote_concentrated_hop(
     provider: Any, hop: dict[str, Any], amount_in: int, block: int
 ) -> int:
@@ -450,6 +539,10 @@ class Session:
     probe_pipeline: BatchExecutor | None = None
     #: Capital stance of the current probe pipeline; None before construction.
     probe_zero_balance: bool | None = None
+    #: The one lock serializing the whole probe critical section — mode select,
+    #: pipeline build, quoting, enqueue, and drain — so two probes can neither
+    #: interleave on one lane nor swap the executor under an in-flight row.
+    _probe_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
     #: The session's core event consumer (the ONE consume loop), attached by
     #: :meth:`build_consumer`; ``None`` before the run ritual builds it.
     consumer: Any | None = None
@@ -658,6 +751,41 @@ class Session:
         The probe's executor is built with the probe submission stance, so it is
         non-submitting by construction under a LIVE session too: no relay
         fan-out, no signature, no broadcast, and no nonce lease.
+
+        SERIALIZED. The whole mode-select/build/quote/enqueue/drain operation is
+        ONE critical section under the session-owned probe lock
+        (:attr:`_probe_lock`). That buys the two properties the caller can rely
+        on:
+
+        * **Response identity.** Two concurrent probes never interleave on one
+          lane, and each caller drains the outcome its own row produced — it
+          keeps its own ``path_id`` and capital mode whichever probe the lane
+          happened to settle first.
+        * **Safe pipeline replacement.** The capital-mode executor is swapped
+          only while no probe is in flight, so a concurrent zero-balance probe
+          waits for the self-funded one instead of replacing the executor under
+          its queued row (which would strand that row in a dropped executor).
+
+        CANCELLED. A caller cancelled or timed out while awaiting its outcome
+        cannot simply drop the drain: the core's outcome stream keeps the
+        message queued, and the NEXT probe would take this caller's row as its
+        own answer. The enqueue+drain therefore runs on a task the cancellation
+        never reaches, and the cancelled caller reaps that task's own drain
+        (bounded by :data:`PROBE_REAP_TIMEOUT_S`) BEFORE releasing the lock, so
+        no outcome can outlive its call. A lane wedged past that bound is refused
+        rather than waited on: the session drops the probe pipeline AND cancels
+        the abandoned probe task, waiting for it to reach a terminal state, so
+        neither the stranded row nor the operation behind it survives the call.
+
+        Returns:
+            The row's own outcome set from the batch executor.
+
+        Raises:
+            ValueError: If ``optimal_input`` is not positive, or the path is not
+                registered.
+            RuntimeError: If the session has no resolved actors yet (it never
+                started).
+
         """
         self.phase = self.phase.on_query("probe_path")
         if optimal_input <= 0:
@@ -667,6 +795,37 @@ class Session:
         if actors is None:
             msg = "probe_path requires a started sim/submit pipeline"
             raise RuntimeError(msg)
+        async with self._probe_lock:
+            return await self._probe_serialized(
+                path_id,
+                optimal_input=optimal_input,
+                zero_balance=zero_balance,
+                actors=actors,
+            )
+
+    async def _probe_serialized(
+        self, path_id: int, *, optimal_input: int, zero_balance: bool, actors: Actors
+    ) -> Any:
+        """Run the probe's critical section: mode select, build, quote, enqueue, drain.
+
+        The caller holds :attr:`_probe_lock`. ``probe_pipeline`` and
+        ``probe_zero_balance`` are this method's only writers, so the swap below
+        can never race an in-flight row: a probe of the other capital mode waits
+        for the lock, then builds, then probes.
+
+        The quoting state (the block clock, the pool reads, the quoter calls) is
+        read inside the same section too, so the amount vector handed to the lane
+        belongs to the block the receipt is stamped with and to no other caller's
+        probe.
+
+        Returns:
+            The row's own outcome set from the batch executor.
+
+        Raises:
+            ValueError: If the path is not registered.
+            RuntimeError: If a pool on the path is not registered.
+
+        """
         if self.probe_pipeline is None or (
             self.probe_zero_balance is not None and self.probe_zero_balance != zero_balance
         ):
@@ -707,7 +866,8 @@ class Session:
             outputs.append(amount_in)
 
         block = await actors.async_w3.get_block(current_block)
-        return await pipeline.probe_path(
+        return await self._probe_and_drain(
+            pipeline,
             path_id=path_id,
             optimal_input=optimal_input,
             hop_outputs=outputs,
@@ -716,6 +876,86 @@ class Session:
             base_fee_next=int(block["base_fee_per_gas"]),
             block_timestamp=int(block["timestamp"]),
         )
+
+    async def _probe_and_drain(self, pipeline: Any, **kwargs: Any) -> Any:
+        """Enqueue one probe row and drain exactly that row's own outcome.
+
+        The core's outcome stream is cancel-safe in the direction a STREAM needs
+        — a dropped drain leaves the message queued — which is precisely a leak
+        for a one-shot probe: the next drain would take this caller's row as its
+        own answer. So the enqueue+drain runs on a task the caller's cancellation
+        never reaches (``asyncio.shield``), and a cancelled caller reaps that
+        task's own drain before the probe lock is released: the row is consumed
+        by the call that enqueued it, whatever happens to the waiter.
+
+        The task is scoped to this call — created and joined here, never a
+        run-lifetime task the session watch would own, and the session keeps no
+        reference to it past the join. The one exception is the give-up path in
+        :meth:`_reap_abandoned_probe`, which cancels the task and waits for its
+        terminal state — with a done-callback collecting the outcome of the one
+        case cancellation cannot reach — so an abandoned operation never outlives
+        its call.
+
+        Returns:
+            The outcome set this call's row produced.
+
+        Raises:
+            asyncio.CancelledError: If the caller is cancelled or timed out; its
+                row has already been reaped when this propagates.
+
+        """
+
+        async def _row() -> Any:
+            return await pipeline.probe_path(**kwargs)
+
+        probe = asyncio.create_task(_row())
+        try:
+            return await asyncio.shield(probe)
+        except asyncio.CancelledError:
+            await self._reap_abandoned_probe(probe)
+            raise
+
+    async def _reap_abandoned_probe(self, probe: asyncio.Task[Any]) -> None:
+        """Consume a cancelled caller's row, or terminate it and drop the pipeline.
+
+        Waiting is the normal case: the abandoned row is already in the lane (or
+        about to be — the FFI spawns its future on creation), so the wait ends
+        when that row's own outcome lands, which is exactly when the channel is
+        safe for the next caller.
+
+        Giving up is the bounded refusal: a lane wedged past
+        :data:`PROBE_REAP_TIMEOUT_S` would otherwise pin the probe lock forever.
+        The give-up is then TERMINAL, in two moves and in this order:
+
+        1. Drop the probe pipeline (:attr:`probe_pipeline` /
+           :attr:`probe_zero_balance`), so the stranded outcome's channel is
+           unreachable and no later probe can take it; the next probe builds a
+           fresh executor.
+        2. Cancel the abandoned probe task and reap its terminal state. Dropping
+           the session's reference alone only prevents outcome theft — the drain
+           future and the executor/EVM/runtime work behind it would live on for
+           the rest of the process.
+
+        Both moves run even if the caller is cancelled a SECOND time while they
+        run: the waits inside swallow that request instead of unwinding out of the
+        cleanup (see :func:`_await_probe_terminal`).
+
+        The refusal is logged as an operator-visible warning; the wire response
+        shape is unchanged (the cancelled caller has no response to receive).
+        """
+        if await _await_probe_terminal(probe, PROBE_REAP_TIMEOUT_S):
+            with contextlib.suppress(asyncio.CancelledError):
+                _ = probe.exception()
+            return
+        bot_logger.warning(
+            "[probe] an abandoned execution probe did not drain within %ss; "
+            "dropping the probe pipeline so its stranded outcome cannot reach a "
+            "later probe, and cancelling the abandoned probe",
+            PROBE_REAP_TIMEOUT_S,
+        )
+        self.probe_pipeline = None
+        self.probe_zero_balance = None
+        await _terminate_abandoned_probe(probe)
 
     # ── Operator add-a-path surface ─────────────────────────────────
     async def enqueue_path(
