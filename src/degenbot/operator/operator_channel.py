@@ -215,8 +215,9 @@ def wrap_handler(
         # The fleet-posture ops echo the effective policy: pass the
         # "effective" key through (handlers that don't return one are
         # unchanged — the wire gains no empty key).
-        if "effective" in resp:
-            ok["effective"] = resp["effective"]
+        for key in ("effective", "sequence", "path_id"):
+            if key in resp:
+                ok[key] = resp[key]
         return ok
 
     return wrapped

@@ -34,7 +34,18 @@
 //! now self-fund the leading V2 hop from the executor's own balance via an
 //! ERC20 transfer instead of a `take`, and they are back in the matrix.)
 
+use std::sync::Arc;
+
 use alloy::primitives::U256;
+use degenbot_math::concentrated_liquidity::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
+use degenbot_math::v2::IntHopState;
+use degenbot_pools::solve::{
+    solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath, SolvePathResult,
+};
+use degenbot_pools::{
+    GateDeps, IntV3TickRangeHop, IntV3TickRangeSequence, PreparedConcentratedLiquidityHop,
+};
+
 use degenbot_simulation::harness::{
     assert_erc6909_capture, assert_profitable, v3_amount_out, Harness, Hop, HopPool,
 };
@@ -88,8 +99,8 @@ fn pool_for(
                 3000,
                 sqrt_x(mult),
                 liq(),
-                1_000_000_000_000,
-                1_000_000_000_000,
+                1_000_000_000_000_000_000_000_000_000_000,
+                1_000_000_000_000_000_000_000_000_000_000,
             )
             .unwrap(),
         ),
@@ -101,8 +112,8 @@ fn pool_for(
                 60,
                 sqrt_x(mult),
                 liq(),
-                1_000_000_000_000,
-                1_000_000_000_000,
+                1_000_000_000_000_000_000_000_000_000_000,
+                1_000_000_000_000_000_000_000_000_000_000,
             )
             .unwrap(),
         ),
@@ -189,6 +200,83 @@ fn cases() -> Vec<Case> {
     m
 }
 
+/// Solve a Harness path through the production mixed-path solver. The single
+/// full-range concentrated-liquidity projection matches the fake pools'
+/// constant-liquidity swap behavior, so solver amounts and EVM execution see
+/// the same state.
+fn solve_hops(hops: &[Hop]) -> SolvePathResult {
+    let resolved_hops = hops
+        .iter()
+        .map(|hop| match hop.pool {
+            HopPool::V2(pool) => {
+                let (reserve_in, reserve_out) = if hop.src == pool.token0 {
+                    (pool.reserve0, pool.reserve1)
+                } else {
+                    (pool.reserve1, pool.reserve0)
+                };
+                ResolvedHop::V2 {
+                    state: IntHopState::new(
+                        U256::from(reserve_in),
+                        U256::from(reserve_out),
+                        997,
+                        1000,
+                    ),
+                }
+            }
+            HopPool::V3(pool) => concentrated_hop(
+                pool.liquidity,
+                pool.sqrt_price,
+                pool.fee,
+                hop.src == pool.token0,
+                false,
+            ),
+            HopPool::V4(pool) => concentrated_hop(
+                pool.liquidity,
+                pool.sqrt_price,
+                pool.fee,
+                hop.src == pool.currency0,
+                true,
+            ),
+        })
+        .collect();
+    let path = ResolvedMixedPath {
+        hops: resolved_hops,
+        valid: true,
+        state_nonces: vec![1; hops.len()],
+        ..Default::default()
+    };
+    solve_path_with_min_profit(&path, U256::ZERO, &GateDeps::offline())
+        .result
+        .unwrap_or_else(|| panic!("the deterministic fixture must be profitable"))
+}
+
+fn concentrated_hop(
+    liquidity: u128,
+    sqrt_price: U256,
+    fee: u32,
+    zero_for_one: bool,
+    v4: bool,
+) -> ResolvedHop {
+    let range = IntV3TickRangeHop {
+        liquidity,
+        sqrt_price_x96: sqrt_price,
+        sqrt_price_lower_x96: U256::from(MIN_SQRT_RATIO),
+        sqrt_price_upper_x96: U256::from(MAX_SQRT_RATIO),
+        gamma_numer: 1_000_000 - u64::from(fee),
+        fee_denom: 1_000_000,
+        zero_for_one,
+        word_boundary_prices: Vec::new(),
+    };
+    let prepared = PreparedConcentratedLiquidityHop::derive(Arc::new(
+        IntV3TickRangeSequence::new(vec![range]).unwrap(),
+    ));
+    if v4 {
+        ResolvedHop::V4 { prepared }
+    } else {
+        ResolvedHop::V3 { prepared }
+    }
+}
+
 /// Drive the whole working matrix; each family gets a fresh harness.
 #[test]
 fn full_matrix_executes_with_expected_profit() {
@@ -204,6 +292,82 @@ fn full_matrix_executes_with_expected_profit() {
             result.outcome, result.predicted_profit, result.actual_weth_delta
         );
         assert_profitable(&result, c.swaps, &c.name);
+    }
+}
+
+#[test]
+fn solver_amounts_execute_one_mixed_path() {
+    let mut h = Harness::new().unwrap();
+    let hops = build_family(&mut h, &[Prot::V2, Prot::V3, Prot::V4]);
+    let solution = solve_hops(&hops);
+    assert!(solution.profit > U256::ZERO);
+
+    let optimal_input = solution.optimal_input.to::<u128>();
+    let outputs: Vec<u128> = solution.hop_outputs.iter().map(U256::to::<u128>).collect();
+    let consumed: Vec<u128> = solution
+        .consumed_inputs
+        .iter()
+        .map(U256::to::<u128>)
+        .collect();
+    let result = h
+        .run_chain_with_consumed(
+            &hops,
+            optimal_input,
+            &outputs,
+            &consumed,
+            40_000_000,
+            degenbot_executor::composers::EncodeOptions::default(),
+        )
+        .unwrap();
+    assert_profitable(&result, 3, "solver-v2-v3-v4");
+    assert_eq!(
+        result.predicted_profit,
+        i128::try_from(solution.profit.to::<u128>()).unwrap()
+    );
+}
+
+#[test]
+fn full_three_hop_matrix_executes_production_solver_amounts() {
+    for c in cases()
+        .into_iter()
+        .filter(|c| c.name.matches('_').count() == 2)
+    {
+        let mut h = Harness::new().unwrap();
+        let hops = (c.build)(&mut h);
+        let solution = solve_hops(&hops);
+        assert!(
+            solution.profit > U256::ZERO,
+            "{} was not profitable",
+            c.name
+        );
+        let optimal_input = solution.optimal_input.to::<u128>();
+        let outputs: Vec<u128> = solution.hop_outputs.iter().map(U256::to::<u128>).collect();
+        let consumed: Vec<u128> = solution
+            .consumed_inputs
+            .iter()
+            .map(U256::to::<u128>)
+            .collect();
+        let result = h
+            .run_chain_with_consumed(
+                &hops,
+                optimal_input,
+                &outputs,
+                &consumed,
+                c.gas,
+                degenbot_executor::composers::EncodeOptions::default(),
+            )
+            .unwrap_or_else(|e| panic!("[{}] solver-driven run_chain: {e}", c.name));
+        println!(
+            "   solver {:<14} input={} predicted={} actual={}",
+            c.name, optimal_input, result.predicted_profit, result.actual_weth_delta
+        );
+        assert_profitable(&result, c.swaps, &c.name);
+        assert_eq!(
+            result.predicted_profit,
+            i128::try_from(solution.profit.to::<u128>()).unwrap(),
+            "{} solver profit differs from the executed amount chain",
+            c.name
+        );
     }
 }
 

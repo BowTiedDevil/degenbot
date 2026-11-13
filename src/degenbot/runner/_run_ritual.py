@@ -339,6 +339,7 @@ class RunRitual:
                     retry_policy=retry_policy,
                     context=registration_context,
                     permutation_filter=session.cfg.permutation_filter,
+                    startup_discovery=session.cfg.startup_discovery,
                 ),
             )
             session.trim_python_state()

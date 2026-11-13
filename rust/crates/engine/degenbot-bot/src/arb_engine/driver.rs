@@ -335,6 +335,8 @@ pub struct CrawlBoot {
     /// The snapshot tick-map arm — a handle SOURCE the crawl asks once per unit
     /// (`None` = construction reads no tick maps).
     pub snapshot: Option<Arc<dyn SnapshotArm>>,
+    /// Whether the run performs its automatic startup sweep.
+    pub startup_discovery: bool,
 }
 
 impl CrawlBoot {
@@ -346,7 +348,15 @@ impl CrawlBoot {
             config,
             receipts: None,
             snapshot: None,
+            startup_discovery: true,
         }
+    }
+
+    /// Select operator-only mode by disabling the automatic startup sweep.
+    #[must_use]
+    pub fn with_startup_discovery(mut self, startup_discovery: bool) -> Self {
+        self.startup_discovery = startup_discovery;
+        self
     }
 
     /// Attach the receipt consumer's sink.
@@ -1179,6 +1189,7 @@ impl EngineDriver {
             config,
             receipts,
             snapshot,
+            startup_discovery,
         } = boot;
 
         let io = self.bot.construction_io_arc().ok_or(CrawlRefusal::Config(
@@ -1212,7 +1223,7 @@ impl EngineDriver {
         let run = degenbot_core::runtime::get_runtime().spawn(async move {
             // The run's own answer is recorded on the controller (readable after
             // end-of-stream); the join handle reports only a panic.
-            let _ = runner.run().await;
+            let _ = runner.run_with_discovery(startup_discovery).await;
         });
 
         mv.land_crawl(Box::new(CrawlTeardown {

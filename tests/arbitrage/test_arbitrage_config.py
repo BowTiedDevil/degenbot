@@ -34,6 +34,11 @@ _NODE = "wss://override.example"
 _OVERRIDE = RpcCascadeOverrides(chain_id=1, node=_NODE)
 
 
+def test_fixed_only_mode_disables_startup_discovery() -> None:
+    assert _cfg(startup_discovery=False).startup_discovery is False
+    assert _cfg().startup_discovery is True
+
+
 def test_discovery_batch_size_clamps_to_a_positive_batch() -> None:
     """ONE clamp owner: the config factory.
 
@@ -45,7 +50,9 @@ def test_discovery_batch_size_clamps_to_a_positive_batch() -> None:
     assert cfg.discovery_batch_size == 1
 
 
-def _cfg(env=None, *, live=False, permutation=None, rpc=None) -> ArbitrageConfig:
+def _cfg(
+    env=None, *, live=False, permutation=None, rpc=None, startup_discovery=True
+) -> ArbitrageConfig:
     """Build a config with the identity in the env layer and the RPC override pinned.
 
     Every test here is about the identity or a non-RPC field, so the endpoint is
@@ -57,6 +64,7 @@ def _cfg(env=None, *, live=False, permutation=None, rpc=None) -> ArbitrageConfig
     return ArbitrageConfig.build(
         live=live,
         permutation=permutation,
+        startup_discovery=startup_discovery,
         rpc=rpc if rpc is not None else _OVERRIDE,
         values=probe.hypothetical_values(env),
     )

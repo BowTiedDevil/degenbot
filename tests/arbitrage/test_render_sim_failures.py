@@ -90,7 +90,7 @@ def _outcome(failures: list[dict[str, Any]]) -> MergedOutcome:
     path_info = {"path_type": "V2-V2", "hops": _hops()}
     return MergedOutcome(
         gas_profitable=[],
-        gas_unprofitable_count=0,
+        gas_unprofitable=[],
         exception_count=0,
         fail_count=len(failures),
         candidate_count=len(failures),

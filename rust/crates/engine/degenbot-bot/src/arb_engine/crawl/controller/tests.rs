@@ -1453,6 +1453,49 @@ async fn a_hold_that_never_lifts_is_named_at_the_hold_budget() {
 // ── the operator surface ────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn operator_only_run_accepts_paths_until_stop() {
+    let fixture = fixture(
+        FakeRpc::new(),
+        skip_graph(2),
+        config(2, 2),
+        TokioSeat::new(Duration::ZERO, None),
+    );
+    let runner = Arc::clone(&fixture.controller);
+    let run = tokio::spawn(async move { runner.run_with_discovery(false).await });
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let error = fixture
+        .controller
+        .enqueue_path(
+            DiscoveredPath {
+                hops: vec![DiscoveredHop::V4 {
+                    pool_manager: V4_PM,
+                    pool_hash: None,
+                }],
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            CrawlRequestError::RegistrationNotCompleted { sequence: 1, .. }
+        ),
+        "the fake graph's skip resolves with its outcome: {error}"
+    );
+    assert!(!fixture.controller.is_finished());
+
+    fixture.controller.stop();
+    tokio::time::timeout(Duration::from_secs(1), run)
+        .await
+        .expect("stop wakes the operator-only run")
+        .unwrap()
+        .unwrap();
+    assert!(fixture.controller.is_finished());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn enqueue_after_stopped_refuses_loudly() {
     let fixture = fixture(
         FakeRpc::new(),
@@ -1491,7 +1534,7 @@ async fn enqueue_is_admitted_post_cap_and_folds_its_receipt() {
     );
     fixture.controller.fold(&cap_receipt());
     assert_eq!(fixture.controller.state(), CrawlState::Capped);
-    let seq = fixture
+    let error = fixture
         .controller
         .enqueue_path(
             DiscoveredPath {
@@ -1503,8 +1546,14 @@ async fn enqueue_is_admitted_post_cap_and_folds_its_receipt() {
             None,
         )
         .await
-        .unwrap();
-    assert_eq!(seq, 1, "the operator path is the first submission");
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            CrawlRequestError::RegistrationNotCompleted { sequence: 1, .. }
+        ),
+        "a cap skip is not a successful registration: {error}"
+    );
     assert_eq!(
         fixture.controller.summary().report.units_folded,
         2,

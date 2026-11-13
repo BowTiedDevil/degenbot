@@ -35,7 +35,11 @@ def _stub_handler(*, fail_on=None):
             raise RuntimeError(msg)
         if op == "add_path":
             steps = [step_from_wire(s) for s in payload["steps"]]
-            return {"detail": f"enqueued {len(steps)}-hop path"}
+            return {
+                "detail": f"enqueued {len(steps)}-hop path",
+                "sequence": 7,
+                "path_id": 42,
+            }
         if op == "discover":
             return {"detail": f"discovery processed {payload.get('bound', 0)}"}
         return {"error": f"unknown op {op}"}
@@ -86,7 +90,12 @@ async def test_add_path_and_discover_round_trip(tmp_path) -> None:
                 "directions": [True, False],
             },
         )
-        assert resp == {"ok": True, "detail": "enqueued 2-hop path"}
+        assert resp == {
+            "ok": True,
+            "detail": "enqueued 2-hop path",
+            "sequence": 7,
+            "path_id": 42,
+        }
         assert seen["add_path"] == [
             {
                 "steps": [

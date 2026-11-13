@@ -14,13 +14,14 @@ from __future__ import annotations
 import dataclasses
 
 from degenbot.runner import _dispatch as dispatch_module
+from degenbot.runner import _render
 from degenbot.runner._render import DisplayPolicy, MergedOutcome
 from tests.helpers.seam import CandidateId
 
 #: A drained batch that carried nothing at all (the falsy render view).
 _EMPTY_BATCH = MergedOutcome(
     gas_profitable=[],
-    gas_unprofitable_count=0,
+    gas_unprofitable=[],
     exception_count=0,
     fail_count=0,
     candidate_count=0,
@@ -170,3 +171,28 @@ class TestSubmissionSmokeFsm:
         # A batch that submits (not vetoed) resets the FSM to Quiet.
         assert smoke.observe(vetoed=False, now=10_302.0) is verdict.QUIET
         assert smoke.streak == 0
+
+
+def test_valid_below_threshold_receipt_names_its_path(monkeypatch) -> None:
+    candidate = CandidateId(path_id=7, deployment_id=1)
+    render_candidate = _render._RenderCandidate(
+        candidate=candidate,
+        gross_profit=12,
+        net_profit=0,
+        gas_used=123_456,
+        priority_fee=0,
+    )
+    outcome = dataclasses.replace(
+        _EMPTY_BATCH,
+        gas_unprofitable=[render_candidate],
+        candidate_count=1,
+        path_infos={7: {"path_type": "V2-V3-V4", "hops": []}},
+    )
+
+    captured = _CapturingLogger()
+    monkeypatch.setattr(_render, "bot_logger", captured)
+    _render._render_profit_logs(outcome)
+
+    messages = [message for level, message in captured.calls if level == "info"]
+    assert any("[sim-ok] path=7 type=V2-V3-V4" in message for message in messages)
+    assert any("net=0" in message for message in messages)

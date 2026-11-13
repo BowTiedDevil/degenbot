@@ -184,6 +184,7 @@ class ArbitrageConfig:
     # of any of them could only be a value the core ignores.
     # Path discovery
     permutation_filter: frozenset[str] | None
+    startup_discovery: bool
     # Bounded retry-with-backoff for transient verification RPC failures
     # (per-call transport / provider-init). Mismatch stays fatal.
     verification_retry_policy: RetryPolicy
@@ -270,6 +271,7 @@ class ArbitrageConfig:
         *,
         live: bool,
         permutation: str | None,
+        startup_discovery: bool = True,
         rpc: RpcCascadeOverrides | None = None,
         values: ConfigValues | None = None,
     ) -> "ArbitrageConfig":
@@ -388,6 +390,7 @@ class ArbitrageConfig:
             inject_executor_code=inject_executor_code,
             injected_address=injected_address,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
+            startup_discovery=startup_discovery,
             dry_run=not live,
             erc6909_profit=resolved_values.dispatch.erc6909_profit,
             reg_progress_secs=resolved_values.pathfinding.reg_progress_secs,

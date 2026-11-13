@@ -111,7 +111,7 @@ class MergedOutcome:
     """
 
     gas_profitable: list[_RenderCandidate]
-    gas_unprofitable_count: int
+    gas_unprofitable: list[_RenderCandidate]
     exception_count: int
     fail_count: int
     candidate_count: int
@@ -119,6 +119,11 @@ class MergedOutcome:
     fail_buckets: dict[str, int]
     failures: list[dict[str, Any]]
     path_infos: dict[int, dict[str, Any]]
+
+    @property
+    def gas_unprofitable_count(self) -> int:
+        """Count valid executions whose net profit did not clear the gas floor."""
+        return len(self.gas_unprofitable)
 
     def __bool__(self) -> bool:
         """Report whether the batch carried anything the renderers print.
@@ -153,7 +158,7 @@ class MergedOutcome:
 
         """
         gas_profitable: list[_RenderCandidate] = []
-        gas_unprofitable_count = 0
+        gas_unprofitable: list[_RenderCandidate] = []
         exception_count = 0
         fail_count = 0
         fail_buckets: dict[str, int] = {}
@@ -193,8 +198,16 @@ class MergedOutcome:
                             priority_fee=receipt.priority_fee,
                         )
                     )
-                case SimulateVerdict.GasUnprofitable():
-                    gas_unprofitable_count += 1
+                case SimulateVerdict.GasUnprofitable(receipt=receipt):
+                    gas_unprofitable.append(
+                        _RenderCandidate(
+                            candidate=_candidate_of(rec),
+                            gross_profit=int(receipt.gross_profit),
+                            net_profit=int(receipt.net_profit),
+                            gas_used=receipt.gas_used,
+                            priority_fee=receipt.priority_fee,
+                        )
+                    )
                 case SimulateVerdict.Failed(detail=detail):
                     fail_count += 1
                     record = detail.record()
@@ -210,11 +223,11 @@ class MergedOutcome:
                     path_infos.pop(rec.candidate_id.path_id, None)
         return cls(
             gas_profitable=gas_profitable,
-            gas_unprofitable_count=gas_unprofitable_count,
+            gas_unprofitable=gas_unprofitable,
             exception_count=exception_count,
             fail_count=fail_count,
             candidate_count=(
-                len(gas_profitable) + gas_unprofitable_count + fail_count + exception_count
+                len(gas_profitable) + len(gas_unprofitable) + fail_count + exception_count
             ),
             suppressed_count=suppressed,
             fail_buckets=fail_buckets,
@@ -441,7 +454,16 @@ def _render_sim_summary(outcome: MergedOutcome) -> None:
 
 
 def _render_profit_logs(outcome: MergedOutcome) -> None:
-    """Render the ``[profit]`` per-path hop-detail log (D4 stay-Python)."""
+    """Render per-path successful simulation receipts."""
+    for cand in outcome.gas_unprofitable:
+        path_info = outcome.path_infos.get(cand.path_id)
+        hops = _hop_token_summary(path_info["hops"]) if path_info is not None else ""
+        bot_logger.info(
+            f"[sim-ok] path={cand.path_id} "
+            f"type={path_info['path_type'] if path_info else '?'} "
+            f"gross={cand.gross_profit} net={cand.net_profit} "
+            f"gas={cand.gas_used} hops={hops}"
+        )
     for cand in outcome.gas_profitable:
         path_info = outcome.path_infos.get(cand.path_id)
 

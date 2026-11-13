@@ -32,9 +32,11 @@ class _FakeCrawlSession:
         self.enqueued = []
         self.sweeps = []
 
-    async def enqueue_path(self, path: Any, directions: list[bool] | None = None) -> int:
+    async def enqueue_path(
+        self, path: Any, directions: list[bool] | None = None
+    ) -> tuple[int, int]:
         self.enqueued.append((path, directions))
-        return 7
+        return (7, 42)
 
     async def trigger_discovery(self, bound: int | None = None) -> int:
         self.sweeps.append(bound)
@@ -67,7 +69,7 @@ async def test_the_operator_surface_survives_the_main_loop_trim() -> None:
     assert session.actors.bot is None
 
     steps = [("0x" + "11" * 20, 1, None)]
-    await session.enqueue_path(steps, directions=[True])
+    assert await session.enqueue_path(steps, directions=[True]) == (7, 42)
     assert crawl.enqueued == [(steps, [True])]
     assert await session.trigger_discovery(bound=5) == 3
     assert crawl.sweeps == [5]

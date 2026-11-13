@@ -281,6 +281,7 @@ def crawl_config(  # ruff: ignore[too-many-arguments] - the resolved values of o
     retry_policy: RetryPolicy | None,
     pool_types: list[PoolKind],
     pool_type_per_depth: list[set[PoolKind] | None] | None,
+    startup_discovery: bool = True,
 ) -> dict[str, Any]:
     """Resolve the engine crawl's configuration — values only.
 
@@ -298,6 +299,7 @@ def crawl_config(  # ruff: ignore[too-many-arguments] - the resolved values of o
         },
         "pool_kinds": pool_types,
         "pool_type_per_depth": _depth_filter_value(pool_type_per_depth),
+        "startup_discovery": startup_discovery,
         "start_tokens": [
             WETH_ADDRESS,
             # The conceptual native asset (ADR-097): V4 Ether-paired pools
@@ -416,6 +418,7 @@ class BuildPathsOptions:
     retry_policy: RetryPolicy | None = None
     context: ConstructionContext | None = None
     permutation_filter: frozenset[str] | None = None
+    startup_discovery: bool = True
 
 
 async def build_paths(
@@ -468,6 +471,7 @@ async def build_paths(
         retry_policy=options.retry_policy,
         pool_types=pool_types,
         pool_type_per_depth=pool_type_per_depth,
+        startup_discovery=options.startup_discovery,
     )
 
     start = time.perf_counter()
@@ -476,7 +480,11 @@ async def build_paths(
         f"[build_paths] Starting registration crawl: the engine's crawl loop, "
         f"window {REG_INTAKE_WINDOW}"
     )
-    bot_logger.info("[build_paths] Discovery: single pass over the DB subgraph")
+    bot_logger.info(
+        "[build_paths] Discovery: single pass over the DB subgraph"
+        if options.startup_discovery
+        else "[build_paths] Discovery: disabled; operator add_path only"
+    )
 
     # The engine takes the core bot handle (the Python companion's ``_py_bot``):
     # its cached snapshot tick-map handle is what a head-stamped V3/V4

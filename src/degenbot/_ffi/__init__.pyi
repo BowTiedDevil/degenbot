@@ -2886,7 +2886,8 @@ class CrawlSession:
         The path is a sequence of `PathStep`-shaped hops (`address`, `type`,
         `hash`); `directions` pins the per-hop `zero_for_one` values.
 
-        Returns the unit's submission sequence.
+        Returns `(submission sequence, engine path ID)`, or a typed error when
+        the unit completes without registering a path.
 
         # Errors
 

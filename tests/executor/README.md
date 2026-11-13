@@ -46,7 +46,10 @@ Three execution layers deliberately answer different questions:
   Its pure-Rust helper is built only through
   `just build-executor-three-hop-encoder`.
 - `degenbot-simulation/tests/harness_declarative.rs` executes all 27 through
-  EVM2 with the real executor bytecode and exact predicted-profit deltas.
+  EVM2 with the real executor bytecode and exact predicted-profit deltas. Its
+  `full_three_hop_matrix_executes_production_solver_amounts` test also solves
+  every row through the production mixed-path solver, then executes the
+  solver-selected input, output, and consumed-input vectors.
 
 Run both Ape matrices serially with:
 
@@ -61,8 +64,53 @@ Run the EVM2 matrix and its completeness guard with:
 just test-rust-nextest -p degenbot-simulation -E 'test(full_matrix_executes_with_expected_profit) or test(matrix_covers_full_reachable_grammar)'
 ```
 
+Run the production-solver EVM2 matrix with:
+
+```bash
+just test-rust-nextest -p degenbot-simulation -E 'test(full_three_hop_matrix_executes_production_solver_amounts)'
+```
+
 The Rust `command_stream_byte_identity_is_pinned` test separately pins every
 permutation under 12 amount/option configurations.
+
+### Fixed-path bot probe
+
+`scripts/executor_three_hop_matrix.json` names a mainnet WETH/USDC/WBTC
+triangle with V2, V3, and V4 pools on every edge. The companion Python tool
+injects both token-cycle directions (54 directed paths) and aggregates their
+exact engine path IDs into 27 protocol rows.
+
+Start an operator-only, zero-floor, injected-executor dry run (set the owner,
+injected address, and runtime artifact for the release under test):
+
+```bash
+export DEGENBOT_INJECT_EXECUTOR_CODE=1
+export EXECUTOR_OWNER_ADDRESS=0x...
+export INJECTED_EXECUTOR_ADDRESS=0x...
+export EXECUTOR_RUNTIME=/path/to/cmd_executor_runtime.txt
+export DEGENBOT_MIN_PROFIT_WEI=0
+export DEGENBOT_MIN_PROFIT_MARGIN_BPS=0
+./run_bot.sh foreground -- --skip-discovery --operator-socket /tmp/degenbot-27.sock
+```
+
+From another shell, inject and then render the fail-closed report:
+
+```bash
+just py python scripts/executor_three_hop_matrix.py inject \
+  --socket /tmp/degenbot-27.sock \
+  --output logs/executor_solver_sim_27_registrations.json
+just py python scripts/executor_three_hop_matrix.py report \
+  --log logs/bot_run.log \
+  --registrations logs/executor_solver_sim_27_registrations.json \
+  --output logs/executor_solver_sim_27_report.json
+```
+
+Registration is not simulation coverage: live pools may have no profitable
+input in either direction. `report` marks those rows `missing` and exits
+nonzero. Valid receipts emit `[sim-ok]`; failures and exceptions remain
+separate. Any `Submitted path` record fails the report. Never add `--live`:
+dry-run skips signing and executor-code injection independently gates
+submission.
 
 The fakes enforce the behavior the executor depends on: V2's K invariant,
 V3's balance-delta input check and reentrancy guard, V4's delta settlement,

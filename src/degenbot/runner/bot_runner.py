@@ -116,15 +116,15 @@ class BotRunner:
         self,
         path_steps: Any,
         directions: list[bool] | None = None,
-    ) -> None:
-        """Add ONE specific path to a running session.
+    ) -> tuple[int, int]:
+        """Add ONE specific path and return its submission sequence and engine path ID.
 
         Args:
             path_steps: The path's steps (the pipeline's enqueue shape).
             directions: Per-step swap directions (``None`` = resolve them).
 
         """
-        await self.session.enqueue_path(path_steps, directions)
+        return await self.session.enqueue_path(path_steps, directions)
 
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
         """Trigger a bounded one-shot discovery sweep over a running session.

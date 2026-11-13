@@ -822,6 +822,14 @@ pub enum CrawlRequestError {
     /// order, and the join fact would have two writers.
     #[error("a crawl run is already in flight on this controller")]
     RunInFlight,
+    /// The unit resolved without registering a path (skip, reject, or cap).
+    #[error("crawl unit {sequence} completed without path registration: {outcome}")]
+    RegistrationNotCompleted {
+        /// The operator unit's submission sequence.
+        sequence: u64,
+        /// The terminal crawl outcome and its refusal tag, when present.
+        outcome: String,
+    },
     /// A unit's loud-abort arm fired: the crawl stops and the caller sees it.
     #[error(transparent)]
     Abort(CrawlAbort),
@@ -908,6 +916,8 @@ pub struct CrawlController {
     summary: Mutex<CrawlSummary>,
     receipts: Mutex<DeliveryChannel<CrawlReceipt>>,
     sweep_lease: tokio::sync::Mutex<()>,
+    /// Wakes an operator-only run when teardown begins.
+    stop_notify: tokio::sync::Notify,
     seq: AtomicU64,
     /// How the last run future resolved, for a caller that owns the receipt
     /// stream rather than the `JoinHandle`. Written by [`CrawlController::run`]
@@ -1012,6 +1022,7 @@ impl CrawlController {
             summary: Mutex::new(CrawlSummary::default()),
             receipts: Mutex::new(DeliveryChannel::detached()),
             sweep_lease: tokio::sync::Mutex::new(()),
+            stop_notify: tokio::sync::Notify::new(),
             seq: AtomicU64::new(0),
             outcome: Mutex::new(None),
             unit_idle_deadline: Mutex::new(UNIT_IDLE_DEADLINE),
@@ -1191,6 +1202,7 @@ impl CrawlController {
         let mut phase = self.run_phase.lock();
         // `Stop` never declines, so this always latches.
         let _ = self.advance(CrawlEvent::Stop);
+        self.stop_notify.notify_one();
         if *phase == RunPhase::Live {
             // The run future finishes the teardown when it resolves.
             return;
@@ -1222,11 +1234,30 @@ impl CrawlController {
     /// end written on the `Ok` path would be skipped by every `Err` and by a
     /// panic.
     pub async fn run(&self) -> Result<(), CrawlRequestError> {
+        self.run_with_discovery(true).await
+    }
+
+    /// Run with or without the automatic startup sweep. Operator-only mode keeps
+    /// the controller and receipt stream live for `enqueue_path` until `stop`.
+    ///
+    /// # Errors
+    ///
+    /// [`CrawlRequestError`] — a refused run, discovery failure, seat refusal,
+    /// fatal unit abort, lost unit, or stop outcome.
+    pub async fn run_with_discovery(
+        &self,
+        startup_discovery: bool,
+    ) -> Result<(), CrawlRequestError> {
         self.arm_run()?;
         let _resolution = RunResolution { controller: self };
         let window = self.config.intake_window;
         // The count is the sweep's business; the run's answer is its outcome.
-        let result = self.drive(None, window).await.map(|_submitted| ());
+        let result = if startup_discovery {
+            self.drive(None, window).await.map(|_submitted| ())
+        } else {
+            self.stop_notify.notified().await;
+            Ok(())
+        };
         // Record BEFORE the resolution guard drops: the guard closes the
         // receipt stream, and a consumer woken by end-of-stream must already be
         // able to read how the run ended.
@@ -1285,7 +1316,8 @@ impl CrawlController {
     /// path silently. Post-cap it is admitted, and the unit answers the cheap cap
     /// skip (no build RPC).
     ///
-    /// Returns the unit's submission sequence.
+    /// Returns the unit's submission sequence and engine path ID, or the
+    /// terminal outcome when the unit did not register a path.
     ///
     /// # Errors
     ///
@@ -1297,7 +1329,7 @@ impl CrawlController {
         &self,
         path: DiscoveredPath,
         directions: Option<Vec<bool>>,
-    ) -> Result<u64, CrawlRequestError> {
+    ) -> Result<(u64, u64), CrawlRequestError> {
         self.advance(CrawlEvent::PathEnqueued)?;
         let unit = CrawlUnit {
             seq: self.next_seq(),
@@ -1334,8 +1366,30 @@ impl CrawlController {
         };
         match outcome {
             Ok(receipt) => {
+                let path_id = receipt.path_id;
+                let mut outcome = receipt.refusal_tag().map_or_else(
+                    || receipt.kind().to_owned(),
+                    |tag| format!("{}:{tag}", receipt.kind()),
+                );
+                let detail = match &receipt.outcome {
+                    RegistrationUnitOutcome::Skip { detail, .. }
+                    | RegistrationUnitOutcome::Reject { detail }
+                    | RegistrationUnitOutcome::RegisterFailed { detail } => detail,
+                    RegistrationUnitOutcome::Cap | RegistrationUnitOutcome::Registered { .. } => {
+                        &None
+                    }
+                };
+                if let Some(detail) = detail {
+                    outcome.push_str(" (");
+                    outcome.push_str(detail);
+                    outcome.push(')');
+                }
                 self.fold(&receipt);
-                Ok(seq)
+                let path_id = path_id.ok_or(CrawlRequestError::RegistrationNotCompleted {
+                    sequence: seq,
+                    outcome,
+                })?;
+                Ok((seq, path_id))
             }
             Err(abort) => Err(CrawlRequestError::Abort(abort)),
         }

@@ -51,6 +51,11 @@ def build_arbitrage_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--skip-discovery",
+        action="store_true",
+        help="Boot the path crawl without startup discovery; only operator add_path requests register paths.",
+    )
+    parser.add_argument(
         "--operator-socket",
         type=str,
         default=None,

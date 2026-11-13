@@ -143,7 +143,8 @@ impl PyCrawlSession {
     /// The path is a sequence of `PathStep`-shaped hops (`address`, `type`,
     /// `hash`); `directions` pins the per-hop `zero_for_one` values.
     ///
-    /// Returns the unit's submission sequence.
+    /// Returns `(submission sequence, engine path ID)`, or a typed error when
+    /// the unit completes without registering a path.
     ///
     /// # Errors
     ///
@@ -282,6 +283,13 @@ impl PyArbEngine {
         // the run, and the sticky materializer keeps answering it.
         degenbot_bot::fleet_intake::registration_intake()
             .map_err(crate::bot::engine::boot_refused)?;
+        let startup_discovery = config
+            .cast::<PyDict>()
+            .map_err(|_| PyValueError::new_err("begin_crawl: the crawl config must be a dict"))?
+            .get_item("startup_discovery")?
+            .map(|value| value.extract::<bool>())
+            .transpose()?
+            .unwrap_or(true);
         let (mut parsed, oracle) = crawl_config_from_python(py, config)?;
         parsed.oracle = oracle.map(|oracle| Arc::new(oracle) as Arc<dyn BatchPolicyOracle>);
         // The tick-map arm is the bot's snapshot SLOT, not a handle: the crawl
@@ -298,6 +306,7 @@ impl PyArbEngine {
             config: parsed,
             receipts: Some(tx),
             snapshot,
+            startup_discovery,
         };
         let driver: Arc<EngineDriver> = Arc::clone(self.session.driver());
         let controller = driver

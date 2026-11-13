@@ -61,6 +61,7 @@ async def main() -> None:
         cfg = ArbitrageConfig.build(
             live=not dry_run,
             permutation=args.permutation,
+            startup_discovery=not args.skip_discovery,
             rpc=RpcCascadeOverrides(node=args.node),
         )
     except ValueError as exc:
@@ -87,8 +88,12 @@ async def main() -> None:
                     if op == "add_path":
                         steps = [step_from_wire(s) for s in payload["steps"]]
                         directions = payload.get("directions")
-                        await session.enqueue_path(steps, directions=directions)
-                        return {"detail": f"enqueued {len(steps)}-hop path"}
+                        sequence, path_id = await session.enqueue_path(steps, directions=directions)
+                        return {
+                            "detail": f"enqueued {len(steps)}-hop path",
+                            "sequence": sequence,
+                            "path_id": path_id,
+                        }
                     if op == "discover":
                         bound = payload.get("bound")
                         n = await session.trigger_discovery(bound=bound)

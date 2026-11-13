@@ -593,8 +593,8 @@ class Session:
         self,
         path_steps: Any,
         directions: list[bool] | None = None,
-    ) -> None:
-        """Add ONE specific path at any time (the operator surface).
+    ) -> tuple[int, int]:
+        """Add ONE specific path and return its submission sequence and engine path ID.
 
         Delegates to the engine's booted crawl session (parked on the
         registration-owned construction context); ``path_steps`` + optional
@@ -618,7 +618,7 @@ class Session:
                 "(injected/fake run, or the crawl is not booted)"
             )
             raise RuntimeError(msg)
-        await session.enqueue_path(path_steps, directions)
+        return await session.enqueue_path(path_steps, directions)
 
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
         """Trigger a bounded one-shot discovery sweep (on-demand trigger).
