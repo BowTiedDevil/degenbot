@@ -112,8 +112,10 @@ just py python scripts/executor_three_hop_matrix.py report \
 Registration is not simulation coverage: live pools may have no profitable
 input. `probe` supplies a small fixed input, quotes through the canonical V3/V4
 quoters, and runs each path through the session's dedicated execution-probe
-executor. `InsufficientProfit` is an executed economic outcome; `encode-failed`
-is a clean refusal. Assembly misses and exceptions fail the report. Any
+executor. `InsufficientProfit` is an executed economic outcome; `encode-failed` is a
+clean encoder refusal and `insolvent-zero-capital` is the capital policy's typed
+answer (the row keeps its `zero_capital` asset/required/available object).
+Assembly misses and exceptions fail the report. Any
 `Submitted path` record fails the report. Never add `--live`: the probe
 executor has no submit lane at all (no signer, nonce lease, relay, or
 broadcast), and executor-code injection is what makes the injected runtime
@@ -122,9 +124,10 @@ not relax simulation checks.
 
 The probe answer is the session's typed `ProbeReport`, projected onto the wire
 by `execution_probe_response`: each row carries the `capital` posture the call
-ran under and a `planning` summary (execution target, native value, calldata
-length) whenever the production encoder composed a row, so the report can tell
-an executed plan from a sim that never got that far. There is no submission
+ran under, the typed `zero_capital` deficit when the stream was refused for want
+of entry capital, and a `planning` summary (execution target, native value,
+calldata length) whenever the production encoder composed a row, so the report
+can tell an executed plan from a sim that never got that far. There is no submission
 record to look for — the retired shared-drain probe entry (and its dry-run skip
 record) is gone.
 
@@ -134,7 +137,9 @@ WBTC, and PoolManager claims (owner gas funding and injected code remain). The
 other two modes are `--capital self_fund` (the default, the executor's own
 capital with the self-funded encoding) and `--capital production` (the account's
 real balances, no capital override). A losing WETH cycle is then a typed
-planning refusal, never a validator panic. The deterministic
+capital-policy refusal — `bucket: "insolvent-zero-capital"` beside the deficit's
+`asset`/`required`/`available` — never a validator panic and never an
+`encode-failed` label. The deterministic
 `full_three_hop_zero_balance_matrix_executes_without_token_funding` test proves
 all 27 profitable shapes without minting any path-token capital.
 
