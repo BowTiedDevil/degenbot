@@ -221,8 +221,19 @@ pub struct EncodeOptions {
     /// If `true`, use `V4_BATCH` instead of individual `V4_SWAP_COMPACT`/`_DYNAMIC`
     /// for pure-V4 paths (single PM extcall).
     pub use_v4_batch: bool,
-    /// Explicit zero-capital execution probe. Only this stance applies the
-    /// losing-WETH-cycle solvency refusal; production encoding is unchanged.
+    /// Explicit zero-capital execution probe: the executor holds **no** token
+    /// balance when the stream starts, so every input must come from the path's
+    /// own credit graph ([`InitialCapital::Zero`]).
+    ///
+    /// This bool is the caller-facing spelling of the ledger's
+    /// [`InitialCapital`] policy ([`Self::initial_capital`]); the policy is
+    /// evaluated ONCE inside the Plan's
+    /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] pass, which
+    /// returns a typed
+    /// [`InsolventZeroCapital`][crate::grammar_ledger::InsolventZeroCapital]
+    /// deficit instead of a family-specific refusal. It never changes the
+    /// bytes: a stream the policy finds solvent encodes exactly what production
+    /// encodes. Production encoding is unchanged.
     pub zero_balance: bool,
     /// Declared origin of the stream's entry (seed) capital (ADR-029 D1).
     /// Branched IN THE STREAM only by the families whose dispatch row declares
@@ -236,6 +247,20 @@ pub struct EncodeOptions {
     /// Whether/how a builder bribe is paid (ADR-029 D1/Q3). Not yet honored by
     /// the encoder; wiring lands in a subsequent increment.
     pub bribe: crate::grammar_ledger::Bribe,
+}
+
+impl EncodeOptions {
+    /// The stream's [`InitialCapital`] policy — the internal mapping the
+    /// zero-capital probe stance is evaluated under.
+    ///
+    /// [`InitialCapital::Held`] (production) grants a `SelfFund` seed; the
+    /// zero-capital probe ([`Self::zero_balance`]) becomes
+    /// [`InitialCapital::Zero`], which withholds the seed so the ledger's one
+    /// evaluation can answer what the path's own credit funds.
+    #[must_use]
+    pub const fn initial_capital(&self) -> crate::grammar_ledger::InitialCapital {
+        crate::grammar_ledger::InitialCapital::from_zero_balance(self.zero_balance)
+    }
 }
 
 /// Resolve the per-path output axes (ADR-029 D1) from [`EncodeOptions`],

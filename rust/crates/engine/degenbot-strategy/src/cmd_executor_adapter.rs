@@ -124,7 +124,11 @@ impl CmdExecutorAdapter {
         };
         let commands = match derived {
             Derive::Encoded(commands) => commands,
-            Derive::Declined => {
+            // A routine skip: no producer for this shape, OR a typed
+            // zero-capital deficit (the stream cannot be funded without entry
+            // capital — the same outcome the retired family-specific pre-checks
+            // produced, now carrying the ledger's deficit).
+            Derive::Declined | Derive::InsolventZeroCapital(_) => {
                 return CmdExecutorOutcome::Declined(CmdExecutorDecline::CommandStream)
             }
             Derive::EncodingFailed(error) => {

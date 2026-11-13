@@ -82,6 +82,15 @@ impl ReleaseEncoding for CmdStreamV1Encoding {
                     "the command grammar has no producer for this path",
                 ));
             }
+            // A zero-capital deficit is the probe's typed answer, not a bug:
+            // the stream cannot be funded without entry capital, so this
+            // release (which can only encode) declines the candidate.
+            Derive::InsolventZeroCapital(deficit) => {
+                return Err(ComposeError::unsupported(format!(
+                    "the path is insolvent at zero initial capital: {} requires {} but only {} is path-funded",
+                    deficit.asset, deficit.required, deficit.available
+                )));
+            }
             Derive::EncodingFailed(error) => {
                 return Err(ComposeError::encode(format!(
                     "command stream emission failed: {error}"

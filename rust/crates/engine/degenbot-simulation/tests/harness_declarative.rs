@@ -607,6 +607,27 @@ fn full_three_hop_zero_balance_matrix_executes_without_token_funding() {
                 degenbot_executor::composers::EncodeOptions::default(),
             )
             .unwrap_or_else(|e| panic!("[{}] zero-balance encode: {e}", c.name));
+        // The zero-capital STANCE (`InitialCapital::Zero`, the ledger's one
+        // solvency evaluation) must find every profitable row solvent and emit
+        // byte-identical commands: the stance never changes a valid stream, it
+        // only classifies the ones the path's own credit cannot fund.
+        let zero_capital = h
+            .encode_path_with_consumed(
+                &path,
+                optimal_input,
+                &outputs,
+                &consumed,
+                degenbot_executor::composers::EncodeOptions {
+                    zero_balance: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|e| panic!("[{}] zero-capital stance declined: {e}", c.name));
+        assert_eq!(
+            zero_capital, payload,
+            "{}: the zero-capital stance changed a valid stream's bytes",
+            c.name
+        );
         let before =
             i128::try_from(h.balance_of(h.weth, h.executor).unwrap().to::<u128>()).unwrap();
         let outcome = h

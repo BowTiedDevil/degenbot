@@ -259,6 +259,33 @@ pub enum PlanStep {
     /// a stream precondition the validator credits so SelfFund families' flash
     /// repayments validate. The encoder emits nothing for it.
     SelfFund { currency: Address, amount: u128 },
+    /// A **negative terminal capture** — the stream's terminal hop returned
+    /// `amount` less than the entry it must repay, so the path needs `amount` of
+    /// `currency` that its own credit graph never generated.
+    ///
+    /// A capture is signed, and only its positive half is a command
+    /// (`V4_TAKE_COMPACT(→SELF, profit)` — a `uint96` amount). The negative half
+    /// has no wire form, so this step is **ledger-only** and emits no bytes: it
+    /// is the second half of [`PlanStep::SelfFund`]'s idea, declaring the
+    /// capital the stream needs rather than the capital the executor holds.
+    ///
+    /// It sits at the HEAD of the Plan because it is a stream-level capital
+    /// declaration, not an execution event — the placement `SelfFund` already
+    /// uses — so the ledger sees it before any op it would have funded and
+    /// reports the shortfall at its source instead of as a downstream take's
+    /// insufficient credit.
+    ///
+    /// The projection is
+    /// [`LedgerOp::CaptureShortfall`](crate::grammar_ledger::LedgerOp::CaptureShortfall):
+    /// no ledger delta (the money is missing, not moved). The stream's ONE
+    /// capital-policy evaluation turns it into the typed
+    /// [`InsolventZeroCapital`](crate::grammar_ledger::InsolventZeroCapital)
+    /// deficit under `InitialCapital::Zero`, and into a routine decline under
+    /// `InitialCapital::Held` — where not even a self-funded stream may take a
+    /// capture out of the executor's balance without declaring it as a
+    /// `SelfFund` seed. [`plan_to_bytes`] refuses the step outright, so no Plan
+    /// carrying one can reach the wire.
+    CaptureShortfall { currency: Address, amount: u128 },
     // ── V4: the PoolManager container + delta ops. ──
     /// A `V4_UNLOCK(inner)` — the PM callback scope. `inner` runs inside the
     /// unlock; at its end the master V4 invariant fires: every touched PM delta
@@ -604,6 +631,15 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                         amount: *amount,
                     });
                 }
+                // A negative terminal capture: no ledger delta (the money is
+                // missing, not moved) — the *capital policy* is what answers
+                // it, so the op exists for `validate_capital` alone.
+                PlanStep::CaptureShortfall { currency, amount } => {
+                    ops.push(LedgerOp::CaptureShortfall {
+                        currency: *currency,
+                        amount: *amount,
+                    });
+                }
                 // V4 container: recurse the unlock's inner Plan, then emit
                 // `V4UnlockEnd` (the net-zero check fires there).
                 PlanStep::V4Unlock { inner, .. } => {
@@ -843,6 +879,15 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Result<Vec<u8>, EncoderE
                 // Self-fund and native transfer are stream preconditions /
                 // ledger-only moves, not on-chain commands — no byte.
                 PlanStep::SelfFund { .. } | PlanStep::NativeTransfer { .. } => {}
+                // A negative terminal capture has NO wire form: the only capture
+                // the stream can express is a positive `uint96` profit take.
+                // Refuse it rather than dropping it — silently emitting the swap
+                // legs without the take would produce a stream that secretly
+                // spends the executor's balance, i.e. exactly the invalid
+                // production bytes this step exists to prevent.
+                PlanStep::CaptureShortfall { amount, .. } => {
+                    return Err(EncoderError::NegativeTerminalCapture(*amount));
+                }
                 PlanStep::V2SwapDirect {
                     pool_idx,
                     zfo,

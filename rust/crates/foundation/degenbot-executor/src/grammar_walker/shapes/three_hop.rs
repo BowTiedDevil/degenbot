@@ -156,6 +156,11 @@ pub(crate) fn derive(
                     out_amount: out_b,
                 },
             ];
+            // Set when the terminal capture is NEGATIVE: the stream needs that
+            // much entry capital it never earned. Declared at the head of the
+            // Plan below (see `PlanStep::CaptureShortfall`) instead of the whole
+            // family declining on the take's `checked_sub`.
+            let mut capture_shortfall: Option<u128> = None;
             let v4_inner: Plan = match terminal_form {
                 TerminalForm::DirectHandoff => {
                     let mut inner = v4_unlock_inner_start;
@@ -204,22 +209,35 @@ pub(crate) fn derive(
                             repays_flash: Some(fa.pool_address),
                         });
                     }
-                    inner.push(PlanStep::V4TakeCompact {
-                        currency_idx: if self_funded {
-                            at.add(fc.out_currency).ok()?
-                        } else {
-                            SENTINEL_WETH
-                        },
-                        currency_addr: if self_funded { fc.out_currency } else { weth },
-                        recipient_idx: SENTINEL_SELF,
-                        amount: if self_funded {
-                            out_c
-                        } else {
-                            out_c.checked_sub(optimal_input)?
-                        },
-                        seeds_pool: None,
-                        repays_flash: None,
-                    });
+                    // The capture is the profit ABOVE the entry — or, for a
+                    // self-funded stream, the whole terminal output (the entry
+                    // is the executor's own, already declared by the `SelfFund`
+                    // seed). A losing in-path-flash capture has no positive take:
+                    // it is recorded as the stream's declared shortfall instead.
+                    let capture = if self_funded {
+                        mechanics::TerminalCapture::Profit(out_c)
+                    } else {
+                        mechanics::terminal_capture(optimal_input, out_c)
+                    };
+                    match capture {
+                        mechanics::TerminalCapture::Profit(amount) => {
+                            inner.push(PlanStep::V4TakeCompact {
+                                currency_idx: if self_funded {
+                                    at.add(fc.out_currency).ok()?
+                                } else {
+                                    SENTINEL_WETH
+                                },
+                                currency_addr: if self_funded { fc.out_currency } else { weth },
+                                recipient_idx: SENTINEL_SELF,
+                                amount,
+                                seeds_pool: None,
+                                repays_flash: None,
+                            });
+                        }
+                        mechanics::TerminalCapture::Shortfall(shortfall) => {
+                            capture_shortfall = Some(shortfall);
+                        }
+                    }
                     inner.push(PlanStep::V4SettleAll);
                     inner
                 }
@@ -271,6 +289,7 @@ pub(crate) fn derive(
             if terminal_form == TerminalForm::UnlockInternal {
                 plan.insert(0, mechanics::self_fund(fa.in_currency, optimal_input));
             }
+            mechanics::declare_capture_shortfall(&mut plan, weth, capture_shortfall);
             Some((plan, at))
         } else {
             None
@@ -1368,7 +1387,7 @@ fn rule_walk_v2v3_v4_mixed(
             )?;
             let b_step =
                 mechanics::v2_swap_direct(&mut at, fb, c_swap_in, fwd_b, pm_idx, None, false)?;
-            let inner: Plan = vec![
+            let mut inner: Plan = vec![
                 PlanStep::V4Swap {
                     c0_idx: c0,
                     c1_idx: c1,
@@ -1400,20 +1419,26 @@ fn rule_walk_v2v3_v4_mixed(
                     currency_addr: fwd_b,
                     amount: c_swap_in,
                 },
-                PlanStep::V4TakeCompact {
+            ];
+            let mut plan: Plan = Vec::new();
+            match mechanics::terminal_capture(optimal_input, out_c) {
+                mechanics::TerminalCapture::Profit(profit) => inner.push(PlanStep::V4TakeCompact {
                     currency_idx: SENTINEL_WETH,
                     currency_addr: weth,
                     recipient_idx: SENTINEL_SELF,
-                    amount: out_c.checked_sub(optimal_input)?,
+                    amount: profit,
                     seeds_pool: None,
                     repays_flash: None,
-                },
-                PlanStep::V4SettleAll,
-            ];
-            let plan: Plan = vec![PlanStep::V4Unlock {
+                }),
+                mechanics::TerminalCapture::Shortfall(shortfall) => {
+                    mechanics::declare_capture_shortfall(&mut plan, weth, Some(shortfall));
+                }
+            }
+            inner.push(PlanStep::V4SettleAll);
+            plan.push(PlanStep::V4Unlock {
                 inner,
                 pool_manager_idx: pm_idx,
-            }];
+            });
             Some((plan, at))
         }
         // ── v2v4v4: V4Unlock[V4Sync(fwd_a), V4Swap(b), V4Swap(c),
@@ -1450,7 +1475,7 @@ fn rule_walk_v2v3_v4_mixed(
             let v2a = at.add(fa.pool_address).ok()?;
             let a_step =
                 mechanics::v2_swap_direct(&mut at, fa, out_a, forward_a_cur, pm_idx, None, false)?;
-            let inner: Plan = vec![
+            let mut inner: Plan = vec![
                 PlanStep::V4Sync {
                     currency_idx: forward_a,
                     currency_addr: forward_a_cur,
@@ -1494,20 +1519,26 @@ fn rule_walk_v2v3_v4_mixed(
                     currency_addr: forward_a_cur,
                     amount: b_swap_in,
                 },
-                PlanStep::V4TakeCompact {
+            ];
+            let mut plan: Plan = Vec::new();
+            match mechanics::terminal_capture(optimal_input, out_c) {
+                mechanics::TerminalCapture::Profit(profit) => inner.push(PlanStep::V4TakeCompact {
                     currency_idx: SENTINEL_WETH,
                     currency_addr: weth,
                     recipient_idx: SENTINEL_SELF,
-                    amount: out_c.checked_sub(optimal_input)?,
+                    amount: profit,
                     seeds_pool: None,
                     repays_flash: None,
-                },
-                PlanStep::V4SettleAll,
-            ];
-            let plan: Plan = vec![PlanStep::V4Unlock {
+                }),
+                mechanics::TerminalCapture::Shortfall(shortfall) => {
+                    mechanics::declare_capture_shortfall(&mut plan, weth, Some(shortfall));
+                }
+            }
+            inner.push(PlanStep::V4SettleAll);
+            plan.push(PlanStep::V4Unlock {
                 inner,
                 pool_manager_idx: pm_idx,
-            }];
+            });
             Some((plan, at))
         }
         // ── v2v3v4: V4Sync(fwd_b) + fb-flash[Unlock[V4Settle, V4Swap(c),
@@ -1543,6 +1574,8 @@ fn rule_walk_v2v3_v4_mixed(
             let c0 = at.add(fc.currency0_address).ok()?;
             let c1 = at.add(fc.currency1_address).ok()?;
             let forward_b = at.add(fwd_b).ok()?;
+            // Set when the (non-self-funded) terminal capture is NEGATIVE.
+            let mut capture_shortfall: Option<u128> = None;
             let mut v4_inner: Plan = vec![
                 PlanStep::V4Settle {
                     currency_addr: fwd_b,
@@ -1572,24 +1605,31 @@ fn rule_walk_v2v3_v4_mixed(
                     repays_flash: None,
                 });
             } else {
-                v4_inner.extend([
-                    PlanStep::V4TakeCompact {
-                        currency_idx: SENTINEL_WETH,
-                        currency_addr: weth,
-                        recipient_idx: v2a,
-                        amount: optimal_input,
-                        seeds_pool: Some(fa.pool_address),
-                        repays_flash: None,
-                    },
-                    PlanStep::V4TakeCompact {
-                        currency_idx: SENTINEL_WETH,
-                        currency_addr: weth,
-                        recipient_idx: SENTINEL_SELF,
-                        amount: out_c.checked_sub(optimal_input)?,
-                        seeds_pool: None,
-                        repays_flash: None,
-                    },
-                ]);
+                v4_inner.push(PlanStep::V4TakeCompact {
+                    currency_idx: SENTINEL_WETH,
+                    currency_addr: weth,
+                    recipient_idx: v2a,
+                    amount: optimal_input,
+                    seeds_pool: Some(fa.pool_address),
+                    repays_flash: None,
+                });
+                // A losing capture has no positive take: declare the residual at
+                // the head of the Plan instead of declining the family.
+                match mechanics::terminal_capture(optimal_input, out_c) {
+                    mechanics::TerminalCapture::Profit(profit) => {
+                        v4_inner.push(PlanStep::V4TakeCompact {
+                            currency_idx: SENTINEL_WETH,
+                            currency_addr: weth,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: profit,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        });
+                    }
+                    mechanics::TerminalCapture::Shortfall(shortfall) => {
+                        capture_shortfall = Some(shortfall);
+                    }
+                }
             }
             v4_inner.extend([
                 PlanStep::V4Sync {
@@ -1646,6 +1686,7 @@ fn rule_walk_v2v3_v4_mixed(
                     cb,
                 )?,
             ]);
+            mechanics::declare_capture_shortfall(&mut plan, weth, capture_shortfall);
             Some((plan, at))
         }
         // ── v3v2v4: SelfFund + fa-flash[v2-flash(auto_repay=true)[Unlock[

@@ -497,6 +497,45 @@ mod mechanics {
         PlanStep::SelfFund { currency, amount }
     }
 
+    /// The stream's **terminal capture** — the signed difference between the
+    /// terminal hop's output and the entry the stream must repay.
+    ///
+    /// A capture is signed and only its positive half is a command: the profit
+    /// take (`V4_TAKE_COMPACT(→SELF, profit)`, a `uint96` amount). The negative
+    /// half is a **capital requirement** the path never earned, which the Plan
+    /// records with [`declare_capture_shortfall`] instead of declining the
+    /// family on an arithmetic underflow — the deficit the zero-capital policy
+    /// has to report is exactly that number, so it must exist in the Plan.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum TerminalCapture {
+        /// The terminal hop returned MORE than the entry: the profit take.
+        Profit(u128),
+        /// The terminal hop returned LESS than the entry: the unearned residual.
+        Shortfall(u128),
+    }
+
+    /// Split the terminal capture of a stream whose entry is `entry` and whose
+    /// terminal hop returned `out`. Total for every `(entry, out)`: no
+    /// subtraction can underflow, so a losing capture is a value rather than a
+    /// `?`-decline.
+    pub const fn terminal_capture(entry: u128, out: u128) -> TerminalCapture {
+        match out.checked_sub(entry) {
+            Some(profit) => TerminalCapture::Profit(profit),
+            None => TerminalCapture::Shortfall(out.abs_diff(entry)),
+        }
+    }
+
+    /// Record a negative terminal capture at the HEAD of `plan` — the
+    /// ledger-only [`PlanStep::CaptureShortfall`], which declares the capital
+    /// the stream needs (the mirror of [`self_fund`], which declares the capital
+    /// the executor holds). Callers pass `None` for a positive capture, where the
+    /// profit take goes in the take's execution slot instead.
+    pub fn declare_capture_shortfall(plan: &mut Plan, currency: Address, shortfall: Option<u128>) {
+        if let Some(amount) = shortfall {
+            plan.insert(0, PlanStep::CaptureShortfall { currency, amount });
+        }
+    }
+
     /// A batched V4 swap (the `use_v4_batch` optimization) over the hop —
     /// `entries` carry per-swap currency/fee/tick_spacing; the pool-manager
     /// index is implicit.

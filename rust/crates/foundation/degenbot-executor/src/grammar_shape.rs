@@ -7,7 +7,8 @@
 //! enc_preamble pipeline), then runs the
 //! [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate →
 //! [`plan_to_bytes`]. all-V2 any-N routes through [`derive_all_v2`].
-//! Returns `None` on decline or gate rejection.
+//! Returns `None` on a routine decline (a typed zero-capital deficit included,
+//! see [`Derive::InsolventZeroCapital`]); a validator `Reject` is fatal.
 //!
 //! This is the **churning** half — the dispatch table + validator gate live
 //! here, while the deep, stable walker (`Plan → LedgerOp`, `Plan → bytes`)
@@ -39,6 +40,10 @@ pub use crate::grammar_plan::{
     plan_to_bytes, plan_to_ledger_ops, Axis, AxisSupport, Bribe, FundingSource, Plan, PlanStep,
     ProfitCapture, Prot, ShapeClass, V4BatchSwap,
 };
+// The foundation-local capital policy + its typed deficit, re-exported beside
+// the shape surface so a consumer reads the derivation outcome
+// ([`Derive::InsolventZeroCapital`]) without reaching into the ledger module.
+pub use crate::grammar_ledger::{InitialCapital, InsolventZeroCapital};
 // Fast-forward helpers are pub(crate) in the walker — shared by the per-family
 // builders + the V4 scaffold.
 
@@ -204,7 +209,8 @@ pub(crate) type BuildPlan =
 /// into the full payload.
 ///
 /// The derivation outcome keeps routine declines and primitive encoding
-/// failures distinct from a would-be-bug validator reject (ADR-030).
+/// failures distinct from a would-be-bug validator reject (ADR-030), and keeps
+/// a zero-capital deficit distinct from both (see [`Derive::InsolventZeroCapital`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Derive {
     /// The family encoded as executable command bytes.
@@ -216,6 +222,20 @@ pub enum Derive {
     Rejected(crate::grammar_ledger::ValidationError),
     /// A primitive could not represent the validated Plan on the command wire.
     EncodingFailed(crate::encoders::EncoderError),
+    /// A Plan was built and is structurally sound, but under the stream's
+    /// declared [`InitialCapital`][crate::grammar_ledger::InitialCapital]
+    /// policy it cannot be funded: the zero-capital stance asks the ledger
+    /// what the path's own credit graph covers, and the
+    /// [`InsolventZeroCapital`][crate::grammar_ledger::InsolventZeroCapital]
+    /// carries `asset` / `required` / `available` for the first uncovered
+    /// debit.
+    ///
+    /// Routine, not fatal: the deficit is the *answer* to a zero-capital probe,
+    /// so it maps onto `None` at the public `Option` seam exactly like a
+    /// `Declined`. It is unreachable under the production
+    /// [`InitialCapital::Held`][crate::grammar_ledger::InitialCapital::Held]
+    /// stance, so production rejection classification is untouched.
+    InsolventZeroCapital(crate::grammar_ledger::InsolventZeroCapital),
 }
 
 /// Map a [`Derive`] onto the public `Option` seam: `Declined` and
@@ -229,7 +249,12 @@ pub enum Derive {
 pub(crate) fn derive_option(d: Derive) -> Option<Vec<u8>> {
     match d {
         Derive::Encoded(bytes) => Some(bytes),
-        Derive::Declined | Derive::EncodingFailed(_) => None,
+        // A zero-capital deficit has no bytes to offer and is not a bug: the
+        // `Option` seam declines it like a routine no-path. (The typed outcome
+        // stays available through the `*_detailed` entries for the probe.)
+        Derive::Declined
+        | Derive::EncodingFailed(_)
+        | Derive::InsolventZeroCapital(_) => None,
         Derive::Rejected(e) => panic!(
             "executor derivation REJECT (a latent bug, ADR-030): the encoder wrote a Plan the ledger validator rejected: {e:?}"
         ),
@@ -270,8 +295,9 @@ fn build_plan_bytes(path: &PathInfo, build: BuildPlan, inputs: &ComposerInputs<'
 /// the single pipeline + validator gate — `build_walk` → the
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] → `plan_to_bytes`
 /// (A3 routes it through the shared [`derive_shape_detailed`] dispatch).
-/// Returns `None` on a routine decline; a validator `Reject` is **fatal**
-/// (panics, ADR-030). See [`derive_all_v2_detailed`] for the detailed outcome.
+/// Returns `None` on a routine decline (a typed zero-capital deficit included);
+/// a validator `Reject` is **fatal** (panics, ADR-030). See
+/// [`derive_all_v2_detailed`] for the detailed outcome.
 #[must_use]
 pub fn derive_all_v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     derive_option(derive_all_v2_detailed(path, inputs))
@@ -301,8 +327,9 @@ fn prot_of(h: Option<&HopInfo>) -> Option<Prot> {
 
 /// Public entry: derive a family's command bytes through the single pipeline
 /// (`build_walk` → [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
-/// gate → `plan_to_bytes`) — the sole production producer. Returns `None` on a routine decline (an unsupported
-/// family → the strategy skips); a validator `Reject` is **fatal** (panics,
+/// gate → `plan_to_bytes`) — the sole production producer. Returns `None` on a
+/// routine decline (an unsupported family, or a typed zero-capital deficit — the
+/// strategy skips either way); a validator `Reject` is **fatal** (panics,
 /// ADR-030). See [`derive_shape_detailed`] for the detailed outcome.
 #[must_use]
 pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
@@ -310,10 +337,24 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 }
 
 /// The detailed form of [`derive_shape`] (ADR-030): routine `Declined` and
-/// `EncodingFailed` outcomes remain distinct from a would-be-bug `Rejected`.
+/// `EncodingFailed` outcomes remain distinct from a would-be-bug `Rejected`,
+/// and the zero-capital stance adds [`Derive::InsolventZeroCapital`].
 /// Routed through [`crate::grammar_walker::build_walk`] (the single
 /// facts → derive_plan → enc_preamble pipeline) then the shared
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate.
+///
+/// **One capital evaluation.** The Plan is built once and its projected
+/// [`LedgerOp`][crate::grammar_ledger::LedgerOp] trace is evaluated through
+/// [`LedgerValidator::validate_capital`][crate::grammar_ledger::LedgerValidator::validate_capital]
+/// under the stream's [`InitialCapital`][crate::grammar_ledger::InitialCapital]
+/// policy ([`EncodeOptions::zero_balance`][crate::composers::EncodeOptions::zero_balance]
+/// spells the zero-capital stance). There is deliberately no family-, currency-,
+/// or closure-specific pre-check: the validator's ledger already distinguishes
+/// an external `SelfFund` seed from path-generated credit, so the same one
+/// evaluation answers `Declined` / `Rejected` / `InsolventZeroCapital` /
+/// `Encoded` for every shape — including a Plan that declares a negative
+/// terminal capture ([`PlanStep::CaptureShortfall`]), which the held stance
+/// declines and the zero stance types.
 #[must_use]
 pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Derive {
     let key = (
@@ -324,28 +365,28 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
     if !crate::grammar_walker::recognized_key(key) {
         return Derive::Declined;
     }
-    if inputs.opts.zero_balance
-        && inputs
-            .hop_outputs
-            .last()
-            .is_some_and(|out| *out < inputs.optimal_input)
-        && crate::grammar_walker::facts_for(path, inputs)
-            .and_then(|facts| facts.last().map(|hop| hop.out_currency))
-            == Some(inputs.weth_address)
-    {
-        // A zero-capital WETH cycle cannot finish below its entry repayment:
-        // every flash/V4 debt must still be settled inside the transaction.
-        // Refuse at planning time instead of panicking in the validator or
-        // reverting opaquely in a pool callback.
-        return Derive::Declined;
-    }
     let Some((preamble, plan, at)) = crate::grammar_walker::build_walk(path, inputs) else {
         return Derive::Declined;
     };
     let ops = plan_to_ledger_ops(&plan);
-    let mut v = crate::grammar_ledger::LedgerValidator::default();
-    if let Err(e) = v.validate_full(&ops) {
-        return Derive::Rejected(e);
+    let mut v = crate::grammar_ledger::LedgerValidator::default()
+        .with_initial_capital(inputs.opts.initial_capital());
+    match v.validate_capital(&ops) {
+        Ok(()) => {}
+        Err(crate::grammar_ledger::CapitalError::InsolventZeroCapital(deficit)) => {
+            return Derive::InsolventZeroCapital(deficit);
+        }
+        // The Plan declares a capture the path never earned and nothing
+        // declares the capital that would pay it: the family has no stream in
+        // this stance (the self-funded Plan is the one that declares it, and it
+        // encodes). Routine, so it lands on `Declined` — never on `Rejected`,
+        // which is the fatal "the encoder wrote a Plan the ledger refused" arm.
+        Err(crate::grammar_ledger::CapitalError::UndeclaredCapture { .. }) => {
+            return Derive::Declined;
+        }
+        Err(crate::grammar_ledger::CapitalError::Rejected(error)) => {
+            return Derive::Rejected(error);
+        }
     }
     let encoded = match plan_to_bytes(&plan, &at) {
         Ok(encoded) => encoded,
@@ -1060,15 +1101,15 @@ mod tests {
             .collect()
     }
 
-    // Gate proof: an InPathFlash all-V2 stream whose terminal output
-    // cannot cover the flash repayment is REJECTED by the LedgerValidator
-    // (the flash-repay `Erc20Transfer` would over-debit `erc20[weth]`, so
-    // credit-before-debit fires). The retired hand-written speedrail emitted
-    // this stream unvalidated (and the evm2 harness's 2× WETH buffer let it
-    // "execute but lose"); the gate now makes it unrepresentable — which is the
-    // entire point. The SAME losing stream under SelfFund still validates
-    // (no flash debt to repay — the executor eats the loss from held capital,
-    // which is what a negative-control delta assert should measure).
+    // Gate proof: an InPathFlash all-V2 stream whose terminal output cannot
+    // cover the flash repayment over-debits `erc20[weth]`, so the ledger's
+    // credit-before-debit rule fires. Under the zero-capital stance that
+    // shortfall is the typed `InsolventZeroCapital` deficit (asset / required /
+    // available) — the ONE `InitialCapital` evaluation, with no all-V2-specific
+    // pre-check. Under the production `Held` stance the same plan is an
+    // ordinary `Rejected` (ADR-030, fatal). The SAME losing stream under
+    // `SelfFund` still validates and encodes: the executor funds the entry and
+    // eats the loss, which is what a negative-control delta assert measures.
     #[test]
     fn all_v2_gate_rejects_unprofitable_inpathflash_stream() {
         let path = PathInfo::new(all_v2_chain_hops(2));
@@ -1092,10 +1133,26 @@ mod tests {
                 },
             };
             if flabel == "InPathFlash" {
-                assert!(
-                    matches!(derive_all_v2_detailed(&path, &inputs), Derive::Declined),
-                    "an insolvent zero-balance flash must be a typed planning refusal"
-                );
+                // The zero-capital stance is now answered by the ledger's ONE
+                // `InitialCapital` evaluation: the flash repayment over-debits
+                // `erc20[weth]`, so the stream reports the typed deficit it
+                // cannot fund (asset / required / available) instead of any
+                // family-specific pre-check declining it.
+                match derive_all_v2_detailed(&path, &inputs) {
+                    Derive::InsolventZeroCapital(deficit) => {
+                        // The all-V2 chain closes on its terminal hop's output
+                        // currency — the asset the entry repayment must return.
+                        let HopInfo::V2(terminal) = &path.hops[1] else {
+                            panic!("2-hop all-V2 fixture");
+                        };
+                        assert_eq!(deficit.asset, terminal.token1_address);
+                        assert!(
+                            deficit.required > deficit.available,
+                            "a deficit must be a real shortfall: {deficit:?}"
+                        );
+                    }
+                    other => panic!("expected a typed zero-capital deficit, got {other:?}"),
+                }
                 assert!(derive_all_v2(&path, &inputs).is_none());
                 continue;
             }

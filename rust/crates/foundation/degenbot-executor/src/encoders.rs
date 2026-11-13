@@ -151,6 +151,19 @@ pub enum EncoderError {
     AddressTableFull,
     /// A `V4_BATCH` exceeded the contract's 8-swap cap.
     TooManyV4BatchSwaps(usize),
+    /// A **negative terminal capture** reached the byte encoder.
+    ///
+    /// A capture exists on the wire only as a profit take — a `uint96`
+    /// amount — so it has no negative form. The Plan records a shortfall as the
+    /// ledger-only
+    /// [`PlanStep::CaptureShortfall`][crate::grammar_plan::PlanStep::CaptureShortfall]
+    /// instead, and the stream's capital-policy evaluation
+    /// ([`LedgerValidator::validate_capital`][crate::grammar_ledger::LedgerValidator::validate_capital])
+    /// always answers such a Plan before the encoder is asked, so this error
+    /// means a Plan skipped that gate. Refusing here is what makes "a shortfall
+    /// can never emit production bytes" a property of the encoder rather than a
+    /// convention its callers must remember.
+    NegativeTerminalCapture(u128),
 }
 
 impl std::fmt::Display for EncoderError {
@@ -167,6 +180,10 @@ impl std::fmt::Display for EncoderError {
             Self::TooManyV4BatchSwaps(n) => {
                 write!(f, "V4_BATCH max 8 swaps, got {n}")
             }
+            Self::NegativeTerminalCapture(n) => write!(
+                f,
+                "a negative terminal capture ({n} of entry unearned) has no command encoding"
+            ),
         }
     }
 }

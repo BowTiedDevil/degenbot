@@ -17,9 +17,9 @@ pub(crate) fn derive(
     let n = facts.len();
     let optimal_input = inputs.optimal_input;
     let closing = facts[n - 1].out_currency;
-    if inputs.opts.zero_balance && inputs.hop_outputs[n - 1] < optimal_input {
-        return None;
-    }
+    // No zero-capital pre-check here: solvency is the LedgerValidator's ONE
+    // `InitialCapital` evaluation (a losing zero-capital chain surfaces as a
+    // typed `InsolventZeroCapital` deficit), never a per-family guard.
     let weth = inputs.weth_address;
 
     let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);

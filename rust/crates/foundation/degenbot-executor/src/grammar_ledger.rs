@@ -190,6 +190,117 @@ impl AxisSupport {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Initial capital (foundation-local policy): external seed vs path credit
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Where a stream's **entry (seed) capital** comes from, as the ledger sees it.
+///
+/// The one policy a built Plan's solvency is evaluated under, so no family and
+/// no currency carries its own pre-check: one Plan, one projected [`LedgerOp`]
+/// trace, one [`LedgerValidator`] evaluation.
+///
+/// The distinction the policy draws is the ledger's own: a
+/// [`LedgerOp::SelfFund`] is a **declared external seed assumption** (the
+/// executor already holds `currency` before the stream runs), while
+/// `Erc20Credit`, `V2Flash`/`V3Flash`, the take half of a `V4TakeCompact`, and a
+/// `SwapCalc` output are **path-generated credit** (the transaction itself
+/// creates it). In-path-flash seed accounting is the second kind: a plan may
+/// pre-fund a leading pool with an `Erc20Transfer` whose credit the path
+/// delivers, and a redundant `SelfFund` restating it must not turn that stream
+/// into a refusal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum InitialCapital {
+    /// External seed capital is available: a `SelfFund` seed names capital the
+    /// executor genuinely holds, so it credits [`Ledger::Erc20`] (the
+    /// production model — a losing self-funded stream executes to its economic
+    /// receipt and the loss is measured, not refused).
+    #[default]
+    Held,
+    /// The executor holds nothing before the stream starts: only
+    /// path-generated credit can fund a debit, and a `SelfFund` seed grants
+    /// nothing. A stream that still needs external capital is
+    /// [`InsolventZeroCapital`], a typed deficit — never a silent approval.
+    Zero,
+}
+
+impl InitialCapital {
+    /// The zero-capital probe stance's spelling ([`crate::composers::EncodeOptions::zero_balance`])
+    /// mapped onto the policy — the internal seam this core slice evaluates.
+    #[must_use]
+    pub const fn from_zero_balance(zero_balance: bool) -> Self {
+        if zero_balance {
+            Self::Zero
+        } else {
+            Self::Held
+        }
+    }
+
+    /// `true` for [`Self::Zero`] — the stance that withholds `SelfFund` seeds.
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        matches!(self, Self::Zero)
+    }
+}
+
+/// A **typed zero-capital deficit**: the stream needs `required` of `asset` at a
+/// point where the executor holds only `available` path-generated credit.
+///
+/// `required` is the amount the failing op demanded and `available` is the
+/// credit actually on hand, so a consumer can report *what is missing* rather
+/// than re-deriving the shortfall. Produced only under
+/// [`InitialCapital::Zero`]; an `InitialCapital::Held` evaluation keeps
+/// classifying a shortfall as an ordinary [`ValidationError`] (fatal under
+/// ADR-030).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct InsolventZeroCapital {
+    /// The currency the stream could not fund (native is
+    /// [`NATIVE_CURRENCY_ADDRESS`]).
+    pub asset: Address,
+    /// The amount the stream needed at the shortfall.
+    pub required: u128,
+    /// The path-generated credit available at that point.
+    pub available: u128,
+}
+
+/// Why a capital-policy evaluation stopped.
+///
+/// [`CapitalError::Rejected`] keeps ADR-030's fatality (a Plan the validator
+/// rejects is a latent bug); [`CapitalError::InsolventZeroCapital`] is the
+/// routine, typed answer to "can this stream run with no entry capital?".
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CapitalError {
+    /// The stream needs external seed capital the policy does not grant.
+    InsolventZeroCapital(InsolventZeroCapital),
+    /// The Plan declares a **negative terminal capture** — the stream needs
+    /// `required` of `currency` its own credit graph never generated — and is
+    /// evaluated under [`InitialCapital::Held`].
+    ///
+    /// Held capital pays for the residual, but paying for it is exactly what a
+    /// [`FundingSource::SelfFund`] stream declares up front: it prepends a
+    /// `SelfFund` seed and captures the full terminal output, which is how a
+    /// losing stream reaches its economic receipt on-chain. An in-path-flash
+    /// Plan declares no such seed, so taking the residual out of the executor's
+    /// balance would be a stream that spends capital it never declared — it
+    /// would encode today's Declined families into a silently under-declared
+    /// stream. The held stance therefore declines the family, exactly as
+    /// production does.
+    ///
+    /// Routine and non-fatal, like [`Self::InsolventZeroCapital`] and unlike
+    /// [`Self::Rejected`]: the same Plan under
+    /// [`InitialCapital::Zero`] is the typed deficit that names the shortfall,
+    /// and under the self-funded Plan it encodes.
+    UndeclaredCapture {
+        /// The currency the stream could not fund (native is
+        /// [`NATIVE_CURRENCY_ADDRESS`]).
+        currency: Address,
+        /// The uncovered residual the path never earned.
+        required: u128,
+    },
+    /// An ordinary ledger invariant violation (fatal, ADR-030).
+    Rejected(ValidationError),
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Ledgers (ADR-029 D2 — an open set, never a closed enum)
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -339,6 +450,19 @@ pub enum LedgerOp {
     /// executor's own balance rather than a flash). Not a command; a stream
     /// precondition modeled so the SelfFund families' repayments validate.
     SelfFund { currency: Address, amount: u128 },
+    /// A **negative terminal capture** — the stream needs `amount` of
+    /// `currency` that its own credit graph never generated (the terminal hop
+    /// returned less than the entry the stream must repay).
+    ///
+    /// Carries **no ledger delta**: the money is missing, not moved, so there
+    /// is nothing to credit or debit. It is a *capital* fact, and
+    /// [`LedgerValidator::validate_capital`] is the one place that answers it —
+    /// as the typed [`InsolventZeroCapital`] deficit under
+    /// [`InitialCapital::Zero`], and as the routine
+    /// [`CapitalError::UndeclaredCapture`] decline under
+    /// [`InitialCapital::Held`]. It stays a no-op in [`LedgerValidator::push`]
+    /// so the ordinary ordering invariants are unaffected.
+    CaptureShortfall { currency: Address, amount: u128 },
     /// The executor-side credit half of a **cross-ledger move** — a V4
     /// `V4_TAKE_COMPACT(cur→SELF)` physically transfers `cur` from the PM to the
     /// executor's balance, so alongside the PM debit (`Take`) the executor's
@@ -470,6 +594,7 @@ impl LedgerOp {
             | LedgerOp::WethDeposit { .. }
             | LedgerOp::ExternalFlash { .. }
             | LedgerOp::ExternalRepay { .. }
+            | LedgerOp::CaptureShortfall { .. }
             | LedgerOp::OpenWethPairing { .. } => None,
         }
     }
@@ -516,6 +641,12 @@ pub struct LedgerValidator {
     /// after an `OpenWethPairing` op until a `Mint { currency: weth }`
     /// disarms it; `V4UnlockEnd` rejects while set.
     open_weth_pairing: Option<Address>,
+    /// Where the stream's entry capital comes from ([`InitialCapital`]).
+    /// [`InitialCapital::Held`] (the default) is the production model — a
+    /// `SelfFund` seed credits the executor's balance. [`InitialCapital::Zero`]
+    /// withholds those seeds and evaluates only what the path's own credit
+    /// graph can fund (see [`Self::validate_capital`]).
+    initial_capital: InitialCapital,
 }
 
 /// Why a stream was rejected — the invariant that fired and the offending op.
@@ -753,6 +884,45 @@ impl LedgerValidator {
         self.externals = ledgers;
         self
     }
+
+    /// Declare the stream's [`InitialCapital`] policy — the single capital
+    /// assumption [`Self::validate_capital`] evaluates. Returns `self` for
+    /// chaining.
+    #[must_use]
+    pub fn with_initial_capital(mut self, capital: InitialCapital) -> Self {
+        self.initial_capital = capital;
+        self
+    }
+
+    /// The stream's [`InitialCapital`] policy (defaults to
+    /// [`InitialCapital::Held`]).
+    #[must_use]
+    pub const fn initial_capital(&self) -> InitialCapital {
+        self.initial_capital
+    }
+
+    /// Pay a NEGATIVE PoolManager delta from the executor's own balance — the
+    /// zero-capital half of a `V4_SETTLE_DELTA`/`V4_SETTLE_ALL` (on-chain
+    /// `_settle` syncs the PM's balance and transfers the currency in). Native
+    /// currency draws on the native ledger, everything else on `E[currency]`;
+    /// both are checked debits, so an uncovered settle is a typed shortfall.
+    fn pay_pm_debt(&mut self, currency: Address, delta: i128) -> Result<(), ValidationError> {
+        debug_assert!(delta < 0, "pay_pm_debt settles the negative half only");
+        let amount = delta.unsigned_abs();
+        if currency == NATIVE_CURRENCY_ADDRESS {
+            if self.native < -amount.cast_signed() {
+                return Err(ValidationError::NativeTransferBeforeCredit {
+                    wanted: amount,
+                    have: self.native,
+                });
+            }
+            self.native -= amount.cast_signed();
+        } else {
+            self.erc20.debit(currency, amount)?;
+        }
+        Ok(())
+    }
+
     /// The ledger balance effect of one op; non-term ops are no-ops here and
     /// are checked (enforced) in [`Self::push`] instead.
     fn apply(&mut self, e: LedgerEffect) {
@@ -785,7 +955,13 @@ impl LedgerValidator {
             return Ok(());
         }
         match op {
-            LedgerOp::SeedPair { .. } => Ok(()), // handled above
+            // Ops with no balance effect of their own in this gate:
+            // `SeedPair` is applied by `effect()` above, and a
+            // `CaptureShortfall` moves nothing (the money is missing, not
+            // transferred) — it is a CAPITAL fact answered by
+            // [`Self::validate_capital`], which intercepts it before this
+            // point, so a bare [`Self::validate_full`] sees it as inert.
+            LedgerOp::SeedPair { .. } | LedgerOp::CaptureShortfall { .. } => Ok(()),
             // V4 swap: PM[in] −= in_amount (debt), PM[out] += out_amount
             // (credit). Both legs so the net-zero-at-unlock-close invariant is
             // checkable (option B full modeling on the PM ledger).
@@ -807,12 +983,45 @@ impl LedgerValidator {
                 Ok(())
             }
             // V4_SETTLE_DELTA: auto-net one currency's PM delta to 0.
+            //
+            // A NEGATIVE delta is the executor paying the PoolManager out of
+            // its own balance (on-chain `_settle` syncs and transfers). Under
+            // [`InitialCapital::Held`] that payment is the declared seed
+            // assumption, so it stays unmodeled (today's production bytes and
+            // classification are unchanged). Under [`InitialCapital::Zero`] it
+            // is exactly the capital question the policy asks, so the payment
+            // debits the executor's balance and an uncovered settle surfaces as
+            // an [`InsolventZeroCapital`] deficit.
             LedgerOp::V4SettleDelta { currency } => {
+                if self.initial_capital.is_zero() {
+                    let delta = self.pm.balance(currency);
+                    if delta < 0 {
+                        self.pay_pm_debt(currency, delta)?;
+                    }
+                }
                 self.pm.settle_key(currency);
                 Ok(())
             }
             // V4_SETTLE_ALL: auto-net every touched PM currency to 0.
+            //
+            // Same zero-capital rule as `V4SettleDelta`: every negative delta is
+            // a payment the executor must make. Currencies are walked in address
+            // order so the deficit a stream reports is deterministic (the delta
+            // map's own iteration order is not).
             LedgerOp::V4SettleAll => {
+                if self.initial_capital.is_zero() {
+                    let mut debtors: Vec<(Address, i128)> = self
+                        .pm
+                        .deltas
+                        .iter()
+                        .filter(|(_, delta)| **delta < 0)
+                        .map(|(currency, delta)| (*currency, *delta))
+                        .collect();
+                    debtors.sort_unstable();
+                    for (currency, delta) in debtors {
+                        self.pay_pm_debt(currency, delta)?;
+                    }
+                }
                 self.pm.settle_all();
                 Ok(())
             }
@@ -982,11 +1191,28 @@ impl LedgerValidator {
                 *self.flash_debt.entry(in_currency).or_default() += in_amount;
                 Ok(())
             }
-            // Self-fund seed OR cross-ledger credit (`V4_TAKE_COMPACT(cur→SELF)`):
-            // both credit the executor's `Erc20` balance. No debt, no D0 check.
-            LedgerOp::SelfFund { currency, amount }
-            | LedgerOp::Erc20Credit { currency, amount } => {
+            // A cross-ledger credit (`V4_TAKE_COMPACT(cur→SELF)`) is
+            // path-generated — the transaction itself moved `cur` into the
+            // executor — so it credits under every policy.
+            LedgerOp::Erc20Credit { currency, amount } => {
                 self.erc20.credit(currency, amount);
+                Ok(())
+            }
+            // A self-fund seed is a **declared external assumption**: the
+            // executor already holds `currency` before the stream runs. Under
+            // [`InitialCapital::Held`] that assumption is granted (production,
+            // where a losing self-funded stream executes and the loss is
+            // measured). Under [`InitialCapital::Zero`] the executor holds
+            // nothing, so the seed grants no credit and a later debit it was
+            // meant to cover becomes the typed [`InsolventZeroCapital`] deficit
+            // via [`Self::validate_capital`]. Withholding the credit (rather
+            // than refusing the op) is what keeps a redundant in-path-flash
+            // seed — a `SelfFund` restating credit the path itself delivers —
+            // runnable at zero capital.
+            LedgerOp::SelfFund { currency, amount } => {
+                if !self.initial_capital.is_zero() {
+                    self.erc20.credit(currency, amount);
+                }
                 Ok(())
             }
             // Native pay-in (executor→PM, native settle leg): debit the
@@ -1141,6 +1367,112 @@ impl LedgerValidator {
     pub fn validate_full(&mut self, ops: &[LedgerOp]) -> Result<(), ValidationError> {
         self.validate(ops)?;
         self.finish()
+    }
+    /// Evaluate a whole stream under the validator's [`InitialCapital`] policy
+    /// — the ONE capital-policy evaluation a built Plan gets (no family- or
+    /// currency-specific pre-check).
+    ///
+    /// [`InitialCapital::Held`] is exactly [`Self::validate_full`]: a credit
+    /// shortfall is an ordinary invariant violation, [`CapitalError::Rejected`]
+    /// and fatal under ADR-030.
+    ///
+    /// [`InitialCapital::Zero`] asks a different question — *can this stream run
+    /// with no pre-existing capital?* — so every credit shortfall (a flash
+    /// repayment the path's own credit cannot cover, a V4 take whose PM credit
+    /// is short, a settle the executor must fund from an empty balance) is the
+    /// typed, routine [`CapitalError::InsolventZeroCapital`] deficit rather
+    /// than a bug. Ordering violations that are not credit shortfalls
+    /// (`SwapCalcBeforeCredit`, `PmDeltaNonzero`, `FlashDebtUnpaid`, …) stay
+    /// [`CapitalError::Rejected`] under both policies.
+    ///
+    /// A Plan's own **negative terminal capture**
+    /// ([`LedgerOp::CaptureShortfall`]) is answered here too, because it is a
+    /// capital fact and not an ordering one: under [`InitialCapital::Zero`] it
+    /// is the [`InsolventZeroCapital`] deficit it names, and under
+    /// [`InitialCapital::Held`] it is
+    /// [`CapitalError::UndeclaredCapture`] — the residual would have to be spent
+    /// from the executor's balance, and no `SelfFund` seed declares that capital.
+    ///
+    /// # Errors
+    ///
+    /// [`CapitalError::InsolventZeroCapital`] when the stream needs external
+    /// capital under the zero policy; [`CapitalError::UndeclaredCapture`] when
+    /// the Plan declares a capture shortfall under the held policy;
+    /// [`CapitalError::Rejected`] for any ordinary [`ValidationError`].
+    pub fn validate_capital(&mut self, ops: &[LedgerOp]) -> Result<(), CapitalError> {
+        for op in ops {
+            // Capital first: a declared shortfall is answered by the policy, not
+            // by the ordering gate (which would misread it as the *take* it
+            // would have funded running short).
+            if let LedgerOp::CaptureShortfall { currency, amount } = *op {
+                return Err(self.declared_capture(currency, amount));
+            }
+            self.push(*op)
+                .map_err(|error| classify_capital(error, self.initial_capital))?;
+        }
+        self.finish().map_err(CapitalError::Rejected)
+    }
+
+    /// The policy's verdict on a declared negative terminal capture.
+    ///
+    /// [`InitialCapital::Zero`]: the path never earned `amount` of `currency`,
+    /// so whatever the executor holds from the path so far is all the shortfall
+    /// can draw on — the typed [`InsolventZeroCapital`] deficit.
+    /// [`InitialCapital::Held`]: held capital could pay it, but nothing in this
+    /// Plan declares that capital ([`CapitalError::UndeclaredCapture`]).
+    fn declared_capture(&self, currency: Address, amount: u128) -> CapitalError {
+        if self.initial_capital.is_zero() {
+            let held = if currency == NATIVE_CURRENCY_ADDRESS {
+                self.native
+            } else {
+                self.erc20.balance(currency)
+            };
+            return CapitalError::InsolventZeroCapital(InsolventZeroCapital {
+                asset: currency,
+                required: amount,
+                available: held.max(0).cast_unsigned(),
+            });
+        }
+        CapitalError::UndeclaredCapture {
+            currency,
+            required: amount,
+        }
+    }
+}
+
+/// Classify a validator error under a stream's capital policy.
+///
+/// At zero capital every *credit shortfall* is a typed deficit — the stream
+/// simply cannot be funded — while every other violation (and every shortfall
+/// under [`InitialCapital::Held`]) stays an ordinary, fatal
+/// [`CapitalError::Rejected`].
+fn classify_capital(error: ValidationError, capital: InitialCapital) -> CapitalError {
+    if !capital.is_zero() {
+        return CapitalError::Rejected(error);
+    }
+    match error {
+        ValidationError::TakeBeforeCredit {
+            currency,
+            wanted,
+            have,
+        }
+        | ValidationError::Erc20TransferBeforeCredit {
+            currency,
+            wanted,
+            have,
+        } => CapitalError::InsolventZeroCapital(InsolventZeroCapital {
+            asset: currency,
+            required: wanted,
+            available: have.max(0).cast_unsigned(),
+        }),
+        ValidationError::NativeTransferBeforeCredit { wanted, have } => {
+            CapitalError::InsolventZeroCapital(InsolventZeroCapital {
+                asset: NATIVE_CURRENCY_ADDRESS,
+                required: wanted,
+                available: have.max(0).cast_unsigned(),
+            })
+        }
+        other => CapitalError::Rejected(other),
     }
 }
 
@@ -2103,6 +2435,159 @@ mod tests {
             capture_modes,
             positions,
             neighbors,
+        );
+    }
+
+    // ── InitialCapital policy: external seed vs path-generated credit ──
+
+    #[test]
+    fn self_fund_seed_credits_only_under_held_initial_capital() {
+        let seed = LedgerOp::SelfFund {
+            currency: weth(),
+            amount: 1_000,
+        };
+        let spend = LedgerOp::Erc20Transfer {
+            currency: weth(),
+            amount: 1_000,
+            repays_flash: None,
+        };
+        // Held (production): the seed is the executor's own capital — the spend
+        // validates, which is what lets a losing self-funded path execute.
+        let mut held = LedgerValidator::default();
+        assert_eq!(held.initial_capital(), InitialCapital::Held);
+        held.validate_full(&[seed, spend]).unwrap();
+        // Zero: the executor holds nothing, so the seed grants no credit and the
+        // spend is a typed deficit — never a silent approval.
+        let mut zero = LedgerValidator::default().with_initial_capital(InitialCapital::Zero);
+        assert_eq!(
+            zero.validate_capital(&[seed, spend]),
+            Err(CapitalError::InsolventZeroCapital(InsolventZeroCapital {
+                asset: weth(),
+                required: 1_000,
+                available: 0,
+            }))
+        );
+    }
+
+    #[test]
+    fn path_generated_credit_funds_a_stream_at_zero_capital() {
+        // In-path-flash seed accounting: the credit arrives from the path
+        // itself (a V2 flash's output), so the same debit is solvent at zero
+        // capital even with a `SelfFund` seed present-but-withheld. This is the
+        // "self-fund is not an automatic refusal" rule.
+        let ops = [
+            LedgerOp::SelfFund {
+                currency: weth(),
+                amount: 1_000,
+            },
+            LedgerOp::V2Flash {
+                out_currency: weth(),
+                out_amount: 1_000,
+                in_currency: usdc(),
+                in_amount: 1_001,
+                recipient: SwapRecipient::Executor,
+            },
+            LedgerOp::Erc20Transfer {
+                currency: weth(),
+                amount: 1_000,
+                repays_flash: Some(pool()),
+            },
+            LedgerOp::Erc20Transfer {
+                currency: usdc(),
+                amount: 1_001,
+                repays_flash: None,
+            },
+        ];
+        // The final usdc repayment is unfunded (the flash owed weth), so the
+        // zero-capital verdict is a weth→usdc-agnostic deficit on usdc; the
+        // point is that the FIRST weth debit (the seed's purpose) is covered by
+        // path credit.
+        let mut zero = LedgerValidator::default().with_initial_capital(InitialCapital::Zero);
+        assert_eq!(
+            zero.validate_capital(&ops[..3]),
+            Err(CapitalError::Rejected(ValidationError::FlashDebtUnpaid {
+                currency: usdc(),
+                amount: 1_001,
+            })),
+            "the weth repay is path-funded; only the unpaid flash debt remains"
+        );
+    }
+
+    #[test]
+    fn zero_capital_settle_debt_is_a_typed_deficit_not_a_reject() {
+        // A pure-V4 stream settles a NEGATIVE PM delta from the executor's own
+        // balance. Under `Held` that payment is the declared seed assumption
+        // (unmodeled, as today); under `Zero` it is the capital question, so the
+        // shortfall is typed rather than a would-be-bug `Reject`.
+        let ops = [
+            LedgerOp::V4Swap {
+                in_currency: weth(),
+                in_amount: 1_000,
+                out_currency: usdc(),
+                out_amount: 900,
+            },
+            LedgerOp::V4Swap {
+                in_currency: usdc(),
+                in_amount: 900,
+                out_currency: weth(),
+                out_amount: 700,
+            },
+            LedgerOp::V4SettleAll,
+        ];
+        // Held: the plan validates (the executor is assumed to hold the 300 it
+        // must pay), exactly as production classifies it today.
+        let mut held = LedgerValidator::default();
+        assert!(held.validate_full(&ops).is_ok());
+        // Zero: 300 of weth is unfunded.
+        let mut zero = LedgerValidator::default().with_initial_capital(InitialCapital::Zero);
+        assert_eq!(
+            zero.validate_capital(&ops),
+            Err(CapitalError::InsolventZeroCapital(InsolventZeroCapital {
+                asset: weth(),
+                required: 300,
+                available: 0,
+            }))
+        );
+    }
+
+    #[test]
+    fn held_capital_keeps_a_shortfall_a_fatal_reject() {
+        // Production classification is untouched: the same uncovered debit is
+        // an ordinary `Rejected` under `Held` (fatal under ADR-030).
+        let spend = LedgerOp::Erc20Transfer {
+            currency: weth(),
+            amount: 10,
+            repays_flash: None,
+        };
+        let mut held = LedgerValidator::default();
+        assert!(matches!(
+            held.validate_capital(&[spend]),
+            Err(CapitalError::Rejected(
+                ValidationError::Erc20TransferBeforeCredit {
+                    wanted: 10,
+                    have: 0,
+                    ..
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn ordering_violations_stay_rejected_under_zero_capital() {
+        // A pair-seeded swap before its seed is an ordering BUG, not a capital
+        // shortfall — it stays fatal at zero capital too.
+        let mut zero = LedgerValidator::default().with_initial_capital(InitialCapital::Zero);
+        assert_eq!(
+            zero.validate_capital(&[LedgerOp::SwapCalc {
+                pool: pool(),
+                amount_in: 0,
+                out_currency: weth(),
+                out_amount: 1,
+                recipient: SwapRecipient::Executor,
+            }]),
+            Err(CapitalError::Rejected(
+                ValidationError::SwapCalcBeforeCredit { pool: pool() }
+            ))
         );
     }
 }

@@ -329,6 +329,42 @@ fn validator_rejection_is_not_a_routine_decline() {
 }
 
 #[test]
+fn a_zero_capital_deficit_is_a_routine_decline_beside_the_fatal_reject() {
+    // One built Plan, two capital policies. Production (Held) still classifies
+
+    // the losing in-path flash as a fatal ledger Reject; the zero-capital
+
+    // stance asks the ledger what the path's own credit funds, and the typed
+
+    // `InsolventZeroCapital` deficit is a routine per-candidate decline.
+
+    let path = v2_path();
+
+    let result = solve_result(&path, 100_000, vec![80_000, 60_000], vec![50_000, 80_000]);
+
+    let adapter = CmdExecutorAdapter::new(ExecutionContext::new(EXECUTOR, PM, WETH));
+
+    assert_eq!(
+        adapter.compose(&path, &result, options(0)),
+        CmdExecutorOutcome::Rejected(CmdExecutorRejection::LedgerValidation),
+        "production rejection classification is unchanged"
+    );
+
+    assert_eq!(
+        adapter.compose(
+            &path,
+            &result,
+            EncodeOptions {
+                zero_balance: true,
+
+                ..options(0)
+            },
+        ),
+        CmdExecutorOutcome::Declined(CmdExecutorDecline::CommandStream),
+        "a typed zero-capital deficit declines the candidate, it never panics"
+    );
+}
+#[test]
 fn same_session_adapter_recomposes_for_a_lower_bribe() {
     let path = v2_path();
     let result = solve_result(

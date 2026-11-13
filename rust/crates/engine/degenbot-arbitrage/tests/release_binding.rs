@@ -1857,3 +1857,187 @@ fn a_single_bound_deployment_keeps_the_single_target_behavior() {
     assert_eq!(lane.exception_count, 0);
     assert!(lane.gas_profitable.is_empty());
 }
+
+// ── zero-capital capital policy through the release-bound encoder ─────────
+
+/// Task 05-core: a built Plan is evaluated ONCE against the stream's
+/// `InitialCapital` policy, and a typed `InsolventZeroCapital` deficit reaches
+/// the release-bound encoder as a **per-candidate decline**, never a panic and
+/// never an encoding failure. The funded stances keep encoding the same losing
+/// stream, so its loss is measured on-chain (the economic receipt) rather than
+/// refused at encode time.
+#[test]
+fn a_zero_capital_deficit_is_a_release_bound_decline() {
+    const WBTC: Address = address!("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599");
+    let registry = registry_production();
+
+    let bind = |opts: EncodeOptions| {
+        BoundCmdExecutor::bind(
+            binding_with(EXECUTOR_V1, opts),
+            &declared_answers(&committed_manifest()),
+            None,
+            &registry,
+        )
+        .expect("the current release binds")
+    };
+    let in_path_flash = EncodeOptions {
+        funding: degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
+        ..Default::default()
+    };
+    let zero_capital = EncodeOptions {
+        zero_balance: true,
+        ..in_path_flash
+    };
+    let self_funded = EncodeOptions {
+        funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+        ..Default::default()
+    };
+
+    // A pure-V4 WETH cycle: the negative WETH delta at the unlock's close is a
+    // payment the executor must make from its own balance.
+    let path = PathInfo::new(vec![
+        v4_hop(WETH, USDC),
+        v4_hop(USDC, WBTC),
+        v4_hop(WBTC, WETH),
+    ]);
+
+    // Profitable: every hop returns more than it takes, so the path's own credit
+    // graph funds it — the zero-capital stance must emit the PRODUCTION bytes.
+    let profitable = [
+        OPTIMAL_INPUT + OPTIMAL_INPUT / 10,
+        OPTIMAL_INPUT + OPTIMAL_INPUT / 5,
+        OPTIMAL_INPUT + OPTIMAL_INPUT * 3 / 10,
+    ];
+    let profitable_consumed = [
+        OPTIMAL_INPUT,
+        OPTIMAL_INPUT + OPTIMAL_INPUT / 10,
+        OPTIMAL_INPUT + OPTIMAL_INPUT / 5,
+    ];
+    let profitable_inputs = combo_inputs(&profitable, &profitable_consumed);
+    let production_tx = bind(in_path_flash)
+        .adapter()
+        .encode(&path, &profitable_inputs)
+        .expect("the profitable path encodes under the production stance");
+    let zero_tx = bind(zero_capital)
+        .adapter()
+        .encode(&path, &profitable_inputs)
+        .expect("a profitable path is solvent at zero capital");
+    assert_eq!(
+        zero_tx.data, production_tx.data,
+        "the zero-capital stance must not change a valid stream's bytes"
+    );
+
+    // Losing: the terminal hop returns less than the entry, so the settle needs
+    // external capital. The zero-capital binding declines it with the typed
+    // deficit's message; the funded binding still encodes it.
+    let losing = [OPTIMAL_INPUT / 2, OPTIMAL_INPUT / 3, OPTIMAL_INPUT / 4];
+    let losing_consumed = [OPTIMAL_INPUT, OPTIMAL_INPUT / 2, OPTIMAL_INPUT / 3];
+    let losing_inputs = combo_inputs(&losing, &losing_consumed);
+    match bind(zero_capital).adapter().encode(&path, &losing_inputs) {
+        Err(ComposeError::Unsupported(message)) => assert!(
+            message.contains("insolvent at zero initial capital"),
+            "the decline must name the typed deficit: {message}"
+        ),
+        Err(other) => panic!("a deficit is a decline, not an encode failure: {other:?}"),
+        Ok(_) => panic!("a losing zero-capital stream must not encode"),
+    }
+    assert!(
+        bind(in_path_flash)
+            .adapter()
+            .encode(&path, &losing_inputs)
+            .is_ok(),
+        "the held-capital stance keeps encoding the losing stream"
+    );
+    assert!(
+        bind(self_funded)
+            .adapter()
+            .encode(&path, &losing_inputs)
+            .is_ok(),
+        "a self-funded losing stream still encodes to its economic receipt"
+    );
+}
+
+// ── a declared negative capture through the release-bound encoder ─────────
+
+/// Task 05-plan: the four terminal-V4 families whose capture goes negative used
+/// to decline at Plan BUILD (`terminal_output − entry` had no Plan step). The
+/// residual is now a ledger-only `PlanStep::CaptureShortfall` declared at the
+/// head of the Plan, and BOTH stances decline the family through the bound
+/// release — as `ComposeError::Unsupported`, which the arbitrage selection walk
+/// treats as a per-candidate decline, never as `ComposeError::Encode` (a hard
+/// stop for that candidate). The self-funded Plan is the one that declares the
+/// capital, and it still encodes to its economic receipt.
+#[test]
+fn a_declared_capture_shortfall_is_a_release_bound_decline() {
+    const WBTC: Address = address!("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599");
+    let registry = registry_production();
+    let bind = |opts: EncodeOptions| {
+        BoundCmdExecutor::bind(
+            binding_with(EXECUTOR_V1, opts),
+            &declared_answers(&committed_manifest()),
+            None,
+            &registry,
+        )
+        .expect("the current release binds")
+    };
+    let in_path_flash = EncodeOptions {
+        funding: degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
+        ..Default::default()
+    };
+    let zero_capital = EncodeOptions {
+        zero_balance: true,
+        ..in_path_flash
+    };
+    let self_funded = EncodeOptions {
+        funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+        ..Default::default()
+    };
+
+    // `V2 → V2 → V4` over a WETH cycle: the terminal V4 delta funds the leading
+    // V2 pool, so a losing amount chain leaves the settle short.
+    let path = PathInfo::new(vec![
+        HopInfo::V2(degenbot_execution::V2HopInfo {
+            pool_address: address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            token0_address: WETH,
+            token1_address: USDC,
+            fee: 30,
+            zfo: true,
+        }),
+        HopInfo::V2(degenbot_execution::V2HopInfo {
+            pool_address: address!("0xdddddddddddddddddddddddddddddddddddddddd"),
+            token0_address: USDC,
+            token1_address: WBTC,
+            fee: 30,
+            zfo: true,
+        }),
+        v4_hop(WBTC, WETH),
+    ]);
+    let losing = [OPTIMAL_INPUT / 2, OPTIMAL_INPUT / 3, OPTIMAL_INPUT / 4];
+    let losing_consumed = [OPTIMAL_INPUT, OPTIMAL_INPUT / 2, OPTIMAL_INPUT / 3];
+    let losing_inputs = combo_inputs(&losing, &losing_consumed);
+
+    // Production (held capital): the family has no stream — the residual would
+    // be spent from the executor's balance with no `SelfFund` seed declaring it.
+    match bind(in_path_flash).adapter().encode(&path, &losing_inputs) {
+        Err(ComposeError::Unsupported(_)) => {}
+        Err(other) => panic!("a declared capture must DECLINE, not fail: {other:?}"),
+        Ok(_) => panic!("a losing in-path-flash capture must not encode"),
+    }
+    // Zero capital: the same decline, now carrying the ledger's typed deficit.
+    match bind(zero_capital).adapter().encode(&path, &losing_inputs) {
+        Err(ComposeError::Unsupported(message)) => assert!(
+            message.contains("insolvent at zero initial capital"),
+            "the decline must name the typed deficit: {message}"
+        ),
+        Err(other) => panic!("a deficit is a decline, not an encode failure: {other:?}"),
+        Ok(_) => panic!("a losing zero-capital stream must not encode"),
+    }
+    // Self-funded: the Plan declares the entry, so the loss is measured on-chain.
+    assert!(
+        bind(self_funded)
+            .adapter()
+            .encode(&path, &losing_inputs)
+            .is_ok(),
+        "a self-funded losing stream still encodes to its economic receipt"
+    );
+}
