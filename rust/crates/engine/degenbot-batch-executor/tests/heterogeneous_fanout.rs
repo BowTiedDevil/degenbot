@@ -25,12 +25,6 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::{address, Address, Bytes, U256};
-use alloy::providers::RootProvider;
-use alloy::rpc::client::RpcClient;
-use alloy::rpc::json_rpc::{
-    ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
-};
-use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
     project_early_admission, AdmittedCandidate, CmdExecutorBinding, DeploymentRegistry,
@@ -57,7 +51,10 @@ use degenbot_submission::{
 use degenbot_substrate::nonce::NonceAuthority;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
-use serde_json::value::{to_raw_value, RawValue};
+
+mod support;
+
+use support::mock_provider;
 
 /// The operator account both the signer and every deployment's owner name.
 const ANVIL_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -300,74 +297,6 @@ fn registry() -> DeploymentRegistry {
     .expect("two distinct identities compose a valid registry")
 }
 
-// ── The offline RPC fixture ──────────────────────────────────────────────
-
-#[derive(Clone, Copy)]
-struct EmptyTransport;
-
-fn success(value: &str) -> ResponsePayload {
-    let raw: Box<RawValue> =
-        to_raw_value(&serde_json::Value::String(value.into())).expect("valid JSON string");
-    ResponsePayload::Success(raw)
-}
-
-impl tower::Service<RequestPacket> for EmptyTransport {
-    type Response = ResponsePacket;
-    type Error = TransportError;
-    type Future = TransportFut<'static>;
-
-    fn poll_ready(
-        &mut self,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: RequestPacket) -> Self::Future {
-        Box::pin(async move {
-            let respond = |req: &SerializedRequest| -> Response {
-                let payload = match req.method() {
-                    "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
-                    "eth_getCode" => success("0x"),
-                    "eth_getStorageAt" => success(&format!("0x{:064x}", 0)),
-                    "eth_getBlockByNumber" => ResponsePayload::Success(
-                        to_raw_value(
-                            &serde_json::json!({ "hash": format!("0x{}", "11".repeat(32)) }),
-                        )
-                        .expect("valid JSON value"),
-                    ),
-                    other => {
-                        return Response {
-                            id: req.id().clone(),
-                            payload: ResponsePayload::Failure(ErrorPayload {
-                                code: -32601,
-                                message: format!("method not found: {other}").into(),
-                                data: None,
-                            }),
-                        }
-                    }
-                };
-                Response {
-                    id: req.id().clone(),
-                    payload,
-                }
-            };
-            Ok(match req {
-                RequestPacket::Single(r) => ResponsePacket::Single(respond(&r)),
-                RequestPacket::Batch(rs) => ResponsePacket::Batch(rs.iter().map(respond).collect()),
-            })
-        })
-    }
-}
-
-fn mock_provider() -> AlloyProvider {
-    let client = RpcClient::new(EmptyTransport, true);
-    let root: RootProvider = RootProvider::new(client);
-    AlloyProvider::from_provider(
-        Arc::new(root) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
-    )
-}
-
 fn block(provider: &AlloyProvider) -> SimulationBlock<'_> {
     SimulationBlock {
         provider,
@@ -397,7 +326,10 @@ impl ReceiptProbe for NoopProbe {
     }
 }
 
-// ── The executor fixture ─────────────────────────────────────────────────
+// ── The executor fixture ────────────────────────────────────────────────
+//
+// The offline RPC transport it drives is the crate-shared fixture
+// (`tests/support`) — the same one the probe suite runs the real stages over.
 
 /// The production executor over the offline transport, with `additional`
 /// registered after the built-in deployment. `dry_run` is on: the submit

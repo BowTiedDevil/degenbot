@@ -49,7 +49,7 @@ rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::the_fanout_prefetches_the
 rust/crates/engine/degenbot-arbitrage/src/simulator.rs::simulate_path_on_evm_seam	the production seam's body
 rust/crates/engine/degenbot-batch-executor/src/assembly.rs::assemble_batch	the stage reads best as one ordered policy pass
 rust/crates/engine/degenbot-batch-executor/src/executor.rs::renderer_drain_reads_every_stage	the fixture spells every stage's record verbatim
-rust/crates/engine/degenbot-batch-executor/src/executor.rs::run_stages_1_2	the leaf reads best as one ordered stage pass
+rust/crates/engine/degenbot-batch-executor/src/stage.rs::run	the stage reads best as one ordered pass
 rust/crates/engine/degenbot-bot/src/arb_engine/boot_stamp.rs::same_cfg_ride_stays_legal	the F3 positive control carries the whole legal-ride story in one deterministic body (twin stamp asserts + materialization identity + ledger probe)
 rust/crates/engine/degenbot-bot/src/arb_engine/diagnostic.rs::diagnostic_path_state_captures_mixed_hops
 rust/crates/engine/degenbot-bot/src/arb_engine/seat_host/pump.rs::backstop_tick_rate_is_bounded_by_time_not_messages	the end-to-end liveness/tick harness is one driven scenario

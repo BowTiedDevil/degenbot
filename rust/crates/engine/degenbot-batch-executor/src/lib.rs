@@ -51,6 +51,15 @@
 //! [`record::BatchOutcome`] records; a driver's remaining responsibility is
 //! display.
 //!
+//! Stages 1-2 live in ONE owner ([`stage`]): the assembly, the production
+//! encoder, and the EVM2 simulation, shaped as `SimStage` over the
+//! sim-side handles ([`SimRuntime`]). Two consumers drive that one value — the
+//! ordered lane above, and [`probe::ProbeExecutor`], a dedicated
+//! NON-SUBMITTING executor whose every call returns its OWN outcome through a
+//! correlated channel instead of consuming a shared ordered drain. The probe
+//! type has no submit lane, signer, relay, or nonce lease at all: non-submission
+//! is a missing field rather than a dry-run flag.
+//!
 //! Standalone-core constraint (ADR-005): pyo3-free. The pure-Rust consumer
 //! (`cargo add degenbot`) and the `PyO3` shell (a thin construction +
 //! `next_outcome` + typed-enums seam, ADR-013/ADR-032) drive the same module.
@@ -58,9 +67,11 @@
 pub mod assembly;
 pub mod executor;
 pub mod policy;
+pub mod probe;
 pub mod record;
 pub mod row;
 pub mod session;
+mod stage;
 
 pub use assembly::{
     build_raw_candidate, classify_raw_row, derive_path_pools, join_sim_result,
@@ -68,6 +79,8 @@ pub use assembly::{
     RawRowClass,
 };
 pub use executor::{BatchDrain, BatchExecutor, BatchOutcomeSet, BatchWork, ExecutorConfig};
+pub use probe::{ProbeConfig, ProbeError, ProbeExecutor, ProbeOutcome};
+pub use stage::SimRuntime;
 
 /// The startup capability refusal [`BatchExecutor::new`] reports when the
 /// `simulation.delta_dispatch` opt-in is ON and the endpoint cannot prove BAL

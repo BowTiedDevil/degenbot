@@ -371,24 +371,25 @@ mod tests {
             crate::executor::ExecutorConfig::from_verdict(&verdict, runtime(Vec::new()).await)
                 .expect("the built-in session composes a one-entry registry");
         assert_eq!(config.sim_concurrency, 8);
-        assert_eq!(config.max_candidates, usize::MAX, "0 = uncapped");
-        assert_eq!(config.min_profit_margin_bps, 0);
+        assert_eq!(config.sim.max_candidates, usize::MAX, "0 = uncapped");
+        assert_eq!(config.sim.min_profit_margin_bps, 0);
         assert_eq!(
             config.submission,
             SubmissionPolicy::Submitting,
             "the live run mode converts to the submitting policy"
         );
         assert_eq!(
-            config.deployments.len(),
+            config.sim.deployments.len(),
             1,
             "the built-in session is the one-entry registry"
         );
         assert_eq!(
-            config.deployments.ids().collect::<Vec<_>>(),
+            config.sim.deployments.ids().collect::<Vec<_>>(),
             vec![crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID]
         );
         assert_eq!(
             config
+                .sim
                 .deployments
                 .get(crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID)
                 .map(|deployment| deployment.target()),
@@ -439,7 +440,7 @@ mod tests {
         let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime)
             .expect("the built-in session composes a one-entry registry");
         assert_eq!(
-            config.target_selection,
+            config.sim.target_selection,
             degenbot_arbitrage::TargetSelection::AllTargets
         );
     }
@@ -468,7 +469,7 @@ mod tests {
         let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime)
             .expect("distinct identities compose a three-entry registry");
         assert_eq!(
-            config.deployments.ids().collect::<Vec<_>>(),
+            config.sim.deployments.ids().collect::<Vec<_>>(),
             vec![
                 crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
                 first,
@@ -499,8 +500,12 @@ mod tests {
         )];
         let config = crate::executor::ExecutorConfig::from_verdict(&verdict, runtime)
             .expect("both deployments name the session's signing account");
-        assert_eq!(config.deployments.len(), 2);
-        assert!(config.deployments.validate_signing_authority(owner).is_ok());
+        assert_eq!(config.sim.deployments.len(), 2);
+        assert!(config
+            .sim
+            .deployments
+            .validate_signing_authority(owner)
+            .is_ok());
     }
 
     /// A deployment reusing the built-in identity is refused at composition:
