@@ -1,4 +1,4 @@
-# Vendored from alloy-rs/evm2 @ 53fe0ef86b87ae0e6fd3068ad6262dd39a3b37f7; the source
+# Vendored from alloy-rs/evm2 @ e681662b6d9ec59edafd112f7c8d64f49f1e6dd1; the source
 # is upstream's plus the downstream patches rust/vendor/README.md enumerates, and
 # this manifest is rewritten. Upstream name: evm2-jit-context.
 

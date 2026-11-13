@@ -2246,8 +2246,8 @@ impl Bytecode<'_> {
                 stack.swap(len - 1 - n as usize, len - inp);
             }
             _ => {
-                // Disabled opcodes halt and have no stack inputs.
-                let loaded = if inst.flags.contains(InstFlags::DISABLED) {
+                // Disabled, unknown and unsupported host opcodes halt and have no stack inputs.
+                let loaded = if inst.flags.intersects(InstFlags::DISABLED | InstFlags::UNKNOWN) {
                     None
                 } else if inst.flags.contains(InstFlags::HOST) {
                     // The host's instruction may write any memory and any stack word.
@@ -2877,6 +2877,31 @@ pub(crate) mod tests {
 mod tests_edge_cases {
     use super::{tests::*, *};
     use evm2::{BaseEvmTypes, OpcodeConfig};
+
+    /// Opcodes the host overrides have no stack inputs in analysis: `analyze` must reject them
+    /// rather than read their operands.
+    #[test]
+    fn unsupported_host_opcodes_are_rejected() {
+        let view = OpcodeConfig::<BaseEvmTypes>::base_for_spec(crate::tests::DEF_SPEC).view(None);
+        for opcode in [
+            op::MLOAD,
+            op::MSTORE,
+            op::MSTORE8,
+            op::CODECOPY,
+            op::CALLDATACOPY,
+            op::RETURNDATACOPY,
+            op::MCOPY,
+            op::EXTCODECOPY,
+            op::CALL,
+            op::CALLCODE,
+            op::DELEGATECALL,
+            op::STATICCALL,
+        ] {
+            let mut bytecode =
+                Bytecode::new(vec![opcode, op::STOP], crate::tests::DEF_SPEC, None, Some(&view));
+            assert!(bytecode.analyze().is_err(), "{opcode:#04x}");
+        }
+    }
 
     /// Three callers to the same internal function. The return JUMP should
     /// resolve to Multi with three targets.

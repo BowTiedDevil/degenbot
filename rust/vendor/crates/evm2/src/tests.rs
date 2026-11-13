@@ -292,6 +292,67 @@ fn unsigned(authorization: Authorization) -> SignedAuthorization {
     SignedAuthorization::new_unchecked(authorization, 0, U256::ZERO, U256::ZERO)
 }
 
+#[test]
+fn eip7702_without_eip2780_refunds_only_existing_authority_execution_gas() {
+    let caller = Address::from([0xbb; 20]);
+    let recipient = Address::from([0xaa; 20]);
+    let existing = Address::from([0xc1; 20]);
+    let stale = Address::from([0xc2; 20]);
+    let delegate = Address::from([0xdd; 20]);
+
+    let mut database = InMemoryDB::default();
+    database.insert_account_info(
+        &caller,
+        AccountInfo { balance: U256::from(u64::MAX), ..Default::default() },
+    );
+    database.insert_account_info(&existing, AccountInfo::default().with_balance(U256::from(1)));
+    database.insert_account_info(&stale, AccountInfo::default().with_nonce(1));
+    // Prague gas prices with EIP-8037 on and EIP-2780 off. The Amsterdam state gas prices make a
+    // state-gas refund visible if one is ever credited again: 120 * 1530 per new account and
+    // 23 * 1530 per delegation.
+    let mut version = Version::new(SpecId::PRAGUE);
+    version.features.set(EvmFeatures::EIP8037, true);
+    version.gas_params.set(GasId::NewAccountState, 183_600);
+    version.gas_params.set(GasId::TxEip7702PerAuthState, 35_190);
+    let chain_id = version.chain_id;
+    let mut evm = TestEvm::new_with_execution_config(
+        ExecutionConfig::for_spec_and_version(SpecId::PRAGUE, version),
+        SpecId::PRAGUE,
+        BlockEnvExt::default(),
+        ethereum_tx_registry(SpecId::PRAGUE),
+        database,
+        Precompiles::base(SpecId::PRAGUE),
+    );
+    let authorization =
+        |nonce| unsigned(Authorization { chain_id: U256::ZERO, address: delegate, nonce });
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Eip7702(LazyTxEip7702::from_cached_recovered_authorizations(
+            TxEip7702 {
+                chain_id,
+                to: recipient,
+                gas_limit: 100_000,
+                // The second authorization is rejected: the authority's nonce is 1, not 0.
+                authorization_list: vec![authorization(0), authorization(0)],
+                ..Default::default()
+            },
+            vec![Some(existing), Some(stale)],
+        )),
+        caller,
+    );
+
+    let result = evm.transact(&tx).unwrap().discard();
+
+    assert!(result.status);
+    // Intrinsic gas: 21,000 base + 2 * 25,000 per authorization. The call to the empty recipient
+    // costs nothing more, so the 29,000 left over is the only gas not spent.
+    assert_eq!(result.total_gas_spent, 100_000 - 29_000);
+    // Only the existing, applied authority refunds execution gas: 25,000 - 12,500 = 12,500, below
+    // the cap of one fifth of the gas spent. No state gas is charged or credited.
+    assert_eq!(result.refunded, 12_500);
+    assert_eq!(result.state_gas_spent, 0);
+    assert_eq!(result.tx_gas_used(), 71_000 - 12_500);
+}
+
 fn absent_authority_evm(spec: SpecId, touched: Address) -> TestEvm {
     let mut evm = TestEvm::new(
         spec,
@@ -725,7 +786,7 @@ fn apply_auth_list_accepts_custom_filtered_authorizations() {
     let delegation = Bytecode::new_eip7702(delegate).hash_slow();
     assert_eq!(evm.state.account(&applied).unwrap().code_hash(), delegation);
     assert_ne!(evm.state.account(&skipped).unwrap().code_hash(), delegation);
-    // Before EIP-8037 only the existing, applied authority is refunded.
+    // Only the existing, applied authority is refunded.
     let per_auth = evm.version().gas_params.get(GasId::TxEip7702AuthRefund);
     assert_eq!(refunds.execution_refund, per_auth);
 }

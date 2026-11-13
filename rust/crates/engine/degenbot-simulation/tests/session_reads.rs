@@ -16,6 +16,7 @@ const PAIR: Address = address!("0x1111111111111111111111111111111111111111");
 const POOL: Address = address!("0x2222222222222222222222222222222222222222");
 const SENDER: Address = address!("0x3333333333333333333333333333333333333333");
 const DUAL: Address = address!("0x4444444444444444444444444444444444444444");
+const CALLER: Address = address!("0x5555555555555555555555555555555555555555");
 
 const BLOCK: u64 = 2050;
 const TIMESTAMP: u64 = 1_780_000_000;
@@ -36,6 +37,30 @@ const DUAL_CODE: &[u8] = &[
     0x60, 0x00, 0x52, // MSTORE
     0x60, 0x20, 0x60, 0x00, 0xF3, // RETURN 32 bytes
 ];
+
+/// A contract that copies its calldata into memory and forwards it verbatim to
+/// [`DUAL`] in a nested `CALL`, giving the inspector a borrowed child input.
+fn caller_code() -> Bytecode {
+    let mut code = vec![
+        0x36, // CALLDATASIZE (copy length)
+        0x60, 0x00, // PUSH1 0 (calldata offset)
+        0x60, 0x00, // PUSH1 0 (memory destination)
+        0x37, // CALLDATACOPY
+        0x60, 0x00, // PUSH1 0 (return length)
+        0x60, 0x00, // PUSH1 0 (return offset)
+        0x36, // CALLDATASIZE (input length)
+        0x60, 0x00, // PUSH1 0 (input offset)
+        0x60, 0x00, // PUSH1 0 (call value)
+        0x73, // PUSH20 (DUAL's address follows)
+    ];
+    code.extend_from_slice(DUAL.as_slice());
+    code.extend_from_slice(&[
+        0x5A, // GAS
+        0xF1, // CALL
+        0x00, // STOP
+    ]);
+    Bytecode::new_raw(code.into())
+}
 
 type TestExt = ::evm2::evm::CacheDB<::evm2::evm::Db<Evm2CountingFrameDb<InMemoryDB>>>;
 
@@ -58,6 +83,7 @@ fn ext() -> (TestExt, std::sync::Arc<FrameRpcCounter>) {
         &DUAL,
         AccountInfo::default().with_code(Bytecode::new_raw(Bytes::copy_from_slice(DUAL_CODE))),
     );
+    db.insert_account_info(&CALLER, AccountInfo::default().with_code(caller_code()));
     let ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CountingFrameDb::new(
         db,
         std::sync::Arc::clone(&counter),
@@ -161,12 +187,17 @@ fn a_view_read_observes_without_changing_the_view() {
 
 /// A transaction for [`DUAL`]: empty calldata writes, non-empty reads.
 fn dual_tx(data: &[u8]) -> ::evm2::ethereum::RecoveredTxEnvelope {
+    tx_to(DUAL, data)
+}
+
+/// A transaction from the fixture sender to `to` with `data` as calldata.
+fn tx_to(to: Address, data: &[u8]) -> ::evm2::ethereum::RecoveredTxEnvelope {
     use ::evm2::ethereum::TxEnvelope;
     use alloy::consensus::transaction::Recovered;
     use alloy::consensus::TxLegacy;
     Recovered::new_unchecked(
         TxEnvelope::Legacy(TxLegacy {
-            to: TxKind::Call(DUAL),
+            to: TxKind::Call(to),
             input: Bytes::copy_from_slice(data),
             gas_limit: 100_000,
             gas_price: BASE_FEE_GWEI,
@@ -294,6 +325,33 @@ fn an_inspect_step_drives_the_capture() {
             .any(|item| item.address == DUAL && !item.storage_keys.is_empty()),
         "the inspected call's warmed slots reach the drained access list"
     );
+}
+
+/// A nested `CALL` carries a borrowed range of the caller's memory. Capture
+/// resolves that range against the caller frame for both the selector and the
+/// owned calldata retained in the trace.
+#[test]
+fn an_inspected_nested_call_captures_the_callers_input_bytes() {
+    let (mut ext, _counter) = ext();
+    with_session!(&mut ext, evm, session);
+    let input = [0xDE, 0xAD, 0xBE, 0xEF, 0x42];
+
+    let sequence = session
+        .run_sequence(
+            &[Evm2SimStep::Inspect(tx_to(CALLER, &input))],
+            degenbot_simulation::sim::evm2::session::Evm2CaptureMode::Inspector,
+        )
+        .expect("the nested inspect step settles");
+
+    let frame = sequence
+        .capture
+        .trace
+        .frames
+        .iter()
+        .find(|frame| frame.target == DUAL && frame.depth > 1)
+        .expect("the nested DUAL frame was captured");
+    assert_eq!(frame.selector, [0xDE, 0xAD, 0xBE, 0xEF]);
+    assert_eq!(frame.data.as_ref(), input.as_slice());
 }
 
 /// The learning path at the engine seam: a completed capture's access list

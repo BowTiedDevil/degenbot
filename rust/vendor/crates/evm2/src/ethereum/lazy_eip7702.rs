@@ -1,4 +1,4 @@
-use crate::precompiles::secp256k1::ecrecover_bytes;
+use crate::precompiles::crypto;
 use alloc::vec::Vec;
 use alloy_consensus::{Transaction, TxEip7702, TxType};
 use alloy_eips::{
@@ -266,19 +266,21 @@ impl Transaction for LazyTxEip7702 {
     }
 }
 
-/// Recovers the authority of a signed authorization with the same secp256k1 backend as the
-/// ecrecover precompile, instead of whichever backend alloy-primitives was built with.
+/// Recovers the authority of a signed authorization with the installed
+/// [`Crypto`](crate::precompiles::Crypto) provider, like the ecrecover precompile does, instead of
+/// whichever backend alloy-primitives was built with.
 ///
 /// Keeps the checks of [`SignedAuthorization::recover_authority`]: the y-parity must be 0 or 1,
-/// `s` must not exceed secp256k1n/2, and the backend rejects a zero or out-of-range `r` or `s`.
+/// `s` must not exceed secp256k1n/2, and the provider rejects a zero or out-of-range `r` or `s`.
 fn recover_authority(authorization: &SignedAuthorization) -> Option<Address> {
     let signature = authorization.signature().ok()?;
     if signature.s() > SECP256K1N_HALF {
         return None;
     }
     let rsy = signature.as_rsy();
-    let hash = ecrecover_bytes(rsy.first_chunk()?, rsy[64], &authorization.signature_hash())?;
-    Some(Address::from_word(hash.into()))
+    let hash =
+        crypto().secp256k1_ecrecover(rsy.first_chunk()?, rsy[64], &authorization.signature_hash());
+    Some(Address::from_word(hash.ok()?.into()))
 }
 
 #[cfg(test)]

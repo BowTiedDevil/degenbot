@@ -36,6 +36,11 @@ ones here with the numbers that rejected them.
   call out of line made `opt.s` change in 28/31 benchmarks, JIT size
   +1.8% total (geomean +1.3%), spills +3.9%, compile instructions +0.8% and
   runtime instructions +0.8% (cycles +1.4%).
+- Marking compiled functions `"prefer-vector-width"="256"` and `"min-legal-vector-width"="0"`,
+  so AVX-512 hosts copy stack words with 32-byte vectors instead of 64-byte loads that can't
+  forward from 8-byte stores: `curve_stableswap` jit/run 54.4 -> 50.6 us on Zen 4 (other runs
+  within noise), but `jit/compile` got 15-19% slower in CodSpeed and 12-18% slower locally
+  (`fibonacci-calldata` 5.4 -> 6.3 ms, `eip2935` 6.2 -> 7.1 ms).
 
 ## Optimization passes
 

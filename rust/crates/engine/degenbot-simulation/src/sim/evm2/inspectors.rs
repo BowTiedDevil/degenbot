@@ -131,7 +131,7 @@ impl Inspector<BaseEvmTypes> for Evm2SimInspector {
 
     fn call(
         &mut self,
-        _interp: &mut Interpreter<'_, '_, BaseEvmTypes>,
+        interp: &mut Interpreter<'_, '_, BaseEvmTypes>,
         message: &mut Message<BaseEvmTypes>,
     ) -> Option<MessageResult<BaseEvmTypes>> {
         self.swaps.begin_frame();
@@ -140,9 +140,9 @@ impl Inspector<BaseEvmTypes> for Evm2SimInspector {
             depth: self.trace.depth,
             caller: message.caller,
             target: message.destination,
-            selector: selector_of(&message.input),
+            selector: selector_of(message.input.as_bytes(interp.memory())),
             gas_limit: message.gas_limit,
-            data: message.input.to_bytes(),
+            data: message.input.to_bytes(interp.memory()),
             outcome: None,
         });
         None

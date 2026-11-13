@@ -254,8 +254,8 @@ pub unsafe fn __revmc_builtin_codecopy<T: EvmTypesHost>(
     ecx: &mut EvmContext<'_, '_, '_, T>,
     sp: &mut [EvmWord; 3],
 ) -> BuiltinResult {
-    let bytecode = ecx.bytecode();
-    unsafe { copy_operation(ecx, sp, bytecode.as_ref()) }
+    let code = ecx.interpreter().original_bytecode_slice();
+    unsafe { copy_operation(ecx, sp, code) }
 }
 
 #[inline]
@@ -689,7 +689,7 @@ pub unsafe fn __revmc_builtin_create<T: EvmTypesHost>(
                 caller_info.nonce,
                 value,
                 depth,
-                ecx.version(),
+                ecx.host().initial_call_depth(),
             )
             .is_some()
         {
@@ -820,8 +820,7 @@ pub unsafe fn __revmc_builtin_call<T: EvmTypesHost>(
             call_kind == CallKind::Call,
             local_gas_limit,
         )?;
-    // SAFETY: The message goes straight to the host, and nothing reads it after the host returns.
-    let input = unsafe { ecx.interpreter().call_input(in_offset, in_len) };
+    let input = ecx.interpreter().call_input(in_offset, in_len);
 
     let current = ecx.message();
     let (destination, caller, call_value, code_address) = match call_kind {
@@ -1167,7 +1166,9 @@ mod tests {
         ) -> Option<MessageResult<BaseEvmTypes>> {
             self.call_static_flags
                 .push(interp.is_static() || message.kind == MessageKind::StaticCall);
-            self.calls.push(message.clone());
+            let mut message = message.clone();
+            message.input = message.input.to_bytes(interp.memory()).into();
+            self.calls.push(message);
             Some(self.execute_result.clone())
         }
 
@@ -1284,7 +1285,7 @@ mod tests {
         assert_eq!(inspector.calls[0].kind, MessageKind::Call);
         assert_eq!(inspector.calls[0].destination, target);
         assert_eq!(inspector.calls[0].caller, caller);
-        assert_eq!(inspector.calls[0].input.as_ref(), b"in");
+        assert_eq!(inspector.calls[0].input.as_owned().unwrap()[..], *b"in");
         assert!(!inspector.call_static_flags[0]);
     }
 
@@ -1440,7 +1441,7 @@ mod tests {
         let inspector = host.clear_inspector_as::<MessageInspector>().unwrap();
         assert_eq!(inspector.creates.len(), 1);
         assert_eq!(inspector.creates[0].kind, MessageKind::Create);
-        assert_eq!(inspector.creates[0].input.as_ref(), initcode);
+        assert_eq!(inspector.creates[0].input.as_owned().unwrap()[..], initcode);
     }
 
     #[test]
@@ -1484,7 +1485,7 @@ mod tests {
         let inspector = host.clear_inspector_as::<MessageInspector>().unwrap();
         assert_eq!(inspector.creates.len(), 1);
         assert_eq!(inspector.creates[0].kind, MessageKind::Create2);
-        assert_eq!(inspector.creates[0].input.as_ref(), initcode);
+        assert_eq!(inspector.creates[0].input.as_owned().unwrap()[..], initcode);
         assert_eq!(inspector.creates[0].salt, B256::from(salt.to_be_bytes()));
     }
 

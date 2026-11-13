@@ -72,12 +72,12 @@ pub fn callvalue(cx: _) -> out {
 #[instruction]
 pub fn calldataload(cx: _, [offset]: [Word]) -> out {
     let offset = offset.to_usize_saturated();
-    *out = read_word_padded(&cx.state.message().input, offset).into();
+    *out = read_word_padded(cx.state.input(), offset).into();
 }
 
 #[instruction]
 pub fn calldatasize(cx: _) -> out {
-    out.write_u64(cx.state.message().input.len() as u64);
+    out.write_u64(cx.state.input().len() as u64);
 }
 
 #[instruction(dynamic_gas)]
@@ -86,7 +86,7 @@ pub fn calldatacopy(cx: _, [memory_offset, data_offset, len]: [Word]) -> Result 
     // SAFETY: Charging and copying data make no host calls.
     let gas_params = unsafe { cx.state.gas_params_detached() };
     cx.gas.spend(gas_params.copy_cost(len))?;
-    let input = cx.state.message().input.as_ref();
+    let input = cx.state.0.input;
     copy_data(cx.gas, &mut cx.state.0.memory, gas_params, memory_offset, data_offset, len, input)
 }
 

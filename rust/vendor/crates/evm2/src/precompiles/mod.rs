@@ -85,13 +85,17 @@ use p256 as _;
 #[derive(Clone, Debug)]
 pub struct Precompiles<T: EvmTypesHost = crate::BaseEvmTypes> {
     map: Cow<'static, PrecompileMap<T>>,
+    /// The map before the first [`PrecompileProvider::move_precompiles`], whose addresses stay
+    /// warm: `eth_simulateV1` keeps the warm set of the fork when it moves a precompile. Changes
+    /// made through [`Precompiles::as_map_mut`] after that move do not change the warm set.
+    warm: Option<Cow<'static, PrecompileMap<T>>>,
 }
 
 impl<T: EvmTypesHost> Precompiles<T> {
     /// Creates a precompile provider from a static precompile map.
     #[inline]
     pub const fn new(map: Cow<'static, PrecompileMap<T>>) -> Self {
-        Self { map }
+        Self { map, warm: None }
     }
 
     /// Creates a precompile provider for a base EVM specification.
@@ -121,6 +125,9 @@ impl<T: EvmTypesHost> Precompiles<T> {
     }
 
     /// Returns the underlying precompile map mutably.
+    ///
+    /// After [`PrecompileProvider::move_precompiles`], changes to this map do not change the
+    /// [warm addresses](PrecompileProvider::warm_addresses).
     #[inline]
     pub fn as_map_mut(&mut self) -> &mut PrecompileMap<T> {
         self.map.to_mut()
@@ -135,7 +142,7 @@ impl<T: EvmTypesHost> PrecompileProvider<T> for Precompiles<T> {
 
     #[inline]
     fn warm_addresses(&self, warm: &mut PrewarmSet) {
-        self.map.as_ref().warm_addresses(warm);
+        self.warm.as_ref().unwrap_or(&self.map).warm_addresses(warm);
     }
 
     #[inline]
@@ -158,7 +165,13 @@ impl<T: EvmTypesHost> PrecompileProvider<T> for Precompiles<T> {
         &mut self,
         moves: &[(Address, Address)],
     ) -> Result<(), MovePrecompileError> {
-        self.as_map_mut().move_precompiles(moves.iter().copied())
+        let original = (self.warm.is_none() && moves.iter().any(|(source, dest)| source != dest))
+            .then(|| self.map.clone());
+        self.as_map_mut().move_precompiles(moves.iter().copied())?;
+        if original.is_some() {
+            self.warm = original;
+        }
+        Ok(())
     }
 
     #[inline]
@@ -306,5 +319,21 @@ mod tests {
         assert!(
             Precompiles::<crate::BaseEvmTypes>::base(SpecId::BERLIN).as_map().contains(&identity)
         );
+    }
+
+    #[test]
+    fn move_precompiles_keeps_warm_addresses() {
+        let identity = IDENTITY::<crate::BaseEvmTypes>().address();
+        let moved = address!("0x0000000000000000000000000000000000001000");
+        let mut precompiles = Precompiles::<crate::BaseEvmTypes>::base(SpecId::BERLIN);
+
+        PrecompileProvider::move_precompiles(&mut precompiles, &[(identity, moved)]).unwrap();
+
+        let mut warm = PrewarmSet::new();
+        precompiles.warm_addresses(&mut warm);
+        assert!(warm.is_warm(&identity));
+        assert!(!warm.is_warm(&moved));
+        assert!(!precompiles.contains(&identity));
+        assert!(precompiles.contains(&moved));
     }
 }

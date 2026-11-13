@@ -357,10 +357,11 @@ mod tests {
 
     use ::evm2_jit::eyre;
     use ::evm2_jit::runtime::{
-        ArtifactKey, ArtifactManifest, ArtifactStore, JitBackend, LookupDecision, LookupMissReason,
-        LookupRequest, RuntimeCacheKey, RuntimeConfig, RuntimeTuning, StoredArtifact,
+        ArtifactKey, ArtifactManifest, ArtifactStore, JitBackend, LookupCode, LookupDecision,
+        LookupMissReason, LookupRequest, RuntimeCacheKey, RuntimeConfig, RuntimeTuning,
+        StoredArtifact,
     };
-    use alloy::primitives::{keccak256, Bytes};
+    use alloy::primitives::keccak256;
 
     use crate::sim::evm2::aot_store;
     use crate::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
@@ -397,14 +398,14 @@ mod tests {
 
     /// A one-opcode program: compilable, and fast enough that the blocking
     /// contrast below costs one translation rather than a contract's worth.
-    fn lookup_request() -> LookupRequest {
-        let code = Bytes::from_static(&[0x00]);
+    fn lookup_request() -> LookupRequest<'static> {
+        const CODE: &[u8] = &[0x00];
         LookupRequest {
             key: RuntimeCacheKey {
-                code_hash: keccak256(&code),
+                code_hash: keccak256(CODE),
                 spec_id: EVM2_PRODUCTION_SPEC,
             },
-            code,
+            code: LookupCode::Bytes(CODE),
         }
     }
 

@@ -1,11 +1,11 @@
 use crate::{
-    BaseEvmTypes, EvmTypesHost, Version,
+    BaseEvmTypes, EvmTypesHost,
     bytecode::Bytecode,
-    interpreter::{InstrStop, Word},
-    trustme,
+    constants::CALL_DEPTH_LIMIT,
+    interpreter::{InstrStop, Memory, Word},
 };
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
-use core::{fmt, ops::Deref};
+use core::ops::Range;
 
 /// EVM message kind.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -43,7 +43,7 @@ pub struct MessageExt<E = ()> {
     /// Message kind.
     pub kind: MessageKind,
     /// Inspector-visible call depth, starting at
-    /// [`Version::initial_call_depth`](crate::Version::initial_call_depth).
+    /// [`Host::initial_call_depth`](crate::interpreter::Host::initial_call_depth).
     pub depth: u16,
     /// Gas available to this message.
     pub gas_limit: u64,
@@ -181,22 +181,23 @@ pub fn derive_create_destination(
 /// Returns the reason a create message fails before its destination is accessed, if any.
 ///
 /// `balance` and `nonce` are the creator's, and are zero for an absent account. Failures are
-/// checked in order: call depth, insufficient balance for `value`, then, for a nested create
-/// (`depth` above [`Version::initial_call_depth`]), a creator nonce at `u64::MAX` (EIP-2681). The
-/// transaction itself bumps the nonce of a top-level create, so that one skips the nonce check.
+/// checked in order: call depth (more than [`CALL_DEPTH_LIMIT`] below `initial_call_depth`),
+/// insufficient balance for `value`, then, for a nested create (`depth` above
+/// `initial_call_depth`), a creator nonce at `u64::MAX` (EIP-2681). The transaction itself bumps
+/// the nonce of a top-level create, so that one skips the nonce check.
 #[inline]
 pub fn create_preaccess_failure(
     balance: Word,
     nonce: u64,
     value: Word,
     depth: u16,
-    version: &Version,
+    initial_call_depth: u16,
 ) -> Option<InstrStop> {
-    if depth > version.max_call_depth() {
+    if depth.saturating_sub(initial_call_depth) > CALL_DEPTH_LIMIT {
         Some(InstrStop::CallTooDeep)
     } else if balance < value {
         Some(InstrStop::OutOfFunds)
-    } else if depth > version.initial_call_depth && nonce == u64::MAX {
+    } else if depth > initial_call_depth && nonce == u64::MAX {
         Some(InstrStop::NonceOverflow)
     } else {
         None
@@ -205,104 +206,148 @@ pub fn create_preaccess_failure(
 
 /// The input of a message: call data, or initcode for create messages.
 ///
-/// It derefs to the input bytes. When [`Evm`](crate::Evm) runs without an inspector, the child of
-/// a call instruction reads its input from the caller's memory instead of a copy, since the caller
-/// waits for the call to return. [`Clone`] and [`to_bytes`](Self::to_bytes) copy borrowed bytes, so
-/// a kept input always owns them.
-#[derive(Default)]
-pub struct MessageInput {
-    /// The owned bytes, or the borrowed bytes with their lifetime erased.
-    bytes: Bytes,
-    /// Whether `bytes` borrows. If set, `bytes` must never be cloned.
-    borrowed: bool,
+/// The input of a call instruction's message is a range of the caller frame's memory instead of a
+/// copy, since the caller waits for the call to return. The child frame reads it from there, and
+/// the inspector hooks that hold the message read it with [`as_bytes`](Self::as_bytes) and the
+/// caller's memory, which is the `interp.memory()` of the hook, and a precompile reads it with
+/// [`Evm::message_input`](crate::Evm::message_input). To change an input, copy it out and assign
+/// an owned one, as in `message.input = bytes.into()`. A clone of such an input is only the range,
+/// and does not record whose memory it names: copy the bytes out with
+/// [`to_bytes`](Self::to_bytes) to keep or forward them.
+///
+/// A running frame reads its own input with
+/// [`Interpreter::input`](crate::interpreter::Interpreter::input), and only [`Evm`](crate::Evm)
+/// resolves a borrowed input when it enters a frame.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MessageInput(Repr);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Repr {
+    /// The input's bytes.
+    Owned(Bytes),
+    /// The input's range in the memory of the caller frame with the entry number `frame`.
+    Borrowed { range: Range<usize>, frame: u64 },
+}
+
+impl Default for Repr {
+    #[inline]
+    fn default() -> Self {
+        Self::Owned(Bytes::new())
+    }
 }
 
 impl MessageInput {
-    /// Borrows `bytes` without copying.
-    ///
-    /// # Safety
-    ///
-    /// `bytes` must stay valid and unchanged for as long as the input is read.
+    /// Creates an input that is `range` of the memory of the caller frame with the entry number
+    /// `frame`.
     #[inline]
-    pub(crate) unsafe fn borrowed(bytes: &[u8]) -> Self {
-        // SAFETY: The caller keeps the bytes alive while they are read, and `borrowed` keeps
-        // them from being cloned out.
-        Self { bytes: Bytes::from_static(unsafe { trustme::decouple_lt(bytes) }), borrowed: true }
+    pub(crate) const fn borrowed(range: Range<usize>, frame: u64) -> Self {
+        Self(Repr::Borrowed { range, frame })
     }
 
-    /// Returns the input as owned bytes, copying borrowed ones.
+    /// Returns the range and the caller frame's entry number of a borrowed input.
     #[inline]
-    pub fn to_bytes(&self) -> Bytes {
-        if self.borrowed { Bytes::copy_from_slice(&self.bytes) } else { self.bytes.clone() }
-    }
-
-    /// Copies borrowed bytes into an owned buffer.
-    #[inline]
-    pub(crate) fn make_owned(&mut self) {
-        if self.borrowed {
-            *self = Self::from(Bytes::copy_from_slice(&self.bytes));
+    pub(crate) const fn borrowed_range(&self) -> Option<(&Range<usize>, u64)> {
+        match &self.0 {
+            Repr::Owned(_) => None,
+            Repr::Borrowed { range, frame } => Some((range, *frame)),
         }
     }
-}
 
-impl Clone for MessageInput {
+    /// Returns the length of the input.
     #[inline]
-    fn clone(&self) -> Self {
-        Self::from(self.to_bytes())
+    pub fn len(&self) -> usize {
+        match &self.0 {
+            Repr::Owned(bytes) => bytes.len(),
+            Repr::Borrowed { range, .. } => range.len(),
+        }
     }
-}
 
-impl fmt::Debug for MessageInput {
+    /// Returns whether the input is empty.
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.bytes.fmt(f)
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
-}
 
-impl PartialEq for MessageInput {
+    /// Returns the bytes of an input that owns them, and `None` for a range of the caller's
+    /// memory.
     #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.bytes == other.bytes
+    pub const fn as_owned(&self) -> Option<&Bytes> {
+        match &self.0 {
+            Repr::Owned(bytes) => Some(bytes),
+            Repr::Borrowed { .. } => None,
+        }
     }
-}
 
-impl Eq for MessageInput {}
-
-impl Deref for MessageInput {
-    type Target = [u8];
-
+    /// Returns the input bytes, reading them from `memory`, the caller frame's memory, unless the
+    /// input owns them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input's range is out of bounds of `memory`.
     #[inline]
-    fn deref(&self) -> &[u8] {
-        &self.bytes
+    pub fn as_bytes<'a>(&'a self, memory: &'a Memory) -> &'a [u8] {
+        match &self.0 {
+            Repr::Owned(bytes) => bytes,
+            Repr::Borrowed { range, .. } => &memory.as_slice()[range.clone()],
+        }
+    }
+
+    /// Returns the input as owned bytes, copying them from `memory`, the caller frame's memory,
+    /// unless the input owns them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input's range is out of bounds of `memory`.
+    #[inline]
+    pub fn to_bytes(&self, memory: &Memory) -> Bytes {
+        match &self.0 {
+            Repr::Owned(bytes) => bytes.clone(),
+            Repr::Borrowed { .. } => Bytes::copy_from_slice(self.as_bytes(memory)),
+        }
     }
 }
 
 impl From<Bytes> for MessageInput {
     #[inline]
     fn from(bytes: Bytes) -> Self {
-        Self { bytes, borrowed: false }
+        Self(Repr::Owned(bytes))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SpecId;
 
     #[test]
     fn create_preaccess_failure_order_and_nesting() {
-        let mut version = Version::new(SpecId::CANCUN);
-        version.initial_call_depth = 5;
-        let max = version.max_call_depth();
+        let initial_call_depth = 5;
+        let max = initial_call_depth + CALL_DEPTH_LIMIT;
         let check = |balance: u64, nonce: u64, value: u64, depth: u16| {
-            create_preaccess_failure(Word::from(balance), nonce, Word::from(value), depth, &version)
+            create_preaccess_failure(
+                Word::from(balance),
+                nonce,
+                Word::from(value),
+                depth,
+                initial_call_depth,
+            )
         };
 
         assert_eq!(check(0, u64::MAX, 1, max + 1), Some(InstrStop::CallTooDeep));
         assert_eq!(check(0, u64::MAX, 1, max), Some(InstrStop::OutOfFunds));
         assert_eq!(check(1, u64::MAX, 1, max), Some(InstrStop::NonceOverflow));
-        assert_eq!(check(1, u64::MAX, 1, version.initial_call_depth), None);
+        assert_eq!(check(1, u64::MAX, 1, initial_call_depth), None);
         assert_eq!(check(0, 0, 0, max), None);
+
+        // A host-supplied initial depth near `u16::MAX` must not overflow the limit.
+        let check_at = |initial_call_depth: u16, depth: u16| {
+            create_preaccess_failure(Word::ZERO, 0, Word::ZERO, depth, initial_call_depth)
+        };
+        assert_eq!(check_at(u16::MAX, u16::MAX), None);
+        assert_eq!(check_at(u16::MAX - CALL_DEPTH_LIMIT, u16::MAX), None);
+        assert_eq!(
+            check_at(u16::MAX - CALL_DEPTH_LIMIT - 1, u16::MAX),
+            Some(InstrStop::CallTooDeep)
+        );
     }
 
     #[test]
@@ -345,20 +390,32 @@ mod tests {
     }
 
     #[test]
-    fn kept_borrowed_input_owns_its_bytes() {
-        let mut memory = [1, 2, 3];
-        // SAFETY: `memory` is unchanged until `input` is dropped.
-        let input = unsafe { MessageInput::borrowed(&memory) };
-        let clone = input.clone();
-        let bytes = input.to_bytes();
-        // SAFETY: `memory` is unchanged until `owned` owns its bytes.
-        let mut owned = unsafe { MessageInput::borrowed(&memory) };
-        owned.make_owned();
-        drop(input);
-        memory.fill(0);
+    fn caller_memory_input() {
+        let mut memory = Memory::new();
+        memory.resize(0, 3).unwrap();
+        memory.set(0, &[1, 2, 3]);
+        let input = MessageInput::borrowed(1..3, 0);
+        let owned = MessageInput::from(Bytes::from_static(&[9]));
+        let kept = input.clone();
+        memory.set(1, &[7]);
 
-        assert_eq!(&*clone, [1, 2, 3]);
-        assert_eq!(bytes[..], [1, 2, 3]);
-        assert_eq!(&*owned, [1, 2, 3]);
+        assert_eq!((input.len(), owned.len()), (2, 1));
+        assert_eq!(input.as_owned(), None);
+        assert_eq!(owned.as_owned(), Some(&Bytes::from_static(&[9])));
+        // A borrowed input, and a clone of it, read the caller's memory.
+        assert_eq!(input.as_bytes(&memory), [7, 3]);
+        assert_eq!(kept.as_bytes(&memory), [7, 3]);
+        assert_eq!(input.to_bytes(&memory)[..], [7, 3]);
+        assert_eq!(owned.as_bytes(&memory), [9]);
+        assert_eq!(MessageInput::default().len(), 0);
+    }
+
+    #[test]
+    #[should_panic = "range end index 3 out of range for slice of length 2"]
+    fn caller_memory_input_out_of_bounds_panics() {
+        let mut memory = Memory::new();
+        memory.resize(0, 2).unwrap();
+
+        MessageInput::borrowed(1..3, 0).as_bytes(&memory);
     }
 }

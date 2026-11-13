@@ -11,7 +11,7 @@ use alloy_primitives::{
 };
 
 /// One block's account transitions, finalized into a [`BundleState`] with their reverts.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct BlockState {
     transitions: AddressMap<TransitionAccount>,
     contracts: B256Map<Bytecode>,

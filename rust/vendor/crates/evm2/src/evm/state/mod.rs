@@ -459,11 +459,43 @@ impl<'a> State<'a> {
         }
     }
 
+    /// Clears the runtime warmth of every loaded account and storage slot without journaling the
+    /// change.
+    ///
+    /// This has the effect of [`Self::set_account_warm`] and [`Self::set_storage_warm`] with
+    /// `false` for everything that [`Self::loaded_accounts`] returns, in one pass over the
+    /// overlay. Values and the pre-warmed set are unchanged, so pre-warmed addresses and slots
+    /// remain effectively warm.
+    pub fn cool_loaded(&mut self) {
+        for account in self.accounts.values_mut() {
+            account.flags.remove(AccountFlags::WARM);
+            for slot in account.storage.slots.values_mut() {
+                slot.is_warm = false;
+            }
+        }
+    }
+
     /// Reads a storage slot from the committed state (accepted overlay and backing database),
     /// ignoring the in-flight transaction overlay.
     #[inline]
     pub fn read_committed_storage(&mut self, address: &Address, key: &Word) -> DbResult<Word> {
         self.inner.database.get_storage(address, key)
+    }
+
+    /// Rereads a loaded storage slot as a first load would, making the value read both its
+    /// transaction-boundary original and its current value. Does nothing for an unloaded slot.
+    ///
+    /// A rollback never evicts a loaded slot, so a slot first loaded while its account's creation
+    /// discarded the old storage keeps the zero it read, as its original and current value, after
+    /// the creation is rolled back. An embedder that rolls back such a creation can reload the
+    /// slot to read its backing value again, with the original that `SSTORE` gas and refunds
+    /// depend on. Like a load, this records no revert entry and keeps the slot's warmth.
+    pub fn reload_storage_slot(&mut self, address: &Address, key: &Word) -> DbResult<()> {
+        let Some(account) = self.accounts.get_mut(address) else { return Ok(()) };
+        let reads_zero = account.storage.wiped || account.discards_storage();
+        let Some(slot) = account.storage.slots.get_mut(key) else { return Ok(()) };
+        slot.value = Tracked::new(self.inner.read_unloaded_slot(address, key, reads_zero)?);
+        Ok(())
     }
 
     /// Takes logs emitted by the current in-flight transaction.
@@ -840,20 +872,9 @@ impl<'a> State<'a> {
     /// This is intended for transaction-finalization policies that encode per-account pending
     /// work in EIP-1153 storage and must consume it before transaction scratch is cleared.
     pub fn take_transient_storage(&mut self, address: &Address) -> Vec<(Word, Word)> {
-        let keys = self
-            .transient_storage
-            .keys()
-            .copied()
-            .filter(|key| key.address() == *address)
-            .collect::<Vec<_>>();
-        keys.into_iter()
-            .map(|key| {
-                let value = self
-                    .transient_storage
-                    .remove(&key)
-                    .expect("collected transient storage key must exist");
-                (key.key(), value)
-            })
+        self.transient_storage
+            .extract_if(|key, _| key.address() == *address)
+            .map(|(key, value)| (key.key(), value))
             .collect()
     }
 
@@ -1549,6 +1570,38 @@ mod tests {
     }
 
     #[test]
+    fn cool_loaded_clears_runtime_warmth_only() {
+        let cooled = Address::with_last_byte(42);
+        let prewarmed = Address::with_last_byte(43);
+        let key = Word::ONE;
+        let mut state = State::new(EmptyDB::default());
+        state.prewarm_storage(&prewarmed, [key]);
+        for address in [cooled, prewarmed] {
+            let mut account = state.account(&address).unwrap();
+            account.set_balance(Word::from(7));
+            account.warm();
+            drop(account);
+            let mut slot = state.storage_slot(&address, key).unwrap();
+            slot.set(Word::from(9));
+            slot.warm();
+        }
+
+        state.cool_loaded();
+
+        assert!(!state.account(&cooled).unwrap().is_warm());
+        assert!(!state.storage(&cooled).unwrap().is_warm(&key));
+        assert!(state.account(&prewarmed).unwrap().is_warm());
+        assert!(state.storage(&prewarmed).unwrap().is_warm(&key));
+        for address in [cooled, prewarmed] {
+            assert_eq!(state.account(&address).unwrap().balance(), Word::from(7));
+            assert_eq!(state.storage_slot(&address, key).unwrap().current(), Word::from(9));
+        }
+        // The cooled slot warms again as a cold access; the pre-warmed one was never cold.
+        assert!(state.storage_slot(&cooled, key).unwrap().warm());
+        assert!(!state.storage_slot(&prewarmed, key).unwrap().warm());
+    }
+
+    #[test]
     fn rollback_after_snapshot_restore() {
         // Restoring a snapshot does not rebase active checkpoints. Only entries beyond each saved
         // cursor are reverted, even after the journal and logs regrow.
@@ -1699,5 +1752,32 @@ mod tests {
         state.rollback(checkpoint, EvmFeatures::empty());
 
         assert_eq!(sorted_loaded_accounts(&state), [(read, vec![Word::ONE])]);
+    }
+
+    #[test]
+    fn reload_storage_slot_rereads_slot_read_as_zero_under_rolled_back_creation() {
+        let caller = Address::with_last_byte(1);
+        let address = Address::with_last_byte(2);
+        let (key, unloaded) = (Word::ONE, Word::from(2));
+        let features = Version::base(crate::SpecId::CANCUN).features;
+        let mut db = CacheDB::default();
+        db.insert_account_info(&address, AccountInfo::default().with_balance(Word::ONE));
+        db.insert_account_storage(&address, &key, &Word::from(6));
+        let mut state = State::new(db);
+
+        let checkpoint = state.checkpoint();
+        state.create_account(&caller, &address, &Word::ZERO, features).unwrap().unwrap();
+        assert_eq!(state.storage_slot(&address, key).unwrap().current(), Word::ZERO);
+        // Under the creation, a first load reads zero.
+        state.reload_storage_slot(&address, &key).unwrap();
+        assert_eq!(state.storage_slot(&address, key).unwrap().current(), Word::ZERO);
+        state.rollback(checkpoint, features);
+
+        state.reload_storage_slot(&address, &key).unwrap();
+        state.reload_storage_slot(&address, &unloaded).unwrap();
+        let slot = state.storage_slot(&address, key).unwrap();
+        assert_eq!((slot.original(), slot.current()), (Word::from(6), Word::from(6)));
+        assert!(!state.accounts[&address].storage.slots.contains_key(&unloaded));
+        assert!(!state.take_pending_state().is_changed());
     }
 }

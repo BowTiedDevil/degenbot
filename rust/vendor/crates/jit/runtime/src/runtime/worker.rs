@@ -468,6 +468,46 @@ impl CompilerTarget {
 
 #[cfg(feature = "llvm")]
 pub(super) fn compile_with_state(
+    mut job: CompileJob,
+    config: &RuntimeConfig,
+    target: CompilerTarget,
+    state_slot: &mut Option<CompilerState>,
+) -> WorkerResult {
+    // A panic while compiling must fail this job rather than unwind into the Rayon pool, which
+    // aborts the process when a spawned job panics.
+    let (key, kind, generation) = (job.key, job.kind, job.generation);
+    let sync_notifier = std::mem::replace(&mut job.sync_notifier, SyncNotifier::none());
+    let t0 = Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compile_with_state_inner(job, config, target, state_slot)
+    }));
+    match result {
+        Ok(result) => WorkerResult { sync_notifier, ..result },
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".into());
+            error!(hash = %key.code_hash, spec_id = ?key.spec_id, %message, "compilation panicked");
+            // The compiler may be left inconsistent: build a fresh one for the next job.
+            *state_slot = None;
+            WorkerResult {
+                key,
+                outcome: Err(format!("compilation panicked: {message}")),
+                kind,
+                sync_notifier,
+                generation,
+                compile_duration: t0.elapsed(),
+                timings: CompileTimings::default(),
+                transient: false,
+            }
+        }
+    }
+}
+
+#[cfg(feature = "llvm")]
+fn compile_with_state_inner(
     job: CompileJob,
     config: &RuntimeConfig,
     target: CompilerTarget,

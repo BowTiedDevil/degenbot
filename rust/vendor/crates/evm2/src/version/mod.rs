@@ -3,8 +3,8 @@
 use crate::{
     EvmConfig, EvmTypesHost, SpecId,
     constants::{
-        CALL_DEPTH_LIMIT, MAX_CODE_SIZE, MAX_CODE_SIZE_AMSTERDAM, MAX_INITCODE_SIZE,
-        MAX_INITCODE_SIZE_AMSTERDAM, MAX_TX_TOTAL_GAS_LIMIT_AMSTERDAM,
+        MAX_CODE_SIZE, MAX_CODE_SIZE_AMSTERDAM, MAX_INITCODE_SIZE, MAX_INITCODE_SIZE_AMSTERDAM,
+        MAX_TX_TOTAL_GAS_LIMIT_AMSTERDAM,
     },
     interpreter::{instructions as instr, op},
 };
@@ -55,12 +55,6 @@ pub struct Version {
     pub max_initcode_size: usize,
     /// Maximum blobs allowed in a single blob transaction.
     pub max_blobs_per_tx: usize,
-    /// Inspector-visible depth of the transaction root. Defaults to zero.
-    ///
-    /// Nested transaction roots can retain their outer call depth while receiving a fresh
-    /// [`CALL_DEPTH_LIMIT`]-descendant budget. This must leave room in `u16` for that budget
-    /// and the attempted-too-deep message: at most `u16::MAX - CALL_DEPTH_LIMIT - 1` (64510).
-    pub initial_call_depth: u16,
 
     #[doc(hidden)] // Not public API. Please use an existing constructor.
     pub _non_exhaustive: (),
@@ -117,29 +111,13 @@ impl Version {
     /// [`ExecutionConfig::with_version`](crate::ExecutionConfig::with_version) calls this when it
     /// installs a version, so instructions can rely on these invariants:
     ///
-    /// - [`initial_call_depth`](Self::initial_call_depth) is at most `u16::MAX - CALL_DEPTH_LIMIT -
-    ///   1` (64510).
     /// - [`GasId::MaxRefundQuotient`] is non-zero.
     #[inline]
     pub const fn assert_valid(&self) {
         assert!(
-            self.initial_call_depth < u16::MAX - CALL_DEPTH_LIMIT,
-            "initial call depth must leave room for 1024 descendants and the rejected attempt"
-        );
-        assert!(
             self.gas_params.get(GasId::MaxRefundQuotient) != 0,
             "max refund quotient must be non-zero"
         );
-    }
-
-    /// Returns the deepest permitted inspector-visible call depth.
-    ///
-    /// [`ExecutionConfig::with_version`](crate::ExecutionConfig::with_version) validates
-    /// [`Self::initial_call_depth`] through [`Self::assert_valid`], so this cannot overflow for an
-    /// installed version.
-    #[inline]
-    pub const fn max_call_depth(&self) -> u16 {
-        self.initial_call_depth + CALL_DEPTH_LIMIT
     }
 }
 
@@ -180,7 +158,6 @@ static BASE_VERSIONS: [Version; SpecId::COUNT] = {
             max_code_size: MAX_CODE_SIZE,
             max_initcode_size: MAX_INITCODE_SIZE,
             max_blobs_per_tx: MAX_BLOBS_PER_BLOCK_DENCUN,
-            initial_call_depth: 0,
             _non_exhaustive: (),
         }
     }; SpecId::COUNT];
@@ -197,7 +174,6 @@ static BASE_VERSIONS: [Version; SpecId::COUNT] = {
             max_code_size: base_max_code_size(spec_id),
             max_initcode_size: base_max_initcode_size(spec_id),
             max_blobs_per_tx: base_max_blobs_per_tx(spec_id),
-            initial_call_depth: 0,
             _non_exhaustive: (),
         };
         i += 1;
@@ -451,14 +427,6 @@ mod tests {
 
         amsterdam.tx_total_gas_cap = u64::MAX;
         assert_eq!(amsterdam.tx_gas_caps(), (u64::MAX, MAX_TX_GAS_LIMIT_OSAKA));
-    }
-
-    #[test]
-    #[should_panic(expected = "initial call depth must leave room")]
-    fn execution_config_rejects_unrepresentable_call_budget() {
-        let mut version = Version::new(SpecId::CANCUN);
-        version.initial_call_depth = u16::MAX - CALL_DEPTH_LIMIT;
-        crate::ExecutionConfig::<BaseEvmTypes>::for_spec_and_version(SpecId::CANCUN, version);
     }
 
     #[test]
@@ -902,9 +870,6 @@ evm_versions! {
             // floor-tokens count.
             TxFloorZeroByteMultiplier: NON_ZERO_BYTE_MULTIPLIER_ISTANBUL,
             TxAccessListFloorByteMultiplier: EIP7981_ACCESS_LIST_FLOOR_BYTE_MULTIPLIER,
-            // EIP-7702 under EIP-8037: per-authorization execution-gas refund. The
-            // intrinsic per-auth execution charge bundles a worst-case
-            // `ACCOUNT_WRITE`; when the authority leaf already exists (or the auth
             // EIP-2780 (ethereum/EIPs#11844): the per-auth `ACCOUNT_WRITE` and
             // state gas are charged conditionally at the runtime gas phase, per
             // authority that incurs them, so the pessimistic per-auth intrinsic

@@ -514,6 +514,10 @@ mod tests {
             unimplemented!()
         }
 
+        fn initial_call_depth(&self) -> u16 {
+            unimplemented!()
+        }
+
         fn load_account(
             &mut self,
             _address: &Address,

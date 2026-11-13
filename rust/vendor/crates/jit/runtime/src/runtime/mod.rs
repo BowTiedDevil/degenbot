@@ -6,9 +6,10 @@
 //! - Background JIT compilation for hot keys (threshold-based promotion).
 
 use crate::eyre::{self, WrapErr};
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use backend::{
-    Command, CompileJitRequest, EventQueue, JitObjectLinker, PrepareAotRequest, ResidentMap,
+    Command, CompileJitRequest, EventQueue, JitObjectLinker, LookupEvent, PrepareAotRequest,
+    ResidentMap,
 };
 use crossbeam_channel as chan;
 use crossbeam_queue::ArrayQueue;
@@ -27,7 +28,8 @@ use worker::SyncNotifier;
 
 mod api;
 pub use api::{
-    AotRequest, CompiledProgram, LookupDecision, LookupMissReason, LookupRequest, ProgramKind,
+    AotRequest, CompiledProgram, LookupCode, LookupDecision, LookupMissReason, LookupRequest,
+    ProgramKind,
 };
 
 mod config;
@@ -291,7 +293,9 @@ impl JitBackend {
     ///
     /// In normal mode this never blocks. In [`blocking`](RuntimeConfig::blocking) mode,
     /// a miss triggers synchronous JIT compilation and the call blocks until it completes.
-    pub fn lookup(&self, mut req: LookupRequest) -> LookupDecision {
+    #[inline]
+    pub fn lookup(&self, req: LookupRequest<'_>) -> LookupDecision {
+        let LookupRequest { key, code } = req;
         let inner = &*self.inner;
         let shared = &*inner.shared;
 
@@ -303,21 +307,23 @@ impl JitBackend {
             cold_path();
             return self.lookup_blocking(req);
         }
-        if !inner.tuning.should_compile(&req.code) {
+        if !inner.tuning.should_compile(code.as_slice()) {
             cold_path();
             return LookupDecision::Unavailable(LookupMissReason::Ineligible);
         }
 
-        let decision = if let Some(program_ref) = shared.resident.try_get(&req.key).try_unwrap() {
+        // An empty bytecode marks a hit for the backend.
+        let mut event = LookupEvent { key, code: Bytes::new() };
+        let decision = if let Some(program_ref) = shared.resident.try_get(&key).try_unwrap() {
             let program = Arc::clone(&program_ref);
             drop(program_ref);
-            req.code.clear();
             LookupDecision::Compiled(program)
         } else {
+            event.code = code.to_bytes();
             LookupDecision::Unavailable(LookupMissReason::NotReady)
         };
 
-        if let Err(_v) = shared.events.push(req) {
+        if let Err(_v) = shared.events.push(event) {
             cold_path();
             shared.stats.events_dropped.fetch_add(1, Ordering::Relaxed);
         }
@@ -354,7 +360,7 @@ impl JitBackend {
     /// compilation (see [`RuntimeTuning::should_compile`]) or compilation does not produce a
     /// resident program. Each such miss is counted in
     /// [`interpreter_fallbacks`](RuntimeStatsSnapshot::interpreter_fallbacks).
-    pub fn lookup_blocking(&self, req: LookupRequest) -> LookupDecision {
+    pub fn lookup_blocking(&self, req: LookupRequest<'_>) -> LookupDecision {
         let decision = self.lookup_blocking_inner(req);
         if let LookupDecision::Unavailable(_) = decision {
             self.count_interpreter_fallback();
@@ -362,8 +368,8 @@ impl JitBackend {
         decision
     }
 
-    fn lookup_blocking_inner(&self, req: LookupRequest) -> LookupDecision {
-        if !self.inner.tuning.should_compile(&req.code) {
+    fn lookup_blocking_inner(&self, req: LookupRequest<'_>) -> LookupDecision {
+        if !self.inner.tuning.should_compile(req.code.as_slice()) {
             return LookupDecision::Unavailable(LookupMissReason::Ineligible);
         }
         let code_hash = req.key.code_hash;
@@ -384,13 +390,13 @@ impl JitBackend {
     ///
     /// Blocks if the command channel is full to guarantee delivery. If the backend
     /// could not be started, the request is dropped and a warning is logged.
-    pub fn compile_jit(&self, req: LookupRequest) {
+    pub fn compile_jit(&self, req: LookupRequest<'_>) {
         if !self.ensure_started_for_enqueue() {
             return;
         }
         let cmd = Command::CompileJit(CompileJitRequest {
             key: req.key,
-            bytecode: req.code,
+            bytecode: req.code.to_bytes(),
             sync_notifier: SyncNotifier::none(),
         });
         let _ = self.inner.tx.send(cmd);
@@ -401,12 +407,12 @@ impl JitBackend {
     /// Returns `Ok(())` when the compiled function is available in the resident map,
     /// or when the compilation fails. Use [`get_compiled`](Self::get_compiled) to
     /// retrieve the result after this returns.
-    pub fn compile_jit_sync(&self, req: LookupRequest) -> eyre::Result<()> {
+    pub fn compile_jit_sync(&self, req: LookupRequest<'_>) -> eyre::Result<()> {
         self.ensure_started()?;
         let (tx, rx) = chan::bounded(1);
         let cmd = Command::CompileJit(CompileJitRequest {
             key: req.key,
-            bytecode: req.code,
+            bytecode: req.code.to_bytes(),
             sync_notifier: SyncNotifier::new(tx),
         });
         self.inner.tx.send(cmd).map_err(|_| eyre::eyre!("backend channel closed"))?;

@@ -88,12 +88,12 @@ fn run_supported<'frame, 'host, T: EvmTypesHost>(
         backend.count_interpreter_fallback();
         return None;
     }
-    let code_hash = interpreter.original_bytecode_hash();
-    let code = interpreter.original_bytecode();
-    let decision = backend.lookup(LookupRequest {
-        key: RuntimeCacheKey { code_hash, spec_id: host.execution_config().base_spec_id() },
-        code,
-    });
+    let key = RuntimeCacheKey {
+        code_hash: interpreter.original_bytecode_hash(),
+        spec_id: host.execution_config().base_spec_id(),
+    };
+    let decision =
+        backend.lookup(LookupRequest { key, code: interpreter.active_bytecode().into() });
 
     let program = match decision {
         LookupDecision::Compiled(program) => program,
@@ -874,7 +874,7 @@ mod tests {
                 assert!(matches!(
                     backend.lookup(LookupRequest {
                         key: RuntimeCacheKey { code_hash: code.hash_slow(), spec_id: spec },
-                        code: code.original_bytes(),
+                        code: (&code).into(),
                     }),
                     LookupDecision::Compiled(_)
                 ));
@@ -887,16 +887,14 @@ mod tests {
                         database
                             .insert_account_info(&creator, AccountInfo::default().with_nonce(1));
                         database.insert_account_info(&callee, AccountInfo::default().with_nonce(1));
-                        let mut version = Version::new(spec);
-                        version.initial_call_depth = initial_call_depth;
-                        let mut host = Evm::<BaseEvmTypes>::new_with_execution_config(
-                            ExecutionConfig::for_spec_and_version(spec, version),
+                        let mut host = Evm::<BaseEvmTypes>::new(
                             spec,
                             BlockEnvExt::default(),
                             ethereum_tx_registry(spec),
                             database,
                             Precompiles::base(spec),
                         );
+                        host.set_initial_call_depth(initial_call_depth);
                         if with_jit {
                             host.set_interpreter_runner(JitInterpreterRunner::new(backend.clone()));
                         }
@@ -1155,6 +1153,7 @@ mod custom_host_tests {
             config.set_instruction::<memory_clearing_selfbalance>(op::SELFBALANCE, selfbalance_gas);
             config.set_instruction::<added>(ADDED_OPCODE, 2);
             config.set_instruction::<added>(op::DUPN, 2);
+            config.set_instruction::<added>(op::MCOPY, 3);
             config
         };
     }
@@ -1410,5 +1409,14 @@ mod custom_host_tests {
         assert_eq!(compiled_stop, None);
         assert_eq!(stop, InstrStop::Return);
         assert_eq!(interpreted.output()[24..], 0xdead_u64.to_be_bytes());
+    }
+
+    #[test]
+    fn host_table_overridden_memory_opcode_uses_the_interpreter() {
+        // The overridden opcode has no stack inputs in analysis: compiling it must fail the job,
+        // not the process, and the frame runs on the interpreter.
+        let (compiled_stop, _, stop, _) = run_both(table_host(), &[op::MCOPY, op::STOP]);
+        assert_eq!(compiled_stop, None);
+        assert_eq!(stop, InstrStop::Stop);
     }
 }

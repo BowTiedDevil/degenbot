@@ -48,7 +48,8 @@ pub trait PrecompileProvider<T: EvmTypesHost>: NonStaticAny {
     /// Marks every precompile address as warm.
     ///
     /// Defaults to warming each of [`Self::addresses`]; providers should override it to avoid the
-    /// allocation, since it runs once per transaction.
+    /// allocation, since it runs once per transaction. After [`Self::move_precompiles`] the warm
+    /// addresses stay those from before the move, so they can differ from [`Self::addresses`].
     fn warm_addresses(&self, warm: &mut PrewarmSet) {
         for address in self.addresses() {
             warm.warm(&address);
@@ -63,8 +64,10 @@ pub trait PrecompileProvider<T: EvmTypesHost>: NonStaticAny {
 
     /// Relocates installed precompiles, validating all sources before changing the provider.
     ///
-    /// Entries whose source and destination match are ignored. Wrappers must preserve the
-    /// underlying provider and invalidate any address-dependent caches after a successful move.
+    /// Entries whose source and destination match are ignored. A move does not change the
+    /// [warm addresses](Self::warm_addresses). Wrappers must preserve the underlying provider,
+    /// delegate [`Self::warm_addresses`], and invalidate any address-dependent caches after a
+    /// successful move.
     fn move_precompiles(&mut self, moves: &[(Address, Address)])
     -> Result<(), MovePrecompileError>;
 

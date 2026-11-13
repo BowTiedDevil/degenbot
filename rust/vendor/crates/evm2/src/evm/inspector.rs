@@ -448,20 +448,20 @@ mod tests {
     use super::*;
     use crate::{
         BaseEvmConfig, BaseEvmTypes, DatabaseError, Evm, EvmConfig, EvmTypesHost, ExecutionConfig,
-        OpcodeConfig, Precompiles, SpecId, Version,
+        OpcodeConfig, Precompiles, SpecId,
         bytecode::Bytecode,
         constants::CALL_DEPTH_LIMIT,
         env::BlockEnvExt,
         ethereum::{TxEnvelope, ethereum_tx_registry},
         evm::{AccountInfo, EmptyDB, InMemoryDB, SYSTEM_ADDRESS, State, StateCheckpoint},
         interpreter::{
-            GasTracker, Host, InstrStop, Interpreter, Message, MessageExt, MessageKind,
-            MessageResult, MessageResultExt, Word, instructions as instr, op,
+            GasTracker, Host, InstrStop, Interpreter, Message, MessageExt, MessageInput,
+            MessageKind, MessageResult, MessageResultExt, Word, instructions as instr, op,
         },
         registry::TxRegistry,
         test_utils::{
-            TestHost, TestTypes, call_code, create_code, legacy_bytecode, push, push_all,
-            return_top_word,
+            TestHost, TestTypes, call_code, create_code, legacy_bytecode, memory_input_call_code,
+            push, push_all, return_top_word,
         },
         utils::{WordExt, address_to_word},
     };
@@ -1653,16 +1653,14 @@ mod tests {
         code.extend([op::CALL, op::STOP]);
 
         for initial_call_depth in [0, 7] {
-            let mut version = Version::new(SpecId::OSAKA);
-            version.initial_call_depth = initial_call_depth;
-            let mut evm = Evm::<BaseEvmTypes>::new_with_execution_config(
-                ExecutionConfig::for_spec_and_version(SpecId::OSAKA, version),
+            let mut evm = Evm::<BaseEvmTypes>::new(
                 SpecId::OSAKA,
                 BlockEnvExt::default(),
                 TxRegistry::new(),
                 InMemoryDB::default(),
                 Precompiles::base(SpecId::OSAKA),
             );
+            evm.set_initial_call_depth(initial_call_depth);
             evm.set_inspector(HookInspector::default());
             let depth = initial_call_depth + CALL_DEPTH_LIMIT;
             let mut message = MessageExt {
@@ -1866,31 +1864,8 @@ mod tests {
         db
     }
 
-    /// Calls `target` through `call_op` with memory 0..32 as input and returns its 32-byte output.
-    fn memory_input_call_code(target: Address, call_op: u8) -> Vec<u8> {
-        let mut code = Vec::new();
-        push_all(&mut code, [Word::from_be_bytes([0xaa; 32]), Word::ZERO]);
-        code.push(op::MSTORE);
-        push_all(
-            &mut code,
-            [
-                Word::from(32),
-                Word::from(32),
-                Word::from(32),
-                Word::ZERO,
-                Word::ZERO,
-                address_to_word(&target),
-                Word::from(50_000),
-            ],
-        );
-        code.extend([call_op, op::POP]);
-        push_all(&mut code, [Word::from(32), Word::from(32)]);
-        code.push(op::RETURN);
-        code
-    }
-
     #[test]
-    fn call_hook_overwriting_caller_memory_keeps_child_input() {
+    fn call_hook_overwriting_caller_memory_changes_child_input() {
         struct OverwriteCallerMemory;
 
         impl Inspector<BaseEvmTypes> for OverwriteCallerMemory {
@@ -1900,9 +1875,24 @@ mod tests {
                 message: &mut Message<BaseEvmTypes>,
             ) -> Option<MessageResult<BaseEvmTypes>> {
                 if message.depth > 0 {
+                    // The input is a range of the caller's memory, read through the caller.
+                    assert_eq!(message.input.as_owned(), None);
+                    assert_eq!(message.input.len(), 32);
+                    assert_eq!(message.input.as_bytes(interp.memory()), [0xaa; 32]);
                     interp.memory_mut().set(0, &[0xbb; 32]);
                 }
                 None
+            }
+
+            fn call_end(
+                &mut self,
+                interp: &mut Interpreter<'_, '_, BaseEvmTypes>,
+                message: &Message<BaseEvmTypes>,
+                _result: &mut MessageResult<BaseEvmTypes>,
+            ) {
+                if message.depth > 0 {
+                    assert_eq!(message.input.to_bytes(interp.memory())[..], [0xbb; 32]);
+                }
             }
         }
 
@@ -1916,12 +1906,144 @@ mod tests {
             );
 
             assert_matches!(result.stop, InstrStop::Return);
-            assert_eq!(result.output[..], [0xaa; 32], "{target}");
+            assert_eq!(result.output[..], [0xbb; 32], "{target}");
         }
     }
 
     #[test]
-    fn call_with_hook_overwriting_caller_memory_keeps_child_input() {
+    #[should_panic = "a call input must be resolved against the frame that made it"]
+    fn forwarding_a_borrowed_call_input_from_another_frame_panics() {
+        // Forwards the borrowed input of the child, a range of the caller's memory, from the
+        // child's own frame, where the range would name the child's memory.
+        struct ForwardInput;
+
+        impl Inspector<BaseEvmTypes> for ForwardInput {
+            fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, BaseEvmTypes>) {
+                if interp.message().depth == 1 {
+                    let mut message = MessageExt {
+                        depth: 2,
+                        gas_limit: 1_000,
+                        input: interp.message().input.clone(),
+                        code: legacy_bytecode([op::STOP]),
+                        ..Default::default()
+                    };
+                    let _ = Host::execute_message(interp.host(), &mut message);
+                }
+            }
+        }
+
+        run_evm_with_inspector_db(
+            echo_db(),
+            memory_input_call_code(ECHO, op::CALL),
+            &MessageExt::default(),
+            100_000,
+            ForwardInput,
+        );
+    }
+
+    #[test]
+    #[should_panic = "a call input must be resolved against the frame that made it"]
+    fn forwarding_a_borrowed_call_input_from_a_sibling_frame_panics() {
+        // Keeps the borrowed input of the first child and forwards it from the second child, a
+        // frame at the same depth whose memory the range would name.
+        #[derive(Default)]
+        struct ForwardSiblingInput(Option<MessageInput>);
+
+        impl Inspector<BaseEvmTypes> for ForwardSiblingInput {
+            fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, BaseEvmTypes>) {
+                if interp.message().depth != 1 {
+                    return;
+                }
+                match self.0.take() {
+                    None => self.0 = Some(interp.message().input.clone()),
+                    Some(input) => {
+                        let mut message = MessageExt {
+                            depth: 2,
+                            gas_limit: 1_000,
+                            input,
+                            code: legacy_bytecode([op::STOP]),
+                            ..Default::default()
+                        };
+                        let _ = Host::execute_message(interp.host(), &mut message);
+                    }
+                }
+            }
+        }
+
+        // Calls `ECHO` twice with memory 0..32 as input.
+        let mut code = memory_input_call_code(ECHO, op::CALL);
+        code.truncate(code.len() - 5);
+        push_all(
+            &mut code,
+            [
+                Word::from(32),
+                Word::from(32),
+                Word::from(32),
+                Word::ZERO,
+                Word::ZERO,
+                address_to_word(&ECHO),
+                Word::from(50_000),
+            ],
+        );
+        code.extend([op::CALL, op::POP, op::STOP]);
+
+        run_evm_with_inspector_db(
+            echo_db(),
+            code,
+            &MessageExt::default(),
+            100_000,
+            ForwardSiblingInput::default(),
+        );
+    }
+
+    #[test]
+    fn call_hook_replacing_input_keeps_caller_memory() {
+        struct ReplaceInput;
+
+        impl Inspector<BaseEvmTypes> for ReplaceInput {
+            fn call(
+                &mut self,
+                interp: &mut Interpreter<'_, '_, BaseEvmTypes>,
+                message: &mut Message<BaseEvmTypes>,
+            ) -> Option<MessageResult<BaseEvmTypes>> {
+                if message.depth > 0 {
+                    let mut input = message.input.to_bytes(interp.memory()).to_vec();
+                    input[..16].fill(0xcc);
+                    message.input = Bytes::from(input).into();
+                }
+                None
+            }
+
+            fn call_end(
+                &mut self,
+                interp: &mut Interpreter<'_, '_, BaseEvmTypes>,
+                message: &Message<BaseEvmTypes>,
+                _result: &mut MessageResult<BaseEvmTypes>,
+            ) {
+                if message.depth > 0 {
+                    assert_eq!(interp.memory().slice(0, 32), [0xaa; 32]);
+                    assert_eq!(message.input.as_owned().unwrap()[..16], [0xcc; 16]);
+                }
+            }
+        }
+
+        for target in [ECHO, Address::with_last_byte(4)] {
+            let (result, _, _) = run_evm_with_inspector_db(
+                echo_db(),
+                memory_input_call_code(target, op::CALL),
+                &MessageExt::default(),
+                100_000,
+                ReplaceInput,
+            );
+
+            assert_matches!(result.stop, InstrStop::Return);
+            assert_eq!(result.output[..16], [0xcc; 16], "{target}");
+            assert_eq!(result.output[16..], [0xaa; 16], "{target}");
+        }
+    }
+
+    #[test]
+    fn call_with_hook_overwriting_caller_memory_changes_child_input() {
         let mut evm = Evm::<BaseEvmTypes>::new_with_execution_config(
             ExecutionConfig::for_config::<OverwritingCallConfig>(),
             SpecId::OSAKA,
@@ -1937,7 +2059,7 @@ mod tests {
         let result = Host::execute_message(&mut evm, &mut message).unwrap();
 
         assert_matches!(result.stop, InstrStop::Return);
-        assert_eq!(result.output[..], [0xaa; 32]);
+        assert_eq!(result.output[..], [0xbb; 32]);
     }
 
     #[test]

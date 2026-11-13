@@ -16,6 +16,9 @@ use core::fmt::{self, Display};
 use derive_where::derive_where;
 
 /// Precompile implementation function.
+///
+/// It reads the message's input with [`Evm::message_input`], since the input of a call
+/// instruction's message is a range of the caller's memory.
 pub type PrecompileFn<T = BaseEvmTypes> =
     fn(&mut Evm<'_, T>, &Message<T>, &mut GasTracker) -> PrecompileResult;
 
@@ -449,11 +452,11 @@ macro_rules! define_precompiles {
             #[allow(non_snake_case)]
             $vis const fn $name<T: $crate::EvmTypesHost>() -> $crate::precompiles::Precompile<T> {
                 fn run<T: $crate::EvmTypesHost>(
-                    _evm: &mut $crate::Evm<'_, T>,
+                    evm: &mut $crate::Evm<'_, T>,
                     message: &$crate::interpreter::Message<T>,
                     gas: &mut $crate::interpreter::GasTracker,
                 ) -> $crate::precompiles::PrecompileResult {
-                    $f(message.input.as_ref(), gas)
+                    $f(evm.message_input(message), gas)
                 }
 
                 $crate::precompiles::Precompile::new(

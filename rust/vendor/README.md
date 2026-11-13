@@ -1,7 +1,7 @@
 # rust/vendor — the vendored evm2 family (temporary)
 
 This tree is a **source copy** of [`alloy-rs/evm2`](https://github.com/alloy-rs/evm2)
-at rev `53fe0ef86b87ae0e6fd3068ad6262dd39a3b37f7`, package-renamed into the
+at rev `e681662b6d9ec59edafd112f7c8d64f49f1e6dd1`, package-renamed into the
 `degenbot-evm2*` family so the engine can be **published to crates.io**. The
 source is upstream's, except the two `evm2` files the [Downstream
 patches](#downstream-patches) section enumerates; every `Cargo.toml` here is
@@ -88,6 +88,66 @@ re-apply the two patch files, then update the rev in the manifest headers, this
 file, and the family comment in `rust/Cargo.toml` — `diff -r` against the
 checkout is the check that nothing else moved. The read-through is every
 consumer-visible API change the new rev makes, recorded in the section below.
+
+## Upstream API changes between `53fe0ef` and `e681662b`
+
+Eighteen upstream commits are in this range. The vendored crates' manifests did
+not change upstream, so the package rewrites and dependency versions stayed as
+they were and `rust/Cargo.lock` did not need a dependency update. The
+consumer-visible changes and their dispositions here are:
+
+- **Call instruction input is borrowed from the caller's memory.** `MessageInput`
+  is now an owned-or-borrowed representation instead of a byte string. It no
+  longer dereferences to `[u8]`; inspectors use `as_bytes(interp.memory())`,
+  `to_bytes(interp.memory())`, or `as_owned`. The two call-hook sites in
+  `degenbot-simulation`'s `Evm2SimInspector` now pass the running caller's
+  memory for the selector and captured calldata. A `call` or `call_with` hook
+  that writes caller memory without replacing the input now changes what the
+  child reads; our inspector does not write memory, so its capture semantics
+  are unchanged. The child frame resolves the input once and
+  `CALLDATALOAD`/`CALLDATASIZE`/`CALLDATACOPY` read that slice, removing the
+  per-call input copy from inspected execution.
+- **`initial_call_depth` moved from `Version` to `Evm`.** Runtime users call
+  `Evm::{initial_call_depth,set_initial_call_depth}`; `Host` has a required
+  `initial_call_depth` method, and `Version::{initial_call_depth,max_call_depth}`
+  are gone. No consumer here referenced the removed `Version` items or
+  implements `Host`, so no call site changed. The fixture harnesses continue to
+  mutate the surviving `Version` fields through `Version::new` plus assignment.
+- **JIT lookup requests borrow bytecode.** `LookupRequest<'a>` now holds a
+  `LookupCode<'a>` (`Bytecode` or raw `Bytes`) rather than an owned `Bytes`, and
+  lookup hit paths avoid cloning frame bytecode. The `evm2-jit` test helper in
+  `degenbot-simulation::sim::evm2::jit` now returns `LookupRequest<'static>`
+  with `LookupCode::Bytes` over static one-opcode code. `should_compile` takes
+  `&[u8]`; no consumer here calls it directly. Artifact storage traits and
+  runtime tuning/config shapes are unchanged. `ABI_VERSION` is 8 (was 7), and
+  the AOT store already keys manifests and filenames by that value, so
+  stale-ABI artifacts are not selected.
+- **EIP-8037 EIP-7702 accounting no longer refunds state gas never charged.**
+  `GasSettlement::state_refund` and the corresponding authorization accounting
+  fields/prices were removed. No consumer here names those APIs. The correction
+  concerns Amsterdam state gas; production sequences run at Osaka and retain
+  their existing accounting. The gas-decomposition and parity suites remain
+  the behavioral gate.
+- **Additive execution/state APIs are available but not adopted by this sync:**
+  `Evm::take_precompiles` (pair with `set_boxed_precompiles`),
+  `Evm::message_input`, `State::cool_loaded`, `State::reload_storage_slot`, and
+  `Interpreter::active_bytecode`. They enable provider reuse, explicit
+  warmth/slot refreshes, and borrow-based bytecode access respectively; using
+  them to change candidate or sequence lifecycle policy is separate work, not a
+  mechanical migration. `BlockState` now derives `Clone`.
+- **Behavior and reliability improvements require no consumer edits:** JIT
+  workers catch compile panics and skip memory analysis for unsupported host
+  opcodes; transient storage drains in one pass and the JIT `CODECOPY` builtin
+  reads active bytecode without cloning it. EIP-7702 authority recovery uses
+  the installed crypto provider (identical results with the default provider
+  used here). Moving precompiles preserves warm addresses, and the `fn_align`
+  feature gate is restricted to x86-64. The async database traits, database
+  traits, inspector hook signatures, `MessageResult`, and `InstrStop` are
+  unchanged.
+- Upstream's `evm2-inspectors` and bench-only changes are outside this vendored
+  tree. The two downstream patch files still apply: upstream's `evm/async.rs`
+  change is confined to its test module, and the `evm/mod.rs` source delta
+  applies around `read_account_info_async` without changing that method.
 
 ## Upstream API changes between `baf0d38` and `53fe0ef`
 

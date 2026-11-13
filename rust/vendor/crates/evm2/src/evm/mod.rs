@@ -120,11 +120,11 @@ use crate::{
     DatabaseError, EvmConfigSelector, EvmTypes, EvmTypesHost, ExecutionConfig, ExecutionError,
     HostError, LoadError, PrecompileError, PrecompileHalt, SpecId,
     bytecode::Bytecode,
-    constants::EIP7708_TRANSFER_TOPIC,
+    constants::{CALL_DEPTH_LIMIT, EIP7708_TRANSFER_TOPIC},
     env::{BlockEnv, TxEnv},
     interpreter::{
-        Gas, GasTracker, Host, InstrStop, Interpreter, InterpreterPool, Message, MessageKind,
-        MessageResult, MessageResultExt, Word, create_preaccess_failure,
+        Gas, GasTracker, Host, InstrStop, Interpreter, InterpreterPool, Memory, Message,
+        MessageKind, MessageResult, MessageResultExt, Word, create_preaccess_failure,
     },
     registry::{HandlerResult, TxRegistry},
     trustme,
@@ -235,6 +235,7 @@ pub struct Evm<'a, T: EvmTypesHost> {
     #[derive_where(skip)]
     inspector: Option<InspectorSlot<'a, T>>,
     inspect_system_calls: bool,
+    initial_call_depth: u16,
     #[derive_where(skip)]
     interpreter_runner: Option<Arc<dyn InterpreterRunner<T>>>,
     /// Whether `interpreter_runner` is set and supports `execution_config`.
@@ -247,6 +248,9 @@ pub struct Evm<'a, T: EvmTypesHost> {
     /// This is passed to the inspector call and create hooks as the parent frame.
     #[derive_where(skip)]
     current_frame: Option<NonNull<Interpreter<'static, 'static, T>>>,
+    /// The number of frames this EVM has entered, which numbers the frame it enters next.
+    #[derive_where(skip)]
+    frames_entered: u64,
     /// The checkpoint the currently running interpreter frame rolls back to if it fails.
     #[derive_where(skip)]
     frame_checkpoint: Option<StateCheckpoint>,
@@ -374,9 +378,11 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
             interpreter_pool: InterpreterPool::new(),
             inspector: None,
             inspect_system_calls: false,
+            initial_call_depth: 0,
             interpreter_runner: None,
             runner_supported: false,
             current_frame: None,
+            frames_entered: 0,
             frame_checkpoint: None,
             running: false,
             #[cfg(feature = "async")]
@@ -925,6 +931,19 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
         self.precompiles = precompiles;
     }
 
+    /// Takes the precompile provider, leaving an empty provider in its place.
+    ///
+    /// Hosts can wrap the returned provider and reinstall it with [`Self::set_boxed_precompiles`].
+    /// Like other provider mutations, this must not be called during execution.
+    #[inline]
+    pub fn take_precompiles(&mut self) -> Box<dyn PrecompileProvider<T> + 'a> {
+        self.assert_precompiles_mutable();
+        core::mem::replace(
+            &mut self.precompiles,
+            boxed_precompile_provider(precompile::NoPrecompiles::default()),
+        )
+    }
+
     /// Returns the precompile provider as `P` if it has that concrete type.
     #[inline]
     pub fn precompiles_as<P: PrecompileProvider<T> + 'static>(&self) -> Option<&P>
@@ -1075,6 +1094,54 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
     #[inline]
     pub const fn set_inspect_system_calls(&mut self, inspect: bool) {
         self.inspect_system_calls = inspect;
+    }
+
+    /// Returns the inspector-visible depth of top-level messages. Defaults to zero.
+    ///
+    /// The call depth limit and the nested-create nonce check are measured from this depth, so a
+    /// top-level message started at a non-zero depth still gets the full [`CALL_DEPTH_LIMIT`]
+    /// budget below it. Inspectors compare against it to find the top-level message.
+    #[inline]
+    pub const fn initial_call_depth(&self) -> u16 {
+        self.initial_call_depth
+    }
+
+    /// Sets [`Self::initial_call_depth`] for top-level messages started afterwards.
+    ///
+    /// A caller can set it before running a nested transaction, such as an isolated call of a
+    /// test framework that keeps its outer depth, and a transaction handler can set it around the
+    /// messages it runs below an implicit parent, such as the calls of a batch transaction. The
+    /// value stays until it is set again, so a handler that changes it should restore it before
+    /// returning.
+    ///
+    /// It must not be called while a message is executing, such as from an inspector hook or a
+    /// precompile: the running message would then be checked against the new depth. As with
+    /// [`Self::set_execution_config`], only a running interpreter frame is detected.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called from inside a running interpreter frame, or if `depth` does not leave room
+    /// in `u16` for the call depth budget and the rejected too-deep message: it must be at most
+    /// `u16::MAX - CALL_DEPTH_LIMIT - 1` (64510).
+    #[inline]
+    pub fn set_initial_call_depth(&mut self, depth: u16) {
+        assert!(
+            self.current_frame.is_none(),
+            "initial call depth cannot be modified while a frame is running"
+        );
+        assert!(
+            depth < u16::MAX - CALL_DEPTH_LIMIT,
+            "initial call depth must leave room for 1024 descendants and the rejected attempt"
+        );
+        self.initial_call_depth = depth;
+    }
+
+    /// Returns the deepest permitted inspector-visible call depth.
+    ///
+    /// [`Self::set_initial_call_depth`] keeps this from overflowing.
+    #[inline]
+    const fn max_call_depth(&self) -> u16 {
+        self.initial_call_depth + CALL_DEPTH_LIMIT
     }
 
     /// Sets the optional external interpreter runner.
@@ -1381,8 +1448,6 @@ impl<'a, T: EvmTypes<Tx: Typed2718>> Evm<'a, T> {
 }
 
 impl<'a, T: EvmTypes> Evm<'a, T> {
-    /// The input of a call message may borrow the caller's memory (see
-    /// [`Interpreter::call_input`]), so this must not keep or clone out a borrowed input.
     #[inline]
     fn execute_message_impl(
         &mut self,
@@ -1425,10 +1490,6 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
         // SAFETY: The inspector is stored in `self`; the execution guard prevents inspector
         // replacement while the hooks are running.
         let inspector = unsafe { trustme::decouple_lt_mut(inspector) };
-        // The hooks can change the caller's memory and keep the message, so the input must not
-        // borrow that memory.
-        message.input.make_owned();
-
         // `destination` already holds the create's contract address (set when the message was
         // constructed), so the create hook observes it directly.
         let is_create = message.kind.is_create();
@@ -1455,6 +1516,8 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
                 // `top_frame` and dropped after the frame is returned to the pool, which resets
                 // its bytecode borrow.
                 frame.set_bytecode(unsafe { trustme::decouple_lt(&top_code) });
+                // The frame only runs hooks, which can replace the message's input.
+                frame.set_input(&[]);
                 frame.prepare_run(guard.evm);
                 frame
             }
@@ -1538,18 +1601,21 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
 
     #[inline(never)]
     fn prepare_create_message(&mut self, message: &mut Message<T>) -> Result<(), HostError> {
-        let nested = message.depth > self.version().initial_call_depth;
+        let nested = message.depth > self.initial_call_depth;
         // A too-deep create fails on depth alone, without reading the creator.
-        let info =
-            if message.depth <= self.version().max_call_depth() && (message.value > 0 || nested) {
-                self.state.account_info_untracked(&message.caller)?
-            } else {
-                None
-            };
+        let info = if message.depth <= self.max_call_depth() && (message.value > 0 || nested) {
+            self.state.account_info_untracked(&message.caller)?
+        } else {
+            None
+        };
         let (balance, nonce) = info.as_ref().map_or((Word::ZERO, 0), |i| (i.balance, i.nonce));
-        if let Some(stop) =
-            create_preaccess_failure(balance, nonce, message.value, message.depth, self.version())
-        {
+        if let Some(stop) = create_preaccess_failure(
+            balance,
+            nonce,
+            message.value,
+            message.depth,
+            self.initial_call_depth,
+        ) {
             return Err(stop.into());
         }
 
@@ -1666,7 +1732,7 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
         &mut self,
         message: &mut Message<T>,
     ) -> Result<MessageResult<T>, ExecutionError> {
-        if message.depth > self.version().max_call_depth() {
+        if message.depth > self.max_call_depth() {
             return Ok(Self::error_message_result(
                 InstrStop::CallTooDeep,
                 message.gas_limit,
@@ -1804,17 +1870,28 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
         let guard = self.enter_execution();
         let mut interp: Box<Interpreter<'frame, 'a, T>> = guard.evm.interpreter_pool.pop(message);
         let interp_ref = interp.as_mut();
+        if let Some((range, frame)) = message.input.borrowed_range() {
+            let memory = guard.evm.caller_memory(frame);
+            // SAFETY: The caller frame is suspended until this frame returns, and `current_frame`
+            // becomes this one below, so nothing can reach the caller's memory in between.
+            interp_ref
+                .set_input(unsafe { trustme::decouple_lt(&memory.as_slice()[range.clone()]) });
+        }
         interp_ref.lend_memory();
+        guard.evm.frames_entered += 1;
+        interp_ref.set_frame(guard.evm.frames_entered);
+        // The initialize hook can send messages, whose hooks must get this frame and not the
+        // caller, whose memory the input slice points into.
+        let prev_frame = guard
+            .evm
+            .current_frame
+            .replace(NonNull::from(&mut *interp_ref).cast::<Interpreter<'static, 'static, T>>());
         guard.evm.inspect_initialize_interp(interp_ref);
         let inspector = guard.evm.active_inspector().map(|inspector| {
             // SAFETY: The inspector is stored in `self` and remains alive for the duration of the
             // interpreter run.
             unsafe { trustme::decouple_lt_mut(inspector) }
         });
-        let prev_frame = guard
-            .evm
-            .current_frame
-            .replace(NonNull::from(&mut *interp_ref).cast::<Interpreter<'static, 'static, T>>());
         let runner =
             guard.evm.interpreter_runner.as_ref().filter(|_| guard.evm.runner_supported).cloned();
         let stop = if let Some(inspector) = inspector {
@@ -1861,6 +1938,44 @@ impl<'a, T: EvmTypes> Evm<'a, T> {
     }
 }
 
+impl<T: EvmTypesHost> Evm<'_, T> {
+    /// Returns the bytes of `message`'s input, reading a range of the caller's memory from the
+    /// running caller frame.
+    ///
+    /// The bytes borrow the EVM, so a precompile cannot send a message, whose hooks could change
+    /// the caller's memory, while it holds them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input is a range of memory and no frame runs, the running frame is not the
+    /// frame that made the input, or the range is out of bounds of its memory. Each means that the
+    /// message did not come from a call instruction of the running frame: copy a borrowed input
+    /// with [`MessageInput::to_bytes`](crate::interpreter::MessageInput::to_bytes) before
+    /// forwarding it.
+    #[inline]
+    pub fn message_input<'m>(&'m self, message: &'m Message<T>) -> &'m [u8] {
+        match message.input.borrowed_range() {
+            None => message.input.as_owned().map_or(&[][..], |input| &input[..]),
+            Some((range, frame)) => &self.caller_memory(frame).as_slice()[range.clone()],
+        }
+    }
+
+    /// Returns the memory of the running frame, which must be the frame with the entry number
+    /// `frame`.
+    #[inline]
+    fn caller_memory(&self, frame: u64) -> &Memory {
+        let caller = self.current_frame.expect("a call input must come from a running frame");
+        // SAFETY: The running frame is suspended on this call stack.
+        let caller = unsafe { caller.as_ref() };
+        assert_eq!(
+            caller.frame(),
+            frame,
+            "a call input must be resolved against the frame that made it",
+        );
+        caller.memory()
+    }
+}
+
 impl<'a, T: EvmTypes> Host<T> for Evm<'a, T> {
     fn spec_id(&self) -> SpecId {
         self.spec_id()
@@ -1876,6 +1991,10 @@ impl<'a, T: EvmTypes> Host<T> for Evm<'a, T> {
 
     fn tx_env(&mut self) -> &TxEnv<T> {
         &self.tx_env
+    }
+
+    fn initial_call_depth(&self) -> u16 {
+        self.initial_call_depth
     }
 
     fn load_account(
@@ -2178,12 +2297,15 @@ mod tests {
     use crate::{
         BaseEvmConfigSelector, BaseEvmTypes, NoopInspector, Precompiles, SpecId, Version,
         bytecode::Bytecode,
+        constants::CALL_DEPTH_LIMIT,
         env::BlockEnvExt,
         ethereum::{TxEnvelope, ethereum_tx_registry},
         interpreter::{GasTracker, Interpreter, Message, MessageExt, MessageKind, op},
         precompiles::{Precompile, PrecompileError, PrecompileId, PrecompileMap},
         registry::{HandlerError, TxRequest, handler},
-        test_utils::{handle_test_tx, legacy_bytecode, push_address, test_tx},
+        test_utils::{
+            handle_test_tx, legacy_bytecode, memory_input_call_code, push_address, test_tx,
+        },
         utils::address_to_word,
     };
     use alloc::{borrow::Cow, string::ToString, sync::Arc, vec, vec::Vec};
@@ -2755,6 +2877,7 @@ mod tests {
         Mut,
         AsMut,
         Set,
+        Take,
     }
 
     fn run_precompile_access(access: PrecompileAccess) {
@@ -2771,6 +2894,10 @@ mod tests {
                 },
                 PrecompileAccess::Set => |evm, _, _| {
                     evm.set_precompiles(empty_precompiles());
+                    Ok(PrecompileOutput::new(Bytes::new()))
+                },
+                PrecompileAccess::Take => |evm, _, _| {
+                    let _ = evm.take_precompiles();
                     Ok(PrecompileOutput::new(Bytes::new()))
                 },
             },
@@ -2933,6 +3060,27 @@ mod tests {
         evm.set_boxed_precompiles(Box::new(precompiles_with([])));
 
         assert!(evm.precompiles_as::<Precompiles>().unwrap().as_map().is_empty());
+    }
+
+    #[test]
+    fn take_precompiles_preserves_provider_and_can_be_restored() {
+        let mut evm = lifecycle_evm();
+        let original_ids = evm.precompiles().precompile_ids();
+        assert!(!original_ids.is_empty());
+
+        let provider = evm.take_precompiles();
+        assert!(evm.precompiles().addresses().is_empty());
+        assert!(evm.precompiles().precompile_ids().is_empty());
+        assert_eq!(provider.precompile_ids(), original_ids);
+
+        evm.set_boxed_precompiles(provider);
+        assert_eq!(evm.precompiles().precompile_ids(), original_ids);
+    }
+
+    #[test]
+    #[should_panic(expected = "precompile provider cannot be modified during EVM execution")]
+    fn take_precompiles_panics_during_execution() {
+        run_precompile_access(PrecompileAccess::Take);
     }
 
     #[test]
@@ -3259,7 +3407,7 @@ mod tests {
             assert_eq!(message.depth, 67);
             assert_eq!(message.destination, TEST_PRECOMPILE);
             assert_eq!(message.caller, Address::with_last_byte(0x7a));
-            assert_eq!(&*message.input, b"message input");
+            assert_eq!(message.input.as_owned().unwrap()[..], *b"message input");
             assert_eq!(message.value, U256::from(99));
             assert_eq!(message.code_address, TEST_PRECOMPILE);
             Ok(PrecompileOutput::new(Bytes::from(evm.block.number.to_be_bytes::<32>())))
@@ -3377,7 +3525,7 @@ mod tests {
     #[derive(Debug)]
     struct SpecBoundRunner {
         spec_id: SpecId,
-        initial_call_depth: u16,
+        chain_id: u64,
         calls: Arc<AtomicUsize>,
     }
 
@@ -3392,8 +3540,7 @@ mod tests {
         }
 
         fn supports(&self, config: &ExecutionConfig<BaseEvmTypes>) -> bool {
-            config.base_spec_id() == self.spec_id
-                && config.version().initial_call_depth == self.initial_call_depth
+            config.base_spec_id() == self.spec_id && config.version().chain_id == self.chain_id
         }
     }
 
@@ -3427,7 +3574,7 @@ mod tests {
 
         evm.set_shared_interpreter_runner(Arc::new(SpecBoundRunner {
             spec_id: SpecId::PRAGUE,
-            initial_call_depth: 0,
+            chain_id: Version::new(SpecId::PRAGUE).chain_id,
             calls: Arc::clone(&calls),
         }));
         assert_eq!(run(&mut evm), (InstrStop::Stop, 0));
@@ -3442,7 +3589,7 @@ mod tests {
         assert_eq!(run(&mut evm), (InstrStop::Return, 2));
 
         let mut version = Version::new(SpecId::PRAGUE);
-        version.initial_call_depth = 1;
+        version.chain_id += 1;
         evm.set_block_and_execution_config_within_spec(
             BlockEnvExt::default(),
             ExecutionConfig::for_spec_and_version(SpecId::PRAGUE, version),
@@ -4677,6 +4824,7 @@ mod tests {
     #[rstest::rstest]
     #[case(PrecompileAccess::Mut)]
     #[case(PrecompileAccess::Set)]
+    #[case(PrecompileAccess::Take)]
     #[should_panic(expected = "precompile provider cannot be modified during EVM execution")]
     fn precompiles_cannot_be_modified_during_transact(#[case] access: PrecompileAccess) {
         let mut evm = lifecycle_evm();
@@ -4692,6 +4840,9 @@ mod tests {
                         }
                         PrecompileAccess::Set => req.host.set_precompiles(empty_precompiles()),
                         PrecompileAccess::AsMut => unreachable!(),
+                        PrecompileAccess::Take => {
+                            let _ = req.host.take_precompiles();
+                        }
                     }
                     Ok(TxResultExt::default())
                 },
@@ -4737,16 +4888,14 @@ mod tests {
         let created = caller.create(nonce);
         let mut database = InMemoryDB::default();
         database.insert_account_info(&caller, AccountInfo::default().with_nonce(nonce));
-        let mut version = Version::new(spec);
-        version.initial_call_depth = initial_call_depth;
-        let mut evm = Evm::<BaseEvmTypes>::new_with_execution_config(
-            ExecutionConfig::for_spec_and_version(spec, version),
+        let mut evm = Evm::<BaseEvmTypes>::new(
             spec,
             BlockEnvExt::default(),
             ethereum_tx_registry(spec),
             database,
             Precompiles::base(spec),
         );
+        evm.set_initial_call_depth(initial_call_depth);
         // The nested transaction root also creates a child, which must still bump its creator.
         let tx = Recovered::new_unchecked(
             TxEnvelope::Legacy(TxLegacy {
@@ -5082,5 +5231,255 @@ mod tests {
         );
 
         let _ = evm.transact_with_inspector(&test_tx(0), &mut CallCounter::default());
+    }
+
+    #[test]
+    fn set_initial_call_depth_offsets_message_depths_and_limit() {
+        #[derive(Default)]
+        struct DepthInspector(Vec<u16>);
+
+        impl Inspector<BaseEvmTypes> for DepthInspector {
+            fn call(
+                &mut self,
+                _interp: &mut Interpreter<'_, '_, BaseEvmTypes>,
+                message: &mut Message<BaseEvmTypes>,
+            ) -> Option<MessageResult<BaseEvmTypes>> {
+                self.0.push(message.depth);
+                None
+            }
+        }
+
+        let target = Address::repeat_byte(0x11);
+        let child = Address::repeat_byte(0x22);
+        let mut code = vec![op::PUSH0; 5];
+        push_address(&mut code, &child);
+        code.extend([op::GAS, op::CALL, op::POP, op::STOP]);
+        let mut database = InMemoryDB::default();
+        database
+            .insert_account_info(&target, AccountInfo::default().with_code(legacy_bytecode(code)));
+        let mut evm = Evm::<BaseEvmTypes>::new(
+            SpecId::CANCUN,
+            BlockEnvExt::default(),
+            ethereum_tx_registry(SpecId::CANCUN),
+            database,
+            Precompiles::base(SpecId::CANCUN),
+        );
+        evm.set_initial_call_depth(7);
+        assert_eq!(evm.initial_call_depth(), 7);
+
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                to: TxKind::Call(target),
+                gas_limit: 100_000,
+                ..Default::default()
+            }),
+            Address::repeat_byte(0xaa),
+        );
+        let mut inspector = DepthInspector::default();
+        let executed = evm.transact_with_inspector(&tx, &mut inspector).unwrap();
+        assert!(executed.result().is_success());
+        drop(executed);
+        assert_eq!(inspector.0, [7, 8]);
+
+        // The full call depth budget remains below the new initial depth.
+        for (depth, stop) in [
+            (7 + CALL_DEPTH_LIMIT, InstrStop::Stop),
+            (7 + CALL_DEPTH_LIMIT + 1, InstrStop::CallTooDeep),
+        ] {
+            let mut message = MessageExt {
+                depth,
+                gas_limit: 50_000,
+                code: legacy_bytecode(vec![op::STOP]),
+                ..MessageExt::default()
+            };
+            let result = Host::execute_message(&mut evm, &mut message).unwrap();
+            assert_eq!(result.stop, stop);
+        }
+    }
+
+    #[test]
+    fn set_initial_call_depth_from_transaction_handler() {
+        let registry = TxRegistry::new().with_handler(
+            TEST_TX_TYPE,
+            TxEnvelope::as_legacy,
+            handler(
+                |_| Ok(()),
+                |req: TxRequest<'_, '_, BaseEvmTypes, TxLegacy>, ()| {
+                    req.host.set_initial_call_depth(1);
+                    let depth = req.host.initial_call_depth();
+                    req.host.set_initial_call_depth(0);
+                    Ok(TxResultExt {
+                        status: true,
+                        total_gas_spent: depth.into(),
+                        ..TxResultExt::default()
+                    })
+                },
+            ),
+        );
+        let mut evm = Evm::<BaseEvmTypes>::new(
+            SpecId::OSAKA,
+            BlockEnvExt::default(),
+            registry,
+            InMemoryDB::default(),
+            Precompiles::base(SpecId::OSAKA),
+        );
+
+        let executed = evm.transact(&test_tx(0)).unwrap();
+        assert_eq!(executed.discard().tx_gas_used(), 1);
+        assert_eq!(evm.initial_call_depth(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "initial call depth cannot be modified while a frame is running")]
+    fn set_initial_call_depth_panics_while_frame_is_running() {
+        struct DepthSettingInspector;
+
+        impl Inspector<BaseEvmTypes> for DepthSettingInspector {
+            fn step(&mut self, interp: &mut Interpreter<'_, '_, BaseEvmTypes>) {
+                interp.host().set_initial_call_depth(1);
+            }
+        }
+
+        let mut evm = Evm::<BaseEvmTypes>::new(
+            SpecId::OSAKA,
+            BlockEnvExt::default(),
+            TxRegistry::new(),
+            InMemoryDB::default(),
+            Precompiles::base(SpecId::OSAKA),
+        );
+        evm.set_inspector(DepthSettingInspector);
+        let message = MessageExt {
+            code: Bytecode::new_legacy(Bytes::from_static(&[op::STOP])),
+            ..MessageExt::default()
+        };
+        let _ = evm.run_interpreter(&message);
+    }
+
+    #[test]
+    #[should_panic]
+    fn set_initial_call_depth_rejects_invalid_depth() {
+        let mut evm = Evm::<BaseEvmTypes>::new(
+            SpecId::OSAKA,
+            BlockEnvExt::default(),
+            TxRegistry::new(),
+            InMemoryDB::default(),
+            Precompiles::base(SpecId::OSAKA),
+        );
+        evm.set_initial_call_depth(u16::MAX - CALL_DEPTH_LIMIT);
+    }
+
+    #[test]
+    fn hook_resizing_caller_memory_keeps_precompile_input_readable() {
+        // Grows and overwrites the caller's memory in the hook of a message that a precompile
+        // sends, after the precompile read its input from that memory.
+        struct OverwriteCallerMemory;
+
+        impl Inspector<BaseEvmTypes> for OverwriteCallerMemory {
+            fn call(
+                &mut self,
+                interp: &mut Interpreter<'_, '_, BaseEvmTypes>,
+                message: &mut Message,
+            ) -> Option<MessageResult<BaseEvmTypes>> {
+                if message.destination == INNER_TEST_PRECOMPILE {
+                    let memory = interp.memory_mut();
+                    memory.resize(0, 1 << 20).unwrap();
+                    memory.set(0, &[0xbb; 32]);
+                }
+                None
+            }
+        }
+
+        let precompiles = precompiles_with([
+            test_precompile(TEST_PRECOMPILE, |evm, message, _| {
+                let input = Bytes::copy_from_slice(evm.message_input(message));
+                let mut child = precompile_message(INNER_TEST_PRECOMPILE);
+                child.depth = message.depth + 1;
+                Host::execute_message(evm, &mut child)?;
+                // The input is a range of the caller's memory, which the hook changed.
+                assert_eq!(evm.message_input(message), [0xbb; 32]);
+                Ok(PrecompileOutput::new(input))
+            }),
+            test_precompile(INNER_TEST_PRECOMPILE, |_, _, _| {
+                Ok(PrecompileOutput::new(Bytes::new()))
+            }),
+        ]);
+        let mut evm = Evm::<BaseEvmTypes>::new(
+            SpecId::OSAKA,
+            BlockEnvExt::default(),
+            TxRegistry::new(),
+            InMemoryDB::default(),
+            precompiles,
+        );
+        evm.set_inspector(OverwriteCallerMemory);
+        let code = memory_input_call_code(TEST_PRECOMPILE, op::CALL);
+        let mut message =
+            MessageExt { gas_limit: 100_000, code: legacy_bytecode(code), ..Default::default() };
+
+        let result = Host::execute_message(&mut evm, &mut message).unwrap();
+
+        assert_eq!(result.stop, InstrStop::Return);
+        assert_eq!(result.output[..], [0xaa; 32]);
+    }
+
+    #[test]
+    fn initialize_hook_message_keeps_caller_memory() {
+        const CALLEE: Address = Address::with_last_byte(0xca);
+
+        struct SendOnInitialize;
+
+        impl Inspector<BaseEvmTypes> for SendOnInitialize {
+            fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, BaseEvmTypes>) {
+                if interp.message().destination == CALLEE {
+                    let mut message = precompile_message(INNER_TEST_PRECOMPILE);
+                    message.depth = interp.message().depth + 1;
+                    Host::execute_message(interp.host(), &mut message).unwrap();
+                }
+            }
+
+            fn call(
+                &mut self,
+                interp: &mut Interpreter<'_, '_, BaseEvmTypes>,
+                message: &mut Message,
+            ) -> Option<MessageResult<BaseEvmTypes>> {
+                if message.destination == INNER_TEST_PRECOMPILE {
+                    let memory = interp.memory_mut();
+                    memory.resize(0, 1 << 20).unwrap();
+                    memory.set(0, &[0xbb; 64]);
+                }
+                None
+            }
+        }
+
+        let precompiles = precompiles_with([test_precompile(INNER_TEST_PRECOMPILE, |_, _, _| {
+            Ok(PrecompileOutput::new(Bytes::new()))
+        })]);
+        let mut database = InMemoryDB::default();
+        let echo = [
+            op::CALLDATASIZE,
+            op::PUSH0,
+            op::PUSH0,
+            op::CALLDATACOPY,
+            op::CALLDATASIZE,
+            op::PUSH0,
+            op::RETURN,
+        ];
+        database
+            .insert_account_info(&CALLEE, AccountInfo::default().with_code(legacy_bytecode(echo)));
+        let mut evm = Evm::<BaseEvmTypes>::new(
+            SpecId::OSAKA,
+            BlockEnvExt::default(),
+            TxRegistry::new(),
+            database,
+            precompiles,
+        );
+        evm.set_inspector(SendOnInitialize);
+        let code = memory_input_call_code(CALLEE, op::CALL);
+        let mut message =
+            MessageExt { gas_limit: 100_000, code: legacy_bytecode(code), ..Default::default() };
+
+        let result = Host::execute_message(&mut evm, &mut message).unwrap();
+
+        assert_eq!(result.stop, InstrStop::Return);
+        assert_eq!(result.output[..], [0xaa; 32]);
     }
 }
