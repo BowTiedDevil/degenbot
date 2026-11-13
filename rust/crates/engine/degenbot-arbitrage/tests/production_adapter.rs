@@ -717,7 +717,25 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
         POOL_MANAGER,
         EncodeOptions::default(),
     )
-    .with_zero_balance(true);
+    .with_capital(degenbot_simulation::ProbeCapital::ZeroBalance);
+    // The SAME binding's encoder axes: the zero-balance capital value supplies
+    // the funding axis and the grammar's zero-balance stance, exactly as the
+    // self-funded binding below derives its own pair. Nothing beside the capital
+    // value is asked to name either axis.
+    assert_eq!(
+        zero_balance.opts().funding,
+        degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
+        "the zero-balance capital value derives the in-path-flash funding axis"
+    );
+    assert!(
+        zero_balance.opts().zero_balance,
+        "the zero-balance capital value derives the grammar's zero-balance stance"
+    );
+    assert_eq!(
+        zero_balance.capital(),
+        degenbot_simulation::ProbeCapital::ZeroBalance,
+        "the binding keeps the posture its axes were projected from"
+    );
     let declared = zero_balance
         .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
         .expect("the declared override names the executor");
@@ -732,9 +750,14 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
             "{arm}: the warmup slots key on the executor, not the owner"
         );
         assert_eq!(
-            deployment.override_params().zero_balance,
+            deployment.override_params().capital,
+            degenbot_simulation::CapitalOverridePlan::ZeroBalance { holder: EXECUTOR },
+            "{arm}: the one capital plan clears the executor, in both arms"
+        );
+        assert_eq!(
+            deployment.capital().holder(),
             Some(EXECUTOR),
-            "{arm}: the clearing target is the executor"
+            "{arm}: the capital target is the executor"
         );
         assert_eq!(
             deployment.target(),
@@ -743,16 +766,24 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
         );
     }
 
-    // A self-funded probe: the funded USDC holder is the same executor.
+    // A self-funded probe: the funded USDC holder is the same executor. The
+    // capital value — not a hand-set `funding` axis — supplies the encoding.
     let self_funded = CmdExecutorBinding::new(
         OWNER,
         EXECUTOR,
         WETH,
         POOL_MANAGER,
-        EncodeOptions {
-            funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
-            ..EncodeOptions::default()
-        },
+        EncodeOptions::default(),
+    )
+    .with_capital(degenbot_simulation::ProbeCapital::SelfFund);
+    assert_eq!(
+        self_funded.opts().funding,
+        degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+        "the self-funded capital value derives the stream's funding axis"
+    );
+    assert!(
+        !self_funded.opts().zero_balance,
+        "a self-funded probe is not the zero-balance probe"
     );
     let declared = self_funded
         .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
@@ -765,8 +796,8 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
             "{arm}: the warmup slots key on the executor, not the owner"
         );
         assert_eq!(
-            deployment.override_params().self_fund_usdc,
-            Some(EXECUTOR),
+            deployment.override_params().capital,
+            degenbot_simulation::CapitalOverridePlan::SelfFund { holder: EXECUTOR },
             "{arm}: self-funded probe capital targets the executor"
         );
     }
@@ -791,6 +822,20 @@ fn the_default_production_deployment_enables_no_probe_capital() {
     let binding = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, POOL_MANAGER, opts);
     assert_eq!(binding.owner(), OWNER);
     assert_eq!(binding.executor(), EXECUTOR);
+    assert_eq!(
+        binding.capital(),
+        degenbot_simulation::ProbeCapital::Production,
+        "the default session declares the production capital posture"
+    );
+    assert_eq!(
+        binding.opts().funding,
+        degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
+        "the production capital value keeps the in-path-flash funding axis"
+    );
+    assert!(
+        !binding.opts().zero_balance,
+        "the production capital value keeps the grammar's ordinary stance"
+    );
 
     let default_slots = compute_simulation_warmup_slots(EXECUTOR, WETH);
     assert_ne!(
@@ -813,12 +858,14 @@ fn the_default_production_deployment_enables_no_probe_capital() {
     for (arm, deployment, declares_code) in arms {
         let overrides = deployment.override_params();
         assert_eq!(
-            overrides.self_fund_usdc, None,
-            "{arm}: ordinary production funds no executor USDC"
+            overrides.capital,
+            degenbot_simulation::CapitalOverridePlan::Production,
+            "{arm}: ordinary production installs and clears no executor capital"
         );
         assert_eq!(
-            overrides.zero_balance, None,
-            "{arm}: ordinary production clears no executor capital"
+            overrides.capital.holder(),
+            None,
+            "{arm}: production names no capital target at all"
         );
         assert_eq!(
             overrides.owner, OWNER,

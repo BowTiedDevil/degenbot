@@ -43,17 +43,27 @@ use degenbot_executor::composers::{EncodeContext, EncodeOptions, EncodeRequest};
 use degenbot_executor::compute_simulation_warmup_slots;
 use degenbot_executor::release::RELEASE_ID_TAG;
 use degenbot_executor::release_registry::{Release, ReleaseEncoding, ReleaseRegistry};
-use degenbot_simulation::{DeclaredCode, SettlementWarmup};
+use degenbot_simulation::{DeclaredCode, ProbeCapital, SettlementWarmup};
 
 use crate::deployment::SimulationDeployment;
 use crate::executor_runtime::{load_executor_runtime, ExecutorRuntimeError};
 
-/// The session-scoped built-in `cmd_executor` facts: the deployment's identities
-/// plus the session's encode policy.
+/// The session-scoped built-in `cmd_executor` facts: the deployment's identities,
+/// the session's encode policy, and the ONE capital value.
 ///
 /// Construct once per session and hand it to
 /// [`CmdExecutorBinding::deployment`] (the already-deployed contract) or
 /// [`CmdExecutorBinding::injected`] (an explicit declared-code override).
+///
+/// # The capital value owns the capital-derived encode axes
+///
+/// [`Self::capital`] is the only authority for the two axes a capital posture
+/// implies — the stream's `funding` axis and the grammar's zero-balance stance —
+/// and for the deployment's simulation override plan. [`Self::opts`] therefore
+/// returns the caller's axes WITH the capital-derived pair applied, rather than
+/// keeping a second copy a caller could disagree with; `with_opts` sets the
+/// remaining axes (`erc6909_profit`, `use_v4_batch`, `capture`, `bribe`) and
+/// takes no position on those two.
 #[derive(Clone, Copy, Debug)]
 pub struct CmdExecutorBinding {
     owner: Address,
@@ -61,7 +71,7 @@ pub struct CmdExecutorBinding {
     weth: Address,
     pool_manager: Address,
     opts: EncodeOptions,
-    zero_balance: bool,
+    capital: ProbeCapital,
 }
 
 impl CmdExecutorBinding {
@@ -80,7 +90,7 @@ impl CmdExecutorBinding {
             weth,
             pool_manager,
             opts,
-            zero_balance: false,
+            capital: ProbeCapital::Production,
         }
     }
 
@@ -97,17 +107,53 @@ impl CmdExecutorBinding {
         self.executor
     }
 
-    /// The session's encode policy (the cmd config axes).
+    /// The session's encode policy (the cmd config axes), with the capital-derived
+    /// axes applied ONCE from [`Self::capital`].
+    ///
+    /// The projection is read-time, so the answer never depends on whether a
+    /// caller set `with_opts` before or after [`Self::with_capital`], and a
+    /// caller-side `funding`/`zero_balance` value can never contradict the
+    /// session's capital posture.
     #[must_use]
     pub const fn opts(&self) -> EncodeOptions {
-        self.opts
+        match self.capital {
+            ProbeCapital::Production => self.opts,
+            ProbeCapital::SelfFund => EncodeOptions {
+                funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+                zero_balance: false,
+                ..self.opts
+            },
+            ProbeCapital::ZeroBalance => EncodeOptions {
+                funding: degenbot_executor::grammar_ledger::FundingSource::InPathFlash,
+                zero_balance: true,
+                ..self.opts
+            },
+        }
+    }
+
+    /// The capital posture this deployment assumes.
+    #[must_use]
+    pub const fn capital(&self) -> ProbeCapital {
+        self.capital
     }
 
     /// Re-bind the encode policy (a consumer's own axis set, e.g. the inline
     /// sim's `erc6909_profit`).
+    ///
+    /// [`Self::capital`] stays the authority for the two capital-derived axes:
+    /// [`Self::opts`] applies them to whatever base this stores, so the value
+    /// handed in here can only ever name the non-capital axes.
     #[must_use]
     pub const fn with_opts(mut self, opts: EncodeOptions) -> Self {
         self.opts = opts;
+        self
+    }
+
+    /// Declare the session's capital posture — the ONE value the deployment's
+    /// override plan and the capital-derived encode axes both come from.
+    #[must_use]
+    pub const fn with_capital(mut self, capital: ProbeCapital) -> Self {
+        self.capital = capital;
         self
     }
 
@@ -178,14 +224,6 @@ impl CmdExecutorBinding {
             });
         }
         Ok(self.build_deployment(deployment_id, Some(address), Some(runtime)))
-    }
-
-    /// Select a genuinely empty executor for an explicit zero-balance probe.
-    #[must_use]
-    pub const fn with_zero_balance(mut self, enabled: bool) -> Self {
-        self.zero_balance = enabled;
-        self.opts.zero_balance = enabled;
-        self
     }
 
     /// Resolve + load the executor runtime artifact for a declared build.
@@ -269,11 +307,11 @@ impl CmdExecutorBinding {
         // gross evidence and the operator's gas/priority policy lands once, above
         // the seam. Every other deployment keeps its adapter's own Fee decision.
         .with_fee_sizing(crate::deployment::FeeSizing::MarketAware)
-        .with_self_fund_usdc(
-            self.opts.funding == degenbot_executor::grammar_ledger::FundingSource::SelfFund
-                && !self.zero_balance,
-        )
-        .with_zero_balance(self.zero_balance)
+        // The ONE capital value, projected into the deployment's override plan at
+        // this composition point. Nothing downstream re-derives a mode from a
+        // neighbouring axis: the mode the session named is the plan the overrides
+        // apply, and the same value supplied the encode axes above.
+        .with_capital(self.capital)
     }
 }
 
@@ -381,7 +419,9 @@ impl ExecutionAdapter for CmdExecutorSimAdapter {
             inputs.optimal_input,
             inputs.hop_outputs.to_vec(),
             inputs.consumed_inputs.to_vec(),
-            self.binding.opts,
+            // The binding's effective axes: the session's encode policy with the
+            // capital-derived `funding` / zero-balance pair applied.
+            self.binding.opts(),
         );
         let context = EncodeContext::new(
             self.binding.executor,

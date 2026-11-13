@@ -9,6 +9,7 @@
 //! strategy (the dispatch fan-out + the 7-call bundle) lives in
 //! `degenbot-arbitrage` (ADR-019 D4/D7, decision R).
 
+pub mod capital;
 pub mod capture;
 pub mod divergence_probe;
 pub mod evm2;
@@ -21,6 +22,7 @@ pub mod sim_metrics;
 pub mod state_override;
 pub mod storage_memo;
 
+pub use capital::{CapitalOverridePlan, ProbeCapital};
 pub use capture::{CapturedSwap, SwapFamily};
 pub use frame_replay::{
     BaseFeeSource, FrameRpcCounter, PredStatus, ReplayFrameError, ReplayableTx, ScratchBlock,

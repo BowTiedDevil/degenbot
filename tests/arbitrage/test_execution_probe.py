@@ -10,6 +10,7 @@ from degenbot.abi import encode_single
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._sim_submit import (
     ExecutorInputs,
+    ProbeCapital,
     SubmissionStance,
     build_batch_executor,
 )
@@ -147,26 +148,32 @@ async def test_probe_path_quotes_exact_inputs_and_uses_the_batch_executor() -> N
 async def test_zero_balance_probe_builds_flash_funded_pipeline_without_capital(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The zero-balance mode rides ONE value, and it rides it through ExecutorInputs.
+
+    The retired boolean pair is gone: the construction is handed a posture, not a
+    ``zero_balance`` flag beside a ``self_fund`` flag, so the two probe modes can
+    no longer be requested together.
+    """
     pipeline = _Pipeline()
     session = session_for_test(bot=_Bot(), engine_registry=_Registry(), async_w3=_Provider())
     session.phase = SessionPhase.RUNNING
-    calls = []
+    calls: list[tuple[Any, dict[str, Any]]] = []
 
     async def build(inputs: Any, **kwargs: Any) -> _Pipeline:
-        calls.append(kwargs)
+        calls.append((inputs, kwargs))
         return pipeline
 
     monkeypatch.setattr("degenbot.runner.session.build_batch_executor", build)
     monkeypatch.setattr(
-        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: object()
+        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: _inputs()
     )
-    result = await session.probe_path(7, optimal_input=100, zero_balance=True)
+    result = await session.probe_path(7, optimal_input=100, capital=ProbeCapital.ZERO_BALANCE)
 
     assert result == {"outcome": "failed", "bucket": "InsufficientProfit"}
-    assert calls == [
-        {"self_fund": False, "zero_balance": True, "submission": SubmissionStance.PROBE}
-    ]
-    assert session.probe_zero_balance is True
+    ((inputs, kwargs),) = calls
+    assert kwargs == {"submission": SubmissionStance.PROBE}
+    assert inputs.capital is ProbeCapital.ZERO_BALANCE, "the mode rides ExecutorInputs"
+    assert session.probe_capital is ProbeCapital.ZERO_BALANCE
 
 
 class _ConstructionProvider:
@@ -307,22 +314,63 @@ async def test_the_session_builds_its_probe_pipeline_with_the_probe_stance(
     session = session_for_test(bot=_Bot(), engine_registry=_Registry(), async_w3=_Provider())
     session.phase = SessionPhase.RUNNING
     assert session.cfg.dry_run is False, "the session under test is LIVE"
-    calls: list[dict[str, Any]] = []
+    calls: list[tuple[Any, dict[str, Any]]] = []
 
     async def build(inputs: Any, **kwargs: Any) -> _Pipeline:
-        calls.append(kwargs)
+        calls.append((inputs, kwargs))
         return pipeline
 
     monkeypatch.setattr("degenbot.runner.session.build_batch_executor", build)
     monkeypatch.setattr(
-        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: object()
+        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: _inputs()
     )
 
     await session.probe_path(7, optimal_input=100)
 
-    assert calls == [
-        {"self_fund": True, "zero_balance": False, "submission": SubmissionStance.PROBE}
-    ]
+    ((inputs, kwargs),) = calls
+    assert kwargs == {"submission": SubmissionStance.PROBE}
+    assert inputs.capital is ProbeCapital.SELF_FUND, (
+        "an unspecified probe keeps the self-funded default the operator wire has always used"
+    )
+
+
+@pytest.mark.asyncio
+async def test_every_capital_mode_builds_one_pipeline_and_a_repeat_reuses_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All three modes are representable, and each drives its own construction once.
+
+    The mode is ONE value: `production` is reachable (it never was through the
+    retired `zero_balance` flag pair), a mode change rebuilds, and repeating the
+    built mode reuses the executor instead of swapping it.
+    """
+    session = session_for_test(bot=_Bot(), engine_registry=_Registry(), async_w3=_EchoProvider())
+    session.phase = SessionPhase.RUNNING
+    builds: list[ProbeCapital] = []
+
+    async def build(inputs: Any, **kwargs: Any) -> _LanePipeline:
+        builds.append(inputs.capital)
+        return _LanePipeline()
+
+    monkeypatch.setattr("degenbot.runner.session.build_batch_executor", build)
+    monkeypatch.setattr(
+        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: _inputs()
+    )
+
+    for capital in (
+        ProbeCapital.SELF_FUND,
+        ProbeCapital.SELF_FUND,
+        ProbeCapital.ZERO_BALANCE,
+        ProbeCapital.PRODUCTION,
+    ):
+        await session.probe_path(7, optimal_input=100, capital=capital)
+        assert session.probe_capital is capital
+
+    assert builds == [
+        ProbeCapital.SELF_FUND,
+        ProbeCapital.ZERO_BALANCE,
+        ProbeCapital.PRODUCTION,
+    ], "each mode builds once and a repeat reuses the executor it built"
 
 
 # ── Response identity and the cancellation lifecycle ──────────────────
@@ -437,7 +485,7 @@ def _probe_session(provider: Any, pipeline: Any) -> Session:
     session = session_for_test(bot=_Bot(), engine_registry=_Registry(), async_w3=provider)
     session.phase = SessionPhase.RUNNING
     session.probe_pipeline = pipeline
-    session.probe_zero_balance = False
+    session.probe_capital = ProbeCapital.SELF_FUND
     return session
 
 
@@ -506,19 +554,19 @@ async def test_a_zero_balance_probe_swaps_the_pipeline_only_after_the_in_flight_
     builds: list[dict[str, Any]] = []
 
     async def build(inputs: Any, **kwargs: Any) -> _LanePipeline:
-        builds.append({**kwargs, "queued": list(self_funded.queue)})
+        builds.append({**kwargs, "capital": inputs.capital, "queued": list(self_funded.queue)})
         return flash_funded
 
     monkeypatch.setattr("degenbot.runner.session.build_batch_executor", build)
     monkeypatch.setattr(
-        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: object()
+        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: _inputs()
     )
 
     funded = asyncio.create_task(_guarded(session.probe_path(7, optimal_input=100)))
     await _guarded(self_funded.row_queued.wait())
 
     zero = asyncio.create_task(
-        _guarded(session.probe_path(8, optimal_input=250, zero_balance=True))
+        _guarded(session.probe_path(8, optimal_input=250, capital=ProbeCapital.ZERO_BALANCE))
     )
     await _scheduler_turns()
     assert session.probe_pipeline is self_funded, "the swap waits for the in-flight probe"
@@ -529,13 +577,12 @@ async def test_a_zero_balance_probe_swaps_the_pipeline_only_after_the_in_flight_
 
     (swap,) = builds
     assert swap == {
-        "self_fund": False,
-        "zero_balance": True,
         "submission": SubmissionStance.PROBE,
+        "capital": ProbeCapital.ZERO_BALANCE,
         "queued": [],
     }, "the flash-funded executor was built only once the self-funded lane drained"
     assert session.probe_pipeline is flash_funded
-    assert session.probe_zero_balance is True
+    assert session.probe_capital is ProbeCapital.ZERO_BALANCE
     assert self_funded.drained == [{"path_id": 7, "optimal_input": 100}]
     assert flash_funded.drained == [{"path_id": 8, "optimal_input": 250}]
 
@@ -670,7 +717,7 @@ async def test_an_unreapable_abandoned_probe_is_cancelled_and_the_pipeline_dropp
 
     monkeypatch.setattr("degenbot.runner.session.build_batch_executor", build)
     monkeypatch.setattr(
-        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: object()
+        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: _inputs()
     )
 
     first = asyncio.create_task(_guarded(session.probe_path(7, optimal_input=100)))
@@ -681,7 +728,7 @@ async def test_an_unreapable_abandoned_probe_is_cancelled_and_the_pipeline_dropp
 
     (abandoned,) = stuck.tasks
     assert session.probe_pipeline is None, "the wedged executor was dropped"
-    assert session.probe_zero_balance is None
+    assert session.probe_capital is None
     assert abandoned.done(), "the give-up path waited the abandoned probe to terminal"
     assert abandoned.cancelled(), "the give-up path CANCELLED the abandoned probe"
     assert abandoned not in asyncio.all_tasks(), "no pending probe task outlives it"
@@ -725,7 +772,7 @@ async def test_a_second_cancel_does_not_abandon_the_terminal_cleanup(
 
     monkeypatch.setattr("degenbot.runner.session.build_batch_executor", build)
     monkeypatch.setattr(
-        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: object()
+        "degenbot.runner.session.ExecutorInputs.from_session", lambda _session: _inputs()
     )
 
     # Deliberately not wrapped in ``_guarded``: ``asyncio.wait_for`` answers a

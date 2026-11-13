@@ -275,3 +275,51 @@ def test_execution_probe_response_accepts_valid_below_threshold_receipt() -> Non
         "permutation": "V4-V4-V4",
         "outcome": "sim_ok",
     }
+
+
+def test_the_probe_payload_names_one_capital_mode() -> None:
+    """The wire carries ONE capital spelling, and every mode is accepted.
+
+    The retired `zero_balance` boolean is gone: a payload either names the mode
+    it wants by its spelling, or omits the field and gets the self-funded probe
+    the wire has always requested.
+    """
+    from degenbot.operator.operator_channel import capital_from_wire
+    from degenbot.runner._sim_submit import ProbeCapital
+
+    assert capital_from_wire({"path_id": 7}) is ProbeCapital.SELF_FUND, (
+        "an absent capital field keeps the historical self-funded probe"
+    )
+    for mode in ProbeCapital:
+        assert capital_from_wire({"path_id": 7, "capital": mode.value}) is mode
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"capital": "self-funded"},  # a near miss, not a mode
+        {"capital": "zero-balance"},
+        {"capital": ""},
+        {"capital": None},
+        {"capital": True},  # a boolean is not a mode spelling
+    ],
+)
+def test_an_unknown_capital_spelling_is_refused(payload: dict[str, object]) -> None:
+    """A spelling the core does not know is refused, never guessed at."""
+    from degenbot.operator.operator_channel import capital_from_wire
+
+    with pytest.raises(ValueError, match="unknown capital"):
+        capital_from_wire({"path_id": 7, **payload})
+
+
+@pytest.mark.parametrize("retired", ["self_fund", "zero_balance"])
+def test_the_retired_boolean_payload_is_refused(retired: str) -> None:
+    """A payload still sending a retired boolean is refused, not silently defaulted.
+
+    Ignoring the old key would run the probe in the self-funded default, i.e. a
+    posture the caller did not ask for — so the transition is loud.
+    """
+    from degenbot.operator.operator_channel import capital_from_wire
+
+    with pytest.raises(ValueError, match=f"retired probe key.*{retired}"):
+        capital_from_wire({"path_id": 7, retired: True})

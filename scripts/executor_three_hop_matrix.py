@@ -28,6 +28,11 @@ EDGE_ORDER = ("A", "B", "C")
 PERMUTATION_COUNT = 27
 DIRECTED_PATH_COUNT = 27
 
+#: The probe payload's capital vocabulary — the operator wire's spellings, which
+#: the host validates (`degenbot.operator.operator_channel.capital_from_wire`).
+CAPITAL_MODES = ("production", "self_fund", "zero_balance")
+DEFAULT_CAPITAL = "self_fund"
+
 
 def load_manifest() -> dict[str, Any]:
     """Load the chain, token, and nine-pool manifest.
@@ -134,14 +139,43 @@ def inject_paths(
     return results
 
 
+def probe_request(path_id: int, *, capital: str = DEFAULT_CAPITAL) -> dict[str, Any]:
+    """Build the operator request that probes one registered path.
+
+    Args:
+        path_id: The engine path ID the registration returned.
+        capital: The capital posture spelling the probe asks for
+            (:data:`CAPITAL_MODES`); ``self_fund`` is the default the wire has
+            always carried.
+
+    Returns:
+        The JSON-lines request object.
+
+    Raises:
+        ValueError: if ``capital`` is not one of :data:`CAPITAL_MODES`.
+
+    """
+    if capital not in CAPITAL_MODES:
+        expected = "|".join(CAPITAL_MODES)
+        msg = f"unknown capital {capital!r} (expected {expected})"
+        raise ValueError(msg)
+    return {"op": "probe_path", "payload": {"path_id": path_id, "capital": capital}}
+
+
 def probe_paths(
     socket_path: Path,
     registrations: list[dict[str, Any]],
     output_path: Path,
     *,
-    zero_balance: bool = False,
+    capital: str = DEFAULT_CAPITAL,
 ) -> dict[str, Any]:
     """Execute every registered path with an explicit small WETH input.
+
+    Args:
+        socket_path: The operator socket.
+        registrations: The ``inject`` command's registrations (path IDs).
+        output_path: Where the execution report is written.
+        capital: The capital posture every probe asks for (:data:`CAPITAL_MODES`).
 
     Returns:
         A per-directed-path execution report.
@@ -154,13 +188,7 @@ def probe_paths(
     for registration in registrations:
         path_id = registration["response"]["path_id"]
         try:
-            response = send_command(
-                socket_path,
-                {
-                    "op": "probe_path",
-                    "payload": {"path_id": path_id, "zero_balance": zero_balance},
-                },
-            )
+            response = send_command(socket_path, probe_request(path_id, capital=capital))
             if not response.get("ok"):
                 response = {
                     "outcome": "exception",
@@ -304,7 +332,7 @@ def main() -> int:
     probe.add_argument("--socket", type=Path, required=True)
     probe.add_argument("--registrations", type=Path, required=True)
     probe.add_argument("--output", type=Path, required=True)
-    probe.add_argument("--zero-balance", action="store_true")
+    probe.add_argument("--capital", choices=CAPITAL_MODES, default=DEFAULT_CAPITAL)
     report = subcommands.add_parser("report")
     report.add_argument("--log", type=Path, required=True)
     report.add_argument("--registrations", type=Path, required=True)
@@ -320,9 +348,7 @@ def main() -> int:
 
     registrations = json.loads(args.registrations.read_text(encoding="utf-8"))
     if args.command == "probe":
-        result = probe_paths(
-            args.socket, registrations, args.output, zero_balance=args.zero_balance
-        )
+        result = probe_paths(args.socket, registrations, args.output, capital=args.capital)
         return 0 if result["summary"]["executed"] == DIRECTED_PATH_COUNT else 1
 
     registrations = json.loads(args.registrations.read_text(encoding="utf-8"))

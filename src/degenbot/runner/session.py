@@ -53,6 +53,7 @@ from degenbot.runner._run_ritual import RunRitual
 from degenbot.runner._session_watch import SessionWatch
 from degenbot.runner._sim_submit import (
     ExecutorInputs,
+    ProbeCapital,
     SubmissionStance,
     build_batch_executor,
     build_executor_for,
@@ -537,8 +538,8 @@ class Session:
     sim_submit_pipeline: BatchExecutor | None = None
     #: Executor used only for explicit dry-run execution probes.
     probe_pipeline: BatchExecutor | None = None
-    #: Capital stance of the current probe pipeline; None before construction.
-    probe_zero_balance: bool | None = None
+    #: Capital posture of the current probe pipeline; None before construction.
+    probe_capital: ProbeCapital | None = None
     #: The one lock serializing the whole probe critical section — mode select,
     #: pipeline build, quoting, enqueue, and drain — so two probes can neither
     #: interleave on one lane nor swap the executor under an in-flight row.
@@ -740,7 +741,11 @@ class Session:
 
     # ── Operator add-a-path and dry-run execution probes ─────────────
     async def probe_path(
-        self, path_id: int, *, optimal_input: int, zero_balance: bool = False
+        self,
+        path_id: int,
+        *,
+        optimal_input: int,
+        capital: ProbeCapital = ProbeCapital.SELF_FUND,
     ) -> Any:
         """Quote and execute one explicit amount vector through the batch executor.
 
@@ -777,6 +782,14 @@ class Session:
         the abandoned probe task, waiting for it to reach a terminal state, so
         neither the stranded row nor the operation behind it survives the call.
 
+        The capital posture is ONE value (:class:`ProbeCapital`) rather than a
+        ``zero_balance`` flag: ``SELF_FUND`` (the default — the executor's own
+        capital, self-funded encoding), ``ZERO_BALANCE`` (that capital stripped,
+        in-path-flash encoding), or ``PRODUCTION`` (no capital override at all).
+        The pipeline is rebuilt when the requested mode is not the built one's,
+        and the mode it was built with is :attr:`probe_capital` — so the surface
+        can never hold a "self-fund AND zero-balance" ask.
+
         Returns:
             The row's own outcome set from the batch executor.
 
@@ -799,17 +812,17 @@ class Session:
             return await self._probe_serialized(
                 path_id,
                 optimal_input=optimal_input,
-                zero_balance=zero_balance,
+                capital=capital,
                 actors=actors,
             )
 
     async def _probe_serialized(
-        self, path_id: int, *, optimal_input: int, zero_balance: bool, actors: Actors
+        self, path_id: int, *, optimal_input: int, capital: ProbeCapital, actors: Actors
     ) -> Any:
         """Run the probe's critical section: mode select, build, quote, enqueue, drain.
 
         The caller holds :attr:`_probe_lock`. ``probe_pipeline`` and
-        ``probe_zero_balance`` are this method's only writers, so the swap below
+        ``probe_capital`` are this method's only writers, so the swap below
         can never race an in-flight row: a probe of the other capital mode waits
         for the lock, then builds, then probes.
 
@@ -827,15 +840,13 @@ class Session:
 
         """
         if self.probe_pipeline is None or (
-            self.probe_zero_balance is not None and self.probe_zero_balance != zero_balance
+            self.probe_capital is not None and self.probe_capital != capital
         ):
             self.probe_pipeline = await build_batch_executor(
-                ExecutorInputs.from_session(self),
-                self_fund=not zero_balance,
-                zero_balance=zero_balance,
+                replace(ExecutorInputs.from_session(self), capital=capital),
                 submission=SubmissionStance.PROBE,
             )
-            self.probe_zero_balance = zero_balance
+            self.probe_capital = capital
         pipeline = self.probe_pipeline
         path_info = actors.engine_registry.engine.payload_path_info(path_id)
         if path_info is None:
@@ -928,7 +939,7 @@ class Session:
         The give-up is then TERMINAL, in two moves and in this order:
 
         1. Drop the probe pipeline (:attr:`probe_pipeline` /
-           :attr:`probe_zero_balance`), so the stranded outcome's channel is
+           :attr:`probe_capital`), so the stranded outcome's channel is
            unreachable and no later probe can take it; the next probe builds a
            fresh executor.
         2. Cancel the abandoned probe task and reap its terminal state. Dropping
@@ -954,7 +965,7 @@ class Session:
             PROBE_REAP_TIMEOUT_S,
         )
         self.probe_pipeline = None
-        self.probe_zero_balance = None
+        self.probe_capital = None
         await _terminate_abandoned_probe(probe)
 
     # ── Operator add-a-path surface ─────────────────────────────────

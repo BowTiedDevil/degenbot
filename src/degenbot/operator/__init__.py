@@ -11,8 +11,16 @@ from degenbot.operator.operator_channel import (
     OperatorHandler,
     OperatorServer,
     StepSpec,
+    capital_from_wire,
     send_command,
     step_from_wire,
 )
 
-__all__ = ["OperatorHandler", "OperatorServer", "StepSpec", "send_command", "step_from_wire"]
+__all__ = [
+    "OperatorHandler",
+    "OperatorServer",
+    "StepSpec",
+    "capital_from_wire",
+    "send_command",
+    "step_from_wire",
+]

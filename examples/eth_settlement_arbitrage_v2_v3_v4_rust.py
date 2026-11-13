@@ -81,6 +81,7 @@ async def main() -> None:
             if args.operator_socket:
                 from degenbot.operator.operator_channel import (
                     OperatorServer,
+                    capital_from_wire,
                     execution_probe_response,
                     handle_fleet_posture_op,
                     step_from_wire,
@@ -97,10 +98,13 @@ async def main() -> None:
                             "path_id": path_id,
                         }
                     if op == "probe_path":
+                        # One capital spelling, validated here: absent keeps the
+                        # historical self-funded probe, and an unknown spelling is
+                        # refused by wrap_handler as {"ok": false, "error": ...}.
                         outcome = await session.probe_path(
                             payload["path_id"],
                             optimal_input=int(payload.get("optimal_input", 1_000_000_000_000_000)),
-                            zero_balance=bool(payload.get("zero_balance", False)),
+                            capital=capital_from_wire(payload),
                         )
                         return execution_probe_response(payload["path_id"], outcome)
                     if op == "discover":

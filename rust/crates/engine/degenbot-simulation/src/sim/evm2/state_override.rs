@@ -17,10 +17,10 @@
 //! slots name belongs to the warmup, and the built-in binding keys them on the
 //! deployment's executor in both deployment arms (declared code and deployed
 //! code). The capital overrides never inherit that answer. Each one names its
-//! own account — [`SimulationOverrideParams::zero_balance`] for the clearing
-//! set, [`SimulationOverrideParams::self_fund_usdc`] for the funded USDC
-//! holder — and derives the WETH9 balance and PoolManager ERC6909 claim slots
-//! from that account, so a probe's capital lands on the executor it names
+//! own account — [`SimulationOverrideParams::capital`], the one
+//! [`crate::CapitalOverridePlan`] a deployment composed — and derives the WETH9
+//! balance and PoolManager ERC6909 claim slots from that account, so a probe's
+//! capital lands on the executor it names
 //! whatever the deployment declares (code or none) and whichever account the
 //! warmup keyed.
 //!
@@ -40,6 +40,7 @@ use crate::sim::state_override::{
     SimulationOverrideParams, EXECUTOR_FUND_ETH, ONE_WEI, OWNER_FUND_ETH, USDC_MAINNET,
     USDC_MAINNET_BALANCE_SLOT, WBTC_MAINNET, WBTC_MAINNET_BALANCE_SLOT,
 };
+use crate::CapitalOverridePlan;
 
 /// Apply the simulation state-overrides onto an evm2 `CacheDB`,
 /// field-for-field with the revm-side original (see the module doc).
@@ -66,7 +67,11 @@ pub fn apply_simulation_overrides<ExtDb: DynDatabase>(
         );
     }
 
-    if let Some(holder) = params.self_fund_usdc {
+    // The ONE capital plan, applied in its declared order relative to the
+    // settlement warmup: a self-funded installation lands before the warmup
+    // raises the WETH9 balanceOf slot, and a zero-balance clearing lands after
+    // it, so clearing always wins.
+    if let CapitalOverridePlan::SelfFund { holder } = params.capital {
         let slot = degenbot_executor::mapping_slot(
             U256::from(USDC_MAINNET_BALANCE_SLOT),
             U256::from_be_bytes(holder.into_word().into()),
@@ -105,8 +110,9 @@ pub fn apply_simulation_overrides<ExtDb: DynDatabase>(
         );
     }
 
-    if let Some(executor) = params.zero_balance {
-        // Native ETH first: the clearing target is the account named here, in
+    if let CapitalOverridePlan::ZeroBalance { holder: executor } = params.capital {
+        // Native ETH first: the clearing target is the account named by the
+        // plan, in
         // BOTH deployment arms. A declared-code build keeps the runtime the
         // code override installed; a deployed executor keeps the code the chain
         // holds. Only the balance is replaced.
@@ -212,8 +218,7 @@ mod tests {
                     pool_manager_address: Some(pm),
                     slots: executor_slots,
                 }),
-                zero_balance: Some(executor),
-                ..Default::default()
+                capital: CapitalOverridePlan::ZeroBalance { holder: executor },
             },
         );
         assert_eq!(
@@ -268,7 +273,7 @@ mod tests {
         let mut db = ::evm2::evm::InMemoryDB::default();
         let params = SimulationOverrideParams {
             owner,
-            self_fund_usdc: Some(executor),
+            capital: CapitalOverridePlan::SelfFund { holder: executor },
             ..Default::default()
         };
         apply_simulation_overrides(&mut db, &params);
@@ -290,6 +295,49 @@ mod tests {
                 .and_then(|s| s.slots.get(&slot)),
             None,
             "ordinary solver simulation must not receive USDC",
+        );
+    }
+
+    /// The production arm of the ONE capital value: no override at all.
+    ///
+    /// The executor keeps whatever the chain holds — no USDC installation, no
+    /// WETH9 / claim clearing, and no materialized (let alone cleared) native
+    /// balance — while owner gas funding is unchanged.
+    #[test]
+    fn production_applies_no_capital_override() {
+        let executor = Address::from([0x42; 20]);
+        let owner = Address::from([0x24; 20]);
+        let mut db = ::evm2::evm::InMemoryDB::default();
+        apply_simulation_overrides(
+            &mut db,
+            &SimulationOverrideParams {
+                owner,
+                capital: CapitalOverridePlan::Production,
+                ..Default::default()
+            },
+        );
+        for (token, slot) in [
+            (USDC_MAINNET, slot_for(USDC_MAINNET_BALANCE_SLOT, executor)),
+            (WBTC_MAINNET, slot_for(WBTC_MAINNET_BALANCE_SLOT, executor)),
+        ] {
+            assert_eq!(
+                db.cache
+                    .storage
+                    .get(&token)
+                    .and_then(|s| s.slots.get(&slot)),
+                None,
+                "production installs no probe capital",
+            );
+        }
+        assert_eq!(
+            db.account_info(&executor).map(|info| info.balance),
+            None,
+            "production never materializes (or clears) the executor's balance",
+        );
+        assert_eq!(
+            db.account_info(&owner).map(|info| info.balance),
+            Some(eth_amount(OWNER_FUND_ETH)),
+            "owner gas funding is unchanged",
         );
     }
 
@@ -448,8 +496,9 @@ mod tests {
                 pool_manager_address: Some(chain.pool_manager),
                 slots: compute_simulation_warmup_slots(chain.executor, chain.weth),
             }),
-            zero_balance: Some(chain.executor),
-            ..Default::default()
+            capital: CapitalOverridePlan::ZeroBalance {
+                holder: chain.executor,
+            },
         }
     }
 
@@ -611,8 +660,9 @@ mod tests {
                 pool_manager_address: Some(chain.pool_manager),
                 slots: owner_slots,
             }),
-            zero_balance: Some(chain.executor),
-            ..Default::default()
+            capital: CapitalOverridePlan::ZeroBalance {
+                holder: chain.executor,
+            },
         };
         let mut db: CacheDB<::evm2::evm::InMemoryDB> = CacheDB::new(chain.db);
         apply_simulation_overrides(&mut db, &params);

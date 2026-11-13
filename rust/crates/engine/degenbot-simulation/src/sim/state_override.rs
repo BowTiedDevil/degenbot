@@ -15,19 +15,22 @@
 //! # Capital targeting is selected independently of both
 //!
 //! The capital overrides (native ETH, WETH9, USDC, WBTC, and PoolManager
-//! ERC6909 claims) name the account they fund or clear THEMSELVES:
-//! [`SimulationOverrideParams::self_fund_usdc`] and
-//! [`SimulationOverrideParams::zero_balance`] each carry the executor they
-//! apply to, and the override application derives the account-keyed slots from
-//! that address. Neither arm of the declared-code / deployed-code split inherits
-//! a target from the other, and no capital slot is keyed on the warmup's own
-//! derivation: a deployment whose warmup slots name one account and whose probe
+//! ERC6909 claims) are ONE value — [`SimulationOverrideParams::capital`], a
+//! [`crate::CapitalOverridePlan`] — which names the account it funds or clears
+//! itself and derives the account-keyed slots from it. The plan is produced once
+//! where the deployment is composed
+//! ([`crate::ProbeCapital::override_plan`]), from the deployment's execution
+//! target: neither arm of the declared-code / deployed-code split inherits a
+//! target from the other, and no capital slot is keyed on the warmup's own
+//! derivation — a deployment whose warmup slots name one account and whose probe
 //! names another still clears the probe's account. The owner's gas funding and
 //! every account the overrides do not name are left alone.
 
 use alloy::primitives::{address, Address, Bytes, U256};
 
 use degenbot_executor::WarmupSlots;
+
+use crate::CapitalOverridePlan;
 
 /// The owner funding, in whole ETH.
 pub const OWNER_FUND_ETH: u64 = 100;
@@ -102,17 +105,14 @@ pub struct SimulationOverrideParams {
     /// The settlement warmup this deployment declares; `None` = the deployment
     /// has no WETH/PoolManager identity to warm.
     pub settlement: Option<SettlementWarmup>,
-    /// The executor receiving self-funded mainnet USDC for an explicit
-    /// execution probe. `None` disables the override; this is test capital,
-    /// never an ordinary solver-candidate assumption.
-    pub self_fund_usdc: Option<Address>,
-    /// Force native ETH, WETH, USDC, WBTC, and PoolManager claims to zero at
-    /// the declared executor. Owner gas funding is retained.
+    /// The capital posture this simulation assumes, as one plan: nothing
+    /// (production), the known asset set installed at the executor
+    /// (self-funded), or that set stripped from the executor (zero-balance).
     ///
-    /// The address here IS the capital target: every clearing slot is derived
-    /// from it, in both deployment arms. A declared-code override keeps the
-    /// runtime it installed; a deployed executor keeps the code the chain holds
-    /// — clearing touches the balance and the account's token/claim slots,
-    /// never the code.
-    pub zero_balance: Option<Address>,
+    /// The plan's [`crate::CapitalOverridePlan::holder`] IS the capital target:
+    /// every capital slot is derived from it, in both deployment arms. A
+    /// declared-code override keeps the runtime it installed; a deployed
+    /// executor keeps the code the chain holds — clearing touches the balance
+    /// and the account's token/claim slots, never the code.
+    pub capital: CapitalOverridePlan,
 }

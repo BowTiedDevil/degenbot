@@ -787,8 +787,7 @@ def build_batch_executor_py(
     broadcast_providers: SupportsGetItem[int, AsyncAlloyProvider] | None = None,
     deployments: SupportsGetItem[int, SimulationDeployment] | None = None,
     target_selection: str | None = None,
-    self_fund: bool = False,
-    zero_balance: bool = False,
+    capital: str | None = None,
 ) -> BatchExecutor:
     """
     Construct the session executor: the core's value-configured module over
@@ -833,10 +832,21 @@ def build_batch_executor_py(
             every path. One registered deployment selects the same target either
             way.
 
+        `capital`: the session's ONE capital posture — `"production"` (the
+            default: the account's real balances, no capital override),
+            `"self_fund"` (the known asset set installed at the executor, with
+            the self-funded encoding), or `"zero_balance"` (that set stripped
+            from the executor, with the in-path-flash encoding). The one value
+            supplies the stream's `funding` / zero-balance axes AND the
+            deployment's simulation override plan, which is why the retired
+            `self_fund` / `zero_balance` boolean pair is gone: the two probe
+            modes can no longer be requested together.
+
     # Errors
 
-    `ValueError` on malformed addresses/args, an unknown `target_selection`
-    value, or when the composed registry is refused: a deployment reusing an
+    `ValueError` on malformed addresses/args, an unknown `target_selection` or
+    `capital` spelling, or when the composed registry is refused: a deployment
+    reusing an
     existing identity (including the built-in
     [`crate::simulation::deployment::builtin_deployment_id`]) makes every
     post-target row ambiguous, and a deployment whose owner is not the session

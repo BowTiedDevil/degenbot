@@ -63,7 +63,9 @@ use alloy::primitives::Address;
 use degenbot_execution::{DeploymentId, ExecutionAdapter};
 use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::{DeclaredCode, SettlementWarmup, SimulationOverrideParams};
+use degenbot_simulation::{
+    CapitalOverridePlan, DeclaredCode, ProbeCapital, SettlementWarmup, SimulationOverrideParams,
+};
 
 /// The facts ONE simulated block contributes to every candidate simulated at it.
 #[derive(Clone)]
@@ -106,8 +108,7 @@ pub struct SimulationDeployment {
     gas_limit: u64,
     code: Option<DeclaredCode>,
     settlement: Option<SettlementWarmup>,
-    self_fund_usdc: Option<Address>,
-    zero_balance: Option<Address>,
+    capital: CapitalOverridePlan,
     fee_sizing: FeeSizing,
 }
 
@@ -145,8 +146,7 @@ impl std::fmt::Debug for SimulationDeployment {
             .field("gas_limit", &self.gas_limit)
             .field("code", &self.code)
             .field("settlement", &self.settlement)
-            .field("self_fund_usdc", &self.self_fund_usdc)
-            .field("zero_balance", &self.zero_balance)
+            .field("capital", &self.capital)
             .field("fee_sizing", &self.fee_sizing)
             .finish()
     }
@@ -190,8 +190,7 @@ impl SimulationDeployment {
             gas_limit,
             code,
             settlement,
-            self_fund_usdc: None,
-            zero_balance: None,
+            capital: CapitalOverridePlan::Production,
             fee_sizing: FeeSizing::default(),
         }
     }
@@ -203,29 +202,29 @@ impl SimulationDeployment {
         self
     }
 
-    /// Enable mainnet USDC capital for an explicit self-fund execution probe.
+    /// Declare this deployment's capital posture — the ONE capital value a
+    /// session carries, projected here into the plan the overrides apply.
     ///
-    /// The funded holder is this deployment's execution target — the executor —
-    /// never its owner, who only funds gas.
+    /// The plan's holder is this deployment's execution target — the executor —
+    /// never its owner, who only funds gas. The target is never inherited from
+    /// the settlement warmup: the warmup's slot subject is a separate fact, and
+    /// the plan names the account it funds or clears. `ProbeCapital::Production`
+    /// declares no override at all, which is a deployment's default.
+    ///
+    /// Both probe arms name the executor in the declared-code and deployed-code
+    /// cases alike: a declared-code build keeps the runtime its override
+    /// installed and a deployed contract keeps the code the chain holds, so the
+    /// capital never travels through a code override.
     #[must_use]
-    pub const fn with_self_fund_usdc(mut self, enabled: bool) -> Self {
-        self.self_fund_usdc = if enabled { Some(self.target) } else { None };
+    pub const fn with_capital(mut self, capital: ProbeCapital) -> Self {
+        self.capital = capital.override_plan(self.target);
         self
     }
 
-    /// Force the executor's native and token balances to zero for an explicit
-    /// probe.
-    ///
-    /// The cleared account is this deployment's execution target — the executor
-    /// — in both deployment arms: a declared-code build keeps the runtime its
-    /// override installed and a deployed contract keeps the code the chain
-    /// holds. The target is never inherited from the settlement warmup: the
-    /// warmup's slot subject is a separate fact, and this parameter names the
-    /// account it clears. The owner's account is never a capital target.
+    /// The capital plan this deployment applies to its execution target.
     #[must_use]
-    pub const fn with_zero_balance(mut self, enabled: bool) -> Self {
-        self.zero_balance = if enabled { Some(self.target) } else { None };
-        self
+    pub const fn capital(&self) -> CapitalOverridePlan {
+        self.capital
     }
 
     /// This deployment's operator-assigned identity — the half of every
@@ -282,9 +281,9 @@ impl SimulationDeployment {
     /// The built-in binding keys the slots it carries on this deployment's
     /// [`Self::target`] (the executor) in both deployment arms; nothing in the
     /// type enforces that subject. Whatever account they name, they stay a
-    /// settlement-warmup fact rather than a capital target: the capital
-    /// overrides ([`Self::with_self_fund_usdc`], [`Self::with_zero_balance`])
-    /// name their own target and never inherit this one.
+    /// settlement-warmup fact rather than a capital target: the capital plan
+    /// ([`Self::with_capital`]) names its own target and never inherits this
+    /// one.
     ///
     /// `None` is a complete answer: a foreign contract with no WETH or
     /// PoolManager identity declares none, and the fetch/prewarm lanes derive
@@ -301,8 +300,7 @@ impl SimulationDeployment {
             owner: self.owner,
             code: self.code.clone(),
             settlement: self.settlement,
-            self_fund_usdc: self.self_fund_usdc,
-            zero_balance: self.zero_balance,
+            capital: self.capital,
         }
     }
 }

@@ -118,9 +118,12 @@ path` record fails the report. Never add `--live`: dry-run skips signing and
 executor-code injection independently gates submission. `--sparse-registration`
 avoids stale tracked tick fixtures; it does not relax simulation checks.
 
-Append `--zero-balance` to `probe` to use ordinary in-path-flash encoding with
-zero executor native ETH, WETH, USDC, WBTC, and PoolManager claims (owner gas
-funding and injected code remain). A losing WETH cycle is then a typed
+Pass `--capital zero_balance` to `probe` (the flag replaced `--zero-balance`) to
+use ordinary in-path-flash encoding with zero executor native ETH, WETH, USDC,
+WBTC, and PoolManager claims (owner gas funding and injected code remain). The
+other two modes are `--capital self_fund` (the default, the executor's own
+capital with the self-funded encoding) and `--capital production` (the account's
+real balances, no capital override). A losing WETH cycle is then a typed
 planning refusal, never a validator panic. The deterministic
 `full_three_hop_zero_balance_matrix_executes_without_token_funding` test proves
 all 27 profitable shapes without minting any path-token capital.

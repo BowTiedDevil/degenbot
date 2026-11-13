@@ -67,7 +67,8 @@ Requests / responses (one JSON object per line):
 
 {"op": "probe_path",
  "path_id": 42,
- "zero_balance": false}                 # optional; false = self-funded encoding
+ "optimal_input": 1000000000000000,     # optional (wei)
+ "capital": "self_fund"}                # optional; production|self_fund|zero_balance
 
 {"ok": true,  "detail": "..."}
 {"ok": false, "error": "..."}
@@ -87,6 +88,37 @@ Key properties:
 
 The example bot hosts the server when launched with `--operator-socket <path>`,
 routing commands into `session.enqueue_path` / `session.trigger_discovery`.
+
+### Migration: one `capital` field replaces the `zero_balance` boolean
+
+The probe payload carried a `zero_balance` boolean, and the host turned it into
+a *pair* of booleans (`self_fund = not zero_balance`) that the FFI then had to
+re-validate and that the deployment had to re-derive into two
+`Option<Address>` override fragments. One value now names the posture end to
+end — operator wire, Python construction boundary, FFI, and deployment:
+
+| Surface | Retired | Now |
+| --- | --- | --- |
+| Operator wire (`probe_path` payload) | `"zero_balance": false` | `"capital": "production"\|"self_fund"\|"zero_balance"` |
+| Python operator verb (`Session.probe_path` / `BotRunner.probe_path`) | `zero_balance: bool = False` | `capital: ProbeCapital = ProbeCapital.SELF_FUND` |
+| Python construction boundary (`build_batch_executor`) | `self_fund=`, `zero_balance=` | `ExecutorInputs.capital` (one `ProbeCapital`) |
+| FFI (`degenbot._ffi.simulation.build_batch_executor`) | `self_fund=False, zero_balance=False` | `capital: str \| None = None` |
+| Session probe bookkeeping | `Session.probe_zero_balance` | `Session.probe_capital` |
+
+The modes are `production` (the account's real balances — no capital override at
+all), `self_fund` (the known asset set installed at the executor, with the
+self-funded stream encoding), and `zero_balance` (that set stripped from the
+executor, with the in-path-flash encoding). They are variants of ONE enum, so
+"self-fund AND zero-balance" is unrepresentable instead of being validated at
+runtime.
+
+There are no aliases: a payload that still sends `"self_fund"` / `"zero_balance"`
+instead of `"capital"` is refused by `capital_from_wire` (`{"ok": false,
+"error": ...}` over the wire), and an unknown spelling is refused the same way.
+An absent `capital` keeps the historical behavior — the self-funded probe.
+`scripts/executor_three_hop_matrix.py` follows the wire (`--capital
+{production,self_fund,zero_balance}`, default `self_fund`, replacing
+`--zero-balance`).
 
 ### The `probe_path` op never submits
 

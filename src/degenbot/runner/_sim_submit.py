@@ -16,6 +16,12 @@ The boundary reads ONE :class:`ExecutorInputs` record (resolved from a session
 by :meth:`ExecutorInputs.from_session`), never the session itself, so the
 constructor's inputs are named in one place.
 
+The executor's capital posture crosses the same boundary as ONE value
+(:class:`ProbeCapital`): the FFI converts it once into the core's capital mode,
+which supplies both the stream's funding axis and the deployment's simulation
+override plan. The retired ``self_fund`` / ``zero_balance`` boolean pair is
+gone, so a construction cannot ask for both probe modes at once.
+
 Submission order is nonce order because the core lane drains batches in
 arrival order (FIFO). The cap VALUE (``DEGENBOT_SIM_PIPELINE_CONCURRENCY``,
 declared default 8, floored at 1 by the conversion) lives in the verdict —
@@ -90,6 +96,29 @@ class SubmissionStance(Enum):
         return [] if self is SubmissionStance.PROBE else list(relay_urls)
 
 
+class ProbeCapital(Enum):
+    """The capital posture one executor construction asks for.
+
+    ONE value names what the executor assumes about its own capital, and the
+    core derives both halves from it: the stream's funding axis and the
+    simulation override plan the deployment applies to its execution target.
+
+    The two probe modes are mutually exclusive by construction — they are
+    members of one enum, not two booleans — and the spellings are the same
+    vocabulary the operator wire and the FFI accept.
+    """
+
+    #: The deployed contract's own capital: production encoding, and no
+    #: simulation override at all.
+    PRODUCTION = "production"
+    #: Executor-held capital from the known asset set, with the self-funded
+    #: stream encoding.
+    SELF_FUND = "self_fund"
+    #: The known asset set stripped from the executor, with the in-path-flash
+    #: stream encoding.
+    ZERO_BALANCE = "zero_balance"
+
+
 @dataclass(frozen=True)
 class ExecutorInputs:
     """The values one session hands the core executor's constructor.
@@ -118,6 +147,11 @@ class ExecutorInputs:
     #: the explicit fan-out to every registered deployment. The walk itself is
     #: the Rust core's; this field only names the policy.
     target_selection: str = "first_compatible"
+    #: The executor's ONE capital posture (:class:`ProbeCapital`). Production is
+    #: the ordinary solver candidate's answer and the session default; an
+    #: explicit execution probe names the probe mode it wants, and the pipeline
+    #: that carries it replaces this field (see ``Session.probe_path``).
+    capital: ProbeCapital = ProbeCapital.PRODUCTION
 
     @classmethod
     def from_session(cls, session: Session) -> ExecutorInputs:
@@ -159,8 +193,6 @@ async def build_batch_executor(
     inputs: ExecutorInputs,
     *,
     engine_builder: Callable[..., BatchExecutor] | None = None,
-    self_fund: bool = False,
-    zero_balance: bool = False,
     submission: SubmissionStance = SubmissionStance.PRODUCTION,
 ) -> BatchExecutor:
     """Build the core batch executor over one session's resolved policy.
@@ -182,12 +214,15 @@ async def build_batch_executor(
     non-submitting by construction — no live stance, no broadcast posture, no
     relay dial — whatever run mode the session resolved.
 
+    The capital posture rides ``inputs.capital`` (one :class:`ProbeCapital`
+    value) and is handed to the FFI as its wire spelling, so a caller states the
+    posture in ONE place and cannot pass a second, contradictory flag beside it.
+
     Args:
-        inputs: The construction boundary's resolved inputs.
+        inputs: The construction boundary's resolved inputs (including the
+            capital posture).
         engine_builder: The construction override; defaults to the FFI
             ``build_batch_executor``.
-        self_fund: Install self-funded token capital for the probe's encoding.
-        zero_balance: Strip every executor token balance for the probe.
         submission: The construction's submission stance
             (:class:`SubmissionStance`).
 
@@ -227,8 +262,7 @@ async def build_batch_executor(
         broadcast_providers=broadcast_providers,
         deployments=list(inputs.deployments) or None,
         target_selection=inputs.target_selection,
-        self_fund=self_fund,
-        zero_balance=zero_balance,
+        capital=inputs.capital.value,
     )
 
 

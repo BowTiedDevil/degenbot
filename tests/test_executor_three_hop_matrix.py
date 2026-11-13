@@ -4,6 +4,8 @@ import importlib.util
 import itertools
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "scripts" / "executor_three_hop_matrix.py"
 SPEC = importlib.util.spec_from_file_location("executor_three_hop_matrix", MODULE_PATH)
@@ -151,3 +153,33 @@ def test_probe_report_does_not_count_an_encode_refusal_as_execution() -> None:
         "exceptions": 0,
         "missing": 0,
     }
+
+
+def test_probe_requests_carry_one_capital_mode_in_the_shared_vocabulary() -> None:
+    """Every probe request names its capital posture, in the host's vocabulary.
+
+    The matrix script is a wire CLIENT: it must send the same spellings the host
+    validates, so its mode list is checked against the operator channel's parser
+    rather than trusted.
+    """
+    from degenbot.operator.operator_channel import capital_from_wire
+    from degenbot.runner._sim_submit import ProbeCapital
+
+    assert matrix.probe_request(7) == {
+        "op": "probe_path",
+        "payload": {"path_id": 7, "capital": "self_fund"},
+    }, "the default probe is the self-funded one the wire has always carried"
+
+    assert set(matrix.CAPITAL_MODES) == {mode.value for mode in ProbeCapital}, (
+        "the script's CLI vocabulary and the host's must be the same set"
+    )
+    for capital in matrix.CAPITAL_MODES:
+        request = matrix.probe_request(9, capital=capital)
+        assert request["payload"] == {"path_id": 9, "capital": capital}
+        assert capital_from_wire(request["payload"]).value == capital
+
+
+def test_a_probe_request_refuses_an_unknown_capital_spelling() -> None:
+    """The client-side refusal mirrors the host's, so a typo never reaches a bot."""
+    with pytest.raises(ValueError, match="unknown capital"):
+        matrix.probe_request(7, capital="zero-balance")

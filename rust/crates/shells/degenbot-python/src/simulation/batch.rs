@@ -635,10 +635,21 @@ impl PyBatchExecutor {
 ///         every path. One registered deployment selects the same target either
 ///         way.
 ///
+///     `capital`: the session's ONE capital posture — `"production"` (the
+///         default: the account's real balances, no capital override),
+///         `"self_fund"` (the known asset set installed at the executor, with
+///         the self-funded encoding), or `"zero_balance"` (that set stripped
+///         from the executor, with the in-path-flash encoding). The one value
+///         supplies the stream's `funding` / zero-balance axes AND the
+///         deployment's simulation override plan, which is why the retired
+///         `self_fund` / `zero_balance` boolean pair is gone: the two probe
+///         modes can no longer be requested together.
+///
 /// # Errors
 ///
-/// `ValueError` on malformed addresses/args, an unknown `target_selection`
-/// value, or when the composed registry is refused: a deployment reusing an
+/// `ValueError` on malformed addresses/args, an unknown `target_selection` or
+/// `capital` spelling, or when the composed registry is refused: a deployment
+/// reusing an
 /// existing identity (including the built-in
 /// [`crate::simulation::deployment::builtin_deployment_id`]) makes every
 /// post-target row ambiguous, and a deployment whose owner is not the session
@@ -666,8 +677,7 @@ impl PyBatchExecutor {
     broadcast_providers = None,
     deployments = None,
     target_selection = None,
-    self_fund = false,
-    zero_balance = false,
+    capital = None,
 ))]
 #[expect(
     clippy::too_many_arguments,
@@ -685,8 +695,7 @@ pub fn build_batch_executor_py(
     broadcast_providers: Option<Vec<PyRef<'_, PyAsyncAlloyProvider>>>,
     deployments: Option<Vec<PyRef<'_, PySimulationDeployment>>>,
     target_selection: Option<&str>,
-    self_fund: bool,
-    zero_balance: bool,
+    capital: Option<&str>,
 ) -> PyResult<PyBatchExecutor> {
     crate::ambient_runtime::ensure_async_runtime_bound();
     let suppression = dispatcher.suppression_arc();
@@ -702,17 +711,18 @@ pub fn build_batch_executor_py(
             ))
         })?,
     };
-    if self_fund && zero_balance {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "self_fund and zero_balance are mutually exclusive",
-        ));
-    }
-    let probe_capital = if zero_balance {
-        degenbot_batch_executor::ProbeCapital::ZeroBalance
-    } else if self_fund {
-        degenbot_batch_executor::ProbeCapital::SelfFund
-    } else {
-        degenbot_batch_executor::ProbeCapital::Production
+    // The capital posture is ONE validated value; a misspelling is refused here
+    // rather than silently defaulting to a posture the caller did not name, and
+    // the two probe modes exclude each other by construction (a boolean pair that
+    // could name both is gone).
+    let probe_capital = match capital {
+        None => degenbot_batch_executor::ProbeCapital::Production,
+        Some(name) => degenbot_batch_executor::ProbeCapital::from_name(name).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown capital {name:?}: expected one of {}",
+                degenbot_batch_executor::ProbeCapital::NAMES.join(", ")
+            ))
+        })?,
     };
     let runtime = ExecutorRuntime {
         // `0` = no cap: the cockpit never carried a per-batch cap (the

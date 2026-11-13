@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Self
 
+from degenbot.runner._sim_submit import ProbeCapital
 from degenbot.runner.session import InjectedActors, Session
 
 if TYPE_CHECKING:
@@ -113,12 +114,22 @@ class BotRunner:
         return await self.session.run()
 
     async def probe_path(
-        self, path_id: int, *, optimal_input: int, zero_balance: bool = False
+        self,
+        path_id: int,
+        *,
+        optimal_input: int,
+        capital: ProbeCapital = ProbeCapital.SELF_FUND,
     ) -> Any:
-        """Execute one explicit amount vector through the session's dry-run probe."""
-        return await self.session.probe_path(
-            path_id, optimal_input=optimal_input, zero_balance=zero_balance
-        )
+        """Execute one explicit amount vector through the session's dry-run probe.
+
+        ``capital`` is the ONE capital posture value (:class:`ProbeCapital`):
+        ``SELF_FUND`` (the default), ``ZERO_BALANCE``, or ``PRODUCTION``.
+
+        Returns:
+            The row's own outcome set from the batch executor.
+
+        """
+        return await self.session.probe_path(path_id, optimal_input=optimal_input, capital=capital)
 
     async def enqueue_path(
         self,

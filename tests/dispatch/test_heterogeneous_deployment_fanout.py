@@ -50,7 +50,7 @@ from degenbot.dispatch import (
     builtin_deployment_id,
     typed_submit_record,
 )
-from degenbot.runner._sim_submit import ExecutorInputs
+from degenbot.runner._sim_submit import ExecutorInputs, ProbeCapital
 from tests.helpers.seam import (
     AlloyProvider,
     AsyncAlloyProvider,
@@ -207,6 +207,7 @@ def _executor(
     dry_run: bool = True,
     rpc_url: str = _RPC_URL,
     target_selection: str | None = None,
+    capital: str | None = None,
 ) -> BatchExecutor:
     """Build the session executor over the offline fixture engine."""
     return build_batch_executor_py(
@@ -220,6 +221,7 @@ def _executor(
         broadcast_providers=None,
         deployments=deployments,
         target_selection=target_selection,
+        capital=capital,
     )
 
 
@@ -385,6 +387,69 @@ class TestCompositionRefusals:
                 engine,
                 deployments=[_deployment(2, target=TARGET_A, owner=stranger)],
             )
+
+
+class TestCapitalPostureRefusal:
+    """The FFI's `capital` parameter is validated at the construction seam.
+
+    `build_batch_executor_py` converts the ONE capital spelling into the core's
+    posture before it builds anything, so a caller who misspells a mode is told
+    so instead of silently receiving the production default. The loopback stub
+    is the spy that makes "before construction" observable: an executor that had
+    been built first would have dialed its chain reads, and the refusal records
+    no request at all.
+    """
+
+    @pytest.mark.parametrize(
+        "misspelling",
+        ["self-funded", "zero-balance", "SELF_FUND", "", "production "],
+    )
+    def test_an_unknown_capital_is_a_value_error_without_construction(
+        self,
+        nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int],
+        canned_chain: _CannedChainNode,
+        misspelling: str,
+    ) -> None:
+        engine, _path_id = nxm2bf_v2_engine_and_path
+
+        # `_executor` forwards `capital` verbatim to `build_batch_executor_py`
+        # (the same construction every test in this suite uses), so the refusal
+        # below IS the FFI's own validation — no wrapper of ours screens it.
+        with pytest.raises(ValueError, match="unknown capital") as refused:
+            _executor(engine, rpc_url=canned_chain.url, capital=misspelling)
+
+        message = str(refused.value)
+        for mode in ProbeCapital:
+            assert mode.value in message, (
+                "the refusal names every accepted spelling, so a caller can fix the payload"
+            )
+        assert canned_chain.methods == [], "the refusal fires before any RPC activity"
+
+    @pytest.mark.parametrize("not_a_spelling", [5, True, ["self_fund"]])
+    def test_a_non_string_capital_never_reaches_construction(
+        self,
+        nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int],
+        canned_chain: _CannedChainNode,
+        not_a_spelling: object,
+    ) -> None:
+        engine, _path_id = nxm2bf_v2_engine_and_path
+
+        # The public seam itself, so the refusal is the FFI's argument check and
+        # not a helper's guard: a mode is a spelling, never a number or a bool.
+        with pytest.raises(TypeError):
+            build_batch_executor_py(
+                context=_ctx(canned_chain.url),
+                dispatcher=Dispatcher.for_block(0),
+                engine=engine,
+                signer=TxSigner(key="0x" + "11" * 32, chain_id=1),
+                submit_provider=_provider(canned_chain.url),
+                operator_nonce=5,
+                dry_run=True,
+                broadcast_providers=None,
+                capital=not_a_spelling,
+            )
+
+        assert canned_chain.methods == [], "the refusal fires before any RPC activity"
 
 
 class TestMalformedDeclarations:

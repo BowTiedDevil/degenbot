@@ -125,32 +125,18 @@ impl std::fmt::Display for ProbeRefusal {
 
 impl std::error::Error for ProbeRefusal {}
 
-/// Capital posture for an explicit execution probe. Ordinary solver candidates
-/// always use `Production`; the two probe modes are mutually exclusive.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ProbeCapital {
-    /// Production in-path-flash encoding with normal simulation overrides.
-    #[default]
-    Production,
-    /// Executor-held capital with self-funded encoding.
-    SelfFund,
-    /// In-path-flash encoding with every executor token balance forced to zero.
-    ZeroBalance,
-}
-
-impl ProbeCapital {
-    /// Whether to install self-funded token capital.
-    #[must_use]
-    pub const fn is_self_funded(self) -> bool {
-        matches!(self, Self::SelfFund)
-    }
-
-    /// Whether to strip all executor token capital.
-    #[must_use]
-    pub const fn is_zero_balance(self) -> bool {
-        matches!(self, Self::ZeroBalance)
-    }
-}
+/// The session's capital posture for its execution target, re-exported from the
+/// simulation crate that also owns the override plan it projects to.
+///
+/// One value drives both halves of a capital posture — the stream's funding axis
+/// and the deployment's simulation override plan — so a driver never names a
+/// `self_fund` / `zero_balance` boolean pair. See
+/// [`degenbot_simulation::ProbeCapital`]: `Production` installs and strips
+/// nothing, `SelfFund` installs the known asset set at the executor with the
+/// self-funded encoding, and `ZeroBalance` strips that set with the
+/// in-path-flash encoding. The two probe modes exclude each other by
+/// construction.
+pub use degenbot_simulation::ProbeCapital;
 
 /// The injected runtime handles: everything the resolved verdict CANNOT name
 /// (the session arcs, identity addresses, relay posture, the driver's

@@ -159,6 +159,10 @@ exactly, and the golden fixtures pin them:
 | `DispatchCandidate.opts`, `SimulatePath.opts` | `CmdExecutorBinding::new(..., opts)` / `with_opts(opts)` | one authority for the cmd config axes (the injected deployment), never a per-candidate copy |
 | `SimulatePath::encode_request()` | gone — the seam hands the adapter `PathInfo` + `ComposerInputs` (`SimulatePath::expected_outputs_vec` / `consumed_inputs_vec`) | Encode belongs to the adapter |
 | `SimulationOverrideParams { owner, inject_code, injected_address, runtime_bytecode, warmup, weth_address, pool_manager_address }` | `SimulationOverrideParams { owner, code: Option<DeclaredCode>, settlement: Option<SettlementWarmup> }` | declared code is an explicit override (production runs deployed code); the settlement warmup is a declaration, not a required pair of addresses |
+
+| `SimulationOverrideParams { …, self_fund_usdc: Option<Address>, zero_balance: Option<Address> }`; `SimulationDeployment::{with_self_fund_usdc, with_zero_balance}(bool)`; `CmdExecutorBinding::with_zero_balance(bool)`; `ProbeCapital::{is_self_funded, is_zero_balance}` | `SimulationOverrideParams { …, capital: CapitalOverridePlan }`; `SimulationDeployment::with_capital(ProbeCapital)` / `capital()`; `CmdExecutorBinding::with_capital(ProbeCapital)` / `capital()`; `degenbot_simulation::{ProbeCapital, CapitalOverridePlan}` (`ProbeCapital::override_plan(holder)`) | one mode produces one plan: the retired fragments were two mutually exclusive `Option<Address>` fields plus three booleans, and the funding axis was re-read to guess which of them applied. The mode is now the only authority for the stream's `funding` axis, the grammar's zero-balance stance, and the override plan, and a self-fund-plus-zero-balance ask has no representation. `ProbeCapital` lives in `degenbot-simulation` so `degenbot-arbitrage` names the plan without depending on `degenbot-batch-executor` (which re-exports it) |
+
+| operator probe payload `{"zero_balance": bool}`; `Session.probe_path(zero_balance=)`, `BotRunner.probe_path(zero_balance=)`, `Session.probe_zero_balance`; Python `build_batch_executor(self_fund=, zero_balance=)`; FFI `build_batch_executor_py(self_fund=False, zero_balance=False)` | `{"capital": "production|self_fund|zero_balance"}` (absent = `self_fund`); `Session.probe_path(capital=ProbeCapital.SELF_FUND)`, `BotRunner.probe_path(capital=…)`, `Session.probe_capital`; `ExecutorInputs.capital`; FFI `capital: str \| None = None` | one value crosses every surface (see `docs/architecture/operator-add-path-surface.md`'s migration table); no alias is accepted — a retired boolean key is refused by `capital_from_wire`, and an unknown spelling is refused by both the Python wire helper and the FFI (`ValueError`) |
 | `PrefetchFacts { weth_address, pool_manager_address, warmup }` | `PrefetchFacts { settlement: Option<SettlementWarmup> }` | the same declaration drives the executor-side prewarm words; a deployment with no settlement identity derives only path words |
 | `warmup: WarmupSlots` computed by the driver shell | `CmdExecutorBinding::{deployment, injected, load_runtime}` | warmup math + runtime-artifact selection are the built-in binding's |
 | fee sizing implied by the settlement strategy for every deployment | `SimulationDeployment::fee_sizing()` / `with_fee_sizing(FeeSizing)`; `AdapterOwned` is the `new` default, `MarketAware` is the built-in binding's explicit opt-in | Fee belongs to the adapter's Assess; only the deployment that chooses market-aware sizing is re-priced |
@@ -200,8 +204,9 @@ a no-op for the deployed arm, though: the production path's own warmup slots
 change which account they name, and the note at the end of this section says so
 plainly.
 
-The capital overrides (`SimulationOverrideParams::self_fund_usdc` and
-`zero_balance`) and the settlement warmup a deployment declares were answering
+The capital override (`SimulationOverrideParams::capital`, the one
+`CapitalOverridePlan` a deployment composes from its mode) and the settlement
+warmup a deployment declares were answering
 "which account?" differently in the two deployment arms. A declared-code build
 (`CmdExecutorBinding::injected`) keyed its WETH9 / PoolManager ERC6909 warmup
 slots on the executor — the account the transaction targets and whose capital
@@ -221,14 +226,16 @@ Two facts are independent by construction now:
   `...::tests::clearing_follows_the_capital_target_not_the_warmup_subject` pins.
   For the deployed arm the subject is CORRECTED — those slots used to name the
   owner's account.
-- **Capital.** Each capital parameter names its own target, and
+- **Capital.** The plan names its own target (`CapitalOverridePlan::holder()`,
+  bound from the mode at deployment composition), and
   `degenbot_simulation::apply_simulation_overrides` derives the WETH9 balance and
   the two PoolManager claim slots from THAT account instead of borrowing the
   warmup's key. A zero-balance probe therefore clears native ETH, USDC, and WBTC
   at the executor in both arms, plus that executor's WETH9 balance word and both
   ERC6909 claims whenever the deployment declares the settlement identities; a
-  self-funded probe funds the executor's mainnet USDC — the only balance
-  `self_fund_usdc` writes. The owner's own slots are never a capital target.
+  self-funded probe funds the executor's mainnet USDC — the only balance the
+  self-fund arm writes — and `production` writes none of them. The owner's own
+  slots are never a capital target.
 
 A deployed executor is the one case where the override application reads the
 chain: clearing its native balance has to preserve the code hash the chain holds,
@@ -250,6 +257,7 @@ table-driven
 (the code-present × code-absent × native/WETH9/USDC/WBTC/PoolManager-claim matrix
 with distinct owner and executor addresses),
 `...::tests::clearing_follows_the_capital_target_not_the_warmup_subject`,
+`...::tests::production_applies_no_capital_override`,
 `degenbot-arbitrage::tests::production_adapter::capital_overrides_name_the_executor_in_both_deployment_arms`,
 and the ordinary-production stance beside them,
 `degenbot-arbitrage::tests::production_adapter::the_default_production_deployment_enables_no_probe_capital`.

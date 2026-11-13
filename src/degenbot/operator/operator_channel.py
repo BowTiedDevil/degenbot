@@ -18,6 +18,13 @@ Wire protocol (one JSON object per line, newline-terminated). Request lines::
         "directions": [true, false],
     }  # optional; auto-resolved if absent
     {"op": "discover", "bound": 5}  # bounded on-demand discovery
+
+    {
+        "op": "probe_path",
+        "path_id": 42,
+        "optimal_input": 1000000000000000,
+        "capital": "self_fund",  # "production" | "self_fund" | "zero_balance"
+    }  # optional capital/optimal_input; capital defaults to self_fund
     {
         "op": "set_fleet_posture",
         "cordon_enter_events": 2,  # ANY subset of the six cordon_* keys
@@ -72,6 +79,7 @@ from typing import Any
 from degenbot import fleet
 from degenbot.logging import logger
 from degenbot.pathfinding import POOL_KIND_BY_LABEL, POOL_KIND_LABELS, PoolKind
+from degenbot.runner._sim_submit import ProbeCapital
 from degenbot.utils.tasks import cancel_and_reap
 
 #: Map the PUBLIC wire labels (`V2`/`V3`/`V4`) to the typed pool families used
@@ -100,6 +108,44 @@ class StepSpec:
     type: PoolKind
     address: str
     hash: object | None = None
+
+
+def capital_from_wire(payload: dict[str, Any]) -> ProbeCapital:
+    """Translate a probe payload's ``capital`` spelling into the typed posture.
+
+    Args:
+        payload: ``{"path_id": 42, "optimal_input": 1_000_000_000_000_000,
+            "capital": "production|self_fund|zero_balance"}``. Both
+            ``optimal_input`` and ``capital`` are optional; an absent
+            ``capital`` means the self-funded probe the wire has always
+            requested.
+
+    Returns:
+        The typed capital posture the executor construction consumes.
+
+    Raises:
+        ValueError: if the spelling is not one of the accepted modes, or if the
+            payload still carries a retired ``self_fund`` / ``zero_balance``
+            boolean instead of a ``capital`` mode. Both are refused rather than
+            guessed at: silently ignoring the old key would run a probe in a
+            posture the caller did not ask for.
+
+    """
+    retired = [key for key in ("self_fund", "zero_balance") if key in payload]
+    if "capital" not in payload and retired:
+        expected = "|".join(mode.value for mode in ProbeCapital)
+        msg = (
+            f"the retired probe key(s) {', '.join(retired)} are gone: send "
+            f'"capital": "{expected}" instead'
+        )
+        raise ValueError(msg)
+    value = payload.get("capital", ProbeCapital.SELF_FUND.value)
+    try:
+        return ProbeCapital(value)
+    except ValueError:
+        expected = "|".join(mode.value for mode in ProbeCapital)
+        msg = f"unknown capital {value!r} (expected {expected})"
+        raise ValueError(msg) from None
 
 
 def step_from_wire(step: dict[str, Any]) -> StepSpec:
