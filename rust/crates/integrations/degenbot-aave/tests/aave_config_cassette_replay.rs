@@ -3,8 +3,9 @@
 //!
 //! The committed cassette
 //! (`tests/fixtures/cassettes/aave_config_chunk_19091050-19091059.json`) was
-//! recorded by `record_updater_cassette --kind aave-run` against a live reth
-//! archive node over mainnet blocks 19,091,050-19,091,059 — the GHO-discount
+//! recorded by the `record_updater_cassette` fixture-tools binary
+//! (`--kind aave-run`) against a live reth archive node over mainnet blocks
+//! 19,091,050-19,091,059 — the GHO-discount
 //! era (the GHO vToken's revision was 1, the discount mechanism live, four
 //! months after the discount config landed at block 17,699,249). The span is
 //! the corpus's config-heavy + discount-activity answer to the seed corpus's

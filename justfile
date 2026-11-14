@@ -1068,9 +1068,12 @@ check-rust-all-features:
 #     `degenbot-pools`'s non-optional no-op stub.
 #
 # Evidence (rust/tools/README.md sections 6.1 and 6.2):
-#   `cargo tree -p <tool> -e normal`            -> the default tree is the
-#                                                  package alone (no optional
-#                                                  product edge active);
+#   `cargo tree -p degenbot-fixture-tools -e normal`  -> the facade graph: this
+#                                                  package's crates are plain
+#                                                  edges now, because its
+#                                                  default binary needs them;
+#   `cargo tree -p <solver-lab|engine-lab> -e normal` -> the package alone (no
+#                                                  optional product edge active);
 #   `cargo tree -p <tool> --features <lane>
 #     -e features -i <owning crate>`            -> names the tool forward that
 #                                                  turned one family on.
@@ -1078,7 +1081,11 @@ check-rust-all-features:
 #
 # Lanes, each run as `just check-dev-tools <lane>`; a leading `--` is ignored,
 # so `just check-dev-tools --engine-jit` is the same lane:
-#   default                  all three packages at their support-library defaults
+#   default                  all three packages with no feature lane --
+#                            degenbot-fixture-tools' DEFAULT-FEATURE binary
+#                            (record_updater_cassette) is built here, because a
+#                            recorder that reads no statement ledger must not be
+#                            hidden behind a feature
 #   fixture-sql-ledger       degenbot-fixture-tools + sql-ledger
 #   solver-capture-fixtures  degenbot-solver-lab + capture-fixtures
 #   solver-cache-lab         degenbot-solver-lab + capture-fixtures,cache-lab
@@ -1087,17 +1094,25 @@ check-rust-all-features:
 #   engine-jit               degenbot-engine-lab + evm2-jit
 #   engine-prometheus        degenbot-engine-lab + prometheus (bot exporter)
 #
-# Every later tool binary joins the lane that owns its features through its own
+# A tool binary that NEEDS a feature joins the lane that owns it through its own
 # `required-features`, so that lane builds it on purpose and every other lane
-# skips it on purpose. Four have landed: the offline capture generators
-# `generate_evm_oracle_captures` / `generate_aave_adversarial_captures` and the
-# live span recorders `generate_aave_upgrade_windows` /
-# `generate_aave_config_windows` are `[[bin]]` targets of
-# `degenbot-fixture-tools` under `required-features = ["sql-ledger"]`, so the
+# skips it on purpose. Five fixture-tools programs have landed, and they split
+# exactly that way. Four replay their SQL goldens -- the offline capture
+# generators `generate_evm_oracle_captures` /
+# `generate_aave_adversarial_captures` and the live span recorders
+# `generate_aave_upgrade_windows` / `generate_aave_config_windows` -- and all
+# four are `[[bin]]` targets under `required-features = ["sql-ledger"]`, so the
 # `fixture-sql-ledger` lane compiles them and the `default` lane skips them
-# without failing on the `cfg`'d-out ledger module. With no argument the recipe
-# runs `default` and prints the menu: an unqualified invocation is the
-# feature-free support-library check, and never silently a union of every lane.
+# without failing on the `cfg`'d-out ledger module. The fifth, the live updater
+# cassette recorder `record_updater_cassette`, reads no statement ledger at all,
+# so it declares NO `required-features`: it is the `default` lane's target, and
+# its offline `--check` arm must never need the ledger feature. The dependency
+# consequence is that `degenbot-fixture-tools`' default tree is the facade graph
+# (see the manifest), so the two fixture lanes differ by the ledger feature
+# alone. With no argument the recipe runs `default` and prints the menu: an
+# unqualified invocation is the feature-FREE check (support libraries plus the
+# one binary that declares no feature), and never silently a union of every
+# lane.
 # Check one development-tool lane at a time (lanes listed above; no --all-features).
 check-dev-tools *lanes:
     #!/usr/bin/env bash
@@ -1109,7 +1124,9 @@ check-dev-tools *lanes:
         cat >&2 <<'LANES'
     lanes (one cargo invocation each; no union, never --all-features):
       default                  degenbot-fixture-tools, degenbot-solver-lab, and
-                               degenbot-engine-lab at support-library defaults
+                               degenbot-engine-lab with no feature lane
+                               (fixture-tools builds its default-feature
+                               record_updater_cassette binary here)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
@@ -1134,7 +1151,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three support libraries, no feature lane)"
+        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette too)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets

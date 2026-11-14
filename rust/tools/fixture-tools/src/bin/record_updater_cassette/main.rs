@@ -10,16 +10,31 @@
 //! is what the drift gate (`--check`, and the `degenbot-rpc` corpus test)
 //! re-runs, so regeneration is byte-identical.
 //!
+//! # Home
+//!
+//! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in the
+//! facade's `examples/`: it is fixture tooling, not a consumer starting point (the epic's
+//! taxonomy). Nothing about the recording changed with that move — the pool / Aave /
+//! `--verify` / `aave-run` kinds, the real chunk loops, the recorder writer and its
+//! canonical bytes, the configured-node resolution, and the argv surface all travelled
+//! with the source; only the invocation did. It needs NO feature lane: it never reads the
+//! statement ledger, so it builds under this package's default features (the four
+//! SQL-ledger binaries keep their own `required-features`). It also resolves no fixture
+//! home itself — every cassette path is an argv path (`--out`, `--check`) — so the move
+//! needed no repository-root re-anchor and no `paths` call.
+//!
 //! Config resolution follows ADR-062 exactly: the node URI comes from
 //! `--node` / `DEGENBOT_RPC_*` / the `nodes.*` tables — nothing is hardcoded.
 //!
 //! Usage:
 //!
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-//!         --example record_updater_cassette -- --check <cassette.json>...
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --bin record_updater_cassette \
+//!         -- --check <cassette.json>...
 //!
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-//!         --example record_updater_cassette -- --kind pool --family v3 \
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --bin record_updater_cassette \
+//!         -- --kind pool --family v3 \
 //!         --factory 0x1F98431c8aD98523631AE4a59f267346ea31F984 \
 //!         --from 26102622 --to 26102626 \
 //!         --out tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json
@@ -43,8 +58,14 @@
 //!   the recording transport — every getLogs pass and per-tx config-dispatch
 //!   call the loop issues is recorded (the old `--kind aave` seed captured
 //!   only the Pool-contract pass).
+//!
+//! The write-versus-check contract is unchanged. Record mode is the LIVE arm: it flushes
+//! the cassette through the canonical writer and writes `--out` with `fs::write`.
+//! `--check <cassette.json>...` is fully OFFLINE and writes nothing: it re-serializes
+//! each committed cassette through that same writer and re-checks every entry digest,
+//! printing one verdict per file and exiting 1 on any drift.
 
-// Run-once diagnostic example: stdout/stderr reports ARE its interface, its
+// Run-once diagnostic tool: stdout/stderr reports ARE its interface, its
 // prose names CLI flags and updaters that pedantry would backtick, and the
 // record flow reads clearer as one body than behind extraction helpers.
 #![expect(clippy::print_stdout, clippy::print_stderr, clippy::too_many_lines)]

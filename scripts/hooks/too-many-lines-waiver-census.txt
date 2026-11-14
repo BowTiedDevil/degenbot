@@ -120,7 +120,6 @@ rust/crates/engine/degenbot-strategy/tests/sequence_deficit_probe.rs::sequence_d
 rust/crates/engine/degenbot-strategy/tests/v2_discovered_fee.rs::discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity	the interface test keeps discovery, admission, both encoders, and golden bytes visible
 rust/crates/facade/degenbot/examples/capture_path_fixture.rs::!module
 rust/crates/facade/degenbot/examples/record_py_oracle_corpus.rs::!module
-rust/crates/facade/degenbot/examples/record_updater_cassette.rs::!module
 rust/crates/facade/degenbot/examples/standalone_consumer.rs::in_process_sim_standalone_slice
 rust/crates/facade/degenbot/examples/standalone_consumer.rs::main
 rust/crates/facade/degenbot/src/investigation/chain_capture.rs::!module
@@ -210,3 +209,4 @@ rust/tools/fixture-tools/src/bin/generate_aave_adversarial_captures/main.rs::!mo
 rust/tools/fixture-tools/src/bin/generate_aave_config_windows/main.rs::!module
 rust/tools/fixture-tools/src/bin/generate_aave_upgrade_windows/main.rs::!module
 rust/tools/fixture-tools/src/bin/generate_evm_oracle_captures/main.rs::!module
+rust/tools/fixture-tools/src/bin/record_updater_cassette/main.rs::!module

@@ -12,40 +12,49 @@ authors.workspace = true
 [lints]
 workspace = true
 
-# Every product edge here is optional and belongs to exactly one lane below, so
-# the default check of this package links no product crate at all. Edges point
-# only from this tool package to product crates; no product crate may depend on
-# a tool.
+# Dependency shape: ONE binary -- the live updater cassette recorder -- is a DEFAULT
+# target of this package (it reads no statement ledger, so no feature may hide it),
+# and the four SQL-ledger binaries need those same crates. Cargo has no per-target
+# dependency selection, so every crate the default binary links must be a plain edge
+# here; the feature cannot narrow what the default target already needs.
 #
-# The four crates beside `degenbot` are the ones the SQL-ledger binaries actually
-# link, and they are optional for the same reason: `alloy` builds the scenario
-# primitives/transports the generators drive, `rusqlite` seeds the throwaway
-# harness DB each recorded chunk runs against, `tempfile` owns those throwaway
-# homes, and `serde_json` serializes the seed manifest the live span recorders
-# write beside each cassette (its KEY ORDER is part of the committed bytes, so the
-# edge carries `preserve_order` exactly as the facade's does). Cargo has no
-# per-target dependency selection, so a `[[bin]]`-only need has to be a
-# feature-activated optional edge — otherwise the default tree stops being the
-# package alone (§6.2's scaffold claim).
+# Consequence, stated plainly: the default tree is NO LONGER the package alone. A
+# default `cargo check -p degenbot-fixture-tools --all-targets` links the facade and
+# its graph (alloy, rusqlite, tempfile, serde_json, tokio) exactly as the
+# `fixture-sql-ledger` lane did, and the ledger FEATURE is the only thing the lane
+# still adds. Edges point only from this tool package to product crates; no product
+# crate may depend on a tool.
+#
+# What each edge is for: `alloy` builds the scenario primitives/transports the
+# generators drive AND the recorder's `Address`/`keccak256` handling, `rusqlite`
+# seeds the throwaway harness DB each recorded chunk runs against, `tempfile` owns
+# those throwaway homes, `serde_json` serializes the seed manifest the live span
+# recorders write beside each cassette (its KEY ORDER is part of the committed
+# bytes, so the edge carries `preserve_order` exactly as the facade's does) and the
+# recorder's probe payload, and `tokio` is the recorder's `#[tokio::main]` entry.
 [dependencies]
 # The umbrella facade owns the fixture schema and the recorders that read it.
 # It also re-exports the three crates the generators import (`degenbot::db`,
 # `degenbot::rpc`, `degenbot::simulation`), so the ledger replay and the scratch
 # EVM arrive through this one edge rather than three more.
-degenbot = { workspace = true, optional = true }
+degenbot = { workspace = true }
 
 # `full` matches the facade's own declaration (the lane's facade edge unifies to it
 # anyway), and it is the honest one to write: the generators use `alloy::primitives`
 # (addresses/words/keccak), the `b256!`/`I256` aliases, and `alloy::transports` for the
 # recording seam's `boxed()` chain.
-alloy = { version = "^2.5", features = ["full"], optional = true }
-rusqlite = { version = "^0.42", optional = true }
-tempfile = { version = "^3.27", optional = true }
+alloy = { version = "^2.5", features = ["full"] }
+rusqlite = { version = "^0.42" }
+tempfile = { version = "^3.27" }
 
 # The seed manifest (`<window>.seed.json`) is `serde_json` output, and the offline
 # replay suites read it back; `preserve_order` keeps the struct-literal key order the
 # committed artifacts already carry instead of sorting it into a `BTreeMap` order.
-serde_json = { version = "^1.0", features = ["preserve_order"], optional = true }
+serde_json = { version = "^1.0", features = ["preserve_order"] }
+
+# The updater cassette recorder's async entry point (`#[tokio::main]`), with the same
+# features the facade's dev-target graph carried for it. Nothing else here needs it.
+tokio = { version = "^1.54", features = ["rt-multi-thread", "macros"] }
 
 [features]
 default = []
@@ -62,22 +71,20 @@ default = []
 # family is in the lane's `cargo tree` output with no feature of this package in
 # the chain -- a property of the product graph, not of this forward.
 #
-# The `dep:` entries are the lane's own binaries' cargo, not an extra forward: a
-# fixture-tools `[[bin]]` builds only under this feature, so this is the only
-# place its `alloy` / `rusqlite` / `tempfile` edges can be turned on. Deleting
-# them would not make the lane lighter -- it would make the lane unbuildable.
-sql-ledger = [
-    "degenbot/sql-ledger",
-    "dep:alloy",
-    "dep:rusqlite",
-    "dep:tempfile",
-    "dep:serde_json",
-]
+# The feature carries the ledger and NOTHING ELSE. It has no `dep:` entries any
+# more: since the default binary (the recorder) needs this package's crates too,
+# they are plain non-optional edges, and `dep:` cannot name a non-optional
+# dependency. That is why the `fixture-sql-ledger` lane differs from the `default`
+# lane by exactly the ledger feature.
+sql-ledger = ["degenbot/sql-ledger"]
 
-# The four programs this package carries. All of them replay their SQL goldens
-# through the statement-ledger wrapper, hence the `sql-ledger` requirement -- the
-# same requirement their `[[example]]` stanzas carried in the facade before the
-# move, so a default check skips every one of them deliberately.
+# The five programs this package carries, split by whether they touch the
+# statement ledger.
+#
+# FOUR replay their SQL goldens through the statement-ledger wrapper, hence the
+# `sql-ledger` requirement -- the same requirement their `[[example]]` stanzas
+# carried in the facade before the move, so a default check skips every one of
+# them deliberately.
 [[bin]]
 name = "generate_evm_oracle_captures"
 path = "src/bin/generate_evm_oracle_captures/main.rs"
@@ -102,3 +109,16 @@ required-features = ["sql-ledger"]
 name = "generate_aave_config_windows"
 path = "src/bin/generate_aave_config_windows/main.rs"
 required-features = ["sql-ledger"]
+
+# The ONE live updater cassette recorder, and the exception to the rule above: it
+# replays nothing through the statement ledger (its `--check` arm re-serializes each
+# cassette through the recorder's canonical writer and re-checks the entry digests,
+# all offline), so it carries NO `required-features` and no feature lane can hide it.
+# It is a default target: `just check-dev-tools default` builds it precisely because
+# that lane is what proves a default-feature build of this package still works. Its
+# argv surface is unchanged from the facade example it replaces -- `--check
+# <cassette.json>...`, the `pool` / `aave` / `aave-run` kinds, the `--verify`
+# verification-surface arm, `--node` over configured-node resolution, and `--out`.
+[[bin]]
+name = "record_updater_cassette"
+path = "src/bin/record_updater_cassette/main.rs"

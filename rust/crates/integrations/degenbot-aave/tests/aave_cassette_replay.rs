@@ -3,8 +3,9 @@
 //!
 //! The committed cassette (the corpus home's
 //! `tests/fixtures/cassettes/aave_update_chunk_26130440-26130445.json`) was
-//! recorded by `record_updater_cassette --kind aave-run` against the live
-//! node: the REAL `activate_aave_market` seed + the REAL `run_aave_update`
+//! recorded by the `record_updater_cassette` fixture-tools binary
+//! (`--kind aave-run`) against the live node: the REAL `activate_aave_market`
+//! seed + the REAL `run_aave_update`
 //! chunk loop over the `RecordingTransport`, so the ledger carries everything
 //! the loop actually asked - the full 7-pass chunk fetch (address provider,
 //! configurator, pool, oracle, scaled tokens, discount config) plus the

@@ -64,7 +64,7 @@ raise no new question: the exemption is about where the write open lands, not
 
 about which program makes it.
 
-The boundary is the rule, not a description of today's four programs: **every
+The boundary is the rule, not a description of today's five programs: **every
 write open in `degenbot-fixture-tools` targets a throwaway harness DB under a
 `TempDir`.** The artifacts those programs produce are written by ordinary
 `fs::write` into the corpus homes, and `--check` writes nothing at all, so the
@@ -124,13 +124,19 @@ guards only the swap.
 - A default `cargo build` of the workspace succeeds: the four updater shells
   turn `writer` on, and every other crate compiles against the read-only
   `degenbot-db` surface. `degenbot-fixture-tools` (D2's addendum) is the one
-  writer-enabled package outside that set, and it is not part of a default
-  workspace build at all: its four programs — the two node-free capture
-
-  generators and the two live span recorders — are `[[bin]]` targets under
-  `required-features = ["sql-ledger"]`, so only
+  writer-enabled package outside that set. It is not part of a default
+  workspace build (it is absent from `default-members`). Five programs live there
+  as `[[bin]]` targets, and the lane that builds each is the feature it needs:
+  four — the two node-free capture generators and the two live span recorders —
+  replay their SQL goldens, so they carry
+  `required-features = ["sql-ledger"]` and only
   `just check-dev-tools fixture-sql-ledger` and the two capture recipes build
-  them, deliberately.
+  them, deliberately. The fifth, the live updater cassette recorder, reads no
+  statement ledger and carries no `required-features`, so
+  `just check-dev-tools default` builds it. Its write opens are the same
+  temporary-harness-only kind: one `DegenbotDb::open_for_writes` per recorded
+  chunk (the `--verify` pool arm and the aave-run arm, each on its own
+  `TempDir`), and its `--check` arm writes nothing.
 - The fixture slice is recognition, not a new write path. Those programs
   always opened throwaway harness DBs for writing; while they were facade
   examples the fence never asked the question, and the relocation into

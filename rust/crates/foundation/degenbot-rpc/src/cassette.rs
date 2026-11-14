@@ -40,6 +40,12 @@
 //!
 //! The pipeline that writes a capture ([`RecordingTransport`] flushed through
 //! [`Cassette::canonical_bytes`]) is the same pipeline the gate runs.
+//!
+//! The recorder that drives it is the non-publishable fixture tool
+//! `record_updater_cassette` in `degenbot-fixture-tools`
+//! (`rust/tools/fixture-tools/src/bin/record_updater_cassette/main.rs`); it needs
+//! no feature lane, and its `--check <cassette.json>...` arm is the offline gate that
+//! runs [`verify_cassette_bytes`] over the committed corpus.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

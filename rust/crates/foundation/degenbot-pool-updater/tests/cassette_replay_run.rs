@@ -4,12 +4,12 @@
 //! This is the replay half of the golden-capture harness: the committed
 //! cassette (the repo-root corpus home's
 //! `tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json` —
-//! machine-emitted by the `record_updater_cassette` example against the live
-//! node, drift-gated) serves `run_pool_update`'s full fetch surface for the
-//! pinned span through the real [`AlloyProvider`] seam (D5 injection — a
-//! [`CassetteReplayTransport`] wrapped as a provider, NOT a mock server and
-//! NOT a socket). The chunk loop runs its real fetch → decode → apply → stamp
-//! cycle with zero network.
+//! machine-emitted by the `record_updater_cassette` fixture-tools binary
+//! against the live node, drift-gated) serves `run_pool_update`'s full fetch
+//! surface for the pinned span through the real [`AlloyProvider`] seam (D5
+//! injection — a [`CassetteReplayTransport`] wrapped as a provider, NOT a mock
+//! server and NOT a socket). The chunk loop runs its real fetch → decode → apply
+//! → stamp cycle with zero network.
 //!
 //! The seeded temp DB carries one ACTIVE `uniswap_v3` exchange whose
 //! `last_update_block` pins the run's span to the cassette's recorded window;
@@ -32,14 +32,15 @@ use tempfile::TempDir;
 
 /// The committed golden capture: the Uniswap V3 factory's `PoolCreated` logs
 /// plus the whole-chain V3 Mint/Burn scan over blocks 26102622..=26102626,
-/// recorded against the live node by `record_updater_cassette`.
+/// recorded against the live node by the `record_updater_cassette` binary
+/// (`degenbot-fixture-tools`; its `--check` arm re-verifies these bytes offline).
 const CASSETTE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../../tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json"
 );
 
-/// The Uniswap V3 factory the capture was recorded against (the recorder
-/// example's documented `--factory` for this corpus file).
+/// The Uniswap V3 factory the capture was recorded against (the recorder's
+/// documented `--factory` for this corpus file).
 const V3_FACTORY: &str = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 
 /// Independent literal: the exact number of ledger entries the replayed
