@@ -274,7 +274,7 @@ select or forward it, but must not duplicate its gate list.
 - `degenbot/otel` is a narrow passthrough to `degenbot-bot/otel`, so the
   feature is reachable from the external product facade.
 - `degenbot_rs` owns Python domain selection, `extension-module`, PyO3
-  auto-initialization, and the development-only mimalloc passthrough. Its
+  auto-initialization, and the opt-in mimalloc passthrough. Its
   `extension-module` feature forwards to `pyo3/extension-module`.
 - Feature-matrix validation is lane-based. Never use `--all-features` as the
   default or release gate: it enables test-only and mutually exclusive variants.
@@ -351,10 +351,11 @@ samples, and `--workspace` when a command must cover every member.
 
 The development-wheel feature list is exactly `extension-module`,
 `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`,
-`degenbot-pools/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and
-`mimalloc`. Release wheels retain `degenbot_rs` defaults and
-`pyo3/extension-module`; they exclude development-only profiling,
-telemetry, allocator-control, and allocator-selection features.
+`degenbot-pools/hotpath`, and `otel`. Development and release builds both use
+Rust's system allocator; `mimalloc` and `degenbot-bot/allocator-ctrl` remain
+explicit opt-ins for allocator A/B investigations. Release wheels retain
+`degenbot_rs` defaults and `pyo3/extension-module`; they exclude
+development-only profiling and telemetry features.
 
 ### Architecture gates
 

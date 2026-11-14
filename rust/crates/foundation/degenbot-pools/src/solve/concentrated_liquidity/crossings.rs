@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy::primitives::U256;
 
-use super::active_set::{landed_any_above, simulate_walk_path, PieceView};
+use super::active_set::{landed_any_above, simulate_walk_path_into, PieceView, WalkPathOutcome};
 use super::tally::WalkTally;
 use super::word_profile::{word_profile_min_input_for_output, ConcentratedLiquidityWordProfile};
 use super::{
@@ -115,10 +115,11 @@ pub(super) fn piece_window_left_edge(
     // all-zeros and ks has a positive component).
     let mut lo = U256::ZERO;
     let mut hi = hint.max(U256::ONE);
+    let mut outcome = WalkPathOutcome::default();
     for _ in 0..256 {
         tally.bump_left_edge_sims(1);
-        let landed = simulate_walk_path(hi, hops, tally).landed;
-        if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
+        simulate_walk_path_into(hi, hops, tally, &mut outcome);
+        if !outcome.landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             break; // predicate true
         }
         lo = hi;
@@ -132,8 +133,8 @@ pub(super) fn piece_window_left_edge(
     while hi.saturating_sub(lo) > U256::from(64u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
         tally.bump_left_edge_sims(1);
-        let landed = simulate_walk_path(mid, hops, tally).landed;
-        if landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
+        simulate_walk_path_into(mid, hops, tally, &mut outcome);
+        if outcome.landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             lo = mid;
         } else {
             hi = mid;
@@ -142,8 +143,8 @@ pub(super) fn piece_window_left_edge(
     let mut x = lo + U256::from(1u64);
     while x < hi {
         tally.bump_left_edge_sims(1);
-        let landed = simulate_walk_path(x, hops, tally).landed;
-        if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
+        simulate_walk_path_into(x, hops, tally, &mut outcome);
+        if !outcome.landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             return x;
         }
         x += U256::from(1u64);
@@ -180,14 +181,15 @@ pub(super) fn piece_window_right_edge_evented(
         return piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed, tally);
     }
     if let Some(pa) = walk_event_first_above_predicted(hops, ks, tally) {
+        let mut outcome = WalkPathOutcome::default();
         let usable = !pa.is_zero() && {
-            let above = simulate_walk_path(pa, hops, tally).landed;
-            landed_any_above(&above, ks)
+            simulate_walk_path_into(pa, hops, tally, &mut outcome);
+            landed_any_above(&outcome.landed, ks)
         };
         if usable {
-            let below = simulate_walk_path(pa - U256::ONE, hops, tally).landed;
+            simulate_walk_path_into(pa - U256::ONE, hops, tally, &mut outcome);
             tally.bump_right_edge_sims(2);
-            if !landed_any_above(&below, ks) {
+            if !landed_any_above(&outcome.landed, ks) {
                 tally.bump_event_solver_ok(1);
                 return (Some(pa - U256::ONE), pa);
             }
@@ -219,6 +221,7 @@ fn piece_window_right_edge_seeded(
     let mut lo = U256::ZERO; // landed(0) = all zeros ≤ ks for any ks
     let mut hi = hint.max(U256::ONE);
     let mut confirmed = false;
+    let mut outcome = WalkPathOutcome::default();
 
     // Lo warm start needs NO probe: ks advances componentwise between
     // consecutive pieces and landed(x) is componentwise non-decreasing in x,
@@ -237,8 +240,8 @@ fn piece_window_right_edge_seeded(
     }
     for _ in 0..256 {
         tally.bump_right_edge_sims(1);
-        let landed = simulate_walk_path(hi, hops, tally).landed;
-        if landed_any_above(&landed, ks) {
+        simulate_walk_path_into(hi, hops, tally, &mut outcome);
+        if landed_any_above(&outcome.landed, ks) {
             confirmed = true;
             break;
         }
@@ -255,8 +258,8 @@ fn piece_window_right_edge_seeded(
     while hi.saturating_sub(lo) > U256::from(4u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
         tally.bump_right_edge_sims(1);
-        let landed = simulate_walk_path(mid, hops, tally).landed;
-        if landed_any_above(&landed, ks) {
+        simulate_walk_path_into(mid, hops, tally, &mut outcome);
+        if landed_any_above(&outcome.landed, ks) {
             hi = mid;
         } else {
             lo = mid;

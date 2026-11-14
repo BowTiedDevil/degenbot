@@ -1028,9 +1028,9 @@ check-rust-consumer:
 check-rust-binding-default:
     cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml
 
-# Check the dev-wheel feature set. Keep this explicit: these profiling,
-# telemetry, allocator, and allocator-selection features are development-only
-# and are not part of the release-wheel or standalone-default matrix.
+# Check the dev-wheel feature set. Keep this explicit: these profiling and
+# telemetry features are not part of the release-wheel or standalone-default
+# matrix. The dev wheel uses the system allocator; mimalloc is a separate opt-in.
 check-rust-dev-features:
     RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$(scripts/build_extension.sh rustflags)" cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --features dev-features
 

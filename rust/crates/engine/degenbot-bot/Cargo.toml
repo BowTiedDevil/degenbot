@@ -91,8 +91,8 @@ libmimalloc-sys = { version = "^0.1", optional = true }
 executor-ab-probe = ["degenbot-pools/capture-fixtures"]
 # Runtime allocator tuning from observed block cadence: lets the
 # engine call mi_option_set on mimalloc's purge delay. Optional + off-by-default:
-# same policy as hotpath/otel, the binding's `dev-features` alias enables it
-# in dev; release wheels ship without it.
+# enable only for explicit allocator A/B builds; ordinary dev and release wheels
+# use the system allocator.
 allocator-ctrl = ["dep:libmimalloc-sys", "libmimalloc-sys/extended"]
 # OpenTelemetry tracer bullet (see src/otel.rs). Enable with --features otel.
 # Unlike the hotpath bullet this feature has no env gate: init_otel_tracing()

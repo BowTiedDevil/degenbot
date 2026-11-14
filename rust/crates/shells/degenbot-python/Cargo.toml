@@ -110,17 +110,14 @@ degenbot-simulation = { workspace = true, optional = true, features = ["evm2-jit
 # descending pre-sim selection inside `dispatch_profitable`.
 default = ["auto-initialize", "bot", "rpc", "price", "submission", "simulation", "abi", "concentrated-liquidity-math", "balancer-math", "curve-math", "solidly-math", "v2-math", "uniswap", "pathfinding", "async", "db", "executor", "execution", "pool", "aave-updater", "fork"]
 extension-module = ["pyo3/extension-module"]
-# Canonical local development-wheel feature set. Keep this alias out of the
-# package defaults: ordinary Python package builds remain release-equivalent,
-# while `just dev` selects this complete set explicitly.
+# Canonical local development-wheel feature set. The system allocator is the
+# default; mimalloc and allocator-ctrl remain explicit opt-ins for A/B probes.
 dev-features = [
     "pyo3/extension-module",
     "degenbot-bot/hotpath",
     "degenbot-bot/hotpath-prometheus",
     "degenbot-pools/hotpath",
-    "degenbot-bot/allocator-ctrl",
     "otel",
-    "mimalloc",
 ]
 auto-initialize = ["pyo3/auto-initialize"]
 # ADR-066 D1 (named feature, not a manifest toggle): embeds PyO3

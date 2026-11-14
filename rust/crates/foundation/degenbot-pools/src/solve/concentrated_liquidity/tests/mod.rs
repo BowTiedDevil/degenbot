@@ -3054,6 +3054,64 @@ fn concentrated_liquidity_path_solver_matches_fine_grid_oracle_across_families()
     }
 }
 
+/// Reusing an outcome preserves simulation semantics and vector capacity.
+#[test]
+fn simulate_walk_path_into_reuses_capacity_without_changing_results() {
+    let seq1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
+    let seq2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
+    let crossings1 = Arc::new(build_crossing_table(&seq1));
+    let crossings2 = Arc::new(build_crossing_table(&seq2));
+    let profiles1 = Arc::new(build_word_profiles(&crossings1, &mut WalkTally::default()));
+    let profiles2 = Arc::new(build_word_profiles(&crossings2, &mut WalkTally::default()));
+    let hops = [
+        PieceView::concentrated_liquidity(&seq1, crossings1, profiles1),
+        PieceView::concentrated_liquidity(&seq2, crossings2, profiles2),
+    ];
+    let input = U256::from(1_000_000_000_000u64);
+    let mut reused = WalkPathOutcome::default();
+
+    simulate_walk_path_into(input, &hops, &mut WalkTally::default(), &mut reused);
+    let expected = simulate_walk_path(input, &hops, &mut WalkTally::default());
+    assert_eq!(reused.final_output, expected.final_output);
+    assert_eq!(reused.hop_outputs, expected.hop_outputs);
+    assert_eq!(reused.landed, expected.landed);
+    assert_eq!(reused.facts, expected.facts);
+
+    let pointers = (
+        reused.hop_outputs.as_ptr(),
+        reused.landed.as_ptr(),
+        reused.facts.as_ptr(),
+    );
+    let capacities = (
+        reused.hop_outputs.capacity(),
+        reused.landed.capacity(),
+        reused.facts.capacity(),
+    );
+    let next_input = input * U256::from(37u64);
+    simulate_walk_path_into(next_input, &hops, &mut WalkTally::default(), &mut reused);
+    let expected = simulate_walk_path(next_input, &hops, &mut WalkTally::default());
+    assert_eq!(reused.final_output, expected.final_output);
+    assert_eq!(reused.hop_outputs, expected.hop_outputs);
+    assert_eq!(reused.landed, expected.landed);
+    assert_eq!(reused.facts, expected.facts);
+    assert_eq!(
+        pointers,
+        (
+            reused.hop_outputs.as_ptr(),
+            reused.landed.as_ptr(),
+            reused.facts.as_ptr(),
+        )
+    );
+    assert_eq!(
+        capacities,
+        (
+            reused.hop_outputs.capacity(),
+            reused.landed.capacity(),
+            reused.facts.capacity(),
+        )
+    );
+}
+
 /// Perf probe for the active-set walk (run manually with --ignored
 /// --nocapture). Not a gate — prints µs per solve for the hot path.
 #[test]

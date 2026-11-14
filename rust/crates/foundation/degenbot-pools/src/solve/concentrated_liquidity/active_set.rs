@@ -256,6 +256,7 @@ pub(super) struct StepFacts {
 /// Result of a [`simulate_walk_path`] evaluation: the per-hop outputs, the
 /// ending-range tuple the input actually landed in, and the per-hop step facts
 /// the census is projected from.
+#[derive(Debug, Default)]
 pub(super) struct WalkPathOutcome {
     /// Output after the last hop.
     pub(super) final_output: U256,
@@ -276,49 +277,69 @@ pub(super) struct WalkPathOutcome {
 /// the assumption), this walker always simulates the piece the input truly
 /// lands in — which is what makes it usable as the walk's ground truth for
 /// any candidate.
+#[cfg_attr(
+    not(any(test, feature = "telemetry")),
+    expect(
+        dead_code,
+        reason = "owned-result wrapper is used by tests and telemetry"
+    )
+)]
 pub(super) fn simulate_walk_path(
     amount_in: U256,
     hops: &[PieceView],
     tally: &mut WalkTally,
 ) -> WalkPathOutcome {
+    let mut outcome = WalkPathOutcome::default();
+    simulate_walk_path_into(amount_in, hops, tally, &mut outcome);
+    outcome
+}
+
+/// Evaluate into caller-owned buffers, retaining their capacity between
+/// probes. The allocating [`simulate_walk_path`] wrapper remains useful when
+/// an owned result is needed; hot evaluation loops reuse one outcome instead.
+pub(super) fn simulate_walk_path_into(
+    amount_in: U256,
+    hops: &[PieceView],
+    tally: &mut WalkTally,
+    outcome: &mut WalkPathOutcome,
+) {
     tally.bump_sims(1);
     let sim_t0 = std::time::Instant::now();
-    let out = simulate_walk_path_inner(amount_in, hops, tally);
+    simulate_walk_path_inner(amount_in, hops, tally, outcome);
     tally.add_sim_ns(u64::try_from(sim_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
-    out
 }
 
 fn simulate_walk_path_inner(
     amount_in: U256,
     hops: &[PieceView],
     tally: &mut WalkTally,
-) -> WalkPathOutcome {
+    outcome: &mut WalkPathOutcome,
+) {
     let n_hops = hops.len();
-    let mut hop_outputs = Vec::with_capacity(n_hops);
-    let mut landed = Vec::with_capacity(n_hops);
-    let mut facts = Vec::with_capacity(n_hops);
+    outcome.final_output = U256::ZERO;
+    outcome.hop_outputs.clear();
+    outcome.landed.clear();
+    outcome.facts.clear();
+    outcome.hop_outputs.reserve(n_hops);
+    outcome.landed.reserve(n_hops);
+    outcome.facts.reserve(n_hops);
     let mut current = amount_in;
 
     for hop in hops {
         if current.is_zero() {
-            hop_outputs.push(U256::ZERO);
-            landed.push(0);
-            facts.push(StepFacts::default());
+            outcome.hop_outputs.push(U256::ZERO);
+            outcome.landed.push(0);
+            outcome.facts.push(StepFacts::default());
             continue;
         }
         let (out, step) = hop.step(current, tally);
-        landed.push(step.landed);
-        facts.push(step);
-        hop_outputs.push(out);
+        outcome.landed.push(step.landed);
+        outcome.facts.push(step);
+        outcome.hop_outputs.push(out);
         current = out;
     }
 
-    WalkPathOutcome {
-        final_output: hop_outputs.last().copied().unwrap_or(U256::ZERO),
-        hop_outputs,
-        landed,
-        facts,
-    }
+    outcome.final_output = outcome.hop_outputs.last().copied().unwrap_or(U256::ZERO);
 }
 
 /// Build the per-hop shifted-piece inputs for tuple `ks`: each hop's
@@ -408,6 +429,8 @@ pub(super) struct WalkRecorder {
     /// Best signed score across every evaluated candidate (including
     /// unprofitable ones) — the direction test's reference level.
     top_score: alloy::primitives::I256,
+    /// Reused evaluation buffers; only a new best result is cloned out.
+    scratch: WalkPathOutcome,
 }
 
 impl WalkRecorder {
@@ -418,6 +441,7 @@ impl WalkRecorder {
             hop_outputs: Vec::new(),
             census: Vec::new(),
             top_score: alloy::primitives::I256::MIN,
+            scratch: WalkPathOutcome::default(),
         }
     }
 
@@ -432,33 +456,42 @@ impl WalkRecorder {
         U256::try_from(self.top_score).unwrap_or(U256::ZERO)
     }
 
-    /// Simulate `candidate`, update the bests, and return the outcome (the
-    /// caller needs `landed` / `final_output` for direction decisions).
+    /// Simulate `candidate`, update the bests, and borrow the reusable outcome
+    /// until the next evaluation (the caller needs `final_output` for direction
+    /// decisions). Winning hop outputs and census data are cloned separately.
     fn eval_and_record(
         &mut self,
         candidate: U256,
         hops: &[PieceView],
         tally: &mut WalkTally,
-    ) -> WalkPathOutcome {
-        let outcome = simulate_walk_path(candidate, hops, tally);
-        let score = walk_profit_score(outcome.final_output, candidate);
-        if score > self.top_score {
-            self.top_score = score;
+    ) -> &WalkPathOutcome {
+        let Self {
+            input,
+            profit,
+            hop_outputs,
+            census,
+            top_score,
+            scratch,
+        } = self;
+        simulate_walk_path_into(candidate, hops, tally, scratch);
+        let score = walk_profit_score(scratch.final_output, candidate);
+        if score > *top_score {
+            *top_score = score;
         }
-        if outcome.final_output > candidate {
-            let profit = outcome.final_output - candidate;
-            if profit > self.profit {
-                self.profit = profit;
-                self.input = candidate;
-                self.hop_outputs.clone_from(&outcome.hop_outputs);
-                self.census = hops
+        if scratch.final_output > candidate {
+            let candidate_profit = scratch.final_output - candidate;
+            if candidate_profit > *profit {
+                *profit = candidate_profit;
+                *input = candidate;
+                hop_outputs.clone_from(&scratch.hop_outputs);
+                *census = hops
                     .iter()
-                    .zip(outcome.facts.iter())
+                    .zip(scratch.facts.iter())
                     .map(|(hop, &facts)| hop.census(facts))
                     .collect();
             }
         }
-        outcome
+        scratch
     }
 }
 
@@ -856,11 +889,16 @@ fn solve_active_set_path_inner(
         ks: &[usize],
         tally: &mut WalkTally,
     ) -> Option<Vec<usize>> {
+        let mut outcome = WalkPathOutcome::default();
         for d in 1u64..=8 {
-            let landed =
-                simulate_walk_path(right_edge.saturating_add(U256::from(d)), hops, tally).landed;
-            if landed_any_above(&landed, ks) {
-                return Some(landed);
+            simulate_walk_path_into(
+                right_edge.saturating_add(U256::from(d)),
+                hops,
+                tally,
+                &mut outcome,
+            );
+            if landed_any_above(&outcome.landed, ks) {
+                return Some(std::mem::take(&mut outcome.landed));
             }
         }
         None
@@ -986,6 +1024,8 @@ fn solve_active_set_path_inner(
     let mut ks = vec![0usize; hops.len()];
     let mut visited: HashSet<Vec<usize>> = HashSet::new();
     let mut rec = WalkRecorder::new();
+    // Direct (non-recorder) probes share one outcome across walked pieces.
+    let mut probe_outcome = WalkPathOutcome::default();
     // Loop-17 anchor memoization: consecutive pieces share tuple prefixes,
     // so the Möbius fold reuses prefix partials (byte-exact — see
     // `ShiftedPieceComposer`). One composer per solve; `hops` is immutable
@@ -1108,8 +1148,13 @@ fn solve_active_set_path_inner(
             let mut found = None;
             for d in 1u64..=9 {
                 let probe = prev + U256::from(d);
-                let landed = simulate_walk_path(probe, hops, tally).landed;
-                if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
+                simulate_walk_path_into(probe, hops, tally, &mut probe_outcome);
+                if !probe_outcome
+                    .landed
+                    .iter()
+                    .zip(ks.iter())
+                    .any(|(a, &b)| *a < b)
+                {
                     found = Some(probe);
                     break;
                 }
@@ -1126,10 +1171,10 @@ fn solve_active_set_path_inner(
         // the lattice path never lands exactly on `ks`. Advance without
         // treating this as a real piece.
         {
-            let landed = simulate_walk_path(x_l, hops, tally).landed;
-            if landed != ks {
-                if landed_any_above(&landed, &ks) {
-                    ks = landed;
+            simulate_walk_path_into(x_l, hops, tally, &mut probe_outcome);
+            if probe_outcome.landed != ks {
+                if landed_any_above(&probe_outcome.landed, &ks) {
+                    ks = std::mem::take(&mut probe_outcome.landed);
                     prev_right_edge = None;
                     le_mk.commit(tally, WalkSection::Edge);
                     continue;
@@ -1137,10 +1182,10 @@ fn solve_active_set_path_inner(
                 // landed BELOW ks means the left-edge search went wrong;
                 // fall back to a full edge computation before giving up.
                 let x_l_full = piece_window_left_edge(hops, &ks, anchor, tally);
-                let landed_full = simulate_walk_path(x_l_full, hops, tally).landed;
-                if landed_full != ks {
-                    if landed_any_above(&landed_full, &ks) {
-                        ks = landed_full;
+                simulate_walk_path_into(x_l_full, hops, tally, &mut probe_outcome);
+                if probe_outcome.landed != ks {
+                    if landed_any_above(&probe_outcome.landed, &ks) {
+                        ks = std::mem::take(&mut probe_outcome.landed);
                         prev_right_edge = None;
                         le_mk.commit(tally, WalkSection::Edge);
                         continue;
@@ -1235,8 +1280,9 @@ fn solve_active_set_path_inner(
             && (anchor_reentry_active || degenerate_lead)
             && !climbing
         {
-            let anchor_landed = simulate_walk_path(anchor, hops, tally).landed;
-            if anchor_landed != ks && !visited.contains(&anchor_landed) {
+            simulate_walk_path_into(anchor, hops, tally, &mut probe_outcome);
+            if probe_outcome.landed != ks && !visited.contains(&probe_outcome.landed) {
+                let reentry_ks = std::mem::take(&mut probe_outcome.landed);
                 // Run the full stop-time refine (current window + gated forward
                 // neighbor) before leaving, so the extra exploration only adds
                 // candidates and never forfeits the region a plain stop would
@@ -1254,7 +1300,7 @@ fn solve_active_set_path_inner(
                     tally,
                 );
                 anchor_reentry_active = true;
-                ks = anchor_landed;
+                ks = reentry_ks;
                 prev_right_edge = None;
                 right_bracket = None;
                 continue;

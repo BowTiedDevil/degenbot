@@ -33,9 +33,8 @@
 // MADV_FREE (lazy) + purge_delay discovered from observed block cadence
 // (2 x mean interval, 10 percent hysteresis); measured on mainnet:
 // 89 percent lower per-block refault churn at equal/better solve p95.
-// Dev builds opt in via pyproject
-// [tool.maturin] features; release wheels keep the system allocator until the
-// swap is judged (same policy as hotpath/otel). NOTE: this switches only the
+// Optional A/B builds opt in via the `mimalloc` feature; ordinary development
+// and release builds use the system allocator. NOTE: this switches only the
 // Rust global allocator — CPython's pymalloc and third-party C libs (sqlite,
 // etc.) keep glibc, so the blast radius is the Rust heap only.
 #[cfg(feature = "mimalloc")]
