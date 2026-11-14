@@ -19,7 +19,7 @@
 //! - **> `threshold_ms`** (default 100 ms) — a single OS thread is holding
 //!   the GIL without yielding. The two known culprits:
 //!   1. A synchronous `#[pyfunction]` / `#[pymethod]` on the `build_paths`
-//!      path that does heavy work WITHOUT `py.allow_threads` — holds the
+//!      path that does heavy work WITHOUT `py.detach` — holds the
 //!      GIL for the whole call body.
 //!   2. The asyncio main thread parked in `_asyncio.so`'s `futex_wait`
 //!      while awaiting a pyo3 `future_into_py` future whose completion

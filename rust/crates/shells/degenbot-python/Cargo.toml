@@ -186,7 +186,6 @@ otel = ['bot', 'degenbot-bot/otel']
 # The console's clap-free semantics crate (also pyo3-free): the seam's tests
 # pin the typed `CliError -> ExitCode` mapping directly.
 degenbot-cli-core.workspace = true
-ctor = "^1"
 # Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for
 # the root crate's tests. Production builds pull degenbot-rpc without this
 # feature.

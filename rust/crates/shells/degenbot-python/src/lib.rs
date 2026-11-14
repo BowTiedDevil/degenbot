@@ -203,28 +203,6 @@ pub use errors::{
     AbiDecodeError, AddressError, ConcentratedLiquidityMathError, ProviderError, TickMathError,
 };
 
-/// Ensure Python is initialized before the test harness spawns threads.
-///
-/// Without this, multiple test threads racing to call `Python::attach()` can
-/// trigger `Py_InitializeEx()` concurrently. CPython's `Py_InitializeEx()` sets
-/// `Py_IsInitialized()` before completing all setup (e.g. importing site.py),
-/// so a second thread that sees the flag and proceeds can hit
-/// `_PyImport_Init: global import state already initialized`.
-///
-/// The `ctor` attribute runs this before `main()`, guaranteeing single-threaded
-/// initialization regardless of how many threads the test harness later spawns.
-///
-/// # Safety
-///
-/// This is safe because `Python::initialize()` uses a `std::sync::Once` guard
-/// internally and only calls `Py_InitializeEx()` when the interpreter is not
-/// yet running, making multiple calls harmless.
-#[cfg(test)]
-#[ctor::ctor(unsafe)]
-fn init_python_before_test_threads() {
-    pyo3::Python::initialize();
-}
-
 use pyo3::prelude::*;
 
 /// Install the long-running-driver stack: the ONE shared runtime bound to

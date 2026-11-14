@@ -4,7 +4,7 @@
 //! The core `encode_rust` / `encode_single_rust` / `encode_for_types` functions
 //! live in the `degenbot-abi` workspace member and have no `PyO3` dependency;
 //! this module adds the `#[pyfunction]` entry points registered in
-//! [`crate::lib`]'s `#[pymodule]`. Python-value extraction delegates to
+//! [`crate`]'s `#[pymodule]`. Python-value extraction delegates to
 //! [`crate::conversion::alloy::abi_value_from_python`].
 
 use crate::prelude::*;

@@ -4,7 +4,7 @@
 //! The core `decode_rust` / `decode_single_rust` / `decode_for_types` functions
 //! live in the `degenbot-abi` workspace member and have no `PyO3` dependency;
 //! this module adds the Python-object conversion (`AbiValue` → Python) and the
-//! `#[pyfunction]` entry points registered in [`crate::lib`]'s `#[pymodule]`.
+//! `#[pyfunction]` entry points registered in [`crate`]'s `#[pymodule]`.
 
 use crate::prelude::*;
 use degenbot_abi::abi_types::AbiValue;
