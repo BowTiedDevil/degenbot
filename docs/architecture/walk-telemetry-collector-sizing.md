@@ -384,8 +384,8 @@ ladder). Baseline first, always.
      record the profit vector + per-path `stats` (the parity artifact; fixture via
      `degenbot_solvers::capture_fixture`, the `heavy_concentrated_liquidity_solve_captures.jsonl` corpus the
      walkmemo readout used — see `docs/architecture/walkmemo-cross-block-reuse-readout.md`).
-  2. `cargo run --release --features telemetry -p degenbot-solvers --example concentrated_liquidity_cache_lab --
-     <capture.jsonl>` — record the strategy matrix + the ns sections.
+  2. `cargo run --release -p degenbot-solver-lab --features capture-fixtures,cache-lab,telemetry --bin
+     concentrated_liquidity_cache_lab -- <capture.jsonl>` — record the strategy matrix + the ns sections.
   3. `cargo bench -p degenbot-solvers --bench walkmemo_contention` — the rayon-contention canary
      (the only bench that stresses the solve entries under parallel load).
 - **A (numbers parity):** step 1's profits and `WalkStats` counters byte-equal against baseline

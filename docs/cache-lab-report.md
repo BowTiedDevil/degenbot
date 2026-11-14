@@ -58,8 +58,9 @@ or clean full rebuild, no partial-state corruption risk.
 
 ## Method
 
-- Harness: `rust/crates/engine/degenbot-solvers/examples/concentrated_liquidity_cache_lab.rs`, replaying
-  `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`
+- Harness: `rust/tools/solver-lab/src/bin/concentrated_liquidity_cache_lab/main.rs`
+  (`-p degenbot-solver-lab --features capture-fixtures,cache-lab`), replaying
+  `rust/crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`
   (420 corpus lines) as deterministic pool-state transition commands.
 - Strategies refill crossing tables + word profiles through the same production
   builders and solve through the production `solve_concentrated_liquidity_piecewise` entry;
@@ -92,7 +93,7 @@ including process start). A second capture of the same run is byte-identical
 Validation-gate invocation:
 
 ```
-DRCLAB_MAX_PATHS=369 DRCLAB_TRANS=2 cargo run -q -p degenbot-solvers   --manifest-path rust/Cargo.toml --example concentrated_liquidity_cache_lab --   rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
+DRCLAB_MAX_PATHS=369 DRCLAB_TRANS=2 cargo run -q -p degenbot-solver-lab --features capture-fixtures,cache-lab   --manifest-path rust/Cargo.toml --bin concentrated_liquidity_cache_lab --   rust/crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
 ```
 
 ### Table A — class rebuild deltas, 369x2 sweep (crossing tables built)

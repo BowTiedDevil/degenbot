@@ -146,6 +146,26 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &["DR_REPLAY_ITERS"][..],
         );
 
+        // The cache-lab replay, same class and same cause: it left
+        // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
+        // solver-lab tool crate, so its four pre-existing per-run controls are
+        // now visible to the production-source scan. Each is read once at
+        // start-up with the same defaults and the same parse-and-fall-back
+        // behavior it has always had: the path cap and the transitions per
+        // path shorten a local sweep, `DRCLAB_DIGEST` echoes each reference
+        // solve, and `DRCLAB_MICRO` adds the micro-bench readout. No
+        // operator-config authority, and the loader would hand a solver-lab
+        // binary the config crate's dependency graph for no behavioral gain.
+        m.insert(
+            "tools/solver-lab/src/bin/concentrated_liquidity_cache_lab/main.rs",
+            &[
+                "DRCLAB_MAX_PATHS",
+                "DRCLAB_TRANS",
+                "DRCLAB_DIGEST",
+                "DRCLAB_MICRO",
+            ][..],
+        );
+
         // The Python oracle corpus recorder, same class and same cause: leaving
         // `examples/` (skipped as a test surface) exposed its pre-existing endpoint
         // fallback to the production-source scan. Both reads are the recorder's

@@ -16,9 +16,9 @@ described in §6.2. Seven fixture slices have landed since, all in task `03`:
 | `03f` | the concentrated-liquidity capture generator — `concentrated_liquidity_capture_gen` | §6.8 |
 | `03g` (`B4IKBC`) | the three-hop production-calldata helper — `encode_three_hop` (a recipe/staging row; no §6.x section of its own) | §4.2, §8.1, §8.2 |
 
-Cargo metadata now reports **32 example targets**, `degenbot-fixture-tools` reports its lib
+Cargo metadata now reports **31 example targets**, `degenbot-fixture-tools` reports its lib
 plus exactly **nine** `[[bin]]` targets, and `degenbot-solver-lab` its lib plus exactly
-**three**. No §4.2 row is still an example — no other recorder, no other program, and no
+**four**. No §4.2 row is still an example — no other recorder, no other program, and no
 other capture generator moved — and **no fixture byte changed** in any of the seven
 slices. Each offline participant was re-proved byte-identical by its own
 re-derivation (the two capture recipes plus, for the cassette recorder,
@@ -42,7 +42,13 @@ default-features target whose write anchor is re-pointed at the pools fixture ho
 built that package's support library from the `degenbot-pools` `examples/common/` modules
 the two replays consumed. Its fixture evidence is split and stated on the row: the
 concentrated-liquidity corpus re-derives byte-identically; the committed synthetic *mixed*
-corpus does not, for a reason that predates the move (§5.3).
+corpus does not, for a reason that predates the move (§5.3). Task `04`'s second slice has
+landed since: it moved `concentrated_liquidity_cache_lab` into `degenbot-solver-lab` as a
+`required-features = ["capture-fixtures", "cache-lab"]` binary, with its cache strategies,
+transition schedule, `DRCLAB_*` controls, readout text, and divergence exit code unchanged,
+and its golden/regression coverage left where it belongs — in `degenbot-pools`'s
+integration tests. No fixture byte changed, and no cache algorithm or metric definition
+did.
 
 The workspace accumulated 44 Cargo example targets whose purposes are three different
 things: a *supported consumer starting point*, a *durable assertion someone must gate*, and
@@ -161,8 +167,8 @@ no script file is added for it).
 destination package and the `Destination` cell says `landed`, because that is the state a
 reader (and the §4.6.1 union audit) has to be able to check. Every not-yet-moved row keeps
 its current package and its planned destination, exactly as before. The move also means the
-*original* population is still 44 rows while the *example* population is 32 — the twelve
-diagnostics that differ are exactly the twelve landed rows (§4.6).
+*original* population is still 44 rows while the *example* population is 31 — the thirteen
+diagnostics that differ are exactly the thirteen landed rows (§4.6).
 
 <!-- ledger:begin -->
 
@@ -194,7 +200,7 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 
 | Target | Package | Destination | Current path (under `rust/`) | Purpose | Features | Needs | I/O and write behavior | Verification route |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `concentrated_liquidity_cache_lab` | `degenbot-pools` | solver-lab (04) | `crates/foundation/degenbot-pools/examples/concentrated_liquidity_cache_lab.rs` | Replay a capture JSONL as deterministic pool-state transitions and solve every state through every registered cache strategy, checking byte-equality against the full-rebuild reference and printing the rebuild-cost matrix | `capture-fixtures`, `cache-lab` | committed corpus (default) or a capture path argument; `DRCLAB_MAX_PATHS`, `DRCLAB_TRANS`, `DRCLAB_MICRO`, `DRCLAB_DIGEST` | stdout report; writes nothing; exits 1 on any strategy divergence | `cargo run -p degenbot-solver-lab --features capture-fixtures,cache-lab --bin concentrated_liquidity_cache_lab -- <capture.jsonl>`; golden/regression coverage in the pools `concentrated_liquidity_cache_lab_goldens` suite; report `docs/cache-lab-report.md` |
+| `concentrated_liquidity_cache_lab` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/concentrated_liquidity_cache_lab/main.rs` | Replay a capture JSONL as deterministic pool-state transitions and solve every state through every registered cache strategy, checking byte-equality against the full-rebuild reference and printing the rebuild-cost matrix | `capture-fixtures`, `cache-lab` (`telemetry` optional: the ambient walk telemetry the drain readout reads, an additional build shape of the same binary, never a bot-exporter lane) | committed corpus (default) or a capture path argument; `DRCLAB_MAX_PATHS`, `DRCLAB_TRANS`, `DRCLAB_MICRO`, `DRCLAB_DIGEST` | stdout report; writes nothing; exits 1 on any strategy divergence | `cargo run -p degenbot-solver-lab --features capture-fixtures,cache-lab --bin concentrated_liquidity_cache_lab -- <capture.jsonl>` (unchanged by the move: same argument, same four `DRCLAB_*` controls, same readout text and counters, same exit code); golden/regression coverage stays in the pools `concentrated_liquidity_cache_lab_goldens` and `concentrated_liquidity_cache_patch_regressions` suites; report `docs/cache-lab-report.md` |
 | `concentrated_liquidity_solve_replay` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs` | Offline heavy-CL replay with N-repeat stable timing; the two-sided golden gate (under-shoot past `PROFIT_EPS`, over-shoot past the few-wei tolerance, or nondeterminism across reps exits 1) | `capture-fixtures` | committed corpora `concentrated_liquidity_capture_offline.jsonl` and `heavy_concentrated_liquidity_solve_captures.jsonl[.zst]`; `DR_REPLAY_ITERS` | stdout; `DR_REPLAY_REGEN=1` rewrites stale over-shoot-only goldens — a write mode, never run by a gate | `just test-golden-replay` (both commands, unchanged in intent); task 06 promotes the durable assertion into pools integration-test coverage and keeps this binary as the lab |
 | `entry_ab_readout` | `degenbot-pools` | solver-lab (04) | `crates/foundation/degenbot-pools/examples/entry_ab_readout.rs` | Post-unification readout: the retained `all-concentrated-liquidity` intake (prepared hops cloned) against `solve_piecewise` directly on real captured paths, byte-equality gated; the row census classifies the traffic mix | `capture-fixtures` (`hotpath` opt-in for the functions-timing run) | capture path argument (recipe defaults to `heavy_concentrated_liquidity_solve_captures.jsonl`); `DR_AB_ITERS`, `DR_AB_MEMO` | stdout; writes nothing except the hotpath JSON when `HOTPATH_OUTPUT_PATH` is set; exits 1 on any arm divergence | `just entry-ab [corpus]`. Its forwarding-parity contract is **already** pinned in-crate by `all_concentrated_liquidity_intake_forwards_to_the_unified_entry_byte_exact`, `key_front_doors_agree_for_concentrated_liquidity_only_compositions`, and `both_solve_entries_refuse_paths_shorter_than_two_hops` (`crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/tests/memo.rs`) — see §5.7 |
 | `mixed_solve_replay` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/mixed_solve_replay/main.rs` | Offline heavy mixed V2+CL replay with N-repeat stable timing and the same two-sided golden gate; the bottleneck-localization note separates the envelope gate from the walk | `capture-fixtures` | `heavy_mixed_solve_captures.jsonl[.zst]`; `DR_REPLAY_ITERS` | stdout; writes nothing; exits 1 on golden drift or nondeterminism | `cargo run -p degenbot-solver-lab --features capture-fixtures --bin mixed_solve_replay -- <capture.jsonl>` (no recipe today); gate behaviour is the exit code |
@@ -287,7 +293,7 @@ revision, the acceptance is §8.2's restatement — same logic and same empty di
 ### 4.6.1 The post-migration audit — one ledger row, one live target
 
 §4.6's block compares the *example* set against the ledger, so it is the right check only
-while no row has moved. After task `03` and task `04`'s first slice twelve rows **have** moved, and the honest form of
+while no row has moved. After task `03` and task `04`'s first two slices thirteen rows **have** moved, and the honest form of
 the same comparison unions the two target kinds a row can now name: a Cargo example target
 (rows not yet moved) and a tool-package `[[bin]]` target (rows whose destination has landed).
 That union is what §2's partition promises — every one of the 44 original targets exists
@@ -324,9 +330,9 @@ PY
 ```
 
 At this revision the acceptance is: `44` ledger rows, `44` unique, empty `missing`, empty
-`stale`, no duplicates, and `PASS` — over `32` example targets plus the `9`
-`degenbot-fixture-tools` and `3` `degenbot-solver-lab` binaries. §4.6's baseline block is
-expected to print `FAIL` here and to name exactly those twelve rows as `stale in ledger`:
+`stale`, no duplicates, and `PASS` — over `31` example targets plus the `9`
+`degenbot-fixture-tools` and `4` `degenbot-solver-lab` binaries. §4.6's baseline block is
+expected to print `FAIL` here and to name exactly those thirteen rows as `stale in ledger`:
 they are not stale, they moved, and this block is where that is visible instead of argued.
 
 **Boundary.** This audit stays valid while every ledger row still exists as *some* target.
@@ -592,8 +598,8 @@ Consequences the later tasks must honor:
 1. **No catch-all package and no catch-all feature.** There is no `dev-tools` crate and no
    `full`/`all-tools` feature. A `just check-dev-tools` entry point is a *grouping of
    separately named checks* (`default`, `fixture-sql-ledger`, `solver-capture-fixtures`,
-   `solver-cache-lab`, `solver-hotpath`, `solver-envelope`, `engine-jit`,
-   `engine-prometheus` — the `justfile` is the authority, §6.2), never `--all-features`:
+   `solver-cache-lab`, `solver-cache-telemetry`, `solver-hotpath`, `solver-envelope`,
+   `engine-jit`, `engine-prometheus` — the `justfile` is the authority, §6.2), never `--all-features`:
    `--all-features` on the union graph is exactly the monolith this epic exists to avoid, and
    it makes a small solver replay link LLVM, SQL, RPC, and fixture machinery.
 2. **`required-features` per binary, not per package.** A heavy binary
@@ -654,7 +660,7 @@ and one check entry point. **No source file moved, and no binary exists.**
 | The three packages exist with the §6 names — `degenbot-fixture-tools`, `degenbot-solver-lab`, `degenbot-engine-lab` — each at `rust/tools/<dir>/` | `cargo metadata --locked --manifest-path rust/Cargo.toml --format-version 1 --no-deps` |
 | Each is `publish = false`, inherits the `workspace.package` metadata and `[lints] workspace = true`, and has exactly one target: its `src/lib.rs` support library (`kind == ["lib"]`). No `[[bin]]`, no `[[example]]`, no test target | same metadata: `packages[].publish == []`, `packages[].targets` |
 | Each is a workspace member and **not** a `default-member`: `workspace_default_members` is still exactly `degenbot` and `degenbot-cli`, so unqualified `cargo build --manifest-path rust/Cargo.toml` selects the same two product entry points it selected before | same metadata |
-| The feature shells are separate forwards, one family each: `sql-ledger = ["degenbot/sql-ledger"]`; `capture-fixtures = ["degenbot-pools/capture-fixtures"]`, `cache-lab = ["degenbot-pools/cache-lab"]`, `hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]`, `envelope = ["degenbot-order-index/envelope"]`; `evm2-jit = ["degenbot-simulation/evm2-jit"]`, `prometheus = ["degenbot-bot/hotpath-prometheus"]` | the three `Cargo.toml` files, plus one lane each in `just check-dev-tools` |
+| The feature shells are separate forwards, one family each: `sql-ledger = ["degenbot/sql-ledger"]`; `capture-fixtures = ["degenbot-pools/capture-fixtures"]`, `cache-lab = ["degenbot-pools/cache-lab"]`, `telemetry = ["degenbot-pools/telemetry"]` (the cache lab's optional second build shape; never a bot-exporter lane), `hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]`, `envelope = ["degenbot-order-index/envelope"]`; `evm2-jit = ["degenbot-simulation/evm2-jit"]`, `prometheus = ["degenbot-bot/hotpath-prometheus"]` | the three `Cargo.toml` files, plus one lane each in `just check-dev-tools` |
 | Every product edge in the engine manifest is optional, so that package's **default** tree is the package alone — no product crate is linked. Two packages are the exception: `degenbot-fixture-tools` since §6.5 (its default-features binary needs the facade) and `degenbot-solver-lab` since task `04`'s first slice (its default-features `synth_corpus_gen` needs pool state), so both have plain crates and a product-graph default tree | `cargo tree -p degenbot-engine-lab -e normal`: one printed line; `cargo tree -p degenbot-fixture-tools -e normal`: the facade graph; `cargo tree -p degenbot-solver-lab -e normal`: the pools graph |
 | **Tool-owned feature-forward isolation**: no lane enables a family another tool package owns | the per-lane `cargo tree ... -e features -i <owning crate>` inspections below (§6.1 consequence 4) |
 | `stubgen` and both `rust/examples/` packages are untouched, and the example surface is unchanged: 44 example targets across the same 10 packages, so §4.6's baseline audit still prints `exact-set audit: PASS` | §4.6's block, unmodified |
@@ -697,6 +703,7 @@ invocation**, each its own `cargo check --locked --manifest-path rust/Cargo.toml
 | `fixture-sql-ledger` | `-p degenbot-fixture-tools --features sql-ledger` |
 | `solver-capture-fixtures` | `-p degenbot-solver-lab --features capture-fixtures` |
 | `solver-cache-lab` | `-p degenbot-solver-lab --features capture-fixtures,cache-lab` |
+| `solver-cache-telemetry` | `-p degenbot-solver-lab --features capture-fixtures,cache-lab,telemetry` (the same cache-lab binary with the pools ambient-walk telemetry on, so its collector-drain assertion and ns split are live; an additional build shape, never a `required-features` entry) |
 | `solver-hotpath` | `-p degenbot-solver-lab --features hotpath` |
 | `solver-envelope` | `-p degenbot-solver-lab --features envelope` |
 | `engine-jit` | `-p degenbot-engine-lab --features evm2-jit` |
@@ -1510,7 +1517,7 @@ contributor, a doc, or the pre-push hook types.
 | `cargo run --release -p degenbot-pools --example synth_corpus_gen` | `cargo run --release -p degenbot-solver-lab --bin synth_corpus_gen` (**no feature lane**; no argument, no `--check`, no dry-run; the two outputs are the same committed pools fixtures, now resolved from the repository root instead of `CARGO_MANIFEST_DIR`) | 04 — **landed** |
 | `cargo run -p degenbot-pools --features capture-fixtures --example v2_concentrated_liquidity_parity_probe` | **unchanged** — it does not move in 04; task 06 extracts its assertions and deletes it (§5.5) | 06 |
 | `cargo run -p degenbot-pools --features capture-fixtures --example entry_ab_readout -- <corpus>` | `cargo run -p degenbot-solver-lab --features capture-fixtures --bin entry_ab_readout -- <corpus>` (wrapped by `just entry-ab`) | 04 |
-| `cargo run -p degenbot-pools --features capture-fixtures,cache-lab --example concentrated_liquidity_cache_lab` | `cargo run -p degenbot-solver-lab --features capture-fixtures,cache-lab --bin concentrated_liquidity_cache_lab` | 04 |
+| `cargo run -p degenbot-pools --features capture-fixtures,cache-lab --example concentrated_liquidity_cache_lab` | `cargo run -p degenbot-solver-lab --features capture-fixtures,cache-lab --bin concentrated_liquidity_cache_lab` (argv, readout text, the `DRCLAB_*` controls, and the exact-accuracy exit code unchanged; the two feature forwards move to the tool package) | 04 — **landed** |
 | `cargo run -p degenbot-pools --example stateview_feasibility_probe` | `cargo run --release -p degenbot-solver-lab --bin stateview_feasibility_probe` | 04 |
 | `cargo run --release -p degenbot-order-index --example bench_strategies` | `cargo run --release -p degenbot-solver-lab --features envelope --bin bench_strategies` | 04 |
 | `cargo run -p degenbot-simulation --example sim_mode_bench --features evm2-jit` | `cargo run -p degenbot-engine-lab --features evm2-jit --bin sim_mode_bench` (wrapped by `just bench-sim-modes`) | 05 |
@@ -1533,7 +1540,7 @@ moved binary and the old target is gone.
 | Destination | Default compile lane | Feature lanes | Behavioural route (the one that actually proves the move) |
 | --- | --- | --- | --- |
 | `degenbot-fixture-tools` | `cargo check -p degenbot-fixture-tools --all-targets` (builds the five default-feature programs — `record_updater_cassette`, `record_py_oracle_corpus`, `capture_path_fixture`, `concentrated_liquidity_capture_gen`, and `encode_three_hop`; skips the four `sql-ledger` binaries) | `--features sql-ledger` (builds the whole package, nine binaries) | `just check-evm-captures`, `just check-aave-captures` (offline drift gates), `cargo run -p degenbot-fixture-tools --bin record_updater_cassette -- --check tests/fixtures/cassettes/*.json` (the cassette recorder's OFFLINE drift gate), `tests/golden/test_oracle_replay_offline.py` (the corpus recorder's offline recording-format gate), `just test-executor-offline`, `cargo test -p degenbot-fixture-tools --bin concentrated_liquidity_capture_gen` (the capture generator's resolved default output path and sidecar text — node-free), and the wave-2/3/4/5 plus pool/Aave cassette replay suites; the record arms of the live recorders — including `record_py_oracle_corpus`'s and `capture_path_fixture`'s default **and** `--check` arms — and the capture generator's only arm are compile only |
-| `degenbot-solver-lab` | `cargo check -p degenbot-solver-lab --all-targets` (builds the lib plus `synth_corpus_gen`; skips the two `capture-fixtures` replays) | `--features capture-fixtures` (both replays), `--features capture-fixtures,cache-lab`, `--features envelope`, `--features hotpath` | `just test-golden-replay` (both corpora), `just entry-ab`, the cache-lab golden suite, `cargo test -p degenbot-order-index`, and for `synth_corpus_gen`: run it, require an empty `git diff` on both outputs, then `just test-rust-nextest -p degenbot-pools -E 'test(profit_envelope)'` (its concentrated-liquidity corpus's kernel consumer) — the mixed output drifts for a pre-existing reason (§5.3) |
+| `degenbot-solver-lab` | `cargo check -p degenbot-solver-lab --all-targets` (builds the lib plus `synth_corpus_gen`; skips the three feature-gated replays) | `--features capture-fixtures` (both replays), `--features capture-fixtures,cache-lab` (the cache lab), `--features envelope`, `--features hotpath` | `just test-golden-replay` (both corpora), `just entry-ab`, the cache-lab golden suite, `cargo test -p degenbot-order-index`, and for `synth_corpus_gen`: run it, require an empty `git diff` on both outputs, then `just test-rust-nextest -p degenbot-pools -E 'test(profit_envelope)'` (its concentrated-liquidity corpus's kernel consumer) — the mixed output drifts for a pre-existing reason (§5.3) |
 | `degenbot-engine-lab` | `cargo check -p degenbot-engine-lab --all-targets` | `--features evm2-jit`, `--features prometheus` | `just test-rust-nextest -p degenbot-simulation` and `-p degenbot-arbitrage` (the 14 `#[path]`-coupled test files plus the parity suites must still run), `just bal-dispatch-scaling-probe`, `just bal-candidate-scaling-probe`; live/`/tmp`-corpus rows: compile only, reported as unexecuted |
 | Owning-crate tests | `cargo check -p degenbot-bot --all-targets`, `-p degenbot-ingestion` | — | `just test-rust-nextest -p degenbot-bot`, `-p degenbot-ingestion`, then `just test-standalone` with its re-pointed second check |
 | Removed executables (`06`) | nothing is built; `cargo metadata` must stop reporting the target | — | The §5 replacement lands *first*: the extracted `degenbot-simulation` offline test green (`just test-rust-nextest -p degenbot-simulation`) and the doc written for `mirror_coverage_probe`; §5.6's evidence re-checked for `walkmemo_readout`; §5.2's "nothing unique to preserve" re-checked for `scale_demo`. Then delete the file and re-run **only §4.6's exact-set comparison logic** — the same two-set comparison and the same `missing`/`stale`/`duplicates` diagnostics, but against the then-current `cargo metadata` and the then-current ledger, with *that revision's* expected set and count instead of §4.6's hard-coded baseline `44`. Do not rerun §4.6 itself: its `44` and its baseline set describe the pre-`06` tree by construction and must go red once a target is converted or deleted. Finally confirm `cargo metadata` reports the smaller example set with no other target renamed; the closing assert that exactly three public example targets remain is task `07`'s (§3) |
@@ -1675,11 +1682,14 @@ disposition is a tool binary. `scale_demo`, `walkmemo_readout`, and
 `mirror_coverage_probe` stay in their crate `examples/` directories until task `06` preserves
 their evidence and removes them, and the same holds for the parity probe (§5.5).
 
-**Task `04`'s remaining scope: eight of the §4.3 rows.** The first slice landed the
-`examples/common/` conversion and `synth_corpus_gen`'s write anchor (§4.3, §5.3, §10.1).
-Still to move, each with a `[[bin]]` stanza and the §8.2 route: `concentrated_liquidity_cache_lab`,
-`entry_ab_readout` (both `capture-fixtures`), `rayon_scale_probe`, `stateview_feasibility_probe`,
-`bench_strategies` (order-index, `envelope`). `scale_demo`, `walkmemo_readout`, and the parity
+**Task `04`'s remaining scope: seven of the §4.3 rows.** The first slice landed the
+`examples/common/` conversion and `synth_corpus_gen`'s write anchor (§4.3, §5.3, §10.1); the
+second landed `concentrated_liquidity_cache_lab`, whose cache-lab lane is now the tool
+package's own `capture-fixtures,cache-lab` forward, with `telemetry` an optional second build
+shape of that same binary (the collector-drain assertion sits behind it and is never a
+`required-features` entry). Still to move, each with a `[[bin]]`
+stanza and the §8.2 route: `entry_ab_readout` (`capture-fixtures`), `rayon_scale_probe`,
+`stateview_feasibility_probe`, `bench_strategies` (order-index, `envelope`). `scale_demo`, `walkmemo_readout`, and the parity
 probe are not task `04` moves at all (§5.2, §5.5, §5.6).
 
 **Task `03`'s remaining scope: none.** Seven slices have landed all nine §4.2 rows: the two

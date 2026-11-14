@@ -60,6 +60,14 @@ capture-fixtures = ["degenbot-pools/capture-fixtures"]
 # dedicated lane enables `capture-fixtures` beside this one.
 cache-lab = ["degenbot-pools/cache-lab"]
 
+# The ambient walk telemetry this replay's `drain_ns` readout reads, forwarded to
+# the crate that owns it. Off by default: a plain `capture-fixtures,cache-lab`
+# build still replays, still prints the matrix, and the ns split comes back
+# zeroed, because the replay's collector-drain assertion sits behind this cfg.
+# It reaches `degenbot-pools` alone -- no exporter, no `/metrics` listener, and
+# no `degenbot-bot` edge.
+telemetry = ["degenbot-pools/telemetry"]
+
 # Solver-phase function profiling: the per-invocation opt-in for the
 # functions-timing run. Never the bot exporter lane — this forward never enables
 # `hotpath/hotpath-prometheus`, never starts a `/metrics` listener, and never
@@ -72,9 +80,10 @@ envelope = ["degenbot-order-index/envelope"]
 # The programs this package carries so far, split by whether they read a capture
 # fixture.
 #
-# TWO replays read the committed `.jsonl[.zst]` corpora through
+# THREE programs read the committed `.jsonl[.zst]` corpora through
 # `degenbot-pools`'s fixture reader, so each carries `required-features` and a
-# default check skips it deliberately instead of failing on a cfg'd-out module.
+# default check skips it deliberately instead of failing on a cfg'd-out module;
+# the cache lab names its second forward beside the reader.
 
 [[bin]]
 name = "concentrated_liquidity_solve_replay"
@@ -85,6 +94,17 @@ required-features = ["capture-fixtures"]
 name = "mixed_solve_replay"
 path = "src/bin/mixed_solve_replay/main.rs"
 required-features = ["capture-fixtures"]
+
+# The cache-lab replay: it reads a capture through the same fixture reader and
+# solves every state through the instrumented cache strategies, so its lane is
+# both forwards. Neither is a profiler, a ledger, or a database lane. Its
+# `telemetry` forward is optional and never a `required-features` entry: the
+# collector-drain assertion compiles only in that second build shape.
+
+[[bin]]
+name = "concentrated_liquidity_cache_lab"
+path = "src/bin/concentrated_liquidity_cache_lab/main.rs"
+required-features = ["capture-fixtures", "cache-lab"]
 
 # The synthetic corpus generator reads no capture and opens no database of any
 # kind: it builds its own geometry and writes the two committed corpora, so it

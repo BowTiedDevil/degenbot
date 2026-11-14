@@ -35,7 +35,8 @@
 //!   the replay instruments share, behind `capture-fixtures` because they reach
 //!   the feature's fixture reader for the default capture path.
 //!
-//! Lane features: `capture-fixtures`, `cache-lab`, `hotpath`, `envelope`.
+//! Lane features: `capture-fixtures`, `cache-lab`, `telemetry` (the cache lab's
+//! second build shape, never a bot-exporter lane), `hotpath`, `envelope`.
 
 pub mod paths;
 

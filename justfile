@@ -1100,6 +1100,7 @@ check-rust-all-features:
 #   fixture-sql-ledger       degenbot-fixture-tools + sql-ledger
 #   solver-capture-fixtures  degenbot-solver-lab + capture-fixtures
 #   solver-cache-lab         degenbot-solver-lab + capture-fixtures,cache-lab
+#   solver-cache-telemetry   degenbot-solver-lab + capture-fixtures,cache-lab,telemetry
 #   solver-hotpath           degenbot-solver-lab + hotpath (solver-phase timing)
 #   solver-envelope          degenbot-solver-lab + envelope
 #   engine-jit               degenbot-engine-lab + evm2-jit
@@ -1135,6 +1136,14 @@ check-rust-all-features:
 # unqualified invocation is the feature-FREE check (support libraries plus the
 # five binaries that declare no feature), and never silently a union of every
 # lane.
+#
+# One lane is not a `required-features` split but a second build shape of the
+# same binary: `solver-cache-telemetry` compiles the cache-lab replay with the
+# pools ambient-walk-telemetry forward on beside `capture-fixtures,cache-lab`,
+# because that replay's collector-drain assertion is `#[cfg(feature =
+# "telemetry")]`. Telemetry stays OPTIONAL (the binary's `required-features`
+# names only the other two), and the forward reaches `degenbot-pools` alone --
+# never `degenbot-bot`, never `hotpath-prometheus`, never a `/metrics` listener.
 # Check one development-tool lane at a time (lanes listed above; no --all-features).
 check-dev-tools *lanes:
     #!/usr/bin/env bash
@@ -1157,6 +1166,9 @@ check-dev-tools *lanes:
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
       solver-cache-lab         degenbot-solver-lab --features capture-fixtures,cache-lab
+      solver-cache-telemetry   degenbot-solver-lab --features
+                               capture-fixtures,cache-lab,telemetry (the cache lab
+                               with the pools ambient-walk-telemetry forward on)
       solver-hotpath           degenbot-solver-lab --features hotpath
       solver-envelope          degenbot-solver-lab --features envelope
       engine-jit               degenbot-engine-lab --features evm2-jit
@@ -1189,6 +1201,7 @@ check-dev-tools *lanes:
             fixture-sql-ledger) check_lane degenbot-fixture-tools sql-ledger ;;
             solver-capture-fixtures) check_lane degenbot-solver-lab capture-fixtures ;;
             solver-cache-lab) check_lane degenbot-solver-lab capture-fixtures,cache-lab ;;
+            solver-cache-telemetry) check_lane degenbot-solver-lab capture-fixtures,cache-lab,telemetry ;;
             solver-hotpath) check_lane degenbot-solver-lab hotpath ;;
             solver-envelope) check_lane degenbot-solver-lab envelope ;;
             engine-jit) check_lane degenbot-engine-lab evm2-jit ;;

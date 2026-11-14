@@ -1,5 +1,5 @@
 // Cache-lab seam: instrumented concentrated-liquidity-table cache strategies driven
-// by the `concentrated_liquidity_cache_lab` example. Strategies refill crossing tables + word
+// by `degenbot-solver-lab`'s `concentrated_liquidity_cache_lab` replay. Strategies refill crossing tables + word
 // profiles through the SAME production builders the bot uses and solve through
 // the production `solve_concentrated_liquidity_piecewise` entry, so every measurement is of
 // the real code path (no parallel implementation).

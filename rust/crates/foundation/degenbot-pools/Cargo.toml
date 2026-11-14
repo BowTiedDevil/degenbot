@@ -48,7 +48,7 @@ hotpath = ["hotpath/hotpath", "hotpath/threads"]
 capture-fixtures = ["dep:zstd"]
 # Cache-lab seam (src/solve/concentrated_liquidity/cache.rs, gated at
 # concentrated_liquidity/mod.rs): the instrumented cache strategies the
-# cache-lab example and its golden/regression binaries drive. Off by default so
+# cache-lab replay and its golden/regression binaries drive. Off by default so
 # the production solve, the standalone consumer, and the extension compile none
 # of it; the workspace test/lint lanes enable it explicitly.
 cache-lab = []
@@ -113,10 +113,6 @@ required-features = ["capture-fixtures", "cache-lab"]
 # Fixture-reading examples ([[example]] sections exist only to carry
 # required-features; unlisted examples auto-discover and compile everywhere).
 # The pre-push/CI lanes that run them enable the feature explicitly.
-
-[[example]]
-name = "concentrated_liquidity_cache_lab"
-required-features = ["capture-fixtures", "cache-lab"]
 
 [[example]]
 name = "entry_ab_readout"

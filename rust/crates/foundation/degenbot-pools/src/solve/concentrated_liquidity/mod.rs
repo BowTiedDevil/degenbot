@@ -55,7 +55,7 @@
 //!   written only when the crate's default-off `telemetry` feature is enabled.
 //! - `cache` — the cache-lab seam: instrumented crossing-table + word-profile
 //!   cache strategies (crossing derivation is kernel territory), driven by the
-//!   `concentrated_liquidity_cache_lab` example and the `concentrated_liquidity_cache_*` regression binaries,
+//!   `degenbot-solver-lab`'s `concentrated_liquidity_cache_lab` replay and the `concentrated_liquidity_cache_*` regression binaries,
 //!   written only when the crate's default-off `cache-lab` feature is enabled.
 
 use std::sync::Arc;

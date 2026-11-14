@@ -4,7 +4,8 @@
 //! reference at each epoch and printing the rebuild-cost matrix.
 //!
 //! Usage:
-//!   cargo run -p degenbot-pools --example concentrated_liquidity_cache_lab -- [<capture.jsonl>]
+//!   cargo run -p degenbot-solver-lab --features capture-fixtures,cache-lab
+//!     --bin concentrated_liquidity_cache_lab -- [<capture.jsonl>]
 //!   DRCLAB_MAX_PATHS=4 DRCLAB_TRANS=8 ...
 //!
 //! Exit 1 if any strategy's solution diverges from the reference on any
@@ -22,8 +23,6 @@
     clippy::items_after_statements,
     clippy::vec_init_then_push
 )]
-
-extern crate degenbot_pools;
 
 use alloy::primitives::U256;
 use degenbot_pools::solve::concentrated_liquidity::cache::{
