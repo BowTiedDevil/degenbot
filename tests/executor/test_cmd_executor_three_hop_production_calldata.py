@@ -29,6 +29,9 @@ from .test_cmd_executor_three_hop_optimized import (
 
 pytestmark = pytest.mark.gas
 
+# The recipe stages the `degenbot-fixture-tools` `encode_three_hop` binary at this
+# path (`just build-executor-three-hop-encoder`), so the suite reads the same artifact
+# name it read before the helper left `degenbot-executor`'s examples for the tool package.
 ROOT = Path(__file__).resolve().parents[2]
 ENCODER = ROOT / "rust/target/debug/examples/encode_three_hop"
 FAMILIES = ("V2", "V3", "V4")
@@ -67,6 +70,7 @@ def build_production_encoder():
         capture_output=True,
         text=True,
     )
+    assert ENCODER.is_file(), ENCODER
 
 
 @pytest.fixture
@@ -103,6 +107,88 @@ def production_commands(payload):
         f"production encoder failed for {payload['hops']}:\n{result.stdout}\n{result.stderr}"
     )
     return bytes.fromhex(result.stdout.strip())
+
+
+def request_document():
+    """A request that decodes cleanly, so a failure test isolates the rule it drives."""
+    return {
+        "executor": "0x" + "11" * 20,
+        "pool_manager": "0x" + "22" * 20,
+        "weth": "0x" + "33" * 20,
+        "optimal_input": 1_000,
+        "outputs": [900, 800, 1_000],
+        "consumed_inputs": [1_000, 900, 800],
+        "hops": [
+            {
+                "family": "V2",
+                "address": "0x" + "44" * 20,
+                "token0": "0x" + "55" * 20,
+                "token1": "0x" + "66" * 20,
+                "fee": V2_FEE,
+                "zfo": True,
+                "tick_spacing": None,
+            }
+            for _ in range(3)
+        ],
+    }
+
+
+def run_encoder(*arguments):
+    return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed Rust helper, argv forwarded verbatim, no shell
+        [str(ENCODER), *arguments],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_encoder_rejects_a_missing_request_argument():
+    result = run_encoder()
+
+    assert result.returncode != 0
+    assert not result.stdout
+    assert "usage: encode_three_hop '<request-json>'" in result.stderr
+
+
+def test_encoder_rejects_malformed_json():
+    result = run_encoder("{")
+
+    assert result.returncode != 0
+    assert not result.stdout
+    assert result.stderr.strip()
+
+
+def test_encoder_rejects_a_hop_family_it_cannot_decode():
+    payload = request_document()
+    payload["hops"][1]["family"] = "V5"
+
+    result = run_encoder(json.dumps(payload))
+
+    assert result.returncode != 0
+    assert not result.stdout
+    assert "unsupported family V5" in result.stderr
+
+
+def test_encoder_requires_tick_spacing_for_v4_hops():
+    payload = request_document()
+    payload["hops"][2]["family"] = "V4"
+
+    result = run_encoder(json.dumps(payload))
+
+    assert result.returncode != 0
+    assert not result.stdout
+    assert "V4 requires tick_spacing" in result.stderr
+
+
+def test_encoder_rejects_a_v2_fee_above_u16():
+    payload = request_document()
+    payload["hops"][0]["fee"] = 70_000
+
+    result = run_encoder(json.dumps(payload))
+
+    assert result.returncode != 0
+    assert not result.stdout
 
 
 @pytest.mark.parametrize("combo", PERMUTATIONS, ids="-".join)

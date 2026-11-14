@@ -2741,6 +2741,8 @@ version = "0.6.0-alpha.19"
 dependencies = [
  "alloy",
  "degenbot",
+ "degenbot-execution",
+ "degenbot-executor",
  "degenbot-pools",
  "degenbot-rpc",
  "hashbrown 0.17.1",

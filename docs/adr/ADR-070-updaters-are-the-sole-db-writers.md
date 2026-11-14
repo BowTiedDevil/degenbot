@@ -64,9 +64,9 @@ raise no new question: the exemption is about where the write open lands, not
 
 about which program makes it.
 
-The boundary is the rule, not a description of today's eight programs: **every
+The boundary is the rule, not a description of today's nine programs: **every
 write open in `degenbot-fixture-tools` targets a throwaway harness DB under a
-`TempDir`** (and three of the eight open no database at all, so they open no write
+`TempDir`** (and four of the nine open no database at all, so they open no write
 either). The artifacts those programs produce are written by ordinary
 `fs::write` into the corpus homes, and `--check` writes nothing at all, so the
 subject of the fence — who may open the operator's database for writing — is
@@ -133,7 +133,7 @@ guards only the swap.
   turn `writer` on, and every other crate compiles against the read-only
   `degenbot-db` surface. `degenbot-fixture-tools` (D2's addendum) is the one
   writer-enabled package outside that set. It is not part of a default
-  workspace build (it is absent from `default-members`). Eight programs live
+  workspace build (it is absent from `default-members`). Nine programs live
   there as `[[bin]]` targets, and the lane that builds each is the feature it
   needs: four — the two node-free capture generators and the two live span
   recorders — replay their SQL goldens, so they carry
@@ -157,7 +157,12 @@ guards only the swap.
   (moved out of `degenbot-rpc`'s `examples/`), is the same case again: it opens
   no DB of any kind — its only writes are the capture JSONL and its `.block`
   sidecar, by `File::create` and `fs::write` — so the fence's subject is not
-  engaged and `WRITER_OWNERS` is unchanged.
+  engaged and `WRITER_OWNERS` is unchanged. The ninth, the three-hop
+  production-calldata helper `encode_three_hop` (moved out of
+  `degenbot-executor`'s `examples/`), is the same case once more: it opens no DB
+  of any kind and writes nothing at all — its only output is the hex command
+  stream on stdout — so the fence's subject is not engaged and `WRITER_OWNERS` is
+  unchanged.
 - The fixture slice is recognition, not a new write path. Those programs
   always opened throwaway harness DBs for writing; while they were facade
   examples the fence never asked the question, and the relocation into

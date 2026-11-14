@@ -1082,11 +1082,12 @@ check-rust-all-features:
 # Lanes, each run as `just check-dev-tools <lane>`; a leading `--` is ignored,
 # so `just check-dev-tools --engine-jit` is the same lane:
 #   default                  all three packages with no feature lane --
-#                            degenbot-fixture-tools' four DEFAULT-FEATURE binaries
+#                            degenbot-fixture-tools' five DEFAULT-FEATURE binaries
 #                            (record_updater_cassette, record_py_oracle_corpus,
-#                            capture_path_fixture, concentrated_liquidity_capture_gen)
-#                            are built here, because a program that reads no
-#                            statement ledger must not be hidden behind a feature
+#                            capture_path_fixture, concentrated_liquidity_capture_gen,
+#                            encode_three_hop) are built here, because a program that
+#                            reads no statement ledger must not be hidden behind a
+#                            feature
 #   fixture-sql-ledger       degenbot-fixture-tools + sql-ledger
 #   solver-capture-fixtures  degenbot-solver-lab + capture-fixtures
 #   solver-cache-lab         degenbot-solver-lab + capture-fixtures,cache-lab
@@ -1097,14 +1098,14 @@ check-rust-all-features:
 #
 # A tool binary that NEEDS a feature joins the lane that owns it through its own
 # `required-features`, so that lane builds it on purpose and every other lane
-# skips it on purpose. Eight fixture-tools programs have landed, and they split
+# skips it on purpose. Nine fixture-tools programs have landed, and they split
 # exactly that way. Four replay their SQL goldens -- the offline capture
 # generators `generate_evm_oracle_captures` /
 # `generate_aave_adversarial_captures` and the live span recorders
 # `generate_aave_upgrade_windows` / `generate_aave_config_windows` -- and all
 # four are `[[bin]]` targets under `required-features = ["sql-ledger"]`, so the
 # `fixture-sql-ledger` lane compiles them and the `default` lane skips them
-# without failing on the `cfg`'d-out ledger module. The other four read no
+# without failing on the `cfg`'d-out ledger module. The other five read no
 # statement ledger at all and open no operator DB, so they declare NO
 # `required-features` and are the `default` lane's targets: the live updater
 # cassette recorder `record_updater_cassette` (whose `--check` arm is offline
@@ -1115,12 +1116,15 @@ check-rust-all-features:
 # drift without writing), and the concentrated-liquidity capture generator
 # `concentrated_liquidity_capture_gen` (whose only arm fetches, solves, and
 # writes the capture JSONL plus its `.block` sidecar, so it has no offline
-# arm at all). The dependency
+# arm at all), and the three-hop production-calldata encoder
+# `encode_three_hop` (whose one arm reads a JSON request document from argv and
+# prints the production command stream, offlining the Ape matrix's bytes -- no
+# node, no database, no fixture home). The dependency
 # consequence is that `degenbot-fixture-tools`' default tree is the facade graph
 # (see the manifest), so the two fixture lanes differ by the ledger feature
 # alone. With no argument the recipe runs `default` and prints the menu: an
 # unqualified invocation is the feature-FREE check (support libraries plus the
-# four binaries that declare no feature), and never silently a union of every
+# five binaries that declare no feature), and never silently a union of every
 # lane.
 # Check one development-tool lane at a time (lanes listed above; no --all-features).
 check-dev-tools *lanes:
@@ -1134,10 +1138,11 @@ check-dev-tools *lanes:
     lanes (one cargo invocation each; no union, never --all-features):
       default                  degenbot-fixture-tools, degenbot-solver-lab, and
                                degenbot-engine-lab with no feature lane
-                               (fixture-tools builds its four default-feature
+                               (fixture-tools builds its five default-feature
                                programs -- record_updater_cassette,
                                record_py_oracle_corpus, capture_path_fixture,
-                               and concentrated_liquidity_capture_gen -- here)
+                               concentrated_liquidity_capture_gen, and
+                               encode_three_hop -- here)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
@@ -1162,7 +1167,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, and concentrated_liquidity_capture_gen too)"
+        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop too)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets
@@ -1449,10 +1454,20 @@ check-executor-release-ratchet:
 
 
 # Build the pure-Rust production-encoder consumer used by the three-hop
-# production-calldata execution matrix. Keeping the build here ensures tests
-# never invoke cargo directly or test a stale helper binary.
+# production-calldata execution matrix, and stage it where that matrix reads it.
+# Keeping the build here ensures tests never invoke cargo directly or test a stale
+# helper binary.
+#
+# The helper is a `degenbot-fixture-tools` [[bin]] (`encode_three_hop`); the matrix
+# (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) reads
+# `{{ target_dir }}/debug/examples/encode_three_hop`, so the second line installs the
+# built artifact under that unchanged name and path. The JSON-in/hex-out contract, the
+# binary name, and the consumer path are stable; only the package and target kind moved.
 build-executor-three-hop-encoder:
-    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-executor --example encode_three_hop
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --bin encode_three_hop
+    install -Dm755 "{{ target_dir }}/debug/encode_three_hop" "{{ target_dir }}/debug/examples/encode_three_hop"
 
 # The ONE command for the bankroll matrix — both capital postures against one
 # injected registration set, through the canonical run_bot.sh launcher:
