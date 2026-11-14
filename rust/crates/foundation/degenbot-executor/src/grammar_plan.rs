@@ -464,6 +464,10 @@ pub type Plan = Vec<PlanStep>;
 /// The external initial capital a built Plan declares, summed per currency in
 /// first-declaration order.
 ///
+/// A self-funded Plan's declaration set is complete by construction: the single
+/// producer runs [`declare_held_seed`] on it before any consumer reads it, so the
+/// seeds here cover every payment the stream makes from the executor's balance.
+///
 /// This is the Plan's capital-requirement metadata, and the ONE authority for
 /// what a self-funded stream needs up front: its [`PlanStep::SelfFund`] seeds.
 /// A [`PlanStep::CaptureShortfall`] is *not* one — it declares a loss the stream
@@ -505,6 +509,75 @@ pub fn plan_external_capital(plan: &Plan) -> Vec<CapitalRequirement> {
     let mut out = Vec::new();
     walk(plan, &mut out);
     out
+}
+
+/// The external seed a **self-funded** stream must declare, prepended to `plan`
+/// as the ledger-only [`PlanStep::SelfFund`] steps it is missing.
+///
+/// A `FundingSource::SelfFund` stream pays its entry capital out of the
+/// executor's balance mid-stream — an `ERC20_TRANSFER` into a pool, or the
+/// currency leg of a `V4_SETTLE*` — instead of borrowing it in-path. That spend
+/// has to be *declared*, because the declaration is what a probe installs at the
+/// execution target ([`plan_external_capital`] is its one reader) and what the
+/// ledger's `Held` policy assumes; an undeclared one is a stream that reverts
+/// inside the payment (a WETH `transfer` with an empty revert) instead of
+/// reaching its economic receipt.
+///
+/// The amount is never a guess about the shape. [`LedgerValidator::undeclared_seed`]
+/// reports the first payment the Plan's own credit graph leaves uncovered — as
+/// the `(asset, required, available)` deficit the zero-capital policy already
+/// reports — and `required - available` is exactly the additional capital that
+/// payment needs. That is the minimum: a profitable stream that funds its own
+/// payment declares nothing, and a losing stream declares only its shortfall,
+/// so the installed balance stays the measured-loss baseline instead of turning
+/// a losing stream's leftover seed into reported profit.
+///
+/// Seeds already in the Plan stay authoritative — they credit the evaluation, so
+/// a family that funds its own entry (or funds one of its two V4 debts) gains no
+/// restatement, and a *later* shortfall in another asset is simply another
+/// declaration: the loop repeats until every payment is covered, which is how a
+/// two-currency V4-first stream declares both of its held inputs.
+///
+/// Emits no command bytes: `SelfFund` is ledger-only, so a stream's
+/// `plan_to_bytes` output is identical before and after.
+///
+/// [`LedgerValidator::undeclared_seed`]: crate::grammar_ledger::LedgerValidator::undeclared_seed
+pub fn declare_held_seed(plan: &mut Plan) {
+    /// One round adds one asset's shortfall, and every round strictly increases
+    /// the credit the evaluation grants, so a stream with `n` projected ops
+    /// reaches its fixpoint in at most `n` rounds — the `n + 1`th then publishes
+    /// what the rounds collected. The bound is defensive: a non-converging round
+    /// leaves the Plan exactly as built, so the capital policy still answers
+    /// (and a genuinely invalid Plan still rejects).
+    fn declared(seeds: &[PlanStep], body: &Plan) -> Plan {
+        let mut amended = seeds.to_vec();
+        amended.extend(body.iter().cloned());
+        amended
+    }
+
+    let mut seeds: Vec<PlanStep> = Vec::new();
+    for _ in 0..=plan_to_ledger_ops(plan).len() {
+        let candidate = declared(&seeds, plan);
+        let mut validator = crate::grammar_ledger::LedgerValidator::default();
+        let Ok(shortfall) = validator.undeclared_seed(&plan_to_ledger_ops(&candidate)) else {
+            // An ordering violation is not a capital fact: leave the Plan as
+            // the grammar wrote it, so the validation gate reports it.
+            return;
+        };
+        let Some(deficit) = shortfall else {
+            // Every payment is covered; publish the declarations collected.
+            *plan = candidate;
+            return;
+        };
+        let missing = deficit.required.saturating_sub(deficit.available);
+        if missing == 0 {
+            return;
+        }
+        seeds.push(PlanStep::SelfFund {
+            currency: deficit.asset,
+            amount: missing,
+        });
+    }
 }
 
 /// Project a `Plan` to its `LedgerOp` trace (depth-first; a `FlashSwap`
@@ -1047,6 +1120,7 @@ mod tests {
     #![expect(clippy::unwrap_used)]
 
     use super::*;
+    use crate::encoders::SENTINEL_WETH;
     use alloy::primitives::{address, Address};
 
     #[test]
@@ -1075,5 +1149,144 @@ mod tests {
         // 0x21 = V2_SWAP_CALC (never exact-out V2_SWAP_COMPACT 0x20).
         assert_eq!(out[0], 0x21, "terminal V2 must encode as V2_SWAP_CALC");
         let _ = U256::ZERO;
+    }
+
+    // ── The declared held seed (a self-funded stream's capital requirement) ──
+
+    fn weth() -> Address {
+        address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    }
+
+    fn usdc() -> Address {
+        address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+    }
+
+    fn spend(token_idx: u8, token: Address, amount: u128) -> PlanStep {
+        PlanStep::Erc20Transfer {
+            token_idx,
+            token_addr: token,
+            recipient_idx: 1,
+            amount,
+            seeds_pool: None,
+            repays_flash: None,
+        }
+    }
+
+    #[test]
+    fn a_self_funded_plan_declares_the_shortfall_its_payments_leave_uncovered() {
+        // The Plan spends 1000 WETH it never earns: the declaration is the
+        // payment the path's own credit graph cannot fund, not the entry size.
+        let mut plan = vec![spend(SENTINEL_WETH, weth(), 1000)];
+        declare_held_seed(&mut plan);
+        assert_eq!(
+            plan_external_capital(&plan),
+            vec![CapitalRequirement {
+                currency: weth(),
+                amount: 1000,
+            }]
+        );
+        assert_eq!(
+            plan.first(),
+            Some(&PlanStep::SelfFund {
+                currency: weth(),
+                amount: 1000,
+            }),
+            "the declaration is a Plan head, before every op it funds"
+        );
+    }
+
+    #[test]
+    fn a_declared_seed_is_authoritative_and_gains_only_its_residual() {
+        // 600 of the 1000 is already declared: the stream needs 400 more, and
+        // the Plan carries one SEED per uncovered asset — never a restatement of
+        // the seed it already has.
+        let mut plan = vec![
+            PlanStep::SelfFund {
+                currency: weth(),
+                amount: 600,
+            },
+            spend(SENTINEL_WETH, weth(), 1000),
+        ];
+        declare_held_seed(&mut plan);
+        assert_eq!(
+            plan_external_capital(&plan),
+            vec![CapitalRequirement {
+                currency: weth(),
+                amount: 1000,
+            }],
+            "declared + derived is exactly the payment"
+        );
+        assert_eq!(
+            plan.len(),
+            3,
+            "one residual declaration, not a duplicate seed: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn a_solvent_self_funded_plan_declares_nothing() {
+        // A path-generated credit covers the spend: no unnecessary seed.
+        let pool = address!("00000000000000000000000000000000000000cc");
+        let mut plan = vec![PlanStep::FlashSwap {
+            pool_idx: 0,
+            pool_addr: pool,
+            protocol: Prot::V2,
+            zfo: true,
+            fee: 30,
+            out_currency: weth(),
+            out_amount: 1000,
+            in_currency: weth(),
+            in_amount: 0,
+            recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
+            auto_repay: false,
+            callback: vec![spend(SENTINEL_WETH, weth(), 1000)],
+        }];
+        let before = plan.clone();
+        declare_held_seed(&mut plan);
+        assert_eq!(plan, before, "a solvent stream gains no declaration");
+    }
+
+    #[test]
+    fn every_uncovered_asset_is_declared_not_just_the_first() {
+        // Two payments, two assets: the first round covers WETH and the second
+        // finds the USDC shortfall behind it, so both are declared.
+        let mut plan = vec![spend(SENTINEL_WETH, weth(), 1000), spend(7, usdc(), 40)];
+        declare_held_seed(&mut plan);
+        assert_eq!(
+            plan_external_capital(&plan),
+            vec![
+                CapitalRequirement {
+                    currency: weth(),
+                    amount: 1000,
+                },
+                CapitalRequirement {
+                    currency: usdc(),
+                    amount: 40,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_ordering_violation_is_left_to_the_validation_gate() {
+        // A swap on an unseeded pair is not a capital fact: the derivation must
+        // not paper over it with a seed (ADR-030 keeps the Reject fatal).
+        let pool = address!("00000000000000000000000000000000000000bb");
+        let mut plan = vec![PlanStep::V2SwapCalc {
+            pool_idx: 0,
+            pool_addr: pool,
+            zfo: true,
+            recipient_idx: SENTINEL_SELF,
+            fee: 30,
+            out_currency: weth(),
+            out_amount: 1000,
+            recipient_pool_addr: None,
+            recipient_repays: false,
+        }];
+        let before = plan.clone();
+        declare_held_seed(&mut plan);
+        assert_eq!(plan, before, "an ordering violation gains no declaration");
     }
 }

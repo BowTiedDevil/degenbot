@@ -30,18 +30,42 @@
 //! executes to its economic receipt (the negative-control delta assert), and
 //! the four declared-capture families still DECLINE (the stream would spend
 //! entry capital no `SelfFund` seed declares), never panic.
+//!
+//! The self-funded arm has a third obligation the zero-capital arm does not: a
+//! `SelfFund` stream *spends* the entry capital a flash stream borrows, so its
+//! Plan must DECLARE it — otherwise the capital override installs nothing and the
+//! payment reverts inside a WETH `transfer`. The section below pins that
+//! declaration against the ledger for all 27 losing permutations, pins the
+//! V4-first amount to the zero-capital deficit's `required - available`, pins
+//! that a solvent Plan gains nothing, and pins that the declaration adds no
+//! command byte.
 
-#![expect(clippy::cast_possible_truncation, clippy::panic, clippy::similar_names)]
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::similar_names,
+    clippy::unwrap_used
+)]
 
 use alloy::primitives::{address, Address};
-use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
+use degenbot_execution::{CapitalRequirement, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 use degenbot_executor::composers::{
     encode_cmd_stream, encode_cmd_stream_capital, ComposerInputs, EncodeContext, EncodeOptions,
     EncodeRequest,
 };
-use degenbot_executor::grammar_ledger::{FundingSource, InitialCapital, InsolventZeroCapital};
-use degenbot_executor::grammar_plan::plan_external_capital;
-use degenbot_executor::grammar_shape::{derive_shape, derive_shape_detailed, Derive};
+use degenbot_executor::grammar_ledger::{
+    CapitalError, FundingSource, InitialCapital, InsolventZeroCapital, LedgerValidator,
+    ValidationError,
+};
+use degenbot_executor::grammar_plan::{
+    plan_external_capital, plan_to_bytes, plan_to_ledger_ops, PlanStep,
+};
+use degenbot_executor::grammar_shape::{
+    derive_shape, derive_shape_detailed, family_axis_support, Derive,
+};
 use degenbot_executor::grammar_walker::build_walk;
 
 /// The `{V2,V3,V4}³` base of the permutation index (three protocols per hop).
@@ -352,6 +376,361 @@ fn self_funded_requirements_come_from_the_built_plan() {
         seeding > 0 && self_funding > 0,
         "the matrix exercises both a funding-branched family and a self-funding one \
          (seeding {seeding}, self-funding {self_funding})"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The declared held seed: a self-funded stream's entry capital
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The V4-led permutations, in fixture order. `v4_v4_v3` is the one shape whose
+/// self-funded Plan already declares its held inputs, so it is the control that
+/// the derivation adds nothing behind an explicit seed.
+const V4_LED: [&str; 9] = [
+    "v4_v4_v4", "v4_v2_v2", "v4_v2_v4", "v4_v3_v3", "v4_v3_v4", "v4_v4_v2", "v4_v4_v3", "v4_v2_v3",
+    "v4_v3_v2",
+];
+
+fn fixture(name: &str) -> PathInfo {
+    permutations()
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .unwrap_or_else(|| panic!("fixture has {name}"))
+        .1
+}
+
+/// The seed declaration a self-funded Plan of `path` carries at `outs`/`consumed`.
+fn declared_seed(path: &PathInfo, outs: &[u128; 3], consumed: &[u128; 3]) -> Vec<(Address, u128)> {
+    let (_, plan, _) = build_walk(path, &inputs(outs, consumed, self_fund_opts()))
+        .unwrap_or_else(|| panic!("the self-funded family builds a Plan"));
+    // A declaration emits no command bytes, so a Plan carrying one must still
+    // encode: the residual is a seed, never a refused capture.
+    assert!(
+        !plan
+            .iter()
+            .any(|step| matches!(step, PlanStep::CaptureShortfall { .. })),
+        "a self-funded Plan may not carry a capture shortfall — it is unencodable"
+    );
+    plan_external_capital(&plan)
+        .into_iter()
+        .map(|requirement| (requirement.currency, requirement.amount))
+        .collect()
+}
+
+/// Every losing self-funded permutation pays out entry capital the executor must
+/// already hold, so its Plan has to DECLARE that capital: the ledger derives the
+/// payment its own credit graph leaves uncovered and the seed names it, which is
+/// what makes the stream payable on-chain instead of reverting inside a WETH
+/// `transfer` with empty return data.
+#[test]
+fn losing_self_funded_permutations_declare_every_uncovered_payment() {
+    let mut declaring = 0;
+    for (name, path) in permutations() {
+        let declared = declared_seed(&path, &LOSING_OUTS, &LOSING_CONSUMED);
+        // Whatever the builder seeds on its own, the derivation must leave the
+        // evaluation with nothing uncovered: declared seeds credit the search
+        // (they are authoritative), a shortfall behind them is declared.
+        let (_, plan, _) = build_walk(
+            &path,
+            &inputs(&LOSING_OUTS, &LOSING_CONSUMED, self_fund_opts()),
+        )
+        .unwrap();
+        let mut validator = LedgerValidator::default();
+        assert_eq!(
+            validator.undeclared_seed(&plan_to_ledger_ops(&plan)),
+            Ok(None),
+            "[{name}] the losing self-funded Plan must declare the capital its payments need, \
+             got {declared:?}"
+        );
+        for (currency, amount) in &declared {
+            assert!(
+                *amount > 0,
+                "[{name}] a declaration is capital, never a zero grant"
+            );
+            // The cycle's own two assets: the WETH entry and, for a shape that
+            // pays a V4 debt in its intermediate, that intermediate.
+            assert!(
+                [WETH, USDC, WBTC].contains(currency),
+                "[{name}] a declared asset is one the cycle names, got {currency}"
+            );
+        }
+        if !declared.is_empty() {
+            assert!(
+                declared.iter().any(|(currency, _)| *currency == WETH),
+                "[{name}] a losing WETH cycle holds its entry in WETH, got {declared:?}"
+            );
+            declaring += 1;
+        }
+        // …and the stream still encodes (a Reject here would be the encoder's
+        // latent-bug panic, i.e. the failure this declaration removes).
+        assert!(
+            matches!(
+                derive_shape_detailed(
+                    &path,
+                    &inputs(&LOSING_OUTS, &LOSING_CONSUMED, self_fund_opts())
+                ),
+                Derive::Encoded(_)
+            ),
+            "[{name}] a losing self-funded stream must encode to its economic receipt"
+        );
+    }
+    assert_eq!(
+        declaring, 27,
+        "every losing permutation declares its held capital"
+    );
+}
+
+/// The V4-first shapes that declared nothing: their declaration is EXACTLY the
+/// shortfall the zero-capital policy already reports (`required - available`),
+/// not the whole entry and not a per-family guess.
+///
+/// `v4_v2_v2` is pinned by name — the mainnet probe's shape — with the ledger's
+/// own numbers: the settle wants the whole entry (`required`) and the path's
+/// realized credit is the terminal output (`available`), so the declaration is
+/// the difference between them.
+#[test]
+fn v4_first_losing_self_fund_declares_exactly_the_zero_capital_shortfall() {
+    for name in V4_LED.into_iter().filter(|n| *n != "v4_v4_v3") {
+        let path = fixture(name);
+        let Derive::InsolventZeroCapital(InsolventZeroCapital {
+            asset,
+            required,
+            available,
+        }) = derive_shape_detailed(
+            &path,
+            &inputs(&LOSING_OUTS, &LOSING_CONSUMED, zero_capital_opts()),
+        )
+        else {
+            panic!("[{name}] the zero-capital stance must report a typed deficit");
+        };
+        assert_eq!(
+            declared_seed(&path, &LOSING_OUTS, &LOSING_CONSUMED),
+            vec![(asset, required - available)],
+            "[{name}] the held declaration is the deficit's own shortfall"
+        );
+    }
+
+    // The pinned row: WETH (1e15 on mainnet) wanted by the settle, the terminal
+    // output available, the shortfall declared.
+    let path = fixture("v4_v2_v2");
+    assert_eq!(
+        derive_shape_detailed(
+            &path,
+            &inputs(&LOSING_OUTS, &LOSING_CONSUMED, zero_capital_opts())
+        ),
+        Derive::InsolventZeroCapital(InsolventZeroCapital {
+            asset: WETH,
+            required: OPTIMAL,
+            available: LOSING_OUTS[2],
+        }),
+        "v4_v2_v2's deficit: the settle wants the entry, the path credits its output"
+    );
+    assert_eq!(
+        declared_seed(&path, &LOSING_OUTS, &LOSING_CONSUMED),
+        vec![(WETH, OPTIMAL - LOSING_OUTS[2])],
+        "v4_v2_v2 declares the entry the settle pays, less the credit it earns first"
+    );
+
+    // The control: a shape whose self-funded Plan already declares both held
+    // inputs gains no restatement behind them.
+    assert_eq!(
+        declared_seed(&fixture("v4_v4_v3"), &LOSING_OUTS, &LOSING_CONSUMED),
+        vec![(WETH, OPTIMAL), (USDC, LOSING_CONSUMED[1])],
+        "v4_v4_v3's two explicit seeds stay authoritative and unduplicated"
+    );
+}
+
+/// A solvent self-funded Plan gains no seed — for any of the 27 permutations and
+/// both amount arms that fund their own payments.
+#[test]
+fn solvent_self_funded_plans_declare_no_unnecessary_seed() {
+    for (name, path) in permutations() {
+        let (_, plan, _) = build_walk(
+            &path,
+            &inputs(&PROFITABLE_OUTS, &PROFITABLE_CONSUMED, self_fund_opts()),
+        )
+        .unwrap_or_else(|| panic!("[{name}] the self-funded family builds a Plan"));
+        let mut validator = LedgerValidator::default();
+        assert_eq!(
+            validator.undeclared_seed(&plan_to_ledger_ops(&plan)),
+            Ok(None),
+            "[{name}] a profitable self-funded Plan needs no held capital"
+        );
+        if V4_LED.contains(&name.as_str()) && name != "v4_v4_v3" {
+            assert!(
+                plan_external_capital(&plan).is_empty(),
+                "[{name}] a profitable V4-first stream that pays from its own credit declares \
+                 no seed, got {:?}",
+                plan_external_capital(&plan)
+            );
+        }
+    }
+}
+
+/// The shortened V4-first shape that used to abort a worker thread: a 2-hop
+/// `V4→V2` self-funded stream whose entry pays the PoolManager.
+///
+/// The held seed turns the encoder's latent-bug panic into a typed, intentional
+/// outcome — and removing it puts the panic back, which is what the sensitivity
+/// arm proves: the Plan without its declaration is the `Erc20TransferBeforeCredit`
+/// the live ladder logged (`wanted: 1e15, have: 998142225664309`), i.e. the empty
+/// WETH-transfer revert seen on-chain.
+#[test]
+fn shortened_v4_first_self_fund_declares_its_entry_and_no_longer_panics() {
+    // `WETH → USDC` (V4) then `USDC → WETH` (V2): the V4 unlock pays its entry
+    // WETH into the PoolManager after the tail swap has credited its output, so
+    // the plan needs the difference held.
+    let path = PathInfo::new(vec![v4(WETH, USDC, 0), v2(USDC, WETH, 1)]);
+    let outs = [LOSING_OUTS[0], LOSING_OUTS[2], 0];
+    let consumed = [OPTIMAL, LOSING_OUTS[0], 0];
+    let two_hop_inputs = |opts: EncodeOptions| ComposerInputs {
+        hop_outputs: &outs[..2],
+        consumed_inputs: &consumed[..2],
+        ..inputs(&LOSING_OUTS, &LOSING_CONSUMED, opts)
+    };
+
+    // The self-funded stream: the declaration is exactly the entry the transfer
+    // pays, less the credit the tail swap earned before it.
+    let (_, plan, _) = build_walk(&path, &two_hop_inputs(self_fund_opts())).unwrap();
+    assert_eq!(
+        plan_external_capital(&plan),
+        vec![CapitalRequirement {
+            currency: WETH,
+            amount: OPTIMAL - LOSING_OUTS[2],
+        }],
+        "the shortened stream declares its uncovered entry"
+    );
+    assert!(
+        derive_shape(&path, &two_hop_inputs(self_fund_opts())).is_some(),
+        "the public seam encodes it — no panic, no decline"
+    );
+
+    // Sensitivity: strip the declaration and the ledger refuses the very
+    // transfer the declaration funds — the live ladder's panic text.
+    let stripped: Vec<_> = plan
+        .iter()
+        .filter(|step| !matches!(step, PlanStep::SelfFund { .. }))
+        .cloned()
+        .collect();
+    let mut validator = LedgerValidator::default();
+    assert_eq!(
+        validator.validate_capital(&plan_to_ledger_ops(&stripped)),
+        Err(CapitalError::Rejected(
+            ValidationError::Erc20TransferBeforeCredit {
+                currency: WETH,
+                wanted: OPTIMAL,
+                have: LOSING_OUTS[2] as i128,
+            }
+        )),
+        "without the declaration the entry transfer is uncovered again"
+    );
+
+    // The flash stream is a different question: it borrows its entry in-path
+    // and must not silently spend capital it never declared, so production
+    // keeps ADR-030's fatal Reject for it.
+    let production = two_hop_inputs(production_opts());
+    assert!(
+        matches!(
+            derive_shape_detailed(&path, &production),
+            Derive::Rejected(ValidationError::Erc20TransferBeforeCredit { .. })
+        ),
+        "an in-path-flash stream that pays undeclared capital still rejects"
+    );
+}
+
+/// The held-seed declaration is **ledger-only**: it is a `SelfFund` step, and
+/// `SelfFund` emits no command byte. This pins that on every reachable family
+/// (2- and 3-hop, 36 cells) and several amount sets, in both directions:
+///
+/// * a cell that gained a declaration encodes the SAME bytes with the seed
+///   present and stripped (the declaration cannot reach the wire);
+/// * a family whose row does not branch the `funding` axis still emits the same
+///   bytes under `SelfFund` as under the production flash stream — the
+///   pre-existing partition, unchanged by the declaration.
+#[test]
+fn the_held_seed_declaration_changes_no_command_byte() {
+    fn strip(plan: &[PlanStep]) -> Vec<PlanStep> {
+        plan.iter()
+            .filter(|step| !matches!(step, PlanStep::SelfFund { .. }))
+            .map(|step| {
+                let mut step = step.clone();
+                match &mut step {
+                    PlanStep::FlashSwap { callback, .. } => *callback = strip(callback),
+                    PlanStep::V4Unlock { inner, .. } => *inner = strip(inner),
+                    _ => {}
+                }
+                step
+            })
+            .collect()
+    }
+
+    // (optimal_input, hop_outputs, consumed_inputs) — a profitable, an exact, a
+    // losing and a partially-consumed arm.
+    let arms: [(u128, [u128; 3], [u128; 3]); 4] = [
+        (OPTIMAL, PROFITABLE_OUTS, PROFITABLE_CONSUMED),
+        (
+            OPTIMAL,
+            [OPTIMAL, OPTIMAL, OPTIMAL],
+            [OPTIMAL - 1, OPTIMAL - 1, OPTIMAL - 1],
+        ),
+        (OPTIMAL, LOSING_OUTS, LOSING_CONSUMED),
+        (
+            OPTIMAL,
+            [900_001, 800_003, 700_007],
+            [OPTIMAL, 900_001, 800_003],
+        ),
+    ];
+
+    let mut declared_cells = 0;
+    let mut unchanged_cells = 0;
+    for (name, path) in permutations() {
+        let branches_funding = family_axis_support(&path)
+            .unwrap_or_else(|| panic!("[{name}] the row exists"))
+            .funding;
+        for (optimal, outs, consumed) in &arms {
+            let arm_inputs = |opts| ComposerInputs {
+                optimal_input: *optimal,
+                ..inputs(outs, consumed, opts)
+            };
+            let (preamble, plan, at) = build_walk(&path, &arm_inputs(self_fund_opts()))
+                .unwrap_or_else(|| panic!("[{name}] the self-funded family builds a Plan"));
+            let declared = plan_external_capital(&plan);
+            let encoded = {
+                let mut bytes = preamble.clone();
+                bytes.extend_from_slice(&plan_to_bytes(&plan, &at).expect("the Plan encodes"));
+                bytes
+            };
+            let mut stripped_bytes = preamble;
+            stripped_bytes.extend_from_slice(
+                &plan_to_bytes(&strip(&plan), &at).expect("the stripped Plan encodes"),
+            );
+            assert_eq!(
+                encoded, stripped_bytes,
+                "[{name}] a SelfFund declaration reached the command wire"
+            );
+            if !declared.is_empty() {
+                declared_cells += 1;
+            }
+
+            if !branches_funding {
+                let flash = derive_shape_detailed(&path, &arm_inputs(production_opts()));
+                let self_fund = derive_shape_detailed(&path, &arm_inputs(self_fund_opts()));
+                assert_eq!(
+                    self_fund, flash,
+                    "[{name}] at {optimal}: a family that funds itself in-path must emit the \
+                     production bytes under a self-funded stream"
+                );
+                unchanged_cells += 1;
+            }
+        }
+    }
+    assert!(
+        declared_cells > 0,
+        "the sweep must exercise cells that gained a declaration"
+    );
+    assert!(
+        unchanged_cells > 0,
+        "the sweep must exercise cells whose bytes are the production stream's"
     );
 }
 

@@ -243,9 +243,16 @@ pub struct EncodeOptions {
     /// encodes exactly the production bytes.
     pub initial_capital: crate::grammar_ledger::InitialCapital,
     /// Declared origin of the stream's entry (seed) capital (ADR-029 D1).
-    /// Branched IN THE STREAM only by the families whose dispatch row declares
+    /// Branched IN THE BYTES only by the families whose dispatch row declares
     /// `funding` ([`crate::grammar_shape::family_axis_support`]); every other
-    /// family derives `InPathFlash`.
+    /// family derives `InPathFlash` there.
+    ///
+    /// The axis is honored by EVERY family in the one place that is not a byte:
+    /// a `SelfFund` stream's Plan declares the held entry capital its payments
+    /// leave uncovered
+    /// ([`crate::grammar_plan::declare_held_seed`]), which is what the capital
+    /// override installs. A family that funds itself in-path declares nothing
+    /// under either value, so the bytes are its only difference.
     pub funding: crate::grammar_ledger::FundingSource,
     /// Declared destination of the stream's terminal profit (ADR-029 D1).
     /// Honored via [`resolve_axes`] (takes precedence over the legacy
@@ -471,10 +478,12 @@ fn grammar_inputs<'a>(ctx: &EncodeContext, req: &'a EncodeRequest) -> ComposerIn
 /// install a self-funded stream's entry without restating a single grammar rule.
 /// Pure computation: no EVM state, no node read, and no command bytes.
 ///
-/// Empty means "this stream declares no external entry capital" — an in-path
-/// flash family (the funding axis is per-family, not per-path) or a path with no
-/// producer at all. Neither installs anything, and neither is a claim that the
-/// path needs nothing.
+/// Empty means "this stream declares no external entry capital": an in-path
+/// flash stream, one whose own credit graph already covers every payment it
+/// makes, or a path with no producer at all. None installs anything, and none is
+/// a claim that the path needs nothing — a [`EncodeOptions::funding`] of
+/// `SelfFund` is the axis that makes a stream declare the capital it spends
+/// ([`crate::grammar_plan::declare_held_seed`]).
 #[must_use]
 pub fn encode_cmd_stream_capital(
     ctx: &EncodeContext,

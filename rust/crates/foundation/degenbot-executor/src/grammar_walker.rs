@@ -24,7 +24,7 @@
 
 use crate::composers::ComposerInputs;
 use crate::encoders::AddressTable;
-use crate::grammar_ledger::Prot;
+use crate::grammar_ledger::{FundingSource, Prot};
 use crate::grammar_plan::{v2_forward, v3_forward, v3_input, Plan};
 use crate::grammar_shape::v4_hop_currencies;
 use alloy::primitives::Address;
@@ -872,17 +872,31 @@ pub(crate) fn facts_for(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<
 }
 
 /// The single pipeline entry (ADR-031 D6): `facts_for` → `derive_plan` →
+/// [`declare_held_seed`](crate::grammar_plan::declare_held_seed) →
 /// `enc_preamble`. Returns `(preamble, plan, address_table)` or `None` on a
 /// routine decline. The `LedgerValidator` gate (build → `plan_to_ledger_ops`
 /// → `LedgerValidator::validate_full` → `plan_to_bytes`) stays in
 /// `grammar_shape::derive_shape_detailed`.
+///
+/// The one post-derivation step is the **declared held seed**: a
+/// [`FundingSource::SelfFund`] stream spends the entry capital the executor
+/// holds, and the ledger derives exactly how much of it the built Plan has to
+/// declare (see [`declare_held_seed`](crate::grammar_plan::declare_held_seed)).
+/// It runs here, on the single producer, so the bytes
+/// ([`crate::grammar_shape::derive_shape`]), the capital requirement
+/// ([`crate::composers::encode_cmd_stream_capital`]) and the validation stance
+/// all read ONE Plan. A flash stream (`FundingSource::InPathFlash`) borrows its
+/// entry in-path and gains nothing.
 #[must_use]
 pub fn build_walk(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_for(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
+    let (mut plan, at) = derive_plan(&facts, inputs)?;
+    if inputs.opts.funding == FundingSource::SelfFund {
+        crate::grammar_plan::declare_held_seed(&mut plan);
+    }
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }

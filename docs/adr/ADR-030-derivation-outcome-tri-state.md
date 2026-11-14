@@ -33,6 +33,7 @@ classification is untouched.
 A **Reject is always fatal** — the revm matrix and honesty suite hard-fail on
 it, and a live run aborts. It is never swallowed, never degraded to a skip.
 
+
 ## Considered options
 
 - **Reject = loud log + skip** at runtime: rejected, because a correct system
@@ -58,3 +59,47 @@ it, and a live run aborts. It is never swallowed, never degraded to a skip.
   redundant, and Reject stays live.
 - The revm matrix / honesty suite treat any Reject as a hard, suite-failing
   assertion — "bad streams are unrepresentable" becomes loudly testable.
+
+### Addendum: held capital is *declared*, and the zero-capital deficit is where its amount comes from (2026-11-20)
+
+The stance above answers "can this stream run with no entry capital?".  A
+**self-funded** stream (`FundingSource::SelfFund`) asks the neighbouring
+question — "does this stream declare the entry capital it spends?" — and the same
+one ledger evaluation answers both.
+
+A self-funded stream pays its entry capital out of the executor's balance
+mid-stream (an `ERC20_TRANSFER` into a pool, or the currency leg of a
+`V4_SETTLE*`) where a flash stream borrows it.  Under `InitialCapital::Held` that
+payment was the *assumption*, and an assumption nobody wrote down is invisible to
+everything downstream: the Plan declared no `SelfFund` seed, the capital override
+installed nothing, and on-chain the payment ran against the path's short proceeds
+— WETH9's bare `require` reverting with empty return data, a failure with no
+typed error and no frame to attribute it to.
+
+The fix is not a new rule per family.  `LedgerValidator::undeclared_seed`
+evaluates the built Plan's projected op trace under exactly the `Held` reading,
+plus the two measurements that reading suppresses: an executor-paid `V4_SETTLE*`
+debt is modeled as the debit it is on-chain, and a credit shortfall is typed as
+the same `InsolventZeroCapital` deficit the zero-capital stance reports.  Its
+`required - available` is therefore the *minimum* the stream must declare, and
+`grammar_plan::declare_held_seed` prepends that `SelfFund` at the Plan head (the
+producers' own placement) until no payment is uncovered.  Seeds a builder already
+declares credit the evaluation, so they stay authoritative and are never
+restated; a second asset's later shortfall is simply a second declaration.
+
+Consequences for the outcome set:
+
+- `InsolventZeroCapital` stays unreachable under a production `Held` pass — the
+  self-funded evaluation is a derivation input, not a stream verdict.
+- A losing self-funded stream still **encodes** and still executes to its
+  economic receipt (`InsufficientProfit`): the declaration is the shortfall, not
+  the entry, so the installed balance is the measured-loss baseline and no
+  leftover seed can be reported as profit.
+- `Rejected` keeps ADR-030's fatality exactly where it belongs.  An ordering
+  violation (`SwapCalcBeforeCredit`, `PmDeltaNonzero`, `FlashDebtUnpaid`, …) is
+  not a capital fact, so the derivation declines to invent a seed for it, and an
+  in-path-flash stream that pays capital it never declared still rejects — a
+  flash stream must not spend held capital, which is the whole distinction the
+  `funding` axis draws.
+- The declaration emits no command byte (`SelfFund` is ledger-only), so every
+  valid command stream, and the release's golden calldata, is byte-identical.

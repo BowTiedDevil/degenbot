@@ -214,3 +214,50 @@ V4 batch) × six amount configurations — are identical before and after the
 migration, and `command_stream_bytepin`'s table and
 `releases/v2/golden_calldata.hex` are unchanged. No D4 exception is required:
 nothing in these regions was unrepresentable.
+
+
+### The declared held seed — the one post-derivation Plan step (2026-11-20)
+
+`build_walk` gained a single step between `derive_plan` and `enc_preamble`:
+`grammar_plan::declare_held_seed`, run only for a `FundingSource::SelfFund`
+stream. It is deliberately **not** a per-family rule and **not** a walker
+concern:
+
+- the walkers still author the *execution order*; the new step only prepends
+  ledger-only `SelfFund` declarations at the Plan head, where the producers have
+  always put their own seeds, so no enclosure, no op order and no amount moves;
+- the amount is read from the ledger's own `Held` reading
+  (`LedgerValidator::undeclared_seed`, ADR-030's addendum), so no shape can
+  disagree with the validator about what it needs;
+- it runs on the single producer, so the bytes (`derive_shape`), the capital
+  requirement (`encode_cmd_stream_capital`) and the validation stance all read
+  ONE Plan — a requirement can never be derived from a different build than the
+  stream it funds.
+
+What it retires is per-family seed guesswork that only *looked* like it knew the
+answer. The 2-hop V4-led `v4v2` arm seeded `optimal` WETH whenever its terminal
+currency was not WETH and nothing when it was, so a `WETH -> USDC -> WETH` round
+trip paid the PoolManager its entry out of a balance holding only the tail swap's
+proceeds; the eight V4-first 3-hop families seeded nothing at all. Both classes
+were masked by a universal WETH grant in the probe posture, which is why the
+defect surfaced as an empty on-chain revert rather than a test failure.
+
+Evidence for the change (all green, no golden-hash edit):
+
+- `degenbot-executor` `zero_capital`: every losing permutation declares each
+  uncovered payment (and re-evaluates clean), the V4-first eight declare exactly
+  the zero-capital deficit's `required - available`, `v4_v4_v3`'s two explicit
+  seeds stay unduplicated, the profitable cells declare nothing unnecessary, and
+  the shortened `V4->V2` shape that used to abort the encoder now encodes with its
+  own declaration — stripping it reproduces the ledger's
+  `Erc20TransferBeforeCredit`.
+- `degenbot-executor` `the_held_seed_declaration_changes_no_command_byte`: 36
+  families x 4 amount arms, the bytes with the declaration equal the bytes with it
+  stripped, and every family that does not branch `funding` in its bytes emits the
+  production stream under `SelfFund`. `command_stream_bytepin`'s frozen table and
+  `releases/v2/golden_calldata.hex` are untouched.
+- `degenbot-simulation` `harness_declarative`: the full 27-permutation losing
+  self-funded matrix reaches `InsufficientProfit` (never an empty revert, a pool
+  underpayment or a panic) starting from exactly the declared requirement, and the
+  withheld-entry control reverts inside the payment — the live ladder's
+  `bucket=empty` signature.

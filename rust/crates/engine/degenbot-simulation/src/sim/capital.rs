@@ -52,11 +52,13 @@
 //! - `SelfFund` covers ONLY the external initial capital the deployment's own
 //!   Encode declares for those paths — the built Plan's `SelfFund` seeds, read
 //!   across the seam by
-//!   [`degenbot_execution::ExecutionAdapter::capital_requirements`]. A path's
-//!   entry amount is a per-family grammar fact, so the Plan is the authority;
-//!   a touched-but-unrequired token is never granted a blanket balance, and a
-//!   self-funding family (one that funds itself in-path) declares nothing and
-//!   receives nothing.
+//!   [`degenbot_execution::ExecutionAdapter::capital_requirements`]. The Plan is
+//!   the authority for a path's entry amount: its seeds are the held capital the
+//!   stream's own payments leave uncovered, derived by the ledger for a
+//!   `SelfFund` stream rather than guessed per family, so the installed balance
+//!   is the minimum the plan needs. A touched-but-unrequired token is never
+//!   granted a blanket balance, and a stream that funds itself in-path declares
+//!   nothing and receives nothing.
 //!
 //! # Failing closed
 //!

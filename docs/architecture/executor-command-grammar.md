@@ -84,7 +84,12 @@ cheaper gas for small opportunities (no flash-callback overhead, no
 flash-repay transfer); InPathFlash = access to outside capital for large ones.
 The operator selects it per path; the grammar honors it (the all-V2 SelfFund
 path emits chained `V2_SWAP_CALC` with a top-level pre-fund; the InPathFlash
-path emits `V2_SWAP_COMPACT` with the callback repay).
+path emits `V2_SWAP_COMPACT` with the callback repay — the byte-visible
+branches are the families whose row declares `funding`). Every other family
+honors the axis where it is not a byte: a `SelfFund` stream's Plan declares the
+held entry capital its own credit graph leaves uncovered, which is what the
+capital override installs and what makes a losing stream reach its economic
+receipt instead of reverting inside a payment it never declared.
 
 ## How it replaces the hand-written encoders
 
@@ -136,6 +141,17 @@ The shape bodies read the position-scoped axes (`out_dest`, `repay`,
 `FlashSwap`/`V4Unlock` enclosures and order the repay/settle sequencing;
 `mod mechanics` supplies the per-protocol step constructors. One Plan, two
 consumers, no drift.
+
+One step follows `derive_plan`, and only for a `SelfFund` stream:
+`grammar_plan::declare_held_seed` prepends the ledger-only `SelfFund`
+declarations the built Plan is missing. The amount is the ledger's own
+`required - available` shortfall (`LedgerValidator::undeclared_seed`, reading the
+Plan's `Held` op trace with its executor-paid settles modeled), so the
+declaration is exact rather than a per-family guess, a seed the builder already
+declares stays authoritative, and the encoder emits nothing for it — the bytes
+are the same stream either way. It exists because a self-funded stream *spends*
+the entry capital a flash stream borrows, and `plan_external_capital` (the one
+reader the capital override consumes) is what installs it.
 
 ### The ledger validator — where the invariants live
 

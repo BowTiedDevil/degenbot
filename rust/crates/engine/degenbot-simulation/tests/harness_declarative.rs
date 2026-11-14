@@ -59,9 +59,10 @@ use degenbot_pools::{
     GateDeps, IntV3TickRangeHop, IntV3TickRangeSequence, PreparedConcentratedLiquidityHop,
 };
 
+use degenbot_decoders::revert::RevertClass;
 use degenbot_simulation::harness::{
     assert_applied_capital, assert_erc6909_capture, assert_profitable, assert_zero_capital,
-    v3_amount_out, ChainError, ChainResult, FixtureCapital, Harness, Hop, HopPool,
+    v3_amount_out, ChainError, ChainResult, ExecOutcome, FixtureCapital, Harness, Hop, HopPool,
     STUB_POOL_MANAGER_ERC6909_BALANCE_OF_SLOT, STUB_TOKEN_BALANCE_OF_SLOT,
 };
 use degenbot_simulation::{CapitalAsset, ProbeCapital};
@@ -79,6 +80,17 @@ const PROT_NAMES: [&str; 3] = ["v2", "v3", "v4"];
 fn q96_one() -> U256 {
     U256::from(1u128) << 96
 }
+/// Q64.96 sqrt price for the rational price `num/den` (token1 per token0 when
+/// the income currency is token0). The whole-number arm is `sqrt_x` itself, so
+/// a `den == 1` ratio reproduces the fixture's exact price.
+fn sqrt_ratio(num: u64, den: u64) -> U256 {
+    if den == 1 {
+        return sqrt_x(num);
+    }
+    let s = ((num as f64 / den as f64).sqrt() * 65536.0) as u64;
+    q96_one() * U256::from(s) / U256::from(65536)
+}
+
 /// Q64.96 sqrt of an integer `x` (price `x` token1 per token0 when the income
 /// currency is token0).
 fn sqrt_x(x: u64) -> U256 {
@@ -103,17 +115,36 @@ fn pool_for(
     dst: alloy::primitives::Address,
     mult: u64,
 ) -> HopPool {
+    pool_for_ratio(h, p, src, dst, mult, 1)
+}
+
+/// The same pool with a RATIONAL out/in ratio `num/den`, so a fixture can build
+/// a money-losing hop (`num < den`) instead of only an appreciating one.
+///
+/// `pool_for(mult)` is `pool_for_ratio(mult, 1)` by construction — the integer
+/// arm is unchanged, so the profitable matrices keep their exact fixture state.
+fn pool_for_ratio(
+    h: &mut Harness,
+    p: Prot,
+    src: alloy::primitives::Address,
+    dst: alloy::primitives::Address,
+    num: u64,
+    den: u64,
+) -> HopPool {
     match p {
         Prot::V2 => {
             let r: u128 = 1_000_000_000_000;
-            HopPool::V2(h.add_pool(src, dst, r, r * u128::from(mult)).unwrap())
+            HopPool::V2(
+                h.add_pool(src, dst, r * u128::from(den), r * u128::from(num))
+                    .unwrap(),
+            )
         }
         Prot::V3 => HopPool::V3(
             h.add_v3_pool(
                 src,
                 dst,
                 3000,
-                sqrt_x(mult),
+                sqrt_ratio(num, den),
                 liq(),
                 1_000_000_000_000_000_000_000_000_000_000,
                 1_000_000_000_000_000_000_000_000_000_000,
@@ -126,7 +157,7 @@ fn pool_for(
                 dst,
                 3000,
                 60,
-                sqrt_x(mult),
+                sqrt_ratio(num, den),
                 liq(),
                 1_000_000_000_000_000_000_000_000_000_000,
                 1_000_000_000_000_000_000_000_000_000_000,
@@ -140,28 +171,9 @@ fn pool_for(
 /// middle legs at ~1×, the terminal (return-to-WETH) leg at `3×` so the path
 /// is profitable. Works for 2- and 3-hop `seq`.
 fn build_family(h: &mut Harness, seq: &[Prot]) -> Vec<Hop> {
-    let n = seq.len();
-    let mut tokens = Vec::with_capacity(n - 1);
-    for _ in 0..n - 1 {
-        tokens.push(h.add_token().unwrap());
-    }
-    let mut hops = Vec::with_capacity(n);
-    for (i, p) in seq.iter().enumerate() {
-        let (src, dst) = if i == 0 {
-            (h.weth, tokens[0])
-        } else if i == n - 1 {
-            (tokens[n - 2], h.weth)
-        } else {
-            (tokens[i - 1], tokens[i])
-        };
-        let mult = if i == n - 1 { 3 } else { 1 };
-        hops.push(Hop {
-            src,
-            dst,
-            pool: pool_for(h, *p, src, dst, mult),
-        });
-    }
-    hops
+    build_family_with(h, seq, |h, p, src, dst, terminal| {
+        pool_for(h, p, src, dst, if terminal { 3 } else { 1 })
+    })
 }
 
 /// All `{v2,v3,v4}^n` family names in order.
@@ -1187,6 +1199,250 @@ fn full_three_hop_self_fund_matrix_executes_from_declared_capital() {
         "rows that did not execute the self-funded posture:\n{}",
         failures.join("\n")
     );
+}
+
+/// A `WETH -> t1 -> … -> WETH` chain whose EVERY hop returns `LOSS_NUM/LOSS_DEN`
+/// of its input, so the amount chain is money-losing by construction: the entry
+/// never comes back.
+fn build_losing_family(h: &mut Harness, seq: &[Prot]) -> Vec<Hop> {
+    build_family_with(h, seq, |h, p, src, dst, _last| {
+        pool_for_ratio(h, p, src, dst, LOSS_NUM, LOSS_DEN)
+    })
+}
+
+/// The chain builder the two family fixtures share: `build_family` gives the
+/// terminal leg a `3x` return, `build_losing_family` gives every leg the same
+/// sub-unity ratio. `pool` takes the hop's protocol, currencies, and whether it
+/// is the terminal (return-to-WETH) leg.
+fn build_family_with(
+    h: &mut Harness,
+    seq: &[Prot],
+    pool: impl Fn(
+        &mut Harness,
+        Prot,
+        alloy::primitives::Address,
+        alloy::primitives::Address,
+        bool,
+    ) -> HopPool,
+) -> Vec<Hop> {
+    let n = seq.len();
+    let mut tokens = Vec::with_capacity(n - 1);
+    for _ in 0..n - 1 {
+        tokens.push(h.add_token().unwrap());
+    }
+    let mut hops = Vec::with_capacity(n);
+    for (i, p) in seq.iter().enumerate() {
+        let (src, dst) = if i == 0 {
+            (h.weth, tokens[0])
+        } else if i == n - 1 {
+            (tokens[n - 2], h.weth)
+        } else {
+            (tokens[i - 1], tokens[i])
+        };
+        hops.push(Hop {
+            src,
+            dst,
+            pool: pool(h, *p, src, dst, i == n - 1),
+        });
+    }
+    hops
+}
+
+/// The ratio every losing hop returns: 90% in, so a three-hop round trip keeps
+/// ~73% of the entry and the terminal amount is below the seed.
+const LOSS_NUM: u64 = 9;
+const LOSS_DEN: u64 = 10;
+
+/// The **full 27-permutation losing self-funded matrix**.
+///
+/// A self-funded stream spends the entry capital the executor holds, so a losing
+/// money chain used to die INSIDE that spend: the WETH transfer ran against the
+/// path's short proceeds instead of the seeded capital and reverted with empty
+/// return data (`bucket=empty` on the live wire, no typed error anywhere). The
+/// Plan now declares the shortfall the ledger derives, the posture installs
+/// exactly that, and every row reaches the contract's terminal economic verdict:
+/// `InsufficientProfit` — the profit floor refusing a real loss — rather than an
+/// empty revert, a pool underpayment or a panic.
+///
+/// The initial snapshot is checked against the requirement read INDEPENDENTLY
+/// from the built Plan (`encode_cmd_stream_capital`), so a row that leaned on a
+/// holding the fixture never declared fails here.
+#[test]
+fn full_three_hop_losing_self_fund_matrix_reaches_the_profit_floor() {
+    let mut failures: Vec<String> = Vec::new();
+    let mut rows = 0;
+    for fam in family_list(3) {
+        let seq: Vec<Prot> = fam
+            .split('_')
+            .map(|s| match s {
+                "v2" => Prot::V2,
+                "v3" => Prot::V3,
+                _ => Prot::V4,
+            })
+            .collect();
+        let mut h = Harness::new().unwrap();
+        let hops = build_losing_family(&mut h, &seq);
+        let (path, outputs, consumed) = h.path_and_amounts(&hops, ENTRY_INPUT);
+        assert!(
+            outputs.last().unwrap().cast_signed() < ENTRY_INPUT.cast_signed(),
+            "[{fam}] the fixture must be money-losing"
+        );
+
+        // The declared requirement, read through the same intake the runner
+        // installs it from.
+        let request = EncodeRequest::new(
+            path.clone(),
+            ENTRY_INPUT,
+            outputs.clone(),
+            consumed.clone(),
+            EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        );
+        let requirements = encode_cmd_stream_capital(&h.encode_context(), &request);
+        assert!(
+            !requirements.is_empty(),
+            "[{fam}] a losing self-funded stream declares the entry it spends"
+        );
+
+        let result = match h.run_chain_with_consumed_capital(
+            &hops,
+            ENTRY_INPUT,
+            &outputs,
+            &consumed,
+            40_000_000,
+            EncodeOptions::default(),
+            &FixtureCapital::self_fund(),
+        ) {
+            Ok(result) => result,
+            Err(e) => {
+                failures.push(format!("{fam}: {e}"));
+                continue;
+            }
+        };
+        assert_eq!(result.capital_plan.mode(), ProbeCapital::SelfFund);
+        assert_applied_capital(&result, &fam);
+        for requirement in &requirements {
+            let asset = if requirement.currency == alloy::primitives::Address::ZERO {
+                CapitalAsset::Native
+            } else {
+                CapitalAsset::Erc20 {
+                    token: requirement.currency,
+                }
+            };
+            assert_eq!(
+                result.initial_capital.balance_of(asset),
+                U256::from(requirement.amount),
+                "[{fam}] the run must start from the Plan's declared {asset}"
+            );
+        }
+
+        match &result.outcome {
+            ExecOutcome::Reverted { raw, .. } => {
+                let class = RevertClass::classify(raw);
+                if class != RevertClass::ExecutorError("InsufficientProfit") {
+                    failures.push(format!("{fam}: reverted as {class:?} ({raw:02x?})"));
+                    continue;
+                }
+            }
+            other => {
+                failures.push(format!("{fam}: {other:?}"));
+                continue;
+            }
+        }
+        rows += 1;
+    }
+    assert!(
+        failures.is_empty(),
+        "losing self-funded rows that did not reach the profit floor:\n{}",
+        failures.join("\n")
+    );
+    assert_eq!(
+        rows, 27,
+        "every three-hop permutation reaches its economic receipt"
+    );
+}
+
+/// `V4-V2-V2` — the shape the live probe ran — and the sensitivity proof that
+/// the declaration is what makes it payable.
+///
+/// With the posture's derived requirement installed the row reaches
+/// `InsufficientProfit`; with the SAME payload and the requirement withheld (an
+/// empty declaration, so the posture clears the entry the stream spends) it
+/// reverts INSIDE that payment instead — the underwritten transfer itself, which
+/// is the failure the live ladder recorded as `bucket=empty`, `revert=0x`. (The
+/// fixture's token stub names the shortfall `T:balance`; WETH9's bare `require`
+/// in the same position is what leaves the data empty on mainnet.)
+#[test]
+fn losing_v4_v2_v2_self_fund_receipt_and_the_withheld_entry_control() {
+    let mut h = Harness::new().unwrap();
+    let hops = build_losing_family(&mut h, &[Prot::V4, Prot::V2, Prot::V2]);
+    let (path, outputs, consumed) = h.path_and_amounts(&hops, ENTRY_INPUT);
+    let request = EncodeRequest::new(
+        path,
+        ENTRY_INPUT,
+        outputs.clone(),
+        consumed.clone(),
+        EncodeOptions {
+            funding: FundingSource::SelfFund,
+            ..Default::default()
+        },
+    );
+    let requirements = encode_cmd_stream_capital(&h.encode_context(), &request);
+    let entry = requirements
+        .iter()
+        .find(|requirement| requirement.currency == h.weth)
+        .unwrap_or_else(|| panic!("v4_v2_v2 declares its held WETH entry: {requirements:?}"));
+    assert_eq!(
+        entry.amount,
+        ENTRY_INPUT - *outputs.last().unwrap(),
+        "the declaration is the entry less the credit the path earns first"
+    );
+
+    let executed = h
+        .run_chain_with_consumed_capital(
+            &hops,
+            ENTRY_INPUT,
+            &outputs,
+            &consumed,
+            40_000_000,
+            EncodeOptions::default(),
+            &FixtureCapital::self_fund(),
+        )
+        .unwrap();
+    match &executed.outcome {
+        ExecOutcome::Reverted { raw, .. } => assert_eq!(
+            RevertClass::classify(raw),
+            RevertClass::ExecutorError("InsufficientProfit"),
+            "the declared entry lets the stream reach the profit floor"
+        ),
+        other => panic!("v4_v2_v2 must reach the profit floor: {other:?}"),
+    }
+
+    // Sensitivity: the same payload with the entry withheld.
+    let mut withheld = Harness::new().unwrap();
+    let hops = build_losing_family(&mut withheld, &[Prot::V4, Prot::V2, Prot::V2]);
+    let (_, outputs, consumed) = withheld.path_and_amounts(&hops, ENTRY_INPUT);
+    let control = withheld
+        .run_chain_with_consumed_capital(
+            &hops,
+            ENTRY_INPUT,
+            &outputs,
+            &consumed,
+            40_000_000,
+            EncodeOptions::default(),
+            &FixtureCapital::self_fund_declared([]),
+        )
+        .unwrap();
+    match &control.outcome {
+        ExecOutcome::Reverted { raw, .. } => assert_eq!(
+            RevertClass::classify(raw),
+            RevertClass::ErrorString("T:balance".to_string()),
+            "without the declaration the entry payment is underwritten and reverts in the token"
+        ),
+        other => panic!("a withheld entry must revert inside the payment: {other:?}"),
+    }
 }
 
 /// The self-funded posture installs exactly what the stream's Plan declares.
