@@ -144,7 +144,7 @@ instrument, its destination, and the exact evidence form (§6.1 consequence 4).
 | Package and path | Purpose |
 | --- | --- |
 | `degenbot-stubgen` — `tools/stubgen/` | The ADR-066 stub generator behind `just gen-stubs`. A generator, not a laboratory. |
-| `degenbot-fixture-tools` — `tools/fixture-tools/` | Record / check / regenerate workflows for the committed fixtures, plus the test-input generators. Lane: `sql-ledger` for the four binaries that replay their SQL goldens; the two recorders that read no statement ledger — `record_updater_cassette` (updater cassettes) and `record_py_oracle_corpus` (the offline oracle-answer corpus) — need no lane and are default-features targets. |
+| `degenbot-fixture-tools` — `tools/fixture-tools/` | Record / check / regenerate workflows for the committed fixtures, plus the test-input generators. Lane: `sql-ledger` for the four binaries that replay their SQL goldens; the four programs that read no statement ledger — `record_updater_cassette` (updater cassettes), `record_py_oracle_corpus` (the offline oracle-answer corpus), `capture_path_fixture` (path-fixture recapture), and `concentrated_liquidity_capture_gen` (the CL capture generator) — need no lane and are default-features targets. |
 | `degenbot-solver-lab` — `tools/solver-lab/` | Solver and order-index replay, measurement, and stress instruments. Lanes: `capture-fixtures`, `cache-lab`, `hotpath`, `envelope`. |
 | `degenbot-engine-lab` — `tools/engine-lab/` | Bot, simulation, arbitrage, JIT, fan-out, and BAL instruments. Lanes: `evm2-jit`, `prometheus`. |
 
@@ -152,7 +152,8 @@ A tool program declares the features it needs on its own `[[bin]]`
 `required-features`, so a default `cargo check` of the package skips a heavy
 instrument visibly in the manifest instead of failing on a `cfg`'d-out module. A
 program that needs no feature declares none and is built by the `default` lane —
-`record_updater_cassette` and `record_py_oracle_corpus` are that case, and since
+`record_updater_cassette`, `record_py_oracle_corpus`, `capture_path_fixture`, and
+`concentrated_liquidity_capture_gen` are that case, and since
 Cargo has no per-target dependency selection their crates are plain edges, so the
 package's default tree is the facade graph rather than the package alone.
 `just check-dev-tools <lane>` checks one lane per invocation; it is a grouping

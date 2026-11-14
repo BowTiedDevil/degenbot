@@ -173,7 +173,6 @@ rust/crates/foundation/degenbot-pools/tests/concentrated_liquidity_cache_lab_gol
 rust/crates/foundation/degenbot-pools/tests/offline_heavy_replay.rs::replay_captured_heavy_paths
 rust/crates/foundation/degenbot-pools/tests/v4_crossing_solver_vs_sim_parity.rs::!module
 rust/crates/foundation/degenbot-pools/tests/v4_leading_current_tick_segment.rs::!module
-rust/crates/foundation/degenbot-rpc/examples/concentrated_liquidity_capture_gen.rs::!module
 rust/crates/foundation/degenbot-rpc/src/abi.rs::getter_selectors_match_reference_vectors
 rust/crates/foundation/degenbot-rpc/src/txpool_feed.rs::session	the ws session reads top-to-bottom
 rust/crates/foundation/degenbot-rpc/tests/v3_iia_fixture_reproduction.rs::!module
@@ -204,6 +203,7 @@ rust/crates/shells/degenbot-python/src/diagnostics/gil_probe.rs::start_gil_probe
 rust/crates/shells/degenbot-python/src/simulation/inline_hook.rs::simulate_path
 rust/examples/settlement_bot/src/main.rs::run	linear boot + ledger + EngineDriver handshake driver; splitting obscures the phase order
 rust/tools/fixture-tools/src/bin/capture_path_fixture/main.rs::!module
+rust/tools/fixture-tools/src/bin/concentrated_liquidity_capture_gen/main.rs::!module
 rust/tools/fixture-tools/src/bin/generate_aave_adversarial_captures/main.rs::!module
 rust/tools/fixture-tools/src/bin/generate_aave_config_windows/main.rs::!module
 rust/tools/fixture-tools/src/bin/generate_aave_upgrade_windows/main.rs::!module

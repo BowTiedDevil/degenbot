@@ -332,7 +332,7 @@ Production path first, then the offline surface. "TP" = touch points (call/signa
     2 direct entry calls. 3 TP.
 13. `benches/walkmemo_contention.rs:164` — 1 call adds `None`. 1 TP.
 14. Examples: `concentrated_liquidity_cache_lab.rs` (entry calls :95,115,247 + the reader cut-over §4.3),
-    `concentrated_liquidity_solve_replay.rs:154`, `mixed_solve_replay.rs:213`, `concentrated_liquidity_capture_gen.rs:332`,
+    `concentrated_liquidity_solve_replay.rs:154`, `mixed_solve_replay.rs:213`, `tools/fixture-tools/src/bin/concentrated_liquidity_capture_gen/main.rs` (the `derive_and_solve_concentrated_liquidity_piecewise` call),
     `walkmemo_readout.rs:141,162`, `v2_concentrated_liquidity_parity_probe.rs:442` (direct swap call). ~9 TP.
 
 ### 4.2 `degenbot-substrate` (a second production entry consumer — easy to miss)

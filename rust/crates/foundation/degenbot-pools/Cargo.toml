@@ -63,11 +63,12 @@ proptest = "^1.12"
 rayon = { version = "^1.12" }
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
 tempfile = { version = "^3.27" }
-# No `degenbot-rpc` here: the RPC-backed CL harnesses (the network-gated V3
-# mainnet-fixture reproduction and the capture generator) live in
-# `degenbot-rpc`. `degenbot-rpc` depends on this crate, so a dev-dependency
-# from here would close a publish cycle (pools -> rpc -> pools) that no
-# crates.io version can satisfy.
+# No `degenbot-rpc` here: the RPC-backed CL capture generator lives in
+# `degenbot-fixture-tools`, the non-publishable development-tool package, which depends on
+# BOTH this crate and `degenbot-rpc`. `degenbot-rpc` depends on this crate, so a
+# dev-dependency from here would close a publish cycle (pools -> rpc -> pools) that no
+# crates.io version can satisfy -- the tool placement is what breaks that cycle, and no
+# product crate depends on a tool.
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros"] }
 serde_json = "^1.0"
 hex = "^0.4"

@@ -12,37 +12,66 @@ authors.workspace = true
 [lints]
 workspace = true
 
-# Dependency shape: THREE binaries -- the live updater cassette recorder, the Python
-# oracle corpus recorder, and the path-fixture recapture -- are DEFAULT targets of this
-# package (none reads the statement ledger, so no feature may hide them), and the four
-# SQL-ledger binaries need those same crates. Cargo has no per-target dependency
-# selection, so every crate the default binaries link must be a plain edge here; the
-# feature cannot narrow what a default target already needs.
+# Dependency shape: FOUR binaries -- the live updater cassette recorder, the Python
+# oracle corpus recorder, the path-fixture recapture, and the concentrated-liquidity
+# capture generator -- are DEFAULT targets of this package (none reads the statement
+# ledger, so no feature may hide them), and the four SQL-ledger binaries need those same
+# crates. Cargo has no per-target dependency selection, so every crate the default
+# binaries link must be a plain edge here; the feature cannot narrow what a default target
+# already needs.
 #
 # Consequence, stated plainly: the default tree is NO LONGER the package alone. A
 # default `cargo check -p degenbot-fixture-tools --all-targets` links the facade and
-# its graph (alloy, rusqlite, tempfile, serde_json, tokio) exactly as the
+# its graph (alloy, rusqlite, tempfile, serde_json, tokio) plus the two product crates
+# the capture generator reads (`degenbot-pools`, `degenbot-rpc`) exactly as the
 # `fixture-sql-ledger` lane did, and the ledger FEATURE is the only thing the lane
 # still adds. Edges point only from this tool package to product crates; no product
-# crate may depend on a tool.
+# crate may depend on a tool -- which is precisely why the capture generator belongs
+# here: `degenbot-rpc` already depends on `degenbot-pools`, so the generator could not
+# sit beside the kernel whose goldens it produces without closing a publish cycle, and
+# a top-level tool may depend on BOTH.
 #
 # What each edge is for: `alloy` builds the scenario primitives/transports the
 # generators drive AND the recorders' `Address`/`keccak256` handling (plus the
-# recapture's `Address`/`B256` arguments), `rusqlite`
+# recapture's `Address`/`B256` arguments and the capture generator's
+# `Address`/`B256`/`I256`/`U256` pool state), `rusqlite`
 # seeds the throwaway harness DB each recorded chunk runs against, `tempfile` owns
 # those throwaway homes, `serde_json` serializes the seed manifest the live span
 # recorders write beside each cassette (its KEY ORDER is part of the committed
 # bytes, so the edge carries `preserve_order` exactly as the facade's does), the
-# recorders' JSON documents, and the recapture's canonical fixture output (which is
+# recorders' JSON documents, the recapture's canonical fixture output (which is
 # why `preserve_order` matters there too: a re-sorted key order would rewrite every
-# committed fixture's bytes), `serde` carries the corpus recorder's `Serialize`
-# derive, and `tokio` is the recorders' and the recapture's `#[tokio::main]` entry.
+# committed fixture's bytes), and the capture generator's JSONL rows (the CL replay's
+# schema, read back by `concentrated_liquidity_solve_replay`), `serde` carries the
+# corpus recorder's `Serialize` derive, and `tokio` is the recorders' and the
+# recapture's `#[tokio::main]` entry and the capture generator's two throwaway
+# `Runtime::new()` reads.
+#
+# The capture generator's other two edges are its product halves: `degenbot-pools` for
+# the V3 pool state, the tick-word source trait, `v3_simulate_swap`,
+# `build_int_v3_sequence` and the piecewise solver, and `degenbot-rpc` for
+# `AlloyProvider`, the `Slot0Prefix` / `liquidity` reads and `AlloyTickWordSource`.
+# `hashbrown` is the pool-state `HashMap` the registration params take -- the same
+# map type `degenbot-pools` itself uses, which is why its workspace edge (and its
+# `default-hasher`) is the honest one to name rather than `std`'s.
 [dependencies]
 # The umbrella facade owns the fixture schema and the recorders that read it.
 # It also re-exports the three crates the generators import (`degenbot::db`,
 # `degenbot::rpc`, `degenbot::simulation`), so the ledger replay and the scratch
 # EVM arrive through this one edge rather than three more.
 degenbot = { workspace = true }
+
+# The capture generator's two product halves, as their own edges because that is what
+# the source imports (no facade re-export). `degenbot-rpc` depends on `degenbot-pools`,
+# and this package depending on both is the cycle break that let the generator leave
+# `degenbot-rpc`'s example surface (see the header note).
+degenbot-rpc.workspace = true
+degenbot-pools.workspace = true
+
+# The pool-registration params carry a `hashbrown::HashMap` (the map type
+# `degenbot-pools` uses for tick data), so the generator names the same crate and its
+# `default-hasher` feature rather than rebuilding it from `std`'s map.
+hashbrown.workspace = true
 
 # `full` matches the facade's own declaration (the lane's facade edge unifies to it
 # anyway), and it is the honest one to write: the generators use `alloy::primitives`
@@ -62,8 +91,10 @@ serde_json = { version = "^1.0", features = ["preserve_order"] }
 # direct edge the facade example had that this package did not.
 serde = { version = "^1.0", features = ["derive"] }
 
-# The recorders' async entry point (`#[tokio::main]`), with the same features the
-# facade's dev-target graph carried for it. Nothing else here needs it.
+# The recorders' async entry point (`#[tokio::main]`) plus the capture generator's two
+# throwaway `Runtime::new()` reads (its slot0/liquidity pass and the tick-word source it
+# keeps for the backfill), with the same features the facade's dev-target graph carried.
+# Nothing else here needs it.
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros"] }
 
 [features]
@@ -82,13 +113,13 @@ default = []
 # the chain -- a property of the product graph, not of this forward.
 #
 # The feature carries the ledger and NOTHING ELSE. It has no `dep:` entries any
-# more: since the default binaries (the recorders and the recapture) need this
-# package's crates too, they are plain non-optional edges, and `dep:` cannot name a
-# non-optional dependency. That is why the `fixture-sql-ledger` lane differs from the
+# more: since the default binaries (the recorders, the recapture, and the capture
+# generator) need this package's crates too, they are plain non-optional edges, and
+# `dep:` cannot name a non-optional dependency. That is why the `fixture-sql-ledger` lane differs from the
 # `default` lane by exactly the ledger feature.
 sql-ledger = ["degenbot/sql-ledger"]
 
-# The seven programs this package carries, split by whether they touch the
+# The eight programs this package carries, split by whether they touch the
 # statement ledger.
 #
 # FOUR replay their SQL goldens through the statement-ledger wrapper, hence the
@@ -157,3 +188,22 @@ path = "src/bin/record_py_oracle_corpus/main.rs"
 [[bin]]
 name = "capture_path_fixture"
 path = "src/bin/capture_path_fixture/main.rs"
+
+# The concentrated-liquidity capture generator: the fourth default-features target on the
+# same rule -- it opens no statement ledger and no operator DB, so no feature lane may hide
+# it. It is the ONLY sanctioned producer of exact-wei goldens for the CL replay corpus, and
+# it needs a live archive node at the pinned block (there is no offline arm and no
+# `--check`): a run reads the curated V3 pools' slot0/liquidity, backfills their tick maps
+# through `v3_simulate_swap`, builds each pool's production `IntV3TickRangeSequence`, forms
+# and solves the 2-hop all-concentrated-liquidity paths, and writes the JSONL plus a
+# `.block` sidecar. The single optional positional output argument is unchanged; with none,
+# the committed corpus fixture under
+# `rust/crates/foundation/degenbot-pools/tests/fixtures/` is the default, resolved from the
+# repository root (`degenbot_fixture_tools::paths`) instead of the old manifest-relative
+# sibling arithmetic. Its four environment keys (`DEGENBOT_CLCAP_RPC`,
+# `DEGENBOT_CLCAP_BLOCK`, `DEGENBOT_CLCAP_MAX_FETCHES`, `DEGENBOT_CLCAP_PATH_CAP`) and their
+# defaults are unchanged.
+
+[[bin]]
+name = "concentrated_liquidity_capture_gen"
+path = "src/bin/concentrated_liquidity_capture_gen/main.rs"

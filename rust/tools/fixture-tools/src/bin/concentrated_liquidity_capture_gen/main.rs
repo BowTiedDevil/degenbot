@@ -1,5 +1,5 @@
-// Dev/example-only harness: an offline capture generator run by hand against live RPC.
-// Pedantic + restriction lints that production code denies are relaxed here.
+// Run-once fixture generator: stdout/stderr reports ARE its interface, and its
+// eyes-on write path reads clearer as one loop nest than behind extraction helpers.
 #![expect(
     clippy::doc_lazy_continuation,
     clippy::expect_used,
@@ -25,16 +25,53 @@
 //! + golden) to a JSONL consumed by `concentrated_liquidity_solve_replay`. Deterministic,
 //! network-gated source of real heavy-concentrated-liquidity data, no full bot soak.
 //!
-//!   `DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545`,
-//!   `DEGENBOT_CLCAP_BLOCK=<pinned block>`,
-//!   `DEGENBOT_CLCAP_MAX_FETCHES=320`,
-//!   `cargo run -p degenbot-rpc --example concentrated_liquidity_capture_gen [-- <out.jsonl>`
-//!   `cargo run -p degenbot-pools --example concentrated_liquidity_solve_replay <capture.jsonl>`
+//! # Home
 //!
-//! Lives in `degenbot-rpc`, not beside the kernel whose goldens it produces:
-//! the fetch is RPC-backed, and `degenbot-rpc` depends on `degenbot-pools`, so
-//! a dev-dependency from pools would close a publish cycle (pools -> rpc ->
-//! pools) that no crates.io version can satisfy.
+//! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in
+//! `degenbot-rpc`'s `examples/` and not beside the kernel whose goldens it produces. It is
+//! fixture tooling, and the placement is the point: a top-level tool package may depend on
+//! BOTH product crates, while `degenbot-rpc` already depends on `degenbot-pools`, so a
+//! dev-dependency from pools would have closed a publish cycle (pools -> rpc -> pools) that
+//! no crates.io version can satisfy. No product crate depends on a tool, so this arrival adds
+//! no edge in that direction.
+//!
+//! Nothing about the generator changed with the move: the curated pool pins, the pinned-block
+//! handling, the slot0/liquidity reads, the bidirectional backfill and its tick-word fetch cap,
+//! the production `build_int_v3_sequence` / path-formation steps, the solver golden generation,
+//! the JSONL schema, the `.block` sidecar's semantics, the four environment keys with their
+//! defaults and their error behaviour, and the single optional output argument all travelled
+//! with the source. It needs NO feature lane: it opens no statement ledger and no operator
+//! database, so `just check-dev-tools default` is the lane that builds it.
+//!
+//! # Output
+//!
+//! The output argument is unchanged — one optional positional path:
+//!
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --bin concentrated_liquidity_capture_gen \
+//!         -- [<out.jsonl>]
+//!
+//! Without it the generator writes the corpus fixture the offline replay reads,
+//! `rust/crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl`,
+//! resolved from the repository root through `degenbot_fixture_tools::paths`. That is the
+//! identical file the old `CARGO_MANIFEST_DIR`-sibling arithmetic named, but the resolver
+//! returns it by walking the repository's own markers and fails loudly instead of writing into
+//! whichever directory a moved package happens to sit beside. No fixture-home flag was
+//! invented: the corpus file belongs to the pools crate's tests, and a second fixture home is
+//! exactly what this move must not create.
+//!
+//! The write contract is unchanged. Rows are written in path order under the per-block path cap,
+//! and a `.block` sidecar is written beside the output recording the pinned block plus the regen
+//! command — now the tool package/bin form — so the offline fixture stays reproducible. The
+//! sidecar overwrite is the same `fs::write` as before; there is no `--check`, no dry-run arm,
+//! and no test runs this program.
+//!
+//! Environment (the only four keys it reads; `DEGENBOT_CLCAP_RPC` unset aborts with exit 1):
+//!
+//!   `DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545`,
+//!   `DEGENBOT_CLCAP_BLOCK=<pinned block>` (default 25826800),
+//!   `DEGENBOT_CLCAP_MAX_FETCHES=320` (raise it to backfill a denser active set),
+//!   `DEGENBOT_CLCAP_PATH_CAP=12`.
 //!
 //! This generator is the ONLY sanctioned producer of exact-wei goldens
 //! (loop-18 T4): it writes sequences + the current solver's result from ONE
@@ -45,16 +82,18 @@
 //! generator (preferred) or `DR_REPLAY_REGEN=1` on `concentrated_liquidity_solve_replay` for
 //! over-shoot-only stale goldens.
 //!
-//! A `.block` sidecar is written next to the output recording the pinned block
-//! + regen command so the offline fixture is reproducible. Raise
-//! `DEGENBOT_CLCAP_MAX_FETCHES` (default 320) to backfill a denser active set.
+//! The replay that reads the result is `cargo run --locked --manifest-path rust/Cargo.toml
+//! -p degenbot-pools --features capture-fixtures --example concentrated_liquidity_solve_replay
+//! <capture.jsonl>`, wrapped by `just test-golden-replay`.
 
 use hashbrown::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256, U256};
+use degenbot_fixture_tools::paths;
 use degenbot_pools::ConcentratedLiquidityPoolMut;
 use degenbot_pools::FetchedTickWord;
 use degenbot_pools::IntV3TickRangeSequence;
@@ -72,6 +111,29 @@ const MAX_FETCHES: usize = 320; // per-pool tick-word fetch cap, overridable
                                 // via DEGENBOT_CLCAP_MAX_FETCHES so a deep backfill can reach dense active
                                 // sets (a liquid pool's busy region can span thousands of tick words).
 const PATH_CAP: usize = 12; // per-block cap, overridable via DEGENBOT_CLCAP_PATH_CAP
+
+/// The committed capture corpus, repository-relative: the file this program writes when no
+/// output path is given, and the file `just test-golden-replay` reads back. It belongs to
+/// `degenbot-pools`' tests, so it is named in full instead of being derived from this
+/// package's position in the tree.
+const DEFAULT_OUTPUT_RELATIVE: &str =
+    "rust/crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl";
+
+/// [`DEFAULT_OUTPUT_RELATIVE`] under the resolved repository root — the default output path.
+///
+/// An unresolvable root is an error, never a fallback guess: a guessed root would write the
+/// capture into a different tree without failing.
+fn default_output_path() -> Result<PathBuf, String> {
+    paths::repo_relative(DEFAULT_OUTPUT_RELATIVE)
+}
+
+/// The `.block` sidecar body: the pinned block plus the exact command that reproduces the
+/// capture, in the shape the committed sidecars carry.
+fn sidecar_contents(block: u64, max_fetches: usize) -> String {
+    format!(
+        "block={block}\nregen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK={block} DEGENBOT_CLCAP_MAX_FETCHES={max_fetches} cargo run -q -p degenbot-fixture-tools --bin concentrated_liquidity_capture_gen [-- <out.jsonl>]\n"
+    )
+}
 
 // (address, tick_spacing, fee_classic, token0, token1) — liquid UNI V3 pools
 // from the static degenbot DB (block ~25826800). Shared USDC/USDT/DAI/WETH.
@@ -188,16 +250,20 @@ fn main() -> ExitCode {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(25_826_800);
-    // The fixture belongs to `degenbot-pools` (its offline replay gate reads
-    // it), so the default is anchored to that crate: a path relative to this
-    // crate's directory - or to the invocation's CWD - would write it elsewhere.
-    let out = std::env::args().nth(1).unwrap_or_else(|| {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl"
-        )
-        .to_string()
-    });
+    // The fixture belongs to `degenbot-pools` (its offline replay gate reads it), so the
+    // default is that crate's corpus file under the resolved repository root: a path relative
+    // to this package's directory - or to the invocation's CWD - would write it elsewhere.
+    // An explicit argv path wins over the default.
+    let out = match std::env::args().nth(1) {
+        Some(arg) => arg,
+        None => match default_output_path() {
+            Ok(path) => path.display().to_string(),
+            Err(err) => {
+                eprintln!("default output path unresolved: {err}");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
 
     // 1) Slot0+liquidity per pool on a throwaway runtime, then drop.
     let setup: Vec<(U256, I256, U256)> =
@@ -381,11 +447,66 @@ fn main() -> ExitCode {
     eprintln!("---- wrote {n_paths} path(s), {n_profitable} profitable -> {out}");
     // Record the pinned block + regen command in a sidecar so the offline
     // fixture is reproducible and any drift is explainable.
-    let _ = std::fs::write(
-        format!("{out}.block"),
-        format!(
-            "block={block}\nregen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK={block} DEGENBOT_CLCAP_MAX_FETCHES={max_fetches} cargo run -q -p degenbot-rpc --example concentrated_liquidity_capture_gen [-- <out.jsonl>]\n"
-        ),
-    );
+    let _ = std::fs::write(format!("{out}.block"), sidecar_contents(block, max_fetches));
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    // A test module may fail loudly; the binary's own code may not.
+    #![expect(clippy::expect_used)]
+
+    use super::{default_output_path, sidecar_contents, DEFAULT_OUTPUT_RELATIVE};
+    use degenbot_fixture_tools::paths;
+
+    /// Pins the default output: the committed corpus under the resolved repository root,
+    /// spelled out segment by segment, and the corpus the offline replay gate reads.
+    #[test]
+    fn default_output_is_the_committed_pools_corpus_fixture() {
+        let resolved = default_output_path().expect("resolved default output");
+        let root = paths::repo_root().expect("repository root");
+        assert_eq!(resolved, root.join(DEFAULT_OUTPUT_RELATIVE));
+        assert_eq!(
+            resolved,
+            root.join(
+                "rust/crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl"
+            ),
+            "the repository-relative path is spelled out, not derived from `..` arithmetic"
+        );
+        assert_eq!(
+            resolved.extension().and_then(|ext| ext.to_str()),
+            Some("jsonl")
+        );
+        assert!(
+            resolved.is_file(),
+            "the committed corpus fixture exists: {}",
+            resolved.display()
+        );
+        assert!(
+            resolved.with_extension("jsonl.block").is_file(),
+            "the committed sidecar exists beside it: {}",
+            resolved.with_extension("jsonl.block").display()
+        );
+    }
+
+    /// Pins the sidecar's write contract: the pinned block plus the regen command that
+    /// reproduces the capture, naming this package and binary.
+    #[test]
+    fn sidecar_records_the_pinned_block_and_the_tool_command() {
+        let sidecar = sidecar_contents(25_879_446, 320);
+        assert!(
+            sidecar.starts_with("block=25879446\nregen: "),
+            "the block leads the sidecar: {sidecar}"
+        );
+        assert!(
+            sidecar.contains(
+                "DEGENBOT_CLCAP_BLOCK=25879446 DEGENBOT_CLCAP_MAX_FETCHES=320 cargo run -q -p degenbot-fixture-tools --bin concentrated_liquidity_capture_gen [-- <out.jsonl>]"
+            ),
+            "the regen command names the tool package/bin: {sidecar}"
+        );
+        assert!(
+            !sidecar.contains("--example"),
+            "no example invocation survives in the recorded provenance: {sidecar}"
+        );
+    }
 }

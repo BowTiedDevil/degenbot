@@ -14,7 +14,9 @@
 //!   `DR_REPLAY_ITERS=25` ...   // more reps for tighter p95 (default 9)
 //!
 //! Re-reads a capture JSONL produced by the live hook
-//! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`) or by `concentrated_liquidity_capture_gen`, rebuilds
+//! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`) or by the live
+//! `concentrated_liquidity_capture_gen` generator (now
+//! `degenbot-fixture-tools`' `--bin`, the only sanctioned exact-wei producer), rebuilds
 //! each Vec<IntV3TickRangeSequence> from the per-range fields, and re-runs
 //! `solve_concentrated_liquidity_piecewise` — the production all-concentrated-liquidity solver (the exact call
 //! `mixed::solve_path` makes, initial input ONE) — OFFLINE, with no bot / RPC /

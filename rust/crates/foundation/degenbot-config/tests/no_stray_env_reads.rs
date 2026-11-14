@@ -142,6 +142,26 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
                 "TEST_BASE_ARCHIVE_NODE_HTTP_URI",
             ][..],
         );
+
+        // The concentrated-liquidity capture generator, same class and same cause: it left
+        // `degenbot-rpc`'s `examples/`, which this scan skips as a test surface, so its four
+        // pre-existing keys are now visible to the production-source scan. All four are the
+        // generator's documented shell contract -- the required endpoint, the pinned block,
+        // the per-pool tick-word fetch cap, and the per-block path cap -- read once at
+        // start-up with the same defaults and the same parse-and-fall-back behavior they have
+        // always had. Enumerated here rather than routed through the loader: it is a
+        // standalone live-node tool that opens no operator DB and reads no typed config key,
+        // and the loader would hand it the config crate's dependency graph for no behavioral
+        // gain.
+        m.insert(
+            "tools/fixture-tools/src/bin/concentrated_liquidity_capture_gen/main.rs",
+            &[
+                "DEGENBOT_CLCAP_RPC",
+                "DEGENBOT_CLCAP_BLOCK",
+                "DEGENBOT_CLCAP_MAX_FETCHES",
+                "DEGENBOT_CLCAP_PATH_CAP",
+            ][..],
+        );
         m.insert(
             // (3) stance: the reset-lock flock test spawns a child test
             // binary that takes the real lock before the parent kills it —
