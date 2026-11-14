@@ -52,7 +52,19 @@ they need a writer exactly as the updater shells do: `DegenbotDb::open_for_write
 seeds the harness DB each recorded chunk applies to, and
 `LedgerDb::open_for_writes` opens the DB the SQL goldens are dumped from.
 
-The boundary is the rule, not a description of today's two programs: **every
+The same relocation carried the two LIVE Aave span recorders
+
+(`generate_aave_upgrade_windows`, `generate_aave_config_windows`) into this
+
+package. They open the same two kinds of throwaway harness DB — one per recorded
+
+window, one per golden replay — so they sit inside this boundary unchanged and
+
+raise no new question: the exemption is about where the write open lands, not
+
+about which program makes it.
+
+The boundary is the rule, not a description of today's four programs: **every
 write open in `degenbot-fixture-tools` targets a throwaway harness DB under a
 `TempDir`.** The artifacts those programs produce are written by ordinary
 `fs::write` into the corpus homes, and `--check` writes nothing at all, so the
@@ -113,11 +125,13 @@ guards only the swap.
   turn `writer` on, and every other crate compiles against the read-only
   `degenbot-db` surface. `degenbot-fixture-tools` (D2's addendum) is the one
   writer-enabled package outside that set, and it is not part of a default
-  workspace build at all: its two capture generators are `[[bin]]` targets under
+  workspace build at all: its four programs — the two node-free capture
+
+  generators and the two live span recorders — are `[[bin]]` targets under
   `required-features = ["sql-ledger"]`, so only
   `just check-dev-tools fixture-sql-ledger` and the two capture recipes build
   them, deliberately.
-- The fixture slice is recognition, not a new write path. Those two programs
+- The fixture slice is recognition, not a new write path. Those programs
   always opened throwaway harness DBs for writing; while they were facade
   examples the fence never asked the question, and the relocation into
   production `src` is what made it ask. The answer — temporary harness DBs only,
@@ -125,7 +139,17 @@ guards only the swap.
   route is `just test-rust-nextest -p degenbot -E
   'test(only_the_updater_shells_open_the_db_for_writes)'` (the fence) plus
   `just check-evm-captures` / `just check-aave-captures` (the programs still
-  reproduce the committed corpus byte-for-byte offline).
+  reproduce the committed corpus byte-for-byte offline). The two live span
+
+  recorders have no offline `--check` proof of their own: both need an endpoint,
+
+  so their offline verification is the compile lane
+
+  (`just check-dev-tools fixture-sql-ledger`) plus the wave-4/wave-5 replay
+
+  suites over the committed cassettes, and a live re-recording is reported as
+
+  unexecuted, never as passing.
 - A probe that references a write fn from a crate without the feature fails to
   compile — the feature is a real compile-time fence for a crate built in
   isolation, and the source gate covers the unified workspace build.

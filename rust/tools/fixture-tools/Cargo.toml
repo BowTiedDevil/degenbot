@@ -17,13 +17,16 @@ workspace = true
 # only from this tool package to product crates; no product crate may depend on
 # a tool.
 #
-# The three crates beside `degenbot` are the ones the SQL-ledger binaries actually
+# The four crates beside `degenbot` are the ones the SQL-ledger binaries actually
 # link, and they are optional for the same reason: `alloy` builds the scenario
 # primitives/transports the generators drive, `rusqlite` seeds the throwaway
-# harness DB each recorded chunk runs against, and `tempfile` owns those throwaway
-# homes. Cargo has no per-target dependency selection, so a `[[bin]]`-only need
-# has to be a feature-activated optional edge — otherwise the default tree stops
-# being the package alone (§6.2's scaffold claim).
+# harness DB each recorded chunk runs against, `tempfile` owns those throwaway
+# homes, and `serde_json` serializes the seed manifest the live span recorders
+# write beside each cassette (its KEY ORDER is part of the committed bytes, so the
+# edge carries `preserve_order` exactly as the facade's does). Cargo has no
+# per-target dependency selection, so a `[[bin]]`-only need has to be a
+# feature-activated optional edge — otherwise the default tree stops being the
+# package alone (§6.2's scaffold claim).
 [dependencies]
 # The umbrella facade owns the fixture schema and the recorders that read it.
 # It also re-exports the three crates the generators import (`degenbot::db`,
@@ -38,6 +41,11 @@ degenbot = { workspace = true, optional = true }
 alloy = { version = "^2.5", features = ["full"], optional = true }
 rusqlite = { version = "^0.42", optional = true }
 tempfile = { version = "^3.27", optional = true }
+
+# The seed manifest (`<window>.seed.json`) is `serde_json` output, and the offline
+# replay suites read it back; `preserve_order` keeps the struct-literal key order the
+# committed artifacts already carry instead of sorting it into a `BTreeMap` order.
+serde_json = { version = "^1.0", features = ["preserve_order"], optional = true }
 
 [features]
 default = []
@@ -58,11 +66,18 @@ default = []
 # fixture-tools `[[bin]]` builds only under this feature, so this is the only
 # place its `alloy` / `rusqlite` / `tempfile` edges can be turned on. Deleting
 # them would not make the lane lighter -- it would make the lane unbuildable.
-sql-ledger = ["degenbot/sql-ledger", "dep:alloy", "dep:rusqlite", "dep:tempfile"]
+sql-ledger = [
+    "degenbot/sql-ledger",
+    "dep:alloy",
+    "dep:rusqlite",
+    "dep:tempfile",
+    "dep:serde_json",
+]
 
-# The two offline capture generators. Both replay their SQL goldens through the
-# statement-ledger wrapper, hence the `sql-ledger` requirement -- the same
-# requirement their `[[example]]` stanzas carried in the facade before the move.
+# The four programs this package carries. All of them replay their SQL goldens
+# through the statement-ledger wrapper, hence the `sql-ledger` requirement -- the
+# same requirement their `[[example]]` stanzas carried in the facade before the
+# move, so a default check skips every one of them deliberately.
 [[bin]]
 name = "generate_evm_oracle_captures"
 path = "src/bin/generate_evm_oracle_captures/main.rs"
@@ -71,4 +86,19 @@ required-features = ["sql-ledger"]
 [[bin]]
 name = "generate_aave_adversarial_captures"
 path = "src/bin/generate_aave_adversarial_captures/main.rs"
+required-features = ["sql-ledger"]
+
+# The two LIVE span recorders: each drives the real `run_aave_update` chunk loop over
+# a `RecordingTransport` against a node, then replays the recorded bytes through the
+# statement ledger. Their `--check` arm is the same offline drift gate shape as the
+# two generators above, but a full run (and therefore the drift proof) needs a live
+# endpoint -- report them as compile-verified, never as live-verified.
+[[bin]]
+name = "generate_aave_upgrade_windows"
+path = "src/bin/generate_aave_upgrade_windows/main.rs"
+required-features = ["sql-ledger"]
+
+[[bin]]
+name = "generate_aave_config_windows"
+path = "src/bin/generate_aave_config_windows/main.rs"
 required-features = ["sql-ledger"]

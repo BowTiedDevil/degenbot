@@ -1089,9 +1089,10 @@ check-rust-all-features:
 #
 # Every later tool binary joins the lane that owns its features through its own
 # `required-features`, so that lane builds it on purpose and every other lane
-# skips it on purpose. The first two have landed: the offline capture
-# generators `generate_evm_oracle_captures` and
-# `generate_aave_adversarial_captures` are `[[bin]]` targets of
+# skips it on purpose. Four have landed: the offline capture generators
+# `generate_evm_oracle_captures` / `generate_aave_adversarial_captures` and the
+# live span recorders `generate_aave_upgrade_windows` /
+# `generate_aave_config_windows` are `[[bin]]` targets of
 # `degenbot-fixture-tools` under `required-features = ["sql-ledger"]`, so the
 # `fixture-sql-ledger` lane compiles them and the `default` lane skips them
 # without failing on the `cfg`'d-out ledger module. With no argument the recipe
@@ -1110,7 +1111,7 @@ check-dev-tools *lanes:
       default                  degenbot-fixture-tools, degenbot-solver-lab, and
                                degenbot-engine-lab at support-library defaults
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
-                               (builds the two capture-generator [[bin]]s too)
+                               (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
       solver-cache-lab         degenbot-solver-lab --features capture-fixtures,cache-lab
       solver-hotpath           degenbot-solver-lab --features hotpath

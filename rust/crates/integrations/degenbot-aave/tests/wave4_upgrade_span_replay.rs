@@ -1,5 +1,6 @@
 //! The wave-4 upgrade-span replay gate: every window the recorder captured
-//! (`generate_aave_upgrade_windows`) replays through the REAL
+//! (`generate_aave_upgrade_windows`, a `degenbot-fixture-tools` `[[bin]]` under the
+//! `sql-ledger` lane) replays through the REAL
 //! `run_aave_update_on_db` multi-chunk loop over the committed cassette BYTES
 //! and must reproduce BOTH committed SQL goldens byte-for-byte, with the
 //! chunk-committed count and the served round-trip count pinned as

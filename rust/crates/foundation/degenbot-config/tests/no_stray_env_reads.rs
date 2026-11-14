@@ -107,6 +107,25 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/foundation/degenbot-executor/src/grammar_walker/shapes/two_hop_seed_v4.rs",
             &["T1_CAPTURE"][..], // executor shape dev-capture gate
         );
+
+        // Same class as the knobs above, on a relocated surface: the two Aave
+        // window recorders now owned by the fixture-tool crate (their keys live
+        // under the workspace `tools/` tree, not `crates/`). Leaving `examples/`,
+        // which this scan skips as a test surface, exposed their pre-existing
+        // explicit `--node` fallback to the production-source scan. The read is
+        // the recorder's documented invocation default, consulted only when the
+        // flag and its value are absent: a standalone offline tool's shell
+        // contract, not a second operator-config authority. Enumerated here
+        // rather than routed through the loader, which would hand a fixture tool
+        // the config crate's dependencies for no behavioural gain.
+        m.insert(
+            "tools/fixture-tools/src/bin/generate_aave_upgrade_windows/main.rs",
+            &["DEGENBOT_RPC_HTTP_CHAINID_1"][..],
+        );
+        m.insert(
+            "tools/fixture-tools/src/bin/generate_aave_config_windows/main.rs",
+            &["DEGENBOT_RPC_HTTP_CHAINID_1"][..],
+        );
         m.insert(
             // (3) stance: the reset-lock flock test spawns a child test
             // binary that takes the real lock before the parent kills it —

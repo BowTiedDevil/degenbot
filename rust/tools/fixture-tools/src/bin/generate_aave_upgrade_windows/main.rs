@@ -1,35 +1,49 @@
-//! Record the wave-5 Aave config-dispatch span cassettes against the live
-//! chain, or run the drift gate.
+//! Record the wave-4 Aave upgrade-span cassettes against the live chain, or
+//! run the drift gate.
 //!
-//! These spans pin the six formerly-fenced config-dispatch events
-//! (`ProxyCreated`, `AddressSet`, `PoolUpdated`, `PoolConfiguratorUpdated`,
-//! `PoolDataProviderUpdated`) with golden coverage. Each window drives the
-//! REAL `run_aave_update` multi-chunk loop over the recording transport
-//! (`degenbot_rpc::cassette::RecordingTransport`), so the cassette carries
-//! exactly the RPC surface an offline replay re-issues. The warm-boot
-//! substrate comes from the chain's current reserve set
+//! Each window drives the REAL `run_aave_update` multi-chunk loop over the
+//! recording transport (`degenbot_rpc::cassette::RecordingTransport`), so the
+//! cassette carries exactly the RPC surface an offline replay re-issues. The
+//! warm-boot substrate comes from the chain's current reserve set
 //! (`resolve_aave_substrate` reads the Pool's `getReservesList()`), not from a
-//! window's sparse Pool logs.
+//! window's sparse Pool logs: an upgrade window's Pool pass carries almost no
+//! logs, and a span-log-derived reserve set would leave the harness DB empty.
 //!
 //! Per window: seed a throwaway harness DB, run the chunk loop over the
 //! recorder, flush the cassette's canonical bytes; then replay those bytes
 //! through the statement-ledger wrapper to emit the per-chunk statement
 //! ledger + final canonical DB dump. Every window is recorded TWICE and the
-//! two passes must be byte-identical (cassette, ledger, dump).
+//! two passes must be byte-identical (cassette, ledger, dump) — a
+//! nondeterministic capture is a defect.
 //!
-//! The substrate resolution block defaults to the window cursor so a
-//! contract-migration event's update-by-old-address path finds the
-//! pre-window row; a window may pin a later block when the cursor predates
-//! the contract set (the bootstrap window).
+//! # Home
+//!
+//! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in the
+//! facade's `examples/`: it is fixture tooling, not a consumer starting point (the epic's
+//! taxonomy). Nothing about the recording is changed by that move — the windows, the real
+//! `run_aave_update` loops, the recorder writer, the statement-ledger replay, the two-pass
+//! determinism gate, the chain id / block pins / addresses / provenance string, and the
+//! argv surface all travel with the source. What changed is the invocation and the *path
+//! anchor*: the old source resolved the corpus as `CARGO_MANIFEST_DIR/../../../..`, which
+//! names a different directory from `rust/tools/fixture-tools`, so the homes are now
+//! resolved once (`degenbot_fixture_tools::paths`) from the repository root's own markers.
 //!
 //! Usage:
 //!
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-//!         --features degenbot/sql-ledger \
-//!         --example generate_aave_config_windows
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --features sql-ledger \
+//!         --bin generate_aave_upgrade_windows [-- --check] [--node <uri>]
 //!
-//! `--check <cassette_home> <golden_home>` regenerates and exits 1 on drift.
-//! `--node <uri>` overrides the default endpoint.
+//! The `sql-ledger` lane feature is REQUIRED (the `[[bin]]` entry's required-features —
+//! without it the `degenbot::db::sql_ledger` import fails E0432). Default mode (re)writes
+//! `tests/fixtures/cassettes/wave4/` + `tests/fixtures/sql_goldens/wave4/`.
+//!
+//! `--check <cassette_home> <golden_home>` regenerates and exits 1 on drift, writing
+//! nothing. The two positional homes are accepted and ignored exactly as they were before
+//! the move (the program derives them from the resolver); `--fixtures-home <dir>` is the
+//! argument that DOES move them, which is how the drift gate's red path is demonstrated
+//! against a copy without touching the committed corpus. `--node <uri>` overrides the
+//! default endpoint.
 #![expect(
     clippy::print_stdout,
     clippy::print_stderr,
@@ -47,40 +61,38 @@ use degenbot::aave::updater::aave_fetch::resolve_aave_substrate;
 use degenbot::aave::updater::{
     run_aave_update, run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy,
 };
+use degenbot::db::sql_ledger::LedgerDb;
 use degenbot::db::DegenbotDb;
 use degenbot::rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
+use degenbot::rpc::cassette_replay::CassetteReplayTransport;
 use degenbot::rpc::provider::AlloyProvider;
-use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
-use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_fixture_tools::{ledger, paths};
 use tempfile::TempDir;
 
-/// The default recording endpoint (overridden by `--node` or the configured
-/// node resolution `DEGENBOT_RPC_HTTP_CHAINID_1`).
+/// The default recording endpoint: an archive reth serving full-history
+/// `eth_getLogs` + historical `eth_call`/`eth_getStorageAt`. `--node`
+/// overrides it; `DEGENBOT_RPC_HTTP_CHAINID_1` overrides the default too (the
+/// configured-node resolution), so the recorder is not pinned to one host.
 const DEFAULT_NODE: &str = "http://localhost:8545/";
-
 /// The chain every window records (mainnet).
 const CHAIN_ID: i64 = 1;
-
 /// The provenance source string written into every cassette (fixed so
-/// regeneration is byte-identical).
+/// regeneration is byte-identical; the recording node is the public gateway).
 const PROVENANCE_SOURCE: &str = "reth/v2.7.0-3d592ec/x86_64-unknown-linux-gnu";
-
 /// The market name the seed stamps (the on-chain `getMarketId()` return).
 const MARKET_NAME: &str = "Aave Ethereum Market";
-
 /// The Aave V3 Ethereum bootstrap block (the market row's seed stamp).
 const BOOTSTRAP_BLOCK: i64 = 16_291_070;
-
 /// The `PoolAddressesProvider` (the substrate resolver's entry point).
 const POOL_ADDRESS_PROVIDER: &str = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e";
-
 /// The chain's GHO token (the reserve whose underlying it is carries the
 /// GHO-vToken FK link).
 const GHO_TOKEN: &str = "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f";
 
-/// The tables one Aave chunk apply touches, in the dump's fixed order.
+/// The tables one Aave chunk apply touches, in the dump's fixed
+/// (alphabetical) order.
 const DUMP_TABLES: &[&str] = &[
     "aave_gho_tokens",
     "aave_v3_asset_configs",
@@ -95,61 +107,64 @@ const DUMP_TABLES: &[&str] = &[
     "erc20_tokens",
 ];
 
-/// One recording window: the market cursor, the loop chunk size, the run's
-/// inclusive end block, and the optional substrate-resolution block.
+/// One recording window: the market cursor, the loop chunk size, and the
+/// run's inclusive end block.
 struct Window {
     name: &'static str,
     /// The seeded `last_update_block`; the run starts at `cursor + 1`.
     cursor: u64,
     chunk_size: u64,
     to_block: u64,
-    /// The block the warm-boot substrate resolves at; `None` means the cursor.
-    substrate_at: Option<u64>,
 }
 
-/// The three wave-5 config-dispatch windows.
+/// The six wave-4 windows, in the recording order (cheapest first).
 const WINDOWS: &[Window] = &[
-    // The `PoolDataProviderUpdated` shape: the transaction at block 20,398,674
-    // rotates the Pool implementation, the configurator implementation, and
-    // the data provider. The cursor pins the substrate resolution one block
-    // before the event, so the data-provider update-by-old-address path finds
-    // the pre-window row.
     Window {
-        name: "w5_aave_pool_data_provider_updated",
-        cursor: 20_398_668,
-        chunk_size: 13,
-        to_block: 20_398_680,
-        substrate_at: None,
+        name: "w4_aave_pre_upgrade_control",
+        cursor: 22_839_352,
+        chunk_size: 5,
+        to_block: 22_839_361,
     },
-    // The `AddressSet` shape: the block 20,977,092 transaction rotates the
-    // Pool implementation (a `PoolUpdated`) and registers a fresh
-    // `AddressSet` id (`MOCK_STABLE_DEBT`) — an insert (`old == 0`). No
-    // mainnet rotation (`old != 0`) exists to pin (see the span map).
     Window {
-        name: "w5_aave_address_set_registration",
-        cursor: 20_977_086,
-        chunk_size: 11,
-        to_block: 20_977_096,
-        substrate_at: None,
+        name: "w4_aave_atoken_upgrade_in_chunk",
+        cursor: 18_870_590,
+        chunk_size: 5,
+        to_block: 18_870_599,
     },
-    // The `ProxyCreated` shape: the bootstrap deployment emitted the two
-    // resolvable proxy creations (the `POOL` and `POOL_CONFIGURATOR` proxies)
-    // plus their paired `PoolUpdated`/`PoolConfiguratorUpdated` at blocks
-    // 16,291,127 and 16,291,130. The cursor pins the run to start just before
-    // them; the window ends at 16,291,135 so it EXCLUDES the third
-    // `ProxyCreated` at 16,291,136 (a non-ASCII id the resolver cannot name —
-    // it aborts loudly by policy, the S2 arm).
-    //
-    // The substrate resolves 74 blocks later: at the cursor the Pool /
-    // configurator / data-provider proxies do not all exist yet, so the
-    // resolver's getter calls would return empty. The later block carries the
-    // same proxy addresses and a well-formed reserve set.
     Window {
-        name: "w5_aave_bootstrap_proxy_created",
-        cursor: 16_291_126,
-        chunk_size: 10,
-        to_block: 16_291_135,
-        substrate_at: Some(16_291_200),
+        name: "w4_aave_upgrade_plus_same_block_config",
+        cursor: 23_088_580,
+        chunk_size: 5,
+        to_block: 23_088_589,
+    },
+    Window {
+        name: "w4_aave_multi_upgrade_one_chunk",
+        cursor: 24_247_923,
+        chunk_size: 5,
+        to_block: 24_247_931,
+    },
+    Window {
+        name: "w4_aave_gho_deprecation_at_chunk_boundary",
+        cursor: 22_839_357,
+        chunk_size: 5,
+        to_block: 22_839_366,
+    },
+    // The per-tx GHO vToken revision re-resolve pin (UPGRADE-MAP.md surface
+    // #7). The deprecation upgrade tx (block 22,839,362) is INTERIOR to chunk
+    // 1, and the chain's FIRST post-upgrade GHO vToken Mint (a borrow — the
+    // discount pre-pass's trigger log) lands 5,867 blocks later at 22,845,229
+    // IN THE SAME CHUNK; the wide chunk span is forced by that on-chain gap
+    // and is why this window dwarfs the five-block siblings. A chunk-start
+    // revision snapshot would serve the pre-upgrade revision (3) to the
+    // post-upgrade tx's discount pre-pass and take the getDiscountPercent RPC
+    // branch; the per-tx re-resolve reads the applied revision (4) and takes
+    // the deprecated-zero path with no RPC — the recorded surface
+    // distinguishes the two, which no five-block window can.
+    Window {
+        name: "w4_aave_gho_deprecation_then_discount_read_in_chunk",
+        cursor: 22_839_357,
+        chunk_size: 5_880,
+        to_block: 22_845_245,
     },
 ];
 
@@ -161,15 +176,17 @@ struct WindowArtifacts {
     ledger: String,
     dump: String,
     /// The seed manifest: the substrate + cursor the offline replay seeds
-    /// from.
+    /// from. Without it the replay cannot reconstruct the exact harness DB
+    /// (block-resolved contract addresses + the chain-current reserve set).
     seed: String,
 }
 
 /// Seed the harness DB the chunk loop bootstraps from: the market row (at the
 /// bootstrap stamp), the `POOL_ADDRESS_PROVIDER` row, the warm-boot contract
-/// rows with their chain-resolved revisions, the cursor, and the resolved
+/// rows with their chain-resolved revisions, the cursor, and the chain-current
 /// reserve set (each reserve's erc20 rows + `aave_v3_assets` row). The GHO
-/// reserve carries the GHO-vToken FK link. Returns `(db path, market id)`.
+/// reserve carries the GHO-vToken FK link, so the discount pre-pass resolves
+/// the GHO vToken. Returns `(db path, market id)`.
 fn seed_db(
     dir: &Path,
     file_name: &str,
@@ -266,6 +283,10 @@ fn seed_db(
                 market_id,
                 underlying_id,
                 a_token_id,
+                // The chain's aToken/vToken revision at the window is
+                // resolved by the config dispatch from the recorded
+                // `Upgraded` answers; the seeded value is the pre-window era
+                // revision every non-upgraded asset keeps.
                 1,
                 v_token_id,
                 1,
@@ -285,15 +306,21 @@ fn seed_db(
 fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
     let ap: Address = POOL_ADDRESS_PROVIDER.parse().expect("AP literal");
     let runtime = degenbot::core::runtime::get_runtime();
-    let substrate_block = window.substrate_at.unwrap_or(window.cursor);
+    // Side-channel substrate resolution (NOT recorded): the chain-current
+    // reserve set + the contract addresses + revisions.
     let substrate = runtime.block_on(async {
         let side = AlloyProvider::new(node_uri, 3)
             .await
             .expect("side-channel provider");
-        resolve_aave_substrate(&side, ap, Some(substrate_block))
+        resolve_aave_substrate(&side, ap, Some(window.cursor))
             .await
             .expect("substrate resolution")
     });
+    assert!(
+        !substrate.reserves.is_empty(),
+        "{}: the chain-current reserve set must be non-empty",
+        window.name
+    );
 
     let recorder = runtime
         .block_on(RecordingTransport::connect(node_uri))
@@ -325,6 +352,8 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
         u64::try_from(CHAIN_ID).expect("chain id fits u64"),
         CassetteProvenance {
             source: PROVENANCE_SOURCE.to_string(),
+            // Fixed epoch timestamp: the cassette is committed, so the
+            // capture time must not vary between regenerations.
             recorded_at: rfc3339_utc(0),
             span: CassetteSpan {
                 from_block: window.cursor + 1,
@@ -334,6 +363,7 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
     );
     let cassette_bytes = cassette.canonical_bytes().expect("canonical bytes");
 
+    // The golden pass: replay the cassette bytes through the statement ledger.
     let parsed = Cassette::from_json_bytes(&cassette_bytes).expect("reparse");
     let replay = CassetteReplayTransport::new(parsed).as_alloy_provider();
     let dir2 = TempDir::new().expect("golden temp dir");
@@ -355,11 +385,7 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
         },
     )
     .unwrap_or_else(|e| panic!("{}: golden replay must commit cleanly: {e}", window.name));
-    let records = ledger.records().expect("the capture session is armed");
-    let ledger_json = ledger_golden_json(&records);
-    let conn = ledger.db().lock();
-    let dump_json = dump_tables_golden_json(&conn, DUMP_TABLES).expect("dump");
-    drop(conn);
+    let (ledger_json, dump_json) = ledger::goldens(&ledger, DUMP_TABLES).expect("goldens");
 
     WindowArtifacts {
         name: window.name,
@@ -367,16 +393,16 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
         cassette: cassette_bytes,
         ledger: ledger_json,
         dump: dump_json,
-        seed: seed_manifest(&substrate, window, substrate_block),
+        seed: seed_manifest(&substrate, window),
     }
 }
 
-/// Serialize the seed manifest: the substrate and the window's cursor/chunk/to
+/// Serialize the seed manifest: the substrate (block-resolved contract
+/// addresses + revisions + the reserve set) and the window's cursor/chunk/to
 /// params. The offline replay reads it to rebuild the harness DB.
 fn seed_manifest(
     substrate: &degenbot::aave::updater::aave_fetch::AaveSubstrate,
     window: &Window,
-    substrate_block: u64,
 ) -> String {
     let reserves: Vec<serde_json::Value> = substrate
         .reserves
@@ -394,7 +420,6 @@ fn seed_manifest(
         "cursor": window.cursor,
         "chunk_size": window.chunk_size,
         "to_block": window.to_block,
-        "substrate_block": substrate_block,
         "pool": substrate.pool.to_checksum(None),
         "configurator": substrate.configurator.to_checksum(None),
         "price_oracle": substrate.price_oracle.to_checksum(None),
@@ -412,13 +437,18 @@ fn generate_all(node_uri: &str) -> Vec<WindowArtifacts> {
     WINDOWS.iter().map(|w| record_window(node_uri, w)).collect()
 }
 
-fn home() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..")
-}
-
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let check = args.iter().any(|a| a == "--check");
+    // The corpus home is resolved ONCE, and before the recording: a bad anchor must fail
+    // before two full live passes rather than after them.
+    let home = match paths::fixtures_home_from_args(&args) {
+        Ok(home) => home,
+        Err(err) => {
+            eprintln!("ARGUMENT ERROR: {err}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     let node_uri = args.iter().position(|a| a == "--node").map_or_else(
         || {
             std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1")
@@ -426,7 +456,7 @@ fn main() -> std::process::ExitCode {
         },
         |i| args[i + 1].clone(),
     );
-    println!("wave-5 aave config-dispatch span recorder (node {node_uri})");
+    println!("wave-4 aave upgrade-span recorder (node {node_uri})");
 
     println!("pass 1 ...");
     let pass1 = generate_all(&node_uri);
@@ -458,12 +488,12 @@ fn main() -> std::process::ExitCode {
         );
     }
 
-    let cassette_home = home().join("tests/fixtures/cassettes/wave5");
-    let golden_home = home().join("tests/fixtures/sql_goldens/wave5");
+    let cassette_home = home.join("cassettes/wave4");
+    let golden_home = home.join("sql_goldens/wave4");
     if check {
         let mut drifted = 0usize;
         for a in &pass1 {
-            for (path, produced) in [
+            let checks = [
                 (
                     cassette_home.join(format!("{}.json", a.name)),
                     a.cassette.as_slice(),
@@ -480,22 +510,11 @@ fn main() -> std::process::ExitCode {
                     golden_home.join(format!("{}.seed.json", a.name)),
                     a.seed.as_bytes(),
                 ),
-            ] {
-                match std::fs::read(&path) {
-                    Ok(committed) if committed == produced => {}
-                    Ok(_) => {
-                        eprintln!("DRIFT: {}", path.display());
-                        drifted += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("MISSING: {} ({e})", path.display());
-                        drifted += 1;
-                    }
-                }
-            }
+            ];
+            drifted += paths::report_drift(&checks);
         }
         if drifted == 0 {
-            println!("--check: all committed wave-5 artifacts byte-identical");
+            println!("--check: all committed wave-4 artifacts byte-identical");
             std::process::ExitCode::SUCCESS
         } else {
             eprintln!("--check: {drifted} artifact(s) drifted");

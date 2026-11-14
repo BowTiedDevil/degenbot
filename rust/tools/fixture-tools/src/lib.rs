@@ -29,13 +29,15 @@
 //! feature or dependency redesign. `cargo tree` here proves which forwards are active; it
 //! does not prove transitive absence.
 //!
-//! Lane feature: `sql-ledger`. The two capture generators this package currently carries
-//! (`generate_evm_oracle_captures`, `generate_aave_adversarial_captures`) build only under
-//! it — each declares its own `[[bin]] required-features` — which is why the lane, not the
+//! Lane feature: `sql-ledger`. The four programs this package currently carries — the two
+//! offline capture generators (`generate_evm_oracle_captures`,
+//! `generate_aave_adversarial_captures`) and the two live span recorders
+//! (`generate_aave_upgrade_windows`, `generate_aave_config_windows`) — build only under it,
+//! each declaring its own `[[bin]] required-features`, which is why the lane, not the
 //! package, is what `just check-dev-tools fixture-sql-ledger` checks. That is a statement
-//! about today's two binaries, not about the package: the fixture migrations still to come
-//! add programs with their own feature requirements, and this sentence must be re-read
-//! then rather than inherited.
+//! about today's four binaries, not about the package: the fixture migrations still to come
+//! add programs with their own feature requirements, and this sentence must be re-read then
+//! rather than inherited.
 
 pub mod paths;
 

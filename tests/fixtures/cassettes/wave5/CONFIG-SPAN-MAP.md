@@ -102,8 +102,8 @@ scaled-token set, discount config) plus the config-dispatch `eth_call`s:
 
 ## Goldens
 
-Recorded by `cargo run -p degenbot --features degenbot/sql-ledger --example
-generate_aave_config_windows -- --node <uri>`: cassette under
+Recorded by `cargo run --manifest-path rust/Cargo.toml -p degenbot-fixture-tools
+--features sql-ledger --bin generate_aave_config_windows -- --node <uri>`: cassette under
 `tests/fixtures/cassettes/wave5/`, statement-ledger + db-dump + seed manifest
 under `tests/fixtures/sql_goldens/wave5/`. The recorder runs every window
 twice and aborts unless both passes are byte-identical. `--check` regenerates

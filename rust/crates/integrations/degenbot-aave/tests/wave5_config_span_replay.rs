@@ -1,5 +1,6 @@
 //! The wave-5 config-dispatch span replay gate: the three spans the recorder
-//! captured (`generate_aave_config_windows`) replay through the REAL
+//! captured (`generate_aave_config_windows`, a `degenbot-fixture-tools` `[[bin]]` under
+//! the `sql-ledger` lane) replay through the REAL
 //! `run_aave_update_on_db` single-chunk loop over the committed cassette
 //! BYTES and must reproduce BOTH committed SQL goldens byte-for-byte, with
 //! the chunk-committed count and the served round-trip count pinned as

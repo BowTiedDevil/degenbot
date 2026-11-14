@@ -2742,6 +2742,7 @@ dependencies = [
  "alloy",
  "degenbot",
  "rusqlite",
+ "serde_json",
  "tempfile",
 ]
 
