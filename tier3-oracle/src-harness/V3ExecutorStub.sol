@@ -225,18 +225,22 @@ contract PoolV3 {
 
         sqrtPriceX96 = next;
 
-        bytes memory balanceCheck = abi.encodeWithSignature("balanceOf(address)", address(this));
-        uint256 balBefore = _erc20Balance(token0, balanceCheck);
-                // Real v3-core calls back `msg.sender` (the entity that initiated the swap),
+        // Real v3-core calls back `msg.sender` (the entity that initiated the swap),
         // NOT the `recipient`. The composer may set `recipient` to the PoolManager
         // (V4-out paths) so the pool output feeds the PM delta; calling back the
         // recipient would misfire at the PM, which has no `uniswapV3SwapCallback`.
+        address inputToken = zeroForOne ? token0 : token1;
+        uint256 expectedInput = zeroForOne ? uint256(amount0) : uint256(amount1);
+        // Snapshot the INPUT token only, after the output left: v3-core's balance
+        // delta can only be taken this way, since a callback-funded input arriving
+        // before the snapshot would hide the payment it is meant to prove.
+        bytes memory balanceCheck = abi.encodeWithSignature("balanceOf(address)", address(this));
+        uint256 inputBefore = _erc20Balance(inputToken, balanceCheck);
         IUniswapV3Callback(msg.sender).uniswapV3SwapCallback(amount0, amount1, data);
-        uint256 balAfter = _erc20Balance(token0, balanceCheck);
-        // IIA: the callback must have paid the input into the pool.
-        uint256 expected = zeroForOne ? uint256(amount0) : 0;
-        require(balBefore + expected <= balAfter, "IIA");
-        emit SwapV3(zeroForOne ? token0 : token1, amountOut, sqrtPriceX96, amountSpecified);
+        uint256 inputAfter = _erc20Balance(inputToken, balanceCheck);
+        // IIA: the callback must have paid the input token into the pool.
+        require(inputBefore + expectedInput <= inputAfter, "IIA");
+        emit SwapV3(inputToken, amountOut, sqrtPriceX96, amountSpecified);
     }
 
     event SwapV3(address inputToken, uint256 amountOut, uint160 sqrtPriceX96, int256 amountSpecified);
@@ -258,14 +262,23 @@ interface IV3ExecLike {
     function token1() external view returns (address);
 }
 contract TestV3SwapDriver {
+    /// Input units withheld from the callback payment; 0 (the default) pays the
+    /// positive delta exactly. A non-zero value is the pool's negative control:
+    /// the withheld amount is exactly the shortfall, so an `IIA` revert proves
+    /// the pool checked the payment rather than a disabled callback or a
+    /// wrong-token transfer.
+    uint256 public underpayment;
+
+    function setUnderpayment(uint256 u) external { underpayment = u; }
+
     function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata) external {
         address t0 = IV3ExecLike(msg.sender).token0();
         address t1 = IV3ExecLike(msg.sender).token1();
-        if (amount0Delta > 0) {
-            Token(payable(t0)).transfer(msg.sender, uint256(amount0Delta));
-        } else {
-            Token(payable(t1)).transfer(msg.sender, uint256(amount1Delta));
-        }
+        // The positive delta is the pool's input token, whichever the direction.
+        address input = amount0Delta > 0 ? t0 : t1;
+        uint256 owed = amount0Delta > 0 ? uint256(amount0Delta) : uint256(amount1Delta);
+        require(owed >= underpayment, "UP");
+        Token(payable(input)).transfer(msg.sender, owed - underpayment);
     }
     function doSwap(address pool, bool zfo, int256 amount, bool zfoLimit) external returns (int256, int256) {
         // MIN_SQRT_RATIO+1 for zfo / MAX_SQRT_RATIO-1 otherwise (same as the executor).

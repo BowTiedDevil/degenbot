@@ -48,11 +48,11 @@
     "source": "src-harness/V4ExecutorStub.sol"
   },
   "harness/PoolV3.json": {
-    "sha256": "537faa11e95e0c2d187ec4cfb466cba8192cf343489a18826f653d52a9d93085",
+    "sha256": "03ad1a2d6e298ae9efb42e3651cb093cb5e11acccf884b336d085cbfd39ffde1",
     "source": "src-harness/V3ExecutorStub.sol"
   },
   "harness/TestV3SwapDriver.json": {
-    "sha256": "537faa11e95e0c2d187ec4cfb466cba8192cf343489a18826f653d52a9d93085",
+    "sha256": "03ad1a2d6e298ae9efb42e3651cb093cb5e11acccf884b336d085cbfd39ffde1",
     "source": "src-harness/V3ExecutorStub.sol"
   },
   "harness/Token.json": {

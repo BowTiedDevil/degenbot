@@ -280,9 +280,15 @@ creates its debt.
 
 The fakes enforce the behavior the executor depends on: V2's K invariant,
 V3's balance-delta input check and reentrancy guard, V4's delta settlement,
-ERC-6909 accounting, and callback variants. They isolate executor routing and
-settlement logic from real pool pricing. They do not replace mainnet-fork or
-Tier-3 execution tests.
+ERC-6909 accounting, and callback variants. The V3 check is direction-faithful:
+the pool transfers the output, snapshots the *input* token's balance, calls back,
+and requires the callback to have paid the swap's own `amountSpecified` of that
+token, so a reverse-direction swap gets no free pass.
+`TestV3SwapDriver`'s `underpayment` hook withholds exactly that many input units,
+which is how `harness_poolv3.rs` proves both directions from the negative side: a
+one-unit shortfall reverts `IIA` and unwinds to the pre-swap balances. They
+isolate executor routing and settlement logic from real pool pricing. They do not
+replace mainnet-fork or Tier-3 execution tests.
 
 ## Rebuild reference artifacts
 
