@@ -73,6 +73,16 @@
 //!
 //! `Production` names no holder and covers no asset, so the override application
 //! writes nothing at all: a production simulation runs on the chain's own state.
+//!
+//! # An empty fan-out
+//!
+//! A batch the selection walk already answered in full — every candidate a
+//! prepared decline — leaves no path to cover, and so no asset set to derive. Its
+//! plan is [`ProbeCapital::no_write_plan`]: the declared mode and the account it
+//! applies to preserved, and no write at all.
+//! [`ProbeCapital::override_plan`] keeps answering [`CapitalPlanError::NoPaths`]
+//! for an empty path list, so only a caller that OBSERVED an empty fan-out
+//! composes that plan; a caller that merely forgot its paths still refuses.
 
 use alloy::primitives::{address, Address, U256};
 
@@ -537,6 +547,38 @@ impl ProbeCapital {
             mode: self,
             writes: Some(CapitalWrites { holder, overrides }),
         })
+    }
+
+    /// The plan this posture carries when its fan-out has **no path left to
+    /// cover**: the mode and the account it applies to are preserved, and the
+    /// write set is empty.
+    ///
+    /// This is the answer for a batch the selection walk already answered in
+    /// full — every candidate prepared as a decline, so nothing reaches the EVM
+    /// and no asset needs funding or clearing. The posture still travels: a
+    /// reader of [`CapitalOverridePlan::mode`] sees the mode the deployment
+    /// declared, and the plan still names the executor it applies to, so an empty
+    /// fan-out is never silently reported as `Production`.
+    ///
+    /// It is deliberately NOT [`Self::override_plan`] with an empty path list.
+    /// That call keeps answering [`CapitalPlanError::NoPaths`], because a caller
+    /// that hands over paths and receives no plan cannot tell "nothing is left to
+    /// cover" from "the path list was forgotten". Only the caller that observed
+    /// the empty fan-out can tell the two apart, and
+    /// `SimulationDeployment::capital_plan` is where it says so.
+    ///
+    /// `Production` keeps its own empty plan — no account and no write — so the
+    /// ordinary posture is unchanged.
+    #[must_use]
+    pub const fn no_write_plan(self, holder: Address) -> CapitalOverridePlan {
+        let writes = match self {
+            Self::Production => None,
+            Self::SelfFund | Self::ZeroBalance => Some(CapitalWrites {
+                holder,
+                overrides: Vec::new(),
+            }),
+        };
+        CapitalOverridePlan { mode: self, writes }
     }
 }
 
@@ -1159,6 +1201,37 @@ mod tests {
         );
         assert_eq!(CapitalOverridePlan::default().holder(), None);
         assert!(CapitalOverridePlan::default().is_empty());
+    }
+
+    /// A fan-out the selection walk answered in full leaves no path to cover: the
+    /// posture's plan keeps its mode and its holder and writes nothing, so an
+    /// empty batch is never mistaken for `Production` and never funds or clears an
+    /// asset no path asked for.
+    #[test]
+    fn an_empty_probe_plan_keeps_its_posture_and_writes_nothing() {
+        for mode in [ProbeCapital::SelfFund, ProbeCapital::ZeroBalance] {
+            let plan = mode.no_write_plan(EXECUTOR);
+            assert_eq!(plan.mode(), mode, "the declared posture survives");
+            assert_eq!(
+                plan.holder(),
+                Some(EXECUTOR),
+                "the plan still names the executor it applies to"
+            );
+            assert_eq!(
+                plan.writes(),
+                Some((EXECUTOR, &[][..])),
+                "a bound account with no write at all"
+            );
+            assert!(plan.overrides().is_empty(), "nothing is funded or cleared");
+            assert!(plan.is_empty());
+        }
+        let production = ProbeCapital::Production.no_write_plan(EXECUTOR);
+        assert_eq!(production, CapitalOverridePlan::default());
+        assert_eq!(
+            production.holder(),
+            None,
+            "production names no account to apply anything to"
+        );
     }
 
     /// A V4 hop's native currency is the native balance plus a claim, never an

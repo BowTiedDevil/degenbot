@@ -751,6 +751,11 @@ fn simulate_leaf(
         // `Accepted` encoding runs as-is and an unencoded (`None`) candidate is
         // composed by this leaf, so both are included; nothing is re-encoded
         // here.
+        //
+        // A fan-out of NOTHING but prepared declines therefore hands over an
+        // empty path list, and the deployment answers it with its own posture
+        // bound to its executor and no write: the batch proceeds to the ordinary
+        // per-candidate records and no EVM transaction runs for any of them.
         ProbeCapital::SelfFund | ProbeCapital::ZeroBalance => {
             let capital_paths: Vec<SimulatePath> = candidates
                 .iter()

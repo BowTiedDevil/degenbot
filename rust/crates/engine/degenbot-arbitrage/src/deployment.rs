@@ -268,16 +268,31 @@ impl SimulationDeployment {
     /// database has to cover the largest single entry — a sum would grant capital
     /// no single path declared.
     ///
+    /// A fan-out with NOTHING left to cover — the selection walk already
+    /// answered every candidate, so no prepared path reaches the EVM — composes
+    /// [`ProbeCapital::no_write_plan`] instead: the deployment's own posture and
+    /// its execution target preserved, and no capital write at all. An empty
+    /// batch is therefore not a planning refusal; each of its candidates answers
+    /// with the outcome its prepared encoding already decided, and no EVM
+    /// transaction runs for any of them.
+    ///
     /// # Errors
     ///
     /// [`CapitalPlanError::UnverifiedLayout`] when a covered asset's storage
-    /// layout is not in [`Self::with_capital_layouts`]'s source, and
-    /// [`CapitalPlanError::NoPaths`] when a probe posture is asked for with no
-    /// path at all. Both are decided BEFORE any EVM work.
+    /// layout is not in [`Self::with_capital_layouts`]'s source, decided BEFORE
+    /// any EVM work. [`CapitalPlanError::NoPaths`] never escapes this method: an
+    /// empty path set is the empty fan-out answered above, and the strict refusal
+    /// remains [`ProbeCapital::override_plan`]'s own guard against a caller that
+    /// lost the paths it meant to name.
     pub fn capital_plan(
         &self,
         paths: &[SimulatePath],
     ) -> Result<CapitalOverridePlan, CapitalPlanError> {
+        // An empty fan-out has no asset set to derive and nothing to fund or
+        // clear: the posture and its holder travel, the writes do not.
+        if paths.is_empty() {
+            return Ok(self.capital.no_write_plan(self.target));
+        }
         // Only `SelfFund` INSTALLS external entry capital, so only it asks its
         // adapter what that entry is: `ZeroBalance` clears what the paths touch
         // and discards any requirement, and `Production` composes no plan at
@@ -405,7 +420,10 @@ impl SimulationDeployment {
     /// [`CapitalPlanError`] when the plan cannot be composed; see
     /// [`Self::capital_plan`]. The refusal is returned before the engine builds
     /// any EVM state, so an unverified asset stops the fan-out rather than
-    /// simulating it.
+    /// simulating it. An EMPTY path set is not such a case: it composes the
+    /// posture's no-write plan, so `override_params(&[])` answers with this
+    /// deployment's owner, code, settlement, and posture intact and no capital
+    /// write.
     pub fn override_params(
         &self,
         paths: &[SimulatePath],

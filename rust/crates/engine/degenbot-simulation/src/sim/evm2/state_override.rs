@@ -418,6 +418,53 @@ mod tests {
         }
     }
 
+    /// A fan-out with no path left to cover keeps its posture and writes no
+    /// capital at all: the executor's own balance and words stand exactly as the
+    /// chain holds them, while owner gas and the settlement warmup still land.
+    #[test]
+    fn a_no_write_plan_clears_nothing_beside_the_ordinary_overrides() {
+        let mut db = ::evm2::evm::InMemoryDB::default();
+        db.insert_account_info(
+            &EXECUTOR,
+            AccountInfo::default().with_balance(U256::from(5u64)),
+        );
+        apply_simulation_overrides(
+            &mut db,
+            &SimulationOverrideParams {
+                owner: OWNER,
+                code: None,
+                settlement: Some(executor_warmup()),
+                capital: ProbeCapital::ZeroBalance.no_write_plan(EXECUTOR),
+            },
+        );
+        assert_eq!(
+            db.account_info(&EXECUTOR).map(|account| account.balance),
+            Some(U256::from(5u64)),
+            "an empty fan-out clears nothing: the executor keeps its own balance"
+        );
+        // The warmup raises this word to its operational amount; a zero-balance
+        // clearing would have installed 0 over it.
+        assert_eq!(
+            cache_lookup(&db, LAB_WETH, slot_for(3, EXECUTOR)),
+            Some(eth_amount(EXECUTOR_FUND_ETH)),
+            "the settlement warmup still lands and the plan writes nothing over it"
+        );
+        assert_eq!(
+            cache_lookup(&db, LAB_TOKEN, slot_for(5, EXECUTOR)),
+            None,
+            "no token word is invented for an asset no path touches"
+        );
+        assert_eq!(
+            db.account_info(&OWNER).map(|account| account.balance),
+            Some(eth_amount(OWNER_FUND_ETH)),
+            "owner gas funding survives"
+        );
+        let slots = degenbot_executor::compute_simulation_warmup_slots(EXECUTOR, LAB_WETH);
+        for slot in [slots.erc6909_weth, slots.erc6909_native] {
+            assert_eq!(cache_lookup(&db, LAB_POOL_MANAGER, slot), Some(ONE_WEI));
+        }
+    }
+
     #[test]
     fn self_fund_installs_the_declared_requirement_over_the_warmup() {
         let path = lab_path();

@@ -39,7 +39,7 @@ use degenbot_arbitrage::{
 use degenbot_execution::{
     AssessError, ComposeError, ComposeOptions, ComposerInputs, DeploymentId, ExecutionAdapter,
     ExecutionObservation, ExecutionResult, FeePolicy, PathInfo, ProbeSpec, ProbeSpecs,
-    TransactionRequest, V2HopInfo,
+    TransactionRequest, V2HopInfo, ZeroCapitalDeficit,
 };
 use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest,
@@ -280,6 +280,69 @@ impl tower::Service<RequestPacket> for CountingTransport {
         let mut empty = EmptyTransport;
         tower::Service::call(&mut empty, req)
     }
+}
+
+/// A transport that RECORDS every method it is asked to serve (and answers with
+/// the same empty chain `EmptyTransport` serves). The log is the point: a fan-out
+/// that executes no candidate must issue no EVM-executing request at all, and a
+/// method log proves it without inferring anything from an outcome.
+#[derive(Clone, Default)]
+struct RecordingTransport {
+    methods: Arc<Mutex<Vec<String>>>,
+}
+
+impl RecordingTransport {
+    fn methods(&self) -> Vec<String> {
+        self.methods
+            .lock()
+            .expect("the method log is never poisoned")
+            .clone()
+    }
+}
+
+impl tower::Service<RequestPacket> for RecordingTransport {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        {
+            let mut methods = self
+                .methods
+                .lock()
+                .expect("the method log is never poisoned");
+            match &req {
+                RequestPacket::Single(request) => methods.push(request.method().to_string()),
+                RequestPacket::Batch(requests) => {
+                    methods.extend(requests.iter().map(|request| request.method().to_string()));
+                }
+            }
+        }
+        let mut empty = EmptyTransport;
+        tower::Service::call(&mut empty, req)
+    }
+}
+
+/// Whether `method` is a provider request that would EXECUTE EVM code or submit a
+/// transaction. Account, storage, block, and code reads are not: they are how a
+/// fan-out builds its view of the chain.
+fn executes_evm(method: &str) -> bool {
+    matches!(
+        method,
+        "eth_call"
+            | "eth_callMany"
+            | "eth_estimateGas"
+            | "eth_sendRawTransaction"
+            | "eth_sendTransaction"
+            | "eth_simulateV1"
+    ) || method.starts_with("debug_")
 }
 
 fn mock_provider() -> AlloyProvider {
@@ -864,6 +927,157 @@ fn a_declined_candidate_does_not_refuse_a_simulatable_sibling() {
         transport.calls() > 0,
         "the accepted sibling reached the EVM, so the plan composed for it"
     );
+}
+
+/// The empty-fan-out plan: a probe deployment asked for no path keeps its own
+/// posture bound to its executor and writes nothing — never `NoPaths`, and never
+/// a silent conversion to production.
+#[test]
+fn an_empty_probe_fanout_keeps_its_posture_and_writes_nothing() {
+    for posture in [
+        degenbot_simulation::ProbeCapital::SelfFund,
+        degenbot_simulation::ProbeCapital::ZeroBalance,
+    ] {
+        let deployment = CmdExecutorBinding::new(
+            OWNER,
+            EXECUTOR,
+            WETH,
+            POOL_MANAGER,
+            EncodeOptions::default(),
+        )
+        .with_capital(posture)
+        .deployment(test_deployment_id());
+        let overrides = deployment
+            .override_params(&[])
+            .expect("an empty fan-out is not a planning refusal");
+        assert_eq!(overrides.capital.mode(), posture, "the posture travels");
+        assert_eq!(
+            overrides.capital.holder(),
+            Some(EXECUTOR),
+            "the plan still names the executor whose capital it models"
+        );
+        assert!(
+            overrides.capital.overrides().is_empty(),
+            "no path touches an asset, so nothing is funded or cleared"
+        );
+        assert_eq!(overrides.owner, OWNER, "owner gas funding is untouched");
+        assert!(
+            overrides.settlement.is_some(),
+            "the settlement warmup is untouched"
+        );
+    }
+}
+
+/// The all-answered batch: a fan-out whose EVERY candidate the selection walk
+/// already refused composes the deployment's no-write plan and proceeds to the
+/// per-candidate records.
+///
+/// Each row here is a prepared capital-policy decline — the shape a certified
+/// zero-balance fan-out produces — so the capital path set is empty. The batch
+/// must answer with the typed outcomes those rows already carry rather than a
+/// planning refusal, and no candidate may reach the EVM. The path crosses the lab
+/// token whose layout the production source does not verify: a planner that
+/// folded a declined row back into its asset set would refuse here instead.
+#[test]
+fn an_all_answered_probe_batch_keeps_its_typed_outcomes_and_runs_no_evm() {
+    for posture in [
+        degenbot_simulation::ProbeCapital::SelfFund,
+        degenbot_simulation::ProbeCapital::ZeroBalance,
+    ] {
+        let transport = RecordingTransport::default();
+        let client = RpcClient::new(transport.clone(), true);
+        let root: RootProvider = RootProvider::new(client);
+        let provider = AlloyProvider::from_provider(
+            Arc::new(root) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
+        );
+        let deployment = CmdExecutorBinding::new(
+            OWNER,
+            EXECUTOR,
+            WETH,
+            POOL_MANAGER,
+            EncodeOptions::default(),
+        )
+        .with_capital(posture)
+        .deployment(test_deployment_id());
+
+        let deficit = ZeroCapitalDeficit {
+            asset: LAB_TOKEN,
+            required: 1_000,
+            available: 250,
+        };
+        let answered = DispatchCandidate {
+            prepared: Some(PreparedEncoding::InsolventZeroCapital(deficit)),
+            ..candidate()
+        };
+
+        let outcome = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let runtime = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(2)
+                        .enable_all()
+                        .build()
+                        .expect("multi-thread runtime");
+                    let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+                    let pool_divergence = Arc::new(Mutex::new(PoolDivergence::new()));
+                    let fot = Arc::new(Mutex::new(FeeOnTransferRegistry::new()));
+                    let bot_state = Arc::new(StateLock::new(BotState::new()));
+                    let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+                    let ctx = degenbot_arbitrage::SimulateContext {
+                        block: block(&provider),
+                        deployment: &deployment,
+                    };
+                    runtime.block_on(async {
+                        dispatch_profitable_results(
+                            vec![answered],
+                            &ctx,
+                            &suppression,
+                            BLOCK,
+                            0,
+                            &pool_divergence,
+                            &fot,
+                            Some(bot_state),
+                            Some(warm_cache),
+                        )
+                    })
+                })
+                .join()
+                .expect("fan-out thread")
+        })
+        .expect("an answered batch is not a capital-plan refusal");
+
+        assert_eq!(
+            outcome.candidate_count, 1,
+            "the row was admitted and answered"
+        );
+        assert_eq!(
+            outcome.exception_count, 0,
+            "a prepared decline is a record, never a stage exception"
+        );
+        assert_eq!(outcome.fail_count, 1);
+        assert_eq!(
+            outcome
+                .fail_buckets
+                .buckets()
+                .get(degenbot_arbitrage::INSOLVENT_ZERO_CAPITAL_BUCKET)
+                .copied(),
+            Some(1),
+            "the prepared deficit reaches the record: {:?}",
+            outcome.fail_buckets.buckets()
+        );
+        assert_eq!(outcome.failures.len(), 1, "one candidate, one record");
+        let failure = outcome.failures.first().expect("one candidate, one record");
+        assert_eq!(
+            failure.zero_capital,
+            Some(deficit),
+            "the typed deficit the row carried survives the batch"
+        );
+        let methods = transport.methods();
+        assert!(
+            !methods.iter().any(|method| executes_evm(method)),
+            "no candidate reached the EVM: {methods:?}"
+        );
+    }
 }
 
 /// Pins: the composition boundary represents a deployment with no PoolManager /
