@@ -224,7 +224,14 @@ fn inspector_dual_driver_parity_cafebabe_revert() {
         deployment: &deployment,
     };
     let mut cache_db = InMemoryDB::default();
-    apply_simulation_overrides(&mut cache_db, &ctx.deployment.override_params());
+    apply_simulation_overrides(
+        &mut cache_db,
+        // A production deployment installs no probe capital, so the plan needs
+        // no path: it resolves nothing.
+        &ctx.deployment
+            .override_params(&[])
+            .expect("production capital needs no path"),
+    );
     let mut buckets = FailBuckets::new();
     let path = smoke_v2_path(fx.fixture.path_id);
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets)

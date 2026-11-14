@@ -476,6 +476,67 @@ impl SimLeaf<BatchWork, SimStageOutput> for SimStage {
     }
 }
 
+impl SimStage {
+    /// The **typed capital pre-flight** for one batch: the plan every lane of
+    /// this stage will simulate under, composed once, with the refusal kept as
+    /// its own value rather than flattened into the stage's detail string.
+    ///
+    /// A probe reports this directly ([`crate::probe::ProbeError::CapitalPlan`]),
+    /// so a path whose capital cannot be overridden is refused as a typed
+    /// planning outcome naming the asset — never as an opaque stage failure.
+    /// The stage's own body composes the same plan per lane and refuses there
+    /// too, so the production lane's `DispatchRefusal` contract is unchanged.
+    ///
+    /// It is a CONSERVATIVE pre-flight, never the assembly's answer: it reads
+    /// the rows this stage can RESOLVE, so a row the resolver cannot find and an
+    /// empty batch both produce no path at all. Those shapes are SKIPPED here and
+    /// left to the ordinary assembly/outcome path, which already reports them
+    /// (an unknown path, an unregistered deployment, a stale row). Refusing them
+    /// as [`CapitalPlanError::NoPaths`] would replace that answer with a planning
+    /// one — and simulating an unknown layout is never an option, so a
+    /// non-production posture with nothing to compose is not an error either.
+    ///
+    /// # Errors
+    ///
+    /// [`CapitalPlanError`] from the first deployment whose plan cannot be
+    /// composed over a NON-EMPTY path set, in registry order.
+    pub(crate) fn probe_capital(
+        &self,
+        work: &BatchWork,
+    ) -> Result<(), degenbot_simulation::CapitalPlanError> {
+        for deployment in self.deployments.entries() {
+            // A production deployment installs and clears nothing, so its plan
+            // resolves no asset and needs no path.
+            if deployment.capital() == ProbeCapital::Production {
+                continue;
+            }
+            // The paths THIS deployment would simulate: the work's rows, bound to
+            // its identity and resolved through the same resolver the assembly
+            // reads. A row that does not resolve produces no candidate, and so no
+            // capital requirement.
+            let paths: Vec<degenbot_arbitrage::SimulatePath> = work
+                .rows
+                .iter()
+                .filter_map(|row| {
+                    let path_info = self.resolver.resolve(row.path_id)?;
+                    let candidate = crate::assembly::build_raw_candidate(
+                        row,
+                        &path_info,
+                        deployment.deployment_id(),
+                    )
+                    .ok()?;
+                    Some(candidate.to_simulate_path())
+                })
+                .collect();
+            if paths.is_empty() {
+                continue;
+            }
+            deployment.override_params(&paths)?;
+        }
+        Ok(())
+    }
+}
+
 /// The sim stage's product: the batch's records (stages 1-2 filled) + the
 /// joined submit rows for stage 3.
 ///

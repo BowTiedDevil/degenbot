@@ -69,6 +69,24 @@ pub struct ComposerInputs<'a> {
     pub opts: ComposeOptions,
 }
 
+/// One asset a stream needs **before it runs**: external initial capital the
+/// executor must already hold.
+///
+/// A built Plan declares these with its `SelfFund` seeds, and an adapter names
+/// them through [`ExecutionAdapter::capital_requirements`][crate::ExecutionAdapter::capital_requirements]
+/// so a simulation's state override can install exactly that capital. `currency`
+/// is the unit the seed is denominated in — a curve identity, not a storage
+/// slot: which contract holds it, and where that contract keeps its balances, is
+/// the caller's capital-layout source, never this seam's guess.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CapitalRequirement {
+    /// The currency the stream needs up front (the V4 native currency is
+    /// `address(0)`; WETH and native ETH are distinct currencies).
+    pub currency: Address,
+    /// The amount of `currency` the executor must hold.
+    pub amount: u128,
+}
+
 /// A **typed zero-capital deficit**: the stream needs `required` of `asset` at a
 /// point where the caller's capital policy grants only `available`.
 ///

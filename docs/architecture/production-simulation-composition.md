@@ -155,12 +155,12 @@ exactly, and the golden fixtures pin them:
 | `SimulateContext { provider, executor_owner, executor_address, weth_address, pool_manager_address, multicall3_address, inject_code, injected_address, runtime_bytecode, warmup, base_fee_next, current_block, block_timestamp, block_priority_fees }` | `SimulateContext { block: SimulationBlock { provider, base_fee_next, current_block, block_timestamp, block_priority_fees }, deployment: &SimulationDeployment }` | one simulated block's facts beside one deployment's facts (ADR-098 D3) |
 | Python `SimulateContext(provider, executor_owner, executor_address, weth_address, pool_manager_address, multicall3_address, inject_code, injected_address=None, executor_runtime_path=None, contracts_dir=None)` | `SimulateContext(provider, executor_owner, executor_address, weth_address, pool_manager_address, inject_code, injected_address=None, executor_runtime_path=None, contracts_dir=None)` — `multicall3_address` left the keyword set, so passing it raises `TypeError: unexpected keyword argument`; every other input keeps its position | the built-in assesses the `execute` receipt and reads no Multicall3 balances, so the address had no reader left; no Python name is added in its place |
 | `CmdExecutorBinding::new(owner, executor, weth, pool_manager, multicall3, opts)` | `CmdExecutorBinding::new(owner, executor, weth, pool_manager, opts)` | the binding no longer declares a Multicall3 identity: its adapter declares no probe reads, so the `getEthBalance` leg retired with the balance bundle |
-| `SimulateContext::override_params()` / `encode_context()` | `SimulationDeployment::override_params()`; the encode context is the built-in binding's | the engine override projection and the encode intake are deployment facts |
+| `SimulateContext::override_params()` / `encode_context()` | `SimulationDeployment::override_params(paths)`; the encode context is the built-in binding's | the engine override projection and the encode intake are deployment facts |
 | `DispatchCandidate.opts`, `SimulatePath.opts` | `CmdExecutorBinding::new(..., opts)` / `with_opts(opts)` | one authority for the cmd config axes (the injected deployment), never a per-candidate copy |
 | `SimulatePath::encode_request()` | gone — the seam hands the adapter `PathInfo` + `ComposerInputs` (`SimulatePath::expected_outputs_vec` / `consumed_inputs_vec`) | Encode belongs to the adapter |
 | `SimulationOverrideParams { owner, inject_code, injected_address, runtime_bytecode, warmup, weth_address, pool_manager_address }` | `SimulationOverrideParams { owner, code: Option<DeclaredCode>, settlement: Option<SettlementWarmup> }` | declared code is an explicit override (production runs deployed code); the settlement warmup is a declaration, not a required pair of addresses |
 
-| `SimulationOverrideParams { …, self_fund_usdc: Option<Address>, zero_balance: Option<Address> }`; `SimulationDeployment::{with_self_fund_usdc, with_zero_balance}(bool)`; `CmdExecutorBinding::with_zero_balance(bool)`; `ProbeCapital::{is_self_funded, is_zero_balance}` | `SimulationOverrideParams { …, capital: CapitalOverridePlan }`; `SimulationDeployment::with_capital(ProbeCapital)` / `capital()`; `CmdExecutorBinding::with_capital(ProbeCapital)` / `capital()`; `degenbot_simulation::{ProbeCapital, CapitalOverridePlan}` (`ProbeCapital::override_plan(holder)`) | one mode produces one plan: the retired fragments were two mutually exclusive `Option<Address>` fields plus three booleans, and the funding axis was re-read to guess which of them applied. The mode is now the only authority for the stream's `funding` axis, the grammar's zero-balance stance, and the override plan, and a self-fund-plus-zero-balance ask has no representation. `ProbeCapital` lives in `degenbot-simulation` so `degenbot-arbitrage` names the plan without depending on `degenbot-batch-executor` (which re-exports it) |
+| `SimulationOverrideParams { …, self_fund_usdc: Option<Address>, zero_balance: Option<Address> }`; `SimulationDeployment::{with_self_fund_usdc, with_zero_balance}(bool)`; `CmdExecutorBinding::with_zero_balance(bool)`; `ProbeCapital::{is_self_funded, is_zero_balance}` | `SimulationOverrideParams { …, capital: CapitalOverridePlan }`; `SimulationDeployment::with_capital(ProbeCapital)` / `capital()`; `CmdExecutorBinding::with_capital(ProbeCapital)` / `capital()`; `degenbot_simulation::{ProbeCapital, CapitalOverridePlan}` (`ProbeCapital::override_plan(holder, paths, layouts)`, see the path-aware capital migration in `operator-add-path-surface.md`) | one mode produces one plan: the retired fragments were two mutually exclusive `Option<Address>` fields plus three booleans, and the funding axis was re-read to guess which of them applied. The mode is now the only authority for the stream's `funding` axis, the grammar's zero-balance stance, and the override plan, and a self-fund-plus-zero-balance ask has no representation. `ProbeCapital` lives in `degenbot-simulation` so `degenbot-arbitrage` names the plan without depending on `degenbot-batch-executor` (which re-exports it) |
 
 | `EncodeOptions.zero_balance: bool` (the public stance spelling; `EncodeOptions::initial_capital()` mapped it onto the ledger policy), `InitialCapital::from_zero_balance(bool)` | `EncodeOptions.initial_capital: InitialCapital`, projected from the ONE capital mode by `ProbeCapital::initial_capital()` (`production` / `self_fund` → `Held`, `zero_balance` → `Zero`); the bool→policy constructor and the zero_balance accessor are gone | the capital stance is a VALIDATION policy, never a stream axis: `funding` stays the axis a family branches on, so one posture can no longer be spelled two ways. `CmdExecutorBinding::opts()` applies both projections from the one mode, and a stream the policy finds solvent still emits the production bytes |
 
@@ -232,21 +232,27 @@ Two facts are independent by construction now:
   For the deployed arm the subject is CORRECTED — those slots used to name the
   owner's account.
 - **Capital.** The plan names its own target (`CapitalOverridePlan::holder()`,
-  bound from the mode at deployment composition), and
-  `degenbot_simulation::apply_simulation_overrides` derives the WETH9 balance and
-  the two PoolManager claim slots from THAT account instead of borrowing the
-  warmup's key. A zero-balance probe therefore clears native ETH, USDC, and WBTC
-  at the executor in both arms, plus that executor's WETH9 balance word and both
-  ERC6909 claims whenever the deployment declares the settlement identities; a
-  self-funded probe funds the executor's mainnet USDC — the only balance the
-  self-fund arm writes — and `production` writes none of them. The owner's own
-  slots are never a capital target.
+  bound from the mode at fan-out composition) and every resolved write it
+  applies, so `degenbot_simulation::apply_simulation_overrides` writes exactly
+  those — never a warmup-derived slot. The covered assets are the PATHS': the
+  executor's native balance, every ERC-20 a hop names, and every PoolManager
+  ERC-6909 claim a V4 currency names (the `probe_path` migration in
+  `operator-add-path-surface.md` states the full contract). A zero-balance probe
+  clears all of them in both arms; a self-funded probe installs the built Plan's
+  declared entry capital (the requirement its own built Plan seeds, combined across
+  the fan-out by MAXIMUM per asset: every candidate starts under the same bankroll
+  and its stream spends only its own Plan's entry) and clears every other touched
+  holding, native and PoolManager claims included; and `production` writes none of
+  them. The owner's own slots are never a capital target, an unverifiable touched
+  asset refuses the whole fan-out before any EVM state exists rather than keeping
+  its balance, and the fan-out's path set is a conservative union (a prepared
+  decline is filtered, an unencoded candidate is included).
 
 A deployed executor is the one case where the override application reads the
-chain: clearing its native balance has to preserve the code hash the chain holds,
+chain: writing its native balance has to preserve the code hash the chain holds,
 so the account is materialized exactly as the EVM's own first read would
-(`sim::evm2::state_override::clear_native_balance`); a declared-code build keeps
-the runtime its override installed.
+(`sim::evm2::state_override::set_native_balance`); a declared-code build keeps the
+runtime its override installed.
 
 UNCHANGED: owner gas funding, the declared code (or the deployed code the EVM
 reads), an unrelated account's balance/code/storage, the identities the warmup
@@ -264,8 +270,14 @@ with distinct owner and executor addresses),
 `...::tests::clearing_follows_the_capital_target_not_the_warmup_subject`,
 `...::tests::production_applies_no_capital_override`,
 `degenbot-arbitrage::tests::production_adapter::capital_overrides_name_the_executor_in_both_deployment_arms`,
-and the ordinary-production stance beside them,
-`degenbot-arbitrage::tests::production_adapter::the_default_production_deployment_enables_no_probe_capital`.
+the ordinary-production stance beside them,
+`degenbot-arbitrage::tests::production_adapter::the_default_production_deployment_enables_no_probe_capital`,
+the fail-closed boundary
+(`degenbot-arbitrage::tests::production_adapter::an_unverified_token_refuses_the_fanout_before_any_evm_work`,
+whose provider counts ZERO requests, and
+`degenbot-batch-executor::probe_executor::a_probe_refuses_an_unverified_token_as_its_own_typed_planning_answer`
+for the one-path probe's typed refusal), and the plan's own asset-set,
+self-funded-requirement, and dedup tests in `degenbot_simulation::sim::capital`.
 
 The Python `SimulateContext` pyclass builds the built-in binding and loads the
 artifact through it: `multicall3_address` is refused at construction

@@ -411,6 +411,13 @@ impl PyProbeExecutor {
         crate::ambient_runtime::future_into_py(py, async move {
             match executor.probe(work).await {
                 Ok(inner) => Ok(PyProbeReport { inner, capital }),
+                // A typed planning refusal: nothing was simulated, and the
+                // message names the asset. It is NOT a per-candidate
+                // `FailureDetail` — the probe never reached the sim, so there is
+                // no candidate verdict to report.
+                Err(ProbeError::CapitalPlan(error)) => Err(PyRuntimeError::new_err(format!(
+                    "the execution probe was refused before simulation: {error}"
+                ))),
                 Err(ProbeError::Stage(detail)) => Err(PyRuntimeError::new_err(format!(
                     "the execution probe stage pass failed: {detail}"
                 ))),

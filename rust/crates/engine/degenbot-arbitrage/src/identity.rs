@@ -97,6 +97,17 @@ pub enum DispatchRefusal {
         /// The identities the registry actually holds.
         registered: Vec<DeploymentId>,
     },
+    /// The fan-out's probe capital could not be composed, so the batch cannot be
+    /// simulated: a path it carries touches an asset whose storage layout this
+    /// build cannot verify (or a probe posture arrived with no path at all).
+    ///
+    /// Refused rather than simulated, and never folded into a per-candidate
+    /// pool revert: the alternative is a probe that leaves the asset's balance
+    /// in place and reports a saturated simulation as if the path had run.
+    CapitalPlan {
+        /// The typed composition refusal, naming the asset.
+        error: degenbot_simulation::CapitalPlanError,
+    },
 }
 
 impl std::fmt::Display for DispatchRefusal {
@@ -108,6 +119,10 @@ impl std::fmt::Display for DispatchRefusal {
             } => write!(
                 f,
                 "candidate {candidate_id} arrived on {occurrences} rows: one identity is one row"
+            ),
+            Self::CapitalPlan { error } => write!(
+                f,
+                "the probe capital override could not be composed: {error}"
             ),
             Self::UnregisteredDeployment {
                 candidate_id,

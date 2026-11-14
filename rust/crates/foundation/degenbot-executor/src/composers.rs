@@ -443,14 +443,14 @@ pub fn encode_cmd_stream(ctx: &EncodeContext, req: &EncodeRequest) -> Option<Vec
     crate::grammar_shape::derive_option(encode_cmd_stream_detailed(ctx, req))
 }
 
-/// Detailed intake for adapters that distinguish an unsupported path from a
-/// primitive encoding failure.
-pub(crate) fn encode_cmd_stream_detailed(
-    ctx: &EncodeContext,
-    req: &EncodeRequest,
-) -> crate::grammar_shape::Derive {
-    let num_hops = req.path.hops.len();
-    let inputs = ComposerInputs {
+/// The grammar inputs one encode request names: the request's amount triple
+/// plus the context's deployment identities.
+///
+/// Both intakes below read THIS, so the Plan whose bytes an adapter emits and
+/// the external capital that Plan declares can never be derived from different
+/// inputs.
+fn grammar_inputs<'a>(ctx: &EncodeContext, req: &'a EncodeRequest) -> ComposerInputs<'a> {
+    ComposerInputs {
         executor_address: ctx.executor,
         pool_manager_address: ctx.pool_manager,
         weth_address: ctx.weth,
@@ -458,7 +458,43 @@ pub(crate) fn encode_cmd_stream_detailed(
         hop_outputs: &req.hop_outputs,
         consumed_inputs: &req.consumed_inputs,
         opts: req.opts,
-    };
+    }
+}
+
+/// The external initial capital the Plan behind `req` declares: the seed
+/// currencies and amounts the stream needs the execution target to hold before
+/// it runs.
+///
+/// This is the capital-requirement half of the SAME build `encode_cmd_stream`
+/// performs — one grammar walk, read from
+/// [`crate::grammar_plan::plan_external_capital`] — so a simulation override can
+/// install a self-funded stream's entry without restating a single grammar rule.
+/// Pure computation: no EVM state, no node read, and no command bytes.
+///
+/// Empty means "this stream declares no external entry capital" — an in-path
+/// flash family (the funding axis is per-family, not per-path) or a path with no
+/// producer at all. Neither installs anything, and neither is a claim that the
+/// path needs nothing.
+#[must_use]
+pub fn encode_cmd_stream_capital(
+    ctx: &EncodeContext,
+    req: &EncodeRequest,
+) -> Vec<degenbot_execution::CapitalRequirement> {
+    let inputs = grammar_inputs(ctx, req);
+    match crate::grammar_walker::build_walk(&req.path, &inputs) {
+        Some((_, plan, _)) => crate::grammar_plan::plan_external_capital(&plan),
+        None => Vec::new(),
+    }
+}
+
+/// Detailed intake for adapters that distinguish an unsupported path from a
+/// primitive encoding failure.
+pub(crate) fn encode_cmd_stream_detailed(
+    ctx: &EncodeContext,
+    req: &EncodeRequest,
+) -> crate::grammar_shape::Derive {
+    let num_hops = req.path.hops.len();
+    let inputs = grammar_inputs(ctx, req);
 
     // Facet A: a generic per-shape-class hop-grammar walk replaces the
     // former 8 two-hop + 27 three-hop bespoke permutation bodies, producing

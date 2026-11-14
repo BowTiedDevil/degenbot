@@ -264,8 +264,8 @@ impl SimResult {
 /// `fail_index` is `Some(idx)` for failures attributable to a specific
 /// simulated step — the revert branch AND a declared probe read whose figure was
 /// absent. It is `None` for orchestration-only buckets (`int128-overflow`,
-/// `encode-failed`, `rpc-failed`, `balance-decode`, `no-profit`) where no single
-/// call failed.
+/// `encode-failed`, `rpc-failed`, `balance-decode`, `no-profit`,
+/// [`CAPITAL_PLAN_REFUSED_BUCKET`]) where no single call failed.
 ///
 /// `reverting_frame` is `Some` only for `execute()` reverts where the
 /// `CallTraceInspector` (attached at the opportunity's own step) captured the
@@ -429,7 +429,8 @@ impl NoProfitShape {
 /// driver can render the reason breakdown from typed counts.
 /// The bucket strings are the `classify_revert` labels + a handful of
 /// orchestration-only buckets (`int128-overflow`, `rpc-failed`,
-/// `balance-decode`, `no-profit`, `encode-failed`, `blocked-path`).
+/// `balance-decode`, `no-profit`, `encode-failed`, `blocked-path`,
+/// `capital-plan-refused`).
 ///
 /// In addition to the per-bucket count, this struct carries the per-path
 /// [`SimFailure`] records (one per `tally`/`record` site) so the dispatch
@@ -457,6 +458,16 @@ pub struct FailBuckets {
 /// parse the sentence. A zero-capital probe therefore reports a *funding* answer,
 /// not an encoder defect, and the two never collapse into one counter.
 pub const INSOLVENT_ZERO_CAPITAL_BUCKET: &str = "insolvent-zero-capital";
+
+/// The bucket label of a **capital-planning refusal**: the override plan this
+/// candidate would have been simulated under could not be composed, so nothing
+/// reached the EVM.
+///
+/// It is an orchestration bucket, not an economic one: no revert happened, no
+/// swap was attempted, and nothing about the path's profitability was measured.
+/// A caller that records a refused candidate records it HERE so the per-path
+/// conversion cannot drop a refusal it has no other record for.
+pub const CAPITAL_PLAN_REFUSED_BUCKET: &str = "capital-plan-refused";
 
 impl FailBuckets {
     /// Construct an empty tally.
@@ -2074,6 +2085,43 @@ mod tests {
         );
     }
 
+    /// A **planning refusal** is recorded under its own non-EVM bucket, so the
+    /// per-path conversion that turns the tally's last record into the failure
+    /// payload has a record to read instead of silently dropping the refusal.
+    ///
+    /// It stays an ORCHESTRATION bucket: distinct from the economic-revert labels
+    /// and from the capital-POLICY bucket, carrying no deficit, no revert data,
+    /// and no failing step — nothing ran.
+    #[test]
+    fn a_capital_plan_refusal_is_its_own_orchestration_bucket() {
+        let candidate = CandidateId::new(7, DeploymentId::new(1));
+        let mut buckets = FailBuckets::new();
+        buckets.record(
+            candidate,
+            CAPITAL_PLAN_REFUSED_BUCKET,
+            None,
+            alloy::primitives::Bytes::new(),
+            1_000,
+            vec![1_100],
+        );
+
+        assert_eq!(buckets.get(CAPITAL_PLAN_REFUSED_BUCKET), 1);
+        assert_ne!(CAPITAL_PLAN_REFUSED_BUCKET, INSOLVENT_ZERO_CAPITAL_BUCKET);
+
+        let mut failures = buckets.into_failures();
+        let refusal = failures
+            .pop()
+            .expect("the refusal keeps a record for the conversion to report");
+        assert_eq!(refusal.candidate_id, candidate);
+        assert_eq!(refusal.bucket, CAPITAL_PLAN_REFUSED_BUCKET);
+        assert_eq!(refusal.fail_index, None, "no step ran, so no step failed");
+        assert!(refusal.revert_data.is_empty(), "no revert happened");
+        assert!(
+            refusal.zero_capital.is_none(),
+            "a layout refusal names no asset deficit"
+        );
+    }
+
     #[test]
     fn priority_fee_uses_p10_plus_one_floor() {
         // gross=1e6, gas=100, base=0, age=0.
@@ -2312,7 +2360,9 @@ mod tests {
             let mut cache_db = ::evm2::evm::InMemoryDB::default();
             degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
                 &mut cache_db,
-                &ctx.deployment.override_params(),
+                &deployment
+                    .override_params(&[smoke_v2_path(path_id)])
+                    .expect("the smoke deployment composes no probe capital"),
             );
             let mut buckets = FailBuckets::new();
             let result =
@@ -2345,7 +2395,11 @@ mod tests {
         let mut db = ::evm2::evm::InMemoryDB::default();
         degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
             &mut db,
-            &ctx.deployment.override_params(),
+            // A smoke deployment runs production capital: no path is needed
+            // because no asset is installed or cleared.
+            &ctx.deployment
+                .override_params(&[])
+                .expect("production capital needs no path"),
         );
         db
     }
@@ -3055,7 +3109,9 @@ mod tests {
         let mut cache_db = ::evm2::evm::InMemoryDB::default();
         degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
             &mut cache_db,
-            &ctx.deployment.override_params(),
+            &deployment
+                .override_params(&[smoke_v2_path(UNIQUE_PATH_ID)])
+                .expect("the smoke deployment composes no probe capital"),
         );
         let mut buckets = FailBuckets::new();
 
@@ -3102,7 +3158,9 @@ mod tests {
         let mut cache_db = ::evm2::evm::InMemoryDB::default();
         degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
             &mut cache_db,
-            &ctx.deployment.override_params(),
+            &deployment
+                .override_params(&[smoke_v2_path(UNIQUE_PATH_ID)])
+                .expect("the smoke deployment composes no probe capital"),
         );
         let mut buckets = FailBuckets::new();
 

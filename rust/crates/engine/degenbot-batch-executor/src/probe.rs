@@ -168,6 +168,14 @@ impl ProbeOutcome {
 /// Why a probe call produced no outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProbeError {
+    /// The probe's capital override could not be composed, so NOTHING was
+    /// simulated: an asset the probe's path touches has no verified storage
+    /// layout in this build (or the posture arrived with no path at all).
+    ///
+    /// Its own arm rather than a [`Self::Stage`] detail: a planning refusal that
+    /// names the asset is the probe's answer, and a caller that cannot tell it
+    /// from a stage failure would have to parse the sentence to report it.
+    CapitalPlan(degenbot_simulation::CapitalPlanError),
     /// The stages refused the batch — the same detail the production lane's
     /// loud-abort carries (a payload row naming an unregistered deployment, the
     /// fan-out's identity refusal, or a registry divergence mid-batch).
@@ -182,6 +190,10 @@ pub enum ProbeError {
 impl std::fmt::Display for ProbeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::CapitalPlan(error) => write!(
+                f,
+                "the probe was refused before simulation: {error}"
+            ),
             Self::Stage(detail) => write!(f, "the probe stage pass failed: {detail}"),
             Self::Abandoned => f.write_str(
                 "the probe stage task ended without an outcome (it panicked, or the runtime tore down)",
@@ -256,6 +268,11 @@ pub struct ProbeExecutor {
     /// executor's correlation contract over a scripted stage while the
     /// production constructor hands it the real `SimStage`.
     stage: Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
+    /// The production stage, kept beside the trait object for the TYPED capital
+    /// pre-flight: a scripted stage declares none, and a production probe reads
+    /// this so a planning refusal keeps its own value instead of flattening into
+    /// the stage's detail string.
+    preflight: Option<Arc<SimStage>>,
 }
 
 impl ProbeExecutor {
@@ -276,7 +293,11 @@ impl ProbeExecutor {
     pub async fn new(config: ProbeConfig) -> Result<Self, BalCapabilityError> {
         crate::stage::arm_session_bal(config.stage.warm_cache.as_ref(), &config.stage.provider)
             .await?;
-        Ok(Self::from_stage(Arc::new(config.stage)))
+        let stage = Arc::new(config.stage);
+        Ok(Self {
+            stage: Arc::clone(&stage) as Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
+            preflight: Some(stage),
+        })
     }
 
     /// Wire an arbitrary stage pass into the executor: the same seam
@@ -284,8 +305,16 @@ impl ProbeExecutor {
     /// correlation contract (identity, reverse-order completion, drop) is
     /// exercised at THIS boundary while the production constructor hands it the
     /// real stage.
+    ///
+    /// A scripted stage declares no typed capital pre-flight — that check is the
+    /// real [`crate::stage::SimStage`]'s own — so a probe wired this way skips
+    /// it and the scripted stage's answer stands as the call's answer.
+    #[cfg(test)]
     pub(crate) fn from_stage(stage: Arc<dyn SimLeaf<BatchWork, SimStageOutput>>) -> Self {
-        Self { stage }
+        Self {
+            stage,
+            preflight: None,
+        }
     }
 
     /// Run ONE probe call and return ITS OWN outcome.
@@ -329,6 +358,15 @@ impl ProbeExecutor {
     /// When polled outside a Tokio runtime (`tokio::spawn` has no reactor to
     /// place the stage task on), exactly like the ordered lane's enqueue.
     pub async fn probe(&self, work: BatchWork) -> Result<ProbeOutcome, ProbeError> {
+        // The TYPED planning pre-flight: the plan this batch will simulate under
+        // is composed once, before the stage spawns, so an asset whose storage
+        // layout this build cannot verify is refused as its own value — naming
+        // the asset — instead of surfacing as a stage detail.
+        if let Some(stage) = &self.preflight {
+            stage
+                .probe_capital(&work)
+                .map_err(ProbeError::CapitalPlan)?;
+        }
         let stage = Arc::clone(&self.stage);
         // The correlation: this receiver is the ONLY handle that can observe
         // this call's result. It is created per call, so no ordering, no key,

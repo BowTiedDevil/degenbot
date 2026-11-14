@@ -86,9 +86,11 @@ pub use sim::evm2::v4_black_box::{
 };
 pub use sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 pub use sim::{
-    divergence_probe, simulate_opportunity, simulate_transaction, BaseFeeSource,
-    CapitalOverridePlan, DeclaredCode, FrameRpcCounter, HotSlotStore, ProbeCapital,
-    ProductionSimContext, ProductionSimError, ProductionSimulation, ReplayFrameError, ReplayableTx,
-    RunVerdict, ScratchBlock, SequenceReplayError, SettlementWarmup, SimulationCapture,
-    SimulationOverrideParams, StepReading, StorageMemo, StorageMemoCache, PROBE_CALL_GAS_LIMIT,
+    divergence_probe, simulate_opportunity, simulate_transaction, BaseFeeSource, CapitalAsset,
+    CapitalLayouts, CapitalOverride, CapitalOverridePlan, CapitalPath, CapitalPlanError,
+    CapitalTarget, ClaimLayout, DeclaredCode, Erc20Layout, FrameRpcCounter, HotSlotStore,
+    ProbeCapital, ProductionSimContext, ProductionSimError, ProductionSimulation, ReplayFrameError,
+    ReplayableTx, RunVerdict, ScratchBlock, SequenceReplayError, SettlementWarmup,
+    SimulationCapture, SimulationOverrideParams, StepReading, StorageMemo, StorageMemoCache,
+    PROBE_CALL_GAS_LIMIT,
 };

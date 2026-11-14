@@ -33,8 +33,8 @@ use alloy::transports::{TransportError, TransportFut};
 
 use degenbot_arbitrage::{
     dispatch_profitable_results, CmdExecutorBinding, DispatchCandidate, DispatchOutcome,
-    FeeOnTransferRegistry, PoolDivergence, SimulationBlock, SimulationDeployment, SolveStep,
-    MIN_PROFIT_NET,
+    FeeOnTransferRegistry, PoolDivergence, PreparedEncoding, SimulatePath, SimulationBlock,
+    SimulationDeployment, SolveStep, MIN_PROFIT_NET,
 };
 use degenbot_execution::{
     AssessError, ComposeError, ComposeOptions, ComposerInputs, DeploymentId, ExecutionAdapter,
@@ -56,6 +56,41 @@ const OWNER: Address = address!("0x1111111111111111111111111111111111111111");
 /// The fixture deployments' operator-assigned identity.
 fn test_deployment_id() -> DeploymentId {
     DeploymentId::new(1)
+}
+
+/// The lab token the fixture paths cross beside mainnet WETH. Its storage layout
+/// is NOT pinned by the production source, so a probe over it must declare one
+/// explicitly ([`lab_layouts`]) — that is the point of the layout source.
+const LAB_TOKEN: Address = address!("0x3333333333333333333333333333333333333333");
+
+/// The layouts the fixture declares explicitly: the lab token's `balances` base
+/// slot, on top of the pinned mainnet set.
+fn lab_layouts() -> degenbot_simulation::CapitalLayouts {
+    degenbot_simulation::CapitalLayouts::verified().with_token(LAB_TOKEN, 5)
+}
+
+/// One fan-out's path value for the fixture path: the amounts the solver fixed
+/// for it, which the capital-requirement intake reads beside the hops.
+fn sim_path(optimal_input: u128) -> SimulatePath {
+    SimulatePath {
+        candidate_id: degenbot_execution::CandidateId::new(1, test_deployment_id()),
+        optimal_input,
+        steps: vec![
+            SolveStep {
+                output: PREPAY_U128,
+                consumed_input: PREPAY_U128,
+                state_nonce: 0,
+            },
+            SolveStep {
+                output: PREPAY_U128,
+                consumed_input: PREPAY_U128,
+                state_nonce: 0,
+            },
+        ]
+        .into_boxed_slice(),
+        path_info: two_v2_hops(),
+        solve_block: BLOCK,
+    }
 }
 const FOREIGN: Address = address!("0x2222222222222222222222222222222222222222");
 const WETH: Address = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
@@ -213,6 +248,40 @@ impl tower::Service<RequestPacket> for EmptyTransport {
     }
 }
 
+/// A transport that COUNTS every request it is asked to serve (and answers with
+/// the same empty chain `EmptyTransport` serves). The counting is the point: a
+/// probe refused at capital-plan composition must issue NO request at all, and a
+/// counter proves it without inferring anything from an outcome.
+#[derive(Clone, Default)]
+struct CountingTransport {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl CountingTransport {
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl tower::Service<RequestPacket> for CountingTransport {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut empty = EmptyTransport;
+        tower::Service::call(&mut empty, req)
+    }
+}
+
 fn mock_provider() -> AlloyProvider {
     let client = RpcClient::new(EmptyTransport, true);
     let root: RootProvider = RootProvider::new(client);
@@ -322,6 +391,33 @@ fn two_v2_hops() -> PathInfo {
             V2HopInfo {
                 pool_address: address!("0xcccccccccccccccccccccccccccccccccccccccc"),
                 token0_address: address!("0x3333333333333333333333333333333333333333"),
+                token1_address: WETH,
+                fee: 30,
+                zfo: true,
+            },
+        ]
+        .into_iter()
+        .map(degenbot_execution::HopInfo::V2)
+        .collect::<Vec<_>>(),
+    )
+}
+
+/// The same round trip over the PINNED mainnet pair (WETH ↔ USDC): every asset it
+/// touches has a verified layout, so a probe posture can compose its plan.
+fn weth_usdc_v2_hops() -> PathInfo {
+    let usdc = address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    PathInfo::new(
+        vec![
+            V2HopInfo {
+                pool_address: address!("0xdddddddddddddddddddddddddddddddddddddddd"),
+                token0_address: WETH,
+                token1_address: usdc,
+                fee: 30,
+                zfo: true,
+            },
+            V2HopInfo {
+                pool_address: address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+                token0_address: usdc,
                 token1_address: WETH,
                 fee: 30,
                 zfo: true,
@@ -596,6 +692,180 @@ fn a_failed_foreign_assessment_is_never_gas_profitable() {
     );
 }
 
+/// The fail-closed fan-out: a zero-balance probe over a token whose storage
+/// layout this build has not verified is REFUSED as a typed planning answer that
+/// names the asset, and the fan-out executes nothing — not a single provider
+/// request, so no EVM state was ever built.
+///
+/// This is the counter-proof the retained-balance failure needs: simulating with
+/// the token left in place would report whatever the untouched balance produced
+/// as if the path had run.
+#[test]
+fn an_unverified_token_refuses_the_fanout_before_any_evm_work() {
+    let transport = CountingTransport::default();
+    let client = RpcClient::new(transport.clone(), true);
+    let root: RootProvider = RootProvider::new(client);
+    let provider = AlloyProvider::from_provider(
+        Arc::new(root) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
+    );
+    // The pinned production layouts only: the fixture's lab token is unverified.
+    let deployment = CmdExecutorBinding::new(
+        OWNER,
+        EXECUTOR,
+        WETH,
+        POOL_MANAGER,
+        EncodeOptions::default(),
+    )
+    .with_capital(degenbot_simulation::ProbeCapital::ZeroBalance)
+    .deployment(test_deployment_id());
+
+    let refusal = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .expect("multi-thread runtime");
+                let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+                let pool_divergence = Arc::new(Mutex::new(PoolDivergence::new()));
+                let fot = Arc::new(Mutex::new(FeeOnTransferRegistry::new()));
+                let bot_state = Arc::new(StateLock::new(BotState::new()));
+                let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+                let ctx = degenbot_arbitrage::SimulateContext {
+                    block: block(&provider),
+                    deployment: &deployment,
+                };
+                runtime.block_on(async {
+                    dispatch_profitable_results(
+                        vec![candidate()],
+                        &ctx,
+                        &suppression,
+                        BLOCK,
+                        0,
+                        &pool_divergence,
+                        &fot,
+                        Some(bot_state),
+                        Some(warm_cache),
+                    )
+                })
+            })
+            .join()
+            .expect("fan-out thread")
+    })
+    .expect_err("the unverified token refuses the batch");
+    assert_eq!(
+        refusal,
+        degenbot_arbitrage::DispatchRefusal::CapitalPlan {
+            error: degenbot_simulation::CapitalPlanError::UnverifiedLayout {
+                asset: degenbot_simulation::CapitalAsset::Erc20 { token: LAB_TOKEN }
+            },
+        },
+        "the refusal names the asset"
+    );
+    assert!(
+        refusal.to_string().contains("no verified storage layout"),
+        "the message states the gap: {refusal}"
+    );
+    assert_eq!(
+        transport.calls(),
+        0,
+        "the refusal happens before any provider read, so no EVM state was built"
+    );
+}
+
+/// The bounded fan-out filter: a candidate the selection walk already DECLINED
+/// cannot suppress a simulatable sibling.
+///
+/// The plan is composed before every per-candidate encoding decision is final, so
+/// its path set is a conservative union — but a prepared decline never reaches the
+/// EVM, so its assets need no override, and an unverifiable token on such a path
+/// must not refuse a fan-out that carries a path this build CAN simulate. The
+/// sibling here is an `Accepted` encoding over the pinned mainnet pair; the
+/// declined one crosses a lab token the production layouts do not verify.
+#[test]
+fn a_declined_candidate_does_not_refuse_a_simulatable_sibling() {
+    let transport = CountingTransport::default();
+    let client = RpcClient::new(transport.clone(), true);
+    let root: RootProvider = RootProvider::new(client);
+    let provider = AlloyProvider::from_provider(
+        Arc::new(root) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
+    );
+    // The pinned production layouts only, and a probe posture: the refused
+    // candidate's lab token has none, the sibling's WETH/USDC both do.
+    let deployment = CmdExecutorBinding::new(
+        OWNER,
+        EXECUTOR,
+        WETH,
+        POOL_MANAGER,
+        EncodeOptions::default(),
+    )
+    .with_capital(degenbot_simulation::ProbeCapital::ZeroBalance)
+    .deployment(test_deployment_id());
+
+    let declined = DispatchCandidate {
+        candidate_id: degenbot_execution::CandidateId::new(8, test_deployment_id()),
+        prepared: Some(PreparedEncoding::Declined(
+            "this deployment has no representation for the shape".to_string(),
+        )),
+        ..candidate()
+    };
+    let accepted = DispatchCandidate {
+        candidate_id: degenbot_execution::CandidateId::new(9, test_deployment_id()),
+        path_info: weth_usdc_v2_hops(),
+        prepared: Some(PreparedEncoding::Accepted(TransactionRequest::call(
+            EXECUTOR,
+            Bytes::new(),
+        ))),
+        ..candidate()
+    };
+
+    let outcome = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .expect("multi-thread runtime");
+                let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+                let pool_divergence = Arc::new(Mutex::new(PoolDivergence::new()));
+                let fot = Arc::new(Mutex::new(FeeOnTransferRegistry::new()));
+                let bot_state = Arc::new(StateLock::new(BotState::new()));
+                let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+                let ctx = degenbot_arbitrage::SimulateContext {
+                    block: block(&provider),
+                    deployment: &deployment,
+                };
+                runtime.block_on(async {
+                    dispatch_profitable_results(
+                        vec![declined, accepted],
+                        &ctx,
+                        &suppression,
+                        BLOCK,
+                        0,
+                        &pool_divergence,
+                        &fot,
+                        Some(bot_state),
+                        Some(warm_cache),
+                    )
+                })
+            })
+            .join()
+            .expect("fan-out thread")
+    })
+    .expect("the declined candidate's unverified token does not refuse the fan-out");
+
+    assert_eq!(
+        outcome.candidate_count, 2,
+        "both candidates were admitted; the fan-out was not refused at planning"
+    );
+    assert!(
+        transport.calls() > 0,
+        "the accepted sibling reached the EVM, so the plan composed for it"
+    );
+}
+
 /// Pins: the composition boundary represents a deployment with no PoolManager /
 /// WETH identity at all, and such a deployment still derives the path's own
 /// prefetch words (only the settlement-side words are skipped).
@@ -604,9 +874,16 @@ fn a_deployment_without_settlement_identities_is_representable() {
     let deployment = foreign_deployment();
     assert!(deployment.settlement().is_none());
     assert!(deployment.code().is_some());
-    let overrides = deployment.override_params();
+    let overrides = deployment
+        .override_params(&[sim_path(PREPAY_U128)])
+        .expect("a production deployment composes no capital plan");
     assert!(overrides.settlement.is_none());
     assert_eq!(overrides.owner, OWNER);
+    assert_eq!(
+        overrides.capital.mode(),
+        degenbot_simulation::ProbeCapital::Production,
+        "an ordinary deployment installs and clears nothing"
+    );
 }
 
 /// Pins the built-in packet: the adapter declares no probe reads (the contract
@@ -740,8 +1017,12 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
     );
     let declared = zero_balance
         .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
-        .expect("the declared override names the executor");
-    let deployed = zero_balance.deployment(test_deployment_id());
+        .expect("the declared override names the executor")
+        .with_capital_layouts(lab_layouts());
+    let deployed = zero_balance
+        .deployment(test_deployment_id())
+        .with_capital_layouts(lab_layouts());
+    let paths = [sim_path(PREPAY_U128)];
 
     for (arm, deployment) in [("declared", declared), ("deployed", deployed)] {
         let settlement = deployment
@@ -751,15 +1032,42 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
             settlement.slots, executor_slots,
             "{arm}: the warmup slots key on the executor, not the owner"
         );
+        let capital = deployment
+            .override_params(&paths)
+            .expect("the fixture declares its lab token's layout")
+            .capital;
         assert_eq!(
-            deployment.override_params().capital,
-            degenbot_simulation::CapitalOverridePlan::ZeroBalance { holder: EXECUTOR },
-            "{arm}: the one capital plan clears the executor, in both arms"
+            capital.mode(),
+            degenbot_simulation::ProbeCapital::ZeroBalance,
+            "{arm}: the one capital plan clears, in both arms"
         );
         assert_eq!(
-            deployment.capital().holder(),
+            capital.holder(),
             Some(EXECUTOR),
             "{arm}: the capital target is the executor"
+        );
+        assert!(
+            capital
+                .assets()
+                .any(|asset| asset == degenbot_simulation::CapitalAsset::Erc20 { token: WETH }),
+            "{arm}: the path's WETH holding is named"
+        );
+        assert!(
+            capital.assets().any(|asset| asset
+                == degenbot_simulation::CapitalAsset::Erc20 { token: LAB_TOKEN }),
+            "{arm}: the path's own lab token is named too, from its declared layout"
+        );
+        assert!(
+            capital
+                .overrides()
+                .iter()
+                .all(|entry| entry.value() == alloy::primitives::U256::ZERO),
+            "{arm}: a zero-balance plan clears, never funds"
+        );
+        assert_eq!(
+            deployment.capital(),
+            degenbot_simulation::ProbeCapital::ZeroBalance,
+            "{arm}: the deployment keeps the posture it was composed from"
         );
         assert_eq!(
             deployment.target(),
@@ -767,9 +1075,16 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
             "{arm}: the deployment executes at the executor the capital names"
         );
     }
+}
 
-    // A self-funded probe: the funded USDC holder is the same executor. The
-    // capital value — not a hand-set `funding` axis — supplies the encoding.
+/// The self-funded half of the same parity: the installed capital IS the built
+/// Plan's declared requirement, on the executor, in both arms — and every other
+/// holding the path touches is cleared rather than granted.
+#[test]
+fn self_funded_probe_overrides_install_the_plan_requirement() {
+    let executor_slots = compute_simulation_warmup_slots(EXECUTOR, WETH);
+    let paths = [sim_path(PREPAY_U128)];
+    // The capital value — not a hand-set `funding` axis — supplies the encoding.
     let self_funded = CmdExecutorBinding::new(
         OWNER,
         EXECUTOR,
@@ -790,18 +1105,56 @@ fn capital_overrides_name_the_executor_in_both_deployment_arms() {
     );
     let declared = self_funded
         .injected(test_deployment_id(), EXECUTOR, Bytes::from_static(&[0xfe]))
-        .expect("the declared override names the executor");
-    let deployed = self_funded.deployment(test_deployment_id());
+        .expect("the declared override names the executor")
+        .with_capital_layouts(lab_layouts());
+    let deployed = self_funded
+        .deployment(test_deployment_id())
+        .with_capital_layouts(lab_layouts());
     for (arm, deployment) in [("declared", declared), ("deployed", deployed)] {
         assert_eq!(
             deployment.settlement().map(|settlement| settlement.slots),
             Some(executor_slots),
             "{arm}: the warmup slots key on the executor, not the owner"
         );
+        let capital = deployment
+            .override_params(&paths)
+            .expect("the fixture declares its lab token's layout")
+            .capital;
         assert_eq!(
-            deployment.override_params().capital,
-            degenbot_simulation::CapitalOverridePlan::SelfFund { holder: EXECUTOR },
+            capital.mode(),
+            degenbot_simulation::ProbeCapital::SelfFund,
+            "{arm}: self-funded probe capital installs an entry"
+        );
+        assert_eq!(
+            capital.holder(),
+            Some(EXECUTOR),
             "{arm}: self-funded probe capital targets the executor"
+        );
+        // The all-V2 self-funded family seeds the entry it spends: the whole
+        // optimal input, in the cycle's closing WETH — and nothing else. The
+        // lab token the path crosses is touched, never granted.
+        assert_eq!(
+            capital
+                .overrides()
+                .iter()
+                .map(|entry| (entry.asset(), entry.value()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    degenbot_simulation::CapitalAsset::Native,
+                    alloy::primitives::U256::ZERO
+                ),
+                (
+                    degenbot_simulation::CapitalAsset::Erc20 { token: WETH },
+                    alloy::primitives::U256::from(PREPAY_U128)
+                ),
+                (
+                    degenbot_simulation::CapitalAsset::Erc20 { token: LAB_TOKEN },
+                    alloy::primitives::U256::ZERO
+                ),
+            ],
+            "{arm}: the installed capital IS the Plan's declared requirement, and the \
+             path's other touched holding is cleared rather than granted"
         );
     }
 }
@@ -864,16 +1217,22 @@ fn the_default_production_deployment_enables_no_probe_capital() {
     ];
 
     for (arm, deployment, declares_code) in arms {
-        let overrides = deployment.override_params();
+        let overrides = deployment
+            .override_params(&[sim_path(PREPAY_U128)])
+            .expect("production composes no capital plan");
         assert_eq!(
-            overrides.capital,
-            degenbot_simulation::CapitalOverridePlan::Production,
+            overrides.capital.mode(),
+            degenbot_simulation::ProbeCapital::Production,
             "{arm}: ordinary production installs and clears no executor capital"
         );
         assert_eq!(
             overrides.capital.holder(),
             None,
             "{arm}: production names no capital target at all"
+        );
+        assert!(
+            overrides.capital.is_empty(),
+            "{arm}: production resolves no write, not even an empty one per asset"
         );
         assert_eq!(
             overrides.owner, OWNER,

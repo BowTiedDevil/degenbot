@@ -154,6 +154,74 @@ Valid streams are untouched: a stream the policy finds solvent emits exactly the
 production bytes and the same `cmd_executor/2` call encoding, so release identity
 and bytes are unchanged. Only the refusal's representation is new.
 
+### Migration: a probe's capital override is path-aware, and an unverified layout refuses
+
+The simulation's capital override used to be a mode plus a holder, with the
+token set hard-coded in the engine: a zero-balance probe cleared mainnet USDC,
+WBTC, the holder's WETH9 word, and its two PoolManager claims whatever the path
+crossed, and a self-funded probe installed a blanket mainnet-USDC balance on
+every path. A probe could therefore report a path whose untouched token balance
+was still there (the simulation read capital the probe claimed to withhold) or
+fund an asset the path never declared.
+
+One **path-aware plan** now crosses the seam, composed once per fan-out, and
+refused before any EVM state exists when a covered asset's storage layout is not
+verified:
+
+| Surface | Retired | Now |
+| --- | --- | --- |
+| Core plan (`degenbot_simulation::CapitalOverridePlan`) | a `Copy` enum: `Production` / `SelfFund { holder }` / `ZeroBalance { holder }` | a value carrying the mode, the holder, and every RESOLVED override (`CapitalOverride { asset, target, value }`): the asset identity (native / ERC-20 token / PoolManager ERC-6909 claim of a currency), its concrete storage target (the account's balance word, or a contract+slot), and the value installed |
+| Layout source | the engine's hard-coded USDC slot 9 / WBTC slot 0 constants plus warmup-derived WETH and claim slots | `degenbot_simulation::CapitalLayouts` — an explicit, pinned descriptor set (mainnet WETH9 `balanceOf`@3, USDC `balances`@9, WBTC `balances`@0, mainnet PoolManager ERC-6909 `balanceOf`@4). A fixture declares its own with `with_token` / `with_manager` (the LAST declaration for a contract wins, so a fixture may re-pin one deliberately); nothing infers a slot from an ABI, an address, decimals, or a `balanceOf` call, and nothing scans storage. **The pinned set has no operator or FFI declaration surface yet**: it is what a shipped build verifies, and only in-process callers (fixtures, embedding code) can extend it |
+| Requirement source | a blanket `EXECUTOR_FUND_ETH` USDC grant on every self-funded path | the built Plan's own `SelfFund` seeds, read across the seam by `ExecutionAdapter::capital_requirements` (the same grammar walk the encode performs, `degenbot_executor::composers::encode_cmd_stream_capital`); a family that funds itself in-path declares nothing |
+| Composition point | `SimulationDeployment::with_capital(mode)` projected a plan at deployment construction | `SimulationDeployment::with_capital(mode)` stores the POSTURE; `capital_plan(paths)` / `override_params(paths)` compose the plan per fan-out for the candidates that fan-out can still hand to the EVM (see the conservative-union rule below), so the same plan reaches the engine's override application |
+| Override application (`apply_simulation_overrides`) | mode branches, hard-coded token list, warmup-derived clearing slots | applies the plan's resolved writes, LAST — after owner funding, declared code, and the settlement warmup — so the plan is authoritative for every asset it names |
+| Refusal | an unknown token kept its balance and the probe reported the resulting revert | `CapitalPlanError::UnverifiedLayout { asset }`; production dispatch reports it as `DispatchRefusal::CapitalPlan { error }`, and the dedicated one-path probe as `ProbeError::CapitalPlan(error)` — its own arm, before any EVM work, naming the asset. It is never `InsolventZeroCapital` (that is a capital-policy answer), never an `encode-failed` bucket, and never a silent skip |
+
+Which assets a plan covers is derived from the paths, never from a fixed list:
+the holder's native balance, every ERC-20 a hop names, and every PoolManager
+ERC-6909 claim a V4 hop's currencies name, deduplicated by identity. A V4 hop's
+native currency contributes the native balance and the claim whose id is
+`uint160(address(0))`; it never contributes an ERC-20 at a guessed slot.
+
+The path set a fan-out composes is a CONSERVATIVE union rather than an exact
+projection of what the EVM will run. A candidate whose encoding the selection walk
+already declined (`Declined` / `InsolventZeroCapital` / `Failed`) is filtered
+cheaply — it never reaches the EVM, so its assets need no override — but an
+unselected or not-yet-encoded (`None`) candidate is still included, because the
+plan is composed before every per-candidate encoding decision is final. One
+unverifiable touched asset anywhere in that union therefore refuses the whole
+fan-out (and, for the one-path `probe_path` op, the probe) BEFORE any EVM work;
+the pre-flight is deliberately the conservative side of the same rule.
+
+`ZeroBalance` installs `0` for every one of them. `SelfFund` installs the
+declared requirement where the path declares one and `0` for every other touched
+holding — native balance, tokens, and PoolManager claims alike — so a
+self-funding family, which declares no external entry, grants nothing and still
+clears what it touches. Requirements from several paths in one fan-out combine by
+MAXIMUM, never by sum: every candidate starts under the same fan-out bankroll, but
+a candidate's stream spends only its own Plan's declared entry, so the shared
+simulated database has to cover the largest single entry — a sum would grant
+capital no single path declared.
+
+The settlement warmup keeps its own meaning and is applied BEFORE the plan: its
+1-wei touches and its operational WETH9 balance make the contract's first run
+cheap, and the plan then overwrites exactly the assets it names — so a warmup can
+never reintroduce capital a zero-balance clearing removed, the warmup's 1 wei is
+never read as declared self-funded capital, and a self-funded requirement is never
+overwritten by the operational amount. Owner gas funding, the declared/deployed
+code, and every account the plan does not name are untouched.
+
+The pinned set covers the canonical mainnet assets a production path crosses, so
+such a path resolves every asset it touches — but the write set is the PATHS',
+never the retired hard-coded list. A path crossing only WETH composes one token
+holding (not USDC and WBTC), a path that touches nothing but native composes one
+native write, and a path naming a token outside the pinned set refuses instead of
+leaving its balance in place. A driver that needs to report the refusal sees the
+Python boundary raise `RuntimeError` (the planning refusal is its own typed probe
+error, never a per-candidate `FailureDetail`), and the production fan-out reports
+it as `DispatchRefusal::CapitalPlan`. Valid streams are byte-identical: the plan is
+EVM state, and no `cmd_executor/2` command byte or release identity moves.
+
 ### The `probe_path` op is non-submitting by construction
 
 An execution probe quotes one explicit amount vector and runs it through the

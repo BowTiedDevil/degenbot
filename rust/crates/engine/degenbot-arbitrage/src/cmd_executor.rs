@@ -462,6 +462,30 @@ impl ExecutionAdapter for CmdExecutorSimAdapter {
         ))
     }
 
+    fn capital_requirements(
+        &self,
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Vec<degenbot_execution::CapitalRequirement> {
+        // The SAME intake the encode above performs: one request value, one
+        // grammar walk, and the Plan's own `SelfFund` seeds as the answer. A
+        // family that funds itself in-path declares nothing, so this is read
+        // from the Plan rather than restated as a rule about hop order.
+        let request = EncodeRequest::new(
+            path.clone(),
+            inputs.optimal_input,
+            inputs.hop_outputs.to_vec(),
+            inputs.consumed_inputs.to_vec(),
+            self.binding.opts(),
+        );
+        let context = EncodeContext::new(
+            self.binding.executor,
+            self.binding.pool_manager,
+            self.binding.weth,
+        );
+        degenbot_executor::composers::encode_cmd_stream_capital(&context, &request)
+    }
+
     fn probe_spec(&self) -> &ProbeSpecs {
         // The receipt is the evidence (ADR-098 D7): the built-in assesses the
         // `execute` return data, so it declares no pre/post reads and spends no

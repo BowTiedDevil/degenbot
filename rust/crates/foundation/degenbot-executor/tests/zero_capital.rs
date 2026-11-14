@@ -36,10 +36,13 @@
 use alloy::primitives::{address, Address};
 use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 use degenbot_executor::composers::{
-    encode_cmd_stream, ComposerInputs, EncodeContext, EncodeOptions, EncodeRequest,
+    encode_cmd_stream, encode_cmd_stream_capital, ComposerInputs, EncodeContext, EncodeOptions,
+    EncodeRequest,
 };
 use degenbot_executor::grammar_ledger::{FundingSource, InitialCapital, InsolventZeroCapital};
+use degenbot_executor::grammar_plan::plan_external_capital;
 use degenbot_executor::grammar_shape::{derive_shape, derive_shape_detailed, Derive};
+use degenbot_executor::grammar_walker::build_walk;
 
 /// The `{V2,V3,V4}³` base of the permutation index (three protocols per hop).
 const PROTOCOLS: usize = 3;
@@ -267,6 +270,88 @@ fn losing_zero_capital_permutations_report_typed_deficits() {
     assert_eq!(
         typed, 27,
         "all 27 losing permutations are typed deficits — none declines at Plan build"
+    );
+}
+
+/// The capital a self-funded override installs is exactly what the Plan the
+/// adapter builds declares — and the funding axis is a PER-FAMILY fact, so the
+/// answer is a real set, not a path-level rule.
+///
+/// This is the seam a path-aware override reads: `encode_cmd_stream_capital` is
+/// the requirement half of the very build `encode_cmd_stream` performs, so the
+/// two can never fund one asset and declare another. The expectation is derived
+/// independently here — from the family's declared axis support — so a family
+/// that ignores the `funding` axis (and therefore needs no entry capital at all)
+/// is pinned as loudly as one that seeds the WETH entry.
+#[test]
+fn self_funded_requirements_come_from_the_built_plan() {
+    let mut seeding = 0;
+    let mut self_funding = 0;
+    for (name, path) in permutations() {
+        let request = EncodeRequest::new(
+            path.clone(),
+            OPTIMAL,
+            PROFITABLE_OUTS.to_vec(),
+            PROFITABLE_CONSUMED.to_vec(),
+            self_fund_opts(),
+        );
+        let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
+        let installed = encode_cmd_stream_capital(&ctx, &request);
+
+        // The same Plan, built directly: the intake is a read of this build,
+        // not a second derivation of it.
+        let (_, plan, _) = build_walk(
+            &path,
+            &inputs(&PROFITABLE_OUTS, &PROFITABLE_CONSUMED, self_fund_opts()),
+        )
+        .unwrap_or_else(|| panic!("[{name}] the family builds a Plan"));
+        assert_eq!(
+            installed,
+            plan_external_capital(&plan),
+            "[{name}] the override's requirement set IS the built Plan's"
+        );
+
+        // One requirement per currency, whatever the family seeds: the Plan
+        // states amounts per asset, and a duplicated entry would make the
+        // override install the same asset twice.
+        let mut currencies: Vec<Address> = installed
+            .iter()
+            .map(|requirement| requirement.currency)
+            .collect();
+        currencies.sort_unstable();
+        currencies.dedup();
+        assert_eq!(
+            currencies.len(),
+            installed.len(),
+            "[{name}] the requirement set names each asset once"
+        );
+        for requirement in &installed {
+            assert!(
+                requirement.amount > 0,
+                "[{name}] a declared requirement is capital, never a zero grant"
+            );
+        }
+        if installed.is_empty() {
+            self_funding += 1;
+        } else {
+            assert!(
+                installed
+                    .iter()
+                    .any(|requirement| requirement.currency == WETH),
+                "[{name}] a seeding family declares the cycle's WETH entry"
+            );
+            seeding += 1;
+        }
+    }
+    assert_eq!(
+        seeding + self_funding,
+        27,
+        "every permutation is accounted for"
+    );
+    assert!(
+        seeding > 0 && self_funding > 0,
+        "the matrix exercises both a funding-branched family and a self-funding one \
+         (seeding {seeding}, self-funding {self_funding})"
     );
 }
 

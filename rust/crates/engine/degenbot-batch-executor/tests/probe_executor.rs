@@ -31,8 +31,8 @@ use degenbot_arbitrage::{
     TargetSelection,
 };
 use degenbot_batch_executor::{
-    derive_path_pools, BatchWork, ExecutorConfig, PathResolver, ProbeCapital, ProbeConfig,
-    ProbeExecutor, RawResult, SimRuntime, SimulateVerdict,
+    derive_path_pools, AssemblyVerdict, BatchWork, ExecutorConfig, PathResolver, ProbeCapital,
+    ProbeConfig, ProbeExecutor, RawResult, SimRuntime, SimulateVerdict,
 };
 use degenbot_execution::{CandidateId, HopInfo, PathInfo, V2HopInfo};
 use degenbot_executor::composers::EncodeOptions;
@@ -135,6 +135,23 @@ fn work(block: u64) -> BatchWork {
 /// values, which is exactly the property under test: non-submission here is a
 /// MISSING field, not a policy flag, a dry-run stance, or an entry that refuses.
 async fn probe_executor() -> ProbeExecutor {
+    probe_executor_with(ProbeCapital::Production).await
+}
+
+/// The same probe executor at an explicit capital posture: a probe is built per
+/// posture, and a probe posture composes a real capital plan for the paths it
+/// simulates.
+async fn probe_executor_with(capital: ProbeCapital) -> ProbeExecutor {
+    probe_executor_over(capital, HashMap::from([(PATH_ID, v2_path())])).await
+}
+
+/// The same probe executor over an explicit resolver projection: a probe whose
+/// rows this engine cannot resolve is a shape the capital pre-flight must SKIP,
+/// so the fixture needs a resolver that knows fewer paths than the work names.
+async fn probe_executor_over(
+    capital: ProbeCapital,
+    paths: HashMap<u64, PathInfo>,
+) -> ProbeExecutor {
     let mut verdict = degenbot_config::BotConfig::default();
     // The built-in target runs a DECLARED build in this fixture: its `execute`
     // stub returns a receipt, so the probe's outcome is the real sim's own
@@ -143,8 +160,8 @@ async fn probe_executor() -> ProbeExecutor {
     let runtime = SimRuntime {
         max_candidates: 50,
         use_v4_batch: false,
-        probe_capital: ProbeCapital::Production,
-        resolver: Arc::new(MapResolver(HashMap::from([(PATH_ID, v2_path())]))),
+        probe_capital: capital,
+        resolver: Arc::new(MapResolver(paths)),
         suppression: Arc::new(Mutex::new(PathSuppression::new())),
         divergence: Arc::new(Mutex::new(PoolDivergence::new())),
         fot: Arc::new(Mutex::new(FeeOnTransferRegistry::new())),
@@ -211,6 +228,75 @@ async fn a_probe_returns_the_real_profitable_simulation_without_a_submit_lane() 
         "the production grammar's selector plus arguments"
     );
     assert_eq!(encoded.gross_profit, BUILTIN_GROSS);
+}
+
+/// The one-path probe contract's typed refusal: a probe posture whose path
+/// touches a token this build has no verified layout for comes back as
+/// `ProbeError::CapitalPlan` naming the asset — its own value, not a stage
+/// detail, and not a per-candidate failure. Nothing was simulated, so there is no
+/// record to report.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_probe_refuses_an_unverified_token_as_its_own_typed_planning_answer() {
+    for capital in [ProbeCapital::ZeroBalance, ProbeCapital::SelfFund] {
+        let executor = probe_executor_with(capital).await;
+        let refusal = executor
+            .probe(work(BLOCK))
+            .await
+            .expect_err("the fixture's lab token has no verified layout");
+        assert_eq!(
+            refusal,
+            degenbot_batch_executor::ProbeError::CapitalPlan(
+                degenbot_simulation::CapitalPlanError::UnverifiedLayout {
+                    asset: degenbot_simulation::CapitalAsset::Erc20 {
+                        token: address!("0x3333333333333333333333333333333333333333"),
+                    },
+                }
+            ),
+            "{capital:?}: the refusal is typed and names the asset"
+        );
+        assert!(
+            refusal.to_string().contains("no verified storage layout"),
+            "{capital:?}: the message states the gap: {refusal}"
+        );
+    }
+}
+
+/// A row the engine cannot RESOLVE, and an EMPTY batch, are never misreported as
+/// a planning refusal: the typed capital pre-flight has nothing to compose, so it
+/// skips and the ordinary stage answer survives.
+///
+/// This is the distinction the pre-flight exists to preserve — an unresolvable
+/// path is the assembly's `SkipResolveMiss` answer (or, for a malformed row, its
+/// own corruption refusal), never `CapitalPlanError::NoPaths`, which would
+/// replace the real verdict with a planning one that names no asset.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unresolvable_row_is_left_to_the_stage_answer_not_refused_as_no_paths() {
+    // A probe posture (not production) over a resolver that knows no path at all.
+    let executor = probe_executor_over(ProbeCapital::ZeroBalance, HashMap::new()).await;
+
+    let outcome = executor
+        .probe(work(BLOCK))
+        .await
+        .expect("the stage answers for the unresolvable row; the pre-flight refuses nothing");
+    assert_eq!(
+        outcome.records.len(),
+        1,
+        "the row keeps its assembly record"
+    );
+    assert_eq!(
+        outcome.records[0].assembly,
+        AssemblyVerdict::SkipResolveMiss,
+        "the ordinary resolve-miss answer survives, not a NoPaths planning refusal"
+    );
+
+    // An empty batch composes no plan either — and reports no refusal.
+    let mut empty = work(BLOCK);
+    empty.rows.clear();
+    let outcome = executor
+        .probe(empty)
+        .await
+        .expect("an empty batch has no capital work to refuse");
+    assert!(outcome.records.is_empty(), "nothing was assembled");
 }
 
 /// Two concurrent probes over the real stages each read their OWN record: the

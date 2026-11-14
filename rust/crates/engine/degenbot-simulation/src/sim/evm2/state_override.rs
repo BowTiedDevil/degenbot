@@ -1,14 +1,12 @@
-//! The evm2 port of `apply_simulation_overrides`
-//! (`sim::evm::state_override`) — the sim-scoped owner/executor funding +
-//! bytecode injection + warmup-slot merge onto a `CacheDB`, field-for-field
-//! with the same explicit-balance-wins merge (the WETH9 `balanceOf` slot IS
-//! overwritten to the operational amount).
+//! The evm2 port of `apply_simulation_overrides` — the sim-scoped owner/executor
+//! funding + bytecode injection + warmup-slot merge + capital-plan application
+//! onto a `CacheDB`.
 //!
 //! One behavioral difference is forced by evm2's `CacheDB`: its
 //! `insert_account_storage` writes the cache entry WITHOUT the backing
-//! `load_account` fetch revm's version performs, so the cold-load side
-//! effect (the WETH9/PoolManager code prefetch) does not happen here — those
-//! accounts' code loads on first real read instead.
+//! `load_account` fetch revm's version performs, so the cold-load side effect
+//! (the WETH9/PoolManager code prefetch) does not happen here — those accounts'
+//! code loads on first real read instead.
 //!
 //! # Capital targeting is its own decision
 //!
@@ -16,39 +14,41 @@
 //! accounts against plus the slots its contract touches; WHICH account those
 //! slots name belongs to the warmup, and the built-in binding keys them on the
 //! deployment's executor in both deployment arms (declared code and deployed
-//! code). The capital overrides never inherit that answer. Each one names its
-//! own account — [`SimulationOverrideParams::capital`], the one
-//! [`crate::CapitalOverridePlan`] a deployment composed — and derives the WETH9
-//! balance and PoolManager ERC6909 claim slots from that account, so a probe's
-//! capital lands on the executor it names
-//! whatever the deployment declares (code or none) and whichever account the
-//! warmup keyed.
+//! code). The capital overrides never inherit that answer. They are the ONE
+//! [`crate::CapitalOverridePlan`] a fan-out composed, and every write it carries
+//! was already resolved — contract, slot, and value — from the account the plan
+//! names (see [`crate::sim::capital`]). This function applies them and decides
+//! nothing: no token list, no slot arithmetic, no mode.
 //!
-//! The one account read this function may perform is the clearing target's own:
-//! a deployed executor's account info (its code hash, above all) lives in the
-//! chain, so it is materialized exactly as the EVM's own first read would
-//! (see [`clear_native_balance`]).
+//! # Order
+//!
+//! Owner funding, declared code, settlement warmup, then the capital plan. The
+//! plan goes LAST so it is authoritative for the assets it names: a warmup's
+//! 1-wei touch or its operational WETH9 balance can never reintroduce capital a
+//! zero-balance clearing removed, and can never overwrite a self-funded
+//! requirement the built Plan declared.
+//!
+//! The one account read this function may perform is a capital target's own: a
+//! deployed executor's account info (its code hash, above all) lives in the
+//! chain, so it is materialized exactly as the EVM's own first read would (see
+//! [`set_native_balance`]).
 
 use alloy::primitives::{Address, U256};
 
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, CacheDB, DynDatabase};
 
-use degenbot_executor::compute_simulation_warmup_slots;
-
+use crate::sim::capital::{CapitalOverride, CapitalTarget};
 use crate::sim::state_override::{
-    SimulationOverrideParams, EXECUTOR_FUND_ETH, ONE_WEI, OWNER_FUND_ETH, USDC_MAINNET,
-    USDC_MAINNET_BALANCE_SLOT, WBTC_MAINNET, WBTC_MAINNET_BALANCE_SLOT,
+    SimulationOverrideParams, EXECUTOR_FUND_ETH, ONE_WEI, OWNER_FUND_ETH,
 };
-use crate::CapitalOverridePlan;
 
-/// Apply the simulation state-overrides onto an evm2 `CacheDB`,
-/// field-for-field with the revm-side original (see the module doc).
+/// Apply the simulation state-overrides onto an evm2 `CacheDB`.
 ///
 /// The settlement warmup touches apply only for a deployment that declares the
 /// identities ([`SimulationOverrideParams::settlement`]); a declared code
 /// override installs its runtime at the declaration's own address. The capital
-/// overrides target the account their own parameter names (see the module doc).
+/// plan's writes apply last, at the account the plan names (see the module doc).
 pub fn apply_simulation_overrides<ExtDb: DynDatabase>(
     cache_db: &mut CacheDB<ExtDb>,
     params: &SimulationOverrideParams,
@@ -65,18 +65,6 @@ pub fn apply_simulation_overrides<ExtDb: DynDatabase>(
                 .with_balance(eth_amount(EXECUTOR_FUND_ETH))
                 .with_code(Bytecode::new_raw(code.runtime.clone())),
         );
-    }
-
-    // The ONE capital plan, applied in its declared order relative to the
-    // settlement warmup: a self-funded installation lands before the warmup
-    // raises the WETH9 balanceOf slot, and a zero-balance clearing lands after
-    // it, so clearing always wins.
-    if let CapitalOverridePlan::SelfFund { holder } = params.capital {
-        let slot = degenbot_executor::mapping_slot(
-            U256::from(USDC_MAINNET_BALANCE_SLOT),
-            U256::from_be_bytes(holder.into_word().into()),
-        );
-        cache_db.insert_account_storage(&USDC_MAINNET, &slot, &eth_amount(EXECUTOR_FUND_ETH));
     }
 
     if let Some(settlement) = &params.settlement {
@@ -102,7 +90,9 @@ pub fn apply_simulation_overrides<ExtDb: DynDatabase>(
         }
 
         // Raise the WETH9 balanceOf slot from the 1-wei touch to the
-        // operational amount for V3 callbacks.
+        // operational amount for V3 callbacks. A capital plan that names this
+        // account's WETH9 balance overwrites it below — the plan is the
+        // authority for every asset it declares.
         cache_db.insert_account_storage(
             &settlement.weth_address,
             &settlement.slots.weth_balance,
@@ -110,74 +100,91 @@ pub fn apply_simulation_overrides<ExtDb: DynDatabase>(
         );
     }
 
-    if let CapitalOverridePlan::ZeroBalance { holder: executor } = params.capital {
-        // Native ETH first: the clearing target is the account named by the
-        // plan, in
-        // BOTH deployment arms. A declared-code build keeps the runtime the
-        // code override installed; a deployed executor keeps the code the chain
-        // holds. Only the balance is replaced.
-        clear_native_balance(cache_db, executor);
+    apply_capital_plan(cache_db, params);
+}
 
-        for (token, base) in [
-            (USDC_MAINNET, USDC_MAINNET_BALANCE_SLOT),
-            (WBTC_MAINNET, WBTC_MAINNET_BALANCE_SLOT),
-        ] {
-            let slot = degenbot_executor::mapping_slot(
-                U256::from(base),
-                U256::from_be_bytes(executor.into_word().into()),
-            );
-            cache_db.insert_account_storage(&token, &slot, &U256::ZERO);
+/// Apply the composed capital plan: every resolved write, in plan order.
+///
+/// The account and its writes are ONE value on the plan, so "writes present,
+/// no account to apply them to" is unrepresentable rather than a state this
+/// function would have to skip in release builds. `Production` carries no write
+/// at all, so an ordinary simulation keeps the chain's own state — including the
+/// executor's balance, which is never materialized here.
+fn apply_capital_plan<ExtDb: DynDatabase>(
+    cache_db: &mut CacheDB<ExtDb>,
+    params: &SimulationOverrideParams,
+) {
+    let Some((holder, capital_writes)) = params.capital.writes() else {
+        return;
+    };
+    for capital_write in capital_writes {
+        apply_capital_override(cache_db, holder, capital_write);
+    }
+}
+
+/// Apply one resolved override at the plan's account.
+fn apply_capital_override<ExtDb: DynDatabase>(
+    cache_db: &mut CacheDB<ExtDb>,
+    holder: Address,
+    capital_write: &CapitalOverride,
+) {
+    match capital_write.target() {
+        // The balance word, set through the account: a clearing replaces the
+        // balance and keeps the code and nonce the arm executes, a funding
+        // installs exactly the declared amount.
+        CapitalTarget::NativeBalance => {
+            set_native_balance(cache_db, holder, capital_write.value());
         }
-        // The WETH9 balance and the PoolManager ERC6909 claims are keyed on
-        // the clearing target itself, never on whichever account the declared
-        // warmup's slots were derived for: a warmup keyed on the owner would
-        // otherwise zero the owner's claim slots and leave the executor's
-        // capital in place.
-        if let Some(settlement) = &params.settlement {
-            let slots = compute_simulation_warmup_slots(executor, settlement.weth_address);
-            cache_db.insert_account_storage(
-                &settlement.weth_address,
-                &slots.weth_balance,
-                &U256::ZERO,
-            );
-            if let Some(pool_manager) = settlement.pool_manager_address {
-                cache_db.insert_account_storage(&pool_manager, &slots.erc6909_weth, &U256::ZERO);
-                cache_db.insert_account_storage(&pool_manager, &slots.erc6909_native, &U256::ZERO);
-            }
+        CapitalTarget::Storage { contract, slot } => {
+            cache_db.insert_account_storage(&contract, &slot, &capital_write.value());
         }
     }
 }
 
-/// Clear an account's native ETH balance while preserving the account itself.
+/// Set an account's native ETH balance while preserving the account itself.
 ///
-/// The zero-balance probe models an executor holding no capital in BOTH
-/// deployment arms, so the clear cannot ride on a declared-code override: a
-/// deployed contract's account info — its code hash above all — is the chain's,
-/// and only the balance may change.
+/// A capital probe models the executor's own holdings in BOTH deployment arms,
+/// so the write cannot ride on a declared-code override: a deployed contract's
+/// account info — its code hash above all — is the chain's, and only the balance
+/// may change.
 ///
 /// A cache that has not materialized the account yet loads it exactly as the
 /// EVM's own first read would; a load failure is left to that read, which fails
 /// at the same account with the same database error rather than letting a
-/// cleared account shadow it. An account the chain reports absent already has a
-/// zero balance and is left absent.
-fn clear_native_balance<ExtDb: DynDatabase>(cache_db: &mut CacheDB<ExtDb>, account: Address) {
+/// rewritten account shadow it. An account the chain reports absent is simply
+/// created with the requested balance (the EVM would read exactly that).
+fn set_native_balance<ExtDb: DynDatabase>(
+    cache_db: &mut CacheDB<ExtDb>,
+    account: Address,
+    balance: U256,
+) {
     if cache_db.account_info(&account).is_none() && cache_db.get_account(&account).is_err() {
         return;
     }
-    let Some(existing) = cache_db.account_info(&account).cloned() else {
-        return;
-    };
-    cache_db.insert_account_info(
-        &account,
-        AccountInfo {
-            balance: U256::ZERO,
-            ..existing
-        },
-    );
+    match cache_db.account_info(&account).cloned() {
+        Some(existing) => {
+            cache_db.insert_account_info(
+                &account,
+                AccountInfo {
+                    balance,
+                    ..existing
+                },
+            );
+        }
+        // The chain reports the account absent, so it already reads a zero
+        // balance: a clearing has nothing to write.
+        None if balance.is_zero() => {}
+        // A funded account the chain does not hold is created with exactly the
+        // declared balance — the code hash of an absent account is empty, which
+        // is what the EVM would read.
+        None => {
+            cache_db.insert_account_info(&account, AccountInfo::default().with_balance(balance));
+        }
+    }
 }
 
 /// A whole-ETH `U256` balance (`eth * 10**18`).
-fn eth_amount(eth: u64) -> U256 {
+pub(crate) fn eth_amount(eth: u64) -> U256 {
     U256::from(eth) * U256::from(10u128.pow(18))
 }
 
@@ -185,11 +192,33 @@ fn eth_amount(eth: u64) -> U256 {
 #[expect(clippy::expect_used)] // test-only fixture reads: the accounts are inserted by the fixture
 mod tests {
     use super::*;
-    use alloy::primitives::{keccak256, Address, Bytes};
+    use alloy::primitives::{keccak256, Bytes};
+    use degenbot_execution::{CapitalRequirement, HopInfo, PathInfo, V2HopInfo, V4HopInfo};
 
     use ::evm2::evm::Database;
 
-    /// The `balances(account)` slot of a token whose mapping base is `base`.
+    use crate::sim::capital::{
+        CapitalAsset, CapitalLayouts, CapitalPath, CapitalPlanError, ProbeCapital, USDC_MAINNET,
+        USDC_MAINNET_BALANCE_SLOT, WBTC_MAINNET, WBTC_MAINNET_BALANCE_SLOT,
+    };
+
+    const OWNER: Address = Address::new([0x24; 20]);
+    const EXECUTOR: Address = Address::new([0x42; 20]);
+    const LAB_WETH: Address = Address::new([0x01; 20]);
+    const LAB_TOKEN: Address = Address::new([0x03; 20]);
+    const LAB_POOL_MANAGER: Address = Address::new([0x02; 20]);
+    const BYSTANDER: Address = Address::new([0x77; 20]);
+
+    /// The layouts this fixture declares EXPLICITLY: its lab WETH at slot 3, its
+    /// lab token at slot 5, and its lab PoolManager at the canonical ERC-6909
+    /// base — beside the pinned mainnet set.
+    fn layouts() -> CapitalLayouts {
+        CapitalLayouts::verified()
+            .with_token(LAB_WETH, 3)
+            .with_token(LAB_TOKEN, 5)
+            .with_manager(LAB_POOL_MANAGER, 4)
+    }
+
     fn slot_for(base: u64, account: Address) -> U256 {
         degenbot_executor::mapping_slot(
             U256::from(base),
@@ -197,155 +226,277 @@ mod tests {
         )
     }
 
+    fn claim_slot(base: u64, account: Address, currency: Address) -> U256 {
+        degenbot_executor::nested_mapping_slot(
+            U256::from(base),
+            U256::from_be_bytes(account.into_word().into()),
+            degenbot_executor::erc6909_id(currency),
+        )
+    }
+
+    fn lab_path() -> PathInfo {
+        PathInfo::new(vec![
+            HopInfo::V2(V2HopInfo {
+                pool_address: Address::from([0xa1; 20]),
+                token0_address: LAB_WETH,
+                token1_address: LAB_TOKEN,
+                fee: 30,
+                zfo: true,
+            }),
+            HopInfo::V2(V2HopInfo {
+                pool_address: Address::from([0xa2; 20]),
+                token0_address: LAB_TOKEN,
+                token1_address: LAB_WETH,
+                fee: 30,
+                zfo: true,
+            }),
+        ])
+    }
+
+    /// A path naming the pinned mainnet USDC + WBTC beside the lab WETH, so the
+    /// clearing covers the production tokens AND the fixture's own.
+    fn mixed_path() -> PathInfo {
+        PathInfo::new(vec![
+            HopInfo::V2(V2HopInfo {
+                pool_address: Address::from([0xa1; 20]),
+                token0_address: LAB_WETH,
+                token1_address: USDC_MAINNET,
+                fee: 30,
+                zfo: true,
+            }),
+            HopInfo::V2(V2HopInfo {
+                pool_address: Address::from([0xa2; 20]),
+                token0_address: USDC_MAINNET,
+                token1_address: WBTC_MAINNET,
+                fee: 30,
+                zfo: true,
+            }),
+        ])
+    }
+
+    fn v4_path() -> PathInfo {
+        PathInfo::new(vec![HopInfo::V4(V4HopInfo {
+            pool_manager_address: LAB_POOL_MANAGER,
+            pool_id_hex: "0x01".to_string(),
+            currency0_address: LAB_WETH,
+            currency1_address: LAB_TOKEN,
+            fee: 500,
+            tick_spacing: 10,
+            hook_address: Address::ZERO,
+            zfo: true,
+        })])
+    }
+
+    /// The external initial capital a deployment's Encode declares: the lab WETH
+    /// entry.
+    fn requirements() -> Vec<CapitalRequirement> {
+        vec![CapitalRequirement {
+            currency: LAB_WETH,
+            amount: 1_000_000,
+        }]
+    }
+
+    fn plan(
+        mode: ProbeCapital,
+        path: &PathInfo,
+        requirements: &[CapitalRequirement],
+    ) -> crate::CapitalOverridePlan {
+        mode.override_plan(EXECUTOR, &[CapitalPath { path, requirements }], &layouts())
+            .expect("the fixture declares its layouts")
+    }
+
+    fn cache_lookup<ExtDb: DynDatabase>(
+        db: &CacheDB<ExtDb>,
+        token: Address,
+        slot: U256,
+    ) -> Option<U256> {
+        db.cache
+            .storage
+            .get(&token)
+            .and_then(|storage| storage.slots.get(&slot))
+            .copied()
+    }
+
+    fn executor_warmup() -> crate::SettlementWarmup {
+        crate::SettlementWarmup {
+            weth_address: LAB_WETH,
+            pool_manager_address: Some(LAB_POOL_MANAGER),
+            slots: degenbot_executor::compute_simulation_warmup_slots(EXECUTOR, LAB_WETH),
+        }
+    }
+
     #[test]
-    fn zero_balance_strips_token_capital_but_preserves_owner_gas() {
-        let executor = Address::from([0x42; 20]);
-        let owner = Address::from([0x24; 20]);
-        let weth = Address::from([0x01; 20]);
-        let pm = Address::from([0x02; 20]);
-        let executor_slots = compute_simulation_warmup_slots(executor, weth);
+    fn zero_balance_strips_every_touched_asset_but_preserves_owner_gas() {
+        let path = lab_path();
         let mut db = ::evm2::evm::InMemoryDB::default();
         apply_simulation_overrides(
             &mut db,
             &SimulationOverrideParams {
-                owner,
+                owner: OWNER,
                 code: Some(crate::DeclaredCode {
-                    address: executor,
-                    runtime: alloy::primitives::Bytes::from_static(&[0x00]),
+                    address: EXECUTOR,
+                    runtime: Bytes::from_static(&[0x00]),
                 }),
-                settlement: Some(crate::SettlementWarmup {
-                    weth_address: weth,
-                    pool_manager_address: Some(pm),
-                    slots: executor_slots,
-                }),
-                capital: CapitalOverridePlan::ZeroBalance { holder: executor },
+                settlement: Some(executor_warmup()),
+                capital: plan(ProbeCapital::ZeroBalance, &path, &[]),
             },
         );
         assert_eq!(
-            db.account_info(&executor).map(|a| a.balance),
-            Some(U256::ZERO)
+            db.account_info(&EXECUTOR).map(|account| account.balance),
+            Some(U256::ZERO),
+            "native ETH is cleared at the executor"
         );
         assert_eq!(
-            db.account_info(&owner).map(|a| a.balance),
-            Some(eth_amount(OWNER_FUND_ETH))
+            db.account_info(&OWNER).map(|account| account.balance),
+            Some(eth_amount(OWNER_FUND_ETH)),
+            "owner gas funding survives"
         );
         for (token, slot) in [
-            (weth, executor_slots.weth_balance),
-            (USDC_MAINNET, slot_for(USDC_MAINNET_BALANCE_SLOT, executor)),
-            (WBTC_MAINNET, slot_for(WBTC_MAINNET_BALANCE_SLOT, executor)),
-            (pm, executor_slots.erc6909_weth),
-            (pm, executor_slots.erc6909_native),
+            (LAB_WETH, slot_for(3, EXECUTOR)),
+            (LAB_TOKEN, slot_for(5, EXECUTOR)),
         ] {
             assert_eq!(
-                db.cache
-                    .storage
-                    .get(&token)
-                    .and_then(|s| s.slots.get(&slot)),
-                Some(&U256::ZERO),
-                "every capital slot is cleared at the executor",
+                cache_lookup(&db, token, slot),
+                Some(U256::ZERO),
+                "every touched token word is cleared at the executor"
             );
         }
-        let owner_slots = compute_simulation_warmup_slots(owner, weth);
         for (token, slot) in [
-            (weth, owner_slots.weth_balance),
-            (pm, owner_slots.erc6909_weth),
-            (pm, owner_slots.erc6909_native),
+            (LAB_WETH, slot_for(3, OWNER)),
+            (LAB_TOKEN, slot_for(5, OWNER)),
         ] {
             assert_eq!(
-                db.cache
-                    .storage
-                    .get(&token)
-                    .and_then(|s| s.slots.get(&slot)),
+                cache_lookup(&db, token, slot),
                 None,
-                "no capital slot keys on the owner",
+                "the owner's own words are never a capital target"
+            );
+        }
+        // This path touches no V4 currency, so the warmup's own claim touches
+        // are the only ones present — and they stay warmup facts, never capital.
+        let slots = degenbot_executor::compute_simulation_warmup_slots(EXECUTOR, LAB_WETH);
+        for slot in [slots.erc6909_weth, slots.erc6909_native] {
+            assert_eq!(cache_lookup(&db, LAB_POOL_MANAGER, slot), Some(ONE_WEI));
+        }
+    }
+
+    /// PoolManager claim coverage for a V4 path: both currencies' claims are
+    /// cleared, including the non-WETH one, and each asset is named once.
+    #[test]
+    fn zero_balance_clears_pool_manager_claims_for_v4_currencies() {
+        let path = v4_path();
+        let composed = plan(ProbeCapital::ZeroBalance, &path, &[]);
+        let claim = |currency| CapitalAsset::Erc6909Claim {
+            manager: LAB_POOL_MANAGER,
+            currency,
+        };
+        assert_eq!(
+            composed.assets().collect::<Vec<_>>(),
+            vec![
+                CapitalAsset::Native,
+                CapitalAsset::Erc20 { token: LAB_WETH },
+                claim(LAB_WETH),
+                CapitalAsset::Erc20 { token: LAB_TOKEN },
+                claim(LAB_TOKEN),
+            ],
+            "native, each currency once, and each claim once"
+        );
+        let mut db = ::evm2::evm::InMemoryDB::default();
+        apply_simulation_overrides(
+            &mut db,
+            &SimulationOverrideParams {
+                owner: OWNER,
+                capital: composed,
+                ..Default::default()
+            },
+        );
+        for currency in [LAB_WETH, LAB_TOKEN] {
+            assert_eq!(
+                cache_lookup(&db, LAB_POOL_MANAGER, claim_slot(4, EXECUTOR, currency)),
+                Some(U256::ZERO),
+                "the claim of {currency} is cleared at the executor"
             );
         }
     }
 
     #[test]
-    fn usdc_capital_is_scoped_to_the_executor_and_opt_in() {
-        let executor = Address::from([0x42; 20]);
-        let owner = Address::from([0x24; 20]);
-        let slot = degenbot_executor::mapping_slot(
-            U256::from(USDC_MAINNET_BALANCE_SLOT),
-            U256::from_be_bytes(executor.into_word().into()),
-        );
+    fn self_fund_installs_the_declared_requirement_over_the_warmup() {
+        let path = lab_path();
+        let requirements = requirements();
         let mut db = ::evm2::evm::InMemoryDB::default();
-        let params = SimulationOverrideParams {
-            owner,
-            capital: CapitalOverridePlan::SelfFund { holder: executor },
-            ..Default::default()
-        };
-        apply_simulation_overrides(&mut db, &params);
-        assert_eq!(
-            db.cache
-                .storage
-                .get(&USDC_MAINNET)
-                .and_then(|s| s.slots.get(&slot)),
-            Some(&eth_amount(EXECUTOR_FUND_ETH)),
-            "the deployed executor, not the owner fallback, receives probe capital",
+        apply_simulation_overrides(
+            &mut db,
+            &SimulationOverrideParams {
+                owner: OWNER,
+                settlement: Some(executor_warmup()),
+                capital: plan(ProbeCapital::SelfFund, &path, &requirements),
+                ..Default::default()
+            },
         );
-        let mut ordinary = ::evm2::evm::InMemoryDB::default();
-        apply_simulation_overrides(&mut ordinary, &SimulationOverrideParams::default());
         assert_eq!(
-            ordinary
-                .cache
-                .storage
-                .get(&USDC_MAINNET)
-                .and_then(|s| s.slots.get(&slot)),
+            cache_lookup(&db, LAB_WETH, slot_for(3, EXECUTOR)),
+            Some(U256::from(1_000_000u64)),
+            "the declared requirement wins over the warmup's operational WETH balance"
+        );
+        assert_eq!(
+            cache_lookup(&db, LAB_TOKEN, slot_for(5, EXECUTOR)),
+            Some(U256::ZERO),
+            "a touched-but-unrequired token is cleared, never granted a blanket balance"
+        );
+        assert_eq!(
+            cache_lookup(
+                &db,
+                USDC_MAINNET,
+                slot_for(USDC_MAINNET_BALANCE_SLOT, EXECUTOR)
+            ),
             None,
-            "ordinary solver simulation must not receive USDC",
+            "an untouched production token is never written at all"
+        );
+        assert!(
+            db.account_info(&EXECUTOR)
+                .is_none_or(|account| account.balance.is_zero()),
+            "the touched native balance is cleared (an absent account already reads zero)"
         );
     }
 
     /// The production arm of the ONE capital value: no override at all.
-    ///
-    /// The executor keeps whatever the chain holds — no USDC installation, no
-    /// WETH9 / claim clearing, and no materialized (let alone cleared) native
-    /// balance — while owner gas funding is unchanged.
     #[test]
     fn production_applies_no_capital_override() {
-        let executor = Address::from([0x42; 20]);
-        let owner = Address::from([0x24; 20]);
         let mut db = ::evm2::evm::InMemoryDB::default();
         apply_simulation_overrides(
             &mut db,
             &SimulationOverrideParams {
-                owner,
-                capital: CapitalOverridePlan::Production,
+                owner: OWNER,
+                capital: ProbeCapital::Production
+                    .override_plan(EXECUTOR, &[], &layouts())
+                    .expect("production declares nothing"),
                 ..Default::default()
             },
         );
         for (token, slot) in [
-            (USDC_MAINNET, slot_for(USDC_MAINNET_BALANCE_SLOT, executor)),
-            (WBTC_MAINNET, slot_for(WBTC_MAINNET_BALANCE_SLOT, executor)),
+            (LAB_WETH, slot_for(3, EXECUTOR)),
+            (LAB_TOKEN, slot_for(5, EXECUTOR)),
+            (USDC_MAINNET, slot_for(USDC_MAINNET_BALANCE_SLOT, EXECUTOR)),
+            (WBTC_MAINNET, slot_for(WBTC_MAINNET_BALANCE_SLOT, EXECUTOR)),
         ] {
             assert_eq!(
-                db.cache
-                    .storage
-                    .get(&token)
-                    .and_then(|s| s.slots.get(&slot)),
+                cache_lookup(&db, token, slot),
                 None,
-                "production installs no probe capital",
+                "production installs no probe capital"
             );
         }
         assert_eq!(
-            db.account_info(&executor).map(|info| info.balance),
+            db.account_info(&EXECUTOR).map(|info| info.balance),
             None,
-            "production never materializes (or clears) the executor's balance",
+            "production never materializes (or clears) the executor's balance"
         );
         assert_eq!(
-            db.account_info(&owner).map(|info| info.balance),
+            db.account_info(&OWNER).map(|info| info.balance),
             Some(eth_amount(OWNER_FUND_ETH)),
-            "owner gas funding is unchanged",
+            "owner gas funding is unchanged"
         );
     }
 
     /// The two deployment arms every capital override must treat identically.
-    ///
-    /// The runtime the EVM executes at the executor comes from the declaration
-    /// in one arm and from the chain in the other; nothing about capital
-    /// targeting may depend on which.
     #[derive(Clone, Copy, Debug)]
     enum Arm {
         /// `code = None`: the executor's account info is the chain's.
@@ -358,358 +509,312 @@ mod tests {
     /// the declared runtime, so a cleared account that lost its code hash cannot
     /// pass by accident.
     const DEPLOYED_RUNTIME: &[u8] = &[0x60, 0x2a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3];
-
-    /// A declared build's runtime.
     const DECLARED_RUNTIME: &[u8] = &[0xfe];
-
-    /// An unrelated account's runtime.
     const BYSTANDER_CODE: &[u8] = &[0x00];
-
-    /// The chain the sim reads through: the executor's deployed account (code,
-    /// native balance, nonce), the settlement contracts' balances keyed on the
-    /// executor, the OWNER's own WETH9/claim slots, and an unrelated account the
-    /// overrides must not touch.
-    struct Chain {
-        db: ::evm2::evm::InMemoryDB,
-        owner: Address,
-        executor: Address,
-        weth: Address,
-        pool_manager: Address,
-        bystander: Address,
-    }
-
-    /// The unrelated account's native balance and its one storage slot.
     const BYSTANDER_ETH: u64 = 6;
     const BYSTANDER_SLOT_VALUE: u64 = 5;
-
-    /// The executor's on-chain holdings the clearing must erase.
     const EXECUTOR_DEPLOYED_ETH: u64 = 3;
     const EXECUTOR_DEPLOYED_NONCE: u64 = 7;
 
-    impl Chain {
-        fn new() -> Self {
-            let owner = Address::from([0x24; 20]);
-            let executor = Address::from([0x42; 20]);
-            let weth = Address::from([0x01; 20]);
-            let pool_manager = Address::from([0x02; 20]);
-            let bystander = Address::from([0x77; 20]);
+    /// The chain the sim reads through: the executor's deployed account (code,
+    /// native balance, nonce), the settlement contracts' words keyed on the
+    /// executor, the OWNER's own words, and an unrelated account the overrides
+    /// must not touch.
+    fn chain() -> ::evm2::evm::InMemoryDB {
+        let mut db = ::evm2::evm::InMemoryDB::default();
+        db.insert_account_info(
+            &EXECUTOR,
+            AccountInfo::default()
+                .with_balance(eth_amount(EXECUTOR_DEPLOYED_ETH))
+                .with_nonce(EXECUTOR_DEPLOYED_NONCE)
+                .with_code(Bytecode::new_raw(Bytes::from_static(DEPLOYED_RUNTIME))),
+        );
+        db.insert_account_info(
+            &BYSTANDER,
+            AccountInfo::default()
+                .with_balance(eth_amount(BYSTANDER_ETH))
+                .with_code(Bytecode::new_raw(Bytes::from_static(BYSTANDER_CODE))),
+        );
+        db.insert_account_storage(
+            &BYSTANDER,
+            &U256::from(1),
+            &U256::from(BYSTANDER_SLOT_VALUE),
+        );
 
-            let mut db = ::evm2::evm::InMemoryDB::default();
-            db.insert_account_info(
-                &executor,
-                AccountInfo::default()
-                    .with_balance(eth_amount(EXECUTOR_DEPLOYED_ETH))
-                    .with_nonce(EXECUTOR_DEPLOYED_NONCE)
-                    .with_code(Bytecode::new_raw(Bytes::from_static(DEPLOYED_RUNTIME))),
-            );
-            db.insert_account_info(
-                &bystander,
-                AccountInfo::default()
-                    .with_balance(eth_amount(BYSTANDER_ETH))
-                    .with_code(Bytecode::new_raw(Bytes::from_static(BYSTANDER_CODE))),
-            );
-            db.insert_account_storage(
-                &bystander,
-                &U256::from(1),
-                &U256::from(BYSTANDER_SLOT_VALUE),
-            );
+        let executor_slots = degenbot_executor::compute_simulation_warmup_slots(EXECUTOR, LAB_WETH);
+        db.insert_account_storage(&LAB_WETH, &executor_slots.weth_balance, &eth_amount(5));
+        db.insert_account_storage(
+            &LAB_POOL_MANAGER,
+            &executor_slots.erc6909_weth,
+            &U256::from(7),
+        );
+        db.insert_account_storage(
+            &LAB_POOL_MANAGER,
+            &executor_slots.erc6909_native,
+            &U256::from(9),
+        );
+        db.insert_account_storage(&LAB_TOKEN, &slot_for(5, EXECUTOR), &eth_amount(11));
+        db.insert_account_storage(
+            &USDC_MAINNET,
+            &slot_for(USDC_MAINNET_BALANCE_SLOT, EXECUTOR),
+            &eth_amount(13),
+        );
+        db.insert_account_storage(
+            &WBTC_MAINNET,
+            &slot_for(WBTC_MAINNET_BALANCE_SLOT, EXECUTOR),
+            &eth_amount(17),
+        );
 
-            let executor_slots = compute_simulation_warmup_slots(executor, weth);
-            db.insert_account_storage(&weth, &executor_slots.weth_balance, &eth_amount(5));
-            db.insert_account_storage(&pool_manager, &executor_slots.erc6909_weth, &U256::from(7));
-            db.insert_account_storage(
-                &pool_manager,
-                &executor_slots.erc6909_native,
-                &U256::from(9),
-            );
-            db.insert_account_storage(
-                &USDC_MAINNET,
-                &slot_for(USDC_MAINNET_BALANCE_SLOT, executor),
-                &eth_amount(11),
-            );
-            db.insert_account_storage(
-                &WBTC_MAINNET,
-                &slot_for(WBTC_MAINNET_BALANCE_SLOT, executor),
-                &eth_amount(13),
-            );
+        // The owner's own WETH9 and claim words: the owner funds gas and holds
+        // no contract capital, so no override may key on it.
+        let owner_slots = degenbot_executor::compute_simulation_warmup_slots(OWNER, LAB_WETH);
+        db.insert_account_storage(&LAB_WETH, &owner_slots.weth_balance, &eth_amount(4));
+        db.insert_account_storage(
+            &LAB_POOL_MANAGER,
+            &owner_slots.erc6909_weth,
+            &U256::from(43),
+        );
+        db.insert_account_storage(
+            &LAB_POOL_MANAGER,
+            &owner_slots.erc6909_native,
+            &U256::from(44),
+        );
+        db
+    }
 
-            // The owner's own WETH9 and claim slots: the owner funds gas and
-            // holds no contract capital, so no override may key on it.
-            let owner_slots = compute_simulation_warmup_slots(owner, weth);
-            db.insert_account_storage(&weth, &owner_slots.weth_balance, &eth_amount(4));
-            db.insert_account_storage(&pool_manager, &owner_slots.erc6909_weth, &U256::from(43));
-            db.insert_account_storage(&pool_manager, &owner_slots.erc6909_native, &U256::from(44));
-
-            Self {
-                db,
-                owner,
-                executor,
-                weth,
-                pool_manager,
-                bystander,
-            }
+    /// The overrides one deployment arm applies over the fixture chain: one
+    /// capital target in BOTH arms, and a declared runtime only in the declared
+    /// one.
+    fn arm_params(arm: Arm, path: &PathInfo) -> SimulationOverrideParams {
+        SimulationOverrideParams {
+            owner: OWNER,
+            code: match arm {
+                Arm::Deployed => None,
+                Arm::Declared => Some(crate::DeclaredCode {
+                    address: EXECUTOR,
+                    runtime: Bytes::from_static(DECLARED_RUNTIME),
+                }),
+            },
+            settlement: Some(executor_warmup()),
+            capital: plan(ProbeCapital::ZeroBalance, path, &[]),
         }
     }
 
-    /// The parity acceptance: the native, WETH9, USDC, WBTC, and
-    /// PoolManager-claim overrides target the EXECUTOR in both deployment arms,
-    /// with a distinct owner, while the owner's gas funding, the deployed code,
-    /// and every unrelated account survive.
-    ///
-    /// The two pinned defects: native ETH clearing used to be conditional on
-    /// declared code (so the deployed arm kept the executor's on-chain ETH), and
-    /// the WETH9 / ERC6909 slots used to be taken from whatever account the
-    /// declared warmup keyed (the owner, in the deployed arm) instead of from the
-    /// executor the clear names.
+    /// The parity acceptance: every capital override targets the EXECUTOR in both
+    /// deployment arms, with a distinct owner, while owner gas funding, the
+    /// deployed code, and every unrelated account survive.
     #[test]
     fn capital_overrides_target_the_executor_in_both_deployment_arms() {
         for (arm, expected_runtime, expected_nonce) in [
             (Arm::Deployed, DEPLOYED_RUNTIME, EXECUTOR_DEPLOYED_NONCE),
             (Arm::Declared, DECLARED_RUNTIME, 0),
         ] {
-            let mut chain = Chain::new();
-            let params = arm_params(arm, &chain);
-            let mut db: CacheDB<::evm2::evm::InMemoryDB> =
-                CacheDB::new(std::mem::take(&mut chain.db));
+            let path = mixed_path();
+            let params = arm_params(arm, &path);
+            let mut db: CacheDB<::evm2::evm::InMemoryDB> = CacheDB::new(chain());
             apply_simulation_overrides(&mut db, &params);
+            assert_cleared_at_the_executor(arm, expected_runtime, expected_nonce, &mut db);
+            assert_owner_words_survive(arm, &db);
 
-            assert_executor_cleared(arm, &chain, &mut db, expected_runtime, expected_nonce);
-            assert_capital_slots_cleared(arm, &chain, &db);
-            assert_bystander_untouched(arm, &chain, &mut db);
+            let bystander =
+                <CacheDB<::evm2::evm::InMemoryDB> as Database>::get_account(&mut db, &BYSTANDER)
+                    .expect("the unrelated account reads")
+                    .expect("the unrelated account exists");
+            assert_eq!(
+                bystander.balance,
+                eth_amount(BYSTANDER_ETH),
+                "{arm:?}: an unrelated account's balance is untouched"
+            );
+            assert_eq!(
+                bystander.code_hash,
+                keccak256(BYSTANDER_CODE),
+                "{arm:?}: an unrelated account's code is untouched"
+            );
+            assert_eq!(
+                <CacheDB<::evm2::evm::InMemoryDB> as Database>::get_storage(
+                    &mut db,
+                    &BYSTANDER,
+                    &U256::from(1)
+                )
+                .expect("the unrelated account's storage reads"),
+                U256::from(BYSTANDER_SLOT_VALUE),
+                "{arm:?}: an unrelated account's storage is untouched"
+            );
         }
     }
 
-    /// The overrides one deployment arm applies over a [`Chain`]: one capital
-    /// target in BOTH arms, and a declared runtime only in the declared one.
-    fn arm_params(arm: Arm, chain: &Chain) -> SimulationOverrideParams {
-        SimulationOverrideParams {
-            owner: chain.owner,
-            code: match arm {
-                Arm::Deployed => None,
-                Arm::Declared => Some(crate::DeclaredCode {
-                    address: chain.executor,
-                    runtime: Bytes::from_static(DECLARED_RUNTIME),
-                }),
-            },
-            settlement: Some(crate::SettlementWarmup {
-                weth_address: chain.weth,
-                pool_manager_address: Some(chain.pool_manager),
-                slots: compute_simulation_warmup_slots(chain.executor, chain.weth),
-            }),
-            capital: CapitalOverridePlan::ZeroBalance {
-                holder: chain.executor,
-            },
-        }
-    }
-
-    /// The account-side acceptance: the executor's native ETH is cleared whether
-    /// or not code is declared, the code the arm executes survives with it (the
-    /// chain's for a deployed executor, the declared runtime otherwise), and
-    /// owner gas funding is untouched.
-    fn assert_executor_cleared(
+    /// The executor-side acceptance: the balance, the code the arm executes, the
+    /// nonce, and every touched token word.
+    fn assert_cleared_at_the_executor(
         arm: Arm,
-        chain: &Chain,
-        db: &mut CacheDB<::evm2::evm::InMemoryDB>,
         expected_runtime: &'static [u8],
         expected_nonce: u64,
+        db: &mut CacheDB<::evm2::evm::InMemoryDB>,
     ) {
         let info = db
-            .account_info(&chain.executor)
+            .account_info(&EXECUTOR)
             .expect("the capital target is materialized in both arms")
             .clone();
         assert_eq!(
             info.balance,
             U256::ZERO,
-            "{arm:?}: native ETH is cleared at the executor whether or not code is declared",
+            "{arm:?}: native ETH is cleared at the executor whether or not code is declared"
         );
         assert_eq!(
             info.code_hash,
             keccak256(expected_runtime),
-            "{arm:?}: clearing preserves the code the arm executes",
+            "{arm:?}: clearing preserves the code the arm executes"
         );
         assert_eq!(
             <CacheDB<::evm2::evm::InMemoryDB> as Database>::get_code_by_hash(db, &info.code_hash)
                 .expect("the preserved code hash resolves")
                 .original_bytes(),
             Bytes::from_static(expected_runtime),
-            "{arm:?}: the executed runtime resolves from its preserved code hash",
+            "{arm:?}: the executed runtime resolves from its preserved code hash"
         );
         assert_eq!(
             info.nonce, expected_nonce,
-            "{arm:?}: the nonce is the arm's own (the chain's for a deployed executor)",
+            "{arm:?}: the nonce is the arm's own"
         );
-        assert_eq!(
-            db.account_info(&chain.owner).map(|a| a.balance),
-            Some(eth_amount(OWNER_FUND_ETH)),
-            "{arm:?}: owner gas funding survives the clearing",
-        );
-    }
-
-    /// The slot-side acceptance: every capital slot the EXECUTOR owns is zeroed
-    /// and no slot keyed on the OWNER is.
-    fn assert_capital_slots_cleared(
-        arm: Arm,
-        chain: &Chain,
-        db: &CacheDB<::evm2::evm::InMemoryDB>,
-    ) {
-        let executor_slots = compute_simulation_warmup_slots(chain.executor, chain.weth);
         for (label, token, slot) in [
-            ("WETH9 balance", chain.weth, executor_slots.weth_balance),
-            (
-                "PoolManager WETH claim",
-                chain.pool_manager,
-                executor_slots.erc6909_weth,
-            ),
-            (
-                "PoolManager native claim",
-                chain.pool_manager,
-                executor_slots.erc6909_native,
-            ),
+            ("WETH9 balance", LAB_WETH, slot_for(3, EXECUTOR)),
             (
                 "USDC balance",
                 USDC_MAINNET,
-                slot_for(USDC_MAINNET_BALANCE_SLOT, chain.executor),
+                slot_for(USDC_MAINNET_BALANCE_SLOT, EXECUTOR),
             ),
             (
                 "WBTC balance",
                 WBTC_MAINNET,
-                slot_for(WBTC_MAINNET_BALANCE_SLOT, chain.executor),
+                slot_for(WBTC_MAINNET_BALANCE_SLOT, EXECUTOR),
             ),
         ] {
             assert_eq!(
-                db.cache
-                    .storage
-                    .get(&token)
-                    .and_then(|s| s.slots.get(&slot)),
-                Some(&U256::ZERO),
-                "{arm:?}: the {label} is cleared at the executor",
+                cache_lookup(db, token, slot),
+                Some(U256::ZERO),
+                "{arm:?}: the {label} is cleared at the executor"
             );
         }
+    }
 
-        let owner_slots = compute_simulation_warmup_slots(chain.owner, chain.weth);
+    /// The owner-side acceptance: gas funding survives, and no owner-held word is
+    /// a capital target.
+    fn assert_owner_words_survive(arm: Arm, db: &CacheDB<::evm2::evm::InMemoryDB>) {
+        assert_eq!(
+            db.account_info(&OWNER).map(|account| account.balance),
+            Some(eth_amount(OWNER_FUND_ETH)),
+            "{arm:?}: owner gas funding survives the clearing"
+        );
+        let owner_slots = degenbot_executor::compute_simulation_warmup_slots(OWNER, LAB_WETH);
         for (label, token, slot) in [
-            ("WETH9 balance", chain.weth, owner_slots.weth_balance),
+            ("WETH9 balance", LAB_WETH, owner_slots.weth_balance),
             (
                 "PoolManager WETH claim",
-                chain.pool_manager,
+                LAB_POOL_MANAGER,
                 owner_slots.erc6909_weth,
             ),
             (
                 "PoolManager native claim",
-                chain.pool_manager,
+                LAB_POOL_MANAGER,
                 owner_slots.erc6909_native,
             ),
         ] {
-            assert_eq!(
-                db.cache
-                    .storage
-                    .get(&token)
-                    .and_then(|s| s.slots.get(&slot)),
-                None,
-                "{arm:?}: the owner's {label} is never a capital target",
+            assert_ne!(
+                cache_lookup(db, token, slot),
+                Some(U256::ZERO),
+                "{arm:?}: the owner's {label} is never a capital target"
             );
         }
     }
 
-    /// The unrelated account keeps its balance, its code hash, and its storage.
-    fn assert_bystander_untouched(
-        arm: Arm,
-        chain: &Chain,
-        db: &mut CacheDB<::evm2::evm::InMemoryDB>,
-    ) {
-        let bystander =
-            <CacheDB<::evm2::evm::InMemoryDB> as Database>::get_account(db, &chain.bystander)
-                .expect("the unrelated account reads")
-                .expect("the unrelated account exists");
-        assert_eq!(
-            bystander.balance,
-            eth_amount(BYSTANDER_ETH),
-            "{arm:?}: an unrelated account's balance is untouched",
-        );
-        assert_eq!(
-            bystander.code_hash,
-            keccak256(BYSTANDER_CODE),
-            "{arm:?}: an unrelated account's code is untouched",
-        );
-        assert_eq!(
-            <CacheDB<::evm2::evm::InMemoryDB> as Database>::get_storage(
-                db,
-                &chain.bystander,
-                &U256::from(1)
-            )
-            .expect("the unrelated account's storage reads"),
-            U256::from(BYSTANDER_SLOT_VALUE),
-            "{arm:?}: an unrelated account's storage is untouched",
-        );
-    }
-
-    /// The warmup separation: a deployment whose declared warmup slots key on
-    /// the OWNER (the shape the built-in binding used to produce for a deployed
-    /// executor) cannot redirect the clearing. The executor's WETH9 balance and
-    /// both PoolManager claims are the ones zeroed; the warmup's own key keeps
-    /// only the warmup's touches.
+    /// The warmup separation: a deployment whose declared warmup slots key on the
+    /// OWNER (the shape the built-in binding used to produce for a deployed
+    /// executor) cannot redirect the clearing, and its own key keeps only the
+    /// warmup's touches.
     #[test]
     fn clearing_follows_the_capital_target_not_the_warmup_subject() {
-        let chain = Chain::new();
-        let owner_slots = compute_simulation_warmup_slots(chain.owner, chain.weth);
+        let owner_slots = degenbot_executor::compute_simulation_warmup_slots(OWNER, LAB_WETH);
+        let path = lab_path();
         let params = SimulationOverrideParams {
-            owner: chain.owner,
+            owner: OWNER,
             code: None,
             settlement: Some(crate::SettlementWarmup {
-                weth_address: chain.weth,
-                pool_manager_address: Some(chain.pool_manager),
+                weth_address: LAB_WETH,
+                pool_manager_address: Some(LAB_POOL_MANAGER),
                 slots: owner_slots,
             }),
-            capital: CapitalOverridePlan::ZeroBalance {
-                holder: chain.executor,
-            },
+            capital: plan(ProbeCapital::ZeroBalance, &path, &[]),
         };
-        let mut db: CacheDB<::evm2::evm::InMemoryDB> = CacheDB::new(chain.db);
+        let mut db: CacheDB<::evm2::evm::InMemoryDB> = CacheDB::new(chain());
         apply_simulation_overrides(&mut db, &params);
 
-        let executor_slots = compute_simulation_warmup_slots(chain.executor, chain.weth);
-        for (label, token, slot) in [
-            ("WETH9 balance", chain.weth, executor_slots.weth_balance),
-            (
-                "PoolManager WETH claim",
-                chain.pool_manager,
-                executor_slots.erc6909_weth,
-            ),
-            (
-                "PoolManager native claim",
-                chain.pool_manager,
-                executor_slots.erc6909_native,
-            ),
-        ] {
-            assert_eq!(
-                db.cache
-                    .storage
-                    .get(&token)
-                    .and_then(|s| s.slots.get(&slot)),
-                Some(&U256::ZERO),
-                "the executor's {label} is cleared from the executor's own key",
-            );
-        }
-
-        // The warmup's own key is left to the warmup: the operational WETH9
-        // balance the settlement funds, and the two 1-wei claim touches.
         assert_eq!(
-            db.cache
-                .storage
-                .get(&chain.weth)
-                .and_then(|s| s.slots.get(&owner_slots.weth_balance)),
-            Some(&eth_amount(EXECUTOR_FUND_ETH)),
-            "the clearing does not follow the warmup's key",
+            cache_lookup(&db, LAB_WETH, slot_for(3, EXECUTOR)),
+            Some(U256::ZERO),
+            "the executor's WETH9 balance is cleared from the executor's own key"
+        );
+        assert_eq!(
+            cache_lookup(&db, LAB_WETH, owner_slots.weth_balance),
+            Some(eth_amount(EXECUTOR_FUND_ETH)),
+            "the clearing does not follow the warmup's key"
         );
         for slot in [owner_slots.erc6909_weth, owner_slots.erc6909_native] {
             assert_eq!(
-                db.cache
-                    .storage
-                    .get(&chain.pool_manager)
-                    .and_then(|s| s.slots.get(&slot)),
-                Some(&ONE_WEI),
-                "the warmup's claim touches stay warmup touches",
+                cache_lookup(&db, LAB_POOL_MANAGER, slot),
+                Some(ONE_WEI),
+                "the warmup's claim touches stay warmup touches"
             );
         }
+    }
+
+    /// The fail-closed boundary: an unverified token refuses the plan, so no
+    /// override is ever applied and the seeded holding survives.
+    #[test]
+    fn an_unverified_token_refuses_before_any_override_is_applied() {
+        let unknown = Address::from([0x99; 20]);
+        let path = PathInfo::new(vec![HopInfo::V2(V2HopInfo {
+            pool_address: Address::from([0xa1; 20]),
+            token0_address: LAB_WETH,
+            token1_address: unknown,
+            fee: 30,
+            zfo: true,
+        })]);
+        let refusal = ProbeCapital::ZeroBalance
+            .override_plan(
+                EXECUTOR,
+                &[CapitalPath {
+                    path: &path,
+                    requirements: &[],
+                }],
+                &layouts(),
+            )
+            .expect_err("the token's layout is unverified");
+        assert_eq!(
+            refusal,
+            CapitalPlanError::UnverifiedLayout {
+                asset: CapitalAsset::Erc20 { token: unknown }
+            }
+        );
+        assert!(
+            refusal.to_string().contains("no verified storage layout"),
+            "the refusal names the gap: {refusal}"
+        );
+
+        let mut db: CacheDB<::evm2::evm::InMemoryDB> = CacheDB::new(chain());
+        apply_simulation_overrides(
+            &mut db,
+            &SimulationOverrideParams {
+                owner: OWNER,
+                capital: ProbeCapital::Production
+                    .override_plan(EXECUTOR, &[], &layouts())
+                    .expect("production declares nothing"),
+                ..Default::default()
+            },
+        );
+        assert_ne!(
+            cache_lookup(&db, LAB_WETH, slot_for(3, EXECUTOR)),
+            Some(U256::ZERO),
+            "a refused plan never clears anything"
+        );
     }
 }

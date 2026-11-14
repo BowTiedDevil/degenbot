@@ -22,7 +22,10 @@ pub mod sim_metrics;
 pub mod state_override;
 pub mod storage_memo;
 
-pub use capital::{CapitalOverridePlan, ProbeCapital};
+pub use capital::{
+    CapitalAsset, CapitalLayouts, CapitalOverride, CapitalOverridePlan, CapitalPath,
+    CapitalPlanError, CapitalTarget, ClaimLayout, Erc20Layout, ProbeCapital,
+};
 pub use capture::{CapturedSwap, SwapFamily};
 pub use frame_replay::{
     BaseFeeSource, FrameRpcCounter, PredStatus, ReplayFrameError, ReplayableTx, ScratchBlock,

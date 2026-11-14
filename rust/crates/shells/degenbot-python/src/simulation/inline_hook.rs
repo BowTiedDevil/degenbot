@@ -43,7 +43,7 @@ use std::sync::Arc;
 use alloy::primitives::{Bytes, U256};
 use degenbot_arbitrage::{
     simulate_path_on_evm_in_span, FailBuckets, SimResult, SimulateContext, SimulatePath,
-    SimulationBlock, SimulationDeployment, SolveStep,
+    SimulationBlock, SimulationDeployment, SolveStep, CAPITAL_PLAN_REFUSED_BUCKET,
 };
 use degenbot_bot::arb_engine::{
     AccessListRow, CapturedSwapRow, HookedLeg, HookedLegAnchor, HookedLegAnswer, HookedLegQuote,
@@ -606,12 +606,43 @@ impl InlineSimulator for InlineSimHook {
                             },
                             deployment: &deployment,
                         };
+                        // The capital plan for THIS path: composed before any
+                        // EVM state exists, and refused here — naming the asset
+                        // — when its storage layout is unverified.
+                        let overrides = match ctx
+                            .deployment
+                            .override_params(std::slice::from_ref(&sim_path))
+                        {
+                            Ok(overrides) => overrides,
+                            Err(error) => {
+                                // A planning refusal never reached the EVM, so
+                                // there is no sim verdict to report — but the
+                                // conversion below turns the bucket record into
+                                // the failure payload, and an EMPTY tally has no
+                                // record to pop, which silently turned a refusal
+                                // into "no result". The refusal gets its own
+                                // non-EVM bucket so it survives the conversion.
+                                let mut buckets = FailBuckets::new();
+                                buckets.record(
+                                    candidate_id(&req),
+                                    CAPITAL_PLAN_REFUSED_BUCKET,
+                                    None,
+                                    Bytes::new(),
+                                    optimal_input,
+                                    outputs_vec(&req),
+                                );
+                                return (
+                                    Err(format!("the probe capital plan was refused: {error}")),
+                                    buckets,
+                                );
+                            }
+                        };
                         if let Some(mut handle) = degenbot_simulation::Evm2BlockSimHandle::build(
                             &provider,
                             base_fee_next,
                             req.sim_block,
                             req.block_timestamp,
-                            &ctx.deployment.override_params(),
+                            &overrides,
                             &anchor,
                             &warm_cache,
                             Some(&storage_memo),

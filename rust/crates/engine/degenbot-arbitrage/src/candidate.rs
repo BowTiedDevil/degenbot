@@ -75,10 +75,38 @@ impl DispatchCandidate {
         self.steps.iter().map(|s| s.output).collect()
     }
 
+    /// Whether this candidate can still reach the EVM, and so whether a probe
+    /// posture's capital plan has to account for its assets.
+    ///
+    /// A prepared decline ([`PreparedEncoding::Declined`] /
+    /// [`PreparedEncoding::InsolventZeroCapital`] / [`PreparedEncoding::Failed`])
+    /// was answered by the selection walk and is never simulated. `Some(Accepted)`
+    /// runs exactly the composed transaction, and `None` is the all-target
+    /// fan-out's shape, where the simulation leaf composes for its own
+    /// deployment — both reach the EVM.
+    #[must_use]
+    pub const fn reaches_simulation(&self) -> bool {
+        !matches!(
+            self.prepared,
+            Some(
+                PreparedEncoding::Declined(_)
+                    | PreparedEncoding::InsolventZeroCapital(_)
+                    | PreparedEncoding::Failed(_)
+            )
+        )
+    }
+
     /// Build the [`SimulatePath`] the fan-out hands to
     /// [`crate::simulate_path_on_evm`].
+    ///
+    /// Public because the capital plan a fan-out composes is keyed on these very
+    /// paths, and the probe stage's typed pre-flight reads the same value: the
+    /// plan and the simulation describe the same paths. The plan's path set is a
+    /// conservative UNION though — a prepared decline is filtered cheaply, while
+    /// an unselected or not-yet-encoded candidate is still included — so a plan
+    /// may cover a path a later encoding decision drops.
     #[must_use]
-    pub(crate) fn to_simulate_path(&self) -> SimulatePath {
+    pub fn to_simulate_path(&self) -> SimulatePath {
         SimulatePath {
             candidate_id: self.candidate_id,
             optimal_input: self.optimal_input,

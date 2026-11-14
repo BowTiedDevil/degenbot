@@ -183,7 +183,14 @@ fn evm_sim_success_path_dual_driver_parity() {
     };
 
     let mut cache_db = InMemoryDB::default();
-    apply_simulation_overrides(&mut cache_db, &ctx.deployment.override_params());
+    apply_simulation_overrides(
+        &mut cache_db,
+        // A production deployment installs no probe capital, so the plan needs
+        // no path: it resolves nothing.
+        &ctx.deployment
+            .override_params(&[])
+            .expect("production capital needs no path"),
+    );
     // Deploy the gift contract (1 ETH + CALLER SELFDESTRUCT bytecode).
     cache_db.insert_account_info(
         &SMOKE_GIFT,

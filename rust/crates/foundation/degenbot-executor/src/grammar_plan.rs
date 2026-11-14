@@ -32,7 +32,7 @@ use alloy::primitives::{Address, U256};
 use crate::composers::NATIVE_CURRENCY_ADDRESS;
 use crate::encoders::{self, AddressTable, EncoderError, SENTINEL_PM, SENTINEL_SELF};
 use crate::grammar_ledger::{LedgerOp, SwapRecipient};
-use degenbot_execution::{V2HopInfo, V3HopInfo};
+use degenbot_execution::{CapitalRequirement, V2HopInfo, V3HopInfo};
 
 /// A hop-protocol family member.
 pub use crate::grammar_ledger::Prot;
@@ -460,6 +460,52 @@ pub struct V4BatchSwap {
 
 /// A Plan = an ordered list of steps. Depth-first walk = execution order.
 pub type Plan = Vec<PlanStep>;
+
+/// The external initial capital a built Plan declares, summed per currency in
+/// first-declaration order.
+///
+/// This is the Plan's capital-requirement metadata, and the ONE authority for
+/// what a self-funded stream needs up front: its [`PlanStep::SelfFund`] seeds.
+/// A [`PlanStep::CaptureShortfall`] is *not* one — it declares a loss the stream
+/// takes, not capital the executor must already hold, and the capital policy
+/// answers it. A family that funds itself in-path declares nothing at all, which
+/// is why the funding axis is a per-family fact rather than a path-level rule.
+///
+/// The type is the neutral [`degenbot_execution::CapitalRequirement`], so the
+/// adapter that owns Encode can hand it across the seam without a second
+/// spelling.
+#[must_use]
+pub fn plan_external_capital(plan: &Plan) -> Vec<CapitalRequirement> {
+    fn walk(plan: &Plan, out: &mut Vec<CapitalRequirement>) {
+        for step in plan {
+            match step {
+                PlanStep::SelfFund { currency, amount } => {
+                    match out
+                        .iter_mut()
+                        .find(|requirement| requirement.currency == *currency)
+                    {
+                        Some(existing) => existing.amount = existing.amount.saturating_add(*amount),
+                        None => out.push(CapitalRequirement {
+                            currency: *currency,
+                            amount: *amount,
+                        }),
+                    }
+                }
+                PlanStep::FlashSwap { callback, .. }
+                | PlanStep::V4Unlock {
+                    inner: callback, ..
+                } => {
+                    walk(callback, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    walk(plan, &mut out);
+    out
+}
 
 /// Project a `Plan` to its `LedgerOp` trace (depth-first; a `FlashSwap`
 /// emits its flash credit/debt term, then recurses into its callback). This is

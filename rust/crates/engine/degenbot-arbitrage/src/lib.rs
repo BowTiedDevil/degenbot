@@ -271,8 +271,8 @@ pub use simulator::{
     compose_transaction, compute_priority_fee, execute_gas_limit, fits_int128,
     simulate_in_process_with_db, simulate_path_on_evm, simulate_path_on_evm_in_span,
     simulate_path_on_evm_prepared, FailBuckets, NoProfitShape, RevertingFrame, SimFailure,
-    SimResult, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_GAS_ENV, GAS_SAFETY_MARGIN,
-    INITIAL_EXECUTE_GAS, INSOLVENT_ZERO_CAPITAL_BUCKET, INT128_MAX, INT128_MIN,
+    SimResult, SimulatePath, AGE_DECAY_CONSTANT, CAPITAL_PLAN_REFUSED_BUCKET, EXECUTE_GAS_ENV,
+    GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INSOLVENT_ZERO_CAPITAL_BUCKET, INT128_MAX, INT128_MIN,
     MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
 // The swap-event-capture inspector's decoded per-swap struct. Re-exported

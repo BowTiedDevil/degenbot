@@ -841,7 +841,14 @@ fn in_process_sim_standalone_slice() {
     };
 
     let mut cache_db = InMemoryDB::default();
-    apply_simulation_overrides(&mut cache_db, &ctx.deployment.override_params());
+    apply_simulation_overrides(
+        &mut cache_db,
+        // A production deployment installs no probe capital, so the plan needs
+        // no path: it resolves nothing.
+        &ctx.deployment
+            .override_params(&[])
+            .expect("production capital needs no path"),
+    );
     cache_db.insert_account_info(
         &GIFT,
         AccountInfo::default()

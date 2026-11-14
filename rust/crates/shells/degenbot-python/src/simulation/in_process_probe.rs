@@ -230,11 +230,16 @@ pub fn simulate_in_process_revert_probe<'py>(
     };
 
     // 2. Build the in-memory DB + apply the executor-injection overrides
-    //    (the evm2 apply is infallible — it never touches the backing).
+    //    (the evm2 apply is infallible — it never touches the backing). The
+    //    probe runs the production capital posture, which resolves no asset, so
+    //    its plan needs no path.
+    let overrides = ctx.deployment.override_params(&[]).map_err(|error| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("the capital plan was refused: {error}"))
+    })?;
     let mut cache_db = ::evm2::evm::InMemoryDB::default();
     degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
         &mut cache_db,
-        &ctx.deployment.override_params(),
+        &overrides,
     );
 
     // 3. Run the production sim seam (GIL-free — release is implicit: no
@@ -372,11 +377,15 @@ pub fn simulate_in_process_success_probe(
     };
 
     // 2. Build the in-memory DB + apply overrides (owner, executor, WETH
-    //    warmup) — the evm2 apply is infallible (no backing fetch).
+    //    warmup) — the evm2 apply is infallible (no backing fetch). The probe
+    //    runs the production capital posture, so its plan needs no path.
+    let overrides = ctx.deployment.override_params(&[]).map_err(|error| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("the capital plan was refused: {error}"))
+    })?;
     let mut cache_db = ::evm2::evm::InMemoryDB::default();
     degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
         &mut cache_db,
-        &ctx.deployment.override_params(),
+        &overrides,
     );
 
     // 3. Deploy the gift contract (the executor stub pays the receipt from it).

@@ -68,6 +68,27 @@ pub trait ExecutionAdapter {
         inputs: &ComposerInputs<'_>,
     ) -> Result<TransactionRequest, ComposeError>;
 
+    /// The **external initial capital** this adapter's Encode declares for
+    /// `path`: what the execution target must already hold before the stream
+    /// runs, as the built Plan's own `SelfFund` seeds state it.
+    ///
+    /// A simulation that installs entry capital reads this instead of guessing
+    /// from the path — the adapter owns its Encode, so it owns what that Encode
+    /// presupposes. The default declares nothing, which is exactly right for an
+    /// adapter whose stream funds itself in-path, and for every caller that runs
+    /// no capital override at all.
+    ///
+    /// `inputs` carries the same solver-driven amounts [`Self::encode`] receives,
+    /// so the answer describes the very stream `encode` would produce. This is
+    /// pure computation: no EVM state, no provider, no I/O.
+    fn capital_requirements(
+        &self,
+        _path: &PathInfo,
+        _inputs: &ComposerInputs<'_>,
+    ) -> Vec<crate::CapitalRequirement> {
+        Vec::new()
+    }
+
     /// **Probe** — declared data: which pre/post reads to snapshot, each either
     /// a contract call carrying complete calldata or a declared account's own
     /// native balance (see [`crate::ProbeSpec`]).

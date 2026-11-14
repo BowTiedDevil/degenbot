@@ -60,12 +60,17 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use alloy::primitives::Address;
-use degenbot_execution::{DeploymentId, ExecutionAdapter};
+use degenbot_execution::{
+    CapitalRequirement, ComposeOptions, ComposerInputs, DeploymentId, ExecutionAdapter,
+};
 use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::{
-    CapitalOverridePlan, DeclaredCode, ProbeCapital, SettlementWarmup, SimulationOverrideParams,
+    CapitalLayouts, CapitalOverridePlan, CapitalPath, CapitalPlanError, DeclaredCode, ProbeCapital,
+    SettlementWarmup, SimulationOverrideParams,
 };
+
+use crate::simulator::SimulatePath;
 
 /// The facts ONE simulated block contributes to every candidate simulated at it.
 #[derive(Clone)]
@@ -108,7 +113,8 @@ pub struct SimulationDeployment {
     gas_limit: u64,
     code: Option<DeclaredCode>,
     settlement: Option<SettlementWarmup>,
-    capital: CapitalOverridePlan,
+    capital: ProbeCapital,
+    capital_layouts: CapitalLayouts,
     fee_sizing: FeeSizing,
 }
 
@@ -147,6 +153,7 @@ impl std::fmt::Debug for SimulationDeployment {
             .field("code", &self.code)
             .field("settlement", &self.settlement)
             .field("capital", &self.capital)
+            .field("capital_layouts", &self.capital_layouts)
             .field("fee_sizing", &self.fee_sizing)
             .finish()
     }
@@ -190,7 +197,8 @@ impl SimulationDeployment {
             gas_limit,
             code,
             settlement,
-            capital: CapitalOverridePlan::Production,
+            capital: ProbeCapital::Production,
+            capital_layouts: CapitalLayouts::verified(),
             fee_sizing: FeeSizing::default(),
         }
     }
@@ -203,7 +211,7 @@ impl SimulationDeployment {
     }
 
     /// Declare this deployment's capital posture — the ONE capital value a
-    /// session carries, projected here into the plan the overrides apply.
+    /// session carries, projected per fan-out into the plan the overrides apply.
     ///
     /// The plan's holder is this deployment's execution target — the executor —
     /// never its owner, who only funds gas. The target is never inherited from
@@ -217,14 +225,98 @@ impl SimulationDeployment {
     /// capital never travels through a code override.
     #[must_use]
     pub const fn with_capital(mut self, capital: ProbeCapital) -> Self {
-        self.capital = capital.override_plan(self.target);
+        self.capital = capital;
         self
     }
 
-    /// The capital plan this deployment applies to its execution target.
+    /// Declare the **verified storage layouts** this deployment's probe overrides
+    /// may resolve against.
+    ///
+    /// The default is the pinned production set
+    /// ([`CapitalLayouts::verified`]). A fixture whose tokens and PoolManager
+    /// live at lab addresses declares theirs here, explicitly — nothing infers a
+    /// `balanceOf` slot from an ABI, an address, decimals, or a `balanceOf` call,
+    /// and an undeclared layout refuses the probe rather than clearing nothing.
     #[must_use]
-    pub const fn capital(&self) -> CapitalOverridePlan {
+    pub fn with_capital_layouts(mut self, layouts: CapitalLayouts) -> Self {
+        self.capital_layouts = layouts;
+        self
+    }
+
+    /// The capital posture this deployment applies to its execution target.
+    #[must_use]
+    pub const fn capital(&self) -> ProbeCapital {
         self.capital
+    }
+
+    /// The path-aware capital plan this deployment applies to a fan-out over
+    /// `paths`: every asset those paths touch (zero-balance) or every external
+    /// entry their Encode declares (self-funded), each resolved to a concrete
+    /// storage target and value.
+    ///
+    /// The requirements are the deployment's OWN Encode's answer, read from the
+    /// Plan it builds
+    /// ([`ExecutionAdapter::capital_requirements`]), because which family seeds
+    /// an external entry is a grammar fact and a second, path-level rule would
+    /// eventually fund one asset and declare another. Only the self-funded
+    /// posture asks for them: `ZeroBalance` clears what the paths touch and
+    /// discards any requirement, and `Production` composes no plan at all.
+    ///
+    /// A fan-out's several paths combine per asset by MAXIMUM, never by sum.
+    /// Each candidate starts under the same fan-out bankroll but its stream
+    /// spends only its own Plan's declared entry, so the shared simulated
+    /// database has to cover the largest single entry — a sum would grant capital
+    /// no single path declared.
+    ///
+    /// # Errors
+    ///
+    /// [`CapitalPlanError::UnverifiedLayout`] when a covered asset's storage
+    /// layout is not in [`Self::with_capital_layouts`]'s source, and
+    /// [`CapitalPlanError::NoPaths`] when a probe posture is asked for with no
+    /// path at all. Both are decided BEFORE any EVM work.
+    pub fn capital_plan(
+        &self,
+        paths: &[SimulatePath],
+    ) -> Result<CapitalOverridePlan, CapitalPlanError> {
+        // Only `SelfFund` INSTALLS external entry capital, so only it asks its
+        // adapter what that entry is: `ZeroBalance` clears what the paths touch
+        // and discards any requirement, and `Production` composes no plan at
+        // all. Asking in those postures would spend a grammar walk per path on
+        // an answer nothing reads.
+        let requirement_sets: Vec<Vec<CapitalRequirement>> =
+            if self.capital == ProbeCapital::SelfFund {
+                paths
+                    .iter()
+                    .map(|path| {
+                        let hop_outputs = path.expected_outputs_vec();
+                        let consumed_inputs = path.consumed_inputs_vec();
+                        let inputs = ComposerInputs {
+                            optimal_input: path.optimal_input,
+                            hop_outputs: &hop_outputs,
+                            consumed_inputs: &consumed_inputs,
+                            opts: ComposeOptions,
+                        };
+                        self.adapter.capital_requirements(&path.path_info, &inputs)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let facts: Vec<CapitalPath<'_>> = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| CapitalPath {
+                path: &path.path_info,
+                // One plan per fan-out: the requirement sets are indexed by the
+                // same path order, and a posture that declares none still keeps
+                // every path (its touched assets are the whole plan).
+                requirements: requirement_sets
+                    .get(index)
+                    .map_or(&[], std::vec::Vec::as_slice),
+            })
+            .collect();
+        self.capital
+            .override_plan(self.target, &facts, &self.capital_layouts)
     }
 
     /// This deployment's operator-assigned identity — the half of every
@@ -293,15 +385,37 @@ impl SimulationDeployment {
         self.settlement
     }
 
-    /// Project the engine's state-override parameters for this deployment.
-    #[must_use]
-    pub fn override_params(&self) -> SimulationOverrideParams {
-        SimulationOverrideParams {
+    /// Project the engine's state-override parameters for a fan-out over `paths`.
+    ///
+    /// The capital half is composed HERE — once per fan-out — so one path-aware
+    /// plan travels from this composition through every override the engine
+    /// applies.
+    ///
+    /// The path set is a CONSERVATIVE union, not an exact projection of what the
+    /// EVM will run: a candidate whose encoding the selection walk already
+    /// declined is filtered cheaply (it never reaches the EVM), but an
+    /// unselected or not-yet-encoded candidate is INCLUDED, because the plan is
+    /// composed before every per-candidate encoding decision is final. One asset
+    /// among them whose layout this build cannot verify therefore refuses the
+    /// whole fan-out — before any EVM work — rather than simulating a path whose
+    /// balance the probe cannot account for.
+    ///
+    /// # Errors
+    ///
+    /// [`CapitalPlanError`] when the plan cannot be composed; see
+    /// [`Self::capital_plan`]. The refusal is returned before the engine builds
+    /// any EVM state, so an unverified asset stops the fan-out rather than
+    /// simulating it.
+    pub fn override_params(
+        &self,
+        paths: &[SimulatePath],
+    ) -> Result<SimulationOverrideParams, CapitalPlanError> {
+        Ok(SimulationOverrideParams {
             owner: self.owner,
             code: self.code.clone(),
             settlement: self.settlement,
-            capital: self.capital,
-        }
+            capital: self.capital_plan(paths)?,
+        })
     }
 }
 

@@ -114,6 +114,10 @@ use crate::{
     SimResult, SimulateContext, SimulatePath,
 };
 
+/// The capital posture a deployment carries — read here to skip composing a path
+/// list for a `Production` fan-out, whose plan writes nothing.
+use degenbot_simulation::ProbeCapital;
+
 // The pre-simulation leaf helpers live in the crate-internal `admission` module
 // but keep their published `degenbot_arbitrage::dispatch::*` paths (and, through
 // them, the crate root's): the module boundary is an implementation fact, not a
@@ -472,7 +476,7 @@ pub fn dispatch_profitable_results(
         },
     );
     let outcome = leaf_outcome(admitted.skips, admitted.admitted.len());
-    Ok(simulate_leaf(
+    simulate_leaf(
         admitted.admitted,
         outcome,
         LeafInputs {
@@ -484,7 +488,7 @@ pub fn dispatch_profitable_results(
             bot_state,
             warm_cache,
         },
-    ))
+    )
 }
 
 /// Finalize PRE-ADMITTED candidates against the live policy state, then
@@ -572,7 +576,7 @@ pub(crate) fn dispatch_admitted_profitable_results(
         },
     );
     let outcome = leaf_outcome(finalized.skips, finalized.admitted.len());
-    Ok(simulate_leaf(
+    simulate_leaf(
         finalized.admitted,
         outcome,
         LeafInputs {
@@ -584,7 +588,7 @@ pub(crate) fn dispatch_admitted_profitable_results(
             bot_state,
             warm_cache,
         },
-    ))
+    )
 }
 
 /// The raw leaf over a candidate set a TEST fixture built, unwrapped: the test
@@ -693,7 +697,7 @@ fn simulate_leaf(
     candidates: Vec<DispatchCandidate>,
     mut outcome: DispatchOutcome,
     inputs: LeafInputs<'_>,
-) -> DispatchOutcome {
+) -> Result<DispatchOutcome, DispatchRefusal> {
     let LeafInputs {
         ctx,
         path_suppression,
@@ -722,8 +726,41 @@ fn simulate_leaf(
     // empty input) — the in-process evm2 path never builds a handle
     // for zero candidates.
     if candidates.is_empty() {
-        return outcome;
+        return Ok(outcome);
     }
+
+    // 1.5. Probe capital — composed HERE, once per fan-out, from the candidates
+    //      this fan-out can still hand to the EVM, and BEFORE any EVM state
+    //      exists. One path-aware plan travels from this point through the
+    //      engine's override application, so the assets installed (self-funded)
+    //      or stripped (zero-balance) are the ones those candidates name. A
+    //      production fan-out composes nothing — and clones no path for a plan
+    //      that would write nothing. A refusal — an asset whose storage layout
+    //      this build cannot verify — stops the batch here, naming the asset:
+    //      simulating it anyway would leave that balance in place and report the
+    //      resulting revert as if the path had run.
+    let override_params = match ctx.deployment.capital() {
+        // Production installs and clears nothing, and its plan resolves no
+        // asset, so it composes no path list: no candidate is cloned into a
+        // `SimulatePath` for a plan that would write nothing.
+        ProbeCapital::Production => ctx.deployment.override_params(&[]),
+        // A probe posture covers the candidates that can still reach the EVM. A
+        // prepared decline was answered by the selection walk and never reaches
+        // the EVM, so its assets need no override — an unverifiable token on
+        // such a path must not refuse a fan-out that does not run it. An
+        // `Accepted` encoding runs as-is and an unencoded (`None`) candidate is
+        // composed by this leaf, so both are included; nothing is re-encoded
+        // here.
+        ProbeCapital::SelfFund | ProbeCapital::ZeroBalance => {
+            let capital_paths: Vec<SimulatePath> = candidates
+                .iter()
+                .filter(|candidate| candidate.reaches_simulation())
+                .map(DispatchCandidate::to_simulate_path)
+                .collect();
+            ctx.deployment.override_params(&capital_paths)
+        }
+    }
+    .map_err(|error| DispatchRefusal::CapitalPlan { error })?;
 
     // 2. Fan-out — build ONE per-block `Evm2BlockSimHandle` + simulate each
     //    candidate SERIALLY on the shared `&mut evm` (Tier 1). The cap was
@@ -1005,7 +1042,7 @@ fn simulate_leaf(
                         ctx.block.base_fee_next,
                         sim_block,
                         ctx.block.block_timestamp,
-                        &ctx.deployment.override_params(),
+                        &override_params,
                         &anchor,
                         &evm2_warm_cache,
                         storage_view,
@@ -1249,7 +1286,7 @@ fn simulate_leaf(
     // fan-out; this is the per-block tally rollup.
     degenbot_simulation::divergence_probe::dump_divergence_summary();
 
-    outcome
+    Ok(outcome)
 }
 
 #[expect(clippy::unwrap_used)]
