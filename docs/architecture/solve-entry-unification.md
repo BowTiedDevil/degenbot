@@ -21,7 +21,7 @@ The live node was unavailable in this environment (the regeneration-path
 `ws://host.containers.internal:8546` probe: connection refused), so both
 inputs are offline over the committed captured corpora — recorded here as a
 substitution, not hidden. The harness is
-`rust/crates/engine/degenbot-solvers/examples/entry_ab_readout.rs`; it times
+`rust/tools/solver-lab/src/bin/entry_ab_readout/main.rs`; it times
 TWO routes over the same captured all-concentrated-liquidity paths, interleaved reps with
 alternating order (median/p95 per path, 25–49 reps):
 
@@ -37,15 +37,15 @@ stances measured (the handle is present in both; the stance gates the
 per-probe fingerprint fold). Exact commands:
 
 ```text
-cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers \
-  --example entry_ab_readout [-- <capture.jsonl>]
+cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solver-lab \
+  --features capture-fixtures --bin entry_ab_readout [-- <capture.jsonl>]
 DR_AB_ITERS=25|49 ...   DR_AB_MEMO=1 ...   # the active-memo stance
 
 # functions-timing over the concentrated_liquidity_solve.* labels:
 HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH=hp.json \
 HOTPATH_REPORT=functions-timing,threads \
-cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers \
-  --features hotpath --example entry_ab_readout
+cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solver-lab \
+  --features capture-fixtures,hotpath --bin entry_ab_readout
 ```
 
 ### Input 1 — telemetry functions-timing over the `concentrated_liquidity_solve.*` labels

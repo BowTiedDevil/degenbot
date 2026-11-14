@@ -2401,6 +2401,6 @@ lint-stub-drift:
 # for the all-CL intake vs the direct entry over a capture corpus, parity-gated
 # (exits 1 on divergence). DR_AB_ITERS / DR_AB_MEMO shape the run.
 entry-ab corpus="heavy_concentrated_liquidity_solve_captures.jsonl":
-    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --features capture-fixtures --example entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solver-lab --features capture-fixtures --bin entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
 
 

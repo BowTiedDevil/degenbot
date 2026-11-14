@@ -145,7 +145,6 @@ rust/crates/foundation/degenbot-math/src/curve/mod.rs::!module
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::apply_chunk_writes_on_conn
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::compute_preverified_liquidity
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::run_pool_update_on_db
-rust/crates/foundation/degenbot-pools/examples/entry_ab_readout.rs::!module
 rust/crates/foundation/degenbot-pools/examples/rayon_scale_probe.rs::!module
 rust/crates/foundation/degenbot-pools/examples/stateview_feasibility_probe.rs::!module
 rust/crates/foundation/degenbot-pools/examples/v2_concentrated_liquidity_parity_probe.rs::!module
@@ -209,4 +208,5 @@ rust/tools/fixture-tools/src/bin/record_py_oracle_corpus/main.rs::!module
 rust/tools/fixture-tools/src/bin/record_updater_cassette/main.rs::!module
 rust/tools/solver-lab/src/bin/concentrated_liquidity_cache_lab/main.rs::!module
 rust/tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs::!module
+rust/tools/solver-lab/src/bin/entry_ab_readout/main.rs::!module
 rust/tools/solver-lab/src/bin/mixed_solve_replay/main.rs::!module

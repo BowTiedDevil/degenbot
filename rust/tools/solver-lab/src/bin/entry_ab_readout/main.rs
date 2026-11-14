@@ -1,4 +1,4 @@
-// Dev/example-only harness: an offline entry A/B readout for the solve-entry
+// Dev-only harness: an offline entry A/B readout for the solve-entry
 // unification decision.
 // Pedantic + restriction lints that production code denies are relaxed here.
 #![expect(clippy::print_stderr, clippy::print_stdout, clippy::too_many_lines)]
@@ -14,14 +14,14 @@
 //! Usage:
 //!
 //! ```text
-//!   cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools \
-//!     --example entry_ab_readout [-- <capture.jsonl>]
+//!   cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solver-lab \
+//!     --features capture-fixtures --bin entry_ab_readout [-- <capture.jsonl>]
 //!   DR_AB_ITERS=49 ...   // reps per path per arm (default 25)
 //!   DR_AB_MEMO=1 ...     // memo stance ON (default 0 = handle present, inactive)
 //!
 //!   Telemetry run (functions-timing over the concentrated_liquidity_solve.* labels):
-//!   cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools \
-//!     --features hotpath --example entry_ab_readout
+//!   cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solver-lab \
+//!     --features capture-fixtures,hotpath --bin entry_ab_readout
 //!   HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH=hp.json \
 //!   HOTPATH_REPORT=functions-timing,threads
 //! ```
@@ -50,14 +50,9 @@ use degenbot_pools::solve::concentrated_liquidity::{
 };
 use degenbot_pools::solve::runtime::SolveRuntimeConfig;
 use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
+use degenbot_solver_lab::capture_rows::{capture_arg, range};
+use degenbot_solver_lab::concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
 use serde_json::Value;
-
-#[path = "common/mod.rs"]
-mod common;
-#[path = "common/concentrated_liquidity_rows.rs"]
-mod concentrated_liquidity_rows;
-
-use concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
 
 /// Median of a mutable slice of microsecond samples (sorts in place).
 fn median_us(samples: &mut [u128]) -> u128 {
@@ -141,7 +136,7 @@ fn all_concentrated_liquidity_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeS
             let ranges = h.get("ranges").and_then(Value::as_array)?;
             let rs = ranges
                 .iter()
-                .map(common::range)
+                .map(range)
                 .collect::<Result<Vec<_>, String>>()
                 .ok()?;
             seqs.push(IntV3TickRangeSequence::new(rs).ok()?);
@@ -161,7 +156,7 @@ fn main() {
     let _guard = hotpath::HotpathGuardBuilder::new("entry_ab_readout").build();
 
     let args: Vec<String> = std::env::args().collect();
-    let path = common::capture_arg(&args, "heavy_concentrated_liquidity_solve_captures.jsonl");
+    let path = capture_arg(&args, "heavy_concentrated_liquidity_solve_captures.jsonl");
     let iters: usize = std::env::var("DR_AB_ITERS")
         .ok()
         .and_then(|s| s.parse().ok())

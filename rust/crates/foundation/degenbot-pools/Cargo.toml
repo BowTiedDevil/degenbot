@@ -115,10 +115,6 @@ required-features = ["capture-fixtures", "cache-lab"]
 # The pre-push/CI lanes that run them enable the feature explicitly.
 
 [[example]]
-name = "entry_ab_readout"
-required-features = ["capture-fixtures"]
-
-[[example]]
 name = "rayon_scale_probe"
 required-features = ["capture-fixtures"]
 

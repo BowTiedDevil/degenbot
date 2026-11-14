@@ -80,7 +80,7 @@ envelope = ["degenbot-order-index/envelope"]
 # The programs this package carries so far, split by whether they read a capture
 # fixture.
 #
-# THREE programs read the committed `.jsonl[.zst]` corpora through
+# FOUR programs read the committed `.jsonl[.zst]` corpora through
 # `degenbot-pools`'s fixture reader, so each carries `required-features` and a
 # default check skips it deliberately instead of failing on a cfg'd-out module;
 # the cache lab names its second forward beside the reader.
@@ -93,6 +93,17 @@ required-features = ["capture-fixtures"]
 [[bin]]
 name = "mixed_solve_replay"
 path = "src/bin/mixed_solve_replay/main.rs"
+required-features = ["capture-fixtures"]
+
+# The entry A/B readout: it reads a capture through the same fixture reader and
+# runs both solve entries over every all-concentrated-liquidity path, so the
+# reader is its only required forward. `hotpath` is an optional second build
+# shape of the same binary (the functions-timing run over the
+# `concentrated_liquidity_solve.*` labels), never a `required-features` entry.
+
+[[bin]]
+name = "entry_ab_readout"
+path = "src/bin/entry_ab_readout/main.rs"
 required-features = ["capture-fixtures"]
 
 # The cache-lab replay: it reads a capture through the same fixture reader and

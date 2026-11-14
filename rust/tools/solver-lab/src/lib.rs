@@ -32,8 +32,9 @@
 //!   arithmetic) and the pools fixture home the synthetic corpus generator
 //!   writes into.
 //! - `capture_rows`, `concentrated_liquidity_rows` — the capture-JSONL parsing
-//!   the replay instruments share, behind `capture-fixtures` because they reach
-//!   the feature's fixture reader for the default capture path.
+//!   the replay and readout instruments share, behind `capture-fixtures`
+//!   because they reach the feature's fixture reader for the default capture
+//!   path.
 //!
 //! Lane features: `capture-fixtures`, `cache-lab`, `telemetry` (the cache lab's
 //! second build shape, never a bot-exporter lane), `hotpath`, `envelope`.

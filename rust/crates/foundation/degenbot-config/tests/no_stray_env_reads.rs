@@ -127,44 +127,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &["DEGENBOT_RPC_HTTP_CHAINID_1"][..],
         );
 
-        // The two solver replay binaries, same class and same cause: they left
-        // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
-        // solver-lab tool crate, so their pre-existing offline replay controls
-        // now reach the production-source scan. Each is a per-run knob for a
-        // local corpus replay -- the iteration count, and the golden
-        // regeneration flag for the concentrated-liquidity program -- read once
-        // at start-up with the same defaults and the same parse-and-fall-back
-        // behavior they have always had. No operator-config authority, and the
-        // loader would hand a solver-lab binary the config crate's dependency
-        // graph for no behavioral gain.
-        m.insert(
-            "tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs",
-            &["DR_REPLAY_ITERS", "DR_REPLAY_REGEN"][..],
-        );
-        m.insert(
-            "tools/solver-lab/src/bin/mixed_solve_replay/main.rs",
-            &["DR_REPLAY_ITERS"][..],
-        );
-
-        // The cache-lab replay, same class and same cause: it left
-        // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
-        // solver-lab tool crate, so its four pre-existing per-run controls are
-        // now visible to the production-source scan. Each is read once at
-        // start-up with the same defaults and the same parse-and-fall-back
-        // behavior it has always had: the path cap and the transitions per
-        // path shorten a local sweep, `DRCLAB_DIGEST` echoes each reference
-        // solve, and `DRCLAB_MICRO` adds the micro-bench readout. No
-        // operator-config authority, and the loader would hand a solver-lab
-        // binary the config crate's dependency graph for no behavioral gain.
-        m.insert(
-            "tools/solver-lab/src/bin/concentrated_liquidity_cache_lab/main.rs",
-            &[
-                "DRCLAB_MAX_PATHS",
-                "DRCLAB_TRANS",
-                "DRCLAB_DIGEST",
-                "DRCLAB_MICRO",
-            ][..],
-        );
+        insert_solver_lab_entries(&mut m);
 
         // The Python oracle corpus recorder, same class and same cause: leaving
         // `examples/` (skipped as a test surface) exposed its pre-existing endpoint
@@ -237,6 +200,65 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
 
         m
     })
+}
+
+/// The solver-lab entries, inserted into the same map the Rust scan reads. A
+/// separate builder for the same reason as the Python half's: these four
+/// binaries share one relocation story, and holding them apart keeps each
+/// registry readable.
+fn insert_solver_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
+    // The two solver replay binaries, same class and same cause: they left
+    // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
+    // solver-lab tool crate, so their pre-existing offline replay controls
+    // now reach the production-source scan. Each is a per-run knob for a
+    // local corpus replay -- the iteration count, and the golden
+    // regeneration flag for the concentrated-liquidity program -- read once
+    // at start-up with the same defaults and the same parse-and-fall-back
+    // behavior they have always had. No operator-config authority, and the
+    // loader would hand a solver-lab binary the config crate's dependency
+    // graph for no behavioral gain.
+    map.insert(
+        "tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs",
+        &["DR_REPLAY_ITERS", "DR_REPLAY_REGEN"][..],
+    );
+    map.insert(
+        "tools/solver-lab/src/bin/mixed_solve_replay/main.rs",
+        &["DR_REPLAY_ITERS"][..],
+    );
+
+    // The entry A/B readout, same class and same cause: it left
+    // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
+    // solver-lab tool crate, so its two pre-existing per-run controls are
+    // now visible to the production-source scan. The rep count per path per
+    // arm and the memo stance are each read once at start-up with the same
+    // defaults (25 reps, stance off) and the same parse-and-fall-back
+    // behavior they have always had. No operator-config authority, and the
+    // loader would hand a solver-lab binary the config crate's dependency
+    // graph for no behavioral gain.
+    map.insert(
+        "tools/solver-lab/src/bin/entry_ab_readout/main.rs",
+        &["DR_AB_ITERS", "DR_AB_MEMO"][..],
+    );
+
+    // The cache-lab replay, same class and same cause: it left
+    // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
+    // solver-lab tool crate, so its four pre-existing per-run controls are
+    // now visible to the production-source scan. Each is read once at
+    // start-up with the same defaults and the same parse-and-fall-back
+    // behavior it has always had: the path cap and the transitions per
+    // path shorten a local sweep, `DRCLAB_DIGEST` echoes each reference
+    // solve, and `DRCLAB_MICRO` adds the micro-bench readout. No
+    // operator-config authority, and the loader would hand a solver-lab
+    // binary the config crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/solver-lab/src/bin/concentrated_liquidity_cache_lab/main.rs",
+        &[
+            "DRCLAB_MAX_PATHS",
+            "DRCLAB_TRANS",
+            "DRCLAB_DIGEST",
+            "DRCLAB_MICRO",
+        ][..],
+    );
 }
 
 /// The Python companion's entries, inserted into the same map the Rust scan
