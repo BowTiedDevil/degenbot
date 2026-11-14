@@ -348,11 +348,18 @@ start() {
     # setsid: new session + no controlling terminal, so the launching shell can
     # exit without the pump dying (SIGHUP) and the tool shell's return isn't
     # entangled with the bot's life. The supervisor records the driver's own pid
-    # and its exit status (see DETACH_WRAPPER). Output is captured by direct fd
-    # redirection (never a tee pipeline), so the log is authoritative and
-    # survives the launching shell going away.
+    # and its exit status (see DETACH_WRAPPER). BOTH halves of the detached pair
+    # reach the log by direct fd redirection (never a tee pipeline), so the log
+    # is authoritative and survives the launching shell going away: the DRIVER
+    # redirects inside DETACH_WRAPPER, and the SUPERVISOR's own stdout/stderr are
+    # redirected at this setsid call. The supervisor's redirect is what makes
+    # `start`'s return independent of the bot: a descriptor inherited from the
+    # caller outlives the launcher, so a supervisor still holding the caller's
+    # stdout would keep a capturing caller (subprocess.run(capture_output=True),
+    # as the bankroll runner does) blocked until the bot itself exited.
     local wrapper_pid _i
-    setsid bash -c "$DETACH_WRAPPER" runner "$LOG" "$PIDFILE" "${BOT_CMD[@]}" < /dev/null &
+    setsid bash -c "$DETACH_WRAPPER" runner "$LOG" "$PIDFILE" "${BOT_CMD[@]}" \
+        < /dev/null >>"$LOG" 2>&1 &
     wrapper_pid=$!
     # The supervisor writes the driver pid as soon as it forks it; fall back to
     # the supervisor pid if that never happened (driver failed to fork).
