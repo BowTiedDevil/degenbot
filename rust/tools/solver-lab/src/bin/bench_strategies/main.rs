@@ -7,7 +7,7 @@
 //! so single-insert costs are measured on a representative smaller index — the
 //! insert cost is O(log h + k), independent of N.
 //!
-//! Run: `cargo run -p degenbot-order-index --example bench_strategies --release`
+//! Run: `cargo run --release -p degenbot-solver-lab --features envelope --bin bench_strategies`
 
 // Demo-only casts (f64 sqrt for point generation) — fine outside prod math.
 // The microbench's stdout report is its output.

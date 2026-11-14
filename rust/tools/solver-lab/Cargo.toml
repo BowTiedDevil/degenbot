@@ -58,6 +58,11 @@ tracing = { version = "^0.1", optional = true }
 # names the lane explicitly so the dependency edge and the lane stay one
 # decision rather than a silently inherited default.
 degenbot-order-index = { workspace = true, optional = true }
+# The microbench's generated points are typed in `U256`, which its source names as
+# `alloy_primitives` directly, so that edge is declared here too rather than
+# reached through a re-export. Optional on the same `envelope` activation as the
+# index above: a default tree compiles neither edge and builds neither program.
+alloy-primitives = { version = "^1.7", default-features = false, features = ["std"], optional = true }
 # Solver-phase function profiling. `degenbot-pools` carries this dependency
 # non-optionally (no-op stubs by default) and matches the version, so the crate
 # itself is in every tree that reaches `degenbot-pools`; it is optional here so
@@ -96,16 +101,18 @@ telemetry = ["degenbot-pools/telemetry"]
 # reaches `degenbot-bot`.
 hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]
 
-# The convex-hull net-profit order index the strategy microbench measures.
-envelope = ["degenbot-order-index/envelope"]
+# The convex-hull net-profit order index the strategy microbench measures, and the
+# `U256` its hard-coded point generator is typed in. Both edges are optional and
+# `dep:`-named, so this lane is the only thing that adds either to a build.
+envelope = ["degenbot-order-index/envelope", "dep:alloy-primitives"]
 
-# The programs this package carries so far, split by whether they read a capture
-# fixture.
+# The programs this package carries so far, split by which lane each one needs.
 #
 # FIVE programs read the committed `.jsonl[.zst]` corpora through
 # `degenbot-pools`'s fixture reader, so each carries `required-features` and a
 # default check skips it deliberately instead of failing on a cfg'd-out module;
-# the cache lab names its second forward beside the reader.
+# the cache lab names its second forward beside the reader. One more program reads
+# no capture at all and is gated on the `envelope` lane alone.
 
 [[bin]]
 name = "concentrated_liquidity_solve_replay"
@@ -171,3 +178,14 @@ path = "src/bin/stateview_feasibility_probe/main.rs"
 [[bin]]
 name = "synth_corpus_gen"
 path = "src/bin/synth_corpus_gen/main.rs"
+
+# The order-index strategy microbench: it generates its points in source and reads
+# no capture, no node, no environment key, and no database, but it does need the
+# hull index (and the `U256` its points are typed in), so its lane is `envelope`
+# alone. Measurement, not a gate: it hard-codes its 1M and 10M runs and carries no
+# pass/fail threshold, so no routine lane executes it.
+
+[[bin]]
+name = "bench_strategies"
+path = "src/bin/bench_strategies/main.rs"
+required-features = ["envelope"]

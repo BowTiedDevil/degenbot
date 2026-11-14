@@ -28,8 +28,3 @@ proptest = "^1.12"
 name = "scale_demo"
 path = "examples/scale_demo.rs"
 required-features = ["envelope"]
-
-[[example]]
-name = "bench_strategies"
-path = "examples/bench_strategies.rs"
-required-features = ["envelope"]

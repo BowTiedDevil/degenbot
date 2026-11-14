@@ -2959,6 +2959,7 @@ name = "degenbot-solver-lab"
 version = "0.6.0-alpha.19"
 dependencies = [
  "alloy",
+ "alloy-primitives",
  "degenbot-math",
  "degenbot-order-index",
  "degenbot-pools",
