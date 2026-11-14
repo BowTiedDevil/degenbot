@@ -44,15 +44,33 @@
 //! topic[0] = 0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83
 //! topic[1] = sender (indexed)
 //! topic[2] = recipient (indexed)
-//! data    = abi.encode(int256,int256,uint160,uint128,int24,uint24,uint24) = 224 bytes
-//!           (7 × 32-byte words)
+//! data    = abi.encode(int256,int256,uint160,uint128,int24,uint128,uint128)
+//!         = 224 bytes (7 × 32-byte words)
 //! ```
 
 #![expect(clippy::doc_markdown)]
 
-use crate::uniswap_tick_range::extract_int24_from_word;
-use alloy::primitives::{b256, Address, B256, I256, U128, U256};
+use crate::uniswap_tick_range::validate_tick;
+use alloy::primitives::{b256, B256, U128, U256};
 use alloy::rpc::types::Log;
+use alloy::sol_types::SolEvent;
+
+alloy::sol! {
+    /// The PancakeSwap V3 fork's swap event: the V3 state words plus the fork's
+    /// two `uint128` protocol-fee accumulators, which are what moved its
+    /// topic0.
+    event Swap(
+        address indexed sender,
+        address indexed recipient,
+        int256 amount0,
+        int256 amount1,
+        uint160 sqrtPriceX96,
+        uint128 liquidity,
+        int24 tick,
+        uint128 protocolFeesToken0,
+        uint128 protocolFeesToken1,
+    );
+}
 
 /// Keccak256 of `Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)`
 /// — the PancakeSwap V3 Swap topic0 (confirmed against the verified
@@ -70,51 +88,33 @@ pub type V3PancakeSwapEvent = crate::v3_swap_decoder::V3SwapEvent;
 /// Returns `Some(V3PancakeSwapEvent)` (reusing the Uniswap V3 event type — the
 /// state fields are identical) if the log is a valid PancakeSwap Swap with
 /// correctly formatted data. Returns `None` if:
-/// - The topic doesn't match [`V3_PANCAKESWAP_SWAP_TOPIC`]
-/// - The data is too short (< 224 bytes — 5 state words + 2 extra words)
-/// - The tick is out of the valid int24 range
+/// - The log's topics are not exactly the declared three (signature + sender +
+///   recipient) or the first one doesn't match
+///   [`V3_PANCAKESWAP_SWAP_TOPIC`] — the declaration binds the topic count, so
+///   a surplus topic is a refusal, not an ignored word
+/// - The data is too short (< 224 bytes — 5 state words + 2 extra words) or a
+///   state word is not canonical for its declared width, or an indexed word is
+///   not a canonical `address` slot
+/// - The tick is outside the Uniswap V3 tick range
 #[must_use]
 pub fn decode_v3_pancakeswap_swap_log(log: &Log) -> Option<V3PancakeSwapEvent> {
-    // topic[0] must match the PancakeSwap V3 Swap topic.
-    let first_topic = log.topics().first()?;
-    if *first_topic != V3_PANCAKESWAP_SWAP_TOPIC {
-        return None;
-    }
+    // The fork's own declaration is the bound: it carries the two trailing
+    // `uint128` protocol-fee words, so a log shorter than the fork's 224 bytes
+    // fails here, while the five state words are decoded VALIDATING against the
+    // widths they share with Uniswap V3.
+    let log = Swap::decode_log_validate(&log.inner).ok()?;
 
-    let topics = log.topics();
-    if topics.len() < 3 {
-        return None;
-    }
-
-    // Decode sender / recipient from indexed topic[1] / topic[2].
-    let sender = Address::from_word(topics[1]);
-    let recipient = Address::from_word(topics[2]);
-
-    // data = abi.encode(int256, int256, uint160, uint128, int24, uint24, uint24)
-    // = 7 × 32 bytes = 224 bytes minimum.
-    let data = log.data().data.as_ref();
-    if data.len() < 224 {
-        return None;
-    }
-
-    let amount0 = I256::from_be_bytes::<32>(data[..32].try_into().ok()?);
-    let amount1 = I256::from_be_bytes::<32>(data[32..64].try_into().ok()?);
-    let sqrt_price_x96 = U256::from_be_bytes::<32>(data[64..96].try_into().ok()?);
-    let liquidity = U128::from_be_bytes::<16>(data[112..128].try_into().ok()?);
-    // tick (int24) in word 4 (bytes 128..160), sign-extended.
-    let tick = extract_int24_from_word(&data[128..160])?;
-    // The trailing two words (bytes 160..224) are PancakeSwap's extra
-    // fee-accounting fields; NOT surfaced on the shared event type.
-
+    // The trailing protocol-fee accumulators are not surfaced on the shared
+    // event type — no reader updates pool state from them.
     Some(V3PancakeSwapEvent {
-        pool_address: log.address(),
-        sender,
-        recipient,
-        amount0,
-        amount1,
-        sqrt_price_x96,
-        liquidity,
-        tick,
+        pool_address: log.address,
+        sender: log.data.sender,
+        recipient: log.data.recipient,
+        amount0: log.data.amount0,
+        amount1: log.data.amount1,
+        sqrt_price_x96: U256::from(log.data.sqrtPriceX96),
+        liquidity: U128::from(log.data.liquidity),
+        tick: validate_tick(log.data.tick)?,
     })
 }
 
@@ -122,7 +122,7 @@ pub fn decode_v3_pancakeswap_swap_log(log: &Log) -> Option<V3PancakeSwapEvent> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Bytes, Log as InnerLog};
+    use alloy::primitives::{Address, Bytes, Log as InnerLog, I256};
 
     /// A real on-chain PancakeSwap V3 Swap at block 25655667, pool
     /// 0x1ac1a8fe (USDC/WETH). The five state words were independently verified
@@ -233,6 +233,34 @@ mod tests {
             log.inner.data.topics().to_vec(),
             Bytes::from(vec![0u8; 96]),
         );
+        assert!(decode_v3_pancakeswap_swap_log(&log).is_none());
+    }
+
+    // ── malformed narrow-field words ──────────────────────────────────────
+
+    #[test]
+    fn rejects_over_wide_sqrt_price() {
+        // A `uint160` slot whose bits above 160 are set is not a price; the
+        // junk bits would otherwise ride along in the shared `U256` field.
+        let mut log = real_pancake_swap_log();
+        let mut data = log.data().data.to_vec();
+        data[64] = 0x01;
+        log.inner =
+            InnerLog::new_unchecked(log.address(), log.topics().to_vec(), Bytes::from(data));
+        assert!(decode_v3_pancakeswap_swap_log(&log).is_none());
+    }
+
+    #[test]
+    fn rejects_non_sign_extended_tick() {
+        // A `-60` tick zero-extended instead of sign-extended: a tail-only read
+        // would report -60 as if the word were canonical.
+        let mut log = real_pancake_swap_log();
+        let mut data = log.data().data.to_vec();
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&(-60_i32).to_be_bytes()[1..]);
+        data[128..160].copy_from_slice(&word);
+        log.inner =
+            InnerLog::new_unchecked(log.address(), log.topics().to_vec(), Bytes::from(data));
         assert!(decode_v3_pancakeswap_swap_log(&log).is_none());
     }
 }

@@ -34,9 +34,23 @@
 
 use alloy::primitives::{b256, Address, B256, I256};
 use alloy::rpc::types::Log;
+use alloy::sol_types::SolEvent;
 
-use crate::uniswap_tick_range::extract_int24_from_word;
+use crate::uniswap_tick_range::validate_tick;
 use crate::v4_swap_decoder::V4PoolId;
+
+alloy::sol! {
+    /// The V4 `PoolManager`'s liquidity-change event — V4's replacement for the
+    /// V3 `Mint`/`Burn` pair.
+    event ModifyLiquidity(
+        bytes32 indexed id,
+        address indexed sender,
+        int24 tickLower,
+        int24 tickUpper,
+        int256 liquidityDelta,
+        bytes32 salt,
+    );
+}
 
 /// Keccak256 of `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)`.
 pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 =
@@ -63,63 +77,34 @@ pub struct V4ModifyLiquidityEvent {
 ///
 /// Returns `Some(V4ModifyLiquidityEvent)` if the log is a valid
 /// `ModifyLiquidity` event with correctly formatted data. Returns `None` if:
-/// - The topic doesn't match `V4_MODIFY_LIQUIDITY_TOPIC`
-/// - There are fewer than 3 topics
-/// - The data is too short (< 128 bytes)
-/// - Tick values are out of the valid int24 range
+/// - The log's topics are not exactly the declared three (signature + id +
+///   sender) or the first one doesn't match `V4_MODIFY_LIQUIDITY_TOPIC` — the
+///   declaration binds the topic count, so a surplus topic is a refusal, not an
+///   ignored word
+/// - The indexed sender word is not a canonical `address` slot
+/// - The data is too short (< 128 bytes) or an `int24` tick word is not
+///   sign-extended
+/// - Tick values are outside the Uniswap V3 tick range
 #[must_use]
 pub fn decode_v4_modify_liquidity_log(log: &Log) -> Option<V4ModifyLiquidityEvent> {
-    let first_topic = log.topics().first()?;
-    if *first_topic != V4_MODIFY_LIQUIDITY_TOPIC {
-        return None;
-    }
-
-    // Need 3 topics: event sig + V4PoolId + sender
-    let topics = log.topics();
-    if topics.len() < 3 {
-        return None;
-    }
-
-    // Decode V4PoolId from topic[1] (indexed bytes32)
-    let pool_id: V4PoolId = topics[1].0;
-
-    // Decode sender from topic[2] (indexed address)
-    let sender = Address::from_word(topics[2]);
-
-    // data = abi.encode(int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt)
-    // = 4 × 32 bytes = 128 bytes minimum
-    let data = log.data().data.as_ref();
-    if data.len() < 128 {
-        return None;
-    }
-
-    // Decode tickLower (int24, sign-extended to int256 in the first 32-byte
-    // data word; range-checked against the Uniswap V3 tick bounds by the
-    // shared helper).
-    let tick_lower = extract_int24_from_word(&data[0..32])?;
-
-    // Decode tickUpper (int24, sign-extended to int256 in the second 32-byte
-    // data word).
-    let tick_upper = extract_int24_from_word(&data[32..64])?;
-
-    // Decode liquidityDelta (int256, bytes 64..96)
-    let liquidity_delta = I256::from_be_bytes::<32>(data[64..96].try_into().ok()?);
-
-    // Decode salt (bytes32, bytes 96..128)
-    let salt = B256::from_slice(&data[96..128]);
+    // The declaration is the bound: topic0, the indexed id + sender words, and
+    // the four data words are decoded VALIDATING against the widths the
+    // `PoolManager` declares, so a tick word that is not sign-extended is a
+    // decode failure instead of a flipped tick.
+    let log = ModifyLiquidity::decode_log_validate(&log.inner).ok()?;
 
     Some(V4ModifyLiquidityEvent {
-        pool_id,
-        sender,
-        tick_lower,
-        tick_upper,
-        liquidity_delta,
-        salt,
+        pool_id: log.data.id.0,
+        sender: log.data.sender,
+        tick_lower: validate_tick(log.data.tickLower)?,
+        tick_upper: validate_tick(log.data.tickUpper)?,
+        liquidity_delta: log.data.liquidityDelta,
+        salt: log.data.salt,
     })
 }
 
 #[cfg(test)]
-#[expect(clippy::unreadable_literal, clippy::unwrap_used)]
+#[expect(clippy::expect_used, clippy::unreadable_literal, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::Bytes;
@@ -412,5 +397,85 @@ mod tests {
         };
 
         assert!(crate::v4_swap_decoder::decode_v4_swap_log(&log).is_none());
+    }
+
+    // ── malformed narrow-field words ──────────────────────────────────────
+
+    /// Set one byte of the log's data body (`word * 32 + byte`).
+    fn corrupt_data_byte(log: &mut Log, word: usize, byte: usize, value: u8) {
+        let mut data = log.data().data.to_vec();
+        data[word * 32 + byte] = value;
+        log.inner = alloy::primitives::Log::new_unchecked(
+            log.address(),
+            log.topics().to_vec(),
+            Bytes::from(data),
+        );
+    }
+
+    /// Set one byte of indexed topic word `topic`.
+    fn corrupt_topic_byte(log: &mut Log, topic: usize, byte: usize, value: u8) {
+        let mut topics = log.topics().to_vec();
+        topics[topic].0[byte] = value;
+        log.inner =
+            alloy::primitives::Log::new_unchecked(log.address(), topics, log.data().data.clone());
+    }
+
+    fn valid_modify_liquidity_log() -> Log {
+        make_v4_modify_liquidity_log(
+            [0xABu8; 32],
+            Address::from([0xBBu8; 20]),
+            -60,
+            60,
+            I256::try_from(-500_000_i128).unwrap(),
+            B256::ZERO,
+        )
+    }
+
+    #[test]
+    fn decode_v4_modify_liquidity_rejects_non_sign_extended_tick_lower() {
+        // A tick word that is not a sign-extended `int24` is malformed; a
+        // tail-only read would have reported the same tick.
+        let mut log = valid_modify_liquidity_log();
+        let mut data = log.data().data.to_vec();
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&(-60_i32).to_be_bytes()[1..]);
+        data[..32].copy_from_slice(&word);
+        log.inner = alloy::primitives::Log::new_unchecked(
+            log.address(),
+            log.topics().to_vec(),
+            Bytes::from(data),
+        );
+        assert!(decode_v4_modify_liquidity_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v4_modify_liquidity_rejects_non_sign_extended_tick_upper() {
+        let mut log = valid_modify_liquidity_log();
+        corrupt_data_byte(&mut log, 1, 0, 0xff);
+        assert!(decode_v4_modify_liquidity_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v4_modify_liquidity_rejects_dirty_sender_topic() {
+        let mut log = valid_modify_liquidity_log();
+        corrupt_topic_byte(&mut log, 2, 0, 0x01);
+        assert!(decode_v4_modify_liquidity_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v4_modify_liquidity_accepts_tick_bounds_and_full_width_delta() {
+        let log = make_v4_modify_liquidity_log(
+            [0xABu8; 32],
+            Address::ZERO,
+            -887_272,
+            887_272,
+            I256::MIN,
+            B256::from([0xFFu8; 32]),
+        );
+
+        let event = decode_v4_modify_liquidity_log(&log).expect("tick bounds must decode cleanly");
+        assert_eq!(event.tick_lower, -887_272);
+        assert_eq!(event.tick_upper, 887_272);
+        assert_eq!(event.liquidity_delta, I256::MIN);
     }
 }

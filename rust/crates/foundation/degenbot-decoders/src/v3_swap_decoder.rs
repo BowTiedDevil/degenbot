@@ -24,9 +24,23 @@
 //!           (5 × 32-byte words, left-padded)
 //! ```
 
-use crate::uniswap_tick_range::extract_int24_from_word;
+use crate::uniswap_tick_range::validate_tick;
 use alloy::primitives::{b256, Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
+use alloy::sol_types::SolEvent;
+
+alloy::sol! {
+    /// The V3 pool's post-swap state event.
+    event Swap(
+        address indexed sender,
+        address indexed recipient,
+        int256 amount0,
+        int256 amount1,
+        uint160 sqrtPriceX96,
+        uint128 liquidity,
+        int24 tick,
+    );
+}
 
 /// Keccak256 of `Swap(address,address,int256,int256,uint160,uint128,int24)`.
 pub const V3_SWAP_TOPIC: B256 =
@@ -55,71 +69,44 @@ pub struct V3SwapEvent {
 
 /// Decode a V3 Swap event from a log.
 ///
-/// Returns `Some(V3SwapEvent)` if the log is a valid Swap event with
-/// correctly formatted data. Returns `None` if:
-/// - The topic doesn't match `V3_SWAP_TOPIC`
-/// - The data is too short (< 160 bytes)
-/// - The tick is out of the valid int24 range
+/// Returns `Some(V3SwapEvent)` if the log is a valid Swap event with correctly
+/// formatted data. Returns `None` if:
+/// - The log's topics are not exactly the declared three (signature + sender +
+///   recipient) or the first one doesn't match `V3_SWAP_TOPIC` — the
+///   declaration binds the topic count, so a surplus topic is a refusal, not an
+///   ignored word
+/// - The data is too short (< 160 bytes) or a state word is not canonical for
+///   its declared width (`uint160` price, `uint128` liquidity, sign-extended
+///   `int24` tick), or an indexed word is not a canonical `address` slot
+/// - The tick is outside the Uniswap V3 tick range
+///
+/// Words past the tick are unread, so a fork's trailing data still decodes.
 #[must_use]
 pub fn decode_v3_swap_log(log: &Log) -> Option<V3SwapEvent> {
-    // topic[0] must match V3_SWAP_TOPIC
-    let first_topic = log.topics().first()?;
-    if *first_topic != V3_SWAP_TOPIC {
-        return None;
-    }
-
-    // We need at least 3 topics (event sig + sender + recipient)
-    let topics = log.topics();
-    if topics.len() < 3 {
-        return None;
-    }
-
-    // Decode sender from topic[1] (indexed address)
-    let sender = Address::from_word(topics[1]);
-    // Decode recipient from topic[2] (indexed address)
-    let recipient = Address::from_word(topics[2]);
-
-    // data = abi.encode(int256, int256, uint160, uint128, int24)
-    // = 5 × 32 bytes = 160 bytes minimum
-    let data = log.data().data.as_ref();
-    if data.len() < 160 {
-        return None;
-    }
-
-    // Decode amount0 (int256, bytes 0..32)
-    let amount0 = I256::from_be_bytes::<32>(data[..32].try_into().ok()?);
-
-    // Decode amount1 (int256, bytes 32..64)
-    let amount1 = I256::from_be_bytes::<32>(data[32..64].try_into().ok()?);
-
-    // Decode sqrtPriceX96 (uint160, bytes 64..96)
-    let sqrt_price_x96 = U256::from_be_bytes::<32>(data[64..96].try_into().ok()?);
-
-    // Decode liquidity (uint128, bytes 96..128)
-    let liquidity = U128::from_be_bytes::<16>(data[112..128].try_into().ok()?);
-
-    // Decode tick (int24, bytes 128..160 — sign-extended to int256 in the ABI;
-    // the value occupies the last 4 bytes of the 32-byte word). Range-checked
-    // against the Uniswap V3 tick bounds by the shared helper.
-    let tick = extract_int24_from_word(&data[128..160])?;
+    // The declaration is the bound: topic0, both indexed `address` words, and
+    // the five state words are decoded VALIDATING against the widths the pool
+    // declares, so an over-wide price or liquidity word is a decode failure
+    // instead of a narrowed value, and a tick word that is not sign-extended is
+    // a failure instead of a flipped tick. Words past the tick are unread.
+    let log = Swap::decode_log_validate(&log.inner).ok()?;
 
     Some(V3SwapEvent {
-        pool_address: log.address(),
-        sender,
-        recipient,
-        amount0,
-        amount1,
-        sqrt_price_x96,
-        liquidity,
-        tick,
+        pool_address: log.address,
+        sender: log.data.sender,
+        recipient: log.data.recipient,
+        amount0: log.data.amount0,
+        amount1: log.data.amount1,
+        sqrt_price_x96: U256::from(log.data.sqrtPriceX96),
+        liquidity: U128::from(log.data.liquidity),
+        tick: validate_tick(log.data.tick)?,
     })
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use alloy::primitives::Bytes;
+    use alloy::primitives::{Bytes, U160};
 
     #[expect(clippy::too_many_arguments)]
     fn make_v3_swap_log(
@@ -361,5 +348,140 @@ mod tests {
         };
 
         assert!(decode_v3_swap_log(&log).is_none());
+    }
+
+    // ── malformed narrow-field words ──────────────────────────────────────
+
+    /// Set one byte of the log's data body (`word * 32 + byte`).
+    fn corrupt_data_byte(log: &mut Log, word: usize, byte: usize, value: u8) {
+        let mut data = log.data().data.to_vec();
+        data[word * 32 + byte] = value;
+        log.inner = alloy::primitives::Log::new_unchecked(
+            log.address(),
+            log.topics().to_vec(),
+            Bytes::from(data),
+        );
+    }
+
+    /// Set one byte of indexed topic word `topic`.
+    fn corrupt_topic_byte(log: &mut Log, topic: usize, byte: usize, value: u8) {
+        let mut topics = log.topics().to_vec();
+        topics[topic].0[byte] = value;
+        log.inner =
+            alloy::primitives::Log::new_unchecked(log.address(), topics, log.data().data.clone());
+    }
+
+    fn valid_swap_log() -> Log {
+        make_v3_swap_log(
+            Address::from([0xaa; 20]),
+            Address::from([0xbb; 20]),
+            Address::from([0xcc; 20]),
+            I256::try_from(-1_000_i128).unwrap_or(I256::ZERO),
+            I256::try_from(500_i128).unwrap_or(I256::ZERO),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            U128::from(1_000_000_u64),
+            -60,
+        )
+    }
+
+    #[test]
+    fn decode_v3_swap_rejects_over_wide_sqrt_price() {
+        // A `uint160` slot whose bits above 160 are set is not a price — the
+        // decoder must refuse the log, not carry the junk bits in the U256.
+        let mut log = valid_swap_log();
+        corrupt_data_byte(&mut log, 2, 0, 0x01);
+        assert!(decode_v3_swap_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_swap_rejects_over_wide_liquidity() {
+        // `uint128` liquidity: a set bit in the word's top half would be
+        // silently dropped by a fixed 16-byte tail read.
+        let mut log = valid_swap_log();
+        corrupt_data_byte(&mut log, 3, 0, 0x01);
+        assert!(decode_v3_swap_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_swap_rejects_non_sign_extended_tick() {
+        // The ABI sign-extends `int24` to 32 bytes. A word carrying the -60
+        // value zero-extended instead is malformed, and a tail-only read would
+        // report -60 as if the log were canonical.
+        let mut log = valid_swap_log();
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&(-60_i32).to_be_bytes()[1..]);
+        let mut data = log.inner.data.data.to_vec();
+        data[128..160].copy_from_slice(&word);
+        log.inner.data.data = Bytes::from(data);
+        assert!(decode_v3_swap_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_swap_rejects_dirty_sender_topic() {
+        // An indexed `address` word with a non-zero 12-byte prefix is not an
+        // address slot.
+        let mut log = valid_swap_log();
+        corrupt_topic_byte(&mut log, 1, 0, 0x01);
+        assert!(decode_v3_swap_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_swap_rejects_dirty_recipient_topic() {
+        let mut log = valid_swap_log();
+        corrupt_topic_byte(&mut log, 2, 11, 0xff);
+        assert!(decode_v3_swap_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_swap_surplus_topic_returns_none() {
+        // The declaration binds the topic count: a fourth topic is not a V3
+        // Swap log, so it is refused instead of ignored.
+        let mut log = valid_swap_log();
+        let mut topics = log.topics().to_vec();
+        topics.push(B256::repeat_byte(0x01));
+        log.inner =
+            alloy::primitives::Log::new_unchecked(log.address(), topics, log.data().data.clone());
+
+        assert!(decode_v3_swap_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_swap_ignores_trailing_data() {
+        // A fork appending words past `tick` still decodes: the declaration
+        // reads the five declared words and leaves the tail unread.
+        let mut log = valid_swap_log();
+        let mut data = log.data().data.to_vec();
+        data.extend_from_slice(&[0xff; 32]);
+        log.inner = alloy::primitives::Log::new_unchecked(
+            log.address(),
+            log.topics().to_vec(),
+            Bytes::from(data),
+        );
+
+        let event = decode_v3_swap_log(&log).expect("trailing data must not fail the decode");
+        assert_eq!(event.tick, -60);
+        assert_eq!(
+            event.amount0,
+            I256::try_from(-1_000_i128).unwrap_or(I256::ZERO)
+        );
+    }
+
+    #[test]
+    fn decode_v3_swap_accepts_width_maxima() {
+        // The highest canonical value each narrow slot can carry still decodes.
+        let log = make_v3_swap_log(
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            I256::ZERO,
+            I256::ZERO,
+            U256::from(U160::MAX),
+            U128::MAX,
+            -60,
+        );
+
+        let event = decode_v3_swap_log(&log).expect("width maxima must decode cleanly");
+        assert_eq!(event.sqrt_price_x96, U256::from(U160::MAX));
+        assert_eq!(event.liquidity, U128::MAX);
     }
 }

@@ -17,6 +17,12 @@
 //! Event signatures + topic constants are the keccak256 of the canonical
 //! event signature each family's factory declares.
 //!
+//! Every decoder but V4 `Initialize` reads its log through an Alloy event
+//! declaration, and a declaration binds the topic count exactly: too few topics
+//! and a surplus topic are both decode failures. V4 `Initialize` is the one
+//! deliberate exception — degenbot keeps a *prefix* of that event, so it
+//! requires the leading topics and data words and ignores whatever follows.
+//!
 //! # V2 `PairCreated` (Uniswap V2 family)
 //!
 //! ```text
@@ -81,24 +87,77 @@
 //!     address indexed currency1,
 //!     uint24 fee,
 //!     int24 tickSpacing,
-//!     address hooks
-//!     // ... trailing fields (sqrtPriceX96, sqrtPriceX96 ...) ignored by degenbot;
-//!     // degenbot reads only the first 3 × 32 bytes of data.
+//!     address hooks,
+//!     uint160 sqrtPriceX96,
+//!     int24 tick
 //! )
 //!
 //! topic[0] = 0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438
 //! topic[1] = V4PoolId (indexed bytes32)
 //! topic[2] = currency0 (indexed address)
 //! topic[3] = currency1 (indexed address)
-//! data    = abi.encode(uint24 fee, int24 tickSpacing, address hooks, ...)
-//!         = ≥ 3 × 32 bytes (degenbot reads only the first 96)
+//! data    = abi.encode(
+//!     uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick
+//! ) = 5 × 32 bytes = 160 bytes
+//!
+//! degenbot reads only the leading three words (`fee`, `tickSpacing`, `hooks`).
 //! ```
 
-use alloy::primitives::{b256, Address, B256, U256};
+use alloy::primitives::{
+    aliases::{I24, U24},
+    b256, Address, B256,
+};
 use alloy::rpc::types::Log;
+use alloy::sol_types::{SolEvent, SolValue};
 
-use crate::uniswap_tick_range::extract_int24_from_word;
+use crate::uniswap_tick_range::validate_tick;
 use crate::v4_swap_decoder::V4PoolId;
+
+// Two of the three factory families below emit an event named `PoolCreated`
+// with a different parameter list, so each family's declaration lives in its
+// own module: Alloy derives the topic hash from the declared event name and
+// parameter types, which is exactly what tells the two apart on the wire.
+
+/// The V2 factory's pool-creation event (the canonical Uniswap V2 family sig —
+/// `Uniswap`, `PancakeSwap`, `SushiSwap`, Swapbased V2).
+mod pair_created_event {
+    alloy::sol! {
+        event PairCreated(
+            address indexed token0,
+            address indexed token1,
+            address pair,
+            uint256 totalSupply,
+        );
+    }
+}
+
+/// Aerodrome V2's pool-creation event — the V2 shape with a `stable` flag
+/// indexed into topic[3].
+mod aerodrome_v2_pool_created_event {
+    alloy::sol! {
+        event PoolCreated(
+            address indexed token0,
+            address indexed token1,
+            bool indexed stable,
+            address pool,
+            uint256 poolType,
+        );
+    }
+}
+
+/// The V3 factory's pool-creation event (`PancakeSwap V3` and `SushiSwap V3`
+/// share it).
+mod v3_pool_created_event {
+    alloy::sol! {
+        event PoolCreated(
+            address indexed token0,
+            address indexed token1,
+            uint24 indexed fee,
+            int24 tickSpacing,
+            address pool,
+        );
+    }
+}
 
 // ── topic constants ───────────────────────────────────────────────────────
 
@@ -212,112 +271,89 @@ pub struct V4InitializeEvent {
 
 /// Decode a V2 `PairCreated` event (the canonical Uniswap V2 family sig).
 ///
-/// Returns `None` if the topic doesn't match `V2_PAIR_CREATED_TOPIC`, there
-/// are fewer than 3 topics, or the data is too short (< 64 bytes).
+/// Returns `None` if the log's topics are not exactly the declared three or the
+/// first one doesn't match `V2_PAIR_CREATED_TOPIC` (the declaration binds the
+/// topic count, so a surplus topic is a refusal), the data is too short
+/// (< 64 bytes), or any address word is not a canonical `address` slot.
 #[must_use]
 pub fn decode_v2_pair_created_log(log: &Log) -> Option<V2PairCreatedEvent> {
-    let first_topic = log.topics().first()?;
-    if *first_topic != V2_PAIR_CREATED_TOPIC {
-        return None;
-    }
-    let topics = log.topics();
-    if topics.len() < 3 {
-        return None;
-    }
-    let token0 = Address::from_word(topics[1]);
-    let token1 = Address::from_word(topics[2]);
-    // data = abi.encode(address pair, uint totalSupply) = 2 × 32 bytes = 64.
-    let data = log.data().data.as_ref();
-    if data.len() < 64 {
-        return None;
-    }
-    let pool_address = Address::from_slice(&data[12..32]);
+    // The declaration is the bound: topic0, both indexed address words, and the
+    // two data words are decoded VALIDATING, so a `token0`/`token1` topic or a
+    // `pair` data word with a non-zero 12-byte prefix is a decode failure
+    // instead of a truncated address.
+    let log = pair_created_event::PairCreated::decode_log_validate(&log.inner).ok()?;
     Some(V2PairCreatedEvent {
-        factory_address: log.address(),
-        token0,
-        token1,
-        pool_address,
+        factory_address: log.address,
+        token0: log.data.token0,
+        token1: log.data.token1,
+        pool_address: log.data.pair,
     })
 }
 
 /// Decode an Aerodrome V2 `PoolCreated` event (the `stable`-flag variant).
 ///
-/// Returns `None` if the topic doesn't match `AERODROME_V2_POOL_CREATED_TOPIC`,
-/// there are fewer than 4 topics, or the data is too short (< 64 bytes).
+/// Returns `None` if the log's topics are not exactly the declared four or the
+/// first one doesn't match `AERODROME_V2_POOL_CREATED_TOPIC` (the declaration
+/// binds the topic count, so a surplus topic is a refusal), the data is too
+/// short (< 64 bytes), the indexed `stable` word is not a canonical `bool`, or
+/// any address word is not a canonical `address` slot.
 #[must_use]
 pub fn decode_aerodrome_v2_pool_created_log(log: &Log) -> Option<AerodromeV2PoolCreatedEvent> {
-    let first_topic = log.topics().first()?;
-    if *first_topic != AERODROME_V2_POOL_CREATED_TOPIC {
-        return None;
-    }
-    let topics = log.topics();
-    if topics.len() < 4 {
-        return None;
-    }
-    let token0 = Address::from_word(topics[1]);
-    let token1 = Address::from_word(topics[2]);
-    // The stable flag is an indexed bool, sign-extended to uint256 in the
-    // topic word. Non-zero word = true; zero word = false.
-    let stable = !topics[3].is_zero();
-    // data = abi.encode(address pool, uint256 type) = 2 × 32 bytes = 64.
-    let data = log.data().data.as_ref();
-    if data.len() < 64 {
-        return None;
-    }
-    let pool_address = Address::from_slice(&data[12..32]);
+    // The declaration is the bound here too, plus the fork's indexed `bool`: a
+    // `stable` word other than 0 or 1 is a decode failure rather than
+    // "non-zero means true".
+    let log = aerodrome_v2_pool_created_event::PoolCreated::decode_log_validate(&log.inner).ok()?;
     Some(AerodromeV2PoolCreatedEvent {
-        factory_address: log.address(),
-        token0,
-        token1,
-        stable,
-        pool_address,
+        factory_address: log.address,
+        token0: log.data.token0,
+        token1: log.data.token1,
+        stable: log.data.stable,
+        pool_address: log.data.pool,
     })
 }
 
 /// Decode a V3 `PoolCreated` event.
 ///
-/// Returns `None` if the topic doesn't match `V3_POOL_CREATED_TOPIC`, there
-/// are fewer than 4 topics, the data is too short (< 64 bytes), or the
-/// tick-spacing is outside the valid int24 range.
+/// Returns `None` if the log's topics are not exactly the declared four or the
+/// first one doesn't match `V3_POOL_CREATED_TOPIC` (the declaration binds the
+/// topic count, so a surplus topic is a refusal), the data is too short
+/// (< 64 bytes), an address/tick word is not canonical for its declared width
+/// (including the indexed `uint24` fee), or the tick-spacing is outside the
+/// Uniswap V3 tick range.
 #[must_use]
 pub fn decode_v3_pool_created_log(log: &Log) -> Option<V3PoolCreatedEvent> {
-    let first_topic = log.topics().first()?;
-    if *first_topic != V3_POOL_CREATED_TOPIC {
-        return None;
-    }
-    let topics = log.topics();
-    if topics.len() < 4 {
-        return None;
-    }
-    let token0 = Address::from_word(topics[1]);
-    let token1 = Address::from_word(topics[2]);
-    // fee = uint24 indexed as uint256 — last 3 bytes of the topic word.
-    let fee_word = U256::from_be_bytes::<32>(topics[3].0);
-    let fee: u32 = fee_word.to::<u32>() & 0x00FF_FFFF;
-    // data = abi.encode(int24 tickSpacing, address pool) = 2 × 32 bytes = 64.
-    let data = log.data().data.as_ref();
-    if data.len() < 64 {
-        return None;
-    }
-    let tick_spacing = extract_int24_from_word(&data[0..32])?;
-    let pool_address = Address::from_slice(&data[44..64]);
+    // The declaration is the bound, and it is what makes the indexed `uint24`
+    // fee safe: an over-wide fee topic is a decode failure instead of a masked
+    // low-24-bits read.
+    let log = v3_pool_created_event::PoolCreated::decode_log_validate(&log.inner).ok()?;
     Some(V3PoolCreatedEvent {
-        factory_address: log.address(),
-        token0,
-        token1,
-        fee,
-        tick_spacing,
-        pool_address,
+        factory_address: log.address,
+        token0: log.data.token0,
+        token1: log.data.token1,
+        // A validated `uint24` fee widens into the event struct's `u32`
+        // without a failure path.
+        fee: log.data.fee.to::<u32>(),
+        tick_spacing: validate_tick(log.data.tickSpacing)?,
+        pool_address: log.data.pool,
     })
 }
 
 /// Decode a V4 `Initialize` event (the V4 `PoolCreated`).
 ///
-/// Returns `None` if the topic doesn't match `V4_INITIALIZE_TOPIC`, there are
-/// fewer than 4 topics, the data is too short (< 96 bytes), or the
-/// tick-spacing is outside the valid int24 range. Trailing data fields
-/// (`sqrtPriceX96`, etc.) are NOT decoded — degenbot's `uniswap_v4_pools`
-/// row only needs `(pool_id, currency0, currency1, fee, tick_spacing, hooks)`.
+/// This is the one decoder that reads a *prefix* of its event rather than the
+/// whole declaration, and it therefore tolerates a surplus topic or trailing
+/// data word that the `sol!` decoders refuse: it requires the four leading
+/// topics and the three-word data prefix degenbot consumes, and ignores
+/// whatever the event carries past them.
+///
+/// Returns `None` if the first topic doesn't match `V4_INITIALIZE_TOPIC`, there
+/// are fewer than 4 topics, the data is shorter than the 96-byte prefix, an
+/// indexed or kept data word is not canonical for its declared width (`uint24`
+/// fee, sign-extended `int24` tickSpacing, `address` hooks), or the
+/// tick-spacing is outside the Uniswap V3 tick range. The declared tail —
+/// `sqrtPriceX96` and `tick` — is deliberately not decoded, since degenbot's
+/// `uniswap_v4_pools` row only needs
+/// `(pool_id, currency0, currency1, fee, tick_spacing, hooks)`.
 #[must_use]
 pub fn decode_v4_initialize_log(log: &Log) -> Option<V4InitializeEvent> {
     let first_topic = log.topics().first()?;
@@ -329,31 +365,28 @@ pub fn decode_v4_initialize_log(log: &Log) -> Option<V4InitializeEvent> {
         return None;
     }
     let pool_id: V4PoolId = topics[1].0;
-    let currency0 = Address::from_word(topics[2]);
-    let currency1 = Address::from_word(topics[3]);
-    // data = abi.encode(uint24 fee, int24 tickSpacing, address hooks, ...)
-    // ≥ 3 × 32 bytes = 96. degenbot reads only the first 96.
-    let data = log.data().data.as_ref();
-    if data.len() < 96 {
-        return None;
-    }
-    let fee_word = U256::from_be_bytes::<32>(data[0..32].try_into().ok()?);
-    let fee: u32 = fee_word.to::<u32>() & 0x00FF_FFFF;
-    let tick_spacing = extract_int24_from_word(&data[32..64])?;
-    let hooks = Address::from_slice(&data[76..96]);
+    let currency0 = <Address as SolValue>::abi_decode_validate(topics[2].as_slice()).ok()?;
+    let currency1 = <Address as SolValue>::abi_decode_validate(topics[3].as_slice()).ok()?;
+    // The event declares five data words and degenbot keeps the leading three,
+    // so the kept prefix is declared as its own tuple rather than as the whole
+    // event: Alloy's validating decode binds `fee` to `uint24`, `tickSpacing` to
+    // a sign-extended `int24`, and `hooks` to `address`, and the `sqrtPriceX96`
+    // and `tick` words past `hooks` are left unread.
+    let (fee, tick_spacing, hooks) =
+        <(U24, I24, Address) as SolValue>::abi_decode_validate(log.data().data.as_ref()).ok()?;
     Some(V4InitializeEvent {
         pool_manager_address: log.address(),
         pool_id,
         currency0,
         currency1,
-        fee,
-        tick_spacing,
+        fee: fee.to::<u32>(),
+        tick_spacing: validate_tick(tick_spacing)?,
         hooks,
     })
 }
 
 #[cfg(test)]
-#[expect(clippy::unreadable_literal, clippy::unwrap_used)]
+#[expect(clippy::expect_used, clippy::unreadable_literal, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog, I256};
@@ -693,6 +726,303 @@ mod tests {
             vec![0u8; 96],
         );
         assert!(decode_v4_initialize_log(&log).is_none());
+    }
+
+    // ── malformed narrow-field words ──────────────────────────────────────
+
+    /// A V3 `PoolCreated` log carrying `fee` in topic[3] and
+    /// `tickSpacing`/`pool` in the two data words.
+    fn v3_pool_created_log(fee: u32, tick_spacing: i32, pool: Address) -> Log {
+        let mut data = vec![0u8; 64];
+        data[0..32].copy_from_slice(&int24_word(tick_spacing).0);
+        data[44..64].copy_from_slice(pool.as_slice());
+
+        make_log(
+            Address::from([0xfa; 20]),
+            vec![
+                V3_POOL_CREATED_TOPIC,
+                addr_word(Address::from([0x11; 20])),
+                addr_word(Address::from([0x22; 20])),
+                B256::new(uint24_word(fee)),
+            ],
+            data,
+        )
+    }
+
+    #[test]
+    fn v2_pair_created_rejects_dirty_pool_address() {
+        // The non-indexed `pair` data word is an `address` slot.
+        let mut data = vec![0u8; 64];
+        data[12..32].copy_from_slice(Address::from([0xab; 20]).as_slice());
+        data[0] = 0x01;
+        let log = make_log(
+            Address::ZERO,
+            vec![V2_PAIR_CREATED_TOPIC, B256::ZERO, B256::ZERO],
+            data,
+        );
+        assert!(decode_v2_pair_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn v2_pair_created_rejects_dirty_token_topic() {
+        let mut token0_word = [0u8; 32];
+        token0_word[12..32].copy_from_slice(Address::from([0x10; 20]).as_slice());
+        token0_word[0] = 0x01;
+        let log = make_log(
+            Address::ZERO,
+            vec![
+                V2_PAIR_CREATED_TOPIC,
+                B256::new(token0_word),
+                addr_word(Address::from([0x20; 20])),
+            ],
+            vec![0u8; 64],
+        );
+        assert!(decode_v2_pair_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn aerodrome_pool_created_rejects_non_bool_stable() {
+        // An indexed `bool` is 0 or 1; a 2 word is malformed, not `true`.
+        let mut stable_word = [0u8; 32];
+        stable_word[31] = 2;
+        let log = make_log(
+            Address::ZERO,
+            vec![
+                AERODROME_V2_POOL_CREATED_TOPIC,
+                addr_word(Address::from([0x30; 20])),
+                addr_word(Address::from([0x40; 20])),
+                B256::new(stable_word),
+            ],
+            vec![0u8; 64],
+        );
+        assert!(decode_aerodrome_v2_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn v3_pool_created_rejects_over_wide_fee_topic() {
+        // An indexed `uint24` fee whose topic word carries a set bit above 24 is
+        // malformed; masking the low three bytes would have reported 3000.
+        let mut fee_word = uint24_word(3000);
+        fee_word[28] = 0x01;
+        let mut data = vec![0u8; 64];
+        data[0..32].copy_from_slice(&int24_word(60).0);
+        data[44..64].copy_from_slice(Address::from([0x99; 20]).as_slice());
+        let log = make_log(
+            Address::ZERO,
+            vec![
+                V3_POOL_CREATED_TOPIC,
+                addr_word(Address::from([0x11; 20])),
+                addr_word(Address::from([0x22; 20])),
+                B256::new(fee_word),
+            ],
+            data,
+        );
+        assert!(decode_v3_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn v3_pool_created_rejects_non_sign_extended_tick_spacing() {
+        let mut log = v3_pool_created_log(3000, -60, Address::from([0x99; 20]));
+        let mut data = log.data().data.to_vec();
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&(-60_i32).to_be_bytes()[1..]);
+        data[..32].copy_from_slice(&word);
+        log.inner = alloy::primitives::Log::new_unchecked(
+            log.address(),
+            log.topics().to_vec(),
+            Bytes::from(data),
+        );
+        assert!(decode_v3_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn v3_pool_created_rejects_dirty_pool_address() {
+        let mut log = v3_pool_created_log(3000, 60, Address::from([0x99; 20]));
+        let mut data = log.data().data.to_vec();
+        data[32] = 0x01;
+        log.inner = alloy::primitives::Log::new_unchecked(
+            log.address(),
+            log.topics().to_vec(),
+            Bytes::from(data),
+        );
+        assert!(decode_v3_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn v3_pool_created_accepts_uint24_max_fee() {
+        let pool = Address::from([0x99; 20]);
+        let log = v3_pool_created_log(0x00FF_FFFF, 60, pool);
+
+        let event = decode_v3_pool_created_log(&log).expect("uint24::MAX fee must decode cleanly");
+        assert_eq!(event.fee, 0x00FF_FFFF);
+        assert_eq!(event.pool_address, pool);
+    }
+
+    #[test]
+    fn v4_initialize_rejects_over_wide_fee() {
+        // The `uint24` fee data word's bits above 24 are not a fee tier; masking
+        // would have reported 500.
+        let mut data = vec![0u8; 96];
+        data[0..32].copy_from_slice(&uint24_word(500));
+        data[0] = 0x01;
+        data[32..64].copy_from_slice(&int24_word(10).0);
+        let log = make_log(
+            Address::ZERO,
+            vec![V4_INITIALIZE_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO],
+            data,
+        );
+        assert!(decode_v4_initialize_log(&log).is_none());
+    }
+
+    #[test]
+    fn v4_initialize_rejects_dirty_hooks_address() {
+        let mut data = vec![0u8; 96];
+        data[0..32].copy_from_slice(&uint24_word(500));
+        data[32..64].copy_from_slice(&int24_word(10).0);
+        data[64..96].copy_from_slice(addr_word(Address::from([0x77; 20])).as_slice());
+        data[64] = 0x01;
+        let log = make_log(
+            Address::ZERO,
+            vec![V4_INITIALIZE_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO],
+            data,
+        );
+        assert!(decode_v4_initialize_log(&log).is_none());
+    }
+
+    #[test]
+    fn v4_initialize_rejects_dirty_currency_topic() {
+        let mut currency0_word = [0u8; 32];
+        currency0_word[12..32].copy_from_slice(Address::from([0x55; 20]).as_slice());
+        currency0_word[0] = 0x01;
+        let mut data = vec![0u8; 96];
+        data[0..32].copy_from_slice(&uint24_word(500));
+        data[32..64].copy_from_slice(&int24_word(10).0);
+        let log = make_log(
+            Address::ZERO,
+            vec![
+                V4_INITIALIZE_TOPIC,
+                B256::ZERO,
+                B256::new(currency0_word),
+                addr_word(Address::from([0x66; 20])),
+            ],
+            data,
+        );
+        assert!(decode_v4_initialize_log(&log).is_none());
+    }
+
+    #[test]
+    fn v4_initialize_decodes_five_word_body_and_ignores_dirty_price_tail() {
+        // The live `Initialize` body is five words / 160 bytes: `fee`,
+        // `tickSpacing`, `hooks`, `sqrtPriceX96`, `tick`. The decoder keeps the
+        // leading three and never reads the price/tick tail.
+        let hooks = Address::from([0x77; 20]);
+        let mut data = vec![0u8; 160];
+        data[0..32].copy_from_slice(&uint24_word(3000));
+        data[32..64].copy_from_slice(&int24_word(-60).0);
+        data[64..96].copy_from_slice(addr_word(hooks).as_slice());
+        // `sqrtPriceX96`: deliberately not a canonical `uint160` (every bit
+        // set), so a decoder that reached into the tail would have to refuse
+        // this log. The prefix decode must carry on.
+        data[96..128].copy_from_slice(&[0xff; 32]);
+        // `tick`: junk for the same reason.
+        data[128..160].copy_from_slice(&[0xff; 32]);
+
+        let log = make_log(
+            Address::from([0xfc; 20]),
+            vec![
+                V4_INITIALIZE_TOPIC,
+                B256::ZERO,
+                addr_word(Address::from([0x55; 20])),
+                addr_word(Address::from([0x66; 20])),
+            ],
+            data,
+        );
+
+        let event = decode_v4_initialize_log(&log).expect("the five-word body must decode");
+        assert_eq!(event.fee, 3000);
+        assert_eq!(event.tick_spacing, -60);
+        assert_eq!(event.hooks, hooks);
+    }
+
+    #[test]
+    fn v4_initialize_rejects_non_sign_extended_tick_spacing() {
+        // `tickSpacing` is an `int24` sign-extended to the 32-byte slot; the
+        // zero-extended -60 below is malformed, and a fixed-width tail read
+        // would have reported -60 as if the log were canonical.
+        let mut data = vec![0u8; 96];
+        data[0..32].copy_from_slice(&uint24_word(3000));
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&(-60_i32).to_be_bytes()[1..]);
+        data[32..64].copy_from_slice(&word);
+        let log = make_log(
+            Address::ZERO,
+            vec![V4_INITIALIZE_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO],
+            data,
+        );
+
+        assert!(decode_v4_initialize_log(&log).is_none());
+    }
+
+    #[test]
+    fn v4_initialize_tick_spacing_at_protocol_bounds() {
+        // The decoder applies the Uniswap tick range to `tickSpacing`: both
+        // bounds decode with the bound intact, and one step past either end is
+        // refused.
+        for tick_spacing in [-887_272, 887_272] {
+            let mut data = vec![0u8; 96];
+            data[0..32].copy_from_slice(&uint24_word(3000));
+            data[32..64].copy_from_slice(&int24_word(tick_spacing).0);
+            let log = make_log(
+                Address::ZERO,
+                vec![V4_INITIALIZE_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO],
+                data,
+            );
+
+            let event = decode_v4_initialize_log(&log);
+            assert!(event.is_some(), "tick spacing {tick_spacing} must decode");
+            assert_eq!(event.map(|e| e.tick_spacing), Some(tick_spacing));
+        }
+
+        for tick_spacing in [-887_273, 887_273] {
+            let mut data = vec![0u8; 96];
+            data[0..32].copy_from_slice(&uint24_word(3000));
+            data[32..64].copy_from_slice(&int24_word(tick_spacing).0);
+            let log = make_log(
+                Address::ZERO,
+                vec![V4_INITIALIZE_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO],
+                data,
+            );
+
+            assert!(
+                decode_v4_initialize_log(&log).is_none(),
+                "tick spacing {tick_spacing} is outside the protocol range"
+            );
+        }
+    }
+
+    #[test]
+    fn v4_initialize_tolerates_surplus_topic() {
+        // The prefix policy: `Initialize` keeps its leading four topics and
+        // three data words, so an extra topic is ignored here — unlike the
+        // `sol!` decoders, whose declaration binds the topic count exactly.
+        let mut data = vec![0u8; 96];
+        data[0..32].copy_from_slice(&uint24_word(500));
+        data[32..64].copy_from_slice(&int24_word(10).0);
+        let log = make_log(
+            Address::ZERO,
+            vec![
+                V4_INITIALIZE_TOPIC,
+                B256::ZERO,
+                B256::ZERO,
+                B256::ZERO,
+                B256::repeat_byte(0x01),
+            ],
+            data,
+        );
+
+        let event = decode_v4_initialize_log(&log).expect("surplus topic must not fail the decode");
+        assert_eq!(event.fee, 500);
+        assert_eq!(event.tick_spacing, 10);
     }
 
     // ── cross-family topic discrimination ──────────────────────────────

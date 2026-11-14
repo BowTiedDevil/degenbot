@@ -35,6 +35,3 @@
 #   - this hook and its two censuses are out of scope (they spell the shapes).
 
 # --- reviewed non-citations (each row still matches; none is a work item) ---
-# "slice V3/V4 event logs" is the algorithm's verb over a protocol-version
-# pair, not a work-item label; the decoders slice event-log topics.
-rust/crates/foundation/degenbot-decoders/src/uniswap_tick_range.rs:slice V3

@@ -1,19 +1,19 @@
-//! Uniswap V3 tick-range constants + the shared int24 extraction helper.
+//! Uniswap V3 tick-range constants + the shared decode-side tick check.
 //!
-//! The decoders that slice V3/V4 event logs must (a) read a sign-extended
-//! `int24` from the tail of a 32-byte ABI word and (b) range-check it against
-//! the Uniswap V3 tick bounds `[-887_272, 887_272]`. Both concerns were
-//! duplicated across `v3_swap_decoder`, `v3_mint_burn_decoder`,
-//! `v4_swap_decoder`, `v4_modify_liquidity_decoder`, and
-//! `pool_created_decoder` — the `887272` literal alone appeared 25+ times.
+//! Every V3/V4 decoder that carries an `int24` tick field hands the decoded
+//! value through [`validate_tick`], which widens it to the `i32` the event
+//! structs hold and range-checks it against the Uniswap V3 bounds
+//! `[-887_272, 887_272]`. The ABI shape of the word (an `int24` sign-extended
+//! to 32 bytes) belongs to Alloy's validating decoder — every decoder reads its
+//! event through one — so this module owns only the protocol bound: a decoded
+//! tick outside the bounds indicates a corrupt or synthetic log, and the check
+//! lives in one place rather than as a repeated `887272` literal.
 //!
-//! This module is the single source of truth for the range + the extraction,
-//! so a future tick-range change (or a new int24-decoding event) edits one
-//! place. The constants are **decode-side validation** (an already-decoded
-//! int24 that lies outside the Uniswap V3 bounds indicates a corrupt or
-//! synthetic log); the canonical tick-math bounds live in
-//! `degenbot-concentrated-liquidity-math::tick_math` (`MIN_TICK`/`MAX_TICK`), which this
-//! alloy-only leaf does not depend on.
+//! The canonical tick-math bounds live in
+//! `degenbot-concentrated-liquidity-math::tick_math` (`MIN_TICK`/`MAX_TICK`),
+//! which this alloy-only leaf does not depend on.
+
+use alloy::primitives::aliases::I24;
 
 /// Minimum Uniswap V3 tick (the decode-side validation bound for an `int24`
 /// tick field). A decoded tick below this indicates a corrupt or synthetic log.
@@ -23,82 +23,58 @@ pub const UNISWAP_V3_MIN_TICK: i32 = -887_272;
 /// tick field). A decoded tick above this indicates a corrupt or synthetic log.
 pub const UNISWAP_V3_MAX_TICK: i32 = 887_272;
 
-/// Extract an `int24` from the tail of a 32-byte ABI word (sign-extended to
-/// `int256` in the ABI; the value occupies the last 4 bytes). Range-checks
-/// the result against the Uniswap V3 tick bounds
+/// Widen an ABI-decoded `int24` tick to the `i32` the decoded event structs
+/// carry, rejecting a value outside
 /// [`UNISWAP_V3_MIN_TICK`]..=[`UNISWAP_V3_MAX_TICK`].
 ///
-/// Pass a 32-byte slice: a data word (`&data[offset..offset + 32]`) or a
-/// topic word (`&topic.0`). Returns `None` if the slice is shorter than
-/// 32 bytes or the value is outside the valid tick range.
+/// The ABI half of the check is Alloy's: a tick word that is not a
+/// sign-extended `int24` fails the decoder's validating decode before it
+/// reaches this function, so `None` here means the tick is outside the protocol
+/// range — never that the word was malformed.
 #[must_use]
-pub fn extract_int24_from_word(word: &[u8]) -> Option<i32> {
-    if word.len() < 32 {
-        return None;
-    }
-    let last4: [u8; 4] = word[28..32].try_into().ok()?;
-    let value = i32::from_be_bytes(last4);
-    if !(UNISWAP_V3_MIN_TICK..=UNISWAP_V3_MAX_TICK).contains(&value) {
-        return None;
-    }
-    Some(value)
+pub fn validate_tick(tick: I24) -> Option<i32> {
+    let tick = i32::try_from(tick).ok()?;
+    (UNISWAP_V3_MIN_TICK..=UNISWAP_V3_MAX_TICK)
+        .contains(&tick)
+        .then_some(tick)
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
-    /// Encode an `int24` tick as a sign-extended 32-byte `int256` word.
-    fn int24_word(tick: i32) -> [u8; 32] {
-        // Sign-extend: replicate the int24's sign bit into the high 28 bytes.
-        let mut word = [0u8; 32];
-        word[29..32].copy_from_slice(&tick.to_be_bytes()[1..4]);
-        if tick < 0 {
-            word.iter_mut().take(29).for_each(|b| *b = 0xff);
-            word[28] = 0xff; // propagate sign into byte 28 too
-        }
-        word
+    fn i24(tick: i32) -> I24 {
+        I24::try_from(tick).unwrap()
     }
 
     #[test]
-    fn extracts_zero_tick() {
-        assert_eq!(extract_int24_from_word(&[0u8; 32]), Some(0));
+    fn accepts_zero_tick() {
+        assert_eq!(validate_tick(i24(0)), Some(0));
     }
 
     #[test]
-    fn extracts_positive_tick_at_max_bound() {
-        assert_eq!(extract_int24_from_word(&int24_word(887_272)), Some(887_272));
+    fn accepts_positive_tick_at_max_bound() {
+        assert_eq!(validate_tick(i24(887_272)), Some(887_272));
     }
 
     #[test]
-    fn extracts_negative_tick_at_min_bound() {
-        assert_eq!(
-            extract_int24_from_word(&int24_word(-887_272)),
-            Some(-887_272)
-        );
+    fn accepts_negative_tick_at_min_bound() {
+        assert_eq!(validate_tick(i24(-887_272)), Some(-887_272));
     }
 
     #[test]
     fn rejects_tick_above_max() {
-        assert_eq!(extract_int24_from_word(&int24_word(887_273)), None);
+        assert_eq!(validate_tick(i24(887_273)), None);
     }
 
     #[test]
     fn rejects_tick_below_min() {
-        assert_eq!(extract_int24_from_word(&int24_word(-887_273)), None);
+        assert_eq!(validate_tick(i24(-887_273)), None);
     }
 
     #[test]
-    fn returns_none_for_short_slice() {
-        assert_eq!(extract_int24_from_word(&[0u8; 31]), None);
-    }
-
-    #[test]
-    fn reads_only_tail_ignoring_high_bytes_for_in_range_value() {
-        // A value whose high bytes are non-zero but whose tail decodes to an
-        // in-range tick must still extract the tail — the ABI sign-extends,
-        // so high bytes are sign bits, not magnitude. 0xff..ff for a negative.
-        let word = int24_word(-60);
-        assert_eq!(extract_int24_from_word(&word), Some(-60));
+    fn accepts_negative_common_spacing() {
+        assert_eq!(validate_tick(i24(-60)), Some(-60));
     }
 }

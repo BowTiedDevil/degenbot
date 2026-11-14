@@ -14,8 +14,14 @@
 //! data    = abi.encode(uint112, uint112) = 64 bytes (each left-padded to 32 bytes)
 //! ```
 
-use alloy::primitives::{aliases::U112, b256, Address, B256, U256};
+use alloy::primitives::{aliases::U112, b256, Address, B256};
 use alloy::rpc::types::Log;
+use alloy::sol_types::SolEvent;
+
+alloy::sol! {
+    /// The reserves-change event of a V2 pair.
+    event Sync(uint112 reserve0, uint112 reserve1);
+}
 
 /// Keccak256 of `Sync(uint112,uint112)`.
 pub const V2_SYNC_TOPIC: B256 =
@@ -26,9 +32,9 @@ pub const V2_SYNC_TOPIC: B256 =
 pub struct SyncEvent {
     /// The pair contract that emitted the event.
     pub pool_address: Address,
-    /// Reserve of token0 (on-chain `uint112` — typed `U112`;
-    /// the decoder validates the high 144 bits of the ABI word are zero
-    /// before narrowing).
+    /// Reserve of token0 (on-chain `uint112` — typed `U112`; the decoder
+    /// reads it through a validating `uint112` decode, so a word with bits
+    /// above 112 set is a decode failure rather than a truncated reserve).
     pub reserve0: U112,
     /// Reserve of token1 (on-chain `uint112`).
     pub reserve1: U112,
@@ -36,60 +42,35 @@ pub struct SyncEvent {
 
 /// Decode a V2 Sync event from a log.
 ///
-/// Returns `Some(SyncEvent)` if the log is a valid Sync event with
-/// correctly formatted data. Returns `None` if:
-/// - The topic doesn't match `V2_SYNC_TOPIC`
-/// - The data is too short (< 64 bytes)
+/// Returns `Some(SyncEvent)` if the log is a valid Sync event with correctly
+/// formatted data. Returns `None` if:
+/// - The log's topics are not exactly `[V2_SYNC_TOPIC]` (the declaration binds
+///   the topic count, so a surplus topic is a refusal and not an ignored word)
+/// - The data is too short (< 64 bytes) or either reserve word carries bits
+///   above 112 (not a canonical `uint112` slot)
 ///
-/// Extra data beyond 64 bytes is ignored (some V2 forks may pad differently).
+/// Extra data beyond 64 bytes is unread and unvalidated (some V2 forks may pad
+/// differently); extra topics are not tolerated.
 #[must_use]
 pub fn decode_sync_log(log: &Log) -> Option<SyncEvent> {
-    // topic[0] must match V2_SYNC_TOPIC
-    let topic0 = log.topics().first()?;
-    if *topic0 != V2_SYNC_TOPIC {
-        return None;
-    }
-
-    // data = abi.encode(uint112, uint112) = 32 bytes + 32 bytes = 64 bytes minimum
-    let data = log.data().data.as_ref();
-    if data.len() < 64 {
-        return None;
-    }
-
-    // Decode reserve0 (bytes 0..32, left-padded uint112). The ABI word is
-    // 32 bytes, but a real uint112 is left-padded with zeros — any non-zero
-    // bits above position 112 indicate a corrupt / synthetic log → reject.
-    let r0 = U256::from_be_bytes::<32>(data[..32].try_into().ok()?);
-    let reserve0 = narrow_sync_reserve(r0)?;
-
-    // Decode reserve1 (bytes 32..64, left-padded uint112).
-    let r1 = U256::from_be_bytes::<32>(data[32..64].try_into().ok()?);
-    let reserve1 = narrow_sync_reserve(r1)?;
+    // The declaration is the bound: topic0 and the two-word body come from one
+    // validating `Sync(uint112,uint112)` decode, so a reserve word with bits
+    // above 112 set is a decode failure instead of a truncated reserve, and a
+    // fork's trailing padding is left unread.
+    let log = Sync::decode_log_validate(&log.inner).ok()?;
 
     Some(SyncEvent {
-        pool_address: log.address(),
-        reserve0,
-        reserve1,
+        pool_address: log.address,
+        reserve0: log.data.reserve0,
+        reserve1: log.data.reserve1,
     })
-}
-
-/// Narrow a 32-byte ABI word to `U112`, returning `None` if bits above
-/// position 112 are set (i.e. the value exceeds `uint112::MAX`). A real
-/// `Sync(uint112,uint112)` event's ABI slot is left-zero-padded; stray high
-/// bits indicate a corrupt / synthetic log, treated as malformed (the existing
-/// `None` paths for short data / topic mismatch).
-fn narrow_sync_reserve(word: U256) -> Option<U112> {
-    if word > U112::MAX.to::<U256>() {
-        return None;
-    }
-    Some(word.to::<U112>())
 }
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use alloy::primitives::Bytes;
+    use alloy::primitives::{Bytes, U256};
     fn make_sync_log(pool_address: Address, reserve0: U256, reserve1: U256) -> Log {
         let data = {
             // ABI encode uint112, uint112 (each left-padded to 32 bytes)
@@ -226,6 +207,31 @@ mod tests {
         let inner = alloy::primitives::Log::new_unchecked(
             pool,
             vec![], // no topics
+            Bytes::from(vec![0u8; 64]),
+        );
+        let log = Log {
+            inner,
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        assert!(decode_sync_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_sync_surplus_topic_returns_none() {
+        // `Sync(uint112,uint112)` declares no indexed parameter: a log carrying
+        // a second topic is not a Sync log, and the declaration refuses it
+        // instead of ignoring the surplus word.
+        let pool = Address::ZERO;
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool,
+            vec![V2_SYNC_TOPIC, B256::repeat_byte(0x01)],
             Bytes::from(vec![0u8; 64]),
         );
         let log = Log {

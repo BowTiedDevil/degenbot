@@ -28,6 +28,19 @@
 
 use alloy::primitives::{b256, Address, B256, U256};
 use alloy::rpc::types::Log;
+use alloy::sol_types::SolEvent;
+
+alloy::sol! {
+    /// A V2 pair's swap event: the raw in/out amounts for both tokens.
+    event Swap(
+        address indexed sender,
+        uint256 amount0In,
+        uint256 amount1In,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address indexed to,
+    );
+}
 
 /// Keccak256 of `Swap(address,uint256,uint256,uint256,uint256,address)`.
 pub const V2_SWAP_TOPIC: B256 =
@@ -54,58 +67,29 @@ pub struct V2SwapEvent {
 
 /// Decode a V2 Swap event from a log.
 ///
-/// Returns `Some(V2SwapEvent)` if the log is a valid Swap event with
-/// correctly formatted data. Returns `None` if:
-/// - The topic doesn't match `V2_SWAP_TOPIC`
+/// Returns `Some(V2SwapEvent)` if the log is a valid Swap event with correctly
+/// formatted data. Returns `None` if:
+/// - The log's topics are not exactly the declared three (signature + sender +
+///   to) or the first one doesn't match `V2_SWAP_TOPIC` — the declaration binds
+///   the topic count, so a surplus topic is a refusal, not an ignored word
+/// - Either indexed word is not a canonical `address` slot
 /// - The data is too short (< 128 bytes)
-/// - There are fewer than 3 topics (signature + sender + to)
 #[must_use]
 pub fn decode_v2_swap_log(log: &Log) -> Option<V2SwapEvent> {
-    // topic[0] must match V2_SWAP_TOPIC
-    let first_topic = log.topics().first()?;
-    if *first_topic != V2_SWAP_TOPIC {
-        return None;
-    }
-
-    // We need at least 3 topics (event sig + sender + to)
-    let topics = log.topics();
-    if topics.len() < 3 {
-        return None;
-    }
-
-    // Decode sender from topic[1] (indexed address)
-    let sender = Address::from_word(topics[1]);
-    // Decode `to` from topic[2] (indexed address)
-    let to = Address::from_word(topics[2]);
-
-    // data = abi.encode(uint256 amount0In, uint256 amount1In,
-    //                   uint256 amount0Out, uint256 amount1Out)
-    // = 4 × 32 bytes = 128 bytes minimum
-    let data = log.data().data.as_ref();
-    if data.len() < 128 {
-        return None;
-    }
-
-    // Decode amount0In (uint256, bytes 0..32)
-    let amount0_in = U256::from_be_bytes::<32>(data[..32].try_into().ok()?);
-
-    // Decode amount1In (uint256, bytes 32..64)
-    let amount1_in = U256::from_be_bytes::<32>(data[32..64].try_into().ok()?);
-
-    // Decode amount0Out (uint256, bytes 64..96)
-    let amount0_out = U256::from_be_bytes::<32>(data[64..96].try_into().ok()?);
-
-    // Decode amount1Out (uint256, bytes 96..128)
-    let amount1_out = U256::from_be_bytes::<32>(data[96..128].try_into().ok()?);
+    // The declaration is the bound: topic0, the two indexed `address` words,
+    // and the four-amount body all come from one validating decode, so an
+    // indexed word with a non-zero 12-byte prefix is a decode failure rather
+    // than a truncated address.
+    let log = Swap::decode_log_validate(&log.inner).ok()?;
 
     Some(V2SwapEvent {
-        pool_address: log.address(),
-        sender,
-        to,
-        amount0_in,
-        amount1_in,
-        amount0_out,
-        amount1_out,
+        pool_address: log.address,
+        sender: log.data.sender,
+        to: log.data.to,
+        amount0_in: log.data.amount0In,
+        amount1_in: log.data.amount1In,
+        amount0_out: log.data.amount0Out,
+        amount1_out: log.data.amount1Out,
     })
 }
 
@@ -318,5 +302,44 @@ mod tests {
                 "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"
             )
         );
+    }
+
+    // ── malformed narrow-field words ──────────────────────────────────────
+
+    #[test]
+    fn decode_v2_swap_rejects_dirty_indexed_address() {
+        // An indexed `address` topic word with a non-zero 12-byte prefix is not
+        // an address slot — the decoder must refuse it, not truncate it.
+        let pool = Address::from([0xaa; 20]);
+        let mut sender_word = [0u8; 32];
+        sender_word[12..32].copy_from_slice(Address::from([0xbb; 20]).as_slice());
+        sender_word[0] = 0x01;
+
+        let mut data = Vec::with_capacity(128);
+        for _ in 0..4 {
+            data.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+        }
+
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool,
+            vec![
+                V2_SWAP_TOPIC,
+                B256::new(sender_word),
+                Address::from([0xcc; 20]).into_word(),
+            ],
+            Bytes::from(data),
+        );
+        let log = Log {
+            inner,
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        assert!(decode_v2_swap_log(&log).is_none());
     }
 }

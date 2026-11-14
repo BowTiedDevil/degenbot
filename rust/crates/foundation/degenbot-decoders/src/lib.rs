@@ -1,11 +1,25 @@
 //! Pure-Rust event-log + revert-data decoders for Uniswap V2/V3/V4 and Aave V3.
 //!
 //! This crate is an **alloy-only leaf** — it has no `pyo3`, no `tokio`, no
-//! `degenbot-core`, and no `degenbot-abi`. Each decoder hand-slices the EVM
-//! log bytes and returns a plain `Option<Event>` struct, making the decoders
-//! independently testable without a Python interpreter and reusable in
-//! non-Python Rust code. A standalone Rust consumer can decode a V3 `Swap`
-//! log without pulling the engine, the pump, or the RPC stack.
+//! `degenbot-core`, and no `degenbot-abi`. Each decoder returns a plain
+//! `Option<Event>` struct, making the decoders independently testable without a
+//! Python interpreter and reusable in non-Python Rust code. A standalone Rust
+//! consumer can decode a V3 `Swap` log without pulling the engine, the pump, or
+//! the RPC stack.
+//!
+//! The Uniswap V2/V3/V4 log decoders read their logs through Alloy's
+//! **validating** decoders — one `sol!` event declaration per event (or a
+//! validating `SolValue` tuple where the decoder keeps only a prefix of the
+//! data) — so a narrow ABI word (`uint112`, `uint160`, `uint128`, `uint24`,
+//! `int128`, sign-extended `int24`, `address`, `bool`) is refused when it is
+//! not canonical for its declared width instead of being truncated.
+//!
+//! A `sol!` declaration also binds the topic count exactly, so a log carrying
+//! too few topics or a surplus topic is a decode failure rather than a
+//! best-effort match. The V4 `Initialize` decoder is the one deliberate
+//! exception: it keeps a prefix of the event (the four leading topics plus the
+//! three data words the row needs) and ignores any surplus topic or trailing
+//! word.
 //!
 //! The state-coupled dispatch layer (`LogDecoder` trait,
 //! `DecodedPoolEvent`, `LogDispatcher` bus) stays in
@@ -38,8 +52,8 @@
 //! - [`revert`] — revert-data taxonomy (`classify_revert`): bytes → stable
 //!   label for the `[sim]` summary + engine revert tallies.
 //! - [`uniswap_tick_range`] — the shared Uniswap V3 tick bounds
-//!   (`UNISWAP_V3_MIN_TICK`/`UNISWAP_V3_MAX_TICK`) + the `extract_int24_from_word`
-//!   helper consumed by every V3/V4 int24-tick decoder.
+//!   (`UNISWAP_V3_MIN_TICK`/`UNISWAP_V3_MAX_TICK`) + the `validate_tick`
+//!   helper every V3/V4 int24-tick decoder applies to its decoded tick.
 
 pub mod aave_event_decoder;
 pub mod pool_created_decoder;

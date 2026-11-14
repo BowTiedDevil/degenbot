@@ -46,9 +46,35 @@
 //!         = 3 × 32 bytes = 96 bytes
 //! ```
 
-use crate::uniswap_tick_range::extract_int24_from_word;
-use alloy::primitives::{b256, Address, B256, U128, U256};
+use crate::uniswap_tick_range::validate_tick;
+use alloy::primitives::{b256, Address, B256, U256};
 use alloy::rpc::types::Log;
+use alloy::sol_types::SolEvent;
+
+alloy::sol! {
+    /// A V3 pool's liquidity-mint event: the position's tick range plus the
+    /// liquidity and token amounts added.
+    event Mint(
+        address sender,
+        address indexed owner,
+        int24 indexed tickLower,
+        int24 indexed tickUpper,
+        uint128 amount,
+        uint256 amount0,
+        uint256 amount1,
+    );
+
+    /// A V3 pool's liquidity-burn event: the position's tick range plus the
+    /// liquidity and token amounts removed.
+    event Burn(
+        address indexed owner,
+        int24 indexed tickLower,
+        int24 indexed tickUpper,
+        uint128 amount,
+        uint256 amount0,
+        uint256 amount1,
+    );
+}
 
 /// Keccak256 of `Mint(address,address,int24,int24,uint128,uint256,uint256)`.
 pub const V3_MINT_TOPIC: B256 =
@@ -100,117 +126,70 @@ pub struct V3BurnEvent {
 
 /// Decode a V3 Mint event from a log.
 ///
-/// Returns `Some(V3MintEvent)` if the log is a valid Mint event with
-/// correctly formatted data. Returns `None` if:
-/// - The topic doesn't match `V3_MINT_TOPIC`
-/// - There are fewer than 4 topics
-/// - The data is too short (< 128 bytes)
-/// - Tick values are out of the valid int24 range
+/// Returns `Some(V3MintEvent)` if the log is a valid Mint event with correctly
+/// formatted data. Returns `None` if:
+/// - The log's topics are not exactly the declared four (signature + owner +
+///   tickLower + tickUpper) or the first one doesn't match `V3_MINT_TOPIC` —
+///   the declaration binds the topic count, so a surplus topic is a refusal,
+///   not an ignored word
+/// - An indexed word is not a canonical `address` / sign-extended `int24` slot
+/// - The data is too short (< 128 bytes) or a data word is not canonical for
+///   its declared width (`address` sender, `uint128` amount)
+/// - Tick values are outside the Uniswap V3 tick range
 #[must_use]
 pub fn decode_v3_mint_log(log: &Log) -> Option<V3MintEvent> {
-    let first_topic = log.topics().first()?;
-    if *first_topic != V3_MINT_TOPIC {
-        return None;
-    }
-
-    // Need 4 topics: event sig + owner + tickLower + tickUpper
-    let topics = log.topics();
-    if topics.len() < 4 {
-        return None;
-    }
-
-    let owner = Address::from_word(topics[1]);
-    let tick_lower = extract_int24_from_word(&topics[2].0)?;
-    let tick_upper = extract_int24_from_word(&topics[3].0)?;
-
-    // data = abi.encode(address sender, uint128 amount, uint256 amount0, uint256 amount1)
-    // = 4 × 32 bytes = 128 bytes minimum
-    let data = log.data().data.as_ref();
-    if data.len() < 128 {
-        return None;
-    }
-
-    // Decode sender (address, bytes 0..32)
-    let sender = Address::from_slice(&data[12..32]);
-
-    // Decode amount (uint128, bytes 32..64)
-    let amount = U128::from_be_bytes::<16>(data[48..64].try_into().ok()?);
-
-    // Decode amount0 (uint256, bytes 64..96)
-    let amount0 = U256::from_be_bytes::<32>(data[64..96].try_into().ok()?);
-
-    // Decode amount1 (uint256, bytes 96..128)
-    let amount1 = U256::from_be_bytes::<32>(data[96..128].try_into().ok()?);
+    // The declaration is the bound: topic0, the indexed owner + tick words, and
+    // the four data words are decoded VALIDATING against the widths the pool
+    // declares, so a data sender with a non-zero 12-byte prefix or an amount
+    // word above 128 bits is a decode failure instead of a truncated value.
+    let log = Mint::decode_log_validate(&log.inner).ok()?;
 
     Some(V3MintEvent {
-        pool_address: log.address(),
-        sender,
-        owner,
-        tick_lower,
-        tick_upper,
-        amount: amount.to::<u128>(),
-        amount0,
-        amount1,
+        pool_address: log.address,
+        sender: log.data.sender,
+        owner: log.data.owner,
+        tick_lower: validate_tick(log.data.tickLower)?,
+        tick_upper: validate_tick(log.data.tickUpper)?,
+        amount: log.data.amount,
+        amount0: log.data.amount0,
+        amount1: log.data.amount1,
     })
 }
 
 /// Decode a V3 Burn event from a log.
 ///
-/// Returns `Some(V3BurnEvent)` if the log is a valid Burn event with
-/// correctly formatted data. Returns `None` if:
-/// - The topic doesn't match `V3_BURN_TOPIC`
-/// - There are fewer than 4 topics
-/// - The data is too short (< 96 bytes)
-/// - Tick values are out of the valid int24 range
+/// Returns `Some(V3BurnEvent)` if the log is a valid Burn event with correctly
+/// formatted data. Returns `None` if:
+/// - The log's topics are not exactly the declared four (signature + owner +
+///   tickLower + tickUpper) or the first one doesn't match `V3_BURN_TOPIC` —
+///   the declaration binds the topic count, so a surplus topic is a refusal,
+///   not an ignored word
+/// - An indexed word is not a canonical `address` / sign-extended `int24` slot
+/// - The data is too short (< 96 bytes) or the `uint128` amount word carries
+///   bits above 128
+/// - Tick values are outside the Uniswap V3 tick range
 #[must_use]
 pub fn decode_v3_burn_log(log: &Log) -> Option<V3BurnEvent> {
-    let first_topic = log.topics().first()?;
-    if *first_topic != V3_BURN_TOPIC {
-        return None;
-    }
-
-    // Need 4 topics: event sig + owner + tickLower + tickUpper
-    let topics = log.topics();
-    if topics.len() < 4 {
-        return None;
-    }
-
-    let owner = Address::from_word(topics[1]);
-    let tick_lower = extract_int24_from_word(&topics[2].0)?;
-    let tick_upper = extract_int24_from_word(&topics[3].0)?;
-
-    // data = abi.encode(uint128 amount, uint256 amount0, uint256 amount1)
-    // = 3 × 32 bytes = 96 bytes minimum
-    let data = log.data().data.as_ref();
-    if data.len() < 96 {
-        return None;
-    }
-
-    // Decode amount (uint128, bytes 0..32)
-    let amount = U128::from_be_bytes::<16>(data[16..32].try_into().ok()?);
-
-    // Decode amount0 (uint256, bytes 32..64)
-    let amount0 = U256::from_be_bytes::<32>(data[32..64].try_into().ok()?);
-
-    // Decode amount1 (uint256, bytes 64..96)
-    let amount1 = U256::from_be_bytes::<32>(data[64..96].try_into().ok()?);
+    // The declaration is the bound here too: every word of the burn log is
+    // decoded VALIDATING against the width the pool declares.
+    let log = Burn::decode_log_validate(&log.inner).ok()?;
 
     Some(V3BurnEvent {
-        pool_address: log.address(),
-        owner,
-        tick_lower,
-        tick_upper,
-        amount: amount.to::<u128>(),
-        amount0,
-        amount1,
+        pool_address: log.address,
+        owner: log.data.owner,
+        tick_lower: validate_tick(log.data.tickLower)?,
+        tick_upper: validate_tick(log.data.tickUpper)?,
+        amount: log.data.amount,
+        amount0: log.data.amount0,
+        amount1: log.data.amount1,
     })
 }
 
 #[cfg(test)]
-#[expect(clippy::unreadable_literal, clippy::unwrap_used)]
+#[expect(clippy::expect_used, clippy::unreadable_literal, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Bytes, I256};
+    use alloy::primitives::{Bytes, I256, U128};
 
     #[expect(clippy::too_many_arguments)]
     fn make_v3_mint_log(
@@ -403,7 +382,7 @@ mod tests {
         let pool = Address::ZERO;
         let owner = Address::ZERO;
 
-        // Only 3 topics — need 4 (sig + owner + tickLower + tickUpper)
+        // 2 topics — the event declares 4 (sig + owner + tickLower + tickUpper)
         let inner = alloy::primitives::Log::new_unchecked(
             pool,
             vec![V3_MINT_TOPIC, owner.into_word()],
@@ -436,6 +415,33 @@ mod tests {
         // tick_upper = 887273 (out of range)
         let log = make_v3_mint_log(pool, sender, owner, 0, 887273, 100, U256::ZERO, U256::ZERO);
         assert!(decode_v3_mint_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_mint_tick_at_protocol_bounds() {
+        // Both protocol bounds are valid ticks, so both decode with the bound
+        // intact; only values outside them are refused.
+        let pool = Address::ZERO;
+        let sender = Address::ZERO;
+        let owner = Address::ZERO;
+
+        let log_min = make_v3_mint_log(
+            pool,
+            sender,
+            owner,
+            -887_272,
+            0,
+            100,
+            U256::ZERO,
+            U256::ZERO,
+        );
+        let event = decode_v3_mint_log(&log_min).expect("min tick must decode");
+        assert_eq!(event.tick_lower, -887_272);
+
+        let log_max =
+            make_v3_mint_log(pool, sender, owner, 0, 887_272, 100, U256::ZERO, U256::ZERO);
+        let event = decode_v3_mint_log(&log_max).expect("max tick must decode");
+        assert_eq!(event.tick_upper, 887_272);
     }
 
     #[test]
@@ -567,11 +573,13 @@ mod tests {
 
         // min tick: -887272
         let log_min = make_v3_burn_log(pool, owner, -887272, 0, 100, U256::ZERO, U256::ZERO);
-        assert!(decode_v3_burn_log(&log_min).is_some());
+        let event = decode_v3_burn_log(&log_min).expect("min tick must decode");
+        assert_eq!(event.tick_lower, -887_272);
 
         // max tick: 887272
         let log_max = make_v3_burn_log(pool, owner, 0, 887272, 100, U256::ZERO, U256::ZERO);
-        assert!(decode_v3_burn_log(&log_max).is_some());
+        let event = decode_v3_burn_log(&log_max).expect("max tick must decode");
+        assert_eq!(event.tick_upper, 887_272);
 
         // out of range: -887273
         let log_under = make_v3_burn_log(pool, owner, -887273, 0, 100, U256::ZERO, U256::ZERO);
@@ -655,5 +663,129 @@ mod tests {
 
         assert!(decode_v3_mint_log(&log).is_none());
         assert!(decode_v3_burn_log(&log).is_none());
+    }
+
+    // ── malformed narrow-field words ──────────────────────────────────────
+
+    /// Set one byte of the log's data body (`word * 32 + byte`).
+    fn corrupt_data_byte(log: &mut Log, word: usize, byte: usize, value: u8) {
+        let mut data = log.data().data.to_vec();
+        data[word * 32 + byte] = value;
+        log.inner = alloy::primitives::Log::new_unchecked(
+            log.address(),
+            log.topics().to_vec(),
+            Bytes::from(data),
+        );
+    }
+
+    /// Set one byte of indexed topic word `topic`.
+    fn corrupt_topic_byte(log: &mut Log, topic: usize, byte: usize, value: u8) {
+        let mut topics = log.topics().to_vec();
+        topics[topic].0[byte] = value;
+        log.inner =
+            alloy::primitives::Log::new_unchecked(log.address(), topics, log.data().data.clone());
+    }
+
+    fn valid_mint_log() -> Log {
+        make_v3_mint_log(
+            Address::from([0xaa; 20]),
+            Address::from([0xbb; 20]),
+            Address::from([0xcc; 20]),
+            -60,
+            60,
+            1_000_000,
+            U256::from(500u64),
+            U256::from(1000u64),
+        )
+    }
+
+    fn valid_burn_log() -> Log {
+        make_v3_burn_log(
+            Address::from([0xaa; 20]),
+            Address::from([0xcc; 20]),
+            -60,
+            60,
+            500_000,
+            U256::from(200u64),
+            U256::from(400u64),
+        )
+    }
+
+    #[test]
+    fn decode_v3_mint_rejects_dirty_sender_address() {
+        // The non-indexed `sender` data word is an `address` slot; a non-zero
+        // 12-byte prefix is not an address.
+        let mut log = valid_mint_log();
+        corrupt_data_byte(&mut log, 0, 0, 0x01);
+        assert!(decode_v3_mint_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_mint_rejects_over_wide_amount() {
+        // The `uint128` amount word's top half is not a fixed-width tail: a set
+        // bit above 128 must be a decode failure, not a truncated amount.
+        let mut log = valid_mint_log();
+        corrupt_data_byte(&mut log, 1, 0, 0x01);
+        assert!(decode_v3_mint_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_mint_rejects_non_sign_extended_indexed_tick() {
+        // An indexed `int24` word that is not sign-extended is malformed; a
+        // tail-only read would have reported the same tick.
+        let mut log = valid_mint_log();
+        let mut topics = log.topics().to_vec();
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&(-60_i32).to_be_bytes()[1..]);
+        topics[2].0 = word;
+        log.inner =
+            alloy::primitives::Log::new_unchecked(log.address(), topics, log.data().data.clone());
+        assert!(decode_v3_mint_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_mint_rejects_dirty_owner_topic() {
+        let mut log = valid_mint_log();
+        corrupt_topic_byte(&mut log, 1, 0, 0x01);
+        assert!(decode_v3_mint_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_burn_rejects_over_wide_amount() {
+        let mut log = valid_burn_log();
+        corrupt_data_byte(&mut log, 0, 0, 0x01);
+        assert!(decode_v3_burn_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_burn_rejects_non_sign_extended_indexed_tick() {
+        let mut log = valid_burn_log();
+        let mut topics = log.topics().to_vec();
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&(60_i32).to_be_bytes()[1..]);
+        word[0] = 0xff;
+        topics[3].0 = word;
+        log.inner =
+            alloy::primitives::Log::new_unchecked(log.address(), topics, log.data().data.clone());
+        assert!(decode_v3_burn_log(&log).is_none());
+    }
+
+    #[test]
+    fn decode_v3_mint_accepts_uint128_max_amount() {
+        let log = make_v3_mint_log(
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            -60,
+            60,
+            u128::MAX,
+            U256::MAX,
+            U256::MAX,
+        );
+
+        let event = decode_v3_mint_log(&log).expect("uint128::MAX must decode cleanly");
+        assert_eq!(event.amount, u128::MAX);
+        assert_eq!(event.amount0, U256::MAX);
+        assert_eq!(event.amount1, U256::MAX);
     }
 }
