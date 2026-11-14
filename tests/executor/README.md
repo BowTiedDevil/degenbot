@@ -149,6 +149,25 @@ runtime's own `OWNER_ADDR` alone, so a mismatched `--owner` would revert every
 self-funded row; the run is refused before the launcher, the endpoint, or the
 output directory is touched.
 
+The tracked artifact bakes the production release owner, and the check above
+compares `--owner` with the artifact's own word 0 — so it passes when both are
+that owner, while the session still signs with its own key. The composition then
+refuses with `OwnerNotSigner`, because the runtime admits a sender the session
+cannot be. Bake the probe runtime for the signer instead of using the
+production-owner artifact blindly:
+
+```bash
+uv run python contracts/recompile.py \
+  --owner <session signer> \
+  --output-dir /path/to/probe-runtime
+```
+
+The bake keeps the accepted code+CBOR and rebinds immutable word 0 only, and it
+refuses a custom owner without an explicit output directory — the release
+deployment always keeps the release owner. The command, its guards, and the
+artifact report are in
+[`contracts/README.md`](../../contracts/README.md#baking-a-signer-compatible-probe-runtime-custom-owner).
+
 The run's directory is the evidence envelope:
 
 | Artifact | Content |

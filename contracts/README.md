@@ -98,8 +98,10 @@ and the two delta slots are computed on-chain from the deployed address.
 
 ### Rebaking the injected bytecode (X6OKMV re-sync)
 
-`contracts/recompile.py` bakes the `contracts/cmd_executor_*` files from the
-COMMITTED tier-3 artifacts (toolchain-free): the runtime file is `0x` +
+`contracts/recompile.py` bakes the release deployment's `cmd_executor_*` files
+(`rust/crates/foundation/degenbot-executor/releases/v2/deployment/`, the default
+`--output-dir`) from the COMMITTED tier-3 artifacts (toolchain-free): the runtime
+file is `0x` +
 `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.runtime.hex` + the 7 x 32-byte
 immutable slots (mainnet values, delta slots precomputed for
 `INJECTED_EXECUTOR_ADDRESS`); the two init/bytecode files are the artifact
@@ -115,6 +117,38 @@ uv run python contracts/recompile.py --compile  # additionally compile the in-re
 
 The previous pipeline compiled from the retired `~/code/executor/` path
 (pre-vendoring); derivation from the committed artifacts replaces it outright.
+
+#### Baking a signer-compatible probe runtime (custom owner)
+
+`execute()` admits the runtime's own `OWNER_ADDR` alone, so a dry run whose
+session signs with another account cannot compose against the production runtime
+at all. `--owner` rebinds immutable word 0 and nothing else: the accepted
+code+CBOR and the other six words stay the release bytes, so the probe runtime is
+the same contract admitting a different sender.
+
+```bash
+uv run python contracts/recompile.py \
+  --owner 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
+  --output-dir /tmp/cmd_executor_probe
+```
+
+`--output-dir` receives the same three files (`cmd_executor_runtime_bytecode.txt`,
+`cmd_executor_bytecode.txt`, `cmd_executor_abi.json`). The creation bytecode and
+the ABI are byte-identical to the tracked deployment, and the runtime differs in
+word 0 only — the release owner into an explicit directory reproduces the
+tracked runtime byte for byte. The bake prints the owner it baked and the runtime
+file's sha256, so a probe artifact is auditable beside the release one.
+
+Two rules keep the release artifact out of reach:
+
+- a non-default owner requires an explicit `--output-dir`, and is refused when
+  that directory resolves to the release deployment, so the release runtime
+  always keeps the release owner;
+- an unusable `--owner` (`0x` plus 40 hex digits is the whole accepted shape) or
+  an unknown argument is refused before anything is written.
+
+The script never reads, accepts, or prints key material — the owner is a public
+address.
 
 ---
 
