@@ -38,6 +38,31 @@ seams serve the updater shells; a future module split may narrow that edge).
 Bot, substrate, facade, and engine crates never enable it, so the write fns do
 not exist in their builds.
 
+**D2 addendum (task `4W2ZUK`) — the offline fixture shell joins the owner set,
+on a temporary-harness-only boundary.** `degenbot-fixture-tools`, the
+non-publishable development-tool package, is now also allowed to name a
+write-capable constructor, and it is listed by name in the fence's
+`WRITER_OWNERS`. What forced the entry is a relocation, not a new capability:
+the two offline capture generators `generate_evm_oracle_captures` and
+`generate_aave_adversarial_captures` moved from the facade's `examples/` — where
+D6's gate does not scan (an example is not production `src`) — into that
+package's `src/bin/<name>/main.rs`, where it does. Both programs run the REAL
+`run_pool_update` / `run_aave_update` chunk loops over a recorded transport, so
+they need a writer exactly as the updater shells do: `DegenbotDb::open_for_writes`
+seeds the harness DB each recorded chunk applies to, and
+`LedgerDb::open_for_writes` opens the DB the SQL goldens are dumped from.
+
+The boundary is the rule, not a description of today's two programs: **every
+write open in `degenbot-fixture-tools` targets a throwaway harness DB under a
+`TempDir`.** The artifacts those programs produce are written by ordinary
+`fs::write` into the corpus homes, and `--check` writes nothing at all, so the
+subject of the fence — who may open the operator's database for writing — is
+untouched. A program in this package that opened a *durable* DB would be a new
+production write path and needs its own D2 decision. The four shells named above
+remain the only crates that may write an operator DB, and this entry exempts no
+other tool package: a later `src/bin/` program in `degenbot-solver-lab` or
+`degenbot-engine-lab` must earn its own row.
+
 **D3 (binding #2, restated) — Every read connection sets `PRAGMA query_only=on`.**
 `DegenbotDb::open` / `open_in_memory` set it after the schema step (the DDL and
 the post-heal reopen are writes); the write-capable constructors never do.
@@ -58,8 +83,8 @@ block.
 
 **D6 — Updaters are the sole writers, and the fence is gated in source.**
 The `architecture_gates` suite asserts that no crate outside the D2 allowlist
-names a write-capable constructor in its **production** `src` (test modules and
-`tests.rs` files may exercise the writer). This is the gate the cargo feature
+(its addendum included) names a write-capable constructor in its **production**
+`src` (test modules and `tests.rs` files may exercise the writer). This is the gate the cargo feature
 cannot be, because workspace feature unification re-enables `writer` through a
 shared updater dependency.
 
@@ -86,7 +111,21 @@ guards only the swap.
 
 - A default `cargo build` of the workspace succeeds: the four updater shells
   turn `writer` on, and every other crate compiles against the read-only
-  `degenbot-db` surface.
+  `degenbot-db` surface. `degenbot-fixture-tools` (D2's addendum) is the one
+  writer-enabled package outside that set, and it is not part of a default
+  workspace build at all: its two capture generators are `[[bin]]` targets under
+  `required-features = ["sql-ledger"]`, so only
+  `just check-dev-tools fixture-sql-ledger` and the two capture recipes build
+  them, deliberately.
+- The fixture slice is recognition, not a new write path. Those two programs
+  always opened throwaway harness DBs for writing; while they were facade
+  examples the fence never asked the question, and the relocation into
+  production `src` is what made it ask. The answer — temporary harness DBs only,
+  never an operator DB — is recorded in D2's addendum, and the verification
+  route is `just test-rust-nextest -p degenbot -E
+  'test(only_the_updater_shells_open_the_db_for_writes)'` (the fence) plus
+  `just check-evm-captures` / `just check-aave-captures` (the programs still
+  reproduce the committed corpus byte-for-byte offline).
 - A probe that references a write fn from a crate without the feature fails to
   compile — the feature is a real compile-time fence for a crate built in
   isolation, and the source gate covers the unified workspace build.

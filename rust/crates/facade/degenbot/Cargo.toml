@@ -122,23 +122,13 @@ name = "updater_replay_bench"
 harness = false
 required-features = ["sql-ledger"]
 
-# The wave-2 EVM-oracle capture generator replays its SQL goldens through the
-# statement-ledger wrapper, so like the bench above it only builds under the
-# `sql-ledger` passthrough — a default-features target sweep (the workspace
-# clippy gate) must skip it instead of dying on E0432
-# (`degenbot_db::sql_ledger` is cfg'd out of degenbot-db).
-# `just check-evm-captures` is the one command that carries the feature.
-[[example]]
-name = "generate_evm_oracle_captures"
-required-features = ["sql-ledger"]
-
-# The wave-3 aave-side adversarial capture generator replays its
-# SQL goldens through the statement-ledger wrapper the same way — the same
-# `sql-ledger` passthrough applies.
-# `just check-aave-captures` is the one command that carries the feature.
-[[example]]
-name = "generate_aave_adversarial_captures"
-required-features = ["sql-ledger"]
+# The wave-2 EVM-oracle and wave-3 aave-side adversarial capture generators used
+# to live here as `sql-ledger` examples. They are fixture tooling, not consumer
+# starting points, so the fixture-tools migration moved them into
+# `rust/tools/fixture-tools/src/bin/<name>/main.rs` as `[[bin]]` targets of
+# `degenbot-fixture-tools` (each still carrying `required-features =
+# ["sql-ledger"]`, now on the tool package's lane). `just check-evm-captures` /
+# `just check-aave-captures` run those binaries and are unchanged as recipes.
 
 # The wave-4 upgrade-span recorder drives the live chunk loop and replays its
 # SQL goldens through the statement-ledger wrapper, so the same `sql-ledger`

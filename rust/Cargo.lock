@@ -2739,7 +2739,10 @@ dependencies = [
 name = "degenbot-fixture-tools"
 version = "0.6.0-alpha.19"
 dependencies = [
+ "alloy",
  "degenbot",
+ "rusqlite",
+ "tempfile",
 ]
 
 [[package]]

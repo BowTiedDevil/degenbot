@@ -13,9 +13,12 @@
 //!   manifest instead of failing on a `cfg`'d-out module.
 //!
 //! The library target is the shared support the programs build on: fixture path
-//! resolution (an explicit path argument, never an inferred one, so a moved
-//! program cannot silently read or write a different directory), the
-//! record-versus-`--check` driver, and the canonical writers.
+//! resolution ([`paths`] — the repository root is resolved ONCE from a marker the
+//! tree actually carries, and every fixture home is derived from that answer,
+//! because a manifest-relative `join("../../../..")` silently names a different
+//! directory for a package that moved from `rust/crates/<role>/<crate>` to
+//! `rust/tools/<package>`), plus the record-versus-`--check` drift comparison both
+//! generators print through the same function so the two gates cannot drift apart.
 //!
 //! **Isolation, stated precisely.** This package's `sql-ledger` forward is the only place the
 //! statement-ledger *feature* is turned on, but the lane's resolved tree is not this package
@@ -26,4 +29,15 @@
 //! feature or dependency redesign. `cargo tree` here proves which forwards are active; it
 //! does not prove transitive absence.
 //!
-//! Lane feature: `sql-ledger`.
+//! Lane feature: `sql-ledger`. The two capture generators this package currently carries
+//! (`generate_evm_oracle_captures`, `generate_aave_adversarial_captures`) build only under
+//! it — each declares its own `[[bin]] required-features` — which is why the lane, not the
+//! package, is what `just check-dev-tools fixture-sql-ledger` checks. That is a statement
+//! about today's two binaries, not about the package: the fixture migrations still to come
+//! add programs with their own feature requirements, and this sentence must be re-read
+//! then rather than inherited.
+
+pub mod paths;
+
+#[cfg(feature = "sql-ledger")]
+pub mod ledger;

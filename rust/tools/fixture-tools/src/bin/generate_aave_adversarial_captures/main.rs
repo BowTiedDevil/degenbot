@@ -15,7 +15,7 @@
 //!
 //! # The scenarios
 //!
-//! 1. `w3_aave_cross_tx_fact_dependence` — the ChunkSubstrate overlay case
+//! 1. `w3_aave_cross_tx_fact_dependence` — the `ChunkSubstrate` overlay case
 //!    (Perf C's write-overlay contract, adversarial): tx N's ops parser
 //!    creates the user + GHO debt position (the paired Pool `Repay` + vToken
 //!    `Burn` apply), and tx N+1's discount/config path READS that row
@@ -26,7 +26,7 @@
 //!    applies would re-issue the call at tx N+1's block (9 on a live node; a
 //!    loud fixture gap in replay — demonstrated by the replay suite's probe).
 //! 2. `w3_aave_upgraded_boundary_revision_memo` — the mid-chunk `Upgraded`
-//!    boundary (BEKQVL's RevisionMemo contract): two same-implementation
+//!    boundary (BEKQVL's `RevisionMemo` contract): two same-implementation
 //!    `DEBT_TOKEN_REVISION()` probes inside one chunk with the second
 //!    proxy's `Upgraded` between them. The memo's block lane must make the
 //!    post-upgrade probe a REAL recorded RPC (two distinct cassette entries,
@@ -49,28 +49,47 @@
 //! `keccak256(block || tx_index)`; the actor frames' logs ride the same
 //! deterministic coordinate scheme as wave 2.
 //!
+//! # Home
+//!
+//! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in the
+//! facade's `examples/`: it is fixture tooling, not a consumer starting point (the epic's
+//! taxonomy). The generation is unchanged by that move — the scripted actors, the real
+//! chunk loop, the recorder writers, the two-pass determinism gate, the checked homes, and
+//! the argv surface. What changed is the invocation and the *path anchor*: the old source
+//! resolved the corpus as `CARGO_MANIFEST_DIR/../../../..`, which named a different
+//! directory from `rust/tools/fixture-tools`, so the anchor is resolved once
+//! (`degenbot_fixture_tools::paths`) from the repository root's own markers.
+//!
 //! Usage:
 //!
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-//!         --features degenbot/sql-ledger \
-//!         --example generate_aave_adversarial_captures -- \
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --features sql-ledger \
+//!         --bin generate_aave_adversarial_captures -- \
 //!         --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
 //!
-//! `just check-aave-captures` is this exact invocation as a recipe. The
-//! `sql-ledger` passthrough is REQUIRED (the `[[example]]` entry's
-//! required-features — without the feature the `degenbot_db::sql_ledger`
-//! import fails E0432). Default mode (re)writes the two fixture homes;
-//! `--check` regenerates and exits 1 on any byte drift against the committed
-//! artifacts.
+//! `just check-aave-captures` is this exact invocation as a recipe. The `sql-ledger`
+//! lane feature is REQUIRED (the `[[bin]]` entry's required-features — without the
+//! feature the `degenbot::db::sql_ledger` import fails E0432). Default mode (re)writes
+//! the two fixture homes; `--check` regenerates and exits 1 on any byte drift against
+//! the committed artifacts.
+//!
+//! The two positional homes the recipe passes are accepted and ignored, exactly as they
+//! were before the move (the program derives its homes from the resolver). The one
+//! argument that DOES move a home is `--fixtures-home <dir>`, which re-points both homes
+//! at a copy: it is how the drift gate's red path is demonstrated without touching the
+//! committed corpus.
 
-// Run-once diagnostic example: stdout/stderr reports ARE its interface (the
+// Run-once diagnostic program: stdout/stderr reports ARE its interface (the
 // generate_evm_oracle_captures precedent), and the two-pass determinism gate
-// asserts by panic — the same scoping the committed examples carry.
+// asserts by panic — the same scoping the committed examples carried. The
+// `unwrap_used` entry the example carried is gone: this file never unwraps, and
+// a `[[bin]]` in this package is checked under the workspace lint set, so an
+// unfulfilled expectation is itself a failure (`cargo clippy -p
+// degenbot-fixture-tools --all-targets --features sql-ledger -- --deny warnings`).
 #![expect(
     clippy::print_stdout,
     clippy::print_stderr,
     clippy::too_many_lines,
-    clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic
 )]
@@ -84,16 +103,17 @@ use alloy::transports::Transport as _;
 use degenbot::aave::updater::{
     run_aave_update, run_aave_update_on_db, AaveUpdateReport, NoProgress, RunSpec, VerifyPolicy,
 };
+use degenbot::db::sql_ledger::LedgerDb;
 use degenbot::db::DegenbotDb;
 use degenbot::rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
-use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
-use degenbot_rpc::cassette_replay::CassetteReplayTransport;
-use degenbot_simulation::capture::{
+use degenbot::rpc::cassette_replay::CassetteReplayTransport;
+use degenbot::simulation::capture::{
     scripted_actor_creation_code, scripted_coordinator_creation_code, ActorBranch, ScratchDriver,
     ScriptedLog,
 };
+use degenbot_fixture_tools::{ledger, paths};
 use tempfile::TempDir;
 
 /// The chain every scenario serves (mainnet-shaped; the wave-2 convention).
@@ -150,7 +170,7 @@ const SEED_TOKEN_REVISION: i64 = 1;
 /// The seeded POOL contract revision (chain-verified for the QR7QVT corpus
 /// era; drives the parser's scaled-amount tolerance gate).
 const SEED_POOL_REVISION: i64 = 11;
-/// The seeded POOL_CONFIGURATOR revision (the recorder's seed shape).
+/// The seeded `POOL_CONFIGURATOR` revision (the recorder's seed shape).
 const SEED_CONFIGURATOR_REVISION: i64 = 8;
 
 /// RAY (1e27) — the index every first event carries, so the scaled-amount
@@ -263,12 +283,11 @@ fn actor_pin(label: &str) -> Address {
 /// an unpinned zero literal fails with the resolved value to copy in).
 fn assert_pin(label: &str, resolved: Address) {
     let pinned = actor_pin(label);
-    if pinned.is_zero() {
-        panic!(
-            "UNPINNED actor address {label}: resolved {resolved} — pin it in ACTOR_PINS \
-             (and mirror it in the replay suite's seed literals)"
-        );
-    }
+    assert!(
+        !pinned.is_zero(),
+        "UNPINNED actor address {label}: resolved {resolved} — pin it in ACTOR_PINS \
+         (and mirror it in the replay suite's seed literals)"
+    );
     assert_eq!(
         pinned, resolved,
         "pinned {label} address drifted: pinned {pinned}, resolved {resolved} — the frame \
@@ -657,12 +676,10 @@ fn golden_pass(
         },
     )
     .expect("the golden replay of the scenario chunk must commit cleanly");
-    let records = ledger.records().expect("the capture session is armed");
-    let ledger_json = ledger_golden_json(&records);
-    let conn = ledger.db().lock();
-    let dump_json = dump_tables_golden_json(&conn, DUMP_TABLES).expect("dump");
-    drop(conn);
-    (ledger_json, dump_json)
+    // The two goldens come from the shared ledger pattern
+    // (`degenbot_fixture_tools::ledger::goldens`), so the wave-3 and wave-2 generators
+    // (and every later one) dump the same shape from the same armed session.
+    ledger::goldens(&ledger, DUMP_TABLES).expect("the SQL goldens")
 }
 
 /// The scenario's provenance — fully deterministic (the pinned source string,
@@ -987,7 +1004,18 @@ fn generate_all() -> Vec<ScenarioArtifacts> {
 }
 
 fn main() -> std::process::ExitCode {
-    let check = std::env::args().any(|arg| arg == "--check");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let check = args.iter().any(|arg| arg == "--check");
+    // The corpus home is resolved ONCE — and before the generation, so a bad anchor
+    // fails before two full passes of recorded chunks rather than after them.
+    let home = match paths::fixtures_home_from_args(&args) {
+        Ok(home) => home,
+        Err(err) => {
+            eprintln!("ARGUMENT ERROR: {err}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
     println!("wave-3 aave adversarial capture generator ");
 
     println!("pass 1 ...");
@@ -1031,9 +1059,8 @@ fn main() -> std::process::ExitCode {
         );
     }
 
-    let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
-    let cassette_home = home.join("tests/fixtures/cassettes/wave3");
-    let golden_home = home.join("tests/fixtures/sql_goldens/wave3");
+    let cassette_home = home.join("cassettes/wave3");
+    let golden_home = home.join("sql_goldens/wave3");
 
     if check {
         let mut drifted = 0usize;
@@ -1052,19 +1079,7 @@ fn main() -> std::process::ExitCode {
                     artifacts.dump.as_bytes(),
                 ),
             ];
-            for (path, produced) in checks {
-                match std::fs::read(&path) {
-                    Ok(committed) if committed == produced => {}
-                    Ok(_committed) => {
-                        eprintln!("DRIFT: {} (regenerated bytes differ)", path.display());
-                        drifted += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("MISSING: {} ({e})", path.display());
-                        drifted += 1;
-                    }
-                }
-            }
+            drifted += paths::report_drift(&checks);
         }
         if drifted == 0 {
             println!("--check: all committed wave-3 artifacts byte-identical to regeneration");

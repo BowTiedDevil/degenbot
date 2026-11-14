@@ -16,21 +16,38 @@
 //! both passes must be byte-identical (asserted here; the corpus `--check`
 //! + the replay suites re-prove it from disk).
 //!
+//! # Home
+//!
+//! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in the
+//! facade's `examples/`: it is fixture tooling, not a consumer starting point (the epic's
+//! taxonomy). Everything about the generation is unchanged by that move — the real chunk
+//! loops, the recorder writers, the two-pass determinism gate, the homes it checks, and
+//! the argv surface. What changed is the invocation and the *path anchor*: the old source
+//! resolved the corpus as `CARGO_MANIFEST_DIR/../../../..`, which named a different
+//! directory from `rust/tools/fixture-tools`, so the anchor is now resolved once
+//! (`degenbot_fixture_tools::paths`) from the repository root's own markers.
+//!
 //! Usage:
 //!
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \\
-//!         --features degenbot/sql-ledger \\
-//!         --example generate_evm_oracle_captures -- \\
+//!     cargo run --locked --manifest-path rust/Cargo.toml \\
+//!         -p degenbot-fixture-tools --features sql-ledger \\
+//!         --bin generate_evm_oracle_captures -- \\
 //!         --check tests/fixtures/cassettes/wave2 tests/fixtures/sql_goldens/wave2
 //!
-//! `just check-evm-captures` is this exact invocation as a recipe. The
-//! `sql-ledger` passthrough is REQUIRED (the `[[example]]` entry's
-//! required-features — without the feature the `degenbot_db::sql_ledger`
-//! import fails E0432).
+//! `just check-evm-captures` is this exact invocation as a recipe. The `sql-ledger`
+//! lane feature is REQUIRED (the `[[bin]]` entry's required-features — without the
+//! feature the `degenbot::db::sql_ledger` import fails E0432).
 //!
 //! Default mode (re)writes `tests/fixtures/cassettes/wave2/` +
 //! `tests/fixtures/sql_goldens/wave2/`. `--check` regenerates into a temp
 //! home and exits 1 on any byte drift against the committed artifacts.
+//!
+//! The two positional homes the recipe passes are accepted and ignored, exactly as they
+//! were before the move (the program derives its homes from the resolver). The one
+//! argument that DOES move a home is `--fixtures-home <dir>`, which re-points the
+//! cassette + golden homes at a copy: it is how the drift gate's red path is demonstrated
+//! without touching the committed corpus. The harness artifact
+//! (`tier3-oracle/artifacts`) is read from the repository root and is never re-pointed.
 
 // Run-once diagnostic example: stdout/stderr reports ARE its interface (the
 // record_updater_cassette precedent), and the two-pass determinism gate
@@ -49,20 +66,21 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use alloy::primitives::{keccak256, Address, Bytes, U256};
+use degenbot::db::sql_ledger::LedgerDb;
 use degenbot::db::DegenbotDb;
 use degenbot::pool_updater::{run_pool_update, run_pool_update_on_db, NoProgress};
 use degenbot::rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
+use degenbot::rpc::cassette_replay::CassetteReplayTransport;
 use degenbot::rpc::provider::LogFilter;
-use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
-use degenbot_rpc::cassette_replay::CassetteReplayTransport;
-use degenbot_simulation::capture::{
+use degenbot::simulation::capture::{
     encode_capture_announce_pool, encode_capture_burn, encode_capture_initialize,
     encode_capture_mint, encode_capture_pool_getter, encode_capture_setup_pool,
     encode_capture_swap, load_capture_harness_creation_bytecode, log_emitter_initcode,
     ScratchDriver,
 };
+use degenbot_fixture_tools::{ledger, paths};
 use tempfile::TempDir;
 
 /// The chain every scenario serves (mainnet-shaped; `eth_chainId` answers
@@ -725,24 +743,22 @@ fn generate_scenario(
             )
         })?;
     }
-    let records = ledger
-        .records()
-        .map_err(|e| format!("{}: ledger records: {e}", scenario.name))?;
-    let ledger_json = ledger_golden_json(&records);
-    let conn = ledger.db().lock();
-    let dump_json = dump_tables_golden_json(&conn, DUMP_TABLES)
-        .map_err(|e| format!("{}: dump: {e}", scenario.name))?;
-    drop(conn);
+    // The two goldens come from the shared ledger pattern
+    // (`degenbot_fixture_tools::ledger::goldens`), so this generator and every
+    // later one dump the same shape from the same armed session.
+    let (ledger_json, dump_json) =
+        ledger::goldens(&ledger, DUMP_TABLES).map_err(|e| format!("{}: {e}", scenario.name))?;
 
     Ok((cassette_bytes, ledger_json, dump_json))
 }
 
-/// The artifact homes (repo-root-relative, the recorder corpus layout's
-/// per-kind homes with a wave-2 scenario subdirectory).
-fn fixtures_home() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/fixtures")
-}
-
+/// The artifact homes: the recorder corpus layout's per-kind homes with a wave-2
+/// scenario subdirectory.
+///
+/// The corpus ROOT is not derived here — `--fixtures-home` or the shared repository-root
+/// resolver names it (`degenbot_fixture_tools::paths`), because `CARGO_MANIFEST_DIR`
+/// relative `..` arithmetic is only correct for one package location and this program
+/// moved (task 03).
 fn cassette_home(home: &Path) -> PathBuf {
     home.join("cassettes/wave2")
 }
@@ -780,9 +796,26 @@ fn content_hash(bytes: &[u8]) -> String {
 }
 
 fn main() -> std::process::ExitCode {
-    let check = std::env::args().any(|arg| arg == "--check");
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
-    let artifacts_dir = repo.join("tier3-oracle/artifacts");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let check = args.iter().any(|arg| arg == "--check");
+    // The corpus home is resolved ONCE — and before the generation, so a bad anchor
+    // fails before two full passes of recorded chunks rather than after them.
+    let home = match paths::fixtures_home_from_args(&args) {
+        Ok(home) => home,
+        Err(err) => {
+            eprintln!("ARGUMENT ERROR: {err}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    // The capture harness artifact is a repository INPUT, not a fixture home: it is read
+    // from the resolved repository root, and `--fixtures-home` never re-points it.
+    let artifacts_dir = match paths::repo_relative("tier3-oracle/artifacts") {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("PATH ERROR: {err}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
 
     println!("wave-2 EVM-oracle capture generator ");
 
@@ -826,7 +859,6 @@ fn main() -> std::process::ExitCode {
     if check {
         // ── the generator's own drift gate: the regenerated bytes must equal
         // the committed artifacts byte-for-byte.
-        let home = fixtures_home();
         let mut drifted = 0usize;
         for (name, cassette, ledger, dump) in &pass1 {
             let checks = [
@@ -843,19 +875,7 @@ fn main() -> std::process::ExitCode {
                     dump.as_bytes(),
                 ),
             ];
-            for (path, produced) in checks {
-                match std::fs::read(&path) {
-                    Ok(committed) if committed == produced => {}
-                    Ok(_committed) => {
-                        eprintln!("DRIFT: {} (regenerated bytes differ)", path.display());
-                        drifted += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("MISSING: {} ({e})", path.display());
-                        drifted += 1;
-                    }
-                }
-            }
+            drifted += paths::report_drift(&checks);
         }
         if drifted == 0 {
             println!("--check: all committed wave-2 artifacts byte-identical to regeneration");
@@ -866,7 +886,6 @@ fn main() -> std::process::ExitCode {
         }
     } else {
         // ── write mode ──
-        let home = fixtures_home();
         let chome = cassette_home(&home);
         let ghome = golden_home(&home);
         std::fs::create_dir_all(&chome).expect("create cassette home");

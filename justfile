@@ -914,17 +914,21 @@ bench-updaters:
 
 # The wave-2 EVM-oracle capture generator's gate: regenerate the
 # wave-2 cassettes + SQL goldens into a temp home and exit 1 on any byte
-# drift against the committed artifacts. The example only builds under the
-# `sql-ledger` passthrough (its [[example]] required-features, same shape as
-# the updater_replay_bench [[bench]] entry above) — this recipe is the one
-# command that carries the feature.
+# drift against the committed artifacts. The generator is a
+# `degenbot-fixture-tools` binary now (it was the facade's
+# `generate_evm_oracle_captures` example); its `[[bin]]` required-features still
+# name the SQL ledger, carried by the tool package's `sql-ledger` lane forward —
+# this recipe is the one command that carries the feature. The two positional
+# homes are accepted and ignored (the program resolves them from the repository
+# root); pass `--fixtures-home <dir>` to run the same gate against a copy.
 check-evm-captures:
-    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --example generate_evm_oracle_captures -- --check tests/fixtures/cassettes/wave2 tests/fixtures/sql_goldens/wave2
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --features sql-ledger --bin generate_evm_oracle_captures -- --check tests/fixtures/cassettes/wave2 tests/fixtures/sql_goldens/wave2
 
 # The wave-3 aave-side adversarial capture generator's gate: the
-# same drift gate as check-evm-captures over the wave-3 fixture homes.
+# same drift gate as check-evm-captures over the wave-3 fixture homes, run from
+# the same `degenbot-fixture-tools` sql-ledger lane.
 check-aave-captures:
-    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --example generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
 
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every workspace member that can package, in dependency
@@ -1085,9 +1089,14 @@ check-rust-all-features:
 #
 # Every later tool binary joins the lane that owns its features through its own
 # `required-features`, so that lane builds it on purpose and every other lane
-# skips it on purpose. With no argument the recipe runs `default` and prints the
-# menu: an unqualified invocation is the feature-free support-library check, and
-# never silently a union of every lane.
+# skips it on purpose. The first two have landed: the offline capture
+# generators `generate_evm_oracle_captures` and
+# `generate_aave_adversarial_captures` are `[[bin]]` targets of
+# `degenbot-fixture-tools` under `required-features = ["sql-ledger"]`, so the
+# `fixture-sql-ledger` lane compiles them and the `default` lane skips them
+# without failing on the `cfg`'d-out ledger module. With no argument the recipe
+# runs `default` and prints the menu: an unqualified invocation is the
+# feature-free support-library check, and never silently a union of every lane.
 # Check one development-tool lane at a time (lanes listed above; no --all-features).
 check-dev-tools *lanes:
     #!/usr/bin/env bash
@@ -1101,6 +1110,7 @@ check-dev-tools *lanes:
       default                  degenbot-fixture-tools, degenbot-solver-lab, and
                                degenbot-engine-lab at support-library defaults
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
+                               (builds the two capture-generator [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
       solver-cache-lab         degenbot-solver-lab --features capture-fixtures,cache-lab
       solver-hotpath           degenbot-solver-lab --features hotpath

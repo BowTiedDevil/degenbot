@@ -1,7 +1,6 @@
 [package]
 name = "degenbot-fixture-tools"
 description = "Record, check, and regenerate the committed fixtures and the test-input generators. Non-publishable development tooling: no product build links it and no `cargo test` lane depends on it."
-
 version.workspace = true
 edition.workspace = true
 publish = false
@@ -17,9 +16,28 @@ workspace = true
 # the default check of this package links no product crate at all. Edges point
 # only from this tool package to product crates; no product crate may depend on
 # a tool.
+#
+# The three crates beside `degenbot` are the ones the SQL-ledger binaries actually
+# link, and they are optional for the same reason: `alloy` builds the scenario
+# primitives/transports the generators drive, `rusqlite` seeds the throwaway
+# harness DB each recorded chunk runs against, and `tempfile` owns those throwaway
+# homes. Cargo has no per-target dependency selection, so a `[[bin]]`-only need
+# has to be a feature-activated optional edge — otherwise the default tree stops
+# being the package alone (§6.2's scaffold claim).
 [dependencies]
 # The umbrella facade owns the fixture schema and the recorders that read it.
+# It also re-exports the three crates the generators import (`degenbot::db`,
+# `degenbot::rpc`, `degenbot::simulation`), so the ledger replay and the scratch
+# EVM arrive through this one edge rather than three more.
 degenbot = { workspace = true, optional = true }
+
+# `full` matches the facade's own declaration (the lane's facade edge unifies to it
+# anyway), and it is the honest one to write: the generators use `alloy::primitives`
+# (addresses/words/keccak), the `b256!`/`I256` aliases, and `alloy::transports` for the
+# recording seam's `boxed()` chain.
+alloy = { version = "^2.5", features = ["full"], optional = true }
+rusqlite = { version = "^0.42", optional = true }
+tempfile = { version = "^3.27", optional = true }
 
 [features]
 default = []
@@ -35,4 +53,22 @@ default = []
 # target-scoped `degenbot-simulation/evm2-jit` dependency, so the vendored JIT
 # family is in the lane's `cargo tree` output with no feature of this package in
 # the chain -- a property of the product graph, not of this forward.
-sql-ledger = ["degenbot/sql-ledger"]
+#
+# The `dep:` entries are the lane's own binaries' cargo, not an extra forward: a
+# fixture-tools `[[bin]]` builds only under this feature, so this is the only
+# place its `alloy` / `rusqlite` / `tempfile` edges can be turned on. Deleting
+# them would not make the lane lighter -- it would make the lane unbuildable.
+sql-ledger = ["degenbot/sql-ledger", "dep:alloy", "dep:rusqlite", "dep:tempfile"]
+
+# The two offline capture generators. Both replay their SQL goldens through the
+# statement-ledger wrapper, hence the `sql-ledger` requirement -- the same
+# requirement their `[[example]]` stanzas carried in the facade before the move.
+[[bin]]
+name = "generate_evm_oracle_captures"
+path = "src/bin/generate_evm_oracle_captures/main.rs"
+required-features = ["sql-ledger"]
+
+[[bin]]
+name = "generate_aave_adversarial_captures"
+path = "src/bin/generate_aave_adversarial_captures/main.rs"
+required-features = ["sql-ledger"]

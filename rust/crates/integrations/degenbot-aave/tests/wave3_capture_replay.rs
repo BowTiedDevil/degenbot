@@ -1,6 +1,10 @@
 //! The wave-3 generated-capture replay gate: every aave-side capture the
 //! node-free generator manufactured
-//! (`generate_aave_adversarial_captures`) replays through the REAL
+//! (`generate_aave_adversarial_captures` — a `degenbot-fixture-tools` binary at
+//! `rust/tools/fixture-tools/src/bin/generate_aave_adversarial_captures/main.rs`
+//! by the fixture-tools migration, run by `just check-aave-captures`; it was the
+//! facade's `--example` before that, and this suite's fixtures are the same bytes
+//! either way) replays through the REAL
 //! `run_aave_update_on_db` chunk loop over the committed cassette BYTES and
 //! must reproduce BOTH committed SQL goldens byte-for-byte — the same drift
 //! gate the live-recorded corpus and the wave-2 captures run under.

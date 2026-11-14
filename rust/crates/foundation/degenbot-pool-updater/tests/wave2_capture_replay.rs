@@ -1,6 +1,10 @@
 //! The wave-2 generated-capture replay gate : every capture the
 //! node-free EVM-oracle generator manufactured
-//! (`generate_evm_oracle_captures`) replays through the REAL `run_pool_update`
+//! (`generate_evm_oracle_captures` — a `degenbot-fixture-tools` binary at
+//! `rust/tools/fixture-tools/src/bin/generate_evm_oracle_captures/main.rs` in
+//! the fixture-tools migration, run by `just check-evm-captures`; it was the facade's
+//! `--example` before that, and this suite's fixtures are the same bytes either way)
+//! replays through the REAL `run_pool_update`
 //! chunk loop and must reproduce BOTH committed SQL goldens byte-for-byte —
 //! the same drift gate the live-recorded corpus runs under.
 //!

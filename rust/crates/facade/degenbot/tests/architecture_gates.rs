@@ -1763,20 +1763,36 @@ fn config_derived_statics_are_classified() {
 
 /// ADR-070: the writer fence. `degenbot-db`'s write substrate (the `writer`
 /// feature: the `write/` module, `open_for_writes`, `open_in_memory_for_writes`)
-/// is enabled ONLY by the updater shells; every other crate opens the DB
-/// read-only. A production `src` source in any other crate that names a
+/// is enabled ONLY by the updater shells (plus `degenbot-fixture-tools`, the
+/// offline updater shell of ADR-070 D2's addendum); every other crate opens the
+/// DB read-only. A production `src` source in any other crate that names a
 /// write-capable constructor is a fence breach — the source-level gate the
 /// cargo feature alone cannot enforce, because workspace feature unification
 /// re-enables `writer` through a shared updater dependency.
 /// live-invariant gate (ADR-087 D2): watches the production `src` of every live crate for write-capable DB constructors outside the updater shells; not tripwire precedent.
 #[test]
 fn only_the_updater_shells_open_the_db_for_writes() {
-    const WRITER_OWNERS: [&str; 5] = [
+    const WRITER_OWNERS: [&str; 6] = [
         "degenbot-db",
         "degenbot-aave",
         "degenbot-pool-updater",
         "degenbot-cli-core",
         "degenbot_rs",
+        // ADR-070 D2 addendum: the NON-PUBLISHABLE offline updater/fixture
+        // shell. The two capture generators now live under this package's
+        // `src/bin/`, and a `src/bin/` target is production
+        // `src` — so the fence now scans programs that run the REAL
+        // `run_pool_update` / `run_aave_update` chunk loops and therefore need
+        // a writer. Their write opens are TEMPORARY HARNESS DBs only:
+        // `DegenbotDb::open_for_writes` seeds the throwaway DB each recorded
+        // chunk applies to and `LedgerDb::open_for_writes` opens the replay DB
+        // the SQL goldens are dumped from, both under a `TempDir`. The fixtures
+        // themselves are written by plain `fs::write` (or not at all under
+        // `--check`), so no operator DB is reachable from here. This exempts
+        // THIS package by name: a `src/bin/` program here that opened a durable
+        // DB would be a new production write path and needs its own D2 decision
+        // (it would have to change this line, not inherit it).
+        "degenbot-fixture-tools",
     ];
     let forbidden = ["open_for_writes", "open_in_memory_for_writes"];
     let mut violations = Vec::new();
