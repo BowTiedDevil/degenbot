@@ -151,7 +151,7 @@ mod tests {
     }
 
     /// Build a multi-range concentrated liquidity sequence in swap order around `anchor_tick`
-    /// (the construction pattern of `examples/synth_corpus_gen.rs`).
+    /// (the construction pattern of `degenbot-solver-lab`'s `synth_corpus_gen`).
     fn multi_range_sequence(
         anchor_tick: i32,
         step: i32,

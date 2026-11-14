@@ -83,7 +83,7 @@
 //! over-shoot-only stale goldens.
 //!
 //! The replay that reads the result is `cargo run --locked --manifest-path rust/Cargo.toml
-//! -p degenbot-pools --features capture-fixtures --example concentrated_liquidity_solve_replay
+//! -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay
 //! <capture.jsonl>`, wrapped by `just test-golden-replay`.
 
 use hashbrown::HashMap;

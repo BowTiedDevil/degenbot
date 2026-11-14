@@ -189,7 +189,8 @@ impl WalkTelemetry {
   atomics' semantics carried over; `drain_ns` is what `concentrated_liquidity_cache_lab`'s swap-sweep becomes.
 - The **`census_pieces` log is drained (take)** at the same cadence the example drives
   (`concentrated_liquidity_cache_lab.rs` prints per-transition edge shifts); `WalkOutcome.census_pieces` keeps flowing
-  per-solve for `concentrated_liquidity_solve_replay` (`examples/concentrated_liquidity_solve_replay.rs:160`, unchanged).
+  per-solve for `concentrated_liquidity_solve_replay`
+  (`rust/tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs`, unchanged).
 - The collector is **not** feature-gated as a type (it must exist in default builds so signatures
   are single); with `telemetry` off the M2 merge site is `#[cfg(feature = "telemetry")]`-skipped,
   so a default-build solve pays one `None` check, nothing else.
@@ -379,7 +380,7 @@ ladder). Baseline first, always.
 ### The per-commit A/B protocol (the executor runs this at every step)
 
 - **Baseline capture (M0 artifact):**
-  1. `cargo run --release -p degenbot-solvers --example concentrated_liquidity_solve_replay -- <capture.jsonl>` —
+  1. `cargo run --release -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- <capture.jsonl>` —
      record the profit vector + per-path `stats` (the parity artifact; fixture via
      `degenbot_solvers::capture_fixture`, the `heavy_concentrated_liquidity_solve_captures.jsonl` corpus the
      walkmemo readout used — see `docs/architecture/walkmemo-cross-block-reuse-readout.md`).

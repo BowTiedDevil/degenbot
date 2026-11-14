@@ -119,15 +119,7 @@ name = "concentrated_liquidity_cache_lab"
 required-features = ["capture-fixtures", "cache-lab"]
 
 [[example]]
-name = "concentrated_liquidity_solve_replay"
-required-features = ["capture-fixtures"]
-
-[[example]]
 name = "entry_ab_readout"
-required-features = ["capture-fixtures"]
-
-[[example]]
-name = "mixed_solve_replay"
 required-features = ["capture-fixtures"]
 
 [[example]]

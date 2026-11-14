@@ -127,6 +127,25 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &["DEGENBOT_RPC_HTTP_CHAINID_1"][..],
         );
 
+        // The two solver replay binaries, same class and same cause: they left
+        // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
+        // solver-lab tool crate, so their pre-existing offline replay controls
+        // now reach the production-source scan. Each is a per-run knob for a
+        // local corpus replay -- the iteration count, and the golden
+        // regeneration flag for the concentrated-liquidity program -- read once
+        // at start-up with the same defaults and the same parse-and-fall-back
+        // behavior they have always had. No operator-config authority, and the
+        // loader would hand a solver-lab binary the config crate's dependency
+        // graph for no behavioral gain.
+        m.insert(
+            "tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs",
+            &["DR_REPLAY_ITERS", "DR_REPLAY_REGEN"][..],
+        );
+        m.insert(
+            "tools/solver-lab/src/bin/mixed_solve_replay/main.rs",
+            &["DR_REPLAY_ITERS"][..],
+        );
+
         // The Python oracle corpus recorder, same class and same cause: leaving
         // `examples/` (skipped as a test surface) exposed its pre-existing endpoint
         // fallback to the production-source scan. Both reads are the recorder's

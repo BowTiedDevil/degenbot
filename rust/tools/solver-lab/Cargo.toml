@@ -13,10 +13,30 @@ authors.workspace = true
 [lints]
 workspace = true
 
-# Optional, one lane each: the default check of this package links no product
-# crate, and every edge points from this tool to a product crate, never back.
+# Dependency shape: the default lane is NOT the package alone, because the
+# synthetic corpus generator is a default-features target that reads pool state
+# through `degenbot-pools` -- Cargo has no per-target dependency selection, so
+# every crate a default target links is a plain edge here. Every edge still
+# points from this tool to a product crate, never back. The crates the other two
+# programs need stay optional, so their lanes are still the only thing that
+# *enables* a capability family.
 [dependencies]
-degenbot-pools = { workspace = true, optional = true }
+# The production tick-range sequences the generator writes and the solver entry
+# points both replays re-run; `capture-fixtures` is the feature that adds the
+# fixture reader the replays resolve their default capture path through.
+degenbot-pools = { workspace = true }
+
+# The tick math the synthetic geometry is built from and the V2 hop state the
+# mixed replay reconstructs. Its own edge because that is what the source
+# imports (no re-export of `degenbot-pools` covers either item).
+degenbot-math = { workspace = true }
+
+# Capture rows carry `U256` decimals and JSON documents: both replays parse them
+# and the generator emits them, so both edges are plain ones on the same rule as
+# `degenbot-pools` above.
+alloy = { version = "^2.5" }
+serde_json = { version = "^1.0" }
+
 # The net-profit order index the strategy microbench measures. Its default
 # feature set already carries the hull index, and the `envelope` forward below
 # names the lane explicitly so the dependency edge and the lane stay one
@@ -48,3 +68,29 @@ hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]
 
 # The convex-hull net-profit order index the strategy microbench measures.
 envelope = ["degenbot-order-index/envelope"]
+
+# The programs this package carries so far, split by whether they read a capture
+# fixture.
+#
+# TWO replays read the committed `.jsonl[.zst]` corpora through
+# `degenbot-pools`'s fixture reader, so each carries `required-features` and a
+# default check skips it deliberately instead of failing on a cfg'd-out module.
+
+[[bin]]
+name = "concentrated_liquidity_solve_replay"
+path = "src/bin/concentrated_liquidity_solve_replay/main.rs"
+required-features = ["capture-fixtures"]
+
+[[bin]]
+name = "mixed_solve_replay"
+path = "src/bin/mixed_solve_replay/main.rs"
+required-features = ["capture-fixtures"]
+
+# The synthetic corpus generator reads no capture and opens no database of any
+# kind: it builds its own geometry and writes the two committed corpora, so it
+# carries NO `required-features` and the package's default lane builds it. That
+# is also why its write anchor (`degenbot_solver_lab::paths`) resolves from the
+# repository root: the corpora belong to the pools crate's fixture home.
+[[bin]]
+name = "synth_corpus_gen"
+path = "src/bin/synth_corpus_gen/main.rs"

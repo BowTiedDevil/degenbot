@@ -2958,9 +2958,12 @@ dependencies = [
 name = "degenbot-solver-lab"
 version = "0.6.0-alpha.19"
 dependencies = [
+ "alloy",
+ "degenbot-math",
  "degenbot-order-index",
  "degenbot-pools",
  "hotpath",
+ "serde_json",
 ]
 
 [[package]]

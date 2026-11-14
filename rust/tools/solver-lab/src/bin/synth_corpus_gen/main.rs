@@ -8,7 +8,7 @@
 //!   2. `mixed_solve_replay` / `gate_bench` format:
 //!      `{"path_id":..,"block":..,"n_hops":3,"hop_order":[false,..],"hops":[{"kind":"concentrated_liquidity","ranges":[...]},..]}`
 //!
-//! Usage: cargo run --release -p degenbot-pools --example `synth_corpus_gen`
+//! Usage: cargo run --release -p degenbot-solver-lab --bin `synth_corpus_gen`
 //! Geometry replicates the deep-late-liquidity fixtures that the production
 //! walk solves correctly (optimum beyond the legacy enumeration prefix).
 
@@ -82,7 +82,10 @@ fn concentrated_liquidity_json(seq: &IntV3TickRangeSequence) -> Value {
 }
 
 fn main() {
-    let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    // The corpora are the pools crate's: its `profit_envelope` kernel tests read the
+    // concentrated-liquidity one from their own `tests/fixtures`, so the writer resolves
+    // that same home from the repository root instead of deriving one beside this package.
+    let base = degenbot_solver_lab::paths::pools_fixtures_dir().unwrap();
     let g_range = |n: usize, liq: u128| vec![liq; n];
     // --- Family W (walk-heavy, path 27817 shape): 400 thin equal bars and
     // ONE deep-late 1e15 bar at the far end — the shallow-climb geometry that

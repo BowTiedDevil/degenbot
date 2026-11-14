@@ -235,10 +235,13 @@ test-rust-ci:
 
 # Two-sided golden replay gate (offline, seconds): profit under/over-shoot and
 # nondeterminism across reps, on the single-block anchor + the 156-row heavy
-# corpus. Blocks merge in CI; named here so the pre-push gate runs it too.
+# corpus. Blocks merge in CI; named here so the pre-push gate runs it too. The
+# program is a `degenbot-solver-lab` binary and reads the committed corpora from
+# the pools crate's fixture home, so the feature flag is the tool package's
+# `capture-fixtures` forward, not the product crate's.
 test-golden-replay:
-    cd rust && cargo run --locked -q -p degenbot-pools --features capture-fixtures --example concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
-    cd rust && cargo run --locked -q -p degenbot-pools --features capture-fixtures --example concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
+    cd rust && cargo run --locked -q -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
+    cd rust && cargo run --locked -q -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
 
 
 # Run the cargo workspace suite under cargo-nextest: per-process test
@@ -1072,7 +1075,12 @@ check-rust-all-features:
 #                                                  package's crates are plain
 #                                                  edges now, because its
 #                                                  default binary needs them;
-#   `cargo tree -p <solver-lab|engine-lab> -e normal` -> the package alone (no
+#   `cargo tree -p degenbot-solver-lab -e normal`  -> the pools graph: its
+#                                                  default binary builds pool
+#                                                  state, so that edge is plain
+#                                                  (the other crates stay
+#                                                  optional);
+#   `cargo tree -p degenbot-engine-lab -e normal`  -> the package alone (no
 #                                                  optional product edge active);
 #   `cargo tree -p <tool> --features <lane>
 #     -e features -i <owning crate>`            -> names the tool forward that
@@ -1085,9 +1093,10 @@ check-rust-all-features:
 #                            degenbot-fixture-tools' five DEFAULT-FEATURE binaries
 #                            (record_updater_cassette, record_py_oracle_corpus,
 #                            capture_path_fixture, concentrated_liquidity_capture_gen,
-#                            encode_three_hop) are built here, because a program that
-#                            reads no statement ledger must not be hidden behind a
-#                            feature
+#                            encode_three_hop) and degenbot-solver-lab's
+#                            synth_corpus_gen are built here, because a program that
+#                            reads no statement ledger and no capture fixture must not
+#                            be hidden behind a feature
 #   fixture-sql-ledger       degenbot-fixture-tools + sql-ledger
 #   solver-capture-fixtures  degenbot-solver-lab + capture-fixtures
 #   solver-cache-lab         degenbot-solver-lab + capture-fixtures,cache-lab
@@ -1142,7 +1151,8 @@ check-dev-tools *lanes:
                                programs -- record_updater_cassette,
                                record_py_oracle_corpus, capture_path_fixture,
                                concentrated_liquidity_capture_gen, and
-                               encode_three_hop -- here)
+                               encode_three_hop -- and solver-lab builds
+                               synth_corpus_gen here)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
@@ -1167,7 +1177,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop too)"
+        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, and solver-lab builds synth_corpus_gen too)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets

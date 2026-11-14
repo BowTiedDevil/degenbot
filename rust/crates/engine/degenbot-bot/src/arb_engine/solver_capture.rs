@@ -77,7 +77,8 @@ pub(crate) fn gate_capture_from_cfg(
 }
 /// One-shot capture of heavy solver inputs, so the offline replay harnesses
 /// (`solve_concentrated_liquidity_piecewise` for all-concentrated-liquidity,
-/// `examples/mixed_solve_replay.rs` for mixed V2+concentrated liquidity) can
+/// `degenbot-solver-lab`'s `mixed_solve_replay` for mixed V2+concentrated
+/// liquidity) can
 /// be optimized against real captured pool state without a full bot run.
 ///
 /// One writer owns the shared capture plumbing: the heavy gate

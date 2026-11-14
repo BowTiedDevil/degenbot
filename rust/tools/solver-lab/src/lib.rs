@@ -26,4 +26,21 @@
 //! row parsing and the harness schemas, so a helper module is imported rather
 //! than `#[path]`-included from an example directory.
 //!
+//! # Modules
+//!
+//! - [`paths`] — repository-root resolution (marker-resolved, no `..`
+//!   arithmetic) and the pools fixture home the synthetic corpus generator
+//!   writes into.
+//! - `capture_rows`, `concentrated_liquidity_rows` — the capture-JSONL parsing
+//!   the replay instruments share, behind `capture-fixtures` because they reach
+//!   the feature's fixture reader for the default capture path.
+//!
 //! Lane features: `capture-fixtures`, `cache-lab`, `hotpath`, `envelope`.
+
+pub mod paths;
+
+#[cfg(feature = "capture-fixtures")]
+pub mod capture_rows;
+
+#[cfg(feature = "capture-fixtures")]
+pub mod concentrated_liquidity_rows;

@@ -1,4 +1,4 @@
-// Dev/example-only harness: offline replay + profiler for captured *mixed*
+// Dev-only harness: offline replay + profiler for captured *mixed*
 // V2+concentrated liquidity solver fixtures. Pedantic lints production code denies are relaxed.
 #![expect(
     clippy::cast_lossless,
@@ -15,11 +15,11 @@
 )]
 
 //! Offline heavy mixed V2+concentrated liquidity path replay harness with N-repeat stable timing.
-//! Mirrors `concentrated_liquidity_solve_replay.rs` for paths that dispatch to
+//! Mirrors `concentrated_liquidity_solve_replay` for paths that dispatch to
 //! `solve_piecewise` (V2→V3→V3, V2→V3→V4, …).
 //!
 //! Usage:
-//!   `cargo run -p degenbot-pools --example mixed_solve_replay -- [<capture.jsonl>]`
+//!   `cargo run -p degenbot-solver-lab --features capture-fixtures --bin mixed_solve_replay -- [<capture.jsonl>]`
 //!   `DR_REPLAY_ITERS=25`   // more reps for tighter p95 (default 9)
 //!
 //! Re-reads a `heavy_mixed_solve_captures.jsonl`-FORMAT capture produced by
@@ -57,12 +57,8 @@ use degenbot_pools::solve::concentrated_liquidity::{
     solve_piecewise, MixedHopView, PreparedConcentratedLiquidityHop, WalkStats,
 };
 use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
+use degenbot_solver_lab::capture_rows::{capture_arg, range, str_field, u256};
 use serde_json::Value;
-
-#[path = "common/mod.rs"]
-mod common;
-
-use common::{capture_arg, range, str_field, u256};
 
 const PROFIT_EPS: u128 = 100_000;
 const OVER_SHOOT_TOLERANCE_WEI: u128 = 8;

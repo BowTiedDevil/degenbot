@@ -1,4 +1,4 @@
-// Dev/example-only harness: an offline replay harness for captured solver fixtures.
+// Dev-only harness: an offline replay harness for captured solver fixtures.
 // Pedantic + restriction lints that production code denies are relaxed here.
 #![expect(
     clippy::collapsible_else_if,
@@ -10,7 +10,8 @@
 //! Offline heavy-concentrated-liquidity-path replay harness with N-repeat stable timing.
 //!
 //! Usage:
-//!   cargo run -p degenbot-pools --example `concentrated_liquidity_solve_replay` [-- <capture.jsonl>]
+//!   cargo run -p degenbot-solver-lab --features capture-fixtures
+//!     --bin `concentrated_liquidity_solve_replay` [-- <capture.jsonl>]
 //!   `DR_REPLAY_ITERS=25` ...   // more reps for tighter p95 (default 9)
 //!
 //! Re-reads a capture JSONL produced by the live hook
@@ -34,15 +35,9 @@ use alloy::primitives::U256;
 use degenbot_pools::solve::concentrated_liquidity::WalkEventCensus;
 use degenbot_pools::solve::gate::{path_profit_bound, GateDeps, HopMath};
 use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
+use degenbot_solver_lab::capture_rows::capture_arg;
+use degenbot_solver_lab::concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
 use serde_json::Value;
-
-#[path = "common/mod.rs"]
-mod common;
-#[path = "common/concentrated_liquidity_rows.rs"]
-mod concentrated_liquidity_rows;
-
-use common::capture_arg;
-use concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
 
 /// Max acceptable profit under-shoot (wei) of the exact-wei golden for the
 /// coarsened search to count as OK — mirrors the solver's "never under-shoot
