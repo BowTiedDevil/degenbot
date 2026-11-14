@@ -46,7 +46,30 @@ use crate::oracle::{
 };
 
 pub mod declarative;
-pub use declarative::{assert_erc6909_capture, assert_profitable, ChainResult, Hop, HopPool};
+
+pub use declarative::{
+    assert_applied_capital, assert_erc6909_capture, assert_profitable, assert_zero_capital,
+    CapitalSnapshot, ChainError, ChainResult, FixtureCapital, Hop, HopPool,
+};
+
+/// The `StubToken` stub's `balanceOf` mapping base
+/// (`tier3-oracle/src-harness/StubToken.sol`: `name`/`symbol`/`decimals` precede
+/// it).
+///
+/// Every token the harness deploys shares this layout, and it is NOT the
+/// canonical mainnet WETH9 slot a production layout set pins — so a capital
+/// plan aimed at a lab token has to be declared, never inferred from the
+/// production source.
+pub const STUB_TOKEN_BALANCE_OF_SLOT: u64 = 3;
+
+/// The stub `PoolManager`'s ERC-6909 `balanceOf` mapping base
+/// (`tier3-oracle/src-harness/V4ExecutorStub.sol`: `tokenBalance`,
+/// `_unlocked`+`_pendingSettle` packed into one slot, `_syncedReserves`,
+/// `_pools`, `_touched`, and `_touchedLen` precede the claim mapping).
+///
+/// Distinct from [`degenbot_executor::POOL_MANAGER_ERC6909_BALANCE_OF_SLOT`],
+/// which is the canonical mainnet v4-core layout the production set verifies.
+pub const STUB_POOL_MANAGER_ERC6909_BALANCE_OF_SLOT: u64 = 6;
 
 /// Repo root = this crate + four up.
 fn repo_root() -> PathBuf {
@@ -250,9 +273,11 @@ impl Harness {
         };
 
         // Seed reserves: mint `r0`/`r1` of each token to the pair, then `sync()`
-        // so slot reserves equal the live balances (ADR-020 D4).
-        self.call(t0, &mint_to(pair, r0), 200_000)?;
-        self.call(t1, &mint_to(pair, r1), 200_000)?;
+        // so slot reserves equal the live balances (ADR-020 D4). Through `fund`,
+        // so a WETH reserve carries the native backing a later `withdraw` needs
+        // — pool liquidity is fixture setup, never executor capital.
+        self.fund(t0, pair, r0)?;
+        self.fund(t1, pair, r1)?;
         let _ = self.call(pair, &sync_selector(), 200_000)?;
 
         for t in [t0, t1] {
@@ -294,8 +319,10 @@ impl Harness {
         let _ = self.call(pool, &init_v3(token_a, token_b, fee), 500_000)?;
         let _ = self.call(pool, &set_v3_price(sqrt_price), 200_000)?;
         let _ = self.call(pool, &set_v3_liquidity(liquidity), 200_000)?;
-        self.call(token_a, &mint_to(pool, amt_a), 200_000)?;
-        self.call(token_b, &mint_to(pool, amt_b), 200_000)?;
+        // Pool liquidity, seeded through `fund` so a WETH side is backed by
+        // native exactly as a real deposit would be.
+        self.fund(token_a, pool, amt_a)?;
+        self.fund(token_b, pool, amt_b)?;
         for t in [token_a, token_b] {
             if !self.tokens.contains(&t) {
                 self.tokens.push(t);
@@ -341,6 +368,11 @@ impl Harness {
                 let held = native_balance_of(&mut self.evm, self.pool_manager);
                 set_native_balance(&mut self.evm, self.pool_manager, held + U256::from(amt));
             }
+            // The PM's `_fund` mints a currency to itself, so a WETH side needs
+            // the same native backing a deposit would have given it.
+            if c == self.weth {
+                self.back_weth(U256::from(amt));
+            }
         }
         for t in [c0, c1] {
             if !self.tokens.contains(&t) {
@@ -359,12 +391,16 @@ impl Harness {
         Ok(v4)
     }
 
-    /// Give `who` `amount` of `token` (mint — the harness's free liquidity).
-    /// For the native currency (`Address::ZERO`), sets the recipient's EVM
-    /// native balance instead (there is no ERC-20 to mint). Minting WETH also
-    /// credits the WETH contract the **matching native backing** — real WETH9
-    /// is always deposit-backed, and `WETH_WITHDRAW` needs the contract to hold
-    /// native to pay out (the executor can't withdraw unbacked minted WETH).
+    /// Give `who` `amount` of `token` (mint — the harness's explicit liquidity
+    /// grant, i.e. a fixture's own seed).
+    ///
+    /// This is how a test states a holding the executor starts with; no runner
+    /// entry calls it behind a test's back. For the native currency
+    /// (`Address::ZERO`), sets the recipient's EVM native balance instead (there
+    /// is no ERC-20 to mint). Minting WETH also credits the WETH contract the
+    /// **matching native backing** — real WETH9 is always deposit-backed, and
+    /// `WETH_WITHDRAW` needs the contract to hold native to pay out (the
+    /// executor can't withdraw unbacked minted WETH).
     pub fn fund(&mut self, token: Address, who: Address, amount: u128) -> Result<(), String> {
         if token == Address::ZERO {
             let held = native_balance_of(&mut self.evm, who);
@@ -374,11 +410,25 @@ impl Harness {
         self.call(token, &mint_to(who, amount), 200_000)
             .map(|_| ())?;
         if token == self.weth {
-            // Back the mint: give the WETH contract native so `withdraw` can pay.
-            let backing = native_balance_of(&mut self.evm, token);
-            set_native_balance(&mut self.evm, token, backing + U256::from(amount));
+            self.back_weth(U256::from(amount));
         }
         Ok(())
+    }
+
+    /// Credit the WETH stub `amount` of native backing for WETH it now holds
+    /// without a deposit.
+    ///
+    /// The stub pays `withdraw` out of its own native balance exactly as real
+    /// WETH9 does, so every WETH a fixture creates (a `fund` mint, a pool
+    /// reserve, or a capital plan's `balanceOf` write) is backed by the same
+    /// amount of native. Nothing is ever debited here: a clearing leaves the
+    /// backing in place rather than taking another holder's.
+    pub fn back_weth(&mut self, amount: U256) {
+        if amount.is_zero() {
+            return;
+        }
+        let backing = native_balance_of(&mut self.evm, self.weth);
+        set_native_balance(&mut self.evm, self.weth, backing + amount);
     }
 
     /// Set an account's native (ETH) balance directly (preserving its code).
@@ -478,17 +528,41 @@ impl Harness {
     /// ERC6909 WETH balance held inside the PoolManager (the `erc6909_profit`
     /// capture destination and the value `profit_mode=2` verifies).
     pub fn pm_balance_of(&mut self, account: Address, currency: Address) -> Result<U256, String> {
-        let out = self.call(
-            self.pool_manager,
-            &pm_balance_of_data(account, currency),
-            200_000,
-        )?;
+        self.erc6909_balance_of(self.pool_manager, account, currency)
+    }
+
+    /// Read an ERC-6909 claim balance on `manager` — the same
+    /// `balanceOf(address,uint256)` surface on any deployed PoolManager.
+    ///
+    /// A capital plan's claim asset names its manager, so the read follows the
+    /// asset's identity instead of assuming the harness's single deployment.
+    pub fn erc6909_balance_of(
+        &mut self,
+        manager: Address,
+        account: Address,
+        currency: Address,
+    ) -> Result<U256, String> {
+        let out = self.call(manager, &pm_balance_of_data(account, currency), 200_000)?;
         if out.len() < 32 {
             return Err(format!("PM.balanceOf returned {} bytes", out.len()));
         }
         Ok(U256::from_be_bytes::<32>(
             out.as_ref()[..32].try_into().unwrap(),
         ))
+    }
+
+    /// Read one raw storage word of `account` from the fixture DB.
+    ///
+    /// This is the slot-level fact a capital LAYOUT claims to know, read with no
+    /// contract view in between: a declaration that has drifted from the deployed
+    /// stub's own storage shows up here even while some other slot still happens
+    /// to answer a `balanceOf` call.
+    pub fn storage_word(&mut self, account: Address, slot: U256) -> Result<U256, String> {
+        self.evm
+            .engine_mut()
+            .state_mut()
+            .storage_slot_untracked(&account, &slot)
+            .map_err(|e| format!("read {account} storage slot {slot:#x}: {e:?}"))
     }
 
     /// Encode a fully-V2 path via the production entry (`encode_cmd_stream`)

@@ -29,8 +29,9 @@
 //! executed through the real executor with exact delta (ADR-029 D5).
 
 use alloy::primitives::{Address, U256};
+use degenbot_execution::CapitalRequirement;
 use degenbot_executor::composers::{ComposerInputs, EncodeOptions};
-use degenbot_simulation::harness::{assert_profitable, Harness, Hop, HopPool};
+use degenbot_simulation::harness::{assert_profitable, FixtureCapital, Harness, Hop, HopPool};
 
 fn q96_one() -> U256 {
     U256::from(1u128) << 96
@@ -1431,6 +1432,11 @@ fn v4v4_batch_executes_with_exact_delta() {
 /// broke Plan↔derive byte-parity). The unified capture-block fix removed the
 /// duplicate; this test proves the tok-terminal batch path executes and
 /// captures the t2 profit.
+///
+/// A tok-terminal stream leaves no WETH output, so it SPENDS the entry rather
+/// than flashing it: the payload is raw (its bytes carry no Plan to read an
+/// amount from), so the fixture declares the exact requirement the stream
+/// spends — the entry input — instead of a universal buffer.
 #[test]
 fn v4v4_tok_batch_executes_and_captures_tok_profit() {
     let mut h = Harness::new().unwrap();
@@ -1453,8 +1459,19 @@ fn v4v4_tok_batch_executes_and_captures_tok_profit() {
     };
     let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("derive v4_v4 tok-batch None"));
+    let capital = FixtureCapital::self_fund_declared([CapitalRequirement {
+        currency: h.weth,
+        amount: optimal_input,
+    }]);
     let result = h
-        .run_raw_payload_config(&hops, &derived, optimal_input, gas, U256::from(2u8))
+        .run_raw_payload_capital(
+            &hops,
+            &derived,
+            optimal_input,
+            gas,
+            U256::from(2u8),
+            &capital,
+        )
         .unwrap_or_else(|e| panic!("run v4_v4 tok-batch: {e}"));
     assert!(
         result.outcome.executed(2),

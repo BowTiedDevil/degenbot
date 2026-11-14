@@ -31,14 +31,14 @@
 //!   model of v4-core's `CurrencyNotSettled`); the encoder's ledger pairing rule
 //!   (TGUZCT item 4) makes this stream unrepresentable.
 
-use alloy::primitives::{keccak256, Address, U256};
+use alloy::primitives::{keccak256, U256};
 use degenbot_executor::composers::{ComposerInputs, EncodeOptions};
 use degenbot_executor::encoders::{
     enc_v4_batch, enc_v4_mint_compact, enc_v4_settle_all, enc_v4_unlock, V4BatchEntry,
 };
 use degenbot_executor::grammar_plan::{plan_to_bytes, PlanStep};
 use degenbot_executor::grammar_walker::build_walk;
-use degenbot_simulation::harness::{ExecOutcome, Harness, Hop, HopPool};
+use degenbot_simulation::harness::{ExecOutcome, FixtureCapital, Harness, Hop, HopPool};
 
 const RESERVE: u128 = 1_000_000_000_000;
 const INPUT: u128 = 100_000;
@@ -205,6 +205,11 @@ struct ProbeResult {
 }
 
 /// Run an explicit payload with a selected measured balance domain.
+///
+/// The stream is a pure-V4 capture: every input comes from the path's own
+/// PoolManager credit, so the fixture declares the PRODUCTION posture and
+/// installs nothing — an unconditional WETH/intermediate buffer is exactly what
+/// these probes must not depend on.
 fn run_raw_config(
     h: &mut Harness,
     hops: &[Hop],
@@ -214,28 +219,20 @@ fn run_raw_config(
 ) -> Result<ProbeResult, String> {
     let predicted = i128::try_from(*hop_outputs.last().unwrap_or(&INPUT)).unwrap()
         - i128::try_from(INPUT).unwrap();
-
-    h.fund(h.weth, h.executor, INPUT * 2)?;
-    for (i, hop) in hops.iter().enumerate().skip(1) {
-        if hop.src != h.weth && hop.src != Address::ZERO {
-            h.fund(hop.src, h.executor, hop_outputs[i - 1] * 2)?;
-        }
-    }
-    for hop in hops {
-        if let HopPool::V2(p) = &hop.pool {
-            h.executor_approve_pair(*p)?;
-        }
-    }
-
-    let before_weth = h.balance_of(h.weth, h.executor)?.to::<u128>();
-    let before_erc = h.pm_balance_of(h.executor, h.weth)?.to::<u128>();
-    let outcome = h.execute_payload_config(payload, GAS, config)?;
-    let after_weth = h.balance_of(h.weth, h.executor)?.to::<u128>();
-    let after_erc = h.pm_balance_of(h.executor, h.weth)?.to::<u128>();
+    let result = h
+        .run_raw_payload_capital(
+            hops,
+            payload,
+            INPUT,
+            GAS,
+            config,
+            &FixtureCapital::production(),
+        )
+        .map_err(|e| e.to_string())?;
     Ok(ProbeResult {
-        outcome,
-        weth_delta: i128::try_from(after_weth).unwrap() - i128::try_from(before_weth).unwrap(),
-        erc6909_delta: i128::try_from(after_erc).unwrap() - i128::try_from(before_erc).unwrap(),
+        outcome: result.outcome,
+        weth_delta: result.actual_weth_delta,
+        erc6909_delta: result.erc6909_delta,
         predicted,
     })
 }

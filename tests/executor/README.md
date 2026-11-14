@@ -50,6 +50,17 @@ Three execution layers deliberately answer different questions:
   `full_three_hop_matrix_executes_production_solver_amounts` test also solves
   every row through the production mixed-path solver, then executes the
   solver-selected input, output, and consumed-input vectors.
+- The same rows run under each of the three capital postures the live probe
+  offers, through the SAME fixture interface (`FixtureCapital` /
+  `ProbeCapital` / `CapitalOverridePlan`). `production` applies no override and
+  executes against exactly the holdings the fixture seeded;
+  `full_three_hop_self_fund_matrix_executes_from_declared_capital` installs the
+  entry each row's built Plan declares (`encode_cmd_stream_capital`) and clears
+  the rest; `full_three_hop_zero_balance_matrix_executes_without_token_funding`
+  clears every touched asset. No runner entry mints a universal WETH or
+  intermediate-token buffer, and each `ChainResult` carries the applied plan plus
+  exact initial/final balances for every touched native, ERC-20, and
+  PoolManager-claim asset.
 
 Run both Ape matrices serially with:
 
@@ -69,6 +80,21 @@ Run the production-solver EVM2 matrix with:
 ```bash
 just test-rust-nextest -p degenbot-simulation -E 'test(full_three_hop_matrix_executes_production_solver_amounts)'
 ```
+
+Run the self-funded and zero-balance posture matrices (plus the exact-balance
+snapshot assertions) with:
+
+```bash
+just test-rust-nextest -p degenbot-simulation -E 'test(full_three_hop_self_fund_matrix) or test(full_three_hop_zero_balance_matrix) or test(capital)'
+```
+
+Fixture capital is DECLARED, never granted: a row that needs a holding seeds it
+explicitly (`Harness::fund`) or asks for the posture that declares it. Pool
+liquidity, WETH native backing, and V2 pair approvals are fixture setup (how the
+fake pools can pay and pull), never executor capital. A raw payload's bytes
+carry no Plan to read a requirement from, so a raw `SelfFund` run must name its
+`CapitalRequirement`s (`FixtureCapital::self_fund_declared`) — the fixture
+refuses to guess an amount from the bytes or the hop list.
 
 The Rust `command_stream_byte_identity_is_pinned` test separately pins every
 permutation under 12 amount/option configurations.
@@ -255,7 +281,10 @@ capital-policy refusal — `bucket: "insolvent-zero-capital"` beside the deficit
 `asset`/`required`/`available` — never a validator panic and never an
 `encode-failed` label. The deterministic
 `full_three_hop_zero_balance_matrix_executes_without_token_funding` test proves
-all 27 profitable shapes without minting any path-token capital.
+all 27 profitable shapes with every touched native, token, and PoolManager-claim
+balance cleared to exact zero, and
+`full_three_hop_self_fund_matrix_executes_from_declared_capital` proves the same
+rows from exactly the entry capital their built Plans declare.
 
 `probe` also states the amount vector it ran: `--fixed-input WEI` (default
 `1000000000000000`) is sent as the request's `optimal_input` and recorded in the
