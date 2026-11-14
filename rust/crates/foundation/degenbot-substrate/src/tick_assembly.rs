@@ -618,10 +618,10 @@ pub fn reconcile_tracked_rows(
 ///
 /// The Db stores `liquidity_gross` as `U256` (decimal `VARCHAR(78)`); valid
 /// on-chain gross liquidity always fits in `U128` (Uniswap's
-/// `type(uint128).max` cap on `liquidity_gross`). The narrowing uses
-/// `U256::to::<U128>()` which silently truncates out-of-range values —
-/// identical to `convert_tick_map` in `bot_core::mod.rs`; a `gross > U128::MAX`
-/// row would be corrupt on-chain data, not a parse failure.
+/// `type(uint128).max` cap on `liquidity_gross`). The narrowing goes through
+/// the checked conversion `U256::to::<U128>()`, which panics on an out-of-range
+/// input; a `gross > U128::MAX` row would be corrupt on-chain data, not a parse
+/// failure.
 fn convert_liquidity_at_tick(
     tick_data: HashMap<i32, LiquidityAtTick>,
     block: u64,
