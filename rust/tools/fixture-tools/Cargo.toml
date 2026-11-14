@@ -12,11 +12,12 @@ authors.workspace = true
 [lints]
 workspace = true
 
-# Dependency shape: ONE binary -- the live updater cassette recorder -- is a DEFAULT
-# target of this package (it reads no statement ledger, so no feature may hide it),
-# and the four SQL-ledger binaries need those same crates. Cargo has no per-target
-# dependency selection, so every crate the default binary links must be a plain edge
-# here; the feature cannot narrow what the default target already needs.
+# Dependency shape: TWO binaries -- the live updater cassette recorder and the Python
+# oracle corpus recorder -- are DEFAULT targets of this package (neither reads the
+# statement ledger, so no feature may hide them), and the four SQL-ledger binaries need
+# those same crates. Cargo has no per-target dependency selection, so every crate the
+# default binaries link must be a plain edge here; the feature cannot narrow what a
+# default target already needs.
 #
 # Consequence, stated plainly: the default tree is NO LONGER the package alone. A
 # default `cargo check -p degenbot-fixture-tools --all-targets` links the facade and
@@ -26,12 +27,13 @@ workspace = true
 # crate may depend on a tool.
 #
 # What each edge is for: `alloy` builds the scenario primitives/transports the
-# generators drive AND the recorder's `Address`/`keccak256` handling, `rusqlite`
+# generators drive AND the recorders' `Address`/`keccak256` handling, `rusqlite`
 # seeds the throwaway harness DB each recorded chunk runs against, `tempfile` owns
 # those throwaway homes, `serde_json` serializes the seed manifest the live span
 # recorders write beside each cassette (its KEY ORDER is part of the committed
 # bytes, so the edge carries `preserve_order` exactly as the facade's does) and the
-# recorder's probe payload, and `tokio` is the recorder's `#[tokio::main]` entry.
+# recorders' JSON documents, `serde` carries the corpus recorder's `Serialize`
+# derive, and `tokio` is the recorders' `#[tokio::main]` entry.
 [dependencies]
 # The umbrella facade owns the fixture schema and the recorders that read it.
 # It also re-exports the three crates the generators import (`degenbot::db`,
@@ -52,8 +54,13 @@ tempfile = { version = "^3.27" }
 # committed artifacts already carry instead of sorting it into a `BTreeMap` order.
 serde_json = { version = "^1.0", features = ["preserve_order"] }
 
-# The updater cassette recorder's async entry point (`#[tokio::main]`), with the same
-# features the facade's dev-target graph carried for it. Nothing else here needs it.
+# The Python oracle corpus recorder's `#[derive(Serialize)]` corpus document. Only the
+# derive is used (its field order IS the committed JSON byte order), and it is the one
+# direct edge the facade example had that this package did not.
+serde = { version = "^1.0", features = ["derive"] }
+
+# The recorders' async entry point (`#[tokio::main]`), with the same features the
+# facade's dev-target graph carried for it. Nothing else here needs it.
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros"] }
 
 [features]
@@ -78,7 +85,7 @@ default = []
 # lane by exactly the ledger feature.
 sql-ledger = ["degenbot/sql-ledger"]
 
-# The five programs this package carries, split by whether they touch the
+# The six programs this package carries, split by whether they touch the
 # statement ledger.
 #
 # FOUR replay their SQL goldens through the statement-ledger wrapper, hence the
@@ -110,7 +117,7 @@ name = "generate_aave_config_windows"
 path = "src/bin/generate_aave_config_windows/main.rs"
 required-features = ["sql-ledger"]
 
-# The ONE live updater cassette recorder, and the exception to the rule above: it
+# The live updater cassette recorder, and the exception to the rule above: it
 # replays nothing through the statement ledger (its `--check` arm re-serializes each
 # cassette through the recorder's canonical writer and re-checks the entry digests,
 # all offline), so it carries NO `required-features` and no feature lane can hide it.
@@ -122,3 +129,14 @@ required-features = ["sql-ledger"]
 [[bin]]
 name = "record_updater_cassette"
 path = "src/bin/record_updater_cassette/main.rs"
+
+# The Python oracle corpus recorder: the other default-features target on the same
+# rule -- it opens no statement ledger and no operator DB, so no feature lane may hide
+# it. Both of its arms need a node that serves the pinned state (there is no offline
+# arm): `--check` re-records every scenario twice and compares the bytes with the corpus
+# on disk. The argv surface gained the shared `--fixtures-home` override in place of the
+# old `--root` anchor; `--scenario`, `--check`, the three repeatable node flags, and
+# `--pace-ms` are unchanged.
+[[bin]]
+name = "record_py_oracle_corpus"
+path = "src/bin/record_py_oracle_corpus/main.rs"

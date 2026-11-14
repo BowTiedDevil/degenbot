@@ -5,7 +5,8 @@ the per-test golden ints under ``tests/golden/data`` (what the parity tests'
 replay asserts against) and, for the same surfaces, the per-block
 ``OfflineProvider`` corpus under ``tests/fixtures/chain_data``
 (``py_oracle_<scenario>_block<N>.json``, recorded by the
-``record_py_oracle_corpus`` example through the recording transport). This
+``record_py_oracle_corpus`` fixture-tools binary through the recording
+transport). This
 module is the drift gate between the two, run fully offline: every recorded
 answer must decode back to the exact golden int (or the exact recorded
 revert) through the real ``OfflineProvider`` runtime, and the recorded call
@@ -100,7 +101,8 @@ _PENDING_CORPUS_REASON = (
     "state (camelot at block 477785000: the reachable publicnode endpoint "
     "rejects archive state at get_code with 'Archive requests require a "
     "personal token'; base: mainnet.base.org rate-limits bursty recording). "
-    "Record with the record_py_oracle_corpus example once an endpoint does."
+    "Record with the record_py_oracle_corpus fixture-tools binary once an "
+    "endpoint does."
 )
 
 

@@ -159,8 +159,8 @@ def test_recorder_check_matches_the_committed_corpus(
         "--manifest-path",
         "rust/Cargo.toml",
         "-p",
-        "degenbot",
-        "--example",
+        "degenbot-fixture-tools",
+        "--bin",
         "record_py_oracle_corpus",
         "--",
     ]

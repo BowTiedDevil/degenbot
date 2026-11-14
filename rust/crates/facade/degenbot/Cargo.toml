@@ -153,6 +153,22 @@ required-features = ["sql-ledger"]
 # are unchanged; its usage block carries the current invocation. The example file is
 # gone with the move, so the two dev-dependency edges below are the replay bench's
 # alone.
+#
+# The Python oracle corpus recorder (`record_py_oracle_corpus`) used to live here as a
+# default-features example too -- it reads no statement ledger, so it never carried a
+# feature requirement. It is fixture tooling for the fork-bound parity tests rather than
+# a consumer starting point, so the same migration moved it into
+# `rust/tools/fixture-tools/src/bin/record_py_oracle_corpus/main.rs` as a second
+# `[[bin]]` with NO `required-features` (it opens no operator DB either), which
+# `just check-dev-tools default` builds. Its scenario wiring, committed golden-key
+# derivation, pinned blocks and addresses, wire-answer projection (revert-as-`null`),
+# two-pass byte-identity gate, ordered endpoint pools with bounded rotation, `--check`
+# arm, node override flags, and per-chain output paths travelled with the source; the
+# invocation and the path anchor changed (the package's shared `paths` resolver replaces
+# this crate's manifest-relative arithmetic, and `--fixtures-home` replaces `--root`).
+# Its `serde` derive edge was the one direct dependency the tool package lacked, so it
+# moved with it. The remaining dev-dependency edges below belong to this crate's tests
+# and its two retained examples.
 
 [dev-dependencies]
 

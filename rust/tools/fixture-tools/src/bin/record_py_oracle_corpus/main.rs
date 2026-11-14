@@ -26,19 +26,50 @@
 //! requires the two passes byte-identical; `--check` additionally requires
 //! byte-identity with the corpus on disk (exit 1 on any drift).
 //!
+//! # Home
+//!
+//! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in the
+//! facade's `examples/`: it is fixture tooling, not a consumer starting point (the epic's
+//! taxonomy). Nothing about the recording changed with that move - the scenario wiring,
+//! the committed golden-key derivation, every block and address pin, the wire-answer
+//! projection (a revert at the pin still stores `null`), the two-pass byte-identity gate,
+//! the ordered endpoint pools with bounded rotation, and the per-chain output paths all
+//! travelled with the source. It needs NO feature lane: it never reads the statement
+//! ledger, so it builds under this package's default features and
+//! `just check-dev-tools default` is the lane that builds it.
+//!
+//! What the move did force is the path anchor. The old source resolved both homes from
+//! `CARGO_MANIFEST_DIR`'s ancestors, which names a different directory from
+//! `rust/tools/fixture-tools`, so both are now resolved once - before the first recording
+//! pass - through this package's shared path support
+//! (`degenbot_fixture_tools::paths`): the fixture home from the repository root's own
+//! markers (default `tests/fixtures`, so `<home>/chain_data` is exactly the pre-move
+//! `tests/fixtures/chain_data`), and the committed golden-key sources from the repository
+//! root. `--fixtures-home <dir>` re-points the fixture home - the recordings, and the
+//! pool cassettes the golden keys resolve through - at a copy, which is how the drift
+//! gate's red path runs without touching the committed corpus; the golden sources are
+//! repository INPUTS and are never re-pointed. The old `--root` flag is gone: it was the
+//! single-anchor override, and `--fixtures-home` replaces it.
+//!
 //! Usage:
 //!
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-//!         --example record_py_oracle_corpus -- --scenario uniswap_v3_quoter
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --bin record_py_oracle_corpus \
+//!         -- --scenario uniswap_v3_quoter
 //!
 //!     # Re-record and require byte-identity with the corpus on disk:
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-//!         --example record_py_oracle_corpus -- --check \
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --bin record_py_oracle_corpus -- --check \
 //!         --scenario uniswap_v3_quoter --scenario uniswap_v4_quoter
 //!
 //!     # All scenarios (omit --scenario):
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-//!         --example record_py_oracle_corpus
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --bin record_py_oracle_corpus
+//!
+//!     # Drift gate against a COPIED corpus (never the committed one):
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --bin record_py_oracle_corpus -- --check \
+//!         --fixtures-home <copied tests/fixtures>
 //!
 //! Node resolution mirrors the parity tests: the ethereum scenarios read
 //! `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` (the `tests/conftest.py` name) and the
@@ -77,6 +108,7 @@ use degenbot::rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteResponse, CassetteSpan, RecordingTransport,
 };
 use degenbot::rpc::provider::AlloyProvider;
+use degenbot_fixture_tools::paths;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -131,8 +163,14 @@ const MIN_SQRT_RATIO: U256 = U256::from_limbs([0x1_0002_76a3, 0, 0, 0]);
 const MAX_SQRT_RATIO: U256 =
     U256::from_limbs([0x5d95_1d52_6398_8d26, 0xefd1_fc6a_5064_8849, 0xfffd_8963, 0]);
 
+/// The committed golden-key sources, relative to the resolved REPOSITORY ROOT. They are
+/// inputs: `--fixtures-home` never re-points them.
 const GOLDEN_ROOT: &str = "tests/golden/data/tests";
-const CHAIN_DATA_ROOT: &str = "tests/fixtures/chain_data";
+/// The per-chain corpus home, relative to the resolved FIXTURE home. The default fixture
+/// home is `tests/fixtures`, so this is the pre-move `tests/fixtures/chain_data` - the
+/// recordings are written here and the pool cassettes the golden keys resolve through are
+/// read here, which is why one override re-points both.
+const CHAIN_DATA_ROOT: &str = "chain_data";
 
 const BALANCER_STABLE_CASSETTES: &[&str] = &[
     "balancer_stable_wsteth_weth.json",
@@ -188,7 +226,8 @@ struct Scenario {
     /// repo root.
     golden: String,
     /// Committed pool cassettes the golden keys' symbols and indices resolve
-    /// through, relative to the repo root.
+    /// through, relative to the resolved FIXTURE home (`--fixtures-home`
+    /// re-points them at a copy of the tree).
     cassettes: Vec<String>,
     /// Contracts whose runtime code joins the corpus `code` map.
     code_targets: Vec<String>,
@@ -633,14 +672,12 @@ fn scenario_target(raw: &str) -> Result<Address, String> {
 
 /// The cassettes a scenario's golden keys resolve through, keyed by the
 /// lowercase pool address each cassette carries (the multiblock metapool
-/// cassette nests its address under `immutable`).
-fn load_cassettes(
-    repo_root: &Path,
-    scenario: &Scenario,
-) -> Result<BTreeMap<String, Value>, String> {
+/// cassette nests its address under `immutable`). Each path is relative to
+/// the resolved FIXTURE home, so a `--fixtures-home` copy re-points it.
+fn load_cassettes(homes: &Homes, scenario: &Scenario) -> Result<BTreeMap<String, Value>, String> {
     let mut map = BTreeMap::new();
     for rel in &scenario.cassettes {
-        let raw = std::fs::read_to_string(repo_root.join(rel))
+        let raw = std::fs::read_to_string(homes.fixtures_home.join(rel))
             .map_err(|e| format!("read cassette {rel}: {e}"))?;
         let cassette: Value =
             serde_json::from_str(&raw).map_err(|e| format!("parse cassette {rel}: {e}"))?;
@@ -1047,7 +1084,7 @@ fn derive_call(
 fn derive_calls(
     scenario: &Scenario,
     golden_path: &Path,
-    repo_root: &Path,
+    homes: &Homes,
 ) -> Result<Vec<DerivedCall>, String> {
     let raw = std::fs::read_to_string(golden_path)
         .map_err(|e| format!("read golden {}: {e}", golden_path.display()))?;
@@ -1065,7 +1102,7 @@ fn derive_calls(
             scenario.golden_block
         ));
     }
-    let cassettes = load_cassettes(repo_root, scenario)?;
+    let cassettes = load_cassettes(homes, scenario)?;
     let entries = golden["entries"].as_object().ok_or("golden entries")?;
     let mut calls = Vec::with_capacity(entries.len());
     for key in entries.keys() {
@@ -1218,9 +1255,9 @@ fn project_corpus(
     })
 }
 
-fn corpus_path(repo_root: &Path, scenario: &Scenario) -> PathBuf {
-    repo_root
-        .join("tests/fixtures/chain_data")
+fn corpus_path(homes: &Homes, scenario: &Scenario) -> PathBuf {
+    homes
+        .chain_data()
         .join(scenario.chain_id.to_string())
         .join(format!(
             "py_oracle_{}_block{}.json",
@@ -1243,7 +1280,7 @@ fn now_secs() -> Result<u64, String> {
 async fn record_scenario(
     scenario: &Scenario,
     node: &str,
-    repo_root: &Path,
+    homes: &Homes,
     check: bool,
     pace_ms: u64,
 ) -> Result<(), ScenarioFailure> {
@@ -1263,9 +1300,8 @@ async fn record_scenario(
         )));
     }
 
-    let golden_path = repo_root.join(&scenario.golden);
-    let calls =
-        derive_calls(scenario, &golden_path, repo_root).map_err(ScenarioFailure::terminal)?;
+    let golden_path = homes.repo_root.join(&scenario.golden);
+    let calls = derive_calls(scenario, &golden_path, homes).map_err(ScenarioFailure::terminal)?;
 
     let mut pass_bytes: Option<Vec<u8>> = None;
     let mut report = (0usize, 0usize, 0u64);
@@ -1358,7 +1394,7 @@ async fn record_scenario(
 
     let bytes = pass_bytes.expect("two passes ran");
     let (call_count, code_count, timestamp) = report;
-    let out_path = corpus_path(repo_root, scenario);
+    let out_path = corpus_path(homes, scenario);
     if check {
         let disk = std::fs::read(&out_path).map_err(|e| {
             ScenarioFailure::terminal(format!(
@@ -1482,7 +1518,7 @@ fn single_line(message: &str) -> String {
 async fn record_scenario_pool(
     scenario: &Scenario,
     pool: &[String],
-    repo_root: &Path,
+    homes: &Homes,
     check: bool,
     pace_ms: u64,
 ) -> Result<(), String> {
@@ -1492,7 +1528,7 @@ async fn record_scenario_pool(
         // (the original semantics) retries its only endpoint, exactly the
         // record_errors policy's same-endpoint shape.
         let node = &pool[attempt % pool.len()];
-        match record_scenario(scenario, node, repo_root, check, pace_ms).await {
+        match record_scenario(scenario, node, homes, check, pace_ms).await {
             Ok(()) => return Ok(()),
             Err(failure) => {
                 attempt += 1;
@@ -1513,10 +1549,37 @@ async fn record_scenario_pool(
     }
 }
 
+/// The two homes one run reads and writes, resolved once before the first pass.
+struct Homes {
+    /// `tests/fixtures` - or the `--fixtures-home` override. The recordings are written
+    /// under `<home>/chain_data`, and the pool cassettes the golden keys resolve through
+    /// are read from there, so one override re-points both.
+    fixtures_home: PathBuf,
+    /// The repository root: the committed golden-key sources are INPUTS read from here
+    /// and are never re-pointed by an override.
+    repo_root: PathBuf,
+}
+
+impl Homes {
+    /// Resolve both homes through this package's shared path support.
+    fn resolve(raw_args: &[String]) -> Result<Self, String> {
+        Ok(Self {
+            fixtures_home: paths::fixtures_home_from_args(raw_args)?,
+            repo_root: paths::repo_root()?,
+        })
+    }
+
+    /// `<fixtures home>/chain_data` - the per-chain corpus home.
+    fn chain_data(&self) -> PathBuf {
+        self.fixtures_home.join(CHAIN_DATA_ROOT)
+    }
+}
+
 struct Args {
     check: bool,
     scenarios: Vec<String>,
-    root: Option<PathBuf>,
+    /// Resolved before anything is recorded (see [`Homes::resolve`]).
+    homes: Homes,
     /// Repeated node flags form their tier's ordered endpoint pool (see
     /// [`pool_for`]); empty falls back to the conftest env var or the
     /// historical keyless default as a one-endpoint pool.
@@ -1526,36 +1589,44 @@ struct Args {
     pace_ms: u64,
 }
 
-fn parse_args() -> Result<Args, String> {
+fn parse_args(raw_args: &[String]) -> Result<Args, String> {
     let mut args = Args {
         check: false,
         scenarios: Vec::new(),
-        root: None,
+        homes: Homes::resolve(raw_args)?,
         ethereum_nodes: Vec::new(),
         base_nodes: Vec::new(),
         arbitrum_nodes: Vec::new(),
         pace_ms: 0,
     };
-    let mut flags = std::env::args().skip(1);
+    let mut flags = raw_args.iter();
     while let Some(flag) = flags.next() {
         match flag.as_str() {
             "--check" => args.check = true,
             "--scenario" => {
                 let name = flags.next().ok_or("--scenario needs a name")?;
-                args.scenarios.push(name);
+                args.scenarios.push(name.clone());
             }
-            "--root" => args.root = Some(PathBuf::from(flags.next().ok_or("--root needs a path")?)),
+            // Resolved by [`Homes::resolve`] before this loop's flags are acted on; the
+            // value is consumed here so it is not read as an unknown flag. The joined
+            // `--fixtures-home=<dir>` spelling is accepted by the same resolver.
+            other if other == paths::FIXTURES_HOME_FLAG => {
+                flags
+                    .next()
+                    .ok_or("--fixtures-home needs a directory argument")?;
+            }
+            other if other.starts_with(&format!("{}=", paths::FIXTURES_HOME_FLAG)) => {}
             "--ethereum-node" => {
                 args.ethereum_nodes
-                    .push(flags.next().ok_or("--ethereum-node needs a URL")?);
+                    .push(flags.next().ok_or("--ethereum-node needs a URL")?.clone());
             }
             "--base-node" => {
                 args.base_nodes
-                    .push(flags.next().ok_or("--base-node needs a URL")?);
+                    .push(flags.next().ok_or("--base-node needs a URL")?.clone());
             }
             "--arbitrum-node" => {
                 args.arbitrum_nodes
-                    .push(flags.next().ok_or("--arbitrum-node needs a URL")?);
+                    .push(flags.next().ok_or("--arbitrum-node needs a URL")?.clone());
             }
             "--pace-ms" => {
                 args.pace_ms = flags
@@ -1607,14 +1678,6 @@ fn pool_for(tier: NodeTier, args: &Args) -> Result<Vec<String>, String> {
 }
 
 async fn run(args: Args) -> Result<(), String> {
-    let repo_root = match &args.root {
-        Some(root) => root.clone(),
-        None => Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(4)
-            .expect("example lives four levels below the repo root")
-            .to_path_buf(),
-    };
     let wired = all_scenarios();
     let selected: Vec<Scenario> = if args.scenarios.is_empty() {
         wired.clone()
@@ -1642,7 +1705,7 @@ async fn run(args: Args) -> Result<(), String> {
     let mut failures = 0usize;
     for scenario in &selected {
         let pool = pool_for(scenario.node, &args)?;
-        match record_scenario_pool(scenario, &pool, &repo_root, args.check, args.pace_ms).await {
+        match record_scenario_pool(scenario, &pool, &args.homes, args.check, args.pace_ms).await {
             Ok(()) => {}
             Err(msg) => {
                 eprintln!("[fail] {}: {msg}", scenario.name);
@@ -1661,7 +1724,8 @@ async fn run(args: Args) -> Result<(), String> {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match parse_args() {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    match parse_args(&raw_args) {
         Ok(args) => match run(args).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(msg) => {
@@ -1673,5 +1737,199 @@ async fn main() -> ExitCode {
             eprintln!("error: {msg}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{all_scenarios, corpus_path, load_cassettes, Homes, CHAIN_DATA_ROOT, GOLDEN_ROOT};
+    use degenbot_fixture_tools::paths;
+
+    /// The committed corpus home, spelled out rather than composed from the constant the
+    /// production code also reads: the assertion is about the ANCHOR the paths land on.
+    const EXPECTED_CHAIN_DATA_HOME: &str = "tests/fixtures/chain_data";
+
+    /// The homes a real invocation resolves (no override), i.e. the default anchor.
+    fn default_homes() -> Homes {
+        Homes::resolve(&[]).expect("default homes resolve from the package's manifest directory")
+    }
+
+    /// The default anchor: the repository root the shared resolver reports, and the
+    /// `tests/fixtures` home hanging off it. This is the node-free half of the moved
+    /// composition - a wrong anchor names a directory that does exist, so only an explicit
+    /// assertion catches it.
+    #[test]
+    fn default_homes_are_the_repository_root_and_its_fixtures_home() {
+        let homes = default_homes();
+
+        for marker in paths::REPO_ROOT_MARKERS {
+            assert!(
+                homes.repo_root.join(marker).is_file(),
+                "resolved root {} carries no {marker}",
+                homes.repo_root.display()
+            );
+        }
+        // The root is ABOVE this package: `rust/tools/fixture-tools` is beneath it, which is
+        // exactly what the facade's `ancestors().nth(4)` arithmetic stopped naming here.
+        assert!(homes
+            .repo_root
+            .join("rust/tools/fixture-tools/Cargo.toml")
+            .is_file());
+
+        // Both halves come from the shared resolver, and the corpus home is the pre-move path.
+        assert_eq!(homes.repo_root, paths::repo_root().expect("repo root"));
+        assert_eq!(
+            homes.fixtures_home,
+            paths::fixtures_home().expect("fixture home")
+        );
+        assert_eq!(
+            homes.fixtures_home,
+            homes.repo_root.join(paths::FIXTURES_HOME)
+        );
+        assert_eq!(homes.fixtures_home, homes.repo_root.join("tests/fixtures"));
+        assert_eq!(
+            homes.chain_data(),
+            homes.repo_root.join(EXPECTED_CHAIN_DATA_HOME)
+        );
+        assert!(homes.chain_data().is_dir());
+        assert!(homes.repo_root.join(GOLDEN_ROOT).is_dir());
+    }
+
+    /// Every wired scenario's INPUT paths exist under the resolved homes: the golden file
+    /// beneath the repository root and each resolved cassette beneath the fixture home. A
+    /// wrong anchor, a missing `chain_data` prefix, or a cassette renamed in the corpus fails
+    /// here for every family, with no node involved.
+    #[test]
+    fn every_scenario_input_exists_under_the_resolved_homes() {
+        let homes = default_homes();
+        let scenarios = all_scenarios();
+        assert!(!scenarios.is_empty(), "no scenario is wired");
+
+        for scenario in &scenarios {
+            assert!(
+                scenario.golden.starts_with(GOLDEN_ROOT),
+                "{}: golden {} is not anchored at {GOLDEN_ROOT}",
+                scenario.name,
+                scenario.golden
+            );
+            let golden = homes.repo_root.join(&scenario.golden);
+            assert!(
+                golden.is_file(),
+                "{}: golden input {} is missing",
+                scenario.name,
+                golden.display()
+            );
+
+            for relative in &scenario.cassettes {
+                assert!(
+                    relative.starts_with(&format!("{CHAIN_DATA_ROOT}/")),
+                    "{}: cassette {relative} is not anchored at {CHAIN_DATA_ROOT}/",
+                    scenario.name
+                );
+                let cassette = homes.fixtures_home.join(relative);
+                assert!(
+                    cassette.is_file(),
+                    "{}: cassette input {} is missing",
+                    scenario.name,
+                    cassette.display()
+                );
+            }
+        }
+    }
+
+    /// The corpus output path keeps its per-chain shape for every scenario. Path shape only:
+    /// some captures are still pending, so the corpus file itself is not required to exist.
+    #[test]
+    fn every_scenario_corpus_path_keeps_the_per_chain_shape() {
+        let homes = default_homes();
+        let chain_data_home = homes.repo_root.join(EXPECTED_CHAIN_DATA_HOME);
+
+        for scenario in all_scenarios() {
+            let expected = chain_data_home
+                .join(scenario.chain_id.to_string())
+                .join(format!(
+                    "py_oracle_{}_block{}.json",
+                    scenario.name, scenario.block
+                ));
+            assert_eq!(
+                corpus_path(&homes, &scenario),
+                expected,
+                "{}: corpus path moved off the per-chain shape",
+                scenario.name
+            );
+        }
+    }
+
+    /// `--fixtures-home <dir>` re-points the cassette and corpus paths beneath that home and
+    /// leaves the golden sources beneath the repository root. The copied cassettes are read
+    /// from the default home into a throwaway tree: nothing under `tests/fixtures` is written.
+    #[test]
+    fn fixtures_home_override_repoints_cassettes_and_corpus_but_not_goldens() {
+        let defaults = default_homes();
+        let scratch = tempfile::tempdir().expect("throwaway fixture home");
+        let override_home = scratch.path().join("fixtures-copy");
+
+        let raw_args = vec![
+            paths::FIXTURES_HOME_FLAG.to_string(),
+            override_home.display().to_string(),
+        ];
+        let homes = Homes::resolve(&raw_args).expect("override homes");
+
+        // The override re-points the fixture home only; the root is unchanged.
+        assert_eq!(homes.fixtures_home, override_home);
+        assert_eq!(homes.repo_root, defaults.repo_root);
+        assert_eq!(homes.chain_data(), override_home.join(CHAIN_DATA_ROOT));
+
+        let scenario = all_scenarios()
+            .into_iter()
+            .find(|scenario| !scenario.cassettes.is_empty())
+            .expect("a scenario resolves its golden keys through committed cassettes");
+
+        // Goldens stay repository INPUTS: same paths, under the unchanged root.
+        let golden = homes.repo_root.join(&scenario.golden);
+        assert_eq!(golden, defaults.repo_root.join(&scenario.golden));
+        assert!(golden.is_file());
+
+        // Every cassette path moves beneath the override home; seed the copy from the
+        // committed tree so the load below proves the anchor moved with the bytes intact.
+        for relative in &scenario.cassettes {
+            let target = homes.fixtures_home.join(relative);
+            let source = defaults.fixtures_home.join(relative);
+            assert!(
+                !target.exists(),
+                "override home already holds {}",
+                target.display()
+            );
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).expect("copied cassette directory");
+            }
+            std::fs::copy(&source, &target).expect("copied cassette");
+        }
+        let copied = load_cassettes(&homes, &scenario).expect("override cassettes load");
+        let committed = load_cassettes(&defaults, &scenario).expect("default cassettes load");
+        assert!(!copied.is_empty(), "{}: no cassette loaded", scenario.name);
+        assert_eq!(
+            copied, committed,
+            "{}: the override read different bytes",
+            scenario.name
+        );
+
+        // The write path follows the same override: same chain directory, same file name.
+        let corpus = corpus_path(&homes, &scenario);
+        assert_eq!(
+            corpus,
+            override_home
+                .join(CHAIN_DATA_ROOT)
+                .join(scenario.chain_id.to_string())
+                .join(format!(
+                    "py_oracle_{}_block{}.json",
+                    scenario.name, scenario.block
+                ))
+        );
+        assert!(
+            !corpus.exists(),
+            "{} exists - the fixture corpus is not written by this test",
+            corpus.display()
+        );
     }
 }

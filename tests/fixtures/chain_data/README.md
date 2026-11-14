@@ -52,8 +52,8 @@ shape and its agreement with the parity goldens.
 Machine-emitted only — never hand-edit the JSON:
 
 ```sh
-cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-    --example record_py_oracle_corpus \
+cargo run --locked --manifest-path rust/Cargo.toml \
+    -p degenbot-fixture-tools --bin record_py_oracle_corpus \
     --scenario <name> ... \
     --ethereum-node <archive-url> [--ethereum-node <fallback-url> ...] \
     --base-node <archive-url> [--base-node <fallback-url> ...] \
@@ -64,7 +64,12 @@ cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
 
 The recorder records every scenario twice and requires the two passes
 byte-identical; `--check` additionally requires byte-identity with the
-corpora on disk (exit 1 on drift). Endpoint notes:
+corpora on disk (exit 1 on drift). The recorder is a `degenbot-fixture-tools`
+binary (it moved out of the facade's `examples/`, and its argv is otherwise
+unchanged): both the recordings and the pool cassettes the golden keys read
+are resolved from the repository root's markers, under this file's own home.
+`--fixtures-home <dir>` re-points that home at a copy, which is how the drift
+gate's red path is shown without touching the committed corpus. Endpoint notes:
 
 - Ethereum and Base scenarios need an endpoint that serves archive state at
   the parity pins (publicnode tiers answer archive requests with "Archive

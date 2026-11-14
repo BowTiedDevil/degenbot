@@ -64,7 +64,7 @@ raise no new question: the exemption is about where the write open lands, not
 
 about which program makes it.
 
-The boundary is the rule, not a description of today's five programs: **every
+The boundary is the rule, not a description of today's six programs: **every
 write open in `degenbot-fixture-tools` targets a throwaway harness DB under a
 `TempDir`.** The artifacts those programs produce are written by ordinary
 `fs::write` into the corpus homes, and `--check` writes nothing at all, so the
@@ -74,6 +74,13 @@ production write path and needs its own D2 decision. The four shells named above
 remain the only crates that may write an operator DB, and this entry exempts no
 other tool package: a later `src/bin/` program in `degenbot-solver-lab` or
 `degenbot-engine-lab` must earn its own row.
+
+The sixth program in the package, the Python oracle corpus recorder
+(`record_py_oracle_corpus`, moved out of the facade's `examples/`), opens no
+database at all — neither read nor write. It records RPC answers into JSON
+corpus files with `fs::write`, so it neither needs nor receives a place in the
+fence, and its arrival widens nothing: the exemption still covers throwaway
+harness DBs only.
 
 **D3 (binding #2, restated) — Every read connection sets `PRAGMA query_only=on`.**
 `DegenbotDb::open` / `open_in_memory` set it after the schema step (the DDL and
@@ -125,7 +132,7 @@ guards only the swap.
   turn `writer` on, and every other crate compiles against the read-only
   `degenbot-db` surface. `degenbot-fixture-tools` (D2's addendum) is the one
   writer-enabled package outside that set. It is not part of a default
-  workspace build (it is absent from `default-members`). Five programs live there
+  workspace build (it is absent from `default-members`). Six programs live there
   as `[[bin]]` targets, and the lane that builds each is the feature it needs:
   four — the two node-free capture generators and the two live span recorders —
   replay their SQL goldens, so they carry
@@ -136,7 +143,11 @@ guards only the swap.
   `just check-dev-tools default` builds it. Its write opens are the same
   temporary-harness-only kind: one `DegenbotDb::open_for_writes` per recorded
   chunk (the `--verify` pool arm and the aave-run arm, each on its own
-  `TempDir`), and its `--check` arm writes nothing.
+  `TempDir`), and its `--check` arm writes nothing. The sixth, the Python oracle
+  corpus recorder `record_py_oracle_corpus`, opens no DB of any kind — it opens
+  no operator DB, and it opens no harness DB either: its only writes are the
+  JSON corpus files, so D2's subject (who may open the operator's database for
+  writing) is not engaged by its arrival.
 - The fixture slice is recognition, not a new write path. Those programs
   always opened throwaway harness DBs for writing; while they were facade
   examples the fence never asked the question, and the relocation into

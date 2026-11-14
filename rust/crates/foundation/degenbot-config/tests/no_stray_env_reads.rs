@@ -126,6 +126,22 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "tools/fixture-tools/src/bin/generate_aave_config_windows/main.rs",
             &["DEGENBOT_RPC_HTTP_CHAINID_1"][..],
         );
+
+        // The Python oracle corpus recorder, same class and same cause: leaving
+        // `examples/` (skipped as a test surface) exposed its pre-existing endpoint
+        // fallback to the production-source scan. Both reads are the recorder's
+        // documented invocation default, consulted only when that tier's repeatable
+        // `--ethereum-node` / `--base-node` flag is absent, and the base read keeps the
+        // keyless endpoint the aerodrome/pancakeswap parity tests fork. Enumerated here
+        // rather than routed through the loader: it is a standalone offline tool's shell
+        // contract, and it opens no operator DB and reads no typed config key.
+        m.insert(
+            "tools/fixture-tools/src/bin/record_py_oracle_corpus/main.rs",
+            &[
+                "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+                "TEST_BASE_ARCHIVE_NODE_HTTP_URI",
+            ][..],
+        );
         m.insert(
             // (3) stance: the reset-lock flock test spawns a child test
             // binary that takes the real lock before the parent kills it —
