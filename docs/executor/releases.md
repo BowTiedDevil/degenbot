@@ -126,13 +126,19 @@ rejection is an error value — never a default, never a panic:
 |-------|--------|
 | empty return data (absent getter) | `MetadataDecodeError::PartialAnswers` |
 | one ABI word ≠ 32 bytes | `MetadataDecodeError::Length { expected, actual }` |
-| `uint32` word with non-zero high bytes | `MetadataDecodeError::OutOfRange` |
+| `uint32` word with non-zero high bytes, refused by Alloy's validating decoder | `MetadataDecodeError::OutOfRange` |
 | zero major or zero encoding version | `MetadataDecodeError::Zero` |
 | `release_id` word that is not a NUL-padded printable-ASCII tag | `MetadataDecodeError::MalformedReleaseId` |
 | `capabilities_hash()` returning 31 or 33 bytes | `MetadataDecodeError::Length { getter: "capabilities_hash", expected: 32 }` |
 | `capabilities_hash()` returning 32 zero bytes | `MetadataDecodeError::Zero { getter: "capabilities_hash" }` — the ID list is never empty, so no valid commitment is zero |
 | only some getters answered | `MetadataDecodeError::PartialAnswers { answered, absent }` — `absent` names the silent getters |
 | a well-formed word that names a different list | not a decode error: `ReleaseMismatch::CapabilityCommitment` at binding |
+
+The two `uint32` getters split length from content: the decoder owns the
+exact-one-word rule, and Alloy's validating `uint32` decoder owns the canonical
+word, so a non-canonical high byte is refused by the type check rather than by a
+decoder-local bit test. A canonical zero is in range and is classified as
+`Zero` here, which keeps "names nothing" distinct from "does not fit the type".
 
 Every 32-byte word is syntactically a commitment, so there is no range check and
 no high-byte check: the decoder separates **syntax** from **agreement**, and

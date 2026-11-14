@@ -55,6 +55,7 @@
 //! [`LegacyReleaseMapping`], and otherwise reports [`DeploymentRelease::Unknown`].
 
 use alloy::primitives::{keccak256, Address, U256};
+use alloy::sol_types::SolValue;
 use serde::Deserialize;
 
 /// The current release's ASCII tag (`cmd_executor/2`), as declared on-chain.
@@ -648,8 +649,8 @@ pub fn decode_release_id(data: &[u8]) -> Result<ReleaseId, MetadataDecodeError> 
 /// # Errors
 ///
 /// Returns [`MetadataDecodeError::Length`] unless the data is exactly one ABI
-/// word, [`MetadataDecodeError::OutOfRange`] when the word's high bytes are
-/// non-zero, and [`MetadataDecodeError::Zero`] for a zero major.
+/// word, [`MetadataDecodeError::OutOfRange`] when Alloy's validating `uint32`
+/// decoder refuses the word, and [`MetadataDecodeError::Zero`] for a zero major.
 pub fn decode_protocol_major(data: &[u8]) -> Result<ProtocolMajor, MetadataDecodeError> {
     let raw = abi_u32("protocol_major", data)?;
     if raw == 0 {
@@ -665,8 +666,8 @@ pub fn decode_protocol_major(data: &[u8]) -> Result<ProtocolMajor, MetadataDecod
 /// # Errors
 ///
 /// Returns [`MetadataDecodeError::Length`] unless the data is exactly one ABI
-/// word, [`MetadataDecodeError::OutOfRange`] when the word's high bytes are
-/// non-zero, and [`MetadataDecodeError::Zero`] for version zero.
+/// word, [`MetadataDecodeError::OutOfRange`] when Alloy's validating `uint32`
+/// decoder refuses the word, and [`MetadataDecodeError::Zero`] for version zero.
 pub fn decode_call_encoding_version(
     data: &[u8],
 ) -> Result<CallEncodingVersion, MetadataDecodeError> {
@@ -751,28 +752,23 @@ fn abi_word(getter: &'static str, data: &[u8]) -> Result<[u8; 32], MetadataDecod
     Ok(word)
 }
 
-/// One ABI word holding a `u32`, rejecting non-canonical high bytes.
+/// One ABI word holding a metadata `uint32`, decoded as Alloy's `uint32` type.
+///
+/// Two decisions, two authorities. The exact-length rule is this decoder's own
+/// ([`abi_word`]): a metadata answer is one whole word, so 31 or 33 bytes is a
+/// [`MetadataDecodeError::Length`] before any content is read. What the word
+/// *says* belongs to Alloy: its validating `uint32` decoder owns
+/// canonicality, so a word whose high twenty-eight bytes are non-zero is a
+/// [`MetadataDecodeError::OutOfRange`] rather than a value assembled from the
+/// low four bytes. A canonical zero is in range and decodes; the callers
+/// classify it as [`MetadataDecodeError::Zero`], keeping "names nothing"
+/// distinct from "does not fit the type".
 fn abi_u32(getter: &'static str, data: &[u8]) -> Result<u32, MetadataDecodeError> {
     let word = abi_word(getter, data)?;
-    element_u32(getter, &word, "the ABI word")
-}
-
-/// Read a `u32` from one ABI word, rejecting non-canonical high bytes.
-fn element_u32(getter: &'static str, word: &[u8], what: &str) -> Result<u32, MetadataDecodeError> {
-    if word.len() != 32 {
-        return Err(MetadataDecodeError::Length {
-            getter,
-            expected: 32,
-            actual: word.len(),
-        });
-    }
-    if word[..28].iter().any(|byte| *byte != 0) {
-        return Err(MetadataDecodeError::OutOfRange {
-            getter,
-            detail: format!("{what} carries non-zero high bytes"),
-        });
-    }
-    Ok(u32::from_be_bytes([word[28], word[29], word[30], word[31]]))
+    u32::abi_decode_validate(&word).map_err(|error| MetadataDecodeError::OutOfRange {
+        getter,
+        detail: format!("the ABI word is not a canonical uint32: {error}"),
+    })
 }
 
 // ── Legacy mapping ─────────────────────────────────────────────────────────
@@ -2085,6 +2081,18 @@ mod tests {
         commitment.as_bytes().to_vec()
     }
 
+    /// Both `uint32` getters' decode errors for `data`, with the getter name
+    /// each one reports, so a test can assert the two stay in lockstep.
+    fn u32_decode_errors(data: &[u8]) -> [(&'static str, MetadataDecodeError); 2] {
+        [
+            ("protocol_major", decode_protocol_major(data).unwrap_err()),
+            (
+                "call_encoding_version",
+                decode_call_encoding_version(data).unwrap_err(),
+            ),
+        ]
+    }
+
     /// A manifest derived from the committed one, mutated and re-parsed.
     fn mutate_manifest(mutate: impl FnOnce(&mut Value)) -> Result<ReleaseManifest, ManifestError> {
         let mut value: Value = serde_json::from_str(RELEASE_MANIFEST_V2).unwrap();
@@ -2161,6 +2169,17 @@ mod tests {
         // The manifest describes exactly what the getters declared.
         manifest.check_metadata(&decoded).unwrap();
         assert_eq!(manifest.declared_metadata().unwrap(), decoded);
+    }
+
+    #[test]
+    fn canonical_uint32_words_decode_their_value() {
+        // The whole `uint32` range is canonical: the low boundary and the top
+        // of the type both decode, for both getters.
+        for raw in [1u32, u32::MAX] {
+            let encoded = word(u64::from(raw));
+            assert_eq!(decode_protocol_major(&encoded).unwrap().get(), raw);
+            assert_eq!(decode_call_encoding_version(&encoded).unwrap().get(), raw);
+        }
     }
 
     #[test]
@@ -2267,24 +2286,51 @@ mod tests {
                 actual: 33,
             }
         );
-        assert_eq!(
-            decode_protocol_major(&[]).unwrap_err(),
-            MetadataDecodeError::Length {
-                getter: "protocol_major",
-                expected: 32,
-                actual: 0,
+        // A `uint32` getter answers one whole word too: the exact-length rule
+        // fires before any content is read, so the fields stay exact.
+        let one = word(1);
+        let mut trailing_word = word(1);
+        trailing_word.push(0);
+        for (data, actual) in [
+            (&[][..], 0usize),
+            (&one[..31], 31),
+            (&trailing_word[..], 33),
+        ] {
+            for (getter, error) in u32_decode_errors(data) {
+                assert_eq!(
+                    error,
+                    MetadataDecodeError::Length {
+                        getter,
+                        expected: 32,
+                        actual,
+                    },
+                    "{getter}() must keep the exact Length fields"
+                );
             }
-        );
+        }
     }
 
     #[test]
     fn non_canonical_words_are_rejected() {
-        let mut high_bytes = word(1);
-        high_bytes[0] = 1;
-        assert!(matches!(
-            decode_protocol_major(&high_bytes),
-            Err(MetadataDecodeError::OutOfRange { .. })
-        ));
+        // Three ways out of the type: a dirty high byte, bit 32 set (`2^32`),
+        // and an all-high-byte word. Alloy's validating `uint32` decoder owns
+        // that verdict, for both getters.
+        let mut dirty_high_byte = word(1);
+        dirty_high_byte[0] = 1;
+        let mut above_the_type = word(0);
+        above_the_type[27] = 1;
+        for non_canonical in [dirty_high_byte, above_the_type, vec![0xff; 32]] {
+            for (getter, error) in u32_decode_errors(&non_canonical) {
+                match error {
+                    MetadataDecodeError::OutOfRange { getter: named, .. } => {
+                        assert_eq!(named, getter);
+                    }
+                    other => panic!("{getter}() must report OutOfRange: {other}"),
+                }
+            }
+        }
+        // A canonical zero is in range, so the content decode accepts it and
+        // the "names nothing" category is this module's decision.
         assert_eq!(
             decode_protocol_major(&word(0)).unwrap_err(),
             MetadataDecodeError::Zero {
@@ -2305,6 +2351,23 @@ mod tests {
             decode_release_id(&word(0)).unwrap_err(),
             MetadataDecodeError::MalformedReleaseId
         );
+    }
+
+    #[test]
+    fn a_non_canonical_major_word_fails_the_whole_declaration() {
+        // Propagation, not another helper check: an otherwise complete answer
+        // set with one dirty `protocol_major` word must surface that word's
+        // verdict through `decode_metadata`, named for the getter that carried
+        // it, so no caller sees a partially decoded declaration.
+        let mut answers = Answers::declared();
+        answers.protocol_major[0] = 1;
+        let observations = answers.observations();
+        assert_eq!(observations.answered_count(), 4);
+
+        match decode_metadata(observations).unwrap_err() {
+            MetadataDecodeError::OutOfRange { getter, .. } => assert_eq!(getter, "protocol_major"),
+            other => panic!("a non-canonical major word must fail the declaration: {other}"),
+        }
     }
 
     #[test]
