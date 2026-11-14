@@ -1094,9 +1094,10 @@ check-rust-all-features:
 #                            (record_updater_cassette, record_py_oracle_corpus,
 #                            capture_path_fixture, concentrated_liquidity_capture_gen,
 #                            encode_three_hop) and degenbot-solver-lab's
-#                            synth_corpus_gen are built here, because a program that
-#                            reads no statement ledger and no capture fixture must not
-#                            be hidden behind a feature
+#                            synth_corpus_gen and stateview_feasibility_probe are
+#                            built here, because a program that reads no statement
+#                            ledger and no capture fixture must not be hidden behind a
+#                            feature
 #   fixture-sql-ledger       degenbot-fixture-tools + sql-ledger
 #   solver-capture-fixtures  degenbot-solver-lab + capture-fixtures
 #   solver-cache-lab         degenbot-solver-lab + capture-fixtures,cache-lab
@@ -1161,7 +1162,8 @@ check-dev-tools *lanes:
                                record_py_oracle_corpus, capture_path_fixture,
                                concentrated_liquidity_capture_gen, and
                                encode_three_hop -- and solver-lab builds
-                               synth_corpus_gen here)
+                               synth_corpus_gen and stateview_feasibility_probe
+                               here)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
@@ -1189,7 +1191,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, and solver-lab builds synth_corpus_gen too)"
+        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, and solver-lab builds synth_corpus_gen and stateview_feasibility_probe too)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets

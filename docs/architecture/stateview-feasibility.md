@@ -45,11 +45,12 @@ Takeaways:
 Reproduce from repo root (release build):
 
 ```bash
-cargo build --release --manifest-path rust/Cargo.toml -p degenbot-solvers --example stateview_feasibility_probe
-rust/target/release/examples/stateview_feasibility_probe
+cargo build --release --manifest-path rust/Cargo.toml -p degenbot-solver-lab --bin stateview_feasibility_probe
+rust/target/release/stateview_feasibility_probe
 ```
 
-Harness: `rust/crates/engine/degenbot-solvers/examples/stateview_feasibility_probe.rs` (throwaway; synthetic `HashMap<i32, TickInfo>` of the exact production entry type, 1001 timed reps per size, percentile = ceil-index). `TickInfo = { U128, i128, u64 }` = 48 B; `V3BlockDelta = 144 B`.
+Harness: `rust/tools/solver-lab/src/bin/stateview_feasibility_probe/main.rs` (a default-lane binary of `degenbot-solver-lab`, no feature lane; throwaway; synthetic `HashMap<i32, TickInfo>` of the exact production entry type, 1001 timed reps per size, percentile = ceil-index).
+`TickInfo = { U128, i128, u64 }` = 48 B; `V3BlockDelta = 144 B`.
 
 ### 2.1 M1 — tickmap clone cost sweep vs N (mechanism (c) worst case: a full per-epoch map clone)
 
@@ -178,8 +179,8 @@ Implementation of the cheap-read branch, as landed in this worktree
 
 ```bash
 # 1. Harness (map clone sweep, journal replay, scalar + COW costs)
-cargo build --release --manifest-path rust/Cargo.toml -p degenbot-solvers --example stateview_feasibility_probe
-rust/target/release/examples/stateview_feasibility_probe
+cargo build --release --manifest-path rust/Cargo.toml -p degenbot-solver-lab --bin stateview_feasibility_probe
+rust/target/release/stateview_feasibility_probe
 
 # 2. Live pool-family mix + tickmap size distribution (read-only beside live WAL)
 sqlite3 -readonly ~/.local/state/degenbot/db/degenbot.db "SELECT 'uniswap_v3', COUNT(*) FROM uniswap_v3_pools;"

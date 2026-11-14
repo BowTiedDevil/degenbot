@@ -152,6 +152,17 @@ name = "rayon_scale_probe"
 path = "src/bin/rayon_scale_probe/main.rs"
 required-features = ["capture-fixtures"]
 
+# The block-epoch data-plane budget probe: it builds synthetic in-memory V2/V3
+# journals and tick maps and runs its hard-coded M1-M6 feasibility/performance
+# matrices, reading no capture and opening no database of any kind, so it
+# carries NO `required-features` and the package's default lane builds it — a
+# budget instrument must be runnable without a feature lane. Its only input
+# from outside the process is `/proc/self/statm` for the RSS column (Linux
+# only).
+[[bin]]
+name = "stateview_feasibility_probe"
+path = "src/bin/stateview_feasibility_probe/main.rs"
+
 # The synthetic corpus generator reads no capture and opens no database of any
 # kind: it builds its own geometry and writes the two committed corpora, so it
 # carries NO `required-features` and the package's default lane builds it. That

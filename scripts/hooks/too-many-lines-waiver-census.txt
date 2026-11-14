@@ -145,7 +145,6 @@ rust/crates/foundation/degenbot-math/src/curve/mod.rs::!module
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::apply_chunk_writes_on_conn
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::compute_preverified_liquidity
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::run_pool_update_on_db
-rust/crates/foundation/degenbot-pools/examples/stateview_feasibility_probe.rs::!module
 rust/crates/foundation/degenbot-pools/examples/v2_concentrated_liquidity_parity_probe.rs::!module
 rust/crates/foundation/degenbot-pools/examples/walkmemo_readout.rs::!module
 rust/crates/foundation/degenbot-pools/src/families/concentrated_liquidity/mod.rs::read_swap	the length is the door's dispatch shape (four sources × two designs, each arm a single drive call); per-arm leaf extraction would re-duplicate the ONE drive policy per design — the seam ADR-037 closed
@@ -210,3 +209,4 @@ rust/tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs::!modu
 rust/tools/solver-lab/src/bin/entry_ab_readout/main.rs::!module
 rust/tools/solver-lab/src/bin/mixed_solve_replay/main.rs::!module
 rust/tools/solver-lab/src/bin/rayon_scale_probe/main.rs::!module
+rust/tools/solver-lab/src/bin/stateview_feasibility_probe/main.rs::!module
