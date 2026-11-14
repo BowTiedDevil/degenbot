@@ -1,45 +1,17 @@
 #!/usr/bin/env bash
-# Recompute `tier3-oracle/artifacts/manifest.json`: maps each committed harness
-# bytecode artifact to the sha256 of its git-tracked source .sol file. The
-# Rust tier-3 tests read this manifest (via `tier3_harness_artifacts.rs`) at
-# test time and reject any artifact whose tracked source has changed without
-# a rebuild — so the checked-in bytecode can never silently drift from the
-# harness sources. Sources only (the canonical vendored libs are version-pinned
-# and immutable during the oracle's lifetime; the pinned-version bump case is
-# covered by the CI tier3-oracle rebuild job).
+# Recompute `artifacts/manifest.json`: every row of `harness-artifacts.tsv` mapped
+# to the sha256 of its git-tracked source .sol, so the two never come from
+# separate lists. The Rust tier-3 tests read this manifest (via
+# `tier3_harness_artifacts.rs`) at test time and reject any artifact whose
+# tracked source changed without a rebuild — the checked-in bytecode can never
+# silently drift from the harness sources.
+#
+# Sources only: the canonical vendored libs are version-pinned and immutable
+# during the oracle's lifetime, and the pinned-version bump case is covered by
+# the CI tier3-oracle rebuild job.
 set -euo pipefail
+
 TD="$(cd "$(dirname "$0")" && pwd)"
 cd "${TD}"
 
-python3 - <<'PY'
-import json, hashlib
-
-# artifact (out shape) -> git-tracked source .sol (relative to tier3-oracle/).
-MAP = {
-    "V2SwapOracleHarness.sol/V2SwapOracleHarness.json": "src-v2/V2SwapOracleHarness.sol",
-    "V3SwapOracleHarness.sol/V3SwapOracleHarness.json": "src-v3/V3SwapOracleHarness.sol",
-    "V3CaptureHarness.sol/V3CaptureHarness.json": "src-v3/V3CaptureHarness.sol",
-    "V4SwapOracleHarness.sol/V4SwapOracleHarness.json": "src-v4/V4SwapOracleHarness.sol",
-    "SwapMathV3Harness.sol/SwapMathV3Harness.json": "src-v3/SwapMathV3Harness.sol",
-    "SwapMathV4Harness.sol/SwapMathV4Harness.json": "src-v4/SwapMathV4Harness.sol",
-    "CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json": "src-curve/CurveSwapOracleHarness.sol",
-    "BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json": "src-balancer/BalancerSwapOracleHarness.sol",
-    "PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json": "src-pancake-v3/PancakeV3SwapOracleHarness.sol",
-    "PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json": "src-pancake-v2/PancakeV2SwapOracleHarness.sol",
-    "harness/Pair.json": "src-harness/V2ExecutorStub.sol",
-    "harness/Token.json": "src-harness/StubToken.sol",
-    "harness/PoolV3.json": "src-harness/V3ExecutorStub.sol",
-    "harness/TestV3SwapDriver.json": "src-harness/V3ExecutorStub.sol",
-    "harness/PoolManager.json": "src-harness/V4ExecutorStub.sol",
-}
-
-manifest = {}
-for artifact, source in MAP.items():
-    digest = hashlib.sha256(open(source, "rb").read()).hexdigest()
-    manifest[artifact] = {"source": source, "sha256": digest}
-
-with open("artifacts/manifest.json", "w", encoding="utf-8") as fh:
-    json.dump(manifest, fh, indent=2, sort_keys=True)
-    fh.write("\n")
-print(f"wrote artifacts/manifest.json ({len(manifest)} artifacts)")
-PY
+python3 "${TD}/harness-artifacts.py" manifest

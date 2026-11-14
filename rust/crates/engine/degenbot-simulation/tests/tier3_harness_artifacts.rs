@@ -10,9 +10,12 @@
 //! If a tracked harness source is edited without a rebuild+re-publish, this
 //! test fails and tells the developer to re-run the harness build script.
 //!
-//! The AUTHORITATIVE compile-vs-use check (which also covers the gitignored
-//! pinned vendored libs) is `tier3-oracle/verify-tier3-artifacts.sh` — it
-//! recompiles each harness with the real toolchain and byte-compares against
+//! `tier3-oracle/harness-artifacts.tsv` is the single map behind both halves:
+//! `tier3-oracle/write-harness-manifest.sh` derives this manifest from it, and
+//! the AUTHORITATIVE compile-vs-use check
+//! (`tier3-oracle/verify-tier3-artifacts.sh`, which also covers the gitignored
+//! pinned vendored libs) reads the same rows, recompiles each harness with the
+//! real toolchain, and byte-compares creation code AND deployed runtime against
 //! the committed artifacts. It runs in the CI `tier3-oracle` job (has
 //! solc/forge); this source-hash test needs no toolchain.
 
@@ -86,7 +89,9 @@ fn committed_tier3_harness_artifacts_match_tracked_sources() {
             actual_hash,
             expected_hash,
             "tier-3 harness source {} changed but artifacts/manifest.json was not refreshed. \
-             Re-run tier3-oracle/<build-tier3-*-swap-harness.sh> (PUBLISH=1) and commit the \
+             Re-run that artifact's build script from tier3-oracle/harness-artifacts.tsv with \
+             PUBLISH=1 (`just rebuild-tier3-artifacts` for the oracle group, \
+             `just rebuild-tier3-executor-stubs` for the executor group) and commit the \
              updated artifact + manifest.",
             source_path.display()
         );

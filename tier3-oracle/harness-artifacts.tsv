@@ -1,0 +1,27 @@
+# Tier-3 harness artifact map — the single binding between a committed artifact
+# and the source, compiler output path, build script, and publish group behind it.
+# Read by `harness-artifacts.py`, which drives build staging, publish selection,
+# the source hashes in `artifacts/manifest.json`, and the compile-vs-use check in
+# `verify-tier3-artifacts.sh`. Add a harness here once and every consumer sees it.
+#
+# Tab-separated columns:
+#   artifact         path under both OUT_DIR and the tracked artifacts/ tree
+#   source           git-tracked .sol the artifact is compiled from
+#   compiler_output  path the compiler emits the artifact at, under its raw out dir
+#   build_script     script that produces the artifact (invoked once per unique value)
+#   group            publish group: `oracle` | `executor`
+V2SwapOracleHarness.sol/V2SwapOracleHarness.json	src-v2/V2SwapOracleHarness.sol	V2SwapOracleHarness.sol/V2SwapOracleHarness.json	build-tier3-v2-swap-harness.sh	oracle
+V3SwapOracleHarness.sol/V3SwapOracleHarness.json	src-v3/V3SwapOracleHarness.sol	V3SwapOracleHarness.sol/V3SwapOracleHarness.json	build-tier3-v3-swap-harness.sh	oracle
+V4SwapOracleHarness.sol/V4SwapOracleHarness.json	src-v4/V4SwapOracleHarness.sol	V4SwapOracleHarness.sol/V4SwapOracleHarness.json	build-tier3-v4-swap-harness.sh	oracle
+SwapMathV3Harness.sol/SwapMathV3Harness.json	src-v3/SwapMathV3Harness.sol	SwapMathV3Harness.sol/SwapMathV3Harness.json	build-tier3-harnesses.sh	oracle
+V3CaptureHarness.sol/V3CaptureHarness.json	src-v3/V3CaptureHarness.sol	V3CaptureHarness.sol/V3CaptureHarness.json	build-tier3-harnesses.sh	oracle
+SwapMathV4Harness.sol/SwapMathV4Harness.json	src-v4/SwapMathV4Harness.sol	SwapMathV4Harness.sol/SwapMathV4Harness.json	build-tier3-harnesses.sh	oracle
+CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json	src-curve/CurveSwapOracleHarness.sol	CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json	build-tier3-curve-swap-harness.sh	oracle
+BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json	src-balancer/BalancerSwapOracleHarness.sol	BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json	build-tier3-balancer-swap-harness.sh	oracle
+PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json	src-pancake-v3/PancakeV3SwapOracleHarness.sol	PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json	build-tier3-pancake-v3-swap-harness.sh	oracle
+PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json	src-pancake-v2/PancakeV2SwapOracleHarness.sol	PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json	build-tier3-pancake-v2-swap-harness.sh	oracle
+harness/Pair.json	src-harness/V2ExecutorStub.sol	V2ExecutorStub.sol/Pair.json	build-tier3-executor-stubs.sh	executor
+harness/Token.json	src-harness/StubToken.sol	StubToken.sol/Token.json	build-tier3-executor-stubs.sh	executor
+harness/PoolV3.json	src-harness/V3ExecutorStub.sol	V3ExecutorStub.sol/PoolV3.json	build-tier3-executor-stubs.sh	executor
+harness/TestV3SwapDriver.json	src-harness/V3ExecutorStub.sol	V3ExecutorStub.sol/TestV3SwapDriver.json	build-tier3-executor-stubs.sh	executor
+harness/PoolManager.json	src-harness/V4ExecutorStub.sol	V4ExecutorStub.sol/PoolManager.json	build-tier3-executor-stubs.sh	executor

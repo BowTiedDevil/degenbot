@@ -266,11 +266,17 @@ Both fail closed: a non-positive or non-integer fixed input, a metadata file
 that is missing, unparseable, not a JSON object, empty, or that names a
 different `fixed_input` refuses the run (exit `2`) without writing a report.
 
-After editing the fake Uniswap contracts, run
-`just rebuild-tier3-executor-stubs`. The recipe republishes
-`tier3-oracle/artifacts/harness` and their source hashes. In particular, the
-fake PoolManager's synced-reserve settlement mirrors real V4: a pre-swap token
-payment is credited by `settle()` before the swap creates its debt.
+The five fakes follow the oracle harnesses' build contract. One table,
+`tier3-oracle/harness-artifacts.tsv`, binds every committed artifact under
+`tier3-oracle/artifacts/` (the ten oracle harnesses and the five fakes) to its
+git-tracked source, the compiler output path it is staged from, its build
+script, and its publish group. After editing the fake Uniswap contracts, run
+`just rebuild-tier3-executor-stubs`: it compiles the stubs into
+`OUT_DIR=tier3-oracle/out`, then republishes `tier3-oracle/artifacts/harness`
+plus their source hashes in `tier3-oracle/artifacts/manifest.json` — commit
+both. In particular, the fake PoolManager's synced-reserve settlement mirrors
+real V4: a pre-swap token payment is credited by `settle()` before the swap
+creates its debt.
 
 The fakes enforce the behavior the executor depends on: V2's K invariant,
 V3's balance-delta input check and reentrancy guard, V4's delta settlement,
@@ -290,3 +296,34 @@ The production Vyper artifact has a separate authoritative compile-vs-use gate:
 ```bash
 just verify-tier3-executor-artifact
 ```
+
+## Verify the fake artifacts against a fresh compile
+
+`tier3-oracle/harness-artifacts.tsv` is the single map behind the whole artifact
+pipeline: build staging, publish selection, the source hashes in
+`tier3-oracle/artifacts/manifest.json`, and the compile-vs-use check. Adding a
+harness there is the only edit its build, publish, and verification paths need.
+
+`just verify-tier3-artifacts` (CI's `tier3-oracle` job) reads that map, runs each
+unique build script once into a throwaway `OUT_DIR` with `PUBLISH=0`, and
+byte-compares every committed artifact's creation code AND deployed runtime
+against the fresh compile. A stub edit without a republish fails there, as does a
+missing artifact or a missing/non-hex bytecode field. Its toolchain-free
+complement is `tier3_harness_artifacts.rs`, which hashes the tracked sources
+against `artifacts/manifest.json` in the default suite.
+
+To inspect a scratch fake-fixture build without touching tracked files:
+
+```bash
+OUT_DIR="$(mktemp -d)" PUBLISH=0 tier3-oracle/build-tier3-executor-stubs.sh
+python3 tier3-oracle/harness-artifacts.py verify --out-dir "$OUT_DIR" --group executor
+```
+
+`PUBLISH=0` writes the five `harness/*.json` entries into `OUT_DIR` and stops;
+`PUBLISH=1` (the default, and what `just rebuild-tier3-executor-stubs` runs)
+copies those same entries through `publish-artifacts.sh executor` and refreshes
+the manifest. An oracle-only publish — `publish-artifacts.sh` with no argument,
+which is what each oracle harness build calls — republishes the ten oracle
+harnesses and never requires the fake outputs. A caller that relied on the stub
+build's old unconditional republish keeps that behavior from the default
+`PUBLISH=1`; only an explicit `PUBLISH=0` leaves tracked artifacts alone.

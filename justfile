@@ -1685,14 +1685,17 @@ test-tier3 family='all':
         run_family "{{ family }}"
     fi
 
-# Validate the committed tier-3 harness bytecode: recompile EVERY harness with
-# the real solc/forge toolchain (into a throwaway dir, PUBLISH=0 — committed
-# artifacts are never mutated) and byte-compare the creation bytecode against
-# what the Rust tests load from `tier3-oracle/artifacts/`. This is the
-# authoritative compile-vs-use check (covers a harness-source OR pinned
-# vendored-lib edit without a rebuild); the toolchain-free complement
-# `tier3_harness_artifacts.rs` runs in the default suite. Requires the
-# toolchain (bootstrap-libs + svm solc). Wired into the CI `tier3-oracle` job.
+# Validate the committed tier-3 artifacts: recompile EVERY oracle harness and
+# every executor stub fixture with the real solc/forge toolchain (into a
+# throwaway dir, PUBLISH=0 — committed artifacts are never mutated) and
+# byte-compare creation code AND deployed runtime against what the Rust tests
+# load from `tier3-oracle/artifacts/`. Selection comes from the shared map
+# `tier3-oracle/harness-artifacts.tsv`, so a new harness is covered the moment
+# it is listed there. This is the authoritative compile-vs-use check (covers a
+# harness-source OR pinned vendored-lib edit without a rebuild); the
+# toolchain-free complement `tier3_harness_artifacts.rs` runs in the default
+# suite. Requires the toolchain (bootstrap-libs + svm solc). Wired into the CI
+# `tier3-oracle` job.
 verify-tier3-artifacts:
     tier3-oracle/verify-tier3-artifacts.sh
 
@@ -1707,10 +1710,13 @@ verify-tier3-artifacts:
 verify-tier3-executor-artifact:
     tier3-oracle/verify-tier3-executor-artifact.sh
 
-# Rebuild + publish every Tier-3 harness artifact (bytecode + source-hash
+# Rebuild + publish every Tier-3 ORACLE harness artifact (bytecode + source-hash
 # manifest) from the current sources, without running the test suites. Run this
 # after editing a `tier3-oracle/src*/**/*.sol` harness (or bumping a pinned
-# vendored lib), then commit the updated `tier3-oracle/artifacts/`.
+# vendored lib), then commit the updated `tier3-oracle/artifacts/`. Each script
+# publishes the map's oracle group (the no-argument `publish-artifacts.sh`
+# call), so the executor fakes stay untouched — `rebuild-tier3-executor-stubs`
+# owns those.
 rebuild-tier3-artifacts:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1723,8 +1729,12 @@ rebuild-tier3-artifacts:
     tier3-oracle/build-tier3-pancake-v3-swap-harness.sh
     tier3-oracle/build-tier3-pancake-v2-swap-harness.sh
 
-# Rebuild + publish only the executor's fake Uniswap fixtures. This keeps
-# artifacts/harness and their source hashes synchronized after a stub edit.
+# Rebuild + publish only the executor's fake Uniswap fixtures. Compiles the
+# stubs into OUT_DIR (default tier3-oracle/out) at their `harness/*.json` entry
+# paths, then PUBLISH=1 (the default) republishes artifacts/harness through
+# `publish-artifacts.sh executor` and refreshes their source hashes — keeping
+# both synchronized after a stub edit. `OUT_DIR=... PUBLISH=0` stops after the
+# build for a scratch comparison that leaves tracked files alone.
 rebuild-tier3-executor-stubs:
     tier3-oracle/build-tier3-executor-stubs.sh
 
