@@ -128,6 +128,13 @@ balance needed.
 the first V2/V3 swap, and the swap chain's output repays the PM
 before `unlock()` returns. No prefunded balance needed.
 
+The guarantee is a property of the FUNDING AXIS, not of every stream: a stream
+that declares `SelfFund` spends entry capital the executor already holds instead
+of borrowing it in-path, so a self-funded path does need that seed. A
+zero-balance probe of such a path therefore answers a typed
+`InsolventZeroCapital` deficit (`asset` / `required` / `available`) instead of
+running — the funding answer, not a broken path.
+
 This is a deliberate design property, not an accident. An executor
 that requires prefunding carries capital-at-rest risk (stuck funds,
 misrouted profits, griefing via forced ETH deposits). The self-capitalizing

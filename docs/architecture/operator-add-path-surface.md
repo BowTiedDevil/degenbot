@@ -175,7 +175,7 @@ verified:
 | Requirement source | a blanket `EXECUTOR_FUND_ETH` USDC grant on every self-funded path | the built Plan's own `SelfFund` seeds, read across the seam by `ExecutionAdapter::capital_requirements` (the same grammar walk the encode performs, `degenbot_executor::composers::encode_cmd_stream_capital`); a family that funds itself in-path declares nothing |
 | Composition point | `SimulationDeployment::with_capital(mode)` projected a plan at deployment construction | `SimulationDeployment::with_capital(mode)` stores the POSTURE; `capital_plan(paths)` / `override_params(paths)` compose the plan per fan-out for the candidates that fan-out can still hand to the EVM (see the conservative-union rule below), so the same plan reaches the engine's override application |
 | Override application (`apply_simulation_overrides`) | mode branches, hard-coded token list, warmup-derived clearing slots | applies the plan's resolved writes, LAST — after owner funding, declared code, and the settlement warmup — so the plan is authoritative for every asset it names |
-| Refusal | an unknown token kept its balance and the probe reported the resulting revert | `CapitalPlanError::UnverifiedLayout { asset }`; production dispatch reports it as `DispatchRefusal::CapitalPlan { error }`, and the dedicated one-path probe as `ProbeError::CapitalPlan(error)` — its own arm, before any EVM work, naming the asset. It is never `InsolventZeroCapital` (that is a capital-policy answer), never an `encode-failed` bucket, and never a silent skip |
+| Refusal | an unknown token kept its balance and the probe reported the resulting revert | `CapitalPlanError::UnverifiedLayout { asset }`; production dispatch reports it as `DispatchRefusal::CapitalPlan { error }`, and the dedicated one-path probe as `ProbeError::CapitalPlan(error)` — its own arm, before any EVM work, naming the asset. It is never `InsolventZeroCapital` (that is a capital-policy answer), never an `encode-failed` bucket, and never a silent skip: the Python inline-sim seam records the refused candidate under its own `capital-plan-refused` orchestration bucket, which carries no deficit, no revert bytes, and no failing step, because nothing ran |
 
 Which assets a plan covers is derived from the paths, never from a fixed list:
 the holder's native balance, every ERC-20 a hop names, and every PoolManager
@@ -415,11 +415,16 @@ abort-on-drop guard, so:
   next yield.
 
 **Wire shape.** A probe that returns answers
-`{path_id, permutation, capital, outcome[, bucket][, planning]}`;
-`planning` is the encoder summary (`execution_target`, `value`, `calldata_len`)
-whenever a row was composed. There is no submission record in the response, and
-`execution_probe_response` still refuses a record carrying a submit verdict as
-the detective check beside the structural guarantee.
+`{path_id, permutation, capital, current_block, assembly, submission, outcome}`,
+plus `receipt` when the simulate verdict carried one, `bucket`/`revert` on a
+failure, `zero_capital` (`asset`/`required`/`available`) when that failure is the
+capital-policy refusal, and `planning` (the encoder summary: `execution_target`,
+`value`, `calldata_len`) whenever a row was composed. `submission` is the
+structural evidence object, never a submit RECORD: the response has no submit
+verdict and no submit-record list, and `execution_probe_response` still refuses a
+record carrying a submit verdict as the detective check beside the structural
+guarantee. `wrap_handler` forwards exactly `PASSTHROUGH_RESPONSE_KEYS`, so a
+projection that grows a key must name it there or the client never sees it.
 
 ## 3. The CLI client
 

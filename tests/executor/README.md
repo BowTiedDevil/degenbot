@@ -97,7 +97,13 @@ carry no Plan to read a requirement from, so a raw `SelfFund` run must name its
 refuses to guess an amount from the bytes or the hop list.
 
 The Rust `command_stream_byte_identity_is_pinned` test separately pins every
-permutation under 12 amount/option configurations.
+permutation under 12 amount/option configurations. The self-funded 3-hop
+producers that were consolidated onto the shared mechanics primitives keep their
+own scoped honesty gate:
+
+```bash
+just test-rust-nextest -p degenbot-executor -E 'test(mechanics_honesty)'
+```
 
 ### Fixed-path bot probe
 
@@ -272,11 +278,22 @@ read off a log — the log `report` command's `broadcast_observed` scan stays
 separate, and an absent log line proves nothing by itself.
 
 Pass `--capital zero_balance` to `probe` (the flag replaced `--zero-balance`) to
-use ordinary in-path-flash encoding with zero executor native ETH, WETH, USDC,
-WBTC, and PoolManager claims (owner gas funding and injected code remain). The
-other two modes are `--capital self_fund` (the default, the executor's own
-capital with the self-funded encoding) and `--capital production` (the account's
-real balances, no capital override). A losing WETH cycle is then a typed
+use ordinary in-path-flash encoding with every asset the probed paths TOUCH
+cleared at the executor — for the fixed WETH/USDC/WBTC triangle that is native
+ETH, WETH, USDC, WBTC, and their PoolManager ERC-6909 claims — while owner gas
+funding and injected code remain. The other two modes are `--capital self_fund`
+(the default: the entry capital each built Plan declares, installed, with the
+self-funded encoding and every other touched holding cleared) and `--capital
+production` (the account's real balances, no capital override at all). The
+cleared/installed set is the paths', never a fixed token list: a path naming an
+asset outside the pinned mainnet layouts (`CapitalLayouts::verified`: WETH9
+`balanceOf`@3, USDC `balances`@9, WBTC `balances`@0, canonical PoolManager
+ERC-6909 `balanceOf`@4) is REFUSED before any EVM state exists rather than
+probed with its balance left in place. Fixture tokens are the `StubToken` stub
+(`balanceOf`@3) and the fake PoolManager's claim mapping (@6), so
+`Harness::capital_layouts` declares those slots explicitly — the pinned set is
+never applied to a lab contract, and there is no operator or FFI surface that
+declares a layout. A losing WETH cycle is then a typed
 capital-policy refusal — `bucket: "insolvent-zero-capital"` beside the deficit's
 `asset`/`required`/`available` — never a validator panic and never an
 `encode-failed` label. The deterministic

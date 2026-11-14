@@ -12,22 +12,33 @@
 The bot builds a command stream for an arbitrage path with one function:
 
 ```rust
-use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
 use degenbot_executor::composers::{
-    encode_cmd_stream, config_for_options, EncodeOptions,
+    encode_cmd_stream, EncodeContext, EncodeRequest,
 };
 
-let cmd_bytes = encode_cmd_stream(
-    &path.path_info,            // the ordered hops (PathInfo)
+// ONE context per session: the deployment addresses every encode shares.
+let ctx = EncodeContext::new(
+    executor_address,       // the cmd_executor contract
+    pool_manager_address,   // the Uniswap V4 PoolManager
+    weth_address,           // WETH9
+);
+
+// ONE request per path: the path + the solver's amount triple + the axes.
+let req = EncodeRequest::new(
+    path.path_info,             // the ordered hops (PathInfo)
     path.optimal_input,         // entry capital (u128)
-    &path.hop_outputs,          // per-hop forward outputs (solver-computed)
-    &path.consumed_inputs,      // per-hop executable input (concentrated-liquidity clamped)
-    ctx.executor_address,      // the cmd_executor contract
-    ctx.pool_manager_address,   // the Uniswap V4 PoolManager
-    ctx.weth_address,           // WETH9
+    path.hop_outputs,           // per-hop forward outputs (solver-computed)
+    path.consumed_inputs,       // per-hop executable input (concentrated-liquidity clamped)
     path.opts,                  // EncodeOptions — the per-path axes
 );
+
+let cmd_bytes: Option<Vec<u8>> = encode_cmd_stream(&ctx, &req);   // `None` = routine decline
 ```
+
+The intake is the pair (ADR-033): `EncodeContext` carries what a session knows
+once, `EncodeRequest` what one path knows. `EncodeRequest::new` asserts the
+per-hop arrays are as long as the path, because a misaligned amount array would
+be indexed silently.
 
 `encode_cmd_stream` routes the path:
 
@@ -35,34 +46,69 @@ let cmd_bytes = encode_cmd_stream(
   chained `V2_SWAP_CALC` Plan layout (one producer: the `facts_of_all_v2` arm
   of `build_walk`; the distinct all-V2 3-hop layout and the N-hop speedrail
   were deleted in `4JOWO5`, collapsing onto this layout).
-- **every other 2/3-hop family** → `grammar::encode_grammar` →
-  `grammar_shape::derive_shape` — one `recognized_key` gate, then the single
-  facts-driven `build_walk` pipeline (`facts_for` → `derive_plan` → the shape
-  modules → `LedgerValidator` gate → `plan_to_bytes`). Again: **no
-  hand-written backstop.**
+- **every other 2/3-hop family** → `grammar_shape::derive_shape` — one
+  `recognized_key` gate, then the single facts-driven `build_walk` pipeline
+  (`facts_for` → `derive_plan` → the shape modules → `LedgerValidator` gate →
+  `plan_to_bytes`). Again: **no hand-written backstop.**
 
-`encode_cmd_3_hop` survives only as a `#[doc(hidden)]` test shim over
-`encode_grammar` — it produces no distinct byte layout.
+`encode_cmd_3_hop` survives only as a `#[doc(hidden)]` 3-hop convenience entry
+over `grammar_shape::derive_shape` — it produces no distinct byte layout.
 
-Returns `None` if the family is unknown or any `enc_*` step fails (e.g. a
-`u128` that does not fit the contract's `uint96`/`int128` range — guard with
-`fits_int128` upstream).
+### The typed outcome behind the `Option`
+
+Every entry above is a thin projection of a detailed (`*_detailed`) derivation
+returning `grammar_shape::Derive`, which keeps the outcomes apart:
+
+| `Derive` | Meaning | Public `Option` seam |
+|---|---|---|
+| `Encoded(bytes)` | a valid stream | `Some(bytes)` |
+| `Declined` | no producer for this shape (a routine no-path) | `None` |
+| `EncodingFailed(err)` | a primitive could not represent the validated Plan (e.g. a `u128` that does not fit the contract's `uint96`/`int128` range — guard with `fits_int128` upstream) | `None` |
+| `InsolventZeroCapital(deficit)` | the Plan is built and sound, but the declared `initial_capital` policy cannot fund it; the deficit carries `asset` / `required` / `available` | `None` |
+| `Rejected(err)` | the Plan violated the ledger invariants — a latent bug | **panics** (ADR-030) |
+
+Only `Rejected` is fatal: the production `InitialCapital::Held` stance
+classifies a Reject exactly as it always did. A capital-policy deficit has no
+bytes to offer and no bug to report, so it declines like a routine no-path at the
+`Option` seam while staying typed for the probe.
+
+### The same build's capital requirement: `encode_cmd_stream_capital`
+
+```rust
+use degenbot_executor::composers::encode_cmd_stream_capital;
+
+let requirements: Vec<degenbot_execution::CapitalRequirement> =
+    encode_cmd_stream_capital(&ctx, &req);
+```
+
+The external entry capital the Plan behind `req` declares — the seed currencies
+and amounts the stream needs the execution target to hold before it runs, read
+from the SAME grammar walk `encode_cmd_stream` performs
+(`grammar_plan::plan_external_capital`), so a simulation override installs a
+self-funded stream's entry without restating a grammar rule. Pure computation: no
+EVM state, no node read, and no command bytes. Empty means "this stream declares
+no external entry capital" — an in-path flash family (the `funding` axis is
+per-family, not per-path) or a path with no producer — and is never a claim that
+the path needs nothing. `degenbot-arbitrage`'s built-in adapter reads it as
+`ExecutionAdapter::capital_requirements`.
 
 ## The per-path axes: `EncodeOptions`
 
 `EncodeOptions` carries the runtime economic choices the strategy/operator
-makes **per path** (ADR-029 D1). All default to inactive/custody:
+makes **per path** (ADR-029 D1), plus the capital-validation policy the Plan's
+ledger is evaluated under. All default to inactive/custody (and `Held`):
 
 ```rust
 use degenbot_executor::grammar_ledger::{
-    Bribe, FundingSource, ProfitCapture,
+    Bribe, FundingSource, InitialCapital, ProfitCapture,
 };
 
 let opts = EncodeOptions {
-    erc6909_profit: false,                      // legacy alias for capture=Erc6909
-    use_v4_batch: false,                         // bundle pure-V4 swaps in one PM extcall
-    funding: FundingSource::SelfFund,            // executor holds the entry WETH
-    capture: ProfitCapture::Erc6909,             // mint profit as an ERC6909 claim
+    erc6909_profit: false,                    // legacy alias for capture=Erc6909
+    use_v4_batch: false,                      // bundle pure-V4 swaps in one PM extcall
+    initial_capital: InitialCapital::Held,    // validation stance; never reaches the bytes
+    funding: FundingSource::SelfFund,         // executor holds the entry WETH
+    capture: ProfitCapture::Erc6909,          // mint profit as an ERC6909 claim
     bribe: Bribe::Some { bips: 50, recipient_idx: 0 }, // 0.5% to block.coinbase
 };
 ```
@@ -74,6 +120,7 @@ let opts = EncodeOptions {
 | `bribe` | `Bribe` | yes — routes to `bribe_bips`/`recipient_idx` via `config_for_options`. |
 | `erc6909_profit` | `bool` | legacy alias; forces `ProfitCapture::Erc6909` via `resolve_axes`. |
 | `use_v4_batch` | `bool` | yes — `V4_BATCH` for pure-V4 paths (single PM extcall). |
+| `initial_capital` | `InitialCapital` | the ledger's capital policy: `Held` (the default, ordinary validation — a `SelfFund` seed names capital the executor holds) or `Zero` (nothing is granted, so a stream needing external entry capital answers a typed `InsolventZeroCapital` deficit). A VALIDATION stance, never a stream axis: it never reaches the bytes, and `funding` stays the axis a family branches on. |
 
 `resolve_axes(opts)` collapses the legacy `erc6909_profit` bool into `capture`
 (backwards-compatible: `erc6909_profit: true` forces `Erc6909` regardless of
@@ -86,8 +133,11 @@ honored).
 same `EncodeOptions`:
 
 ```rust
-let execute_config = config_for_options(path.opts, U256::ZERO);
+let execute_config: U256 = config_for_options(path.opts, U256::ZERO)?;
 ```
+
+It returns `Result<_, ConfigError>` because the declared `bribe` axis is
+validated there (`bips > 10_000` or `recipient_idx >= 32` is a refusal).
 
 `config_for_options` reads the full axis set:
 
@@ -116,40 +166,57 @@ Wrap the command stream in the `execute(bytes, uint256)` ABI call:
 use degenbot_executor::composers::{encode_execute_call, EncodedCall};
 
 let call: EncodedCall = encode_execute_call(
-    ctx.executor_address,
+    ctx.executor,
     &cmd_bytes,
     execute_config,
-).expect("ABI encode");
+);
 // call.to / call.data / call.value — ready for submission.
 ```
 
+The wrap is infallible: the selector comes from the declared
+`ICommandExecutor::execute` signature and the call carries a zero native value,
+so neither can fail at this seam.
+
 ## Putting it together — the production call site
 
-This is exactly what `degenbot-arbitrage::simulator` does (task
-`Q35IJN`):
+Production does not call the steps above one by one. The built-in adapter
+(`degenbot-arbitrage/src/cmd_executor.rs`, `CmdExecutorSimAdapter`) hands ONE
+`EncodeRequest` and ONE `EncodeContext` to the bound release's encoding, which
+encodes the stream, the packed config, and the `execute` ABI as one unit
+(ADR-101):
 
 ```rust
-// 1. Encode the cmd_executor command stream (YQORTM).
-let cmd_bytes = encode_cmd_stream(
-    &path.path_info,
-    path.optimal_input,
-    &path.hop_outputs,
-    &path.consumed_inputs,
-    ctx.executor_address,
-    ctx.pool_manager_address,
-    ctx.weth_address,
-    path.opts,
-)?;
-// 2. Build the axis-aware config (Q35IJN).
-let execute_config = config_for_options(path.opts, U256::ZERO);
-// 3. Wrap in execute(bytes, uint256).
-let execute_calldata = encode_execute_call(ctx.executor_address, &cmd_bytes, execute_config)?;
+// 1. One typed intake: the path + the solver's amounts + the binding's axes.
+let request = EncodeRequest::new(
+    path.clone(),
+    inputs.optimal_input,
+    inputs.hop_outputs.to_vec(),
+    inputs.consumed_inputs.to_vec(),
+    self.binding.opts(),          // the session's axes + the projected capital stance
+);
+let context = EncodeContext::new(
+    self.binding.executor,
+    self.binding.pool_manager,
+    self.binding.weth,
+);
+
+// 2. The release answers the whole call: stream + config + execute(bytes,uint256).
+let call = self.encoding.encode(&context, &request)?;   // ComposeError
 ```
 
-See `rust/crates/engine/degenbot-arbitrage/src/simulator.rs` for the full
-production path; profitability is the contract's own returned
+`CmdExecutorBinding::opts()` is where a capital posture becomes the encoder's two
+projections: the stream's `funding` axis and `EncodeOptions::initial_capital`.
+A bound adapter then plans capability levels against the release, and a release
+that lacks one is a routine `ComposeError::Unsupported` for that candidate.
+
+The steps shown above (`encode_cmd_stream`, `config_for_options`,
+`encode_execute_call`) are the same three pieces spelled separately — use them
+for a leaf caller, a test, or a foreign adapter that wants the pieces rather than
+the release-bound unit.
+
+Profitability is the contract's own returned
 `ExecutionReceipt { gross_profit, bribe_paid }`, decoded by the built-in
-adapter (`degenbot-arbitrage/src/cmd_executor.rs`).
+adapter; `degenbot-arbitrage/src/simulator.rs` owns the surrounding seam.
 
 ## Building a `PathInfo`
 

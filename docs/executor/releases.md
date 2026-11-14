@@ -460,6 +460,31 @@ never reused. The stable ID → name catalog
 (`degenbot_executor::release::capability`) names IDs in diagnostics, while the
 manifest and `capabilities_hash()` commit to the complete set.
 
+### Host-only surfaces keep the package identity
+
+The simulation/probe work adds host-only types and behavior: the probe capital
+posture and its path-aware override plan (`ProbeCapital`,
+`CapitalOverridePlan`, `CapitalLayouts`), the declared entry capital a Plan
+carries (`CapitalRequirement`, `encode_cmd_stream_capital`), the ledger's typed
+`InsolventZeroCapital` deficit and its `ComposeError::InsolventZeroCapital` arm,
+the probe/operator/report schemas, the bankroll matrix runner, and the fake
+fixture contracts. None of them reaches the contract, the manifest, a frozen
+artifact, the capability set, the command stream, the packed config, or the
+`execute` ABI, so **`cmd_executor/2` stays the official release** and there is no
+sequenced package behind it.
+
+The evidence is reproducible, not asserted:
+
+| Check | What it proves |
+|---|---|
+| `just check-executor-release-ratchet` | every frozen file (contract source, manifest, artifacts, deployment artifacts, golden calldata) and the sequential index are byte-identical to the accepted package |
+| `just test-rust-nextest -p degenbot-executor -E 'test(command_stream_byte_identity_is_pinned)'` | every permutation under every amount/option configuration still emits the pinned bytes |
+| `git diff <accepted-package-commit> -- releases/` | the ONE change under the release directory is the encoder's typed `InsolventZeroCapital` refusal arm — a refusal that produces no bytes |
+
+A capital-policy refusal therefore cannot move the package: the bytes it would
+have produced never existed, and the stream the policy finds solvent is the one
+the pin already covers.
+
 ## Immutable release packages
 
 `rust/crates/foundation/degenbot-executor/releases/v2/` owns the accepted

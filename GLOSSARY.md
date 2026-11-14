@@ -1300,6 +1300,42 @@ ERC-6909 burn-to-settle. Exactly one per stream; inter-hop inputs are not fundin
 decisions.
 _Avoid_: "capital source", "flash source".
 
+**Capital posture**:
+The funding position one simulation assumes for its execution target: `production` (the
+account's real balances, no override), `self_fund` (the paths' declared entry capital
+installed, everything else touched cleared), or `zero_balance` (every touched holding
+cleared). One posture is one value, so a self-funded-and-zero-balance ask is
+unrepresentable.
+_Avoid_: the retired `self_fund`/`zero_balance` boolean pair; "capital override" for
+the posture itself (that is the plan).
+
+**Capital override plan**:
+A capital posture bound to the one account it applies to, together with every resolved
+storage write it applies — the executor's native balance word, each touched ERC-20
+`balanceOf` slot, each touched PoolManager ERC-6909 claim slot. Composed per fan-out from
+the paths' touched assets, never from a fixed token list; `production` names no writes.
+_Avoid_: "balance override", "funding config"; conflating it with the stream's `funding`
+axis (the plan is simulated EVM state, the axis is command bytes).
+
+**Verified balance layout**:
+The declared, pinned location of a holding's storage word (a token's `balances` mapping
+base slot, or a PoolManager's ERC-6909 `balanceOf` base slot). Only pinned mainnet
+identities are built in; a fixture declares its own; an asset with no declared layout
+refuses the plan before any EVM state exists.
+_Avoid_: inferring a slot from an ABI, an address, decimals, or a `balanceOf` call.
+
+**Insolvent zero capital**:
+A built Plan the declared capital policy cannot fund, reported as data — the asset, the
+amount required, and the path-generated credit available — never as an encoder defect.
+_Avoid_: "encode-failed" for a funding answer, an `Unsupported` message, `"no capital"`.
+
+**Probe executor**:
+The sim-only executor an execution probe runs on: constructed from sim-side handles only,
+so it has no signer, nonce lane, relay, or broadcast target and cannot submit — by
+construction, not by a dry-run flag.
+_Avoid_: "dry-run executor", "read-only submit lane"; inferring non-submission from an
+absent log line.
+
 **Profit capture**:
 The declared destination of a stream's terminal profit: custody, owner, native, ERC-6909
 mint, or Balancer Vault.
@@ -1332,15 +1368,20 @@ coupling — never hand-picked.
 _Avoid_: "repay hop" (a pivot may be a settle, not a swap).
 
 **Derivation outcome**:
-The tri-state result of turning a shape class into a command stream:
+The typed result of turning a shape class into a command stream (`Derive`):
 
 - **Encoded** — a valid stream was derived.
 - **Decline** — the derivation declines the family (no producer, or a producer guard
   returned nothing); routine and expected, and the strategy skips the path.
+- **Encoding failure** — a Plan was validated, but a primitive could not represent it on
+  the command wire (a range or length overflow); routine, and its own typed error.
+- **Insolvent zero capital** — a Plan was built and is structurally sound, but the
+  declared capital policy cannot fund it; routine, and it carries the deficit as data.
 - **Reject** — a stream was built but the ledger validator rejected it; by contract this
   is a latent bug, so it is always fatal — never swallowed or degraded to a skip.
 
-_Avoid_: collapsing decline and reject under "None"; treating a reject like a skip.
+_Avoid_: collapsing decline, encoding failure, and reject under "None"; treating a reject
+like a skip.
 
 **Hop facts**:
 The per-protocol data descriptors the plan walker consumes — ledgers touched,

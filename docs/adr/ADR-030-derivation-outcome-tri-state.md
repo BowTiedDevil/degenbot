@@ -16,11 +16,19 @@ profitable path with no diagnostic.
 ## Decision
 
 The derivation result distinguishes `Encoded`, `Declined`, `EncodingFailed`,
-and `Rejected`. The public seams (`encode_cmd_stream` / `encode_grammar`) keep
-returning `Option<Vec<u8>>`: Decline and primitive encoding failure map to
-`None`. Detailed adapters preserve the distinction: an unsupported path is a
-per-candidate decline, while a primitive range or length failure is a typed
-encoding error. Neither case panics.
+and `Rejected`. The public seams (`encode_cmd_stream` and the `*_detailed`
+derivation entries it projects) keep returning `Option<Vec<u8>>`: Decline and
+primitive encoding failure map to `None`. Detailed adapters preserve the
+distinction: an unsupported path is a per-candidate decline, while a primitive
+range or length failure is a typed encoding error. Neither case panics.
+
+A fifth arm joins the set for the same reason `Declined` is not a Reject:
+`InsolventZeroCapital` answers a *built, structurally sound* Plan the declared
+capital policy cannot fund. It is routine (the target-selection walk advances
+past it), it carries its own `asset` / `required` / `available` data instead of a
+message, and it maps to `None` at the public `Option` seam. It is unreachable
+under the production `InitialCapital::Held` stance, so production rejection
+classification is untouched.
 
 A **Reject is always fatal** — the revm matrix and honesty suite hard-fail on
 it, and a live run aborts. It is never swallowed, never degraded to a skip.
