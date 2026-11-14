@@ -22,12 +22,24 @@ to bin paths before the solve.
 
 ### Harness
 
-`degenbot-solvers/examples/rayon_scale_probe.rs` reconstructs production
+`rust/tools/solver-lab/src/bin/rayon_scale_probe/main.rs` (the `rayon_scale_probe`
+binary of `degenbot-solver-lab`, `--features capture-fixtures`) reconstructs production
 `ResolvedMixedPath` inputs (V3 concentrated-liquidity hops carrying the production
 `build_concentrated_liquidity_word_profiles` + `build_concentrated_liquidity_crossing_table` precomputes) from the
-committed heavy concentrated-liquidity capture fixture (`tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`,
+committed heavy concentrated-liquidity capture fixture
+(`rust/crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`,
 420 paths / 87 MB) and re-runs the production solver entry
 `mixed::solve_path_with_min_profit` under controlled thread counts.
+
+The instrument's home moved from the `degenbot-pools` examples into
+`degenbot-solver-lab`; its measurement, thread sweep, CLI arguments, CSV output, and
+golden-lite profit check are unchanged.
+
+```bash
+cargo run --locked --release --manifest-path rust/Cargo.toml \
+  -p degenbot-solver-lab --features capture-fixtures --bin rayon_scale_probe \
+  [-- <fixture.jsonl>] [--paths N] [--serial-passes N] [--ns 1,2,4,8]
+```
 
 The harness sweeps:
 
@@ -150,7 +162,8 @@ solving, correlates with walk combinatorics). The per-drain solve then uses
 
 ## 6. Artifacts
 
-- Harness: `rust/crates/engine/degenbot-solvers/examples/rayon_scale_probe.rs`
-- Fixture: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`
+- Harness: `rust/tools/solver-lab/src/bin/rayon_scale_probe/main.rs`
+  (`cargo run -p degenbot-solver-lab --features capture-fixtures --bin rayon_scale_probe`)
+- Fixture: `rust/crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`
 - Raw CSV: `/tmp/raypar80.csv` (80-path), smoke run inline (40-path).
 - ergo: epic 7MKIR7, task 5A3C2P (harness), task QXEVGN (this report).

@@ -37,6 +37,22 @@ degenbot-math = { workspace = true }
 alloy = { version = "^2.5" }
 serde_json = { version = "^1.0" }
 
+# The scale probe's fan-out: it builds its own `rayon::ThreadPoolBuilder` pools
+# at every thread count it sweeps, so the scheduler under measurement is a
+# direct edge, not a transitive arrival. Optional and activated by
+# `capture-fixtures` (the probe reads a capture), so the default lane compiles
+# neither it nor the probe.
+rayon = { version = "^1.12", optional = true }
+# The probe's production-diagnostics arm enters the `degenbot.arb.solve` span
+# per item, and measuring that closure shape is the arm's whole point, so the
+# facade is a direct edge. Optional on the same `capture-fixtures` activation as
+# `rayon`, on the `hotpath` rule below: `degenbot-pools` carries `tracing`
+# non-optionally, so the crate is already in every tree that reaches it and this
+# edge only makes the NAME available to this package when the probe's lane is on.
+# No other program here names a span, no subscriber is installed, and this is
+# never an exporter or a listener.
+tracing = { version = "^0.1", optional = true }
+
 # The net-profit order index the strategy microbench measures. Its default
 # feature set already carries the hull index, and the `envelope` forward below
 # names the lane explicitly so the dependency edge and the lane stay one
@@ -52,8 +68,14 @@ hotpath = { version = "^0.31.2", default-features = false, optional = true }
 [features]
 default = []
 
-# Capture-fixture I/O: the committed `.jsonl[.zst]` corpora the replays read.
-capture-fixtures = ["degenbot-pools/capture-fixtures"]
+# Capture-fixture I/O: the committed `.jsonl[.zst]` corpora the replays read,
+# plus the two edges only the scale probe names -- the `rayon` scheduler it
+# sweeps (a real addition: no default tree here carries it) and the `tracing`
+# span its diagnostics arm enters (already present through `degenbot-pools`'s
+# own non-optional edge). Activating this lane is the one thing that makes
+# either name available to this package; neither is a declared default
+# dependency.
+capture-fixtures = ["degenbot-pools/capture-fixtures", "dep:rayon", "dep:tracing"]
 
 # The instrumented cache strategies the cache-lab replay compares against the
 # full-rebuild reference. The cache-lab binaries also read a capture, so the
@@ -80,7 +102,7 @@ envelope = ["degenbot-order-index/envelope"]
 # The programs this package carries so far, split by whether they read a capture
 # fixture.
 #
-# FOUR programs read the committed `.jsonl[.zst]` corpora through
+# FIVE programs read the committed `.jsonl[.zst]` corpora through
 # `degenbot-pools`'s fixture reader, so each carries `required-features` and a
 # default check skips it deliberately instead of failing on a cfg'd-out module;
 # the cache lab names its second forward beside the reader.
@@ -116,6 +138,19 @@ required-features = ["capture-fixtures"]
 name = "concentrated_liquidity_cache_lab"
 path = "src/bin/concentrated_liquidity_cache_lab/main.rs"
 required-features = ["capture-fixtures", "cache-lab"]
+
+# The rayon scale probe: the one program here that measures the solver's
+# fan-out instead of a path's result. It reads a capture through the same
+# fixture reader, then re-runs production `solve_path_with_min_profit` under its
+# own `rayon` pools at each swept thread count; `--paths`, `--serial-passes` and
+# `--ns` are per-run caps on that sweep. Its golden-lite profit check filters the
+# measured set (a path that fails it is excluded, never silently kept) and is
+# never a timing threshold.
+
+[[bin]]
+name = "rayon_scale_probe"
+path = "src/bin/rayon_scale_probe/main.rs"
+required-features = ["capture-fixtures"]
 
 # The synthetic corpus generator reads no capture and opens no database of any
 # kind: it builds its own geometry and writes the two committed corpora, so it

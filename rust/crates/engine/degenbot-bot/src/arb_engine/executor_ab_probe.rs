@@ -10,7 +10,7 @@
 // is one executor, so there is nothing to A/B). What remains: the heavy-concentrated-liquidity
 // capture-corpus loader, the production cost proxy's bin packer and the
 // shared-cycle fixture used by the fleet parity/identity fixtures.
-// Fixture parse replicates rust/crates/foundation/degenbot-pools/examples/rayon_scale_probe.rs.
+// Fixture parse replicates rust/tools/solver-lab/src/bin/rayon_scale_probe/main.rs.
 use super::BotState;
 use crate::arb_engine::solve_cycle::SolveCycleShared;
 use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};

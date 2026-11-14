@@ -1,4 +1,4 @@
-// Dev/example-only harness: offline rayon scaling probe for the solver fan-out.
+// Dev-only harness: offline rayon scaling probe for the solver fan-out.
 #![expect(
     clippy::borrow_deref_ref,
     clippy::cast_possible_truncation,
@@ -32,7 +32,8 @@
 //! reconstructed path is flagged and excluded (never silent).
 //!
 //! Usage:
-//!   cargo run -p degenbot-pools --release --example rayon_scale_probe
+//!   cargo run -p degenbot-solver-lab --release --features capture-fixtures \
+//!     --bin rayon_scale_probe
 //!     [-- <fixture.jsonl>] [--paths N] [--serial-passes N]
 //!
 //! Output CSV columns:

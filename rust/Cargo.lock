@@ -2963,7 +2963,9 @@ dependencies = [
  "degenbot-order-index",
  "degenbot-pools",
  "hotpath",
+ "rayon",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

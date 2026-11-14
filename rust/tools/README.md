@@ -16,9 +16,9 @@ described in §6.2. Seven fixture slices have landed since, all in task `03`:
 | `03f` | the concentrated-liquidity capture generator — `concentrated_liquidity_capture_gen` | §6.8 |
 | `03g` (`B4IKBC`) | the three-hop production-calldata helper — `encode_three_hop` (a recipe/staging row; no §6.x section of its own) | §4.2, §8.1, §8.2 |
 
-Cargo metadata now reports **30 example targets**, `degenbot-fixture-tools` reports its lib
+Cargo metadata now reports **29 example targets**, `degenbot-fixture-tools` reports its lib
 plus exactly **nine** `[[bin]]` targets, and `degenbot-solver-lab` its lib plus exactly
-**five**. No §4.2 row is still an example — no other recorder, no other program, and no
+**six**. No §4.2 row is still an example — no other recorder, no other program, and no
 other capture generator moved — and **no fixture byte changed** in any of the seven
 slices. Each offline participant was re-proved byte-identical by its own
 re-derivation (the two capture recipes plus, for the cassette recorder,
@@ -54,7 +54,17 @@ that package's support modules instead of the `#[path]`-included `examples/commo
 with its `DR_AB_ITERS` / `DR_AB_MEMO` controls, capture argument, readout text, and
 divergence exit code unchanged; the `just entry-ab` recipe moved with it. `degenbot-pools`'s
 `examples/common/` modules stay exactly as they are until task `06`, because
-`walkmemo_readout` still consumes them. No fixture byte changed.
+`walkmemo_readout` still consumes them. No fixture byte changed. Task `04`'s fourth slice
+has landed since: it moved `rayon_scale_probe` into `degenbot-solver-lab` as a
+`required-features = ["capture-fixtures"]` binary, with its thread sweep (default
+`1,2,3,4,6,8`), its serial calibration passes, its `--paths` / `--serial-passes` /
+`--bare-only` / `--skip-gate` / `--skip-control` / `--ns` arguments, its CSV columns, and
+its golden-lite `PROFIT_EPS` exclusion unchanged. The two edges the instrument needs —
+the `rayon` scheduler it sweeps and the `tracing` span its diagnostics arm enters — are
+OPTIONAL dependencies of that package, activated by the existing `capture-fixtures` lane,
+so the default tree gained no crate: `rayon` is the lane's addition, and the `tracing`
+facade already rides along through `degenbot-pools`'s own non-optional edge. No timing
+threshold was added, and the largest matrix stays an on-demand measurement.
 
 The workspace accumulated 44 Cargo example targets whose purposes are three different
 things: a *supported consumer starting point*, a *durable assertion someone must gate*, and
@@ -173,8 +183,8 @@ no script file is added for it).
 destination package and the `Destination` cell says `landed`, because that is the state a
 reader (and the §4.6.1 union audit) has to be able to check. Every not-yet-moved row keeps
 its current package and its planned destination, exactly as before. The move also means the
-*original* population is still 44 rows while the *example* population is 30 — the fourteen
-diagnostics that differ are exactly the fourteen landed rows (§4.6).
+*original* population is still 44 rows while the *example* population is 29 — the fifteen
+diagnostics that differ are exactly the fifteen landed rows (§4.6).
 
 <!-- ledger:begin -->
 
@@ -210,7 +220,7 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 | `concentrated_liquidity_solve_replay` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs` | Offline heavy-CL replay with N-repeat stable timing; the two-sided golden gate (under-shoot past `PROFIT_EPS`, over-shoot past the few-wei tolerance, or nondeterminism across reps exits 1) | `capture-fixtures` | committed corpora `concentrated_liquidity_capture_offline.jsonl` and `heavy_concentrated_liquidity_solve_captures.jsonl[.zst]`; `DR_REPLAY_ITERS` | stdout; `DR_REPLAY_REGEN=1` rewrites stale over-shoot-only goldens — a write mode, never run by a gate | `just test-golden-replay` (both commands, unchanged in intent); task 06 promotes the durable assertion into pools integration-test coverage and keeps this binary as the lab |
 | `entry_ab_readout` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/entry_ab_readout/main.rs` | Post-unification readout: the retained `all-concentrated-liquidity` intake (prepared hops cloned) against `solve_piecewise` directly on real captured paths, byte-equality gated; the row census classifies the traffic mix | `capture-fixtures` (`hotpath` opt-in for the functions-timing run) | capture path argument (recipe defaults to `heavy_concentrated_liquidity_solve_captures.jsonl`); `DR_AB_ITERS`, `DR_AB_MEMO` | stdout; writes nothing except the hotpath JSON when `HOTPATH_OUTPUT_PATH` is set; exits 1 on any arm divergence | `just entry-ab [corpus]` → `cargo run -p degenbot-solver-lab --features capture-fixtures --bin entry_ab_readout -- <capture.jsonl>` (unchanged by the move: same argument, same two `DR_AB_*` controls, same readout text and counters, same parity exit code; its row parsing now imports `degenbot_solver_lab`'s support modules instead of the `#[path]`-included pools example helpers). Its forwarding-parity contract is **already** pinned in-crate by `all_concentrated_liquidity_intake_forwards_to_the_unified_entry_byte_exact`, `key_front_doors_agree_for_concentrated_liquidity_only_compositions`, and `both_solve_entries_refuse_paths_shorter_than_two_hops` (`crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/tests/memo.rs`) — see §5.7 |
 | `mixed_solve_replay` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/mixed_solve_replay/main.rs` | Offline heavy mixed V2+CL replay with N-repeat stable timing and the same two-sided golden gate; the bottleneck-localization note separates the envelope gate from the walk | `capture-fixtures` | `heavy_mixed_solve_captures.jsonl[.zst]`; `DR_REPLAY_ITERS` | stdout; writes nothing; exits 1 on golden drift or nondeterminism | `cargo run -p degenbot-solver-lab --features capture-fixtures --bin mixed_solve_replay -- <capture.jsonl>` (no recipe today); gate behaviour is the exit code |
-| `rayon_scale_probe` | `degenbot-pools` | solver-lab (04) | `crates/foundation/degenbot-pools/examples/rayon_scale_probe.rs` | Solver-parallelism scaling: production `solve_path_with_min_profit` under controlled thread counts, measuring wall / sum-CPU / efficiency per configuration | `capture-fixtures` | committed heavy-CL corpus; `--paths`, `--serial-passes` | stdout CSV; writes nothing; a golden-lite check reproduces each path's recorded profit within `PROFIT_EPS` and excludes (never silently keeps) a flagged path | `cargo run --release -p degenbot-solver-lab --features capture-fixtures --bin rayon_scale_probe`; report `docs/rayon-parallelism-lab.md`. Measurement, not a gate |
+| `rayon_scale_probe` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/rayon_scale_probe/main.rs` | Solver-parallelism scaling: production `solve_path_with_min_profit` under controlled thread counts, measuring wall / sum-CPU / efficiency per configuration | `capture-fixtures` | committed heavy-CL corpus; `--paths`, `--serial-passes`, `--ns`, `--bare-only`, `--skip-gate`, `--skip-control` | stdout CSV; writes nothing; a golden-lite check reproduces each path's recorded profit within `PROFIT_EPS` and excludes (never silently keeps) a flagged path | `cargo run --release -p degenbot-solver-lab --features capture-fixtures --bin rayon_scale_probe` (unchanged by the move: same arguments, same thread sweep and defaults, same CSV columns, same golden-lite exclusion; its `rayon` and `tracing` edges are OPTIONAL dependencies enabled by that same lane, so a default build compiles neither edge and never builds the probe); report `docs/rayon-parallelism-lab.md`. Measurement, not a gate — no timing threshold, and the largest matrix is never a routine gate |
 | `stateview_feasibility_probe` | `degenbot-pools` | solver-lab (04) | `crates/foundation/degenbot-pools/examples/stateview_feasibility_probe.rs` | The signed-off **KEEP**: reusable budget-regression tool for the block-epoch data plane — tickmap clone sweep vs N, journal-replay materialization, `Arc` COW, V2 scalar costs, memory anchors, RSS | — | none — synthetic `HashMap<i32, TickInfo>` of the production entry type; reads `/proc/self/statm` for RSS (Linux only) | stdout tables; writes nothing | `cargo run --release -p degenbot-solver-lab --bin stateview_feasibility_probe`; the budget rule and the historical numbers are `docs/architecture/stateview-feasibility.md` §2/§5. Its `// Throwaway spike harness ... deleted after supervisor sign-off` header is **stale** — see §5.7 |
 | `synth_corpus_gen` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/synth_corpus_gen/main.rs` | Generator of the giant-liquidity family shapes observed live (walk-heavy 27817, gate-heavy 10760/15012/26030); writes the two committed synthetic corpora in the replay and mixed schemas | — (**no `required-features`**: a DEFAULT-features target, so `just check-dev-tools default` builds it) | none — the two outputs are resolved from the repository root through `degenbot_solver_lab::paths`, which names the **pools** fixture home, so the corpora stay where their consumer reads them | **Writes** `crates/foundation/degenbot-pools/tests/fixtures/synth_giant_concentrated_liquidity.jsonl` and `..._mixed.jsonl`; no `--check`, no dry-run | `cargo run -p degenbot-solver-lab --bin synth_corpus_gen`, then `git diff --exit-code` on both outputs and `just test-rust-nextest -p degenbot-pools -E 'test(profit_envelope)'` (the kernel test that reads the concentrated-liquidity corpus). The concentrated-liquidity file re-derives byte-identically; the mixed file does not, for a reason that predates the move — see §5.3 |
 | `v2_concentrated_liquidity_parity_probe` | `degenbot-pools` | remove in 06 — 04 leaves it in place | `crates/foundation/degenbot-pools/examples/v2_concentrated_liquidity_parity_probe.rs` | ADR-060 evidence record: V2 constant-product hop vs the same state projected as a degenerate single-range CL tick sequence, compared per swap step over a real + synthetic corpus with a zero-tolerance verdict | `capture-fixtures` | `heavy_mixed_solve_captures.jsonl.zst` plus the three committed single-path pool fixtures | stdout: one `DIVERGENCE {...}` line per non-zero delta, then one `SUMMARY {...}` line; writes nothing | `cargo run -p degenbot-pools --features capture-fixtures --example v2_concentrated_liquidity_parity_probe` (unchanged: it does not move); decision record `docs/architecture/v2-cl-parity-probe.md`; task 06 extracts the durable assertions and then removes it — see §5.5 |
@@ -299,7 +309,7 @@ revision, the acceptance is §8.2's restatement — same logic and same empty di
 ### 4.6.1 The post-migration audit — one ledger row, one live target
 
 §4.6's block compares the *example* set against the ledger, so it is the right check only
-while no row has moved. After task `03` and task `04`'s first three slices fourteen rows **have** moved, and the honest form of
+while no row has moved. After task `03` and task `04`'s first four slices fifteen rows **have** moved, and the honest form of
 the same comparison unions the two target kinds a row can now name: a Cargo example target
 (rows not yet moved) and a tool-package `[[bin]]` target (rows whose destination has landed).
 That union is what §2's partition promises — every one of the 44 original targets exists
@@ -336,9 +346,9 @@ PY
 ```
 
 At this revision the acceptance is: `44` ledger rows, `44` unique, empty `missing`, empty
-`stale`, no duplicates, and `PASS` — over `30` example targets plus the `9`
-`degenbot-fixture-tools` and `5` `degenbot-solver-lab` binaries. §4.6's baseline block is
-expected to print `FAIL` here and to name exactly those fourteen rows as `stale in ledger`:
+`stale`, no duplicates, and `PASS` — over `29` example targets plus the `9`
+`degenbot-fixture-tools` and `6` `degenbot-solver-lab` binaries. §4.6's baseline block is
+expected to print `FAIL` here and to name exactly those fifteen rows as `stale in ledger`:
 they are not stale, they moved, and this block is where that is visible instead of argued.
 
 **Boundary.** This audit stays valid while every ledger row still exists as *some* target.
@@ -1688,14 +1698,17 @@ disposition is a tool binary. `scale_demo`, `walkmemo_readout`, and
 `mirror_coverage_probe` stay in their crate `examples/` directories until task `06` preserves
 their evidence and removes them, and the same holds for the parity probe (§5.5).
 
-**Task `04`'s remaining scope: seven of the §4.3 rows.** The first slice landed the
+**Task `04`'s remaining scope: two of the §4.3 rows.** The first slice landed the
 `examples/common/` conversion and `synth_corpus_gen`'s write anchor (§4.3, §5.3, §10.1); the
 second landed `concentrated_liquidity_cache_lab`, whose cache-lab lane is now the tool
 package's own `capture-fixtures,cache-lab` forward, with `telemetry` an optional second build
 shape of that same binary (the collector-drain assertion sits behind it and is never a
-`required-features` entry). Still to move, each with a `[[bin]]`
-stanza and the §8.2 route: `entry_ab_readout` (`capture-fixtures`), `rayon_scale_probe`,
-`stateview_feasibility_probe`, `bench_strategies` (order-index, `envelope`). `scale_demo`, `walkmemo_readout`, and the parity
+`required-features` entry); the third landed `entry_ab_readout` (`capture-fixtures`); the
+fourth landed `rayon_scale_probe` (`capture-fixtures`, with the `rayon` scheduler it sweeps
+and the `tracing` span its diagnostics arm enters as OPTIONAL dependencies behind that same
+lane). Still to move, each with a `[[bin]]`
+stanza and the §8.2 route: `stateview_feasibility_probe` and `bench_strategies` (order-index,
+`envelope`). `scale_demo`, `walkmemo_readout`, and the parity
 probe are not task `04` moves at all (§5.2, §5.5, §5.6).
 
 **Task `03`'s remaining scope: none.** Seven slices have landed all nine §4.2 rows: the two
