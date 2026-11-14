@@ -35,9 +35,12 @@
 //! declared width, the stable/volatile flags the resolver probes — have no
 //! getter to declare: the signature is data. They hash it with [`selector`],
 //! cross the same [`ContractRead::call`] primitive, and decode to the shape
-//! the caller named. The ERC-20 metadata family (name/symbol/decimals with
-//! its selector fallback and field decodes) has its own home in
-//! [`crate::erc20`].
+//! the caller named. That shape is a STATIC Solidity type (`U24`, `I24`,
+//! `bool`, `U256`), whose width the decode validates exactly as
+//! [`ContractRead::read`] validates a declared return — a live `DynSolType`
+//! would carry the same width and lose the check. The ERC-20 metadata family
+//! (name/symbol/decimals with its selector fallback and field decodes) has its
+//! own home in [`crate::erc20`].
 //!
 //! # Errors
 //!
@@ -45,15 +48,24 @@
 //! (reverts as [`ProviderError::ExecutionReverted`], transport errors
 //! classified by the provider); return data that does not decode surfaces as
 //! [`ProviderError::DecodingError`]. A word that is not canonical for its
-//! declared type is part of "does not decode" for a read that crosses
-//! [`ContractRead::read`]. No swallowing — callers decide retry/policy.
+//! declared type is part of "does not decode" on every read THIS module
+//! declares: [`ContractRead::read`] validates the `sol!` return type, the
+//! declared-shape helpers ([`fetch_no_arg_value`],
+//! [`fetch_address_returning`], [`fetch_uint256_field`]) validate the static
+//! type their caller named in the signature, and the narrowings that take raw
+//! bytes ([`Slot0Prefix`], [`TickLiquidity`]) validate the words they keep.
+//! The claim stops there: an answer whose shape no declaration here names —
+//! the ERC-20 metadata family in [`crate::erc20`], which classifies between a
+//! `string`, a `bytes32` and a whole-word integer under its own fall-through
+//! contract, and the storage-word paths outside this module — keeps its own
+//! decode policy and inherits nothing from this section. No swallowing —
+//! callers decide retry/policy.
 
 use std::future::Future;
 use std::sync::Arc;
 
-use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{address, Address, Bytes, I256, U128, U160, U256};
-use alloy::sol_types::SolCall;
+use alloy::sol_types::{SolCall, SolType, SolValue};
 use degenbot_core::errors::{ProviderError, ProviderResult};
 
 use crate::provider::AlloyProvider;
@@ -95,11 +107,13 @@ pub trait ContractRead: Send + Sync {
     /// discards those bits, so an over-wide answer arrives as a plausible small
     /// number indistinguishable from real state.
     ///
-    /// Reads that assemble their own answer do not cross this method and do not
-    /// inherit the policy: a declared-shape helper ([`fetch_no_arg_uint`] and
-    /// its siblings) reads through [`ContractRead::call`] and detokenizes what
-    /// it finds, and a narrowing adapter that must keep a tail or a prefix
-    /// ([`Slot0Prefix`], [`TickLiquidity`]) decodes its own bytes.
+    /// Reads that assemble their own answer do not cross this method, and none
+    /// of them decodes unvalidated: a declared-shape helper
+    /// ([`fetch_no_arg_value`], [`fetch_address_returning`]) reads through
+    /// [`ContractRead::call`] and validates the static type its caller named,
+    /// and a narrowing adapter that must keep a tail or a prefix
+    /// ([`Slot0Prefix`], [`TickLiquidity`]) validates the words it reads and
+    /// leaves the rest unread.
     ///
     /// Validation is not STRICT decoding: trailing bytes past the declared
     /// tuple stay accepted, so a getter whose answer leads with the fields a
@@ -439,7 +453,9 @@ impl Slot0Prefix {
     ///
     /// Returns [`ProviderError`] from the underlying `eth_call` or
     /// [`ProviderError::DecodingError`] when the return is shorter than the
-    /// two-word prefix.
+    /// two-word prefix or either word is not canonical for its declared width
+    /// (a `uint160` with its high bits set, an `int24` that is not
+    /// sign-extended). A longer tail is unread and unvalidated.
     pub async fn read(
         transport: &impl ContractRead,
         pool: Address,
@@ -450,11 +466,27 @@ impl Slot0Prefix {
         Self::decode(&data)
     }
 
+    /// The decode half of the narrowing, for a caller that obtains the bytes
+    /// through a batch (`multicall3`) rather than through
+    /// [`read`](Self::read).
+    ///
+    /// The declaration is the bound: the leading `(uint160, int24)` pair is
+    /// decoded by Alloy's VALIDATING decoder, so an over-wide price word or a
+    /// tick word that is not sign-extended is a decode failure rather than a
+    /// truncated price or a flipped tick. The tail the v3 family differs in is
+    /// left unread, so every answer at two words or longer reads.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::DecodingError`] when the bytes are shorter than
+    /// the pair or either word is not canonical for its declared width.
     fn decode(bytes: &[u8]) -> ProviderResult<Self> {
-        type Prefix = (alloy::primitives::U160, alloy::primitives::aliases::I24);
-        let (sqrt_price_x96, tick) = <Prefix as alloy::sol_types::SolValue>::abi_decode(bytes)
-            .map_err(|e| ProviderError::DecodingError {
-                message: format!("slot0 prefix decode: {e}"),
+        type Prefix = (U160, alloy::primitives::aliases::I24);
+        let (sqrt_price_x96, tick) =
+            <Prefix as SolValue>::abi_decode_validate(bytes).map_err(|e| {
+                ProviderError::DecodingError {
+                    message: format!("slot0 prefix decode: {e}"),
+                }
             })?;
         Ok(Self {
             sqrt_price_x96: U256::from(sqrt_price_x96),
@@ -528,7 +560,8 @@ impl TickLiquidity {
     ///
     /// Returns [`ProviderError`] from the underlying `eth_call` or
     /// [`ProviderError::DecodingError`] when the return is shorter than the
-    /// leading pair or the `int128` net does not decode.
+    /// leading pair or either word is not canonical for its declared width
+    /// (see [`decode`](Self::decode)).
     pub async fn read(
         transport: &impl ContractRead,
         pool: Address,
@@ -573,27 +606,28 @@ impl TickLiquidity {
     /// through a batch (`multicall3`) rather than through
     /// [`read`](Self::read).
     ///
+    /// The declaration is the bound here too: the leading pair is decoded as a
+    /// `(uint128, int128)` tuple by Alloy's VALIDATING decoder, so a gross word
+    /// with bits above 128 set and a net word that is not a sign-extended
+    /// `int128` are decode failures rather than a truncated gross or a flipped
+    /// net. The six words past the pair that the v3 `ticks(int24)` tuple
+    /// carries are left unread, so a two-word answer and the full eight-word
+    /// answer both read — which is what lets the same decode serve a pool that
+    /// answers only the pair and the real contract.
+    ///
     /// # Errors
     ///
-    /// Returns [`ProviderError::DecodingError`] when the bytes are shorter
-    /// than the leading pair.
+    /// Returns [`ProviderError::DecodingError`] when the bytes are shorter than
+    /// the leading pair or either word is not canonical for its declared width.
     pub fn decode(bytes: &[u8]) -> ProviderResult<Self> {
-        if bytes.len() < 64 {
-            return Err(ProviderError::DecodingError {
-                message: format!("ticks result < 64 bytes ({} bytes)", bytes.len()),
-            });
-        }
-        // Both words are right-aligned: `uint128` fills the low 16 bytes of
-        // word 0, `int128` the low 16 bytes of word 1 (sign-extended above).
-        let gross = U128::from_be_slice(&bytes[16..32]);
-        let low: [u8; 16] = bytes[48..64]
-            .try_into()
-            .map_err(|_| ProviderError::DecodingError {
-                message: "invalid ticks(int24) int128 decode".into(),
-            })?;
+        let (gross, net) = <(u128, i128) as SolValue>::abi_decode_validate(bytes).map_err(|e| {
+            ProviderError::DecodingError {
+                message: format!("ticks(int24) decode: {e}"),
+            }
+        })?;
         Ok(Self {
-            gross,
-            net: i128::from_be_bytes(low),
+            gross: U128::from(gross),
+            net,
         })
     }
 }
@@ -830,11 +864,11 @@ fn int24(tick: i32) -> ProviderResult<alloy::primitives::aliases::I24> {
 //
 // - ERC-20 metadata read through prototype lists (`name()`/`NAME()`,
 //   `symbol()`/`SYMBOL()`, `decimals()`/`DECIMALS()`), where a token may answer
-//   with `string`, `bytes32`, or a word of a width the caller does not want
-//   validated.
+//   with `string`, `bytes32`, or a word whose width only a fall-through shape
+//   can classify.
 // - The concentrated-liquidity fee tier and tick spacing, decoded at a declared
-//   width (`uint24` / `int24`) so an out-of-width answer is a decode failure
-//   rather than a truncated value.
+//   width (`U24` / `I24`) so an out-of-width answer is a decode failure rather
+//   than a truncated value.
 // - The solidly-family stable-vs-volatile flags (`stable()`, `stableSwap()`) and
 //   Camelot's fee probes (`FEE_DENOMINATOR()`, `token0FeePercent()`,
 //   `token1FeePercent()`), read by the resolver that classifies the pool and by
@@ -842,10 +876,11 @@ fn int24(tick: i32) -> ProviderResult<alloy::primitives::aliases::I24> {
 //
 // The caller passes the Solidity signature (`b"decimals()"`, …), which is hashed
 // to the 4-byte selector here, called once through the read primitive, and
-// decoded to the named shape. Test transports key their canned answers on
-// [`selector`] for the same reason: the double asserts the calldata the chain
-// would receive, whether the caller encoded it from a typed home or from
-// signature text.
+// decoded to the named STATIC type — the width rides that type, so the decode
+// validates it ([`fetch_no_arg_value`]). Test transports key their canned
+// answers on [`selector`] for the same reason: the double asserts the calldata
+// the chain would receive, whether the caller encoded it from a typed home or
+// from signature text.
 // ---------------------------------------------------------------------------
 
 /// Compute the 4-byte Solidity function selector, `keccak256(signature)[..4]`.
@@ -860,15 +895,28 @@ pub fn selector(signature: &[u8]) -> [u8; 4] {
     s
 }
 
-/// Call the no-argument `signature` on `to` and decode the right-aligned
-/// 20-byte `address` it returns — the pipeline for an address getter whose
-/// shape the caller declares (the [`IPoolIdentity`] family is the typed
-/// alternative).
+/// The decode failure a declared-shape read reports: the signature the caller
+/// asked for, then the decoder's own reason.
+fn declared_decode_failure(signature: &[u8], error: &alloy::sol_types::Error) -> ProviderError {
+    ProviderError::DecodingError {
+        message: format!("{} decode: {error}", String::from_utf8_lossy(signature)),
+    }
+}
+
+/// Call the no-argument `signature` on `to` and decode the `address` it returns
+/// — the pipeline for an address getter whose shape the caller declares (the
+/// [`IPoolIdentity`] family is the typed alternative).
+///
+/// The word crosses Alloy's VALIDATING `address` decoder, so the padding is
+/// part of the type: a word whose high twelve bytes are dirty is a decode
+/// failure rather than an address assembled from bits the getter never
+/// answered, and a return shorter than one word fails the same way.
 ///
 /// # Errors
 ///
 /// Returns [`ProviderError`] from the underlying `eth_call` or
-/// [`ProviderError::DecodingError`] when the return is shorter than one word.
+/// [`ProviderError::DecodingError`] when the return is not one canonical
+/// `address` word.
 pub async fn fetch_address_returning(
     provider: &impl ContractRead,
     signature: &[u8],
@@ -877,99 +925,49 @@ pub async fn fetch_address_returning(
 ) -> ProviderResult<Address> {
     let calldata = Bytes::copy_from_slice(&selector(signature));
     let bytes = provider.call(*to, calldata, block).await?;
-    if bytes.len() < 32 {
-        return Err(ProviderError::DecodingError {
-            message: "address-returning call returned <32 bytes".into(),
-        });
-    }
-    Ok(Address::from_slice(&bytes[12..32]))
+    Address::abi_decode_validate(&bytes).map_err(|e| declared_decode_failure(signature, &e))
 }
 
-/// Call the no-argument `signature` on `to` and decode its return as the
-/// unsigned integer type `ty` (`fee()` as `uint24`, `decimals()` as
-/// `uint256`, …), widened into a `U256`.
+/// Call the no-argument `signature` on `to` and decode its answer as the STATIC
+/// Solidity type `S` — `U24` for a fee tier, `I24` for a tick spacing, `U256`
+/// for a full-word getter, `bool` for a flag.
 ///
-/// `ty` is the shape the CALLER declares, not a bound this helper enforces: the
-/// word is read through [`ContractRead::call`] and detokenized by
-/// [`DynSolType::abi_decode`], whose non-validating path zeroes the bits above
-/// `ty`'s width — a `uint24` getter answering bit 24 set arrives as the
-/// truncated value. A caller that wants its declared width to refuse such a
-/// word declares the getter as an `sol!` call and crosses
-/// [`ContractRead::read`] instead.
+/// `S` is both the shape the caller declares and the bound the decode enforces:
+/// the word is read through [`ContractRead::call`] and decoded by Alloy's
+/// validating decoder for `S`'s static `SolType` (the same policy
+/// [`ContractRead::read`] applies to a declared return). A `U24` getter
+/// answering bit 24 set, an `I24` answer whose word is not sign-extended, and a
+/// `bool` word outside `{0, 1}` are therefore decode failures, never values
+/// whose excess bits were dropped. Words past `S` stay accepted, so a getter
+/// answering more than the caller reads still reads.
 ///
 /// # Errors
 ///
 /// Returns [`ProviderError`] from the underlying `eth_call` or
-/// [`ProviderError::DecodingError`] when the return does not decode as `ty` at
-/// all (a short word, or a value of another ABI type).
-pub async fn fetch_no_arg_uint(
+/// [`ProviderError::DecodingError`] when the return does not decode as `S` at
+/// its declared width.
+pub async fn fetch_no_arg_value<S>(
     provider: &impl ContractRead,
     signature: &[u8],
     to: &Address,
     block: Option<u64>,
-    ty: &DynSolType,
-) -> ProviderResult<U256> {
+) -> ProviderResult<S>
+where
+    S: SolValue,
+    S: From<<S::SolType as SolType>::RustType>,
+{
     let calldata = Bytes::copy_from_slice(&selector(signature));
     let bytes = provider.call(*to, calldata, block).await?;
-    match ty.abi_decode(&bytes) {
-        Ok(DynSolValue::Uint(n, _)) => Ok(n),
-        _ => Err(ProviderError::DecodingError {
-            message: "invalid uint decode for no-arg read".into(),
-        }),
-    }
+    S::abi_decode_validate(&bytes).map_err(|e| declared_decode_failure(signature, &e))
 }
 
-/// Call the no-argument `signature` on `to` and decode its return as the
-/// signed integer type `ty`, widened into an `I256` (`tickSpacing()` as
-/// `int24`, …).
+/// Call the no-argument `signature` on `to` and decode the first return word as
+/// a `uint256` (`decimals()` / `DECIMALS()`, and any other single-word getter
+/// whose declared width is the whole word).
 ///
-/// # Errors
-///
-/// Returns [`ProviderError`] from the underlying `eth_call` or
-/// [`ProviderError::DecodingError`] when the return does not decode as `ty`.
-pub async fn fetch_no_arg_int(
-    provider: &impl ContractRead,
-    signature: &[u8],
-    to: &Address,
-    block: Option<u64>,
-    ty: &DynSolType,
-) -> ProviderResult<I256> {
-    let calldata = Bytes::copy_from_slice(&selector(signature));
-    let bytes = provider.call(*to, calldata, block).await?;
-    match ty.abi_decode(&bytes) {
-        Ok(DynSolValue::Int(n, _)) => Ok(n),
-        _ => Err(ProviderError::DecodingError {
-            message: "invalid int decode for no-arg read".into(),
-        }),
-    }
-}
-
-/// Call the no-argument `signature` on `to` and decode its return as a
-/// Solidity `bool` (`stable()` / `stableSwap()`, …).
-///
-/// # Errors
-///
-/// Returns [`ProviderError`] from the underlying `eth_call` or
-/// [`ProviderError::DecodingError`] when the return is not a `bool`.
-pub async fn fetch_no_arg_bool(
-    provider: &impl ContractRead,
-    signature: &[u8],
-    to: &Address,
-    block: Option<u64>,
-) -> ProviderResult<bool> {
-    let calldata = Bytes::copy_from_slice(&selector(signature));
-    let bytes = provider.call(*to, calldata, block).await?;
-    match DynSolType::Bool.abi_decode(&bytes) {
-        Ok(DynSolValue::Bool(b)) => Ok(b),
-        _ => Err(ProviderError::DecodingError {
-            message: "invalid bool decode for no-arg read".into(),
-        }),
-    }
-}
-
-/// Call the no-argument `signature` on `to` and decode the first return word
-/// as a `uint256` (`decimals()` / `DECIMALS()`, and any other single-word
-/// getter whose width the caller does not want validated).
+/// This is [`fetch_no_arg_value`] at `S = U256`: the full word needs no padding
+/// check beyond "one whole word" — every 32-byte word is a canonical `uint256`
+/// — and words past it stay unread.
 ///
 /// # Errors
 ///
@@ -981,16 +979,7 @@ pub async fn fetch_uint256_field(
     to: &Address,
     block: Option<u64>,
 ) -> ProviderResult<U256> {
-    let calldata = Bytes::copy_from_slice(&selector(signature));
-    let bytes = provider.call(*to, calldata, block).await?;
-    if bytes.len() < 32 {
-        return Err(ProviderError::DecodingError {
-            message: format!("uint256 decode: expected >= 32 bytes, got {}", bytes.len()),
-        });
-    }
-    let mut word = [0u8; 32];
-    word.copy_from_slice(&bytes[0..32]);
-    Ok(U256::from_be_bytes::<32>(word))
+    fetch_no_arg_value(provider, signature, to, block).await
 }
 
 #[cfg(test)]
@@ -1000,7 +989,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    use alloy::primitives::aliases::U112;
+    use alloy::dyn_abi::{DynSolType, DynSolValue};
+    use alloy::primitives::aliases::{I24, U112, U24};
 
     const TO: Address = alloy::primitives::address!("00000000000000000000000000000000000000a1");
     const OTHER: Address = alloy::primitives::address!("00000000000000000000000000000000000000b2");
@@ -1058,6 +1048,14 @@ mod tests {
         DynSolValue::Uint(v, 256).abi_encode()
     }
 
+    /// One raw ABI word holding `v` in its low four bytes — the shape a narrow
+    /// field arrives in when its padding is the thing under test.
+    fn word_of(v: u32) -> Vec<u8> {
+        let mut word = [0u8; 32];
+        word[28..32].copy_from_slice(&v.to_be_bytes());
+        word.to_vec()
+    }
+
     /// A `uint256` return of `bits` width (right-aligned in the word).
     fn narrow_uint_return(v: U256, bits: usize) -> Vec<u8> {
         DynSolValue::Uint(v, bits).abi_encode()
@@ -1112,6 +1110,13 @@ mod tests {
             DynSolValue::Bool(true),
         ])
         .abi_encode()
+    }
+
+    /// A `ticks(int24)` leading pair from two raw words.
+    fn tick_pair_return(gross: [u8; 32], net: [u8; 32]) -> Vec<u8> {
+        let mut out = gross.to_vec();
+        out.extend_from_slice(&net);
+        out
     }
 
     /// The eight-word `ticks(int24)` return.
@@ -1610,6 +1615,69 @@ mod tests {
         ));
     }
 
+    /// The leading pair's declaration is its bound: the price is `uint160` and
+    /// the tick is `int24`, so a price word carrying bits above position 160 and
+    /// a tick word that is not sign-extended are both decode failures — never a
+    /// truncated price or a sign read off the low 24 bits.
+    #[tokio::test]
+    async fn slot0_prefix_rejects_words_outside_their_declared_widths() {
+        let mut over_wide_price = uint_return(U256::from(1u8) << 160);
+        over_wide_price.extend_from_slice(&DynSolValue::Int(I256::ZERO, 24).abi_encode());
+        let price = TableTransport::new()
+            .answer(IUniswapV3Pool::slot0Call {}.abi_encode(), over_wide_price);
+        assert!(matches!(
+            Slot0Prefix::read(&price, TO, BLOCK).await,
+            Err(ProviderError::DecodingError { .. })
+        ));
+
+        // `-123` at int24 is `0xffff85`; answered with no sign padding above it
+        // the word is not a canonical `int24`.
+        let mut unpadded_tick = uint_return(U256::from(1u8) << 96);
+        unpadded_tick.extend_from_slice(&word_of(0x00ff_ff85));
+        let tick = TableTransport::new().answer(
+            IUniswapV3Pool::slot0Call {}.abi_encode(),
+            unpadded_tick.clone(),
+        );
+        assert!(matches!(
+            Slot0Prefix::read(&tick, TO, BLOCK).await,
+            Err(ProviderError::DecodingError { .. })
+        ));
+        assert_eq!(
+            I24::abi_decode(&unpadded_tick[32..]).unwrap(),
+            I24::try_from(-123i32).unwrap(),
+            "the typed unvalidated decode reads -123 off the low three bytes"
+        );
+    }
+
+    /// The declarations' own edges are canonical: `uint160::MAX` is a price a
+    /// pool may report and `int24`'s MIN/MAX are ticks it may hold, so the bound
+    /// is each field's width rather than a narrower guess that would refuse real
+    /// state.
+    #[tokio::test]
+    async fn slot0_prefix_reads_the_uint160_and_int24_bounds() {
+        const INT24_MIN: i32 = -8_388_608;
+        const INT24_MAX: i32 = 8_388_607;
+        for (sqrt, tick) in [
+            (U256::from(U160::MAX), INT24_MIN),
+            (U256::from(U160::MAX), INT24_MAX),
+            (U256::ZERO, INT24_MIN),
+        ] {
+            let transport = TableTransport::new().answer(
+                IUniswapV3Pool::slot0Call {}.abi_encode(),
+                slot0_return(sqrt, tick),
+            );
+
+            assert_eq!(
+                Slot0Prefix::read(&transport, TO, BLOCK).await.unwrap(),
+                Slot0Prefix {
+                    sqrt_price_x96: sqrt,
+                    tick: widen_int24(tick),
+                },
+                "sqrt={sqrt} tick={tick} sit inside uint160/int24, not outside them"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn tick_liquidity_reads_the_leading_pair_of_ticks() {
         let transport = TableTransport::new().answer(
@@ -1657,6 +1725,82 @@ mod tests {
             TickLiquidity::read(&transport, TO, 0, BLOCK).await,
             Err(ProviderError::DecodingError { .. })
         ));
+    }
+
+    /// The pair's declaration is its bound: `uint128` gross and `int128` net, so
+    /// an over-wide gross word and a net word that is not sign-extended are
+    /// decode failures rather than a truncated gross and a sign read off the low
+    /// half-word.
+    #[test]
+    fn tick_liquidity_decode_rejects_words_outside_their_declared_widths() {
+        let mut over_wide_gross = [0u8; 32];
+        over_wide_gross.copy_from_slice(&uint_return(U256::from(1u8) << 128));
+        let net_word = ticks_return(0, -100)[32..64]
+            .try_into()
+            .expect("word 1 of the eight-word answer");
+        assert!(matches!(
+            TickLiquidity::decode(&tick_pair_return(over_wide_gross, net_word)),
+            Err(ProviderError::DecodingError { .. })
+        ));
+
+        // `-100` at int128 with its high 16 bytes left zero: the low half-word is
+        // still `-100`, which is what a bare low-half slice reported.
+        let mut unpadded_net = [0u8; 32];
+        unpadded_net[16..32].copy_from_slice(&(-100i128).to_be_bytes());
+        let unpadded = tick_pair_return([0u8; 32], unpadded_net);
+        assert!(matches!(
+            TickLiquidity::decode(&unpadded),
+            Err(ProviderError::DecodingError { .. })
+        ));
+        assert_eq!(
+            <(u128, i128) as SolValue>::abi_decode(&unpadded).unwrap(),
+            (0u128, -100i128),
+            "the unvalidated decode reads -100 off the low half-word"
+        );
+    }
+
+    /// Both shapes a `ticks(int24)` answer arrives in read the same pair: the
+    /// two words a pool answering only the leading pair returns, and the full
+    /// eight-word tuple the real contract does. A byte short of the pair does
+    /// not.
+    #[test]
+    fn tick_liquidity_decode_reads_two_word_and_eight_word_answers() {
+        let expected = TickLiquidity {
+            gross: U128::from(500u64),
+            net: -100i128,
+        };
+        let full = ticks_return(500, -100);
+        assert_eq!(TickLiquidity::decode(&full).unwrap(), expected);
+        assert_eq!(TickLiquidity::decode(&full[..64]).unwrap(), expected);
+        assert!(matches!(
+            TickLiquidity::decode(&full[..63]),
+            Err(ProviderError::DecodingError { .. })
+        ));
+    }
+
+    /// The pair's edges are canonical for the same reason: a `uint128` gross of
+    /// MAX and an `int128` net of MIN/MAX are values a tick may hold, and both
+    /// answer shapes read them back unchanged.
+    #[test]
+    fn tick_liquidity_decode_reads_the_uint128_and_int128_bounds() {
+        for (gross, net) in [
+            (u128::MAX, i128::MIN),
+            (u128::MAX, i128::MAX),
+            (0u128, i128::MIN),
+        ] {
+            let expected = TickLiquidity {
+                gross: U128::from(gross),
+                net,
+            };
+            let full = ticks_return(gross, net);
+
+            assert_eq!(
+                TickLiquidity::decode(&full).unwrap(),
+                expected,
+                "gross={gross} net={net} sit inside uint128/int128, not outside them"
+            );
+            assert_eq!(TickLiquidity::decode(&full[..64]).unwrap(), expected);
+        }
     }
 
     #[tokio::test]
@@ -1855,7 +1999,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn declared_scalars_decode_against_their_declared_widths() {
+    async fn declared_scalars_decode_at_the_width_their_type_declares() {
         let transport = TableTransport::new()
             .answer(
                 selector(b"fee()").to_vec(),
@@ -1871,27 +2015,166 @@ mod tests {
             );
 
         assert_eq!(
-            fetch_no_arg_uint(&transport, b"fee()", &TO, BLOCK, &DynSolType::Uint(24))
+            fetch_no_arg_value::<U24>(&transport, b"fee()", &TO, BLOCK)
                 .await
                 .unwrap(),
-            U256::from(3_000u64)
+            U24::from(3_000u32)
         );
         assert_eq!(
-            fetch_no_arg_int(
-                &transport,
-                b"tickSpacing()",
-                &TO,
-                BLOCK,
-                &DynSolType::Int(24)
-            )
-            .await
-            .unwrap(),
-            I256::try_from(-60i128).unwrap()
+            fetch_no_arg_value::<I24>(&transport, b"tickSpacing()", &TO, BLOCK)
+                .await
+                .unwrap(),
+            I24::try_from(-60i32).unwrap(),
+            "the declared int24 keeps its sign"
         );
-        assert!(fetch_no_arg_bool(&transport, b"stable()", &TO, BLOCK)
-            .await
-            .unwrap());
+        assert!(
+            fetch_no_arg_value::<bool>(&transport, b"stable()", &TO, BLOCK)
+                .await
+                .unwrap()
+        );
         assert_eq!(transport.calls().len(), 3, "each scalar read is one call");
+    }
+
+    /// The declared type is the bound: a `uint24` getter answering bit 24 set is
+    /// a decode failure, not the truncated fee an unvalidated decode yields.
+    #[tokio::test]
+    async fn declared_uint_read_refuses_a_word_wider_than_its_declared_width() {
+        let dirty = narrow_uint_return(U256::from(1u8) << 24, 256);
+        let transport = TableTransport::new().answer(selector(b"fee()").to_vec(), dirty.clone());
+
+        let err = fetch_no_arg_value::<U24>(&transport, b"fee()", &TO, BLOCK)
+            .await
+            .unwrap_err();
+
+        let ProviderError::DecodingError { message } = err else {
+            panic!("an over-wide uint24 word is a decode failure, got {err:?}");
+        };
+        assert!(
+            message.contains("fee()"),
+            "the failure names the signature it decoded: {message}"
+        );
+        assert_eq!(
+            DynSolType::Uint(24).abi_decode(&dirty).unwrap(),
+            DynSolValue::Uint(U256::from(1u8) << 24, 24),
+            "the dynamic decode enforced no width at all — the fee would have carried bit 24"
+        );
+    }
+
+    /// An `int24` word that is not sign-extended is refused: the low 24 bits
+    /// still read as a negative tick without validation, which is exactly the
+    /// value a bare low-half slice would have produced.
+    #[tokio::test]
+    async fn declared_int_read_refuses_a_word_that_is_not_sign_extended() {
+        // `-60` at int24 is `0xffffc4`; a getter that answered those three bytes
+        // with no sign padding is not a canonical `int24` word.
+        let dirty = word_of(0x00ff_ffc4);
+        let transport =
+            TableTransport::new().answer(selector(b"tickSpacing()").to_vec(), dirty.clone());
+
+        let err = fetch_no_arg_value::<I24>(&transport, b"tickSpacing()", &TO, BLOCK)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ProviderError::DecodingError { .. }));
+        assert_eq!(
+            DynSolType::Int(24).abi_decode(&dirty).unwrap(),
+            DynSolValue::Int(I256::try_from(0x00ff_ffc4i32).unwrap(), 24),
+            "the dynamic decode kept the unpadded word as a large positive number"
+        );
+        assert_eq!(
+            I24::abi_decode(&dirty).unwrap(),
+            I24::try_from(-60i32).unwrap(),
+            "the typed unvalidated decode sign-extends bit 23 into -60 regardless of the padding"
+        );
+    }
+
+    /// A `bool` is canonical only as 0 or 1: a getter answering 2 is refused
+    /// rather than read as `true`.
+    #[tokio::test]
+    async fn declared_bool_read_refuses_a_word_other_than_zero_or_one() {
+        let transport = TableTransport::new()
+            .answer(selector(b"stable()").to_vec(), uint_return(U256::from(2u8)));
+
+        let err = fetch_no_arg_value::<bool>(&transport, b"stable()", &TO, BLOCK)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ProviderError::DecodingError { .. }));
+    }
+
+    /// A getter answering more than the caller reads keeps working: the words
+    /// past the declared type are unread.
+    #[tokio::test]
+    async fn declared_reads_keep_trailing_words_past_the_declared_type() {
+        let mut answer = uint_return(U256::from(3_000u64));
+        answer.extend_from_slice(&uint_return(U256::from(999u64)));
+        let transport = TableTransport::new().answer(selector(b"fee()").to_vec(), answer);
+
+        assert_eq!(
+            fetch_no_arg_value::<U24>(&transport, b"fee()", &TO, BLOCK)
+                .await
+                .unwrap(),
+            U24::from(3_000u32)
+        );
+    }
+
+    /// A return shorter than one word decodes as nothing — never as a zero.
+    #[tokio::test]
+    async fn declared_reads_refuse_a_short_answer() {
+        let fee = TableTransport::new().answer(selector(b"fee()").to_vec(), vec![0u8; 31]);
+        assert!(
+            matches!(
+                fetch_no_arg_value::<U24>(&fee, b"fee()", &TO, BLOCK).await,
+                Err(ProviderError::DecodingError { .. })
+            ),
+            "a 31-byte fee answer is not a word"
+        );
+
+        let identity = TableTransport::new().answer(selector(b"factory()").to_vec(), vec![0u8; 31]);
+        assert!(matches!(
+            fetch_address_returning(&identity, b"factory()", &TO, BLOCK).await,
+            Err(ProviderError::DecodingError { .. })
+        ));
+
+        let decimals =
+            TableTransport::new().answer(selector(b"decimals()").to_vec(), vec![0u8; 31]);
+        assert!(matches!(
+            fetch_uint256_field(&decimals, b"decimals()", &TO, BLOCK).await,
+            Err(ProviderError::DecodingError { .. })
+        ));
+    }
+
+    /// An `address` word with dirty high bytes is refused by the declared-shape
+    /// read for the same reason the typed verb refuses it: the padding is part
+    /// of the type.
+    #[tokio::test]
+    async fn declared_address_read_refuses_a_word_with_dirty_high_bytes() {
+        let mut word = [0u8; 32];
+        word[0] = 0x01;
+        word[31] = 0x42;
+        let transport =
+            TableTransport::new().answer(selector(b"factory()").to_vec(), word.to_vec());
+
+        assert!(matches!(
+            fetch_address_returning(&transport, b"factory()", &TO, BLOCK).await,
+            Err(ProviderError::DecodingError { .. })
+        ));
+    }
+
+    /// The padding is what the decode checks, not the value: a canonical
+    /// `address` word — twelve zero bytes above the twenty — reads back whole.
+    #[tokio::test]
+    async fn declared_address_read_accepts_a_canonically_padded_word() {
+        let expected = alloy::primitives::address!("00000000000000000000000000000000000000c3");
+        let transport =
+            TableTransport::new().answer(selector(b"factory()").to_vec(), expected.abi_encode());
+
+        assert_eq!(
+            fetch_address_returning(&transport, b"factory()", &TO, BLOCK)
+                .await
+                .unwrap(),
+            expected
+        );
     }
 
     #[tokio::test]

@@ -209,17 +209,11 @@ pub async fn scrape_v2_state(
     pair: Address,
     block: u64,
 ) -> Result<FetchedState, String> {
-    use degenbot_rpc::abi;
-    let bytes = provider
-        .eth_call(
-            &pair,
-            Bytes::from(abi::IUniswapV2Pair::getReservesCall {}.abi_encode()),
-            Some(block),
-        )
+    use degenbot_rpc::abi::{self, ContractRead};
+    let r = provider
+        .read(pair, abi::IUniswapV2Pair::getReservesCall {}, Some(block))
         .await
         .map_err(|e| format!("getReserves: {e}"))?;
-    let r = abi::IUniswapV2Pair::getReservesCall::abi_decode_returns(&bytes)
-        .map_err(|e| format!("getReserves decode: {e}"))?;
     Ok(FetchedState::V2 {
         reserve0: U256::from(r.reserve0),
         reserve1: U256::from(r.reserve1),
@@ -299,9 +293,10 @@ async fn scan_v3_via_lens(
                 "TickLens.getPopulatedTicksInWord(pool={pool}, word={word}) returned failure"
             ));
         }
-        let decoded =
-            ITickLens::getPopulatedTicksInWordCall::abi_decode_returns(&result.return_data)
-                .map_err(|e| format!("populated-ticks decode (word {word}): {e}"))?;
+        let decoded = ITickLens::getPopulatedTicksInWordCall::abi_decode_returns_validate(
+            &result.return_data,
+        )
+        .map_err(|e| format!("populated-ticks decode (word {word}): {e}"))?;
         for entry in decoded {
             let tick: i32 = entry
                 .tick
@@ -343,8 +338,9 @@ async fn scan_v3_direct(
             return Err(format!("tickBitmap(word={word}) returned failure"));
         }
         // Single return: the decode is the bare word.
-        let bitmap = IUniswapV3Pool::tickBitmapCall::abi_decode_returns(&result.return_data)
-            .map_err(|e| format!("bitmap decode (word {word}): {e}"))?;
+        let bitmap =
+            IUniswapV3Pool::tickBitmapCall::abi_decode_returns_validate(&result.return_data)
+                .map_err(|e| format!("bitmap decode (word {word}): {e}"))?;
         bitmaps.push((*word, bitmap));
     }
     let mut ticks: Vec<i32> = Vec::new();
@@ -364,7 +360,7 @@ async fn scan_v3_direct(
         if !result.success {
             return Err(format!("ticks(tick={tick}) returned failure"));
         }
-        let decoded = IUniswapV3Pool::ticksCall::abi_decode_returns(&result.return_data)
+        let decoded = IUniswapV3Pool::ticksCall::abi_decode_returns_validate(&result.return_data)
             .map_err(|e| format!("tick decode ({tick}): {e}"))?;
         out.insert(tick, (decoded.liquidityNet, decoded.liquidityGross));
     }
@@ -429,9 +425,10 @@ pub async fn scrape_v4_state(
                 "StateView.getTickBitmap(word={word}) returned failure"
             ));
         }
-        let bitmap =
-            IUniswapV4StateView::getTickBitmapCall::abi_decode_returns(&result.return_data)
-                .map_err(|e| format!("bitmap decode (word {word}): {e}"))?;
+        let bitmap = IUniswapV4StateView::getTickBitmapCall::abi_decode_returns_validate(
+            &result.return_data,
+        )
+        .map_err(|e| format!("bitmap decode (word {word}): {e}"))?;
         ticks.extend(ticks_from_bitmap_word(*word, bitmap, tick_spacing));
     }
     let mut tick_calls: Vec<(Address, Bytes)> = Vec::with_capacity(ticks.len());
@@ -455,9 +452,10 @@ pub async fn scrape_v4_state(
                 "StateView.getTickLiquidity(tick={tick}) returned failure"
             ));
         }
-        let decoded =
-            IUniswapV4StateView::getTickLiquidityCall::abi_decode_returns(&result.return_data)
-                .map_err(|e| format!("tick decode ({tick}): {e}"))?;
+        let decoded = IUniswapV4StateView::getTickLiquidityCall::abi_decode_returns_validate(
+            &result.return_data,
+        )
+        .map_err(|e| format!("tick decode ({tick}): {e}"))?;
         tick_data.insert(tick, (decoded.net, decoded.gross));
     }
     Ok(FetchedState::V4 {
@@ -1005,6 +1003,68 @@ mod tests {
     #[tokio::test]
     async fn pseudo_golden_path73385_direct_pool_scan() {
         pseudo_golden(FIXTURE_73385, TickScan::DirectPool).await;
+    }
+
+    /// `scrape_v2_state` crosses the typed read verb: the calldata is the
+    /// unchanged `getReserves()` selector (the recorded transport answers that
+    /// exact key and nothing else), a canonical three-word answer is the
+    /// snapshot, and an over-wide reserve word is refused rather than truncated
+    /// into a plausible reserve.
+    #[tokio::test]
+    async fn scrape_v2_state_reads_three_words_and_refuses_an_oversized_reserve() {
+        let pair = Address::repeat_byte(0x22);
+        let block = 21_000_000u64;
+        let chain = |reserve0: U256| {
+            let mut calls = serde_json::Map::new();
+            calls.insert(
+                call_key(
+                    pair,
+                    &degenbot_rpc::abi::IUniswapV2Pair::getReservesCall {}.abi_encode(),
+                ),
+                serde_json::Value::String(hex_str(&concat_words(&[
+                    word_be_u(reserve0),
+                    word_be_u(U256::from(2_500u64)),
+                    word_be_u(U256::from(1_700_000_000u64)),
+                ]))),
+            );
+            serde_json::json!({
+                "chain_id": 1,
+                "block_number": block,
+                "timestamp": 0,
+                "calls": calls,
+                "code": {},
+            })
+        };
+
+        let provider = provider_for(&chain(U256::from(1_500u64)));
+        let state = scrape_v2_state(&provider, pair, block)
+            .await
+            .expect("a recorded getReserves answer scrapes");
+        let refreshed = state.state_json();
+        assert!(
+            matches!(
+                state,
+                FetchedState::V2 {
+                    reserve0,
+                    reserve1,
+                    block_number,
+                } if reserve0 == U256::from(1_500u64)
+                    && reserve1 == U256::from(2_500u64)
+                    && block_number == 1_700_000_000
+            ),
+            "the three words are the reserves and the timestamp the corpus records: {refreshed:?}"
+        );
+
+        // `2^112`: one past the pair's reserve field, which the unvalidated
+        // decode would report as a zero reserve.
+        let over = provider_for(&chain(U256::from(1u8) << 112));
+        let err = scrape_v2_state(&over, pair, block)
+            .await
+            .expect_err("an over-wide reserve word is refused");
+        assert!(
+            err.contains("getReserves"),
+            "the failure names the read it could not decode: {err}"
+        );
     }
 
     /// Drift-gate discipline: a missing batch answer must fail the scrape

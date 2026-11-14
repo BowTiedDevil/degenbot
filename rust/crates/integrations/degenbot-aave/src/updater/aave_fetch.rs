@@ -27,10 +27,11 @@
 //! synchronous; the orchestrator calls it after grouping, per tx, on the
 //! in-memory tx-bundle (no extra RPC).
 
-use alloy::primitives::{Address, Bytes, B256};
+use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::Log;
+use alloy::sol_types::SolValue;
 use degenbot_core::address_utils::address_to_checksum_string;
-use degenbot_core::errors::ProviderResult;
+use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_decoders::aave_event_decoder::{
     AAVE_ADDRESS_SET_TOPIC, AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
     AAVE_ASSET_SOURCE_UPDATED_TOPIC, AAVE_BALANCE_TRANSFER_TOPIC, AAVE_BORROW_TOPIC,
@@ -413,7 +414,20 @@ fn no_arg_calldata(signature: &str) -> Bytes {
     Bytes::from(alloy::primitives::keccak256(signature.as_bytes())[..4].to_vec())
 }
 
-/// `eth_call` a no-arg view returning an `address` (word 0's low 20 bytes).
+/// The decode failure a fixed-width substrate read reports: the signature the
+/// caller asked for, then the decoder's own reason.
+fn decode_failure(signature: &str, error: &alloy::sol_types::Error) -> ProviderError {
+    ProviderError::DecodingError {
+        message: format!("{signature} decode: {error}"),
+    }
+}
+
+/// `eth_call` a no-arg view returning an `address` (word 0).
+///
+/// The word crosses Alloy's VALIDATING `address` decoder: a return shorter than
+/// one word, or one whose high twelve bytes are dirty, is a typed decode
+/// failure rather than a panic on the slice or an address assembled from bits
+/// the contract never answered.
 async fn call_address(
     provider: &AlloyProvider,
     target: Address,
@@ -423,10 +437,19 @@ async fn call_address(
     let ret = provider
         .eth_call(&target, no_arg_calldata(signature), at_block)
         .await?;
-    Ok(Address::from_slice(&ret[12..32]))
+    decode_address_answer(signature, &ret)
 }
 
-/// `eth_call` a no-arg view returning a `uint256` (word 0).
+/// The decode half of [`call_address`], over the return bytes.
+fn decode_address_answer(signature: &str, ret: &[u8]) -> ProviderResult<Address> {
+    Address::abi_decode_validate(ret).map_err(|e| decode_failure(signature, &e))
+}
+
+/// `eth_call` a no-arg view returning a `uint256` (word 0), as a `u64`.
+///
+/// The word is decoded at its declared `uint256` width and then narrowed with a
+/// checked conversion: a short answer and a value past `u64` are both typed
+/// failures, never a zero or a truncated low eight bytes.
 async fn call_uint(
     provider: &AlloyProvider,
     target: Address,
@@ -436,33 +459,25 @@ async fn call_uint(
     let ret = provider
         .eth_call(&target, no_arg_calldata(signature), at_block)
         .await?;
-    let word: [u8; 8] = ret[24..32].try_into().unwrap_or([0u8; 8]);
-    Ok(u64::from_be_bytes(word))
+    decode_uint_answer(signature, &ret)
 }
 
-/// Decode an ABI-encoded `address[]` return (offset word, length word, then
-/// the address words). A malformed return yields an empty set.
+/// The decode half of [`call_uint`], over the return bytes.
+fn decode_uint_answer(signature: &str, ret: &[u8]) -> ProviderResult<u64> {
+    let word: U256 = U256::abi_decode_validate(ret).map_err(|e| decode_failure(signature, &e))?;
+    u64::try_from(word).map_err(|_| ProviderError::DecodingError {
+        message: format!("{signature} answered {word}, which does not fit a u64"),
+    })
+}
+
+/// Decode an ABI-encoded `address[]` return.
+///
+/// The array and every address word inside it cross Alloy's VALIDATING decoder,
+/// so a malformed return — a short or misaligned array, or an element whose high
+/// twelve bytes are dirty — yields an empty set instead of addresses assembled
+/// from bytes the contract never answered.
 fn decode_address_array(ret: &[u8]) -> Vec<Address> {
-    let word = |i: usize| -> Option<&[u8]> { ret.get(i * 32..i * 32 + 32) };
-    let read_u64 = |w: &[u8]| -> u64 {
-        let b: [u8; 8] = w[24..32].try_into().unwrap_or([0u8; 8]);
-        u64::from_be_bytes(b)
-    };
-    let Some(offset_word) = word(0) else {
-        return Vec::new();
-    };
-    let Ok(offset) = usize::try_from(read_u64(offset_word)) else {
-        return Vec::new();
-    };
-    let Some(len_word) = word(offset / 32) else {
-        return Vec::new();
-    };
-    let Ok(len) = usize::try_from(read_u64(len_word)) else {
-        return Vec::new();
-    };
-    (0..len)
-        .filter_map(|i| word(offset / 32 + 1 + i).map(|w| Address::from_slice(&w[12..32])))
-        .collect()
+    Vec::<Address>::abi_decode_validate(ret).unwrap_or_default()
 }
 
 /// `getReserveData(address)` -> the `(a_token, v_token)` pair (the address
@@ -485,8 +500,17 @@ async fn reserve_tokens(
     if ret.len() < 11 * 32 {
         return Ok(None);
     }
-    let a_token = Address::from_slice(&ret[8 * 32 + 12..9 * 32]);
-    let v_token = Address::from_slice(&ret[10 * 32 + 12..11 * 32]);
+    // The a/v token addresses are words 8 and 10 of the return; each crosses the
+    // validating `address` decoder, so a non-canonical word is treated as "not a
+    // reserve" exactly like a zeroed one instead of being truncated into an
+    // address.
+    let word = |i: usize| -> &[u8] { &ret[i * 32..(i + 1) * 32] };
+    let (Ok(a_token), Ok(v_token)) = (
+        Address::abi_decode_validate(word(8)),
+        Address::abi_decode_validate(word(10)),
+    ) else {
+        return Ok(None);
+    };
     if a_token.is_zero() || v_token.is_zero() {
         return Ok(None);
     }
@@ -513,7 +537,7 @@ async fn fetch_single_address_multi_topic(
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog};
@@ -834,5 +858,164 @@ mod tests {
             ],
             "the resolver seeds the getReservesList set with no Pool logs present"
         );
+    }
+
+    // ── the fixed-width substrate decoders ──
+
+    /// The no-arg calldata is the bare selector, arguments and all: `getPool()`
+    /// hashes to `0x026b1d5f`, so a substrate call is byte-identical to what the
+    /// contract's own ABI names.
+    #[test]
+    fn no_arg_calldata_is_the_unchanged_selector() {
+        assert_eq!(
+            no_arg_calldata("getPool()").to_vec(),
+            vec![0x02, 0x6b, 0x1d, 0x5f],
+            "getPool() selector, unchanged"
+        );
+        assert_eq!(
+            no_arg_calldata("POOL_REVISION()").to_vec(),
+            vec![0x01, 0x48, 0x17, 0x0e],
+            "POOL_REVISION() selector, unchanged"
+        );
+    }
+
+    /// A canonical `address` word — twelve zero bytes above the twenty — reads
+    /// back whole.
+    #[test]
+    fn address_answer_reads_a_canonical_word() {
+        let pool = Address::from([0x2a; 20]);
+
+        assert_eq!(
+            decode_address_answer("getPool()", &pool.abi_encode()).unwrap(),
+            pool
+        );
+    }
+
+    /// The padding is part of the type: a word whose high twelve bytes are dirty
+    /// is a decode failure, never the low-twenty address a bare slice would
+    /// assemble.
+    #[test]
+    fn address_answer_refuses_a_dirty_high_byte() {
+        let mut word = [0u8; 32];
+        word[0] = 0x01;
+        word[31] = 0x2a;
+
+        let err = decode_address_answer("getPool()", &word).unwrap_err();
+
+        let ProviderError::DecodingError { message } = err else {
+            panic!("a dirty address word is a decode failure, got {err:?}");
+        };
+        assert!(
+            message.contains("getPool()"),
+            "the failure names the signature it decoded: {message}"
+        );
+    }
+
+    /// A return short of one word fails at 0 and at 31 bytes — never an
+    /// all-zero address assembled from an answer that never arrived.
+    #[test]
+    fn address_answer_refuses_a_short_return() {
+        for len in [0usize, 31] {
+            assert!(
+                matches!(
+                    decode_address_answer("getPool()", &vec![0u8; len]),
+                    Err(ProviderError::DecodingError { .. })
+                ),
+                "a {len}-byte address answer is not a word"
+            );
+        }
+    }
+
+    /// A full `uint256` word inside `u64` reads as itself: the word decodes at
+    /// its declared width and is narrowed afterwards.
+    #[test]
+    fn uint_answer_reads_words_that_fit_a_u64() {
+        for v in [0u64, 1, u64::MAX] {
+            assert_eq!(
+                decode_uint_answer("POOL_REVISION()", &U256::from(v).abi_encode()).unwrap(),
+                v
+            );
+        }
+    }
+
+    /// The narrowing is checked, so a full-width word past `u64` is refused
+    /// rather than truncated to its low eight bytes.
+    #[test]
+    fn uint_answer_refuses_a_word_past_u64() {
+        for over in [
+            U256::from(u64::MAX) + U256::from(1u8),
+            U256::from(1u8) << 200,
+            U256::MAX,
+        ] {
+            let err = decode_uint_answer("POOL_REVISION()", &over.abi_encode()).unwrap_err();
+
+            let ProviderError::DecodingError { message } = err else {
+                panic!("{over} does not fit a u64, got {err:?}");
+            };
+            assert!(
+                message.contains("does not fit a u64"),
+                "the failure says why: {message}"
+            );
+        }
+    }
+
+    /// A return short of one word fails at 0 and at 31 bytes — never a zero
+    /// revision.
+    #[test]
+    fn uint_answer_refuses_a_short_return() {
+        for len in [0usize, 31] {
+            assert!(
+                matches!(
+                    decode_uint_answer("POOL_REVISION()", &vec![0u8; len]),
+                    Err(ProviderError::DecodingError { .. })
+                ),
+                "a {len}-byte uint answer is not a word"
+            );
+        }
+    }
+
+    /// A canonically encoded `address[]` reads element for element.
+    #[test]
+    fn address_array_decodes_a_canonical_return() {
+        let expected = vec![Address::from([0x11; 20]), Address::from([0x22; 20])];
+
+        assert_eq!(
+            decode_address_array(&expected.abi_encode()),
+            expected,
+            "offset word, length word, then one canonical word per element"
+        );
+    }
+
+    /// One non-canonical element fails the whole array: a malformed return is an
+    /// empty reserve set, never a list holding an address assembled from bytes
+    /// the Pool never answered.
+    #[test]
+    fn address_array_refuses_a_non_canonical_element() {
+        let canonical = vec![Address::from([0x11; 20]), Address::from([0x22; 20])].abi_encode();
+        let mut dirty = canonical.clone();
+        dirty[64] = 0x01; // the first element word's high byte
+
+        assert_eq!(
+            decode_address_array(&canonical).len(),
+            2,
+            "the baseline reads"
+        );
+        assert!(
+            decode_address_array(&dirty).is_empty(),
+            "a dirty element word is not a reserve"
+        );
+    }
+
+    /// A truncated array fails the same way instead of returning the elements
+    /// that happened to fit.
+    #[test]
+    fn address_array_refuses_a_truncated_return() {
+        let canonical = vec![Address::from([0x11; 20])].abi_encode();
+
+        assert!(
+            decode_address_array(&canonical[..canonical.len() - 1]).is_empty(),
+            "a short element word is not an address"
+        );
+        assert!(decode_address_array(&[0u8; 63]).is_empty());
     }
 }

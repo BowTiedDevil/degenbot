@@ -17,8 +17,8 @@
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-use alloy::dyn_abi::DynSolType;
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::aliases::{I24, U24};
+use alloy::primitives::{Address, Bytes, B256, I256, U256};
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::fee::{FeeRatio, FeeSpec, V2Fee, V2FeeRefusal};
@@ -503,15 +503,36 @@ pub(crate) async fn fetch_v3_immutable_data(
     let token1 = read
         .read(*address, IPoolIdentity::token1Call {}, block)
         .await?;
-    let fee = abi::fetch_no_arg_uint(read, b"fee()", address, block, &DynSolType::Uint(24)).await?;
-    let tick_spacing =
-        abi::fetch_no_arg_int(read, b"tickSpacing()", address, block, &DynSolType::Int(24)).await?;
+    // Both getters are declared at their on-chain widths (`uint24` / `int24`),
+    // so the decode is the range check: an out-of-width answer is a decode
+    // failure here and never a fee or a spacing that was truncated to fit.
+    let fee: U24 = abi::fetch_no_arg_value(read, b"fee()", address, block).await?;
+    let tick_spacing: I24 = abi::fetch_no_arg_value(read, b"tickSpacing()", address, block).await?;
     Ok(V3Immutable {
         factory,
         token0,
         token1,
         fee: fee.to::<u32>(),
-        tick_spacing: tick_spacing.try_into().unwrap_or(0),
+        tick_spacing: tick_spacing.as_i32(),
+    })
+}
+
+/// Narrow a `slot0` tick — `int24` on the wire, carried as `I256` — to the `i32`
+/// the tick map is keyed by.
+///
+/// The read already validates the field's `int24` width, so every tick it
+/// produces narrows; the checked conversion is what keeps a value that does not
+/// fit (a hand-built [`Slot0Prefix`], a future width) a construction refusal
+/// instead of an `unwrap_or(0)` that would register the pool at a fabricated
+/// tick.
+///
+/// # Errors
+///
+/// [`PoolBuilderError::Decoding`] naming the contract when `tick` does not fit
+/// `i32`.
+fn narrow_slot0_tick(source: Address, tick: I256) -> Result<i32, PoolBuilderError> {
+    i32::try_from(tick).map_err(|_| PoolBuilderError::Decoding {
+        message: format!("{source} slot0 tick {tick} does not fit the stored tick width"),
     })
 }
 
@@ -544,26 +565,23 @@ pub async fn fetch_camelot_state(
     address: &Address,
     block: Option<u64>,
 ) -> Result<CamelotState, ProviderError> {
-    let uint = &DynSolType::Uint(256);
     Ok(CamelotState {
-        stable: abi::fetch_no_arg_bool(read, b"stableSwap()", address, block).await?,
-        fee_denominator: abi::fetch_no_arg_uint(read, b"FEE_DENOMINATOR()", address, block, uint)
+        stable: abi::fetch_no_arg_value(read, b"stableSwap()", address, block).await?,
+        fee_denominator: abi::fetch_no_arg_value(read, b"FEE_DENOMINATOR()", address, block)
             .await?,
-        token0_fee_percent: abi::fetch_no_arg_uint(
+        token0_fee_percent: abi::fetch_no_arg_value::<U256>(
             read,
             b"token0FeePercent()",
             address,
             block,
-            uint,
         )
         .await?
         .to::<u64>(),
-        token1_fee_percent: abi::fetch_no_arg_uint(
+        token1_fee_percent: abi::fetch_no_arg_value::<U256>(
             read,
             b"token1FeePercent()",
             address,
             block,
-            uint,
         )
         .await?
         .to::<u64>(),
@@ -592,7 +610,7 @@ pub async fn fetch_aerodrome_stable_and_fee(
     factory: &Address,
     block: Option<u64>,
 ) -> Result<AerodromeV2Common, ProviderError> {
-    let stable = abi::fetch_no_arg_bool(read, b"stable()", address, block).await?;
+    let stable: bool = abi::fetch_no_arg_value(read, b"stable()", address, block).await?;
     // The fee read takes the pool's own `stable()` answer, so the stable flag
     // must be known before it — the one data dependency in this assembly.
     let fee_bps = read
@@ -631,14 +649,14 @@ pub async fn resolve_v2_dex(
     block: Option<u64>,
 ) -> Result<Option<DexIdentity>, ProviderError> {
     if factory == dex_identity::CAMELOT_V2_STABLE.factory {
-        let stable = abi::fetch_no_arg_bool(io, b"stableSwap()", &address, block).await?;
+        let stable: bool = abi::fetch_no_arg_value(io, b"stableSwap()", &address, block).await?;
         Ok(Some(if stable {
             dex_identity::CAMELOT_V2_STABLE
         } else {
             dex_identity::CAMELOT_V2_VOLATILE
         }))
     } else if factory == dex_identity::AERODROME_V2_STABLE.factory {
-        let stable = abi::fetch_no_arg_bool(io, b"stable()", &address, block).await?;
+        let stable: bool = abi::fetch_no_arg_value(io, b"stable()", &address, block).await?;
         Ok(Some(if stable {
             dex_identity::AERODROME_V2_STABLE
         } else {
@@ -1808,7 +1826,7 @@ pub(crate) async fn build_v3_with_factory(
         .await?;
     let (sqrt_price_x96, tick_i, liquidity) =
         (slot0.sqrt_price_x96, slot0.tick, U256::from(liquidity));
-    let tick = i32::try_from(tick_i).unwrap_or(0);
+    let tick = narrow_slot0_tick(address, tick_i)?;
     let update_block = block.unwrap_or(0);
 
     let seed =
@@ -1967,7 +1985,7 @@ pub async fn build_v4(
     let liquidity_u = U256::from(liquidity_u);
     let protocol_fee = protocol_fee_u.to::<u32>();
     let lp_fee = lp_fee_u.to::<u32>();
-    let tick = i32::try_from(tick_i).unwrap_or(0);
+    let tick = narrow_slot0_tick(id.state_view, tick_i)?;
     let update_block = block.unwrap_or(0);
 
     let seed = assemble_db_or_chain_v4(

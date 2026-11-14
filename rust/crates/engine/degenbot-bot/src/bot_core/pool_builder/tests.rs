@@ -586,6 +586,37 @@ async fn fetch_v3_immutable_data_decodes_incl_negative_tick_spacing() {
     assert_eq!(d.tick_spacing, -10);
 }
 
+/// The V3 scalars are declared at their on-chain widths, so an out-of-width
+/// answer refuses the read: a `tickSpacing()` word past `int24` is a decode
+/// failure, never a spacing truncated — or zeroed — to fit.
+#[tokio::test]
+async fn fetch_v3_immutable_data_refuses_a_tick_spacing_wider_than_int24() {
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(TO));
+    f.set(abi::selector(b"token0()"), addr_word(TO));
+    f.set(abi::selector(b"token1()"), addr_word(SV));
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(30), 24)),
+    );
+    // One past `int24`'s positive bound, answered at full word width — the shape
+    // a contract answering something other than a tick spacing produces.
+    f.set(
+        abi::selector(b"tickSpacing()"),
+        enc(DynSolValue::Uint(U256::from(1u8) << 24, 256)),
+    );
+    let io = io_with(f);
+
+    let error = builder::fetch_v3_immutable_data(&io, &TO, None, None)
+        .await
+        .expect_err("an out-of-width tickSpacing is a decode refusal");
+
+    assert!(
+        matches!(error, ProviderError::DecodingError { .. }),
+        "expected a decode refusal, got {error:?}"
+    );
+}
+
 #[tokio::test]
 async fn fetch_v3_slot0_liquidity_decodes() {
     let mut f = FakeRpc::new();
@@ -1489,6 +1520,44 @@ async fn build_v3_assembles_sparse_register_params_from_onchain() {
     assert_eq!(params.tick_data_block, Some(9_000_000));
     assert_eq!(params.coverage, PoolTickCoverage::Sparse);
     assert!(params.tick_data.is_empty());
+}
+
+/// A `slot0` tick word that is not a canonical `int24` refuses the build: the
+/// pool is never registered with its tick map seeded at tick 0 instead.
+#[tokio::test]
+async fn build_v3_refuses_a_slot0_tick_outside_int24_instead_of_seeding_tick_zero() {
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(TO));
+    f.set(abi::selector(b"token0()"), addr_word(TO));
+    f.set(abi::selector(b"token1()"), addr_word(SV));
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        abi::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    // `-123` at int24 is `0xffff85`; answered with its high bytes zero this word
+    // is not sign-extended, so it is not the `int24` the getter declares.
+    let mut answer = U256::from(1u128 << 96).to_be_bytes::<32>().to_vec();
+    let mut tick_word = [0u8; 32];
+    tick_word[29..32].copy_from_slice(&[0xff, 0xff, 0x85]);
+    answer.extend_from_slice(&tick_word);
+    f.set(abi::selector(b"slot0()"), answer);
+    let io = io_with(f);
+
+    let error = builder::build_v3(1, TO, None, &io, Some(9_000_000))
+        .await
+        .expect_err("an uncanonical slot0 tick is a decode refusal");
+
+    assert!(
+        matches!(
+            error,
+            builder::PoolBuilderError::Rpc(ProviderError::DecodingError { .. })
+        ),
+        "expected a decode refusal, got {error:?}"
+    );
 }
 
 #[tokio::test]

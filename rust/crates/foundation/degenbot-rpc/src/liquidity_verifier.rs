@@ -476,7 +476,7 @@ fn decode_v3_bitmap_result(
             reason: format!("V3 tickBitmap({word}) reverted"),
         });
     }
-    IUniswapV3Pool::tickBitmapCall::abi_decode_returns(&result.return_data).map_err(|e| {
+    IUniswapV3Pool::tickBitmapCall::abi_decode_returns_validate(&result.return_data).map_err(|e| {
         LiquidityMapVerifyError::Decode {
             reason: format!("V3 tickBitmap({word}): {e}"),
         }

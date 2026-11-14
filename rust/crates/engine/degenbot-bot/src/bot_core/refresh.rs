@@ -26,7 +26,7 @@
 //! `external_update` raise their historical `ExternalUpdateError` for the same
 //! condition; the refresh entry has no journal to rewind and simply declines.
 
-use alloy::primitives::U256;
+use alloy::primitives::{I256, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_pools::narrow_v2_reserve;
 use degenbot_pools::RegisteredPoolFamily;
@@ -168,6 +168,24 @@ async fn refresh_reserve_pair(
     Ok(RefreshOutcome::Changed)
 }
 
+/// Narrow a `slot0` tick — `int24` on the wire, carried as `I256` — to the `i32`
+/// the pool state stores.
+///
+/// The read already validates the field's `int24` width, so every tick it
+/// produces narrows; the checked conversion is what keeps a value that does not
+/// fit (a hand-built [`Slot0Prefix`], a future width) a named refusal instead of
+/// an `unwrap_or(0)` that would refresh the pool at a fabricated tick.
+///
+/// # Errors
+///
+/// [`RefreshError::Spec`] naming the pool when `tick` does not fit `i32`.
+fn narrow_slot0_tick(pool_id: u64, tick: I256) -> Result<i32, RefreshError> {
+    i32::try_from(tick).map_err(|_| RefreshError::Spec {
+        pool_id,
+        message: format!("slot0 tick {tick} does not fit the stored tick width"),
+    })
+}
+
 /// V3: `slot0()` + `liquidity()`.
 async fn refresh_v3(
     state: &StateLock<BotState>,
@@ -188,7 +206,7 @@ async fn refresh_v3(
         .read(address, IUniswapV3Pool::liquidityCall {}, Some(block))
         .await?;
     let (sqrt_price_x96, tick_raw) = (slot0.sqrt_price_x96, slot0.tick);
-    let tick = i32::try_from(tick_raw).unwrap_or(0);
+    let tick = narrow_slot0_tick(pool_id, tick_raw)?;
     let liquidity = liquidity_raw;
 
     let mut guard = state.write_at(LockSite::Orchestrator);
@@ -237,7 +255,7 @@ async fn refresh_v4(
         )
         .await?;
     let (sqrt_price_x96, tick_raw) = (slot0.sqrt_price_x96, slot0.tick);
-    let tick = i32::try_from(tick_raw).unwrap_or(0);
+    let tick = narrow_slot0_tick(pool_id, tick_raw)?;
     let liquidity = liquidity_raw;
 
     let mut guard = state.write_at(LockSite::Orchestrator);
@@ -542,6 +560,140 @@ mod tests {
             std::sync::Arc::new(NoDb),
             std::sync::Arc::new(ReservesRpc { reserve0, reserve1 }),
         )
+    }
+
+    /// The `I256` -> `i32` narrowing is a typed refusal, never a zero: a value
+    /// the tick width cannot hold is named against its pool and no state moves.
+    #[test]
+    fn a_slot0_tick_wider_than_the_state_stores_is_a_spec_refusal_not_a_zero() {
+        let error = narrow_slot0_tick(7, I256::try_from(1i64 << 40).unwrap())
+            .expect_err("a tick past i32 is not a tick");
+        assert!(matches!(error, RefreshError::Spec { pool_id: 7, .. }));
+        assert_eq!(
+            narrow_slot0_tick(9, I256::try_from(-60i32).unwrap()).unwrap(),
+            -60,
+            "a negative tick inside the range narrows with its sign"
+        );
+    }
+
+    /// An RPC serving one canned `slot0()` answer for every call — the V3
+    /// fetch's decode is then observable without a chain.
+    struct Slot0Rpc {
+        slot0: Vec<u8>,
+    }
+
+    #[async_trait]
+    impl RpcConstruction for Slot0Rpc {
+        async fn get_block_number(&self) -> Result<u64, ProviderError> {
+            Ok(100)
+        }
+
+        async fn get_block(
+            &self,
+            _block_number: u64,
+        ) -> Result<Option<degenbot_rpc::provider::EthBlock>, ProviderError> {
+            Ok(None)
+        }
+
+        async fn get_block_timestamp(
+            &self,
+            _block_number: u64,
+        ) -> Result<Option<u64>, ProviderError> {
+            Ok(None)
+        }
+
+        async fn get_code(
+            &self,
+            _address: Address,
+            _block_number: Option<u64>,
+        ) -> Result<Bytes, ProviderError> {
+            Ok(Bytes::new())
+        }
+
+        async fn get_balance(
+            &self,
+            _address: Address,
+            _block_number: Option<u64>,
+        ) -> Result<U256, ProviderError> {
+            Ok(U256::ZERO)
+        }
+
+        async fn call(
+            &self,
+            _to: Address,
+            data: Bytes,
+            _block_number: Option<u64>,
+        ) -> Result<Bytes, ProviderError> {
+            if data.as_ref() == degenbot_rpc::abi::selector(b"slot0()") {
+                return Ok(Bytes::from(self.slot0.clone()));
+            }
+            Err(unavailable())
+        }
+    }
+
+    /// A core holding one registered V3 pool at tick `tick`.
+    fn v3_state(tick: i32) -> (StateLock<BotState>, u64) {
+        let state = StateLock::new(BotState::new());
+        let pool_id = state
+            .write_at(LockSite::Orchestrator)
+            .register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
+                address: Address::from([0xddu8; 20]),
+                token0: Address::from([0xa0u8; 20]),
+                token1: Address::from([0xa1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                factory: Address::from([0xf0u8; 20]),
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick,
+                update_block: 100,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+        (state, pool_id)
+    }
+
+    /// A `slot0` answer whose tick word is not a canonical `int24` refuses the
+    /// refresh: the pool's price and tick are left exactly as registered,
+    /// never re-stamped at tick 0.
+    #[tokio::test]
+    async fn a_non_canonical_slot0_tick_refuses_the_refresh_instead_of_applying_tick_zero() {
+        let (state, pool_id) = v3_state(-50);
+
+        // `-123` at int24 is `0xffff85`; answered with its high bytes zero this
+        // word is not sign-extended, so it is not the `int24` `slot0()` declares.
+        let mut bytes = U256::from(2u128 << 96).to_be_bytes::<32>().to_vec();
+        let mut tick_word = [0u8; 32];
+        tick_word[29..32].copy_from_slice(&[0xff, 0xff, 0x85]);
+        bytes.extend_from_slice(&tick_word);
+        let io = ConstructionIo::new(
+            std::sync::Arc::new(NoDb),
+            std::sync::Arc::new(Slot0Rpc { slot0: bytes }),
+        );
+
+        let error = refresh_pool(&state, pool_id, &io, Some(101))
+            .await
+            .expect_err("an uncanonical slot0 tick is a decode refusal");
+
+        assert!(
+            matches!(
+                error,
+                RefreshError::Provider(ProviderError::DecodingError { .. })
+            ),
+            "expected a decode refusal, got {error:?}"
+        );
+
+        let guard = state.read_at(LockSite::Orchestrator);
+        let pool = guard
+            .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
+            .expect("registered");
+        assert_eq!(pool.tick, -50, "the refused read moved no tick");
+        assert_eq!(
+            pool.sqrt_price_x96,
+            U256::from(1u128) << 96,
+            "the refused read moved no price"
+        );
+        assert_eq!(pool.update_block, 100, "the refused read moved no clock");
     }
 
     /// The reserve-pair half of the choreography: a fetched pair that differs
