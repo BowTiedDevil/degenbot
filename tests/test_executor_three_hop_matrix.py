@@ -932,7 +932,11 @@ def test_probe_requests_carry_one_capital_mode_in_the_shared_vocabulary() -> Non
     """
     assert matrix.probe_request(7) == {
         "op": "probe_path",
-        "payload": {"path_id": 7, "capital": "self_fund"},
+        "payload": {
+            "path_id": 7,
+            "optimal_input": matrix.DEFAULT_FIXED_INPUT,
+            "capital": "self_fund",
+        },
     }, "the default probe is the self-funded one the wire has always carried"
 
     assert set(matrix.CAPITAL_MODES) == {mode.value for mode in ProbeCapital}, (
@@ -940,7 +944,11 @@ def test_probe_requests_carry_one_capital_mode_in_the_shared_vocabulary() -> Non
     )
     for capital in matrix.CAPITAL_MODES:
         request = matrix.probe_request(9, capital=capital)
-        assert request["payload"] == {"path_id": 9, "capital": capital}
+        assert request["payload"] == {
+            "path_id": 9,
+            "optimal_input": matrix.DEFAULT_FIXED_INPUT,
+            "capital": capital,
+        }
         assert capital_from_wire(request["payload"]).value == capital
 
 
@@ -948,3 +956,215 @@ def test_a_probe_request_refuses_an_unknown_capital_spelling() -> None:
     """The client-side refusal mirrors the host's, so a typo never reaches a bot."""
     with pytest.raises(ValueError, match="unknown capital"):
         matrix.probe_request(7, capital="zero-balance")
+
+
+def _never_called(request: dict[str, Any]) -> dict[str, Any]:
+    """A transport that must not be reached: a refused run issues no probe."""
+    msg = f"the probe was issued despite the refusal: {request}"
+    raise AssertionError(msg)
+
+
+# ── the fixed input and the run's metadata ─────────────────────────────
+
+
+def test_a_probe_request_carries_the_fixed_input_it_was_given() -> None:
+    """The amount vector is stated on the wire, never left to the host's default."""
+    assert matrix.probe_request(7)["payload"]["optimal_input"] == matrix.DEFAULT_FIXED_INPUT
+    request = matrix.probe_request(7, fixed_input=10**18)
+    assert request["payload"] == {
+        "path_id": 7,
+        "optimal_input": 10**18,
+        "capital": "self_fund",
+    }
+
+
+@pytest.mark.parametrize("fixed_input", [0, -1, True, False, 1.5, "1000000000000000", None])
+def test_an_invalid_fixed_input_is_refused_before_a_probe(
+    tmp_path: Path, *, fixed_input: object
+) -> None:
+    """A typo in the one shared amount fails closed, and writes no report."""
+    with pytest.raises(ValueError, match="fixed input"):
+        matrix.probe_request(7, fixed_input=fixed_input)  # type: ignore[arg-type]
+
+    output = tmp_path / "report.json"
+    with pytest.raises(ValueError, match="fixed input"):
+        matrix.probe_paths(
+            _registrations(),
+            output,
+            expect=matrix.EXPECT_EXECUTED,
+            send=_never_called,
+            fixed_input=fixed_input,  # type: ignore[arg-type]
+        )
+    assert not output.exists(), "a refused run writes no report"
+
+
+def test_the_report_states_the_fixed_input_and_metadata_before_the_first_probe(
+    tmp_path: Path,
+) -> None:
+    """The run's conditions are in the report from its first write, and in every row.
+
+    The metadata is what makes a report reproducible, so an interrupted run must
+    still carry it: it is written before the first probe, not patched in at the end.
+    """
+    output = tmp_path / "report.json"
+    fixed_input = 10**16
+    metadata = {
+        "schema_version": 1,
+        "chain_id": 1,
+        "block_number": 21_000_000,
+        "release_id": "cmd_executor/2",
+        "fixed_input": fixed_input,
+        "capitals": ["self_fund"],
+    }
+    witnesses: list[dict[str, Any]] = []
+    requests: list[dict[str, Any]] = []
+
+    def send(request: dict[str, Any]) -> dict[str, Any]:
+        requests.append(request)
+        witnesses.append(json.loads(output.read_text(encoding="utf-8")))
+        return _response(path_id=request["payload"]["path_id"])
+
+    report = matrix.probe_paths(
+        _registrations(),
+        output,
+        expect=matrix.EXPECT_EXECUTED,
+        send=send,
+        fixed_input=fixed_input,
+        metadata=metadata,
+    )
+
+    first = witnesses[0]
+    assert first["metadata"] == metadata, "the metadata is in the report BEFORE the first probe"
+    assert first["fixed_input"] == fixed_input
+    assert first["paths"][0]["state"] == "pending"
+    assert {row["fixed_input"] for row in first["paths"]} == {fixed_input}
+    assert all(witness["metadata"] == metadata for witness in witnesses), (
+        "every incremental write carries the same metadata"
+    )
+    assert {request["payload"]["optimal_input"] for request in requests} == {fixed_input}
+    assert report["metadata"] == metadata
+    assert report["fixed_input"] == fixed_input
+    assert report["paths"][0]["request_block"] == 21_000_000, "the row keeps its own block"
+    assert json.loads(output.read_text(encoding="utf-8")) == report
+
+
+def test_an_interrupted_run_still_carries_its_metadata(tmp_path: Path) -> None:
+    """A stop mid-matrix leaves a report that states the conditions, not a fragment."""
+    output = tmp_path / "report.json"
+    metadata = {"chain_id": 1, "fixed_input": matrix.DEFAULT_FIXED_INPUT}
+    calls = 0
+
+    def send(request: dict[str, Any]) -> dict[str, Any]:
+        nonlocal calls
+        if calls == 2:
+            raise KeyboardInterrupt
+        calls += 1
+        return _response(path_id=request["payload"]["path_id"])
+
+    report = matrix.probe_paths(
+        _registrations(),
+        output,
+        expect=matrix.EXPECT_EXECUTED,
+        send=send,
+        metadata=metadata,
+    )
+
+    assert report["summary"]["interrupted"] is True
+    assert report["metadata"] == metadata
+    assert json.loads(output.read_text(encoding="utf-8"))["metadata"] == metadata
+    assert matrix.probe_exit_code(report) == matrix.PROBE_EXIT_FAILED
+
+
+@pytest.mark.parametrize("document", [[], ["chain_id"], "metadata", 7, None, {}])
+def test_an_invalid_metadata_document_is_refused(tmp_path: Path, *, document: object) -> None:
+    """Only a non-empty JSON object can state a run's conditions."""
+    path = tmp_path / "metadata.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises((TypeError, ValueError)):
+        matrix.load_metadata(path, fixed_input=matrix.DEFAULT_FIXED_INPUT)
+
+
+def test_a_missing_or_unparseable_metadata_file_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="missing"):
+        matrix.load_metadata(tmp_path / "absent.json", fixed_input=matrix.DEFAULT_FIXED_INPUT)
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="not readable JSON"):
+        matrix.load_metadata(broken, fixed_input=matrix.DEFAULT_FIXED_INPUT)
+
+
+def test_metadata_fixed_input_must_agree_with_the_requested_one() -> None:
+    """A report whose metadata names another vector is not reproducible."""
+    with pytest.raises(ValueError, match="disagrees"):
+        matrix.validate_metadata({"fixed_input": 10**16}, fixed_input=10**15)
+    with pytest.raises(ValueError, match="positive"):
+        matrix.validate_metadata({"fixed_input": 0}, fixed_input=matrix.DEFAULT_FIXED_INPUT)
+    assert matrix.validate_metadata({"chain_id": 1}, fixed_input=10**15) == {"chain_id": 1}
+
+
+def test_an_invalid_metadata_document_refuses_the_matrix_before_any_probe(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "report.json"
+
+    with pytest.raises(TypeError, match="JSON object"):
+        matrix.probe_paths(
+            _registrations(),
+            output,
+            expect=matrix.EXPECT_EXECUTED,
+            send=_never_called,
+            metadata=["chain_id"],  # type: ignore[arg-type]
+        )
+    assert not output.exists(), "a refused run writes no report"
+
+
+def test_the_probe_command_threads_the_fixed_input_and_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metadata = {"chain_id": 1, "source_commit": "a" * 40, "fixed_input": 10**16}
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    requests: list[dict[str, Any]] = []
+
+    def handler(_socket: Path, request: dict[str, Any]) -> dict[str, Any]:
+        requests.append(request)
+        return _response(path_id=request["payload"]["path_id"])
+
+    monkeypatch.setattr(matrix, "send_command", handler)
+    argv = [
+        *_probe_argv(tmp_path, _registrations(), matrix.EXPECT_EXECUTED),
+        "--fixed-input",
+        str(10**16),
+        "--metadata-file",
+        str(metadata_path),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert matrix.main() == matrix.PROBE_EXIT_COMPLETE
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert report["metadata"] == metadata
+    assert report["fixed_input"] == 10**16
+    assert {request["payload"]["optimal_input"] for request in requests} == {10**16}
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        (["--fixed-input", "0"], matrix.PROBE_EXIT_REFUSED),
+        (["--metadata-file", "absent.json"], matrix.PROBE_EXIT_REFUSED),
+    ],
+)
+def test_the_probe_command_refuses_bad_run_conditions_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    extra: list[str],
+    expected: int,
+) -> None:
+    argv = _probe_argv(tmp_path, _registrations(), matrix.EXPECT_EXECUTED)
+    argv += [item.replace("absent.json", str(tmp_path / "absent.json")) for item in extra]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert matrix.main() == expected
+    assert not (tmp_path / "report.json").exists(), "a refused run writes no report"

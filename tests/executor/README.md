@@ -80,6 +80,60 @@ triangle with V2, V3, and V4 pools on every edge. The companion Python tool
 injects the forward token cycle and records exact engine path IDs for all 27
 protocol rows.
 
+### Bankroll matrix: one command
+
+`just executor-bankroll-matrix` is the canonical way to run both capital
+postures. It owns the whole session — one fresh `run_bot.sh start`, ONE
+injection of the registration set, both probes against that same set, every
+artifact archived, and `run_bot.sh stop` in its `finally` (also on inject/probe
+failure, injected failure, and SIGINT/SIGTERM). It refuses a nonempty output
+directory and an already-running bot rather than taking over somebody else's
+session, and it never reads, accepts, or prints key material.
+
+```bash
+just executor-bankroll-matrix -- \
+  --owner 0x... \
+  --injected-address 0x... \
+  --runtime /path/to/cmd_executor_runtime.txt \
+  --output-dir /path/to/run
+```
+
+`--owner`, `--injected-address`, `--runtime`, and `--output-dir` are required.
+Optional: `--capital both|self_fund|zero_balance` (default `both`),
+`--fixed-input WEI` (default `1000000000000000`), `--chain-id` (default `1`),
+`--release-id` (default `cmd_executor/2`), and `--ready-timeout SECONDS`
+(default `120`). The posture picks its own expectation: `self_fund` must execute
+every row (`--expect executed`), `zero_balance` must refuse every row on capital
+policy (`--expect insolvent`), so a selection of one posture still states the
+right policy for it.
+
+The run's directory is the evidence envelope:
+
+| Artifact | Content |
+| --- | --- |
+| `metadata.json` | chain ID, pre-launch block, release ID, runtime and manifest SHA-256, source commit and dirty flag, fixed input, selected capitals, owner/injected addresses, artifact names — written BEFORE the first probe and embedded in every report |
+| `run_metadata.json` | the run's outcome, every command's real return code, each posture's exit code and report summary, and the cleanup verdict |
+| `registrations.json` | the ONE injected registration set both probes used |
+| `report_self_fund.json`, `report_zero_balance.json` | one fail-closed matrix report per selected posture |
+| `matrix_inject.log`, `matrix_probe_<capital>.log`, `launcher.log` | the commands' own output, with any RPC URI redacted |
+| `bot_run.log` | the bot's own launcher log, archived after `stop` |
+
+Exit codes: `0` — every selected report complete and policy-matched; `1` — a
+failed launch/injection/probe, an incomplete report, a policy mismatch, or a
+session that left a bot, pidfile, or socket behind; `2` — refused before launch
+(unusable argument, nonempty output directory, a bot already running, an
+unreachable or wrong-chain endpoint, a missing artifact); `130` — stopped by
+SIGINT/SIGTERM, which is the operator's own outcome and still cleans up.
+
+An operator stop (`^C` / `SIGTERM`) stops the bot, archives what exists, and
+records `outcome: "stopped"`: the postures that never ran stay named as
+skipped, so an early stop never reads as full coverage.
+
+### Advanced/debug: the manual two-shell sequence
+
+The commands below are the underlying flow, for debugging the launcher or a
+single command in isolation. Prefer the one-command recipe above.
+
 Start an operator-only, zero-floor, injected-executor dry run (set the owner,
 injected address, and runtime artifact for the release under test):
 
@@ -202,6 +256,15 @@ capital-policy refusal — `bucket: "insolvent-zero-capital"` beside the deficit
 `encode-failed` label. The deterministic
 `full_three_hop_zero_balance_matrix_executes_without_token_funding` test proves
 all 27 profitable shapes without minting any path-token capital.
+
+`probe` also states the amount vector it ran: `--fixed-input WEI` (default
+`1000000000000000`) is sent as the request's `optimal_input` and recorded in the
+report and in every row, and `--metadata-file PATH` embeds a JSON object of run
+facts (chain, block, release, artifact hashes, source state) into the report
+BEFORE its first probe — so an interrupted report still says what it ran under.
+Both fail closed: a non-positive or non-integer fixed input, a metadata file
+that is missing, unparseable, not a JSON object, empty, or that names a
+different `fixed_input` refuses the run (exit `2`) without writing a report.
 
 After editing the fake Uniswap contracts, run
 `just rebuild-tier3-executor-stubs`. The recipe republishes

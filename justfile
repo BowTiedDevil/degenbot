@@ -1295,6 +1295,30 @@ check-executor-release-ratchet:
 build-executor-three-hop-encoder:
     cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-executor --example encode_three_hop
 
+# The ONE command for the bankroll matrix — both capital postures against one
+# injected registration set, through the canonical run_bot.sh launcher:
+#
+#   just executor-bankroll-matrix -- --owner 0x... --injected-address 0x... \
+#       --runtime /path/to/cmd_executor_runtime.txt --output-dir /path/to/run
+#
+# It refuses a nonempty output directory and an already-running bot, never reads
+# or prints key material, archives every artifact (logs, registrations, reports,
+# metadata) in the output directory, and stops the bot through the launcher's
+# own `stop` on every exit path. Optional: --capital, --fixed-input, --chain-id,
+# --release-id, --ready-timeout. Artifact layout and exit codes live in
+# tests/executor/README.md.
+#
+# Run both bankroll postures against one registration set.
+executor-bankroll-matrix *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # An operator may separate the recipe from its own flags with `--` (the
+    # familiar `just recipe -- --flag` habit); just passes that token through as
+    # a literal argument here, so drop one leading separator before forwarding.
+    if [ "${1:-}" = "--" ]; then shift; fi
+    exec {{ py_run }} python scripts/executor_bankroll_matrix.py "$@"
+
+
 # The root project's Ape suite (tests/executor) — the canonical wrapper for
 # testing the Vyper executor contracts under contracts/vyper. The root uv lock
 # owns Ape and vyper ==0.5.0b2, so the suite uses the same environment as every

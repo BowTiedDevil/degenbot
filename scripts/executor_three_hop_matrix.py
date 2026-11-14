@@ -7,7 +7,11 @@ all 27 permutations have a valid execution receipt. It also fails if a submissio
 record appears in what is required to be a dry-run log.
 
 The ``probe`` command drives the operator's explicit execution probe and writes a
-versioned, fail-closed report. Every expected row is in the first write (as
+versioned, fail-closed report. Every probe asks for one explicit fixed input
+(``--fixed-input``, wei) and the report states it, so the amount vector is part
+of the evidence; ``--metadata-file`` embeds a reproducibility document (chain,
+block, release, artifact hashes, source state) into the report BEFORE its first
+probe. Every expected row is in the first write (as
 ``pending``) and the report is replaced after every response, so an interrupted run
 leaves an auditable report instead of a green fragment. Each completed row keeps
 the probe's own evidence — the probed block, the simulate verdict's typed label, the
@@ -50,6 +54,11 @@ DIRECTED_PATH_COUNT = 27
 #: the host validates (`degenbot.operator.operator_channel.capital_from_wire`).
 CAPITAL_MODES = ("production", "self_fund", "zero_balance")
 DEFAULT_CAPITAL = "self_fund"
+
+#: The fixed swap input (wei) a probe runs when nobody states one: the value the
+#: operator wire has always fallen back to, now explicit in the request and the
+#: report.
+DEFAULT_FIXED_INPUT = 10**15
 
 #: The failure bucket of a **capital-policy refusal** — the core ledger answered
 #: that the stream cannot be funded under the probed posture
@@ -251,7 +260,100 @@ def inject_paths(
     return results
 
 
-def probe_request(path_id: int, *, capital: str = DEFAULT_CAPITAL) -> dict[str, Any]:
+def validate_fixed_input(fixed_input: object) -> int:
+    """Refuse anything that is not a positive, non-boolean wei amount.
+
+    The amount is the one thing every row shares, so a caller's typo would
+    otherwise be recorded as a run fact.
+
+    Args:
+        fixed_input: The proposed fixed input.
+
+    Returns:
+        The amount.
+
+    Raises:
+        ValueError: if the value is not a positive integer (a JSON ``true`` is
+            not an amount, and neither is a float or a string).
+
+    """
+    if not _is_integer(fixed_input) or fixed_input <= 0:
+        msg = f"fixed input must be a positive integer amount of wei, got {fixed_input!r}"
+        raise ValueError(msg)
+    return fixed_input
+
+
+def validate_metadata(document: object, *, fixed_input: int) -> dict[str, Any]:
+    """Refuse a metadata document this report could not stand behind.
+
+    The document is the run's own statement of the conditions it ran under, so
+    it must be an object that states something, and where it states the fixed
+    input that input must be the one the probes actually used: a report whose
+    metadata and rows disagree about the amount vector is not reproducible.
+
+    Args:
+        document: The decoded metadata document.
+        fixed_input: The fixed input this run's probes asked for.
+
+    Returns:
+        The document.
+
+    Raises:
+        TypeError: if the document is not a JSON object.
+        ValueError: if the document is empty, or its own ``fixed_input`` is not
+            a positive integer equal to this run's.
+
+    """
+    if not isinstance(document, dict):
+        msg = f"metadata must be a JSON object, not {type(document).__name__}"
+        raise TypeError(msg)
+    if not document:
+        msg = "metadata is empty; state the conditions the run was made under"
+        raise ValueError(msg)
+    stated = document.get("fixed_input")
+    if stated is None:
+        return document
+    if not _is_integer(stated) or stated <= 0:
+        msg = f"metadata fixed_input must be a positive integer, got {stated!r}"
+        raise ValueError(msg)
+    if stated != fixed_input:
+        msg = f"metadata fixed_input {stated} disagrees with the requested {fixed_input}"
+        raise ValueError(msg)
+    return document
+
+
+def load_metadata(path: Path, *, fixed_input: int) -> dict[str, Any]:
+    """Load and validate one metadata handoff document.
+
+    Args:
+        path: The metadata file the caller handed in.
+        fixed_input: The fixed input this run's probes ask for.
+
+    Returns:
+        The validated metadata document.
+
+    Raises:
+        ValueError: if the file is missing, is not JSON, or fails
+            :func:`validate_metadata`.
+
+    """
+    if not path.is_file():
+        msg = f"metadata file is missing: {path}"
+        raise ValueError(msg)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        msg = f"metadata file is not readable JSON: {path} ({type(exc).__name__})"
+        raise ValueError(msg) from None
+    return validate_metadata(document, fixed_input=fixed_input)
+
+
+def probe_request(
+    path_id: int,
+    *,
+    capital: str = DEFAULT_CAPITAL,
+    fixed_input: int = DEFAULT_FIXED_INPUT,
+) -> dict[str, Any]:
     """Build the operator request that probes one registered path.
 
     Args:
@@ -259,19 +361,30 @@ def probe_request(path_id: int, *, capital: str = DEFAULT_CAPITAL) -> dict[str, 
         capital: The capital posture spelling the probe asks for
             (:data:`CAPITAL_MODES`); ``self_fund`` is the default the wire has
             always carried.
+        fixed_input: The fixed swap input (wei) the probe runs at — stated
+            explicitly so the report's rows and the run's metadata describe the
+            same amount vector.
 
     Returns:
         The JSON-lines request object.
 
     Raises:
-        ValueError: if ``capital`` is not one of :data:`CAPITAL_MODES`.
+        ValueError: if ``capital`` is not one of :data:`CAPITAL_MODES`, or
+            ``fixed_input`` is not a positive integer.
 
     """
     if capital not in CAPITAL_MODES:
         expected = "|".join(CAPITAL_MODES)
         msg = f"unknown capital {capital!r} (expected {expected})"
         raise ValueError(msg)
-    return {"op": "probe_path", "payload": {"path_id": path_id, "capital": capital}}
+    return {
+        "op": "probe_path",
+        "payload": {
+            "path_id": path_id,
+            "optimal_input": validate_fixed_input(fixed_input),
+            "capital": capital,
+        },
+    }
 
 
 def validate_registrations(registrations: object) -> None:
@@ -647,7 +760,12 @@ def response_identity_defect(response: dict[str, Any], *, path_id: int, capital:
 
 
 def probe_row(
-    registration: dict[str, Any], response: dict[str, Any], *, expect: str, capital: str
+    registration: dict[str, Any],
+    response: dict[str, Any],
+    *,
+    expect: str,
+    capital: str,
+    fixed_input: int = DEFAULT_FIXED_INPUT,
 ) -> dict[str, Any]:
     """State one completed probe row: its identity, its raw evidence, its verdict.
 
@@ -658,6 +776,7 @@ def probe_row(
         expect: The run's declared expected-outcome policy.
         capital: The capital posture the probe requested (:data:`CAPITAL_MODES`),
             audited against the response's own ``capital``.
+        fixed_input: The fixed swap input (wei) the probe requested.
 
     Returns:
         The row: what was probed, the posture and block the call ran under, the raw
@@ -683,6 +802,7 @@ def probe_row(
         "permutation": registration["permutation"],
         "direction": registration["direction"],
         "path_id": registration["response"]["path_id"],
+        "fixed_input": fixed_input,
         "capital": response.get("capital"),
         "request_block": response.get("current_block"),
         "outcome": response.get("outcome"),
@@ -698,12 +818,15 @@ def probe_row(
     }
 
 
-def pending_row(registration: dict[str, Any], *, expect: str) -> dict[str, Any]:
+def pending_row(
+    registration: dict[str, Any], *, expect: str, fixed_input: int = DEFAULT_FIXED_INPUT
+) -> dict[str, Any]:
     """State one expected row that has not been probed yet.
 
     Args:
         registration: The directed row's registration.
         expect: The run's declared expected-outcome policy.
+        fixed_input: The fixed swap input (wei) this row will be probed at.
 
     Returns:
         The row with no evidence in it: pending, unclassified, and NOT a policy
@@ -715,6 +838,7 @@ def pending_row(registration: dict[str, Any], *, expect: str) -> dict[str, Any]:
         "permutation": registration["permutation"],
         "direction": registration["direction"],
         "path_id": registration["response"]["path_id"],
+        "fixed_input": fixed_input,
         "capital": None,
         "request_block": None,
         "outcome": None,
@@ -770,6 +894,8 @@ def build_probe_report(
     *,
     expect: str,
     capital: str = DEFAULT_CAPITAL,
+    fixed_input: int = DEFAULT_FIXED_INPUT,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Start a report whose every expected row is pending.
 
@@ -777,25 +903,38 @@ def build_probe_report(
         registrations: The validated directed registrations.
         expect: The run's declared expected-outcome policy (:data:`EXPECTATIONS`).
         capital: The capital posture every probe asks for (:data:`CAPITAL_MODES`).
+        fixed_input: The fixed swap input (wei) every probe asks for.
+        metadata: The run's reproducibility document, recorded BEFORE the first
+            probe so an interrupted run still states the conditions it ran under.
 
     Returns:
-        The report skeleton: the schema version, the policy it will be read under,
-        the structural submission evidence, a summary that claims no coverage yet,
-        and one pending row per expected identity.
+        The report skeleton: the schema version, the run's metadata and fixed
+        input, the policy it will be read under, the structural submission
+        evidence, a summary that claims no coverage yet, and one pending row per
+        expected identity.
 
     Raises:
-        ValueError: If ``expect`` is not one of :data:`EXPECTATIONS`.
+        ValueError: If ``expect`` is not one of :data:`EXPECTATIONS`, or
+            ``fixed_input`` is not a positive integer.
 
     """
     if expect not in EXPECTATIONS:
         expected = "|".join(EXPECTATIONS)
         msg = f"unknown expected outcome {expect!r} (expected {expected})"
         raise ValueError(msg)
+    validate_fixed_input(fixed_input)
+    if metadata is not None:
+        validate_metadata(metadata, fixed_input=fixed_input)
     report: dict[str, Any] = {
         "schema_version": PROBE_REPORT_SCHEMA_VERSION,
+        "metadata": metadata,
+        "fixed_input": fixed_input,
         "expect": expect,
         "capital": capital,
-        "paths": [pending_row(registration, expect=expect) for registration in registrations],
+        "paths": [
+            pending_row(registration, expect=expect, fixed_input=fixed_input)
+            for registration in registrations
+        ],
     }
     refresh_probe_report(report, interrupted=False)
     return report
@@ -843,6 +982,7 @@ def _probe_once(
     registration: dict[str, Any],
     *,
     capital: str,
+    fixed_input: int = DEFAULT_FIXED_INPUT,
 ) -> dict[str, Any]:
     """Issue one probe and return its response, or the exception shape for it.
 
@@ -851,6 +991,7 @@ def _probe_once(
             (``send_command`` bound to the socket, or a test's stub).
         registration: The row's registration (its engine ``path_id``).
         capital: The capital posture to ask for.
+        fixed_input: The fixed swap input (wei) to ask for.
 
     Returns:
         The operator's response verbatim when the command succeeded, else the
@@ -865,7 +1006,7 @@ def _probe_once(
     """
     path_id = registration["response"]["path_id"]
     try:
-        response = transport(probe_request(path_id, capital=capital))
+        response = transport(probe_request(path_id, capital=capital, fixed_input=fixed_input))
     except KeyboardInterrupt:
         raise
     except Exception as exc:  # ruff: ignore[blind-except] - a failed probe is an outcome
@@ -884,8 +1025,6 @@ def _probe_rows(
     registrations: list[dict[str, Any]],
     report: dict[str, Any],
     output_path: Path,
-    *,
-    capital: str,
 ) -> None:
     """Probe every expected row in order, replacing the report after each response.
 
@@ -897,13 +1036,22 @@ def _probe_rows(
         registrations: The validated directed registrations.
         report: The report skeleton to fill (mutated in place).
         output_path: Where the report is replaced after every response.
-        capital: The capital posture every probe asks for (:data:`CAPITAL_MODES`).
 
     """
     expect = report["expect"]
+    capital = report["capital"]
+    fixed_input = report["fixed_input"]
     for registration, row in zip(registrations, report["paths"], strict=True):
-        response = _probe_once(send, registration, capital=capital)
-        row.update(probe_row(registration, response, expect=expect, capital=capital))
+        response = _probe_once(send, registration, capital=capital, fixed_input=fixed_input)
+        row.update(
+            probe_row(
+                registration,
+                response,
+                expect=expect,
+                capital=capital,
+                fixed_input=fixed_input,
+            )
+        )
         refresh_probe_report(report, interrupted=False)
         write_probe_report(output_path, report)
         sys.stdout.write(
@@ -913,13 +1061,15 @@ def _probe_rows(
         sys.stdout.flush()
 
 
-def probe_paths(
+def probe_paths(  # ruff: ignore[too-many-arguments] - one explicit keyword per probe-policy input
     registrations: list[dict[str, Any]],
     output_path: Path,
     *,
     expect: str,
     send: Callable[[dict[str, Any]], dict[str, Any]],
     capital: str = DEFAULT_CAPITAL,
+    fixed_input: int = DEFAULT_FIXED_INPUT,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Probe every registered path, keeping the report complete at every step.
 
@@ -941,17 +1091,27 @@ def probe_paths(
         send: The request/response function — :func:`send_command` bound to the
             operator socket, or a stub.
         capital: The capital posture every probe asks for (:data:`CAPITAL_MODES`).
+        fixed_input: The fixed swap input (wei) every probe asks for; the report
+            states it before the first probe and in every row.
+        metadata: The run's reproducibility document, embedded in the report
+            before the first probe.
 
     Returns:
         The finished, possibly incomplete, report.
 
     """
     validate_registrations(registrations)
-    report = build_probe_report(registrations, expect=expect, capital=capital)
+    report = build_probe_report(
+        registrations,
+        expect=expect,
+        capital=capital,
+        fixed_input=fixed_input,
+        metadata=metadata,
+    )
     write_probe_report(output_path, report)
     interrupted = False
     try:
-        _probe_rows(send, registrations, report, output_path, capital=capital)
+        _probe_rows(send, registrations, report, output_path)
     except KeyboardInterrupt:
         interrupted = True
     refresh_probe_report(report, interrupted=interrupted)
@@ -1046,6 +1206,8 @@ def main() -> int:
     probe.add_argument("--output", type=Path, required=True)
     probe.add_argument("--capital", choices=CAPITAL_MODES, default=DEFAULT_CAPITAL)
     probe.add_argument("--expect", choices=EXPECTATIONS, required=True)
+    probe.add_argument("--fixed-input", type=int, default=DEFAULT_FIXED_INPUT)
+    probe.add_argument("--metadata-file", type=Path)
     report = subcommands.add_parser("report")
     report.add_argument("--log", type=Path, required=True)
     report.add_argument("--registrations", type=Path, required=True)
@@ -1062,12 +1224,19 @@ def main() -> int:
     registrations = json.loads(args.registrations.read_text(encoding="utf-8"))
     if args.command == "probe":
         try:
+            metadata = (
+                None
+                if args.metadata_file is None
+                else load_metadata(args.metadata_file, fixed_input=args.fixed_input)
+            )
             result = probe_paths(
                 registrations,
                 args.output,
                 expect=args.expect,
                 send=partial(send_command, args.socket),
                 capital=args.capital,
+                fixed_input=args.fixed_input,
+                metadata=metadata,
             )
         except (TypeError, ValueError) as exc:
             sys.stderr.write(f"probe refused: {exc}\n")
