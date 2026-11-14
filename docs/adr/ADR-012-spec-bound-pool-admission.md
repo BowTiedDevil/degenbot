@@ -39,11 +39,13 @@ carrying an obligation they had no authority over.
 `register_v2_pool`, `register_v3_pool`, and `register_v4_pool` accept
 *spec-bound* state and reject *out-of-spec* state with a typed error
 before storing it. The validation helpers live in
-`rust/crates/engine/degenbot-bot/src/bot_core/spec_bounds.rs`:
-`validate_v2_reserve`, `validate_sqrt_price`, `validate_tick`,
-`validate_v3_fee`, `validate_tick_spacing`. Each returns a
-`SpecViolation` carrying the offending field name so callers (and the
-PyO3 layer) can surface it.
+`rust/crates/foundation/degenbot-pools/src/state/spec_bounds.rs`:
+`validate_sqrt_price`, `validate_tick`, `validate_v3_fee`,
+`validate_tick_spacing`. Each returns a `SpecViolation` carrying the
+offending field name so callers (and the PyO3 layer) can surface it.
+V2 needs no runtime reserve validator: its reserves are `U112` at both
+the params and the state layer, so the width is admitted by type, and a
+`U256` from outside narrows through `narrow_v2_reserve` at its own seam.
 
 The register functions return a typed `RegisterV×PoolError` enum whose
 two meaningful admission variants are `AlreadyRegistered` and
@@ -146,15 +148,15 @@ The changes:
 - **(a) V2 reserve storage is now `U112`.** `V2PoolState`'s
   `reserve0` / `reserve1` fields are `alloy::primitives::aliases::U112`,
   the on-chain `uint112` storage type. `register_v2_pool` accepts `U112`
-  reserves (the `RegisterV2PoolParams` fields are `U112`), so the
-  runtime `validate_v2_reserve` check (`value > UINT112_MAX`) is a
-  **tautology** for type-correct callers — a `U112` cannot exceed
-  `uint112::MAX`. The runtime check **remains** as a diagnostic-message
-  uniformity aid (it returns the `SpecViolation` with the offending
-  field name, which the bare type would not), and as a guard against
-  any future code path that widens-then-narrows around the typed seam.
-  This is the registration-time enforcement cited by the Möbius
-  narrowing helper's `# Panics` docstring.
+  reserves (the `RegisterV2PoolParams` fields are `U112`), so a runtime
+  reserve validator (`value > UINT112_MAX`) is a **tautology** for
+  type-correct callers — a `U112` cannot exceed `uint112::MAX`. That
+  tautological validator is retired: the `U112` field is the
+  enforcement, and the `U256` seam into it — a `sync_reserves` call, an
+  ABI word, a storage word — narrows through `narrow_v2_reserve`, which
+  keeps the bound and its field-named `SpecViolation`. This is the
+  registration-time enforcement cited by the Möbius narrowing helper's
+  `# Panics` docstring.
 
 - **(b) `IntHopState::swap` does native `U256` arithmetic.** The V2
   swap primitive (`degenbot_v2_math::hop_state::IntHopState::swap`)

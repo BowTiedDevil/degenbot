@@ -122,6 +122,16 @@
 # remains. The name is Curve's wire spelling for its native coin — a
 # protocol-private sentinel, never a token contract address.
 #
+# The 1086 -> 1084 review is the tautological V2 validator's retirement:
+# `state::spec_bounds::validate_v2_reserve` took a `U112` and refused only a
+# value above `UINT112_MAX`, which is that type's `MAX` — no input could fail
+# it. The declaration and its root re-export leave together, which is why the
+# pin moves by exactly two names. The bound stays live wherever a width can
+# actually be violated: `narrow_v2_reserve` is the `U256` → `U112` seam an FFI
+# `sync_reserves` call or a pool-builder reserve word crosses, and
+# `V2Reserves::read` refuses an over-wide word at decode before any hypothetical
+# reserve is answered. The V3/V4 `U256` width checks are untouched.
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

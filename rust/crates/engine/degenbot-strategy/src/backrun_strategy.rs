@@ -679,14 +679,13 @@ async fn admit_hop_v2(
     let reserves = match view_v2_reserves(scratch, address) {
         Some(r) => r,
         None => match degenbot_rpc::abi::V2Reserves::read(provider, address, None).await {
-            Ok(reserves) => {
-                let (r0, r1) = (reserves.reserve0, reserves.reserve1);
-                let (Ok(r0), Ok(r1)) = (u128::try_from(r0), u128::try_from(r1)) else {
-                    hop_admit_fail(trace, address, "reserves-rpc-width", "reserves exceed u128");
-                    return None;
-                };
-                (r0, r1)
-            }
+            // The read's validating decode bounds both words to the pair's
+            // `uint112` field, which fits `u128`: these widen the snapshot's
+            // width rather than re-check the answer's.
+            Ok(reserves) => (
+                reserves.reserve0.to::<u128>(),
+                reserves.reserve1.to::<u128>(),
+            ),
             Err(err) => {
                 hop_admit_fail(trace, address, "reserves-rpc", &err.to_string());
                 return None;

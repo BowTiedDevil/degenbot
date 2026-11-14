@@ -247,25 +247,6 @@ pub enum ExactInputQuoteError {
         source: ProviderError,
     },
 
-    /// The pair answered a reserve wider than its own `uint112` storage field.
-    #[error(
-        "hop {hop} of path {path_id}: the reserves of {pool} at block {block} do not fit its uint112 fields ({reserve0}, {reserve1})"
-    )]
-    ReservePairWidth {
-        /// The path whose hop was refused.
-        path_id: u64,
-        /// The hop's index in path order.
-        hop: usize,
-        /// The pair that answered them.
-        pool: Address,
-        /// The block every hop of the quote prices at.
-        block: u64,
-        /// The answered `reserve0`.
-        reserve0: U256,
-        /// The answered `reserve1`.
-        reserve1: U256,
-    },
-
     /// The on-chain quoter refused (or could not answer) the hop.
     #[error("hop {hop} of path {path_id}: {source}")]
     HopQuote {
@@ -335,8 +316,8 @@ impl ProbeQuoteTransport for AlloyProvider {
 ///
 /// [`ExactInputQuoteError::PoolMath`] when an in-process hop's own math refuses,
 /// [`ExactInputQuoteError::ReservePairAnchor`] when an in-process hop's reserves
-/// at the anchor block cannot be read, [`ExactInputQuoteError::ReservePairWidth`]
-/// when the pair answers a reserve wider than its `uint112` field,
+/// at the anchor block cannot be read — including when the pair answers a word
+/// wider than its own `uint112` field, since that read validates,
 /// [`ExactInputQuoteError::HopQuote`] when the canonical quoter refuses (or
 /// cannot answer) a concentrated hop, and
 /// [`ExactInputQuoteError::BlockContext`] when the anchor block's context cannot
@@ -456,7 +437,10 @@ async fn anchored_reserve_pair<T: ProbeQuoteTransport>(
             block: plan.block,
             source,
         })?;
-    let (reserve0, reserve1) = narrow_reserves(plan, hop, pool, answer)?;
+    // The read's validating decode already bounded both words to the pair's
+    // `uint112` fields, so this is the typed projection into the snapshot's
+    // fields — a wider word never leaves `V2Reserves::read`.
+    let (reserve0, reserve1) = (answer.reserve0.to::<U112>(), answer.reserve1.to::<U112>());
     Ok(re_anchored(&spec.entry, reserve0, reserve1, plan.block))
 }
 
@@ -493,40 +477,6 @@ fn re_anchored(pool_entry: &PoolEntry, reserve0: U112, reserve1: U112, block: u6
     anchored_entry
 }
 
-/// The anchor answer as the pool's `uint112` reserve fields — refused, never
-/// saturated, when a word is wider: reserves a pool cannot hold are an answer
-/// about another pool, not a price.
-fn narrow_reserves(
-    plan: &ExactInputQuotePlan,
-    hop: usize,
-    pool: Address,
-    answer: V2Reserves,
-) -> Result<(U112, U112), ExactInputQuoteError> {
-    match (
-        narrow_reserve(answer.reserve0),
-        narrow_reserve(answer.reserve1),
-    ) {
-        (Some(reserve0), Some(reserve1)) => Ok((reserve0, reserve1)),
-        _ => Err(ExactInputQuoteError::ReservePairWidth {
-            path_id: plan.path_id,
-            hop,
-            pool,
-            block: plan.block,
-            reserve0: answer.reserve0,
-            reserve1: answer.reserve1,
-        }),
-    }
-}
-
-/// One reserve word as the pool's `uint112` field — `None` when bits above
-/// position 112 are set.
-fn narrow_reserve(word: U256) -> Option<U112> {
-    if word > U112::MAX.to::<U256>() {
-        return None;
-    }
-    Some(word.to::<U112>())
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -543,8 +493,8 @@ mod tests {
         RegisterV4PoolParams, V3PoolIdentity, V4PoolIdentity, V4PoolKey,
     };
     use degenbot_rpc::abi::{
-        selector, ContractRead, V2Reserves, MAX_SQRT_RATIO_MINUS_ONE, MIN_SQRT_RATIO_PLUS_ONE,
-        V3_QUOTER, V4_QUOTER,
+        selector, ContractRead, MAX_SQRT_RATIO_MINUS_ONE, MIN_SQRT_RATIO_PLUS_ONE, V3_QUOTER,
+        V4_QUOTER,
     };
     use degenbot_rpc::offline::OfflineProvider;
     use degenbot_substrate::state_lock::LockSite;
@@ -556,9 +506,8 @@ mod tests {
     use crate::arb_engine::{ArbitrageEngine, EngineStages};
 
     use super::{
-        narrow_reserve, narrow_reserves, quote_exact_input_hops, reserve_pair_anchor,
-        ExactInputHop, ExactInputQuoteError, ExactInputQuotePlan, ProbeBlockContext,
-        ProbeQuoteTransport,
+        quote_exact_input_hops, reserve_pair_anchor, ExactInputHop, ExactInputQuoteError,
+        ProbeBlockContext, ProbeQuoteTransport,
     };
 
     // ── the pinned mainnet corpora ──
@@ -1694,47 +1643,55 @@ mod tests {
         );
     }
 
-    /// A reserve wider than the pool's `uint112` field is refused, never
-    /// saturated: an anchor answer that cannot be stored is not a price.
-    #[test]
-    fn an_anchor_answer_wider_than_uint112_is_refused() {
-        let quote_plan = ExactInputQuotePlan {
-            path_id: 7,
-            block: ANCHOR,
-            hops: Vec::new(),
-        };
-        let oversize = U112::MAX.to::<U256>() + U256::from(1u8);
-        let error = narrow_reserves(
-            &quote_plan,
-            1,
+    /// A reserve wider than the pair's `uint112` field is refused at the read,
+    /// never truncated into a price: an anchor answer the pair cannot hold is an
+    /// answer about another pool.
+    #[tokio::test]
+    async fn an_anchor_answer_wider_than_uint112_is_refused_at_the_decode() {
+        let mut engine = ArbitrageEngine::new();
+        let pair = register_v2_at(
+            &mut engine,
             WETH_USDC_PAIR,
-            V2Reserves {
-                reserve0: oversize,
-                reserve1: U256::from(1u8),
-            },
+            u112(HOP0_HEAD_RESERVES.0),
+            u112(HOP0_HEAD_RESERVES.1),
+            HEAD,
+        );
+        let path_id = store_path(&mut engine, &[(HopType::V2, pair, true)]);
+        let transport = ScriptedTransport::new(ANCHOR).answer(
+            WETH_USDC_PAIR,
+            get_reserves_calldata(),
+            reserves_answer(
+                U112::MAX.to::<U256>() + U256::from(1u8),
+                U256::from(HOP0_HEAD_RESERVES.1),
+            ),
+        );
+
+        let error = quote_exact_input_hops(
+            &plan_at(&engine, path_id, ANCHOR),
+            &transport,
+            U256::from(1_000_000_000_000_000u64),
         )
+        .await
         .unwrap_err();
-        match error {
-            ExactInputQuoteError::ReservePairWidth {
-                path_id,
-                hop,
-                pool,
-                block,
-                reserve0,
-                ..
-            } => {
-                assert_eq!(path_id, 7);
-                assert_eq!(hop, 1);
-                assert_eq!(pool, WETH_USDC_PAIR);
-                assert_eq!(block, ANCHOR);
-                assert_eq!(reserve0, oversize);
-            }
-            other => panic!("expected the width refusal, got {other:?}"),
-        }
+
+        let ExactInputQuoteError::ReservePairAnchor {
+            hop,
+            pool,
+            block,
+            source,
+            ..
+        } = error
+        else {
+            panic!("an over-wide reserve word is an unreadable anchor, got {error:?}");
+        };
         assert_eq!(
-            narrow_reserve(U112::MAX.to::<U256>()),
-            Some(U112::MAX),
-            "the field's own maximum is not wider than the field"
+            (hop, pool, block),
+            (0, WETH_USDC_PAIR, ANCHOR),
+            "the refusal names the hop, the pair and the block"
+        );
+        assert!(
+            matches!(source, ProviderError::DecodingError { .. }),
+            "the read's validating decode refused the word: {source:?}"
         );
     }
 }

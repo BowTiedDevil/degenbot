@@ -1418,11 +1418,10 @@ async fn build_v2_assembles_register_params_from_onchain() {
 /// The V2-reserve refusal names its reason, and it enforces the on-chain
 /// `uint112` bound.
 ///
-/// The arm is a DEFENSIVE guard, not a reachable refusal: the `getReserves()`
-/// decode narrows to `uint112` (an over-bound word comes back masked — `2^112`
-/// decodes as `0`), so no RPC hands the builder an out-of-bound reserve. The
-/// name still has to be right: it is what a caller renders when the guard
-/// fires.
+/// The arm is a DEFENSIVE guard, not a reachable refusal: `V2Reserves::read`
+/// validates its `uint112` words, so a pair answering an out-of-bound reserve
+/// is a decode failure and never reaches the builder as a reserve. The name
+/// still has to be right: it is what a caller renders when the guard fires.
 #[test]
 fn v2_reserve_refusal_names_its_reason() {
     assert!(

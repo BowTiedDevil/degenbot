@@ -1,19 +1,24 @@
 //! Spec-bound validation for pool registration admission.
 //!
 //! The on-chain Solidity types constrain every field a Uniswap V2 / V3 / V4
-//! pool can hold. `BotState::register_v{2,3,4}_pool` admits pools by
-//! verifying these widths up-front and returning a typed [`SpecViolation`]
-//! on a violation; downstream swap math (`narrow_u512_to_u256`, the concentrated liquidity
-//! step math) can then rely on spec-bound admission as an upstream guarantee
-//! (cf. the `# Panics` section on the V2/V3 U512→U256 narrowing helpers
-//! committed in `19218a2c`).
+//! pool can hold. `BotState::register_v{3,4}_pool` admits pools by verifying
+//! these widths up-front and returning a typed [`SpecViolation`] on a
+//! violation; the concentrated liquidity step math and the V3/V4 U512→U256
+//! narrowing can then rely on that admission as an upstream guarantee (cf. the
+//! `# Panics` sections on those helpers).
+//!
+//! The V2 pair is the width the Rust type already carries: `V2PoolState`'s and
+//! `V2BlockDelta`'s reserve fields are `U112`, so `register_v2_pool` has no
+//! width to check. The one runtime reserve check left is [`narrow_v2_reserve`],
+//! the `U256` → `U112` seam that a `sync_reserves` call and the V2 Sync
+//! decoder's ABI word cross on their way into typed storage.
 //!
 //! Bounds are derived from Uniswap v2-core / v3-core / v4-core (researched
 //! against the contract source trees):
 //!
 //! | Field | On-chain type | Bound |
 //! |---|---|---|
-//! | V2 reserves (reserve0 / reserve1) | `uint112` | `≤ 2^112 − 1` (v2-core `UniswapV2Pair._update`: `require(balance0 <= uint112(-1))`) |
+//! | V2 reserves (reserve0 / reserve1) | `uint112` | `≤ 2^112 − 1` — enforced by the `U112` field type, and at runtime only by the `U256` → `U112` seam [`narrow_v2_reserve`] (v2-core `UniswapV2Pair._update`: `require(balance0 <= uint112(-1))`) |
 //! | V3/V4 `sqrtPriceX96` | `uint160` | `[MIN_SQRT_RATIO, MAX_SQRT_RATIO)` (`TickMath` rejects out-of-range) |
 //! | V3/V4 liquidity | `uint128` | `≤ 2^128 − 1` (already enforced by the Rust `u128` type — no check) |
 //! | V3 `fee` | `uint24` | `< 1_000_000` (V3 factory `require(fee < 1000000)`) |
@@ -32,9 +37,9 @@ use degenbot_math::concentrated_liquidity::tick_math::{
 
 /// `uint112(-1)` — `2^112 − 1`. The `uint112` storage width v2-core asserts
 /// at `UniswapV2Pair._update` (`require(balance0 <= uint112(-1))`). Held as
-/// `U256` for direct comparison with `RegisterV2PoolParams.reserve{0,1}`,
-/// which are upcast to `U256` for ergonomic arithmetic elsewhere in the
-/// solver path.
+/// `U256` because its one comparison is against a `U256` reserve word at the
+/// [`narrow_v2_reserve`] seam; the typed reserve fields are already `U112` and
+/// need no bound.
 pub const UINT112_MAX: U256 = uint!(5192296858534827628530496329220095_U256);
 
 /// V3 factory's `< 1_000_000` fee bound — `UniswapV3Factory.createPool`:
@@ -112,31 +117,12 @@ impl std::fmt::Display for SpecViolation {
 // ---------------------------------------------------------------------------
 // Validators — pure functions returning `Result<(), SpecViolation>`.
 //
-// The family `RegisterV{2,3,4}PoolError` enums each wrap a `SpecViolation`
-// via `SpecViolation(SpecViolation)` —
-// the register fns `.map_err(RegisterV*PoolError::SpecViolation)` when
-// calling these.
+// The V3/V4 family `RegisterV{3,4}PoolError` enums wrap a `SpecViolation` via
+// `SpecViolation(SpecViolation)` — the register fns
+// `.map_err(RegisterV*PoolError::SpecViolation)` when calling these. The V2 and
+// Aerodrome twins keep the same variant without calling a reserve validator:
+// their reserves are `U112`, so the params type carries the width.
 // ---------------------------------------------------------------------------
-
-/// Validate a V2 reserve value (`uint112` on-chain).
-///
-/// `field` is the offending struct-field name (`"reserve0"` / `"reserve1"`)
-/// used in the resulting [`SpecViolation`] diagnostic.
-///
-/// # Errors
-///
-/// Returns [`Err`] with a [`SpecViolation`] bound `"uint112 (≤ 2^112 − 1)"`
-/// when `value > UINT112_MAX` (i.e. `> 2^112 − 1`).
-pub fn validate_v2_reserve(value: U112, field: &'static str) -> Result<(), SpecViolation> {
-    if U256::from(value) > UINT112_MAX {
-        return Err(SpecViolation {
-            field,
-            value: SpecValue::U256(U256::from(value)),
-            bound: "uint112 (≤ 2^112 − 1)",
-        });
-    }
-    Ok(())
-}
 
 /// Narrow a `U256`-sourced reserve to `U112` with a spec-bound check.
 ///
@@ -275,24 +261,23 @@ mod tests {
     // Each validator's `Ok` boundary is the largest value the spec accepts;
     // the reject test below asserts the very next step out-of-range fires.
 
+    // ── the `U256` reserve ingestion seam ─────────────────────────
+    // The typed `U112` fields need no runtime width check, so the bound is
+    // exercised where a `U256` — a `sync_reserves` call, an ABI word, a
+    // snapshot decoded off a storage slot — actually narrows.
+
     #[test]
-    fn v2_reserve_accepts_uint112_max() {
-        // The field is typed `U112`, so `U112::MAX` *is*
-        // `UINT112_MAX`; the type-level bound supersedes the runtime check.
-        assert_eq!(validate_v2_reserve(U112::MAX, "reserve0"), Ok(()));
-    }
-    #[test]
-    fn v2_reserve_accepts_zero() {
-        assert_eq!(validate_v2_reserve(U112::ZERO, "reserve1"), Ok(()));
+    fn narrow_v2_reserve_accepts_uint112_max_exactly() {
+        assert_eq!(narrow_v2_reserve(UINT112_MAX, "reserve0"), Ok(U112::MAX));
     }
 
-    // Note: the pre-widening `v2_reserve_rejects_uint112_max_plus_one` test is
-    // removed — a value `> UINT112_MAX` cannot be constructed as a `U112`
-    // (the type's `MAX` *is* `UINT112_MAX`), so the runtime reject branch is
-    // unreachable for `U112`-typed input. The branch remains live for the
-    // `U256`-ingestion seams (PyO3 `sync_reserves`, the Sync decoder's
-    // high-bits-zero check) that narrow to `U112` after validation; those
-    // paths exercise the bound in their own crate's tests.
+    #[test]
+    fn narrow_v2_reserve_rejects_one_past_uint112_max() {
+        assert!(matches!(
+            narrow_v2_reserve(UINT112_MAX + U256::from(1u8), "reserve1"),
+            Err(SpecViolation { bound, .. }) if bound.contains("uint112"),
+        ));
+    }
 
     #[test]
     fn sqrt_price_accepts_min() {

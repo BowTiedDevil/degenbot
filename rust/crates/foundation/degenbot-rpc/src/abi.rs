@@ -44,14 +44,15 @@
 //! Every read returns [`ProviderError`]: `eth_call` failures surface verbatim
 //! (reverts as [`ProviderError::ExecutionReverted`], transport errors
 //! classified by the provider); return data that does not decode surfaces as
-//! [`ProviderError::DecodingError`]. No swallowing — callers decide
-//! retry/policy.
+//! [`ProviderError::DecodingError`]. A word that is not canonical for its
+//! declared type is part of "does not decode" for a read that crosses
+//! [`ContractRead::read`]. No swallowing — callers decide retry/policy.
 
 use std::future::Future;
 use std::sync::Arc;
 
 use alloy::dyn_abi::{DynSolType, DynSolValue};
-use alloy::primitives::{address, aliases::U112, Address, Bytes, I256, U128, U160, U256};
+use alloy::primitives::{address, Address, Bytes, I256, U128, U160, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 
@@ -83,7 +84,27 @@ pub trait ContractRead: Send + Sync {
     ) -> impl Future<Output = ProviderResult<Bytes>> + Send;
 
     /// Call the getter `call` names and decode its return into the typed
-    /// answer: encode the calldata, one `eth_call`, decode `C::Return`.
+    /// answer: encode the calldata, one `eth_call`, decode `C::Return` with
+    /// Alloy's VALIDATING decoder.
+    ///
+    /// Validation is the policy for every read that crosses THIS method, and it
+    /// is what makes the declared width the answer's bound: a `uint112` word
+    /// with bits above position 112 set, a `bool` other than 0/1, or an
+    /// `address` word with a dirty high twelve bytes is a decode FAILURE, not a
+    /// value whose excess bits are dropped. Decoding without validation
+    /// discards those bits, so an over-wide answer arrives as a plausible small
+    /// number indistinguishable from real state.
+    ///
+    /// Reads that assemble their own answer do not cross this method and do not
+    /// inherit the policy: a declared-shape helper ([`fetch_no_arg_uint`] and
+    /// its siblings) reads through [`ContractRead::call`] and detokenizes what
+    /// it finds, and a narrowing adapter that must keep a tail or a prefix
+    /// ([`Slot0Prefix`], [`TickLiquidity`]) decodes its own bytes.
+    ///
+    /// Validation is not STRICT decoding: trailing bytes past the declared
+    /// tuple stay accepted, so a getter whose answer leads with the fields a
+    /// snapshot keeps — and a transport answering more words than the tuple
+    /// declares — reads unchanged.
     ///
     /// # Errors
     ///
@@ -99,7 +120,7 @@ pub trait ContractRead: Send + Sync {
         let calldata = Bytes::from(call.abi_encode());
         async move {
             let data = self.call(to, calldata, block).await?;
-            C::abi_decode_returns(&data).map_err(|e| ProviderError::DecodingError {
+            C::abi_decode_returns_validate(&data).map_err(|e| ProviderError::DecodingError {
                 message: format!("{} decode: {e}", C::SIGNATURE),
             })
         }
@@ -136,21 +157,6 @@ alloy::sol! {
     interface IUniswapV2Pair {
         function getReserves()
             external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-    }
-
-    /// The same `getReserves()` at `uint256` width.
-    ///
-    /// A function's signature is its NAME AND ARGUMENTS only, so this declaration
-    /// answers to the identical selector as `IUniswapV2Pair::getReserves` — the
-    /// wire call is byte-identical and no transport can tell the two apart. What
-    /// differs is the DECODE: alloy's `uint112` decode discards bits above
-    /// position 112, so an over-wide return would arrive as a plausible small
-    /// reserve before any caller could bound it. Reading the words wide and
-    /// checking them in [`V2Reserves::read`] keeps that decision where the bytes
-    /// are, instead of after the truncation.
-    interface IUniswapV2PairWideReserves {
-        function getReserves()
-            external view returns (uint256 reserve0, uint256 reserve1, uint32 blockTimestampLast);
     }
 
     /// Aerodrome V2 factory read: the per-pool unidirectional fee, answered per
@@ -342,13 +348,25 @@ alloy::sol! {
 /// A V2-style pair's reserves: `getReserves()`'s first two words.
 ///
 /// The third field — `blockTimestampLast` — is unused by the snapshot, and a
-/// pool that answered a stale or zero timestamp must still read the same.
+/// pool that answered a stale or zero timestamp must still read the same. It is
+/// validated all the same: a word above `uint32` fails the decode whether or not
+/// a consumer keeps it.
 ///
-/// Both words are `uint112` fields on the pair, so a word wider than that is
-/// refused at the decode rather than truncated into a plausible reserve.
+/// Both words are `uint112` on the pair, so the declaration is the bound: the
+/// validating decode behind [`ContractRead::read`] refuses a word wider than the
+/// field instead of truncating it into a plausible reserve.
+///
+/// The fields are `U256` because that is the width the consumers' swap math
+/// carries, not because a wider word can arrive: [`Self::read`] is the only
+/// production constructor, and it cannot yield a word above `uint112`. A
+/// narrowing projection downstream (`reserve0.to::<U112>()`) relies on exactly
+/// that constructor invariant instead of re-checking the answer — a struct
+/// literal is what would make such a projection panic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct V2Reserves {
+    /// `getReserves()`'s first word, widened from the pair's `uint112` field.
     pub reserve0: U256,
+    /// `getReserves()`'s second word, widened from the pair's `uint112` field.
     pub reserve1: U256,
 }
 
@@ -359,42 +377,22 @@ impl V2Reserves {
     ///
     /// Returns [`ProviderError`] from the underlying `eth_call` or
     /// [`ProviderError::DecodingError`] when the return is not the
-    /// `(uint256, uint256, uint32)` tuple, or when either reserve word is wider
-    /// than the pair's `uint112` field.
+    /// `(uint112, uint112, uint32)` tuple — which includes either reserve word
+    /// being wider than its `uint112` field, and a timestamp word wider than
+    /// `uint32` even though no caller keeps it.
     pub async fn read(
         transport: &impl ContractRead,
         pool: Address,
         block: Option<u64>,
     ) -> ProviderResult<Self> {
         let r = transport
-            .read(pool, IUniswapV2PairWideReserves::getReservesCall {}, block)
+            .read(pool, IUniswapV2Pair::getReservesCall {}, block)
             .await?;
         Ok(Self {
-            reserve0: checked_reserve_word(r.reserve0, 0)?,
-            reserve1: checked_reserve_word(r.reserve1, 1)?,
+            reserve0: U256::from(r.reserve0),
+            reserve1: U256::from(r.reserve1),
         })
     }
-}
-
-/// One `getReserves()` word as the pair's `uint112` reserve field, or a decode
-/// failure when it does not fit.
-///
-/// A pool cannot hold a reserve wider than `uint112`, so such a word is an
-/// answer about something other than that pool's reserves. It must be refused
-/// HERE: a `uint112`-width decode drops the high bits, and a truncated value is
-/// indistinguishable from real state by the time a caller narrows it. The
-/// field's own maximum is valid, so the bound is inclusive.
-///
-/// # Errors
-///
-/// Returns [`ProviderError::DecodingError`] when `word` exceeds `U112::MAX`.
-fn checked_reserve_word(word: U256, position: usize) -> ProviderResult<U256> {
-    if word > U112::MAX.to::<U256>() {
-        return Err(ProviderError::DecodingError {
-            message: format!("getReserves() reserve{position} {word} exceeds the uint112 range"),
-        });
-    }
-    Ok(word)
 }
 
 /// A Balancer pool's `getPoolId()` identifier as the raw 32 bytes the Vault's
@@ -891,14 +889,19 @@ pub async fn fetch_address_returning(
 /// unsigned integer type `ty` (`fee()` as `uint24`, `decimals()` as
 /// `uint256`, …), widened into a `U256`.
 ///
-/// Decoding against the declared ABI type (rather than reading the word
-/// blindly) keeps an out-of-width return a decode failure instead of a
-/// silently truncated value.
+/// `ty` is the shape the CALLER declares, not a bound this helper enforces: the
+/// word is read through [`ContractRead::call`] and detokenized by
+/// [`DynSolType::abi_decode`], whose non-validating path zeroes the bits above
+/// `ty`'s width — a `uint24` getter answering bit 24 set arrives as the
+/// truncated value. A caller that wants its declared width to refuse such a
+/// word declares the getter as an `sol!` call and crosses
+/// [`ContractRead::read`] instead.
 ///
 /// # Errors
 ///
 /// Returns [`ProviderError`] from the underlying `eth_call` or
-/// [`ProviderError::DecodingError`] when the return does not decode as `ty`.
+/// [`ProviderError::DecodingError`] when the return does not decode as `ty` at
+/// all (a short word, or a value of another ABI type).
 pub async fn fetch_no_arg_uint(
     provider: &impl ContractRead,
     signature: &[u8],
@@ -997,6 +1000,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
+    use alloy::primitives::aliases::U112;
+
     const TO: Address = alloy::primitives::address!("00000000000000000000000000000000000000a1");
     const OTHER: Address = alloy::primitives::address!("00000000000000000000000000000000000000b2");
     const BLOCK: Option<u64> = Some(21_000_000);
@@ -1062,10 +1067,16 @@ mod tests {
     /// and the shape an over-wide reserve arrives in (a `uint112`-width encode
     /// could not express one).
     fn get_reserves_return(reserve0: U256, reserve1: U256) -> Vec<u8> {
+        get_reserves_return_at(reserve0, reserve1, U256::from(1_700_000_000u64))
+    }
+
+    /// The same answer with the timestamp word as given — also at full width, so
+    /// a timestamp past `uint32` can be expressed at all.
+    fn get_reserves_return_at(reserve0: U256, reserve1: U256, timestamp: U256) -> Vec<u8> {
         DynSolValue::Tuple(vec![
             DynSolValue::Uint(reserve0, 256),
             DynSolValue::Uint(reserve1, 256),
-            DynSolValue::Uint(U256::from(1_700_000_000u64), 32),
+            DynSolValue::Uint(timestamp, 256),
         ])
         .abi_encode()
     }
@@ -1165,6 +1176,150 @@ mod tests {
         );
     }
 
+    /// Validation is not STRICT decoding: a transport answering more words than
+    /// the declared tuple still reads, which is what keeps a getter whose
+    /// leading fields are all a snapshot keeps working.
+    #[tokio::test]
+    async fn read_keeps_trailing_words_past_the_declared_tuple() {
+        let mut answer = get_reserves_return(U256::from(11u8), U256::from(22u8));
+        answer.extend_from_slice(&uint_return(U256::from(999u64)));
+
+        let transport =
+            TableTransport::new().answer(IUniswapV2Pair::getReservesCall {}.abi_encode(), answer);
+
+        let reserves = V2Reserves::read(&transport, TO, BLOCK).await.unwrap();
+
+        assert_eq!(
+            (reserves.reserve0, reserves.reserve1),
+            (U256::from(11u8), U256::from(22u8)),
+            "the declared tuple reads; the words past it are ignored"
+        );
+    }
+
+    /// The validation policy belongs to the read verb, not to V2: a `uint128`
+    /// getter refuses a word carrying bits above position 128.
+    #[tokio::test]
+    async fn read_refuses_a_narrow_uint_word_with_bits_above_its_width() {
+        let over_wide = U256::from(1u8) << 128;
+        let transport = TableTransport::new().answer(
+            IUniswapV3Pool::liquidityCall {}.abi_encode(),
+            uint_return(over_wide),
+        );
+
+        let err = transport
+            .read(TO, IUniswapV3Pool::liquidityCall {}, BLOCK)
+            .await
+            .unwrap_err();
+
+        let ProviderError::DecodingError { message } = err else {
+            panic!("an over-wide uint128 word is a decode failure, got {err:?}");
+        };
+        assert!(
+            message.contains("liquidity()") && message.contains("uint128"),
+            "the failure names the getter and the type it could not produce: {message}"
+        );
+    }
+
+    /// An `address` return with dirty high twelve bytes is refused by the same
+    /// policy — the padding is checked, not just the length.
+    #[tokio::test]
+    async fn read_refuses_an_address_word_with_dirty_high_bytes() {
+        let mut word = [0u8; 32];
+        word[0] = 0x01;
+        word[31] = 0x42;
+        let transport =
+            TableTransport::new().answer(IPoolIdentity::token0Call {}.abi_encode(), word.to_vec());
+
+        let err = transport
+            .read(TO, IPoolIdentity::token0Call {}, BLOCK)
+            .await
+            .unwrap_err();
+
+        let ProviderError::DecodingError { message } = err else {
+            panic!("a dirty address word is a decode failure, got {err:?}");
+        };
+        assert!(
+            message.contains("token0()") && message.contains("address"),
+            "the failure names the getter and the type it could not produce: {message}"
+        );
+    }
+
+    /// The same two getters answer their canonical words exactly: validation
+    /// refuses non-canonical padding, it does not narrow what a getter may say.
+    #[tokio::test]
+    async fn read_accepts_canonical_narrow_and_address_words_at_their_bounds() {
+        let token = alloy::primitives::address!("00000000000000000000000000000000000000c3");
+        let widest_liquidity = u128::MAX;
+
+        let transport = TableTransport::new()
+            .answer(
+                IPoolIdentity::token0Call {}.abi_encode(),
+                token.into_word().as_slice().to_vec(),
+            )
+            .answer(
+                IUniswapV3Pool::liquidityCall {}.abi_encode(),
+                narrow_uint_return(U256::from(widest_liquidity), 128),
+            );
+
+        assert_eq!(
+            transport
+                .read(TO, IPoolIdentity::token0Call {}, BLOCK)
+                .await
+                .unwrap(),
+            token
+        );
+        assert_eq!(
+            transport
+                .read(TO, IUniswapV3Pool::liquidityCall {}, BLOCK)
+                .await
+                .unwrap(),
+            widest_liquidity
+        );
+    }
+
+    /// A `bool` return is canonical only as 0 or 1: the validating decode
+    /// refuses `2` rather than reading it as `true`.
+    #[tokio::test]
+    async fn read_refuses_a_bool_word_other_than_zero_or_one() {
+        let transport = TableTransport::new().answer(
+            ILendingToken::isCTokenCall {}.abi_encode(),
+            uint_return(U256::from(2u8)),
+        );
+
+        let err = transport
+            .read(TO, ILendingToken::isCTokenCall {}, BLOCK)
+            .await
+            .unwrap_err();
+
+        let ProviderError::DecodingError { message } = err else {
+            panic!("a bool word that is neither 0 nor 1 is a decode failure, got {err:?}");
+        };
+        assert!(
+            message.contains("isCToken()") && message.contains("bool"),
+            "the failure names the getter and the type it could not produce: {message}"
+        );
+    }
+
+    /// The two canonical `bool` words are the ones that read — validation
+    /// refuses the rest, it does not reshape what a getter may answer.
+    #[tokio::test]
+    async fn read_accepts_the_canonical_bool_words() {
+        for (word, expected) in [(0u8, false), (1u8, true)] {
+            let transport = TableTransport::new().answer(
+                ILendingToken::isCTokenCall {}.abi_encode(),
+                uint_return(U256::from(word)),
+            );
+
+            assert_eq!(
+                transport
+                    .read(TO, ILendingToken::isCTokenCall {}, BLOCK)
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
     #[tokio::test]
     async fn read_surfaces_a_transport_error_verbatim() {
         let transport = TableTransport::new().fail(
@@ -1220,12 +1375,36 @@ mod tests {
         assert_eq!(reserves.reserve1, U256::from(2_500u64));
     }
 
-    #[test]
-    fn v2_reserves_reads_the_wide_declaration_on_the_unchanged_wire_call() {
+    /// The pair's own `uint112` declaration is the shape this read crosses, and
+    /// the wire call is the selector alone — unchanged by the width it decodes.
+    #[tokio::test]
+    async fn v2_reserves_reads_the_uint112_getter_on_the_unchanged_pair_calldata() {
         assert_eq!(
-            IUniswapV2PairWideReserves::getReservesCall {}.abi_encode(),
+            IUniswapV2Pair::getReservesCall::SELECTOR,
+            [0x09, 0x02, 0xf1, 0xac],
+            "`getReserves()` as the pair declares it"
+        );
+        assert_eq!(
             IUniswapV2Pair::getReservesCall {}.abi_encode(),
-            "return widths are not part of a signature, so the selector and calldata are identical"
+            IUniswapV2Pair::getReservesCall::SELECTOR.to_vec(),
+            "a getter with no arguments encodes to its selector alone"
+        );
+
+        let transport = TableTransport::new().answer(
+            IUniswapV2Pair::getReservesCall {}.abi_encode(),
+            get_reserves_return(U256::from(1u8), U256::from(2u8)),
+        );
+
+        V2Reserves::read(&transport, TO, BLOCK).await.unwrap();
+
+        assert_eq!(
+            transport.calls(),
+            vec![(
+                TO,
+                Bytes::from(IUniswapV2Pair::getReservesCall {}.abi_encode()),
+                BLOCK
+            )],
+            "the pair's own calldata, at the caller's block"
         );
     }
 
@@ -1262,15 +1441,18 @@ mod tests {
         }
     }
 
+    /// The declaration's width is the bound, in either position: a reserve word
+    /// past `uint112` is refused at the decode, so no caller ever sees a
+    /// truncated reserve.
     #[tokio::test]
     async fn v2_reserves_rejects_a_word_wider_than_the_uint112_field_in_either_position() {
         let two_pow_112 = two_pow_112();
         let just_over = two_pow_112 + U256::from(1u8);
-        for (reserve0, reserve1, position) in [
-            (two_pow_112, U256::from(1u8), 0),
-            (just_over, U256::from(1u8), 0),
-            (U256::from(1u8), two_pow_112, 1),
-            (U256::from(1u8), U256::MAX, 1),
+        for (reserve0, reserve1) in [
+            (two_pow_112, U256::from(1u8)),
+            (just_over, U256::from(1u8)),
+            (U256::from(1u8), two_pow_112),
+            (U256::from(1u8), U256::MAX),
         ] {
             let transport = TableTransport::new().answer(
                 IUniswapV2Pair::getReservesCall {}.abi_encode(),
@@ -1283,15 +1465,58 @@ mod tests {
                 panic!("a reserve wider than the pair's field is a decode failure, got {err:?}");
             };
             assert!(
-                message.contains(&format!("reserve{position}")),
-                "the failure names the word it refused: {message}"
+                message.contains("getReserves()") && message.contains("uint112"),
+                "the failure names the getter and the type it could not produce: {message}"
+            );
+        }
+    }
+
+    /// The timestamp word is validated even though no caller keeps it: a word
+    /// above `uint32` is not the `(uint112, uint112, uint32)` tuple the pair
+    /// declares, so the read fails instead of discarding the excess.
+    #[tokio::test]
+    async fn v2_reserves_rejects_a_timestamp_word_above_uint32() {
+        for timestamp in [U256::from(1u8) << 32, U256::MAX] {
+            let transport = TableTransport::new().answer(
+                IUniswapV2Pair::getReservesCall {}.abi_encode(),
+                get_reserves_return_at(U256::from(1u8), U256::from(2u8), timestamp),
+            );
+
+            let err = V2Reserves::read(&transport, TO, BLOCK).await.unwrap_err();
+
+            let ProviderError::DecodingError { message } = err else {
+                panic!("a timestamp wider than uint32 is a decode failure, got {err:?}");
+            };
+            assert!(
+                message.contains("getReserves()") && message.contains("uint32"),
+                "the failure names the getter and the type it could not produce: {message}"
+            );
+        }
+    }
+
+    /// A zero or stale timestamp is still a canonical `uint32`, so the reserves
+    /// read exactly as they would beside a fresh one.
+    #[tokio::test]
+    async fn v2_reserves_accepts_a_zero_or_stale_timestamp() {
+        for timestamp in [U256::ZERO, U256::from(1u64), U256::from(u32::MAX)] {
+            let transport = TableTransport::new().answer(
+                IUniswapV2Pair::getReservesCall {}.abi_encode(),
+                get_reserves_return_at(U256::from(1_500u64), U256::from(2_500u64), timestamp),
+            );
+
+            let reserves = V2Reserves::read(&transport, TO, BLOCK).await.unwrap();
+
+            assert_eq!(
+                (reserves.reserve0, reserves.reserve1),
+                (U256::from(1_500u64), U256::from(2_500u64)),
+                "a timestamp the snapshot drops cannot change the reserves it keeps"
             );
         }
     }
 
     /// The `(2^112, 1)` pair must be a decode failure, never the truncated
-    /// `reserve0 = 0, reserve1 = 1` a `uint112`-width decode of the same bytes
-    /// would produce.
+    /// `reserve0 = 0, reserve1 = 1` an unvalidated decode of the same bytes
+    /// produces.
     #[tokio::test]
     async fn v2_reserves_regression_two_to_the_112_is_a_decode_failure_not_a_zero_reserve() {
         let bytes = get_reserves_return(two_pow_112(), U256::from(1u8));
@@ -1305,11 +1530,11 @@ mod tests {
             Err(ProviderError::DecodingError { .. })
         ));
 
-        let truncated = IUniswapV2Pair::getReservesCall::abi_decode_returns(&bytes).unwrap();
+        let unvalidated = IUniswapV2Pair::getReservesCall::abi_decode_returns(&bytes).unwrap();
         assert_eq!(
-            (truncated.reserve0, truncated.reserve1),
+            (unvalidated.reserve0, unvalidated.reserve1),
             (U112::ZERO, U112::from(1u8)),
-            "a uint112-width decode DROPS bit 112 — the reason this read decodes wide and bounds the words itself"
+            "the unvalidated decode drops bit 112 — the reason the read verb validates"
         );
     }
 
@@ -1813,10 +2038,6 @@ mod tests {
             ),
             (
                 IUniswapV2Pair::getReservesCall {}.abi_encode(),
-                [0x09, 0x02, 0xf1, 0xac],
-            ),
-            (
-                IUniswapV2PairWideReserves::getReservesCall {}.abi_encode(),
                 [0x09, 0x02, 0xf1, 0xac],
             ),
             (

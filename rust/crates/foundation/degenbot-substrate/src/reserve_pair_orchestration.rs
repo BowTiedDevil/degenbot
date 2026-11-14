@@ -34,11 +34,10 @@ impl BotState {
     ///
     /// Returns [`RegisterV2PoolError::AlreadyRegistered`] if a pool at this
     /// address is already registered (replaces the prior `assert!` panic).
-    /// Returns [`RegisterV2PoolError::SpecViolation`] when `reserve0` or
-    /// `reserve1` exceed `uint112::MAX` — the on-chain `uint112` storage width
-    /// v2-core asserts at `UniswapV2Pair._update`. Living pool state from
-    /// `Sync(uint112,uint112)` events is structurally spec-bound, so spec
-    /// checks fire only on synthetic / corrupt registration.
+    ///
+    /// The reserves arrive `U112` — the on-chain `uint112` storage width
+    /// v2-core asserts at `UniswapV2Pair._update` — so the width is admitted by
+    /// TYPE here, with no runtime reserve check to run.
     ///
     /// A fee is admitted by TYPE, not by a re-check here: `params.fee_tokenN`
     /// is a `FeeRatio`, whose constructor already refuses a zero or oversized
@@ -47,14 +46,6 @@ impl BotState {
         &mut self,
         params: &RegisterV2PoolParams,
     ) -> Result<u64, RegisterV2PoolError> {
-        // Spec-bound admission: reject up-front rather
-        // than propagating overlarge reserves into `V2PoolState` (where the
-        // downstream swap-math U512→U256 narrowing would silently degrade to
-        // `U256::MAX` under the prior sat-cap, or panic — see the helper's
-        // `# Panics` section committed in `19218a2c`).
-        ::degenbot_pools::validate_v2_reserve(params.reserve0, "reserve0")?;
-        ::degenbot_pools::validate_v2_reserve(params.reserve1, "reserve1")?;
-
         // Construction I/O (ADR-003 single source): capture the pair's token
         // decimal scales off the token registry at registration — the same
         // construction seam that carries `stable_swap` onto the identity. The Camelot-stable read arm scales from them; an
@@ -154,21 +145,13 @@ impl BotState {
     ///
     /// Returns [`RegisterAerodromePoolError::AlreadyRegistered`] if a pool at
     /// this address is already registered (replaces the prior `assert!`
-    /// panic, mirroring the V2 conversion). Returns
-    /// [`RegisterAerodromePoolError::SpecViolation`] when `reserve0` or
-    /// `reserve1` exceed `uint112::MAX` — the on-chain `uint112` storage
-    /// width the Solidly pair asserts at `_update`. Both reserves are typed
-    /// `U112` at the params layer, so this fires only if the params are ever
-    /// re-widened; the check is belt-and-braces parity with V2.
+    /// panic, mirroring the V2 conversion). The reserves arrive `U112` — the
+    /// on-chain `uint112` storage width the Solidly pair asserts at `_update` —
+    /// so the width is admitted by TYPE, with no runtime reserve check.
     pub fn register_aerodrome_pool(
         &mut self,
         params: &RegisterAerodromeV2PoolParams,
     ) -> Result<u64, RegisterAerodromePoolError> {
-        // Spec-bound admission (parity with `register_v2_pool`): the reserves
-        // are already `U112`-typed, so this only rejects a re-widened params
-        // layer — kept so the admission contract matches its V2 sibling.
-        ::degenbot_pools::validate_v2_reserve(params.reserve0, "reserve0")?;
-        ::degenbot_pools::validate_v2_reserve(params.reserve1, "reserve1")?;
         let (identity, state) =
             AerodromeV2PoolState::from_params(params, self.pools.journal_depth());
         self.pools

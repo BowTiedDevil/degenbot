@@ -73,12 +73,10 @@ pub struct V2PoolIdentity {
 /// The reserves are typed `U112` to mirror v2-core's on-chain `uint112`
 /// storage width (`UniswapV2Pair._update`'s
 /// `require(balance0 <= uint112(-1))`). The spec-bound admission contract
-/// (ADR-012) enforces this width at `register_v2_pool`;
-/// typing the field `U112` makes that contract a *type-level* guarantee —
-/// the runtime `validate_v2_reserve` check below it is a tautology against
-/// `U112::MAX`, retained for diagnostic-message uniformity with the other
-/// `spec_bounds` validators. The deeper fix forward-referenced in commit
-/// `19218a2c` ("a multiply-precision dodge") lands here.
+/// (ADR-012) owns this width, and typing the field `U112` makes it a
+/// *type-level* guarantee: there is no runtime reserve check to run, and a
+/// `U256` from a `sync_reserves` call or a storage-word decode narrows
+/// through [`narrow_v2_reserve`](crate::narrow_v2_reserve) at that seam.
 #[derive(Clone, Debug)]
 pub struct V2PoolState {
     /// Current reserve of token0 (on-chain `uint112`).
@@ -136,8 +134,9 @@ pub struct RegisterV2PoolParams {
     pub stable_swap: bool,
 }
 
-/// Typed rejection from [`BotState::register_v2_pool`] (the spec-bound +
-/// duplicate-address admission contract — see [`spec_bounds`]).
+/// Typed rejection from [`BotState::register_v2_pool`] (duplicate-address
+/// admission plus this family's retained compatibility error category — see
+/// [`spec_bounds`]).
 ///
 /// Mirrors [`RegisterV4PoolError`]: `#[derive(Clone, Debug, PartialEq, Eq)]`,
 /// no `Display`/`Error` impl (the `PyO3` mapper pattern-matches the variants
@@ -147,15 +146,18 @@ pub struct RegisterV2PoolParams {
 /// - [`AlreadyRegistered`](Self::AlreadyRegistered) — replaces the prior
 ///   `assert!` duplicate-check panic (`assert!(!pool_addresses.contains_key(..))`).
 /// - [`SpecViolation`](Self::SpecViolation) — wraps a
-///   [`spec_bounds::SpecViolation`] from the validator helpers
-///   (`validate_v2_reserve`); fires on `reserve{0,1} > uint112::MAX` (only
-///   reachable for synthetic / corrupt registration — `Sync(uint112,uint112)`
-///   events are structurally spec-bound).
+///   [`spec_bounds::SpecViolation`] carrying the offending field, the value and
+///   the bound (the admission category this family shares with V3/V4). V2
+///   reserves are typed `U112` — the on-chain `uint112` storage width — so the
+///   width is a *type-level* guarantee and registration runs no reserve check
+///   that could violate it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegisterV2PoolError {
     /// A pool at this contract address is already registered.
     AlreadyRegistered { address: Address },
-    /// An out-of-spec field (e.g. `reserve0 > uint112::MAX`).
+    /// An out-of-spec field. Unreachable for the reserves — those are `U112` —
+    /// so the variant exists to keep this family's admission errors
+    /// interchangeable with V3/V4 and its Aerodrome twin.
     SpecViolation(crate::state::spec_bounds::SpecViolation),
 }
 
@@ -174,8 +176,9 @@ impl V2PoolState {
     /// journal with a genesis anchor (`before == after == registration`
     /// reserves, at `update_block`) so [`ReorgJournal::restore_before_block`]
     /// can land on the registration state — the same anchor discipline as
-    /// the other 6 families. `register_v2_pool` delegates here after
-    /// spec-validation + dedup + `pool_id` assignment.
+    /// the other 6 families. `register_v2_pool` delegates here before the
+    /// registry's dedup and `pool_id` assignment; the reserves arrive `U112`, so
+    /// no spec check runs ahead of this constructor.
     #[must_use]
     /// `token_decimals` carries the pair's `(token0, token1)` decimal counts
     /// resolved from the token registry by the CALLING registration row (the

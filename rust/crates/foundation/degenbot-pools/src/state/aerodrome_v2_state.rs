@@ -114,8 +114,9 @@ pub struct RegisterAerodromeV2PoolParams {
     pub update_block: u64,
 }
 
-/// Typed rejection from `BotState::register_aerodrome_pool` (the
-/// duplicate-address admission contract — see `spec_bounds`).
+/// Typed rejection from `BotState::register_aerodrome_pool` (duplicate-address
+/// admission plus this family's retained compatibility error category — see
+/// `spec_bounds`).
 ///
 /// Mirrors `RegisterV2PoolError`: `#[derive(Clone, Debug, PartialEq, Eq)]`,
 /// no `Display`/`Error` impl (the `PyO3` mapper pattern-matches the variants
@@ -124,11 +125,12 @@ pub struct RegisterAerodromeV2PoolParams {
 /// Variants:
 /// - `AlreadyRegistered` — replaces the prior `assert!` duplicate-check
 ///   panic (`assert!(!pool_addresses.contains_key(..))`).
-/// - `SpecViolation` — wraps a `spec_bounds::SpecViolation`. Aerodrome
-///   reserves are typed `U112` (the on-chain `uint112` storage width —
-///   Solidly mirrors v2-core's `Sync(uint112,uint112)` shape), so the
-///   validator is belt-and-braces parity with V2 and fires only if the
-///   params are ever re-widened.
+/// - `SpecViolation` — wraps a `spec_bounds::SpecViolation` carrying the
+///   offending field, the value and the bound (the admission category this
+///   family shares with V2/V3/V4). Aerodrome reserves are typed `U112` — the
+///   on-chain `uint112` storage width Solidly mirrors v2-core's
+///   `Sync(uint112,uint112)` shape — so the width is a *type-level* guarantee
+///   and registration runs no reserve check that could violate it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegisterAerodromePoolError {
     /// A pool at this contract address is already registered.
@@ -136,7 +138,9 @@ pub enum RegisterAerodromePoolError {
         /// The refused (duplicate) pool address.
         address: Address,
     },
-    /// An out-of-spec field (e.g. `reserve0 > uint112::MAX`).
+    /// An out-of-spec field. Unreachable for the reserves — those are `U112` —
+    /// so the variant exists to keep this family's admission errors
+    /// interchangeable with V2/V3/V4.
     SpecViolation(crate::state::spec_bounds::SpecViolation),
 }
 

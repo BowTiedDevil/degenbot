@@ -509,10 +509,11 @@ pub fn quote_execution_probe_py<'py>(
 ///
 /// A malformed ASK (an unregistered path, a family with no quote arm, an amount
 /// the protocol cannot carry) is a `ValueError`; a refusal the WORLD produced (a
-/// missing pool, a pool-math refusal, an unreadable reserve-pair anchor or one
-/// wider than the pool's fields, a quoter revert, an unreadable block) is a
-/// `RuntimeError`. The distinction is the caller's: the first is a request the
-/// operator can correct, the second is an answer they cannot.
+/// missing pool, a pool-math refusal, an unreadable reserve-pair anchor — which
+/// includes a pair answering a reserve wider than its own field — a quoter
+/// revert, an unreadable block) is a `RuntimeError`. The distinction is the
+/// caller's: the first is a request the operator can correct, the second is an
+/// answer they cannot.
 fn quote_error_to_py(error: &ExactInputQuoteError) -> PyErr {
     match error {
         ExactInputQuoteError::PathNotRegistered { path_id } => {
@@ -522,7 +523,6 @@ fn quote_error_to_py(error: &ExactInputQuoteError) -> PyErr {
         | ExactInputQuoteError::PoolNotRegistered { .. }
         | ExactInputQuoteError::PoolMath { .. }
         | ExactInputQuoteError::ReservePairAnchor { .. }
-        | ExactInputQuoteError::ReservePairWidth { .. }
         | ExactInputQuoteError::HopQuote { .. }
         | ExactInputQuoteError::BlockContext { .. } => PyRuntimeError::new_err(format!(
             "probe_path: the exact-input quote was refused: {error}"
