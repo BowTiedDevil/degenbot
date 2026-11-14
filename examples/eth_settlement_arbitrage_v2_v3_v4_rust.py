@@ -104,12 +104,22 @@ async def main() -> None:
                         # The session hands back the probe executor's own typed
                         # report (records + encoded planning rows), which the
                         # response projection reads without re-deriving anything.
-                        report = await session.probe_path(
+                        # The probed block is the session's block clock, read
+                        # before dispatch: that is the clock `probe_path` quotes
+                        # its typed request at, and the typed report carries no
+                        # request context of its own.
+                        probe_block = session.session.current_block
+                        return execution_probe_response(
                             payload["path_id"],
-                            optimal_input=int(payload.get("optimal_input", 1_000_000_000_000_000)),
-                            capital=capital_from_wire(payload),
+                            await session.probe_path(
+                                payload["path_id"],
+                                optimal_input=int(
+                                    payload.get("optimal_input", 1_000_000_000_000_000)
+                                ),
+                                capital=capital_from_wire(payload),
+                            ),
+                            current_block=probe_block,
                         )
-                        return execution_probe_response(payload["path_id"], report)
                     if op == "discover":
                         bound = payload.get("bound")
                         n = await session.trigger_discovery(bound=bound)

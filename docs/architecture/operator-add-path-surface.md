@@ -138,7 +138,7 @@ readable by parsing prose. One value now crosses every surface as data:
 | Candidate record (`SimFailure`) | bucket `encode-failed`, no detail | bucket `insolvent-zero-capital` + `zero_capital: Option<ZeroCapitalDeficit>` |
 | PyO3 (`FailureDetail`) | — (nothing to read) | `FailureDetail.zero_capital -> ZeroCapitalDeficit \| None` (`asset` checksummed, `required`, `available`), and the render dict carries the same three fields under `"zero_capital"` |
 | Operator wire (`probe_path` response) | `{"bucket": "encode-failed"}` | `{"bucket": "insolvent-zero-capital", "zero_capital": {"asset": …, "required": …, "available": …}}` |
-| Matrix report (`scripts/executor_three_hop_matrix.py probe`) | counted as `encode_failed` | its own `summary.insolvent_zero_capital` counter, and each row keeps the typed `zero_capital` object |
+| Matrix report (`scripts/executor_three_hop_matrix.py probe`) | counted as `encode_failed` | its own `planning_refused` row category (with `reason: typed-insolvency`), and each row keeps the typed `zero_capital` object |
 
 `EncodeOptions.zero_balance` — the public bool that spelled the stance — is gone.
 The policy is the field `EncodeOptions.initial_capital`
@@ -258,6 +258,56 @@ operator:
 `Session.probe_path` / `BotRunner.probe_path` return the `ProbeReport` (not a
 `BatchOutcomeSet`). The request states what the stages must simulate; the
 VECTORS it carries are quoted by the core (see below), never by the driver.
+
+### Migration: a probe report states evidence, so a revert cannot read as coverage
+
+The `probe_path` response used to collapse both receipt-bearing simulations into
+one `sim_ok` spelling, and `wrap_handler` forwarded only a fixed handful of keys,
+so the probe's `capital`/`zero_capital`/`planning` evidence never reached the
+wire. A consumer could therefore classify a row only by its bucket label: any
+`failed` row whose bucket was neither `encode-failed` nor
+`insolvent-zero-capital` counted as an execution, whatever its revert said.
+
+The response is now a report, and the wire forwards all of it:
+
+| Surface | Retired | Now |
+| --- | --- | --- |
+| `probe_path` response `outcome` | `sim_ok` for both `profitable` and `gas_unprofitable` | the simulate verdict's own label (`profitable`, `gas-unprofitable`, `failed`, `exception`), or the assembly skip label when no simulation ran |
+| `probe_path` response evidence | `path_id`, `permutation`, `capital`, `outcome`, `bucket` — with `capital`/`zero_capital`/`planning` silently dropped by the wrapper | the same fields plus `current_block` (the probed `ExecutionProbeRequest` block), `assembly`, `receipt`, `revert` (the raw failure bytes) and `submission`; `wrap_handler` forwards `PASSTHROUGH_RESPONSE_KEYS` verbatim, and a test pins the projection against that list |
+| Non-submission evidence | a paragraph in the docs | a `submission` object in every response: `{possible: false, observed: false, evidence: "dedicated ProbeExecutor has no submit lane"}` — a property of the executor's construction, never an inference from an absent log line |
+| `scripts/executor_three_hop_matrix.py probe` | counted `failed && bucket != encode-failed` as executed | six row categories — `planning_refused`, `executed_success`, `economic_reject`, `unexpected_revert`, `assembly_missing`, `exception`; only `executed_success`/`economic_reject` are coverage, and both require their own evidence: a complete integer `receipt`, or the terminal `InsufficientProfit` revert as exactly the selector `0x4e88422a` plus its two ABI words in hex |
+| Expected outcome | implicit | a required `--expect executed` / `--expect insolvent` policy; every row records `expected` and `matches_policy`, and any mismatch fails the command |
+| Matrix persistence | one write at the end | the schema-version-2 report exists before the first probe with every expected row `pending`, and is atomically replaced after every response; an interruption leaves a parseable incomplete report and a non-zero exit |
+| Registration set | counted responses | validated first: exactly 27 or 54 directed rows, unique non-negative engine path IDs, unique `(permutation, direction)` identities, every expected identity present, and an explicit `direction` on every row (an absent one is refused, never read as forward) |
+| Response identity | taken from the transport's own correlation | audited per row: the response's `path_id` must be the requested engine path, its `capital` exactly the requested posture, and its `current_block` a non-negative integer, or the row is an `exception` and matches no policy — a profitable verdict for another path is not coverage |
+| Typed deficit `asset` | any string with a `0x` prefix of the right length | exactly 40 hex digits behind `0x` (no underscores, no non-hex), because the field names a 20-byte asset |
+
+`gas_unprofitable` is an `economic_reject`, not a success: it has a receipt and
+is therefore execution coverage, but it is not a profitable arbitrage. An unknown
+bucket or selector, a failed row with empty or missing revert bytes, a padded or
+non-hex terminal payload, and a receipt-bearing label with no complete integer
+receipt behind it are all rejections of the row's evidence — `unexpected_revert`
+for the revert cases, `exception` for the missing receipt.
+`insolvent-zero-capital` is a `planning_refused` only with its complete typed
+deficit, and under `--expect insolvent` that refusal is the expected row rather
+than a process error.
+
+The block a probe ran at is threaded through the Python call site because the
+typed `ProbeReport` carries no request context: `execution_probe_response`
+requires `current_block`, and the operator handler reads the session's block
+clock before dispatch — the clock `Session.probe_path` quotes its typed request
+at. The `submission` evidence is checked field by field: `possible` and `observed`
+must be the boolean `false` and `evidence` must be the executor-shape sentence
+verbatim, so a missing object, a missing key, a truthy claim, a non-boolean, or a
+foreign sentence is an `exception` row that fails the run.
+
+The same audit covers the response's identity. The socket pair correlates a reply
+with its request, but a report that trusted that alone would accept a verdict for
+some other path, a receipt for a posture nobody asked for, or a block the call
+cannot have run at: each row therefore checks the response's `path_id` against the
+engine path it requested, its `capital` against the requested posture, and its
+`current_block` for a non-negative integer. A row that already classified as an
+`exception` keeps its own more specific reason.
 
 ### The exact-input quote lives in the core
 

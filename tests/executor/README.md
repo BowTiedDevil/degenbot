@@ -93,7 +93,7 @@ export DEGENBOT_MIN_PROFIT_MARGIN_BPS=0
 ./run_bot.sh foreground -- --skip-discovery --sparse-registration --operator-socket /tmp/degenbot-27.sock
 ```
 
-From another shell, inject and then render the fail-closed report:
+From another shell, inject and then render the fail-closed probe report:
 
 ```bash
 just py python scripts/executor_three_hop_matrix.py inject \
@@ -102,7 +102,8 @@ just py python scripts/executor_three_hop_matrix.py inject \
 just py python scripts/executor_three_hop_matrix.py probe \
   --socket /tmp/degenbot-27.sock \
   --registrations logs/executor_solver_sim_27_registrations.json \
-  --output logs/executor_solver_sim_27_report.json
+  --output logs/executor_solver_sim_27_report.json \
+  --expect executed
 just py python scripts/executor_three_hop_matrix.py report \
   --log logs/bot_run.log \
   --registrations logs/executor_solver_sim_27_registrations.json \
@@ -112,24 +113,83 @@ just py python scripts/executor_three_hop_matrix.py report \
 Registration is not simulation coverage: live pools may have no profitable
 input. `probe` supplies a small fixed input, quotes through the canonical V3/V4
 quoters, and runs each path through the session's dedicated execution-probe
-executor. `InsufficientProfit` is an executed economic outcome; `encode-failed` is a
-clean encoder refusal and `insolvent-zero-capital` is the capital policy's typed
-answer (the row keeps its `zero_capital` asset/required/available object).
-Assembly misses and exceptions fail the report. Any
-`Submitted path` record fails the report. Never add `--live`: the probe
-executor has no submit lane at all (no signer, nonce lease, relay, or
-broadcast), and executor-code injection is what makes the injected runtime
-simulable. `--sparse-registration` avoids stale tracked tick fixtures; it does
-not relax simulation checks.
+executor. Never add `--live`: the probe executor has no submit lane at all (no
+signer, nonce lease, relay, or broadcast), and executor-code injection is what
+makes the injected runtime simulable. `--sparse-registration` avoids stale
+tracked tick fixtures; it does not relax simulation checks.
 
-The probe answer is the session's typed `ProbeReport`, projected onto the wire
-by `execution_probe_response`: each row carries the `capital` posture the call
-ran under, the typed `zero_capital` deficit when the stream was refused for want
-of entry capital, and a `planning` summary (execution target, native value,
-calldata length) whenever the production encoder composed a row, so the report
-can tell an executed plan from a sim that never got that far. There is no submission
-record to look for — the retired shared-drain probe entry (and its dry-run skip
-record) is gone.
+#### The probe report is fail-closed
+
+`probe` writes schema version 2 of the named output file. Each answer is the
+session's typed `ProbeReport`, projected onto the wire by
+`execution_probe_response`; each completed row keeps that response verbatim in
+`response` beside the normalized fields — the probed `request_block`, the
+`capital` posture, the simulate verdict's own typed label, the raw failure
+`bucket` and `revert` bytes, the typed `zero_capital` deficit
+(`asset`/`required`/`available`), the encoder's `planning` summary (target,
+native value, calldata length) when it composed a row, and the `receipt`
+(gross/net profit, gas used) when a receipt-bearing verdict ran.
+
+Every row is classified into exactly one `category`:
+
+| Category | Meaning |
+| --- | --- |
+| `executed_success` | a committed `profitable` simulation with a complete receipt (gross profit, net profit, gas used) |
+| `economic_reject` | a receipt that lost money: a `gas-unprofitable` simulation with a complete receipt, or the executor's terminal `InsufficientProfit` revert, proven by its raw bytes — the selector `0x4e88422a` plus exactly its two ABI words, in hex |
+| `planning_refused` | no bytecode was ever simulated: the encoder's `encode-failed` grammar gap, or the ledger's typed `insolvent-zero-capital` refusal with a complete deficit |
+| `unexpected_revert` | a failure the report cannot account for: an unknown bucket or selector, an empty or truncated revert, or an insolvency label with no typed deficit |
+| `assembly_missing` | the row never reached the simulation (an assembly skip) |
+| `exception` | a transport failure, a refused operator command, a receipt-bearing label with no integer receipt behind it, any response that does not state the exact structural submission evidence (`possible: false`, `observed: false`, and the executor-shape sentence), or a response that does not name its own request |
+
+Execution coverage is `executed_success` plus `economic_reject` — both have an
+EVM outcome, and a gas-unprofitable receipt is an executed economic reject, not a
+winning arbitrage. Nothing else is coverage, and neither a bucket label nor a
+`profitable` spelling promotes a row on its own: the terminal economic refusal is
+read from the exact revert bytes, and a receipt-bearing outcome needs the
+receipt's own integer numbers behind it.
+
+`--expect` is required and states what the run must prove:
+
+- `--expect executed`: every row must be `executed_success` or `economic_reject`.
+- `--expect insolvent`: every row must be `planning_refused` with raw bucket
+  `insolvent-zero-capital` and a complete typed deficit. Any execution, any
+  other refusal, and any unexplained revert is unexpected.
+
+Each row records `expected` and `matches_policy`; the summary reports `expected`,
+`completed`, `missing`, `matched`, `unexpected`, `complete`, `interrupted`, and a
+count per category. The registration set is validated before the first probe: a
+run covers exactly 27 or exactly 54 directed rows, with unique non-negative engine
+path IDs, unique `(permutation, direction)` identities, an explicit `direction` on
+every row, and exactly the identities the matrix contains. Duplicates, negative
+path IDs, undirected rows, and incomplete sets are refused, and a refused set
+writes no report.
+
+A row also audits the answer's identity instead of trusting the socket to have
+correlated it: the response's `path_id` must be the engine path the probe asked
+for, its `capital` exactly the requested posture, and its `current_block` a
+non-negative integer. A response that fails any of the three is an `exception`
+row — a profitable verdict for somebody else's path is not coverage — and the raw
+response stays in the row beside the verdict.
+
+The report exists before the first probe — every expected row present as
+`pending` — and is replaced atomically (temp file + `replace`) after every
+response, so an interrupted or killed run leaves a parseable incomplete report
+whose remaining rows are still pending, never a green fragment over the rows that
+happened to finish. `KeyboardInterrupt` writes the interrupted report and exits
+non-zero.
+
+Exit codes: `0` — every expected row completed and matched the declared policy;
+`1` — an interrupted or incomplete run, or any unexpected row (a correct
+`--expect executed` or `--expect insolvent` run needs no `|| true`); `2` — the
+registration set was refused before a single probe was issued. The legacy log
+`report` command keeps its own behavior: it fails on missing coverage and on any
+`Submitted path` record.
+
+Non-submission is structural: every probe row and the report itself carry
+`{"possible": false, "observed": false, "evidence": "dedicated ProbeExecutor has
+no submit lane"}`. That is a fact about the executor's construction, not evidence
+read off a log — the log `report` command's `broadcast_observed` scan stays
+separate, and an absent log line proves nothing by itself.
 
 Pass `--capital zero_balance` to `probe` (the flag replaced `--zero-balance`) to
 use ordinary in-path-flash encoding with zero executor native ETH, WETH, USDC,

@@ -234,6 +234,30 @@ def handle_fleet_posture_op(op: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {"error": f"unknown op {op!r}"}
 
 
+#: The response keys :func:`wrap_handler` copies onto the wire verbatim beside
+#: ``detail``: the fleet-posture echo, the add-path identity, and the WHOLE
+#: execution-probe evidence row. A projection that grows a key must add it here,
+#: because the wrapper forwards nothing it does not name — a dropped key is
+#: evidence a client cannot audit (``tests/operator/test_operator_channel.py``
+#: pins the projection against this list).
+PASSTHROUGH_RESPONSE_KEYS = (
+    "effective",
+    "sequence",
+    "path_id",
+    "permutation",
+    "capital",
+    "current_block",
+    "assembly",
+    "outcome",
+    "receipt",
+    "bucket",
+    "revert",
+    "zero_capital",
+    "planning",
+    "submission",
+)
+
+
 def wrap_handler(
     handler: OperatorHandler,
 ) -> OperatorHandler:
@@ -261,10 +285,9 @@ def wrap_handler(
         if resp.get("error"):
             return {"ok": False, "error": resp["error"]}
         ok: dict[str, Any] = {"ok": True, "detail": resp.get("detail", "")}
-        # The fleet-posture ops echo the effective policy: pass the
-        # "effective" key through (handlers that don't return one are
-        # unchanged — the wire gains no empty key).
-        for key in ("effective", "sequence", "path_id", "permutation", "outcome", "bucket"):
+        # The typed projections ride beside `detail` (handlers that return none
+        # of these keys are unchanged — the wire gains no empty key).
+        for key in PASSTHROUGH_RESPONSE_KEYS:
             if key in resp:
                 ok[key] = resp[key]
         return ok
@@ -302,25 +325,61 @@ def _decode_request(line: bytes) -> tuple[str, dict[str, Any]]:
     return op, payload
 
 
-def execution_probe_response(path_id: int, report: ProbeReport) -> dict[str, Any]:
+#: The structural non-submission evidence every execution-probe response carries.
+#:
+#: A probe runs on the core's dedicated ``ProbeExecutor``, whose construction
+#: takes only sim-side handles: no signer, no nonce lane, no relay fan-out, and
+#: no broadcast target. There is no submit stage to reach, so the claim is a fact
+#: about the executor's shape — ``possible: false`` — not an observation that
+#: something was screened. ``observed`` stays ``false`` for the same reason: a
+#: probe cannot produce a submission record, so a report claiming one is a
+#: short-circuited surface and its consumer must fail closed.
+PROBE_SUBMISSION_EVIDENCE: dict[str, Any] = {
+    "possible": False,
+    "observed": False,
+    "evidence": "dedicated ProbeExecutor has no submit lane",
+}
+
+
+def execution_probe_response(
+    path_id: int,
+    report: ProbeReport,
+    *,
+    current_block: int,
+) -> dict[str, Any]:
     """Project one typed probe report into the operator's dry-run probe response.
 
     The report is the probe executor's own: ``records`` carry the assembly and
     simulate verdicts, ``encoded`` carries the production encoder's planning
     rows, and ``capital`` names the funding posture the call ran under. There is
     no submit-record list to screen: a probe has no submit lane, so the
-    non-submission claim is structural (and the ``submit`` slot below must stay
-    empty, which is the one assertion left to make).
+    non-submission claim is structural — the ``submission`` object states it and
+    the ``submit`` slot must stay empty, which is the one assertion left to make.
+
+    The response states evidence rather than summarizing it: it carries the
+    simulate verdict's own label (`profitable` and `gas-unprofitable` are
+    distinguishable, because a receipt below the profit floor is not a successful
+    arbitrage), the raw failure bucket AND the raw revert bytes, so a consumer
+    classifies an outcome from evidence rather than from a normalized label it
+    would have to trust.
 
     Args:
         path_id: The probed path (the wire's own id, echoed back).
         report: The typed `ProbeReport` the probe executor returned.
+        current_block: The block the probed ``ExecutionProbeRequest`` was quoted
+            at. The caller's request owns it — the probe report carries no request
+            context — so it is stated here explicitly rather than guessed from
+            whatever block the session has advanced to.
 
     Returns:
-        The wire response: path id, permutation, capital, outcome, and the
-        failure bucket — plus, for a capital-policy refusal, the deficit's typed
-        ``zero_capital`` object (``asset`` / ``required`` / ``available``) and,
-        when the production encoder composed a row, the encoded planning summary.
+        The wire response: path id, permutation, capital, the probed block, the
+        assembly verdict, the structural ``submission`` evidence, the simulate
+        verdict's typed label (or the assembly skip label when no simulation
+        ran), the receipt for a receipt-bearing verdict, and — for a failure —
+        the raw ``bucket``, the raw ``revert`` hex, the deficit's typed
+        ``zero_capital`` object (``asset`` / ``required`` / ``available``) when
+        the failure is a capital-policy refusal, and, when the production encoder
+        composed a row, the encoded planning summary.
 
     Raises:
         RuntimeError: If the report does not carry exactly one outcome, or if a
@@ -338,15 +397,25 @@ def execution_probe_response(path_id: int, report: ProbeReport) -> dict[str, Any
         "path_id": path_id,
         "permutation": record.path_type,
         "capital": report.capital,
+        "current_block": int(current_block),
+        "assembly": record.assembly_label,
+        "submission": dict(PROBE_SUBMISSION_EVIDENCE),
     }
     verdict = record.simulate
     if verdict is None:
         response["outcome"] = record.assembly_label
         return response
+    # The typed verdict label itself: a consumer must be able to tell a
+    # profitable simulation from a receipt that only cleared its gas floor, and
+    # neither may be inferred from an "ok" spelling.
     kind = verdict.kind()
-    response["outcome"] = "sim_ok" if kind in {"profitable", "gas_unprofitable"} else kind
+    response["outcome"] = kind
+    receipt = _receipt_field(getattr(verdict, "receipt", None))
+    if receipt is not None:
+        response["receipt"] = receipt
     if kind == "failed":
         response["bucket"] = verdict.detail.bucket
+        response["revert"] = _revert_hex(verdict.detail)
         # A refusal's DATA half: the typed deficit a capital-policy refusal
         # carries. `bucket == "insolvent-zero-capital"` says which answer this
         # is; these three fields say what the stream could not fund, so no client
@@ -360,6 +429,51 @@ def execution_probe_response(path_id: int, report: ProbeReport) -> dict[str, Any
     if planning is not None:
         response["planning"] = planning
     return response
+
+
+def _receipt_field(receipt: object) -> dict[str, int] | None:
+    """Project one receipt-bearing verdict's own receipt onto the wire.
+
+    Args:
+        receipt: The verdict's ``SimReceipt`` (a profitable or gas-unprofitable
+            simulation), or ``None`` for any other verdict.
+
+    Returns:
+        ``{"gross_profit", "net_profit", "gas_used"}`` — the numbers the
+        simulation itself reported, so an executed row states what it earned
+        instead of an adjective — or ``None``.
+
+    """
+    if receipt is None:
+        return None
+    return {
+        "gross_profit": int(receipt.gross_profit),
+        "net_profit": int(receipt.net_profit),
+        "gas_used": int(receipt.gas_used),
+    }
+
+
+def _revert_hex(detail: object) -> str:
+    """Read one failure record's raw revert bytes as a ``0x`` hex string.
+
+    The bytes come from the record's ONE serializer shape (``record()``), so the
+    wire carries the same bytes the ``[sim-fail]`` renderer prints — a consumer
+    can check the selector itself instead of believing the bucket label.
+
+    Args:
+        detail: The verdict's ``FailureDetail``.
+
+    Returns:
+        The raw revert data as ``0x``-prefixed hex (``"0x"`` when the failure
+        carried no return data at all, e.g. an orchestration-only bucket).
+
+    """
+    record = getattr(detail, "record", None)
+    if not callable(record):
+        return "0x"
+    rendered = record()
+    revert = rendered.get("revert_data") if hasattr(rendered, "get") else None
+    return revert if isinstance(revert, str) else "0x"
 
 
 def _zero_capital_field(deficit: object) -> dict[str, int | str] | None:

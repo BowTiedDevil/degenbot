@@ -10,16 +10,19 @@ example/session layer in `tests/arbitrage/test_arbitrage_session.py`.
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
-from degenbot.pathfinding import PoolKind
 from degenbot.operator.operator_channel import (
+    PROBE_SUBMISSION_EVIDENCE,
     OperatorServer,
+    execution_probe_response,
     send_command,
     step_from_wire,
     wrap_handler,
 )
+from degenbot.pathfinding import PoolKind
 from tests.deadlock_guard import DEADLOCK_GUARD_S
 
 
@@ -241,32 +244,48 @@ def test_wrap_handler_normalizes_detail_and_error() -> None:
     }
 
 
+#: The executor's own ``InsufficientProfit(uint256,uint256)`` revert: its selector
+#: plus the two ABI words the release declares.
+INSUFFICIENT_PROFIT_SELECTOR = "0x4e88422a"
+TERMINAL_REVERT = INSUFFICIENT_PROFIT_SELECTOR + "00" * 64
+
+
+def _probe_record(**overrides: object) -> object:
+    """One probe record as the typed report exposes it."""
+    fields: dict[str, object] = {
+        "candidate_id": SimpleNamespace(path_id=7, deployment_id=1),
+        "path_type": "V2-V3-V4",
+        "assembly_label": "assembled",
+        "submit": None,
+        "simulate": None,
+    }
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
 def test_execution_probe_response_preserves_economic_failure_without_broadcast() -> None:
-    """A typed report projects to the wire's failure shape, with its posture."""
-    from types import SimpleNamespace
-
-    from degenbot.operator.operator_channel import execution_probe_response
-
-    detail = SimpleNamespace(bucket="InsufficientProfit")
-    verdict = SimpleNamespace(kind=lambda: "failed", detail=detail)
-    record = SimpleNamespace(
-        candidate_id=SimpleNamespace(path_id=7, deployment_id=1),
-        path_type="V2-V3-V4",
-        assembly_label="assembled",
-        submit=None,
-        simulate=verdict,
+    """A typed report projects to the wire's failure shape, with its posture + bytes."""
+    detail = SimpleNamespace(
+        bucket="InsufficientProfit",
+        record=lambda: {"bucket": "InsufficientProfit", "revert_data": TERMINAL_REVERT},
     )
+    record = _probe_record(simulate=SimpleNamespace(kind=lambda: "failed", detail=detail))
     report = SimpleNamespace(capital="self_fund", records=[record], encoded=[])
 
-    response = execution_probe_response(7, report)
+    response = execution_probe_response(7, report, current_block=21_000_000)
 
     assert response == {
         "path_id": 7,
         "permutation": "V2-V3-V4",
         "capital": "self_fund",
+        "current_block": 21_000_000,
+        "assembly": "assembled",
+        "submission": PROBE_SUBMISSION_EVIDENCE,
         "outcome": "failed",
         "bucket": "InsufficientProfit",
-    }
+        "revert": TERMINAL_REVERT,
+    }, "the raw revert rides the wire so a client checks the selector itself"
+    assert response["revert"][:10] == INSUFFICIENT_PROFIT_SELECTOR
 
 
 def test_execution_probe_response_carries_a_typed_zero_capital_refusal() -> None:
@@ -276,36 +295,34 @@ def test_execution_probe_response_carries_a_typed_zero_capital_refusal() -> None
     `zero_capital` object says what the stream could not fund. An ordinary
     `encode-failed` refusal carries no such object, so the two stay distinct.
     """
-    from types import SimpleNamespace
-
-    from degenbot.operator.operator_channel import execution_probe_response
-
     detail = SimpleNamespace(
         bucket="insolvent-zero-capital",
+        record=lambda: {"bucket": "insolvent-zero-capital", "revert_data": "0x"},
         zero_capital=SimpleNamespace(
             asset="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             required=1_000_000,
             available=250_000,
         ),
     )
-    verdict = SimpleNamespace(kind=lambda: "failed", detail=detail)
-    record = SimpleNamespace(
+    record = _probe_record(
         candidate_id=SimpleNamespace(path_id=11, deployment_id=1),
         path_type="V4-V4-V4",
-        assembly_label="assembled",
-        submit=None,
-        simulate=verdict,
+        simulate=SimpleNamespace(kind=lambda: "failed", detail=detail),
     )
     report = SimpleNamespace(capital="zero_balance", records=[record], encoded=[])
 
-    response = execution_probe_response(11, report)
+    response = execution_probe_response(11, report, current_block=21_000_005)
 
     assert response == {
         "path_id": 11,
         "permutation": "V4-V4-V4",
         "capital": "zero_balance",
+        "current_block": 21_000_005,
+        "assembly": "assembled",
+        "submission": PROBE_SUBMISSION_EVIDENCE,
         "outcome": "failed",
         "bucket": "insolvent-zero-capital",
+        "revert": "0x",
         "zero_capital": {
             "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             "required": 1_000_000,
@@ -315,19 +332,38 @@ def test_execution_probe_response_carries_a_typed_zero_capital_refusal() -> None
     assert response["zero_capital"]["required"] > response["zero_capital"]["available"]
 
 
-def test_execution_probe_response_accepts_valid_below_threshold_receipt() -> None:
-    """A gas-unprofitable receipt is `sim_ok` — and it carries its planning row."""
-    from types import SimpleNamespace
+def test_a_gas_unprofitable_receipt_is_its_own_typed_outcome() -> None:
+    """A below-floor receipt executed — the wire must not call it `sim_ok`.
 
-    from degenbot.operator.operator_channel import execution_probe_response
-
-    verdict = SimpleNamespace(kind=lambda: "gas_unprofitable")
-    record = SimpleNamespace(
+    `profitable` and `gas-unprofitable` both carry a receipt, and a report that
+    collapsed them would let a losing receipt read as a successful arbitrage.
+    """
+    receipt = SimpleNamespace(gross_profit=10**15, net_profit=10**13, gas_used=120_000)
+    record = _probe_record(
         candidate_id=SimpleNamespace(path_id=9, deployment_id=1),
         path_type="V4-V4-V4",
-        assembly_label="assembled",
-        submit=None,
-        simulate=verdict,
+        simulate=SimpleNamespace(kind=lambda: "gas-unprofitable", receipt=receipt),
+    )
+    report = SimpleNamespace(capital="production", records=[record], encoded=[])
+
+    assert execution_probe_response(9, report, current_block=7) == {
+        "path_id": 9,
+        "permutation": "V4-V4-V4",
+        "capital": "production",
+        "current_block": 7,
+        "assembly": "assembled",
+        "submission": PROBE_SUBMISSION_EVIDENCE,
+        "outcome": "gas-unprofitable",
+        "receipt": {"gross_profit": 10**15, "net_profit": 10**13, "gas_used": 120_000},
+    }
+
+
+def test_a_profitable_probe_projects_its_receipt_and_plan() -> None:
+    """A winning probe states what it earned and what it would have sent."""
+    receipt = SimpleNamespace(gross_profit=10**15, net_profit=10**13, gas_used=120_000)
+    record = _probe_record(
+        candidate_id=SimpleNamespace(path_id=9, deployment_id=1),
+        simulate=SimpleNamespace(kind=lambda: "profitable", receipt=receipt),
     )
     encoded = SimpleNamespace(
         candidate_id=SimpleNamespace(path_id=9, deployment_id=1),
@@ -337,11 +373,17 @@ def test_execution_probe_response_accepts_valid_below_threshold_receipt() -> Non
     )
     report = SimpleNamespace(capital="production", records=[record], encoded=[encoded])
 
-    assert execution_probe_response(9, report) == {
+    response = execution_probe_response(9, report, current_block=21_000_000)
+
+    assert response == {
         "path_id": 9,
-        "permutation": "V4-V4-V4",
+        "permutation": "V2-V3-V4",
         "capital": "production",
-        "outcome": "sim_ok",
+        "current_block": 21_000_000,
+        "assembly": "assembled",
+        "submission": PROBE_SUBMISSION_EVIDENCE,
+        "outcome": "profitable",
+        "receipt": {"gross_profit": 10**15, "net_profit": 10**13, "gas_used": 120_000},
         "planning": {
             "execution_target": "0x00000000000000000000000000000000000000C0",
             "value": 0,
@@ -352,23 +394,20 @@ def test_execution_probe_response_accepts_valid_below_threshold_receipt() -> Non
 
 def test_an_assembly_skip_projects_its_skip_label() -> None:
     """A row that never reached the sim reports its stage-1 label and no plan."""
-    from types import SimpleNamespace
-
-    from degenbot.operator.operator_channel import execution_probe_response
-
-    record = SimpleNamespace(
+    record = _probe_record(
         candidate_id=SimpleNamespace(path_id=4, deployment_id=1),
         path_type="V2",
         assembly_label="skip-thin-margin",
-        submit=None,
-        simulate=None,
     )
     report = SimpleNamespace(capital="zero_balance", records=[record], encoded=[])
 
-    assert execution_probe_response(4, report) == {
+    assert execution_probe_response(4, report, current_block=99) == {
         "path_id": 4,
         "permutation": "V2",
         "capital": "zero_balance",
+        "current_block": 99,
+        "assembly": "skip-thin-margin",
+        "submission": PROBE_SUBMISSION_EVIDENCE,
         "outcome": "skip-thin-margin",
     }
 
@@ -380,33 +419,88 @@ def test_a_report_carrying_a_submit_verdict_is_refused() -> None:
     means the surface was short-circuited — refused loudly rather than rendered
     as a dry-run success.
     """
-    from types import SimpleNamespace
-
-    from degenbot.operator.operator_channel import execution_probe_response
-
-    record = SimpleNamespace(
-        candidate_id=SimpleNamespace(path_id=7, deployment_id=1),
-        path_type="V2-V3-V4",
-        assembly_label="assembled",
+    record = _probe_record(
         submit=SimpleNamespace(kind=lambda: "submitted"),
         simulate=SimpleNamespace(kind=lambda: "profitable"),
     )
     report = SimpleNamespace(capital="self_fund", records=[record], encoded=[])
 
     with pytest.raises(RuntimeError, match="submit verdict"):
-        execution_probe_response(7, report)
+        execution_probe_response(7, report, current_block=1)
 
 
 def test_a_report_with_no_outcome_is_refused() -> None:
     """An empty report is a bug, not an "unknown" probe."""
-    from types import SimpleNamespace
-
-    from degenbot.operator.operator_channel import execution_probe_response
-
     report = SimpleNamespace(capital="self_fund", records=[], encoded=[])
 
     with pytest.raises(RuntimeError, match="expected one outcome, got 0"):
-        execution_probe_response(7, report)
+        execution_probe_response(7, report, current_block=1)
+
+
+def test_the_wire_carries_every_key_the_projection_states() -> None:
+    """The wrapper forwards only the keys it names, so the projection is pinned.
+
+    A key the projection states but the wrapper drops is evidence a client cannot
+    audit, which is why the two are checked against each other rather than trusted.
+    """
+    deficit_detail = SimpleNamespace(
+        bucket="insolvent-zero-capital",
+        record=lambda: {"bucket": "insolvent-zero-capital", "revert_data": "0x"},
+        zero_capital=SimpleNamespace(
+            asset="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", required=9, available=1
+        ),
+    )
+    encoded = SimpleNamespace(
+        candidate_id=SimpleNamespace(path_id=7, deployment_id=1),
+        execution_target="0x00000000000000000000000000000000000000C0",
+        value=0,
+        execute_calldata=b"\xde\xad",
+    )
+    receipt = SimpleNamespace(gross_profit=10**15, net_profit=10**13, gas_used=120_000)
+    projections = [
+        execution_probe_response(
+            7,
+            SimpleNamespace(
+                capital="production",
+                records=[
+                    _probe_record(
+                        simulate=SimpleNamespace(kind=lambda: "profitable", receipt=receipt)
+                    )
+                ],
+                encoded=[encoded],
+            ),
+            current_block=21_000_000,
+        ),
+        execution_probe_response(
+            7,
+            SimpleNamespace(
+                capital="zero_balance",
+                records=[
+                    _probe_record(
+                        simulate=SimpleNamespace(
+                            kind=lambda: "failed",
+                            detail=deficit_detail,
+                        )
+                    )
+                ],
+                encoded=[encoded],
+            ),
+            current_block=21_000_000,
+        ),
+    ]
+
+    stated = [set(projection) for projection in projections]
+
+    async def handler(_op: str, _payload: dict[str, object]) -> dict[str, object]:
+        await asyncio.sleep(0)
+        return projections.pop(0)
+
+    for keys in stated:
+        wrapped = asyncio.run(wrap_handler(handler)("probe_path", {}))
+
+        assert wrapped["ok"] is True
+        assert not wrapped["detail"]
+        assert set(wrapped) == {"ok", "detail"} | keys
 
 
 def test_the_probe_payload_names_one_capital_mode() -> None:
