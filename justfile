@@ -1046,6 +1046,120 @@ check-rust-extension-release:
 check-rust-all-features:
     RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$(scripts/build_extension.sh rustflags)" cargo check --locked --workspace --all-targets --all-features $(scripts/vendor_members.sh) --manifest-path rust/Cargo.toml
 
+# The development-tool lanes (`rust/tools/`): one named check per tool package
+# feature family, each its own cargo invocation. This is a grouping of separate
+# checks, never one combined feature set and never `--all-features`:
+#
+#   * each lane enables its own family and no *other tool package's* family --
+#     the JIT lane never turns on the bot exporter, a capture lane never enables
+#     the solver profiler, and the SQL ledger belongs to the fixture tools alone;
+#   * that is a claim about the forwards these packages declare, NOT about
+#     resolved-package absence. A lane's tree still carries whatever the product
+#     crates it reaches already pull in: the fixture SQL-ledger lane reaches the
+#     `degenbot` facade and therefore inherits its Linux target-scoped
+#     `degenbot-simulation/evm2-jit` dependency (20 `evm2-jit` lines in the
+#     resolved tree, with no fixture-tools feature in the chain), `rusqlite` is a
+#     non-optional `degenbot-db` dependency wherever that crate is reached, and
+#     the `hotpath` crate is present in the solver capture lanes as
+#     `degenbot-pools`'s non-optional no-op stub.
+#
+# Evidence (rust/tools/README.md sections 6.1 and 6.2):
+#   `cargo tree -p <tool> -e normal`            -> the default tree is the
+#                                                  package alone (no optional
+#                                                  product edge active);
+#   `cargo tree -p <tool> --features <lane>
+#     -e features -i <owning crate>`            -> names the tool forward that
+#                                                  turned one family on.
+# Neither form proves transitive absence; do not cite it as if it did.
+#
+# Lanes, each run as `just check-dev-tools <lane>`; a leading `--` is ignored,
+# so `just check-dev-tools --engine-jit` is the same lane:
+#   default                  all three packages at their support-library defaults
+#   fixture-sql-ledger       degenbot-fixture-tools + sql-ledger
+#   solver-capture-fixtures  degenbot-solver-lab + capture-fixtures
+#   solver-cache-lab         degenbot-solver-lab + capture-fixtures,cache-lab
+#   solver-hotpath           degenbot-solver-lab + hotpath (solver-phase timing)
+#   solver-envelope          degenbot-solver-lab + envelope
+#   engine-jit               degenbot-engine-lab + evm2-jit
+#   engine-prometheus        degenbot-engine-lab + prometheus (bot exporter)
+#
+# Every later tool binary joins the lane that owns its features through its own
+# `required-features`, so that lane builds it on purpose and every other lane
+# skips it on purpose. With no argument the recipe runs `default` and prints the
+# menu: an unqualified invocation is the feature-free support-library check, and
+# never silently a union of every lane.
+# Check one development-tool lane at a time (lanes listed above; no --all-features).
+check-dev-tools *lanes:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    manifest="rust/Cargo.toml"
+
+    usage() {
+        cat >&2 <<'LANES'
+    lanes (one cargo invocation each; no union, never --all-features):
+      default                  degenbot-fixture-tools, degenbot-solver-lab, and
+                               degenbot-engine-lab at support-library defaults
+      fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
+      solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
+      solver-cache-lab         degenbot-solver-lab --features capture-fixtures,cache-lab
+      solver-hotpath           degenbot-solver-lab --features hotpath
+      solver-envelope          degenbot-solver-lab --features envelope
+      engine-jit               degenbot-engine-lab --features evm2-jit
+      engine-prometheus        degenbot-engine-lab --features prometheus
+    LANES
+    }
+
+    check_lane() {
+        local package="$1"
+        local features="$2"
+        if [ -z "$features" ]; then
+            echo "check-dev-tools: ${package} (default features)"
+            cargo check --locked --manifest-path "$manifest" -p "$package" --all-targets
+        else
+            echo "check-dev-tools: ${package} --features ${features}"
+            cargo check --locked --manifest-path "$manifest" -p "$package" --all-targets --features "$features"
+        fi
+    }
+
+    check_default() {
+        echo "check-dev-tools: default (three support libraries, no feature lane)"
+        cargo check --locked --manifest-path "$manifest" \
+            -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
+            --all-targets
+    }
+
+    run_lane() {
+        case "$1" in
+            default) check_default ;;
+            fixture-sql-ledger) check_lane degenbot-fixture-tools sql-ledger ;;
+            solver-capture-fixtures) check_lane degenbot-solver-lab capture-fixtures ;;
+            solver-cache-lab) check_lane degenbot-solver-lab capture-fixtures,cache-lab ;;
+            solver-hotpath) check_lane degenbot-solver-lab hotpath ;;
+            solver-envelope) check_lane degenbot-solver-lab envelope ;;
+            engine-jit) check_lane degenbot-engine-lab evm2-jit ;;
+            engine-prometheus) check_lane degenbot-engine-lab prometheus ;;
+            help|list) usage ;;
+            *)
+                echo "check-dev-tools: unknown lane '$1'" >&2
+                usage
+                return 2
+                ;;
+        esac
+    }
+
+    if [ "$#" -eq 0 ]; then
+        check_default
+        echo
+        echo "check-dev-tools: no lane named; ran the 'default' lane only."
+        usage
+        exit 0
+    fi
+
+    for lane in "$@"; do
+        run_lane "${lane#--}"
+    done
+
 # Hotpath test lane. Tokio's full RuntimeMetrics getters sit behind the
 # unstable API and there is no global rustflag, so any direct hotpath
 # Cargo/maturin invocation must set the cfg explicitly. Extra args forward to

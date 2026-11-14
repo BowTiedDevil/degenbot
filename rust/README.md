@@ -4,7 +4,9 @@ This map is the contributor's short guide to the Rust workspace. The
 [workspace manifest](Cargo.toml), crate manifests, and
 [architecture-gate tests](crates/facade/degenbot/tests/architecture_gates.rs) are
 authoritative when this document and the code disagree. The workspace currently
-contains **31 crates under the five role directories plus two non-publishable examples**.
+contains **33 crates under the five role directories, four non-publishable
+development tool packages, and two non-publishable examples** — 49 members in
+all once the ten vendored `evm2` crates (`rust/vendor/`, ADR-096) are counted.
 
 For the product-level rule, read [AGENTS.md](../AGENTS.md): **Rust is the engine;
 Python is a driver shell, not a co-implementation.** The original split is
@@ -124,6 +126,33 @@ meaningful without a complete bot runtime.
 | --- | --- |
 | `degenbot-execution-sample` — `examples/degenbot-execution-sample/` | A standalone user-defined `ExecutionAdapter` for a foreign executor contract. It demonstrates the execution seam and is not a product dependency. |
 | `degenbot-settlement-bot-example` — `examples/settlement_bot/` | The complete external-consumer bot described above. |
+
+### Non-publishable development tools
+
+`tools/` holds the development instruments. A tool package is a workspace
+member (its manifest resolves and its dependencies lock with everything else)
+but is deliberately **not** a `default-member`, and no product crate may depend
+on one: every dependency edge points from a tool to a product crate. Its
+bounded feature lanes keep an instrument from *enabling* a capability family it
+does not measure — a lane is a **tool-owned forward**, not a promise that the
+resolved tree shrinks: the product crates a lane reaches still carry their own
+dependencies, so the fixture SQL-ledger lane inherits the facade's Linux
+target-scoped `degenbot-simulation/evm2-jit` dependency and the vendored JIT
+family with it. See [tools/README.md](tools/README.md) for the catalog of every
+instrument, its destination, and the exact evidence form (§6.1 consequence 4).
+
+| Package and path | Purpose |
+| --- | --- |
+| `degenbot-stubgen` — `tools/stubgen/` | The ADR-066 stub generator behind `just gen-stubs`. A generator, not a laboratory. |
+| `degenbot-fixture-tools` — `tools/fixture-tools/` | Record / check / regenerate workflows for the committed fixtures, plus the test-input generators. Lane: `sql-ledger`. |
+| `degenbot-solver-lab` — `tools/solver-lab/` | Solver and order-index replay, measurement, and stress instruments. Lanes: `capture-fixtures`, `cache-lab`, `hotpath`, `envelope`. |
+| `degenbot-engine-lab` — `tools/engine-lab/` | Bot, simulation, arbitrage, JIT, fan-out, and BAL instruments. Lanes: `evm2-jit`, `prometheus`. |
+
+A tool program declares the features it needs on its own `[[bin]]`
+`required-features`, so a default `cargo check` of the package skips a heavy
+instrument visibly in the manifest instead of failing on a `cfg`'d-out module.
+`just check-dev-tools <lane>` checks one lane per invocation; it is a grouping
+of separately named checks, never `--all-features`.
 
 All other current workspace members are publishable. Internal path
 dependencies carry a version requirement in `[workspace.dependencies]`, in
@@ -276,6 +305,15 @@ select or forward it, but must not duplicate its gate list.
 - `degenbot_rs` owns Python domain selection, `extension-module`, PyO3
   auto-initialization, and the opt-in mimalloc passthrough. Its
   `extension-module` feature forwards to `pyo3/extension-module`.
+- Development-tool lanes are per-package forwards, never one combined feature
+  set: `degenbot-fixture-tools` owns `sql-ledger`;
+  `degenbot-solver-lab` owns `capture-fixtures`, `cache-lab`, `hotpath`
+  (solver-phase function profiling), and `envelope`; `degenbot-engine-lab` owns
+  `evm2-jit` and `prometheus` (the bot's `/metrics` exporter — the exporter lane
+  is not the pool profiling lane). A lane enables only its own package's
+  forward; it does not remove the product graph that forward's crates already
+  reach, so no lane's `cargo tree` is evidence of transitive absence
+  (`tools/README.md` §6.1 consequence 4).
 - Feature-matrix validation is lane-based. Never use `--all-features` as the
   default or release gate: it enables test-only and mutually exclusive variants.
 
@@ -340,6 +378,7 @@ samples, and `--workspace` when a command must cover every member.
 | Check pure-Rust consumer defaults | `just check-rust-consumer` |
 | Check binding defaults without extension link mode | `just check-rust-binding-default` |
 | Check the exact development-wheel features | `just check-rust-dev-features` |
+| Check one development-tool lane (`default`, `fixture-sql-ledger`, `solver-capture-fixtures`, `solver-cache-lab`, `solver-hotpath`, `solver-envelope`, `engine-jit`, `engine-prometheus`) | `just check-dev-tools <lane>` |
 | Check the release-equivalent extension set | `just check-rust-extension-release` |
 | Exhaustive diagnostic only | `just check-rust-all-features` |
 | Build the extension with release-equivalent features | `just build-rust-extension` |

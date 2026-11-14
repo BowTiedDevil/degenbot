@@ -1,0 +1,50 @@
+[package]
+name = "degenbot-solver-lab"
+description = "Solver and order-index replay, measurement, and stress instruments. Non-publishable development tooling: no product build links it and no merge gate blocks on it."
+
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+# Optional, one lane each: the default check of this package links no product
+# crate, and every edge points from this tool to a product crate, never back.
+[dependencies]
+degenbot-pools = { workspace = true, optional = true }
+# The net-profit order index the strategy microbench measures. Its default
+# feature set already carries the hull index, and the `envelope` forward below
+# names the lane explicitly so the dependency edge and the lane stay one
+# decision rather than a silently inherited default.
+degenbot-order-index = { workspace = true, optional = true }
+# Solver-phase function profiling. `degenbot-pools` carries this dependency
+# non-optionally (no-op stubs by default) and matches the version, so the crate
+# itself is in every tree that reaches `degenbot-pools`; it is optional here so
+# only the `hotpath` lane *enables* real measurement. It is the pool profiling
+# crate, NOT the bot's Prometheus exporter.
+hotpath = { version = "^0.31.2", default-features = false, optional = true }
+
+[features]
+default = []
+
+# Capture-fixture I/O: the committed `.jsonl[.zst]` corpora the replays read.
+capture-fixtures = ["degenbot-pools/capture-fixtures"]
+
+# The instrumented cache strategies the cache-lab replay compares against the
+# full-rebuild reference. The cache-lab binaries also read a capture, so the
+# dedicated lane enables `capture-fixtures` beside this one.
+cache-lab = ["degenbot-pools/cache-lab"]
+
+# Solver-phase function profiling: the per-invocation opt-in for the
+# functions-timing run. Never the bot exporter lane — this forward never enables
+# `hotpath/hotpath-prometheus`, never starts a `/metrics` listener, and never
+# reaches `degenbot-bot`.
+hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]
+
+# The convex-hull net-profit order index the strategy microbench measures.
+envelope = ["degenbot-order-index/envelope"]

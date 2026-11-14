@@ -2,12 +2,15 @@
 #
 # The workspace root holds ONLY the `[workspace]` declaration + the `[profile.*]`
 # blocks (Cargo only honors `[profile]` at the workspace root — keep them here).
-# The workspace contains 31 crates, a non-publishable stub generator
-# (rust/tools/stubgen), and two non-publishable examples. Crates are
-# explicitly grouped by architectural role under
+# The workspace contains 33 crates, the non-publishable development tool
+# packages under `rust/tools/` (the stub generator plus the fixture, solver, and
+# engine labs), and two non-publishable examples. Crates are explicitly grouped
+# by architectural role under
 # `crates/{foundation,engine,integrations,shells,facade}/`; examples live under
-# `examples/`. The Python binding is a shell beside the Rust-facing core rather
-# than an implementation peer.
+# `examples/`. A tool package is never a product entry point: nothing shipped
+# depends on one, and each tool's feature lanes stay opt-in per package rather
+# than collapsing into one combined feature set. The Python binding is a shell
+# beside the Rust-facing core rather than an implementation peer.
 #
 # Engine and foundation crates are pyo3-free under their default features;
 # `degenbot_rs` enables selected crates' `pyo3` features so the
@@ -208,6 +211,15 @@ members = [
     "examples/settlement_bot",
     "tools/stubgen",
 
+    # Development instruments: workspace members so their manifests resolve,
+    # their dependencies lock with everything else, and one `cargo metadata`
+    # reports them, and deliberately absent from `default-members` so an
+    # unqualified build never selects one. Each carries its own optional feature
+    # forwards; there is no catch-all tool package and no combined tool feature.
+    "tools/fixture-tools",
+    "tools/solver-lab",
+    "tools/engine-lab",
+
     # The vendored evm2 family (rust/vendor/ — see its README): upstream
     # code at a pinned rev, published under names we own. Temporary: these
     # paths go away the day upstream publishes (ADR-096).
@@ -223,8 +235,9 @@ members = [
     "vendor/crates/jit/runtime",
 ]
 # Keep unqualified Cargo commands focused on the two first-class pure-Rust
-# entry points. The PyO3 binding and non-publishable samples remain workspace
-# members, but dedicated recipes must select them explicitly.
+# entry points. The PyO3 binding, the non-publishable samples, and the
+# non-publishable development tools remain workspace members, but dedicated
+# recipes must select them explicitly.
 default-members = [
     "crates/facade/degenbot",
     "crates/shells/degenbot-cli",

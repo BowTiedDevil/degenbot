@@ -2525,6 +2525,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-engine-lab"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "degenbot-bot",
+ "degenbot-simulation",
+]
+
+[[package]]
 name = "degenbot-eventhub"
 version = "0.6.0-alpha.19"
 dependencies = [
@@ -2728,6 +2736,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-fixture-tools"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "degenbot",
+]
+
+[[package]]
 name = "degenbot-fork"
 version = "0.6.0-alpha.19"
 dependencies = [
@@ -2926,6 +2941,15 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+]
+
+[[package]]
+name = "degenbot-solver-lab"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "degenbot-order-index",
+ "degenbot-pools",
+ "hotpath",
 ]
 
 [[package]]

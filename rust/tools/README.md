@@ -1,7 +1,11 @@
 # Rust development tools — catalog and migration ledger
 
-**Status: task 01 of epic `BY3RRJ` ("Separate Rust consumer examples from development
-labs"), ergo `2VLTDD`. This file is the plan; no source moved with it.**
+**Status: epic `BY3RRJ` ("Separate Rust consumer examples from development labs").**
+The catalog landed as task `01` (ergo `2VLTDD`); the package scaffold landed as
+task `02` (ergo `CUP3KB`) — three non-publishable tool packages, their workspace
+membership, their support libraries, and the `just check-dev-tools` lanes, all
+described in §6.2. **This file is the plan and the ledger; no example source has
+moved with it, and none has moved since.**
 
 The workspace accumulated 44 Cargo example targets whose purposes are three different
 things: a *supported consumer starting point*, a *durable assertion someone must gate*, and
@@ -451,6 +455,11 @@ generator, not a lab, and it keeps its own membership and recipes.
 | JIT | `degenbot-simulation/evm2-jit` (the `evm2-jit`, `-build`, `-runtime` deps) | `degenbot-engine-lab`'s `evm2-jit` forward | `degenbot-fixture-tools`, `degenbot-solver-lab` |
 | Bot Prometheus exporter (`hotpath-prometheus`) | `degenbot-bot/hotpath-prometheus` = `["hotpath", "hotpath/hotpath-prometheus"]` (the profiler's `/metrics` listener) | `degenbot-engine-lab`'s `prometheus` forward | `degenbot-fixture-tools`, `degenbot-solver-lab`, and every lane that is not the bot exporter |
 
+Read the `Must NOT appear in` column as a statement about **forwards**: no other tool
+package declares a feature that turns that family on. It is **not** a statement about a
+resolved tree's package list — see consequence 4 for the entries that appear in a lane's
+tree without any tool forwarding them.
+
 **Pool `hotpath` profiling is not the bot exporter lane.** `degenbot-solver-lab` deliberately
 carries `hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]` for
 solver-phase function profiling (`entry_ab_readout`'s functions-timing run is the consumer
@@ -466,8 +475,9 @@ Consequences the later tasks must honor:
 
 1. **No catch-all package and no catch-all feature.** There is no `dev-tools` crate and no
    `full`/`all-tools` feature. A `just check-dev-tools` entry point is a *grouping of
-   separately named checks* (`--default`, `--fixture-sql-ledger`, `--solver-capture-fixtures`,
-   `--solver-cache-lab`, `--engine-jit`, `--engine-prometheus`), never `--all-features`:
+   separately named checks* (`default`, `fixture-sql-ledger`, `solver-capture-fixtures`,
+   `solver-cache-lab`, `solver-hotpath`, `solver-envelope`, `engine-jit`,
+   `engine-prometheus` — the `justfile` is the authority, §6.2), never `--all-features`:
    `--all-features` on the union graph is exactly the monolith this epic exists to avoid, and
    it makes a small solver replay link LLVM, SQL, RPC, and fixture machinery.
 2. **`required-features` per binary, not per package.** A heavy binary
@@ -480,10 +490,106 @@ Consequences the later tasks must honor:
    product crates. The one reverse edge that exists today is test-only and path-based:
    14 test files in `degenbot-simulation/tests/` `#[path]`-include `examples/shared/*.rs`
    (see §10.2) — task 05 must resolve it without adding a normal dependency.
-4. **Isolation is a checkable claim**: `cargo tree -p <tool> -e normal` per lane must not
-   show another family's feature-selected deps. Record those `cargo tree` commands in the
-   `just check-dev-tools` recipe comments as the evidence form, mirroring the
-   `docs/architecture/capability-restructure-plan.md` W3 acceptance shape.
+4. **Isolation is a checkable claim — about forwards, not about package absence.** Two
+   statements must never be merged into one:
+
+   - *Tool-owned feature-forward isolation* — what this scaffold establishes, and the only
+     thing the per-lane trees prove: **no lane enables a family another tool package owns.**
+     `cargo tree -p <tool> --features <lane> -e features -i <owning crate>` prints the
+     `(command-line)` chain that turned the family on, so a lane that also showed a second
+     tool's forward would be visible there.
+   - *Resolved-tree absence* — **not claimed, and false if claimed.** A lane's tree is the
+     tool plus whatever the product crates it reaches already pull in. Three inherited
+     sources exist today and none of them is a tool forward: (a) the fixture SQL-ledger lane
+     reaches the `degenbot` facade, whose **Linux target-scoped**
+     `degenbot-simulation/evm2-jit` dependency puts the whole vendored JIT family in that
+     tree (`cargo tree -p degenbot-fixture-tools --features sql-ledger -e normal` contains 20
+     `evm2-jit` lines, with no fixture-tools feature anywhere in the chain); (b) `rusqlite`
+     (bundled) is a **non-optional** `degenbot-db` dependency, so it appears wherever
+     `degenbot-db` is reachable even though only the fixture lane enables the
+     `degenbot-db/sql-ledger` *feature*; (c) the `hotpath` crate is **non-optional** in
+     `degenbot-pools` (no-op stubs by default), so the solver capture lanes carry it even
+     though only solver-lab's `hotpath` forward enables `hotpath/hotpath` +
+     `hotpath/threads`. Removing any of the three is a product
+     dependency/feature redesign, not a scaffold change.
+
+   The sharpest form of the second check is the *default* tree: `cargo tree -p <tool> -e
+   normal` prints one line — the package — for all three packages, which proves no optional
+   product edge is active at default features. Record both forms in the `just
+   check-dev-tools` recipe comments, mirroring the
+   `docs/architecture/capability-restructure-plan.md` W3 acceptance shape, and never write a
+   doc line that claims a `cargo tree` proves transitive absence.
+
+### 6.2 The scaffold as landed — what exists, and the proof nothing moved
+
+The ratified graph above now exists as three manifests, three support libraries,
+and one check entry point. **No source file moved, and no binary exists.**
+
+| Claim | How to check it |
+| --- | --- |
+| The three packages exist with the §6 names — `degenbot-fixture-tools`, `degenbot-solver-lab`, `degenbot-engine-lab` — each at `rust/tools/<dir>/` | `cargo metadata --locked --manifest-path rust/Cargo.toml --format-version 1 --no-deps` |
+| Each is `publish = false`, inherits the `workspace.package` metadata and `[lints] workspace = true`, and has exactly one target: its `src/lib.rs` support library (`kind == ["lib"]`). No `[[bin]]`, no `[[example]]`, no test target | same metadata: `packages[].publish == []`, `packages[].targets` |
+| Each is a workspace member and **not** a `default-member`: `workspace_default_members` is still exactly `degenbot` and `degenbot-cli`, so unqualified `cargo build --manifest-path rust/Cargo.toml` selects the same two product entry points it selected before | same metadata |
+| The feature shells are separate forwards, one family each: `sql-ledger = ["degenbot/sql-ledger"]`; `capture-fixtures = ["degenbot-pools/capture-fixtures"]`, `cache-lab = ["degenbot-pools/cache-lab"]`, `hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]`, `envelope = ["degenbot-order-index/envelope"]`; `evm2-jit = ["degenbot-simulation/evm2-jit"]`, `prometheus = ["degenbot-bot/hotpath-prometheus"]` | the three `Cargo.toml` files, plus one lane each in `just check-dev-tools` |
+| Every product edge in the three manifests is optional, so each package's **default** tree is the package alone — no product crate is linked | `cargo tree -p degenbot-fixture-tools -e normal`, then `-p degenbot-solver-lab`, then `-p degenbot-engine-lab`: one printed line each |
+| **Tool-owned feature-forward isolation**: no lane enables a family another tool package owns | the per-lane `cargo tree ... -e features -i <owning crate>` inspections below (§6.1 consequence 4) |
+| `stubgen` and both `rust/examples/` packages are untouched, and the example surface is unchanged: 44 example targets across the same 10 packages, so §4.6's baseline audit still prints `exact-set audit: PASS` | §4.6's block, unmodified |
+| `rust/Cargo.lock` grew three package entries and nothing else: no version move, no external-family change | `git diff rust/Cargo.lock` is purely additive |
+
+**What the per-lane trees prove — and the facade JIT they inherit.** Isolation here is
+tool-owned *feature-forward* isolation, **not resolved-package absence**. Every inspection
+below is `cargo tree --locked --manifest-path rust/Cargo.toml …`; each proves which forwards
+are active in one lane, and none of them proves that some other family's crates vanished from
+the graph:
+
+| Inspection | What it actually shows |
+| --- | --- |
+| `-p degenbot-fixture-tools --features sql-ledger -e normal` | the `degenbot` facade and its whole graph, **including 20 `evm2-jit` lines**: the facade's Linux target-scoped `degenbot-simulation/evm2-jit` dependency, inherited by the lane and forwarded by nothing in this package |
+| `-p degenbot-fixture-tools --features sql-ledger -e features -i degenbot-db` | `degenbot-db feature "sql-ledger"` ← `degenbot feature "sql-ledger"` ← `degenbot-fixture-tools feature "sql-ledger" (command-line)` — the tool-owned forward, named |
+| `-p degenbot-solver-lab --features capture-fixtures -e normal` (the `capture-fixtures,cache-lab` lane has the same shape) | `degenbot-pools` and its capture/cache dependencies, no `evm2-jit`, no `hotpath-prometheus`, and no `degenbot-db feature "sql-ledger"`; `rusqlite` and the `hotpath` no-op stub are present as **non-optional product dependencies** of `degenbot-db` / `degenbot-pools` |
+| `-p degenbot-solver-lab --features hotpath -e features -i hotpath` | `hotpath feature "hotpath"`, `"threads"`, `"json"`, `"time"` — and **not** `hotpath-prometheus` |
+| `-p degenbot-solver-lab --features envelope -e normal` | `degenbot-order-index` and its hull index only (34 lines): no capture, no profiler, no JIT, no SQL |
+| `-p degenbot-engine-lab --features prometheus -e features -i hotpath` | `hotpath feature "hotpath-prometheus"` enabled through `degenbot-bot/hotpath-prometheus`; no `evm2-jit` and no `degenbot-db feature "sql-ledger"` anywhere in the lane |
+| `-p degenbot-engine-lab --features evm2-jit -e features -i degenbot-simulation` | `degenbot-simulation feature "evm2-jit"` ← `degenbot-engine-lab feature "evm2-jit" (command-line)`; no `hotpath-prometheus` and no `sql-ledger` in the lane |
+
+Exactly three conclusions follow, and later tasks may rely on exactly these: (1) each
+package's default resolution is the package alone; (2) each lane turns on its own family and
+no other tool package's family; (3) a lane's *package list* still contains the product graph
+its crates already had, the facade's Linux JIT included. The fixture SQL-ledger lane therefore
+records **its inherited facade JIT on Linux** as a known property of the product graph, not a
+leak this scaffold can close: closing it would take a facade feature or dependency redesign,
+which is outside task `02`'s authority (and `cargo tree` must not be cited as proof of
+transitive absence).
+
+**The check entry point.** `just check-dev-tools <lane>` runs **one lane per
+invocation**, each its own `cargo check --locked --manifest-path rust/Cargo.toml
+--all-targets` invocation:
+
+| Lane | Package and feature selection the recipe adds |
+| --- | --- |
+| `default` | `cargo check -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab --all-targets` |
+| `fixture-sql-ledger` | `-p degenbot-fixture-tools --features sql-ledger` |
+| `solver-capture-fixtures` | `-p degenbot-solver-lab --features capture-fixtures` |
+| `solver-cache-lab` | `-p degenbot-solver-lab --features capture-fixtures,cache-lab` |
+| `solver-hotpath` | `-p degenbot-solver-lab --features hotpath` |
+| `solver-envelope` | `-p degenbot-solver-lab --features envelope` |
+| `engine-jit` | `-p degenbot-engine-lab --features evm2-jit` |
+| `engine-prometheus` | `-p degenbot-engine-lab --features prometheus` |
+
+A leading `--` is ignored, so the catalog's `just check-dev-tools --engine-jit`
+spelling and the bare `just check-dev-tools engine-jit` form name the same lane.
+An invocation with **no lane** runs `default` and prints this menu: it is the
+feature-free support-library check, never a union of every lane, and no lane is
+spelled `--all-features`. Later tasks extend the lane that owns a binary's
+features — the recipe accumulates the exact package checks as `[[bin]]` entries
+land, and each binary carries its own `required-features`, so its lane builds it
+deliberately and every other lane skips it deliberately.
+
+**What the scaffold deliberately does not contain**, so its absence reads as a
+decision rather than an oversight: any `src/bin/` directory, any `[[bin]]`
+stanza, any moved example source or deleted `[[example]]` stanza, a fourth
+catch-all `dev-tools` package, a combined `all`/`full`/`profiler` feature, and
+any product crate depending on a tool.
 
 ## 7. `src/bin/` migration shape
 

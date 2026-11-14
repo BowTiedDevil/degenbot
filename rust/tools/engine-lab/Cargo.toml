@@ -1,0 +1,37 @@
+[package]
+name = "degenbot-engine-lab"
+description = "Bot, simulation, arbitrage, JIT, fan-out, and BAL measurement instruments. Non-publishable development tooling: not an operator CLI and not a product code path."
+
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+# Optional, one lane each: the default check of this package links no product
+# crate, and every edge points from this tool to a product crate, never back.
+# A lane enables its own forward only -- it does not shrink the resolved tree,
+# which still carries what the reached product crates already depend on
+# (e.g. `degenbot-db`'s non-optional bundled `rusqlite`).
+[dependencies]
+degenbot-simulation = { workspace = true, optional = true }
+degenbot-bot = { workspace = true, optional = true }
+
+[features]
+default = []
+
+# The JIT engine lane: the vendored `evm2-jit`, `-build`, and `-runtime` edges
+# behind `degenbot-simulation/evm2-jit`. The engine-benchmark and AOT programs
+# declare it in their own `required-features`, so a default check compiles no
+# LLVM codegen.
+evm2-jit = ["degenbot-simulation/evm2-jit"]
+
+# The bot profiler's Prometheus exporter lane (the guard's `/metrics` listener,
+# `degenbot-bot/hotpath-prometheus`). It is the exporter lane only: it is not
+# the pool profiling lane, which lives in `degenbot-solver-lab`.
+prometheus = ["degenbot-bot/hotpath-prometheus"]

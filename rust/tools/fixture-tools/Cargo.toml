@@ -1,0 +1,38 @@
+[package]
+name = "degenbot-fixture-tools"
+description = "Record, check, and regenerate the committed fixtures and the test-input generators. Non-publishable development tooling: no product build links it and no `cargo test` lane depends on it."
+
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+# Every product edge here is optional and belongs to exactly one lane below, so
+# the default check of this package links no product crate at all. Edges point
+# only from this tool package to product crates; no product crate may depend on
+# a tool.
+[dependencies]
+# The umbrella facade owns the fixture schema and the recorders that read it.
+degenbot = { workspace = true, optional = true }
+
+[features]
+default = []
+
+# SQL statement-ledger passthrough (`degenbot` -> `degenbot-db/sql-ledger`). The
+# programs that replay their goldens through the ledger build only under it, and
+# each of those `[[bin]]` entries carries its own `required-features` so a
+# default check skips it deliberately instead of failing on a cfg'd-out module.
+# This forward exists in no other tool package: the ledger is fixture-tools'
+# lane alone.
+#
+# A forward is not a resolved tree. On Linux this lane inherits the facade's
+# target-scoped `degenbot-simulation/evm2-jit` dependency, so the vendored JIT
+# family is in the lane's `cargo tree` output with no feature of this package in
+# the chain -- a property of the product graph, not of this forward.
+sql-ledger = ["degenbot/sql-ledger"]

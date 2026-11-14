@@ -1,0 +1,29 @@
+//! Shared support for the solver-lab development package.
+//!
+//! This package owns the solver and order-index replay, measurement, and stress
+//! instruments. Three rules keep it a laboratory rather than a gate:
+//!
+//! - **Measurements never gate.** Nothing added here becomes a pass/fail gate,
+//!   and no `just check-dev-tools` lane may be promoted into one: what lives
+//!   here reports numbers, and a durable assertion belongs in the owning crate's
+//!   integration tests. The one gate that runs a program of this kind today is
+//!   the deliberately preserved `just test-golden-replay` bridge, which keeps
+//!   gating unchanged until task 06 moves its durable assertions into
+//!   owning-crate tests (`rust/tools/README.md` sections 8 and 8.1).
+//! - **A small replay stays small.** Profiling, capture I/O, the cache lab, and
+//!   the hull index are four separate opt-in forwards, so reading a capture
+//!   never *enables* a profiler, the ledger feature, or a JIT lane. A forward is
+//!   not a resolved tree, though: `degenbot-pools` carries the `hotpath` crate
+//!   non-optionally (no-op stubs unless this package's `hotpath` forward turns
+//!   it on) and `degenbot-db`'s bundled `rusqlite` rides along wherever the
+//!   database crate is reached. No combined "all lab" feature exists, and no
+//!   lane is spelled `--all-features`.
+//! - **Pool profiling is not the bot exporter.** The `hotpath` lane is
+//!   solver-phase function timing; the `/metrics` listener belongs to the bot
+//!   exporter lane in `degenbot-engine-lab`.
+//!
+//! The library target is the shared support the instruments build on: capture
+//! row parsing and the harness schemas, so a helper module is imported rather
+//! than `#[path]`-included from an example directory.
+//!
+//! Lane features: `capture-fixtures`, `cache-lab`, `hotpath`, `envelope`.
