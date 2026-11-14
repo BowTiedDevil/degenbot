@@ -51,7 +51,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use alloy::dyn_abi::{DynSolType, DynSolValue};
-use alloy::primitives::{address, Address, Bytes, I256, U128, U160, U256};
+use alloy::primitives::{address, aliases::U112, Address, Bytes, I256, U128, U160, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 
@@ -136,6 +136,21 @@ alloy::sol! {
     interface IUniswapV2Pair {
         function getReserves()
             external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    }
+
+    /// The same `getReserves()` at `uint256` width.
+    ///
+    /// A function's signature is its NAME AND ARGUMENTS only, so this declaration
+    /// answers to the identical selector as `IUniswapV2Pair::getReserves` — the
+    /// wire call is byte-identical and no transport can tell the two apart. What
+    /// differs is the DECODE: alloy's `uint112` decode discards bits above
+    /// position 112, so an over-wide return would arrive as a plausible small
+    /// reserve before any caller could bound it. Reading the words wide and
+    /// checking them in [`V2Reserves::read`] keeps that decision where the bytes
+    /// are, instead of after the truncation.
+    interface IUniswapV2PairWideReserves {
+        function getReserves()
+            external view returns (uint256 reserve0, uint256 reserve1, uint32 blockTimestampLast);
     }
 
     /// Aerodrome V2 factory read: the per-pool unidirectional fee, answered per
@@ -328,6 +343,9 @@ alloy::sol! {
 ///
 /// The third field — `blockTimestampLast` — is unused by the snapshot, and a
 /// pool that answered a stale or zero timestamp must still read the same.
+///
+/// Both words are `uint112` fields on the pair, so a word wider than that is
+/// refused at the decode rather than truncated into a plausible reserve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct V2Reserves {
     pub reserve0: U256,
@@ -341,20 +359,42 @@ impl V2Reserves {
     ///
     /// Returns [`ProviderError`] from the underlying `eth_call` or
     /// [`ProviderError::DecodingError`] when the return is not the
-    /// `(uint112, uint112, uint32)` tuple.
+    /// `(uint256, uint256, uint32)` tuple, or when either reserve word is wider
+    /// than the pair's `uint112` field.
     pub async fn read(
         transport: &impl ContractRead,
         pool: Address,
         block: Option<u64>,
     ) -> ProviderResult<Self> {
         let r = transport
-            .read(pool, IUniswapV2Pair::getReservesCall {}, block)
+            .read(pool, IUniswapV2PairWideReserves::getReservesCall {}, block)
             .await?;
         Ok(Self {
-            reserve0: U256::from(r.reserve0),
-            reserve1: U256::from(r.reserve1),
+            reserve0: checked_reserve_word(r.reserve0, 0)?,
+            reserve1: checked_reserve_word(r.reserve1, 1)?,
         })
     }
+}
+
+/// One `getReserves()` word as the pair's `uint112` reserve field, or a decode
+/// failure when it does not fit.
+///
+/// A pool cannot hold a reserve wider than `uint112`, so such a word is an
+/// answer about something other than that pool's reserves. It must be refused
+/// HERE: a `uint112`-width decode drops the high bits, and a truncated value is
+/// indistinguishable from real state by the time a caller narrows it. The
+/// field's own maximum is valid, so the bound is inclusive.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] when `word` exceeds `U112::MAX`.
+fn checked_reserve_word(word: U256, position: usize) -> ProviderResult<U256> {
+    if word > U112::MAX.to::<U256>() {
+        return Err(ProviderError::DecodingError {
+            message: format!("getReserves() reserve{position} {word} exceeds the uint112 range"),
+        });
+    }
+    Ok(word)
 }
 
 /// A Balancer pool's `getPoolId()` identifier as the raw 32 bytes the Vault's
@@ -1018,6 +1058,23 @@ mod tests {
         DynSolValue::Uint(v, bits).abi_encode()
     }
 
+    /// A `getReserves()` return at FULL word width — the bytes a pair answers,
+    /// and the shape an over-wide reserve arrives in (a `uint112`-width encode
+    /// could not express one).
+    fn get_reserves_return(reserve0: U256, reserve1: U256) -> Vec<u8> {
+        DynSolValue::Tuple(vec![
+            DynSolValue::Uint(reserve0, 256),
+            DynSolValue::Uint(reserve1, 256),
+            DynSolValue::Uint(U256::from(1_700_000_000u64), 32),
+        ])
+        .abi_encode()
+    }
+
+    /// `2^112`: one past the pair's reserve field.
+    fn two_pow_112() -> U256 {
+        U256::from(1u8) << 112
+    }
+
     /// The canonical seven-word `slot0()` return.
     fn slot0_return(sqrt: U256, tick: i32) -> Vec<u8> {
         DynSolValue::Tuple(vec![
@@ -1161,6 +1218,116 @@ mod tests {
 
         assert_eq!(reserves.reserve0, U256::from(1_500u64));
         assert_eq!(reserves.reserve1, U256::from(2_500u64));
+    }
+
+    #[test]
+    fn v2_reserves_reads_the_wide_declaration_on_the_unchanged_wire_call() {
+        assert_eq!(
+            IUniswapV2PairWideReserves::getReservesCall {}.abi_encode(),
+            IUniswapV2Pair::getReservesCall {}.abi_encode(),
+            "return widths are not part of a signature, so the selector and calldata are identical"
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_reserves_reads_every_word_inside_the_uint112_field() {
+        for (reserve0, reserve1) in [
+            (U256::ZERO, U256::ZERO),
+            (U256::from(1_500u64), U256::from(2_500u64)),
+            (U112::MAX.to::<U256>(), U256::ZERO),
+            (U256::ZERO, U112::MAX.to::<U256>()),
+            (U112::MAX.to::<U256>(), U112::MAX.to::<U256>()),
+        ] {
+            let transport = TableTransport::new().answer(
+                IUniswapV2Pair::getReservesCall {}.abi_encode(),
+                get_reserves_return(reserve0, reserve1),
+            );
+
+            let reserves = V2Reserves::read(&transport, TO, BLOCK).await.unwrap();
+
+            assert_eq!(
+                (reserves.reserve0, reserves.reserve1),
+                (reserve0, reserve1),
+                "the field's own maximum and every value below it keep their exact value"
+            );
+            assert_eq!(
+                transport.calls(),
+                vec![(
+                    TO,
+                    Bytes::from(IUniswapV2Pair::getReservesCall {}.abi_encode()),
+                    BLOCK
+                )],
+                "the pair's own getReserves() calldata, at the caller's block"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn v2_reserves_rejects_a_word_wider_than_the_uint112_field_in_either_position() {
+        let two_pow_112 = two_pow_112();
+        let just_over = two_pow_112 + U256::from(1u8);
+        for (reserve0, reserve1, position) in [
+            (two_pow_112, U256::from(1u8), 0),
+            (just_over, U256::from(1u8), 0),
+            (U256::from(1u8), two_pow_112, 1),
+            (U256::from(1u8), U256::MAX, 1),
+        ] {
+            let transport = TableTransport::new().answer(
+                IUniswapV2Pair::getReservesCall {}.abi_encode(),
+                get_reserves_return(reserve0, reserve1),
+            );
+
+            let err = V2Reserves::read(&transport, TO, BLOCK).await.unwrap_err();
+
+            let ProviderError::DecodingError { message } = err else {
+                panic!("a reserve wider than the pair's field is a decode failure, got {err:?}");
+            };
+            assert!(
+                message.contains(&format!("reserve{position}")),
+                "the failure names the word it refused: {message}"
+            );
+        }
+    }
+
+    /// The `(2^112, 1)` pair must be a decode failure, never the truncated
+    /// `reserve0 = 0, reserve1 = 1` a `uint112`-width decode of the same bytes
+    /// would produce.
+    #[tokio::test]
+    async fn v2_reserves_regression_two_to_the_112_is_a_decode_failure_not_a_zero_reserve() {
+        let bytes = get_reserves_return(two_pow_112(), U256::from(1u8));
+        let transport = TableTransport::new().answer(
+            IUniswapV2Pair::getReservesCall {}.abi_encode(),
+            bytes.clone(),
+        );
+
+        assert!(matches!(
+            V2Reserves::read(&transport, TO, BLOCK).await,
+            Err(ProviderError::DecodingError { .. })
+        ));
+
+        let truncated = IUniswapV2Pair::getReservesCall::abi_decode_returns(&bytes).unwrap();
+        assert_eq!(
+            (truncated.reserve0, truncated.reserve1),
+            (U112::ZERO, U112::from(1u8)),
+            "a uint112-width decode DROPS bit 112 — the reason this read decodes wide and bounds the words itself"
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_reserves_rejects_a_return_shorter_than_its_tuple() {
+        for length in [95usize, 64] {
+            let short = get_reserves_return(U256::from(1u8), U256::from(2u8))[..length].to_vec();
+            let transport = TableTransport::new()
+                .answer(IUniswapV2Pair::getReservesCall {}.abi_encode(), short);
+
+            assert!(
+                matches!(
+                    V2Reserves::read(&transport, TO, BLOCK).await,
+                    Err(ProviderError::DecodingError { .. })
+                ),
+                "a {length}-byte return cannot hold the three-word tuple"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1646,6 +1813,10 @@ mod tests {
             ),
             (
                 IUniswapV2Pair::getReservesCall {}.abi_encode(),
+                [0x09, 0x02, 0xf1, 0xac],
+            ),
+            (
+                IUniswapV2PairWideReserves::getReservesCall {}.abi_encode(),
                 [0x09, 0x02, 0xf1, 0xac],
             ),
             (
