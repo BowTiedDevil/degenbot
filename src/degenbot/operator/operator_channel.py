@@ -74,7 +74,7 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from degenbot import fleet
 from degenbot.logging import logger
@@ -83,7 +83,13 @@ from degenbot.runner._sim_submit import ProbeCapital
 from degenbot.utils.tasks import cancel_and_reap
 
 if TYPE_CHECKING:
-    from degenbot.dispatch import BatchOutcome, ProbeReport
+    from degenbot.dispatch import (
+        BatchOutcome,
+        ProbeReport,
+        SimReceipt,
+        SimulateVerdict,
+        ZeroCapitalDeficit,
+    )
 
 #: Map the PUBLIC wire labels (`V2`/`V3`/`V4`) to the typed pool families used
 #: by pathfinding, minted from the core's exported label list
@@ -414,15 +420,19 @@ def execution_probe_response(
     if receipt is not None:
         response["receipt"] = receipt
     if kind == "failed":
-        response["bucket"] = verdict.detail.bucket
-        response["revert"] = _revert_hex(verdict.detail)
+        # `kind` is the verdict's own typed label, so this arm is the one place a
+        # failure detail exists; the cast states that narrowing for the checker
+        # and changes nothing at runtime (a non-failed verdict never gets here).
+        failed = cast("SimulateVerdict.Failed", verdict)
+        response["bucket"] = failed.detail.bucket
+        response["revert"] = _revert_hex(failed.detail)
         # A refusal's DATA half: the typed deficit a capital-policy refusal
         # carries. `bucket == "insolvent-zero-capital"` says which answer this
         # is; these three fields say what the stream could not fund, so no client
         # parses the rendered message. Ordinary failures (`encode-failed`, a
         # revert, `no-profit`) have no deficit and project no key at all, which
         # is what keeps the two refused-stream kinds distinct on the wire.
-        deficit = _zero_capital_field(getattr(verdict.detail, "zero_capital", None))
+        deficit = _zero_capital_field(getattr(failed.detail, "zero_capital", None))
         if deficit is not None:
             response["zero_capital"] = deficit
     planning = _encoded_plan(report, record)
@@ -431,7 +441,7 @@ def execution_probe_response(
     return response
 
 
-def _receipt_field(receipt: object) -> dict[str, int] | None:
+def _receipt_field(receipt: SimReceipt | None) -> dict[str, int] | None:
     """Project one receipt-bearing verdict's own receipt onto the wire.
 
     Args:
@@ -476,7 +486,7 @@ def _revert_hex(detail: object) -> str:
     return revert if isinstance(revert, str) else "0x"
 
 
-def _zero_capital_field(deficit: object) -> dict[str, int | str] | None:
+def _zero_capital_field(deficit: ZeroCapitalDeficit | None) -> dict[str, int | str] | None:
     """Project one typed zero-capital deficit onto its wire object.
 
     Args:

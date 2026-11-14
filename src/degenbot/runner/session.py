@@ -675,7 +675,7 @@ class Session:
             path_id,
             optimal_input=optimal_input,
         )
-        return await executor.probe(request)
+        return cast("ProbeReport", await executor.probe(request))
 
     def _probe_executor(self, capital: ProbeCapital) -> ProbeExecutor:
         """Return the probe executor for ONE capital posture, building it once.
@@ -767,6 +767,9 @@ class Session:
             path_steps: The path's steps (the crawl's enqueue shape).
             directions: Per-step swap directions (``None`` = resolve them).
 
+        Returns:
+            The submission sequence and the engine-assigned path ID.
+
         Raises:
             RuntimeError: if no live crawl session exists (injected fake
                 builders have no construction surface, or ``run()`` has not
@@ -781,7 +784,7 @@ class Session:
                 "(injected/fake run, or the crawl is not booted)"
             )
             raise RuntimeError(msg)
-        return await session.enqueue_path(path_steps, directions)
+        return cast("tuple[int, int]", await session.enqueue_path(path_steps, directions))
 
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
         """Trigger a bounded one-shot discovery sweep (on-demand trigger).

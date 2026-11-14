@@ -30,7 +30,8 @@ script for it:
   did `from examples.eth_backrun_v2_v3_v4_rust import BackrunSession` — was real and live at
   spike time. Both ends are gone: the test is `tests/arbitrage/test_arbitrage_session.py`
   (`from degenbot.runner import BotRunner`), and the entrypoint is
-  `examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`, a 134-line `argv → BotRunner` shell.
+  `examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`, a thin `argv → BotRunner` shell
+  (the optional operator-channel host sits beside `main()`, not in it).
 
 ## 2. Placement decision (ADR-005 discipline — the two-consumer check)
 

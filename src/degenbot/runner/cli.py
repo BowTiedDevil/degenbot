@@ -53,12 +53,18 @@ def build_arbitrage_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-discovery",
         action="store_true",
-        help="Boot the path crawl without startup discovery; only operator add_path requests register paths.",
+        help=(
+            "Boot the path crawl without startup discovery; only operator add_path "
+            "requests register paths."
+        ),
     )
     parser.add_argument(
         "--sparse-registration",
         action="store_true",
-        help="Construct operator-registered pools from current chain state instead of the tracked snapshot.",
+        help=(
+            "Construct operator-registered pools from current chain state instead of "
+            "the tracked snapshot."
+        ),
     )
     parser.add_argument(
         "--operator-socket",

@@ -147,6 +147,9 @@ class BotRunner:
             path_steps: The path's steps (the pipeline's enqueue shape).
             directions: Per-step swap directions (``None`` = resolve them).
 
+        Returns:
+            The submission sequence and the engine-assigned path ID.
+
         """
         return await self.session.enqueue_path(path_steps, directions)
 

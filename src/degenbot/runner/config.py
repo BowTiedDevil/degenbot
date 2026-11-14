@@ -267,7 +267,7 @@ class ArbitrageConfig:
         return operator_address, operator_private_key
 
     @classmethod
-    def build(
+    def build(  # ruff:ignore[too-many-arguments] - one keyword per declared config knob, each with its default
         cls,
         *,
         live: bool,

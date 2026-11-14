@@ -22,11 +22,13 @@ The old driver code that lived here (``BackrunSession``→``BotRunner``,
 the shared constants) has moved to ``degenbot.runner``.
 """
 
+import argparse
 import asyncio
 import contextlib
 import sys
 import time
-from typing import Any, cast
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.exceptions import BootRefused
@@ -34,6 +36,87 @@ from degenbot.logging import logger as bot_logger
 from degenbot.runner import ActivationGateRefused, BotRunner
 from degenbot.runner.cli import build_arbitrage_arg_parser
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+
+
+@contextlib.asynccontextmanager
+async def _operator_channel(
+    args: argparse.Namespace, session: BotRunner
+) -> AsyncGenerator[None, None]:
+    """Serve the optional operator command channel on a Unix socket.
+
+    An unset ``--operator-socket`` is the one no-op case: no socket is bound and
+    the ``async with`` block runs alone. The channel is torn down (task
+    cancelled, socket closed) on the way out of the block, before ``BotRunner``
+    stops its pump.
+
+    Yields:
+        Nothing — the block runs with the channel served in the background.
+
+    """
+    if not args.operator_socket:
+        yield
+        return
+
+    from degenbot.operator.operator_channel import (
+        OperatorServer,
+        capital_from_wire,
+        execution_probe_response,
+        handle_fleet_posture_op,
+        step_from_wire,
+    )
+
+    async def operator_handler(op: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if op == "add_path":
+            steps = [step_from_wire(s) for s in payload["steps"]]
+            directions = payload.get("directions")
+            sequence, path_id = await session.enqueue_path(steps, directions=directions)
+            return {
+                "detail": f"enqueued {len(steps)}-hop path",
+                "sequence": sequence,
+                "path_id": path_id,
+            }
+        if op == "probe_path":
+            # One capital spelling, validated here: absent keeps the
+            # historical self-funded probe, and an unknown spelling is
+            # refused by wrap_handler as {"ok": false, "error": ...}.
+            # The session hands back the probe executor's own typed
+            # report (records + encoded planning rows), which the
+            # response projection reads without re-deriving anything.
+            # The probed block is the session's block clock, read
+            # before dispatch: that is the clock `probe_path` quotes
+            # its typed request at, and the typed report carries no
+            # request context of its own.
+            probe_block = session.session.current_block
+            return execution_probe_response(
+                payload["path_id"],
+                await session.probe_path(
+                    payload["path_id"],
+                    optimal_input=int(payload.get("optimal_input", 1_000_000_000_000_000)),
+                    capital=capital_from_wire(payload),
+                ),
+                current_block=probe_block,
+            )
+        if op == "discover":
+            bound = payload.get("bound")
+            n = await session.trigger_discovery(bound=bound)
+            return {"detail": f"discovery processed {n} paths"}
+        if op in {"set_fleet_posture", "get_fleet_posture"}:
+            # The live cordon-threshold re-tune + read, routed
+            # through the shared helper (the degenbot.fleet
+            # mirror home mints on first use).
+            return handle_fleet_posture_op(op, payload)
+        return {"error": f"unknown op {op!r}"}
+
+    operator = OperatorServer(operator_handler, socket_path=args.operator_socket)
+    operator_task = asyncio.create_task(operator.serve(), name="operator-server")
+    bot_logger.info(f"[operator] listening on {args.operator_socket}")
+    try:
+        yield
+    finally:
+        operator_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await operator_task
+        await operator.close()
 
 
 async def main() -> None:
@@ -74,74 +157,11 @@ async def main() -> None:
     # `BotRunner.__aexit__` → `shutdown()` (stops the Rust pump). The
     # KeyboardInterrupt is caught here so the operator sees a single clean line.
     try:
-        async with BotRunner(cfg) as session:
-            # Optional operator command channel on a Unix socket.
-            operator = None
-            operator_task = None
-            if args.operator_socket:
-                from degenbot.operator.operator_channel import (
-                    OperatorServer,
-                    capital_from_wire,
-                    execution_probe_response,
-                    handle_fleet_posture_op,
-                    step_from_wire,
-                )
-
-                async def operator_handler(op: str, payload: dict[str, Any]) -> dict[str, Any]:
-                    if op == "add_path":
-                        steps = [step_from_wire(s) for s in payload["steps"]]
-                        directions = payload.get("directions")
-                        sequence, path_id = await session.enqueue_path(steps, directions=directions)
-                        return {
-                            "detail": f"enqueued {len(steps)}-hop path",
-                            "sequence": sequence,
-                            "path_id": path_id,
-                        }
-                    if op == "probe_path":
-                        # One capital spelling, validated here: absent keeps the
-                        # historical self-funded probe, and an unknown spelling is
-                        # refused by wrap_handler as {"ok": false, "error": ...}.
-                        # The session hands back the probe executor's own typed
-                        # report (records + encoded planning rows), which the
-                        # response projection reads without re-deriving anything.
-                        # The probed block is the session's block clock, read
-                        # before dispatch: that is the clock `probe_path` quotes
-                        # its typed request at, and the typed report carries no
-                        # request context of its own.
-                        probe_block = session.session.current_block
-                        return execution_probe_response(
-                            payload["path_id"],
-                            await session.probe_path(
-                                payload["path_id"],
-                                optimal_input=int(
-                                    payload.get("optimal_input", 1_000_000_000_000_000)
-                                ),
-                                capital=capital_from_wire(payload),
-                            ),
-                            current_block=probe_block,
-                        )
-                    if op == "discover":
-                        bound = payload.get("bound")
-                        n = await session.trigger_discovery(bound=bound)
-                        return {"detail": f"discovery processed {n} paths"}
-                    if op in {"set_fleet_posture", "get_fleet_posture"}:
-                        # The live cordon-threshold re-tune + read, routed
-                        # through the shared helper (the degenbot.fleet
-                        # mirror home mints on first use).
-                        return handle_fleet_posture_op(op, payload)
-                    return {"error": f"unknown op {op!r}"}
-
-                operator = OperatorServer(operator_handler, socket_path=args.operator_socket)
-                operator_task = asyncio.create_task(operator.serve(), name="operator-server")
-                bot_logger.info(f"[operator] listening on {args.operator_socket}")
-            try:
-                bot_logger.info(f"[session] ended: {(await session.run()).name}")
-            finally:
-                if operator_task is not None:
-                    operator_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await operator_task
-                    await cast("OperatorServer", operator).close()
+        async with BotRunner(cfg) as session, _operator_channel(args, session):
+            # The operator command channel (when `--operator-socket` is set) is
+            # served for exactly the run's lifetime: cancelled + closed as this
+            # block unwinds, before `BotRunner.__aexit__` stops the pump.
+            bot_logger.info(f"[session] ended: {(await session.run()).name}")
     except ActivationGateRefused as exc:
         # The posture gate refused the fleet: same fail-fast discipline as
         # the boot refusal — one named line, EX_CONFIG, no partial run().
