@@ -14,9 +14,10 @@
 //!
 //! - **V2 hops** price through [`simulate_swap`] — the production pool math the
 //!   solver, the inline sim, and the Python companion read all dispatch to. The
-//!   [`PoolEntry`] is SNAPSHOTTED when the plan is built, so every in-process hop
-//!   of one quote prices the same state and no read lock is held across an
-//!   `await`.
+//!   [`PoolEntry`] is SNAPSHOTTED when the plan is built, so no read lock is
+//!   held across an `await`; a snapshot whose own block stamp is not the plan's
+//!   block is re-anchored from the pair's `getReserves()` at that block, so an
+//!   in-process hop never prices a state the vector does not claim.
 //! - **V3 and V4 hops** price through the chain's OWN quoter at the same block
 //!   ([`V3Quote`] / [`V4Quote`]): `quoteExactInputSingle` on the canonical
 //!   v3-periphery and v4-periphery deployments. A V4 hop carries its WHOLE
@@ -27,8 +28,10 @@
 //! # One block, one vector
 //!
 //! [`ExactInputQuotePlan::block`] is the quote's ONE anchor: every concentrated
-//! hop is called at it, every in-process hop reads the state snapshotted for it,
-//! and [`ProbeBlockContext`] reports that same block's timestamp and base fee. A
+//! hop is called at it, every in-process hop prices the reserve-pair state read
+//! AT it — the snapshot it holds when that snapshot's own stamp is the anchor,
+//! the pair's `getReserves()` at the anchor otherwise — and [`ProbeBlockContext`]
+//! reports that same block's timestamp and base fee. A
 //! caller that hands the resulting vector to an execution probe is therefore
 //! describing one block, not a smear of them.
 //!
@@ -80,12 +83,13 @@
 
 use std::future::Future;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{aliases::U112, Address, U256};
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_pools::solve::HopType;
 use degenbot_pools::{simulate_swap, PoolEntry, SimulateSwapError, V4PoolKey};
 use degenbot_rpc::abi::{
-    ContractRead, V3Quote, V3QuoteRequest, V4Quote, V4QuoteRequest, V3_QUOTER, V4_QUOTER,
+    ContractRead, V2Reserves, V3Quote, V3QuoteRequest, V4Quote, V4QuoteRequest, V3_QUOTER,
+    V4_QUOTER,
 };
 use degenbot_rpc::provider::AlloyProvider;
 use thiserror::Error;
@@ -117,7 +121,9 @@ pub struct InProcessHop {
     pub pool_id: u64,
     /// `true` when the path trades `token0` → `token1` through this pool.
     pub zero_for_one: bool,
-    /// The pool state snapshot the hop prices against.
+    /// The pool state snapshot the hop starts from: it prices as it stands when
+    /// its own block stamp IS the plan's block, and is otherwise replaced by the
+    /// pair's reserves at that block.
     pub entry: PoolEntry,
 }
 
@@ -222,6 +228,44 @@ pub enum ExactInputQuoteError {
         /// The family's typed refusal (a not-computable walk).
         error: SimulateSwapError,
     },
+    /// The reserve-pair state at the quote's block could not be read, so the hop
+    /// has no anchor-correct reserves to price.
+    #[error(
+        "hop {hop} of path {path_id}: the reserves of {pool} at block {block} could not be read: {source}"
+    )]
+    ReservePairAnchor {
+        /// The path whose hop was refused.
+        path_id: u64,
+        /// The hop's index in path order.
+        hop: usize,
+        /// The pair whose `getReserves()` was read.
+        pool: Address,
+        /// The block every hop of the quote prices at.
+        block: u64,
+        /// The provider's failure.
+        #[source]
+        source: ProviderError,
+    },
+
+    /// The pair answered a reserve wider than its own `uint112` storage field.
+    #[error(
+        "hop {hop} of path {path_id}: the reserves of {pool} at block {block} do not fit its uint112 fields ({reserve0}, {reserve1})"
+    )]
+    ReservePairWidth {
+        /// The path whose hop was refused.
+        path_id: u64,
+        /// The hop's index in path order.
+        hop: usize,
+        /// The pair that answered them.
+        pool: Address,
+        /// The block every hop of the quote prices at.
+        block: u64,
+        /// The answered `reserve0`.
+        reserve0: U256,
+        /// The answered `reserve1`.
+        reserve1: U256,
+    },
+
     /// The on-chain quoter refused (or could not answer) the hop.
     #[error("hop {hop} of path {path_id}: {source}")]
     HopQuote {
@@ -290,6 +334,9 @@ impl ProbeQuoteTransport for AlloyProvider {
 /// # Errors
 ///
 /// [`ExactInputQuoteError::PoolMath`] when an in-process hop's own math refuses,
+/// [`ExactInputQuoteError::ReservePairAnchor`] when an in-process hop's reserves
+/// at the anchor block cannot be read, [`ExactInputQuoteError::ReservePairWidth`]
+/// when the pair answers a reserve wider than its `uint112` field,
 /// [`ExactInputQuoteError::HopQuote`] when the canonical quoter refuses (or
 /// cannot answer) a concentrated hop, and
 /// [`ExactInputQuoteError::BlockContext`] when the anchor block's context cannot
@@ -305,12 +352,16 @@ pub async fn quote_exact_input_hops<T: ProbeQuoteTransport>(
     for (hop, spec) in plan.hops.iter().enumerate() {
         consumed_inputs.push(amount);
         amount = match spec {
-            ExactInputHop::InProcess(spec) => simulate_swap(&spec.entry, spec.zero_for_one, amount)
-                .map_err(|error| ExactInputQuoteError::PoolMath {
-                    path_id: plan.path_id,
-                    hop,
-                    error,
-                })?,
+            ExactInputHop::InProcess(spec) => {
+                let entry = anchored_reserve_pair(plan, hop, spec, transport).await?;
+                simulate_swap(&entry, spec.zero_for_one, amount).map_err(|error| {
+                    ExactInputQuoteError::PoolMath {
+                        path_id: plan.path_id,
+                        hop,
+                        error,
+                    }
+                })?
+            }
             ExactInputHop::V3(spec) => {
                 V3Quote::quote_exact_in(
                     transport,
@@ -371,6 +422,111 @@ pub async fn quote_exact_input_hops<T: ProbeQuoteTransport>(
     })
 }
 
+/// The pool state the hop prices at `plan.block`.
+///
+/// A snapshot whose own stamp IS the plan's block is that block's state, so it
+/// prices with no I/O. Any other stamp — a registration seed priced at the node
+/// head, a sync from an adjacent block — describes a DIFFERENT state than the
+/// block the vector claims and the EVM executes at, and one block of reserve
+/// drift moves a whole unit of the next token in a vector whose every amount is a
+/// floor. So the pair's own `getReserves()` at the plan's block replaces the
+/// clone's reserves and stamp. A refused read is a typed refusal, never a fall
+/// back to the mismatched snapshot.
+async fn anchored_reserve_pair<T: ProbeQuoteTransport>(
+    plan: &ExactInputQuotePlan,
+    hop: usize,
+    spec: &InProcessHop,
+    transport: &T,
+) -> Result<PoolEntry, ExactInputQuoteError> {
+    let Some((pool, update_block)) = reserve_pair_anchor(&spec.entry) else {
+        // `path_info::exact_input_hop` builds this arm only from a reserve-pair
+        // entry: a family with no `getReserves` state has no anchor to read, and
+        // its own quoter arm prices it.
+        return Ok(spec.entry.clone());
+    };
+    if update_block == plan.block {
+        return Ok(spec.entry.clone());
+    }
+    let answer = V2Reserves::read(transport, pool, Some(plan.block))
+        .await
+        .map_err(|source| ExactInputQuoteError::ReservePairAnchor {
+            path_id: plan.path_id,
+            hop,
+            pool,
+            block: plan.block,
+            source,
+        })?;
+    let (reserve0, reserve1) = narrow_reserves(plan, hop, pool, answer)?;
+    Ok(re_anchored(&spec.entry, reserve0, reserve1, plan.block))
+}
+
+/// The `(pair address, snapshot block)` a reserve-pair entry binds — `None` for a
+/// family whose state carries no `getReserves`.
+fn reserve_pair_anchor(pool_entry: &PoolEntry) -> Option<(Address, u64)> {
+    match pool_entry {
+        PoolEntry::V2(pair) => Some((pair.0.address, pair.1.update_block)),
+        PoolEntry::AerodromeV2(pair) => Some((pair.0.address, pair.1.update_block)),
+        _ => None,
+    }
+}
+
+/// A clone of `pool_entry` carrying the anchor's reserves and block stamp.
+///
+/// Only the two fields the anchor read owns are written: the identity (family,
+/// fees, decimals), the state nonce, and the reorg journal stay the snapshot's,
+/// because a quote is a read-only projection and never a state transition.
+fn re_anchored(pool_entry: &PoolEntry, reserve0: U112, reserve1: U112, block: u64) -> PoolEntry {
+    let mut anchored_entry = pool_entry.clone();
+    match &mut anchored_entry {
+        PoolEntry::V2(pair) => {
+            pair.1.reserve0 = reserve0;
+            pair.1.reserve1 = reserve1;
+            pair.1.update_block = block;
+        }
+        PoolEntry::AerodromeV2(pair) => {
+            pair.1.reserve0 = reserve0;
+            pair.1.reserve1 = reserve1;
+            pair.1.update_block = block;
+        }
+        _ => {}
+    }
+    anchored_entry
+}
+
+/// The anchor answer as the pool's `uint112` reserve fields — refused, never
+/// saturated, when a word is wider: reserves a pool cannot hold are an answer
+/// about another pool, not a price.
+fn narrow_reserves(
+    plan: &ExactInputQuotePlan,
+    hop: usize,
+    pool: Address,
+    answer: V2Reserves,
+) -> Result<(U112, U112), ExactInputQuoteError> {
+    match (
+        narrow_reserve(answer.reserve0),
+        narrow_reserve(answer.reserve1),
+    ) {
+        (Some(reserve0), Some(reserve1)) => Ok((reserve0, reserve1)),
+        _ => Err(ExactInputQuoteError::ReservePairWidth {
+            path_id: plan.path_id,
+            hop,
+            pool,
+            block: plan.block,
+            reserve0: answer.reserve0,
+            reserve1: answer.reserve1,
+        }),
+    }
+}
+
+/// One reserve word as the pool's `uint112` field — `None` when bits above
+/// position 112 are set.
+fn narrow_reserve(word: U256) -> Option<U112> {
+    if word > U112::MAX.to::<U256>() {
+        return None;
+    }
+    Some(word.to::<U112>())
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -380,24 +536,28 @@ mod tests {
 
     use alloy::primitives::{address, aliases::U112, Address, Bytes, U256};
     use degenbot_core::errors::{ProviderError, ProviderResult};
+    use degenbot_core::fee::fee_fraction;
     use degenbot_pools::solve::{HopType, MixedPoolRef, PoolHop};
     use degenbot_pools::{
-        PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams, V3PoolIdentity,
-        V4PoolIdentity, V4PoolKey,
+        PoolTickCoverage, RegisterAerodromeV2PoolParams, RegisterV3PoolParams,
+        RegisterV4PoolParams, V3PoolIdentity, V4PoolIdentity, V4PoolKey,
     };
     use degenbot_rpc::abi::{
-        selector, ContractRead, MAX_SQRT_RATIO_MINUS_ONE, MIN_SQRT_RATIO_PLUS_ONE, V3_QUOTER,
-        V4_QUOTER,
+        selector, ContractRead, V2Reserves, MAX_SQRT_RATIO_MINUS_ONE, MIN_SQRT_RATIO_PLUS_ONE,
+        V3_QUOTER, V4_QUOTER,
     };
     use degenbot_rpc::offline::OfflineProvider;
+    use degenbot_substrate::state_lock::LockSite;
     use degenbot_substrate::EpochDelta;
+    use degenbot_uniswap::dex_identity::DexVariant;
 
     use crate::arb_engine::path_info::exact_input_quote_plan;
     use crate::arb_engine::path_registry::PathRegistration;
     use crate::arb_engine::{ArbitrageEngine, EngineStages};
 
     use super::{
-        quote_exact_input_hops, ExactInputHop, ExactInputQuoteError, ProbeBlockContext,
+        narrow_reserve, narrow_reserves, quote_exact_input_hops, reserve_pair_anchor,
+        ExactInputHop, ExactInputQuoteError, ExactInputQuotePlan, ProbeBlockContext,
         ProbeQuoteTransport,
     };
 
@@ -427,6 +587,34 @@ mod tests {
     const HOOK: Address = address!("0x00000000000000000000000000000000000000c4");
     const POOL_MANAGER: Address = address!("0x000000000004444c5dc75cB358380D2e3dE08A90");
 
+    // ── the over-reported V2-first row ──
+
+    /// A WETH/USDC pair and a WBTC/USDC pair holding the MEASURED mainnet
+    /// reserves of the row whose in-process hops were priced one block ahead
+    /// (the addresses are fixtures; the reserves are the real ones).
+    const WETH_USDC_PAIR: Address = address!("0x00000000000000000000000000000000000000b4");
+    const WBTC_USDC_PAIR: Address = address!("0x0000000000000000000000000000000000000043");
+
+    /// The block the row's concentrated hop was quoted at and the EVM executed
+    /// at — the anchor every one of its hops must price at.
+    const ANCHOR: u64 = 26_410_810;
+
+    /// The block the engine's reserve-pair snapshots were seeded at: the node
+    /// head, one block ahead of the anchor.
+    const HEAD: u64 = 26_410_811;
+
+    /// Hop 0's WETH/USDC reserves at the anchor block and at the head block. The
+    /// head state is the anchor state after one USDC→WETH swap (1567.242473 USDC
+    /// in, 0.826849466573099054 WETH out); for a `1e15` WETH input the constant
+    /// product floors the anchor state to 1883749 and the head state to 1884417.
+    const HOP0_ANCHOR_RESERVES: (u128, u128) = (4_668_167_384_860_983_639_910, 8_820_117_875_000);
+    const HOP0_HEAD_RESERVES: (u128, u128) = (4_667_340_535_394_410_540_856, 8_821_685_117_473);
+
+    /// Hop 1's `(USDC, WBTC)` reserves, untouched by the swap above: the same
+    /// two reserves floor 1883749 → 2812 and 1884417 → 2813, so one whole WBTC
+    /// unit separates the anchor vector from the head-ahead one.
+    const HOP1_RESERVES: (u128, u128) = (45_446_079_957, 68_069_013);
+
     const GAMMA_03: u64 = 997;
     const FEE_DENOM_03: u64 = 1000;
     const SQRT_PRICE_1_1: u128 = 79_228_162_514_264_337_593_543_950_336;
@@ -448,12 +636,13 @@ mod tests {
 
     // ── the scripted transport ──
 
-    /// A calldata-keyed transport double: one canned answer per encoded
-    /// calldata, plus the calls and block-context reads it received. An answer is
-    /// only found under the exact bytes the seam produced, so a green quote
-    /// asserts the calldata the chain would receive.
+    /// An `(address, calldata)`-keyed transport double: one canned answer per
+    /// encoded call, plus the calls and block-context reads it received. An
+    /// answer is only found under the exact bytes the seam produced, addressed to
+    /// the contract the seam named — which is what lets one `getReserves()`
+    /// calldata answer differently per pair.
     struct ScriptedTransport {
-        answers: std::collections::HashMap<Vec<u8>, Result<Bytes, ProviderError>>,
+        answers: std::collections::HashMap<(Address, Vec<u8>), Result<Bytes, ProviderError>>,
         calls: Mutex<Vec<(Address, Bytes, u64)>>,
         contexts: Mutex<Vec<u64>>,
         context: ProbeBlockContext,
@@ -486,13 +675,14 @@ mod tests {
             }
         }
 
-        fn answer(mut self, calldata: Vec<u8>, response: Vec<u8>) -> Self {
-            self.answers.insert(calldata, Ok(Bytes::from(response)));
+        fn answer(mut self, to: Address, calldata: Vec<u8>, response: Vec<u8>) -> Self {
+            self.answers
+                .insert((to, calldata), Ok(Bytes::from(response)));
             self
         }
 
-        fn fail(mut self, calldata: Vec<u8>, error: ProviderError) -> Self {
-            self.answers.insert(calldata, Err(error));
+        fn fail(mut self, to: Address, calldata: Vec<u8>, error: ProviderError) -> Self {
+            self.answers.insert((to, calldata), Err(error));
             self
         }
 
@@ -514,12 +704,16 @@ mod tests {
         ) -> impl std::future::Future<Output = ProviderResult<Bytes>> + Send {
             let block = block.expect("an exact-input quote always pins its block");
             self.calls.lock().unwrap().push((to, data.clone(), block));
-            let answer = self.answers.get(data.as_ref()).cloned().unwrap_or_else(|| {
-                Err(ProviderError::ExecutionReverted {
-                    code: -32000,
-                    message: "no canned answer for this calldata".into(),
-                })
-            });
+            let answer = self
+                .answers
+                .get(&(to, data.to_vec()))
+                .cloned()
+                .unwrap_or_else(|| {
+                    Err(ProviderError::ExecutionReverted {
+                        code: -32000,
+                        message: "no canned answer for this calldata".into(),
+                    })
+                });
             std::future::ready(answer)
         }
     }
@@ -591,6 +785,16 @@ mod tests {
         out
     }
 
+    /// `getReserves()`'s calldata (the reserve-pair anchor read) and the
+    /// `(uint112, uint112, uint32)` tuple a pair answers it with.
+    fn get_reserves_calldata() -> Vec<u8> {
+        selector(b"getReserves()").to_vec()
+    }
+
+    fn reserves_answer(reserve0: U256, reserve1: U256) -> Vec<u8> {
+        words(&[reserve0, reserve1, U256::ZERO])
+    }
+
     fn words(values: &[U256]) -> Vec<u8> {
         let mut out = Vec::with_capacity(values.len() * 32);
         for value in values {
@@ -601,23 +805,48 @@ mod tests {
 
     // ── fixture pools + paths ──
 
+    /// Register a reserve-pair fixture holding `(reserve0, reserve1)` with its
+    /// snapshot stamped at `block` — the state a quote plan carries for it.
+    fn register_v2_at(
+        engine: &mut ArbitrageEngine,
+        address: Address,
+        reserve0: U112,
+        reserve1: U112,
+        block: u64,
+    ) -> u64 {
+        let pool_id = engine.register_v2_pool(address, reserve0, reserve1, GAMMA_03, FEE_DENOM_03);
+        assert_eq!(
+            engine
+                .core()
+                .write_at(LockSite::Solver)
+                .apply_sync_by_pool_id(pool_id, reserve0, reserve1, block),
+            Some(pool_id),
+            "the fixture snapshot lands on a reserve-pair pool"
+        );
+        pool_id
+    }
+
+    fn u112(value: u128) -> U112 {
+        U256::from(value).to::<U112>()
+    }
+
     fn register_v2(engine: &mut ArbitrageEngine) -> u64 {
-        engine.register_v2_pool(
+        register_v2_at(
+            engine,
             address!("0x0000000000000000000000000000000000000002"),
             usdc(1_500_000),
             weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
+            PIN,
         )
     }
 
     fn register_v2_twin(engine: &mut ArbitrageEngine) -> u64 {
-        engine.register_v2_pool(
+        register_v2_at(
+            engine,
             address!("0x0000000000000000000000000000000000000009"),
             usdc(1_600_000),
             weth(820),
-            GAMMA_03,
-            FEE_DENOM_03,
+            PIN,
         )
     }
 
@@ -687,8 +916,12 @@ mod tests {
         })
     }
 
+    fn plan_at(engine: &ArbitrageEngine, path_id: u64, block: u64) -> super::ExactInputQuotePlan {
+        exact_input_quote_plan(engine, path_id, block).expect("the plan projects")
+    }
+
     fn plan(engine: &ArbitrageEngine, path_id: u64) -> super::ExactInputQuotePlan {
-        exact_input_quote_plan(engine, path_id, PIN).expect("the plan projects")
+        plan_at(engine, path_id, PIN)
     }
 
     // ── one mixed path, each family through its own owner ──
@@ -723,6 +956,7 @@ mod tests {
         let v4_out = U256::from(555u64);
         let transport = ScriptedTransport::new(PIN)
             .answer(
+                V3_QUOTER,
                 v3_calldata(
                     WBTC,
                     WETH,
@@ -733,6 +967,7 @@ mod tests {
                 words(&[v3_out]),
             )
             .answer(
+                V4_QUOTER,
                 v4_calldata(&key, true, v3_out),
                 words(&[v4_out, U256::from(31_000u64)]),
             );
@@ -764,7 +999,11 @@ mod tests {
         );
 
         let calls = transport.calls();
-        assert_eq!(calls.len(), 2, "the V2 hop makes no RPC call");
+        assert_eq!(
+            calls.len(),
+            2,
+            "the V2 hop prices the snapshot stamped with the plan's block: no RPC call"
+        );
         assert_eq!(calls[0].0, V3_QUOTER);
         assert_eq!(calls[1].0, V4_QUOTER);
         assert!(calls.iter().all(|(_, _, block)| *block == PIN));
@@ -804,6 +1043,7 @@ mod tests {
         let v4_out = U256::from(533_549_005_056u64);
         let transport = ScriptedTransport::new(PIN)
             .answer(
+                V3_QUOTER,
                 v3_calldata(
                     WETH,
                     WBTC,
@@ -814,6 +1054,7 @@ mod tests {
                 words(&[v3_out]),
             )
             .answer(
+                V4_QUOTER,
                 v4_calldata(&key, false, v3_out),
                 words(&[v4_out, U256::from(58_710u64)]),
             );
@@ -958,6 +1199,7 @@ mod tests {
         let path_id = store_path(&mut engine, &[(HopType::V3, v3, true)]);
         let amount_in = U256::from(1_000_000u64);
         let transport = ScriptedTransport::new(PIN).fail(
+            V3_QUOTER,
             v3_calldata(
                 WBTC,
                 WETH,
@@ -1104,6 +1346,7 @@ mod tests {
         // The same pool through a transport that answers the hooked key quotes
         // the hooked calldata: the hook address is in the key the chain sees.
         let transport = ScriptedTransport::new(PIN).answer(
+            V4_QUOTER,
             v4_calldata(
                 &v4_key(Address::ZERO, USDC, HOOK),
                 true,
@@ -1193,14 +1436,22 @@ mod tests {
         }
     }
 
-    /// A V2 hop prices the state SNAPSHOTTED with the plan, and makes no RPC
-    /// call: the vector belongs to the block it was planned for.
+    /// The snapshot fast path: a hop whose own block stamp IS the plan's block
+    /// prices the snapshot it holds, with no `getReserves()` call at all.
     #[tokio::test]
-    async fn a_v2_hop_prices_the_snapshot_the_plan_holds() {
+    async fn a_v2_hop_stamped_with_the_plan_block_prices_with_no_io() {
         let mut engine = ArbitrageEngine::new();
         let v2 = register_v2(&mut engine);
         let path_id = store_path(&mut engine, &[(HopType::V2, v2, true)]);
         let plan = plan(&engine, path_id);
+        match &plan.hops[0] {
+            ExactInputHop::InProcess(hop) => assert_eq!(
+                reserve_pair_anchor(&hop.entry).map(|(_, stamp)| stamp),
+                Some(PIN),
+                "the fixture snapshot is stamped with the plan's block"
+            ),
+            other => panic!("expected an in-process hop, got {other:?}"),
+        }
 
         let amount_in = U256::from(1_000_000u64);
         let transport = ScriptedTransport::new(PIN);
@@ -1215,6 +1466,275 @@ mod tests {
                 U256::from(weth(800))
             )]
         );
-        assert!(transport.calls().is_empty(), "no RPC call for a V2 hop");
+        assert!(
+            transport.calls().is_empty(),
+            "a snapshot already stamped with the plan's block needs no read"
+        );
+    }
+
+    // ── the reserve-pair anchor ──
+
+    /// The over-report that reverted the V2-first rows, at the seam that produced
+    /// it: a plan at block N whose reserve-pair snapshots were seeded at N+1 must
+    /// price N.
+    ///
+    /// The reserves are the failing row's measured states (see the fixture
+    /// constants): the head-ahead snapshot vector is `[1884417, 2813]` and the
+    /// anchor vector is `[1883749, 2812]`. The 2813 is what the V3 flash demanded
+    /// back and the 2812 is what the callback delivered — one WBTC unit, one
+    /// state.
+    #[tokio::test]
+    async fn a_plan_block_quote_prices_the_anchor_reserves_not_a_head_ahead_snapshot() {
+        let mut engine = ArbitrageEngine::new();
+        let first = register_v2_at(
+            &mut engine,
+            WETH_USDC_PAIR,
+            u112(HOP0_HEAD_RESERVES.0),
+            u112(HOP0_HEAD_RESERVES.1),
+            HEAD,
+        );
+        let second = register_v2_at(
+            &mut engine,
+            WBTC_USDC_PAIR,
+            u112(HOP1_RESERVES.0),
+            u112(HOP1_RESERVES.1),
+            HEAD,
+        );
+        let path_id = store_path(
+            &mut engine,
+            &[(HopType::V2, first, true), (HopType::V2, second, true)],
+        );
+        let amount_in = U256::from(1_000_000_000_000_000u64);
+
+        // What the snapshots alone produce: the vector the failing request
+        // carried. Both hops are stamped with that block, so the fast path
+        // answers with no read at all.
+        let head_transport = ScriptedTransport::new(HEAD);
+        let head_quote =
+            quote_exact_input_hops(&plan_at(&engine, path_id, HEAD), &head_transport, amount_in)
+                .await
+                .expect("the snapshot-stamped plan prices in process");
+        assert_eq!(
+            head_quote.consumed_inputs,
+            vec![amount_in, U256::from(1_884_417u64)]
+        );
+        assert_eq!(
+            head_quote.hop_outputs,
+            vec![U256::from(1_884_417u64), U256::from(2_813u64)],
+            "the head state floors hop 1 to the 2813 the failing row demanded"
+        );
+        assert!(
+            head_transport.calls().is_empty(),
+            "the mismatched-state vector is the snapshot's own: no read was made"
+        );
+
+        // At the plan's block the same two pairs answer the anchor state.
+        let transport = ScriptedTransport::new(ANCHOR)
+            .answer(
+                WETH_USDC_PAIR,
+                get_reserves_calldata(),
+                reserves_answer(
+                    U256::from(HOP0_ANCHOR_RESERVES.0),
+                    U256::from(HOP0_ANCHOR_RESERVES.1),
+                ),
+            )
+            .answer(
+                WBTC_USDC_PAIR,
+                get_reserves_calldata(),
+                reserves_answer(U256::from(HOP1_RESERVES.0), U256::from(HOP1_RESERVES.1)),
+            );
+        let quote =
+            quote_exact_input_hops(&plan_at(&engine, path_id, ANCHOR), &transport, amount_in)
+                .await
+                .expect("the anchor plan prices from the chain's own answer");
+        assert_eq!(quote.block, ANCHOR);
+        assert_eq!(
+            quote.consumed_inputs,
+            vec![amount_in, U256::from(1_883_749u64)],
+            "hop 1 consumes hop 0's ANCHOR output, not the snapshot's"
+        );
+        assert_eq!(
+            quote.hop_outputs,
+            vec![U256::from(1_883_749u64), U256::from(2_812u64)],
+            "the anchor state floors hop 1 to the 2812 the callback delivered"
+        );
+        let calls = transport.calls();
+        assert_eq!(calls.len(), 2, "one anchor read per in-process hop");
+        assert_eq!(calls[0].0, WETH_USDC_PAIR);
+        assert_eq!(calls[1].0, WBTC_USDC_PAIR);
+        assert_eq!(
+            calls[0].1.as_ref(),
+            get_reserves_calldata().as_slice(),
+            "the anchor read is the pair's own getReserves()"
+        );
+        assert!(
+            calls.iter().all(|(_, _, block)| *block == ANCHOR),
+            "every hop reads AT the plan's block — never the snapshot's {HEAD}"
+        );
+    }
+
+    /// The Aerodrome reserve-pair family is anchored by the same row: its
+    /// `getReserves()` is read at the plan's block, and the production math
+    /// prices the anchor state.
+    #[tokio::test]
+    async fn an_aerodrome_v2_hop_is_anchored_at_the_plan_block() {
+        let pair = address!("0x00000000000000000000000000000000000000ad");
+        let snapshot_reserves = (1_500_000u128, 800u128);
+        let anchor_reserves = (1_400_000u128, 900u128);
+        let mut engine = ArbitrageEngine::new();
+        let pool_id = engine
+            .core()
+            .write_at(LockSite::Solver)
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: pair,
+                token0: Address::ZERO,
+                token1: Address::ZERO,
+                factory: Address::ZERO,
+                variant: DexVariant::AerodromeV2Volatile,
+                stable: false,
+                fee: fee_fraction(3, FEE_DENOM_03),
+                token0_decimals: 6,
+                token1_decimals: 18,
+                reserve0: u112(snapshot_reserves.0),
+                reserve1: u112(snapshot_reserves.1),
+                update_block: HEAD,
+            })
+            .expect("register the Aerodrome fixture");
+        let path_id = store_path(&mut engine, &[(HopType::V2, pool_id, true)]);
+        let amount_in = U256::from(1_000_000u64);
+
+        let transport = ScriptedTransport::new(ANCHOR).answer(
+            pair,
+            get_reserves_calldata(),
+            reserves_answer(U256::from(anchor_reserves.0), U256::from(anchor_reserves.1)),
+        );
+        let quote =
+            quote_exact_input_hops(&plan_at(&engine, path_id, ANCHOR), &transport, amount_in)
+                .await
+                .expect("the Aerodrome hop quotes");
+
+        let anchor_out = constant_product(
+            amount_in,
+            U256::from(anchor_reserves.0),
+            U256::from(anchor_reserves.1),
+        );
+        let snapshot_out = constant_product(
+            amount_in,
+            U256::from(snapshot_reserves.0),
+            U256::from(snapshot_reserves.1),
+        );
+        assert_ne!(anchor_out, snapshot_out, "the two states price differently");
+        assert_eq!(
+            quote.hop_outputs,
+            vec![anchor_out],
+            "the hop prices the anchor state, not the snapshot"
+        );
+        let calls = transport.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, pair);
+        assert_eq!(calls[0].2, ANCHOR);
+    }
+
+    /// An unreadable anchor is a typed refusal that names the hop, the pair and
+    /// the block — never a quiet fall back to the snapshot, whose vector would
+    /// have over-reported.
+    #[tokio::test]
+    async fn an_unreadable_anchor_is_refused_rather_than_priced_from_the_snapshot() {
+        let mut engine = ArbitrageEngine::new();
+        let pair = register_v2_at(
+            &mut engine,
+            WETH_USDC_PAIR,
+            u112(HOP0_HEAD_RESERVES.0),
+            u112(HOP0_HEAD_RESERVES.1),
+            HEAD,
+        );
+        let path_id = store_path(&mut engine, &[(HopType::V2, pair, true)]);
+        let amount_in = U256::from(1_000_000_000_000_000u64);
+        let transport = ScriptedTransport::new(ANCHOR).fail(
+            WETH_USDC_PAIR,
+            get_reserves_calldata(),
+            ProviderError::ExecutionReverted {
+                code: -32000,
+                message: "state pruned".into(),
+            },
+        );
+
+        let error =
+            quote_exact_input_hops(&plan_at(&engine, path_id, ANCHOR), &transport, amount_in)
+                .await
+                .unwrap_err();
+        match error {
+            ExactInputQuoteError::ReservePairAnchor {
+                path_id: refused,
+                hop,
+                pool,
+                block,
+                source,
+            } => {
+                assert_eq!(refused, path_id);
+                assert_eq!(hop, 0, "the refusal names the hop that raised it");
+                assert_eq!(pool, WETH_USDC_PAIR);
+                assert_eq!(block, ANCHOR);
+                assert!(matches!(source, ProviderError::ExecutionReverted { .. }));
+            }
+            other => panic!("expected the anchor refusal, got {other:?}"),
+        }
+        assert!(
+            transport.contexts().is_empty(),
+            "a refused quote never reaches its block context"
+        );
+        // The snapshot alone would have answered the over-reported 1884417.
+        assert_eq!(
+            constant_product(
+                amount_in,
+                U256::from(HOP0_HEAD_RESERVES.0),
+                U256::from(HOP0_HEAD_RESERVES.1)
+            ),
+            U256::from(1_884_417u64)
+        );
+    }
+
+    /// A reserve wider than the pool's `uint112` field is refused, never
+    /// saturated: an anchor answer that cannot be stored is not a price.
+    #[test]
+    fn an_anchor_answer_wider_than_uint112_is_refused() {
+        let quote_plan = ExactInputQuotePlan {
+            path_id: 7,
+            block: ANCHOR,
+            hops: Vec::new(),
+        };
+        let oversize = U112::MAX.to::<U256>() + U256::from(1u8);
+        let error = narrow_reserves(
+            &quote_plan,
+            1,
+            WETH_USDC_PAIR,
+            V2Reserves {
+                reserve0: oversize,
+                reserve1: U256::from(1u8),
+            },
+        )
+        .unwrap_err();
+        match error {
+            ExactInputQuoteError::ReservePairWidth {
+                path_id,
+                hop,
+                pool,
+                block,
+                reserve0,
+                ..
+            } => {
+                assert_eq!(path_id, 7);
+                assert_eq!(hop, 1);
+                assert_eq!(pool, WETH_USDC_PAIR);
+                assert_eq!(block, ANCHOR);
+                assert_eq!(reserve0, oversize);
+            }
+            other => panic!("expected the width refusal, got {other:?}"),
+        }
+        assert_eq!(
+            narrow_reserve(U112::MAX.to::<U256>()),
+            Some(U112::MAX),
+            "the field's own maximum is not wider than the field"
+        );
     }
 }

@@ -439,8 +439,9 @@ impl EngineStages {
     ///
     /// The answer is the per-hop amount vector the input produces plus the
     /// anchor's block context, derived by each family's own owner: a
-    /// reserve-pair hop through the production pool math over the state
-    /// snapshotted for this call, a V3/V4 hop through the chain's canonical
+    /// reserve-pair hop through the production pool math over that pair's
+    /// reserves AT `block` (the snapshot when it was taken there, otherwise the
+    /// pair's own `getReserves()`), a V3/V4 hop through the chain's canonical
     /// quoter at `block` (a V4 hop carrying its whole pool key, hook included).
     ///
     /// The engine lock is held only for the plan (one core read), never across
@@ -450,8 +451,9 @@ impl EngineStages {
     ///
     /// [`ExactInputQuoteError`]: the path is unregistered, a hop's pool is
     /// unregistered, a hop has no exact-input arm, the in-process math refuses a
-    /// hop, the canonical quoter refuses a hop, or the anchor's block context
-    /// cannot be read.
+    /// hop, a reserve-pair hop's reserves at `block` cannot be read or do not fit
+    /// its `uint112` fields, the canonical quoter refuses a hop, or the anchor's
+    /// block context cannot be read.
     pub async fn quote_exact_input_path<T: ProbeQuoteTransport>(
         &self,
         transport: &T,

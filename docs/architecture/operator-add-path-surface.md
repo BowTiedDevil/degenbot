@@ -319,15 +319,21 @@ own family's owner:
 
 | Hop family | Owner |
 | --- | --- |
-| Reserve pair (V2 / Aerodrome V2) | `degenbot_pools::simulate_swap` over the pool entry SNAPSHOTTED when the quote's plan was built — the same production pool math the solver and the Python companion read |
+| Reserve pair (V2 / Aerodrome V2) | `degenbot_pools::simulate_swap` over that pair's reserves AT the quote's block — the plan's snapshot when it was stamped with that block, the pair's own `getReserves()` when it was not — the same production pool math the solver and the Python companion read |
 | V3 | the canonical v3-periphery `Quoter` (`0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6`) at the quote's block |
 | V4 (hook included) | the canonical v4-periphery `Quoter` (`0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203`) at the quote's block, with the pool's WHOLE key — hook address included — in the calldata |
 
 The vector and its block context belong to ONE block: every quoter call is pinned
-to it, the reserve-pair snapshot is taken for it, and the request's
-`current_block` / `base_fee_next` / `block_timestamp` are read at it. A refusal
-(a quoter revert, a partial fill, an unregistered pool) is typed and stops the
-call — a probe never runs on a partial vector.
+to it, every reserve-pair hop prices that pair's reserves read at it, and the
+request's `current_block` / `base_fee_next` / `block_timestamp` are read at it. A
+reserve-pair snapshot carrying another block stamp — the node head a registration
+was seeded at, an adjacent block's sync — is NOT that block's state, so the hop
+reads the pair's `getReserves()` at the anchor instead, with the answer's
+`uint112` fields checked rather than saturated. One block of reserve drift moves a
+whole unit of the next token (every quoted amount is a floor), which is why a
+mismatched snapshot is never a fallback. A refusal (a quoter revert, an unreadable
+or over-wide reserve answer, a partial fill, an unregistered pool) is typed and
+stops the call — a probe never runs on a partial vector.
 
 The Python adapter this replaced is DELETED, not aliased:
 

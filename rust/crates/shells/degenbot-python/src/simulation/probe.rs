@@ -434,8 +434,9 @@ impl PyProbeExecutor {
 ///
 /// This is the operator surface's only quote call: the core's exact-input quote
 /// interface does the derivation (`EngineStages::quote_exact_input_path`) — the
-/// reserve-pair hop through the production pool math, the V3/V4 hops through the
-/// canonical on-chain quoters at `current_block` — and this wrapper only narrows
+/// reserve-pair hop through the production pool math over that pair's reserves at
+/// `current_block`, the V3/V4 hops through the canonical on-chain quoters at
+/// `current_block` — and this wrapper only narrows
 /// the answer into the request the typed probe protocol already accepts.
 ///
 /// The returned request's `hop_outputs` / `consumed_inputs` are one entry per
@@ -459,8 +460,9 @@ impl PyProbeExecutor {
 /// 128-bit fields.
 ///
 /// `RuntimeError`: A hop's pool is not registered, the in-process pool math
-/// refuses a hop, the canonical quoter refuses a hop, or the block context
-/// cannot be read.
+/// refuses a hop, a reserve-pair hop's reserves at `current_block` cannot be
+/// read (or are wider than the pool's `uint112` fields), the canonical quoter
+/// refuses a hop, or the block context cannot be read.
 #[pyfunction]
 #[pyo3(signature = (engine, provider, path_id, optimal_input, current_block))]
 pub fn quote_execution_probe_py<'py>(
@@ -507,7 +509,8 @@ pub fn quote_execution_probe_py<'py>(
 ///
 /// A malformed ASK (an unregistered path, a family with no quote arm, an amount
 /// the protocol cannot carry) is a `ValueError`; a refusal the WORLD produced (a
-/// missing pool, a pool-math refusal, a quoter revert, an unreadable block) is a
+/// missing pool, a pool-math refusal, an unreadable reserve-pair anchor or one
+/// wider than the pool's fields, a quoter revert, an unreadable block) is a
 /// `RuntimeError`. The distinction is the caller's: the first is a request the
 /// operator can correct, the second is an answer they cannot.
 fn quote_error_to_py(error: &ExactInputQuoteError) -> PyErr {
@@ -518,6 +521,8 @@ fn quote_error_to_py(error: &ExactInputQuoteError) -> PyErr {
         ExactInputQuoteError::UnsupportedHop { .. }
         | ExactInputQuoteError::PoolNotRegistered { .. }
         | ExactInputQuoteError::PoolMath { .. }
+        | ExactInputQuoteError::ReservePairAnchor { .. }
+        | ExactInputQuoteError::ReservePairWidth { .. }
         | ExactInputQuoteError::HopQuote { .. }
         | ExactInputQuoteError::BlockContext { .. } => PyRuntimeError::new_err(format!(
             "probe_path: the exact-input quote was refused: {error}"

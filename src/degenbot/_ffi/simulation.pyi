@@ -1232,8 +1232,9 @@ def quote_execution_probe_py(
 
     This is the operator surface's only quote call: the core's exact-input quote
     interface does the derivation (`EngineStages::quote_exact_input_path`) — the
-    reserve-pair hop through the production pool math, the V3/V4 hops through the
-    canonical on-chain quoters at `current_block` — and this wrapper only narrows
+    reserve-pair hop through the production pool math over that pair's reserves at
+    `current_block`, the V3/V4 hops through the canonical on-chain quoters at
+    `current_block` — and this wrapper only narrows
     the answer into the request the typed probe protocol already accepts.
 
     The returned request's `hop_outputs` / `consumed_inputs` are one entry per
@@ -1257,8 +1258,9 @@ def quote_execution_probe_py(
     128-bit fields.
 
     `RuntimeError`: A hop's pool is not registered, the in-process pool math
-    refuses a hop, the canonical quoter refuses a hop, or the block context
-    cannot be read.
+    refuses a hop, a reserve-pair hop's reserves at `current_block` cannot be
+    read (or are wider than the pool's `uint112` fields), the canonical quoter
+    refuses a hop, or the block context cannot be read.
     """
 
 def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: bytes) -> dict:
