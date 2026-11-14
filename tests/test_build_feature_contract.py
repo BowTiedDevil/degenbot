@@ -20,9 +20,9 @@ DEVELOPMENT_FEATURES = [
     "degenbot-bot/hotpath",
     "degenbot-bot/hotpath-prometheus",
     "degenbot-pools/hotpath",
-    "degenbot-bot/allocator-ctrl",
+    # The system allocator is the development default; allocator-ctrl and
+    # mimalloc are explicit A/B opt-ins, not part of the canonical alias.
     "otel",
-    "mimalloc",
 ]
 
 
