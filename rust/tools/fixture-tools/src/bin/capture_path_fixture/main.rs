@@ -11,10 +11,29 @@
 //! Config resolution follows ADR-062 exactly: the node URI comes from
 //! `--node` / `DEGENBOT_RPC_*` / the `nodes.*` tables — nothing is hardcoded.
 //!
+//! # Home
+//!
+//! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in the
+//! facade's `examples/`: it is fixture tooling, not a consumer starting point (the epic's
+//! taxonomy). Nothing about the recapture changed with that move — the V2 scalar read,
+//! the V3 `TickLens` / bitmap scan (and its `--tick-lens` / `--scan` validation), the V4
+//! StateView read and its `--state-view` override, the Multicall3 batching, the
+//! configured-node resolution, the authored identity/narrative preservation, the canonical
+//! serde output, the argv surface, the exit codes, and the repeatable fixture arguments all
+//! travelled with the source; only the invocation did. It needs NO feature lane: it opens
+//! no statement ledger and no operator database, so it builds under this package's default
+//! features and `just check-dev-tools default` is the lane that builds it.
+//!
+//! It resolves no fixture home itself — every fixture is an explicit positional argv path,
+//! read and rewritten where the operator names it — so the move needed no repository-root
+//! re-anchor and no `--fixtures-home` (inventing one would have changed the argv surface and
+//! the meaning of a relative path).
+//!
 //! Usage:
 //!
-//!     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
-//!         --example capture_path_fixture -- [--check] [--scan lens|bitmap] \
+//!     cargo run --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-fixture-tools --bin capture_path_fixture \
+//!         -- [--check] [--scan lens|bitmap] \
 //!         [--tick-lens <addr>] [--state-view <addr>] <fixture.json>...
 //!
 //! `--tick-lens` names the TickLens deployment to scan V3 word ranges through
@@ -22,8 +41,15 @@
 //! (defaults to the canonical mainnet deployment the corpus recorded).
 //! `--check` reports drifted state keys and exits 1 on any; the default mode
 //! rewrites each fixture with canonical serde_json formatting.
+//!
+//! The write-versus-check contract is unchanged. The default arm is the LIVE one: it reads
+//! every scalar and tick through the node and rewrites each named fixture with canonical
+//! serde formatting (`fs::write`). `--check` is non-mutating — it computes the same refresh,
+//! prints one verdict per file and the drifted state keys, writes nothing, and exits 1 on
+//! any drift — but it still needs the node, so in an offline gate report it is a compile
+//! lane, never an executed check.
 
-// Run-once diagnostic example: stdout/stderr reports ARE its interface, its
+// Run-once diagnostic tool: stdout/stderr reports ARE its interface, its
 // prose names CLI flags and deployments that pedantry would backtick, and the
 // main loop reads clearer as one body than behind extraction helpers.
 #![expect(

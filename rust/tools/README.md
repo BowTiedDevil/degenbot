@@ -4,7 +4,7 @@
 The catalog landed as task `01` (ergo `2VLTDD`); the package scaffold landed as
 task `02` (ergo `CUP3KB`) — three non-publishable tool packages, their workspace
 membership, their support libraries, and the `just check-dev-tools` lanes, all
-described in §6.2. Four fixture slices have landed since, all in task `03`:
+described in §6.2. Five fixture slices have landed since, all in task `03`:
 
 | Slice | Rows landed | Where |
 | --- | --- | --- |
@@ -12,16 +12,20 @@ described in §6.2. Four fixture slices have landed since, all in task `03`:
 | `6DAEEE` | the two live Aave span recorders — `generate_aave_upgrade_windows`, `generate_aave_config_windows` | §6.4 |
 | `MCV3JU` | the live updater cassette recorder — `record_updater_cassette` | §6.5 |
 | `FT3KUP` | the Python oracle corpus recorder — `record_py_oracle_corpus` | §6.6 |
+| `ZWV3MH` | the path-fixture recapture — `capture_path_fixture` | §6.7 |
 
-Cargo metadata now reports **38 example targets** (only those six left the example
-surface) and `degenbot-fixture-tools` reports its lib plus exactly **six** `[[bin]]`
-targets. The other **three** §4.2 rows are still examples — no other recorder, no
+Cargo metadata now reports **37 example targets** (only those seven left the example
+surface) and `degenbot-fixture-tools` reports its lib plus exactly **seven** `[[bin]]`
+targets. The other **two** §4.2 rows are still examples — no other recorder, no
 other program, and no capture generator moved — and **no fixture byte changed** in
-any of the four slices: each was re-proved byte-identical by its own offline
+any of the five slices. Each offline participant was re-proved byte-identical by its own
 re-derivation (the two capture recipes plus, for the cassette recorder,
 `record_updater_cassette --check <cassette.json>...` over every committed cassette in
 `tests/fixtures/cassettes/`), and every red path was shown against a **temporary
-mutated copy**, never against the committed corpus.
+mutated copy**, never against the committed corpus. The seventh slice moved no fixture at
+all (`git status --short -- tests/fixtures` empty): its recapture arms read the chain and
+need a live archive node, so the honest report there is a compile lane, not a
+re-derivation.
 
 The workspace accumulated 44 Cargo example targets whose purposes are three different
 things: a *supported consumer starting point*, a *durable assertion someone must gate*, and
@@ -138,8 +142,8 @@ no script file is added for it).
 destination package and the `Destination` cell says `landed`, because that is the state a
 reader (and the §4.6.1 union audit) has to be able to check. Every not-yet-moved row keeps
 its current package and its planned destination, exactly as before. The move also means the
-*original* population is still 44 rows while the *example* population is 38 — the six
-diagnostics that differ are exactly the six landed rows (§4.6).
+*original* population is still 44 rows while the *example* population is 37 — the seven
+diagnostics that differ are exactly the seven landed rows (§4.6).
 
 <!-- ledger:begin -->
 
@@ -153,11 +157,11 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 | `solve_path_probe` | `degenbot-pools` | retain | `crates/foundation/degenbot-pools/examples/solve_path_probe.rs` | consumer (ii) solve-door probe (see §3) | — | none | stdout | `just check-consumer-probes` |
 | `foreign_consumer` | `degenbot-execution-sample` | retain | `examples/degenbot-execution-sample/examples/foreign_consumer.rs` | foreign `ExecutionAdapter` seam sample (see §3) | — | none | stdout | `cargo run -p degenbot-execution-sample --example foreign_consumer` |
 
-### 4.2 Fixture recorders and test-input generators — `degenbot-fixture-tools` (task 03: 6 rows landed, 3 still examples)
+### 4.2 Fixture recorders and test-input generators — `degenbot-fixture-tools` (task 03: 7 rows landed, 2 still examples)
 
 | Target | Package | Destination | Current path (under `rust/`) | Purpose | Features | Needs | I/O and write behavior | Verification route |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `capture_path_fixture` | `degenbot` | fixture-tools (03) | `crates/facade/degenbot/examples/capture_path_fixture.rs` | Recapture a path-investigation fixture's recorded state from the chain at its `target_block` (V3 ticks word-wise via `TickLens` or bitmap, V4 through the pool StateView, all batched over Multicall3); authored identity and narrative stay verbatim | — | LIVE archive node resolved per ADR-062 (`--node`, `DEGENBOT_RPC_*`, `nodes.*`), plus the committed path fixtures | Default mode REWRITES each fixture JSON with canonical serde formatting (`fs::write`); `--check` writes nothing and exits 1 on drifted state keys | `cargo run -p degenbot-fixture-tools --bin capture_path_fixture -- --check <fixture.json>...`; the fixture schema is owned by `crates/facade/degenbot/src/investigation/fixture.rs` and documented in `docs/architecture/investigation-harness.md` |
+| `capture_path_fixture` | `degenbot-fixture-tools` | fixture-tools (03, **landed**) | `tools/fixture-tools/src/bin/capture_path_fixture/main.rs` | Recapture a path-investigation fixture's recorded state from the chain at its `target_block` (V2 scalars, V3 ticks word-wise via `TickLens` or bitmap, V4 through the pool StateView, all batched over Multicall3); authored identity and narrative stay verbatim — unchanged by the move from `degenbot`'s examples | — (**no `required-features`**: it reads no statement ledger and opens no operator DB, so it is a DEFAULT-features target that `just check-dev-tools default` builds) | LIVE archive node resolved per ADR-062 (`--node`, `DEGENBOT_RPC_*`, `nodes.*`), plus the committed path fixtures, each named as an explicit positional argv path (no fixture home is derived, so no `--fixtures-home` exists) | Default mode REWRITES each named fixture JSON with canonical serde formatting (`fs::write`); `--check` writes nothing and exits 1 on drifted state keys | `cargo run -p degenbot-fixture-tools --bin capture_path_fixture -- [--check] <fixture.json>...` (no recipe: both arms read the chain, so in CI this row is a **compile lane only**). The fixture schema and the recapture library stay owned by `crates/facade/degenbot/src/investigation/{fixture,capture,chain_capture}.rs`, documented in `docs/architecture/investigation-harness.md`; offline consumers of that schema: `crates/facade/degenbot/tests/tier3_*` |
 | `generate_aave_adversarial_captures` | `degenbot-fixture-tools` | fixture-tools (03, **landed**) | `tools/fixture-tools/src/bin/generate_aave_adversarial_captures/main.rs` | Generate the wave-3 aave-side adversarial goldens node-free (three scenarios over the ScratchEvm/frame-replay seam, real `run_aave_update` chunk loop); determinism asserted by generating twice byte-identically — unchanged by the move from `degenbot`'s examples | `sql-ledger` (the `[[bin]]` `required-features` on the tool package) | offline; committed `tests/fixtures/cassettes/wave3` + `tests/fixtures/sql_goldens/wave3`, resolved once from the repository root (`--fixtures-home <dir>` re-points both homes at a copy) | (Re)writes both fixture homes (`create_dir_all` + `fs::write`) in default mode; `--check` compares the regenerated bytes and exits 1 on any drift, writing nothing — red-path evidence runs against a temporary mutated copy | `just check-aave-captures` → `cargo run -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3`; offline consumer = `crates/integrations/degenbot-aave/tests/wave3_capture_replay.rs` |
 | `generate_aave_config_windows` | `degenbot-fixture-tools` | fixture-tools (03, **landed**) | `tools/fixture-tools/src/bin/generate_aave_config_windows/main.rs` | Record the wave-5 Aave config-dispatch span cassettes from the live chain (six formerly-fenced events), each window driving the real multi-chunk loop over `RecordingTransport`, then replaying through the statement ledger | `sql-ledger` | LIVE node (`--node`, `DEGENBOT_RPC_HTTP_CHAINID_1`); committed wave-5 cassette + golden homes | (Re)writes cassettes, per-chunk statement ledger, and the canonical DB dump; every window recorded twice for byte-identity; `--check <cassette_home> <golden_home>` | `cargo run -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_config_windows -- [--check] [--node <uri>]` (no recipe: the recorder needs a node). Offline owner: `crates/integrations/degenbot-aave/tests/wave5_config_span_replay.rs` (plus `tests/fixtures/cassettes/wave5/CONFIG-SPAN-MAP.md` provenance). The drift gate re-records from a live node, so in CI this row is a **compile lane only** — never claim a live revalidation from it |
 | `generate_aave_upgrade_windows` | `degenbot-fixture-tools` | fixture-tools (03, **landed**) | `tools/fixture-tools/src/bin/generate_aave_upgrade_windows/main.rs` | Record the wave-4 Aave upgrade-span cassettes from the live chain; substrate from the chain's current reserve set (`resolve_aave_substrate`), same record-twice determinism contract | `sql-ledger` | LIVE node (`--node`, `DEGENBOT_RPC_HTTP_CHAINID_1`); committed wave-4 homes | Same write/`--check` shape as the wave-5 recorder | `cargo run -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_upgrade_windows -- [--check] [--node <uri>]` (no recipe: the recorder needs a node). Offline owner: `crates/integrations/degenbot-aave/tests/wave4_upgrade_span_replay.rs`; **compile lane only** in CI |
@@ -264,7 +268,7 @@ revision, the acceptance is §8.2's restatement — same logic and same empty di
 ### 4.6.1 The post-migration audit — one ledger row, one live target
 
 §4.6's block compares the *example* set against the ledger, so it is the right check only
-while no row has moved. After task `03` six rows **have** moved, and the honest form of the
+while no row has moved. After task `03` seven rows **have** moved, and the honest form of the
 same comparison unions the two target kinds a row can now name: a Cargo example target
 (rows not yet moved) and a tool-package `[[bin]]` target (rows whose destination has landed).
 That union is what §2's partition promises — every one of the 44 original targets exists
@@ -301,9 +305,9 @@ PY
 ```
 
 At this revision the acceptance is: `44` ledger rows, `44` unique, empty `missing`, empty
-`stale`, no duplicates, and `PASS` — over `38` example targets plus the `6`
+`stale`, no duplicates, and `PASS` — over `37` example targets plus the `7`
 `degenbot-fixture-tools` binaries. §4.6's baseline block is expected to print `FAIL` here
-and to name exactly those six rows as `stale in ledger`: they are not stale, they moved, and
+and to name exactly those seven rows as `stale in ledger`: they are not stale, they moved, and
 this block is where that is visible instead of argued.
 
 **Boundary.** This audit stays valid while every ledger row still exists as *some* target.
@@ -672,11 +676,12 @@ stanza, any moved example source or deleted `[[example]]` stanza, a fourth
 catch-all `dev-tools` package, a combined `all`/`full`/`profiler` feature, and
 any product crate depending on a tool.
 
-That paragraph describes the **scaffold** (`02`). Task `03` has since added six `src/bin/`
-entries, six `[[bin]]` stanzas, and the six deleted facade `[[example]]` stanzas — and
-nothing else in that list. §6.3, §6.4, §6.5, and §6.6 record what landed and how each claim
-above was re-checked against it (§6.5 is the slice that changed the dependency shape from
-optional to plain edges; §6.6 added one further plain edge, `serde`).
+That paragraph describes the **scaffold** (`02`). Task `03` has since added seven `src/bin/`
+entries, seven `[[bin]]` stanzas, and the seven deleted facade `[[example]]` stanzas — and
+nothing else in that list. §6.3, §6.4, §6.5, §6.6, and §6.7 record what landed and how each
+claim above was re-checked against it (§6.5 is the slice that changed the dependency shape
+from optional to plain edges; §6.6 added one further plain edge, `serde`; §6.7 added no edge
+and no feature at all).
 
 ## 6.3 The first binaries as landed — task `03`, ergo `4W2ZUK`
 
@@ -1022,7 +1027,7 @@ The RECORD arm (`--kind pool|aave|aave-run`, live replay drift re-recording) nee
 endpoint and was **not** executed: it is compile-verified and unexecuted, never claimed as
 live-verified. ADR-070 D2's addendum needed no new decision — the recorder opens the same kind
 of throwaway harness DB the four generators did, so the boundary it states already covers it;
-its prose now says six programs and two no-feature default targets (§6.6 added the second).
+its prose now says six programs and two no-feature default targets (§6.6 added the second, §6.7 the third).
 
 ## 6.6 The Python oracle corpus recorder as landed — task `03d`, ergo `FT3KUP`
 
@@ -1037,8 +1042,9 @@ preserved for the cassette recorder:
 Nothing else moved in this slice: `capture_path_fixture`, `concentrated_liquidity_capture_gen`,
 and `encode_three_hop` still carry their `[[example]]` stanzas (§4.2), no capture generator and
 no other recorder was touched, and no other package's example surface changed. `cargo metadata`
-therefore reports **38** example targets plus this package's library and its **six** `[[bin]]`
-targets.
+therefore reported **38** example targets plus this package's library and its **six** `[[bin]]`
+targets at that revision (§6.7 later moved `capture_path_fixture` too, so today's numbers are
+**37** and **seven**).
 
 **The command, old → new.** The argv surface is unchanged apart from the path anchor below:
 
@@ -1134,6 +1140,102 @@ behavioral gain). This is the same disposition §6.4's recorders received for
 DB either — so D2's subject is not engaged and the writer-owner rule is not broadened by its
 arrival. The addendum's program count moved from five to six and says so explicitly, and the
 fence's `WRITER_OWNERS` is unchanged.
+
+## 6.7 The path-fixture recapture as landed — task `03e`, ergo `ZWV3MH`
+
+**Scope.** One program, a live-node recapture, previously a `degenbot` (facade) auto-discovered
+`[[example]]` target with **no** feature stanza — the same default-feature reachability §6.5
+and §6.6 preserved for the two recorders:
+
+| Target | Was | Now |
+| --- | --- | --- |
+| `capture_path_fixture` | `crates/facade/degenbot/examples/capture_path_fixture.rs`, an auto-discovered `[[example]]` with no feature stanza | `rust/tools/fixture-tools/src/bin/capture_path_fixture/main.rs`, a `[[bin]]` with **no** `required-features` |
+
+Nothing else moved in this slice: `concentrated_liquidity_capture_gen` and `encode_three_hop`
+still carry their `[[example]]` stanzas (§4.2), no other recorder or generator was touched, and
+no other package's example surface changed. `cargo metadata` therefore reports **37** example
+targets plus this package's library and its **seven** `[[bin]]` targets. The facade's example
+surface is down to the one public retainer it keeps: `standalone_consumer`.
+
+**The command, old → new.** The argv surface is unchanged — only the package and the target kind
+moved, and there is no recipe for it (both arms need a node):
+
+```bash
+# was
+cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
+    --example capture_path_fixture -- --check <fixture.json>...
+
+# now (no feature lane: this binary reads no statement ledger and opens no operator DB)
+cargo run --locked --manifest-path rust/Cargo.toml \
+    -p degenbot-fixture-tools --bin capture_path_fixture \
+    -- [--check] [--scan lens|bitmap] [--tick-lens <addr>] \
+    [--state-view <addr>] <fixture.json>...
+```
+
+Every flag is the one the example had: `--check`, `--scan lens|bitmap` (the V3 vehicle — V4
+always rides the StateView), `--tick-lens <addr>` (required by `--scan lens`, refused without
+it), `--state-view <addr>` (defaulting to the corpus's canonical deployment), and the
+**repeatable positional fixture list**. Exit codes keep their meaning: an argv error is exit 2, a
+failed read/parse/scrape/config/node is exit 1, and a clean run is exit 0.
+
+**The path anchor: there was none to move, and inventing one would have changed the surface.**
+Unlike the five facade recorders §10.1 lists, this program never derived a fixture home from
+`CARGO_MANIFEST_DIR` — every fixture, for read and for rewrite, is an explicit positional argv
+path, so the move cannot silently retarget a file. No `--fixtures-home` was added: it would have
+changed the argv contract and, worse, changed what a *relative* positional path means. The
+fixture identity and narrative are preserved because the recapture only ever rewrites the state
+keys (`degenbot::investigation::capture::refresh_fixture`), which is exactly the library call
+that stayed in the facade.
+
+**What did not change.** The V2 scalar read (`getReserves`, with `blockTimestampLast` recorded
+under the corpus's load-bearing `block_number` key), the V3 state read (slot0 prefix + liquidity)
+and its tick scan in both vehicles (word-wise `TickLens` via `word_positions` /
+`ticks_from_bitmap_word`, or the lens-free bitmap + tick-map walk, with the
+`--tick-lens`/`--scan` pairing validated before any call is made), the V4 StateView read and its
+`--state-view` override, every Multicall3 `aggregate3` batch, the ADR-062 configured-node
+resolution (`--node` / `DEGENBOT_RPC_*` / `nodes.*`, nothing hardcoded), the authored
+identity/narrative preservation, the canonical serde output (`preserve_order`, so a rewrite
+keeps the family's declared key order instead of re-sorting the file), the write-versus-check
+split (default arm REWRITES each named fixture with `fs::write`; `--check` computes the same
+refresh, prints `ok`/`DRIFT` per file plus the drifted state-key paths, writes nothing, and exits
+1 on any drift — the snapshot-marker note on `liquidity_update_block` included), and the
+repeatable fixture arguments. **No fixture byte changed**, and no committed fixture was read
+differently: the schema, the `capture` refresh/diff/emit functions, and the `chain_capture`
+scrapers all stayed in `crates/facade/degenbot/src/investigation/`, so this slice moved an
+executable and nothing else.
+
+**The dependency edge: none.** `alloy` (its `Address`/`B256`), `serde_json` (`preserve_order`
+included), `tokio` (its `#[tokio::main]`), and the facade were already plain edges after §6.5
+and §6.6, so no manifest dependency, no feature, no forward, and no `Cargo.lock` line was added.
+The manifest gained one `[[bin]]` stanza carrying no `required-features`, which is what puts the
+binary in the `default` lane.
+
+**Verification, and its honest limit.**
+
+| Claim | How it was checked |
+| --- | --- |
+| The default-feature lane builds it (no feature may hide it) | `just check-dev-tools default` — compiles `capture_path_fixture`, `record_updater_cassette`, and `record_py_oracle_corpus`; skips the four `sql-ledger` binaries |
+| The SQL lane still builds the package | `just check-dev-tools fixture-sql-ledger` — seven binaries, green |
+| `cargo metadata` agrees with §4.2 | `37` example targets, `degenbot-fixture-tools` lib + `7` `[[bin]]`s, `capture_path_fixture` with no `required-features` |
+| The argv surface still behaves | the built binary: no arguments → the usage line, exit 2; `--scan bogus` → exit 2; `--scan lens` without `--tick-lens` → exit 2; `--tick-lens` without `--scan lens` → exit 2; `--state-view nonsense` → exit 2; `--bogus-flag` → exit 2 |
+| The library the tool calls is untouched and still passes its own tests | `just test-rust-nextest -p degenbot -E 'test(investigation)'` — the fixture/parser, capture refresh/diff/emit, and offline chain-capture (pseudo-golden `TickLens`/bitmap scrapes over recorded chain) suites |
+| The fence is not engaged | `just test-rust-nextest -p degenbot -E 'test(only_the_updater_shells_open_the_db_for_writes)'` — the binary opens no DB at all |
+| The committed fixtures are untouched | `git status --short -- tests/fixtures` empty |
+| Both arms against a live archive node | **NOT EXECUTED.** The default rewrite arm and the `--check` arm both read the chain at each fixture's `target_block`, so drift against the committed fixtures is compile-verified only in an offline gate report. What *is* covered without a node is everything the move could have broken: the argv surface (row above), the resolved command line, and the library calls the binary makes |
+
+**ADR-070.** The seventh program opens no database at all — no operator DB, and no harness DB
+either: its only writes are the fixture JSON files, by `fs::write`. D2's subject (who may open
+the operator's database for writing) is therefore not engaged, and the writer-owner rule is not
+broadened. The addendum's program count moved from six to seven and says so explicitly; the
+fence's `WRITER_OWNERS` is unchanged.
+
+**Prose that moved with it.** The facade's `investigation` module docs no longer call the
+recapture an "example" (`mod.rs`, `fixture.rs`), `docs/architecture/investigation-harness.md`
+carries the new command beside the retired capture scripts, the fixture provenance those
+`_doc` stamps record is unchanged (the stamps are committed bytes and were not edited), this
+catalog's §4.2 row and §8.1 transition row say `landed`, the `too_many_lines` waiver census row
+moved with the file, and the `just check-dev-tools` lane prose names the third default-feature
+binary.
 
 ## 7. `src/bin/` migration shape
 
@@ -1238,6 +1340,7 @@ contributor, a doc, or the pre-push hook types.
 | `cargo run -p degenbot --features degenbot/sql-ledger --example generate_aave_config_windows -- <args>` | `cargo run -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_config_windows -- <args>` (no recipe: needs a live node) | 03b — **landed** |
 | `cargo run -p degenbot --example record_updater_cassette -- <args>` | `cargo run -p degenbot-fixture-tools --bin record_updater_cassette -- <args>` (**no feature lane**: the `--check` arm is offline and needs no ledger; the record arm needs a live node, so no recipe) | 03c — **landed** |
 | `cargo run -p degenbot --example record_py_oracle_corpus -- <args>` | `cargo run -p degenbot-fixture-tools --bin record_py_oracle_corpus -- <args>` (**no feature lane**; `--scenario` / `--check` / the three node flags / `--pace-ms` unchanged, `--root` replaced by the shared `--fixtures-home <dir>`; both arms need a node, so no recipe — `just live-drift` drives it per chain) | 03d — **landed** |
+| `cargo run -p degenbot --example capture_path_fixture -- <args>` | `cargo run -p degenbot-fixture-tools --bin capture_path_fixture -- <args>` (**no feature lane**; `--check` / `--scan lens|bitmap` / `--tick-lens` / `--state-view` / the repeatable fixture list unchanged, no `--fixtures-home` added; both arms need a node, so no recipe) | 03e — **landed** |
 | `cargo build -p degenbot-executor --example encode_three_hop` | `cargo build -p degenbot-fixture-tools --bin encode_three_hop` (wrapped by `just build-executor-three-hop-encoder`; the JSON stdout contract is unchanged) | 03 |
 | `cargo run -p degenbot-rpc --example concentrated_liquidity_capture_gen` | `cargo run -p degenbot-fixture-tools --bin concentrated_liquidity_capture_gen` | 03 |
 | `cargo run -p degenbot-pools --features capture-fixtures --example concentrated_liquidity_solve_replay -- <corpus>` | `cargo run -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- <corpus>` (wrapped by `just test-golden-replay`) | 04 |
@@ -1264,7 +1367,7 @@ moved binary and the old target is gone.
 
 | Destination | Default compile lane | Feature lanes | Behavioural route (the one that actually proves the move) |
 | --- | --- | --- | --- |
-| `degenbot-fixture-tools` | `cargo check -p degenbot-fixture-tools --all-targets` (builds the two default-feature recorders, `record_updater_cassette` and `record_py_oracle_corpus`; skips the four `sql-ledger` binaries) | `--features sql-ledger` (builds the whole package, six binaries) | `just check-evm-captures`, `just check-aave-captures` (offline drift gates), `cargo run -p degenbot-fixture-tools --bin record_updater_cassette -- --check tests/fixtures/cassettes/*.json` (the cassette recorder's OFFLINE drift gate), `tests/golden/test_oracle_replay_offline.py` (the corpus recorder's offline recording-format gate), `just test-executor-offline`, and the wave-2/3/4/5 plus pool/Aave cassette replay suites; the record arms of the live recorders — including `record_py_oracle_corpus`'s recording and `--check` arms — are compile only |
+| `degenbot-fixture-tools` | `cargo check -p degenbot-fixture-tools --all-targets` (builds the three default-feature programs — `record_updater_cassette`, `record_py_oracle_corpus`, and `capture_path_fixture`; skips the four `sql-ledger` binaries) | `--features sql-ledger` (builds the whole package, seven binaries) | `just check-evm-captures`, `just check-aave-captures` (offline drift gates), `cargo run -p degenbot-fixture-tools --bin record_updater_cassette -- --check tests/fixtures/cassettes/*.json` (the cassette recorder's OFFLINE drift gate), `tests/golden/test_oracle_replay_offline.py` (the corpus recorder's offline recording-format gate), `just test-executor-offline`, and the wave-2/3/4/5 plus pool/Aave cassette replay suites; the record arms of the live recorders — including `record_py_oracle_corpus`'s and `capture_path_fixture`'s default **and** `--check` arms — are compile only |
 | `degenbot-solver-lab` | `cargo check -p degenbot-solver-lab --all-targets` | `--features capture-fixtures`, `--features capture-fixtures,cache-lab`, `--features envelope`, `--features hotpath` | `just test-golden-replay` (both corpora), `just entry-ab`, the cache-lab golden suite, `cargo test -p degenbot-order-index`, `cargo test -p degenbot-pools profit_envelope` (for `synth_corpus_gen` regeneration) |
 | `degenbot-engine-lab` | `cargo check -p degenbot-engine-lab --all-targets` | `--features evm2-jit`, `--features prometheus` | `just test-rust-nextest -p degenbot-simulation` and `-p degenbot-arbitrage` (the 14 `#[path]`-coupled test files plus the parity suites must still run), `just bal-dispatch-scaling-probe`, `just bal-candidate-scaling-probe`; live/`/tmp`-corpus rows: compile only, reported as unexecuted |
 | Owning-crate tests | `cargo check -p degenbot-bot --all-targets`, `-p degenbot-ingestion` | — | `just test-rust-nextest -p degenbot-bot`, `-p degenbot-ingestion`, then `just test-standalone` with its re-pointed second check |
@@ -1310,10 +1413,18 @@ recorder (§6.6). All five now resolve their homes through `degenbot_fixture_too
 (marker-resolved repository root, `--fixtures-home` override; the corpus recorder splits the
 two — fixtures home for the corpus and its cassettes, repository root for the golden-key
 inputs), and each one's offline consumer proves the resolved homes are the committed ones.
-The one remaining facade row — `capture_path_fixture` — and the `degenbot-rpc` /
-`degenbot-pools` rows are still at their current paths, so their manifest-relative arithmetic
-is still correct for the package they sit in. The requirement in this section applies to each
-of them in the task that moves it.
+
+The last facade program in this population is `capture_path_fixture`, and task `03e` (§6.7)
+moved it **without** re-anchoring anything: it is not one of the 16 `CARGO_MANIFEST_DIR`
+sources — every fixture it reads or rewrites arrives as an explicit positional argv path — so
+there was no manifest-relative arithmetic to break, and no `--fixtures-home` was invented for
+it (`paths` is never called). The previous revision of this paragraph counted it among the rows
+still sitting at their current paths; the correct statement is that it never belonged to this
+hazard at all, whose subject is a *derived* home, and an argv path is already the explicit form
+the "Required form" paragraph below prefers. The `degenbot-rpc` / `degenbot-pools` rows are
+still at their current paths, so their manifest-relative arithmetic is still correct for the
+package they sit in, and the requirement in this section applies to each of them in the task
+that moves it.
 
 Required form: resolve the repository root once (an explicit `--repo-root`/`--out` argument
 where a tool writes, or a single `ancestors()`-walking resolver in the tool library), then
@@ -1358,9 +1469,12 @@ defaults to `logs/bal_postfix_soak_trace.log`, also untracked. These rows are
 arm that drives a live node (`generate_aave_upgrade_windows`,
 `generate_aave_config_windows`, `record_updater_cassette`'s record arm, and
 `record_py_oracle_corpus`'s record **and** `--check` arms) need a node.
-Report them as unexecuted — never as passing, and never inferred from a `cargo check`. Each
-program's `--check` arm is the exception that proves the rule: it touches no node and no
-fixture write, so it IS executed offline (§6.5 does exactly that for the cassette recorder).
+Report them as unexecuted — never as passing, and never inferred from a `cargo check`. A
+program's `--check` arm is the exception only when it touches no node and no fixture write:
+`record_updater_cassette`'s re-serialization arm is offline and IS executed (§6.5 does exactly
+that), while `capture_path_fixture`'s `--check` reads the chain at every fixture's
+`target_block` and is therefore **node-bound like its default arm** — compile-verified, never
+reported as an executed check (§6.7).
 
 ### 10.4 Stale package spellings in the decision records
 
@@ -1387,14 +1501,16 @@ disposition is a tool binary — `scale_demo`, `walkmemo_readout`, and `mirror_c
 stay in their crate `examples/` directories until task `06` preserves their evidence and
 removes them.
 
-**Task `03`'s remaining scope, stated here so it is not mistaken for done work.** Four
-slices have landed six of the nine §4.2 rows: the two node-free generators (§6.3), the two
-live span recorders (§6.4), the live updater cassette recorder (§6.5), and the Python oracle
-corpus recorder (§6.6). Still owed by task `03`: the three rows the brief deliberately
-excluded — `capture_path_fixture`, `concentrated_liquidity_capture_gen`, `encode_three_hop` —
-each with its own `[[bin]]`, `required-features` (none of the three needs `sql-ledger`), §10.1
-re-anchoring where it writes, and its §8.2 verification route. Two of the three need a live
-node, so their only honest verification in an offline gate report is a compile lane (§10.3) —
-which is why the two node-free generators, whose `--check` gate can prove byte-identity, were
-their own slice, the two live span recorders shipped without a live claim, and the cassette
-recorder shipped with an executed offline `--check` and an unexecuted record arm.
+**Task `03`'s remaining scope, stated here so it is not mistaken for done work.** Five
+slices have landed seven of the nine §4.2 rows: the two node-free generators (§6.3), the two
+live span recorders (§6.4), the live updater cassette recorder (§6.5), the Python oracle
+corpus recorder (§6.6), and the path-fixture recapture (§6.7). Still owed by task `03`: the two
+rows the brief deliberately excluded — `concentrated_liquidity_capture_gen` and
+`encode_three_hop` — each with its own `[[bin]]`, `required-features` (neither needs
+`sql-ledger`), §10.1 re-anchoring where it writes, and its §8.2 verification route.
+`concentrated_liquidity_capture_gen` needs a live node, so its only honest verification in an
+offline gate report is a compile lane (§10.3) — which is why the two node-free generators,
+whose `--check` gate can prove byte-identity, were their own slice, the two live span recorders
+shipped without a live claim, the cassette recorder shipped with an executed offline `--check`
+and an unexecuted record arm, and the recapture (§6.7) shipped with an exercised argv surface
+and both of its chain-reading arms unexecuted.

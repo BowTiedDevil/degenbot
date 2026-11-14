@@ -64,9 +64,10 @@ raise no new question: the exemption is about where the write open lands, not
 
 about which program makes it.
 
-The boundary is the rule, not a description of today's six programs: **every
+The boundary is the rule, not a description of today's seven programs: **every
 write open in `degenbot-fixture-tools` targets a throwaway harness DB under a
-`TempDir`.** The artifacts those programs produce are written by ordinary
+`TempDir`** (and two of the seven open no database at all, so they open no write
+either). The artifacts those programs produce are written by ordinary
 `fs::write` into the corpus homes, and `--check` writes nothing at all, so the
 subject of the fence — who may open the operator's database for writing — is
 untouched. A program in this package that opened a *durable* DB would be a new
@@ -132,10 +133,10 @@ guards only the swap.
   turn `writer` on, and every other crate compiles against the read-only
   `degenbot-db` surface. `degenbot-fixture-tools` (D2's addendum) is the one
   writer-enabled package outside that set. It is not part of a default
-  workspace build (it is absent from `default-members`). Six programs live there
-  as `[[bin]]` targets, and the lane that builds each is the feature it needs:
-  four — the two node-free capture generators and the two live span recorders —
-  replay their SQL goldens, so they carry
+  workspace build (it is absent from `default-members`). Seven programs live
+  there as `[[bin]]` targets, and the lane that builds each is the feature it
+  needs: four — the two node-free capture generators and the two live span
+  recorders — replay their SQL goldens, so they carry
   `required-features = ["sql-ledger"]` and only
   `just check-dev-tools fixture-sql-ledger` and the two capture recipes build
   them, deliberately. The fifth, the live updater cassette recorder, reads no
@@ -147,7 +148,11 @@ guards only the swap.
   corpus recorder `record_py_oracle_corpus`, opens no DB of any kind — it opens
   no operator DB, and it opens no harness DB either: its only writes are the
   JSON corpus files, so D2's subject (who may open the operator's database for
-  writing) is not engaged by its arrival.
+  writing) is not engaged by its arrival. The seventh, the path-fixture recapture
+  `capture_path_fixture` (moved out of the facade's `examples/`), is the same
+  case: it opens no DB of any kind — its only writes are the fixture JSON files
+  it recaptures, by `fs::write` — so it widens nothing, adds no `WRITER_OWNERS`
+  entry, and leaves the fence's subject exactly where it was.
 - The fixture slice is recognition, not a new write path. Those programs
   always opened throwaway harness DBs for writing; while they were facade
   examples the fence never asked the question, and the relocation into

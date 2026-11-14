@@ -209,9 +209,29 @@ instead.
   and the `EXECUTE_CONFIG` constant whose calldata-dump examples went is deleted.
 - **Retired the path capture scripts (2026-09-30):** `capture_path5000_v2v4v3_fixture.py`
   and `capture_path73385_v4_fixture.py` were replaced by the `capture_path_fixture`
-  example (`degenbot::investigation::capture`), which recaptures every fixture's
+  recapture (`degenbot::investigation::capture`), which recaptures every fixture's
   recorded state (DB tick snapshot + on-chain scalars at `target_block`) through
   the typed config — the retired scripts hardcoded the since-removed
   `~/.config/degenbot/degenbot.db`. The committed fixtures remain the tier-3
   regression input, and their `_doc` stamps keep the recorder names as
   provenance of what the file records.
+- **Moved the recapture out of the example surface (epic `BY3RRJ`):** the
+  `capture_path_fixture` executable now lives in the non-publishable development-tool
+  package `degenbot-fixture-tools` as a `[[bin]]` target:
+
+  ```bash
+  cargo run --locked --manifest-path rust/Cargo.toml \
+      -p degenbot-fixture-tools --bin capture_path_fixture \
+      -- [--check] [--scan lens|bitmap] [--tick-lens <addr>] \
+      [--state-view <addr>] <fixture.json>...
+  ```
+
+  Only the executable moved: the fixture schema and
+  `degenbot::investigation::capture`'s refresh/diff/emit functions, plus
+  `degenbot::investigation::chain_capture`'s V2/V3/V4 scrapers, stay in the facade — which
+  is why the Layer-3 toolkit below is unchanged. The arguments (every fixture is an
+  explicit positional path, so there is no fixture home to re-point), the typed-config node
+  resolution (ADR-062), and both arms' behavior are unchanged. The default arm REWRITES
+  each named fixture with canonical serde formatting; `--check` is non-mutating — it prints
+  the drifted state keys, writes nothing, and exits 1 on any drift. Both arms read the
+  chain at the fixture's `target_block`, so an offline gate can only compile them.

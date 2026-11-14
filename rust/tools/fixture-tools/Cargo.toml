@@ -12,12 +12,12 @@ authors.workspace = true
 [lints]
 workspace = true
 
-# Dependency shape: TWO binaries -- the live updater cassette recorder and the Python
-# oracle corpus recorder -- are DEFAULT targets of this package (neither reads the
-# statement ledger, so no feature may hide them), and the four SQL-ledger binaries need
-# those same crates. Cargo has no per-target dependency selection, so every crate the
-# default binaries link must be a plain edge here; the feature cannot narrow what a
-# default target already needs.
+# Dependency shape: THREE binaries -- the live updater cassette recorder, the Python
+# oracle corpus recorder, and the path-fixture recapture -- are DEFAULT targets of this
+# package (none reads the statement ledger, so no feature may hide them), and the four
+# SQL-ledger binaries need those same crates. Cargo has no per-target dependency
+# selection, so every crate the default binaries link must be a plain edge here; the
+# feature cannot narrow what a default target already needs.
 #
 # Consequence, stated plainly: the default tree is NO LONGER the package alone. A
 # default `cargo check -p degenbot-fixture-tools --all-targets` links the facade and
@@ -27,13 +27,16 @@ workspace = true
 # crate may depend on a tool.
 #
 # What each edge is for: `alloy` builds the scenario primitives/transports the
-# generators drive AND the recorders' `Address`/`keccak256` handling, `rusqlite`
+# generators drive AND the recorders' `Address`/`keccak256` handling (plus the
+# recapture's `Address`/`B256` arguments), `rusqlite`
 # seeds the throwaway harness DB each recorded chunk runs against, `tempfile` owns
 # those throwaway homes, `serde_json` serializes the seed manifest the live span
 # recorders write beside each cassette (its KEY ORDER is part of the committed
-# bytes, so the edge carries `preserve_order` exactly as the facade's does) and the
-# recorders' JSON documents, `serde` carries the corpus recorder's `Serialize`
-# derive, and `tokio` is the recorders' `#[tokio::main]` entry.
+# bytes, so the edge carries `preserve_order` exactly as the facade's does), the
+# recorders' JSON documents, and the recapture's canonical fixture output (which is
+# why `preserve_order` matters there too: a re-sorted key order would rewrite every
+# committed fixture's bytes), `serde` carries the corpus recorder's `Serialize`
+# derive, and `tokio` is the recorders' and the recapture's `#[tokio::main]` entry.
 [dependencies]
 # The umbrella facade owns the fixture schema and the recorders that read it.
 # It also re-exports the three crates the generators import (`degenbot::db`,
@@ -79,13 +82,13 @@ default = []
 # the chain -- a property of the product graph, not of this forward.
 #
 # The feature carries the ledger and NOTHING ELSE. It has no `dep:` entries any
-# more: since the default binary (the recorder) needs this package's crates too,
-# they are plain non-optional edges, and `dep:` cannot name a non-optional
-# dependency. That is why the `fixture-sql-ledger` lane differs from the `default`
-# lane by exactly the ledger feature.
+# more: since the default binaries (the recorders and the recapture) need this
+# package's crates too, they are plain non-optional edges, and `dep:` cannot name a
+# non-optional dependency. That is why the `fixture-sql-ledger` lane differs from the
+# `default` lane by exactly the ledger feature.
 sql-ledger = ["degenbot/sql-ledger"]
 
-# The six programs this package carries, split by whether they touch the
+# The seven programs this package carries, split by whether they touch the
 # statement ledger.
 #
 # FOUR replay their SQL goldens through the statement-ledger wrapper, hence the
@@ -140,3 +143,17 @@ path = "src/bin/record_updater_cassette/main.rs"
 [[bin]]
 name = "record_py_oracle_corpus"
 path = "src/bin/record_py_oracle_corpus/main.rs"
+
+# The path-fixture recapture: the third default-features target on the same rule -- it
+# opens no statement ledger and no operator DB, so no feature lane may hide it. Both of
+# its arms need a live archive node at each fixture's `target_block` (there is no offline
+# arm): the default arm rewrites each named fixture with canonical serde formatting, and
+# `--check` computes the same refresh, prints the drifted state keys and exits 1, writing
+# nothing. Every fixture is an explicit positional argv path, so it resolves no fixture
+# home and takes no `--fixtures-home`; `--check`, `--scan lens|bitmap`, `--tick-lens`,
+# `--state-view`, and the repeatable fixture list are unchanged from the facade example
+# it replaces.
+
+[[bin]]
+name = "capture_path_fixture"
+path = "src/bin/capture_path_fixture/main.rs"

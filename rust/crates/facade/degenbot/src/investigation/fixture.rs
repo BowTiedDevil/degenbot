@@ -2,7 +2,8 @@
 //! JSON capture format so a future investigation can load a captured
 //! `path<N>_…_block<B>.json` with zero copy-paste.
 //!
-//! The fixture files produced by the `capture_path_fixture` example share a common
+//! The fixture files produced by the `capture_path_fixture` tool
+//! (`degenbot-fixture-tools`, rust/tools/fixture-tools) share a common
 //! core (pool list, hop list, tick map, recorded solve) with small per-family
 //! variation (a V4 pool adds `currency0/1`+`pool_id`; a V2 pool adds
 //! `reserve0/1`; amounts were authored as JSON numbers in some files and decimal
@@ -162,7 +163,8 @@ pub struct PathFixture {
 }
 
 impl PathFixture {
-    /// Load + parse a captured-path fixture JSON (see the `capture_path_fixture` example).
+    /// Load + parse a captured-path fixture JSON (see `degenbot-fixture-tools`'
+    /// `capture_path_fixture` binary).
     ///
     /// # Errors
     ///

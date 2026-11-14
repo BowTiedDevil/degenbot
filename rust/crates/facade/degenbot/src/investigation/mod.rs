@@ -1,6 +1,6 @@
 //! Path **investigation toolkit** — reusable building blocks for reproducing a
 //! captured failing settlement-arbitrage path (the `path<N>_…_block<B>` fixtures written by
-//! the `capture_path_fixture` example).
+//! `degenbot-fixture-tools`' `capture_path_fixture` binary).
 //!
 //! **Layering.** This is degenbot's OWN pool-level scaffold (its capture format,
 //! its V2/V3/V4 pool reconstruction, its per-hop pool oracle). It contains NO

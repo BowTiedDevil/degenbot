@@ -167,8 +167,25 @@ required-features = ["sql-ledger"]
 # invocation and the path anchor changed (the package's shared `paths` resolver replaces
 # this crate's manifest-relative arithmetic, and `--fixtures-home` replaces `--root`).
 # Its `serde` derive edge was the one direct dependency the tool package lacked, so it
-# moved with it. The remaining dev-dependency edges below belong to this crate's tests
-# and its two retained examples.
+# moved with it.
+#
+# The path-fixture recapture (`capture_path_fixture`) was the last fixture recorder to
+# live here, and it moved the same way: `examples/capture_path_fixture.rs` is gone and
+# `rust/tools/fixture-tools/src/bin/capture_path_fixture/main.rs` is a `[[bin]]` with NO
+# `required-features` (it opens no statement ledger and no operator DB), so
+# `just check-dev-tools default` builds it. Nothing about the recapture changed -- the V2
+# scalar read, the V3 TickLens/bitmap scan and the V4 StateView read with their overrides,
+# the Multicall3 batching, the configured-node resolution, the authored identity/narrative
+# preservation, the canonical serde output, the repeatable fixture arguments, and
+# `--check`'s non-mutating drift verdict all travelled with the source. It needed no
+# dependency edge of its own (`alloy`, `serde_json`, and `tokio` were already plain edges)
+# and no path re-anchor: every fixture is an explicit positional argv path, so no
+# `--fixtures-home` was invented for it. The fixture schema and the `capture` /
+# `chain_capture` / `fixture` library stay here -- only the executable consumer moved, and
+# `tests/tier3_*` still reads its fixtures through `degenbot::investigation`.
+#
+# The remaining dev-dependency edges below belong to this crate's tests and its one
+# retained example (`standalone_consumer`).
 
 [dev-dependencies]
 

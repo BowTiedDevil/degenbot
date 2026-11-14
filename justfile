@@ -1082,8 +1082,9 @@ check-rust-all-features:
 # Lanes, each run as `just check-dev-tools <lane>`; a leading `--` is ignored,
 # so `just check-dev-tools --engine-jit` is the same lane:
 #   default                  all three packages with no feature lane --
-#                            degenbot-fixture-tools' two DEFAULT-FEATURE binaries
-#                            (record_updater_cassette, record_py_oracle_corpus)
+#                            degenbot-fixture-tools' three DEFAULT-FEATURE binaries
+#                            (record_updater_cassette, record_py_oracle_corpus,
+#                            capture_path_fixture)
 #                            are built here, because a recorder that reads no
 #                            statement ledger must not be hidden behind a feature
 #   fixture-sql-ledger       degenbot-fixture-tools + sql-ledger
@@ -1096,25 +1097,27 @@ check-rust-all-features:
 #
 # A tool binary that NEEDS a feature joins the lane that owns it through its own
 # `required-features`, so that lane builds it on purpose and every other lane
-# skips it on purpose. Six fixture-tools programs have landed, and they split
+# skips it on purpose. Seven fixture-tools programs have landed, and they split
 # exactly that way. Four replay their SQL goldens -- the offline capture
 # generators `generate_evm_oracle_captures` /
 # `generate_aave_adversarial_captures` and the live span recorders
 # `generate_aave_upgrade_windows` / `generate_aave_config_windows` -- and all
 # four are `[[bin]]` targets under `required-features = ["sql-ledger"]`, so the
 # `fixture-sql-ledger` lane compiles them and the `default` lane skips them
-# without failing on the `cfg`'d-out ledger module. The other two read no
+# without failing on the `cfg`'d-out ledger module. The other three read no
 # statement ledger at all and open no operator DB, so they declare NO
 # `required-features` and are the `default` lane's targets: the live updater
 # cassette recorder `record_updater_cassette` (whose `--check` arm is offline
-# and must never need the ledger feature) and the Python oracle corpus recorder
+# and must never need the ledger feature), the Python oracle corpus recorder
 # `record_py_oracle_corpus` (whose `--check` arm re-records against a node and
-# compares the corpus bytes). The dependency
+# compares the corpus bytes), and the path-fixture recapture
+# `capture_path_fixture` (whose `--check` arm re-reads the chain and prints
+# drift without writing). The dependency
 # consequence is that `degenbot-fixture-tools`' default tree is the facade graph
 # (see the manifest), so the two fixture lanes differ by the ledger feature
 # alone. With no argument the recipe runs `default` and prints the menu: an
 # unqualified invocation is the feature-FREE check (support libraries plus the
-# one binary that declares no feature), and never silently a union of every
+# three binaries that declare no feature), and never silently a union of every
 # lane.
 # Check one development-tool lane at a time (lanes listed above; no --all-features).
 check-dev-tools *lanes:
@@ -1128,9 +1131,10 @@ check-dev-tools *lanes:
     lanes (one cargo invocation each; no union, never --all-features):
       default                  degenbot-fixture-tools, degenbot-solver-lab, and
                                degenbot-engine-lab with no feature lane
-                               (fixture-tools builds its two default-feature
-                               recorders -- record_updater_cassette and
-                               record_py_oracle_corpus -- here)
+                               (fixture-tools builds its three default-feature
+                               programs -- record_updater_cassette,
+                               record_py_oracle_corpus, and
+                               capture_path_fixture -- here)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
@@ -1155,7 +1159,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette and record_py_oracle_corpus too)"
+        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, and capture_path_fixture too)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets
