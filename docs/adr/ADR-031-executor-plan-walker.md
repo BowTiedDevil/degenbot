@@ -153,10 +153,64 @@ points); the executor suite ends all-green (118 lib tests) with no RED
 probes remaining. Net across T2–T5: ~1,100 lines removed.
 
 **Corrections to the main text:** (a) "the per-shape bodies are
-hand-authored code" — as of 6SWFBS, no shape module contains a single
-`PlanStep` literal; all step construction lives in `mod mechanics` plus
-the two shared `grammar_shape` helpers, and the D4 data/code split is
-complete for every family. (b) The D4 additive claim ("a new protocol is
+hand-authored code" — the two 2-hop V4 shapes (`two_hop_seed_v4`,
+`two_hop_v4_led`) emit through `mod mechanics` plus the two shared
+`grammar_shape` helpers and hold no `PlanStep` literal. The original
+wording of this correction — "no shape module contains a single
+`PlanStep` literal" — was overbroad and is narrowed here to the actual
+final boundary: **the two 2-hop V4 walk regions plus the four named
+self-funded 3-hop regions listed in the next subsection.** Everything else
+still hand-builds its steps and is out of the honesty gate's scope:
+`all_v2_chain`, `tag_residual`, `two_hop_uniswap_only`, the three 3-hop rule
+walkers (`rule_walk_v2v3`, `rule_walk_v4_led`, `rule_walk_v2v3_v4_mixed`),
+and `three_hop`'s older arms, including the merged `v3v4` arm's
+direct-handoff tail and the not-self-funded sibling of the unlock-internal
+branch. (b)
+The D4 additive claim ("a new protocol is
 one hop-facts descriptor + one mechanics module") now holds for the
 walked 2-hop arms too: walking six families cost ten small primitives
 and one arm function per shape.
+
+### The self-funded 3-hop regions (scoped mechanics consolidation, 2026-11-13)
+
+The `FundingSource::SelfFund` funding posture added four 3-hop producers that
+hand-built their steps: `rule_walk_v2_terminal_v4_self_fund` (the
+`v2v2v4`/`v2v4v4` terminal-V4 paths that pay the entry seed from held capital
+instead of taking a not-yet-earned terminal output),
+`rule_walk_v4_v4_v3_self_fund`, `rule_walk_v3_v3_v4_self_fund`, and the
+self-funded branch of the merged `v3v4` unlock-internal arm. They now emit
+through the same primitives as the walked families:
+
+- **one new primitive, `mechanics::v3_direct`**, beside `v2_swap_direct`. The
+  hop's facts supply `pool_idx`, `zfo`, and the currency pair; the caller
+  supplies both amounts and the recipient index. `V3Direct` carries no
+  recipient-pool/repay fields, so the primitive invents none — a self-funded
+  direct swap has no flash debt to repay or to route.
+- the four regions compose `v4_swap`, `v4_unlock`, `v4_sync`, `v4_settle`,
+  `v4_settle_delta`, `v4_settle_all`, `v4_take_compact`/
+  `v4_take_compact_at`, `erc20_transfer`, `self_fund`, `v2_swap`,
+  `v2_swap_direct`, `v3_direct`, and `declare_capture_shortfall`.
+
+The literal sites these regions gave up were not an encoding capability but
+staging order: the golden preamble *is* the `AddressTable`'s insertion order,
+so an address that a primitive now stages itself (the direct swap's pool) is
+still staged at its exact former position by an order-preserving `add` whose
+index the primitive later re-resolves as a no-op. No guard, decline,
+amount, recipient index, seed/repay metadata, or capture-shortfall arm moved.
+
+**Scope of the honesty gate.** `mechanics_honesty` in
+`grammar_walker/shapes/three_hop.rs` extracts exactly those four regions —
+three named `fn` bodies (signature through column-0 close) and the
+marker-delimited unlock-internal branch — proves each extraction is the region
+it names (signature plus anchor markers and a byte floor, so a vanished marker
+or renamed function fails instead of scanning nothing), and rejects every
+`PlanStep::` literal inside them. It is deliberately **not** a whole-file rule:
+the older arms named in correction (a) above still hand-build their steps.
+
+**Byte transparency.** 1,296 pinned stream hashes — every 2-hop and 3-hop
+family under six postures (base; `SelfFund`; `SelfFund` + erc6909 capture;
+`SelfFund` + native capture; `SelfFund` + zero-capital policy; `SelfFund` +
+V4 batch) × six amount configurations — are identical before and after the
+migration, and `command_stream_bytepin`'s table and
+`releases/v2/golden_calldata.hex` are unchanged. No D4 exception is required:
+nothing in these regions was unrepresentable.

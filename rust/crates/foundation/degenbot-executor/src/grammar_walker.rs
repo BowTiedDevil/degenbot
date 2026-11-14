@@ -297,6 +297,32 @@ mod mechanics {
         })
     }
 
+    /// The V3 direct-forward swap — a bare pool swap with no flash envelope
+    /// and no callback, so its output never rests in the executor's custody:
+    /// the caller names the `recipient_idx` that consumes it (the pool-manager
+    /// ledger, or SELF for a terminal capture). `pool_idx`, `zfo`, and the
+    /// currency pair come from the hop's facts; the two amounts are explicit
+    /// because a direct swap's draw is not the hop's whole output
+    /// (`V3Direct` carries no recipient-pool/repay fields — a self-funded
+    /// stream has no flash debt to repay).
+    pub fn v3_direct(
+        at: &mut AddressTable,
+        facts: &HopFacts,
+        in_amount: u128,
+        out_amount: u128,
+        recipient_idx: u8,
+    ) -> Option<PlanStep> {
+        Some(PlanStep::V3Direct {
+            pool_idx: at.add(facts.pool_address).ok()?,
+            zfo: facts.zfo,
+            in_currency: facts.in_currency,
+            in_amount,
+            out_currency: facts.out_currency,
+            out_amount,
+            recipient_idx,
+        })
+    }
+
     // ── V4 mechanics (ADR-031 D4 code half) ──────────────────────────────
 
     /// The V4 swap step, parameterized by the hop's facts (c0/c1 from the
@@ -902,7 +928,7 @@ pub(crate) fn derive_plan(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::cast_possible_truncation, clippy::panic)]
+    #![expect(clippy::cast_possible_truncation, clippy::expect_used, clippy::panic)]
 
     use super::*;
     use crate::composers::{ComposerInputs, EncodeOptions};
@@ -1056,5 +1082,58 @@ mod tests {
             let kind = format!("{tf:?}");
             assert!(kind.contains(expect), "got {kind}, want {expect}");
         }
+    }
+
+    /// The V3-direct primitive: the hop's facts supply `pool_idx`, `zfo`, and
+    /// the currency pair; the caller supplies both amounts and the recipient.
+    /// `V3Direct` carries no recipient-pool/repay fields, so the primitive
+    /// invents none — a direct swap's forward leaves the executor's custody
+    /// whole and repays no flash debt.
+    #[test]
+    fn v3_direct_maps_facts_onto_the_direct_swap() {
+        use crate::encoders::{SENTINEL_PM, SENTINEL_SELF};
+        use crate::grammar_plan::PlanStep;
+
+        let facts = v3_hop_facts(&V3HopInfo {
+            pool_address: Address::from([0xB7; 20]),
+            token0_address: WETH,
+            token1_address: USDC,
+            fee: 3000,
+            zfo: true,
+        });
+        let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXEC), Some(PM));
+
+        let step = mechanics::v3_direct(&mut at, &facts, 1_234, 5_678, SENTINEL_PM)
+            .expect("the direct swap builds");
+        let PlanStep::V3Direct {
+            pool_idx,
+            zfo,
+            in_currency,
+            in_amount,
+            out_currency,
+            out_amount,
+            recipient_idx,
+        } = step
+        else {
+            panic!("v3_direct must emit a V3Direct step");
+        };
+        assert_eq!(pool_idx, at.index_of(facts.pool_address).expect("staged"));
+        assert_eq!(zfo, facts.zfo);
+        assert_eq!((in_currency, in_amount), (facts.in_currency, 1_234));
+        assert_eq!((out_currency, out_amount), (facts.out_currency, 5_678));
+        assert_eq!(recipient_idx, SENTINEL_PM);
+
+        // The recipient is the shape's call, not the facts': the same hop
+        // taken to SELF re-stages nothing.
+        let to_self = mechanics::v3_direct(&mut at, &facts, 1_234, 5_678, SENTINEL_SELF)
+            .expect("the direct swap builds");
+        assert_eq!(at.addresses().len(), 1, "one pool, staged once");
+        assert!(matches!(
+            to_self,
+            PlanStep::V3Direct {
+                recipient_idx: SENTINEL_SELF,
+                ..
+            }
+        ));
     }
 }

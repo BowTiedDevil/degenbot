@@ -191,14 +191,27 @@ pub(crate) fn derive(
                         out_amount: out_c,
                     });
                     if self_funded {
-                        inner.push(PlanStep::Erc20Transfer {
-                            token_idx: at.add(fa.in_currency).ok()?,
-                            token_addr: fa.in_currency,
-                            recipient_idx: v3a,
-                            amount: optimal_input,
-                            seeds_pool: None,
-                            repays_flash: Some(fa.pool_address),
-                        });
+                        // mechanics-honesty:begin self-funded-unlock-internal
+                        // The entry seed is the executor's own token balance, so
+                        // it pays the leading V3 flash debt by transfer; the
+                        // capture is the WHOLE terminal output (no profit
+                        // subtraction: the entry was never borrowed).
+                        inner.push(mechanics::erc20_transfer(
+                            at.add(fa.in_currency).ok()?,
+                            fa.in_currency,
+                            v3a,
+                            optimal_input,
+                            None,
+                            Some(fa.pool_address),
+                        ));
+                        inner.push(mechanics::v4_take_compact(
+                            &mut at,
+                            fc,
+                            SENTINEL_SELF,
+                            out_c,
+                            None,
+                        )?);
+                        // mechanics-honesty:end self-funded-unlock-internal
                     } else {
                         inner.push(PlanStep::V4TakeCompact {
                             currency_idx: SENTINEL_WETH,
@@ -208,37 +221,26 @@ pub(crate) fn derive(
                             seeds_pool: None,
                             repays_flash: Some(fa.pool_address),
                         });
-                    }
-                    // The capture is the profit ABOVE the entry — or, for a
-                    // self-funded stream, the whole terminal output (the entry
-                    // is the executor's own, already declared by the `SelfFund`
-                    // seed). A losing in-path-flash capture has no positive take:
-                    // it is recorded as the stream's declared shortfall instead.
-                    let capture = if self_funded {
-                        mechanics::TerminalCapture::Profit(out_c)
-                    } else {
-                        mechanics::terminal_capture(optimal_input, out_c)
-                    };
-                    match capture {
-                        mechanics::TerminalCapture::Profit(amount) => {
-                            inner.push(PlanStep::V4TakeCompact {
-                                currency_idx: if self_funded {
-                                    at.add(fc.out_currency).ok()?
-                                } else {
-                                    SENTINEL_WETH
-                                },
-                                currency_addr: if self_funded { fc.out_currency } else { weth },
-                                recipient_idx: SENTINEL_SELF,
-                                amount,
-                                seeds_pool: None,
-                                repays_flash: None,
-                            });
-                        }
-                        mechanics::TerminalCapture::Shortfall(shortfall) => {
-                            capture_shortfall = Some(shortfall);
+                        // The capture is the profit ABOVE the entry. A losing
+                        // in-path-flash capture has no positive take: it is
+                        // recorded as the stream's declared shortfall instead.
+                        match mechanics::terminal_capture(optimal_input, out_c) {
+                            mechanics::TerminalCapture::Profit(amount) => {
+                                inner.push(PlanStep::V4TakeCompact {
+                                    currency_idx: SENTINEL_WETH,
+                                    currency_addr: weth,
+                                    recipient_idx: SENTINEL_SELF,
+                                    amount,
+                                    seeds_pool: None,
+                                    repays_flash: None,
+                                });
+                            }
+                            mechanics::TerminalCapture::Shortfall(shortfall) => {
+                                capture_shortfall = Some(shortfall);
+                            }
                         }
                     }
-                    inner.push(PlanStep::V4SettleAll);
+                    inner.push(mechanics::v4_settle_all());
                     inner
                 }
             };
@@ -2096,59 +2098,40 @@ fn rule_walk_v2_terminal_v4_self_fund(
     if fb.prot == Prot::V2 {
         let v2b = at.add(fb.pool_address).ok()?;
         inner.extend([
-            PlanStep::V4Sync {
-                currency_idx: forward,
-                currency_addr: fb.out_currency,
-            },
-            PlanStep::Erc20Transfer {
-                token_idx: entry,
-                token_addr: fa.in_currency,
-                recipient_idx: v2a,
-                amount: optimal,
-                seeds_pool: Some(fa.pool_address),
-                repays_flash: None,
-            },
+            mechanics::v4_sync(forward, fb.out_currency),
+            mechanics::erc20_transfer(
+                entry,
+                fa.in_currency,
+                v2a,
+                optimal,
+                Some(fa.pool_address),
+                None,
+            ),
             mechanics::v2_swap(&mut at, fa, out_a, v2b, Some(fb.pool_address), false)?,
             mechanics::v2_swap(&mut at, fb, c_input, pm, None, false)?,
-            PlanStep::V4Settle {
-                currency_addr: fb.out_currency,
-                amount: c_input,
-            },
+            mechanics::v4_settle(fb.out_currency, c_input),
         ]);
     } else {
         let second_input = at.add(fb.in_currency).ok()?;
         inner.extend([
-            PlanStep::V4Sync {
-                currency_idx: second_input,
-                currency_addr: fb.in_currency,
-            },
-            PlanStep::Erc20Transfer {
-                token_idx: entry,
-                token_addr: fa.in_currency,
-                recipient_idx: v2a,
-                amount: optimal,
-                seeds_pool: Some(fa.pool_address),
-                repays_flash: None,
-            },
+            mechanics::v4_sync(second_input, fb.in_currency),
+            mechanics::erc20_transfer(
+                entry,
+                fa.in_currency,
+                v2a,
+                optimal,
+                Some(fa.pool_address),
+                None,
+            ),
             mechanics::v2_swap_direct(&mut at, fa, b_input, fa.out_currency, pm, None, false)?,
             mechanics::v4_swap(&mut at, fb, b_input, inputs.hop_outputs[1])?,
-            PlanStep::V4Settle {
-                currency_addr: fb.in_currency,
-                amount: b_input,
-            },
+            mechanics::v4_settle(fb.in_currency, b_input),
         ]);
     }
     inner.extend([
         mechanics::v4_swap(&mut at, fc, c_input, out_c)?,
-        PlanStep::V4TakeCompact {
-            currency_idx: terminal,
-            currency_addr: fc.out_currency,
-            recipient_idx: SENTINEL_SELF,
-            amount: out_c,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleAll,
+        mechanics::v4_take_compact_at(terminal, fc.out_currency, SENTINEL_SELF, out_c, None, None),
+        mechanics::v4_settle_all(),
     ]);
     Some((
         vec![
@@ -2186,49 +2169,19 @@ fn rule_walk_v4_v4_v3_self_fund(
     let forward = at.add(fb.out_currency).ok()?;
     let first_input = at.add(fa.in_currency).ok()?;
     let second_input = at.add(fb.in_currency).ok()?;
-    let v3c = at.add(fc.pool_address).ok()?;
+    // Order-preserving stage: `v3_direct` re-resolves this pool at its step.
+    let _ = at.add(fc.pool_address).ok()?;
     let pm = at.add(inputs.pool_manager_address).ok()?;
     let inner = vec![
         mechanics::v4_swap(&mut at, fa, a_input, inputs.hop_outputs[0])?,
-        PlanStep::V4Sync {
-            currency_idx: second_input,
-            currency_addr: fb.in_currency,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: second_input,
-            token_addr: fb.in_currency,
-            recipient_idx: pm,
-            amount: b_input,
-            seeds_pool: None,
-            repays_flash: None,
-        },
+        mechanics::v4_sync(second_input, fb.in_currency),
+        mechanics::erc20_transfer(second_input, fb.in_currency, pm, b_input, None, None),
         mechanics::v4_swap(&mut at, fb, b_input, out_b)?,
-        PlanStep::V4Settle {
-            currency_addr: fb.in_currency,
-            amount: b_input,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: forward,
-            currency_addr: fb.out_currency,
-            recipient_idx: SENTINEL_SELF,
-            amount: c_input,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V3Direct {
-            pool_idx: v3c,
-            zfo: fc.zfo,
-            in_currency: fc.in_currency,
-            in_amount: c_input,
-            out_currency: fc.out_currency,
-            out_amount: out_c,
-            recipient_idx: SENTINEL_SELF,
-        },
-        PlanStep::V4SettleDelta {
-            currency_idx: first_input,
-            currency_addr: fa.in_currency,
-        },
-        PlanStep::V4SettleAll,
+        mechanics::v4_settle(fb.in_currency, b_input),
+        mechanics::v4_take_compact_at(forward, fb.out_currency, SENTINEL_SELF, c_input, None, None),
+        mechanics::v3_direct(&mut at, fc, c_input, out_c, SENTINEL_SELF)?,
+        mechanics::v4_settle_delta(first_input, fa.in_currency),
+        mechanics::v4_settle_all(),
     ];
     Some((
         vec![
@@ -2266,52 +2219,25 @@ fn rule_walk_v3_v3_v4_self_fund(
     }
     let mut at = v4_scaffold_table(inputs);
     let pm = at.add(inputs.pool_manager_address).ok()?;
-    let v3a = at.add(fa.pool_address).ok()?;
-    let v3b = at.add(fb.pool_address).ok()?;
+    // Order-preserving stages: `v3_direct` re-resolves both V3 pools at their
+    // steps; the golden preamble order is fixed by these two `add` calls.
+    let _ = at.add(fa.pool_address).ok()?;
+    let _ = at.add(fb.pool_address).ok()?;
     let forward = at.add(fb.out_currency).ok()?;
     let terminal = at.add(fc.out_currency).ok()?;
     let inner = vec![
-        PlanStep::V3Direct {
-            pool_idx: v3a,
-            zfo: fa.zfo,
-            in_currency: fa.in_currency,
-            in_amount: optimal,
-            out_currency: fa.out_currency,
-            out_amount: out_a,
-            recipient_idx: SENTINEL_SELF,
-        },
-        PlanStep::V3Direct {
-            pool_idx: v3b,
-            zfo: fb.zfo,
-            in_currency: fb.in_currency,
-            in_amount: b_input,
-            out_currency: fb.out_currency,
-            out_amount: out_b,
-            recipient_idx: pm,
-        },
+        mechanics::v3_direct(&mut at, fa, optimal, out_a, SENTINEL_SELF)?,
+        mechanics::v3_direct(&mut at, fb, b_input, out_b, pm)?,
         mechanics::v4_swap(&mut at, fc, c_input, out_c)?,
-        PlanStep::V4Settle {
-            currency_addr: fb.out_currency,
-            amount: c_input,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: terminal,
-            currency_addr: fc.out_currency,
-            recipient_idx: SENTINEL_SELF,
-            amount: out_c,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleAll,
+        mechanics::v4_settle(fb.out_currency, c_input),
+        mechanics::v4_take_compact_at(terminal, fc.out_currency, SENTINEL_SELF, out_c, None, None),
+        mechanics::v4_settle_all(),
     ];
     Some((
         vec![
             mechanics::self_fund(fa.in_currency, optimal),
             mechanics::self_fund(fb.in_currency, b_input),
-            PlanStep::V4Sync {
-                currency_idx: forward,
-                currency_addr: fb.out_currency,
-            },
+            mechanics::v4_sync(forward, fb.out_currency),
             mechanics::v4_unlock(inner, pm),
         ],
         at,
@@ -2813,5 +2739,125 @@ mod rule_walker_tests {
                 }
             }
         }
+    }
+}
+
+/// Scoped honesty gate for the self-funded funding posture (ADR-031's
+/// mechanics addendum).
+///
+/// The scanned scope is exactly the four self-funded regions: the three named
+/// rule arms plus the merged `v3v4` unlock-internal branch between the
+/// `mechanics-honesty` markers. Every older arm in this module is deliberately
+/// out of scope — they carry literals this gate must not police — so the
+/// extraction is by name/marker, never whole-file.
+#[cfg(test)]
+mod mechanics_honesty {
+    /// This module's own source: the gate reads the file the compiler builds,
+    /// so a region can only pass by being what ships.
+    const SOURCE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/grammar_walker/shapes/three_hop.rs"
+    ));
+
+    /// The named self-funded rule arms, as `(label, signature needle)`. The
+    /// needle is a top-level `fn`, so its body ends at the first column-0 `}`.
+    const FN_REGIONS: [(&str, &str); 3] = [
+        (
+            "v2-terminal-v4 self-funded",
+            "fn rule_walk_v2_terminal_v4_self_fund(",
+        ),
+        ("v4-v4-v3 self-funded", "fn rule_walk_v4_v4_v3_self_fund("),
+        ("v3-v3-v4 self-funded", "fn rule_walk_v3_v3_v4_self_fund("),
+    ];
+
+    /// The marker pair delimiting the merged `v3v4` unlock-internal branch.
+    const MARKED_BEGIN: &str = "// mechanics-honesty:begin self-funded-unlock-internal";
+    const MARKED_END: &str = "// mechanics-honesty:end self-funded-unlock-internal";
+
+    /// A region shorter than this is a failed extraction, not a lean one: each
+    /// carries a guard ladder and a step sequence.
+    const MIN_REGION_BYTES: usize = 400;
+
+    /// Extract a top-level `fn` body, proving the extraction is the function it
+    /// names: the signature must be present and the text must reach the
+    /// column-0 close.
+    #[expect(clippy::panic)]
+    fn fn_region(needle: &str) -> &'static str {
+        let start = SOURCE
+            .find(needle)
+            .unwrap_or_else(|| panic!("self-funded region `{needle}` is gone"));
+        let body = &SOURCE[start..];
+        let mut offset = 0;
+        for line in body.split_inclusive('\n') {
+            offset += line.len();
+            if line.trim_end() == "}" {
+                let region = &body[..offset];
+                assert!(
+                    region.contains("Option<(Plan, AddressTable)>"),
+                    "`{needle}` extracted without its signature — the gate is \
+                     scanning the wrong text"
+                );
+                assert!(
+                    region.len() > MIN_REGION_BYTES,
+                    "`{needle}` extracted {} bytes, below the {} floor — the \
+                     function it names has gone missing",
+                    region.len(),
+                    MIN_REGION_BYTES
+                );
+                return region;
+            }
+        }
+        panic!("`{needle}` never closes at column 0");
+    }
+
+    /// Extract the marker-delimited merged branch, proving it is the
+    /// self-funded one (its mechanics calls are the anchors).
+    #[expect(clippy::panic)]
+    fn marked_region() -> &'static str {
+        let begin = SOURCE.find(MARKED_BEGIN).unwrap_or_else(|| {
+            panic!("the merged v3v4 self-funded branch lost its opening marker")
+        }) + MARKED_BEGIN.len();
+        let rest = &SOURCE[begin..];
+        let end = rest.find(MARKED_END).unwrap_or_else(|| {
+            panic!("the merged v3v4 self-funded branch lost its closing marker")
+        });
+        let region = &rest[..end];
+        assert!(
+            region.contains("mechanics::erc20_transfer")
+                && region.contains("mechanics::v4_take_compact"),
+            "the marker-delimited branch is not the self-funded unlock-internal tail"
+        );
+        assert!(
+            region.len() > MIN_REGION_BYTES,
+            "the marker-delimited branch extracted {} bytes, below the {} floor",
+            region.len(),
+            MIN_REGION_BYTES
+        );
+        region
+    }
+
+    /// The self-funded regions emit through `mechanics` primitives only: a
+    /// hand-built `PlanStep` inside one of them is a per-family Plan body
+    /// growing back, which no golden or validator gate can see as such.
+    #[test]
+    fn self_funded_regions_emit_only_through_mechanics() {
+        let mut regions: Vec<(&str, &'static str)> = FN_REGIONS
+            .iter()
+            .map(|(label, needle)| (*label, fn_region(needle)))
+            .collect();
+        regions.push(("v3v4 unlock-internal self-funded", marked_region()));
+        let mut offenders: Vec<String> = Vec::new();
+        for (label, region) in regions {
+            let literals = region.matches("PlanStep::").count();
+            if literals > 0 {
+                offenders.push(format!("{label}: {literals}"));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "self-funded walker regions still hand-build PlanStep literals \
+             ({}) — every step must come from a `mechanics` primitive",
+            offenders.join(", ")
+        );
     }
 }
