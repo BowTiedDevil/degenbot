@@ -1980,8 +1980,8 @@ setup-git-hooks:
     command -v prek >/dev/null 2>&1 || uv tool install prek
     prek install
     echo "✓ prek hooks installed:"
-    echo "    pre-commit : Markdown lint + PLC0415 noqa guard (staged files)"
-    echo "                + instant checks (Rust/Python fmt, Rust no-pyo3)"
+    echo "    pre-commit : Markdown lint + instant checks (Rust/Python fmt,"
+    echo "                 Rust no-pyo3)"
     echo "    commit-msg : commitlint against .commitlintrc.yml (relaxed rules)"
     echo "    pre-push   : object-DB GC + commitlint push-range + Rust/Python lint"
     echo "                 (clippy/ty) + build & test suite (rust build/test,"

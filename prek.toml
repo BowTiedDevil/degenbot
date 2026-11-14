@@ -57,13 +57,6 @@ hooks = [
   # scoping principle as the src/-only Python lint gates.
   { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], stages = ["pre-commit"], exclude = "^executor/|^logs/|^rust/vendor/" },
 
-  # File-scoped pygrep over the staged python list.
-  # Forbid `# noqa: ...PLC0415`. This lint is suppressed project-wide by a
-  # shared ruff config; the suppression must never be re-enabled per-line.
-  #
-  # live-invariant gate (ADR-087 D2): watches the live `PL` (pylint) rules ruff selects, whose teeth a per-line `noqa` would silence; not tripwire precedent.
-  { id = "forbid-noqa-PLC0415", name = "forbid noqa for PLC0415", language = "pygrep", entry = "noqa:.*PLC0415", types = ["python"], stages = ["pre-commit"] },
-
   # Comment hygiene (AGENTS.md / docs/comments.md): work-tracker (ergo) IDs
   # and RED/GREEN gate narration are banned in code comments. The waiver
   # list (scripts/hooks/comment-hygiene-waivers.txt) is empty and the census

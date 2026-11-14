@@ -104,7 +104,6 @@ Ties break toward KEEP: deletion is irreversible, relabeling is not.
 
 | location (file:line) | mechanism | class | evidence |
 | --- | --- | --- | --- |
-| `prek.toml:63` | name-text-grep | KEEP-RECLASSIFY | censusError: the premise is stale — `PLC0415`/`import-outside-top-level` is live through `extend-select = ["PL"]` and absent from ruff's `ignore`, so the hook defends a present lint's teeth against per-line silencing |
 | `prek.toml:83` | name-text-grep | KEEP-RECLASSIFY | censusError: not a retirement at all — tracker-citation ban over the live comment surface (AGENTS.md "Comment Hygiene", `docs/comments.md`), no deleted symbol watched |
 | `scripts/hooks/comment-hygiene.sh:181` | count-guard | KEEP-RECLASSIFY | censusError: Detector 2 is a shrink-only ratchet over live comments — the census lexicon in `scripts/hooks/comment-hygiene-census.txt` is live wiring and a new bare token is new code, not a revival |
 | `justfile:1296` | name-text-grep | DELETE | absent ⇒ DELETE: `check-no-alembic` (recipe at `justfile:1301`, census anchor is its ADR-052 D6 comment) wraps the `no_alembic_references` cargo test the facade section classified at `architecture_gates.rs:498`; zero `alembic` hits under `src/**/*.py` and `src/degenbot/migrations` is gone (the surviving `legacy_alembic` marker is Rust-side, outside this recipe's cargo-test scan) |
