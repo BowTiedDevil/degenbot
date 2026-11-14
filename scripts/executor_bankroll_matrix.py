@@ -27,6 +27,12 @@ not a promise about any one market — a zero-capital row that does execute is a
 execution, and therefore a policy mismatch for that posture. A selection of one
 posture runs only that posture, with its own expectation.
 
+The runtime artifact under test must state the owner named by ``--owner``: the
+``cmd_executor/2`` immutable tail is decoded and its OWNER_ADDR word compared,
+so a run the runtime would refuse fails here instead of reverting every row. A
+``--release-id`` this runner does not know the immutable layout of is refused
+rather than guessed.
+
 No key material is read, accepted, or printed: the launcher inherits the normal
 environment, and the only environment this runner sets is the executor-injection
 set the matrix probe needs. Captured command output is scrubbed of RPC URIs
@@ -104,6 +110,19 @@ DEFAULT_CHAIN_ID = 1
 DEFAULT_RELEASE_ID = "cmd_executor/2"
 DEFAULT_READY_TIMEOUT = 120.0
 
+#: A 32-byte immutable word, and the 20 bytes of an ``address`` inside one:
+#: Vyper appends the immutables after the runtime, one word per immutable, and
+#: an address occupies its word's LOW bytes.
+WORD_BYTES = 32
+ADDRESS_BYTES = 20
+
+#: The immutable words each supported release appends, by ``--release-id``.
+#: ``cmd_executor.immutables.json`` orders OWNER_ADDR first, then WETH_ADDR,
+#: POOL_MANAGER_ADDR, USDC_ADDR, USDT_ADDR, WETH_DELTA_SLOT,
+#: NATIVE_DELTA_SLOT. A release with no entry here is refused: reading an
+#: unlisted layout would validate whatever bytes happened to land there.
+IMMUTABLE_WORDS_BY_RELEASE = {DEFAULT_RELEASE_ID: 7}
+
 METADATA_SCHEMA_VERSION = 1
 RUN_SCHEMA_VERSION = 1
 
@@ -146,6 +165,10 @@ _ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]{40}")
 
 #: A JSON-RPC quantity: ``0x`` and hex digits only (no sign, no separators).
 _QUANTITY_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
+
+#: A runtime artifact's body once its whitespace and optional ``0x`` prefix are
+#: gone: hex digits only, so a stray byte or a comment word is a refusal.
+_HEX_BODY_PATTERN = re.compile(r"[0-9a-fA-F]+")
 
 
 class RefusalError(Exception):
@@ -501,6 +524,122 @@ def validate_socket_path(path: Path) -> Path:
     return path
 
 
+def decode_runtime(path: Path) -> bytes:
+    """Decode a runtime artifact's bytecode.
+
+    The accepted body is hex digits with an optional ``0x`` prefix and any
+    whitespace between them — the shape ``contracts/recompile.py`` writes and
+    the bot loads.
+
+    Args:
+        path: The runtime artifact.
+
+    Returns:
+        The decoded bytecode, immutable tail included.
+
+    Raises:
+        RefusalError: If the artifact is missing, unreadable, or not hex.
+
+    """
+    if not path.is_file():
+        msg = f"runtime artifact is missing: {path}"
+        raise RefusalError(msg)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"runtime artifact {path} could not be read: {type(exc).__name__}"
+        raise RefusalError(msg) from None
+    body = "".join(text.split())
+    if body[:2].lower() == "0x":
+        body = body[2:]
+    if _HEX_BODY_PATTERN.fullmatch(body) is None:
+        msg = f"runtime artifact {path} is not hex bytecode (hex digits, optional 0x prefix)"
+        raise RefusalError(msg)
+    try:
+        return bytes.fromhex(body)
+    except ValueError:
+        msg = f"runtime artifact {path} is not hex bytecode (an odd number of hex digits)"
+        raise RefusalError(msg) from None
+
+
+def runtime_owner(path: Path, *, release_id: str) -> str:
+    """Read the owner baked into a runtime artifact's immutable tail.
+
+    The deployed runtime appends one 32-byte word per immutable AFTER the code
+    section and its CBOR metadata, and ``OWNER_ADDR`` is word 0 of that tail, an
+    ``address`` left-padded inside the word. So the owner is read from the LAST
+    tail-sized slice of the artifact and nowhere else: an address-shaped run of
+    bytes in the code section is a coincidence, and matching one would validate
+    a runtime that admits a different sender.
+
+    ``execute()`` admits only the runtime's own ``OWNER_ADDR``, which makes this
+    the one fact a matrix launch cannot get wrong.
+
+    Args:
+        path: The runtime artifact under test.
+        release_id: The release whose immutable layout applies.
+
+    Returns:
+        The artifact's owner address, lowercase (``0x`` plus 40 hex digits).
+
+    Raises:
+        RefusalError: If the release's layout is unknown, the artifact is
+            unreadable, too short to hold its tail, or word 0's high bytes are
+            not the zero padding an address requires.
+
+    """
+    words = IMMUTABLE_WORDS_BY_RELEASE.get(release_id)
+    if words is None:
+        supported = ", ".join(sorted(IMMUTABLE_WORDS_BY_RELEASE))
+        msg = (
+            f"unsupported release id {release_id!r}: this runner reads the immutable "
+            f"tail of {supported} only, and does not guess another layout"
+        )
+        raise RefusalError(msg)
+    tail_bytes = words * WORD_BYTES
+    data = decode_runtime(path)
+    if len(data) < tail_bytes:
+        msg = (
+            f"runtime artifact {path} decodes to {len(data)} bytes, shorter than the "
+            f"{tail_bytes}-byte {release_id} immutable tail"
+        )
+        raise RefusalError(msg)
+    padding = WORD_BYTES - ADDRESS_BYTES
+    word = data[-tail_bytes:][:WORD_BYTES]
+    if any(word[:padding]):
+        msg = (
+            f"runtime artifact {path} immutable word 0 is {word.hex()}, whose first "
+            f"{padding} bytes are not zero: {release_id} carries no address there"
+        )
+        raise RefusalError(msg)
+    return "0x" + word[padding:].hex()
+
+
+def validate_runtime_owner(config: MatrixConfig) -> str:
+    """Refuse a runtime whose own immutable owner is not ``--owner``.
+
+    Args:
+        config: The run's configuration.
+
+    Returns:
+        The owner the runtime admits, lowercase.
+
+    Raises:
+        RefusalError: If the release layout is unsupported, the artifact cannot
+            be read as the release's runtime, or its owner is another address.
+
+    """
+    owner = runtime_owner(config.runtime, release_id=config.release_id)
+    if owner != config.owner.lower():
+        msg = (
+            f"runtime owner {owner} does not match --owner {config.owner}: "
+            f"the runtime admits its OWNER_ADDR alone, so no row of this run "
+            f"could execute"
+        )
+        raise RefusalError(msg)
+    return owner
+
+
 def validate_config(config: MatrixConfig) -> MatrixConfig:
     """Refuse a configuration that could not produce an auditable run.
 
@@ -512,7 +651,8 @@ def validate_config(config: MatrixConfig) -> MatrixConfig:
 
     Raises:
         RefusalError: If an address, the fixed input, a chain id, the ready
-            timeout, the capital selection, or the socket path is unusable.
+            timeout, the capital selection, the release/runtime owner, or the
+            socket path is unusable.
 
     """
     validate_address(config.owner, label="--owner")
@@ -529,9 +669,7 @@ def validate_config(config: MatrixConfig) -> MatrixConfig:
     if not config.ready_timeout > 0:
         msg = f"ready timeout must be positive, got {config.ready_timeout!r}"
         raise RefusalError(msg)
-    if not config.release_id:
-        msg = "release id must not be empty"
-        raise RefusalError(msg)
+    validate_runtime_owner(config)
     validate_socket_path(config.socket_path)
     return config
 

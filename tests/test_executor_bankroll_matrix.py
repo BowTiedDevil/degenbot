@@ -33,6 +33,42 @@ OWNER = "0x" + "11" * 20
 INJECTED = "0x" + "22" * 20
 MANIFEST = ROOT / "scripts" / "executor_three_hop_matrix.json"
 
+#: The owner the tracked deployment baked into its runtime, in the mixed case the
+#: deployment spells it; a run's ``--owner`` must be this address.
+TRACKED_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
+
+#: The runtime the bot injects: the deployed ``cmd_executor/2`` bytecode, code
+#: section plus the seven immutable words its constructor wrote.
+TRACKED_RUNTIME = (
+    ROOT
+    / "rust"
+    / "crates"
+    / "foundation"
+    / "degenbot-executor"
+    / "releases"
+    / "v2"
+    / "deployment"
+    / "cmd_executor_runtime_bytecode.txt"
+)
+
+#: The fixture runtime's code section. The runner reads the immutable tail that
+#: follows it, so no test depends on this being executable bytecode.
+RUNTIME_CODE = "0x60006000"
+
+
+def _owner_word(owner: str) -> str:
+    """One address immutable word: twelve zero bytes, then the owner's twenty."""
+    return "00" * 12 + owner[2:].lower()
+
+
+def _runtime_hex(owner: str = OWNER) -> str:
+    """One ``cmd_executor/2`` runtime: a minimal code section, then the seven-word tail.
+
+    Word 0 carries OWNER_ADDR, as ``cmd_executor.immutables.json`` orders the
+    tail; the other six words are immutables this runner never reads.
+    """
+    return RUNTIME_CODE + _owner_word(owner) + "ab" * (32 * 6)
+
 
 def _summary(*, complete: bool = True, unexpected: int = 0, matched: int = 27) -> dict[str, Any]:
     """One report summary in the matrix's own shape."""
@@ -57,11 +93,12 @@ class World:
         self.root = root
         self.out = root / "run"
         self.runtime = root / "runtime.txt"
-        self.runtime.write_text("0x60006000", encoding="utf-8")
+        self.runtime.write_text(_runtime_hex(), encoding="utf-8")
         self.bot_log = root / "logs" / "bot_run.log"
         self.bot_log.parent.mkdir(parents=True, exist_ok=True)
         self.pidfile = root / "logs" / "bot_run.pid"
         self.calls: list[tuple[str, list[str], Mapping[str, str] | None]] = []
+        self.rpc_calls: list[str] = []
         self.running = False
         self.start_code = 0
         self.inject_code = 0
@@ -115,6 +152,7 @@ class World:
 
     def rpc(self, method: str) -> object:
         """Answer one JSON-RPC method."""
+        self.rpc_calls.append(method)
         if self.rpc_error is not None:
             msg = self.rpc_error
             raise RuntimeError(msg)
@@ -365,12 +403,12 @@ def test_every_artifact_is_archived_in_the_run_directory(world: World) -> None:
 
 def test_the_metadata_records_what_a_reproduction_needs(world: World) -> None:
     """Chain, block, release, hashes, source state, posture, and artifact names."""
-    _run(world, "--release-id", "cmd_executor/7", "--fixed-input", str(10**16))
+    _run(world, "--fixed-input", str(10**16))
 
     metadata = world.metadata()
     assert metadata["chain_id"] == 1
     assert metadata["block_number"] == 0x1400000
-    assert metadata["release_id"] == "cmd_executor/7"
+    assert metadata["release_id"] == "cmd_executor/2"
     assert metadata["runtime_sha256"] == hashlib.sha256(world.runtime.read_bytes()).hexdigest()
     assert metadata["matrix_manifest_sha256"] == hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
     assert metadata["source_commit"] == world.commit
@@ -875,6 +913,102 @@ def test_a_missing_runtime_artifact_is_refused(world: World) -> None:
 
     assert bankroll.main(world.argv(), deps=world.deps()) == bankroll.EXIT_REFUSED
     assert "start" not in world.steps()
+
+
+# ── the runtime's own owner ───────────────────────────────────────────
+
+
+def test_a_runtime_owned_by_another_address_is_refused(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The runtime admits its own OWNER_ADDR alone, so another --owner reverts every row."""
+    world.runtime.write_text(_runtime_hex(TRACKED_OWNER), encoding="utf-8")
+
+    assert bankroll.main(world.argv(), deps=world.deps()) == bankroll.EXIT_REFUSED
+
+    assert world.calls == [], "the refusal precedes even the launcher's status check"
+    assert world.rpc_calls == [], "the refusal precedes the endpoint read"
+    assert not world.out.exists(), "the refusal did not create a run directory"
+    refusal = capsys.readouterr().err
+    assert TRACKED_OWNER.lower() in refusal, "the refusal names the owner the runtime declares"
+    assert OWNER in refusal, "the refusal names the owner the run was given"
+
+
+def test_the_owner_is_matched_through_another_hex_spelling(world: World) -> None:
+    """Hex case, the optional 0x prefix, and whitespace carry no identity."""
+    world.runtime.write_text(f"\n 0X{_runtime_hex(TRACKED_OWNER)[2:].upper()}\n", encoding="utf-8")
+
+    record = _run(world, "--owner", TRACKED_OWNER.lower())
+
+    assert record.outcome == bankroll.OUTCOME_COMPLETE
+    assert bankroll.runtime_owner(world.runtime, release_id="cmd_executor/2") == (
+        TRACKED_OWNER.lower()
+    )
+
+
+def test_an_unsupported_release_id_is_refused(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only the release whose immutable layout this runner knows is accepted."""
+    assert bankroll.main(world.argv("--release-id", "cmd_executor/7"), deps=world.deps()) == (
+        bankroll.EXIT_REFUSED
+    )
+
+    assert world.calls == []
+    assert world.rpc_calls == []
+    assert not world.out.exists()
+    refusal = capsys.readouterr().err
+    assert "unsupported release id" in refusal
+    assert "cmd_executor/2" in refusal, "the refusal names the layout it can read"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "0x60006000,not-hex\n",
+        "0x",
+        "",
+    ],
+)
+def test_a_runtime_that_is_not_hex_is_refused(world: World, *, body: str) -> None:
+    """A body this runner cannot decode is no runtime at all."""
+    world.runtime.write_text(body, encoding="utf-8")
+
+    assert bankroll.main(world.argv(), deps=world.deps()) == bankroll.EXIT_REFUSED
+    assert world.calls == []
+    assert world.rpc_calls == []
+    assert not world.out.exists()
+
+
+def test_a_runtime_too_short_to_hold_its_tail_is_refused(world: World) -> None:
+    """200 bytes cannot carry a seven-word tail, so there is no owner word to read."""
+    world.runtime.write_text("0x" + "00" * 200, encoding="utf-8")
+
+    assert bankroll.main(world.argv(), deps=world.deps()) == bankroll.EXIT_REFUSED
+    assert world.calls == []
+    assert world.rpc_calls == []
+    assert not world.out.exists()
+
+
+def test_a_runtime_whose_owner_word_has_nonzero_high_bytes_is_refused(world: World) -> None:
+    """An address immutable is left-padded in its word; code bytes there are no address.
+
+    The unlinked compiler artifact ends in its code section, so its last 20 bytes
+    spell a plausible-looking owner — which is exactly why they are refused.
+    """
+    world.runtime.write_text("0x6000" + "ff" * 12 + OWNER[2:] + "ab" * (32 * 6), encoding="utf-8")
+
+    assert bankroll.main(world.argv(), deps=world.deps()) == bankroll.EXIT_REFUSED
+    assert world.calls == []
+    assert world.rpc_calls == []
+    assert not world.out.exists()
+
+
+def test_the_tracked_runtime_states_its_deployed_owner() -> None:
+    """The artifact the bot injects parses to the owner its deployment baked in."""
+    assert bankroll.runtime_owner(TRACKED_RUNTIME, release_id="cmd_executor/2") == (
+        TRACKED_OWNER.lower()
+    )
 
 
 def test_an_unusable_socket_path_is_refused(world: World) -> None:

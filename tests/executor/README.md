@@ -126,7 +126,7 @@ session, and it never reads, accepts, or prints key material.
 just executor-bankroll-matrix -- \
   --owner 0x... \
   --injected-address 0x... \
-  --runtime /path/to/cmd_executor_runtime.txt \
+  --runtime /path/to/cmd_executor_runtime_bytecode.txt \
   --output-dir /path/to/run
 ```
 
@@ -138,6 +138,16 @@ Optional: `--capital both|self_fund|zero_balance` (default `both`),
 every row (`--expect executed`), `zero_balance` must refuse every row on capital
 policy (`--expect insolvent`), so a selection of one posture still states the
 right policy for it.
+
+`--runtime` must be the release's deployed runtime — the bytecode with its
+immutable tail already baked in — and `--release-id` must name a release whose
+tail layout the runner knows. That is `cmd_executor/2` today: the runner reads
+the last seven 32-byte words of the artifact, takes `OWNER_ADDR` from word 0
+(low 20 bytes of the word), and compares it with `--owner`, ignoring hex case.
+Any other release ID is refused rather than guessed. `execute()` admits the
+runtime's own `OWNER_ADDR` alone, so a mismatched `--owner` would revert every
+self-funded row; the run is refused before the launcher, the endpoint, or the
+output directory is touched.
 
 The run's directory is the evidence envelope:
 
@@ -153,8 +163,10 @@ The run's directory is the evidence envelope:
 Exit codes: `0` — every selected report complete and policy-matched; `1` — a
 failed launch/injection/probe, an incomplete report, a policy mismatch, or a
 session that left a bot, pidfile, or socket behind; `2` — refused before launch
-(unusable argument, nonempty output directory, a bot already running, an
-unreachable or wrong-chain endpoint, a missing artifact); `130` — stopped by
+(unusable argument, a runtime artifact that is missing, not hex, too short for
+its immutable tail, or owned by another address, an unsupported `--release-id`,
+nonzero high bytes in the owner word, a nonempty output directory, a bot
+already running, an unreachable or wrong-chain endpoint); `130` — stopped by
 SIGINT/SIGTERM, which is the operator's own outcome and still cleans up.
 
 An operator stop (`^C` / `SIGTERM`) stops the bot, archives what exists, and
@@ -173,7 +185,7 @@ injected address, and runtime artifact for the release under test):
 export DEGENBOT_INJECT_EXECUTOR_CODE=1
 export EXECUTOR_OWNER_ADDRESS=0x...
 export INJECTED_EXECUTOR_ADDRESS=0x...
-export EXECUTOR_RUNTIME=/path/to/cmd_executor_runtime.txt
+export EXECUTOR_RUNTIME=/path/to/cmd_executor_runtime_bytecode.txt
 export DEGENBOT_MIN_PROFIT_WEI=0
 export DEGENBOT_MIN_PROFIT_MARGIN_BPS=0
 ./run_bot.sh foreground -- --skip-discovery --sparse-registration --operator-socket /tmp/degenbot-27.sock
