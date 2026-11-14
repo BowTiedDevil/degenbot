@@ -23,23 +23,29 @@ py_run := "uv run --no-sync"
 # `ape test` injects the plugin explicitly, so it does not use this prefix.
 pytest_run := "env 'PYTEST_ADDOPTS=-p no:ape_test' uv run --no-sync pytest"
 
-# The type checker's exact version. Every gate that runs `ty` reads this one
-# pin: an unpinned `--with ty` resolved whatever PyPI published that minute, so
-# an upstream release could flip the shared pre-push gate's verdict with no
-# diff on our side to review. Bump deliberately: check `--with ty==X.Y.Z`
-# against the tree, then edit this line in its own gated change.
-ty_version := "ty==0.0.91"
-
-# The linter/formatter's exact version, for the same reason as the type
-# checker's: every gate that runs ruff reads this one pin (`lint-python`,
-# `lint-python-check`, `fmt-check-python`, `format`, and the gen-stubs
-# formatting pipeline whose output lands in the committed stub tree). An
-# unpinned `uvx ruff` resolved whatever PyPI published that minute, and ruff
-# rewrites files under `check --fix` / `format`, so an upstream release could
-# flip — or silently rewrite — the shared gate's verdict with no diff on our
-# side to review. Bump deliberately: check `--with ruff==X.Y.Z` against the
-# tree, then edit this line in its own gated change.
-ruff_version := "ruff==0.17.4"
+# The lint/format tool pins. Every tool the python gates run carries exactly ONE
+# pin -- these two, the `markdownlint-cli2@X` in the markdown recipes, and the
+# `@commitlint/cli@X` pair in prek.toml + this file -- so a gate's verdict can
+# never move without a reviewable diff. That precision is also what makes ruff
+# safe to run in a rewriting pass: `format` / `check --fix` and the gen-stubs
+# pipeline whose output lands in the committed stub tree produce the same bytes
+# here as in CI.
+#
+# The pins are tracked, not frozen. An exact pin nobody refreshes ages out, so
+# `just lint-tools-latest` reports every pin that is behind what this repo can
+# actually install (the pre-push `lint-tools` gate runs exactly that), and
+# `just bump-lint-tools` refreshes them all in ONE reviewable diff and re-runs
+# the gates on the result. A registry that cannot be reached is a warning, never
+# a red: freshness never breaks an offline push, and the remedy is always the
+# same one command.
+#
+# The comparison asks uv rather than a package index: uv is the resolver the
+# gates themselves use, and `[tool.uv] exclude-newer` applies to the
+# project-venv form (`ty`), so an index lookup would name a version uv then
+# refuses -- an un-pushable tree. The freshness lag is bounded by that cutoff,
+# the same 14-day window every dependency lives under.
+ty_version := "ty==0.0.95"
+ruff_version := "ruff==0.17.5"
 
 # Default recipe - show available commands
 default:
@@ -1777,7 +1783,7 @@ lint-markdown:
 
 # Lint Markdown (check-only; non-mutating). Mirrors CI's pinned step.
 lint-markdown-check:
-    npx --yes markdownlint-cli2@0.24.0 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**"
+    npx --yes markdownlint-cli2@0.24.1 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**"
 
 # Lint Python files
 lint-python:
@@ -1816,6 +1822,25 @@ lint-tripwire-ratchet:
 lint-python-check:
     uvx --with {{ ruff_version }} ruff check src/ examples/
     {{ py_run }} --with {{ ty_version }} ty check --no-progress src/
+
+# Report every lint/format tool pin against what this repo can install today.
+# Network-dependent by design (it asks uv / the npm registry), so an unreachable
+# registry is a warning, not a failure. The pre-push `lint-tools` gate runs this
+# exact recipe, so a pin that goes stale fails the push instead of aging out
+# quietly in the justfile.
+lint-tools-latest:
+    scripts/hooks/lint-tool-pins.sh --report
+
+# Refresh every behind pin in ONE reviewable diff, then re-run the gates on the
+# result, so the churn lands here rather than on some later, unrelated push.
+bump-lint-tools:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    scripts/hooks/lint-tool-pins.sh --bump
+    git --no-pager diff -- justfile prek.toml
+    just fmt-check-python
+    just lint-python-check
+    scripts/hooks/lint-tool-pins.sh --report
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see
