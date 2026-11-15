@@ -412,6 +412,21 @@ shape in which what was tested is what was published. A member whose retained
 requirement reaches a withheld member is withheld in turn, so the population
 is closed over dependents.
 
+Every retained requirement is also an upload-ordering constraint:
+`cargo publish --workspace` uploads members in dependency order, and a
+member's retained dev-dependencies participate — cargo resolves a member's
+versioned dev-dependencies while preparing its package, including under
+`--no-verify`, so the fresh sibling version must already be resolvable at
+packaging time, and a retained dev edge orders its member after its target
+exactly like a normal edge. The gate
+therefore also fails outright on any cycle formed by registry-retained normal
+and dev dependencies among publishable members, naming the cycle, because no
+upload order — and so no crates.io version of the workspace — can satisfy it.
+The dependency shape cargo strips at packaging (the version-less path/git
+dev-dependency) is not a requirement and can never close a cycle. A cycle is
+never recorded as a census row: it is a release-graph defect to repair in the
+manifests, and no census exclusion may hide it.
+
 The reconciliation is **bidirectional and fails closed**:
 
 - a withheld member with no census row fails — the population cannot grow in
@@ -457,7 +472,9 @@ metadata --no-deps`, so a plain `python3` runs it — the same uv-free
 constraint as section 6. `tests/test_publish_blocked_gate.py` is the committed
 negative probe: it drives the real gate with `--root` pointed at a throwaway
 workspace and requires the red path for a fresh member, both reason-drift
-directions, the stale row, and the fail-closed exits.
+directions, the stale row, the fail-closed exits, a retained normal+dev cycle
+(named by the gate), and the green paths for the stripped dev-dependency shape
+and an acyclic retained dev edge.
 ### The publish-verify overlay
 
 **Failure class.** `cargo publish --dry-run` resolves every member's rewritten
@@ -484,10 +501,10 @@ packed `.crate`'s checksum — a dependency renamed through `package = ...`
 keeps Cargo's index rename spelling (the alias in the entry dependency's
 `name`, the original package name in its `package`, and the manifest's own
 `dep:` feature references), so a member compiled from the overlay is linked
-under the alias its code imports (a dev-dependency edge closing a normal
-dependency cycle has no packing order; its members get provisional entries
-that are rewritten from the packaged artifacts before anything resolves
-through them). The census is reconciled first and its members are withheld
+under the alias its code imports (a retained normal+dev dependency cycle
+among publishable members has no upload order; the census gate rejects it
+outright with the cycle named before this run packs anything). The census
+is reconciled first and its members are withheld
 from the run by name, keeping their file-inclusion coverage through `cargo
 package --list`. A member whose `publish` allowlist names a non-crates.io
 registry fails loud — this run certifies the crates.io publish form only —

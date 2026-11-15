@@ -493,14 +493,17 @@ def test_a_stale_lock_fails_the_pack_without_rewriting_it(tmp_path: Path) -> Non
     assert lock.read_text(encoding="utf-8") == stale
 
 
-def test_a_packing_dev_cycle_still_covers_every_member(tmp_path: Path) -> None:
-    """A dev-dependency edge closing a normal cycle has no packing order.
+def test_a_retained_dev_cycle_fails_the_oracle_before_packaging(
+    tmp_path: Path,
+) -> None:
+    """A dev-dependency edge closing a normal cycle is a release-graph defect.
 
-    cargo resolves a member's dev-dependencies at packaging, so `db ->dev
-    pools -> uniswap -> db` (the real workspace's shape) cannot be packed in
-    any strict order; the oracle seeds provisional entries for the cycle and
-    rewrites them from the packaged artifacts, and every member still lands
-    covered with the published forms resolving through faithful entries.
+    Every retained requirement -- normal or dev -- is an upload-ordering
+    constraint, so `db -> pools -> uniswap -> db` (the real workspace's
+    shape, with the dev edge retained by its explicit version) leaves
+    `cargo publish --workspace` no upload order. The census gate rejects the
+    cycle outright with the cycle named before this oracle packs anything,
+    so no member is covered and no census exclusion may hide the defect.
     """
     tree = _lockstep_tree(
         tmp_path,
@@ -516,9 +519,11 @@ def test_a_packing_dev_cycle_still_covers_every_member(tmp_path: Path) -> None:
     )
     _census(tree, [])
     result = _oracle(tree, "--no-verify")
-    assert result.returncode == 0, result.stdout + result.stderr
-    for name in ("pubfix-db", "pubfix-math", "pubfix-pools", "pubfix-uniswap"):
-        assert f"publish-verify covered {name}" in result.stdout
+    assert result.returncode == 1
+    assert "publishable dependency cycle" in result.stdout
+    assert "pubfix-db -> pubfix-pools -> pubfix-uniswap -> pubfix-db" in result.stdout
+    # refused before any packaging: no member was covered
+    assert "publish-verify covered" not in result.stdout
 
 
 def test_a_renamed_optional_dep_keeps_its_manifest_feature_reference(

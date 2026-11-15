@@ -30,6 +30,14 @@ here can be satisfied by a re-typed copy of the gate's logic.
   * ``test_a_blocked_member_blocks_its_dependents`` -- rule 4, the closure.
   * ``test_the_blocked_list_is_the_withheld_population`` -- ``--blocked``
     prints exactly the rows' members.
+  * ``test_a_normal_dev_cycle_fails_with_the_cycle_named`` -- a cycle formed
+    by registry-retained normal + dev dependencies among publishable members
+    fails the gate and the message names the cycle; no publish order exists.
+  * ``test_a_stripped_versionless_dev_dep_does_not_close_a_cycle`` -- the
+    dependency shape cargo strips at packaging is not a requirement and
+    cannot close a cycle.
+  * ``test_an_acyclic_retained_dev_dep_passes`` -- a retained dev edge is
+    only an ordering constraint; without a cycle nothing is withheld.
   * ``test_the_committed_census_matches_the_tree`` -- the real gate over the
     real tree.
 """
@@ -210,6 +218,70 @@ def test_the_blocked_list_is_the_withheld_population(tmp_path: Path) -> None:
     result = _run(tree, "--blocked")
     assert result.returncode == 0
     assert result.stdout.split() == ["a", "b"]
+
+
+def test_a_normal_dev_cycle_fails_with_the_cycle_named(tmp_path: Path) -> None:
+    """A retained normal+dev cycle among publishable members cannot be ordered.
+
+    `a --normal--> b --retained dev--> a` leaves `cargo publish --workspace`
+    no upload order: publishing `a` requires `b` at this version, and
+    publishing `b` requires `a` too -- cargo resolves `b`'s retained
+    versioned dev-dependency while preparing `b`'s package, even under
+    `--no-verify`, so the fresh sibling version must already be resolvable.
+    The gate must name the cycle, not withhold a census row for
+    it -- the cycle is a release-graph defect, not a withheld member.
+    """
+    tree = _tree(
+        tmp_path,
+        {
+            "a": _deps('b = { path = "../b", version = "0.1.0" }'),
+            "b": '[dev-dependencies]\na = { path = "../a", version = "0.1.0" }\n',
+        },
+    )
+    _census(tree, [])
+    result = _run(tree)
+    assert result.returncode == 1
+    assert "publishable dependency cycle" in result.stdout
+    assert "a -> b -> a" in result.stdout
+
+
+def test_a_stripped_versionless_dev_dep_does_not_close_a_cycle(tmp_path: Path) -> None:
+    """The one shape cargo strips from the published manifest breaks no cycle.
+
+    `b`'s version-less path dev-dependency leaves its published manifest at
+    packaging, so it is not a requirement and cannot order `b` after `a`:
+    the graph is the acyclic `a -> b` and the gate stays green.
+    """
+    tree = _tree(
+        tmp_path,
+        {
+            "a": _deps('b = { path = "../b", version = "0.1.0" }'),
+            "b": '[dev-dependencies]\na = { path = "../a" }\n',
+        },
+    )
+    _census(tree, [])
+    result = _run(tree)
+    assert result.returncode == 0
+    assert "publishable dependency cycle" not in result.stdout
+
+
+def test_an_acyclic_retained_dev_dep_passes(tmp_path: Path) -> None:
+    """A retained dev edge is legal; only the cycle it might close is not.
+
+    `b`'s versioned dev-dependency on leaf `c` is a real requirement (rule 3
+    keeps it in the graph) but names no cycle, so nothing is withheld.
+    """
+    tree = _tree(
+        tmp_path,
+        {
+            "b": '[dev-dependencies]\nc = { path = "../c", version = "0.1.0" }\n',
+            "c": _deps(""),
+        },
+    )
+    _census(tree, [])
+    result = _run(tree)
+    assert result.returncode == 0
+    assert result.stdout.strip().endswith("withheld from publish-dry-run: none")
 
 
 def test_the_committed_census_matches_the_tree() -> None:

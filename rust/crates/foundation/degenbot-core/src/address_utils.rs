@@ -12,6 +12,18 @@ use crate::errors::AddressError;
 use alloy::primitives::Address;
 use std::str::FromStr;
 
+/// The Curve protocol's native-coin wire spelling — the all-Es address the
+/// old Vyper Curve pools spell a native coin with (the Curve protocol's
+/// PRIVATE sentinel, ADR-097 D3). This crate is the single authority for the
+/// spelling: it is the lowest crate every sentinel consumer (the pools
+/// capability, the persistence substrate) already shares, so the constant
+/// needs no dependency edge back up the release graph and every copy pins
+/// against one definition. It is translated to the conceptual `NativeToken`
+/// at Curve construction and coin-projection call sites and is never a token
+/// contract address or a generic input; zero remains the coin-enumeration
+/// terminator and is not this constant.
+pub const NATIVE_SENTINEL_ALL_ES: Address = Address::repeat_byte(0xEE);
+
 /// Convert an Alloy `Address` to a checksummed string.
 ///
 /// This is the canonical implementation used throughout the codebase.

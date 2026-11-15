@@ -46,6 +46,21 @@ The rules
    withheld: the requirement cannot resolve on crates.io for as long as the
    required member does not upload at this version.
 
+5. A cycle formed by registry-retained normal AND dev dependencies among
+   publishable members fails the gate outright, with the cycle named. Every
+   retained requirement is an upload-ordering constraint: `cargo publish
+   --workspace` uploads in dependency order, and a member's retained
+   dev-dependencies are requirements too -- cargo resolves a member's
+   versioned dev-dependencies while preparing its package, including under
+   `--no-verify`, so the fresh sibling version must already be resolvable at
+   packaging time -- so a normal edge in one direction plus a retained dev
+   edge back cannot be ordered and no
+   crates.io version of the workspace can satisfy it. The one dependency
+   form cargo strips at packaging (the version-less path/git
+   dev-dependency) is not a requirement and cannot close a cycle. A cycle
+   is never recorded as a census row: it is a release-graph defect to
+   repair in the manifests, not a member to withhold, and no census
+   exclusion may hide it.
 
 Reconciliation is bidirectional and fails closed: a withheld member with no
 census row fails (the population cannot grow silently, and the run cannot
@@ -226,6 +241,59 @@ def blocked_rows(publishable: list[dict], member_names: set[str]) -> dict[str, s
     return rows
 
 
+def retained_member_edges(publishable: list[dict], member_names: set[str]) -> dict[str, set[str]]:
+    """The upload-ordering edges among publishable members (rules 1 and 3).
+
+    A dependency orders its dependent after its target exactly when the
+    published manifest retains it: every non-stripped dependency on another
+    workspace member, normal or dev. Stripped dev-dependencies are not
+    requirements, so they carry no ordering constraint and no cycle.
+    """
+    edges: dict[str, set[str]] = {}
+    for member in publishable:
+        name = member["name"]
+        targets = {
+            dep["name"]
+            for dep in member["dependencies"]
+            if dep["name"] in member_names and dep["name"] != name and not stripped(dep)
+        }
+        if targets:
+            edges[name] = targets
+    return edges
+
+
+def find_cycle(edges: dict[str, set[str]]) -> list[str] | None:
+    """One cycle in `edges` as a closed name list, or None when acyclic.
+
+    Iterative colored DFS over the sorted graph, so the named cycle is
+    deterministic for a given set of manifests.
+    """
+    unvisited, in_progress, done = 0, 1, 2
+    color: dict[str, int] = dict.fromkeys(edges, unvisited)
+    for start in sorted(edges):
+        if color[start] != unvisited:
+            continue
+        color[start] = in_progress
+        path = [start]
+        iters = [iter(sorted(edges[start]))]
+        while path:
+            advanced = False
+            for nxt in iters[-1]:
+                state = color.get(nxt, done)
+                if state == in_progress:
+                    return path[path.index(nxt) :] + [nxt]
+                if state == unvisited:
+                    color[nxt] = in_progress
+                    path.append(nxt)
+                    iters.append(iter(sorted(edges[nxt])))
+                    advanced = True
+                    break
+            if not advanced:
+                color[path.pop()] = done
+                iters.pop()
+    return None
+
+
 def read_census(path: Path) -> dict[str, str]:
     """Parse `member<TAB>reason` rows; anything else refuses to certify."""
     if not path.is_file():
@@ -258,6 +326,17 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     publishable, member_names = load_members(args.root / MANIFEST_REL)
+
+    # Rule 5 before any census work: a cycle means no member upload order
+    # exists, so reconciliation is moot until the manifests are repaired.
+    cycle = find_cycle(retained_member_edges(publishable, member_names))
+    if cycle is not None:
+        print(
+            "publishable dependency cycle -- no crates.io publish order can "
+            f"exist; repair the manifests:\n  {' -> '.join(cycle)}"
+        )
+        return 1
+
     rows = blocked_rows(publishable, member_names)
 
     if args.rows:

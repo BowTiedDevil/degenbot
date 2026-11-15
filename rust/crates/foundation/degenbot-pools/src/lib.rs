@@ -96,15 +96,15 @@ pub mod solve;
 pub mod state;
 
 /// The all-Es address the old Vyper Curve pools spell a native coin with:
-/// the Curve protocol's PRIVATE sentinel (ADR-097 D3). It is translated to
-/// the conceptual `NativeToken` at Curve construction and coin-projection
-/// call sites and is never a token contract address or a generic input;
-/// zero remains the coin-enumeration terminator and is not this constant.
-///
-/// Declared at the curated crate-root door (ADR-084 D2) because the
-/// translation call sites live outside this capability crate.
-pub const NATIVE_SENTINEL_ALL_ES: alloy::primitives::Address =
-    alloy::primitives::Address::repeat_byte(0xEE);
+/// the Curve protocol's PRIVATE sentinel (ADR-097 D3). The authority lives
+/// in `degenbot_core::address_utils` — the lowest crate every sentinel
+/// consumer already shares; this curated crate-root door (ADR-084 D2)
+/// re-exports it so the translation call sites outside this capability
+/// crate keep their stable path. It is translated to the conceptual
+/// `NativeToken` at Curve construction and coin-projection call sites and is
+/// never a token contract address or a generic input; zero remains the
+/// coin-enumeration terminator and is not this constant.
+pub use degenbot_core::address_utils::NATIVE_SENTINEL_ALL_ES;
 
 pub use sim::curve_dy_io::{
     check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, CurveInputsError,

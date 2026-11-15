@@ -47,9 +47,12 @@ const V4_NATIVE_SENTINEL: Address = Address::ZERO;
 
 /// The Curve protocol's native-coin wire spelling (the all-Es address), the
 /// second protocol-private sentinel. Its translation authority is
-/// `degenbot_pools::NATIVE_SENTINEL_ALL_ES`; this copy exists because the
-/// persistence substrate cannot see that crate's door, and the in-crate test
-/// `curve_sentinel_spelling_matches_the_pools_authority` is the drift gate
+/// `degenbot_core::address_utils::NATIVE_SENTINEL_ALL_ES` — the
+/// lower-level crate both this substrate and the pools capability share, so
+/// the authority needs no dependency edge back up the graph; this copy
+/// exists because the sentinel translation happens at this crate's call
+/// sites, and the in-crate test
+/// `curve_sentinel_spelling_matches_the_core_authority` is the drift gate
 /// that keeps the two spellings identical.
 const CURVE_NATIVE_SENTINEL: Address = Address::repeat_byte(0xEE);
 
@@ -595,12 +598,13 @@ mod tests {
     }
 
     #[test]
-    fn curve_sentinel_spelling_matches_the_pools_authority() {
+    fn curve_sentinel_spelling_matches_the_core_authority() {
         // Drift gate: this crate's spelling of the Curve sentinel is a copy
-        // (the pools crate owns the authority); the two must never diverge.
+        // (degenbot-core owns the authority; pools re-exports it); the two
+        // must never diverge.
         assert_eq!(
             CURVE_NATIVE_SENTINEL,
-            degenbot_pools::NATIVE_SENTINEL_ALL_ES
+            degenbot_core::address_utils::NATIVE_SENTINEL_ALL_ES
         );
     }
 }
