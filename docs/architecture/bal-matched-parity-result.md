@@ -20,7 +20,8 @@ changed; the evidence is a review input.
 
 `logs/` is gitignored, so the two new captures are local evidence beside the harness
 (`rust/crates/engine/degenbot-arbitrage/src/probe_support/dispatch_probe.rs`,
-`.../probe_support/dispatch_scaling.rs`, `.../examples/bal_dispatch_scaling_probe.rs`,
+`.../probe_support/dispatch_scaling.rs`,
+`rust/tools/engine-lab/src/bin/bal_dispatch_scaling_probe/main.rs`,
 `.../examples/bal_live_acquisition_probe.rs`). Every figure below was read back from those
 captures; no figure here is new.
 

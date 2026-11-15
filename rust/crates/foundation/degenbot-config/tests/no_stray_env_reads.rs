@@ -303,7 +303,7 @@ fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'st
     insert_bal_live_probe_entries(map);
 }
 
-/// The offline BAL engine-lab entries: the five instruments that never dial a
+/// The offline BAL engine-lab entries: the six instruments that never dial a
 /// node. Split from the live half so each registry helper stays under the
 /// line-count lint with every per-entry justification carried in place.
 fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
@@ -417,6 +417,22 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
             "BAL_PROD_IDLE",
             "BAL_PROD_PLANT_DIVERGENCE",
         ][..],
+    );
+
+    // The offline BAL dispatch-scaling instrument, same class and same cause:
+    // it also left `degenbot-arbitrage`'s `examples/` for the engine-lab tool
+    // crate, so its two pre-existing per-run controls are now visible to the
+    // production-source scan. Both are that probe's documented invocation
+    // knobs -- the fan-out size list and the interleaved repetitions per leg
+    // -- read once at start-up with the defaults they have always had (counts
+    // 1,4,16,50,100,500,1000 and 3 repetitions) and the same
+    // parse-and-fall-back behavior. None is an operator-config key: the
+    // readout is a measurement, so routing them through the loader would hand
+    // a lab binary the config crate's dependency graph for no behavioral
+    // gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_dispatch_scaling_probe/main.rs",
+        &["BAL_DISPATCH_SCALING_COUNTS", "BAL_DISPATCH_SCALING_REPS"][..],
     );
 }
 

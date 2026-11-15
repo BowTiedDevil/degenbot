@@ -2529,6 +2529,7 @@ name = "degenbot-engine-lab"
 version = "0.6.0-alpha.19"
 dependencies = [
  "alloy",
+ "degenbot-arbitrage",
  "degenbot-bot",
  "degenbot-evm2",
  "degenbot-evm2-jit",

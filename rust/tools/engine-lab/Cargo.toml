@@ -30,6 +30,12 @@ degenbot-simulation.workspace = true
 degenbot-executor.workspace = true
 degenbot-execution.workspace = true
 
+# The dispatch-scaling probe's support: the scripted dispatch chain and the
+# controlled same-head dispatch-scaling benchmark are the product-owned
+# `degenbot_arbitrage::probe_support`, consumed directly by the binary like the
+# simulation probe support the other BAL instruments read.
+degenbot-arbitrage.workspace = true
+
 # The EVM the corpus is built and measured on: `Evm`/`InMemoryDB`, the block
 # env, the ethereum tx registry, and `Version`/`ExecutionConfig`. The engine's
 # feature set unifies with the `degenbot-simulation` edge above, which is what
@@ -186,6 +192,18 @@ path = "src/bin/bal_candidate_scaling_probe/main.rs"
 [[bin]]
 name = "bal_wall_ceiling_probe"
 path = "src/bin/bal_wall_ceiling_probe/main.rs"
+
+# The controlled BAL dispatch-scaling probe: the production dispatch entry
+# point over ONE scripted head, ONE candidate list, ONE deployment declaration
+# and ONE provider state, from a single candidate to a burst fan-out, with the
+# storage representation the only variable. Its support is the product-owned
+# `degenbot_arbitrage::probe_support` (`dispatch_probe`/`dispatch_scaling`)
+# consumed directly, and it compiles no JIT program, so it declares no
+# `required-features`: the default lane builds it, and `evm2-jit` remains the
+# lane the JIT-gated targets open.
+[[bin]]
+name = "bal_dispatch_scaling_probe"
+path = "src/bin/bal_dispatch_scaling_probe/main.rs"
 
 [[bin]]
 name = "capture_seam_probe"

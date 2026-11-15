@@ -4,7 +4,8 @@
 //! controls, the cold controls' fallback shape, the ready generation's coverage,
 //! and the latency model's arithmetic.
 //!
-//! The probe (`examples/bal_dispatch_scaling_probe.rs`) prints the matrix; these
+//! The probe (`tools/engine-lab/src/bin/bal_dispatch_scaling_probe/main.rs`)
+//! prints the matrix; these
 //! tests pin the properties the matrix would be meaningless without, on a small
 //! slice of it (two sizes, both words, zero added latency, one repetition). No
 //! test here asserts a wall: timing belongs to the report, never to a gate.
