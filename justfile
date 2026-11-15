@@ -943,26 +943,27 @@ check-aave-captures:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
 
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
-# verification-builds every workspace member that can package, in dependency
-# order, with the publish-blocked census reconciled FIRST (docs/gates.md
-# section 7). A member whose published manifest would require a dependency
-# crates.io cannot resolve is withheld by name -- never dropped by silence --
-# and keeps its file-inclusion coverage through `cargo package --list`, which
-# enumerates what it would ship without resolving anything. It re-enters the
-# run in the same change its census row goes. ~20-40 min cold with
-# verification; CI's PR gate runs the clean-tree `--no-verify` form.
+# verification-builds every workspace member that can package, with the
+# publish-blocked census reconciled FIRST (docs/gates.md section 7). At a
+# fresh lockstep version the siblings a member requires are not on crates.io
+# yet, and the rewritten manifests must resolve before any verify build --
+# `--no-verify` does NOT skip resolution -- so the run resolves against a
+# temporary overlay registry (scripts/publish_verify.py): the lock's external
+# crates mirrored verbatim from the crates.io sparse index, plus every covered
+# member indexed from its own packaged form. Nothing is uploaded and no token
+# is read; the overlay lives in a per-run directory under rust/target/ and a
+# loopback index server on an ephemeral port lives for the run. A member
+# whose published manifest would require a
+# dependency crates.io cannot resolve is withheld by name -- never dropped by
+# silence -- and keeps its file-inclusion coverage through `cargo package
+# --list`. It re-enters the run in the same change its census row goes.
+# ~20-40 min cold with verification; CI's PR gate runs the clean-tree
+# `--no-verify` form.
 publish-dry-run *args:
     #!/usr/bin/env bash
     set -euo pipefail
     cd rust
-    python3 ../scripts/publish_blocked.py --check
-    mapfile -t blocked < <(python3 ../scripts/publish_blocked.py --blocked)
-    excludes=()
-    for member in "${blocked[@]}"; do
-        excludes+=(--exclude "$member")
-        echo "publish-blocked $member: $(cargo package --list --allow-dirty -p "$member" | wc -l) files would package"
-    done
-    cargo publish --locked --workspace --dry-run --allow-dirty "${excludes[@]}" "$@"
+    python3 ../scripts/publish_verify.py "$@"
 
 
 # Every file the vendored evm2 family carries (rust/vendor/, ADR-096) is tracked

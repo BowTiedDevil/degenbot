@@ -475,33 +475,19 @@ jobs:
           bash "$tooling" --check
 
       - name: Pre-publish verification (verify exactly what will be uploaded)
-        # Release policy: never publish without verify (ADR-020). The verify is
-        # scoped to the members that are not live yet: an already-published member
-        # cannot be uploaded again, and verifying all of them is precisely what
-        # makes a resuming re-run expensive. A fresh runner has no stale
-        # local-registry state, so the remaining tarballs are verified clean; the
-        # two non-publishable members (degenbot_rs and the execution sample) are
-        # skipped by cargo itself.
-        run: |
-          set -o pipefail
-          audit="$(scripts/crates_io_pending.sh --classify)"
-          excludes=()
-          pending=0
-          while read -r state member; do
-            [ -n "$member" ] || continue
-            if [ "$state" = "live" ]; then
-              excludes+=("--exclude" "$member")
-            else
-              pending=$((pending + 1))
-            fi
-          done <<< "$audit"
-          if [ "$pending" -eq 0 ]; then
-            echo "nothing to verify: every publishable member is already live at this version"
-            exit 0
-          fi
-          echo "verifying $pending pending member(s); ${#excludes[@]} already-live member(s) excluded"
-          cargo publish --locked --workspace --dry-run --allow-dirty \
-            --manifest-path rust/Cargo.toml "${excludes[@]}"
+        # Release policy: never publish without verify (ADR-020). The verify
+        # drives scripts/publish_verify.py — the same oracle `just
+        # publish-dry-run` runs — so a fresh tag whose lockstep siblings are
+        # not live yet still resolves: the rewritten manifests resolve against
+        # a temporary overlay registry holding the lock's external crates plus
+        # every publishable member's packaged form. Nothing uploads and no
+        # token is read. Members the publish-blocked census withholds stay
+        # excluded, and the two non-publishable members (degenbot_rs and the
+        # execution sample) are skipped by cargo itself. Unlike the old
+        # live-audit scoping, already-live members verify too: a resuming
+        # re-run cannot re-upload them, but the verify is the same build a
+        # fresh tag pays, so the step stays one code path for both shapes.
+        run: python3 scripts/publish_verify.py
 
       - name: Publish (resumable across partial publishes; rate-limit rounds)
         # Publishing is a sequence of one-way registry writes: an attempt that dies

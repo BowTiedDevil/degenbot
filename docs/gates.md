@@ -451,17 +451,71 @@ The header is maintained by hand.
 **Run it.** `just check-publish-blocked` — also a dependency of
 `lint-rust-check`, so `just test`, the pre-push `rust-clippy` gate and CI run
 it over a complete tree, and the `publish-blocked` pre-commit hook runs it
-when a commit touches a manifest, the census, or the gate's own script.
-`just publish-dry-run` reconciles the census first and then withholds exactly
-the recorded members from `cargo publish --dry-run`, keeping their
-file-inclusion coverage through `cargo package --list` (which enumerates what
-a member would ship without resolving a single dependency). The script imports
-nothing outside the standard library and drives only `cargo metadata --no-deps`,
-so a plain `python3` runs it — the same uv-free constraint as section 6.
-`tests/test_publish_blocked_gate.py` is the committed negative probe: it
-drives the real gate with `--root` pointed at a throwaway workspace and
-requires the red path for a fresh member, both reason-drift directions, the
-stale row, and the fail-closed exits.
+when a commit touches a manifest, the census, or the gate's own script. The
+script imports nothing outside the standard library and drives only `cargo
+metadata --no-deps`, so a plain `python3` runs it — the same uv-free
+constraint as section 6. `tests/test_publish_blocked_gate.py` is the committed
+negative probe: it drives the real gate with `--root` pointed at a throwaway
+workspace and requires the red path for a fresh member, both reason-drift
+directions, the stale row, and the fail-closed exits.
+### The publish-verify overlay
+
+**Failure class.** `cargo publish --dry-run` resolves every member's rewritten
+manifest against crates.io before any verify build — `--no-verify` does not
+skip resolution. Under ADR-009 lockstep versioning a fresh release bumps every
+member to a version crates.io has never seen, so at a fresh tag the plain dry
+run dies on the first member another member requires, no matter the verify
+mode. The real `cargo publish --workspace` survives only because it uploads
+members in dependency order; a non-uploading verification cannot borrow that
+ordering.
+**Gate body.** `scripts/publish_verify.py`, driven by `just publish-dry-run`
+and by release.yml's pre-publish verification step. For one run it replaces
+the crates.io source with a temporary overlay registry under
+`rust/target/publish-verify-overlay/` (untracked; a loopback HTTP server
+serves the index because cargo rejects `file://` sparse indexes): the lock's
+crates.io-sourced external crates mirrored verbatim from the real crates.io
+sparse index — so the overlay can never satisfy a requirement the registry
+cannot, and a pin locked to a path, a git repository, or an alternate
+registry fails the run loud instead of resolving a same-named stranger —
+plus every publishable member the census does not withhold, packed with
+`cargo package --locked` in dependency order and indexed from its own
+packaged manifest with the
+packed `.crate`'s checksum — a dependency renamed through `package = ...`
+keeps Cargo's index rename spelling (the alias in the entry dependency's
+`name`, the original package name in its `package`, and the manifest's own
+`dep:` feature references), so a member compiled from the overlay is linked
+under the alias its code imports (a dev-dependency edge closing a normal
+dependency cycle has no packing order; its members get provisional entries
+that are rewritten from the packaged artifacts before anything resolves
+through them). The census is reconciled first and its members are withheld
+from the run by name, keeping their file-inclusion coverage through `cargo
+package --list`. A member whose `publish` allowlist names a non-crates.io
+registry fails loud — this run certifies the crates.io publish form only —
+and caller flags that would retarget the run (`--registry`, `--index`,
+`--token`, `--config`, in `--x value` and `--x=value` forms) are refused
+before any cargo invocation. The overlay lives in a fresh per-run directory
+under `rust/target/` (two runs never delete each other's served files) and is
+served over loopback on an ephemeral port — no fixed port can be pre-bound by
+something else, and concurrent runs cannot collide — and is removed when the
+run ends. External mirror fetches carry an explicit timeout, bounded retries
+with backoff, and a failure naming the crate and URL; in the `--no-verify`
+form only index metadata is mirrored, because cargo resolves a no-verify run
+from the index alone. The verification then runs one `cargo publish
+--dry-run --registry crates-io` round per member, so nothing uploads and no
+token is read; the real `--workspace` upload rounds in release.yml are
+untouched.
+**Run it.** `just publish-dry-run` (verified) or `just publish-dry-run
+--no-verify` (the CI PR form). `tests/test_publish_verify_oracle.py` is the
+committed probe: it drives the real script with `--root` pointed at a
+throwaway fresh-lockstep workspace, requires the plain publish to fail there
+(the red shape, resolved against a loopback sparse index the probe serves
+itself, so the default suite never queries crates.io nor depends on whether
+the fixture names are registered), both dry-run modes to pass, a
+census-withheld member to stay excluded by name, an unrecorded block to fail
+loud, the member index entry to carry the packed crate's own checksum, and
+the network/lifecycle bounds above (bounded mirror fetches, `--no-verify`
+index-only mirroring, ephemeral ports, per-run overlay directories, and two
+runs proceeding independently at once).
 
 ---
 
