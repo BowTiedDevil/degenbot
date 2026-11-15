@@ -2534,7 +2534,12 @@ dependencies = [
  "degenbot-evm2-jit",
  "degenbot-execution",
  "degenbot-executor",
+ "degenbot-rpc",
  "degenbot-simulation",
+ "parking_lot 0.13.0",
+ "serde_json",
+ "tokio",
+ "tower",
 ]
 
 [[package]]

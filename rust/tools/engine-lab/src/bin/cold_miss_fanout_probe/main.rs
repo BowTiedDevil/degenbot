@@ -54,7 +54,7 @@
 //! Usage:
 //!
 //! ```sh
-//! cargo run --release -p degenbot-simulation --example cold_miss_fanout_probe
+//! cargo run --release -p degenbot-engine-lab --bin cold_miss_fanout_probe
 //! ```
 //!
 //! `COLD_MISS_LATENCY_US` overrides the modeled per-round-trip latency;
@@ -92,11 +92,8 @@ use degenbot_simulation::sim::prefetch::{
 use degenbot_simulation::sim::storage_memo::ReadAnchor;
 use degenbot_simulation::{HotSlotStore, StorageMemo};
 
-#[path = "shared/bench_corpus.rs"]
-mod bench_corpus;
-
-use bench_corpus::{
-    bench_evm, build_corpus, deploy, envelope, BENCH_BASE_FEE, BENCH_BLOCK, DEPLOYER,
+use degenbot_engine_lab::bench_corpus::{
+    bench_evm, build_corpus, deploy, envelope, CorpusError, BENCH_BASE_FEE, BENCH_BLOCK, DEPLOYER,
 };
 
 alloy::sol! {
@@ -1007,10 +1004,16 @@ fn main() {
 
     // ── setup: the corpus, plus a DISJOINT view corpus ────────────────────
     let mut setup = bench_evm(false);
+    // The corpus support reports its two failure classes as values; this probe
+    // keeps the split it has always had. A committed artifact that does not read,
+    // decode, or parse panics at the stage's own message (exit 101), while a
+    // reverted deploy or an unencodable workload prints the stage's message and
+    // ends the run (exit 0) — the legs measure a corpus, they do not gate one.
     let (corpus, corpus_path) = match build_corpus(&mut setup) {
         Ok(built) => built,
-        Err(e) => {
-            println!("corpus build failed: {e}");
+        Err(CorpusError::Panic(message)) => panic!("{message}"),
+        Err(CorpusError::Failure(message)) => {
+            println!("corpus build failed: {message}");
             return;
         }
     };
@@ -2211,7 +2214,7 @@ fn report_fan_out(label: &str, report: &FanOutReport) {
 
 fn load_stub_creation(name: &str) -> Vec<u8> {
     let rel = format!("tier3-oracle/artifacts/harness/{name}.json");
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../..");
+    let root = degenbot_engine_lab::paths::repo_root().expect("read stub artifact");
     let raw = std::fs::read_to_string(root.join(&rel)).expect("read stub artifact");
     degenbot_simulation::oracle::parse_foundry_creation_bytecode(&raw).expect("parse stub artifact")
 }

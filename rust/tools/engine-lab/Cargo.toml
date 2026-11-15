@@ -42,6 +42,22 @@ evm2.workspace = true
 # `sol!` interfaces, and the probe compares `Address`/`B256` sets.
 alloy = { version = "^2.5", features = ["full"] }
 
+# The typed RPC provider the cold-miss probe's snapshot-backed stand-in node
+# serves (`AlloyProvider::from_provider`). Plain, not `test-utils`: the offline
+# provider the fan-out legs build is ungated.
+degenbot-rpc.workspace = true
+
+# The transport seam that stand-in implements — `tower::Service` over alloy's
+# JSON-RPC request/response packets — and the JSON its members carry.
+tower = { version = "^0.5", default-features = false }
+serde_json = { version = "^1.0" }
+
+# The cross-block `WarmCodeCacheInner` the steady-state legs front the engine
+# with is a `parking_lot` lock, and the multi-threaded runtime the prefetch lane
+# enters is the ambient-runtime shape that lock's owner expects.
+parking_lot = "^0.13"
+tokio = { version = "^1.54", features = ["rt", "rt-multi-thread"] }
+
 # The bot profiler's guard and exporter, reachable only through `prometheus`.
 degenbot-bot = { workspace = true, optional = true }
 
@@ -72,3 +88,12 @@ prometheus = ["degenbot-bot/hotpath-prometheus"]
 name = "capture_seam_probe"
 path = "src/bin/capture_seam_probe/main.rs"
 required-features = ["evm2-jit"]
+
+# The cold-miss cost + coroutine fan-out probe (the evm2 coroutine-fan-out
+# decision instrument): a latency-injecting RPC stand-in measures where cold
+# storage misses cost wall time and whether N fibers overlap them. It compiles
+# no JIT program, so it declares no `required-features`: the default lane builds
+# and runs it, and `evm2-jit` remains the capture probe's own forward.
+[[bin]]
+name = "cold_miss_fanout_probe"
+path = "src/bin/cold_miss_fanout_probe/main.rs"
