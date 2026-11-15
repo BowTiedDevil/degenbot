@@ -60,8 +60,22 @@ token is read or required.
 
 The overlay lives under `rust/target/` in a fresh per-run directory, so two
 runs never delete each other's served files; the mirror of external index
-entries is cached under `rust/target/` keyed by the lockfile hash. The sparse
-index itself must be served over HTTP (cargo rejects `file://` sparse
+entries is cached under `rust/target/` keyed by the lockfile hash. Every cargo
+invocation of a run executes with `CARGO_HOME` pointed at the run's own
+directory inside its overlay: the loopback-registry caches and staging state
+cargo writes during packing and the dry-run rounds (`127.0.0.1-*` residue)
+land there and are removed with the overlay, leaving the caller's real Cargo
+home byte-for-byte unchanged. Runs sharing one workspace serialize their
+cargo phases through an interprocess lock (`rust/target/publish-verify.lock`,
+an `flock` held from the first cargo resolution to the last publish round):
+`rust/target/package` staging and the lockfile cannot interleave between two
+same-tree runs, while the lock path is derived from the tree root, so runs in
+different workspaces never wait on each other. A second same-tree run waits
+a bounded time (`PUBLISH_VERIFY_LOCK_WAIT_SECONDS`, default 1800 seconds) and
+then fails loud with an error naming the lock file and the recorded holder;
+the lock file itself is never deleted, because removing an `flock`'d file
+would let a waiter acquire against an inode the holder no longer holds. The
+sparse index itself must be served over HTTP (cargo rejects `file://` sparse
 indexes), so a loopback-only server lives for the duration of the run, bound
 to an ephemeral port: no fixed port can be pre-bound by something else, and
 concurrent runs cannot collide. Mirror fetches carry an explicit timeout,
@@ -76,8 +90,12 @@ Exit codes: 0 covered, 1 census findings / packaging / resolution failure,
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
+import math
+import os
 import shutil
 import subprocess
 import sys
@@ -99,6 +117,16 @@ LOCK_REL = "rust/Cargo.lock"
 CENSUS_GATE = Path(__file__).resolve().parent / "publish_blocked.py"
 OVERLAY_REL = "rust/target/publish-verify-overlay"
 MIRROR_REL = "rust/target/publish-verify-mirror"
+# Same-workspace mutual exclusion: runs in one tree share rust/target/package
+# staging and the lockfile, so the phases that touch them serialize through an
+# flock on this file. The path is derived from the tree root, so runs in
+# different workspaces take different locks and never wait on each other. The
+# file itself is never deleted: removing an flock'd file would let a waiter
+# acquire against an inode the holder no longer holds.
+RUN_LOCK_REL = "rust/target/publish-verify.lock"
+LOCK_POLL_SECONDS = 0.1
+DEFAULT_LOCK_WAIT_SECONDS = 1800.0
+LOCK_WAIT_ENV = "PUBLISH_VERIFY_LOCK_WAIT_SECONDS"
 SOURCE_NAME = "pubverify"
 CRATES_IO_INDEX = "https://index.crates.io"
 
@@ -138,9 +166,112 @@ def fail(message: str) -> None:
 
 
 def run(
-    cmd: list[str], cwd: Path | None = None, capture: bool = False
+    cmd: list[str],
+    cwd: Path | None = None,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, check=False, capture_output=capture, text=True)
+    return subprocess.run(cmd, cwd=cwd, check=False, capture_output=capture, text=True, env=env)
+
+
+def cargo_environment(cargo_home: Path) -> dict[str, str]:
+    """The environment for every cargo invocation of one run.
+
+    CARGO_HOME points at the run's own directory inside its per-run overlay:
+    the loopback-registry caches and staging state cargo writes during packing
+    and the dry-run rounds (`127.0.0.1-*` residue) land there and are removed
+    with the overlay, instead of accumulating in the caller's real Cargo home.
+    """
+    return {**os.environ, "CARGO_HOME": str(cargo_home)}
+
+
+def lock_wait_seconds() -> float:
+    """The bounded wait for a same-workspace lock, caller-overridable.
+
+    Defaults to a generous bound (a verified run holds the lock for tens of
+    minutes); a caller who prefers failing fast sets the environment variable.
+    A non-numeric, non-finite (NaN or an infinity would make the deadline
+    comparison permanently false or the wait unbounded), or negative value
+    fails loud instead of falling back.
+    """
+    raw = os.environ.get(LOCK_WAIT_ENV)
+    if raw is None:
+        return DEFAULT_LOCK_WAIT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        fail(f"{LOCK_WAIT_ENV}={raw!r} is not a number of seconds")
+    if not math.isfinite(value):
+        fail(f"{LOCK_WAIT_ENV}={raw!r} is not a finite number of seconds")
+    if value < 0:
+        fail(f"{LOCK_WAIT_ENV}={raw!r} is negative")
+    return value
+
+
+def _holder_description(lock_path: Path) -> str:
+    """The best-effort identity of the run holding the lock, from its record.
+
+    A record missing either field (a holder that died between truncating and
+    writing, a torn read) degrades the message, never the exclusion.
+    """
+    try:
+        holder = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "holder not recorded"
+    parts = []
+    if isinstance(holder, dict):
+        if "pid" in holder:
+            parts.append(f"pid {holder['pid']}")
+        if "started" in holder:
+            parts.append(f"started {holder['started']}")
+    return " ".join(parts) if parts else "holder not recorded"
+
+
+@contextlib.contextmanager
+def run_lock(root: Path, wait_seconds: float):
+    """Hold the same-workspace publish-verify lock for the enclosed phase.
+
+    The lock is an `flock` on a file derived from the tree root, so only runs
+    sharing this workspace serialize. Acquisition polls a non-blocking try
+    until `wait_seconds` elapse, then fails loud with an error naming the
+    lock file and the recorded holder. The holder records its pid and start
+    time into the file (best effort -- a torn read only degrades the error
+    message, never the exclusion, which is the flock itself). The lock file
+    is never deleted; release is the unlock and close alone.
+    """
+    lock_path = root / RUN_LOCK_REL
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+    try:
+        deadline = time.monotonic() + max(wait_seconds, 0.0)
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    fail(
+                        f"another publish-verify run holds the same-workspace lock "
+                        f"{lock_path} ({_holder_description(lock_path)}); waited "
+                        f"{wait_seconds:g}s. Re-run when the other run finishes, "
+                        f"or raise {LOCK_WAIT_ENV}."
+                    )
+                time.sleep(LOCK_POLL_SECONDS)
+        try:
+            record = json.dumps({
+                "pid": os.getpid(),
+                "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }).encode("utf-8")
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, record, 0)
+        except OSError:
+            pass  # exclusion is the flock; an unwritable record only blurs the error
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def census(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -611,30 +742,34 @@ def main(argv: list[str]) -> int:
         return blocked.returncode
     withheld = sorted(blocked.stdout.split())
 
-    meta = run(
-        [
-            "cargo",
-            "metadata",
-            "--no-deps",
-            "--format-version",
-            "1",
-            "--manifest-path",
-            str(rust / "Cargo.toml"),
-        ],
-        cwd=rust,
-        capture=True,
-    )
-    if meta.returncode != 0:
-        sys.stderr.write(meta.stderr)
-        return meta.returncode
-    packages = {p["name"]: p for p in json.loads(meta.stdout)["packages"]}
-
     overlay = overlay_run_dir(root)
     mirror = root / MIRROR_REL
-    (overlay / "index").mkdir(parents=True, exist_ok=True)
-    (overlay / "dl").mkdir(parents=True, exist_ok=True)
     try:
-        return _verify(root, rust, overlay, mirror, packages, withheld, extra)
+        with run_lock(root, lock_wait_seconds()):
+            cargo_env = cargo_environment(overlay / "cargo-home")
+            (overlay / "index").mkdir(parents=True, exist_ok=True)
+            (overlay / "dl").mkdir(parents=True, exist_ok=True)
+            # The workspace metadata is the first cargo resolution of the run,
+            # already under the same-workspace lock.
+            meta = run(
+                [
+                    "cargo",
+                    "metadata",
+                    "--no-deps",
+                    "--format-version",
+                    "1",
+                    "--manifest-path",
+                    str(rust / "Cargo.toml"),
+                ],
+                cwd=rust,
+                capture=True,
+                env=cargo_env,
+            )
+            if meta.returncode != 0:
+                sys.stderr.write(meta.stderr)
+                return meta.returncode
+            packages = {p["name"]: p for p in json.loads(meta.stdout)["packages"]}
+            return _verify(root, rust, overlay, mirror, packages, withheld, extra, cargo_env)
     finally:
         if not args.keep_overlay:
             shutil.rmtree(overlay, ignore_errors=True)
@@ -648,8 +783,14 @@ def _verify(
     packages: dict[str, dict],
     withheld: list[str],
     extra: list[str],
+    cargo_env: dict[str, str],
 ) -> int:
-    """Build the overlay, pack the covered members, publish each against it."""
+    """Build the overlay, pack the covered members, publish each against it.
+
+    Runs under the same-workspace lock (`main` holds it across the metadata,
+    packing, and publish phases), and every cargo invocation carries the
+    run's own CARGO_HOME.
+    """
     no_verify = "--no-verify" in extra
     # The sparse-index config: cargo downloads `.crate` files straight off the
     # overlay's own dl tree, so the verified build needs no network at all.
@@ -659,9 +800,15 @@ def _verify(
     )
 
     # The mirror is keyed by the lockfile the workspace resolves to; a tree
-    # without one (fresh checkouts of throwaway workspaces) gets it here.
+    # without one (fresh checkouts of throwaway workspaces) gets it here, under
+    # the same-workspace lock so two runs cannot race the shared lockfile.
     if not (root / LOCK_REL).is_file():
-        lockfile = run(["cargo", "metadata", "--format-version", "1"], cwd=rust, capture=True)
+        lockfile = run(
+            ["cargo", "metadata", "--format-version", "1"],
+            cwd=rust,
+            capture=True,
+            env=cargo_env,
+        )
         if lockfile.returncode != 0:
             sys.stderr.write(lockfile.stderr)
             return lockfile.returncode
@@ -696,6 +843,7 @@ def _verify(
                 ["cargo", "package", "--list", "--allow-dirty", "-p", name],
                 cwd=rust,
                 capture=True,
+                env=cargo_env,
             )
             files = len(listing.stdout.splitlines()) if listing.returncode == 0 else 0
             print(f"publish-blocked {name}: {files} files would package")
@@ -743,6 +891,7 @@ def _verify(
                 ],
                 cwd=rust,
                 capture=True,
+                env=cargo_env,
             )
             if packaging.returncode != 0:
                 sys.stderr.write(packaging.stdout)
@@ -812,6 +961,7 @@ def _verify(
                     ],
                     cwd=rust,
                     capture=True,
+                    env=cargo_env,
                 )
                 sys.stdout.write(publish.stdout)
                 sys.stderr.write(publish.stderr)

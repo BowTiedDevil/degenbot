@@ -497,10 +497,26 @@ before any cargo invocation. The overlay lives in a fresh per-run directory
 under `rust/target/` (two runs never delete each other's served files) and is
 served over loopback on an ephemeral port — no fixed port can be pre-bound by
 something else, and concurrent runs cannot collide — and is removed when the
-run ends. External mirror fetches carry an explicit timeout, bounded retries
-with backoff, and a failure naming the crate and URL; in the `--no-verify`
-form only index metadata is mirrored, because cargo resolves a no-verify run
-from the index alone. The verification then runs one `cargo publish
+run ends. Every cargo invocation of a run executes with `CARGO_HOME` pointed
+at the run's own directory inside that overlay: the loopback-registry caches
+and staging state cargo writes during packing and the dry-run rounds (the
+ephemeral `127.0.0.1-*` residue) land in the per-run overlay and are removed
+with it, leaving the caller's real Cargo home byte-for-byte unchanged — the
+sentinel probe runs the real script against an untouched `CARGO_HOME` and
+requires exactly that. Runs sharing one workspace serialize their cargo
+phases (metadata resolution, packing, publish rounds — everything touching
+the shared `rust/target/package` staging and the lockfile) through an
+interprocess lock (`rust/target/publish-verify.lock`, an `flock` held from
+the first cargo resolution to the last publish round, never deleted): a
+second same-tree run waits a bounded time — `PUBLISH_VERIFY_LOCK_WAIT_SECONDS`,
+default 1800 seconds — and then fails loud with an error naming the lock file
+and the recorded holder, while the lock path is derived from the tree root so
+runs in different workspaces never wait on each other. The persistent mirror
+cache under `rust/target/publish-verify-mirror/` (keyed by the lockfile hash)
+and its atomic cache writes are unchanged. External mirror fetches carry an
+explicit timeout, bounded retries with backoff, and a failure naming the
+crate and URL; in the `--no-verify` form only index metadata is mirrored,
+because cargo resolves a no-verify run from the index alone. The verification then runs one `cargo publish
 --dry-run --registry crates-io` round per member, so nothing uploads and no
 token is read; the real `--workspace` upload rounds in release.yml are
 untouched.
@@ -515,7 +531,12 @@ census-withheld member to stay excluded by name, an unrecorded block to fail
 loud, the member index entry to carry the packed crate's own checksum, and
 the network/lifecycle bounds above (bounded mirror fetches, `--no-verify`
 index-only mirroring, ephemeral ports, per-run overlay directories, and two
-runs proceeding independently at once).
+runs proceeding independently at once), the process-state quarantine (a
+sentinel real `CARGO_HOME` byte-identical after a run, with the
+`127.0.0.1-*` residue confined to the kept per-run overlay), and the
+same-workspace coordination (two same-tree runs both completing serialized,
+a run facing a held lock failing bounded with the lock and owner named, and a
+failed run cleaning up only its own overlay directory).
 
 ---
 

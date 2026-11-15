@@ -51,14 +51,26 @@ The network and lifecycle cases pin the mirror's bounded fetches (explicit
 timeout, limited retries with backoff, transient failures only), the
 ``--no-verify`` index-only mirroring, ephemeral loopback ports, and the
 per-run overlay directory.
+
+The process-state cases pin the quarantine of everything a run would
+otherwise leave in the caller's Cargo home: every cargo invocation executes
+with ``CARGO_HOME`` pointed at the run's own directory inside its overlay, so
+a sentinel real ``CARGO_HOME`` is byte-for-byte unchanged after a run. The
+same-workspace cases pin the interprocess lock that serializes runs sharing
+one tree's ``rust/target/package`` staging: two same-tree runs both complete
+serialized, a run facing a held lock fails bounded with an error naming the
+lock and its recorded owner, and a failed run cleans up only its own overlay
+directory.
 """
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import http.server
 import importlib.util
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -750,6 +762,197 @@ def test_concurrent_runs_on_distinct_trees_stay_independent(tmp_path: Path) -> N
         assert process.returncode == 0, out + err
         for name in ("pubfix-leaf", "pubfix-mid", "pubfix-top"):
             assert f"publish-verify covered {name}" in out
+
+
+def test_two_concurrent_same_tree_runs_serialize_and_both_cover(
+    tmp_path: Path,
+) -> None:
+    """Same-tree runs serialize on an interprocess lock; distinct trees do not.
+
+    Two invocations in one throwaway workspace share `rust/target/package`
+    staging and the lockfile, so their package and publish phases cannot
+    interleave: both complete with every member covered. The lock path is
+    derived from the tree root, so this waits only same-workspace runs --
+    runs in different trees take different locks and proceed independently
+    (pinned by `test_concurrent_runs_on_distinct_trees_stay_independent`).
+    """
+    members = {
+        "pubfix-leaf": "",
+        "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
+    }
+    tree = _lockstep_tree(tmp_path / "tree", members)
+    _census(tree, [])
+    processes = [
+        subprocess.Popen(
+            [sys.executable, str(_ORACLE), "--root", str(tree), "--no-verify"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(2)
+    ]
+    outputs = [process.communicate(timeout=580) for process in processes]
+    for process, (out, err) in zip(processes, outputs):
+        assert process.returncode == 0, out + err
+        for name in members:
+            assert f"publish-verify covered {name}" in out
+
+
+def test_a_held_same_tree_lock_fails_bounded_and_names_the_owner(
+    tmp_path: Path,
+) -> None:
+    """A run facing a held workspace lock waits bounded, then fails loud.
+
+    The error names the lock file and the recorded owner pid, so a stuck
+    holder is diagnosable instead of a silent hang or a concurrent run over
+    shared staging. The wait bound is a caller-overridable environment
+    setting (`PUBLISH_VERIFY_LOCK_WAIT_SECONDS`), not a fixed constant.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    lock = tree / "rust" / "target" / "publish-verify.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    holder_pid = os.getpid()
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.ftruncate(fd, 0)
+        os.write(fd, json.dumps({"pid": holder_pid}).encode("utf-8"))
+        env = {**os.environ, "PUBLISH_VERIFY_LOCK_WAIT_SECONDS": "1"}
+        result = subprocess.run(
+            [sys.executable, str(_ORACLE), "--root", str(tree), "--no-verify"],
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert str(lock) in output
+    assert str(holder_pid) in output
+
+
+@pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf", "Infinity", "-Infinity"])
+def test_a_non_finite_lock_wait_fails_loud(raw: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """NaN and infinities fail loud like the other invalid bounds.
+
+    NaN would make the wait's deadline comparison permanently false (a wait
+    that never times out and never reports) and an infinity would make the
+    supposedly bounded wait unbounded, so a non-finite
+    `PUBLISH_VERIFY_LOCK_WAIT_SECONDS` is rejected with the variable and
+    value named, never accepted as a number of seconds.
+    """
+    module = _oracle_module()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv("PUBLISH_VERIFY_LOCK_WAIT_SECONDS", raw)
+        with pytest.raises(SystemExit):
+            module.lock_wait_seconds()
+    assert raw in capsys.readouterr().err
+
+
+def test_a_failed_run_cleans_up_without_deleting_another_runs_overlay(
+    tmp_path: Path,
+) -> None:
+    """A run removes only its own per-run directory, in failure and success.
+
+    A failing run leaves no overlay residue of its own and never deletes the
+    directory an earlier `--keep-overlay` run kept for inspection.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+            "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    good = _oracle(tree, "--no-verify", "--keep-overlay")
+    assert good.returncode == 0, good.stdout + good.stderr
+    overlay_root = tree / "rust" / "target" / "publish-verify-overlay"
+    kept = list(overlay_root.iterdir())
+    assert len(kept) == 1
+
+    # a stale lock fails the second run during packing, after its cleanup
+    # path is live
+    lock = tree / "rust" / "Cargo.lock"
+    stale = lock.read_text(encoding="utf-8").replace(
+        'name = "pubfix-leaf"\nversion = "0.1.0"',
+        'name = "pubfix-leaf"\nversion = "9.9.9"',
+    )
+    lock.write_text(stale, encoding="utf-8")
+    bad = _oracle(tree, "--no-verify")
+    assert bad.returncode != 0
+    assert list(overlay_root.iterdir()) == kept
+
+
+def test_a_sentinel_real_cargo_home_stays_untouched(tmp_path: Path) -> None:
+    """Ephemeral Cargo state is quarantined in the run's own CARGO_HOME.
+
+    Packing and the dry-run rounds make cargo write loopback-registry caches
+    (`127.0.0.1-*` residue) under CARGO_HOME; a run points CARGO_HOME at its
+    own overlay directory, so a sentinel real CARGO_HOME handed to the run is
+    byte-for-byte unchanged afterwards and the residue lives only under the
+    kept per-run overlay.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    sentinel = tmp_path / "sentinel-cargo-home"
+    # Pre-existing nested content: the pinned postcondition is byte-for-byte
+    # equality of what the caller's real Cargo home already held, not just
+    # emptiness.
+    config = sentinel / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_bytes(b'[registry]\nindex = "https://example.invalid"\n')
+    cache = sentinel / "registry" / "cache" / "ex" / "am"
+    cache.mkdir(parents=True)
+    (cache / "example-1.0.0.crate").write_bytes(b"pre-existing crate bytes")
+    (sentinel / ".package-cache").mkdir()
+
+    def snapshot() -> list[tuple[str, str]]:
+        """(relative path, sha256) per file, plus `/`-marked directories."""
+        entries = []
+        for path in sorted(sentinel.rglob("*")):
+            rel = str(path.relative_to(sentinel))
+            if path.is_dir():
+                entries.append((rel + "/", ""))
+            else:
+                entries.append((rel, hashlib.sha256(path.read_bytes()).hexdigest()))
+        return entries
+
+    before = snapshot()
+    env = {**os.environ, "CARGO_HOME": str(sentinel)}
+    result = subprocess.run(
+        [sys.executable, str(_ORACLE), "--root", str(tree), "--no-verify", "--keep-overlay"],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=580,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert snapshot() == before
+    overlay = _only_overlay_run(tree)
+    quarantined = sorted(str(f.relative_to(overlay)) for f in overlay.rglob("*"))
+    assert any("cargo-home" in path for path in quarantined)
+    assert any("127.0.0.1-" in path for path in quarantined)
 
 
 def _oracle_module() -> object:
