@@ -85,23 +85,35 @@ use wall_ledger::{
 };
 
 /// The committed corpora: the recorded scheduler traces and the real
-/// write-coverage capture that keys each stretch's lists.
+/// write-coverage capture that keys each stretch's lists. The capture stays at
+/// its committed simulation home; its path resolves from the marker-anchored
+/// repository root ([`real_coverage_fixture`]), never from `..` arithmetic off
+/// this package's manifest directory.
 const CORPORA: &[(&str, &str)] = &[
-    (
-        "/tmp/fanout_trace.log",
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/bal_real_coverage.json"
-        ),
-    ),
+    ("/tmp/fanout_trace.log", "bal_real_coverage.json"),
     (
         "/tmp/bal_broader_trace.log",
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/bal_real_coverage_broader.json"
-        ),
+        "bal_real_coverage_broader.json",
     ),
 ];
+
+/// A committed real-coverage capture's path, resolved through the
+/// repository-root support the tool package owns.
+///
+/// # Panics
+///
+/// Panics if the repository root fails to resolve, or if the resolved fixture
+/// path is not utf-8.
+fn real_coverage_fixture(name: &str) -> String {
+    let root = degenbot_engine_lab::paths::repo_root().expect("the repository root resolves");
+    let fixture = root
+        .join("rust/crates/engine/degenbot-simulation/tests/fixtures")
+        .join(name);
+    fixture
+        .to_str()
+        .map(str::to_string)
+        .expect("the committed capture's path is not utf-8")
+}
 
 /// The optimistic latency point: one storage batch / one account batch.
 const OPTIMISTIC: (u64, u64) = (200, 400);
@@ -151,23 +163,26 @@ impl LegKind {
     }
 }
 
-fn env_us(name: &str) -> Option<Duration> {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
+/// One microsecond latency value, parse-or-absent. The read itself sits at the
+/// call site as a literal key: the stray-env-read gate enumerates names it can
+/// read off the `env::var` line, and a helper taking the name hides it.
+fn parse_us(raw: Option<String>) -> Option<Duration> {
+    raw.and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_micros)
 }
 
-fn env_count(name: &str, fallback: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
+/// One positive count with its fallback; the key is read as a literal at the
+/// call site, for the same reason as [`parse_us`].
+fn parse_count(raw: Option<String>, fallback: usize) -> usize {
+    raw.and_then(|value| value.parse().ok())
         .filter(|count| *count > 0)
         .unwrap_or(fallback)
 }
 
-fn env_list(name: &str) -> Option<Vec<String>> {
-    std::env::var(name).ok().map(|raw| {
+/// One comma list, empty parts dropped; the key is read as a literal at the
+/// call site, for the same reason as [`parse_us`].
+fn parse_list(raw: Option<String>) -> Option<Vec<String>> {
+    raw.map(|raw| {
         raw.split(',')
             .map(str::trim)
             .filter(|part| !part.is_empty())
@@ -179,8 +194,8 @@ fn env_list(name: &str) -> Option<Vec<String>> {
 impl Knobs {
     /// Fold the invocation's env knobs into one configuration.
     fn from_env() -> Self {
-        let chosen = env_list("BAL_DELTA_ROUNDS_TRACES");
-        let fixtures = env_list("BAL_DELTA_ROUNDS_FIXTURES");
+        let chosen = parse_list(std::env::var("BAL_DELTA_ROUNDS_TRACES").ok());
+        let fixtures = parse_list(std::env::var("BAL_DELTA_ROUNDS_FIXTURES").ok());
         let traces: Vec<String> = chosen.unwrap_or_else(|| {
             CORPORA
                 .iter()
@@ -194,15 +209,20 @@ impl Knobs {
                 trace: Box::leak(trace.clone().into_boxed_str()),
                 fixture: match fixtures.as_ref().and_then(|list| list.get(index)) {
                     Some(fixture) => Box::leak(fixture.clone().into_boxed_str()),
-                    None => CORPORA
-                        .get(index)
-                        .map_or(CORPORA[0].1, |(_, fixture)| *fixture),
+                    None => Box::leak(
+                        real_coverage_fixture(
+                            CORPORA
+                                .get(index)
+                                .map_or(CORPORA[0].1, |(_, fixture)| *fixture),
+                        )
+                        .into_boxed_str(),
+                    ),
                 },
             })
             .collect();
         let points = match (
-            env_us("BAL_DELTA_ROUNDS_STORAGE_US"),
-            env_us("BAL_DELTA_ROUNDS_ACCOUNT_US"),
+            parse_us(std::env::var("BAL_DELTA_ROUNDS_STORAGE_US").ok()),
+            parse_us(std::env::var("BAL_DELTA_ROUNDS_ACCOUNT_US").ok()),
         ) {
             (Some(storage), Some(account)) => vec![(storage, account)],
             _ => vec![
@@ -220,10 +240,11 @@ impl Knobs {
             corpora,
             points,
             limits: FanoutLimits::new(
-                env_count("BAL_DELTA_ROUNDS_W", 2),
-                env_count("BAL_DELTA_ROUNDS_F", 8),
+                parse_count(std::env::var("BAL_DELTA_ROUNDS_W").ok(), 2),
+                parse_count(std::env::var("BAL_DELTA_ROUNDS_F").ok(), 8),
             ),
-            idle: u64::try_from(env_count("BAL_DELTA_ROUNDS_IDLE", 8)).unwrap_or(u64::MAX),
+            idle: u64::try_from(parse_count(std::env::var("BAL_DELTA_ROUNDS_IDLE").ok(), 8))
+                .unwrap_or(u64::MAX),
             planted: std::env::var("BAL_DELTA_ROUNDS_PLANT_DIVERGENCE")
                 .is_ok_and(|value| value == "1"),
         }

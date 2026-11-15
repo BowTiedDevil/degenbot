@@ -359,6 +359,33 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         ][..],
     );
 
+    // The offline BAL round-coalesced replay instrument, same class and same
+    // cause: it also left `degenbot-simulation`'s `examples/` for the
+    // engine-lab tool crate, so its eight pre-existing per-run controls are now
+    // visible to the production-source scan. All eight are that probe's
+    // documented invocation knobs -- the two recorded-trace paths and their
+    // matching real-coverage captures, the two modeled round-trip prices, the
+    // worker and slot counts, the idle-block window, and the planted-divergence
+    // negative control -- read once at start-up with the defaults they have
+    // always had (the two `/tmp` corpora, the 200/400 us and 700/1200 us
+    // points, W=2, F=8, idle 8) and the same parse-and-fall-back behavior. None
+    // is an operator-config key: the readout is a measurement, so routing them
+    // through the loader would hand a lab binary the config crate's dependency
+    // graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_delta_rounds_probe/main.rs",
+        &[
+            "BAL_DELTA_ROUNDS_TRACES",
+            "BAL_DELTA_ROUNDS_FIXTURES",
+            "BAL_DELTA_ROUNDS_STORAGE_US",
+            "BAL_DELTA_ROUNDS_ACCOUNT_US",
+            "BAL_DELTA_ROUNDS_W",
+            "BAL_DELTA_ROUNDS_F",
+            "BAL_DELTA_ROUNDS_IDLE",
+            "BAL_DELTA_ROUNDS_PLANT_DIVERGENCE",
+        ][..],
+    );
+
     // The session-scheduler fan-out instrument, same class and same cause: it
     // also left `examples/` for the engine-lab tool crate, so its seven
     // pre-existing per-run controls are now visible to the production-source
