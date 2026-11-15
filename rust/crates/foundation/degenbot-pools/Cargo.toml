@@ -118,14 +118,6 @@ required-features = ["capture-fixtures", "cache-lab"]
 name = "concentrated_liquidity_cache_patch_regressions"
 required-features = ["capture-fixtures", "cache-lab"]
 
-# Fixture-reading examples ([[example]] sections exist only to carry
-# required-features; unlisted examples auto-discover and compile everywhere).
-# The pre-push/CI lanes that run them enable the feature explicitly.
-
-[[example]]
-name = "walkmemo_readout"
-required-features = ["capture-fixtures"]
-
 [[bench]]
 name = "digest"
 harness = false
