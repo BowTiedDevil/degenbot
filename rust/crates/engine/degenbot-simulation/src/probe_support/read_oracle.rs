@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use alloy::primitives::{Address, U256};
 use serde_json::Value;
 
-use crate::recorded_corpus::{
+use super::recorded_corpus::{
     anchor_keys, parse_trace_line, row_relevance, Recorded, Relevance, RelevanceSource, TRACE_TAG,
 };
 

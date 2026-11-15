@@ -13,12 +13,12 @@ use std::collections::BTreeSet;
 
 use alloy::primitives::{Address, B256, U256};
 
+use crate::sim::evm2::delta_snapshot::{DeltaReport, DeltaSnapshotCache};
+use crate::sim::evm2::read_hub::{CarryReport, ReadHub, ReadHubCache};
+use crate::sim::ReadAnchor;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm2::delta_snapshot::{DeltaReport, DeltaSnapshotCache};
-use degenbot_simulation::sim::evm2::read_hub::{CarryReport, ReadHub, ReadHubCache};
-use degenbot_simulation::sim::ReadAnchor;
 
-use crate::real_coverage::{Key, RealCoverage};
+use super::real_coverage::{Key, RealCoverage};
 
 /// One replayed generation: its anchor, the parent hash the advance is handed,
 /// its relevance set, and the identities read there.
@@ -150,6 +150,7 @@ fn compare_reports(
 
 /// Every identity the capture wrote anywhere in its stretch — the read set a
 /// real-fixture replay compares.
+#[must_use]
 pub fn real_keys(real: &RealCoverage) -> BTreeSet<Key> {
     let mut keys = BTreeSet::new();
     for number in real.first()..=real.last() {
@@ -161,6 +162,7 @@ pub fn real_keys(real: &RealCoverage) -> BTreeSet<Key> {
 /// The real-fixture parity blocks: every captured block at its exact hash,
 /// linked by its captured parent hash, reading every captured write identity
 /// under the full tracked-address relevance set.
+#[must_use]
 pub fn real_parity_blocks(real: &RealCoverage, keys: &BTreeSet<Key>) -> Vec<ParityBlock> {
     let relevance: Vec<Address> = keys.iter().map(|(address, _)| *address).collect();
     (real.first()..=real.last())

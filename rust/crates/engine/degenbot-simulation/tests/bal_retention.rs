@@ -15,8 +15,7 @@
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
-    reason = "the stub chain and its assertions fail loudly on a broken fixture"
+    reason = "the assertions fail loudly on a broken fixture"
 )]
 
 use alloy::primitives::{Address, B256, U256};
@@ -29,15 +28,9 @@ use std::collections::BTreeSet;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-#[path = "../examples/shared/chain_stub.rs"]
-#[expect(dead_code)]
-mod chain_stub;
-#[path = "../examples/shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "../examples/shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
+use degenbot_simulation::probe_support::chain_stub;
+use degenbot_simulation::probe_support::modeled_chain;
+use degenbot_simulation::probe_support::real_coverage;
 
 use chain_stub::ChainStub;
 use modeled_chain::{bal_bytes, read_selected, ChainState, Coverage, StubChain};

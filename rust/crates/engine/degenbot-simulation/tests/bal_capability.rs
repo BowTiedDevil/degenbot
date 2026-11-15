@@ -10,10 +10,8 @@
 //! representations behind the caller's back.
 
 #![expect(
-    clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
-    reason = "the stub chain and its assertions fail loudly on a broken case"
+    reason = "the assertions fail loudly on a broken case"
 )]
 
 use alloy::primitives::B256;
@@ -22,9 +20,7 @@ use degenbot_simulation::sim::evm2::bal_capability::{
 };
 use degenbot_simulation::sim::evm2::bal_prefetch::{fetch_bal_seed, BalPlan, BalSkip};
 
-#[path = "../examples/shared/chain_stub.rs"]
-#[expect(dead_code)]
-mod chain_stub;
+use degenbot_simulation::probe_support::chain_stub;
 
 use chain_stub::ChainStub;
 

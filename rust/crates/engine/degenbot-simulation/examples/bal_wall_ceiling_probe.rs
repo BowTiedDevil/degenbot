@@ -139,22 +139,12 @@ use degenbot_simulation::sim::evm2::bal_prefetch::{fetch_bal_seed, BalPlan};
 use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, CarryReport, ReadHub, ReadHubCache};
 use degenbot_simulation::sim::ReadAnchor;
 
-#[path = "shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "shared/probe_report.rs"]
-mod probe_report;
-#[path = "shared/real_coverage.rs"]
-mod real_coverage;
-#[path = "shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
-#[path = "shared/session_drive.rs"]
-#[expect(dead_code)]
-mod session_drive;
-#[path = "shared/wall_ledger.rs"]
-#[expect(dead_code)]
-mod wall_ledger;
+use degenbot_simulation::probe_support::modeled_chain;
+use degenbot_simulation::probe_support::probe_report;
+use degenbot_simulation::probe_support::real_coverage;
+use degenbot_simulation::probe_support::recorded_corpus;
+use degenbot_simulation::probe_support::session_drive;
+use degenbot_simulation::probe_support::wall_ledger;
 
 use modeled_chain::{write_selected, ChainState, Coverage, Key, StubChain};
 use probe_report::{

@@ -149,7 +149,7 @@
 //!   read, poll the fibers, and [`DeltaHub::drain_round`] when none can
 //!   progress — the same shape as [`ReadHub::read_storage`](super::read_hub::ReadHub::read_storage)
 //!   plus [`ReadHub::drain_round`](super::read_hub::ReadHub::drain_round). The
-//!   recorded-read driver (`examples/shared/session_drive.rs`) drives a delta
+//!   recorded-read driver (`src/probe_support/session_drive.rs`) drives a delta
 //!   generation and the full-clone control through one lane abstraction, which
 //!   is what makes a round-coalesced replay comparable to the existing legs.
 //!

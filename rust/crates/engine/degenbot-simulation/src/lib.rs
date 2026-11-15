@@ -64,6 +64,16 @@ pub mod oracle;
 /// API.
 pub mod capture;
 
+/// Product-owned development support for the simulation probes and their
+/// behavior pins: the scripted and modeled chain fixtures, the recorded corpus
+/// readers, the read oracle, the session driver, the delta-parity comparison,
+/// the head legs, the real-coverage accounting, the wall ledger and its report,
+/// the relevance pairing, and the candidate-scaling model. `#[doc(hidden)]`:
+/// fixture surface with no stability promise, consumed by this crate's examples
+/// and integration tests and by the engine-lab probes.
+#[doc(hidden)]
+pub mod probe_support;
+
 pub use oracle::{
     call_bytes, decode_error_string, deploy, load_foundry_creation_bytecode, native_balance_of,
     new_fixture_evm, parse_foundry_creation_bytecode, read_address, seed_slots, selector,

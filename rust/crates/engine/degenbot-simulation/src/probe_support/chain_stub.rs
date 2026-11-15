@@ -25,7 +25,7 @@ use serde_json::Value;
 // The codec family the engine decodes with, named through the crate that OWNS
 // the BAL decode (`degenbot_simulation` re-exports it): a shared fixture that
 // pinned its own copy would let the two drift apart.
-use degenbot_simulation::alloy_eip7928::bal::{Bal, DecodedBal};
+use crate::alloy_eip7928::bal::{Bal, DecodedBal};
 
 use degenbot_rpc::provider::AlloyProvider;
 
@@ -40,6 +40,7 @@ pub const SERVED: u64 = 42;
 /// four slot changes, two read-only slots, and the three account-level change
 /// lists. Bytes this tree FULLY decodes, so a fixture serving them can only fail
 /// where the test means it to.
+#[must_use]
 pub fn worked_list() -> Vec<u8> {
     alloy::hex::decode(concat!(
         "f845f843941111111111111111111111111111111111111111d4c801c6c28007c2022aca02c8",
@@ -103,6 +104,7 @@ impl Default for ChainStub {
 }
 
 impl ChainStub {
+    #[must_use]
     pub fn serving() -> Self {
         Self::default()
     }
@@ -235,17 +237,20 @@ impl ChainStub {
 
     /// Storage reads dispatched as their own single request — the shape a
     /// serial fallback would produce.
+    #[must_use]
     pub fn storage_singles(&self) -> usize {
         self.storage_singles.load(Ordering::Relaxed)
     }
 
     /// Storage reads dispatched as batch members — the shape the read hub's
     /// rounds produce.
+    #[must_use]
     pub fn storage_batched(&self) -> usize {
         self.storage_batched.load(Ordering::Relaxed)
     }
 
     /// BAL fetches dispatched, through EITHER official representation.
+    #[must_use]
     pub fn bal_requests(&self) -> usize {
         self.requests
             .lock()
@@ -259,11 +264,13 @@ impl ChainStub {
     }
 
     /// Every dispatched request's `method params` identity, in order.
+    #[must_use]
     pub fn dispatched(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
     }
 
     /// Every dispatched method's name, in order — what the negotiation chose.
+    #[must_use]
     pub fn methods(&self) -> Vec<String> {
         self.dispatched()
             .into_iter()
@@ -272,6 +279,7 @@ impl ChainStub {
     }
 
     /// Storage reads dispatched — one `eth_getStorageAt` per dynamic miss.
+    #[must_use]
     pub fn storage_members(&self) -> usize {
         self.requests
             .lock()
@@ -281,6 +289,7 @@ impl ChainStub {
             .count()
     }
 
+    #[must_use]
     pub fn provider(&self) -> AlloyProvider {
         let client = ClientBuilder::default().transport(self.clone(), true);
         let root: RootProvider = RootProvider::new(client);

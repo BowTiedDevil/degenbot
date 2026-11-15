@@ -55,8 +55,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use alloy::primitives::{Address, B256, U256};
 use serde::{Deserialize, Serialize};
 
+use crate::sim::evm2::bal_prefetch::{fetch_bal_seed, BalPlan, BalSeed};
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm2::bal_prefetch::{fetch_bal_seed, BalPlan, BalSeed};
 
 /// One tracked read identity.
 pub type Key = (Address, U256);

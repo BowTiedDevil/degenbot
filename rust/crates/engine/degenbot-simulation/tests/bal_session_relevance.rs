@@ -19,8 +19,7 @@
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
-    reason = "the stub chain and its assertions fail loudly on a broken fixture"
+    reason = "the assertions fail loudly on a broken fixture"
 )]
 
 use alloy::primitives::aliases::U112;
@@ -43,18 +42,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::task::{Context, Waker};
 
-#[path = "../examples/shared/chain_stub.rs"]
-#[expect(dead_code)]
-mod chain_stub;
-#[path = "../examples/shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "../examples/shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
-#[path = "../examples/shared/scripted_head.rs"]
-#[expect(dead_code)]
-mod scripted_head;
+use degenbot_simulation::probe_support::chain_stub;
+use degenbot_simulation::probe_support::modeled_chain;
+use degenbot_simulation::probe_support::scripted_head;
 
 use chain_stub::ChainStub;
 use modeled_chain::bal_bytes;

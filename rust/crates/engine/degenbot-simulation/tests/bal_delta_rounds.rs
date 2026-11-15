@@ -33,17 +33,11 @@ use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Waker};
 
-#[path = "../examples/shared/chain_stub.rs"]
-#[expect(dead_code)]
-mod chain_stub;
+use degenbot_simulation::probe_support::chain_stub;
 
-#[path = "../examples/shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
+use degenbot_simulation::probe_support::modeled_chain;
 
-#[path = "../examples/shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
+use degenbot_simulation::probe_support::real_coverage;
 
 use chain_stub::{ChainStub, SERVED};
 use modeled_chain::{ChainState, Coverage, StubChain};

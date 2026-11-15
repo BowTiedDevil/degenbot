@@ -6,7 +6,8 @@
 )]
 
 //! The analytical BAL candidate-scaling report: the two-corpus calibration
-//! closure of the shared scaling model (`shared/candidate_scaling.rs` — model,
+//! closure of the shared scaling model (`src/probe_support/candidate_scaling.rs`
+//! — model,
 //! assumptions, and what it does NOT claim live there), the scenario matrix
 //! over candidate count x family x independent novelty at both calibrated
 //! price points, and the W/F sensitivity.
@@ -20,9 +21,7 @@
 //! `BAL_SCALING_PLANT_MISMATCH=1 just bal-candidate-scaling-probe`). Migration:
 //! none for consumers — development analysis surface only.
 
-#[path = "shared/candidate_scaling.rs"]
-#[expect(dead_code)]
-mod candidate_scaling;
+use degenbot_simulation::probe_support::candidate_scaling;
 
 use candidate_scaling::{
     calibrate, calibrate_planted, probe_exit_code, scenario_report, CalibrationReport, PricePoint,

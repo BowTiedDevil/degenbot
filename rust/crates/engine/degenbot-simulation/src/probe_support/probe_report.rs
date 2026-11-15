@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use alloy::primitives::{Address, U256};
 
-use crate::real_coverage::RealCoverage;
-use crate::wall_ledger::{Digests, Span, WallBucket, WallReport};
+use super::real_coverage::RealCoverage;
+use super::wall_ledger::{Digests, Span, WallBucket, WallReport};
 
 /// One anchor's snapshot hits split across their sources. The first two
 /// classes come from the corpus's read-call counts and the policy's own key
@@ -39,6 +39,7 @@ impl HitSplit {
 /// anchor's own final writes carry is a final-write hit, every recorded read
 /// call the snapshot already held (and the writes did not overwrite) is a
 /// carried hit, and the hub's counter minus those two is the residual.
+#[must_use]
 pub fn classify_hits(
     read_calls: &BTreeMap<(Address, U256), u64>,
     final_write_keys: &BTreeSet<(Address, U256)>,
@@ -90,6 +91,7 @@ impl StorageAccounting {
 /// key the anchor's own final writes carry is a final-write hit even when the
 /// snapshot also held it, every other key the snapshot held is a carried hit,
 /// and the rest are dynamic members.
+#[must_use]
 pub fn storage_accounting(
     keys: &BTreeSet<(Address, U256)>,
     final_write_keys: &BTreeSet<(Address, U256)>,
@@ -172,6 +174,7 @@ pub fn eliminable_ceiling(
 /// Compare every leg's read digests against the baseline: the same recorded
 /// candidate must carry the same read-value digest in every leg, whatever its
 /// cache policy served.
+#[must_use]
 pub fn identity_gate(baseline: &Digests, legs: &[(String, Digests)]) -> Vec<String> {
     let mut mismatches = Vec::new();
     for (label, digests) in legs {

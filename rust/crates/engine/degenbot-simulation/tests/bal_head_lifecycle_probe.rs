@@ -1,5 +1,5 @@
 //! Behavior pins for the canonical-head lifecycle probe's control legs
-//! (`examples/shared/head_legs.rs`): the fresh knob's OFF switch, the waiter
+//! (`src/probe_support/head_legs.rs`): the fresh knob's OFF switch, the waiter
 //! leg's real wait resolution over the controllably deferred transport, and the
 //! percentile math every reported summary is built from.
 //!
@@ -7,10 +7,8 @@
 //! the chain stub, so the pins are deterministic and need no node.
 
 #![expect(
-    clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
-    reason = "the scripted chain and its assertions fail loudly on a broken fixture"
+    reason = "the assertions fail loudly on a broken fixture"
 )]
 
 use std::cell::Cell;
@@ -18,20 +16,7 @@ use std::time::Duration;
 
 use degenbot_simulation::sim::evm2::delta_snapshot::BalHeadDriver;
 
-#[path = "../examples/shared/chain_stub.rs"]
-#[expect(dead_code)]
-mod chain_stub;
-
-#[path = "../examples/shared/head_legs.rs"]
-mod head_legs;
-
-#[path = "../examples/shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-
-#[path = "../examples/shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
+use degenbot_simulation::probe_support::head_legs;
 
 use head_legs::{fresh_heads, percentile, waiter_leg, WaiterChain};
 

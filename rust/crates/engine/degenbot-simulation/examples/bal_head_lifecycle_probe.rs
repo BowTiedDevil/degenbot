@@ -1,11 +1,8 @@
 #![expect(
     clippy::print_stdout,
     clippy::print_stderr,
-    clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
-    reason = "a live probe prints its report, and the shared chain stub and capture \
-              fixtures it includes fail loudly on a broken fixture"
+    reason = "a live probe prints its report and fails loudly on a broken fixture"
 )]
 
 //! The canonical-head lifecycle probe: real mainnet heads driven through
@@ -101,17 +98,8 @@ use std::time::{Duration, Instant};
 use alloy::primitives::{Address, B256, U256};
 
 use degenbot_rpc::provider::AlloyProvider;
-#[path = "shared/chain_stub.rs"]
-#[expect(dead_code)]
-mod chain_stub;
-#[path = "shared/head_legs.rs"]
-mod head_legs;
-#[path = "shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
+use degenbot_simulation::probe_support::head_legs;
+use degenbot_simulation::probe_support::real_coverage;
 use degenbot_simulation::sim::evm2::delta_snapshot::{
     BalHeadDriver, DeltaReport, HeadOutcome, HeadReadiness,
 };

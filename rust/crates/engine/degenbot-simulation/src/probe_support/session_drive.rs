@@ -21,18 +21,16 @@ use std::time::Duration;
 
 use alloy::primitives::{keccak256, Address, StorageValue, B256, U256};
 
-use degenbot_rpc::provider::{AccountRead, AlloyProvider};
-use degenbot_simulation::sim::evm2::async_fanout::{
+use crate::sim::evm2::async_fanout::{
     DrainOutcome, DrainPolicy, FanoutLimits, HubDrain, MAX_IDLE_ROUNDS,
 };
-use degenbot_simulation::sim::evm2::delta_snapshot::{DeltaHub, DeltaRead, ReadOrigin};
-use degenbot_simulation::sim::evm2::read_hub::{
-    ReadFuture, ReadHub, ReadHubError, ReadHubStats, RoundReport,
-};
-use degenbot_simulation::sim::ReadAnchor;
+use crate::sim::evm2::delta_snapshot::{DeltaHub, DeltaRead, ReadOrigin};
+use crate::sim::evm2::read_hub::{ReadFuture, ReadHub, ReadHubError, ReadHubStats, RoundReport};
+use crate::sim::ReadAnchor;
+use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 
-use crate::recorded_corpus::Recorded;
-use crate::wall_ledger::{Digests, Node, WallLedger};
+use super::recorded_corpus::Recorded;
+use super::wall_ledger::{Digests, Node, WallLedger};
 
 /// The digest material of one account read.
 pub fn extend_account(material: &mut Vec<u8>, read: &AccountRead) {
@@ -114,6 +112,7 @@ pub enum ReadLane<'h> {
 impl<'h> ReadLane<'h> {
     /// The hub this lane's rounds belong to — the lane's drain coordinator and
     /// its counters both read it.
+    #[must_use]
     pub fn hub(self) -> &'h ReadHub {
         match self {
             Self::Full(hub) => hub,
@@ -127,6 +126,7 @@ impl<'h> ReadLane<'h> {
     }
 
     /// Register one storage read on the lane's round.
+    #[must_use]
     pub fn read_storage(self, address: Address, index: U256) -> StorageRead<'h> {
         match self {
             Self::Full(hub) => StorageRead::Full(hub.read_storage(address, index)),
@@ -394,9 +394,9 @@ async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome,
             run.gauge.admitted();
         }
         let mut ready: Vec<(usize, usize, B256)> = Vec::new();
-        for (position, entry) in active.iter_mut().enumerate() {
-            let index = entry.0;
-            match entry.1.as_mut().poll(&mut cx) {
+        for (position, pending) in active.iter_mut().enumerate() {
+            let index = pending.0;
+            match pending.1.as_mut().poll(&mut cx) {
                 Poll::Ready(Ok(digest)) => ready.push((position, index, digest)),
                 Poll::Ready(Err(error)) => return Err(error),
                 Poll::Pending => {}

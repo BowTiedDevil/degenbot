@@ -20,23 +20,13 @@ use alloy::primitives::{keccak256, Address, B256, U256};
 
 use degenbot_simulation::sim::evm2::bal_prefetch::{decode_bal_seed, BalPlan, BalSeed};
 
-// The shared benchmark modules carry more surface than one consumer drives
-// (the probes divide it); the pins below read the parts this suite owns.
-#[path = "../examples/shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "../examples/shared/probe_report.rs"]
-#[expect(dead_code)]
-mod probe_report;
-#[path = "../examples/shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
-#[path = "../examples/shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
-#[path = "../examples/shared/wall_ledger.rs"]
-#[expect(dead_code)]
-mod wall_ledger;
+// The probe-support benchmark modules carry more surface than one consumer
+// drives (the probes divide it); the pins below read the parts this suite owns.
+use degenbot_simulation::probe_support::modeled_chain;
+use degenbot_simulation::probe_support::probe_report;
+use degenbot_simulation::probe_support::real_coverage;
+use degenbot_simulation::probe_support::recorded_corpus;
+use degenbot_simulation::probe_support::wall_ledger;
 
 use modeled_chain::{
     bal_bytes, block_writes, modeled_value, real_block_writes, shared_value, write_selected,

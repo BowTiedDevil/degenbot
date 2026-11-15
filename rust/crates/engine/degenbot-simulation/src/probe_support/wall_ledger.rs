@@ -67,6 +67,7 @@ impl WallBucket {
     ];
 
     /// The bucket's index into a [`WallReport`] array.
+    #[must_use]
     pub const fn index(self) -> usize {
         match self {
             Self::RecordedExec => 0,
@@ -79,6 +80,7 @@ impl WallBucket {
     }
 
     /// The short label the report table prints.
+    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::RecordedExec => "exec",
@@ -351,6 +353,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// The wall bucket this read kind's wait is charged to.
+    #[must_use]
     pub const fn bucket(self) -> WallBucket {
         match self {
             Self::Storage => WallBucket::StorageWait,

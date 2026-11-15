@@ -1,5 +1,5 @@
 //! Behavior pins for the analytical BAL candidate-scaling model
-//! (`examples/shared/candidate_scaling.rs` and its development probe
+//! (`src/probe_support/candidate_scaling.rs` and its development probe
 //! `examples/bal_candidate_scaling_probe.rs`): the two-corpus calibration
 //! closure against the committed real-coverage accounting and ceilings, the
 //! carry-hit identities, the scenario aggregates and their novelty axis, the
@@ -16,19 +16,18 @@
 //! bal-candidate-scaling-probe` exits nonzero); these pins run under `just
 //! test-rust-nextest -p degenbot-simulation`.
 //!
-//! Migration: none for consumers — the model is example/test surface only, no
-//! production `src` and no wire/ABI/FFI contract.
+//! Migration: none for consumers — the model is development support in the
+//! crate's own library (`probe_support`), with no wire/ABI/FFI contract.
 
 #![expect(
     clippy::expect_used,
     reason = "the committed corpus facts are literals this suite trusts"
 )]
 
-// The shared scaling module carries more surface than one consumer drives (the
-// probe and the pins divide it); the pins below read the parts this suite owns.
-#[path = "../examples/shared/candidate_scaling.rs"]
-#[expect(dead_code)]
-mod candidate_scaling;
+// The probe-support scaling module carries more surface than one consumer drives
+// (the probe and the pins divide it); the pins below read the parts this suite
+// owns.
+use degenbot_simulation::probe_support::candidate_scaling;
 
 use candidate_scaling::{
     calibrate, carry_accounting, measured_ceiling_pm, probe_exit_code, scenario_report, PricePoint,

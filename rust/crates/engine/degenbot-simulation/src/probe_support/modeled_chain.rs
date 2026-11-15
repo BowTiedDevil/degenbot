@@ -55,7 +55,7 @@ use serde_json::{json, Value};
 
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 
-use crate::real_coverage::RealCoverage;
+use super::real_coverage::RealCoverage;
 
 /// One tracked read identity.
 pub type Key = (Address, U256);

@@ -72,12 +72,7 @@ use degenbot_simulation::sim::evm2::delta_snapshot::{
 use degenbot_simulation::sim::evm2::read_hub::CarryOutcome;
 use degenbot_simulation::sim::ReadAnchor;
 
-#[path = "shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
-
-#[path = "shared/read_oracle.rs"]
-mod read_oracle;
+use degenbot_simulation::probe_support::read_oracle;
 
 use read_oracle::{
     compare, fingerprint, load_tagged_rows, plant_one_wei, select, write_overlap, Key, Mismatch,

@@ -64,11 +64,9 @@ use degenbot_simulation::sim::evm2::bal_prefetch::BalSeed;
 use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, ReadHubCache};
 use degenbot_simulation::sim::ReadAnchor;
 
-// The shared benchmark corpus module carries more surface than this probe
-// reads (the wall-ceiling benchmark divides it).
-#[path = "shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
+// The probe-support benchmark corpus module carries more surface than this
+// probe reads (the wall-ceiling benchmark divides it).
+use degenbot_simulation::probe_support::recorded_corpus;
 
 use recorded_corpus::{
     anchor_relevance, anchors_keys, corpus_relevance_source, group_by_anchor, load_rows, shape,

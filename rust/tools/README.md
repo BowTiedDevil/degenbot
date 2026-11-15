@@ -744,9 +744,10 @@ Consequences the later tasks must honor:
    `[[bin]] required-features`, so a default `cargo check` of the package *deliberately*
    skips it and the skip is visible in the manifest rather than implied.
 3. **No tool edge into a publishable product crate.** All edges point *from* tools *to*
-   product crates. The one reverse edge that exists today is test-only and path-based:
-   14 test files in `degenbot-simulation/tests/` `#[path]`-include `examples/shared/*.rs`
-   (see §10.2) — task 05 must resolve it without adding a normal dependency.
+   product crates. The one reverse edge that existed — 14 test files in
+   `degenbot-simulation/tests/` `#[path]`-including `examples/shared/*.rs` — is closed:
+   those fixtures are product-owned now (`degenbot_simulation::probe_support`, §10.2),
+   so the tests and this package read one implementation with no dependency added.
 4. **Isolation is a checkable claim — about forwards, not about package absence.** Two
    statements must never be merged into one:
 
@@ -1759,24 +1760,25 @@ repository's own markers (so no program spells `..`), and `--fixtures-home <dir>
 same binary run against a copied tree (so a gate can be shown going red without touching the
 committed corpus). Every later row inherits the pattern instead of re-deriving it.
 
-### 10.2 Fourteen simulation test files compile example-shared code through `#[path]`
+### 10.2 Simulation probe support is product-owned, not `#[path]`-shared
 
-`crates/engine/degenbot-simulation/tests/` contains 14 files with 54 `#[path =
-"../examples/shared/..."]` attributes (`bal_candidate_scaling`, `bal_capability`,
-`bal_corpus_segments`, `bal_delta_rounds`, `bal_delta_snapshot`, `bal_head_lifecycle`,
-`bal_head_lifecycle_probe`, `bal_head_pipeline`, `bal_production_relevance`, and siblings).
-Those tests are *why* the shared modules are durable (they pin the scaling model, the wall
-ledger's bucket reconciliation, the read-digest gate, the corpus segmentation). Moving
-`examples/shared/` into `degenbot-engine-lab`'s library breaks every one of them unless the
-tests are re-pointed in the same task. Task 05 owns this: either the tests move beside the
-new library, or they consume the tool library in a way that does not add a normal edge to a
-publishable crate, or the shared modules become a test-support module the tests can reach
-without a `#[path]` attribute. Whichever it picks, `just test-rust-nextest -p
-degenbot-simulation` must run the same named tests afterwards — a silently emptied test file
-is the failure mode to watch for.
+`crates/engine/degenbot-simulation/src/probe_support/` holds the thirteen fixture modules the
+BAL and session probes and their behavior pins drive — the scripted chain stub, the modeled
+chain, the recorded corpus readers, the read oracle, the session driver, the delta-parity
+comparison, the head legs, the real-coverage accounting, the wall ledger and its report, the
+relevance pairing, and the candidate-scaling model. The crate root exposes them as
+`#[doc(hidden)] pub mod probe_support`, so the probes, the behavior pins and the tool package
+read ONE implementation, and every edge still points from tests/tools to product.
 
-`degenbot-arbitrage` has the same pattern in miniature: its two BAL examples `#[path]`-include
-`examples/shared/{dispatch_probe,dispatch_scaling}.rs`.
+That closes the test-support question this section used to hold open: the 14 simulation test
+files, the ten BAL/session example probes, and `degenbot-batch-executor`'s startup probe
+import `degenbot_simulation::probe_support::*`; no `#[path]` attribute and no
+`examples/shared/` directory remains. `just test-rust-nextest -p degenbot-simulation` runs 600
+tests: `recorded_corpus`'s four unit tests compile once in the library target instead of once
+per path-including test target, and every other named test is unchanged.
+
+`degenbot-arbitrage` has the same pattern in miniature and keeps it for now: its two BAL
+examples `#[path]`-include `examples/shared/{dispatch_probe,dispatch_scaling}.rs`.
 
 ### 10.3 External corpora that are not in the tree
 

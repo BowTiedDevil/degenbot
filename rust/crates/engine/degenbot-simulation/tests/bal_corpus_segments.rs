@@ -1,6 +1,6 @@
 //! Behavior pins for the broader-corpus segmentation and per-segment report
-//! arithmetic (`examples/shared/recorded_corpus.rs`'s corpus shape and density
-//! segments, `examples/shared/probe_report.rs`'s per-segment write overlap,
+//! arithmetic (`src/probe_support/recorded_corpus.rs`'s corpus shape and density
+//! segments, `src/probe_support/probe_report.rs`'s per-segment write overlap,
 //! span attribution, ceiling, and live cross-check).
 //!
 //! Every test name states the behavior it pins. The inputs are synthetic rows,
@@ -17,20 +17,12 @@ use std::collections::BTreeSet;
 
 use alloy::primitives::{Address, B256, U256};
 
-// The shared benchmark modules carry more surface than one consumer drives
-// (the probes divide it); the pins below read the parts this suite owns.
-#[path = "../examples/shared/probe_report.rs"]
-#[expect(dead_code)]
-mod probe_report;
-#[path = "../examples/shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
-#[path = "../examples/shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
-#[path = "../examples/shared/wall_ledger.rs"]
-#[expect(dead_code)]
-mod wall_ledger;
+// The probe-support benchmark modules carry more surface than one consumer
+// drives (the probes divide it); the pins below read the parts this suite owns.
+use degenbot_simulation::probe_support::probe_report;
+use degenbot_simulation::probe_support::real_coverage;
+use degenbot_simulation::probe_support::recorded_corpus;
+use degenbot_simulation::probe_support::wall_ledger;
 
 use probe_report::{
     attribute_segment_spans, cross_check_live, segment_ceiling, write_overlap, StorageAccounting,

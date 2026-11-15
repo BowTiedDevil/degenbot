@@ -68,14 +68,9 @@ use degenbot_simulation::sim::evm2::delta_snapshot::DeltaSnapshotCache;
 use degenbot_simulation::sim::evm2::read_hub::ReadHubCache;
 use degenbot_simulation::sim::ReadAnchor;
 
-#[path = "shared/delta_parity.rs"]
-mod delta_parity;
-#[path = "shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
+use degenbot_simulation::probe_support::delta_parity;
+use degenbot_simulation::probe_support::modeled_chain;
+use degenbot_simulation::probe_support::real_coverage;
 
 use modeled_chain::{bal_bytes, ChainState, Coverage, StubChain};
 use real_coverage::RealCoverage;

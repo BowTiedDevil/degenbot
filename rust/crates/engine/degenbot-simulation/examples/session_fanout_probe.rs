@@ -107,27 +107,14 @@ use alloy::primitives::U256;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::async_fanout::{DrainPolicy, FanoutLimits};
 
-// The shared benchmark modules carry more surface than one consumer drives
-// (the probes divide it); the parts this probe does not replay stay unmarked
-// only where every item has a caller here.
-#[path = "shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "shared/probe_report.rs"]
-#[expect(dead_code)]
-mod probe_report;
-#[path = "shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
-#[path = "shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
-#[path = "shared/session_drive.rs"]
-#[expect(dead_code)]
-mod session_drive;
-#[path = "shared/wall_ledger.rs"]
-#[expect(dead_code)]
-mod wall_ledger;
+// The probe-support benchmark modules carry more surface than one consumer
+// drives (the probes divide it); the parts this probe does not replay stay
+// unmarked only where every item has a caller here.
+use degenbot_simulation::probe_support::modeled_chain;
+use degenbot_simulation::probe_support::probe_report;
+use degenbot_simulation::probe_support::recorded_corpus;
+use degenbot_simulation::probe_support::session_drive;
+use degenbot_simulation::probe_support::wall_ledger;
 
 use modeled_chain::{ChainState, StubChain};
 use probe_report::identity_gate;

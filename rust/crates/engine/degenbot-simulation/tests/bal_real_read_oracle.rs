@@ -18,13 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use alloy::primitives::{Address, U256};
 use serde_json::json;
 
-#[path = "../examples/shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
+use degenbot_simulation::probe_support::recorded_corpus;
 
-#[path = "../examples/shared/read_oracle.rs"]
-#[expect(dead_code)]
-mod read_oracle;
+use degenbot_simulation::probe_support::read_oracle;
 
 use read_oracle::{
     compare, fingerprint, load_tagged_rows, plant_one_wei, select, selection_material,

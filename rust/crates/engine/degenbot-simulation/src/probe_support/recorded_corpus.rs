@@ -371,6 +371,7 @@ pub const BURST_MIN: usize = 51;
 
 impl DensityRegime {
     /// The short label the report prints.
+    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::Sparse => "sparse",

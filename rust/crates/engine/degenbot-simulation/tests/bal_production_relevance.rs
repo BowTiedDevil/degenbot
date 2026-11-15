@@ -14,8 +14,7 @@
 
 #![expect(
     clippy::expect_used,
-    clippy::print_stdout,
-    reason = "the pins fail loudly on a broken fixture, and the shared lane driver prints its debug               lines"
+    reason = "the pins fail loudly on a broken fixture"
 )]
 
 use std::collections::BTreeMap;
@@ -24,29 +23,15 @@ use alloy::primitives::{Address, U256};
 
 use degenbot_simulation::sim::evm2::delta_snapshot::ReadOrigin;
 
-#[path = "../examples/shared/probe_report.rs"]
-#[expect(dead_code)]
-mod probe_report;
+use degenbot_simulation::probe_support::probe_report;
 
-#[path = "../examples/shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
+use degenbot_simulation::probe_support::real_coverage;
 
-#[path = "../examples/shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
+use degenbot_simulation::probe_support::recorded_corpus;
 
-#[path = "../examples/shared/relevance_pairs.rs"]
-#[expect(dead_code)]
-mod relevance_pairs;
+use degenbot_simulation::probe_support::relevance_pairs;
 
-#[path = "../examples/shared/session_drive.rs"]
-#[expect(dead_code)]
-mod session_drive;
-
-#[path = "../examples/shared/wall_ledger.rs"]
-#[expect(dead_code)]
-mod wall_ledger;
+use degenbot_simulation::probe_support::session_drive;
 
 use probe_report::StorageAccounting;
 use real_coverage::RealCoverage;

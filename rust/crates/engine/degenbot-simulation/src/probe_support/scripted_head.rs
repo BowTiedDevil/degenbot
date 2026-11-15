@@ -30,29 +30,36 @@ use std::task::{Context, Poll, Waker};
 use alloy::primitives::{Address, B256};
 use futures_util::future::BoxFuture;
 
-use degenbot_simulation::sim::evm2::bal_heads::HeadSpawn;
-use degenbot_simulation::sim::evm2::delta_snapshot::{
+use crate::sim::evm2::bal_heads::HeadSpawn;
+use crate::sim::evm2::delta_snapshot::{
     BalHeadDriver, DeltaReport, HeadOutcome, HeadReadiness, HeadTicket, HeadView,
 };
-use degenbot_simulation::sim::evm2::read_hub::PreparedBal;
-use degenbot_simulation::sim::ReadAnchor;
+use crate::sim::evm2::read_hub::PreparedBal;
+use crate::sim::ReadAnchor;
 
 /// A hash no scripted chain links to: the parent of a session's first head.
+#[must_use]
 pub fn genesis() -> B256 {
     B256::new([0x99; 32])
 }
 
 /// An address distinct from the fixtures' other identities.
+#[must_use]
 pub fn address(tag: u8) -> Address {
     Address::new([tag; 20])
 }
 
 /// One exact-hash anchor.
+#[must_use]
 pub fn identified(number: u64, hash: B256) -> ReadAnchor {
     ReadAnchor::identified(number, hash)
 }
 
 /// The settled report of one successful apply.
+#[expect(
+    clippy::must_use_candidate,
+    reason = "callers assert with it as often as they read its report"
+)]
 pub fn settled(outcome: &HeadOutcome) -> Arc<DeltaReport> {
     match outcome {
         HeadOutcome::Settled(report) => Arc::clone(report),
@@ -109,16 +116,19 @@ impl<'a> ScriptedHead<'a> {
     }
 
     /// The exact-hash anchor this head was delivered at.
+    #[must_use]
     pub fn anchor(&self) -> ReadAnchor {
         self.anchor
     }
 
     /// The delivery ticket a preparation is applied against.
+    #[must_use]
     pub fn ticket(&self) -> HeadTicket {
         self.ticket
     }
 
     /// The driver the head was delivered to.
+    #[must_use]
     pub fn driver(&self) -> &'a BalHeadDriver {
         self.driver
     }
@@ -130,6 +140,7 @@ impl<'a> ScriptedHead<'a> {
     }
 
     /// The apply phase of an already-prepared list.
+    #[must_use]
     pub fn apply(&self, prepared: &PreparedBal, relevance: &[Address]) -> HeadOutcome {
         self.driver.apply(self.ticket, prepared, relevance)
     }
@@ -147,21 +158,25 @@ impl<'a> ScriptedHead<'a> {
 
     /// Claim this head's preparation: the advance is claimed and parked at its
     /// first pending poll, so the test holds a genuinely live attempt.
+    #[must_use]
     pub fn claimed(&self) -> ParkedAdvance<'a> {
         ParkedAdvance::claim(self.driver, self.ticket, &[])
     }
 
     /// [`Self::claimed`] with the relevance the apply will read.
+    #[must_use]
     pub fn claimed_with(&self, relevance: &'a [Address]) -> ParkedAdvance<'a> {
         ParkedAdvance::claim(self.driver, self.ticket, relevance)
     }
 
     /// The view this head answers with right now.
+    #[must_use]
     pub fn view(&self) -> HeadView {
         self.driver.snapshot(self.anchor)
     }
 
     /// The readiness this head reports right now.
+    #[must_use]
     pub fn readiness(&self) -> HeadReadiness {
         self.view().readiness
     }
@@ -190,6 +205,7 @@ impl<'a> ParkedAdvance<'a> {
     }
 
     /// The still-parked advance, for a test that drives it itself.
+    #[must_use]
     pub fn into_future(self) -> Pin<Box<dyn Future<Output = HeadOutcome> + 'a>> {
         self.advance
     }
@@ -208,35 +224,40 @@ impl<'a> ParkedAdvance<'a> {
 /// The deterministic spawn seam: every phase a [`BalHeadPipeline`] spawns parks
 /// here until the test drains it, in the order the test chooses.
 ///
-/// [`BalHeadPipeline`]: degenbot_simulation::sim::evm2::bal_heads::BalHeadPipeline
+/// [`BalHeadPipeline`]: crate::sim::evm2::bal_heads::BalHeadPipeline
 #[derive(Clone, Default)]
 pub struct SpawnQueue {
     parked: Arc<Mutex<Vec<BoxFuture<'static, ()>>>>,
 }
 
 impl SpawnQueue {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// The [`HeadSpawn`] a pipeline is constructed with.
+    #[must_use]
     pub fn spawner(&self) -> HeadSpawn {
         let parked = Arc::clone(&self.parked);
         Arc::new(move |phase: BoxFuture<'static, ()>| parked.lock().unwrap().push(phase))
     }
 
     /// Phases spawned and not yet run.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.parked.lock().unwrap().len()
     }
 
     /// Whether no phase is parked.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Take the oldest parked phase WITHOUT running it: the test decides when a
     /// head's preparation lands.
+    #[must_use]
     pub fn take(&self) -> Option<BoxFuture<'static, ()>> {
         let mut parked = self.parked.lock().unwrap();
         if parked.is_empty() {

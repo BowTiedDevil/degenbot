@@ -54,8 +54,8 @@
 //! scenario matrix; `BAL_SCALING_PLANT_MISMATCH=1` takes the red calibration
 //! path (nonzero exit). The pins run under
 //! `just test-rust-nextest -p degenbot-simulation`. Migration: none for
-//! consumers — example/test surface only, no production `src`, no wire/ABI/FFI
-//! contract.
+//! consumers — development support under [`crate::probe_support`], with no
+//! wire/ABI/FFI contract.
 
 /// The negative-probe knob: set to `1` to plant a calibration mismatch and
 /// watch the gate fail loud (the probe exits nonzero).

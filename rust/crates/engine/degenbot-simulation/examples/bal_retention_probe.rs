@@ -72,12 +72,8 @@ use degenbot_simulation::sim::evm2::delta_snapshot::{
 };
 use degenbot_simulation::sim::ReadAnchor;
 
-#[path = "shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
+use degenbot_simulation::probe_support::modeled_chain;
+use degenbot_simulation::probe_support::real_coverage;
 
 use modeled_chain::{block_hash, read_selected, write_selected, ChainState, Coverage, StubChain};
 use real_coverage::{RealBlock, RealCoverage};

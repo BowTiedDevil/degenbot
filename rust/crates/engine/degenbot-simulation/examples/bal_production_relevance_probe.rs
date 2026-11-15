@@ -63,7 +63,6 @@
 
 #![expect(
     clippy::exit,
-    clippy::expect_used,
     clippy::print_stderr,
     clippy::print_stdout,
     reason = "a benchmark probe prints its report and fails loudly on a broken fixture"
@@ -84,26 +83,13 @@ use degenbot_simulation::sim::evm2::delta_snapshot::{
 use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, CarryReport, ReadHub, ReadHubCache};
 use degenbot_simulation::sim::ReadAnchor;
 
-#[path = "shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
-#[path = "shared/probe_report.rs"]
-#[expect(dead_code)]
-mod probe_report;
-#[path = "shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
-#[path = "shared/recorded_corpus.rs"]
-#[expect(dead_code)]
-mod recorded_corpus;
-#[path = "shared/relevance_pairs.rs"]
-mod relevance_pairs;
-#[path = "shared/session_drive.rs"]
-#[expect(dead_code)]
-mod session_drive;
-#[path = "shared/wall_ledger.rs"]
-#[expect(dead_code)]
-mod wall_ledger;
+use degenbot_simulation::probe_support::modeled_chain;
+use degenbot_simulation::probe_support::probe_report;
+use degenbot_simulation::probe_support::real_coverage;
+use degenbot_simulation::probe_support::recorded_corpus;
+use degenbot_simulation::probe_support::relevance_pairs;
+use degenbot_simulation::probe_support::session_drive;
+use degenbot_simulation::probe_support::wall_ledger;
 
 use modeled_chain::{ChainState, Coverage, StubChain};
 use probe_report::{cross_check_live, identity_gate, storage_accounting, StorageAccounting};

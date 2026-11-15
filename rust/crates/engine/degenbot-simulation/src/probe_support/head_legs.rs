@@ -39,15 +39,13 @@ use std::time::{Duration, Instant};
 
 use alloy::primitives::{Address, B256};
 
+use crate::sim::evm2::delta_snapshot::{BalHeadDriver, HeadCold, HeadOutcome, HeadReadiness};
+use crate::sim::ReadAnchor;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm2::delta_snapshot::{
-    BalHeadDriver, HeadCold, HeadOutcome, HeadReadiness,
-};
-use degenbot_simulation::sim::ReadAnchor;
 
-use crate::chain_stub::ChainStub;
-use crate::modeled_chain::{bal_bytes, real_block_writes};
-use crate::real_coverage::RealCoverage;
+use super::chain_stub::ChainStub;
+use super::modeled_chain::{bal_bytes, real_block_writes};
+use super::real_coverage::RealCoverage;
 
 /// The park guard a waiter sample's resolve is bounded by: a wait that never
 /// resolves is a broken lifecycle, not a slow one.

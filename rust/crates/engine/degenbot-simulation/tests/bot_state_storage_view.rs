@@ -11,7 +11,6 @@
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
     reason = "the scripted fallback and its assertions fail loudly on a broken fixture"
 )]
 
@@ -36,17 +35,11 @@ use evm2::bytecode::Bytecode;
 use evm2::evm::{AccountInfo, Database};
 use evm2::interpreter::Word;
 
-#[path = "../examples/shared/chain_stub.rs"]
-#[expect(dead_code)]
-mod chain_stub;
+use degenbot_simulation::probe_support::chain_stub;
 
-#[path = "../examples/shared/modeled_chain.rs"]
-#[expect(dead_code)]
-mod modeled_chain;
+use degenbot_simulation::probe_support::modeled_chain;
 
-#[path = "../examples/shared/real_coverage.rs"]
-#[expect(dead_code)]
-mod real_coverage;
+use degenbot_simulation::probe_support::real_coverage;
 
 use chain_stub::ChainStub;
 use modeled_chain::{ChainState, Coverage, StubChain};

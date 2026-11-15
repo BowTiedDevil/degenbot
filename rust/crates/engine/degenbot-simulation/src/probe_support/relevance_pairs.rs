@@ -23,12 +23,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use alloy::primitives::Address;
 
-use degenbot_simulation::sim::evm2::delta_snapshot::ReadOrigin;
+use crate::sim::evm2::delta_snapshot::ReadOrigin;
 
-use crate::probe_report::StorageAccounting;
-use crate::real_coverage::Key;
-use crate::recorded_corpus::{candidate_addresses, classify_density, DensityRegime, Recorded};
-use crate::session_drive::ReadEvent;
+use super::probe_report::StorageAccounting;
+use super::real_coverage::Key;
+use super::recorded_corpus::{candidate_addresses, classify_density, DensityRegime, Recorded};
+use super::session_drive::ReadEvent;
 
 /// Which derivation scoped one replay's relevance set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,12 +191,12 @@ pub fn write_split(writes: &[Key], relevance: &[Address]) -> WriteSplit {
     split
 }
 
-/// Classify one anchor's distinct keys by the answer path the leg TRACED: a key
+/// Classify one anchor's distinct keys by the answer path the leg traced: a key
 /// the anchor's own final writes carry is a final-write hit whatever the
 /// snapshot said, a key EVERY read of which the chain answered is carried, and a
 /// key any read of which took the round path is a dynamic member — the member is
 /// paid once per identity per anchor, however many candidates share it. Unlike
-/// [`storage_accounting`](crate::probe_report::storage_accounting) this reads the
+/// [`storage_accounting`](super::probe_report::storage_accounting) this reads the
 /// leg's own answers, so it measures an expiring policy too instead of modelling
 /// the held set.
 ///

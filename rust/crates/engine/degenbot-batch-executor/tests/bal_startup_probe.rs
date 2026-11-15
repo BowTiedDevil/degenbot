@@ -16,8 +16,6 @@
 
 #![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
     reason = "the fixture drives known-valid values and asserts on the typed product"
 )]
 
@@ -45,9 +43,7 @@ use degenbot_substrate::nonce::NonceAuthority;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 
-#[path = "../../degenbot-simulation/examples/shared/chain_stub.rs"]
-#[expect(dead_code)]
-mod chain_stub;
+use degenbot_simulation::probe_support::chain_stub;
 
 use chain_stub::ChainStub;
 
