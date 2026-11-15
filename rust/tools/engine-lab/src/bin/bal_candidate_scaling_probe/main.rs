@@ -6,8 +6,8 @@
 )]
 
 //! The analytical BAL candidate-scaling report: the two-corpus calibration
-//! closure of the shared scaling model (`src/probe_support/candidate_scaling.rs`
-//! — model,
+//! closure of the shared scaling model (the product-owned
+//! `degenbot_simulation::probe_support::candidate_scaling` — model,
 //! assumptions, and what it does NOT claim live there), the scenario matrix
 //! over candidate count x family x independent novelty at both calibrated
 //! price points, and the W/F sensitivity.
@@ -18,14 +18,15 @@
 //! calibration path: the gate fails and the process exits nonzero.
 //!
 //! Invocation: `just bal-candidate-scaling-probe` (red probe:
-//! `BAL_SCALING_PLANT_MISMATCH=1 just bal-candidate-scaling-probe`). Migration:
-//! none for consumers — development analysis surface only.
+//! `BAL_SCALING_PLANT_MISMATCH=1 just bal-candidate-scaling-probe`). The
+//! model's behavior pins run in
+//! `crates/engine/degenbot-simulation/tests/bal_candidate_scaling.rs`.
 
 use degenbot_simulation::probe_support::candidate_scaling;
 
 use candidate_scaling::{
     calibrate, calibrate_planted, probe_exit_code, scenario_report, CalibrationReport, PricePoint,
-    Scenario, ScenarioFamily, CORPORA, PLANT_ENV,
+    Scenario, ScenarioFamily, CORPORA,
 };
 
 /// The scenario matrix's candidate counts.
@@ -39,7 +40,10 @@ const NOVELTIES: [f64; 7] = [0.0, 0.05, 0.131, 0.35, 0.6, 0.852, 1.0];
 const BOUNDS: [(u64, u64); 4] = [(1, 8), (2, 8), (2, 16), (4, 8)];
 
 fn main() {
-    let planted = std::env::var(PLANT_ENV).is_ok_and(|value| value == "1");
+    // The key is read as a literal at the call site, for the same reason the
+    // stray-env-read gate enumerates names it can read off the `env::var`
+    // line: a constant indirection hides it.
+    let planted = std::env::var("BAL_SCALING_PLANT_MISMATCH").is_ok_and(|value| value == "1");
     let outcome = if planted {
         calibrate_planted()
     } else {

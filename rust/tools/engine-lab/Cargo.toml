@@ -164,6 +164,17 @@ path = "src/bin/bal_production_relevance_probe/main.rs"
 name = "bal_real_read_oracle_probe"
 path = "src/bin/bal_real_read_oracle_probe/main.rs"
 
+# The analytical candidate-scaling report: the shared scaling model's
+# two-corpus calibration closure against the committed real-coverage
+# accounting, the scenario matrix over candidate count x family x independent
+# novelty at both calibrated price points, and the W/F sensitivity — every
+# number a formula over aggregates, no candidate executed. It compiles no JIT
+# program, so it declares no `required-features`: the default lane builds it,
+# and `evm2-jit` remains the lane the JIT-gated targets open.
+[[bin]]
+name = "bal_candidate_scaling_probe"
+path = "src/bin/bal_candidate_scaling_probe/main.rs"
+
 [[bin]]
 name = "capture_seam_probe"
 path = "src/bin/capture_seam_probe/main.rs"

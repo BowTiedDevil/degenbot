@@ -1,6 +1,7 @@
 //! Behavior pins for the analytical BAL candidate-scaling model
-//! (`src/probe_support/candidate_scaling.rs` and its development probe
-//! `examples/bal_candidate_scaling_probe.rs`): the two-corpus calibration
+//! (`src/probe_support/candidate_scaling.rs` and its development probe, the
+//! engine-lab binary `tools/engine-lab/src/bin/bal_candidate_scaling_probe/main.rs`):
+//! the two-corpus calibration
 //! closure against the committed real-coverage accounting and ceilings, the
 //! carry-hit identities, the scenario aggregates and their novelty axis, the
 //! edge behaviors, and the red calibration probe's nonzero disposition.

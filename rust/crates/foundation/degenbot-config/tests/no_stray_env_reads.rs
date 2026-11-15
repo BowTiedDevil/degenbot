@@ -294,7 +294,7 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
 }
 
 /// The BAL engine-lab entries, inserted into the same map the Rust scan
-/// reads. A separate builder for the same reason as the two below: the seven
+/// reads. A separate builder for the same reason as the two below: the eight
 /// BAL instruments share one relocation story and one key-prefix family,
 /// and holding them apart keeps each registry readable.
 fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
@@ -303,7 +303,7 @@ fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'st
     insert_bal_live_probe_entries(map);
 }
 
-/// The offline BAL engine-lab entries: the four instruments that never dial a
+/// The offline BAL engine-lab entries: the five instruments that never dial a
 /// node. Split from the live half so each registry helper stays under the
 /// line-count lint with every per-entry justification carried in place.
 fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
@@ -318,6 +318,20 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
     // is an operator-config key: the readout is a measurement, so routing them
     // through the loader would hand a lab binary the config crate's dependency
     // graph for no behavioral gain.
+    // The analytical candidate-scaling report instrument, same class and
+    // same cause: it also left `degenbot-simulation`'s `examples/` for the
+    // engine-lab tool crate, so its one pre-existing per-run control is now
+    // visible to the production-source scan. It is the probe's documented
+    // invocation knob -- the planted-mismatch red calibration path -- read
+    // once at start-up with its `== "1"` gate semantics unchanged. It is not
+    // an operator-config key: the readout is an analytical report, so routing
+    // it through the loader would hand a lab binary the config crate's
+    // dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_candidate_scaling_probe/main.rs",
+        &["BAL_SCALING_PLANT_MISMATCH"][..],
+    );
+
     map.insert(
         "tools/engine-lab/src/bin/bal_delta_snapshot_probe/main.rs",
         &[
