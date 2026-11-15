@@ -264,6 +264,31 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         "tools/engine-lab/src/bin/sim_mode_bench/main.rs",
         &["SIM_BENCH_ITERS"][..],
     );
+
+    // The session-scheduler fan-out instrument, same class and same cause: it
+    // also left `examples/` for the engine-lab tool crate, so its seven
+    // pre-existing per-run controls are now visible to the production-source
+    // scan. All seven are that probe's documented invocation knobs -- the two
+    // modeled round-trip prices, the lane and slot counts, the lane-progress
+    // diagnostic, the planted-divergence negative control, and the recorded
+    // trace path -- read once at start-up with the defaults they have always
+    // had (the optimistic 200/400 us and pessimistic 700/1200 us points, W=2,
+    // F=8, `/tmp/fanout_trace.log`) and the same
+    // parse-and-fall-back behavior. None is an operator-config key: the readout
+    // is a measurement, so routing them through the loader would hand a lab
+    // binary the config crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/session_fanout_probe/main.rs",
+        &[
+            "SESSION_FANOUT_DEBUG",
+            "SESSION_FANOUT_STORAGE_US",
+            "SESSION_FANOUT_ACCOUNT_US",
+            "SESSION_FANOUT_W",
+            "SESSION_FANOUT_F",
+            "SESSION_FANOUT_PLANT_DIVERGENCE",
+            "SESSION_FANOUT_TRACE",
+        ][..],
+    );
 }
 
 /// The solver-lab entries, inserted into the same map the Rust scan reads. A

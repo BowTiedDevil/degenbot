@@ -20,10 +20,12 @@
 //! frame. This probe therefore drives the read SCHEDULE — the hub's coalescing
 //! and batching under a bounded slot budget — and charges the recorded
 //! execution time as wall. Actual EVM call/slot parity on this same scheduler is
-//! covered by the committed `tests/async_fanout.rs` / `tests/session_async.rs`
-//! suite, which owns real frames; nothing here claims to reproduce a production
-//! verdict. `AsyncEvmFanout` itself cannot be driven honestly from these fields
-//! (its `PreparedCandidate` carries `Evm2SimStep`s that need calldata), so this
+//! covered by the committed
+//! `crates/engine/degenbot-simulation/tests/async_fanout.rs` /
+//! `.../session_async.rs` suite, which owns real frames; nothing here claims to
+//! reproduce a production verdict. `AsyncEvmFanout` itself cannot be driven
+//! honestly from these fields (its `PreparedCandidate` carries `Evm2SimStep`s
+//! that need calldata), so this
 //! probe drives the read-hub scheduling seam one layer below it: the same
 //! `ReadHub` rounds, the same `FanoutLimits` bound, the same drain discipline.
 //!
@@ -133,19 +135,40 @@ const PESSIMISTIC: (u64, u64) = (700, 1200);
 /// The fan-out size the multi-fan-out submission splits one anchor into.
 const FANOUTS_PER_SUBMISSION: usize = 6;
 
-fn env_us(name: &str) -> Option<Duration> {
-    std::env::var(name)
+/// A modeled round-trip price in microseconds: the parsed `*_US` control, or
+/// None when unset or unparseable (the caller falls back per key).
+fn storage_us_from_env() -> Option<Duration> {
+    std::env::var("SESSION_FANOUT_STORAGE_US")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_micros)
 }
 
-fn env_count(name: &str, fallback: usize) -> usize {
-    std::env::var(name)
+/// Same contract, the account price.
+fn account_us_from_env() -> Option<Duration> {
+    std::env::var("SESSION_FANOUT_ACCOUNT_US")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_micros)
+}
+
+/// A slot/lane count control: the parsed value when it is positive, else the
+/// documented fallback.
+fn workers_from_env() -> usize {
+    std::env::var("SESSION_FANOUT_W")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|count| *count > 0)
-        .unwrap_or(fallback)
+        .unwrap_or(2)
+}
+
+/// Same contract, the slot budget.
+fn slots_from_env() -> usize {
+    std::env::var("SESSION_FANOUT_F")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or(8)
 }
 
 /// Whether `SESSION_FANOUT_DEBUG` asks for the lane progress trace.
@@ -175,8 +198,8 @@ struct Config {
 
 impl Config {
     fn from_env() -> Self {
-        let storage = env_us("SESSION_FANOUT_STORAGE_US");
-        let account = env_us("SESSION_FANOUT_ACCOUNT_US");
+        let storage = storage_us_from_env();
+        let account = account_us_from_env();
         let points = match (storage, account) {
             (Some(storage), Some(account)) => vec![(storage, account)],
             (Some(storage), None) => vec![(storage, Duration::from_micros(OPTIMISTIC.1))],
@@ -192,10 +215,7 @@ impl Config {
                 ),
             ],
         };
-        let limits = FanoutLimits::new(
-            env_count("SESSION_FANOUT_W", 2),
-            env_count("SESSION_FANOUT_F", 8),
-        );
+        let limits = FanoutLimits::new(workers_from_env(), slots_from_env());
         let plant = std::env::var("SESSION_FANOUT_PLANT_DIVERGENCE")
             .is_ok()
             .then(|| Arc::new(AtomicBool::new(false)));

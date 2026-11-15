@@ -52,11 +52,17 @@ degenbot-rpc.workspace = true
 tower = { version = "^0.5", default-features = false }
 serde_json = { version = "^1.0" }
 
+# `join_all` drives the session fan-out probe's multi-fan-out submission: the
+# per-fan-out sessions run concurrently and the merged report needs their
+# combined facts.
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+
 # The cross-block `WarmCodeCacheInner` the steady-state legs front the engine
 # with is a `parking_lot` lock, and the multi-threaded runtime the prefetch lane
-# enters is the ambient-runtime shape that lock's owner expects.
+# enters is the ambient-runtime shape that lock's owner expects. `macros` is the
+# session fan-out probe's `#[tokio::main]`.
 parking_lot = "^0.13"
-tokio = { version = "^1.54", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "^1.54", features = ["rt", "rt-multi-thread", "macros"] }
 
 # The bot profiler's guard and exporter, reachable only through `prometheus`.
 degenbot-bot = { workspace = true, optional = true }
@@ -97,6 +103,18 @@ required-features = ["evm2-jit"]
 [[bin]]
 name = "cold_miss_fanout_probe"
 path = "src/bin/cold_miss_fanout_probe/main.rs"
+
+# The session-scheduler captured-data benchmark: the recorded production fan-out
+# read walks driven through the committed `ReadHub` under the committed W/F
+# bound, walled against serial / hybrid / fibers / per-lane reads under one
+# latency model, with a slot-count sensitivity table, the multi-fan-out
+# submission bound, and a cross-leg read-digest identity gate (planted-divergence
+# negative control). It compiles no JIT program, so it declares no
+# `required-features`: the default lane builds and runs it, and `evm2-jit`
+# remains the lane the JIT-gated targets open.
+[[bin]]
+name = "session_fanout_probe"
+path = "src/bin/session_fanout_probe/main.rs"
 
 # The per-worker EVM fan-out probe (the ADR-089 concurrency-trio decision
 # instrument): one dispatch fan-out driven four ways -- serial over a shared
