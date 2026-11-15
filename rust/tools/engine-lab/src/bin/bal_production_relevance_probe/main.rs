@@ -43,7 +43,9 @@
 //!
 //! `BAL_PROD_TRACE` (default `/tmp/bal_production_trace.log`),
 //! `BAL_PROD_FIXTURE` (default the committed
-//! `tests/fixtures/bal_real_coverage_production.json`),
+//! `rust/crates/engine/degenbot-simulation/tests/fixtures/bal_real_coverage_production.json`,
+//! resolved from the marker-anchored repository root, never from `..`
+//! arithmetic off this package's manifest directory),
 //! `BAL_PROD_STORAGE_US` / `BAL_PROD_ACCOUNT_US`, `BAL_PROD_W` / `BAL_PROD_F`,
 //! `BAL_PROD_IDLE` (default 8), `BAL_PROD_PLANT_DIVERGENCE`. The trace and the
 //! fixture are REQUIRED: an absent corpus is a hard failure, never an empty
@@ -63,9 +65,10 @@
 
 #![expect(
     clippy::exit,
+    clippy::expect_used,
     clippy::print_stderr,
     clippy::print_stdout,
-    reason = "a benchmark probe prints its report and fails loudly on a broken fixture"
+    reason = "a benchmark probe prints its report, resolves its committed fixture loudly, and fails loudly on a broken corpus"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -111,11 +114,25 @@ use wall_ledger::{
 /// The manager-assigned production-relevance corpus.
 const DEFAULT_TRACE: &str = "/tmp/bal_production_trace.log";
 
-/// The committed real write-coverage capture of that corpus's stretch.
-const DEFAULT_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/bal_real_coverage_production.json"
-);
+/// The committed real write-coverage capture of that corpus's stretch. The
+/// capture stays at its committed simulation home; its path resolves from the
+/// marker-anchored repository root (`degenbot_engine_lab::paths`), never from
+/// `..` arithmetic off this package's manifest directory.
+///
+/// # Panics
+///
+/// Panics if the repository root fails to resolve, or if the resolved fixture
+/// path is not utf-8.
+fn default_fixture() -> String {
+    let root = degenbot_engine_lab::paths::repo_root().expect("the repository root resolves");
+    let fixture = root
+        .join("rust/crates/engine/degenbot-simulation/tests/fixtures")
+        .join("bal_real_coverage_production.json");
+    fixture
+        .to_str()
+        .map(str::to_string)
+        .expect("the committed capture's path is not utf-8")
+}
 
 /// The manager's canonical block range: the replay advances every block of it,
 /// candidate anchors and intermediate blocks alike, so the parent links are the
@@ -177,17 +194,18 @@ const OPTIMISTIC: (u64, u64) = (200, 400);
 /// The pessimistic latency point.
 const PESSIMISTIC: (u64, u64) = (700, 1_200);
 
-fn env_us(name: &str) -> Option<Duration> {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
+/// One microsecond latency value, parse-or-absent. The read itself sits at the
+/// call site as a literal key: the stray-env-read gate enumerates names it can
+/// read off the `env::var` line, and a helper taking the name hides it.
+fn parse_us(raw: Option<String>) -> Option<Duration> {
+    raw.and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_micros)
 }
 
-fn env_count(name: &str, fallback: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
+/// One positive count with its fallback; the key is read as a literal at the
+/// call site, for the same reason as [`parse_us`].
+fn parse_count(raw: Option<String>, fallback: usize) -> usize {
+    raw.and_then(|value| value.parse().ok())
         .filter(|count| *count > 0)
         .unwrap_or(fallback)
 }
@@ -204,7 +222,10 @@ struct Knobs {
 
 impl Knobs {
     fn from_env() -> Self {
-        let points = match (env_us("BAL_PROD_STORAGE_US"), env_us("BAL_PROD_ACCOUNT_US")) {
+        let points = match (
+            parse_us(std::env::var("BAL_PROD_STORAGE_US").ok()),
+            parse_us(std::env::var("BAL_PROD_ACCOUNT_US").ok()),
+        ) {
             (Some(storage), Some(account)) => vec![(storage, account)],
             _ => vec![
                 (
@@ -219,11 +240,14 @@ impl Knobs {
         };
         Self {
             trace: std::env::var("BAL_PROD_TRACE").unwrap_or_else(|_| DEFAULT_TRACE.to_string()),
-            fixture: std::env::var("BAL_PROD_FIXTURE")
-                .unwrap_or_else(|_| DEFAULT_FIXTURE.to_string()),
+            fixture: std::env::var("BAL_PROD_FIXTURE").unwrap_or_else(|_| default_fixture()),
             points,
-            limits: FanoutLimits::new(env_count("BAL_PROD_W", 2), env_count("BAL_PROD_F", 8)),
-            idle: u64::try_from(env_count("BAL_PROD_IDLE", 8)).unwrap_or(u64::MAX),
+            limits: FanoutLimits::new(
+                parse_count(std::env::var("BAL_PROD_W").ok(), 2),
+                parse_count(std::env::var("BAL_PROD_F").ok(), 8),
+            ),
+            idle: u64::try_from(parse_count(std::env::var("BAL_PROD_IDLE").ok(), 8))
+                .unwrap_or(u64::MAX),
             planted: std::env::var("BAL_PROD_PLANT_DIVERGENCE").is_ok_and(|value| value == "1"),
         }
     }

@@ -265,6 +265,39 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         &["SIM_BENCH_ITERS"][..],
     );
 
+    insert_bal_engine_lab_entries(map);
+
+    // The session-scheduler fan-out instrument, same class and same cause: it
+    // also left `examples/` for the engine-lab tool crate, so its seven
+    // pre-existing per-run controls are now visible to the production-source
+    // scan. All seven are that probe's documented invocation knobs -- the two
+    // modeled round-trip prices, the lane and slot counts, the lane-progress
+    // diagnostic, the planted-divergence negative control, and the recorded
+    // trace path -- read once at start-up with the defaults they have always
+    // had (the optimistic 200/400 us and pessimistic 700/1200 us points, W=2,
+    // F=8, `/tmp/fanout_trace.log`) and the same
+    // parse-and-fall-back behavior. None is an operator-config key: the readout
+    // is a measurement, so routing them through the loader would hand a lab
+    // binary the config crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/session_fanout_probe/main.rs",
+        &[
+            "SESSION_FANOUT_DEBUG",
+            "SESSION_FANOUT_STORAGE_US",
+            "SESSION_FANOUT_ACCOUNT_US",
+            "SESSION_FANOUT_W",
+            "SESSION_FANOUT_F",
+            "SESSION_FANOUT_PLANT_DIVERGENCE",
+            "SESSION_FANOUT_TRACE",
+        ][..],
+    );
+}
+
+/// The BAL engine-lab entries, inserted into the same map the Rust scan
+/// reads. A separate builder for the same reason as the two below: the six
+/// BAL instruments share one relocation story and one key-prefix family,
+/// and holding them apart keeps each registry readable.
+fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
     // The live BAL carry-forward instrument, same class and same cause: it
     // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
     // crate, so its five pre-existing per-run controls are now visible to the
@@ -386,28 +419,30 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         ][..],
     );
 
-    // The session-scheduler fan-out instrument, same class and same cause: it
-    // also left `examples/` for the engine-lab tool crate, so its seven
-    // pre-existing per-run controls are now visible to the production-source
-    // scan. All seven are that probe's documented invocation knobs -- the two
-    // modeled round-trip prices, the lane and slot counts, the lane-progress
-    // diagnostic, the planted-divergence negative control, and the recorded
-    // trace path -- read once at start-up with the defaults they have always
-    // had (the optimistic 200/400 us and pessimistic 700/1200 us points, W=2,
-    // F=8, `/tmp/fanout_trace.log`) and the same
+    // The paired production-relevance replay instrument, same class and same
+    // cause: it also left `degenbot-simulation`'s `examples/` for the
+    // engine-lab tool crate, so its eight pre-existing per-run controls are now
+    // visible to the production-source scan. All eight are that probe's
+    // documented invocation knobs -- the recorded-trace path and its matching
+    // real-coverage capture, the two modeled round-trip prices, the worker and
+    // slot counts, the idle-block window, and the planted-divergence negative
+    // control -- read once at start-up with the defaults they have always had
+    // (`/tmp/bal_production_trace.log`, the committed production capture, the
+    // 200/400 us and 700/1200 us points, W=2, F=8, idle 8) and the same
     // parse-and-fall-back behavior. None is an operator-config key: the readout
     // is a measurement, so routing them through the loader would hand a lab
     // binary the config crate's dependency graph for no behavioral gain.
     map.insert(
-        "tools/engine-lab/src/bin/session_fanout_probe/main.rs",
+        "tools/engine-lab/src/bin/bal_production_relevance_probe/main.rs",
         &[
-            "SESSION_FANOUT_DEBUG",
-            "SESSION_FANOUT_STORAGE_US",
-            "SESSION_FANOUT_ACCOUNT_US",
-            "SESSION_FANOUT_W",
-            "SESSION_FANOUT_F",
-            "SESSION_FANOUT_PLANT_DIVERGENCE",
-            "SESSION_FANOUT_TRACE",
+            "BAL_PROD_TRACE",
+            "BAL_PROD_FIXTURE",
+            "BAL_PROD_STORAGE_US",
+            "BAL_PROD_ACCOUNT_US",
+            "BAL_PROD_W",
+            "BAL_PROD_F",
+            "BAL_PROD_IDLE",
+            "BAL_PROD_PLANT_DIVERGENCE",
         ][..],
     );
 }
