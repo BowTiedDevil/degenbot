@@ -23,7 +23,7 @@ committed.
 | `rust/crates/engine/degenbot-simulation/examples/shared/read_oracle.rs` | shared selection/comparison arithmetic | the module both the probe and the suite use |
 
 `logs/` is gitignored, so the two captures are local evidence beside the harness
-(`rust/crates/engine/degenbot-simulation/examples/bal_real_read_oracle_probe.rs`,
+(`rust/tools/engine-lab/src/bin/bal_real_read_oracle_probe/main.rs`,
 `.../examples/shared/read_oracle.rs`, `.../tests/bal_real_read_oracle.rs`). Every figure
 below was read back from those captures.
 

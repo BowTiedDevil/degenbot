@@ -294,32 +294,19 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
 }
 
 /// The BAL engine-lab entries, inserted into the same map the Rust scan
-/// reads. A separate builder for the same reason as the two below: the six
+/// reads. A separate builder for the same reason as the two below: the seven
 /// BAL instruments share one relocation story and one key-prefix family,
 /// and holding them apart keeps each registry readable.
 fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
-    // The live BAL carry-forward instrument, same class and same cause: it
-    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
-    // crate, so its five pre-existing per-run controls are now visible to the
-    // production-source scan. All five are that probe's documented invocation
-    // contract -- the recorded-trace path (`/tmp/fanout_trace.log`), the
-    // first/last corpus-block overrides, and the two endpoint names the live
-    // legs dial -- read once at start-up with the defaults they have always
-    // had (26375033..=26375053) and the same parse-and-fall-back behavior.
-    // None is an operator-config key: the readout is a live measurement, so
-    // routing them through the loader would hand a lab binary the config
-    // crate's dependency graph for no behavioral gain.
-    map.insert(
-        "tools/engine-lab/src/bin/bal_carry_probe/main.rs",
-        &[
-            "BAL_CARRY_TRACE",
-            "BAL_CARRY_FIRST",
-            "BAL_CARRY_LAST",
-            "DEGENBOT_RPC_HTTP_CHAINID_1",
-            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
-        ][..],
-    );
+    insert_bal_offline_probe_entries(map);
 
+    insert_bal_live_probe_entries(map);
+}
+
+/// The offline BAL engine-lab entries: the four instruments that never dial a
+/// node. Split from the live half so each registry helper stays under the
+/// line-count lint with every per-entry justification carried in place.
+fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
     // The offline BAL delta-snapshot instrument, same class and same cause:
     // it also left `degenbot-simulation`'s `examples/` for the engine-lab tool
     // crate, so its five pre-existing per-run controls are now visible to the
@@ -339,34 +326,6 @@ fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'st
             "BAL_DELTA_REPS",
             "BAL_DELTA_LOOKUPS",
             "BAL_DELTA_MAX_DEPTH",
-        ][..],
-    );
-
-    // The live BAL head-lifecycle instrument, same class and same cause: it
-    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
-    // crate, so its nine pre-existing per-run controls are now visible to the
-    // production-source scan. All nine are that probe's documented invocation
-    // contract -- the historical/fresh-head/waiter sample knobs, the parked
-    // window each waiter sample holds, the planted-divergence negative
-    // control, the summary-out path, and the two endpoint names the live legs
-    // dial -- read once at start-up with the defaults they have always had
-    // (26375033..=26375053, 6 fresh heads, 21 waiter samples, 20 ms hold) and
-    // the same parse-and-fall-back behavior, the two zero sample sizes
-    // disabling their legs. None is an operator-config key: the readout is a
-    // live measurement, so routing them through the loader would hand a lab
-    // binary the config crate's dependency graph for no behavioral gain.
-    map.insert(
-        "tools/engine-lab/src/bin/bal_head_lifecycle_probe/main.rs",
-        &[
-            "BAL_HEAD_FIRST",
-            "BAL_HEAD_LAST",
-            "BAL_HEAD_FRESH",
-            "BAL_HEAD_WAIT_SAMPLES",
-            "BAL_HEAD_WAIT_HOLD_MS",
-            "BAL_HEAD_PLANT_DIVERGENCE",
-            "BAL_HEAD_SUMMARY_OUT",
-            "DEGENBOT_RPC_HTTP_CHAINID_1",
-            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
         ][..],
     );
 
@@ -443,6 +402,86 @@ fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'st
             "BAL_PROD_F",
             "BAL_PROD_IDLE",
             "BAL_PROD_PLANT_DIVERGENCE",
+        ][..],
+    );
+}
+
+/// The live BAL engine-lab entries: the three instruments that dial a
+/// declared live endpoint, each carrying the two endpoint names beside its
+/// own controls.
+fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
+    // The live BAL carry-forward instrument, same class and same cause: it
+    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
+    // crate, so its five pre-existing per-run controls are now visible to the
+    // production-source scan. All five are that probe's documented invocation
+    // contract -- the recorded-trace path (`/tmp/fanout_trace.log`), the
+    // first/last corpus-block overrides, and the two endpoint names the live
+    // legs dial -- read once at start-up with the defaults they have always
+    // had (26375033..=26375053) and the same parse-and-fall-back behavior.
+    // None is an operator-config key: the readout is a live measurement, so
+    // routing them through the loader would hand a lab binary the config
+    // crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_carry_probe/main.rs",
+        &[
+            "BAL_CARRY_TRACE",
+            "BAL_CARRY_FIRST",
+            "BAL_CARRY_LAST",
+            "DEGENBOT_RPC_HTTP_CHAINID_1",
+            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+        ][..],
+    );
+
+    // The live BAL head-lifecycle instrument, same class and same cause: it
+    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
+    // crate, so its nine pre-existing per-run controls are now visible to the
+    // production-source scan. All nine are that probe's documented invocation
+    // contract -- the historical/fresh-head/waiter sample knobs, the parked
+    // window each waiter sample holds, the planted-divergence negative
+    // control, the summary-out path, and the two endpoint names the live legs
+    // dial -- read once at start-up with the defaults they have always had
+    // (26375033..=26375053, 6 fresh heads, 21 waiter samples, 20 ms hold) and
+    // the same parse-and-fall-back behavior, the two zero sample sizes
+    // disabling their legs. None is an operator-config key: the readout is a
+    // live measurement, so routing them through the loader would hand a lab
+    // binary the config crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_head_lifecycle_probe/main.rs",
+        &[
+            "BAL_HEAD_FIRST",
+            "BAL_HEAD_LAST",
+            "BAL_HEAD_FRESH",
+            "BAL_HEAD_WAIT_SAMPLES",
+            "BAL_HEAD_WAIT_HOLD_MS",
+            "BAL_HEAD_PLANT_DIVERGENCE",
+            "BAL_HEAD_SUMMARY_OUT",
+            "DEGENBOT_RPC_HTTP_CHAINID_1",
+            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+        ][..],
+    );
+
+    // The live real-read-oracle instrument, same class and same cause: it
+    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
+    // crate, so its six pre-existing per-run controls are now visible to the
+    // production-source scan. All six are that probe's documented invocation
+    // contract -- the soak-trace path (the recipe exports
+    // `logs/bal_postfix_soak_trace.log`), the anchor and row-count selectors,
+    // the planted one-wei negative control, and the two endpoint names the
+    // live legs dial -- read once at start-up with the defaults they have
+    // always had (6 anchors x 2 rows, the plant unarmed) and the same
+    // parse-and-fall-back behavior. None is an operator-config key: the
+    // readout is a live measurement, so routing them through the loader would
+    // hand a lab binary the config crate's dependency graph for no behavioral
+    // gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_real_read_oracle_probe/main.rs",
+        &[
+            "BAL_READ_ORACLE_TRACE",
+            "BAL_READ_ORACLE_ANCHORS",
+            "BAL_READ_ORACLE_ROWS",
+            "BAL_READ_ORACLE_PLANT_WEI",
+            "DEGENBOT_RPC_HTTP_CHAINID_1",
+            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
         ][..],
     );
 }

@@ -88,10 +88,11 @@ const COLD_CHUNK: usize = 500;
 /// How many expired identities the expiry leg adds to the row's own reads.
 const EXPIRY_KEYS: usize = 16;
 
-fn env_count(name: &str, fallback: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
+/// One positive count with its fallback; the key is read as a literal at the
+/// call site, for the same reason the stray-env-read gate enumerates names it
+/// can read off the `env::var` line: a helper taking the name hides it.
+fn parse_count(raw: Option<String>, fallback: usize) -> usize {
+    raw.and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(fallback)
 }
 
@@ -472,8 +473,8 @@ fn sorted_keys(rows: impl IntoIterator<Item = Key>) -> Vec<Key> {
 async fn run() -> Result<(), String> {
     let total_started = Instant::now();
     let trace = std::env::var("BAL_READ_ORACLE_TRACE").unwrap_or_else(|_| DEFAULT_TRACE.into());
-    let anchors_wanted = env_count("BAL_READ_ORACLE_ANCHORS", 6);
-    let rows_per_anchor = env_count("BAL_READ_ORACLE_ROWS", 2);
+    let anchors_wanted = parse_count(std::env::var("BAL_READ_ORACLE_ANCHORS").ok(), 6);
+    let rows_per_anchor = parse_count(std::env::var("BAL_READ_ORACLE_ROWS").ok(), 2);
     let plant = plant_armed();
     let url = rpc_url()?;
 

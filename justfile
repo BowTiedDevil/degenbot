@@ -629,7 +629,7 @@ bal-real-read-oracle-probe *ARGS:
         exit 1
     fi
     export BAL_READ_ORACLE_TRACE="${BAL_READ_ORACLE_TRACE:-$PWD/logs/bal_postfix_soak_trace.log}"
-    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-simulation --example bal_real_read_oracle_probe -- {{ ARGS }}
+    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-engine-lab --bin bal_real_read_oracle_probe -- {{ ARGS }}
 
 
 # The canonical-head lifecycle probe: real mainnet heads driven through the
@@ -1173,9 +1173,9 @@ check-dev-tools *lanes:
                                here, and engine-lab builds its lib plus
                                bal_carry_probe, bal_delta_rounds_probe,
                                bal_delta_snapshot_probe, bal_head_lifecycle_probe,
-                               bal_production_relevance_probe, bal_retention_probe,
-                               cold_miss_fanout_probe, session_fanout_probe, and
-                               worker_fanout_probe)
+                               bal_production_relevance_probe, bal_real_read_oracle_probe,
+                               bal_retention_probe, cold_miss_fanout_probe,
+                               session_fanout_probe, and worker_fanout_probe)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
@@ -1203,7 +1203,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, solver-lab builds synth_corpus_gen and stateview_feasibility_probe, and engine-lab builds bal_carry_probe, bal_delta_rounds_probe, bal_delta_snapshot_probe, bal_head_lifecycle_probe, bal_production_relevance_probe, bal_retention_probe, cold_miss_fanout_probe, session_fanout_probe, and worker_fanout_probe)"
+        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, solver-lab builds synth_corpus_gen and stateview_feasibility_probe, and engine-lab builds bal_carry_probe, bal_delta_rounds_probe, bal_delta_snapshot_probe, bal_head_lifecycle_probe, bal_production_relevance_probe, bal_real_read_oracle_probe, bal_retention_probe, cold_miss_fanout_probe, session_fanout_probe, and worker_fanout_probe)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets
