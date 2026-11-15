@@ -102,20 +102,6 @@ fn rpc_url() -> Result<String, String> {
         })
 }
 
-fn env_usize(name: &str, fallback: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(fallback)
-}
-
-fn env_u64(name: &str, fallback: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(fallback)
-}
-
 /// Every corpus width the batch prices.
 fn env_counts() -> Vec<usize> {
     match std::env::var("BAL_ACQ_CORPUS_COUNTS") {
@@ -195,8 +181,14 @@ struct Acquisition {
 /// The whole measurement, or the one failure that stopped it.
 async fn run(derived: Vec<(usize, Vec<(Address, U256)>)>) -> Result<(), String> {
     let url = rpc_url()?;
-    let anchor_block = env_u64("BAL_ACQ_ANCHOR", DEFAULT_ANCHOR);
-    let reps = env_usize("BAL_ACQ_REPS", DEFAULT_REPS);
+    let anchor_block = std::env::var("BAL_ACQ_ANCHOR")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_ANCHOR);
+    let reps = std::env::var("BAL_ACQ_REPS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_REPS);
     let counts: Vec<usize> = derived.iter().map(|(count, _)| *count).collect();
     let provider = AlloyProvider::new(&url, 3)
         .await

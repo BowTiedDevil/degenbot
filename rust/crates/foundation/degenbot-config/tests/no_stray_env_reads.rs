@@ -436,7 +436,7 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
     );
 }
 
-/// The live BAL engine-lab entries: the four instruments that dial a
+/// The live BAL engine-lab entries: the five instruments that dial a
 /// declared live endpoint, each carrying the two endpoint names beside its
 /// own controls.
 fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
@@ -547,6 +547,30 @@ fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'st
             "BAL_WALL_PLANT_STORAGE_DELAY_US",
             "BAL_WALL_PLANT_DIVERGENCE",
             "BAL_WALL_DEBUG",
+            "DEGENBOT_RPC_HTTP_CHAINID_1",
+            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+        ][..],
+    );
+
+    // The live BAL acquisition instrument, same class and same cause: it also
+    // left `degenbot-arbitrage`'s `examples/` for the engine-lab tool crate,
+    // so its five pre-existing per-run controls are now visible to the
+    // production-source scan. All five are that probe's documented invocation
+    // contract -- the anchor block, the interleaved repetitions, the corpus
+    // width list, and the two endpoint names the live legs dial (the chain-1
+    // endpoint family first, the conftest archive endpoint as the fallback) --
+    // read once at start-up with the defaults they have always had (anchor
+    // 26375043, 7 repetitions, widths 1,4,16,50,100,500,1000) and the same
+    // parse-and-fall-back behavior. None is an operator-config key: the
+    // readout is a live measurement, so routing them through the loader would
+    // hand a lab binary the config crate's dependency graph for no behavioral
+    // gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_live_acquisition_probe/main.rs",
+        &[
+            "BAL_ACQ_ANCHOR",
+            "BAL_ACQ_REPS",
+            "BAL_ACQ_CORPUS_COUNTS",
             "DEGENBOT_RPC_HTTP_CHAINID_1",
             "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
         ][..],

@@ -16,15 +16,15 @@ described in §6.2. Seven fixture slices have landed since, all in task `03`:
 | `03f` | the concentrated-liquidity capture generator — `concentrated_liquidity_capture_gen` | §6.8 |
 | `03g` (`B4IKBC`) | the three-hop production-calldata helper — `encode_three_hop` (a recipe/staging row; no §6.x section of its own) | §4.2, §8.1, §8.2 |
 
-Cargo metadata now reports **12 example targets**, `degenbot-fixture-tools` reports its lib
+Cargo metadata now reports **11 example targets**, `degenbot-fixture-tools` reports its lib
 plus exactly **nine** `[[bin]]` targets, `degenbot-solver-lab` its lib plus exactly
-**eight**, and `degenbot-engine-lab` its lib plus exactly **fifteen** — thirteen default-lane
+**eight**, and `degenbot-engine-lab` its lib plus exactly **sixteen** — fourteen default-lane
 binaries (`bal_carry_probe`, `bal_candidate_scaling_probe`, `bal_delta_rounds_probe`,
 `bal_delta_snapshot_probe`, `bal_dispatch_scaling_probe`, `bal_head_lifecycle_probe`,
-`bal_production_relevance_probe`, `bal_real_read_oracle_probe`, `bal_retention_probe`,
-`bal_wall_ceiling_probe`, `cold_miss_fanout_probe`, `session_fanout_probe`,
-`worker_fanout_probe`) beside `capture_seam_probe` and `sim_mode_bench` under
-`required-features = ["evm2-jit"]`.
+`bal_live_acquisition_probe`, `bal_production_relevance_probe`, `bal_real_read_oracle_probe`,
+`bal_retention_probe`, `bal_wall_ceiling_probe`, `cold_miss_fanout_probe`,
+`session_fanout_probe`, `worker_fanout_probe`) beside `capture_seam_probe` and
+`sim_mode_bench` under `required-features = ["evm2-jit"]`.
 No §4.2 row is still an example — no other recorder, no other program, and no other
 capture generator moved — and **no fixture byte changed** in any of the seven slices.
 Each offline participant was re-proved byte-identical by its own re-derivation (the two capture recipes plus, for the cassette
@@ -304,8 +304,8 @@ no script file is added for it).
 destination package and the `Destination` cell says `landed`, because that is the state a
 reader (and the §4.6.1 union audit) has to be able to check. Every not-yet-moved row keeps
 its current package and its planned destination, exactly as before. The move also means the
-*original* population is still 44 rows while the *example* population is 12 — the
-thirty-two diagnostics that differ are exactly the thirty-two landed rows (§4.6).
+*original* population is still 44 rows while the *example* population is 11 — the
+thirty-three diagnostics that differ are exactly the thirty-three landed rows (§4.6).
 
 <!-- ledger:begin -->
 
@@ -370,7 +370,7 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 | `sim_mode_bench` | `degenbot-engine-lab` | engine-lab (05d, **landed**) | `tools/engine-lab/src/bin/sim_mode_bench/main.rs` | ADR-089 phase-6 offline engine benchmark: one corpus, engine modes (interp / jit-block / jit-pool / aot / replay / replay-jit), first-run vs steady-state latency, JIT compile telemetry, cross-mode verdict identity | `evm2-jit` | offline — committed fixture spine (real `cmd_executor` creation artifact + tier-3 stubs); `SIM_BENCH_ITERS` | stdout; writes nothing (the AOT mode's scratch store is a temp path) | `just bench-sim-modes [args]` (release); the decision instrument for the AOT/worker-pool tasks — measurement only. Bounded routine smoke `SIM_BENCH_ITERS=10 just bench-sim-modes all` (above the pool's hot threshold, which is the sim fan-out width 8, so `jit-pool`'s upgrade lands inside the run) — every mode green, both verdict-identity families OK |
 | `worker_fanout_probe` | `degenbot-engine-lab` | engine-lab (05c, **landed**) | `tools/engine-lab/src/bin/worker_fanout_probe/main.rs` | Per-worker EVM fan-out probe (ADR-089 concurrency trio item 4): serial shared `&mut evm` vs per-worker threads vs per-candidate fibers vs warm fibers, cross-leg verdict identity gated | — (no `required-features`: the default lane builds and runs it) | offline — shape-matched corpus built in code; `WORKER_FANOUT_SHAPE`, `WORKER_FANOUT_CANDIDATES`, `WORKER_FANOUT_WORKERS`, `COLD_MISS_LATENCY_US`, `WORKER_FANOUT_ACCOUNT_US`; `WORKER_FANOUT_TRACE` optionally points at a recorded trace; the corpus comes from `degenbot_engine_lab::bench_corpus`, read anchors from `degenbot_engine_lab::paths` | stdout; `WORKER_FANOUT_PLANT_DIVERGENCE=1` must exit non-zero | `just worker-fanout-probe` (unchanged recipe name, `--release` posture and env controls; it now runs `-p degenbot-engine-lab --bin worker_fanout_probe`); bounded routine smoke `WORKER_FANOUT_CANDIDATES=2 WORKER_FANOUT_WORKERS=2 COLD_MISS_LATENCY_US=1 WORKER_FANOUT_ACCOUNT_US=1`, whose identity gate stays green — the default 21-candidate sweep is a non-routine measurement. Results' provenance `logs/bal_matched_parity_matrix.md`. Measurement, non-gating |
 | `bal_dispatch_scaling_probe` | `degenbot-engine-lab` | engine-lab (05h2, **landed**) | `tools/engine-lab/src/bin/bal_dispatch_scaling_probe/main.rs` | Controlled BAL dispatch-scaling probe: the production dispatch entry point over one scripted head, one candidate list, one deployment and one provider state, from one candidate to a burst fan-out, with only the storage representation varying | — (no `required-features`: the default lane builds it) | offline — scripted chain/market in source; `BAL_DISPATCH_SCALING_COUNTS`, `BAL_DISPATCH_SCALING_REPS`; the dispatch/chain/scaling support is the product-owned `degenbot_arbitrage::probe_support` (`dispatch_probe`/`dispatch_scaling`) consumed directly | stdout Markdown report; never asserts timing; **fails closed (exit 1)** on a broken fixture (wrong lane, cold control fetching a BAL, missing prefetch identity, missing read key, cross-lane verdict difference) | `just bal-dispatch-scaling-probe` (unchanged recipe name and `--release` posture; it now runs `-p degenbot-engine-lab --bin bal_dispatch_scaling_probe`); the durable scripted value-sensitive parity matrix is `crates/engine/degenbot-arbitrage/tests/bal_dispatch_scaling.rs`; regeneration notes `logs/bal_dispatch_scaling_result.md`, result `docs/architecture/bal-matched-parity-result.md` |
-| `bal_live_acquisition_probe` | `degenbot-arbitrage` | engine-lab (05) | `crates/engine/degenbot-arbitrage/examples/bal_live_acquisition_probe.rs` | Live reth BAL acquisition: what it costs to acquire ONE fixed historical block's EIP-7928 access list in both official representations, plus per-fan-out packet prices at that anchor | — | LIVE archive node (`TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` / `DEGENBOT_RPC_HTTP_CHAINID_1`); `BAL_ACQ_ANCHOR`, `BAL_ACQ_REPS`, `BAL_ACQ_CORPUS_COUNTS` | stdout; writes nothing; seed-parity disagreement and settled-value mismatch are hard failures | `just bal-live-acquisition-probe`; priced conclusions in `docs/architecture/bal-matched-parity-result.md`. **Live-only: compile lane in CI** |
+| `bal_live_acquisition_probe` | `degenbot-engine-lab` | engine-lab (05i, **landed**) | `tools/engine-lab/src/bin/bal_live_acquisition_probe/main.rs` | Live reth BAL acquisition: what it costs to acquire ONE fixed historical block's EIP-7928 access list in both official representations, plus per-fan-out packet prices at that anchor | — (no `required-features`: the default lane builds it) | LIVE archive node (`TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` / `DEGENBOT_RPC_HTTP_CHAINID_1`); `BAL_ACQ_ANCHOR`, `BAL_ACQ_REPS`, `BAL_ACQ_CORPUS_COUNTS`; the dispatch/runtime support is the product-owned `degenbot_arbitrage::probe_support` (`dispatch_probe`/`dispatch_scaling`) consumed directly | stdout; writes nothing; seed-parity disagreement and settled-value mismatch are hard failures | `just bal-live-acquisition-probe` (unchanged recipe name, declared-RPC gate, `--release` posture and env controls; it now runs `-p degenbot-engine-lab --bin bal_live_acquisition_probe`); priced conclusions in `docs/architecture/bal-matched-parity-result.md`. **Live-only: compile lane in CI** |
 | `hotpath_prometheus_probe` | `degenbot-bot` | engine-lab (05) | `crates/engine/degenbot-bot/examples/hotpath_prometheus_probe.rs` | Smallest end-to-end proof that a guard-enabled build serves profiler metrics on `:6772`: installs the typed config from the environment, constructs the same guard the pump holds, scrapes `/metrics` and asserts the always-present process families plus a `measure_block!`-sampled family | `hotpath-prometheus` *(runtime-derived: the example declares no `required-features` in metadata today — task 05 must declare it on the new `[[bin]]`, see §4.7)* | offline but binds a local TCP port (`HOTPATH_PROMETHEUS_PORT`, default 6772); `DEGENBOT_HOTPATH=1` required | stdout; writes nothing; non-zero exit on any wiring breakage | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe`. No recipe and no test names it today — its CI obligation is the **Prometheus compile lane** (`just check-dev-tools --engine-prometheus`), documented in `docs/grafana/HOTPATH.md` |
 
 ### 4.5 Assertion-only smoke → owning-crate integration tests (task 06, 2 rows)
@@ -468,10 +468,10 @@ PY
 ```
 
 At this revision the acceptance is: `44` ledger rows, `44` unique, empty `missing`, empty
-`stale`, no duplicates, and `PASS` — over `12` example targets plus the `9`
-`degenbot-fixture-tools`, `8` `degenbot-solver-lab`, and `15` `degenbot-engine-lab`
+`stale`, no duplicates, and `PASS` — over `11` example targets plus the `9`
+`degenbot-fixture-tools`, `8` `degenbot-solver-lab`, and `16` `degenbot-engine-lab`
 binaries. §4.6's baseline block is
-expected to print `FAIL` here and to name exactly those thirty-two rows as `stale in ledger`:
+expected to print `FAIL` here and to name exactly those thirty-three rows as `stale in ledger`:
 they are not stale, they moved, and this block is where that is visible instead of argued.
 
 **Boundary.** This audit stays valid while every ledger row still exists as *some* target.
@@ -1795,9 +1795,10 @@ per path-including test target, and every other named test is unchanged.
 the scripted dispatch chain and the controlled same-head dispatch-scaling benchmark —
 lives in `src/probe_support/{dispatch_probe,dispatch_scaling}.rs`, exposed as
 `#[doc(hidden)] pub mod probe_support`; the dispatch unit suite, the
-`bal_dispatch_scaling` pins, the engine-lab `bal_dispatch_scaling_probe` binary, and the
-remaining `bal_live_acquisition_probe` example all read it through the crate export,
-with no `#[path]` attribute and no `examples/shared/` directory.
+`bal_dispatch_scaling` pins, and the engine-lab `bal_dispatch_scaling_probe` and
+`bal_live_acquisition_probe` binaries all read it through the crate export,
+with no `#[path]` attribute and no `examples/shared/` directory, and the crate's
+`examples/` directory is gone.
 
 ### 10.3 External corpora that are not in the tree
 

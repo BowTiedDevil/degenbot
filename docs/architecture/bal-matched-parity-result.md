@@ -22,7 +22,7 @@ changed; the evidence is a review input.
 (`rust/crates/engine/degenbot-arbitrage/src/probe_support/dispatch_probe.rs`,
 `.../probe_support/dispatch_scaling.rs`,
 `rust/tools/engine-lab/src/bin/bal_dispatch_scaling_probe/main.rs`,
-`.../examples/bal_live_acquisition_probe.rs`). Every figure below was read back from those
+`rust/tools/engine-lab/src/bin/bal_live_acquisition_probe/main.rs`). Every figure below was read back from those
 captures; no figure here is new.
 
 ## Matched parity coverage
