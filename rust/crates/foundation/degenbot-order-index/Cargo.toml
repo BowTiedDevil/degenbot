@@ -23,8 +23,3 @@ alloy-primitives = { version = "^1.7", default-features = false, features = ["st
 
 [dev-dependencies]
 proptest = "^1.12"
-
-[[example]]
-name = "scale_demo"
-path = "examples/scale_demo.rs"
-required-features = ["envelope"]

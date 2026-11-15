@@ -369,7 +369,7 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 | `v2_concentrated_liquidity_parity_probe` | `degenbot-pools` | removed (06e — **landed**) | *(deleted)* `crates/foundation/degenbot-pools/examples/v2_concentrated_liquidity_parity_probe.rs` | ADR-060 evidence record: V2 constant-product hop vs the same state projected as a degenerate single-range CL tick sequence, compared per swap step over a real + synthetic corpus with a zero-tolerance verdict | `capture-fixtures` | `heavy_mixed_solve_captures.jsonl.zst` plus the three committed single-path pool fixtures | stdout: one `DIVERGENCE {...}` line per non-zero delta, then one `SUMMARY {...}` line; writes nothing | §5.5 — **landed**: the decision-critical invariants are pinned by `degenbot-pools`' `tests/v2_degenerate_cl_parity.rs` (exactly 1,236 comparisons, `consumed_input == x` on every one with zero range-boundary hits, zero-for-one divergence strictly non-positive, zero divergence in the sub-`1e-3` regime, plus the non-vacuous direction/regime/dataset census); the evidence record is `docs/architecture/v2-cl-parity-probe.md`; the executable is deleted |
 | `walkmemo_readout` | `degenbot-pools` | remove in 06 — 04 leaves it in place | `crates/foundation/degenbot-pools/examples/walkmemo_readout.rs` | Offline `WalkMemo` cross-block A/B at **synthetic maximum recurrence** (every composition recurs every epoch); reports probes/hits/cache_plays/wall per epoch | `capture-fixtures` | committed heavy-CL corpus; `DR_READOUT_EPOCHS` | stdout; exits non-zero only on fixture/parse failure — it asserts nothing about the memo | **Delete as redundant** — see §5.6. Task 04 does not move it and nothing is preserved |
 | `bench_strategies` | `degenbot-solver-lab` | solver-lab (04, **landed**) | `tools/solver-lab/src/bin/bench_strategies/main.rs` | Spike-S2 microbench of the order index's cost components (build, insert, non-vertex update/remove, per-block `top_k`) — the instrument the incremental-maintenance design is justified by, and the source of ADR-024's addendum numbers | `envelope` (both `degenbot-order-index` and the `alloy-primitives` its points are typed in are OPTIONAL dependencies behind that one lane) | none — synthetic points hard-coded in source, both the N=1M run and the separate 10M target leg; no CLI argument, no environment key | stdout report; writes nothing; timing only, never asserted | `cargo run --release -p degenbot-solver-lab --features envelope --bin bench_strategies` (source byte-identical apart from its path and its `Run:` line; same binary name, same point generation, same measurement order, same report text, same failure behaviour). The 1M/10M matrix is **compiled and never executed** by a routine gate — no smaller mode exists and none was invented; numbers recorded in `docs/adr/ADR-024-net-profit-order-index.md` §Addendum. **Benchmark role — not a gate, not a demo** (see §5.7) |
-| `scale_demo` | `degenbot-order-index` | remove in 06 — 04 leaves it in place | `crates/foundation/degenbot-order-index/examples/scale_demo.rs` | 1M-point end-state load demo for `EnvelopeIndex`: build time, hull vertices, hot-set share, `top_k(50)` time, top-5 ids | `envelope` | none — deterministic LCG in source | stdout only; **no assertion of any kind** | **Delete as redundant** — see §5.2; task 04 does not move it |
+| `scale_demo` | `degenbot-order-index` | removed (06f — **landed**) | *(deleted)* `crates/foundation/degenbot-order-index/examples/scale_demo.rs` | 1M-point end-state load demo for `EnvelopeIndex`: build time, hull vertices, hot-set share, `top_k(50)` time, top-5 ids | `envelope` | none — deterministic LCG in source | stdout only; **no assertion of any kind** | §5.2 — **landed**: nothing was extracted — the file held no assertion of any kind; differential hot/cold correctness stays owned by `degenbot-order-index`'s `tests/envelope_invariant.rs` (proptest against the brute `ScanTopK` reference) and scale measurement stays owned by `degenbot-solver-lab`'s `bench_strategies` (ADR-024 §Addendum); the executable is deleted |
 
 ### 4.4 Simulation, arbitrage, and bot laboratories — `degenbot-engine-lab` (task 05 owns 19 rows: 18 move, `mirror_coverage_probe` preserved and removed by 06)
 
@@ -551,7 +551,7 @@ the guard child (planted variable refused, non-zero exit naming it) and the clea
 (environment built empty apart from the child-mode flag), so the guard stays a real
 process-environment check and the test runner's process never installs a stance.
 
-### 5.2 `scale_demo` → **delete as redundant** (task 04 leaves it in place, task 06 removes it)
+### 5.2 `scale_demo` → **delete as redundant** (DONE — nothing to extract, executable removed)
 
 Evidence: it prints and returns — there is **no assertion of any kind** in the file; "the
 demo's stdout report is its output". Its two claims are already owned elsewhere:
@@ -570,6 +570,15 @@ matters, it is a new bounded integration test (`envelope` feature, N=100k, `top_
 not move it into `degenbot-solver-lab` at all — a file that task 06 deletes is not worth a
 manifest stanza, a path re-anchoring, and a verification run, so it stays where it is in
 `crates/foundation/degenbot-order-index/examples/` until then.
+
+**Done (06f):** the pre-deletion re-check confirmed the evidence: the file held **no assertion of
+any kind** (print-and-return; its stdout is recorded nowhere), no recipe, test, or doc cited it,
+and both owners were live in the tree — `tests/envelope_invariant.rs` owns the differential
+hot/cold correctness (proptests driving `EnvelopeIndex` against `ScanTopK`, plus
+`pruning_shrinks_hot_set_for_dominated_data` and `envelope_matches_scan_topk`), and
+`degenbot-solver-lab`'s `bench_strategies` owns the scale measurement (ADR-024 §Addendum).
+The example file and its `[[example]]` stanza left the tree in the same change; the speculative
+bounded large-N test stays unbuilt and the 1M/10M matrix was never executed.
 
 ### 5.3 `synth_corpus_gen` → **retain as a `degenbot-solver-lab` tool** (task 04)
 
@@ -1732,7 +1741,7 @@ contributor, a doc, or the pre-push hook types.
 | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-bot --features hotpath-prometheus --example hotpath_prometheus_probe` | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe` | 05 — **landed** |
 | `cargo run -p degenbot-bot --example config_smoke_boot -- <config.toml>` | *(no command)* — the config-only smoke boot is a `degenbot-bot` integration test (`tests/config_smoke_boot.rs`), run by `just test-rust-nextest -p degenbot-bot -E 'binary(config_smoke_boot)'` | 06b — **landed** |
 | `cargo run -p degenbot-ingestion --example headless_boot` | *(no command)* — the headless boot is a `degenbot-ingestion` integration test (`tests/headless_boot.rs`), invoked explicitly by `just test-standalone` as its second check: `cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-ingestion --test headless_boot` | 06a — **landed** |
-| `cargo run -p degenbot-order-index --features envelope --example scale_demo` | *(no target command)* — the executable is deleted in 06 (`bench_strategies` is the measurement that survives, §5.2/§5.7) | 06 |
+| `cargo run -p degenbot-order-index --features envelope --example scale_demo` | *(no target command)* — the executable was deleted in 06f (`bench_strategies` is the measurement that survives, §5.2/§5.7) | 06f — **landed** |
 | `cargo run -p degenbot-pools --features capture-fixtures --example walkmemo_readout` | *(no target command)* — the executable is deleted in 06; the memo's durable evidence is the doc plus the in-crate memo tests (§5.6) | 06 |
 | `cargo run -p degenbot-simulation --example mirror_coverage_probe` | *(no target command)* — deleted in 06; the overlap table lives in `docs/architecture/sim-anchor-mirror-coverage.md` and the projection/classification regression is `degenbot-simulation`'s `tests/mirror_anchor_coverage.rs` (§5.4) | 06 — **landed** |
 | `cargo run -p degenbot-pools --features capture-fixtures --example solve_path_probe` | **unchanged** — public retainer | — |
