@@ -69,8 +69,8 @@ pub mod capture;
 /// readers, the read oracle, the session driver, the delta-parity comparison,
 /// the head legs, the real-coverage accounting, the wall ledger and its report,
 /// the relevance pairing, and the candidate-scaling model. `#[doc(hidden)]`:
-/// fixture surface with no stability promise, consumed by this crate's examples
-/// and integration tests and by the engine-lab probes.
+/// fixture surface with no stability promise, consumed by this crate's
+/// integration tests and the engine-lab probes.
 #[doc(hidden)]
 pub mod probe_support;
 

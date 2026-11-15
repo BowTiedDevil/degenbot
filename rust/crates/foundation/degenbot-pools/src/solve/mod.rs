@@ -65,6 +65,8 @@ pub mod fixtures;
 // the fixture machinery it evaluates, so the default dependency tree compiles
 // none of it; the owning integration tests and the solver-lab replay's
 // measurement/readout pass both classify through this one implementation.
+// No stability promise: lab support, not a curated door module (ADR-084).
+#[doc(hidden)]
 #[cfg(feature = "capture-fixtures")]
 pub mod golden_gate;
 

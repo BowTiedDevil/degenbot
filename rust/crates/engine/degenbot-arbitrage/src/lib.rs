@@ -190,7 +190,7 @@ pub mod identity;
 /// their behavior pins: the scripted dispatch chain the dispatch suites and the
 /// scaling probe drive, and the controlled same-head dispatch-scaling benchmark
 /// over it. `#[doc(hidden)]`: fixture surface with no stability promise,
-/// consumed by this crate's examples and integration tests.
+/// consumed by this crate's integration tests and the engine-lab probes.
 #[doc(hidden)]
 pub mod probe_support;
 

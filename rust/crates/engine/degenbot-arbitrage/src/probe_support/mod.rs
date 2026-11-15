@@ -6,11 +6,13 @@
 //! Every module here is fixture surface: the numbers a probe reports and the
 //! facts a pin asserts are computed by this ONE implementation, so a probe and
 //! its pins cannot drift apart. The dependency arrow is consumers -> this
-//! module (the crate's own examples and integration tests), never the reverse.
+//! module (the crate's own integration tests and the engine-lab probes),
+//! never the reverse.
 //!
 //! Not a production API: `#[doc(hidden)]` with no stability promise. It is
 //! compiled into the library rather than gated behind `cfg(test)` so the
-//! example binaries share the same support.
+//! integration-test binaries and the engine-lab tool package share the same
+//! support.
 // The scripted chain and its assertions fail loudly on a broken fixture.
 #![expect(
     clippy::expect_used,
