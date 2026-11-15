@@ -928,9 +928,8 @@ bench-updaters:
 # The wave-2 EVM-oracle capture generator's gate: regenerate the
 # wave-2 cassettes + SQL goldens into a temp home and exit 1 on any byte
 # drift against the committed artifacts. The generator is a
-# `degenbot-fixture-tools` binary now (it was the facade's
-# `generate_evm_oracle_captures` example); its `[[bin]]` required-features still
-# name the SQL ledger, carried by the tool package's `sql-ledger` lane forward —
+# `degenbot-fixture-tools` binary; its `[[bin]]` required-features name the SQL
+# ledger, carried by the tool package's `sql-ledger` lane forward —
 # this recipe is the one command that carries the feature. The two positional
 # homes are accepted and ignored (the program resolves them from the repository
 # root); pass `--fixtures-home <dir>` to run the same gate against a copy.
@@ -1080,7 +1079,7 @@ check-rust-all-features:
 #     the `hotpath` crate is present in the solver capture lanes as
 #     `degenbot-pools`'s non-optional no-op stub.
 #
-# Evidence (rust/tools/README.md sections 6.1 and 6.2):
+# Evidence (rust/tools/README.md, "Feature isolation"):
 #   `cargo tree -p degenbot-fixture-tools -e normal`  -> the facade graph: this
 #                                                  package's crates are plain
 #                                                  edges now, because its
@@ -1126,8 +1125,7 @@ check-rust-all-features:
 #
 # A tool binary that NEEDS a feature joins the lane that owns it through its own
 # `required-features`, so that lane builds it on purpose and every other lane
-# skips it on purpose. Nine fixture-tools programs have landed, and they split
-# exactly that way. Four replay their SQL goldens -- the offline capture
+# skips it on purpose. The nine fixture-tools programs split exactly that way. Four replay their SQL goldens -- the offline capture
 # generators `generate_evm_oracle_captures` /
 # `generate_aave_adversarial_captures` and the live span recorders
 # `generate_aave_upgrade_windows` / `generate_aave_config_windows` -- and all
@@ -1511,7 +1509,7 @@ check-executor-release-ratchet:
 # (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) reads
 # `{{ target_dir }}/debug/examples/encode_three_hop`, so the second line installs the
 # built artifact under that unchanged name and path. The JSON-in/hex-out contract, the
-# binary name, and the consumer path are stable; only the package and target kind moved.
+# binary name, and the consumer path are stable.
 build-executor-three-hop-encoder:
     #!/usr/bin/env bash
     set -euo pipefail

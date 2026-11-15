@@ -138,13 +138,13 @@ does not measure — a lane is a **tool-owned forward**, not a promise that the
 resolved tree shrinks: the product crates a lane reaches still carry their own
 dependencies, so the fixture SQL-ledger lane inherits the facade's Linux
 target-scoped `degenbot-simulation/evm2-jit` dependency and the vendored JIT
-family with it. See [tools/README.md](tools/README.md) for the catalog of every
-instrument, its destination, and the exact evidence form (§6.1 consequence 4).
+family with it. See [tools/README.md](tools/README.md) for the current catalog of
+every instrument: its command, feature lane, inputs, write behavior, and gate status.
 
 | Package and path | Purpose |
 | --- | --- |
 | `degenbot-stubgen` — `tools/stubgen/` | The ADR-066 stub generator behind `just gen-stubs`. A generator, not a laboratory. |
-| `degenbot-fixture-tools` — `tools/fixture-tools/` | Record / check / regenerate workflows for the committed fixtures, plus the test-input generators. Lane: `sql-ledger` for the four binaries that replay their SQL goldens; the four programs that read no statement ledger — `record_updater_cassette` (updater cassettes), `record_py_oracle_corpus` (the offline oracle-answer corpus), `capture_path_fixture` (path-fixture recapture), and `concentrated_liquidity_capture_gen` (the CL capture generator) — need no lane and are default-features targets. |
+| `degenbot-fixture-tools` — `tools/fixture-tools/` | Record / check / regenerate workflows for the committed fixtures, plus the test-input generators. Lane: `sql-ledger` for the four binaries that replay their SQL goldens; the five programs that read no statement ledger — `record_updater_cassette` (updater cassettes), `record_py_oracle_corpus` (the offline oracle-answer corpus), `capture_path_fixture` (path-fixture recapture), `concentrated_liquidity_capture_gen` (the CL capture generator), and `encode_three_hop` (the production-calldata helper) — need no lane and are default-features targets. |
 | `degenbot-solver-lab` — `tools/solver-lab/` | Solver and order-index replay, measurement, and stress instruments. Lanes: `capture-fixtures`, `cache-lab`, `telemetry` (the cache lab's second build shape: `capture-fixtures,cache-lab,telemetry`), `hotpath`, `envelope`. Binaries so far: the two capture replays (`concentrated_liquidity_solve_replay`, `mixed_solve_replay`, both `capture-fixtures`), the entry forwarding-parity/readout harness (`entry_ab_readout`, `capture-fixtures`: post-unification both arms share ONE solve body, so its byte-equality gate is the forwarding contract, durably pinned by the pools memo tests; `hotpath` is an optional second build shape for its functions-timing run), the cache lab (`concentrated_liquidity_cache_lab`, `capture-fixtures,cache-lab`), the rayon scale probe (`rayon_scale_probe`, `capture-fixtures`: it builds its own `rayon` pools and reports wall / sum-CPU / efficiency per thread count — timing only, never a gate), `synth_corpus_gen` (no lane: it builds in the `default` lane), the StateView feasibility probe (`stateview_feasibility_probe`, no lane: it builds in the `default` lane and its synthetic in-memory M1–M6 budget matrices read no capture and no database), and the order-index strategy microbench (`bench_strategies`, `envelope`: synthetic points in source, its timing report never asserted and its hard-coded 1M/10M matrix never executed by a routine lane). |
 | `degenbot-engine-lab` — `tools/engine-lab/` | Bot, simulation, arbitrage, JIT, fan-out, and BAL instruments. Lanes: `evm2-jit`, `prometheus`. |
 
@@ -152,9 +152,9 @@ A tool program declares the features it needs on its own `[[bin]]`
 `required-features`, so a default `cargo check` of the package skips a heavy
 instrument visibly in the manifest instead of failing on a `cfg`'d-out module. A
 program that needs no feature declares none and is built by the `default` lane —
-`record_updater_cassette`, `record_py_oracle_corpus`, `capture_path_fixture`, and
-`concentrated_liquidity_capture_gen` are that case, and so is `degenbot-solver-lab`'s
-`synth_corpus_gen`; since Cargo has no per-target dependency selection their crates are
+`record_updater_cassette`, `record_py_oracle_corpus`, `capture_path_fixture`,
+`concentrated_liquidity_capture_gen`, and `encode_three_hop` are that case, and so is
+`degenbot-solver-lab`'s `synth_corpus_gen`; since Cargo has no per-target dependency selection their crates are
 plain edges, so those two packages' default trees are the product graph each reads (the
 facade for fixture-tools, the pools graph for solver-lab) rather than the package alone.
 `just check-dev-tools <lane>` checks one lane per invocation; it is a grouping
@@ -321,7 +321,7 @@ select or forward it, but must not duplicate its gate list.
   is not the pool profiling lane). A lane enables only its own package's
   forward; it does not remove the product graph that forward's crates already
   reach, so no lane's `cargo tree` is evidence of transitive absence
-  (`tools/README.md` §6.1 consequence 4).
+  (see `tools/README.md`, "Feature isolation").
 - Feature-matrix validation is lane-based. Never use `--all-features` as the
   default or release gate: it enables test-only and mutually exclusive variants.
 
