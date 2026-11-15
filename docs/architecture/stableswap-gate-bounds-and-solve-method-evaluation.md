@@ -162,7 +162,9 @@ and the faithful-arithmetic predicate.
 
 ### The measured regression
 
-`cargo bench -p degenbot-solvers --bench solidly_t`, 18-path corpus:
+Measured with the since-deleted `solidly_t` bench (invoked then as
+`cargo bench -p degenbot-solvers --bench solidly_t`; the target is gone and the
+table below is the surviving record), 18-path corpus:
 
 | arm | wall time (18 paths) |
 | --- | --- |
@@ -403,17 +405,17 @@ explicitly instead).
 ## 6. Cross-references
 
 - Derivation docs in code:
-  `rust/crates/engine/degenbot-solvers/src/profit_envelope/derive.rs`
+  `rust/crates/foundation/degenbot-pools/src/solve/profit_envelope/derive.rs`
   (the `SolidlyStable` / `BalancerStable` / `CurveStableswap` variant docs,
   `solidly_stable_lines` / `solidly_stable_rise`, `stableswap_concave_at`,
   `balancer_stable_lines`, `curve_stableswap_lines`).
-- Module docs: `rust/crates/engine/degenbot-solvers/src/profit_envelope/mod.rs`.
-- Shared solve template: `rust/crates/engine/degenbot-solvers/src/mixed/solve.rs`
+- Module docs: `rust/crates/foundation/degenbot-pools/src/solve/profit_envelope/mod.rs`.
+- Shared solve template: `rust/crates/foundation/degenbot-pools/src/solve/mixed/solve.rs`
   (`solve_golden_section_path_int`).
 - Glossary: `GLOSSARY.md`, "Profit envelope".
 - Related evaluations: [combinatorial ending-range enumeration in the Möbius
   V3/concentrated-liquidity solver](mobius_v3_ending_range_enumeration_evaluation.md) (the concentrated-liquidity
   concavity / active-set evaluation), [hull-edge seed
   evaluation](hull-edge-seed-evaluation.md).
-- Tests: `rust/crates/engine/degenbot-solvers/tests/profit_envelope_tests.rs`,
+- Tests: `rust/crates/foundation/degenbot-pools/tests/profit_envelope_tests.rs`,
   `tests/solidly_golden_parity.rs`, `tests/stable_golden_drift_net.rs`.

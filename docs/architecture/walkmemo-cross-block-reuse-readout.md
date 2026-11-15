@@ -8,7 +8,7 @@ the live-capture section records what real traffic actually does, kept
 explicitly separate.**
 
 The cross-block composition memo (`WalkMemo` in
-`rust/crates/engine/degenbot-solvers/src/concentrated_liquidity/memo.rs`) is live on the engine path:
+`rust/crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/memo.rs`) is live on the engine path:
 `arb_engine::solve_cycle` advances `begin_block(solve_block)` before the per-path
 probes (`solve_cycle/mod.rs`, `BlockScope::advance`) and threads the engine-owned
 handle into every solve (`gate_deps.walk_memo = Some(&memo)`,
@@ -18,10 +18,13 @@ needs before anyone acts on it.
 
 ## Method
 
-`cargo run -p degenbot-solvers --example walkmemo_readout`
-(`rust/crates/engine/degenbot-solvers/examples/walkmemo_readout.rs`, new in this
-change) loads the same capture fixture the other replays use
-(`heavy_concentrated_liquidity_solve_captures.jsonl` via `degenbot_solvers::capture_fixture`), derives
+The harness was the `walkmemo_readout` example — since retired with the
+example target (nothing was extracted; this document and the live-capture
+section below are its record, and the memo's durable assertions live in the
+in-crate memo tests and `benches/walkmemo_contention.rs`). It loads the same
+capture fixture the other replays use
+(`heavy_concentrated_liquidity_solve_captures.jsonl` via the pools fixture reader,
+`degenbot_pools::solve::fixtures`), derives
 `ClSolveTables` ONCE per captured path (the production shape — the A/B must not
 measure table derivation), then runs `E` epochs (default 5,
 `DR_READOUT_EPOCHS` to override) over the FULL path set — 156 captured paths, 12
@@ -133,8 +136,8 @@ passes over the tick data per solve, before the memo probe can even run.
 Facts established from code (no measurement):
 
 - `hotpath::measure` is an **external crate attribute**
-  (`hotpath = { version = "^0.28.5", default-features = false }` in
-  `degenbot-solvers/Cargo.toml`), not workspace-local code; the spans expand to
+  (`hotpath = { version = "^0.31.2", default-features = false }` in
+  `degenbot-pools/Cargo.toml`), not workspace-local code; the spans expand to
   nothing unless the `hotpath` Cargo feature is enabled
   (`hotpath = ["hotpath/hotpath", "hotpath/threads"]`).
 - The span labels that exist and would decide this:
@@ -252,7 +255,7 @@ Environment and boot facts:
   (`run_loop.rs`; the session ends `WindowExpired` at the bound).
 - `DEGENBOT_SOLVER_WALK_MEMO=1` + `DEGENBOT_SOLVER_WALK_MEMO_STATS=1` — the
   memo and its stats stances (`SolveRuntimeConfig::memo_on` / `memo_stats`,
-  `degenbot-solvers/src/runtime.rs:39-43`). Both **default OFF**
+  `rust/crates/foundation/degenbot-pools/src/solve/runtime.rs:41-43`). Both **default OFF**
   (`SolveRuntimeConfig::default()`, runtime.rs:69-70): a first drive without
   them proved the tap fully inert — a disabled memo never counts, and the
   tap's zero-activity gate emits no line, no instrument, no IO — so the JSONL
@@ -401,9 +404,10 @@ follow-ups, not work:
 
 1. a `#[hotpath::main]` attribute (or an explicit `HotpathGuard`
    construction — the pattern already exists in-repo:
-   `degenbot-bot/examples/hotpath_prometheus_probe.rs` builds the pump's own
-   `profiling::hotpath_guard` under `--features hotpath-prometheus`) on the
-   corpus examples, so a telemetry-enabled example run can flush a report;
+   `degenbot-engine-lab`'s `hotpath_prometheus_probe`
+   (`rust/tools/engine-lab/src/bin/hotpath_prometheus_probe/main.rs`) builds
+   the pump's own `profiling::hotpath_guard` under the `prometheus` lane) on
+   the corpus examples, so a telemetry-enabled example run can flush a report;
 2. an umbrella feature-forward for `hotpath` (a parity-gap candidate
    alongside the existing `otel` forward), so the settlement example can
    compile the feature through the umbrella at all.

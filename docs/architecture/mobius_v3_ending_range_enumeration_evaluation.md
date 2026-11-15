@@ -42,11 +42,12 @@ walker, after `7J22EQ`).
 
 Hot path: `arb_engine/solve_cycle/` resolves each hop; V3/V4 hops call
 `V3PoolState::build_int_v3_sequence(tick_spacing, fee, zfo, 10)`
-(`rust/crates/foundation/degenbot-pools/src/v3_state.rs`), which slices
+(`rust/crates/foundation/degenbot-pools/src/state/v3_state.rs`), which slices
 `get_cached_tick_ranges(..., max_ranges=15)` (`compute_tick_ranges` in
 `tick_bitmap.rs`) down to an `IntV3TickRangeSequence`
-(`rust/crates/foundation/degenbot-pools/src/int_v3_hop.rs`). The all-concentrated-liquidity dispatcher calls
-`int_solve_concentrated_liquidity_path` (`rust/crates/engine/degenbot-solvers/src/mobius_v3_int.rs`);
+(`rust/crates/foundation/degenbot-pools/src/state/int_v3_hop.rs`). The all-concentrated-liquidity dispatcher calls
+`int_solve_concentrated_liquidity_path`
+(`rust/crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/entries.rs`);
 mixed V2+concentrated liquidity paths go through `exact_solve_mixed_path_n` /
 `exact_solve_mixed_v2_v3_sequence`. All of these enumerate ending-range
 tuples: `max_candidates = 10` per concentrated-liquidity hop, mixed-radix counter, per-tuple
@@ -392,12 +393,13 @@ green; clippy `-D warnings` clean.
   `BQ43DK` (Tier-3 enforcement).
 - Fixture: `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md` (a gitignored
   logs/ artifact, since removed).
-- Code: `rust/crates/engine/degenbot-solvers/src/mobius_v3_int.rs`,
-  `rust/crates/engine/degenbot-solvers/src/mobius_int_anchor.rs`,
-  `rust/crates/engine/degenbot-solvers/src/mobius_int.rs`,
-  `rust/crates/foundation/degenbot-pools/src/int_v3_hop.rs`,
-  `rust/crates/foundation/degenbot-pools/src/tick_bitmap.rs`,
-  `rust/crates/foundation/degenbot-pools/src/v3_state.rs`
+- Code: `rust/crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/`
+  (the decomposed `mobius_v3_int.rs`'s successor home),
+  `rust/crates/foundation/degenbot-pools/src/solve/mobius_int_anchor.rs`,
+  `rust/crates/foundation/degenbot-pools/src/solve/mobius_int.rs`,
+  `rust/crates/foundation/degenbot-pools/src/state/int_v3_hop.rs`,
+  `rust/crates/foundation/degenbot-pools/src/state/tick_bitmap.rs`,
+  `rust/crates/foundation/degenbot-pools/src/state/v3_state.rs`
   (`build_int_v3_sequence`, `v3_simulate_swap`),
   `rust/crates/foundation/degenbot-math/src/concentrated_liquidity/`.
 - Prior diagnosis doc: `docs/architecture/sim_v4_swap_step_rounding.md` (removed in

@@ -33,8 +33,8 @@ p95 is back under the 12s block-time threshold in the comparable high-load windo
 
 ## Build gates
 
-- cargo test -p degenbot-solvers -p degenbot-bot --manifest-path rust/Cargo.toml green.
-- cargo clippy -p degenbot-solvers -p degenbot-bot --all-targets green.
+- cargo test -p degenbot-pools -p degenbot-bot --manifest-path rust/Cargo.toml green.
+- cargo clippy -p degenbot-pools -p degenbot-bot --all-targets green.
 - prepare pre-commit fmt/lint gates green on every commit.
 
 ## Artifacts

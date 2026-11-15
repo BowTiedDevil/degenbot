@@ -372,7 +372,7 @@ deletion once the example drains the collector.
 
 ## 5. Stepwise migration plan
 
-Gates for every step: `cargo test -p degenbot-solvers` in **both** feature configurations
+Gates for every step: `cargo test -p degenbot-pools` in **both** feature configurations
 (default, and `--features telemetry`), plus `cargo test -p degenbot-substrate -p degenbot-bot` when
 those crates are touched (scoped per the dispatched-agent lane rules; the PM owns the workspace
 ladder). Baseline first, always.
@@ -382,19 +382,19 @@ ladder). Baseline first, always.
 - **Baseline capture (M0 artifact):**
   1. `cargo run --release -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- <capture.jsonl>` —
      record the profit vector + per-path `stats` (the parity artifact; fixture via
-     `degenbot_solvers::capture_fixture`, the `heavy_concentrated_liquidity_solve_captures.jsonl` corpus the
+     `degenbot_pools::solve::fixtures`, the `heavy_concentrated_liquidity_solve_captures.jsonl` corpus the
      walkmemo readout used — see `docs/architecture/walkmemo-cross-block-reuse-readout.md`).
   2. `cargo run --release -p degenbot-solver-lab --features capture-fixtures,cache-lab,telemetry --bin
      concentrated_liquidity_cache_lab -- <capture.jsonl>` — record the strategy matrix + the ns sections.
-  3. `cargo bench -p degenbot-solvers --bench walkmemo_contention` — the rayon-contention canary
+  3. `cargo bench -p degenbot-pools --bench walkmemo_contention` — the rayon-contention canary
      (the only bench that stresses the solve entries under parallel load).
 - **A (numbers parity):** step 1's profits and `WalkStats` counters byte-equal against baseline
   (epic acceptance: "walk number parity between baseline and gated"). ns fields compare within
   run-to-run noise only after M6; before that they are literally the same code.
 - **B (readout parity):** step 2's matrix identical; section ns sums (edge+redge+dir+refine ≤ solve
   total) sane.
-- **C (zero-ambient audit):** `grep -n "thread_local!\|Cell<" rust/crates/engine/degenbot-solvers/
-  src/concentrated_liquidity/ | grep -v tests` must shrink monotonically and hit zero at M6.
+- **C (zero-ambient audit):** `grep -rn "thread_local!\|Cell<" rust/crates/foundation/degenbot-pools/
+  src/solve/concentrated_liquidity/ | grep -v tests` must shrink monotonically and hit zero at M6.
 
 ### Commits
 
