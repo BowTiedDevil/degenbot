@@ -266,3 +266,15 @@ path = "src/bin/worker_fanout_probe/main.rs"
 name = "sim_mode_bench"
 path = "src/bin/sim_mode_bench/main.rs"
 required-features = ["evm2-jit"]
+
+# The production executor's AOT prep lane: compiles the injected `cmd_executor`
+# runtime bytecode once into the durable artifact store the process-shared JIT
+# holder opens (`<persistence.state_dir>/aot-artifacts`) and proves the
+# artifact loads back as `ProgramKind::Aot`. It compiles through the runner, so
+# it is a `required-features` target on the same lane the capture probe and
+# `sim_mode_bench` opened; a default check skips it. A documented operational
+# tool, not a production CLI.
+[[bin]]
+name = "aot_prepare_executor"
+path = "src/bin/aot_prepare_executor/main.rs"
+required-features = ["evm2-jit"]

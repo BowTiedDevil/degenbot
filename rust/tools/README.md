@@ -16,15 +16,15 @@ described in §6.2. Seven fixture slices have landed since, all in task `03`:
 | `03f` | the concentrated-liquidity capture generator — `concentrated_liquidity_capture_gen` | §6.8 |
 | `03g` (`B4IKBC`) | the three-hop production-calldata helper — `encode_three_hop` (a recipe/staging row; no §6.x section of its own) | §4.2, §8.1, §8.2 |
 
-Cargo metadata now reports **11 example targets**, `degenbot-fixture-tools` reports its lib
+Cargo metadata now reports **10 example targets**, `degenbot-fixture-tools` reports its lib
 plus exactly **nine** `[[bin]]` targets, `degenbot-solver-lab` its lib plus exactly
-**eight**, and `degenbot-engine-lab` its lib plus exactly **sixteen** — fourteen default-lane
+**eight**, and `degenbot-engine-lab` its lib plus exactly **seventeen** — fourteen default-lane
 binaries (`bal_carry_probe`, `bal_candidate_scaling_probe`, `bal_delta_rounds_probe`,
 `bal_delta_snapshot_probe`, `bal_dispatch_scaling_probe`, `bal_head_lifecycle_probe`,
 `bal_live_acquisition_probe`, `bal_production_relevance_probe`, `bal_real_read_oracle_probe`,
 `bal_retention_probe`, `bal_wall_ceiling_probe`, `cold_miss_fanout_probe`,
-`session_fanout_probe`, `worker_fanout_probe`) beside `capture_seam_probe` and
-`sim_mode_bench` under `required-features = ["evm2-jit"]`.
+`session_fanout_probe`, `worker_fanout_probe`) beside `aot_prepare_executor`,
+`capture_seam_probe`, and `sim_mode_bench` under `required-features = ["evm2-jit"]`.
 No §4.2 row is still an example — no other recorder, no other program, and no other
 capture generator moved — and **no fixture byte changed** in any of the seven slices.
 Each offline participant was re-proved byte-identical by its own re-derivation (the two capture recipes plus, for the cassette
@@ -186,6 +186,27 @@ behaviour, which is why the routine bound is above the threshold and not 2). The
 threshold. No fixture byte changed, and the package's manifest gained no dependency edge
 (the JIT lane already named `evm2-jit`) and no Prometheus, SQL-ledger, or solver-lab
 forward.
+
+Task `05`'s `05j` slice has landed since: it moved `aot_prepare_executor` into
+`degenbot-engine-lab` as its third `required-features = ["evm2-jit"]` binary (the same lane
+`capture_seam_probe` and `sim_mode_bench` opened) and deleted the old
+`crates/engine/degenbot-simulation/examples/aot_prepare_executor.rs` target with its
+manifest row. The production executor bytecode source, the exact repo-relative
+`EXECUTOR_RUNTIME_ARTIFACT`, the durable artifact-store location and format, the
+`ProgramKind::Aot` load-back proof, the `argv[1]` artifact-path override and its
+canonicalize fallback, the stdout report, and every failure message and exit path are
+unchanged; the derived repository root — the one `join("../../../..")` the example carried —
+now resolves through `degenbot_engine_lab::paths::repo_root()` (marker-resolved, no `..`
+arithmetic) with the same `EXECUTOR_RUNTIME_ARTIFACT` joined to it. `just
+aot-prepare-executor` keeps its name, its `*ARGS`, and its `--release` posture and now runs
+`-p degenbot-engine-lab --features evm2-jit --bin aot_prepare_executor`. The move added no
+dependency edge (the JIT lane already named `evm2-jit`, and the package already reads
+`degenbot-simulation` through its default tree) and no direct env read: the state root
+stays owned by the `degenbot-config` loader that `default_artifact_dir()` consults. The
+isolated proof ran `DEGENBOT_STATE_DIR` at a fresh temporary directory outside the
+repository — never a shared durable store — and the preparation, the store listing, and
+the `proof: get_compiled -> Aot` line passed there. No fixture byte changed, and no
+Prometheus, SQL-ledger, or solver-lab forward arrived with it.
 
 The workspace accumulated 44 Cargo example targets whose purposes are three different
 things: a *supported consumer starting point*, a *durable assertion someone must gate*, and
@@ -353,7 +374,7 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 
 | Target | Package | Destination | Current path (under `rust/`) | Purpose | Features | Needs | I/O and write behavior | Verification route |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `aot_prepare_executor` | `degenbot-simulation` | engine-lab (05) | `crates/engine/degenbot-simulation/examples/aot_prepare_executor.rs` | Production executor AOT prep lane: compile the injected `cmd_executor` runtime bytecode once into the durable artifact store the process-shared JIT holder opens (`<persistence.state_dir>/aot-artifacts`) and prove it loads back as `ProgramKind::Aot` | `evm2-jit` | committed `crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt` | **Writes** the artifact store (temp sibling + rename, idempotent) under the resolved state dir | `just aot-prepare-executor`; the compile lane is `just check-dev-tools --engine-jit` (task 02 onward). Operational tool, explicitly **not** a production CLI |
+| `aot_prepare_executor` | `degenbot-engine-lab` | engine-lab (05j, **landed**) | `tools/engine-lab/src/bin/aot_prepare_executor/main.rs` | Production executor AOT prep lane: compile the injected `cmd_executor` runtime bytecode once into the durable artifact store the process-shared JIT holder opens (`<persistence.state_dir>/aot-artifacts`) and prove it loads back as `ProgramKind::Aot` | `evm2-jit` | committed `crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt`, rooted through `degenbot_engine_lab::paths::repo_root()` | **Writes** the artifact store (temp sibling + rename, idempotent) under the resolved state dir | `just aot-prepare-executor` (unchanged recipe name, ARGS pass-through and `--release` posture, now `-p degenbot-engine-lab --features evm2-jit --bin aot_prepare_executor`); the compile lane is `just check-dev-tools --engine-jit`. Operational tool, explicitly **not** a production CLI |
 | `bal_candidate_scaling_probe` | `degenbot-engine-lab` | engine-lab (05g1, **landed**) | `tools/engine-lab/src/bin/bal_candidate_scaling_probe/main.rs` | Analytical BAL candidate-scaling report: two-corpus calibration closure, candidate-count × family × novelty matrix, W/F sensitivity — pure formula over committed corpus aggregates, no candidate executed | — (no `required-features`: the default lane builds it) | committed corpus accounting embedded in the product-owned `degenbot_simulation::probe_support` (`candidate_scaling`) consumed directly | stdout Markdown; writes nothing; `BAL_SCALING_PLANT_MISMATCH=1` fails the gate and exits non-zero (red probe) | `just bal-candidate-scaling-probe` (offline; unchanged recipe name and `--release` posture, now `-p degenbot-engine-lab --bin bal_candidate_scaling_probe`); behavior pins in `crates/engine/degenbot-simulation/tests/bal_candidate_scaling.rs` |
 | `bal_carry_probe` | `degenbot-engine-lab` | engine-lab (05e1, **landed**) | `tools/engine-lab/src/bin/bal_carry_probe/main.rs` | Parent-linked BAL carry-forward against live reth: every canonical block of a captured range advanced through `ReadHubCache::advance_bal`, each candidate anchor's carried values compared against independent cold reads | — (no `required-features`: the default lane builds it) | LIVE reth/archive node (`DEGENBOT_RPC_HTTP_CHAINID_1` / `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI`); a recorded `fanout-trace` file via `BAL_CARRY_TRACE` (`BAL_CARRY_FIRST`/`BAL_CARRY_LAST`); the recorded corpus comes from the product-owned `degenbot_simulation::probe_support` consumed directly | stdout; writes nothing; any value mismatch is a hard failure (non-zero exit) | `just bal-carry-probe` (unchanged recipe name, RPC declaration and fails-closed shell gate, `--release` posture and env controls; it now runs `-p degenbot-engine-lab --bin bal_carry_probe`); its per-anchor accounting is the reference `bal_production_relevance_probe` and `bal_wall_ceiling_probe` cross-check against. **Live-only: compile lane in CI, never claim a refreshed measurement** |
 | `bal_delta_rounds_probe` | `degenbot-engine-lab` | engine-lab (05f1, **landed**) | `tools/engine-lab/src/bin/bal_delta_rounds_probe/main.rs` | Round-coalesced delta read replay over two live-captured corpora: full-clone vs delta chain vs idle-block retention, with the re-read gap distribution the retention decision needs | — (no `required-features`: the default lane builds it) | **EXTERNAL CORPUS, absent from the tree**: `BAL_DELTA_ROUNDS_TRACES` defaults to `/tmp/fanout_trace.log` and `/tmp/bal_broader_trace.log`, both REQUIRED (absent corpus = hard failure, never an empty replay); matching real-coverage captures (`rust/crates/engine/degenbot-simulation/tests/fixtures/bal_real_coverage{,_broader}.json`) default by corpus index, rooted through `degenbot_engine_lab::paths::repo_root()` from the product-owned `degenbot_simulation::probe_support` (`modeled_chain`/`real_coverage`/`recorded_corpus`/`session_drive`/`wall_ledger`) consumed directly | stdout; `BAL_DELTA_ROUNDS_PLANT_DIVERGENCE=1` must exit non-zero; measurements land in `logs/bal_delta_rounds_result.md` (gitignored, `logs/*`) | Compile lane only until the traces are supplied: `cargo check -p degenbot-engine-lab --bin bal_delta_rounds_probe`; `just bal-delta-rounds-probe` (unchanged recipe name and `--release` posture, now `-p degenbot-engine-lab --bin bal_delta_rounds_probe`). Unexecutable offline — report as such, do not fabricate a run |
@@ -1732,7 +1753,7 @@ would write (or a replay would read) somewhere else without failing.
 
 | Affected source | Anchor | Task |
 | --- | --- | --- |
-| `degenbot-simulation`: `aot_prepare_executor` and `examples/shared/bench_corpus.rs` | `join("../../../..")` or a `format!`-built path | 05 — **partly closed by 05a, 05b, 05c, 05d, 05e2, 05e3, 05e4, 05f1, 05f2, and 05g2**: the moved `capture_seam_probe`, `cold_miss_fanout_probe`, `worker_fanout_probe`, and `sim_mode_bench` read their corpus artifacts through `degenbot_engine_lab::bench_corpus` / `paths` (marker-resolved root, no `..` arithmetic), the cold-miss and worker probes' own stub/artifact loaders included, and the original `examples/shared/bench_corpus.rs` — the last `..`-carrying corpus module — is deleted with its final consumer; `bal_delta_snapshot_probe`'s, `bal_head_lifecycle_probe`'s, `bal_retention_probe`'s, `bal_delta_rounds_probe`'s, `bal_production_relevance_probe`'s, and `bal_wall_ceiling_probe`'s real-coverage fixture roots likewise resolve through `degenbot_engine_lab::paths::repo_root()` at their new homes (05e2, 05e3, 05e4, 05f1, 05f2, 05g2), and the other `degenbot-simulation` example rows here keep their arithmetic until their own slices |
+| `degenbot-simulation`: `aot_prepare_executor` and `examples/shared/bench_corpus.rs` | `join("../../../..")` or a `format!`-built path | 05 — **partly closed by 05a, 05b, 05c, 05d, 05e2, 05e3, 05e4, 05f1, 05f2, 05g2, and 05j**: the moved `capture_seam_probe`, `cold_miss_fanout_probe`, `worker_fanout_probe`, and `sim_mode_bench` read their corpus artifacts through `degenbot_engine_lab::bench_corpus` / `paths` (marker-resolved root, no `..` arithmetic), the cold-miss and worker probes' own stub/artifact loaders included, and the original `examples/shared/bench_corpus.rs` — the last `..`-carrying corpus module — is deleted with its final consumer; `bal_delta_snapshot_probe`'s, `bal_head_lifecycle_probe`'s, `bal_retention_probe`'s, `bal_delta_rounds_probe`'s, `bal_production_relevance_probe`'s, and `bal_wall_ceiling_probe`'s real-coverage fixture roots likewise resolve through `degenbot_engine_lab::paths::repo_root()` at their new homes (05e2, 05e3, 05e4, 05f1, 05f2, 05g2), `aot_prepare_executor`'s production-artifact root resolves through the same `degenbot_engine_lab::paths::repo_root()` at its `tools/engine-lab` home (05j), and the remaining `degenbot-simulation` example row here (`mirror_coverage_probe`, which task `06` deletes) keeps its arithmetic until its own slice |
 | `degenbot` (facade): `generate_aave_adversarial_captures`, `generate_aave_config_windows`, `generate_aave_upgrade_windows`, `generate_evm_oracle_captures` (×2), `record_py_oracle_corpus` | `join("../../../..")` / `join("../../../../tests/fixtures")` | 03 |
 | `degenbot-rpc`: `concentrated_liquidity_capture_gen` | manifest-relative path `format!` | 03f — **closed**: the default output resolves through `degenbot_fixture_tools::paths` to the identical committed file (§6.8) |
 | `degenbot-pools`: `synth_corpus_gen` (**writes** into `tests/fixtures`) | `join("tests/fixtures")` | 04 — **closed by the move**: the output home resolves through `degenbot_solver_lab::paths` (marker-resolved repository root + the pools fixture path) to the identical committed files, proven by regenerating the concentrated-liquidity corpus to an empty `git diff` (§5.3) |

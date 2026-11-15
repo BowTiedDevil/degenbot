@@ -23,7 +23,7 @@
 //! a re-run replaces the artifact cleanly.
 //!
 //! ```sh
-//! cargo run --release -p degenbot-simulation --example aot_prepare_executor \
+//! cargo run --release -p degenbot-engine-lab --bin aot_prepare_executor \
 //!   --features evm2-jit -- [artifact-path]
 //! ```
 
@@ -42,7 +42,7 @@ use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
 const EXECUTOR_RUNTIME_ARTIFACT: &str = "rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt";
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../..")
+    degenbot_engine_lab::paths::repo_root().expect("repository root resolution")
 }
 
 /// The artifact path: `argv[1]` when given, else the repo's production artifact.

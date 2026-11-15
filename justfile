@@ -512,7 +512,7 @@ bench-sim-modes *ARGS:
 # artifact loads back as `ProgramKind::Aot`. Idempotent; an alternate artifact
 # path may be passed as ARGS.
 aot-prepare-executor *ARGS:
-    cd rust && cargo run --locked --release -p degenbot-simulation --example aot_prepare_executor --features evm2-jit -- {{ ARGS }}
+    cd rust && cargo run --locked --release -p degenbot-engine-lab --features evm2-jit --bin aot_prepare_executor -- {{ ARGS }}
 
 # The per-worker EVM fan-out probe (ADR-089 concurrency trio item 4): corpus,
 # four drive strategies (serial shared / per-worker threads / per-candidate

@@ -113,15 +113,6 @@ tokio = { version = "^1.54", features = ["rt", "sync"] }
 # feature (the same vendored fork as evm2).
 evm2-jit-build = { workspace = true, optional = true }
 
-# The production executor's AOT prep lane: compiles
-# `rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt` into the durable artifact store
-# the process-shared JIT holder opens, and proves the artifact loads back as
-# `ProgramKind::Aot`.
-[[example]]
-name = "aot_prepare_executor"
-path = "examples/aot_prepare_executor.rs"
-required-features = ["evm2-jit"]
-
 # The JIT spine's fail-soft + verdict-parity gate (needs the runner type).
 [[test]]
 name = "jit_spine"
