@@ -8,6 +8,7 @@ production transfer shape and conserve every token.
 
 import itertools
 import json
+import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - executes only repository-owned helper binaries
 from pathlib import Path
@@ -29,11 +30,13 @@ from .test_cmd_executor_three_hop_optimized import (
 
 pytestmark = pytest.mark.gas
 
-# The recipe stages the `degenbot-fixture-tools` `encode_three_hop` binary at this
-# path (`just build-executor-three-hop-encoder`), so the suite reads the same artifact
-# name it read before the helper left `degenbot-executor`'s examples for the tool package.
 ROOT = Path(__file__).resolve().parents[2]
-ENCODER = ROOT / "rust/target/debug/examples/encode_three_hop"
+# The recipe builds the `degenbot-fixture-tools` `encode_three_hop` [[bin]]
+# (`just build-executor-three-hop-encoder`); the suite consumes the artifact at its
+# canonical cargo output path, resolving the target dir by the justfile's convention
+# (CARGO_TARGET_DIR, else rust/target) so build and read can never disagree.
+TARGET_DIR = Path(os.environ.get("CARGO_TARGET_DIR", "rust/target"))
+ENCODER = ROOT / TARGET_DIR / "debug" / "encode_three_hop"
 FAMILIES = ("V2", "V3", "V4")
 PERMUTATIONS = tuple(itertools.product(FAMILIES, repeat=3))
 EXPECTED_TRANSFERS = {

@@ -13,21 +13,14 @@
 //!
 //! # Home
 //!
-//! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in
-//! `degenbot-executor`'s `examples/`: it is test-oracle tooling, not a consumer starting
-//! point (the epic's taxonomy). Nothing about the contract changed with that move — the
-//! single JSON argv document, the V2/V3/V4 request decoding (including the V2 `u16` fee
-//! conversion and the V4 `tick_spacing` requirement), the `encode_cmd_3_hop` call with its
-//! default `EncodeOptions`, the one hex line on stdout, the binary name, and the failure
-//! behaviour (a non-zero exit with the reason on stderr) all travelled with the source;
-//! only the invocation did. It needs NO feature lane: it reads no statement ledger and
+//! This program is a `degenbot-fixture-tools` [[bin]]: test-oracle tooling, not a
+//! consumer starting point. It needs NO feature lane: it reads no statement ledger and
 //! opens no database of any kind, so it builds under this package's default features and
 //! `just check-dev-tools default` is the lane that builds it.
 //!
-//! `just build-executor-three-hop-encoder` wraps the build and ALSO stages the binary at
-//! `<target-dir>/debug/examples/encode_three_hop`, which is the path
-//! `tests/executor/test_cmd_executor_three_hop_production_calldata.py` reads; the staged
-//! name and the two-package invocation are the only things the relocation moved.
+//! `just build-executor-three-hop-encoder` wraps the build; the Ape execution matrix
+//! (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) consumes the
+//! binary at its canonical cargo output path `<target-dir>/debug/encode_three_hop`.
 //!
 //! Usage (one JSON argument, no flags):
 //!

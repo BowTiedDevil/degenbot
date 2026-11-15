@@ -1502,20 +1502,18 @@ check-executor-release-ratchet:
 
 
 # Build the pure-Rust production-encoder consumer used by the three-hop
-# production-calldata execution matrix, and stage it where that matrix reads it.
-# Keeping the build here ensures tests never invoke cargo directly or test a stale
-# helper binary.
+# production-calldata execution matrix. Keeping the build here ensures tests never
+# invoke cargo directly or test a stale helper binary.
 #
 # The helper is a `degenbot-fixture-tools` [[bin]] (`encode_three_hop`); the matrix
-# (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) reads
-# `{{ target_dir }}/debug/examples/encode_three_hop`, so the second line installs the
-# built artifact under that unchanged name and path. The JSON-in/hex-out contract, the
-# binary name, and the consumer path are stable.
+# (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) reads the
+# binary at its canonical cargo output path `{{ target_dir }}/debug/encode_three_hop`,
+# resolving {{ target_dir }} the same way this file does. The JSON-in/hex-out contract
+# and the binary name are stable.
 build-executor-three-hop-encoder:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --bin encode_three_hop
-    install -Dm755 "{{ target_dir }}/debug/encode_three_hop" "{{ target_dir }}/debug/examples/encode_three_hop"
 
 # The ONE command for the bankroll matrix — both capital postures against one
 # injected registration set, through the canonical run_bot.sh launcher:
@@ -1994,12 +1992,12 @@ coverage *args:
 # lint-python / lint-python-check already set. rust/vendor/ carries
 # upstream's docs verbatim (ADR-096) and keeps upstream's conventions.
 lint-markdown:
-    npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**"
+    npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
 
 
 # Lint Markdown (check-only; non-mutating). Mirrors CI's pinned step.
 lint-markdown-check:
-    npx --yes markdownlint-cli2@0.24.1 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**"
+    npx --yes markdownlint-cli2@0.24.1 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
 
 # Lint Python files
 lint-python:

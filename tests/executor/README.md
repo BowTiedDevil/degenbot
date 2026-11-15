@@ -45,8 +45,8 @@ Three execution layers deliberately answer different questions:
   exact production bytes, checking transfer counts and token conservation.
   Its pure-Rust helper is the `degenbot-fixture-tools`
   `encode_three_hop` binary, built only through
-  `just build-executor-three-hop-encoder` (which also stages it at
-  `rust/target/debug/examples/encode_three_hop`, the path this suite reads).
+  `just build-executor-three-hop-encoder` and read at its canonical
+  `rust/target/debug/encode_three_hop` output path.
 - `degenbot-simulation/tests/harness_declarative.rs` executes all 27 through
   EVM2 with the real executor bytecode and exact predicted-profit deltas. Its
   `full_three_hop_matrix_executes_production_solver_amounts` test also solves
