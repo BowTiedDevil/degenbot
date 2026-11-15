@@ -250,6 +250,20 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
             "WORKER_FANOUT_EXEC_SLEEP",
         ][..],
     );
+
+    // The phase-6 sim-mode benchmark, same class and same cause: it also left
+    // `examples/` for the engine-lab tool crate, so its one pre-existing
+    // per-run control is now visible to the production-source scan. It is the
+    // benchmark's documented invocation default -- the iteration count per
+    // mode, read once at start-up with the same default (100) and the same
+    // parse-and-fall-back behavior it has always had. It is not an
+    // operator-config key: the readout is a measurement, so routing it through
+    // the loader would hand a lab binary the config crate's dependency graph
+    // for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/sim_mode_bench/main.rs",
+        &["SIM_BENCH_ITERS"][..],
+    );
 }
 
 /// The solver-lab entries, inserted into the same map the Rust scan reads. A

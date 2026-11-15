@@ -1,17 +1,21 @@
 #![expect(
     clippy::expect_used,
     clippy::panic,
+    clippy::panic_in_result_fn,
     clippy::print_stdout,
     clippy::print_stderr
 )]
-//! The ADR-089 phase-6 offline engine benchmark: one corpus, four engine
+//! The ADR-089 phase-6 offline engine benchmark: one corpus, six engine
 //! modes, first-run and steady-state latency, plus the JIT backend's
 //! compile telemetry.
 //!
 //! # Corpus
 //!
-//! The fixture spine mirrors the executor grammar harness (`crate::harness`,
-//! evm2-based): the REAL `cmd_executor` creation artifact plus the
+//! The corpus is [`degenbot_engine_lab::bench_corpus`], the tool library's own
+//! support (imported, not `#[path]`-included), so this instrument and the
+//! capture/fan-out probes measure the same deployed state and replay the same
+//! frame. The fixture spine mirrors the executor grammar harness (evm2-based):
+//! the REAL `cmd_executor` creation artifact plus the
 //! `Token`/`Pair`/`PoolManager` stubs from `tier3-oracle/artifacts/`,
 //! deployed as CREATE frames through the production-policy evm2 EVM and
 //! committed. The workload is one encoded V2 two-hop cycle
@@ -55,8 +59,8 @@
 //! # Usage
 //!
 //! ```sh
-//! cargo run --release -p degenbot-simulation --example sim_mode_bench \
-//!   --features evm2-jit -- [all|interp|jit-block|jit-pool|aot|replay|replay-jit]
+//! cargo run --release -p degenbot-engine-lab --features evm2-jit \
+//!   --bin sim_mode_bench -- [all|interp|jit-block|jit-pool|aot|replay|replay-jit]
 //! ```
 //!
 //! `SIM_BENCH_ITERS` sets the iteration count (default 100).
@@ -82,9 +86,9 @@ use degenbot_simulation::sim::evm2::jit::production_tuning;
 use degenbot_simulation::sim::frame_replay::{ReplayableTx, ScratchBlock};
 use degenbot_simulation::sim::RunVerdict;
 
-#[path = "shared/bench_corpus.rs"]
-mod bench_corpus;
-use bench_corpus::{bench_evm, build_corpus, Corpus, Deployed, BENCH_BASE_FEE, BENCH_BLOCK};
+use degenbot_engine_lab::bench_corpus::{
+    bench_evm, build_corpus, Corpus, CorpusError, Deployed, BENCH_BASE_FEE, BENCH_BLOCK,
+};
 
 /// The engine modes under measurement.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -308,11 +312,24 @@ fn post_upgrade_measure(
     Ok((wait_ms, post[post.len() / 2]))
 }
 
+/// Build the corpus into this binary's own error path: a fixture-class error (a
+/// committed artifact that will not read, decode, or parse) aborts at the
+/// stage's own message, while the runtime class (a reverted deploy or setup
+/// frame, an unencodable workload) stays the `String` a mode reports as
+/// `<mode> FAILED: <message>`.
+fn load_corpus(evm: &mut Evm<'_, BaseEvmTypes>) -> Result<Corpus, String> {
+    match build_corpus(evm) {
+        Ok((corpus, _path)) => Ok(corpus),
+        Err(CorpusError::Panic(message)) => panic!("{message}"),
+        Err(CorpusError::Failure(message)) => Err(message),
+    }
+}
+
 /// Run one mode end to end: fresh EVM, corpus build (untimed), optional AOT
 /// prep (timed, reported separately), then the timed discard loop.
 fn run_mode(mode: Mode, iters: usize, scratch: &ScratchDir) -> Result<ModeReport, String> {
     let mut evm = bench_evm(false);
-    let (corpus, _path) = build_corpus(&mut evm)?;
+    let corpus = load_corpus(&mut evm)?;
     if mode.is_replay() {
         return run_replay_mode(mode, iters, &corpus, &mut evm);
     }

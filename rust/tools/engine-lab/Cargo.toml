@@ -93,7 +93,7 @@ required-features = ["evm2-jit"]
 # decision instrument): a latency-injecting RPC stand-in measures where cold
 # storage misses cost wall time and whether N fibers overlap them. It compiles
 # no JIT program, so it declares no `required-features`: the default lane builds
-# and runs it, and `evm2-jit` remains the capture probe's own forward.
+# and runs it, and `evm2-jit` remains the lane the JIT-gated targets open.
 [[bin]]
 name = "cold_miss_fanout_probe"
 path = "src/bin/cold_miss_fanout_probe/main.rs"
@@ -103,7 +103,17 @@ path = "src/bin/cold_miss_fanout_probe/main.rs"
 # `&mut evm`, per-worker threads, per-candidate fibers on the batched-round
 # scheduler, and the warm re-drive -- with cross-leg verdict identity gated. It
 # compiles no JIT program either, so it declares no `required-features` and the
-# default lane builds and runs it; `evm2-jit` stays the capture probe's forward.
+# default lane builds and runs it; `evm2-jit` stays the JIT-gated targets' lane.
 [[bin]]
 name = "worker_fanout_probe"
 path = "src/bin/worker_fanout_probe/main.rs"
+
+# The ADR-089 phase-6 offline engine benchmark: one corpus, six engine modes
+# (interp / jit-block / jit-pool / aot / replay / replay-jit), first-run vs
+# steady-state latency, and the JIT backend's compile telemetry. Every mode
+# compiles or replays through the runner, so it is a `required-features` target
+# on the same lane the capture probe opened; a default check skips it.
+[[bin]]
+name = "sim_mode_bench"
+path = "src/bin/sim_mode_bench/main.rs"
+required-features = ["evm2-jit"]

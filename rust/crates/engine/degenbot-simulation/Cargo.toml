@@ -113,13 +113,6 @@ tokio = { version = "^1.54", features = ["rt", "sync"] }
 # feature (the same vendored fork as evm2).
 evm2-jit-build = { workspace = true, optional = true }
 
-# The phase-6 offline engine benchmark: all four modes need
-# the JIT runner, so the example builds only with the `evm2-jit` feature.
-[[example]]
-name = "sim_mode_bench"
-path = "examples/sim_mode_bench.rs"
-required-features = ["evm2-jit"]
-
 # The production executor's AOT prep lane: compiles
 # `rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt` into the durable artifact store
 # the process-shared JIT holder opens, and proves the artifact loads back as

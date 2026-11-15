@@ -504,7 +504,7 @@ test-fork: dev
 # JIT compile telemetry, with a cross-mode verdict-identity gate. Offline by
 # construction; the decision instrument for the AOT/worker-pool tasks.
 bench-sim-modes *ARGS:
-    cd rust && cargo run --locked --release -p degenbot-simulation --example sim_mode_bench --features evm2-jit -- {{ ARGS }}
+    cd rust && cargo run --locked --release -p degenbot-engine-lab --features evm2-jit --bin sim_mode_bench -- {{ ARGS }}
 
 # The production executor's AOT prep lane: compile
 # `rust/crates/foundation/degenbot-executor/releases/v2/deployment/cmd_executor_runtime_bytecode.txt` into the durable artifact store
