@@ -90,6 +90,19 @@ prometheus = ["degenbot-bot/hotpath-prometheus"]
 # swap events) survive OFF the `Inspector` hook, so compiled execution can
 # carry it? It needs the runner type, so it is a `required-features` target and
 # a default check skips it deliberately.
+# The parent-linked BAL carry-forward live probe: EVERY canonical block of the
+# captured corpus range advanced through the production decode/advance pipeline
+# (`ReadHubCache::advance_bal`) against a live node, with every candidate
+# anchor's carried values compared against INDEPENDENT cold-node reads at that
+# anchor. It compiles no JIT program, so it declares no `required-features`:
+# the default lane builds it, and `evm2-jit` remains the lane the JIT-gated
+# targets open.
+[[bin]]
+name = "bal_carry_probe"
+path = "src/bin/bal_carry_probe/main.rs"
+
+
+
 [[bin]]
 name = "capture_seam_probe"
 path = "src/bin/capture_seam_probe/main.rs"

@@ -265,6 +265,28 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         &["SIM_BENCH_ITERS"][..],
     );
 
+    // The live BAL carry-forward instrument, same class and same cause: it
+    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
+    // crate, so its five pre-existing per-run controls are now visible to the
+    // production-source scan. All five are that probe's documented invocation
+    // contract -- the recorded-trace path (`/tmp/fanout_trace.log`), the
+    // first/last corpus-block overrides, and the two endpoint names the live
+    // legs dial -- read once at start-up with the defaults they have always
+    // had (26375033..=26375053) and the same parse-and-fall-back behavior.
+    // None is an operator-config key: the readout is a live measurement, so
+    // routing them through the loader would hand a lab binary the config
+    // crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_carry_probe/main.rs",
+        &[
+            "BAL_CARRY_TRACE",
+            "BAL_CARRY_FIRST",
+            "BAL_CARRY_LAST",
+            "DEGENBOT_RPC_HTTP_CHAINID_1",
+            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+        ][..],
+    );
+
     // The session-scheduler fan-out instrument, same class and same cause: it
     // also left `examples/` for the engine-lab tool crate, so its seven
     // pre-existing per-run controls are now visible to the production-source

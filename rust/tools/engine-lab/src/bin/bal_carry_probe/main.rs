@@ -146,10 +146,13 @@ const SYNTHETIC_ENTRIES: usize = 100_000;
 /// The cold leg's batch member bound (one packet per chunk).
 const COLD_CHUNK: usize = 500;
 
-fn env_count(name: &str, fallback: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
+/// A per-run block override: the read value parsed as `u64`, or the recorded
+/// corpus default when absent or unparseable. The two call sites pass literal
+/// names (`BAL_CARRY_FIRST`, `BAL_CARRY_LAST`) because the env-read gate
+/// enumerates literal spellings, not computed ones.
+fn env_count(value: Option<String>, fallback: u64) -> u64 {
+    value
+        .and_then(|parsed| parsed.parse::<u64>().ok())
         .unwrap_or(fallback)
 }
 
@@ -225,8 +228,8 @@ fn percentile(series: &mut [Duration], percent: usize) -> Duration {
 async fn run() -> Result<(), String> {
     let total_started = Instant::now();
     let trace = std::env::var("BAL_CARRY_TRACE").unwrap_or_else(|_| DEFAULT_TRACE.into());
-    let first = env_count("BAL_CARRY_FIRST", FIRST_BLOCK);
-    let last = env_count("BAL_CARRY_LAST", LAST_BLOCK);
+    let first = env_count(std::env::var("BAL_CARRY_FIRST").ok(), FIRST_BLOCK);
+    let last = env_count(std::env::var("BAL_CARRY_LAST").ok(), LAST_BLOCK);
     let url = rpc_url()?;
     let rows = load_rows(&trace)?;
     let corpus = shape(&rows);
