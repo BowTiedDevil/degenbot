@@ -78,6 +78,21 @@ use degenbot_simulation::probe_support::real_coverage;
 use modeled_chain::{block_hash, read_selected, write_selected, ChainState, Coverage, StubChain};
 use real_coverage::{RealBlock, RealCoverage};
 
+/// A committed real-coverage capture's path. The capture stays at its committed
+/// simulation home; its path resolves from the marker-anchored repository root
+/// (`degenbot_engine_lab::paths`), never from `..` arithmetic off this
+/// package's manifest directory.
+fn real_coverage_fixture(name: &str) -> String {
+    let root = degenbot_engine_lab::paths::repo_root().expect("the repository root resolves");
+    let fixture = root
+        .join("rust/crates/engine/degenbot-simulation/tests/fixtures")
+        .join(name);
+    fixture
+        .to_str()
+        .map(str::to_string)
+        .expect("the committed capture's path is not utf-8")
+}
+
 /// The one account whose slots form the synthetic run's identities.
 const ADDRESS: Address = Address::new([0x21; 20]);
 
@@ -540,11 +555,8 @@ async fn main() {
 
     // The negative probe: one verified run with the skew armed must be CAUGHT.
     if planted {
-        let fixture = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/bal_real_coverage.json"
-        );
-        let real = RealCoverage::load(fixture).expect("the committed capture parses");
+        let fixture = real_coverage_fixture("bal_real_coverage.json");
+        let real = RealCoverage::load(&fixture).expect("the committed capture parses");
         let keys: BTreeSet<(Address, U256)> = (real.first()..=real.last())
             .flat_map(|number| real.writes_at(number).iter().copied())
             .collect();
@@ -568,18 +580,12 @@ async fn main() {
     // The correctness leg and the real-fixture measurements: both committed
     // captures, verified against independent cold reads at every anchor.
     for fixture in [
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/bal_real_coverage.json"
-        ),
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/bal_real_coverage_broader.json"
-        ),
+        real_coverage_fixture("bal_real_coverage.json"),
+        real_coverage_fixture("bal_real_coverage_broader.json"),
     ] {
-        let real = RealCoverage::load(fixture).expect("the committed capture parses");
+        let real = RealCoverage::load(&fixture).expect("the committed capture parses");
         let mismatches =
-            measure_driver(fixture, &real, false, &thresholds, true, read_selected).await;
+            measure_driver(&fixture, &real, false, &thresholds, true, read_selected).await;
         assert!(
             mismatches.is_empty(),
             "{}: {} mismatches vs cold reads: {:?}",
