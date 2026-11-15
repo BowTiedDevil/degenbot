@@ -1,7 +1,9 @@
-// Throwaway spike harness (StateView mechanism feasibility).
-// Lives only for this spike; deleted after supervisor sign-off per
-// docs/architecture/stateview-feasibility.md §7. Lint-exempt wholesale: it is
-// diagnostic-only and never ships.
+// Reusable budget-regression probe for the block-epoch data plane: the
+// StateView mechanism-feasibility harness. Synthetic in-memory
+// measurements over the production entry types (tickmap clone sweep vs N,
+// journal-replay materialization, Arc COW, V2 scalar costs, memory anchors,
+// RSS). Diagnostic-only and never ships; lint-exempt wholesale. The heavy
+// 1001-rep/large-memory matrix is a non-routine measurement, never a gate.
 #![expect(
     clippy::print_stdout,
     clippy::cast_precision_loss,

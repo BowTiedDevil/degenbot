@@ -18,7 +18,7 @@
 
 ### 1.1 Corpus locations (confirmed on disk)
 
-- Heavy concentrated-liquidity solver-replay corpus: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl.zst` (420 paths / 87 MB decoded; packaged 80 KB), referenced by `docs/rayon-parallelism-lab.md` and read transparently via `rust/crates/engine/degenbot-solvers/src/capture_fixture.rs` (`read_fixture`, `DEGENBOT_SOLVER_CAPTURE_*` producer knobs in `rust/crates/engine/degenbot-bot/src/arb_engine/solver_capture.rs`).
+- Heavy concentrated-liquidity solver-replay corpus: `rust/crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl.zst` (420 paths / 87 MB decoded; packaged 80 KB), referenced by `docs/rayon-parallelism-lab.md` and read transparently via `rust/crates/foundation/degenbot-pools/src/solve/fixtures.rs` (`read_fixture`, `DEGENBOT_SOLVER_CAPTURE_*` producer knobs in `rust/crates/engine/degenbot-bot/src/arb_engine/solver_capture.rs`).
 - Other committed captures: `heavy_mixed_solve_captures.jsonl.zst`, `live_capture_loop13/17.jsonl.zst`, `live_gatebursts_mixed.jsonl`, `concentrated_liquidity_capture_offline.jsonl` (same fixture dir).
 - **Tickmap size distribution has no producer-side capture:** the solver captures record precomputed tick-*range* views, not raw map cardinalities. The authoritative size/mix source is therefore the live registry the captures are drawn from: the running bot's pool database (below), read `-readonly` beside the live WAL.
 
@@ -49,7 +49,7 @@ cargo build --release --manifest-path rust/Cargo.toml -p degenbot-solver-lab --b
 rust/target/release/stateview_feasibility_probe
 ```
 
-Harness: `rust/tools/solver-lab/src/bin/stateview_feasibility_probe/main.rs` (a default-lane binary of `degenbot-solver-lab`, no feature lane; throwaway; synthetic `HashMap<i32, TickInfo>` of the exact production entry type, 1001 timed reps per size, percentile = ceil-index).
+Harness: `rust/tools/solver-lab/src/bin/stateview_feasibility_probe/main.rs` (a default-lane binary of `degenbot-solver-lab`, no feature lane; the signed-off reusable budget-regression tool, kept — its heavy 1001-rep/large-memory matrix is a non-routine measurement, never executed by a routine gate; synthetic `HashMap<i32, TickInfo>` of the exact production entry type, 1001 timed reps per size, percentile = ceil-index).
 `TickInfo = { U128, i128, u64 }` = 48 B; `V3BlockDelta = 144 B`.
 
 ### 2.1 M1 — tickmap clone cost sweep vs N (mechanism (c) worst case: a full per-epoch map clone)
@@ -206,4 +206,4 @@ curl -s 'http://host.docker.internal:16686/api/traces?service=degenbot-bot&opera
 2. **262,144-entry (≈33 MB) superlinear clone anomaly** is real but reproduces only far outside the live distribution (max 1,536 entries). Should the registry ever host >10⁵-tick pools, revisit COW for that pool before cloning.
 3. DB read was taken read-only beside a live WAL; counts are point-in-time (2026-09-07) but the shape (p99 ≤ 22 ticks) has been stable across this epic's span.
 4. Rule leg-2 reasoning relies on structural write confinement (Streaming ↔ Resolved..Solved separation), which is the A+D hybrid's settled design (Q1/Q3), not a measurement — the measured `state_lock_wait` p99 ≤ 0.1 ms on 19.6 M events is the empirical bound available *above* it (i.e. before that confinement exists).
-5. The harness (`stateview_feasibility_probe.rs`) is committed and lint-exempted with a dated throwaway header; supervisor decision at 2UVG3E sign-off: KEEP it as the reusable budget-regression probe (deletion is no longer planned).
+5. The harness (`stateview_feasibility_probe`) is committed and lint-exempted as the signed-off **KEEP** — the reusable budget-regression probe (the supervisor's original sign-off decision; the historical throwaway/deletion-planned header is retired and the file now opens with this role). Its heavy 1001-rep/large-memory matrix stays a non-routine measurement, never executed by a routine gate.
