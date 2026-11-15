@@ -527,10 +527,12 @@ async fn benchmark(knobs: &Knobs, sizes: &[usize]) {
 /// The correctness leg: the committed real capture replayed through both
 /// representations, with the negative probe's skew armed or not.
 async fn correctness_leg(planted: bool) -> Vec<String> {
-    let fixture = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/bal_real_coverage.json"
-    );
+    let root = degenbot_engine_lab::paths::repo_root().expect("the committed capture resolves");
+    let fixture =
+        root.join("rust/crates/engine/degenbot-simulation/tests/fixtures/bal_real_coverage.json");
+    let fixture = fixture
+        .to_str()
+        .expect("the committed capture's path is utf-8");
     let real = RealCoverage::load(fixture).expect("the committed capture parses");
     let keys = delta_parity::real_keys(&real);
     let chain = ChainState::build_coverage(&keys, real.first(), real.last(), &real, Coverage::Real)

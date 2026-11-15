@@ -287,6 +287,28 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         ][..],
     );
 
+    // The offline BAL delta-snapshot instrument, same class and same cause:
+    // it also left `degenbot-simulation`'s `examples/` for the engine-lab tool
+    // crate, so its five pre-existing per-run controls are now visible to the
+    // production-source scan. All five are that probe's documented invocation
+    // knobs -- the planted-divergence negative control and the working-set
+    // matrix's four sizes/reps/lookups/depth bounds -- read once at start-up
+    // with the defaults they have always had (2500..1000000 sizes, 11 reps,
+    // 10000 lookups, depth 2) and the same parse-and-fall-back behavior. None
+    // is an operator-config key: the readout is a measurement, so routing them
+    // through the loader would hand a lab binary the config crate's dependency
+    // graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_delta_snapshot_probe/main.rs",
+        &[
+            "BAL_DELTA_PLANT_DIVERGENCE",
+            "BAL_DELTA_SIZES",
+            "BAL_DELTA_REPS",
+            "BAL_DELTA_LOOKUPS",
+            "BAL_DELTA_MAX_DEPTH",
+        ][..],
+    );
+
     // The session-scheduler fan-out instrument, same class and same cause: it
     // also left `examples/` for the engine-lab tool crate, so its seven
     // pre-existing per-run controls are now visible to the production-source

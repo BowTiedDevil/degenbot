@@ -101,7 +101,17 @@ prometheus = ["degenbot-bot/hotpath-prometheus"]
 name = "bal_carry_probe"
 path = "src/bin/bal_carry_probe/main.rs"
 
-
+# The full-clone versus delta-chain snapshot measurement: the same BAL
+# carry-forward advances driven through the production full-clone control
+# (`ReadHubCache::advance_bal`) and the parent-linked delta-chain prototype
+# (`DeltaSnapshotCache::advance_bal`) at realistic working-set sizes, with a
+# committed real-coverage correctness leg and a planted-divergence negative
+# probe. It compiles no JIT program, so it declares no `required-features`:
+# the default lane builds it, and `evm2-jit` remains the lane the JIT-gated
+# targets open.
+[[bin]]
+name = "bal_delta_snapshot_probe"
+path = "src/bin/bal_delta_snapshot_probe/main.rs"
 
 [[bin]]
 name = "capture_seam_probe"
