@@ -183,6 +183,27 @@ allow-star-arg-any = true
     "import-private-name",  # the demos intentionally import the private `degenbot._ffi` seam
     "too-many-statements-in-try-clause",  # the demo main's one guarded body is broad by design
 ]
+"scripts/publish_verify.py" = [
+    # The publication oracle, folded into the lint gate with only these
+    # deliberate relaxations (each verified live by `just lint-python-check`):
+    "any-type",   # cargo metadata / index entries are dynamic JSON payloads (see the `Json` alias)
+    "suspicious-subprocess-import",   # the oracle is a cargo driver; subprocess is the point
+    "subprocess-without-shell-equals-true",   # every argv is a fixed literal list built in this file
+    "suspicious-url-open-usage",   # the only urlopen targets are the crates.io URLs this file constructs
+    "print",   # a CLI oracle reports progress and failures on the console streams
+    "too-many-arguments",   # mirror_external's overlay paths + fetch-policy knobs are one deliberate surface the suite drives directly
+    "too-many-positional-arguments",   # _verify threads the run's phase state (root/overlay/mirror/packages) through one body
+    "too-many-branches",   # _verify is the run's linear phase orchestration under one lock; splitting adds plumbing, not behavior
+    "too-many-statements",   # _verify: same
+    "too-many-locals",   # _verify: same
+]
+"tests/test_publish_verify_oracle.py" = [
+    # The suite drives the real oracle script as a subprocess (the CLI seam is
+    # the behavior under test); each relaxation is verified live:
+    "suspicious-subprocess-import",   # the seam under test is a subprocess CLI
+    "subprocess-without-shell-equals-true",   # fixed literal argv lists ([sys.executable, _ORACLE, ...] / ["cargo", ...])
+    "start-process-with-partial-path",   # cargo resolves on PATH exactly as the oracle and every just recipe invoke it
+]
 
 [tool.pytest.ini_options]
 # Four workers keep local-node forks below the resource and RPC pressure that

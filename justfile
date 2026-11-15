@@ -1999,13 +1999,15 @@ lint-markdown:
 lint-markdown-check:
     npx --yes markdownlint-cli2@0.24.1 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
 
-# Lint Python files
+# Lint Python files. The publication oracle and its behavior suite are the
+# only scripts//tests/ members under the gate so far: coverage moves file by
+# file so historical scripts are fixed or consciously scoped, never swept in.
 lint-python:
-    uvx --with {{ ruff_version }} ruff check --fix src/ examples/
+    uvx --with {{ ruff_version }} ruff check --fix src/ examples/ scripts/publish_verify.py tests/test_publish_verify_oracle.py
     # ty must run under the project environment (it resolves third-party imports
     # and the degenbot stubs from the venv), so `uvx ty` cannot work; `--with`
     # installs it beside the venv, at the exact version `ty_version` pins.
-    {{ py_run }} --with {{ ty_version }} ty check --fix --no-progress src/
+    {{ py_run }} --with {{ ty_version }} ty check --fix --no-progress src/ scripts/publish_verify.py
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -2034,8 +2036,8 @@ lint-tripwire-ratchet:
     {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
 lint-python-check:
-    uvx --with {{ ruff_version }} ruff check src/ examples/
-    {{ py_run }} --with {{ ty_version }} ty check --no-progress src/
+    uvx --with {{ ruff_version }} ruff check src/ examples/ scripts/publish_verify.py tests/test_publish_verify_oracle.py
+    {{ py_run }} --with {{ ty_version }} ty check --no-progress src/ scripts/publish_verify.py
 
 # Report every lint/format tool pin against what this repo can install today.
 # Network-dependent by design (it asks uv / the npm registry), so an unreachable
@@ -2076,9 +2078,13 @@ dead-code:
 dead-code-deep:
     uvx vulture src/degenbot --min-confidence 60 --make-whitelist
 
-# Check Python formatting (read-only; fails on drift). Run `just format` to fix.
+# Check Python formatting (read-only; fails on drift). The population is the
+# staged hook's (prek.toml python-fmt-staged): every tracked python file,
+# executor/ excluded -- the same detector over the same set a commit can
+# carry, so the push sweep and the commit hook can never disagree about a
+# tracked file. Run `just format` to fix.
 fmt-check-python:
-    uvx --with {{ ruff_version }} ruff format --check src/
+    git ls-files -z '*.py' | grep -zv '^executor/' | xargs -0 -r uvx --with {{ ruff_version }} ruff format --check
 
 # Lint commit messages across a range (default: everything not yet pushed).
 # Examples: just lint-commits              # @{push}..HEAD
@@ -2106,7 +2112,7 @@ lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
 
 # Format all code
 format: check-toolchain
-    uvx --with {{ ruff_version }} ruff format src/
+    git ls-files -z '*.py' | grep -zv '^executor/' | xargs -0 -r uvx --with {{ ruff_version }} ruff format
     cargo fmt --manifest-path rust/Cargo.toml --all
 
 # ========== Dependency Updates ==========

@@ -171,7 +171,8 @@ hooks = [
   #    upstream tracking ref instead (mirrors `just lint-commits`).
   #
   # 3. Whole-tree format sweeps — `just fmt-check` (cargo fmt --all) and
-  #    `just fmt-check-python` (ruff format --check src/). Moved here from
+  #    `just fmt-check-python` (the tracked python tree, executor/ excluded —
+  #    the population the staged python-fmt-staged hook slices). Moved here from
   #    pre-commit: a tree sweep at commit time examined untracked files other
   #    lanes left mid-flight (prek's stash parks tracked-unstaged changes but
   #    leaves untracked files alone) and blocked clean commits. The commit's

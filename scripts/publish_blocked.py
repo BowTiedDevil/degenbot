@@ -101,7 +101,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess  # ruff: ignore[suspicious-subprocess-import]
+import subprocess
 import sys
 from pathlib import Path
 
@@ -124,7 +124,7 @@ def load_members(manifest: Path) -> tuple[list[dict], set[str]]:
     Refuses (SystemExit 2) on anything but a conclusive read: a workspace this
     gate cannot enumerate is a workspace it must not certify.
     """
-    proc = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+    proc = subprocess.run(
         [
             "cargo",
             "metadata",

@@ -11,7 +11,10 @@ _repo_root = Path(__file__).resolve().parents[1]
 try:
     _proj = tomllib.loads((_repo_root / "pyproject.toml").read_text())
     project = _proj["project"]["name"]
-    author = ", ".join(_proj["project"]["authors"].get(i, {}).get("name", "") for i in range(3)) or "degenbot contributors"
+    author = (
+        ", ".join(_proj["project"]["authors"].get(i, {}).get("name", "") for i in range(3))
+        or "degenbot contributors"
+    )
     # release = the full stored version; version = short major.minor for the
     # sidebar. pyproject is canonical (ADR-009 single-source-of-truth).
     release = _proj["project"]["version"]
@@ -78,8 +81,8 @@ suppress_warnings = [
     "ref.python",
     # generated API pages only: live .py docstrings contain tables/indent
     # shapes that trip rst definition-list rendering in autoapi's output
-    "docutils",               # existing files have h2/h3 skips
-    "misc.highlighting_failure", # pre-tool 'mermaid' fences + pygments lacking a lexer for the 'solidity' snippets in docs/aave
+    "docutils",  # existing files have h2/h3 skips
+    "misc.highlighting_failure",  # pre-tool 'mermaid' fences + pygments lacking a lexer for the 'solidity' snippets in docs/aave
 ]
 
 # The Rust core is documented on docs.rs, not here (degenbot_rs is
@@ -90,8 +93,13 @@ intersphinx_mapping = {
 
 templates_path = ["_templates"]
 exclude_patterns = [
-    "_build", "Thumbs.db", ".DS_Store",
-    "handoffs/*", "tasks/*", "gate-viz/*", "grafana/provisioning/*",
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "handoffs/*",
+    "tasks/*",
+    "gate-viz/*",
+    "grafana/provisioning/*",
     # untitled ergo-task artifacts; releases/ carries the site copy
     "release-notes/*",
 ]

@@ -76,8 +76,10 @@ def main() -> int:
             print(f"{name:<46} {'(no samples)':>10}")
             continue
         cells = [pct(buckets, count, q) for q in (0.5, 0.9, 0.95, 0.99)]
+
         def fmt(x):
             return f"{x:g}" if x is not None else "?"
+
         print(
             f"{name:<46} {int(count):>10} {fmt(cells[0]):>8} {fmt(cells[1]):>8} "
             f"{fmt(cells[2]):>8} {fmt(cells[3]):>8}  (sum={ssum:g}s)"

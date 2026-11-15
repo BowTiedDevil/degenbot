@@ -19,7 +19,6 @@ Regenerate candidate entries from a clean tree with:
     vulture src/degenbot --min-confidence 80 --make-whitelist
 """
 
-
 dialect  # database/models/base.py: SQLAlchemy TypeDecorator.process_bind_param signature (framework-required)
 exc_type  # provider/__init__.py + provider/sync.py: __exit__ context-manager protocol parameter
 exc_val  # provider/__init__.py + provider/sync.py: __exit__ context-manager protocol parameter

@@ -188,7 +188,7 @@ class _LoopbackRegistry:
         outer = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
-            def log_message(self, format: str, *args: object) -> None:
+            def log_message(self, format_: str, *args: object) -> None:
                 pass
 
             def do_GET(self) -> None:
@@ -505,7 +505,10 @@ def test_a_packing_dev_cycle_still_covers_every_member(tmp_path: Path) -> None:
     tree = _lockstep_tree(
         tmp_path,
         {
-            "pubfix-db": "[dependencies]\npubfix-math.workspace = true\n\n[dev-dependencies]\npubfix-pools.workspace = true\n",
+            "pubfix-db": (
+                "[dependencies]\npubfix-math.workspace = true\n\n"
+                "[dev-dependencies]\npubfix-pools.workspace = true\n"
+            ),
             "pubfix-math": "",
             "pubfix-pools": "[dependencies]\npubfix-uniswap.workspace = true\n",
             "pubfix-uniswap": "[dependencies]\npubfix-db.workspace = true\n",
@@ -767,7 +770,7 @@ def test_the_no_verify_mirror_skips_crate_downloads(tmp_path: Path) -> None:
         hits = list(registry.hits)
     finally:
         registry.stop()
-    assert message == ""
+    assert not message
     assert hits == ["/pu/bf/pubfix-leaf"]
     overlay = tree / "rust" / "target" / "publish-verify-overlay" / "run-x"
     assert (overlay / "index" / "pu" / "bf" / "pubfix-leaf").is_file()
@@ -801,7 +804,7 @@ def test_the_verified_mirror_downloads_the_locked_crate(tmp_path: Path) -> None:
         )
     finally:
         registry.stop()
-    assert message == ""
+    assert not message
     link = (
         tree
         / "rust"
@@ -906,7 +909,7 @@ def test_concurrent_runs_on_distinct_trees_stay_independent(tmp_path: Path) -> N
         for tree in trees
     ]
     outputs = [process.communicate(timeout=290) for process in processes]
-    for process, (out, err) in zip(processes, outputs):
+    for process, (out, err) in zip(processes, outputs, strict=True):
         assert process.returncode == 0, out + err
         for name in ("pubfix-leaf", "pubfix-mid", "pubfix-top"):
             assert f"publish-verify covered {name}" in out
@@ -941,7 +944,7 @@ def test_two_concurrent_same_tree_runs_serialize_and_both_cover(
         for _ in range(2)
     ]
     outputs = [process.communicate(timeout=580) for process in processes]
-    for process, (out, err) in zip(processes, outputs):
+    for process, (out, err) in zip(processes, outputs, strict=True):
         assert process.returncode == 0, out + err
         for name in members:
             assert f"publish-verify covered {name}" in out
