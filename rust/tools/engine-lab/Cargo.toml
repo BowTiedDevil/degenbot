@@ -97,3 +97,13 @@ required-features = ["evm2-jit"]
 [[bin]]
 name = "cold_miss_fanout_probe"
 path = "src/bin/cold_miss_fanout_probe/main.rs"
+
+# The per-worker EVM fan-out probe (the ADR-089 concurrency-trio decision
+# instrument): one dispatch fan-out driven four ways -- serial over a shared
+# `&mut evm`, per-worker threads, per-candidate fibers on the batched-round
+# scheduler, and the warm re-drive -- with cross-leg verdict identity gated. It
+# compiles no JIT program either, so it declares no `required-features` and the
+# default lane builds and runs it; `evm2-jit` stays the capture probe's forward.
+[[bin]]
+name = "worker_fanout_probe"
+path = "src/bin/worker_fanout_probe/main.rs"

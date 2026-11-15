@@ -75,14 +75,12 @@ use ::evm2::{BaseEvmTypes, Evm, EvmFeatures, ExecutionConfig, Precompiles, SpecI
 use degenbot_execution::{HopInfo, PathInfo, V2HopInfo};
 use degenbot_executor::composers::{EncodeContext, EncodeOptions, EncodeRequest};
 
-// The shared fixture is a toolbox wider than this probe's corpus (its
-// single-frame builder half stays unused here); the module is included per
-// example, so its unused items are per-unit noise, not dead code.
-#[expect(dead_code)]
-#[path = "shared/bench_corpus.rs"]
-mod bench_corpus;
-
-use bench_corpus::{bench_evm, deploy, envelope, Deployed, BENCH_BASE_FEE, BENCH_BLOCK, DEPLOYER};
+// The corpus support is the engine-lab library's own module: the deployment,
+// the seeding, and the replayed frame's envelope live there, so every engine
+// instrument builds one corpus from one implementation.
+use degenbot_engine_lab::bench_corpus::{
+    bench_evm, deploy, envelope, CorpusError, Deployed, BENCH_BASE_FEE, BENCH_BLOCK, DEPLOYER,
+};
 
 alloy::sol! {
     /// The harness stubs' funding + seed surface (the bench corpus's stubs).
@@ -453,6 +451,23 @@ fn take(nonce: &mut u64) -> u64 {
     n
 }
 
+/// Deploy through the shared corpus support, keeping this probe's own error
+/// path: a runtime-class failure — a reverted create, no created address, no
+/// runtime code — is the `String` its corpus builders report, while a
+/// fixture-class failure (a committed artifact that will not read, decode, or
+/// parse) panics at the stage's own message, as every artifact read here does.
+fn deploy_artifact(
+    evm: &mut Evm<'static, BaseEvmTypes>,
+    creation: Vec<u8>,
+    nonce: u64,
+) -> Result<Deployed, String> {
+    match deploy(evm, Bytes::from(creation), nonce) {
+        Ok(deployed) => Ok(deployed),
+        Err(CorpusError::Failure(message)) => Err(message),
+        Err(CorpusError::Panic(message)) => panic!("{message}"),
+    }
+}
+
 fn load_hex(rel: &str) -> Vec<u8> {
     let raw = std::fs::read_to_string(repo_root().join(rel))
         .unwrap_or_else(|e| panic!("read {rel}: {e}"));
@@ -472,8 +487,12 @@ fn load_stub_creation(name: &str) -> Vec<u8> {
         .unwrap_or_else(|e| panic!("parse {name}: {e}"))
 }
 
+/// The repository root, resolved from markers rather than manifest-relative
+/// `..` arithmetic: this package sits at `rust/tools/<package>`, where that
+/// chain names an existing directory and would read a stranger's fixtures
+/// instead of failing.
 fn repo_root() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../..")
+    degenbot_engine_lab::paths::repo_root().expect("resolve the repository root")
 }
 
 /// A V2 constant-product output quote (0.3% fee).
@@ -505,12 +524,8 @@ fn call_commit(
 /// The shared hot set, deployed once (production shape) or per candidate
 /// (the disjoint upper bound).
 fn deploy_world(setup: &mut Evm<'static, BaseEvmTypes>, nonce: &mut u64) -> Result<World, String> {
-    let weth = deploy(setup, Bytes::from(load_stub_creation("Token")), take(nonce))?;
-    let pool_manager = deploy(
-        setup,
-        Bytes::from(load_stub_creation("PoolManager")),
-        take(nonce),
-    )?;
+    let weth = deploy_artifact(setup, load_stub_creation("Token"), take(nonce))?;
+    let pool_manager = deploy_artifact(setup, load_stub_creation("PoolManager"), take(nonce))?;
     let mut executor_init = load_hex(
         "rust/crates/foundation/degenbot-executor/releases/v2/artifacts/cmd_executor.creation.hex",
     );
@@ -523,7 +538,7 @@ fn deploy_world(setup: &mut Evm<'static, BaseEvmTypes>, nonce: &mut u64) -> Resu
         )
             .abi_encode(),
     );
-    let executor = deploy(setup, Bytes::from(executor_init), take(nonce))?;
+    let executor = deploy_artifact(setup, executor_init, take(nonce))?;
     call_commit(
         setup,
         DEPLOYER,
@@ -602,9 +617,9 @@ fn build_candidate(
     world: &World,
     knob: Knob,
 ) -> Result<Candidate, String> {
-    let token = deploy(setup, Bytes::from(load_stub_creation("Token")), take(nonce))?;
-    let pair_a = deploy(setup, Bytes::from(load_stub_creation("Pair")), take(nonce))?;
-    let pair_b = deploy(setup, Bytes::from(load_stub_creation("Pair")), take(nonce))?;
+    let token = deploy_artifact(setup, load_stub_creation("Token"), take(nonce))?;
+    let pair_a = deploy_artifact(setup, load_stub_creation("Pair"), take(nonce))?;
+    let pair_b = deploy_artifact(setup, load_stub_creation("Pair"), take(nonce))?;
 
     // pair_a prices TKN at 1 WETH, pair_b at 2 — the dislocation the cycle
     // harvests. The depth knobs leave one pool unseeded (its swap reverts):

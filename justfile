@@ -520,7 +520,7 @@ aot-prepare-executor *ARGS:
 # identity gate. Offline by construction; the decision instrument for the
 # ADR-089 concurrency-trio item 4 prototype.
 worker-fanout-probe *ARGS:
-    cd rust && cargo run --locked --release -p degenbot-simulation --example worker_fanout_probe -- {{ ARGS }}
+    cd rust && cargo run --locked --release -p degenbot-engine-lab --bin worker_fanout_probe -- {{ ARGS }}
 
 
 # The session-scheduler captured-data benchmark (ADR-089 concurrency trio): the
@@ -1171,7 +1171,8 @@ check-dev-tools *lanes:
                                encode_three_hop -- and solver-lab builds
                                synth_corpus_gen and stateview_feasibility_probe
                                here, and engine-lab builds its lib plus
-                               cold_miss_fanout_probe)
+                               cold_miss_fanout_probe and
+                               worker_fanout_probe)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
@@ -1199,7 +1200,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, solver-lab builds synth_corpus_gen and stateview_feasibility_probe, and engine-lab builds cold_miss_fanout_probe)"
+        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, solver-lab builds synth_corpus_gen and stateview_feasibility_probe, and engine-lab builds cold_miss_fanout_probe and worker_fanout_probe)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets

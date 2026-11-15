@@ -127,20 +127,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &["DEGENBOT_RPC_HTTP_CHAINID_1"][..],
         );
 
-        // The cold-miss fan-out instrument, same class and same cause: it left
-        // `degenbot-simulation`'s `examples/` (skipped as a test surface) for the
-        // engine-lab tool crate, so its two pre-existing per-run controls are now
-        // visible to the production-source scan. Both are the probe's documented
-        // invocation defaults -- the modeled RPC round-trip latency and the frame
-        // count N -- read once at start-up with the same defaults (200 us, 8) and
-        // the same parse-and-fall-back behavior they have always had. Neither is an
-        // operator-config key: the readout is a measurement, so routing them
-        // through the loader would hand a lab binary the config crate's dependency
-        // graph for no behavioral gain.
-        m.insert(
-            "tools/engine-lab/src/bin/cold_miss_fanout_probe/main.rs",
-            &["COLD_MISS_LATENCY_US", "COLD_MISS_FRAMES"][..],
-        );
+        insert_engine_lab_entries(&mut m);
 
         insert_solver_lab_entries(&mut m);
 
@@ -215,6 +202,54 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
 
         m
     })
+}
+
+/// The engine-lab entries, inserted into the same map the Rust scan reads. A
+/// separate builder for the same reason as the two below: the fan-out
+/// instruments share one relocation story, and holding them apart keeps each
+/// registry readable.
+fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
+    // The cold-miss fan-out instrument, same class and same cause: it left
+    // `degenbot-simulation`'s `examples/` (skipped as a test surface) for the
+    // engine-lab tool crate, so its two pre-existing per-run controls are now
+    // visible to the production-source scan. Both are the probe's documented
+    // invocation defaults -- the modeled RPC round-trip latency and the frame
+    // count N -- read once at start-up with the same defaults (200 us, 8) and
+    // the same parse-and-fall-back behavior they have always had. Neither is an
+    // operator-config key: the readout is a measurement, so routing them
+    // through the loader would hand a lab binary the config crate's dependency
+    // graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/cold_miss_fanout_probe/main.rs",
+        &["COLD_MISS_LATENCY_US", "COLD_MISS_FRAMES"][..],
+    );
+
+    // The per-worker fan-out instrument, same class and same cause: it also
+    // left `examples/` for the engine-lab tool crate, so its ten pre-existing
+    // per-run controls are now visible to the production-source scan. All ten
+    // are that probe's documented invocation knobs -- the two modeled
+    // round-trip prices, the candidate and worker counts, the corpus shape, the
+    // recorded-trace path and its chunk size, and the three diagnostic
+    // switches -- read once at start-up with the defaults they have always had
+    // (700 us, 1200 us, 21 candidates, 2 workers, `production`) and the same
+    // parse-and-fall-back behavior. None is an operator-config key: the readout
+    // is a measurement, so routing them through the loader would hand a lab
+    // binary the config crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/worker_fanout_probe/main.rs",
+        &[
+            "COLD_MISS_LATENCY_US",
+            "WORKER_FANOUT_ACCOUNT_US",
+            "WORKER_FANOUT_CANDIDATES",
+            "WORKER_FANOUT_WORKERS",
+            "WORKER_FANOUT_SHAPE",
+            "WORKER_FANOUT_TRACE",
+            "WORKER_FANOUT_DEBUG",
+            "WORKER_FANOUT_PLANT_DIVERGENCE",
+            "WORKER_FANOUT_TRACE_CHUNK",
+            "WORKER_FANOUT_EXEC_SLEEP",
+        ][..],
+    );
 }
 
 /// The solver-lab entries, inserted into the same map the Rust scan reads. A
