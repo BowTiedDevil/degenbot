@@ -24,6 +24,17 @@ of the script's logic.
     a versioned git dep is excluded by name while the rest stay covered.
   * ``test_an_unrecorded_block_fails_the_oracle_loud`` -- a withheld member
     with no census row fails the run before any cargo invocation.
+  * ``test_a_fresh_run_verifies_every_pending_member``,
+    ``test_a_resumed_run_verifies_only_pending_members_against_live_siblings``,
+    and ``test_a_fully_live_run_skips_every_verification_round`` -- the three
+    audit shapes release.yml's pre-publish step drives. The RESOLUTION set
+    (every member packed and indexed in the overlay) is independent of the
+    VERIFICATION set (the per-member publish rounds): a live member forwarded
+    as cargo's own ``--exclude`` keeps resolving its dependents through the
+    overlay while skipping its own round, a fresh run verifies every pending
+    member, a fully live call runs no round, and an unknown exclusion fails
+    loud before any packing (the ``--exclude=<name>`` form parses like the
+    separated one).
   * ``test_the_member_entry_matches_the_packed_crate_checksum`` -- the overlay
     indexes members from their own packaged artifacts: the entry's checksum is
     the packed ``.crate``'s checksum, and the entry's dependencies are the
@@ -302,6 +313,143 @@ def test_the_oracle_verifies_a_fresh_lockstep_workspace(tmp_path: Path) -> None:
     # Cargo's status lines (Verifying/Compiling/Uploading) stream on stderr.
     assert "Verifying" in result.stderr
     assert "aborting upload due to dry run" in result.stderr
+
+
+def test_a_fresh_run_verifies_every_pending_member(tmp_path: Path) -> None:
+    """Fresh tag shape: nothing is live, so every pending member is verified.
+
+    release.yml's pre-publish step forwards no ``--exclude`` when the audit
+    reports no live members; the run verifies all of them.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+            "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    result = _oracle(tree)
+    assert result.returncode == 0, result.stdout + result.stderr
+    verified = sorted(
+        line.split()[1]
+        for line in result.stderr.splitlines()
+        if line.strip().startswith("Verifying pubfix-")
+    )
+    assert verified == ["pubfix-leaf", "pubfix-mid", "pubfix-top"]
+
+
+def test_a_resumed_run_verifies_only_pending_members_against_live_siblings(
+    tmp_path: Path,
+) -> None:
+    """Resumed tag shape: live siblings resolve, only pending members verify.
+
+    The release step forwards the audit's live members as cargo's own
+    ``--exclude`` spelling. The run keeps the excluded member in the
+    resolution set -- it is still packed and indexed, so the pending member's
+    rewritten manifest (which requires it at the lockstep version crates.io
+    actually holds live) resolves through the overlay -- but its own verify
+    round is skipped: an already-live member cannot be re-uploaded, and
+    re-verifying it is exactly what makes a resumed re-run expensive. The run
+    passing while pubfix-mid (whose published manifest requires pubfix-leaf)
+    is the proof that resolution against a live sibling survives exclusion.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+            "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    result = _oracle(tree, "--exclude", "pubfix-leaf")
+    assert result.returncode == 0, result.stdout + result.stderr
+    # resolution set: the live sibling is still packed and indexed
+    for name in ("pubfix-leaf", "pubfix-mid", "pubfix-top"):
+        assert f"publish-verify covered {name}" in result.stdout
+    assert "publish-verify resolution-only pubfix-leaf v0.1.0" in result.stdout
+    # verification set: only the pending members get a publish round
+    assert "Verifying pubfix-leaf" not in result.stderr
+    assert "Verifying pubfix-mid" in result.stderr
+    assert "Verifying pubfix-top" in result.stderr
+    assert result.stderr.count("aborting upload due to dry run") == 2
+
+
+def test_a_fully_live_run_skips_every_verification_round(tmp_path: Path) -> None:
+    """Fully-live tag shape: nothing verifies; nothing uploads; the run passes.
+
+    Every publishable member is already live at this version, so the release
+    step normally exits before invoking the oracle at all; this pins the
+    oracle's own contract should it still see an all-excluded call: all
+    members stay in the resolution set (packed and indexed) and no
+    verification round runs.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+            "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    result = _oracle(
+        tree,
+        "--exclude",
+        "pubfix-leaf",
+        "--exclude",
+        "pubfix-mid",
+        "--exclude",
+        "pubfix-top",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name in ("pubfix-leaf", "pubfix-mid", "pubfix-top"):
+        assert f"publish-verify covered {name}" in result.stdout
+        assert f"publish-verify resolution-only {name} v0.1.0" in result.stdout
+    assert "Verifying" not in result.stderr
+    assert "aborting upload due to dry run" not in result.stderr
+
+
+def test_an_unknown_exclusion_fails_loud_before_packing(tmp_path: Path) -> None:
+    """``--exclude`` of a name outside the workspace fails before any packing.
+
+    Mirrors cargo's own package-selection behavior: an exclusion that matches
+    no member would silently verify-or-skip the wrong set, so the run names
+    the offender and dies before the first ``cargo package``.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    result = _oracle(tree, "--no-verify", "--exclude", "pubfix-ghost")
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "pubfix-ghost" in output
+    # refused before any cargo packaging, not after a partial run
+    assert "publish-verify covered" not in output
+
+
+def test_an_exclusion_accepts_the_equals_form(tmp_path: Path) -> None:
+    """``--exclude=<name>`` parses like the separated form (and like the
+    retargeting-flag refusal does for its own spellings)."""
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    result = _oracle(tree, "--no-verify", "--exclude=pubfix-leaf")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "publish-verify resolution-only pubfix-leaf v0.1.0" in result.stdout
+    assert "publish-verify resolution-only pubfix-mid v0.1.0" not in result.stdout
 
 
 def test_a_stale_lock_fails_the_pack_without_rewriting_it(tmp_path: Path) -> None:

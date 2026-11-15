@@ -53,10 +53,30 @@ unchanged mtime second could otherwise be served as a stale 304).
 
 Members the census withholds (genuinely unresolvable external/git shapes) are
 excluded from the run by name and keep their file-inclusion coverage through
-`cargo package --list`, exactly as before. Everything else is verified
-(actually built, unless `--no-verify` is forwarded) against the overlay, and
-cargo aborts before any upload because the command stays a `--dry-run`. No
-token is read or required.
+`cargo package --list`, exactly as before. Everything else is packed and
+indexed; by default every such member is also verified (actually built, unless
+`--no-verify` is forwarded) against the overlay, and cargo aborts before any
+upload because the command stays a `--dry-run`. No token is read or required.
+
+The run separates two member sets. The RESOLUTION set is every publishable
+non-withheld member: each is packed and indexed from its own packaged form, so
+any member's rewritten manifest resolves against every sibling at the lockstep
+version -- which is what crates.io actually holds when a sibling is live. The
+VERIFICATION set is the members that get their own publish round. The release
+pre-publish step forwards cargo's own `--exclude <name>` flags for members the
+live-set audit (`crates_io_pending.sh --classify`) reports already live at this
+version; an exclusion moves a member out of the verification set only -- it
+stays in the resolution set, because an already-live member cannot be
+re-uploaded and re-verifying it is precisely what makes a resumed re-run
+expensive. A fresh tag forwards nothing, so every pending member verifies, and
+the release step exits before any packaging when the audit reports nothing
+pending. The flags cannot be forwarded to the rounds themselves: each round is
+one member (`cargo publish -p name`), where cargo refuses `--exclude` outright
+(`--exclude can only be used together with --workspace`), so the script
+consumes them and everything else (`--no-verify`) keeps forwarding. An
+`--exclude` naming a non-member fails loud before any packing, mirroring
+cargo's own package-selection error; census withholding is independent of and
+unchanged by exclusions.
 
 The overlay lives under `rust/target/` in a fresh per-run directory, so two
 runs never delete each other's served files; the mirror of external index
@@ -158,6 +178,38 @@ def reject_retargeting(extra: list[str]) -> None:
         flag = token.split("=", 1)[0]
         if flag in RETARGETING_FLAGS:
             fail(f"{flag} would retarget the overlay and cannot be forwarded")
+
+
+def split_exclusions(extra: list[str]) -> tuple[list[str], list[str]]:
+    """Split the caller's forwarded flags into exclusions and the rest.
+
+    `--exclude <name>` and `--exclude=<name>` are cargo's own workspace
+    publish spellings, and release.yml's pre-publish step forwards exactly the
+    flags its upload rounds carry. They cannot ride through to the rounds:
+    each round is one member (`cargo publish -p name`), where cargo refuses
+    `--exclude` outright, and plain forwarding would re-verify live members.
+    So this run consumes them -- everything else (`--no-verify`) keeps
+    forwarding -- and an excluded name keeps only its resolution-set
+    membership (see the module docstring). The returned names are validated
+    against the workspace before any packing; a value with no name fails here.
+    """
+    excluded: list[str] = []
+    rest: list[str] = []
+    index = 0
+    while index < len(extra):
+        token = extra[index]
+        if token == "--exclude":
+            if index + 1 >= len(extra):
+                fail("--exclude needs a member name")
+            excluded.append(extra[index + 1])
+            index += 2
+        elif token.startswith("--exclude="):
+            excluded.append(token.split("=", 1)[1])
+            index += 1
+        else:
+            rest.append(token)
+            index += 1
+    return excluded, rest
 
 
 def fail(message: str) -> None:
@@ -728,6 +780,7 @@ def main(argv: list[str]) -> int:
     )
     args, extra = parser.parse_known_args(argv)
     reject_retargeting(extra)
+    exclusions, extra = split_exclusions(extra)
     root = args.root.resolve()
     rust = root / "rust"
 
@@ -769,7 +822,23 @@ def main(argv: list[str]) -> int:
                 sys.stderr.write(meta.stderr)
                 return meta.returncode
             packages = {p["name"]: p for p in json.loads(meta.stdout)["packages"]}
-            return _verify(root, rust, overlay, mirror, packages, withheld, extra, cargo_env)
+            # Validate the exclusions the moment the workspace membership is
+            # known: an unknown name must fail loud before any packing, not
+            # surface as cargo's own selection error after a partial run.
+            unknown = sorted(set(exclusions) - set(packages))
+            if unknown:
+                fail("--exclude names no workspace member: " + ", ".join(unknown))
+            return _verify(
+                root,
+                rust,
+                overlay,
+                mirror,
+                packages,
+                withheld,
+                extra,
+                cargo_env,
+                exclusions=set(exclusions),
+            )
     finally:
         if not args.keep_overlay:
             shutil.rmtree(overlay, ignore_errors=True)
@@ -784,12 +853,16 @@ def _verify(
     withheld: list[str],
     extra: list[str],
     cargo_env: dict[str, str],
+    *,
+    exclusions: set[str],
 ) -> int:
     """Build the overlay, pack the covered members, publish each against it.
 
     Runs under the same-workspace lock (`main` holds it across the metadata,
     packing, and publish phases), and every cargo invocation carries the
-    run's own CARGO_HOME.
+    run's own CARGO_HOME. `exclusions` are members the caller removed from
+    the verification set: still packed and indexed (resolution set), never
+    given a publish round of their own.
     """
     no_verify = "--no-verify" in extra
     # The sparse-index config: cargo downloads `.crate` files straight off the
@@ -943,6 +1016,13 @@ def _verify(
                 f'source.{SOURCE_NAME}.registry="sparse+http://127.0.0.1:{publish_port}/index/"',
             ]
             for name in plan:
+                if name in exclusions:
+                    version = packages[name]["version"]
+                    print(
+                        f"publish-verify resolution-only {name} v{version}: "
+                        "--exclude keeps it in the overlay, no verify round"
+                    )
+                    continue
                 version = packages[name]["version"]
                 discard_stale_package(rust, name, version)
                 publish = run(

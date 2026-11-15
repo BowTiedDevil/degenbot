@@ -517,9 +517,23 @@ and its atomic cache writes are unchanged. External mirror fetches carry an
 explicit timeout, bounded retries with backoff, and a failure naming the
 crate and URL; in the `--no-verify` form only index metadata is mirrored,
 because cargo resolves a no-verify run from the index alone. The verification then runs one `cargo publish
---dry-run --registry crates-io` round per member, so nothing uploads and no
-token is read; the real `--workspace` upload rounds in release.yml are
-untouched.
+--dry-run --registry crates-io` round per member of the VERIFICATION set, so
+nothing uploads and no token is read; the real `--workspace` upload rounds in
+release.yml are untouched. The RESOLUTION set and the VERIFICATION set are
+distinct: every publishable non-withheld member is packed and indexed
+(resolution), while release.yml's pre-publish step forwards cargo's own
+`--exclude <name>` spelling — the same flags its upload rounds carry — for
+members the live-set audit reports already live, and the oracle consumes those
+flags instead of forwarding them (its rounds are one member each, where cargo
+refuses `--exclude` outright). An excluded member keeps its resolution-set
+membership — still packed and indexed, so a still-pending member's rewritten
+manifest resolves against the live sibling's packaged form — but gets no
+publish round of its own, because an already-live member cannot be re-uploaded
+and re-verifying it is precisely what makes a resumed re-run expensive. A fresh
+tag forwards nothing, so every pending member verifies, and the release step
+exits before any packaging when the audit reports nothing pending. An
+`--exclude` naming a non-member fails loud before any packing; census
+withholding is independent of and unchanged by exclusions.
 **Run it.** `just publish-dry-run` (verified) or `just publish-dry-run
 --no-verify` (the CI PR form). `tests/test_publish_verify_oracle.py` is the
 committed probe: it drives the real script with `--root` pointed at a
@@ -528,7 +542,11 @@ throwaway fresh-lockstep workspace, requires the plain publish to fail there
 itself, so the default suite never queries crates.io nor depends on whether
 the fixture names are registered), both dry-run modes to pass, a
 census-withheld member to stay excluded by name, an unrecorded block to fail
-loud, the member index entry to carry the packed crate's own checksum, and
+loud, the resolution/verification set split (a fresh run verifying every
+pending member, a resumed run verifying only pending members while a
+pending member still resolves against a live `--exclude`d sibling, a fully
+live call skipping every verification round, an unknown exclusion failing
+loud before any packing, and the `=` exclusion form), the member index entry to carry the packed crate's own checksum, and
 the network/lifecycle bounds above (bounded mirror fetches, `--no-verify`
 index-only mirroring, ephemeral ports, per-run overlay directories, and two
 runs proceeding independently at once), the process-state quarantine (a

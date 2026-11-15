@@ -432,9 +432,13 @@ jobs:
         # as absent there, and a job that trusts it re-uploads a version the
         # registry already holds (a hard error, never a no-op). The script exits
         # non-zero when the index cannot be read, so this step fails closed
-        # instead of guessing.
+        # instead of guessing (the step runs with -e, so a non-zero audit exit
+        # fails the job rather than reading as an empty audit). The pre-publish
+        # verification step below RE-READS the live set at its own point of use:
+        # the LLVM provisioning between the two steps takes minutes, and a
+        # member that became live meanwhile must not be verified or re-uploaded.
         run: |
-          set -o pipefail
+          set -euo pipefail
           audit="$(scripts/crates_io_pending.sh --classify)"
           printf '%s\n' "$audit" | sed 's/^/  crates.io: /'
           live=$(printf '%s\n' "$audit" | grep -c '^live ' || true)
@@ -481,13 +485,43 @@ jobs:
         # not live yet still resolves: the rewritten manifests resolve against
         # a temporary overlay registry holding the lock's external crates plus
         # every publishable member's packaged form. Nothing uploads and no
-        # token is read. Members the publish-blocked census withholds stay
-        # excluded, and the two non-publishable members (degenbot_rs and the
-        # execution sample) are skipped by cargo itself. Unlike the old
-        # live-audit scoping, already-live members verify too: a resuming
-        # re-run cannot re-upload them, but the verify is the same build a
-        # fresh tag pays, so the step stays one code path for both shapes.
-        run: python3 scripts/publish_verify.py
+        # token is read. Members the publish-blocked census withholds keep
+        # their explicit exclusion and `cargo package --list` coverage, and the
+        # two non-publishable members (degenbot_rs and the execution sample)
+        # are skipped by cargo itself.
+        #
+        # Two member sets, one run. The RESOLUTION set is every publishable
+        # member the census does not withhold — already-live siblings
+        # included, because a still-pending member's rewritten manifest
+        # requires them at the lockstep version and crates.io holds their
+        # live form. The VERIFICATION set is the pending members only: an
+        # already-live member cannot be re-uploaded, and re-verifying it is
+        # exactly what makes a resuming re-run expensive. The live members are
+        # forwarded as cargo's own `--exclude` spelling — the same flags the
+        # publish rounds below carry — and the oracle consumes them: pack
+        # everything into the overlay, verify only the rest. A fully live tag
+        # exits here, before any packaging or compilation.
+        run: |
+          set -euo pipefail
+          audit="$(scripts/crates_io_pending.sh --classify)"
+          excludes=()
+          pending=0
+          live=0
+          while read -r state member; do
+            [ -n "$member" ] || continue
+            if [ "$state" = "live" ]; then
+              excludes+=(--exclude "$member")
+              live=$((live + 1))
+            else
+              pending=$((pending + 1))
+            fi
+          done <<< "$audit"
+          if [ "$pending" -eq 0 ]; then
+            echo "nothing to verify: every publishable member is already live at this version"
+            exit 0
+          fi
+          echo "verifying $pending pending member(s); $live already-live member(s) resolve-only"
+          python3 scripts/publish_verify.py "${excludes[@]}"
 
       - name: Publish (resumable across partial publishes; rate-limit rounds)
         # Publishing is a sequence of one-way registry writes: an attempt that dies
