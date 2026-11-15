@@ -3,8 +3,8 @@
 //! :6772.
 //!
 //! Procedure (the exporter must be compiled in):
-//!   `DEGENBOT_HOTPATH=1` cargo run -p degenbot-bot \
-//!       --features hotpath-prometheus --example `hotpath_prometheus_probe`
+//!   `DEGENBOT_HOTPATH=1` cargo run -p degenbot-engine-lab \
+//!       --features prometheus --bin `hotpath_prometheus_probe`
 //!
 //! The probe installs the typed config from the process environment (the
 //! pure-Rust consumer path — `DEGENBOT_HOTPATH=1` maps to 'trace.hotpath'),

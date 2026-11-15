@@ -77,6 +77,20 @@ degenbot-bot = { workspace = true, optional = true }
 # The JIT runner the `evm2-jit` lane compiles and runs.
 evm2-jit = { workspace = true, optional = true }
 
+# The hotpath Prometheus probe's direct needs, all OPTIONAL and activated only
+# by `prometheus`: the typed config loader and stance install the probe runs
+# before constructing the guard, and the `hotpath` edge is the
+# `measure_block!` sample the probe records so the function-duration family
+# has data to scrape. The bot exporter itself arrives through the
+# `degenbot-bot` optional edge above (`degenbot-bot/hotpath-prometheus`); no
+# SQL-ledger, solver, or JIT feature rides along.
+degenbot-config = { workspace = true, optional = true }
+degenbot-substrate = { workspace = true, optional = true }
+# Same version posture as `degenbot-bot`'s own hotpath edge: macros resolve
+# with `default-features = false` (no-op stubs) and the exporter/threads/tokio
+# features unify through `degenbot-bot/hotpath-prometheus` in this lane.
+hotpath = { version = "^0.31.2", default-features = false, optional = true }
+
 [features]
 default = []
 
@@ -90,8 +104,16 @@ evm2-jit = ["dep:evm2-jit", "degenbot-simulation/evm2-jit"]
 
 # The bot profiler's Prometheus exporter lane (the guard's `/metrics` listener,
 # `degenbot-bot/hotpath-prometheus`). It is the exporter lane only: it is not
-# the pool profiling lane, which lives in `degenbot-solver-lab`.
-prometheus = ["degenbot-bot/hotpath-prometheus"]
+# the pool profiling lane, which lives in `degenbot-solver-lab`. It also
+# activates the probe's three direct optional edges (config, substrate,
+# hotpath) and the bot edge itself; nothing else in the package reaches them.
+prometheus = [
+    "dep:degenbot-bot",
+    "dep:degenbot-config",
+    "dep:degenbot-substrate",
+    "dep:hotpath",
+    "degenbot-bot/hotpath-prometheus",
+]
 
 # The JIT-composition probe: does the production capture (access-list slots +
 # swap events) survive OFF the `Inspector` hook, so compiled execution can
@@ -278,3 +300,16 @@ required-features = ["evm2-jit"]
 name = "aot_prepare_executor"
 path = "src/bin/aot_prepare_executor/main.rs"
 required-features = ["evm2-jit"]
+
+# The hotpath Prometheus exporter probe: the smallest end-to-end proof that a guard-enabled build serves
+# profiler metrics on the exporter port — installs the typed config from the
+# process environment, constructs the production `profiling::hotpath_guard`,
+# records one `measure_block!` sample, scrapes `/metrics` on the loopback, and
+# asserts the always-present process families plus the sampled function
+# family. It runs through the `DEGENBOT_HOTPATH=1` runtime gate and needs the
+# exporter compiled in, so it is a `required-features` target on the
+# `prometheus` lane: a default check compiles no exporter surface.
+[[bin]]
+name = "hotpath_prometheus_probe"
+path = "src/bin/hotpath_prometheus_probe/main.rs"
+required-features = ["prometheus"]

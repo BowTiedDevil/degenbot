@@ -33,8 +33,8 @@ curl -s http://127.0.0.1:6772/metrics | head
 Standalone proof without the bot:
 
 ```
-cd rust && DEGENBOT_HOTPATH=1 RUSTFLAGS=--cfg tokio_unstable cargo run -p degenbot-bot \
-    --features hotpath-prometheus --example hotpath_prometheus_probe
+cd rust && DEGENBOT_HOTPATH=1 RUSTFLAGS=--cfg tokio_unstable cargo run -p degenbot-engine-lab \
+    --features prometheus --bin hotpath_prometheus_probe
 ```
 
 ## Exporter configuration

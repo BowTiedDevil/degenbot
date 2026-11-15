@@ -16,15 +16,16 @@ described in §6.2. Seven fixture slices have landed since, all in task `03`:
 | `03f` | the concentrated-liquidity capture generator — `concentrated_liquidity_capture_gen` | §6.8 |
 | `03g` (`B4IKBC`) | the three-hop production-calldata helper — `encode_three_hop` (a recipe/staging row; no §6.x section of its own) | §4.2, §8.1, §8.2 |
 
-Cargo metadata now reports **10 example targets**, `degenbot-fixture-tools` reports its lib
+Cargo metadata now reports **9 example targets**, `degenbot-fixture-tools` reports its lib
 plus exactly **nine** `[[bin]]` targets, `degenbot-solver-lab` its lib plus exactly
-**eight**, and `degenbot-engine-lab` its lib plus exactly **seventeen** — fourteen default-lane
+**eight**, and `degenbot-engine-lab` its lib plus exactly **eighteen** — fourteen default-lane
 binaries (`bal_carry_probe`, `bal_candidate_scaling_probe`, `bal_delta_rounds_probe`,
 `bal_delta_snapshot_probe`, `bal_dispatch_scaling_probe`, `bal_head_lifecycle_probe`,
 `bal_live_acquisition_probe`, `bal_production_relevance_probe`, `bal_real_read_oracle_probe`,
 `bal_retention_probe`, `bal_wall_ceiling_probe`, `cold_miss_fanout_probe`,
 `session_fanout_probe`, `worker_fanout_probe`) beside `aot_prepare_executor`,
-`capture_seam_probe`, and `sim_mode_bench` under `required-features = ["evm2-jit"]`.
+`capture_seam_probe`, and `sim_mode_bench` under `required-features = ["evm2-jit"]` and
+`hotpath_prometheus_probe` under `required-features = ["prometheus"]`.
 No §4.2 row is still an example — no other recorder, no other program, and no other
 capture generator moved — and **no fixture byte changed** in any of the seven slices.
 Each offline participant was re-proved byte-identical by its own re-derivation (the two capture recipes plus, for the cassette
@@ -392,7 +393,7 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 | `worker_fanout_probe` | `degenbot-engine-lab` | engine-lab (05c, **landed**) | `tools/engine-lab/src/bin/worker_fanout_probe/main.rs` | Per-worker EVM fan-out probe (ADR-089 concurrency trio item 4): serial shared `&mut evm` vs per-worker threads vs per-candidate fibers vs warm fibers, cross-leg verdict identity gated | — (no `required-features`: the default lane builds and runs it) | offline — shape-matched corpus built in code; `WORKER_FANOUT_SHAPE`, `WORKER_FANOUT_CANDIDATES`, `WORKER_FANOUT_WORKERS`, `COLD_MISS_LATENCY_US`, `WORKER_FANOUT_ACCOUNT_US`; `WORKER_FANOUT_TRACE` optionally points at a recorded trace; the corpus comes from `degenbot_engine_lab::bench_corpus`, read anchors from `degenbot_engine_lab::paths` | stdout; `WORKER_FANOUT_PLANT_DIVERGENCE=1` must exit non-zero | `just worker-fanout-probe` (unchanged recipe name, `--release` posture and env controls; it now runs `-p degenbot-engine-lab --bin worker_fanout_probe`); bounded routine smoke `WORKER_FANOUT_CANDIDATES=2 WORKER_FANOUT_WORKERS=2 COLD_MISS_LATENCY_US=1 WORKER_FANOUT_ACCOUNT_US=1`, whose identity gate stays green — the default 21-candidate sweep is a non-routine measurement. Results' provenance `logs/bal_matched_parity_matrix.md`. Measurement, non-gating |
 | `bal_dispatch_scaling_probe` | `degenbot-engine-lab` | engine-lab (05h2, **landed**) | `tools/engine-lab/src/bin/bal_dispatch_scaling_probe/main.rs` | Controlled BAL dispatch-scaling probe: the production dispatch entry point over one scripted head, one candidate list, one deployment and one provider state, from one candidate to a burst fan-out, with only the storage representation varying | — (no `required-features`: the default lane builds it) | offline — scripted chain/market in source; `BAL_DISPATCH_SCALING_COUNTS`, `BAL_DISPATCH_SCALING_REPS`; the dispatch/chain/scaling support is the product-owned `degenbot_arbitrage::probe_support` (`dispatch_probe`/`dispatch_scaling`) consumed directly | stdout Markdown report; never asserts timing; **fails closed (exit 1)** on a broken fixture (wrong lane, cold control fetching a BAL, missing prefetch identity, missing read key, cross-lane verdict difference) | `just bal-dispatch-scaling-probe` (unchanged recipe name and `--release` posture; it now runs `-p degenbot-engine-lab --bin bal_dispatch_scaling_probe`); the durable scripted value-sensitive parity matrix is `crates/engine/degenbot-arbitrage/tests/bal_dispatch_scaling.rs`; regeneration notes `logs/bal_dispatch_scaling_result.md`, result `docs/architecture/bal-matched-parity-result.md` |
 | `bal_live_acquisition_probe` | `degenbot-engine-lab` | engine-lab (05i, **landed**) | `tools/engine-lab/src/bin/bal_live_acquisition_probe/main.rs` | Live reth BAL acquisition: what it costs to acquire ONE fixed historical block's EIP-7928 access list in both official representations, plus per-fan-out packet prices at that anchor | — (no `required-features`: the default lane builds it) | LIVE archive node (`TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` / `DEGENBOT_RPC_HTTP_CHAINID_1`); `BAL_ACQ_ANCHOR`, `BAL_ACQ_REPS`, `BAL_ACQ_CORPUS_COUNTS`; the dispatch/runtime support is the product-owned `degenbot_arbitrage::probe_support` (`dispatch_probe`/`dispatch_scaling`) consumed directly | stdout; writes nothing; seed-parity disagreement and settled-value mismatch are hard failures | `just bal-live-acquisition-probe` (unchanged recipe name, declared-RPC gate, `--release` posture and env controls; it now runs `-p degenbot-engine-lab --bin bal_live_acquisition_probe`); priced conclusions in `docs/architecture/bal-matched-parity-result.md`. **Live-only: compile lane in CI** |
-| `hotpath_prometheus_probe` | `degenbot-bot` | engine-lab (05) | `crates/engine/degenbot-bot/examples/hotpath_prometheus_probe.rs` | Smallest end-to-end proof that a guard-enabled build serves profiler metrics on `:6772`: installs the typed config from the environment, constructs the same guard the pump holds, scrapes `/metrics` and asserts the always-present process families plus a `measure_block!`-sampled family | `hotpath-prometheus` *(runtime-derived: the example declares no `required-features` in metadata today — task 05 must declare it on the new `[[bin]]`, see §4.7)* | offline but binds a local TCP port (`HOTPATH_PROMETHEUS_PORT`, default 6772); `DEGENBOT_HOTPATH=1` required | stdout; writes nothing; non-zero exit on any wiring breakage | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe`. No recipe and no test names it today — its CI obligation is the **Prometheus compile lane** (`just check-dev-tools --engine-prometheus`), documented in `docs/grafana/HOTPATH.md` |
+| `hotpath_prometheus_probe` | `degenbot-engine-lab` | engine-lab (05, **landed**) | `tools/engine-lab/src/bin/hotpath_prometheus_probe/main.rs` | Smallest end-to-end proof that a guard-enabled build serves profiler metrics on `:6772`: installs the typed config from the environment, constructs the same guard the pump holds, scrapes `/metrics` and asserts the always-present process families plus a `measure_block!`-sampled family | `prometheus` (manifest-declared: the replacement `[[bin]]` carries `required-features = ["prometheus"]`) | offline but binds a local TCP port (`HOTPATH_PROMETHEUS_PORT`, default 6772); `DEGENBOT_HOTPATH=1` required | stdout; writes nothing; non-zero exit on any wiring breakage | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe`. No recipe and no test names it today — its CI obligation is the **Prometheus compile lane** (`just check-dev-tools --engine-prometheus`), documented in `docs/grafana/HOTPATH.md` |
 
 ### 4.5 Assertion-only smoke → owning-crate integration tests (task 06, 2 rows)
 
@@ -500,22 +501,23 @@ Task `06` deletes four executables and converts two examples into integration te
 change must delete those six rows in the same edit; from then on the union is the three
 retainers plus the 35 tool binaries, and the count is that revision's, not `44`.
 
-### 4.7 Feature-column provenance — the one row that is not metadata-declared
+### 4.7 Feature-column provenance — the row that was not metadata-declared
 
-`hotpath_prometheus_probe` is the only row whose `Features` cell is not a Cargo
-`required-features` value: `cargo metadata` reports `required-features: null` for
-`degenbot-bot`'s example today, so its `hotpath-prometheus` need lives in the source and in
+`hotpath_prometheus_probe` was the only row whose `Features` cell was not a Cargo
+`required-features` value: `cargo metadata` reported `required-features: null` for
+`degenbot-bot`'s example, so its `hotpath-prometheus` need lived in the source and in
 the `DEGENBOT_HOTPATH=1` runtime wiring plus the `just check-dev-tools --engine-prometheus`
 compile lane, **not** in the manifest. No row may be described as metadata-declared that the
 metadata does not declare — that is exactly the kind of claim a later task inherits and
 trusts.
 
-Task 05 makes the declaration real when it lands the replacement binary: the new `[[bin]]
+Task 05 landed the declaration with the replacement binary: the `[[bin]]
 hotpath_prometheus_probe` in `rust/tools/engine-lab/Cargo.toml` carries
 `required-features = ["prometheus"]`, forwarding
-`prometheus = ["degenbot-bot/hotpath-prometheus"]`. Until that lands, the row stays marked
-*(runtime)* and its CI obligation remains the Prometheus compile lane rather than an
-execution claim.
+`prometheus = ["dep:degenbot-bot", "dep:degenbot-config", "dep:degenbot-substrate",
+"dep:hotpath", "degenbot-bot/hotpath-prometheus"]`. The row is metadata-declared now; its
+CI obligation remains the Prometheus compile lane (`just check-dev-tools --engine-prometheus`),
+and execution claims come only from bounded local scrape runs.
 
 ## 5. The six review dispositions
 
@@ -1701,7 +1703,7 @@ contributor, a doc, or the pre-push hook types.
 | `cargo run --release -p degenbot-simulation --example bal_candidate_scaling_probe` | `cargo run --release -p degenbot-engine-lab --bin bal_candidate_scaling_probe` (wrapped by `just bal-candidate-scaling-probe`; no feature lane — it declares no `required-features`, and its scaling-model support is the product-owned `degenbot_simulation::probe_support`) | 05g1 — **landed** |
 | `cargo run --release -p degenbot-simulation --example bal_wall_ceiling_probe` | `cargo run --release -p degenbot-engine-lab --bin bal_wall_ceiling_probe` (wrapped by `just bal-wall-ceiling-probe`; no feature lane — it declares no `required-features`, and its chain/corpus/coverage/session/ledger/report support is the product-owned `degenbot_simulation::probe_support`; the default real-coverage fixture is rooted through `degenbot_engine_lab::paths::repo_root()`) | 05g2 — **landed** |
 | `cargo run --release -p degenbot-arbitrage --example bal_dispatch_scaling_probe` | `cargo run --release -p degenbot-engine-lab --bin bal_dispatch_scaling_probe` (wrapped by `just bal-dispatch-scaling-probe`; no feature lane — it declares no `required-features`, and its dispatch/chain/scaling support is the product-owned `degenbot_arbitrage::probe_support`) | 05h2 — **landed** |
-| `DEGENBOT_HOTPATH=1 cargo run -p degenbot-bot --features hotpath-prometheus --example hotpath_prometheus_probe` | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe` | 05 |
+| `DEGENBOT_HOTPATH=1 cargo run -p degenbot-bot --features hotpath-prometheus --example hotpath_prometheus_probe` | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe` | 05 — **landed** |
 | `cargo run -p degenbot-bot --example config_smoke_boot -- <config.toml>` | *(no command)* — becomes a `degenbot-bot` integration test, run by `just test-rust-nextest -p degenbot-bot` | 06 |
 | `cargo run -p degenbot-ingestion --example headless_boot` | *(no command)* — becomes a `degenbot-ingestion` integration test, invoked explicitly by `just test-standalone` | 06 |
 | `cargo run -p degenbot-order-index --features envelope --example scale_demo` | *(no target command)* — the executable is deleted in 06 (`bench_strategies` is the measurement that survives, §5.2/§5.7) | 06 |

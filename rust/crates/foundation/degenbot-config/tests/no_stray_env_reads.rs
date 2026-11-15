@@ -265,6 +265,23 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         &["SIM_BENCH_ITERS"][..],
     );
 
+    // The hotpath Prometheus exporter probe, same class and same cause: it
+    // left `degenbot-bot`'s `examples/` (skipped as a test surface) for the
+    // engine-lab tool crate, so its two pre-existing controls are now visible
+    // to the production-source scan. Both are the probe's documented
+    // invocation contract -- the `DEGENBOT_HOTPATH=1` guard/runtime gate the
+    // bot's `profiling::hotpath_guard` itself consults (the probe refuses to
+    // run without it), and the exporter port override (`HOTPATH_PROMETHEUS_PORT`,
+    // default 6772) read once at scrape time with the same
+    // parse-and-fall-back behavior it has always had. Neither is an
+    // operator-config key: the probe is a bounded exporter proof, so routing
+    // them through the loader would hand a lab binary the config crate's
+    // dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/hotpath_prometheus_probe/main.rs",
+        &["DEGENBOT_HOTPATH", "HOTPATH_PROMETHEUS_PORT"][..],
+    );
+
     insert_bal_engine_lab_entries(map);
 
     // The session-scheduler fan-out instrument, same class and same cause: it
