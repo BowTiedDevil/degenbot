@@ -194,8 +194,9 @@ machine). Source: `rust/crates/foundation/degenbot-ingestion/src/`
   (`HEADER_STALENESS_SECS` = 30, `LOG_SILENCE_SECS` = 60, `LOG_WAIT_MAX_AGE_SECS` = 5
   — the SONJQA span-force-close bound) + per-episode `silence_alarm_count`. The
   *decisions* on those windows belong to the stage machine (`watchdog_phase`).
-- `examples/headless_boot.rs` — the standalone no-Python boot smoke
-  (`just test-standalone` runs it).
+- `tests/headless_boot.rs` — the standalone no-Python boot smoke as an
+  owning-crate integration test (`just test-standalone` runs it directly via
+  `cargo test --test headless_boot` as its second check).
 
 **`degenbot-bot` — the runtime** (the stage machine, its driver, and the engine):
 

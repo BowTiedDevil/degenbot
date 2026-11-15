@@ -145,8 +145,11 @@ node-identity:
 # `cargo add degenbot` showcase binary AND a CI-runnable assertion.
 test-standalone:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --example standalone_consumer
-    # The WS-ingestion crate's headless boot (no Python, no net).
-    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-ingestion --example headless_boot
+    # The WS-ingestion crate's headless boot (no Python, no net) is an
+    # owning-crate integration test, invoked directly: this recipe backs
+    # `test-rust` in CI with NO uv, and `test-rust-nextest` strictly
+    # requires uv.
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-ingestion --test headless_boot
 
 # ========== Tests ==========
 #
