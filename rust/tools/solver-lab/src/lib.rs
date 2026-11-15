@@ -6,10 +6,11 @@
 //! - **Measurements never gate.** Nothing added here becomes a pass/fail gate,
 //!   and no `just check-dev-tools` lane may be promoted into one: what lives
 //!   here reports numbers, and a durable assertion belongs in the owning crate's
-//!   integration tests. The one gate that runs a program of this kind today is
-//!   the deliberately preserved `just test-golden-replay` bridge, which keeps
-//!   gating unchanged until task 06 moves its durable assertions into
-//!   owning-crate tests (`rust/tools/README.md` sections 8 and 8.1).
+//!   integration tests. The `just test-golden-replay` recipe invokes the
+//!   two-sided golden contract's durable assertions in `degenbot-pools`'
+//!   owning integration tests through the canonical nextest lane, then runs
+//!   this replay as the non-gating measurement/readout pass
+//!   (`rust/tools/README.md` sections 8 and 8.1).
 //! - **A small replay stays small.** Profiling, capture I/O, the cache lab, and
 //!   the hull index are four separate opt-in forwards, so reading a capture
 //!   never *enables* a profiler, the ledger feature, or a JIT lane. A forward is

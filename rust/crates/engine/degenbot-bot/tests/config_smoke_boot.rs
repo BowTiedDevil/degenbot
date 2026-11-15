@@ -42,8 +42,9 @@ use std::sync::Arc;
 /// provably free of that prefix while still selecting the child code path.
 const CHILD_FLAG: &str = "CONFIG_SMOKE_BOOT_CHILD";
 
-/// The one variable planted into the guard child's environment.
-const PLANTED_VAR: &str = "DEGENBOT_CONFIG_SMOKE_GUARD_PROBE";
+/// The one variable planted into the guard child's environment: an existing
+/// real schema key, so the guard must refuse a legitimate-but-misplaced var.
+const PLANTED_VAR: &str = "DEGENBOT_HOTPATH";
 
 /// The refusal text the guard must report (preserved from the boot smoke).
 const GUARD_TEXT: &str = "smoke boot requires NO DEGENBOT_* env";

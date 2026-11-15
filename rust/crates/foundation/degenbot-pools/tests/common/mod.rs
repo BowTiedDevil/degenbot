@@ -9,6 +9,8 @@
 //! `pub` so the per-binary dead-code lint stays quiet for a builder one
 //! binary does not exercise (each binary would otherwise flag its neighbours).
 
+pub mod concentrated_liquidity_capture;
+
 use alloy::primitives::U256;
 use degenbot_math::balancer::constants::PowVersion;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};

@@ -236,13 +236,20 @@ test-rust-ci:
     CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 just test-rust
 
 
-# Two-sided golden replay gate (offline, seconds): profit under/over-shoot and
-# nondeterminism across reps, on the single-block anchor + the 156-row heavy
-# corpus. Blocks merge in CI; named here so the pre-push gate runs it too. The
-# program is a `degenbot-solver-lab` binary and reads the committed corpora from
-# the pools crate's fixture home, so the feature flag is the tool package's
-# `capture-fixtures` forward, not the product crate's.
+# Two-sided golden replay gate (offline): the owning `degenbot-pools`
+# integration tests assert the contract over both committed corpora — profit
+# under-shoot bounded by PROFIT_EPS, over-shoot past the few-wei tolerance,
+# determinism across repetitions, and null-golden reconciliation — through the
+# canonical nextest lane (the selector fails closed on zero matches). The
+# solver-lab replay follows as the non-gating measurement/readout pass over
+# the same corpora; its stale-golden regeneration (`DR_REPLAY_REGEN`,
+# over-shoot-only) stays a manual write mode. Blocks merge in CI; named here
+# so the pre-push gate runs it too. The tests read the corpora from the pools
+# crate's fixture home behind the package's `capture-fixtures` feature, which
+# the nextest lane enables; the lab binary reads the same home through the
+# tool package's `capture-fixtures` forward.
 test-golden-replay:
+    just test-rust-nextest -p degenbot-pools -E 'binary(concentrated_liquidity_golden_replay)'
     cd rust && cargo run --locked -q -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
     cd rust && cargo run --locked -q -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
 

@@ -193,7 +193,8 @@ recipe-side feature enabling, so a scoped `cargo test -p degenbot-pools` compile
 them instead of dropping them.
 Test wiring names **both** Rust lanes plus the two corpus-running pre-push
 recipes: the nextest recipes, the cargo lane (`just test-rust`, which CI runs),
-`just test-golden-replay` (runs a replay example directly) and
+`just test-golden-replay` (runs the owning pools golden-replay tests, then the
+solver-lab replay readout) and
 `just test-fleet-parity` (its `the_outcome_corpus` filter matches zero tests — and
 exits green — when the feature is off). No pytest change (no Python consumer of
 the Rust corpora).

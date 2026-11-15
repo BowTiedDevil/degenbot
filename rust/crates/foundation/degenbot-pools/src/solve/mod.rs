@@ -59,6 +59,15 @@ pub mod runtime;
 #[cfg(feature = "capture-fixtures")]
 pub mod fixtures;
 
+// The two-sided golden replay gate: the single owner of the concentrated-
+// liquidity golden-gate correctness contract (under-shoot epsilon, over-shoot
+// tolerance, repetition determinism, null-golden reconciliation). Gated beside
+// the fixture machinery it evaluates, so the default dependency tree compiles
+// none of it; the owning integration tests and the solver-lab replay's
+// measurement/readout pass both classify through this one implementation.
+#[cfg(feature = "capture-fixtures")]
+pub mod golden_gate;
+
 // The gate door: the profit-envelope boundary types, hoisted from the former
 // `solve::profit_envelope` path (no `solve::gate::gate` collision — the inner
 // gate submodule stays private).

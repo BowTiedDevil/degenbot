@@ -1,11 +1,6 @@
 // Dev-only harness: an offline replay harness for captured solver fixtures.
 // Pedantic + restriction lints that production code denies are relaxed here.
-#![expect(
-    clippy::collapsible_else_if,
-    clippy::print_stderr,
-    clippy::print_stdout,
-    clippy::too_many_lines
-)]
+#![expect(clippy::print_stderr, clippy::print_stdout, clippy::too_many_lines)]
 
 //! Offline heavy-concentrated-liquidity-path replay harness with N-repeat stable timing.
 //!
@@ -26,29 +21,26 @@
 //! is pure math, so per-run nondeterminism (e.g. HashMap-iteration order in the
 //! active-set walk) is flagged, which also bears on the desync investigation.
 //!
-//! F2 two-sided golden gate: exits 1 (so CI blocks merge) if any path (a)
-//! under-shoots the recorded golden profit beyond `PROFIT_EPS`, (b) over-shoots
-//! it past the few-wei tolerance (phantom profit / stale golden, never silent),
-//! or (c) is nondeterministic across reps.
+//! Two-sided golden gate: the durable correctness contract is owned by the
+//! `degenbot-pools` integration tests (`tests/concentrated_liquidity_golden_replay.rs`,
+//! run by `just test-golden-replay` through the canonical nextest lane). This
+//! program performs measurement, readout, and over-shoot-only golden
+//! regeneration through the shared evaluator (`degenbot_pools::solve::golden_gate`):
+//! every path is classified — under-shoot past `PROFIT_EPS`, over-shoot past
+//! the few-wei tolerance, or nondeterminism across reps — and every mismatch
+//! is reported loudly as `MISMATCH`, but a mismatch is not an exit code.
 
 use alloy::primitives::U256;
 use degenbot_pools::solve::concentrated_liquidity::WalkEventCensus;
 use degenbot_pools::solve::gate::{path_profit_bound, GateDeps, HopMath};
+use degenbot_pools::solve::golden_gate::{
+    classify, parse_golden, replay_profitable, results_consistent, GateVerdict, ReplaySolution,
+    OVER_SHOOT_TOLERANCE_WEI, PROFIT_EPS,
+};
 use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_solver_lab::capture_rows::capture_arg;
 use degenbot_solver_lab::concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
 use serde_json::Value;
-
-/// Max acceptable profit under-shoot (wei) of the exact-wei golden for the
-/// coarsened search to count as OK — mirrors the solver's "never under-shoot
-/// the fine-grid oracle" contract at a diagnostic epsilon.
-const PROFIT_EPS: u128 = 100_000;
-// Two-sided golden gate (F2): under-shoot of the exact golden is bounded by
-// PROFIT_EPS, and any over-shoot beyond this few-wei rounding tolerance is a
-// HARD FAIL — the golden is the recorded exact result, so a solver exceeding
-// it is either phantom profit (claiming profit that does not exist) or a stale
-// golden needing regeneration. Never silent.
-const OVER_SHOOT_TOLERANCE_WEI: u128 = 8;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -144,8 +136,7 @@ fn main() {
         // nondeterminism (e.g. HashMap-iteration order in the active-set walk)
         // is flagged and counted separately.
         let mut times: Vec<u128> = Vec::with_capacity(iters);
-        let mut first: Option<(U256, Vec<U256>)> = None;
-        let mut consistent = true;
+        let mut runs: Vec<Option<ReplaySolution>> = Vec::with_capacity(iters);
         let mut last_stats: Option<degenbot_pools::solve::concentrated_liquidity::WalkStats> = None;
         let mut path_pieces: Vec<(Vec<usize>, U256)> = Vec::new();
         for _ in 0..iters {
@@ -157,21 +148,10 @@ fn main() {
             times.push(t0.elapsed().as_micros());
             last_stats = Some(out.stats);
             path_pieces = out.census_pieces;
-            match out.result.as_ref() {
-                Some(solution) => match &first {
-                    None => first = Some((solution.optimal_input, solution.hop_outputs.clone())),
-                    Some((fo, fh)) => {
-                        if *fo != solution.optimal_input || *fh != solution.hop_outputs {
-                            consistent = false;
-                        }
-                    }
-                },
-                None => {
-                    if first.is_some() {
-                        consistent = false;
-                    }
-                }
-            }
+            runs.push(out.result.map(|solution| ReplaySolution {
+                optimal_input: solution.optimal_input,
+                hop_outputs: solution.hop_outputs,
+            }));
         }
         // Census + per-piece log ride the last rep's WalkOutcome (T2: out
         // the return path; no frozen-thread-local takes).
@@ -214,6 +194,7 @@ fn main() {
         let ans = ws_last.as_ref().map_or(0, |s| s.anchor_sims);
         let esok = ws_last.as_ref().map_or(0, |s| s.event_solver_ok);
         let esfb = ws_last.as_ref().map_or(0, |s| s.event_solver_fallbacks);
+        let consistent = results_consistent(&runs);
         if consistent {
             n_consistent += 1;
         } else {
@@ -225,126 +206,99 @@ fn main() {
         let med = times[n / 2];
         let p95 = times[((n * 94) / 100).min(n - 1)];
 
-        // Golden check against the (first) run's result.
-        let golden = doc.get("golden").cloned().unwrap_or(Value::Null);
-        let replay_profitable = first.as_ref().is_some_and(|(opt, ho)| {
-            !opt.is_zero()
-                && ho
-                    .last()
-                    .copied()
-                    .unwrap_or(U256::ZERO)
-                    .saturating_sub(*opt)
-                    != U256::ZERO
-        });
+        // Golden classification through the shared evaluator — the one
+        // implementation the owning integration tests gate with; this
+        // program only reads the verdict out.
+        let golden_json = doc.get("golden");
+        let golden = parse_golden(golden_json);
+        let first = runs.first().and_then(Option::as_ref);
+        let verdict = classify(golden.as_ref(), first);
         let mut ok = true;
-        if golden.is_null() {
-            // Loop-18 T4: null goldens are gate-skipped captures — production
-            // answered "nothing" (bound < floor) for this pool state, so the
-            // recorded output is not a solver result and CANNOT be compared
-            // exact-wei against the gateless replay. Classify separately so
-            // the F2 gate stays green AND the reconciliation volume (the
-            // replay-found profit the gate declined to solve) is surfaced as
-            // the false-skip telemetry the gate work tracks.
-            if replay_profitable {
-                if let Some((opt, ho)) = first.as_ref() {
-                    let prof = ho.last().copied().unwrap_or(U256::ZERO) - *opt;
-                    println!(
-                        "path {pid}: GATE-SKIPPED capture — ungated replay profit = {prof} wei (reconciliation telemetry, not a gate failure)"
+        if let Some((under, over, input_delta)) = verdict.deltas() {
+            eprintln!(
+                "path {pid}: input_delta={input_delta} wei  under_shoot={under} wei  over_shoot={over} wei (vs recorded golden)",
+            );
+            if let (Some(r), Some(go)) = (
+                first,
+                golden_json
+                    .and_then(Value::as_object)
+                    .and_then(|g| g.get("optimal_input"))
+                    .and_then(Value::as_str),
+            ) {
+                if r.optimal_input.to_string() != go {
+                    eprintln!(
+                        "path {pid}: optimal_input replay={} golden={go} (informational; gate = profit both directions)",
+                        r.optimal_input
                     );
                 }
             }
-            n_gate_skipped += 1;
-            // Fall through to the per-path stat printing but do not fail the
-            // golden gate for these lines.
-        } else {
-            if let Some((opt, ho)) = &first {
-                let go = golden
-                    .get("optimal_input")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let gh: Vec<String> = golden
-                    .get("hop_outputs")
-                    .and_then(Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|x| x.as_str().map(String::from))
-                            .collect::<Vec<String>>()
-                    })
-                    .unwrap_or_default();
-                let go_in: U256 = go.parse().unwrap_or(U256::ZERO);
-                let go_out = gh
-                    .last()
-                    .cloned()
-                    .and_then(|s: String| s.parse().ok())
-                    .unwrap_or(U256::ZERO);
-                let golden_profit = go_out.saturating_sub(go_in);
-                let replay_profit = ho
-                    .last()
-                    .copied()
-                    .unwrap_or(U256::ZERO)
-                    .saturating_sub(*opt);
-                // The solver's contract (concentrated_liquidity_path_solver_matches_fine_grid_oracle)
-                // is to never under-shoot the optimum. The under-shoot vs the
-                // exact-wei golden is the gate for the coarsened search;
-                // F2 adds the mirror over-shoot gate so BOTH profit
-                // directions are pinned vs the recorded golden.
-                let under = golden_profit.saturating_sub(replay_profit);
-                let over = replay_profit.saturating_sub(golden_profit);
-                let in_delta = if *opt >= go_in {
-                    opt - go_in
-                } else {
-                    go_in - opt
-                };
+        }
+        match &verdict {
+            GateVerdict::GateSkipped => {
+                // Null goldens are gate-skipped captures — production
+                // answered "nothing" (bound < floor) for this pool state, so
+                // the recorded output is not a solver result and CANNOT be
+                // compared exact-wei against the gateless replay. Classified
+                // separately so the reconciliation volume (the replay-found
+                // profit the gate declined to solve) is surfaced as the
+                // false-skip telemetry the gate work tracks.
+                if let Some(r) = first {
+                    if replay_profitable(r) {
+                        println!(
+                            "path {pid}: GATE-SKIPPED capture — ungated replay profit = {} wei (reconciliation telemetry, not a gate failure)",
+                            r.profit()
+                        );
+                    }
+                }
+                n_gate_skipped += 1;
+                // Fall through to the per-path stat printing but do not fail
+                // the golden gate for these lines.
+            }
+            GateVerdict::Within { .. } => {}
+            GateVerdict::UnderShoot { under, .. } => {
                 eprintln!(
-                    "path {pid}: input_delta={in_delta} wei  under_shoot={under} wei  over_shoot={over} wei (vs recorded golden)",
+                    "path {pid}: under_shoot {under} wei > PROFIT_EPS {PROFIT_EPS} — search lost profit vs the recorded optimum"
                 );
-                if opt.to_string() != go {
-                    eprintln!(
-                        "path {pid}: optimal_input replay={opt} golden={go} (informational; gate = profit both directions)",
-                    );
-                }
-                if under > U256::from(PROFIT_EPS) {
-                    eprintln!(
-                        "path {pid}: under_shoot {under} wei > PROFIT_EPS {PROFIT_EPS} — search lost profit vs the recorded optimum"
-                    );
-                    ok = false;
-                }
-                if over > U256::from(OVER_SHOOT_TOLERANCE_WEI) {
-                    eprintln!(
-                        "path {pid}: over_shoot {over} wei > tolerance {OVER_SHOOT_TOLERANCE_WEI} — solver exceeds the recorded golden (phantom profit or stale golden)"
-                    );
-                    if regen_golden && under <= U256::from(PROFIT_EPS) {
-                        // Loop-18 T4 regeneration: the solver legitimately
-                        // EXCEEDS the recorded golden (loop-15..17 improved
-                        // the walk on giant-range shapes). Under-shoot stays
-                        // a hard fail; over-shoot-only lines get their
-                        // goldens refreshed in place, loudly.
+                ok = false;
+            }
+            GateVerdict::OverShoot { over, .. } => {
+                eprintln!(
+                    "path {pid}: over_shoot {over} wei > tolerance {OVER_SHOOT_TOLERANCE_WEI} — solver exceeds the recorded golden (phantom profit or stale golden)"
+                );
+                if regen_golden {
+                    // Regeneration: the solver legitimately EXCEEDS the
+                    // recorded golden (improved walk on giant-range shapes),
+                    // so the over-shoot-only lines get their goldens
+                    // refreshed in place, loudly; under-shoot never reaches
+                    // this arm.
+                    if let Some(r) = first {
                         regen_queue.push((
                             line_index,
                             serde_json::json!({
-                                "optimal_input": opt.to_string(),
-                                "profit": replay_profit.to_string(),
-                                "hop_outputs": ho
+                                "optimal_input": r.optimal_input.to_string(),
+                                "profit": r.profit().to_string(),
+                                "hop_outputs": r
+                                    .hop_outputs
                                     .iter()
                                     .map(std::string::ToString::to_string)
                                     .collect::<Vec<_>>(),
                             }),
                         ));
                         eprintln!(
-                            "path {pid}: DR_REPLAY_REGEN queued golden refresh (+{over} wei, over-shoot only)"
+                            "path {pid}: DR_REPLAY_REGEN queued golden refresh (+{over} wei, over-shoot-only)"
                         );
-                        ok = true;
                         regen_count += 1;
-                    } else {
-                        ok = false;
                     }
+                } else {
+                    ok = false;
                 }
-            } else {
+            }
+            GateVerdict::MissingResult => {
                 eprintln!("path {pid}: replay=None but golden present");
                 ok = false;
             }
         }
-        if ok && !golden.is_null() {
+        if ok && golden.is_some() {
             n_golden_ok += 1;
         }
 
@@ -389,21 +343,14 @@ fn main() {
                 skipped += 1;
                 if !golden.is_null() {
                     goldens += 1;
-                    let go_in: U256 = golden["optimal_input"]
-                        .as_str()
-                        .unwrap_or("0")
-                        .parse()
-                        .unwrap_or(U256::ZERO);
-                    let go_out: U256 = golden["hop_outputs"]
-                        .as_array()
-                        .and_then(|a| a.last())
-                        .and_then(|v| v.as_str())
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(U256::ZERO);
-                    let gp = go_out.saturating_sub(go_in);
-                    if gp >= floor && !gp.is_zero() {
-                        false_skips += 1;
-                        eprintln!("FALSE SKIP: path {pid} bound {b} < floor {floor} but golden profit {gp} >= floor");
+                    if let Some(g) = parse_golden(Some(golden)) {
+                        if g.profit >= floor && !g.profit.is_zero() {
+                            false_skips += 1;
+                            eprintln!(
+                                "FALSE SKIP: path {pid} bound {b} < floor {floor} but golden profit {} >= floor",
+                                g.profit
+                            );
+                        }
                     }
                 }
             }
@@ -472,15 +419,16 @@ fn main() {
         "----\nreplayed {n_paths} path(s) | golden {n_golden_ok}/{exact_goldens} exact match | gate-skipped {n_gate_skipped} | deterministic {n_consistent}/{n_paths} | iters={iters} | heaviest median: path {} = {}us | file={path}",
         heaviest.1, heaviest.0
     );
-    // F2: a CI build must FAIL if any path regresses (golden mismatch, either
-    // direction) or is nondeterministic — this is what makes the harness a
-    // gate rather than a report. Null-golden gate-skipped captures are
-    // reconciled out (counted separately, loop-18 T4) and deterministic
-    // coverage is computed over the whole population.
+    // The durable two-sided golden gate lives in the owning `degenbot-pools`
+    // integration tests (run by `just test-golden-replay` through the
+    // canonical nextest lane); this program is the measurement/readout pass,
+    // so a mismatch is reported loudly here but is not an exit code.
+    // Null-golden gate-skipped captures are reconciled out (counted
+    // separately) and deterministic coverage is computed over the whole
+    // population.
     if n_golden_ok != exact_goldens || n_consistent != n_paths {
         eprintln!(
-            "F2 GOLDEN GATE FAILED: golden {n_golden_ok}/{n_paths} match, deterministic {n_consistent}/{n_paths}"
+            "GOLDEN MISMATCHES PRESENT: golden {n_golden_ok}/{n_paths} match, deterministic {n_consistent}/{n_paths} (the owning degenbot-pools tests gate this contract)"
         );
-        std::process::exit(1);
     }
 }

@@ -99,6 +99,10 @@ name = "offline_heavy_replay"
 required-features = ["capture-fixtures"]
 
 [[test]]
+name = "concentrated_liquidity_golden_replay"
+required-features = ["capture-fixtures"]
+
+[[test]]
 name = "profit_envelope_tests"
 required-features = ["capture-fixtures"]
 

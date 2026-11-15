@@ -2,7 +2,10 @@
 //! Reads the capture JSONL (env `DBENCH_CAPTURES`; default the committed
 //! heavy-concentrated-liquidity corpus under `tests/fixtures/`) and reports per-path release-mode
 //! solve time + walk
-//! stats. Diagnostic only — asserts nothing about goldens here.
+//! stats. Timing/stats are the readout; the golden role here is the
+//! byte-for-byte exact reconstruction check (`optimal_input` + `hop_outputs`) —
+//! the two-sided profit gate and repetition determinism are owned by the
+//! concentrated-liquidity golden replay tests.
 #![expect(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -16,39 +19,11 @@
 use alloy::primitives::U256;
 use degenbot_pools::solve::concentrated_liquidity::WalkStats;
 use degenbot_pools::solve::gate::{GateDeps, HopMath};
-use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+pub mod common;
+
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
 use serde_json::Value;
 use std::time::Instant;
-
-fn u256(s: &str) -> U256 {
-    s.trim().parse::<U256>().expect("valid U256")
-}
-
-fn parse_hop(v: &Value) -> Option<IntV3TickRangeSequence> {
-    let arr = v.as_array()?;
-    let mut ranges = Vec::with_capacity(arr.len());
-    for item in arr {
-        let liq: u128 = item.get("liquidity")?.as_str()?.parse().ok()?;
-        let wbp: Vec<U256> = item
-            .get("word_boundary_prices")?
-            .as_array()?
-            .iter()
-            .filter_map(|w| w.as_str())
-            .map(u256)
-            .collect();
-        ranges.push(IntV3TickRangeHop {
-            liquidity: liq,
-            sqrt_price_x96: u256(item.get("sqrt_price_x96")?.as_str()?),
-            sqrt_price_lower_x96: u256(item.get("sqrt_price_lower_x96")?.as_str()?),
-            sqrt_price_upper_x96: u256(item.get("sqrt_price_upper_x96")?.as_str()?),
-            gamma_numer: item.get("gamma_numer")?.as_u64()?,
-            fee_denom: item.get("fee_denom")?.as_u64()?,
-            zero_for_one: item.get("zero_for_one")?.as_bool()?,
-            word_boundary_prices: wbp,
-        });
-    }
-    IntV3TickRangeSequence::new(ranges).ok()
-}
 
 #[test]
 #[expect(clippy::too_many_lines)]
@@ -90,11 +65,8 @@ fn replay_captured_heavy_paths() {
         let doc: Value = serde_json::from_str(line).expect("capture JSON");
         let pid: u64 = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
         let hops = doc.get("hops").and_then(Value::as_array).expect("hops");
-        let seqs: Vec<IntV3TickRangeSequence> = hops
-            .iter()
-            .map(parse_hop)
-            .collect::<Option<Vec<_>>>()
-            .expect("hops parse");
+        let seqs: Vec<IntV3TickRangeSequence> =
+            common::concentrated_liquidity_capture::parse_capture_hops(hops).expect("hops parse");
         let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
         // RED-1: small-K ranges must build word profiles after the threshold
         // widening. Until then the per-sim linear word walk is the driver.
