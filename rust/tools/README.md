@@ -1790,8 +1790,12 @@ import `degenbot_simulation::probe_support::*`; no `#[path]` attribute and no
 tests: `recorded_corpus`'s four unit tests compile once in the library target instead of once
 per path-including test target, and every other named test is unchanged.
 
-`degenbot-arbitrage` has the same pattern in miniature and keeps it for now: its two BAL
-examples `#[path]`-include `examples/shared/{dispatch_probe,dispatch_scaling}.rs`.
+`degenbot-arbitrage` has the same pattern in miniature: its dispatch probe support —
+the scripted dispatch chain and the controlled same-head dispatch-scaling benchmark —
+lives in `src/probe_support/{dispatch_probe,dispatch_scaling}.rs`, exposed as
+`#[doc(hidden)] pub mod probe_support`; the dispatch unit suite, the
+`bal_dispatch_scaling` pins, and both BAL examples read it through the crate export,
+with no `#[path]` attribute and no `examples/shared/` directory.
 
 ### 10.3 External corpora that are not in the tree
 

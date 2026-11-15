@@ -101,7 +101,7 @@ use alloy::rpc::types::AccessList;
 use alloy_eip7928::bal::Bal;
 use alloy_eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
 
-use degenbot_arbitrage::{
+use crate::{
     dispatch_profitable_results, BlockPriorityFees, CmdExecutorBinding, DispatchCandidate,
     DispatchOutcome, FeeOnTransferRegistry, PoolDivergence, SimulateContext, SimulationBlock,
     SimulationDeployment, SolveStep,
@@ -119,7 +119,9 @@ use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 
-use crate::probe::{settle_head, BalMode, DeltaRecorder, StorageLatency, WireCensus, BLOCK};
+use super::dispatch_probe::{
+    settle_head, BalMode, DeltaRecorder, StorageLatency, WireCensus, BLOCK,
+};
 
 /// The owner + executor + settlement identities the built-in `cmd_executor`
 /// deployment declares (the same scripted facts the dispatch unit suites use).
@@ -1161,13 +1163,13 @@ fn discover_prefetch(
 #[must_use]
 pub fn prefetch_identity_set(count: usize) -> Vec<(Address, U256)> {
     let corpus = corpus(count);
-    let runtime = crate::probe::runtime();
+    let runtime = super::dispatch_probe::runtime();
     runtime.block_on(async {
         let recorder = DeltaRecorder::default();
         recorder.serve_head(BLOCK - 2, GRANDPARENT, GENESIS);
         recorder.serve_head(BLOCK - 1, PREVIOUS, GRANDPARENT);
         recorder.serve_head(BLOCK, CURRENT, PREVIOUS);
-        let provider = crate::probe::provider(&recorder);
+        let provider = super::dispatch_probe::provider(&recorder);
         let declaration = deployment();
         discover_prefetch(&provider, &declaration, &corpus, &recorder)
     })
@@ -1185,13 +1187,13 @@ fn run_point(
     reps: usize,
 ) -> Result<Point, String> {
     let corpus = corpus(count);
-    let runtime = crate::probe::runtime();
+    let runtime = super::dispatch_probe::runtime();
     runtime.block_on(async move {
         let recorder = DeltaRecorder::with_latency(model);
         recorder.serve_head(BLOCK - 2, GRANDPARENT, GENESIS);
         recorder.serve_head(BLOCK - 1, PREVIOUS, GRANDPARENT);
         recorder.serve_head(BLOCK, CURRENT, PREVIOUS);
-        let provider = crate::probe::provider(&recorder);
+        let provider = super::dispatch_probe::provider(&recorder);
         let declaration = deployment();
 
         // The one word this point scripts: what the chain answers for the
@@ -1284,13 +1286,13 @@ pub fn planted_divergence(
 ) -> Result<PlantedControl, String> {
     let planted_word = chain_word.other();
     let corpus = corpus(count);
-    let runtime = crate::probe::runtime();
+    let runtime = super::dispatch_probe::runtime();
     runtime.block_on(async move {
         let recorder = DeltaRecorder::with_latency(model);
         recorder.serve_head(BLOCK - 2, GRANDPARENT, GENESIS);
         recorder.serve_head(BLOCK - 1, PREVIOUS, GRANDPARENT);
         recorder.serve_head(BLOCK, CURRENT, PREVIOUS);
-        let provider = crate::probe::provider(&recorder);
+        let provider = super::dispatch_probe::provider(&recorder);
         let declaration = deployment();
         recorder.serve_storage(EXECUTOR, READ_SLOT, chain_word.value());
         let prefetch = discover_prefetch(&provider, &declaration, &corpus, &recorder);
@@ -1916,10 +1918,10 @@ pub struct WaitShape {
 /// A scripted chain that cannot settle the heads a shape needs is a broken
 /// fixture, never a result.
 pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
-    let runtime = crate::probe::runtime();
+    let runtime = super::dispatch_probe::runtime();
     runtime.block_on(async {
         let recorder = DeltaRecorder::default();
-        let provider = crate::probe::provider(&recorder);
+        let provider = super::dispatch_probe::provider(&recorder);
         recorder.serve_head(BLOCK - 2, GRANDPARENT, GENESIS);
         recorder.serve_head(BLOCK - 1, PREVIOUS, GRANDPARENT);
         recorder.serve_head(BLOCK, CURRENT, PREVIOUS);
@@ -1929,7 +1931,7 @@ pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
             // The chain's three heads: the first two settle (so the previous
             // anchor is a READY window), the third is the shape's subject.
             recorder.set_bal_mode(BalMode::Serving);
-            recorder.set_bal_payload(crate::probe::EMPTY_BAL.to_vec());
+            recorder.set_bal_payload(super::dispatch_probe::EMPTY_BAL.to_vec());
             let cache = delta_cache();
             let driver = arm(&cache, &provider);
             for (number, hash, parent) in [
@@ -2000,6 +2002,7 @@ pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
 /// production selection's own figure — the `wait_us` a fan-out's diagnostic row
 /// reports — and `selection wall` is the measured wall of the whole selection,
 /// its lineage read included.
+#[must_use]
 pub fn render_wait_shapes(shapes: &[WaitShape]) -> String {
     let mut out = String::new();
     let _ = write!(

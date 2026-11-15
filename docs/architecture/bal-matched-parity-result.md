@@ -19,9 +19,9 @@ changed; the evidence is a review input.
 | `docs/architecture/bal-head-lifecycle-result.md` | existing live prepare/apply lifecycle capture (cited, not re-run here) | live apply walls and readiness on real heads |
 
 `logs/` is gitignored, so the two new captures are local evidence beside the harness
-(`rust/crates/engine/degenbot-arbitrage/examples/shared/dispatch_probe.rs`,
-`.../shared/dispatch_scaling.rs`, `.../bal_dispatch_scaling_probe.rs`,
-`.../bal_live_acquisition_probe.rs`). Every figure below was read back from those
+(`rust/crates/engine/degenbot-arbitrage/src/probe_support/dispatch_probe.rs`,
+`.../probe_support/dispatch_scaling.rs`, `.../examples/bal_dispatch_scaling_probe.rs`,
+`.../examples/bal_live_acquisition_probe.rs`). Every figure below was read back from those
 captures; no figure here is new.
 
 ## Matched parity coverage

@@ -78,11 +78,7 @@
     reason = "a benchmark probe prints its report and fails loudly on a broken fixture"
 )]
 
-#[path = "shared/dispatch_probe.rs"]
-#[expect(dead_code)]
-mod probe;
-#[path = "shared/dispatch_scaling.rs"]
-mod scaling;
+use degenbot_arbitrage::probe_support::{dispatch_probe as probe, dispatch_scaling as scaling};
 
 use probe::StorageLatency;
 use scaling::{Bench, Leg, LegSummary, Point, RunMeasure, ScriptedWord};

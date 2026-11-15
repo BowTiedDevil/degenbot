@@ -186,6 +186,14 @@ pub mod dispatch;
 /// into execution runs, and the [`DispatchRefusal`] they report.
 pub mod identity;
 
+/// Product-owned development support for the arbitrage dispatch probes and
+/// their behavior pins: the scripted dispatch chain the dispatch suites and the
+/// scaling probe drive, and the controlled same-head dispatch-scaling benchmark
+/// over it. `#[doc(hidden)]`: fixture surface with no stability promise,
+/// consumed by this crate's examples and integration tests.
+#[doc(hidden)]
+pub mod probe_support;
+
 /// Per-pool solver-divergence tracking (`PoolDivergence` +
 /// `is_solver_calc_failure`) — a stateful per-pool memo consumed by the
 /// dispatch leaf to skip paths through recently-divergent pools. Parallels `PathSuppression` (a stateful per-key

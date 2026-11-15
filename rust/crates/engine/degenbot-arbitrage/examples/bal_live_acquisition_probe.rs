@@ -53,12 +53,7 @@
     reason = "a live probe prints its report and fails loudly on a broken fixture"
 )]
 
-#[path = "shared/dispatch_probe.rs"]
-#[expect(dead_code)]
-mod probe;
-#[path = "shared/dispatch_scaling.rs"]
-#[expect(dead_code)]
-mod scaling;
+use degenbot_arbitrage::probe_support::{dispatch_probe as probe, dispatch_scaling as scaling};
 
 use std::time::Instant;
 
@@ -88,7 +83,7 @@ fn main() {
         .into_iter()
         .map(|count| (count, prefetch_identity_set(count)))
         .collect();
-    let runtime = crate::probe::runtime();
+    let runtime = probe::runtime();
     if let Err(failure) = runtime.block_on(run(derived)) {
         println!("\nprobe FAILED: {failure}");
         std::process::exit(1);

@@ -305,27 +305,33 @@ impl DeltaRecorder {
             .unwrap_or(U256::ZERO)
     }
 
+    #[must_use]
     pub fn bal_requests(&self) -> u64 {
         self.bal_requests.load(Ordering::Relaxed)
     }
 
+    #[must_use]
     pub fn head_reads(&self) -> u64 {
         self.head_reads.load(Ordering::Relaxed)
     }
 
+    #[must_use]
     pub fn storage_batches(&self) -> u64 {
         self.storage_batches.load(Ordering::Relaxed)
     }
 
+    #[must_use]
     pub fn storage_members(&self) -> u64 {
         self.storage_members.load(Ordering::Relaxed)
     }
 
+    #[must_use]
     pub fn storage_singles(&self) -> u64 {
         self.storage_singles.load(Ordering::Relaxed)
     }
 
     /// Every dispatched request's wire body, in dispatch order.
+    #[must_use]
     pub fn wire(&self) -> Vec<String> {
         self.wire.lock().expect("recorder mutex").clone()
     }
@@ -337,6 +343,7 @@ impl DeltaRecorder {
 
     /// The storage identities the recorded wire named, in dispatch order:
     /// every batch member and every serial read, as `(address, slot)`.
+    #[must_use]
     pub fn storage_identities(&self) -> Vec<(Address, U256)> {
         self.wire()
             .iter()
@@ -376,6 +383,7 @@ struct RecordingTransport {
     recorder: DeltaRecorder,
 }
 
+#[must_use]
 pub fn provider(recorder: &DeltaRecorder) -> AlloyProvider {
     let client = RpcClient::new(
         RecordingTransport {
@@ -389,6 +397,7 @@ pub fn provider(recorder: &DeltaRecorder) -> AlloyProvider {
     )
 }
 
+#[must_use]
 pub fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

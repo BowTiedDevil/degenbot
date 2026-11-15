@@ -19,12 +19,7 @@
 
 use degenbot_arbitrage::MAX_SIMULATE_CONCURRENT;
 
-#[path = "../examples/shared/dispatch_probe.rs"]
-#[expect(dead_code)]
-mod probe;
-#[path = "../examples/shared/dispatch_scaling.rs"]
-#[expect(dead_code)]
-mod scaling;
+use degenbot_arbitrage::probe_support::{dispatch_probe as probe, dispatch_scaling as scaling};
 
 use probe::{StorageLatency, BLOCK};
 use scaling::{

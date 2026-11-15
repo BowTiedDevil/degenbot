@@ -2432,12 +2432,9 @@ mod tests {
 }
 
 /// The scripted chain the dispatch-lane suites share with the dispatch-scaling
-/// probe: one lazy module file, compiled only for this crate's test build and
-/// included by path from the benchmark's own targets.
+/// probe: the product-owned support module, aliased for this crate's test build.
 #[cfg(test)]
-#[path = "../examples/shared/dispatch_probe.rs"]
-#[expect(dead_code, clippy::expect_used)] // the scripted chain fails loudly on a broken fixture
-mod probe;
+use crate::probe_support::dispatch_probe as probe;
 
 /// The BAL delta storage opt-in at the dispatch seam: what the fan-out reads
 /// candidates through, what it pays on the wire, and what it pays when the head
