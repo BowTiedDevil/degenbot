@@ -16,7 +16,7 @@ described in §6.2. Seven fixture slices have landed since, all in task `03`:
 | `03f` | the concentrated-liquidity capture generator — `concentrated_liquidity_capture_gen` | §6.8 |
 | `03g` (`B4IKBC`) | the three-hop production-calldata helper — `encode_three_hop` (a recipe/staging row; no §6.x section of its own) | §4.2, §8.1, §8.2 |
 
-Cargo metadata now reports **9 example targets**, `degenbot-fixture-tools` reports its lib
+Cargo metadata now reports **7 example targets**, `degenbot-fixture-tools` reports its lib
 plus exactly **nine** `[[bin]]` targets, `degenbot-solver-lab` its lib plus exactly
 **eight**, and `degenbot-engine-lab` its lib plus exactly **eighteen** — fourteen default-lane
 binaries (`bal_carry_probe`, `bal_candidate_scaling_probe`, `bal_delta_rounds_probe`,
@@ -399,7 +399,7 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 
 | Target | Package | Destination | Current path (under `rust/`) | Purpose | Features | Needs | I/O and write behavior | Verification route |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `config_smoke_boot` | `degenbot-bot` | integration test (06) | `crates/engine/degenbot-bot/examples/config_smoke_boot.rs` | The lightest start-up path of the bot engine driven by a config TOML file only: refuses a process that already carries any `DEGENBOT_*` variable, loads with the env layer disabled, installs the typed config, and observes the packed stances through `EngineStages` | — | a local test config file; **process-isolated** — `stance::install` is a process global, so this cannot share a test binary with anything that installs or reads a stance | writes nothing; returns an error (non-zero exit) on any wiring breakage | Becomes a `degenbot-bot` integration test with its own local config fixture, asserting the no-`DEGENBOT_*` guard, the file-layer load, and the `streaming_delivery=false` / `min_profit_wei` / `metrics_addr` observations. Gate: `just test-rust-nextest -p degenbot-bot` |
+| `config_smoke_boot` | `degenbot-bot` | integration test (06b, **landed**) | `crates/engine/degenbot-bot/tests/config_smoke_boot.rs` | The lightest start-up path of the bot engine driven by a config TOML file only: the test spawns its own test executable twice — a guard child planted with one `DEGENBOT_*` variable must exit non-zero naming it, and a clean child (environment constructed empty apart from the child-mode flag, so the no-`DEGENBOT_*` guard runs as a real process-environment check) performs the sole `.without_env()` file-layer load, the sole typed-config install, the `EngineStages::with_core_cfg` construction, and prints the four observations | — | the committed fixture `tests/fixtures/config_smoke_boot.toml`; **process-isolated by construction** — `stance::install` is a process global, so both boot runs happen in spawned child processes and the test runner's own process never installs a stance | writes nothing; the parent asserts the guard child's non-zero exit plus refusal text and the clean child's `streaming_delivery=false` / `min_profit_wei` / `solve_cpus` unset / `metrics_addr` observation line (children run `--nocapture` so their libtest harness cannot swallow the output) | `just test-rust-nextest -p degenbot-bot -E 'binary(config_smoke_boot)'` (one dedicated integration binary with ONE test, identical under nextest and `cargo test`). Gate: `just test-rust-nextest -p degenbot-bot` |
 | `headless_boot` | `degenbot-ingestion` | integration test (06a, **landed**) | `crates/foundation/degenbot-ingestion/tests/headless_boot.rs` | Headless standalone-Rust boot over the `degenbot-ingestion` public surface with NO Python and NO network: a synthetic fused event stream through the topic filter, the watchdog windows constructing and evaluating, and the backfill filter builder producing a server-side-filterable `eth_getLogs` filter | — | none — synthetic stream in source | writes nothing; named test assertions fail the run on any check failure | `just test-rust-nextest -p degenbot-ingestion -E 'binary(headless_boot)'`; `just test-standalone` keeps its two-check scope with this as its re-pointed second check |
 
 <!-- ledger:end -->
@@ -543,7 +543,13 @@ process isolation: `degenbot_substrate::stance::install` installs a process-glob
 binary (or be otherwise isolated from anything that installs a stance) and must not leak the
 installed config into sibling tests. Preserve verbatim: the no-`DEGENBOT_*` environment
 proof, the `.without_env()` loader attachment, and the four observed values. The executable
-then goes.
+then goes. **Landed (06b)**: the test lives at `crates/engine/degenbot-bot/tests/config_smoke_boot.rs`
+(one dedicated integration binary, one test) with the committed fixture
+`tests/fixtures/config_smoke_boot.toml`; because this devcontainer's ambient environment
+carries `DEGENBOT_*` variables, both boot runs execute in self-spawned child processes —
+the guard child (planted variable refused, non-zero exit naming it) and the clean child
+(environment built empty apart from the child-mode flag), so the guard stays a real
+process-environment check and the test runner's process never installs a stance.
 
 ### 5.2 `scale_demo` → **delete as redundant** (task 04 leaves it in place, task 06 removes it)
 
@@ -1704,8 +1710,8 @@ contributor, a doc, or the pre-push hook types.
 | `cargo run --release -p degenbot-simulation --example bal_wall_ceiling_probe` | `cargo run --release -p degenbot-engine-lab --bin bal_wall_ceiling_probe` (wrapped by `just bal-wall-ceiling-probe`; no feature lane — it declares no `required-features`, and its chain/corpus/coverage/session/ledger/report support is the product-owned `degenbot_simulation::probe_support`; the default real-coverage fixture is rooted through `degenbot_engine_lab::paths::repo_root()`) | 05g2 — **landed** |
 | `cargo run --release -p degenbot-arbitrage --example bal_dispatch_scaling_probe` | `cargo run --release -p degenbot-engine-lab --bin bal_dispatch_scaling_probe` (wrapped by `just bal-dispatch-scaling-probe`; no feature lane — it declares no `required-features`, and its dispatch/chain/scaling support is the product-owned `degenbot_arbitrage::probe_support`) | 05h2 — **landed** |
 | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-bot --features hotpath-prometheus --example hotpath_prometheus_probe` | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe` | 05 — **landed** |
-| `cargo run -p degenbot-bot --example config_smoke_boot -- <config.toml>` | *(no command)* — becomes a `degenbot-bot` integration test, run by `just test-rust-nextest -p degenbot-bot` | 06 |
-| `cargo run -p degenbot-ingestion --example headless_boot` | *(no command)* — the headless boot is a `degenbot-ingestion` integration test (`tests/headless_boot.rs`), invoked explicitly by `just test-standalone` through `just test-rust-nextest -p degenbot-ingestion -E 'binary(headless_boot)'` | 06a — **landed** |
+| `cargo run -p degenbot-bot --example config_smoke_boot -- <config.toml>` | *(no command)* — the config-only smoke boot is a `degenbot-bot` integration test (`tests/config_smoke_boot.rs`), run by `just test-rust-nextest -p degenbot-bot -E 'binary(config_smoke_boot)'` | 06b — **landed** |
+| `cargo run -p degenbot-ingestion --example headless_boot` | *(no command)* — the headless boot is a `degenbot-ingestion` integration test (`tests/headless_boot.rs`), invoked explicitly by `just test-standalone` as its second check: `cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-ingestion --test headless_boot` | 06a — **landed** |
 | `cargo run -p degenbot-order-index --features envelope --example scale_demo` | *(no target command)* — the executable is deleted in 06 (`bench_strategies` is the measurement that survives, §5.2/§5.7) | 06 |
 | `cargo run -p degenbot-pools --features capture-fixtures --example walkmemo_readout` | *(no target command)* — the executable is deleted in 06; the memo's durable evidence is the doc plus the in-crate memo tests (§5.6) | 06 |
 | `cargo run -p degenbot-simulation --example mirror_coverage_probe` | *(no target command)* — deleted in 06 only after the overlap table reaches a durable doc and the projection assertion becomes an offline `degenbot-simulation` test (§5.4) | 06 |

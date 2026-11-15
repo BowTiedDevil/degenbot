@@ -1,0 +1,15 @@
+# Local fixture for the degenbot-bot config-only boot integration test.
+# Read through the loader's file layer ONLY (.without_env()); every value
+# differs from the schema default so a defaulted (unwired) key fails the
+# parent's assertions.
+
+[pump]
+streaming_delivery = false
+
+[solve]
+# u128 keys load as quoted decimal text (solve.min_profit_wei schema note).
+min_profit_wei = "1234500000000"
+# solve.solve_cpus stays unset on purpose: the boot asserts it is None.
+
+[telemetry]
+metrics_addr = "127.0.0.1:9177"
