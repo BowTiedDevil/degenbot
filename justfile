@@ -557,7 +557,7 @@ session-fanout-probe *ARGS:
 # profiles and per-regime segments with read-set diversity, real write overlap,
 # and per-segment cold-versus-carry results).
 bal-wall-ceiling-probe *ARGS:
-    cd rust && cargo run --locked --release -p degenbot-simulation --example bal_wall_ceiling_probe -- {{ ARGS }}
+    cd rust && cargo run --locked --release -p degenbot-engine-lab --bin bal_wall_ceiling_probe -- {{ ARGS }}
 
 
 # The real write-coverage fixture capture (dev-only; the measured replay's
@@ -577,7 +577,7 @@ bal-real-coverage-capture *ARGS:
         echo "ERROR: no RPC declared — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
         exit 1
     fi
-    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" BAL_WALL_FIXTURE_CAPTURE=1 cargo run --locked --release -p degenbot-simulation --example bal_wall_ceiling_probe -- {{ ARGS }}
+    cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" BAL_WALL_FIXTURE_CAPTURE=1 cargo run --locked --release -p degenbot-engine-lab --bin bal_wall_ceiling_probe -- {{ ARGS }}
 
 
 # The parent-linked BAL carry-forward live probe: EVERY canonical block of the
@@ -1175,8 +1175,8 @@ check-dev-tools *lanes:
                                bal_delta_rounds_probe, bal_delta_snapshot_probe,
                                bal_head_lifecycle_probe, bal_production_relevance_probe,
                                bal_real_read_oracle_probe, bal_retention_probe,
-                               cold_miss_fanout_probe, session_fanout_probe, and
-                               worker_fanout_probe)
+                               bal_wall_ceiling_probe, cold_miss_fanout_probe,
+                               session_fanout_probe, and worker_fanout_probe)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
                                (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
@@ -1204,7 +1204,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, solver-lab builds synth_corpus_gen and stateview_feasibility_probe, and engine-lab builds bal_carry_probe, bal_candidate_scaling_probe, bal_delta_rounds_probe, bal_delta_snapshot_probe, bal_head_lifecycle_probe, bal_production_relevance_probe, bal_real_read_oracle_probe, bal_retention_probe, cold_miss_fanout_probe, session_fanout_probe, and worker_fanout_probe)"
+        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, solver-lab builds synth_corpus_gen and stateview_feasibility_probe, and engine-lab builds bal_carry_probe, bal_candidate_scaling_probe, bal_delta_rounds_probe, bal_delta_snapshot_probe, bal_head_lifecycle_probe, bal_production_relevance_probe, bal_real_read_oracle_probe, bal_retention_probe, bal_wall_ceiling_probe, cold_miss_fanout_probe, session_fanout_probe, and worker_fanout_probe)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets

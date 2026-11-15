@@ -294,7 +294,7 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
 }
 
 /// The BAL engine-lab entries, inserted into the same map the Rust scan
-/// reads. A separate builder for the same reason as the two below: the eight
+/// reads. A separate builder for the same reason as the two below: the nine
 /// BAL instruments share one relocation story and one key-prefix family,
 /// and holding them apart keeps each registry readable.
 fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
@@ -420,7 +420,7 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
     );
 }
 
-/// The live BAL engine-lab entries: the three instruments that dial a
+/// The live BAL engine-lab entries: the four instruments that dial a
 /// declared live endpoint, each carrying the two endpoint names beside its
 /// own controls.
 fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
@@ -494,6 +494,43 @@ fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'st
             "BAL_READ_ORACLE_ANCHORS",
             "BAL_READ_ORACLE_ROWS",
             "BAL_READ_ORACLE_PLANT_WEI",
+            "DEGENBOT_RPC_HTTP_CHAINID_1",
+            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+        ][..],
+    );
+
+    // The wall-clock ceiling instrument, same class and same cause: it also
+    // left `degenbot-simulation`'s `examples/` for the engine-lab tool
+    // crate, so its fourteen pre-existing per-run controls are now visible
+    // to the production-source scan. All fourteen are that probe's
+    // documented invocation contract -- the recorded-trace path
+    // (`/tmp/fanout_trace.log`), the real-coverage fixture path and its
+    // capture flag, the coverage-mode selector, the leg selector, the two
+    // modeled round-trip prices, the worker and slot counts, the two
+    // negative controls, the lane-progress diagnostic, and the two endpoint
+    // names the dev-only fixture-capture phase dials (the offline replay
+    // itself never touches the network) -- read once at start-up with the
+    // defaults they have always had (both coverage modes, all three legs,
+    // the 200/400 us and 700/1200 us points, W=2, F=8, the committed
+    // capture, no plant armed) and the same parse-and-fall-back behavior.
+    // None is an operator-config key: the readout is a measurement, so
+    // routing them through the loader would hand a lab binary the config
+    // crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_wall_ceiling_probe/main.rs",
+        &[
+            "BAL_WALL_LEGS",
+            "BAL_WALL_STORAGE_US",
+            "BAL_WALL_ACCOUNT_US",
+            "BAL_WALL_COVERAGE",
+            "BAL_WALL_TRACE",
+            "BAL_WALL_FIXTURE",
+            "BAL_WALL_FIXTURE_CAPTURE",
+            "BAL_WALL_W",
+            "BAL_WALL_F",
+            "BAL_WALL_PLANT_STORAGE_DELAY_US",
+            "BAL_WALL_PLANT_DIVERGENCE",
+            "BAL_WALL_DEBUG",
             "DEGENBOT_RPC_HTTP_CHAINID_1",
             "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
         ][..],

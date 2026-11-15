@@ -175,6 +175,18 @@ path = "src/bin/bal_real_read_oracle_probe/main.rs"
 name = "bal_candidate_scaling_probe"
 path = "src/bin/bal_candidate_scaling_probe/main.rs"
 
+# The deterministic wall-clock ceiling benchmark of BAL carry-forward: the
+# recorded fan-out read walks replayed under the three cache policies (cold,
+# exact-anchor seeded, parent-linked carry) with candidate wall time
+# attributed to six reconciled buckets and the eliminable storage-wait
+# ceiling reported per latency point, in both write-coverage modes. It
+# compiles no JIT program, so it declares no `required-features`: the
+# default lane builds it, and `evm2-jit` remains the lane the JIT-gated
+# targets open.
+[[bin]]
+name = "bal_wall_ceiling_probe"
+path = "src/bin/bal_wall_ceiling_probe/main.rs"
+
 [[bin]]
 name = "capture_seam_probe"
 path = "src/bin/capture_seam_probe/main.rs"

@@ -1,5 +1,6 @@
-//! Behavior pins for the wall-clock ceiling benchmark's instrumentation
-//! (`examples/bal_wall_ceiling_probe.rs` and its shared report modules): the
+//! Behavior pins for the wall-clock ceiling benchmark's instrumentation (the
+//! engine-lab binary `tools/engine-lab/src/bin/bal_wall_ceiling_probe/main.rs`
+//! and its shared report modules): the
 //! bucket partition and its reconciliation, the modeled cost model's charge
 //! classification, the eliminable storage-wait ceiling, the completion series,
 //! the snapshot-hit classification, and the cross-leg read-digest gate.

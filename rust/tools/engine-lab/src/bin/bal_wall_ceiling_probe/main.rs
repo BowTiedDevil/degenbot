@@ -122,9 +122,11 @@
 //! just bal-real-coverage-capture                  # regenerate the fixture (live node, dev-only)
 //! ```
 //!
-//! `BAL_WALL_FIXTURE` relocates the fixture (default
-//! `tests/fixtures/bal_real_coverage.json` in this crate); `BAL_WALL_DEBUG`
-//! traces lane progress.
+//! `BAL_WALL_FIXTURE` relocates the fixture (default the committed
+//! `rust/crates/engine/degenbot-simulation/tests/fixtures/bal_real_coverage.json`,
+//! resolved through the tool package's repository-root support);
+//! `BAL_WALL_DEBUG` traces lane progress. The report modules' behavior pins
+//! run in `crates/engine/degenbot-simulation/tests/bal_wall_ceiling.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -172,11 +174,21 @@ const OPTIMISTIC: (u64, u64) = (200, 400);
 const PESSIMISTIC: (u64, u64) = (700, 1200);
 
 /// The fixture's default home: the committed compact capture of the corpus
-/// stretch (the raw list responses are never stored).
-const DEFAULT_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/bal_real_coverage.json"
-);
+/// stretch (the raw list responses are never stored), resolved through the
+/// tool package's repository-root support -- the capture lives in the
+/// simulation crate's test fixtures, not under this package.
+///
+/// # Panics
+///
+/// Panics if the repository root fails to resolve, or if the resolved fixture
+/// path is not utf-8.
+fn default_fixture() -> String {
+    let root = degenbot_engine_lab::paths::repo_root().expect("the repository root resolves");
+    root.join("rust/crates/engine/degenbot-simulation/tests/fixtures/bal_real_coverage.json")
+        .to_str()
+        .map(str::to_string)
+        .expect("the committed capture's path is not utf-8")
+}
 
 /// The live `bal_carry_probe` accounting each recorded corpus produced — the
 /// real mode's cross-check target, measured by the live probe over the same
@@ -279,20 +291,10 @@ impl SegmentMap {
     }
 }
 
-fn env_us(name: &str) -> Option<Duration> {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(Duration::from_micros)
-}
-
-fn env_count(name: &str, fallback: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|count| *count > 0)
-        .unwrap_or(fallback)
-}
+// Every env key below is read as a literal at its call site, for the same
+// reason the stray-env-read gate enumerates names it can read off the
+// `env::var` line: a helper taking the name as a computed parameter would
+// hide it.
 
 /// What one invocation drives.
 struct Config {
@@ -379,8 +381,14 @@ impl Config {
     /// A `BAL_WALL_COVERAGE` value that names no coverage mode is a broken
     /// invocation, never a silent default.
     fn from_env() -> Result<Self, String> {
-        let storage = env_us("BAL_WALL_STORAGE_US");
-        let account = env_us("BAL_WALL_ACCOUNT_US");
+        let storage = std::env::var("BAL_WALL_STORAGE_US")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(Duration::from_micros);
+        let account = std::env::var("BAL_WALL_ACCOUNT_US")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(Duration::from_micros);
         let points = match (storage, account) {
             (Some(storage), Some(account)) => vec![(storage, account)],
             (Some(storage), None) => vec![(storage, Duration::from_micros(OPTIMISTIC.1))],
@@ -411,13 +419,27 @@ impl Config {
         };
         Ok(Self {
             trace: std::env::var("BAL_WALL_TRACE").unwrap_or_else(|_| DEFAULT_TRACE.into()),
-            fixture: std::env::var("BAL_WALL_FIXTURE").unwrap_or_else(|_| DEFAULT_FIXTURE.into()),
+            fixture: std::env::var("BAL_WALL_FIXTURE").unwrap_or_else(|_| default_fixture()),
             capture: std::env::var("BAL_WALL_FIXTURE_CAPTURE").is_ok(),
             modes,
             legs: parse_legs()?,
             points,
-            limits: FanoutLimits::new(env_count("BAL_WALL_W", 2), env_count("BAL_WALL_F", 8)),
-            plant_storage: env_us("BAL_WALL_PLANT_STORAGE_DELAY_US").unwrap_or(Duration::ZERO),
+            limits: FanoutLimits::new(
+                std::env::var("BAL_WALL_W")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .filter(|count| *count > 0)
+                    .unwrap_or(2),
+                std::env::var("BAL_WALL_F")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .filter(|count| *count > 0)
+                    .unwrap_or(8),
+            ),
+            plant_storage: std::env::var("BAL_WALL_PLANT_STORAGE_DELAY_US")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .map_or(Duration::ZERO, Duration::from_micros),
             plant: std::env::var("BAL_WALL_PLANT_DIVERGENCE")
                 .is_ok()
                 .then(|| Arc::new(AtomicBool::new(false))),

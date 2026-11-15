@@ -81,8 +81,8 @@ rust/crates/engine/degenbot-bot/src/instruments.rs::apply	the dispatch IS one fl
 rust/crates/engine/degenbot-bot/src/instruments.rs::new	one instrument per block; splitting hides the inventory
 rust/tools/engine-lab/src/bin/bal_carry_probe/main.rs::run	the probe's corpus, replay, report, and scaling leg read top-down
 rust/tools/engine-lab/src/bin/bal_real_read_oracle_probe/main.rs::run	the probe's corpus, leg loop, report, and negative control read top-down
-rust/crates/engine/degenbot-simulation/examples/bal_wall_ceiling_probe.rs::print_coverage_comparison	the comparison rows and the decomposition read top-down beside the tables
-rust/crates/engine/degenbot-simulation/examples/bal_wall_ceiling_probe.rs::run	the run's capture phase, mode replays, and gates read top-down
+rust/tools/engine-lab/src/bin/bal_wall_ceiling_probe/main.rs::print_coverage_comparison	the comparison rows and the decomposition read top-down beside the tables
+rust/tools/engine-lab/src/bin/bal_wall_ceiling_probe/main.rs::run	the run's capture phase, mode replays, and gates read top-down
 rust/crates/engine/degenbot-simulation/examples/mirror_coverage_probe.rs::!module
 rust/crates/engine/degenbot-simulation/tests/evm2_batch_quote_bench.rs::!module
 rust/crates/engine/degenbot-simulation/tests/evm2_gas_decomposition.rs::!module
