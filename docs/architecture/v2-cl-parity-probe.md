@@ -1,7 +1,17 @@
 # V2-as-degenerate-concentrated-liquidity swap-step parity probe
 
-Probe harness: `rust/crates/engine/degenbot-solvers/examples/v2_concentrated_liquidity_parity_probe.rs`
-Run: `cargo run -p degenbot-solvers --example v2_concentrated_liquidity_parity_probe`
+Durable test owner: `rust/crates/foundation/degenbot-pools/tests/v2_degenerate_cl_parity.rs`
+Reproduction gate: `just test-rust-nextest -p degenbot-pools -E 'binary(v2_degenerate_cl_parity)'`
+
+The probe executable that first produced this evidence
+(`degenbot-solvers`' example, later `degenbot-pools`') is retired; the pools
+integration test now owns its reconstruction — the same corpus, the same
+mapping, the same 8-point grid plus recorded hotspots — and pins the
+decision-critical invariants as named assertions: exactly 1,236 comparisons,
+`consumed_input == x` on every one with zero range-boundary hits, every
+zero-for-one divergence strictly non-positive, and zero divergence in the deep
+sub-`1e-3` ratio regime (550 comparisons). A rounding change in either
+simulator now fails that test instead of landing silently.
 
 This probe answers the decision question in ADR-060 ("Collapse the V2 walk
 dispatch — representation vs interface"): can a V2 constant-product hop be
@@ -155,5 +165,6 @@ boundary, which is an observable result change dressed as a refactor.
 
 Collapsing the V2 walk dispatch at the **piece-view seam** (interface collapse)
 removes the enum match sites without touching either production simulator and
-remains byte-identical by construction. This probe is the evidence record for
-that choice; it does not modify any production source.
+remains byte-identical by construction. This document is the evidence record for
+that choice; the durable assertions live in the `degenbot-pools` integration
+test named above, which gates the census on every pools test run.

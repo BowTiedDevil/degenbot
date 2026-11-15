@@ -42,7 +42,7 @@
 #   - the ceiling is a reviewed baseline, not a proof: an author can widen it by editing
 #     the number. That edit is exactly what the ratchet exists to put in a diff.
 #
-# reasonless-high-water: 99
+# reasonless-high-water: 98
 #
 rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::simulate_leaf	the fan-out, feedback, and recording read best as one ordered pass
 rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::the_fanout_prefetches_the_anchors_slot_set_once	the three fan-outs' wire observations read top-down
@@ -141,7 +141,6 @@ rust/crates/foundation/degenbot-math/src/curve/mod.rs::!module
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::apply_chunk_writes_on_conn
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::compute_preverified_liquidity
 rust/crates/foundation/degenbot-pool-updater/src/run.rs::run_pool_update_on_db
-rust/crates/foundation/degenbot-pools/examples/v2_concentrated_liquidity_parity_probe.rs::!module
 rust/crates/foundation/degenbot-pools/examples/walkmemo_readout.rs::!module
 rust/crates/foundation/degenbot-pools/src/families/concentrated_liquidity/mod.rs::read_swap	the length is the door's dispatch shape (four sources × two designs, each arm a single drive call); per-arm leaf extraction would re-duplicate the ONE drive policy per design — the seam ADR-037 closed
 rust/crates/foundation/degenbot-pools/src/sim/curve_dy_io.rs::resolve_dy_inputs	cohesive I/O orchestration ported 1:1 from the companion

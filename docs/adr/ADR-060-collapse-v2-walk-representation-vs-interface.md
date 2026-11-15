@@ -225,7 +225,12 @@ differs by hundreds of millions of wei at `x = 1` and multi-thousand-wei at
 production-scale inputs. The cause is structural - the CL step floors the
 post-fee net input before the invariant, and floors both the geometric-mean
 liquidity and the spot price - so it is not an accumulation a probe could
-erase. Evidence: `docs/architecture/v2-cl-parity-probe.md`.
+erase. Evidence: `docs/architecture/v2-cl-parity-probe.md`; the probe's
+decision-critical invariants (exactly 1,236 comparisons, full-input
+consumption everywhere, zero-for-one divergence strictly non-positive, zero
+divergence in the deep sub-`1e-3` regime) are pinned as a durable census by
+`degenbot-pools`' `tests/v2_degenerate_cl_parity.rs`, so a rounding change in
+either simulator fails a test instead of landing silently.
 
 The all-V2 fast arm stays on `exact_mobius_solve`. Routing all-V2 paths through
 the walk's constant-product projection is neither byte-identical (83.3% of the

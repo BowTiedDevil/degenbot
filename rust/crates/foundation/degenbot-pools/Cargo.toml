@@ -103,6 +103,10 @@ name = "concentrated_liquidity_golden_replay"
 required-features = ["capture-fixtures"]
 
 [[test]]
+name = "v2_degenerate_cl_parity"
+required-features = ["capture-fixtures"]
+
+[[test]]
 name = "profit_envelope_tests"
 required-features = ["capture-fixtures"]
 
@@ -117,10 +121,6 @@ required-features = ["capture-fixtures", "cache-lab"]
 # Fixture-reading examples ([[example]] sections exist only to carry
 # required-features; unlisted examples auto-discover and compile everywhere).
 # The pre-push/CI lanes that run them enable the feature explicitly.
-
-[[example]]
-name = "v2_concentrated_liquidity_parity_probe"
-required-features = ["capture-fixtures"]
 
 [[example]]
 name = "walkmemo_readout"
