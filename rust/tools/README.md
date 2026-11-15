@@ -16,14 +16,15 @@ described in §6.2. Seven fixture slices have landed since, all in task `03`:
 | `03f` | the concentrated-liquidity capture generator — `concentrated_liquidity_capture_gen` | §6.8 |
 | `03g` (`B4IKBC`) | the three-hop production-calldata helper — `encode_three_hop` (a recipe/staging row; no §6.x section of its own) | §4.2, §8.1, §8.2 |
 
-Cargo metadata now reports **27 example targets**, `degenbot-fixture-tools` reports its lib
-plus exactly **nine** `[[bin]]` targets, and `degenbot-solver-lab` its lib plus exactly
-**eight**. No §4.2 row is still an example — no other recorder, no other program, and no
-other capture generator moved — and **no fixture byte changed** in any of the seven
-slices. Each offline participant was re-proved byte-identical by its own
-re-derivation (the two capture recipes plus, for the cassette recorder,
-`record_updater_cassette --check <cassette.json>...` over every committed cassette in
-`tests/fixtures/cassettes/`), and every red path was shown against a **temporary
+Cargo metadata now reports **26 example targets**, `degenbot-fixture-tools` reports its lib
+plus exactly **nine** `[[bin]]` targets, `degenbot-solver-lab` its lib plus exactly
+**eight**, and `degenbot-engine-lab` its lib plus exactly **one** (`capture_seam_probe`,
+under `required-features = ["evm2-jit"]`). No §4.2 row is still an example — no other
+recorder, no other program, and no other capture generator moved — and **no fixture byte
+changed** in any of the seven slices. Each offline participant was re-proved
+byte-identical by its own re-derivation (the two capture recipes plus, for the cassette
+recorder, `record_updater_cassette --check <cassette.json>...` over every committed
+cassette in `tests/fixtures/cassettes/`), and every red path was shown against a **temporary
 mutated copy**, never against the committed corpus. The seventh slice moved no fixture at
 all (`git status --short -- tests/fixtures` empty): its recapture arms read the chain and
 need a live archive node, so the honest report there is a compile lane, not a
@@ -82,6 +83,27 @@ index and adds nothing else — no capture/cache, hotpath, RPC, JIT, or SQL-ledg
 and no bot exporter — while the default tree gained no crate. Its hard-coded 1M and 10M legs
 were compiled, reviewed against the unchanged source, and **not executed**: there is no
 smaller mode to run and no timing threshold anywhere.
+
+Task `05`'s first slice has landed since: it moved `capture_seam_probe` into
+`degenbot-engine-lab` as a `required-features = ["evm2-jit"]` binary and built that
+package's support library from the `examples/shared/bench_corpus.rs` module the capture
+probe shares with `cold_miss_fanout_probe`, `worker_fanout_probe`, and `sim_mode_bench` —
+one corpus-building implementation, imported instead of `#[path]`-included, with its read
+anchors resolved through `degenbot_engine_lab::paths` (marker-resolved root) instead of
+`CARGO_MANIFEST_DIR/../../../..` arithmetic. The corpus names no JIT type, so the support
+and the crates it links are DEFAULT-feature code and the later non-JIT consumers inherit it
+without a JIT lane; `evm2-jit` stays the capture binary's own forward. The three other
+consumers keep the old-home helper byte-intact until their own slices land, and no BAL
+helper, BAL test, or simulation test changed. The binary ran offline from its new home and
+printed its documented `PASS` line (both seam configurations' slot/swap sets equal the
+inspector's, `540` compiled-code lookup hits, and the reverted-subcall leg's
+`seam logs=0, inspector committed=0, inspector reverted-diagnostic=1`). The corpus
+support's failure contract is a **two-class error** (`bench_corpus::CorpusError`): the
+fixture class (an unresolvable repository root, an unreadable/undecodable/parse-failing
+committed artifact, a quote outside `u128`) aborts the probe at the stage's own message —
+exit 101 — while the runtime class (a reverted deploy or setup frame, an unencodable
+workload) stays an ordinary reported error and exits 1. Both classes are values in the
+library, and each instrument decides which of them aborts its own run.
 
 The workspace accumulated 44 Cargo example targets whose purposes are three different
 things: a *supported consumer starting point*, a *durable assertion someone must gate*, and
@@ -259,7 +281,7 @@ See §3 for the full rows; repeated here only so the marked region holds all 44 
 | `bal_real_read_oracle_probe` | `degenbot-simulation` | engine-lab (05) | `crates/engine/degenbot-simulation/examples/bal_real_read_oracle_probe.rs` | Real-candidate read-set oracle replay: the post-fix soak's `fanout-trace` rows replayed through exact-anchor BAL generations, every recorded read compared against an independent cold read | — | LIVE node (`DEGENBOT_RPC_HTTP_CHAINID_1` / `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI`); the soak trace `BAL_READ_ORACLE_TRACE` defaults to `logs/bal_postfix_soak_trace.log`, which is **gitignored and not in the tree** | stdout; `BAL_READ_ORACLE_PLANT_WEI=1` must exit non-zero | `just bal-real-read-oracle-probe`; recorded result `docs/architecture/bal-real-read-oracle-result.md`. **Live + external corpus: compile lane here, measurements not refreshed** |
 | `bal_retention_probe` | `degenbot-simulation` | engine-lab (05) | `crates/engine/degenbot-simulation/examples/bal_retention_probe.rs` | Idle-block retention measurement over both committed real write-coverage captures and one synthetic long run, at thresholds 1/2/4/8 against the unbounded control; every identity verified against an independent cold read | — | committed `tests/fixtures/bal_real_coverage*.json`; `BAL_RETENTION_THRESHOLDS`, `BAL_RETENTION_SYNTH_*` | stdout; `BAL_RETENTION_PLANT_DIVERGENCE=1` must exit non-zero; results in `logs/bal_retention_result.md` | `just bal-retention-probe` (offline); the parity pins live in `crates/engine/degenbot-simulation/tests/` and the recipe is the only route to the report |
 | `bal_wall_ceiling_probe` | `degenbot-simulation` | engine-lab (05) | `crates/engine/degenbot-simulation/examples/bal_wall_ceiling_probe.rs` | Deterministic wall-clock ceiling benchmark of BAL carry-forward: the recorded read walks under three cache policies, candidate wall attributed to six reconciled buckets, the eliminable storage-wait ceiling per price point, in both write-coverage modes | — | **EXTERNAL CORPUS**: `BAL_WALL_TRACE` defaults to `/tmp/fanout_trace.log`; committed `tests/fixtures/bal_real_coverage.json` / `..._broader.json` via `BAL_WALL_FIXTURE` | stdout + `logs/` results; `BAL_WALL_FIXTURE_CAPTURE=1` is the live fixture-write mode (its own recipe `just bal-real-coverage-capture`); `BAL_WALL_PLANT_DIVERGENCE=1` must exit non-zero | `just bal-wall-ceiling-probe`; instrumentation pins in `crates/engine/degenbot-simulation/tests/bal_wall_ceiling.rs`. Measurement — timing is reported, never asserted |
-| `capture_seam_probe` | `degenbot-simulation` | engine-lab (05) | `crates/engine/degenbot-simulation/examples/capture_seam_probe.rs` | JIT-composition probe: does the production capture (access-list slots + swap events) survive OFF the `Inspector` hook, i.e. can compiled execution carry it? Three configurations A/B/C with a set-equality PASS bar | `evm2-jit` | offline; the corpus comes from the shared bench corpus module | stdout; writes nothing; prints PASS/FAIL | `cargo run --release -p degenbot-engine-lab --features evm2-jit --bin capture_seam_probe`; the durable JIT verdict parity it feeds lives in the simulation test suite (`crates/engine/degenbot-simulation/tests/`) |
+| `capture_seam_probe` | `degenbot-engine-lab` | engine-lab (05a, **landed**) | `tools/engine-lab/src/bin/capture_seam_probe/main.rs` | JIT-composition probe: does the production capture (access-list slots + swap events) survive OFF the `Inspector` hook, i.e. can compiled execution carry it? Three configurations A/B/C with a set-equality PASS bar | `evm2-jit` | offline; the corpus comes from `degenbot_engine_lab::bench_corpus`, the tool library's corpus support (read anchors resolved from the repository root, no `CARGO_MANIFEST_DIR` arithmetic) | stdout; writes nothing; prints PASS/FAIL | `cargo run --release -p degenbot-engine-lab --features evm2-jit --bin capture_seam_probe` (unchanged command shape from the catalog row: same binary name, same feature lane, same three configurations, same PASS/FAIL bar, same reverted-subcall leg); the durable JIT verdict parity it feeds lives in the simulation test suite (`crates/engine/degenbot-simulation/tests/`) |
 | `cold_miss_fanout_probe` | `degenbot-simulation` | engine-lab (05) | `crates/engine/degenbot-simulation/examples/cold_miss_fanout_probe.rs` | Cold-miss cost and coroutine fan-out: ten legs over a deterministic offline RPC stand-in charging per modeled round trip; the decision instrument for the evm2 coroutine-fan-out chunk | — | offline — snapshot-derived state, `COLD_MISS_LATENCY_US`, `COLD_MISS_FRAMES` | stdout; writes nothing; timing reported, never asserted | `cargo run --release -p degenbot-engine-lab --bin cold_miss_fanout_probe` (no recipe); compile lane + its own leg-10 verdict-identity check |
 | `mirror_coverage_probe` | `degenbot-simulation` | remove in 06 — 05 leaves it in place | `crates/engine/degenbot-simulation/examples/mirror_coverage_probe.rs` | BotState-mirror overlap probe: of a real mainnet candidate's cold SLOAD set, how many keys the sim anchor already carries, and whether the carried word is *serveable* or only *comparable* | — | offline — two frames from the committed `degenbot-strategy/tests/fixtures/frame_replay_capture.jsonl`, prestate-tracer slot sets pinned in source | stdout classification tables; **asserts** that a registered pool projects its scalar rows into the anchor (an empty projection is a build defect) | See §5.4: task 05 leaves it where it is; task 06 extracts a durable offline regression test in `degenbot-simulation`, records the overlap table in a durable doc, and only then removes the executable |
 | `session_fanout_probe` | `degenbot-simulation` | engine-lab (05) | `crates/engine/degenbot-simulation/examples/session_fanout_probe.rs` | Session-scheduler benchmark: the recorded fan-out read walks driven through the committed `ReadHub` under the committed W/F bound, walled against serial / hybrid / fibers / per-lane reads under one latency model | — | **EXTERNAL CORPUS**: `SESSION_FANOUT_TRACE` defaults to `/tmp/fanout_trace.log` and its absence is a hard failure | stdout; `SESSION_FANOUT_PLANT_DIVERGENCE=1` must exit non-zero (per-candidate read-digest gate) | `just session-fanout-probe`; the real-frame scheduler behaviour it approximates is owned by `crates/engine/degenbot-simulation/tests/async_fanout.rs` and `.../session_async.rs`. Compile lane only without the trace |
@@ -326,7 +348,8 @@ revision, the acceptance is §8.2's restatement — same logic and same empty di
 ### 4.6.1 The post-migration audit — one ledger row, one live target
 
 §4.6's block compares the *example* set against the ledger, so it is the right check only
-while no row has moved. After task `03` and task `04`'s first six slices seventeen rows **have** moved, and the honest form of
+while no row has moved. After task `03`, task `04`'s first six slices, and task `05`'s first
+slice eighteen rows **have** moved, and the honest form of
 the same comparison unions the two target kinds a row can now name: a Cargo example target
 (rows not yet moved) and a tool-package `[[bin]]` target (rows whose destination has landed).
 That union is what §2's partition promises — every one of the 44 original targets exists
@@ -363,9 +386,10 @@ PY
 ```
 
 At this revision the acceptance is: `44` ledger rows, `44` unique, empty `missing`, empty
-`stale`, no duplicates, and `PASS` — over `27` example targets plus the `9`
-`degenbot-fixture-tools` and `8` `degenbot-solver-lab` binaries. §4.6's baseline block is
-expected to print `FAIL` here and to name exactly those seventeen rows as `stale in ledger`:
+`stale`, no duplicates, and `PASS` — over `26` example targets plus the `9`
+`degenbot-fixture-tools`, `8` `degenbot-solver-lab`, and `1` `degenbot-engine-lab`
+binaries. §4.6's baseline block is
+expected to print `FAIL` here and to name exactly those eighteen rows as `stale in ledger`:
 they are not stale, they moved, and this block is where that is visible instead of argued.
 
 **Boundary.** This audit stays valid while every ledger row still exists as *some* target.
@@ -671,11 +695,15 @@ Consequences the later tasks must honor:
    The sharpest form of the second check was the *default* tree: `cargo tree -p <tool> -e
    normal` printed one line — the package — for all three packages, which proved no optional
    product edge was active at default features. That held for the scaffold's three
-   support-library-only packages, and it holds for `degenbot-engine-lab` today. It no longer
-   holds for `degenbot-fixture-tools` (§6.5) nor for `degenbot-solver-lab`, whose
-   default-features `synth_corpus_gen` links pool state and therefore made the pools edge a
-   plain one: each of those two packages' default tree is the product graph it reads, and its
-   feature lane is the only difference between the lanes. §6.5 made
+   support-library-only packages. It no longer holds for `degenbot-fixture-tools` (§6.5) nor
+   for `degenbot-solver-lab`, whose default-features `synth_corpus_gen` links pool state and
+   therefore made the pools edge a plain one: each of those two packages' default tree is the
+   product graph it reads, and its feature lane is the only difference between the lanes. It
+   no longer holds for `degenbot-engine-lab` either: task `05`'s first slice made the corpus
+   support (`bench_corpus`) DEFAULT-feature library code, and that support names the
+   simulation engine, the command grammar, and evm2 — so this package's default tree is the
+   simulation graph, and its `evm2-jit` forward adds the JIT spine (`evm2-jit` plus
+   `degenbot-simulation/evm2-jit`) rather than changing which product graph is present. §6.5 made
    that package's crates plain (non-optional) edges because its ONE default-features binary —
    the cassette recorder — links them, so its default tree is the facade graph and the
    `sql-ledger` feature is the only difference between its two lanes. Record both forms in
@@ -691,10 +719,10 @@ and one check entry point. **No source file moved, and no binary exists.**
 | Claim | How to check it |
 | --- | --- |
 | The three packages exist with the §6 names — `degenbot-fixture-tools`, `degenbot-solver-lab`, `degenbot-engine-lab` — each at `rust/tools/<dir>/` | `cargo metadata --locked --manifest-path rust/Cargo.toml --format-version 1 --no-deps` |
-| Each is `publish = false`, inherits the `workspace.package` metadata and `[lints] workspace = true`, and has exactly one target: its `src/lib.rs` support library (`kind == ["lib"]`). No `[[bin]]`, no `[[example]]`, no test target | same metadata: `packages[].publish == []`, `packages[].targets` |
+| Each is `publish = false`, inherits the `workspace.package` metadata and `[lints] workspace = true`, and has exactly one target: its `src/lib.rs` support library (`kind == ["lib"]`). No `[[bin]]`, no `[[example]]`, no test target **at the scaffold's revision only** — every package has since gained binaries in its own slices, and `degenbot-engine-lab` is its lib plus exactly one (`capture_seam_probe`, `required-features = ["evm2-jit"]`) after task `05`'s first slice | same metadata: `packages[].publish == []`, `packages[].targets` |
 | Each is a workspace member and **not** a `default-member`: `workspace_default_members` is still exactly `degenbot` and `degenbot-cli`, so unqualified `cargo build --manifest-path rust/Cargo.toml` selects the same two product entry points it selected before | same metadata |
-| The feature shells are separate forwards, one family each: `sql-ledger = ["degenbot/sql-ledger"]`; `capture-fixtures = ["degenbot-pools/capture-fixtures"]`, `cache-lab = ["degenbot-pools/cache-lab"]`, `telemetry = ["degenbot-pools/telemetry"]` (the cache lab's optional second build shape; never a bot-exporter lane), `hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]`, `envelope = ["degenbot-order-index/envelope", "dep:alloy-primitives"]`; `evm2-jit = ["degenbot-simulation/evm2-jit"]`, `prometheus = ["degenbot-bot/hotpath-prometheus"]` | the three `Cargo.toml` files, plus one lane each in `just check-dev-tools` |
-| Every product edge in the engine manifest is optional, so that package's **default** tree is the package alone — no product crate is linked. Two packages are the exception: `degenbot-fixture-tools` since §6.5 (its default-features binary needs the facade) and `degenbot-solver-lab` since task `04`'s first slice (its default-features `synth_corpus_gen` needs pool state), so both have plain crates and a product-graph default tree | `cargo tree -p degenbot-engine-lab -e normal`: one printed line; `cargo tree -p degenbot-fixture-tools -e normal`: the facade graph; `cargo tree -p degenbot-solver-lab -e normal`: the pools graph |
+| The feature shells are separate forwards, one family each: `sql-ledger = ["degenbot/sql-ledger"]`; `capture-fixtures = ["degenbot-pools/capture-fixtures"]`, `cache-lab = ["degenbot-pools/cache-lab"]`, `telemetry = ["degenbot-pools/telemetry"]` (the cache lab's optional second build shape; never a bot-exporter lane), `hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]`, `envelope = ["degenbot-order-index/envelope", "dep:alloy-primitives"]`; `evm2-jit = ["degenbot-simulation/evm2-jit"]`, `prometheus = ["degenbot-bot/hotpath-prometheus"]` — and `degenbot-engine-lab`'s `evm2-jit` since task `05`'s first slice also names the `evm2-jit` crate itself, the capture probe's runner type | the three `Cargo.toml` files, plus one lane each in `just check-dev-tools` |
+| Every product edge in the engine manifest is optional, so that package's **default** tree is the package alone — no product crate is linked — **at the scaffold's revision only**: all three packages have since gained plain crates. `degenbot-fixture-tools` since §6.5 (its default-features binary needs the facade), `degenbot-solver-lab` since task `04`'s first slice (its default-features `synth_corpus_gen` needs pool state), and `degenbot-engine-lab` since task `05`'s first slice (its DEFAULT-feature corpus support links the simulation graph), so each has a product-graph default tree | `cargo tree -p degenbot-fixture-tools -e normal`: the facade graph; `cargo tree -p degenbot-solver-lab -e normal`: the pools graph; `cargo tree -p degenbot-engine-lab -e normal`: the simulation graph |
 | **Tool-owned feature-forward isolation**: no lane enables a family another tool package owns | the per-lane `cargo tree ... -e features -i <owning crate>` inspections below (§6.1 consequence 4) |
 | `stubgen` and both `rust/examples/` packages are untouched, and the example surface is unchanged: 44 example targets across the same 10 packages, so §4.6's baseline audit still prints `exact-set audit: PASS` | §4.6's block, unmodified |
 | `rust/Cargo.lock` grew three package entries and nothing else: no version move, no external-family change | `git diff rust/Cargo.lock` is purely additive |
@@ -1607,7 +1635,7 @@ would write (or a replay would read) somewhere else without failing.
 
 | Affected source | Anchor | Task |
 | --- | --- | --- |
-| `degenbot-simulation`: `aot_prepare_executor`, `cold_miss_fanout_probe`, `worker_fanout_probe`, `bal_wall_ceiling_probe`, `bal_delta_snapshot_probe`, `bal_retention_probe` (×3), `bal_delta_rounds_probe` (×2), `bal_production_relevance_probe`, `bal_head_lifecycle_probe`, and `examples/shared/bench_corpus.rs` | `join("../../../..")` or a `format!`-built path | 05 |
+| `degenbot-simulation`: `aot_prepare_executor`, `cold_miss_fanout_probe`, `worker_fanout_probe`, `bal_wall_ceiling_probe`, `bal_delta_snapshot_probe`, `bal_retention_probe` (×3), `bal_delta_rounds_probe` (×2), `bal_production_relevance_probe`, `bal_head_lifecycle_probe`, and `examples/shared/bench_corpus.rs` | `join("../../../..")` or a `format!`-built path | 05 — **partly closed by 05a**: the moved `capture_seam_probe` reads its corpus artifacts through `degenbot_engine_lab::paths` (marker-resolved root, no `..` arithmetic); the original `examples/shared/bench_corpus.rs` keeps `join("../../../..")` for the three consumers still `#[path]`-including it until 05b–05d |
 | `degenbot` (facade): `generate_aave_adversarial_captures`, `generate_aave_config_windows`, `generate_aave_upgrade_windows`, `generate_evm_oracle_captures` (×2), `record_py_oracle_corpus` | `join("../../../..")` / `join("../../../../tests/fixtures")` | 03 |
 | `degenbot-rpc`: `concentrated_liquidity_capture_gen` | manifest-relative path `format!` | 03f — **closed**: the default output resolves through `degenbot_fixture_tools::paths` to the identical committed file (§6.8) |
 | `degenbot-pools`: `synth_corpus_gen` (**writes** into `tests/fixtures`) | `join("tests/fixtures")` | 04 — **closed by the move**: the output home resolves through `degenbot_solver_lab::paths` (marker-resolved repository root + the pools fixture path) to the identical committed files, proven by regenerating the concentrated-liquidity corpus to an empty `git diff` (§5.3) |

@@ -13,25 +13,62 @@ authors.workspace = true
 [lints]
 workspace = true
 
-# Optional, one lane each: the default check of this package links no product
-# crate, and every edge points from this tool to a product crate, never back.
-# A lane enables its own forward only -- it does not shrink the resolved tree,
-# which still carries what the reached product crates already depend on
-# (e.g. `degenbot-db`'s non-optional bundled `rusqlite`).
+# Dependency shape: the corpus support behind `src/lib.rs` is DEFAULT-feature
+# code, so the crates it names are plain edges -- Cargo has no per-target
+# dependency selection, and the support is shared by JIT and non-JIT
+# instruments alike. Every edge still points from this tool to a product crate,
+# never back, and a lane only ADDS its own forward: `evm2-jit` turns the JIT
+# spine on and `prometheus` the bot exporter, and neither is enabled here.
 [dependencies]
-degenbot-simulation = { workspace = true, optional = true }
+# The corpus support builds a production-policy evm2 EVM, deploys the real
+# `cmd_executor` creation artifact from the executor's release home, and
+# encodes the replayed frame through the production composers -- so the
+# simulation engine, the command grammar, and the neutral opportunity
+# descriptors the encoding consumes are all direct edges rather than arrivals
+# through a re-export.
+degenbot-simulation.workspace = true
+degenbot-executor.workspace = true
+degenbot-execution.workspace = true
+
+# The EVM the corpus is built and measured on: `Evm`/`InMemoryDB`, the block
+# env, the ethereum tx registry, and `Version`/`ExecutionConfig`. The engine's
+# feature set unifies with the `degenbot-simulation` edge above, which is what
+# asks for the production precompile/keccak backends; naming them again here
+# would be a second copy of the same decision.
+evm2.workspace = true
+
+# The alloy umbrella, matching the simulation edge: the corpus frames are typed
+# `TxEip1559` recovered envelopes (`alloy::consensus`), the fixture stubs are
+# `sol!` interfaces, and the probe compares `Address`/`B256` sets.
+alloy = { version = "^2.5", features = ["full"] }
+
+# The bot profiler's guard and exporter, reachable only through `prometheus`.
 degenbot-bot = { workspace = true, optional = true }
+
+# The JIT runner the `evm2-jit` lane compiles and runs.
+evm2-jit = { workspace = true, optional = true }
 
 [features]
 default = []
 
-# The JIT engine lane: the vendored `evm2-jit`, `-build`, and `-runtime` edges
-# behind `degenbot-simulation/evm2-jit`. The engine-benchmark and AOT programs
-# declare it in their own `required-features`, so a default check compiles no
-# LLVM codegen.
-evm2-jit = ["degenbot-simulation/evm2-jit"]
+# The JIT engine lane: the vendored `evm2-jit` edge (its curated root re-exports
+# the `evm2_evm` interpreter runner and the `runtime` config the capture-seam
+# probe installs) plus `degenbot-simulation/evm2-jit`, which is the `-build` and
+# `-runtime` edges and the build script's builtins-symbol export. The programs
+# that need it declare it in their own `required-features`, so a default check
+# compiles no LLVM codegen.
+evm2-jit = ["dep:evm2-jit", "degenbot-simulation/evm2-jit"]
 
 # The bot profiler's Prometheus exporter lane (the guard's `/metrics` listener,
 # `degenbot-bot/hotpath-prometheus`). It is the exporter lane only: it is not
 # the pool profiling lane, which lives in `degenbot-solver-lab`.
 prometheus = ["degenbot-bot/hotpath-prometheus"]
+
+# The JIT-composition probe: does the production capture (access-list slots +
+# swap events) survive OFF the `Inspector` hook, so compiled execution can
+# carry it? It needs the runner type, so it is a `required-features` target and
+# a default check skips it deliberately.
+[[bin]]
+name = "capture_seam_probe"
+path = "src/bin/capture_seam_probe/main.rs"
+required-features = ["evm2-jit"]

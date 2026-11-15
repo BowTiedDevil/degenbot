@@ -22,4 +22,18 @@
 //! shaping, so those modules are imported rather than `#[path]`-included from an
 //! example directory.
 //!
+//! # Modules
+//!
+//! - [`bench_corpus`] — the deployed executor corpus (real `cmd_executor`
+//!   artifact plus the harness stubs), seeded through the production-policy
+//!   evm2 EVM, and the `execute()` frame every replay instrument runs. It names
+//!   no JIT type, so the non-JIT fan-out instruments link it on default
+//!   features.
+//! - [`paths`] — repository-root resolution (marker-resolved, no `..`
+//!   arithmetic) for the committed artifacts a corpus load reads.
+//!
 //! Lane features: `evm2-jit`, `prometheus`.
+
+pub mod bench_corpus;
+
+pub mod paths;

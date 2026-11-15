@@ -137,13 +137,6 @@ required-features = ["evm2-jit"]
 name = "cold_miss_fanout_probe"
 path = "examples/cold_miss_fanout_probe.rs"
 
-# The JIT-composition probe: does the production capture (slots + swaps)
-# survive off the Inspector hook, so compiled execution can carry it?
-[[example]]
-name = "capture_seam_probe"
-path = "examples/capture_seam_probe.rs"
-required-features = ["evm2-jit"]
-
 # The JIT spine's fail-soft + verdict-parity gate (needs the runner type).
 [[test]]
 name = "jit_spine"

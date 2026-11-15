@@ -1,6 +1,14 @@
+// This instrument keeps the corpus support's two failure classes apart. The
+// FIXTURE class (a committed artifact the tree should carry that does not read,
+// decode, or parse) aborts the run on the stage's own message: a capture
+// verdict over a corpus that never loaded measures nothing. The RUNTIME class
+// (a reverted deploy, an unencodable workload) is an ordinary error the caller
+// reports and exits 1 on. Both are values in the support library, which stays
+// `Result`-based.
 #![expect(
     clippy::expect_used,
     clippy::panic,
+    clippy::panic_in_result_fn,
     clippy::print_stdout,
     clippy::print_stderr
 )]
@@ -34,16 +42,17 @@ use std::time::Instant;
 
 use alloy::primitives::{Address, B256};
 
+use ::evm2::{BaseEvmTypes, Evm};
 use ::evm2_jit::evm2_evm::JitInterpreterRunner;
 use ::evm2_jit::runtime::{JitBackend, RuntimeConfig};
 
 use degenbot_simulation::sim::capture::CapturedSwap;
 use degenbot_simulation::sim::evm2::inspectors::Evm2SimInspector;
 
-#[path = "shared/bench_corpus.rs"]
-mod bench_corpus;
 use alloy::primitives::{keccak256, Bytes, TxKind};
-use bench_corpus::{bench_evm, build_corpus, deploy, envelope, DEPLOYER};
+use degenbot_engine_lab::bench_corpus::{
+    bench_evm, build_corpus, deploy, envelope, Corpus, CorpusError, DEPLOYER,
+};
 
 const ITERS: usize = 30;
 
@@ -64,10 +73,33 @@ fn swap_lines(swaps: &[CapturedSwap]) -> Vec<String> {
     lines
 }
 
+/// The binary's panic boundary: the fixture class aborts on the stage's own
+/// message, the runtime class is an ordinary error the caller reports.
+///
+/// The verdicts below are about capture, and a capture comparison over a corpus
+/// that never deployed measures nothing — so a corpus whose committed fixture
+/// does not load aborts the process at the stage's own message instead of
+/// arriving as a probe failure line. A reverted deploy or an unencodable
+/// workload is a failure of this run, not a broken fixture, and stays a normal
+/// error. The library reports both as values and stays `Result`-based.
+fn corpus_or_abort<T>(result: Result<T, CorpusError>) -> Result<T, String> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(CorpusError::Panic(message)) => panic!("{message}"),
+        Err(CorpusError::Failure(message)) => Err(message),
+    }
+}
+
+/// Build the fixture corpus through [`corpus_or_abort`].
+fn load_corpus(evm: &mut Evm<'_, BaseEvmTypes>) -> Result<Corpus, String> {
+    let (corpus, _path) = corpus_or_abort(build_corpus(evm))?;
+    Ok(corpus)
+}
+
 /// Reference configuration: the production inspector on the interpreter.
 fn run_inspector_config() -> Result<ConfigReport, String> {
     let mut evm = bench_evm(true);
-    let (corpus, _path) = build_corpus(&mut evm)?;
+    let corpus = load_corpus(&mut evm)?;
     // The corpus build runs through the inspector too — flush its capture
     // so the reference holds only the timed runs' sets.
     let inspector = evm
@@ -132,7 +164,7 @@ fn run_inspector_config() -> Result<ConfigReport, String> {
 /// swaps from result logs. `jit` installs the blocking runner.
 fn run_seam_config(name: &'static str, jit: bool) -> Result<ConfigReport, String> {
     let mut evm = bench_evm(false);
-    let (corpus, _path) = build_corpus(&mut evm)?;
+    let corpus = load_corpus(&mut evm)?;
     if corpus.contracts.is_empty() {
         return Err("corpus deploys no contracts".to_string());
     }
@@ -304,7 +336,7 @@ fn reverted_subcall_leg() -> Result<(), String> {
 
     // Seam side: the reverted frame's result carries no logs.
     let mut evm = bench_evm(false);
-    let reverter = deploy(&mut evm, creation.clone(), 0)?;
+    let reverter = corpus_or_abort(deploy(&mut evm, creation.clone(), 0))?;
     let frame = envelope(
         DEPLOYER,
         TxKind::Call(reverter.address),
@@ -338,7 +370,7 @@ fn reverted_subcall_leg() -> Result<(), String> {
     // Inspector reference side: the committed buffer agrees (empty), and
     // the reverted diagnostic buffer keeps the event.
     let mut ievm = bench_evm(true);
-    let ireverter = deploy(&mut ievm, creation, 0)?;
+    let ireverter = corpus_or_abort(deploy(&mut ievm, creation, 0))?;
     let frame = envelope(
         DEPLOYER,
         TxKind::Call(ireverter.address),
@@ -415,5 +447,45 @@ fn main() {
     if let Err(e) = reverted_subcall_leg() {
         eprintln!("reverted-subcall leg FAILED: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // A test harness may fail loudly; the instrument's own boundary may not.
+    #![expect(clippy::expect_used)]
+
+    use degenbot_engine_lab::bench_corpus::CorpusError;
+
+    use super::corpus_or_abort;
+
+    /// The fixture class reaches the process as a panic carrying the stage's own
+    /// message — never as a probe failure line over a corpus that never loaded.
+    #[test]
+    fn the_fixture_class_aborts_on_the_stage_message() {
+        let payload = std::panic::catch_unwind(|| {
+            corpus_or_abort::<()>(Err(CorpusError::Panic(
+                "read tier3-oracle/artifacts/harness/Token.json: absent".to_string(),
+            )))
+        })
+        .expect_err("the fixture class aborts");
+        let message = payload
+            .downcast_ref::<String>()
+            .expect("a formatted panic payload");
+        assert_eq!(
+            message,
+            "read tier3-oracle/artifacts/harness/Token.json: absent"
+        );
+    }
+
+    /// The runtime class comes back as the ordinary error the caller reports
+    /// before exiting 1.
+    #[test]
+    fn the_runtime_class_is_an_ordinary_error() {
+        let err = corpus_or_abort::<()>(Err(CorpusError::Failure(
+            "deploy reverted/halted: Stop".to_string(),
+        )))
+        .expect_err("the runtime class is a value");
+        assert_eq!(err, "deploy reverted/halted: Stop");
     }
 }

@@ -2528,7 +2528,12 @@ dependencies = [
 name = "degenbot-engine-lab"
 version = "0.6.0-alpha.19"
 dependencies = [
+ "alloy",
  "degenbot-bot",
+ "degenbot-evm2",
+ "degenbot-evm2-jit",
+ "degenbot-execution",
+ "degenbot-executor",
  "degenbot-simulation",
 ]
 

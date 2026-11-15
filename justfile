@@ -1080,8 +1080,15 @@ check-rust-all-features:
 #                                                  state, so that edge is plain
 #                                                  (the other crates stay
 #                                                  optional);
-#   `cargo tree -p degenbot-engine-lab -e normal`  -> the package alone (no
-#                                                  optional product edge active);
+#   `cargo tree -p degenbot-engine-lab -e normal`  -> the simulation graph: its
+#                                                  DEFAULT-feature corpus support
+#                                                  (the tool library's
+#                                                  `bench_corpus`) names the engine,
+#                                                  the command grammar, and evm2,
+#                                                  so those edges are plain and the
+#                                                  `evm2-jit` lane adds the JIT
+#                                                  spine instead of changing the
+#                                                  graph;
 #   `cargo tree -p <tool> --features <lane>
 #     -e features -i <owning crate>`            -> names the tool forward that
 #                                                  turned one family on.

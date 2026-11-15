@@ -115,9 +115,9 @@ the choice explicit per journaled sequence:
   `transact_with_inspector` on the interpreted path, giving the full call trace
   and the reverted-frame swap buffer.
 
-`rust/crates/engine/degenbot-simulation/examples/capture_seam_probe.rs` is the
-equivalence gate between them: the seam's slot and swap sets must equal the
-inspector's, with the JIT backend reporting compiled execution.
+`rust/tools/engine-lab/src/bin/capture_seam_probe/main.rs` is the equivalence gate
+between them: the seam's slot and swap sets must equal the inspector's, with the JIT
+backend reporting compiled execution.
 
 ## Revert and halt attribution
 
@@ -236,8 +236,9 @@ by `diagnostic_path_state` with no RPC.
   the PyO3 probe). The oracle is a recorded constant — the evm2 run is the
   truth — so a dropped field, a changed address format or a re-rendered revert
   payload makes the two consumers disagree with the fixture.
-- **Capture equivalence** — `examples/capture_seam_probe.rs` under
-  `rust/crates/engine/degenbot-simulation/` (see above).
+- **Capture equivalence** — the `capture_seam_probe` development instrument,
+  `rust/tools/engine-lab/src/bin/capture_seam_probe/main.rs` (see above; it is a tool
+  binary now, not a simulation example).
 - **Offline pool truth** — the `tier3_*` reference-bytecode suites in
   `degenbot-simulation/tests/` run the canonical pool contracts on evm2 and
   prove the Rust swap math byte-exact against them, so the amounts the capture
