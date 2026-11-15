@@ -135,23 +135,28 @@ const WINDOW_MS: &[u64] = &[25, 100, 500, 1_000, 2_000];
 /// changing what a field means bumps the version.
 const SUMMARY_SCHEMA: &str = "bal-head-lifecycle/1";
 
-/// The environment variable naming where the summary is written. Unset means
-/// no file: the human report is then the whole output.
-const SUMMARY_OUT: &str = "BAL_HEAD_SUMMARY_OUT";
-
 /// The committed real write-coverage capture whose write addresses stand in for
 /// the caller's relevance set: the same ORACLE-labelled input the live carry
 /// probe uses, so the probe's new writes are the ones a tracked-address fan-out
 /// would care about instead of every address a block touched.
-const RELEVANCE_CAPTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/bal_real_coverage.json"
-);
+///
+/// The capture stays at its committed simulation home; its path resolves from
+/// the marker-anchored repository root (`degenbot_engine_lab::paths`), never
+/// from `..` arithmetic off this package's manifest directory.
+fn relevance_capture() -> Result<String, String> {
+    let root = degenbot_engine_lab::paths::repo_root()?;
+    let fixture =
+        root.join("rust/crates/engine/degenbot-simulation/tests/fixtures/bal_real_coverage.json");
+    fixture
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| "the committed capture's path is not utf-8".to_string())
+}
 
 /// The caller's relevance set: every distinct write address the committed
 /// capture recorded, sorted so the set is reproducible.
 fn relevance_set() -> Result<Vec<Address>, String> {
-    let real = RealCoverage::load(RELEVANCE_CAPTURE)?;
+    let real = RealCoverage::load(&relevance_capture()?)?;
     let mut addresses: Vec<Address> = (real.first()..=real.last())
         .flat_map(|number| real.writes_at(number).iter().map(|(address, _)| *address))
         .collect();
@@ -206,10 +211,13 @@ impl Row {
     }
 }
 
-fn env_count(name: &str, fallback: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
+/// A per-run knob override: the read value parsed as `u64`, or the recorded
+/// default when absent or unparseable. The call sites pass literal names
+/// (`BAL_HEAD_FIRST`, `BAL_HEAD_LAST`, and their siblings) because the env-read
+/// gate enumerates literal spellings, not computed ones.
+fn env_count(value: Option<String>, fallback: u64) -> u64 {
+    value
+        .and_then(|parsed| parsed.parse::<u64>().ok())
         .unwrap_or(fallback)
 }
 
@@ -246,11 +254,14 @@ impl Config {
     fn from_env() -> Result<Self, String> {
         Ok(Self {
             url: rpc_url()?,
-            first: env_count("BAL_HEAD_FIRST", FIRST_BLOCK),
-            last: env_count("BAL_HEAD_LAST", LAST_BLOCK),
-            fresh: env_count("BAL_HEAD_FRESH", FRESH_HEADS),
-            wait_samples: env_count("BAL_HEAD_WAIT_SAMPLES", WAIT_SAMPLES),
-            wait_hold: Duration::from_millis(env_count("BAL_HEAD_WAIT_HOLD_MS", WAIT_HOLD_MS)),
+            first: env_count(std::env::var("BAL_HEAD_FIRST").ok(), FIRST_BLOCK),
+            last: env_count(std::env::var("BAL_HEAD_LAST").ok(), LAST_BLOCK),
+            fresh: env_count(std::env::var("BAL_HEAD_FRESH").ok(), FRESH_HEADS),
+            wait_samples: env_count(std::env::var("BAL_HEAD_WAIT_SAMPLES").ok(), WAIT_SAMPLES),
+            wait_hold: Duration::from_millis(env_count(
+                std::env::var("BAL_HEAD_WAIT_HOLD_MS").ok(),
+                WAIT_HOLD_MS,
+            )),
         })
     }
 }
@@ -444,7 +455,8 @@ async fn wait_leg(config: &Config) -> Result<Vec<WaiterSample>, String> {
     if config.wait_samples == 0 {
         return Ok(Vec::new());
     }
-    let chain = WaiterChain::load(RELEVANCE_CAPTURE, config.wait_samples)?;
+    let capture = relevance_capture()?;
+    let chain = WaiterChain::load(&capture, config.wait_samples)?;
     let driver = BalHeadDriver::new(&chain.provider());
     waiter_leg(&driver, &chain, config.wait_hold).await
 }
@@ -663,10 +675,11 @@ async fn run() -> Result<(), String> {
     // A session's first anchor is a settled head; every later head carries it.
     let driver = BalHeadDriver::new(&provider);
     let relevance = relevance_set()?;
+    let relevance_capture = relevance_capture()?;
     println!(
         "relevance: ORACLE — {} distinct write addresses from the committed capture {}",
         relevance.len(),
-        RELEVANCE_CAPTURE
+        relevance_capture
     );
     let mut rows = Vec::new();
     let mut failures = Vec::new();
@@ -694,7 +707,9 @@ async fn run() -> Result<(), String> {
 
     // The machine-readable summary is written only for a run that measured a
     // clean lifecycle: a failed run has no numbers a comparison may consume.
-    if let Ok(path) = std::env::var(SUMMARY_OUT) {
+    // BAL_HEAD_SUMMARY_OUT names where the summary is written; unset means no
+    // file: the human report is then the whole output.
+    if let Ok(path) = std::env::var("BAL_HEAD_SUMMARY_OUT") {
         let document = summary(&config, &rows, &waits);
         std::fs::write(&path, format!("{document}\n"))
             .map_err(|error| format!("write summary {path}: {error}"))?;

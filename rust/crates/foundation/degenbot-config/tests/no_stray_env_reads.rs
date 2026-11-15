@@ -309,6 +309,34 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         ][..],
     );
 
+    // The live BAL head-lifecycle instrument, same class and same cause: it
+    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
+    // crate, so its nine pre-existing per-run controls are now visible to the
+    // production-source scan. All nine are that probe's documented invocation
+    // contract -- the historical/fresh-head/waiter sample knobs, the parked
+    // window each waiter sample holds, the planted-divergence negative
+    // control, the summary-out path, and the two endpoint names the live legs
+    // dial -- read once at start-up with the defaults they have always had
+    // (26375033..=26375053, 6 fresh heads, 21 waiter samples, 20 ms hold) and
+    // the same parse-and-fall-back behavior, the two zero sample sizes
+    // disabling their legs. None is an operator-config key: the readout is a
+    // live measurement, so routing them through the loader would hand a lab
+    // binary the config crate's dependency graph for no behavioral gain.
+    map.insert(
+        "tools/engine-lab/src/bin/bal_head_lifecycle_probe/main.rs",
+        &[
+            "BAL_HEAD_FIRST",
+            "BAL_HEAD_LAST",
+            "BAL_HEAD_FRESH",
+            "BAL_HEAD_WAIT_SAMPLES",
+            "BAL_HEAD_WAIT_HOLD_MS",
+            "BAL_HEAD_PLANT_DIVERGENCE",
+            "BAL_HEAD_SUMMARY_OUT",
+            "DEGENBOT_RPC_HTTP_CHAINID_1",
+            "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+        ][..],
+    );
+
     // The session-scheduler fan-out instrument, same class and same cause: it
     // also left `examples/` for the engine-lab tool crate, so its seven
     // pre-existing per-run controls are now visible to the production-source
