@@ -2,86 +2,9 @@
 
 This file is the **current catalog** of the workspace's development-tool surface and its
 public example surface: one row per target, the command that runs it today, its feature
-lane, its inputs, its write behavior, and whether an automatic gate runs it. It is not a
-migration journal — per-slice history, old `--example` invocations, and landed-evidence
-play-by-play live in the commit history and the ADRs, not here.
-
-## The final shape
-
-- **3 public example targets** (Cargo metadata reports exactly these three):
-  `standalone_consumer`, `solve_path_probe`, `foreign_consumer`.
-- **35 lab binaries** in three non-publishable tool packages:
-  9 in `degenbot-fixture-tools`, 8 in `degenbot-solver-lab`, 18 in `degenbot-engine-lab`.
-- **2 promoted integration tests** (former smoke examples, now owning-crate tests):
-  `headless_boot` (`degenbot-ingestion`), `config_smoke_boot` (`degenbot-bot`).
-- **4 removed executables**, each with a durable doc/test/evidence owner:
-  `scale_demo`, `walkmemo_readout`, `v2_concentrated_liquidity_parity_probe`,
-  `mirror_coverage_probe`.
-
-`3 + 35 + 2 + 4 = 44`: every original example target is accounted for exactly once, in the
-marked region below. Two complete sample packages (`degenbot-execution-sample` and
-`degenbot-settlement-bot-example`) and the stub generator (`degenbot-stubgen`) are separate
-non-example surfaces: Cargo reports no example target for the settlement package, and none
-of the three appears in the 44-row census.
-
-The marked region is checked programmatically. Run from the repository root; `PASS` on
-every line is the acceptance of this catalog against the live workspace:
-
-```bash
-python3 - <<'PY'
-import json, os, re, subprocess, sys
-
-meta = json.loads(subprocess.run(
-    ["cargo", "metadata", "--manifest-path", "rust/Cargo.toml",
-     "--format-version", "1", "--no-deps", "--locked"],
-    capture_output=True, text=True, check=True).stdout)
-
-EXAMPLES = {"standalone_consumer": "degenbot",
-            "solve_path_probe": "degenbot-pools",
-            "foreign_consumer": "degenbot-execution-sample"}
-LAB = {"degenbot-fixture-tools": 9,
-       "degenbot-solver-lab": 8,
-       "degenbot-engine-lab": 18}
-REMOVED = ["scale_demo", "walkmemo_readout",
-           "v2_concentrated_liquidity_parity_probe", "mirror_coverage_probe"]
-PROMOTED = ["headless_boot", "config_smoke_boot"]
-
-examples = {(p["name"], t["name"]) for p in meta["packages"]
-            for t in p["targets"] if "example" in t["kind"]}
-bins = {(p["name"], t["name"]) for p in meta["packages"]
-        for t in p["targets"] if "bin" in t["kind"]}
-
-ok = True
-def check(cond, msg):
-    global ok
-    print(("PASS " if cond else "FAIL ") + msg)
-    ok = ok and cond
-
-check(examples == {(v, k) for k, v in EXAMPLES.items()},
-      f"exactly 3 public examples: {sorted(t for _, t in examples)}")
-for pkg, n in LAB.items():
-    got = sorted(t for (p, t) in bins if p == pkg)
-    check(len(got) == n, f"{pkg}: exactly {n} binaries")
-
-lines = open("rust/tools/README.md").read().splitlines()
-start = next(i for i, l in enumerate(lines) if l == "<!-- census:begin -->")
-end = next(i for i, l in enumerate(lines) if l == "<!-- census:end -->")
-region = "\n".join(lines[start + 1:end])
-rows = re.findall(r"^\| (?:\[)?`([A-Za-z0-9_-]+)`", region, re.M)
-unique = set(rows)
-expected = set(EXAMPLES) | {t for (p, t) in bins if p in LAB} | set(REMOVED) | set(PROMOTED)
-check(len(rows) == 44 and len(unique) == 44, f"catalog rows: {len(rows)}, unique: {len(unique)}")
-check(unique == expected, f"catalog rows == live targets + promoted + removed; diff:"
-      f" missing={sorted(expected - unique)} stale={sorted(unique - expected)}")
-for name, path in [("headless_boot", "rust/crates/foundation/degenbot-ingestion/tests/headless_boot.rs"),
-                   ("config_smoke_boot", "rust/crates/engine/degenbot-bot/tests/config_smoke_boot.rs")]:
-    check(os.path.isfile(path), f"promoted test file exists: {path}")
-
-sys.exit(0 if ok else 1)
-PY
-```
-
-<!-- census:begin -->
+lane, its inputs, its write behavior, and whether an automatic gate runs it. Per-slice
+history lives in the commit history and the ADRs; `just` recipes and Cargo metadata are
+the executable truth this catalog mirrors.
 
 ## Public examples (3 rows)
 
@@ -163,29 +86,14 @@ parity support is product-owned (`degenbot_simulation::probe_support`,
 | [`worker_fanout_probe`](engine-lab/src/bin/worker_fanout_probe/main.rs) | Per-worker EVM fan-out probe (ADR-089 concurrency item): serial shared `&mut evm` vs per-worker threads vs per-candidate fibers vs warm fibers, cross-leg verdict identity | `just worker-fanout-probe`; bounded smoke `WORKER_FANOUT_CANDIDATES=2 WORKER_FANOUT_WORKERS=2 COLD_MISS_LATENCY_US=1 WORKER_FANOUT_ACCOUNT_US=1` | default | offline — shape-matched corpus built in code; `WORKER_FANOUT_*`, `COLD_MISS_LATENCY_US`; optional recorded trace via `WORKER_FANOUT_TRACE` | stdout; `WORKER_FANOUT_PLANT_DIVERGENCE=1` must exit non-zero | measurement (non-gating) — the default 21-candidate sweep is a non-routine measurement; provenance `logs/bal_matched_parity_matrix.md` |
 | [`hotpath_prometheus_probe`](engine-lab/src/bin/hotpath_prometheus_probe/main.rs) | Smallest end-to-end proof that a guard-enabled build serves profiler metrics on `:6772`: installs typed config, constructs the pump's guard, scrapes `/metrics`, asserts the families | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe` | `prometheus` | offline but binds a local TCP port (`HOTPATH_PROMETHEUS_PORT`, default 6772); `DEGENBOT_HOTPATH=1` required | stdout; writes nothing; non-zero exit on any wiring breakage | diagnostic — its CI obligation is the Prometheus compile lane (`just check-dev-tools --engine-prometheus`); documented in `docs/grafana/HOTPATH.md` |
 
-## Promoted integration tests (2 rows)
+## Owning-crate integration tests (2 rows)
 
-Assertion-only smoke examples became owning-crate integration tests: the example target
-is gone, the assertions gate changes.
+Boot-level smoke assertions owned by their product crates: the assertions are the gate.
 
 | Test | Source | Purpose | Command | Status |
 | --- | --- | --- | --- | --- |
 | `headless_boot` | [`degenbot-ingestion` tests](../crates/foundation/degenbot-ingestion/tests/headless_boot.rs) | Headless standalone-Rust boot over the `degenbot-ingestion` public surface with no Python and no network: synthetic fused event stream through the topic filter, watchdog windows, server-side-filterable `eth_getLogs` backfill filter | `just test-rust-nextest -p degenbot-ingestion -E 'binary(headless_boot)'`; second check of `just test-standalone` | **gate** — named assertions fail the run |
 | `config_smoke_boot` | [`degenbot-bot` tests](../crates/engine/degenbot-bot/tests/config_smoke_boot.rs) | The lightest start-up path of the bot engine driven by a config TOML only: spawned child processes prove the `DEGENBOT_*` guard refuses a planted variable and the clean child loads, installs, and constructs `EngineStages::with_core_cfg` | `just test-rust-nextest -p degenbot-bot -E 'binary(config_smoke_boot)'`; gate: `just test-rust-nextest -p degenbot-bot` | **gate** — process-isolated by construction (the stance install is a process global) |
-
-## Removed executables (4 rows)
-
-Deleted once their durable evidence existed. No attic, archive, or wrapper package holds
-them; Git history is their code record.
-
-| Target | Durable owner |
-| --- | --- |
-| `scale_demo` | Nothing was extracted — the file held no assertion. Differential hot/cold correctness: `degenbot-order-index`'s `tests/envelope_invariant.rs` (proptest vs the brute `ScanTopK` reference). Scale measurement: `degenbot-solver-lab`'s `bench_strategies` (ADR-024 §Addendum) |
-| `walkmemo_readout` | Nothing was extracted — the replay asserted nothing about the memo. Live retention: production walk telemetry (`degenbot.solver.walk_memo_*` counters/gauge). Memo semantics: the in-crate memo tests (`src/solve/concentrated_liquidity/tests/memo.rs`). Contention: `benches/walkmemo_contention.rs`. Historical tables: `docs/architecture/walkmemo-cross-block-reuse-readout.md` |
-| `v2_concentrated_liquidity_parity_probe` | Decision-critical invariants pinned by `degenbot-pools`' `tests/v2_degenerate_cl_parity.rs` (exactly 1,236 comparisons, consumed-input / zero-for-one direction-sign / deep sub-1e-3 invariants, non-vacuous census — no overall zero-divergence assertion). Evidence record: `docs/architecture/v2-cl-parity-probe.md` |
-| `mirror_coverage_probe` | Measured table: `docs/architecture/sim-anchor-mirror-coverage.md`. Offline projection/classification regression: `degenbot-simulation`'s `tests/mirror_anchor_coverage.rs` |
-
-<!-- census:end -->
 
 ## Feature isolation — forwards, not package absence
 

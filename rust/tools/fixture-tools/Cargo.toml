@@ -20,7 +20,7 @@ workspace = true
 # dependency selection, so every crate the default binaries link must be a plain edge
 # here; the feature cannot narrow what a default target already needs.
 #
-# Consequence, stated plainly: the default tree is NO LONGER the package alone. A
+# Consequence, stated plainly: the default tree is not the package alone. A
 # default `cargo check -p degenbot-fixture-tools --all-targets` links the concrete
 # product crates every program's source names (alloy, rusqlite, tempfile,
 # serde_json, tokio, `degenbot-pools`, `degenbot-rpc`, `degenbot-db`,
@@ -29,8 +29,9 @@ workspace = true
 # `fixture-sql-ledger` lane does, and the ledger FEATURE is the only thing the lane
 # still adds. No umbrella facade edge exists: the default tree reaches no
 # `degenbot` package and no facade-forced feature (the Linux target-scoped
-# `degenbot-simulation/evm2-jit` carriage rode the facade edge and is gone with
-# it). Edges point only from this tool package to product crates; no product
+# `degenbot-simulation/evm2-jit` carriage rides the facade edge, and this
+# package has no facade edge). Edges point only from this tool package to
+# product crates; no product
 # crate may depend on a tool -- which is precisely why the capture generator belongs
 # here: `degenbot-rpc` already depends on `degenbot-pools`, so the generator could not
 # sit beside the kernel whose goldens it produces without closing a publish cycle, and
@@ -80,8 +81,8 @@ degenbot-simulation.workspace = true
 
 # The capture generator's two product halves, as their own edges because that is what
 # the source imports (no facade re-export). `degenbot-rpc` depends on `degenbot-pools`,
-# and this package depending on both is the cycle break that let the generator leave
-# `degenbot-rpc`'s example surface (see the header note).
+# so a top-level tool package naming both is what keeps the publish graph acyclic
+# (see the header note).
 degenbot-rpc.workspace = true
 degenbot-pools.workspace = true
 
@@ -136,9 +137,9 @@ default = []
 # family (`degenbot-simulation/evm2-jit` is the facade's Linux target-scoped
 # carriage, and this package has no facade edge).
 #
-# The feature carries the ledger and NOTHING ELSE. It has no `dep:` entries any
-# more: since the default binaries (the recorders, the recapture, and the capture
-# generator) need this package's crates too, they are plain non-optional edges, and
+# The feature carries the ledger and NOTHING ELSE. It has no `dep:` entries:
+# the default binaries (the recorders, the recapture, and the capture generator) need
+# this package's crates too, so they are plain non-optional edges, and
 # `dep:` cannot name a non-optional dependency. That is why the `fixture-sql-ledger` lane differs from the
 # `default` lane by exactly the ledger feature.
 sql-ledger = ["degenbot-db/sql-ledger"]
@@ -147,9 +148,7 @@ sql-ledger = ["degenbot-db/sql-ledger"]
 # statement ledger.
 #
 # FOUR replay their SQL goldens through the statement-ledger wrapper, hence the
-# `sql-ledger` requirement -- the same requirement their `[[example]]` stanzas
-# carried in the facade before the move, so a default check skips every one of
-# them deliberately.
+# `sql-ledger` requirement -- a default check skips every one of them deliberately.
 [[bin]]
 name = "generate_evm_oracle_captures"
 path = "src/bin/generate_evm_oracle_captures/main.rs"
@@ -181,9 +180,9 @@ required-features = ["sql-ledger"]
 # all offline), so it carries NO `required-features` and no feature lane can hide it.
 # It is a default target: `just check-dev-tools default` builds it precisely because
 # that lane is what proves a default-feature build of this package still works. Its
-# argv surface is unchanged from the facade example it replaces -- `--check
-# <cassette.json>...`, the `pool` / `aave` / `aave-run` kinds, the `--verify`
-# verification-surface arm, `--node` over configured-node resolution, and `--out`.
+# argv surface: `--check <cassette.json>...`, the `pool` / `aave` / `aave-run`
+# kinds, the `--verify` verification-surface arm, `--node` over configured-node
+# resolution, and `--out`.
 [[bin]]
 name = "record_updater_cassette"
 path = "src/bin/record_updater_cassette/main.rs"
@@ -192,9 +191,8 @@ path = "src/bin/record_updater_cassette/main.rs"
 # rule -- it opens no statement ledger and no operator DB, so no feature lane may hide
 # it. Both of its arms need a node that serves the pinned state (there is no offline
 # arm): `--check` re-records every scenario twice and compares the bytes with the corpus
-# on disk. The argv surface gained the shared `--fixtures-home` override in place of the
-# old `--root` anchor; `--scenario`, `--check`, the three repeatable node flags, and
-# `--pace-ms` are unchanged.
+# on disk. The argv surface: `--scenario`, `--check`, the shared `--fixtures-home`
+# override, the three repeatable node flags, and `--pace-ms`.
 [[bin]]
 name = "record_py_oracle_corpus"
 path = "src/bin/record_py_oracle_corpus/main.rs"
@@ -205,9 +203,8 @@ path = "src/bin/record_py_oracle_corpus/main.rs"
 # arm): the default arm rewrites each named fixture with canonical serde formatting, and
 # `--check` computes the same refresh, prints the drifted state keys and exits 1, writing
 # nothing. Every fixture is an explicit positional argv path, so it resolves no fixture
-# home and takes no `--fixtures-home`; `--check`, `--scan lens|bitmap`, `--tick-lens`,
-# `--state-view`, and the repeatable fixture list are unchanged from the facade example
-# it replaces.
+# home and takes no `--fixtures-home`; the remaining flags are `--check`,
+# `--scan lens|bitmap`, `--tick-lens`, `--state-view`, and the repeatable fixture list.
 
 [[bin]]
 name = "capture_path_fixture"
@@ -220,13 +217,12 @@ path = "src/bin/capture_path_fixture/main.rs"
 # `--check`): a run reads the curated V3 pools' slot0/liquidity, backfills their tick maps
 # through `v3_simulate_swap`, builds each pool's production `IntV3TickRangeSequence`, forms
 # and solves the 2-hop all-concentrated-liquidity paths, and writes the JSONL plus a
-# `.block` sidecar. The single optional positional output argument is unchanged; with none,
-# the committed corpus fixture under
-# `rust/crates/foundation/degenbot-pools/tests/fixtures/` is the default, resolved from the
-# repository root (`degenbot_fixture_tools::paths`) instead of the old manifest-relative
-# sibling arithmetic. Its four environment keys (`DEGENBOT_CLCAP_RPC`,
-# `DEGENBOT_CLCAP_BLOCK`, `DEGENBOT_CLCAP_MAX_FETCHES`, `DEGENBOT_CLCAP_PATH_CAP`) and their
-# defaults are unchanged.
+# `.block` sidecar. The single optional positional output argument defaults to the
+# committed corpus fixture under
+# `rust/crates/foundation/degenbot-pools/tests/fixtures/`, resolved from the
+# repository root (`degenbot_fixture_tools::paths`). Its four environment keys
+# (`DEGENBOT_CLCAP_RPC`, `DEGENBOT_CLCAP_BLOCK`, `DEGENBOT_CLCAP_MAX_FETCHES`,
+# `DEGENBOT_CLCAP_PATH_CAP`) each carry a default.
 
 [[bin]]
 name = "concentrated_liquidity_capture_gen"

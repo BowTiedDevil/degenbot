@@ -1067,107 +1067,17 @@ check-rust-all-features:
 
 # The development-tool lanes (`rust/tools/`): one named check per tool package
 # feature family, each its own cargo invocation. This is a grouping of separate
-# checks, never one combined feature set and never `--all-features`:
-#
-#   * each lane enables its own family and no *other tool package's* family --
-#     the JIT lane never turns on the bot exporter, a capture lane never enables
-#     the solver profiler, and the SQL ledger belongs to the fixture tools alone;
-#   * that is a claim about the forwards these packages declare, NOT about
-#     resolved-package absence. A lane's tree still carries whatever the product
-#     crates it reaches already pull in: `rusqlite` is a non-optional
-#     `degenbot-db` dependency wherever that crate is reached (so the fixture
-#     SQL-ledger lane still resolves it), and the `hotpath` crate is present in
-#     the solver capture lanes as `degenbot-pools`'s non-optional no-op stub.
-#     The fixture lanes reach NO `degenbot` facade package and no facade-forced
-#     feature: `degenbot-simulation/evm2-jit` is the facade's Linux target-scoped
-#     carriage, and `degenbot-fixture-tools`' product edges are default-features
-#     edges, so neither fixture lane resolves the vendored JIT family.
-#
-# Evidence (rust/tools/README.md, "Feature isolation"):
-#   `cargo tree -p degenbot-fixture-tools -e normal`  -> the concrete product
-#                                                  graph: every product crate
-#                                                  its programs' sources name
-#                                                  is a plain edge, and no
-#                                                  `degenbot` facade package
-#                                                  resolves;
-#   `cargo tree -p degenbot-solver-lab -e normal`  -> the pools graph: its
-#                                                  default binary builds pool
-#                                                  state, so that edge is plain
-#                                                  (the other crates stay
-#                                                  optional);
-#   `cargo tree -p degenbot-engine-lab -e normal`  -> the simulation graph: its
-#                                                  DEFAULT-feature corpus support
-#                                                  (the tool library's
-#                                                  `bench_corpus`) names the engine,
-#                                                  the command grammar, and evm2,
-#                                                  so those edges are plain and the
-#                                                  `evm2-jit` lane adds the JIT
-#                                                  spine instead of changing the
-#                                                  graph;
-#   `cargo tree -p <tool> --features <lane>
-#     -e features -i <owning crate>`            -> names the tool forward that
-#                                                  turned one family on.
-# Neither form proves transitive absence; do not cite it as if it did.
-#
-# Lanes, each run as `just check-dev-tools <lane>`; a leading `--` is ignored,
-# so `just check-dev-tools --engine-jit` is the same lane:
-#   default                  all three packages with no feature lane --
-#                            degenbot-fixture-tools' five DEFAULT-FEATURE binaries
-#                            (record_updater_cassette, record_py_oracle_corpus,
-#                            capture_path_fixture, concentrated_liquidity_capture_gen,
-#                            encode_three_hop) and degenbot-solver-lab's
-#                            synth_corpus_gen and stateview_feasibility_probe are
-#                            built here, because a program that reads no statement
-#                            ledger and no capture fixture must not be hidden behind a
-#                            feature
-#   fixture-sql-ledger       degenbot-fixture-tools + sql-ledger
-#   solver-capture-fixtures  degenbot-solver-lab + capture-fixtures
-#   solver-cache-lab         degenbot-solver-lab + capture-fixtures,cache-lab
-#   solver-cache-telemetry   degenbot-solver-lab + capture-fixtures,cache-lab,telemetry
-#   solver-hotpath           degenbot-solver-lab + hotpath (solver-phase timing)
-#   solver-envelope          degenbot-solver-lab + envelope
-#   engine-jit               degenbot-engine-lab + evm2-jit
-#   engine-prometheus        degenbot-engine-lab + prometheus (bot exporter)
-#
-# A tool binary that NEEDS a feature joins the lane that owns it through its own
-# `required-features`, so that lane builds it on purpose and every other lane
-# skips it on purpose. The nine fixture-tools programs split exactly that way. Four replay their SQL goldens -- the offline capture
-# generators `generate_evm_oracle_captures` /
-# `generate_aave_adversarial_captures` and the live span recorders
-# `generate_aave_upgrade_windows` / `generate_aave_config_windows` -- and all
-# four are `[[bin]]` targets under `required-features = ["sql-ledger"]`, so the
-# `fixture-sql-ledger` lane compiles them and the `default` lane skips them
-# without failing on the `cfg`'d-out ledger module. The other five read no
-# statement ledger at all and open no operator DB, so they declare NO
-# `required-features` and are the `default` lane's targets: the live updater
-# cassette recorder `record_updater_cassette` (whose `--check` arm is offline
-# and must never need the ledger feature), the Python oracle corpus recorder
-# `record_py_oracle_corpus` (whose `--check` arm re-records against a node and
-# compares the corpus bytes), the path-fixture recapture
-# `capture_path_fixture` (whose `--check` arm re-reads the chain and prints
-# drift without writing), and the concentrated-liquidity capture generator
-# `concentrated_liquidity_capture_gen` (whose only arm fetches, solves, and
-# writes the capture JSONL plus its `.block` sidecar, so it has no offline
-# arm at all), and the three-hop production-calldata encoder
-# `encode_three_hop` (whose one arm reads a JSON request document from argv and
-# prints the production command stream, offlining the Ape matrix's bytes -- no
-# node, no database, no fixture home). The dependency
-# consequence is that `degenbot-fixture-tools`' default tree is the concrete
-# product graph its programs' sources name (see the manifest) -- no facade
-# package in either fixture lane -- so the two fixture lanes differ by the
-# ledger feature alone. With no argument the recipe runs `default` and prints the menu: an
-# unqualified invocation is the feature-FREE check (support libraries plus the
-# five binaries that declare no feature), and never silently a union of every
-# lane.
-#
-# One lane is not a `required-features` split but a second build shape of the
-# same binary: `solver-cache-telemetry` compiles the cache-lab replay with the
-# pools ambient-walk-telemetry forward on beside `capture-fixtures,cache-lab`,
-# because that replay's collector-drain assertion is `#[cfg(feature =
-# "telemetry")]`. Telemetry stays OPTIONAL (the binary's `required-features`
-# names only the other two), and the forward reaches `degenbot-pools` alone --
-# never `degenbot-bot`, never `hotpath-prometheus`, never a `/metrics` listener.
-# Check one development-tool lane at a time (lanes listed above; no --all-features).
+# checks, never one combined feature set and never `--all-features`: each lane
+# enables its own family and no other tool package's family, and a lane is a
+# claim about the forwards these packages declare, not about resolved-package
+# absence (the fixture lanes resolve `rusqlite` through `degenbot-db` and the
+# hotpath no-op stub through `degenbot-pools`, and reach no `degenbot` facade
+# package). rust/tools/README.md owns the full per-binary catalog, the lane
+# table, and the feature-isolation evidence. A tool binary that needs a feature
+# joins its lane through its own `[[bin]] required-features`, so that lane
+# builds it on purpose and every other lane skips it on purpose; a binary that
+# needs no feature is the `default` lane's target. With no argument the recipe
+# runs `default` and prints the menu; a leading `--` on a lane name is ignored.
 check-dev-tools *lanes:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1176,30 +1086,15 @@ check-dev-tools *lanes:
 
     usage() {
         cat >&2 <<'LANES'
-    lanes (one cargo invocation each; no union, never --all-features):
+    lanes (one cargo invocation each; no union, never --all-features; a leading
+    -- on a lane name is ignored; per-binary catalog in rust/tools/README.md):
       default                  degenbot-fixture-tools, degenbot-solver-lab, and
                                degenbot-engine-lab with no feature lane
-                               (fixture-tools builds its five default-feature
-                               programs -- record_updater_cassette,
-                               record_py_oracle_corpus, capture_path_fixture,
-                               concentrated_liquidity_capture_gen, and
-                               encode_three_hop -- and solver-lab builds
-                               synth_corpus_gen and stateview_feasibility_probe
-                               here, and engine-lab builds its lib plus
-                               bal_carry_probe, bal_candidate_scaling_probe,
-                               bal_delta_rounds_probe, bal_delta_snapshot_probe,
-                               bal_head_lifecycle_probe, bal_production_relevance_probe,
-                               bal_real_read_oracle_probe, bal_retention_probe,
-                               bal_wall_ceiling_probe, bal_dispatch_scaling_probe,
-                               bal_live_acquisition_probe, cold_miss_fanout_probe,
-                               session_fanout_probe, and worker_fanout_probe)
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
-                               (builds the four sql-ledger [[bin]]s too)
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
       solver-cache-lab         degenbot-solver-lab --features capture-fixtures,cache-lab
       solver-cache-telemetry   degenbot-solver-lab --features
-                               capture-fixtures,cache-lab,telemetry (the cache lab
-                               with the pools ambient-walk-telemetry forward on)
+                               capture-fixtures,cache-lab,telemetry
       solver-hotpath           degenbot-solver-lab --features hotpath
       solver-envelope          degenbot-solver-lab --features envelope
       engine-jit               degenbot-engine-lab --features evm2-jit
@@ -1220,7 +1115,7 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; fixture-tools builds its default-feature record_updater_cassette, record_py_oracle_corpus, capture_path_fixture, concentrated_liquidity_capture_gen, and encode_three_hop, solver-lab builds synth_corpus_gen and stateview_feasibility_probe, and engine-lab builds bal_carry_probe, bal_candidate_scaling_probe, bal_delta_rounds_probe, bal_delta_snapshot_probe, bal_head_lifecycle_probe, bal_production_relevance_probe, bal_real_read_oracle_probe, bal_retention_probe, bal_wall_ceiling_probe, bal_dispatch_scaling_probe, bal_live_acquisition_probe, cold_miss_fanout_probe, session_fanout_probe, and worker_fanout_probe)"
+        echo "check-dev-tools: default (three packages, no feature lane; per-binary catalog in rust/tools/README.md)"
         cargo check --locked --manifest-path "$manifest" \
             -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets
