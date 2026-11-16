@@ -694,7 +694,10 @@ jobs:
     # and both fleet profiles; the other legs run the test suite only. 3.15 is
     # the ceiling leg.
     name: Python ${{ matrix.python-version }} (fleet ${{ matrix.fleet-profile }})
-    needs: changes
+    # `python-wheel` produces the artifact every leg installs. Without this edge
+    # the legs race the build and fail on `Artifact not found`; both jobs carry
+    # the same `python` path gate, so a path-gated push skips them together.
+    needs: [changes, python-wheel]
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
