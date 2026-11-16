@@ -27,7 +27,8 @@ import json
 import os
 import shlex
 import shutil
-import subprocess
+import socket
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import threading
 from pathlib import Path
@@ -157,7 +158,7 @@ def _audit(
         *args,
     ]
     env = {**os.environ, **(env_extra or {})}
-    return subprocess.run(
+    return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
         command, check=False, capture_output=True, text=True, timeout=300, env=env
     )
 
@@ -242,7 +243,7 @@ def test_an_allowlisted_member_cannot_bypass_the_verify_oracle(tmp_path: Path) -
         },
     )
     _census(tree, [])
-    result = subprocess.run(
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
         [sys.executable, str(_ORACLE), "--root", str(tree), "--no-verify"],
         check=False,
         capture_output=True,
@@ -315,14 +316,12 @@ def test_an_unreachable_index_fails_closed(tmp_path: Path) -> None:
     "nothing is live".
     """
     tree = _workspace(tmp_path, {"pubfix-free": ""})
-    import socket
-
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         dead_port = sock.getsockname()[1]
     result = _audit(f"http://127.0.0.1:{dead_port}", manifest=tree / "rust" / "Cargo.toml")
     assert result.returncode == 2
-    assert result.stdout == ""
+    assert not result.stdout
     assert "index unreachable" in result.stderr
     assert "state unknown" in result.stderr
 

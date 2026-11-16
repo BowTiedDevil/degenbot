@@ -203,7 +203,17 @@ allow-star-arg-any = true
     "suspicious-subprocess-import",   # the seam under test is a subprocess CLI
     "subprocess-without-shell-equals-true",   # fixed literal argv lists ([sys.executable, _ORACLE, ...] / ["cargo", ...])
     "start-process-with-partial-path",   # cargo resolves on PATH exactly as the oracle and every just recipe invoke it
-    "suspicious-url-open-usage",   # the urlopen targets are the probe's own loopback server (traversal refusal)
+]
+
+"scripts/publish_blocked.py" = [
+    # The publish-blocked census, folded into the lint gate with only these
+    # deliberate relaxations (each verified live by `just lint-python-check`):
+    "any-type",   # cargo metadata entries are dynamic JSON payloads (see the `Json` alias)
+    "suspicious-subprocess-import",   # the gate is a cargo driver; subprocess is the point
+    "subprocess-without-shell-equals-true",   # the one argv is a fixed literal list built in this file
+    "start-process-with-partial-path",   # cargo resolves on PATH exactly as the oracle and every just recipe invoke it
+    "print",   # a CLI gate reports findings and refusals on the console streams
+    "too-many-branches",   # blocked_rows walks the withholding rules (1-4) in one body; splitting adds plumbing, not behavior
 ]
 
 [tool.pytest.ini_options]

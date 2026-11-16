@@ -111,6 +111,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import http.client
 import http.server
 import importlib.util
 import json
@@ -122,7 +123,6 @@ import sys
 import threading
 import time
 import urllib.error
-import urllib.request
 from pathlib import Path
 
 import pytest
@@ -200,6 +200,17 @@ def _oracle(tree: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         timeout=600,
     )
+
+
+def _loopback_get(port: int, path: str) -> tuple[int, bytes]:
+    """One GET against a loopback registry server, driven through `http.client`."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.request("GET", path)
+        response = conn.getresponse()
+        return response.status, response.read()
+    finally:
+        conn.close()
 
 
 class _LoopbackRegistry:
@@ -885,10 +896,7 @@ def test_the_registry_server_binds_distinct_ephemeral_ports(tmp_path: Path) -> N
     try:
         ports = [port for _, port in servers]
         assert len(set(ports)) == 2
-        bodies = [
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/index/config.json", timeout=5).read()
-            for port in ports
-        ]
+        bodies = [_loopback_get(port, "/index/config.json")[1] for port in ports]
         assert bodies[0] != bodies[1]
     finally:
         for server, _ in servers:
@@ -1719,10 +1727,9 @@ def test_the_loopback_registry_rejects_traversal_outside_its_root(tmp_path: Path
     secret.write_text("caller's own bytes", encoding="utf-8")
     assert (overlay / ".." / "secret.txt").resolve() == secret
     server, port = module.serve_registry(overlay, module.DUMMY_TOKEN)
-    base = f"http://127.0.0.1:{port}"
     try:
-        with urllib.request.urlopen(f"{base}/index/pu/bf/pubfix-leaf", timeout=5) as control:
-            assert control.status == 200
+        status, _ = _loopback_get(port, "/index/pu/bf/pubfix-leaf")
+        assert status == 200
         for hostile in (
             "/dl/../../secret.txt",
             "/dl/%2e%2e/%2e%2e/secret.txt",
@@ -1730,10 +1737,8 @@ def test_the_loopback_registry_rejects_traversal_outside_its_root(tmp_path: Path
             "/dl/..%2f..%2fsecret.txt",
             "/index/../..%2fsecret.txt",
         ):
-            with pytest.raises(urllib.error.HTTPError) as raised:
-                urllib.request.urlopen(f"{base}{hostile}", timeout=5)
-            assert raised.value.code == 403, hostile
-            raised.value.close()
+            status, _ = _loopback_get(port, hostile)
+            assert status == 403, hostile
     finally:
         server.shutdown()
         server.server_close()

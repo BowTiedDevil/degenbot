@@ -1900,15 +1900,17 @@ lint-markdown:
 lint-markdown-check:
     npx --yes markdownlint-cli2@0.24.1 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
 
-# Lint Python files. The publication oracle and its behavior suite are the
-# only scripts//tests/ members under the gate so far: coverage moves file by
-# file so historical scripts are fixed or consciously scoped, never swept in.
+# Lint Python files. The release-critical set: the package source and the
+# examples, the publication chain (the verify oracle and the publish-blocked
+# census) and the behavior suites that drive them, plus the crates.io
+# live-audit suite. Coverage moves file by file so historical scripts are
+# fixed or consciously scoped, never swept in.
 lint-python:
-    uvx --with {{ ruff_version }} ruff check --fix src/ examples/ scripts/publish_verify.py tests/test_publish_verify_oracle.py
+    uvx --with {{ ruff_version }} ruff check --fix src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_crates_io_pending.py
     # ty must run under the project environment (it resolves third-party imports
     # and the degenbot stubs from the venv), so `uvx ty` cannot work; `--with`
     # installs it beside the venv, at the exact version `ty_version` pins.
-    {{ py_run }} --with {{ ty_version }} ty check --fix --no-progress src/ scripts/publish_verify.py
+    {{ py_run }} --with {{ ty_version }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -1937,8 +1939,8 @@ lint-tripwire-ratchet:
     {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
 lint-python-check:
-    uvx --with {{ ruff_version }} ruff check src/ examples/ scripts/publish_verify.py tests/test_publish_verify_oracle.py
-    {{ py_run }} --with {{ ty_version }} ty check --no-progress src/ scripts/publish_verify.py
+    uvx --with {{ ruff_version }} ruff check src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_crates_io_pending.py
+    {{ py_run }} --with {{ ty_version }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py
 
 # Report every lint/format tool pin against what this repo can install today.
 # Network-dependent by design (it asks uv / the npm registry), so an unreachable

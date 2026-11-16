@@ -119,6 +119,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CENSUS_REL = "scripts/publish-blocked-census.txt"
@@ -126,18 +127,36 @@ MANIFEST_REL = "rust/Cargo.toml"
 
 VERSION_LESS = "(version-less)"
 
+# The dep payloads are cargo metadata entries read whole and mirrored into the
+# census reasons; no field is validated, so they stay Any-typed through the
+# helpers below (the same spelling `scripts/publish_verify.py` uses for its
+# metadata payloads).
+Json = dict[str, Any]
+
+CENSUS_ROW_FIELDS = 2
+
 
 def refuse(message: str) -> None:
-    """Exit 2: the gate declines to certify a tree it could not fully read."""
+    """Exit 2: the gate declines to certify a tree it could not fully read.
+
+    Raises:
+        SystemExit: always, with the refusal exit code.
+
+    """
     print(f"publish-blocked: {message} -- refusing to certify", file=sys.stderr)
     raise SystemExit(2)
 
 
-def load_members(manifest: Path) -> tuple[list[dict], set[str]]:
+def load_members(manifest: Path) -> tuple[list[Json], set[str]]:
     """Return the publishable members and the names of every member.
 
     Refuses (SystemExit 2) on anything but a conclusive read: a workspace this
     gate cannot enumerate is a workspace it must not certify.
+
+    Returns:
+        The members cargo can upload (a `publish` value cargo honors) and the
+        names of every member.
+
     """
     proc = subprocess.run(
         [
@@ -167,15 +186,25 @@ def load_members(manifest: Path) -> tuple[list[dict], set[str]]:
     return publishable, names
 
 
-def dep_label(dep: dict) -> str:
-    """One dep rendering shared by every reason: `name@req` or `name (version-less)`."""
+def dep_label(dep: Json) -> str:
+    """One dep rendering shared by every reason: `name@req` or `name (version-less)`.
+
+    Returns:
+        The rendering, shared by every reason.
+
+    """
     if dep["req"] == "*":
         return f"{dep['name']} {VERSION_LESS}"
     return f"{dep['name']}@{dep['req']}"
 
 
-def source_kind(dep: dict) -> str | None:
-    """`git`, `path`, or None for a plain registry dependency."""
+def source_kind(dep: Json) -> str | None:
+    """`git`, `path`, or None for a plain registry dependency.
+
+    Returns:
+        The dependency's source kind.
+
+    """
     source = dep.get("source") or ""
     if source.startswith("git+"):
         return "git"
@@ -184,13 +213,25 @@ def source_kind(dep: dict) -> str | None:
     return None
 
 
-def stripped(dep: dict) -> bool:
-    """Rule 1: the dependency leaves the published manifest at packaging."""
-    return dep.get("kind") == "dev" and dep["req"] == "*" and source_kind(dep) in {"git", "path"}
+def stripped(dep: Json) -> bool:
+    """Rule 1: the dependency leaves the published manifest at packaging.
+
+    Returns:
+        True for a version-less path or git dev-dependency.
+
+    """
+    return bool(
+        dep.get("kind") == "dev" and dep["req"] == "*" and source_kind(dep) in {"git", "path"}
+    )
 
 
-def blocked_rows(publishable: list[dict], member_names: set[str]) -> dict[str, str]:
-    """Compute the withheld population and its per-member reason (rules 1-4)."""
+def blocked_rows(publishable: list[Json], member_names: set[str]) -> dict[str, str]:
+    """Compute the withheld population and its per-member reason (rules 1-4).
+
+    Returns:
+        One entry per withheld member: the reason the manifests imply.
+
+    """
     sites: dict[str, list[str]] = {}
     edges: dict[str, list[str]] = {}
     unavailable = {
@@ -241,13 +282,17 @@ def blocked_rows(publishable: list[dict], member_names: set[str]) -> dict[str, s
     return rows
 
 
-def retained_member_edges(publishable: list[dict], member_names: set[str]) -> dict[str, set[str]]:
-    """The upload-ordering edges among publishable members (rules 1 and 3).
+def retained_member_edges(publishable: list[Json], member_names: set[str]) -> dict[str, set[str]]:
+    """Collect the upload-ordering edges among publishable members (rules 1 and 3).
 
     A dependency orders its dependent after its target exactly when the
     published manifest retains it: every non-stripped dependency on another
     workspace member, normal or dev. Stripped dev-dependencies are not
     requirements, so they carry no ordering constraint and no cycle.
+
+    Returns:
+        The adjacency: member name -> the members it requires.
+
     """
     edges: dict[str, set[str]] = {}
     for member in publishable:
@@ -267,6 +312,10 @@ def find_cycle(edges: dict[str, set[str]]) -> list[str] | None:
 
     Iterative colored DFS over the sorted graph, so the named cycle is
     deterministic for a given set of manifests.
+
+    Returns:
+        The cycle's closed name list, or None when the graph is acyclic.
+
     """
     unvisited, in_progress, done = 0, 1, 2
     color: dict[str, int] = dict.fromkeys(edges, unvisited)
@@ -281,7 +330,7 @@ def find_cycle(edges: dict[str, set[str]]) -> list[str] | None:
             for nxt in iters[-1]:
                 state = color.get(nxt, done)
                 if state == in_progress:
-                    return path[path.index(nxt) :] + [nxt]
+                    return [*path[path.index(nxt) :], nxt]
                 if state == unvisited:
                     color[nxt] = in_progress
                     path.append(nxt)
@@ -295,7 +344,12 @@ def find_cycle(edges: dict[str, set[str]]) -> list[str] | None:
 
 
 def read_census(path: Path) -> dict[str, str]:
-    """Parse `member<TAB>reason` rows; anything else refuses to certify."""
+    """Parse `member<TAB>reason` rows; anything else refuses to certify.
+
+    Returns:
+        The rows: member name -> reason.
+
+    """
     if not path.is_file():
         refuse(f"missing census {path}")
     rows: dict[str, str] = {}
@@ -304,7 +358,7 @@ def read_census(path: Path) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         parts = line.split("\t")
-        if len(parts) != 2 or not parts[0] or not parts[1]:
+        if len(parts) != CENSUS_ROW_FIELDS or not parts[0] or not parts[1]:
             refuse(f"{path}:{lineno}: row is not '<member>TAB<reason>'")
         if parts[0] in rows:
             refuse(f"{path}:{lineno}: duplicate row for {parts[0]}")
@@ -313,6 +367,15 @@ def read_census(path: Path) -> dict[str, str]:
 
 
 def main(argv: list[str]) -> int:
+    """Run the gate in the mode `argv` selects; see the module docstring.
+
+    Args:
+        argv: The command-line arguments, without the program name.
+
+    Returns:
+        The process exit code.
+
+    """
     parser = argparse.ArgumentParser(description="The publish-blocked census gate.")
     parser.add_argument(
         "--root", type=Path, default=REPO_ROOT, help="tree root (default: this repo)"
@@ -359,10 +422,10 @@ def main(argv: list[str]) -> int:
                 f"reason drift for {name} -- the manifests imply one reason, the census another:\n"
                 f"  manifests: {rows[name]}\n  census:    {census[name]}"
             )
-    for name in sorted(set(census) - set(rows)):
-        findings.append(
-            f"census row with no publish-blocked member -- delete:\n  {name}\t{census[name]}"
-        )
+    findings.extend(
+        f"census row with no publish-blocked member -- delete:\n  {name}\t{census[name]}"
+        for name in sorted(set(census) - set(rows))
+    )
     if findings:
         print("\n".join(findings))
         return 1
