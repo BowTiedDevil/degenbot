@@ -269,6 +269,21 @@ codegen-units = 16
 [profile.release.package.degenbot_rs]
 codegen-units = 1
 
+# Test-only profile: the semantics of `release` without its packaging shape.
+#
+# `lto` and `strip` exist for the shipped cdylib. On a test binary they are pure
+# link cost — one thin-LTO link of two crates' tests measured 871 s on a CI
+# runner, against 167 s of compilation for the same graph — so a leg that exists
+# to run tests under `debug_assertions` off and the release `opt-level` uses this
+# profile instead. `inherits = "release"` keeps every semantic key (opt-level,
+# debug-assertions, overflow-checks, panic, codegen-units) at the shipped value;
+# only the two packaging keys are overridden, and the profile-policy gate pins
+# exactly that (ADR-088).
+[profile.release-tests]
+inherits = "release"
+lto = false
+strip = false
+
 # Dev profile (default for `cargo test` / `just dev`): favor representative
 # optimization over a fully unoptimized debug build, while keeping iteration
 # substantially cheaper than release. No LTO or stripping; line-tables-only

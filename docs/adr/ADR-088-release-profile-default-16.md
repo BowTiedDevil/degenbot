@@ -58,8 +58,21 @@ shipped cdylib is pinned back to strict-1 by exactly one named override.**
 5. The profile shape is pinned by the `profile_release_policy_is_respected`
    gate on the umbrella crate's `architecture_gates` suite, wired as
    `just check-profile-policy` into `lint-rust-check`. The gate asserts the
-   shape (root values, override set ⊆ `{degenbot_rs}` at 1), not a member
-   enumeration, so crate splits stay gate-clean.
+   shape (root values, override set ⊆ `{degenbot_rs}` at 1, and the
+   test-only profile below), not a member enumeration, so crate splits stay
+   gate-clean.
+
+6. `[profile.release-tests]` is the test-only shape: `inherits = "release"`
+   with `lto = false` and `strip = false`, and nothing else. It exists because
+   `lto`/`strip` are packaging properties of the shipped cdylib, and on a test
+   binary they are pure link cost — one thin-LTO link of the two-crate
+   shipped-profile leg measured 871 s inside a consolidated job and 1074 s once
+   it ran as its own job, against 167 s of compilation for the same graph on a
+   4-vCPU runner. The leg that guards shipped-profile semantics (which is about
+   `debug_assertions` and `opt-level`, not codegen partitioning) runs under this
+   profile. The gate pins both halves of that claim — it inherits release, and
+   the override set is exactly those two keys — so the leg can neither drift into
+   different code semantics nor silently re-acquire the link.
 
 ## Rejected alternative
 

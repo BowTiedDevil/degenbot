@@ -3029,6 +3029,7 @@ fn profile_release_policy_is_respected() {
     // Collect (header, body) for every `profile.release*` section. Body lines
     // are raw; the value lookups trim whitespace and trailing comments.
     let mut release_body: Vec<String> = Vec::new();
+    let mut release_tests_body: Vec<String> = Vec::new();
     let mut package_bodies: Vec<(String, Vec<String>)> = Vec::new();
     let mut current: Option<(String, Vec<String>)> = None;
     for line in manifest.lines() {
@@ -3039,6 +3040,8 @@ fn profile_release_policy_is_respected() {
                     release_body = body;
                 } else if let Some(name) = header.strip_prefix("profile.release.package.") {
                     package_bodies.push((name.trim_matches('"').to_owned(), body));
+                } else if header == "profile.release-tests" {
+                    release_tests_body = body;
                 }
             }
             current = Some((trimmed[1..trimmed.len() - 1].to_owned(), Vec::new()));
@@ -3051,6 +3054,8 @@ fn profile_release_policy_is_respected() {
             release_body = body;
         } else if let Some(name) = header.strip_prefix("profile.release.package.") {
             package_bodies.push((name.trim_matches('"').to_owned(), body));
+        } else if header == "profile.release-tests" {
+            release_tests_body = body;
         }
     }
 
@@ -3097,6 +3102,45 @@ fn profile_release_policy_is_respected() {
             section_value(body, "codegen-units"),
             Some("1"),
             "[profile.release.package.{name}] must pin codegen-units = 1 (ADR-088)"
+        );
+    }
+
+    // The shipped-profile test leg runs under [profile.release-tests]: release's
+    // semantics minus its packaging shape. Pin both halves of that claim, so the
+    // leg can neither drift away from release's semantics nor quietly re-acquire
+    // the link cost the profile exists to drop.
+    assert!(
+        !release_tests_body.is_empty(),
+        "rust/Cargo.toml has no [profile.release-tests] section — the shipped-profile \
+         test leg runs under it (ADR-088)"
+    );
+    assert_eq!(
+        section_value(&release_tests_body, "inherits"),
+        Some("\"release\""),
+        "[profile.release-tests] must inherit release: it is a test run of the shipped \
+         semantics, not a fourth profile (ADR-088)"
+    );
+    for (key, want) in [("lto", "false"), ("strip", "false")] {
+        assert_eq!(
+            section_value(&release_tests_body, key),
+            Some(want),
+            "[profile.release-tests] {key} must stay {want}: the profile buys link time \
+             back from the packaging shape, nothing else (ADR-088)"
+        );
+    }
+    for key in [
+        "opt-level",
+        "debug-assertions",
+        "overflow-checks",
+        "panic",
+        "codegen-units",
+        "debug",
+        "incremental",
+    ] {
+        assert!(
+            section_value(&release_tests_body, key).is_none(),
+            "[profile.release-tests] must not override `{key}`: a test leg that changes \
+             code semantics is not the shipped profile (ADR-088)"
         );
     }
 }

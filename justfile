@@ -435,6 +435,11 @@ test-rust-policy-lane package policy='default':
 # profile.
 #
 # Release profile, state layer only — a release-only regression fails here.
+#
+# `--profile release-tests` carries release's semantics (opt-level,
+# debug_assertions off, codegen-units) and drops only its packaging `lto`/`strip`,
+# which on a test binary is a multi-minute link with no behavioural witness. The
+# profile-policy gate pins the override set (ADR-088).
 test-rust-release: check-toolchain
     #!/usr/bin/env bash
     set -euo pipefail
@@ -446,7 +451,7 @@ test-rust-release: check-toolchain
     # whole-workspace lane stays uv-required. Widening the selection to a crate
     # that turns pyo3 on (or a test that drives the binding) reinstates the
     # runtime dependency and the export with it.
-    cargo test --locked --manifest-path rust/Cargo.toml --release \
+    cargo test --locked --manifest-path rust/Cargo.toml --profile release-tests \
         -p degenbot-substrate -p degenbot-simulation \
         --features degenbot-simulation/test-harness
 
