@@ -486,45 +486,88 @@ mode. The real `cargo publish --workspace` survives only because it uploads
 members in dependency order; a non-uploading verification cannot borrow that
 ordering.
 **Gate body.** `scripts/publish_verify.py`, driven by `just publish-dry-run`
-and by release.yml's pre-publish verification step. For one run it replaces
-the crates.io source with a temporary overlay registry under
-`rust/target/publish-verify-overlay/` (untracked; a loopback HTTP server
-serves the index because cargo rejects `file://` sparse indexes): the lock's
-crates.io-sourced external crates mirrored verbatim from the real crates.io
-sparse index — so the overlay can never satisfy a requirement the registry
-cannot, and a pin locked to a path, a git repository, or an alternate
-registry fails the run loud instead of resolving a same-named stranger —
-plus every publishable member the census does not withhold, packed with
-`cargo package --locked` in dependency order and indexed from its own
-packaged manifest with the
-packed `.crate`'s checksum — a dependency renamed through `package = ...`
-keeps Cargo's index rename spelling (the alias in the entry dependency's
-`name`, the original package name in its `package`, and the manifest's own
-`dep:` feature references), so a member compiled from the overlay is linked
-under the alias its code imports (a retained normal+dev dependency cycle
-among publishable members has no upload order; the census gate rejects it
-outright with the cycle named before this run packs anything). The census
+and by release.yml's pre-publish verification step. For one run it stands up
+ONE Cargo-owned loopback registry under `rust/target/publish-verify-overlay/`
+(untracked; a loopback HTTP server serves it because cargo rejects `file://`
+sparse indexes) and lets cargo drive it exactly like crates.io through two
+seams: `source.crates-io.replace-with` resolves plain version requirements
+(the rewritten manifests' shape) against the loopback index, and `cargo
+publish --registry <name>` — with a `[registries.<name>]` table (index plus a
+fixed dummy token) inside the run-owned `CARGO_HOME` — uploads through the
+loopback's Publish API. Neither seam can reach crates.io's upload endpoint:
+the replacement resolves only (cargo hardcodes the upload API to
+https://crates.io behind it), and the named registry names only the loopback.
+The registry serves the three surfaces cargo's publish flow needs: the sparse
+index (entries cargo itself generates at upload), the `.crate` download tree,
+and the upload endpoint, which requires the dummy token and appends one
+receipt line per upload (`uploads.jsonl`) recording the loopback endpoint and
+the auth that arrived — the committed probe asserts every receipt.
+A run proceeds in two cargo-owned rounds over the same registry. The
+population round (`cargo publish --workspace --registry <name> --no-verify`)
+uploads every covered member without building: cargo packages each member,
+generates the index entry from the packaged form, and polls the loopback
+index until the entry is visible before its dependents are packaged — the
+ordering, the metadata, and the polling are cargo's, and this script writes
+none of them. The registry maps each upload payload mechanically onto the
+sparse-index spelling (`version_req` becomes `req`, a dependency renamed
+through `package = ...` keeps the alias in the entry dependency's `name` and
+the original package name in its `package`, `dep:`-bearing features split
+into `features2` behind the `v: 2` marker, the checksum is the sha256 of
+the uploaded `.crate`, and the payload's optional `rust_version` and
+`links` fields are carried under the same names when cargo sends them), so a
+member compiled from the registry is linked under the alias its code
+imports. The verification round (`cargo publish
+--workspace --registry <name> --dry-run`, omitted in the `--no-verify` form)
+verify-builds the pending members against the populated registry and aborts
+each upload (nothing ever leaves the loopback). The lock's crates.io-sourced
+external crates are mirrored verbatim from the real crates.io sparse index
+into the same registry — so the loopback can never satisfy a requirement the
+real registry cannot, and a pin locked to a path, a git repository, or an
+alternate registry fails the run loud instead of resolving a same-named
+stranger (a retained normal+dev dependency cycle among publishable members
+has no upload order; the census gate rejects it outright with the cycle named
+before this run uploads anything). The census
 is reconciled first and its members are withheld
 from the run by name, keeping their file-inclusion coverage through `cargo
-package --list`. A member whose `publish` allowlist names a non-crates.io
-registry fails loud — this run certifies the crates.io publish form only —
+package --list`. `publish = false` members are cargo-skipped and therefore
+not eligible for the covered set at all, and coverage fails closed: covered
+lines print only after the population round has succeeded, and the upload
+receipts must name exactly the eligible covered set — a missing receipt
+(certifying a member the registry never accepted) and an unexpected receipt
+(an upload the run never accounted for) both fail the run. A member whose
+`publish` allowlist NAMES registries fails
+loud — cargo refuses to carry such a member to any other registry name, and
+the one registry this run drives is the loopback (measured: `--registry
+crates-io` bypasses any `[registries.crates-io]` table and uploads to the
+real crates.io API, so no table spelling rescues it) —
 and caller flags that would retarget the run (`--registry`, `--index`,
 `--token`, `--config`, in `--x value` and `--x=value` forms) are refused
-before any cargo invocation. The overlay lives in a fresh per-run directory
+before any cargo invocation. The registry lives in a fresh per-run directory
 under `rust/target/` (two runs never delete each other's served files) and is
 served over loopback on an ephemeral port — no fixed port can be pre-bound by
 something else, and concurrent runs cannot collide — and is removed when the
 run ends. Every cargo invocation of a run executes with `CARGO_HOME` pointed
-at the run's own directory inside that overlay: the loopback-registry caches
-and staging state cargo writes during packing and the dry-run rounds (the
-ephemeral `127.0.0.1-*` residue) land in the per-run overlay and are removed
-with it, leaving the caller's real Cargo home byte-for-byte unchanged — the
-sentinel probe runs the real script against an untouched `CARGO_HOME` and
-requires exactly that. Runs sharing one workspace serialize their cargo
-phases (metadata resolution, packing, publish rounds — everything touching
-the shared `rust/target/package` staging and the lockfile) through an
-interprocess lock (`rust/target/publish-verify.lock`, an `flock` held from
-the first cargo resolution to the last publish round, never deleted): a
+at the run's own directory inside that directory: the named-registry token
+and source table live there, the loopback-registry caches and staging state
+cargo writes during the rounds (the ephemeral `127.0.0.1-*` residue) land
+there and are removed with it, leaving the caller's real Cargo home — and any
+real token inside it — byte-for-byte unread and unchanged (the sentinel probe
+runs the real script against an untouched `CARGO_HOME` and requires exactly
+that), and every token environment override (`CARGO_TOKEN`, the legacy
+`CARGO_REGISTRY_*` spellings, and every named-registry
+`CARGO_REGISTRIES_*_TOKEN`) is stripped from the cargo child environment, so
+cargo's env-over-config preference can never put a real credential ahead of
+the run's fixed dummy (the receipt probe uploads under hostile token
+variables and requires the dummy on every receipt). Runs sharing one workspace serialize their cargo
+phases (metadata resolution, upload round, verification round — everything
+touching the shared `rust/target/package` staging and the lockfile) through
+an interprocess lock (`rust/target/publish-verify.lock`, an `flock` held from
+the first cargo resolution to the last publish round, never deleted). Under
+that lock, each publish round first removes Cargo's own temporary staging
+directories from a previous round (`rust/target/package/tmp-crate` and
+`tmp-registry` — residue a killed run leaves behind poisons a rerun; the
+dirty-staging probe replants them and requires a clean rerun, with packaged
+artifacts outside those two directories untouched). A
 second same-tree run waits a bounded time — `PUBLISH_VERIFY_LOCK_WAIT_SECONDS`,
 default 1800 seconds — and then fails loud with an error naming the lock file
 and the recorded holder, while the lock path is derived from the tree root so
@@ -533,24 +576,20 @@ cache under `rust/target/publish-verify-mirror/` (keyed by the lockfile hash)
 and its atomic cache writes are unchanged. External mirror fetches carry an
 explicit timeout, bounded retries with backoff, and a failure naming the
 crate and URL; in the `--no-verify` form only index metadata is mirrored,
-because cargo resolves a no-verify run from the index alone. The verification then runs one `cargo publish
---dry-run --registry crates-io` round per member of the VERIFICATION set, so
-nothing uploads and no token is read; the real `--workspace` upload rounds in
-release.yml are untouched. The RESOLUTION set and the VERIFICATION set are
-distinct: every publishable non-withheld member is packed and indexed
-(resolution), while release.yml's pre-publish step forwards cargo's own
-`--exclude <name>` spelling — the same flags its upload rounds carry — for
-members the live-set audit reports already live, and the oracle consumes those
-flags instead of forwarding them (its rounds are one member each, where cargo
-refuses `--exclude` outright). An excluded member keeps its resolution-set
-membership — still packed and indexed, so a still-pending member's rewritten
-manifest resolves against the live sibling's packaged form — but gets no
-publish round of its own, because an already-live member cannot be re-uploaded
-and re-verifying it is precisely what makes a resumed re-run expensive. A fresh
-tag forwards nothing, so every pending member verifies, and the release step
-exits before any packaging when the audit reports nothing pending. An
-`--exclude` naming a non-member fails loud before any packing; census
-withholding is independent of and unchanged by exclusions.
+because cargo resolves a no-verify run from the index alone.
+The RESOLUTION set and the VERIFICATION set are
+distinct: every publishable non-withheld member is uploaded to the loopback
+(resolution), while only the pending members get a verify build. release.yml's
+pre-publish step forwards cargo's own `--exclude <name>` spelling — the same
+flags its upload rounds carry — for members the live-set audit reports
+already live, and the oracle consumes those flags: an excluded member is
+still uploaded in the population round and resolves like a live crate, but
+gets no verify build of its own, because an already-live member cannot be
+re-uploaded and re-verifying it is precisely what makes a resumed re-run
+expensive. A fresh tag forwards nothing, so every pending member verifies,
+and the release step exits before any packaging when the audit reports
+nothing pending. An `--exclude` naming a non-member fails loud before any
+cargo work; census withholding is independent of and unchanged by exclusions.
 **Run it.** `just publish-dry-run` (verified) or `just publish-dry-run
 --no-verify` (the CI PR form). `tests/test_publish_verify_oracle.py` is the
 committed probe: it drives the real script with `--root` pointed at a
@@ -563,7 +602,15 @@ loud, the resolution/verification set split (a fresh run verifying every
 pending member, a resumed run verifying only pending members while a
 pending member still resolves against a live `--exclude`d sibling, a fully
 live call skipping every verification round, an unknown exclusion failing
-loud before any packing, and the `=` exclusion form), the member index entry to carry the packed crate's own checksum, and
+loud before any cargo work, and the `=` exclusion form), the Cargo-generated
+loopback entry to carry the uploaded crate's own checksum (and the payload's
+`rust_version`/`links` fields), the upload receipts to prove the loopback-only
+endpoint and dummy token (including under hostile token environment
+variables), the coverage fail-closed shapes (a `publish = false` member out of
+the eligible set, receipts exactly matching it, a failed population round
+printing no covered lines), the dirty-staging rerun probe, the loopback
+server's traversal refusal, a member that
+cannot compile to fail the verified run, and
 the network/lifecycle bounds above (bounded mirror fetches, `--no-verify`
 index-only mirroring, ephemeral ports, per-run overlay directories, and two
 runs proceeding independently at once), the process-state quarantine (a

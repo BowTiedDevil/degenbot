@@ -483,9 +483,11 @@ jobs:
         # drives scripts/publish_verify.py — the same oracle `just
         # publish-dry-run` runs — so a fresh tag whose lockstep siblings are
         # not live yet still resolves: the rewritten manifests resolve against
-        # a temporary overlay registry holding the lock's external crates plus
-        # every publishable member's packaged form. Nothing uploads and no
-        # token is read. Members the publish-blocked census withholds keep
+        # one Cargo-owned loopback registry holding the lock's external crates
+        # (mirrored verbatim) plus every publishable member's cargo-uploaded
+        # form. Uploads are confined to the loopback under a run-owned
+        # CARGO_HOME and a fixed dummy token; no real token is read. Members
+        # the publish-blocked census withholds keep
         # their explicit exclusion and `cargo package --list` coverage, and the
         # two non-publishable members (degenbot_rs and the execution sample)
         # are skipped by cargo itself.
@@ -498,9 +500,9 @@ jobs:
         # already-live member cannot be re-uploaded, and re-verifying it is
         # exactly what makes a resuming re-run expensive. The live members are
         # forwarded as cargo's own `--exclude` spelling — the same flags the
-        # publish rounds below carry — and the oracle consumes them: pack
-        # everything into the overlay, verify only the rest. A fully live tag
-        # exits here, before any packaging or compilation.
+        # publish rounds below carry — and the oracle consumes them: upload
+        # everything to the loopback, verify-build only the rest. A fully live
+        # tag exits here, before any packaging or compilation.
         run: |
           set -euo pipefail
           audit="$(scripts/crates_io_pending.sh --classify)"

@@ -943,19 +943,21 @@ check-aave-captures:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
 
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
-# verification-builds every workspace member that can package, with the
+# verification-builds every workspace member that can publish, with the
 # publish-blocked census reconciled FIRST (docs/gates.md section 7). At a
 # fresh lockstep version the siblings a member requires are not on crates.io
 # yet, and the rewritten manifests must resolve before any verify build --
-# `--no-verify` does NOT skip resolution -- so the run resolves against a
-# temporary overlay registry (scripts/publish_verify.py): the lock's external
-# crates mirrored verbatim from the crates.io sparse index, plus every covered
-# member indexed from its own packaged form. Nothing is uploaded and no token
-# is read; the overlay lives in a per-run directory under rust/target/ and a
-# loopback index server on an ephemeral port lives for the run. A member
-# whose published manifest would require a
-# dependency crates.io cannot resolve is withheld by name -- never dropped by
-# silence -- and keeps its file-inclusion coverage through `cargo package
+# `--no-verify` does NOT skip resolution -- so the run drives ONE Cargo-owned
+# loopback registry (scripts/publish_verify.py): the lock's external crates
+# mirrored verbatim from the crates.io sparse index, plus every covered member
+# uploaded by cargo itself to the loopback's Publish API (cargo packages,
+# generates each index entry, and polls the index in its own dependency
+# order), then a `--dry-run` verification round builds the pending members
+# against the populated registry. Uploads are confined to the loopback under
+# a run-owned CARGO_HOME and a fixed dummy token; no real token is read and
+# nothing reaches crates.io. A member whose published manifest would require
+# a dependency crates.io cannot resolve is withheld by name -- never dropped
+# by silence -- and keeps its file-inclusion coverage through `cargo package
 # --list`. It re-enters the run in the same change its census row goes.
 # ~20-40 min cold with verification; CI's PR gate runs the clean-tree
 # `--no-verify` form.

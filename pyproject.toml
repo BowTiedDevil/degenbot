@@ -203,6 +203,7 @@ allow-star-arg-any = true
     "suspicious-subprocess-import",   # the seam under test is a subprocess CLI
     "subprocess-without-shell-equals-true",   # fixed literal argv lists ([sys.executable, _ORACLE, ...] / ["cargo", ...])
     "start-process-with-partial-path",   # cargo resolves on PATH exactly as the oracle and every just recipe invoke it
+    "suspicious-url-open-usage",   # the urlopen targets are the probe's own loopback server (traversal refusal)
 ]
 
 [tool.pytest.ini_options]

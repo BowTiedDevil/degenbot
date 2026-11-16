@@ -1,13 +1,13 @@
-"""The publish-verify overlay (``scripts/publish_verify.py``).
+"""The publish-verify loopback registry (``scripts/publish_verify.py``).
 
 `cargo publish --dry-run` resolves every member's rewritten manifest against
 crates.io. At a fresh lockstep version (ADR-009) the sibling members are not
 published yet, so the plain dry run -- verified or ``--no-verify`` alike --
-dies on the first member another member requires. This file pins the overlay
-mechanism that repairs the non-uploading verification without touching the
-real upload rounds: every case drives the real script with ``--root`` pointed
-at a throwaway workspace, so no assertion can be satisfied by a re-typed copy
-of the script's logic.
+dies on the first member another member requires. This file pins the
+Cargo-owned loopback registry that repairs the non-uploading verification
+without touching the real upload rounds: every case drives the real script
+with ``--root`` pointed at a throwaway workspace, so no assertion can be
+satisfied by a re-typed copy of the script's logic.
 
   * ``test_the_plain_publish_fails_against_a_deterministic_local_registry`` --
     the red shape: cargo itself cannot resolve the unpublished sibling, so the
@@ -28,35 +28,68 @@ of the script's logic.
     ``test_a_resumed_run_verifies_only_pending_members_against_live_siblings``,
     and ``test_a_fully_live_run_skips_every_verification_round`` -- the three
     audit shapes release.yml's pre-publish step drives. The RESOLUTION set
-    (every member packed and indexed in the overlay) is independent of the
-    VERIFICATION set (the per-member publish rounds): a live member forwarded
-    as cargo's own ``--exclude`` keeps resolving its dependents through the
-    overlay while skipping its own round, a fresh run verifies every pending
-    member, a fully live call runs no round, and an unknown exclusion fails
-    loud before any packing (the ``--exclude=<name>`` form parses like the
-    separated one).
-  * ``test_the_member_entry_matches_the_packed_crate_checksum`` -- the overlay
-    indexes members from their own packaged artifacts: the entry's checksum is
-    the packed ``.crate``'s checksum, and the entry's dependencies are the
-    rewritten ones the member will upload.
-  * ``test_a_renamed_dependency_keeps_the_index_name_and_package_fields``,
-    ``test_a_renamed_optional_dep_keeps_its_manifest_feature_reference``, and
+    (every member uploaded to the loopback registry) is independent of the
+    VERIFICATION set (the members whose verify build the ``--dry-run`` round
+    performs): a live member forwarded as cargo's own ``--exclude`` keeps
+    resolving its dependents through the loopback index while skipping its
+    own verify build, a fresh run verifies every pending member, a fully live
+    call runs no verification, and an unknown exclusion fails loud before any
+    cargo work (the ``--exclude=<name>`` form parses like the separated one).
+  * ``test_the_loopback_entry_is_cargo_generated_and_matches_the_uploaded_bytes``
+    -- the loopback index entry is cargo's own upload metadata mapped onto the
+    sparse-index spelling: the entry's checksum is the uploaded ``.crate``'s
+    checksum, and the entry's dependencies are the rewritten ones the member
+    will upload. No handwritten metadata exists to test.
+  * ``test_uploads_land_only_on_the_loopback_under_the_dummy_token`` -- the
+    registry server's own upload receipts prove every upload hit the loopback
+    Publish API endpoint under the run's fixed dummy token, and the run's
+    cargo config names no real crates.io endpoint or credential.
+  * ``test_a_renamed_optional_dep_keeps_its_manifest_feature_reference`` and
     ``test_a_renamed_library_dependency_verifies_end_to_end`` -- a dependency
-    renamed with `package = ...` keeps Cargo's index rename semantics: the
-    entry carries the alias in `name` and the original package name in
-    `package` (the documented index spelling), feature references keep the
-    manifest's own `dep:` spellings (cargo validates them against the alias),
-    and a member importing a library through the alias builds in a verified
-    run even when it is compiled from the overlay by a dependent member (with
-    a non-renamed control).
+    renamed with `package = ...` keeps Cargo's index rename semantics in the
+    Cargo-generated entry: the entry carries the alias in `name` and the
+    original package name in `package` (the documented index spelling),
+    feature references keep the manifest's own `dep:` spellings (cargo
+    validates them against the alias), and a member importing a library
+    through the alias builds in a verified run even when it is compiled from
+    the registry by a dependent member (with a non-renamed control).
+  * ``test_a_member_that_fails_to_compile_fails_the_verified_run`` -- the
+    verification round actually builds the packaged form: a member whose code
+    does not compile fails the run, so a green run is a build fact, not a
+    bookkeeping one.
+  * ``test_the_loopback_entry_carries_rust_version_and_links_from_the_upload``
+    -- the entry carries the Publish payload's ``rust_version`` and ``links``
+    when present (real-Cargo upload evidence: the workspace MSRV 1.97 and a
+    ``links``-bearing member with a build script, as cargo itself frames them).
+  * ``test_a_dirty_staging_directory_does_not_poison_a_rerun`` and
+    ``test_clear_cargo_staging_removes_only_the_tmp_dirs`` -- Cargo's own
+    ``rust/target/package/tmp-crate`` and ``tmp-registry`` staging from a
+    previous round are removed under the run lock before each publish round,
+    and nothing else under ``target/package`` (packaged artifacts) is touched.
+  * ``test_a_publish_false_member_is_out_of_the_eligible_covered_set``,
+    ``test_upload_receipts_must_exactly_match_the_eligible_covered_set``, and
+    ``test_a_failed_population_round_prints_no_covered_lines`` -- coverage
+    fails closed: ``publish = false`` members are not eligible for the
+    covered set, covered lines print only after the population round
+    succeeded, and the receipt names must equal the exact eligible set
+    (missing and unexpected receipts both fail).
+  * ``test_the_loopback_registry_rejects_traversal_outside_its_root`` --
+    ``_serve_file``/``do_GET`` reject raw and percent-encoded ``..`` traversal
+    outside the overlay root with 403.
+  * ``test_cargo_environment_strips_token_overrides`` -- real/default
+    (``CARGO_TOKEN``) and named-registry (``CARGO_REGISTRIES_*_TOKEN``,
+    ``CARGO_REGISTRY_*``) token environment overrides are stripped from every
+    cargo child environment, so the config's fixed dummy token always wins
+    (the receipt test runs a real upload under hostile token variables).
 
 The Cargo-fidelity cases pin what the oracle resolves and what cannot
-retarget it: packing runs ``--locked`` (a stale lock fails without a
+retarget it: the rounds run ``--locked`` (a stale lock fails without a
 rewrite), ``lock_externals`` mirrors crates.io pins only and fails loud on
 path/git/alternate-registry pins, caller-supplied ``--registry``,
 ``--index``, ``--token``, and ``--config`` are refused in both argument
-forms, and a ``publish`` allowlist naming a non-crates.io registry fails
-loud instead of being verified against the wrong registry.
+forms, and a ``publish`` allowlist naming registries fails loud -- cargo
+refuses to carry such a member to any other registry name, and the one
+registry this run drives is the loopback.
 
 The network and lifecycle cases pin the mirror's bounded fetches (explicit
 timeout, limited retries with backoff, transient failures only), the
@@ -599,12 +632,12 @@ def test_an_unrecorded_block_fails_the_oracle_loud(tmp_path: Path) -> None:
 
 
 def test_a_non_crates_io_publish_allowlist_fails_loud(tmp_path: Path) -> None:
-    """An allowlist naming another registry is not a crates.io publish shape.
+    """An allowlist naming another registry cannot reach the loopback registry.
 
-    The overlay certifies the form a crates.io upload round would carry; a
-    member publishing to (or through) any other registry would be silently
-    verified against the wrong registry's expectations, so it fails loud.
-    An allowlist naming crates.io alone stays covered.
+    Cargo refuses to publish a member to any registry its `publish` allowlist
+    does not name, and the one registry this run drives is the loopback -- so
+    an allowlisted member has no upload path the oracle can drive and fails
+    loud with both names, before any round runs.
     """
     tree = _lockstep_tree(
         tmp_path,
@@ -622,7 +655,15 @@ def test_a_non_crates_io_publish_allowlist_fails_loud(tmp_path: Path) -> None:
     assert "publish-verify covered pubfix-leaf" not in output
 
 
-def test_a_crates_io_publish_allowlist_stays_covered(tmp_path: Path) -> None:
+def test_a_crates_io_publish_allowlist_fails_loud(tmp_path: Path) -> None:
+    """Even a crates.io-named allowlist cannot be driven to the loopback.
+
+    `cargo publish --registry <name>` refuses a member whose allowlist names
+    only `crates-io` (measured: "the registry `pubfix` is not listed in the
+    `package.publish` value"), and `--registry crates-io` hardcodes the real
+    crates.io upload API, which the run must never touch. The oracle refuses
+    up front instead of failing mid-round on cargo's own refusal.
+    """
     tree = _lockstep_tree(
         tmp_path,
         {"pubfix-leaf": ""},
@@ -632,12 +673,15 @@ def test_a_crates_io_publish_allowlist_stays_covered(tmp_path: Path) -> None:
 
     result = _oracle(tree, "--no-verify")
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "publish-verify covered pubfix-leaf" in result.stdout
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "pubfix-leaf" in output
+    assert "crates-io" in output
+    assert "publish-verify covered pubfix-leaf" not in output
 
 
 def test_the_oracle_rejects_caller_registry_targeting(tmp_path: Path) -> None:
-    """The overlay owns the registry targeting; the caller cannot retarget it.
+    """The run owns the registry targeting; the caller cannot retarget it.
 
     `--registry`, `--index`, `--token`, and `--config` would redirect the very
     resolution the oracle certifies (a different registry, a foreign index, a
@@ -825,7 +869,7 @@ def test_the_verified_mirror_downloads_the_locked_crate(tmp_path: Path) -> None:
     assert link.read_bytes() == payload
 
 
-def test_the_index_server_binds_distinct_ephemeral_ports(tmp_path: Path) -> None:
+def test_the_registry_server_binds_distinct_ephemeral_ports(tmp_path: Path) -> None:
     """No fixed preferred port: each server binds an unbound port at start.
 
     A port chosen by the OS at bind time cannot be pre-bound by an attacker
@@ -836,9 +880,8 @@ def test_the_index_server_binds_distinct_ephemeral_ports(tmp_path: Path) -> None
     for i in range(2):
         overlay = tmp_path / f"overlay-{i}"
         (overlay / "index").mkdir(parents=True)
-        (overlay / "index" / "config.json").write_text(f'{{"dl": "run-{i}"}}', encoding="utf-8")
         overlays.append(overlay)
-    servers = [module.serve_index(overlay) for overlay in overlays]
+    servers = [module.serve_registry(overlay, module.DUMMY_TOKEN) for overlay in overlays]
     try:
         ports = [port for _, port in servers]
         assert len(set(ports)) == 2
@@ -1220,53 +1263,18 @@ def test_a_non_member_path_dependency_fails_the_run_loud(tmp_path: Path) -> None
     assert "locked to a path source" in result.stdout + result.stderr
 
 
-def test_a_renamed_dependency_keeps_the_index_name_and_package_fields() -> None:
-    """A renamed dependency keeps both of the names Cargo's index carries.
-
-    Cargo's documented index convention puts the manifest's alias in the
-    dependency's `name` field and the original package name in its `package`
-    field. An entry that loses either name breaks the rename: the real package
-    name is what resolves on the registry, the alias is the name the member's
-    code imports.
-    """
-    module = _oracle_module()
-    manifest = (
-        "[package]\n"
-        'name = "pubfix-renamer"\n'
-        'version = "0.1.0"\n\n'
-        "[dependencies]\n"
-        'alias = { package = "pubfix-real", version = "0.1.0" }\n\n'
-        "[dev-dependencies]\n"
-        'pubfix-plain = { version = "0.2.0" }\n'
-    )
-    entry = module.entry_from_packaged_manifest(manifest, "0" * 64)
-    deps = {dep["name"]: dep for dep in entry["deps"]}
-    assert set(deps) == {"alias", "pubfix-plain"}
-    assert deps["alias"] == {
-        "name": "alias",
-        "req": "^0.1.0",
-        "features": [],
-        "optional": False,
-        "default_features": True,
-        "target": None,
-        "kind": "normal",
-        "package": "pubfix-real",
-    }
-    # a dependency that was not renamed carries no rename field
-    assert "package" not in deps["pubfix-plain"]
-
-
 def test_a_renamed_library_dependency_verifies_end_to_end(tmp_path: Path) -> None:
     """A member importing a library through an alias builds in the verified run.
 
     `renamed = { package = "pubfix-real", ... }` must resolve to a dependency
     linked under the alias the member's code imports -- both when the member
-    is the publish round's own target (from its packaged manifest) and when a
-    dependent member resolves it through the overlay index, where the entry's
-    dependency list is the only rename carrier. An entry that loses the alias
-    leaves the import unresolved exactly as `degenbot-evm2`'s
-    `use evm2_macros::instruction` died while a dependent member was verified.
-    The non-renamed control proves the run is otherwise sound.
+    is the round's own target and when a dependent member resolves it through
+    the loopback index, where the Cargo-generated entry's dependency list is
+    the only rename carrier: the alias in the entry dependency's `name`, the
+    real package name in `package` (the documented index spelling; an entry
+    that loses either name breaks the rename exactly as `degenbot-evm2`'s
+    `use evm2_macros::instruction` died while a dependent member was
+    verified). The non-renamed control proves the run is otherwise sound.
     """
     tree = _lockstep_tree(
         tmp_path,
@@ -1291,12 +1299,30 @@ def test_a_renamed_library_dependency_verifies_end_to_end(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     _census(tree, [])
-    result = _oracle(tree)
+    result = _oracle(tree, "--keep-overlay")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "aborting upload due to dry run" in result.stderr
+    # the Cargo-generated entry keeps both rename names
+    overlay = _only_overlay_run(tree)
+    entry = json.loads(
+        (overlay / "index" / "pu" / "bf" / "pubfix-user").read_text(encoding="utf-8")
+    )
+    deps = {dep["name"]: dep for dep in entry["deps"]}
+    assert deps["renamed"]["package"] == "pubfix-real"
+    # a dependency that was not renamed carries no rename field
+    assert "package" not in deps["pubfix-plain"]
 
 
-def test_the_member_entry_matches_the_packed_crate_checksum(tmp_path: Path) -> None:
+def test_the_loopback_entry_is_cargo_generated_and_matches_the_uploaded_bytes(
+    tmp_path: Path,
+) -> None:
+    """The loopback index entry is cargo's upload metadata, byte-exact.
+
+    The entry's checksum is the uploaded ``.crate``'s checksum (the receipt
+    and the stored artifact agree), the dependency list is the rewritten form
+    the member will upload, and there is exactly one entry per member -- the
+    registry never appended a second, divergent line for the same version.
+    """
     tree = _lockstep_tree(
         tmp_path,
         {
@@ -1309,8 +1335,8 @@ def test_the_member_entry_matches_the_packed_crate_checksum(tmp_path: Path) -> N
     result = _oracle(tree, "--no-verify", "--keep-overlay")
     assert result.returncode == 0, result.stdout + result.stderr
     overlay = _only_overlay_run(tree)
-    packed = overlay / "dl" / "pubfix-top" / "0.1.0" / "download"
-    assert packed.is_file()
+    stored = overlay / "dl" / "pubfix-top" / "0.1.0" / "download"
+    assert stored.is_file()
     index_lines = [
         line
         for line in (overlay / "index" / "pu" / "bf" / "pubfix-top")
@@ -1322,7 +1348,13 @@ def test_the_member_entry_matches_the_packed_crate_checksum(tmp_path: Path) -> N
     entry = json.loads(index_lines[0])
     assert entry["name"] == "pubfix-top"
     assert entry["vers"] == "0.1.0"
-    assert entry["cksum"] == hashlib.sha256(packed.read_bytes()).hexdigest()
+    assert entry["cksum"] == hashlib.sha256(stored.read_bytes()).hexdigest()
+    receipts = [
+        json.loads(line)
+        for line in (overlay / "uploads.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [r["cksum"] for r in receipts if r["name"] == "pubfix-top"] == [entry["cksum"]]
     assert entry["deps"] == [
         {
             "name": "pubfix-mid",
@@ -1334,3 +1366,374 @@ def test_the_member_entry_matches_the_packed_crate_checksum(tmp_path: Path) -> N
             "kind": "normal",
         }
     ]
+
+
+def test_uploads_land_only_on_the_loopback_under_the_dummy_token(tmp_path: Path) -> None:
+    """Every upload receipt proves the loopback endpoint and the dummy auth.
+
+    The registry server records what actually arrived: a loopback Publish API
+    endpoint and the run's fixed dummy token -- never a caller credential.
+    The run's cargo config names the loopback index twice (resolution and
+    upload) and no real crates.io endpoint or token at all.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    result = _oracle(tree, "--keep-overlay")
+    assert result.returncode == 0, result.stdout + result.stderr
+    overlay = _only_overlay_run(tree)
+    receipts = [
+        json.loads(line)
+        for line in (overlay / "uploads.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {r["name"] for r in receipts} == {"pubfix-leaf", "pubfix-mid"}
+    for receipt in receipts:
+        assert receipt["endpoint"].startswith("http://127.0.0.1:")
+        assert receipt["endpoint"].endswith("/api/v1/crates/new")
+        assert receipt["auth"] == _oracle_module().DUMMY_TOKEN
+    config = (overlay / "cargo-home" / "config.toml").read_text(encoding="utf-8")
+    assert _oracle_module().DUMMY_TOKEN in config
+    assert "https://crates.io" not in config
+    assert "index.crates.io" not in config
+
+
+def test_uploads_land_on_the_loopback_under_hostile_token_env(tmp_path: Path) -> None:
+    """Token env overrides cannot retarget the upload auth; the dummy wins.
+
+    cargo prefers environment variables over config tables, so a real
+    ``CARGO_TOKEN`` or a named-registry ``CARGO_REGISTRIES_*_TOKEN`` in the
+    caller's environment would override the config's fixed dummy token and
+    put a real credential on the wire. The run strips every such variable
+    from the cargo child environment, so even a run started with all of them
+    hostile uploads under the dummy -- the receipts record what arrived.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv("CARGO_TOKEN", "real-default-registry-token")
+        monkeypatch.setenv("CARGO_REGISTRIES_CRATES_IO_TOKEN", "real-crates-io-token")
+        monkeypatch.setenv("CARGO_REGISTRIES_PUBVERIFY_LOOPBACK_TOKEN", "hostile-named-token")
+        monkeypatch.setenv("CARGO_REGISTRY_TOKEN", "hostile-legacy-token")
+        result = _oracle(tree, "--keep-overlay")
+    assert result.returncode == 0, result.stdout + result.stderr
+    overlay = _only_overlay_run(tree)
+    receipts = [
+        json.loads(line)
+        for line in (overlay / "uploads.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {r["name"] for r in receipts} == {"pubfix-leaf", "pubfix-mid"}
+    for receipt in receipts:
+        assert receipt["auth"] == _oracle_module().DUMMY_TOKEN
+
+
+def test_cargo_environment_strips_token_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every token override is stripped from the cargo child environment.
+
+    The default-registry token (``CARGO_TOKEN``), the legacy
+    ``CARGO_REGISTRY_*`` spellings, and every named-registry
+    ``CARGO_REGISTRIES_*`` variable are removed; an unrelated variable and
+    the redirected ``CARGO_HOME`` survive.
+    """
+    module = _oracle_module()
+    monkeypatch.setenv("CARGO_TOKEN", "real-default-token")
+    monkeypatch.setenv("CARGO_REGISTRY_TOKEN", "legacy-token")
+    monkeypatch.setenv("CARGO_REGISTRIES_CRATES_IO_TOKEN", "crates-io-token")
+    monkeypatch.setenv("CARGO_REGISTRIES_PUBVERIFY_LOOPBACK_TOKEN", "named-token")
+    monkeypatch.setenv("KEEP_ME", "value")
+
+    env = module.cargo_environment(tmp_path / "cargo-home")
+
+    for hostile in (
+        "CARGO_TOKEN",
+        "CARGO_REGISTRY_TOKEN",
+        "CARGO_REGISTRIES_CRATES_IO_TOKEN",
+        "CARGO_REGISTRIES_PUBVERIFY_LOOPBACK_TOKEN",
+    ):
+        assert hostile not in env, hostile
+    assert env["KEEP_ME"] == "value"
+    assert env["CARGO_HOME"] == str(tmp_path / "cargo-home")
+
+
+def test_a_member_that_fails_to_compile_fails_the_verified_run(tmp_path: Path) -> None:
+    """The verification round builds the packaged form, so a green run builds.
+
+    A member whose code does not compile still uploads in the population
+    round (`--no-verify` stages without building) and then fails the
+    verification round's build -- the run refuses to certify what cannot
+    compile, exactly the failure the real upload round would hit.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        },
+    )
+    (tree / "rust" / "crates" / "pubfix-leaf" / "src" / "lib.rs").write_text(
+        "this is not rust\n",
+        encoding="utf-8",
+    )
+    _census(tree, [])
+    result = _oracle(tree)
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "Verifying pubfix-leaf" in output
+    assert "aborting upload due to dry run" not in output
+
+
+def test_the_loopback_entry_carries_rust_version_and_links_from_the_upload(
+    tmp_path: Path,
+) -> None:
+    """The entry carries the Publish payload's rust_version and links when present.
+
+    Cargo frames both fields in the Publish API payload it uploads; the
+    mapping onto the sparse-index spelling must carry them when present.
+    The evidence is a real upload: the workspace MSRV (rust-version = "1.97")
+    and a `links`-bearing member with a build script, each visible in the
+    Cargo-generated entry exactly as cargo sent it. A member with neither
+    field carries neither key.
+    """
+    tree = tmp_path / "tree"
+    rust = tree / "rust"
+    rust.mkdir(parents=True)
+    (rust / "Cargo.toml").write_text(
+        """[workspace]
+members = ["crates/pubfix-plain", "crates/pubfix-linked"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97"
+"""
+    )
+    for name, links in (("pubfix-plain", ""), ("pubfix-linked", 'links = "pubfix-native"\n')):
+        crate = rust / "crates" / name
+        (crate / "src").mkdir(parents=True)
+        (crate / "src" / "lib.rs").write_text("pub fn f() {}\n", encoding="utf-8")
+        (crate / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
+        (crate / "Cargo.toml").write_text(
+            f'[package]\nname = "{name}"\nversion.workspace = true\n'
+            f"edition.workspace = true\nrust-version.workspace = true\n{links}",
+            encoding="utf-8",
+        )
+    _census(tree, [])
+    result = _oracle(tree, "--no-verify", "--keep-overlay")
+    assert result.returncode == 0, result.stdout + result.stderr
+    overlay = _only_overlay_run(tree)
+    plain = json.loads(
+        (overlay / "index" / "pu" / "bf" / "pubfix-plain").read_text(encoding="utf-8")
+    )
+    linked = json.loads(
+        (overlay / "index" / "pu" / "bf" / "pubfix-linked").read_text(encoding="utf-8")
+    )
+    assert plain["rust_version"] == "1.97"
+    assert "links" not in plain
+    assert linked["rust_version"] == "1.97"
+    assert linked["links"] == "pubfix-native"
+
+
+def test_clear_cargo_staging_removes_only_the_tmp_dirs(tmp_path: Path) -> None:
+    """The staging cleanup removes Cargo's tmp-crate/tmp-registry and nothing else.
+
+    `target/package` also holds packaged artifacts; deleting it wholesale
+    would destroy them. Only the two temporary staging directories Cargo
+    creates for a publish round are removed.
+    """
+    module = _oracle_module()
+    package = tmp_path / "rust" / "target" / "package"
+    (package / "tmp-crate").mkdir(parents=True)
+    (package / "tmp-crate" / "pubfix-leaf-0.1.0.crate").write_bytes(b"stale")
+    (package / "tmp-registry" / "index").mkdir(parents=True)
+    (package / "tmp-registry" / "index" / "garbage").write_text("{}", encoding="utf-8")
+    artifact = package / "pubfix-leaf-0.1.0.crate"
+    artifact.write_bytes(b"packaged artifact bytes")
+    other = package / "pubfix-leaf-0.1.0"
+    other.mkdir()
+
+    module.clear_cargo_staging(tmp_path / "rust")
+
+    assert not (package / "tmp-crate").exists()
+    assert not (package / "tmp-registry").exists()
+    assert artifact.read_bytes() == b"packaged artifact bytes"
+    assert other.is_dir()
+
+
+def test_a_dirty_staging_directory_does_not_poison_a_rerun(tmp_path: Path) -> None:
+    """Residue from a previous round is cleared under the lock before a rerun.
+
+    A killed run leaves `target/package/tmp-registry` (a stale index Cargo
+    may reuse) and `tmp-crate` (stale packed bytes) behind; a rerun that
+    trusted them would certify against the previous round's leftovers. The
+    rerun removes exactly those directories before its publish round,
+    succeeds, and leaves packaged artifacts outside them untouched.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
+        },
+    )
+    _census(tree, [])
+    first = _oracle(tree, "--no-verify")
+    assert first.returncode == 0, first.stdout + first.stderr
+    staging = tree / "rust" / "target" / "package"
+    poisoned = staging / "tmp-registry" / "index" / "pu" / "bf" / "pubfix-leaf"
+    assert poisoned.is_file(), "the first round must leave staging residue to poison"
+    poisoned.write_text('{"garbage": true}\n', encoding="utf-8")
+    (staging / "tmp-crate" / "sentinel-stale.crate").write_bytes(b"stale bytes")
+    artifact = staging / "pubfix-mid-0.1.0.crate"
+    artifact.write_bytes(b"packaged artifact from an earlier packaging")
+
+    second = _oracle(tree, "--no-verify", "--keep-overlay")
+
+    assert second.returncode == 0, second.stdout + second.stderr
+    # the poisoned residue was removed before the round, not reused
+    assert not (staging / "tmp-crate" / "sentinel-stale.crate").exists()
+    fresh = json.loads(
+        (staging / "tmp-registry" / "index" / "pu" / "bf" / "pubfix-leaf").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "garbage" not in fresh
+    overlay = _only_overlay_run(tree)
+    assert (
+        fresh["cksum"]
+        == hashlib.sha256(
+            (overlay / "dl" / "pubfix-leaf" / "0.1.0" / "download").read_bytes()
+        ).hexdigest()
+    )
+    # packaged artifacts outside the two staging directories survive
+    assert artifact.read_bytes() == b"packaged artifact from an earlier packaging"
+
+
+def test_a_publish_false_member_is_out_of_the_eligible_covered_set(tmp_path: Path) -> None:
+    """`publish = false` members are cargo-skipped, so they are not eligible.
+
+    An eligible member is one cargo will actually upload in the population
+    round; a `publish = false` member is skipped by `cargo publish
+    --workspace` and must therefore stay out of the covered set entirely --
+    no covered line and no receipt expectation.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {"pubfix-leaf": "", "priv": ""},
+        publishable=("pubfix-leaf",),
+    )
+    _census(tree, [])
+    result = _oracle(tree, "--no-verify")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "publish-verify covered pubfix-leaf" in result.stdout
+    assert "publish-verify covered priv" not in result.stdout
+
+
+def test_upload_receipts_must_exactly_match_the_eligible_covered_set() -> None:
+    """Missing and unexpected receipts both fail the coverage check.
+
+    A receipt for a member outside the eligible set, or an eligible member
+    without a receipt, means the round uploaded something other than what
+    the run certified; the check names both directions and stays silent only
+    on an exact match.
+    """
+    module = _oracle_module()
+    assert module.receipt_problems({"a", "b"}, {"a", "b"}) is None
+    missing = module.receipt_problems({"a", "b"}, {"a"})
+    assert missing is not None
+    assert "b" in missing
+    unexpected = module.receipt_problems({"a"}, {"a", "ghost"})
+    assert unexpected is not None
+    assert "ghost" in unexpected
+    both = module.receipt_problems({"a", "b"}, {"a", "ghost"})
+    assert both is not None
+    assert "b" in both
+    assert "ghost" in both
+
+
+def test_a_failed_population_round_prints_no_covered_lines(tmp_path: Path) -> None:
+    """Covered lines print only after the population round has succeeded.
+
+    A population round that fails (here: two members linking the same native
+    library, which cargo cannot resolve) must print no coverage -- lines that
+    name covered members ahead of the round's outcome would certify uploads
+    the round never completed.
+    """
+    tree = tmp_path / "tree"
+    rust = tree / "rust"
+    rust.mkdir(parents=True)
+    (rust / "Cargo.toml").write_text(
+        """[workspace]
+members = ["crates/pubfix-a", "crates/pubfix-b"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+"""
+    )
+    for name in ("pubfix-a", "pubfix-b"):
+        crate = rust / "crates" / name
+        (crate / "src").mkdir(parents=True)
+        (crate / "src" / "lib.rs").write_text("pub fn f() {}\n", encoding="utf-8")
+        (crate / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
+        (crate / "Cargo.toml").write_text(
+            f'[package]\nname = "{name}"\nversion.workspace = true\n'
+            'edition.workspace = true\nlinks = "pubfix-native"\n',
+            encoding="utf-8",
+        )
+    _census(tree, [])
+    result = _oracle(tree, "--no-verify")
+    assert result.returncode != 0
+    assert "publish-verify covered" not in result.stdout
+
+
+def test_the_loopback_registry_rejects_traversal_outside_its_root(tmp_path: Path) -> None:
+    """`_serve_file`/`do_GET` never serve a path outside the overlay root.
+
+    Raw and percent-encoded `..` traversal (and any path that would escape
+    the overlay root) is answered 403, so a hostile URL cannot read the
+    caller's files through the loopback server. The in-root control still
+    serves.
+    """
+    module = _oracle_module()
+    overlay = tmp_path / "overlay"
+    index = overlay / "index" / "pu" / "bf"
+    index.mkdir(parents=True)
+    (index / "pubfix-leaf").write_text('{"name": "pubfix-leaf"}\n', encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("caller's own bytes", encoding="utf-8")
+    assert (overlay / ".." / "secret.txt").resolve() == secret
+    server, port = module.serve_registry(overlay, module.DUMMY_TOKEN)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with urllib.request.urlopen(f"{base}/index/pu/bf/pubfix-leaf", timeout=5) as control:
+            assert control.status == 200
+        for hostile in (
+            "/dl/../../secret.txt",
+            "/dl/%2e%2e/%2e%2e/secret.txt",
+            "/index/%2e%2e/%2e%2e/secret.txt",
+            "/dl/..%2f..%2fsecret.txt",
+            "/index/../..%2fsecret.txt",
+        ):
+            with pytest.raises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(f"{base}{hostile}", timeout=5)
+            assert raised.value.code == 403, hostile
+            raised.value.close()
+    finally:
+        server.shutdown()
+        server.server_close()
