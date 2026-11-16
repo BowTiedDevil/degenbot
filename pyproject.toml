@@ -131,6 +131,9 @@ allow-star-arg-any = true
     "print",     # the generator prints its summary to stdout by design
     "shebang-not-executable",  # invoked as `uv run python ...`, not directly
 ]
+"tests/test_tool_catalog_check.py" = [
+    "line-too-long",  # the fixture README template's table rows are data, wrapped by the table shape
+]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "ARG",
@@ -220,6 +223,18 @@ allow-star-arg-any = true
     "start-process-with-partial-path",   # cargo resolves on PATH exactly as the census gate and every just recipe invoke it
     "print",   # a CLI fact reporter prints the selected view on the console streams
     "too-many-branches",   # the withheld population walks the census rules (1-4) in one body; splitting adds plumbing, not behavior
+]
+
+"scripts/tool_catalog_check.py" = [
+    # The tool-catalog reconciliation gate, folded into the lint gate with only
+    # these deliberate relaxations (each verified live by `just lint-python-check`):
+    "suspicious-subprocess-import",   # the gate is a cargo metadata driver; subprocess is the point
+    "subprocess-without-shell-equals-true",   # the one argv is a fixed literal list built in this file
+    "start-process-with-partial-path",   # cargo resolves on PATH exactly as every just recipe invokes it
+    "print",   # a CLI gate reports findings and refusals on the console streams
+    "too-many-arguments",   # the row reconciliations thread the finding contract (owner, rows, bins, views, root, findings, seen) through one body; splitting scatters one walk across frames
+    "too-many-positional-arguments",   # same: one reconciliation walk, one argument set
+    "too-many-branches",   # the README line walk carries fence state, section dispatch, and table accumulation in one small loop; extracting scatters one walk across frames
 ]
 
 [tool.pytest.ini_options]

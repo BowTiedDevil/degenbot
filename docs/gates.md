@@ -10,7 +10,7 @@ failure class it prevents (with the incident where known), where the gate body
 lives, where its census/data file lives, how to add an entry, and how to run it
 locally.
 
-The nine ratchets:
+The ten ratchets:
 
 | Ratchet | Gate body | Census / data | Local command |
 | --- | --- | --- | --- |
@@ -23,6 +23,7 @@ The nine ratchets:
 | Capability catalog | `rust/crates/facade/degenbot/tests/architecture_gates.rs::capability_catalog_covers_every_public_crate` | `docs/capabilities.md` (the catalog itself) | `just check-capability-catalog` |
 | Dependency charter | `rust/crates/facade/degenbot/tests/architecture_gates.rs::dependency_charter_is_respected` | `rust/crates/facade/degenbot/tests/dependency_charter.txt` | `just check-dependency-charter` |
 | Publish-blocked census | `scripts/publish_blocked.py` | `scripts/publish-blocked-census.txt` | `just check-publish-blocked` |
+| Tool catalog | `scripts/tool_catalog_check.py` | `rust/tools/README.md` (the living catalog itself) | `just check-tool-catalog` |
 
 ---
 
@@ -703,6 +704,89 @@ sentinel real `CARGO_HOME` byte-identical after a run, with the
 same-workspace coordination (two same-tree runs both completing serialized,
 a run facing a held lock failing bounded with the lock and owner named, and a
 failed run cleaning up only its own overlay directory).
+
+---
+
+## 8. Tool-catalog reconciliation
+
+**Failure class.** `rust/tools/README.md` is the living catalog of the
+development-tool surface: one row per public example, per lab `[[bin]]`, and
+per owning-crate integration test, each naming its source path, its feature
+lane, and the `just` recipe that runs it. Nothing watched it: a renamed or
+deleted target, a moved source file, a changed `[[bin]]`
+`required-features`, or a recipe that lost its name could leave the catalog
+describing a surface that no longer exists (or missing one that does), and the
+drift would surface only when a human followed a stale row.
+
+**Gate body.** `scripts/tool_catalog_check.py`, driven by
+`just check-tool-catalog`. It runs `cargo metadata --format-version 1
+--no-deps --locked --offline` over `rust/Cargo.toml` and parses the current
+justfile's recipe names, then reconciles the catalog in both directions:
+
+- every Public examples row resolves to exactly one live example target
+  outside the tool packages, by source path and target name, and every such
+  live target is covered by exactly one row;
+- every current tool package -- discovered from the metadata, not from the
+  README -- has exactly one Lab section naming it (whose manifest must live
+  under `rust/tools`); its rows resolve to exactly that package's `[[bin]]`s,
+  every `[[bin]]` of every current tool package is covered exactly once (a
+  section present or not), and a row's documented primary Lane equals the
+  target's `required-features` (an explicitly documented secondary build shape
+  after the primary lane is ignored);
+- the two integration tests the explicit current-source rule selects
+  (`degenbot-ingestion`'s `headless_boot`, `degenbot-bot`'s
+  `config_smoke_boot`) are reconciled in both directions: a live selected
+  target without a row, a selected row without its live target, and an
+  integration row outside the rule all fail; a target the rule once selected
+  whose row and target are both gone has left the current surface and is not
+  asserted (no revival tripwire);
+- every `just <recipe>` a row references names a recipe in the current
+  justfile;
+- a source link must resolve to an existing file inside the repository, and to
+  the target's own `src_path`;
+- structural defects fail loudly: a row whose cell count disagrees with its
+  header, a duplicate target identity, a declared row count that disagrees
+  with its table, a missing or nonlocal source link, an ambiguous section, a
+  missing catalog section.
+
+The catalog's population is not merely what the README declares. The current
+tool packages are discovered from the metadata -- every package whose manifest
+lives under `rust/tools` must have exactly one Lab section here, and its
+`[[bin]]`s are reconciled whether or not a section exists yet, so a new tool
+package joins by gaining a section and cannot pass unwatched. The two
+integration targets are selected by the explicit current-source rule, not by
+the README's presence. There is no fixed row arithmetic and no removed-name
+list: a target that leaves the manifests together with its row simply leaves
+the catalog's surface. The README's human prose (purpose, inputs, write
+behavior, gate semantics) stays authored there -- metadata cannot express it
+and the gate never generates it.
+
+Exit codes: `0` reconciled, `1` findings, `2` refused to certify (unreadable
+inputs, a `cargo metadata` failure, a malformed metadata payload, a missing
+catalog section, or a justfile that yields no recipe names).
+
+**Data.** No census file: `rust/tools/README.md` is the living data, and
+per-slice history lives in git history and the ADRs.
+
+**Run it.** `just check-tool-catalog` -- also a dependency of
+`lint-rust-check`, so `just test`, the pre-push `rust-clippy` gate and CI run
+it over a complete tree, and the `tool-catalog` pre-commit hook runs it when a
+commit touches the README, the justfile, any rust manifest (so a manifest-only
+example addition triggers), a `rust/tools` manifest or source, a `rust/examples`
+crate, an example source, one of the two integration-test sources, or the gate
+itself.
+Interpreter: a plain `python3`, standard library only -- the same uv-free
+constraint as sections 6 and 7.
+`tests/test_tool_catalog_check.py` is the committed negative probe: it drives
+the real gate over a throwaway workspace (a `--metadata` JSON dump standing in
+for the cargo child) and requires the red paths for an added target, a row
+whose target left the manifests, a tool package without a Lab section, a
+duplicated Lab section, a duplicate row, a malformed row, a missing source
+link, source drift, package drift, lane drift, an unknown recipe, nonlocal
+source links, a declared-count disagreement, a current-source integration row
+deleted while its live target remains, an integration row outside the
+current-source rule, and the fail-closed exits, plus the green paths for the
+secondary-build-shape lane form and the committed workspace itself.
 
 ---
 

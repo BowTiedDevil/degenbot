@@ -103,6 +103,22 @@ hooks = [
   # live-invariant gate (ADR-087 D2): watches the live workspace manifests and the dependency shapes their published forms retain against their census; not tripwire precedent.
   { id = "publish-blocked", name = "publish-blocked census", language = "system", entry = "just check-publish-blocked", files = '.*Cargo\.toml$|^scripts/publish-blocked-census\.txt$|^scripts/publish_blocked\.py$|^scripts/publication_plan\.py$', stages = ["pre-commit"], pass_filenames = false },
 
+  # The tool catalog (rust/tools/README.md) is reconciled against Cargo
+  # metadata and the justfile in both directions: every cataloged public
+  # example and lab [[bin]] resolves to exactly one live target (source path +
+  # target name), every live target of the cataloged populations has a row,
+  # lanes match [[bin]] required-features, and every referenced `just` recipe
+  # exists. The trigger covers the README, the justfile, every rust manifest
+  # (so a manifest-only example addition triggers without a new source file),
+  # rust/tools manifests and sources, the rust/examples example crates
+  # (manifests and sources), example sources, the two integration-test
+  # sources, and the gate itself -- so target drift cannot bypass the gate
+  # merely because no Markdown changed. The gate sweeps the workspace itself, so the filename
+  # list is only the trigger.
+  #
+  # live-invariant gate (ADR-087 D2): watches the live Cargo targets and just recipes against rust/tools/README.md; not tripwire precedent.
+  { id = "tool-catalog", name = "Tool catalog reconciliation", language = "system", entry = "just check-tool-catalog", files = '^rust/tools/README\.md$|^justfile$|^rust/.*Cargo\.toml$|^rust/tools/|^rust/examples/|^rust/.*/examples/.*\.rs$|^rust/crates/foundation/degenbot-ingestion/tests/headless_boot\.rs$|^rust/crates/engine/degenbot-bot/tests/config_smoke_boot\.rs$|^scripts/tool_catalog_check\.py$|^tests/test_tool_catalog_check\.py$', stages = ["pre-commit"], pass_filenames = false },
+
   # The settlement-bot parity ledger's statuses live in exactly one
   # machine-checked place — the boot gate's oracle,
   # tests/standalone_parity/fixtures/settlement_bot_boot.json

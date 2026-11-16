@@ -994,6 +994,21 @@ check-vendor-tracked:
 check-publish-blocked *args:
     python3 scripts/publish_blocked.py "$@"
 
+# Reconcile rust/tools/README.md's catalog against the live Cargo metadata and this
+# justfile: every public example and lab [[bin]] covered exactly once in both
+# directions, source links resolving to the targets' src_path, tool-package and
+# feature-lane assignments matching, and every referenced `just` recipe
+# existing. It rides the Rust lint leg, so target drift cannot bypass it
+# because no Markdown changed.
+#
+# Interpreter: a plain `python3`, deliberately NOT `{{ py_run }} python` (same
+# reason as check-publish-blocked): this gate rides the uv-free Rust lint leg,
+# and the script imports nothing outside the standard library.
+#
+# live-invariant gate (ADR-087 D2): watches the live tool/example targets and just recipes against rust/tools/README.md; not tripwire precedent.
+check-tool-catalog:
+    python3 scripts/tool_catalog_check.py
+
 # Which publishable members are live on crates.io at the workspace version, and
 # which are not — the audit the release workflow's crates.io leg runs before every
 # upload round. The oracle is the crates.io sparse index (what `cargo publish`
@@ -1017,7 +1032,7 @@ crates-io-pending *args:
 # shipped crate root, so the lab keeps its `--deny warnings` coverage. The
 # feature-OFF production shape — every dependent compiling without either — is
 # `check-rust-default`'s claim.
-lint-rust-check: check-toolchain check-too-many-lines-waivers check-publish-blocked check-vendor-tracked
+lint-rust-check: check-toolchain check-too-many-lines-waivers check-publish-blocked check-vendor-tracked check-tool-catalog
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
@@ -1906,11 +1921,11 @@ lint-markdown-check:
 # them, plus the crates.io live-audit suite. Coverage moves file by file so
 # historical scripts are fixed or consciously scoped, never swept in.
 lint-python:
-    uvx --with {{ ruff_version }} ruff check --fix src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py
+    uvx --with {{ ruff_version }} ruff check --fix src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
     # ty must run under the project environment (it resolves third-party imports
     # and the degenbot stubs from the venv), so `uvx ty` cannot work; `--with`
     # installs it beside the venv, at the exact version `ty_version` pins.
-    {{ py_run }} --with {{ ty_version }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py
+    {{ py_run }} --with {{ ty_version }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -1939,8 +1954,8 @@ lint-tripwire-ratchet:
     {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
 lint-python-check:
-    uvx --with {{ ruff_version }} ruff check src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py
-    {{ py_run }} --with {{ ty_version }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py
+    uvx --with {{ ruff_version }} ruff check src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
+    {{ py_run }} --with {{ ty_version }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py
 
 # Report every lint/format tool pin against what this repo can install today.
 # Network-dependent by design (it asks uv / the npm registry), so an unreachable
