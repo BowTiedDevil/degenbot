@@ -488,9 +488,11 @@ jobs:
         # form. Uploads are confined to the loopback under a run-owned
         # CARGO_HOME and a fixed dummy token; no real token is read. Members
         # the publish-blocked census withholds keep
-        # their explicit exclusion and `cargo package --list` coverage, and the
-        # two non-publishable members (degenbot_rs and the execution sample)
-        # are skipped by cargo itself.
+        # their explicit exclusion and `cargo package --list` coverage.
+        # Members with `publish = false` are skipped by cargo's own publish
+        # selection, while any allowlisted member (`publish = [...]`) stays
+        # in the verification set and fails verification loudly before any
+        # upload.
         #
         # Two member sets, one run. The RESOLUTION set is every publishable
         # member the census does not withhold — already-live siblings

@@ -77,9 +77,13 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
-# Publishable members come from cargo metadata (publish == null), so a crate
-# declaring publish = false is skipped without a hand-maintained list drifting
-# out of date.
+# Publishable members come from cargo metadata with the census's own rule
+# (scripts/publish_blocked.py): publish != [], so a crate declaring
+# publish = false is skipped without a hand-maintained list drifting out of
+# date, while an allowlisted member (publish = ["crates-io"] or another
+# registry) stays in the audit -- it must surface, never silently vanish.
+# --locked pins the membership read to the tree's own lockfile, the same
+# resolution act the publish and verify rounds assert.
 # Reachability probe first: a down or misconfigured index must fail the audit once,
 # in seconds, instead of costing a retry ladder per member. config.json is the
 # index's own root document, so a 200 here means the rest of the audit can trust
@@ -89,10 +93,10 @@ if ! curl -fsS -o /dev/null --max-time 15 --retry 3 --retry-connrefused "$index_
   exit 2
 fi
 
-members=$(cargo metadata --format-version 1 --no-deps --manifest-path "$manifest" 2>/dev/null \
+members=$(cargo metadata --format-version 1 --no-deps --locked --manifest-path "$manifest" 2>/dev/null \
   | python3 -c 'import json, sys
 meta = json.load(sys.stdin)
-print("\n".join(p["name"] for p in meta["packages"] if p["publish"] is None))')
+print("\n".join(p["name"] for p in meta["packages"] if p["publish"] != []))')
 if [ -z "$members" ]; then
   echo "crates_io_pending: could not read publishable members from $manifest" >&2
   exit 1
