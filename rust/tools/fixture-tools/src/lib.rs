@@ -34,11 +34,11 @@
 //! `generate_aave_adversarial_captures`) and the two live span recorders
 //! (`generate_aave_upgrade_windows`, `generate_aave_config_windows`) — build only under it,
 //! each declaring its own `[[bin]] required-features`, which is why the lane, not the
-//! package, is what `just check-dev-tools fixture-sql-ledger` checks. The other five
+//! package, is what `just check-dev-tools fixture-sql-ledger` checks. The other four
 //! programs (`record_updater_cassette`, `record_py_oracle_corpus`, `capture_path_fixture`,
-//! `concentrated_liquidity_capture_gen`, `encode_three_hop`) read no statement ledger and open
+//! `concentrated_liquidity_capture_gen`) read no statement ledger and open
 //! no operator DB, so they declare no `required-features` and the `default` lane builds them.
-//! That is a statement about today's nine binaries, not about the package: a program added
+//! That is a statement about today's eight binaries, not about the package: a program added
 //! later re-reads this sentence rather than inheriting it.
 
 pub mod paths;

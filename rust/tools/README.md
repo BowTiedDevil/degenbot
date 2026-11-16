@@ -28,7 +28,7 @@ tests, where named, carry the durable assertions. **Compile-lane only** rows nee
 endpoint or an external corpus that is not in the tree: CI compiles them, never executes
 them, and no offline report may claim a refreshed measurement from them.
 
-### `degenbot-fixture-tools` (9 rows) — `fixture-tools/src/bin/`
+### `degenbot-fixture-tools` (8 rows) — `fixture-tools/src/bin/`
 
 Record / check / regenerate workflows for committed fixtures, and test-input generators.
 
@@ -42,7 +42,17 @@ Record / check / regenerate workflows for committed fixtures, and test-input gen
 | [`record_py_oracle_corpus`](fixture-tools/src/bin/record_py_oracle_corpus/main.rs) | Record the offline oracle-answer corpus for the fork-bound parity tests into the per-block `OfflineProvider` JSON home; every value comes off the wire | `cargo run -p degenbot-fixture-tools --bin record_py_oracle_corpus -- --check --scenario <name> --ethereum-node <archive-url>` | default | LIVE archive node(s) (ordered endpoint pool); committed golden-key sources under `tests/fixtures/chain_data` | writes `tests/fixtures/chain_data/<chain_id>/py_oracle_<scenario>_block<N>.json`; every scenario recorded twice; `--check` requires byte-identity, writes nothing | diagnostic — **compile-lane only** (no offline arm). Replay consumers: `tests/golden/test_oracle_replay_offline.py`, live drift guard `just live-drift`; provenance `tests/fixtures/chain_data/README.md` |
 | [`record_updater_cassette`](fixture-tools/src/bin/record_updater_cassette/main.rs) | Record one updater chunk span cassette (pool `PoolCreated` + V3 liquidity scan, or an Aave market chunk), with the `--verify` gate surface and the `--kind aave-run` loop | `cargo run -p degenbot-fixture-tools --bin record_updater_cassette -- --check tests/fixtures/cassettes/*.json` (offline arm; the record arm adds `--node`/`--out`) | default | `--check` arm fully offline; record arm needs a LIVE node (ADR-062 resolution) | record arm writes cassette JSON canonically; `--check` re-serializes each cassette, re-checks entry digests, writes nothing, exits 1 on drift | **gate** on the offline `--check` arm (every committed cassette byte-identical); record arm compile-lane only. Replay owners: pool-updater `cassette_replay_run.rs`/`verification_gate_probes.rs`, aave `aave_cassette_replay.rs`/`aave_config_cassette_replay.rs`; writer contract `degenbot-rpc`'s `cassette.rs` |
 | [`concentrated_liquidity_capture_gen`](fixture-tools/src/bin/concentrated_liquidity_capture_gen/main.rs) | The ONLY sanctioned producer of exact-wei goldens for the CL replay corpus: fetch curated V3 pools at a pinned block, backfill ticks, build and solve the 2-hop CL paths, write JSONL | `cargo run -p degenbot-fixture-tools --bin concentrated_liquidity_capture_gen -- [<out.jsonl>]` | default | LIVE archive node (`DEGENBOT_CLCAP_RPC`, `DEGENBOT_CLCAP_BLOCK`, `DEGENBOT_CLCAP_PATH_CAP`, `DEGENBOT_CLCAP_MAX_FETCHES`); explicit path overrides the committed corpus default | writes the capture JSONL **and** a `.block` sidecar (pinned block + regen command) | diagnostic — **compile-lane only**, never run by tests; regeneration is manual and live-only. Offline consumer of its product: `just test-golden-replay` |
-| [`encode_three_hop`](fixture-tools/src/bin/encode_three_hop/main.rs) | Encode one three-hop `PathInfo` through the production command grammar so the Ape execution matrix exercises production bytes | `just build-executor-three-hop-encoder` (build; the matrix consumes `<target-dir>/debug/encode_three_hop`), consumed by `just test-executor-offline` | default | none — one JSON request document as `argv[1]` | stdout only: one hex line; a missing/invalid request exits non-zero | **gate** — the executor offline matrix (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) consumes its output, including failure paths |
+
+### `degenbot-executor-fixture-tools` (1 row) — `executor-fixture-tools/src/bin/`
+
+The offline three-hop production-calldata oracle, in its own minimal package: its only
+edges are the five crates its source names (`alloy`, `degenbot-execution`,
+`degenbot-executor`, `serde`, `serde_json`), so an independent encoder build resolves the
+production executor's graph and nothing else.
+
+| Binary | Purpose | Current command | Lane | Inputs | Writes | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| [`encode_three_hop`](executor-fixture-tools/src/bin/encode_three_hop/main.rs) | Encode one three-hop `PathInfo` through the production command grammar so the Ape execution matrix exercises production bytes | `just build-executor-three-hop-encoder` (build; the matrix consumes `<target-dir>/debug/encode_three_hop`), consumed by `just test-executor-offline` | default | none — one JSON request document as `argv[1]` | stdout only: one hex line; a missing/invalid request exits non-zero | **gate** — the executor offline matrix (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) consumes its output, including failure paths |
 
 ### `degenbot-solver-lab` (8 rows) — `solver-lab/src/bin/`
 
@@ -137,16 +147,17 @@ dependency redesign, not a tool-surface change. The fixture lanes resolve no
 `degenbot` facade package and no facade-forced feature: `degenbot-fixture-tools`'s
 product edges are default-features edges, so the Linux target-scoped
 `degenbot-simulation/evm2-jit` carriage (a facade dependency) is absent from both
-fixture lanes.
+fixture lanes, and `degenbot-executor-fixture-tools` carries no facade edge at all.
 
 Every tool package is `publish = false`, outside `default-members` (`degenbot` and
 `degenbot-cli` remain the only defaults), and reachable only by explicit `-p` selection.
 Heavy binaries carry their own `[[bin]]` `required-features`, so a default check skips
 each one visibly in the manifest; a binary that needs no feature declares none and is the
-`default` lane's target (fixture-tools' five, solver-lab's `synth_corpus_gen` and
-`stateview_feasibility_probe`, engine-lab's fourteen no-feature probes). Each package's
-default tree is the concrete product graph its default binaries read (the named product
-edges for fixture-tools, the pools graph for solver-lab, the simulation graph for
+`default` lane's target (fixture-tools' four, executor-fixture-tools' one, solver-lab's
+`synth_corpus_gen` and `stateview_feasibility_probe`, engine-lab's fourteen no-feature
+probes). Each package's default tree is the concrete product graph its default binaries
+read (the named product edges for fixture-tools, the production executor's graph for
+executor-fixture-tools, the pools graph for solver-lab, the simulation graph for
 engine-lab); the feature lane is the only difference between lanes.
 
 ## Boundaries

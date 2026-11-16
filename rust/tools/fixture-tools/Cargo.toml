@@ -12,11 +12,11 @@ authors.workspace = true
 [lints]
 workspace = true
 
-# Dependency shape: FIVE binaries -- the live updater cassette recorder, the Python
-# oracle corpus recorder, the path-fixture recapture, the concentrated-liquidity
-# capture generator, and the three-hop production-calldata encoder -- are DEFAULT
-# targets of this package (none reads the statement ledger, so no feature may hide
-# them), and the four SQL-ledger binaries need those same crates. Cargo has no per-target
+# Dependency shape: FOUR binaries -- the live updater cassette recorder, the Python
+# oracle corpus recorder, the path-fixture recapture, and the concentrated-liquidity
+# capture generator -- are DEFAULT targets of this package (none reads the statement
+# ledger, so no feature may hide them), and the four SQL-ledger binaries need those
+# same crates. Cargo has no per-target
 # dependency selection, so every crate the default binaries link must be a plain edge
 # here; the feature cannot narrow what a default target already needs.
 #
@@ -25,7 +25,7 @@ workspace = true
 # product crates every program's source names (alloy, rusqlite, tempfile,
 # serde_json, tokio, `degenbot-pools`, `degenbot-rpc`, `degenbot-db`,
 # `degenbot-aave`, `degenbot-pool-updater`, `degenbot-config`, `degenbot-core`,
-# `degenbot-simulation`, `degenbot-execution`, `degenbot-executor`) exactly as the
+# `degenbot-simulation`) exactly as the
 # `fixture-sql-ledger` lane does, and the ledger FEATURE is the only thing the lane
 # still adds. No umbrella facade edge exists: the default tree reaches no
 # `degenbot` package and no facade-forced feature (the Linux target-scoped
@@ -86,15 +86,6 @@ degenbot-simulation.workspace = true
 degenbot-rpc.workspace = true
 degenbot-pools.workspace = true
 
-# The three-hop calldata helper's two halves, again as their own edges because that is
-# what its source imports: `degenbot-execution` for the neutral `PathInfo`/`HopInfo`
-# family payloads it builds, and `degenbot-executor` for the production
-# `encode_cmd_3_hop` + `EncodeOptions` it calls. Neither is optional and neither carries
-# a feature: the helper is a default-features target, so its crates must be plain edges
-# exactly like the rest.
-degenbot-execution.workspace = true
-degenbot-executor.workspace = true
-
 # The pool-registration params carry a `hashbrown::HashMap` (the map type
 # `degenbot-pools` uses for tick data), so the generator names the same crate and its
 # `default-hasher` feature rather than rebuilding it from `std`'s map.
@@ -144,7 +135,7 @@ default = []
 # `default` lane by exactly the ledger feature.
 sql-ledger = ["degenbot-db/sql-ledger"]
 
-# The nine programs this package carries, split by whether they touch the
+# The eight programs this package carries, split by whether they touch the
 # statement ledger.
 #
 # FOUR replay their SQL goldens through the statement-ledger wrapper, hence the
@@ -227,15 +218,3 @@ path = "src/bin/capture_path_fixture/main.rs"
 [[bin]]
 name = "concentrated_liquidity_capture_gen"
 path = "src/bin/concentrated_liquidity_capture_gen/main.rs"
-
-# The three-hop production-calldata helper: the fifth default-features target on the same
-# rule -- it reads no statement ledger and opens no database of any kind, so no feature
-# lane may hide it. It is the OFFLINE test oracle for the Ape execution matrix
-# (`tests/executor/`): one JSON request document as argv[1] in, the hex command stream
-# `encode_cmd_3_hop` produced out. That stdout contract and the binary name are the stable
-# part of this row, which is why `just build-executor-three-hop-encoder` stages the binary
-# at the artifact path that matrix reads. No node, no fixture home, no environment key.
-
-[[bin]]
-name = "encode_three_hop"
-path = "src/bin/encode_three_hop/main.rs"

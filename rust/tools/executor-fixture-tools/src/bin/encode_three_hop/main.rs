@@ -13,10 +13,11 @@
 //!
 //! # Home
 //!
-//! This program is a `degenbot-fixture-tools` [[bin]]: test-oracle tooling, not a
-//! consumer starting point. It needs NO feature lane: it reads no statement ledger and
-//! opens no database of any kind, so it builds under this package's default features and
-//! `just check-dev-tools default` is the lane that builds it.
+//! This program is the only binary of `degenbot-executor-fixture-tools`: test-oracle
+//! tooling, not a consumer starting point. It needs NO feature lane (the package carries
+//! none): it reads no statement ledger and opens no database of any kind, so it builds
+//! under the package's default features and `just check-dev-tools default` is the lane
+//! that builds it.
 //!
 //! `just build-executor-three-hop-encoder` wraps the build; the Ape execution matrix
 //! (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) consumes the
@@ -25,7 +26,7 @@
 //! Usage (one JSON argument, no flags):
 //!
 //!     cargo run --locked --manifest-path rust/Cargo.toml \
-//!         -p degenbot-fixture-tools --bin encode_three_hop -- '<request-json>'
+//!         -p degenbot-executor-fixture-tools --bin encode_three_hop -- '<request-json>'
 
 use alloy::primitives::Address;
 use degenbot_execution::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};

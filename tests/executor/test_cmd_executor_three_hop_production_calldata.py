@@ -31,7 +31,7 @@ from .test_cmd_executor_three_hop_optimized import (
 pytestmark = pytest.mark.gas
 
 ROOT = Path(__file__).resolve().parents[2]
-# The recipe builds the `degenbot-fixture-tools` `encode_three_hop` [[bin]]
+# The recipe builds the `degenbot-executor-fixture-tools` `encode_three_hop` [[bin]]
 # (`just build-executor-three-hop-encoder`); the suite consumes the artifact at its
 # canonical cargo output path, resolving the target dir by the justfile's convention
 # (CARGO_TARGET_DIR, else rust/target) so build and read can never disagree.

@@ -3,8 +3,8 @@
 # The workspace root holds ONLY the `[workspace]` declaration + the `[profile.*]`
 # blocks (Cargo only honors `[profile]` at the workspace root — keep them here).
 # The workspace contains 33 crates, the non-publishable development tool
-# packages under `rust/tools/` (the stub generator plus the fixture, solver, and
-# engine labs), and two non-publishable examples. Crates are explicitly grouped
+# packages under `rust/tools/` (the stub generator plus the fixture, executor-fixture,
+# solver, and engine labs), and two non-publishable examples. Crates are explicitly grouped
 # by architectural role under
 # `crates/{foundation,engine,integrations,shells,facade}/`; examples live under
 # `examples/`. A tool package is never a product entry point: nothing shipped
@@ -217,6 +217,7 @@ members = [
     # unqualified build never selects one. Each carries its own optional feature
     # forwards; there is no catch-all tool package and no combined tool feature.
     "tools/fixture-tools",
+    "tools/executor-fixture-tools",
     "tools/solver-lab",
     "tools/engine-lab",
 

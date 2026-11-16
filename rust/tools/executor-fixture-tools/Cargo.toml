@@ -1,0 +1,30 @@
+[package]
+name = "degenbot-executor-fixture-tools"
+description = "The offline three-hop production-calldata oracle: one JSON request document as argv[1] in, the hex command stream `degenbot_executor::composers::encode_cmd_3_hop` produces on stdout. Non-publishable development tooling: no product build links it."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+# Dependency shape: ONE binary, the three-hop production-calldata oracle, whose source
+# names exactly five crates — `alloy` for the `Address` primitives and hex encoding it
+# prints, `degenbot-execution` for the neutral `PathInfo`/`HopInfo` family payloads it
+# builds, `degenbot-executor` for the production `encode_cmd_3_hop` + `EncodeOptions` it
+# calls, `serde` for the request document's `Deserialize` derive, and `serde_json` for
+# parsing it. All five are plain, non-optional, feature-less edges (serde carries only
+# its `derive`): no feature may hide the oracle, and nothing else belongs in the package.
+# Config/core/DB/pools/hashbrown/rusqlite/tokio remain honest transitive requirements
+# through the production executor — the tree is minimal for what the oracle reads, not
+# free of the executor's own graph.
+[dependencies]
+alloy = { version = "^2.5" }
+degenbot-execution.workspace = true
+degenbot-executor.workspace = true
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }

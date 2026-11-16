@@ -144,7 +144,8 @@ every instrument: its command, feature lane, inputs, write behavior, and gate st
 | Package and path | Purpose |
 | --- | --- |
 | `degenbot-stubgen` — `tools/stubgen/` | The ADR-066 stub generator behind `just gen-stubs`. A generator, not a laboratory. |
-| `degenbot-fixture-tools` — `tools/fixture-tools/` | Record / check / regenerate workflows for the committed fixtures, plus the test-input generators. Lane: `sql-ledger` for the four binaries that replay their SQL goldens; the five programs that read no statement ledger — `record_updater_cassette` (updater cassettes), `record_py_oracle_corpus` (the offline oracle-answer corpus), `capture_path_fixture` (path-fixture recapture), `concentrated_liquidity_capture_gen` (the CL capture generator), and `encode_three_hop` (the production-calldata helper) — need no lane and are default-features targets. |
+| `degenbot-fixture-tools` — `tools/fixture-tools/` | Record / check / regenerate workflows for the committed fixtures, plus the test-input generators. Lane: `sql-ledger` for the four binaries that replay their SQL goldens; the four programs that read no statement ledger — `record_updater_cassette` (updater cassettes), `record_py_oracle_corpus` (the offline oracle-answer corpus), `capture_path_fixture` (path-fixture recapture), and `concentrated_liquidity_capture_gen` (the CL capture generator) — need no lane and are default-features targets. |
+| `degenbot-executor-fixture-tools` — `tools/executor-fixture-tools/` | The offline three-hop production-calldata oracle (`encode_three_hop`) in its own minimal package: five direct edges (`alloy`, `degenbot-execution`, `degenbot-executor`, `serde`, `serde_json`), no lane, no features. |
 | `degenbot-solver-lab` — `tools/solver-lab/` | Solver and order-index replay, measurement, and stress instruments. Lanes: `capture-fixtures`, `cache-lab`, `telemetry` (the cache lab's second build shape: `capture-fixtures,cache-lab,telemetry`), `hotpath`, `envelope`. Binaries: the two capture replays (`concentrated_liquidity_solve_replay`, `mixed_solve_replay`, both `capture-fixtures`), the entry forwarding-parity/readout harness (`entry_ab_readout`, `capture-fixtures`: post-unification both arms share ONE solve body, so its byte-equality gate is the forwarding contract, durably pinned by the pools memo tests; `hotpath` is an optional second build shape for its functions-timing run), the cache lab (`concentrated_liquidity_cache_lab`, `capture-fixtures,cache-lab`), the rayon scale probe (`rayon_scale_probe`, `capture-fixtures`: it builds its own `rayon` pools and reports wall / sum-CPU / efficiency per thread count — timing only, never a gate), `synth_corpus_gen` (no lane: it builds in the `default` lane), the StateView feasibility probe (`stateview_feasibility_probe`, no lane: it builds in the `default` lane and its synthetic in-memory M1–M6 budget matrices read no capture and no database), and the order-index strategy microbench (`bench_strategies`, `envelope`: synthetic points in source, its timing report never asserted and its hard-coded 1M/10M matrix never executed by a routine lane). |
 | `degenbot-engine-lab` — `tools/engine-lab/` | Bot, simulation, arbitrage, JIT, fan-out, and BAL instruments. Lanes: `evm2-jit`, `prometheus`. |
 
@@ -153,10 +154,12 @@ A tool program declares the features it needs on its own `[[bin]]`
 instrument visibly in the manifest instead of failing on a `cfg`'d-out module. A
 program that needs no feature declares none and is built by the `default` lane —
 `record_updater_cassette`, `record_py_oracle_corpus`, `capture_path_fixture`,
-`concentrated_liquidity_capture_gen`, and `encode_three_hop` are that case, and so is
+`concentrated_liquidity_capture_gen`, and `degenbot-executor-fixture-tools`'s
+`encode_three_hop` are that case, and so is
 `degenbot-solver-lab`'s `synth_corpus_gen`; since Cargo has no per-target dependency selection their crates are
-plain edges, so those two packages' default trees are the product graph each reads (the
-facade for fixture-tools, the pools graph for solver-lab) rather than the package alone.
+plain edges, so those three packages' default trees are the product graph each reads (the
+named product edges for fixture-tools, the production executor's graph for
+executor-fixture-tools, the pools graph for solver-lab) rather than the package alone.
 `just check-dev-tools <lane>` checks one lane per invocation; it is a grouping
 of separately named checks, never `--all-features`.
 

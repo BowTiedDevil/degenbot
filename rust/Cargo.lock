@@ -2750,6 +2750,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-executor-fixture-tools"
+version = "0.6.0-alpha.19"
+dependencies = [
+ "alloy",
+ "degenbot-execution",
+ "degenbot-executor",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "degenbot-fixture-tools"
 version = "0.6.0-alpha.19"
 dependencies = [
@@ -2758,8 +2769,6 @@ dependencies = [
  "degenbot-config",
  "degenbot-core",
  "degenbot-db",
- "degenbot-execution",
- "degenbot-executor",
  "degenbot-pool-updater",
  "degenbot-pools",
  "degenbot-rpc",

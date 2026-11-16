@@ -43,7 +43,7 @@ Three execution layers deliberately answer different questions:
 - `test_cmd_executor_three_hop_production_calldata.py` encodes every ordering
   through `degenbot_executor::composers::encode_cmd_3_hop` and executes those
   exact production bytes, checking transfer counts and token conservation.
-  Its pure-Rust helper is the `degenbot-fixture-tools`
+  Its pure-Rust helper is the `degenbot-executor-fixture-tools`
   `encode_three_hop` binary, built only through
   `just build-executor-three-hop-encoder` and read at its canonical
   `rust/target/debug/encode_three_hop` output path.

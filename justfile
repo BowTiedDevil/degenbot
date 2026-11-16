@@ -1103,8 +1103,9 @@ check-dev-tools *lanes:
         cat >&2 <<'LANES'
     lanes (one cargo invocation each; no union, never --all-features; a leading
     -- on a lane name is ignored; per-binary catalog in rust/tools/README.md):
-      default                  degenbot-fixture-tools, degenbot-solver-lab, and
-                               degenbot-engine-lab with no feature lane
+      default                  degenbot-fixture-tools, degenbot-executor-fixture-tools,
+                               degenbot-solver-lab, and degenbot-engine-lab with no
+                               feature lane
       fixture-sql-ledger       degenbot-fixture-tools --features sql-ledger
       solver-capture-fixtures  degenbot-solver-lab --features capture-fixtures
       solver-cache-lab         degenbot-solver-lab --features capture-fixtures,cache-lab
@@ -1130,9 +1131,10 @@ check-dev-tools *lanes:
     }
 
     check_default() {
-        echo "check-dev-tools: default (three packages, no feature lane; per-binary catalog in rust/tools/README.md)"
+        echo "check-dev-tools: default (four packages, no feature lane; per-binary catalog in rust/tools/README.md)"
         cargo check --locked --manifest-path "$manifest" \
-            -p degenbot-fixture-tools -p degenbot-solver-lab -p degenbot-engine-lab \
+            -p degenbot-fixture-tools -p degenbot-executor-fixture-tools \
+            -p degenbot-solver-lab -p degenbot-engine-lab \
             --all-targets
     }
 
@@ -1421,7 +1423,7 @@ check-executor-release-ratchet:
 # production-calldata execution matrix. Keeping the build here ensures tests never
 # invoke cargo directly or test a stale helper binary.
 #
-# The helper is a `degenbot-fixture-tools` [[bin]] (`encode_three_hop`); the matrix
+# The helper is the `degenbot-executor-fixture-tools` `encode_three_hop` [[bin]]; the matrix
 # (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) reads the
 # binary at its canonical cargo output path `{{ target_dir }}/debug/encode_three_hop`,
 # resolving {{ target_dir }} the same way this file does. The JSON-in/hex-out contract
@@ -1429,7 +1431,7 @@ check-executor-release-ratchet:
 build-executor-three-hop-encoder:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --bin encode_three_hop
+    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-executor-fixture-tools --bin encode_three_hop
 
 # The ONE command for the bankroll matrix — both capital postures against one
 # injected registration set, through the canonical run_bot.sh launcher:

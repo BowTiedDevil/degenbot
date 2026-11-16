@@ -64,9 +64,9 @@ raise no new question: the exemption is about where the write open lands, not
 
 about which program makes it.
 
-The boundary is the rule, not a description of today's nine programs: **every
+The boundary is the rule, not a description of today's eight programs: **every
 write open in `degenbot-fixture-tools` targets a throwaway harness DB under a
-`TempDir`** (and four of the nine open no database at all, so they open no write
+`TempDir`** (and three of the eight open no database at all, so they open no write
 either). The artifacts those programs produce are written by ordinary
 `fs::write` into the corpus homes, and `--check` writes nothing at all, so the
 subject of the fence — who may open the operator's database for writing — is
