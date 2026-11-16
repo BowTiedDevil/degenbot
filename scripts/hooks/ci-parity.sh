@@ -220,36 +220,70 @@ if [ ! -s "${tools_file}" ]; then
 fi
 
 # The job's own YAML text, comments stripped: prose never provisions a tool,
-# and a comment mentioning `cargo nextest` must not read as an install.
+# and a comment mentioning `cargo nextest` must not read as an install. Pure
+# bash on purpose -- a runner whose awk handles a construct differently than the
+# development host's is a portability trap this gate cannot afford.
 job_steps() {
-    awk -v want="$1" '
-        /^jobs:$/ { in_jobs=1; next }
-        in_jobs && /^[^ ]/ { in_jobs=0 }
-        in_jobs && /^  [A-Za-z0-9_-]+:$/ {
-            line=$0; sub(/^  /, "", line); sub(/:$/, "", line); cur=line; next
-        }
-        in_jobs && cur==want && !/^[[:space:]]*#/ { print }
-    ' "${ci}"
+    local want="$1" cur="" in_jobs=0 line
+    while IFS= read -r line; do
+        if [ "${line}" = "jobs:" ]; then
+            in_jobs=1
+            continue
+        fi
+        [ "${in_jobs}" -eq 1 ] || continue
+        if [ -n "${line}" ] && [ "${line# }" = "${line}" ]; then
+            in_jobs=0
+            continue
+        fi
+        case "${line}" in
+            "  "*":")
+                if [[ "${line#  }" =~ ^([A-Za-z0-9_-]+):$ ]]; then
+                    cur="${BASH_REMATCH[1]}"
+                    continue
+                fi
+                ;;
+        esac
+        # A comment is blanks then `#`, in regex terms: a glob `[[:blank:]]*`
+        # is one blank followed by any string, which would strip every line
+        # carrying a trailing `# v1`-style comment -- including the `uses:`
+        # lines this check exists to read.
+        if [[ "${line}" =~ ^[[:space:]]*# ]]; then
+            continue
+        fi
+        if [ "${cur}" = "${want}" ]; then
+            printf '%s\n' "${line}"
+        fi
+    done < "${ci}"
+    return 0
 }
 
 # The recipes a job invokes, read from its `run:` bodies only (single-line and
 # `run: |` blocks), so a recipe named in a comment or a step name is not a call.
 job_recipes() {
-    job_steps "$1" | awk '
-        /^[[:space:]]*-?[[:space:]]*run:[[:space:]]*[|>]-?[[:space:]]*$/ { in_run=1; next }
-        /^[[:space:]]*-?[[:space:]]*run:/ { in_run=0; print; next }
-        in_run && /^[[:space:]]{10,}[^[:space:]]/ { print; next }
-        in_run { in_run=0 }
-    ' | grep -oE '\bjust [a-z0-9_-]+' | awk '{print $2}' | sort -u || true
+    local line indent run_indent=-1
+    while IFS= read -r line; do
+        indent="${line%%[! ]*}"
+        indent="${#indent}"
+        if [ "${run_indent}" -ge 0 ] && [ "${indent}" -gt "${run_indent}" ]; then
+            printf '%s\n' "${line}"
+            continue
+        fi
+        run_indent=-1
+        case "${line}" in
+            *"run: |"|*"run: |-"|*"run: >"|*"run: >-") run_indent="${indent}" ;;
+            *"run: "*) printf '%s\n' "${line}" ;;
+        esac
+    done < <(job_steps "$1") | grep -oE 'just [a-z0-9_-]+' | cut -d' ' -f2 | sort -u || true
+    return 0
 }
 
 # One predicate per tool name: does this job's step text provision it?
 provisions_tool() {
     local block="$1" tool="$2"
     case "${tool}" in
-        uv) printf '%s\n' "${block}" | grep -qE 'uses:[[:space:]]*astral-sh/setup-uv@' ;;
-        cargo-nextest) printf '%s\n' "${block}" | grep -qE 'tool:[[:space:]]*nextest|cargo install[^|]*cargo-nextest' ;;
-        dev-venv) printf '%s\n' "${block}" | grep -qE 'uv sync[^|]*--dev' ;;
+        uv) grep -qE 'uses:[[:space:]]*astral-sh/setup-uv@' <<< "${block}" ;;
+        cargo-nextest) grep -qE 'tool:[[:space:]]*nextest|cargo install[^|]*cargo-nextest' <<< "${block}" ;;
+        dev-venv) grep -qE 'uv sync[^|]*--dev' <<< "${block}" ;;
         *)
             echo "ci-parity: unknown tool '${tool}' in ${tools_file}" >&2
             return 2
@@ -301,6 +335,7 @@ for job in "${jobs[@]}"; do
             done
             if [ "${provided}" -eq 0 ]; then
                 echo "ci-parity: job '${job}' runs 'just ${recipe}', which needs '${tool}', and nothing in that job provisions it" >&2
+                printf '%s\n' "${steps}" | grep -E '^[[:space:]]*(- )?(name|uses|run):' | sed 's/^[[:space:]]*/    | /' >&2 || true
                 fail=1
             fi
         done
