@@ -148,7 +148,9 @@ Use it for **your** executor, a lending market, a new pool family — anything.
 
 For reproducing degenbot's captured failing backrun paths (the
 `tests/fixtures/path<N>_…_block<B>.json` files), use the
-`degenbot::investigation` toolkit:
+`degenbot::investigation` toolkit (implemented by
+`degenbot-simulation` as `degenbot_simulation::investigation` and re-exported
+by the `degenbot` facade for its consumers):
 
 ```rust
 use degenbot::investigation::{PathFixture, register_v2, register_v3, build_v3_state, v3_hop_output};
@@ -228,8 +230,9 @@ instead.
 
   Only the executable moved: the fixture schema and
   `degenbot::investigation::capture`'s refresh/diff/emit functions, plus
-  `degenbot::investigation::chain_capture`'s V2/V3/V4 scrapers, stay in the facade — which
-  is why the Layer-3 toolkit below is unchanged. The arguments (every fixture is an
+  `degenbot::investigation::chain_capture`'s V2/V3/V4 scrapers, are owned by
+  `degenbot-simulation` (`degenbot_simulation::investigation`, re-exported through the
+  facade as `degenbot::investigation`) — which is why the Layer-3 toolkit below is unchanged. The arguments (every fixture is an
   explicit positional path, so there is no fixture home to re-point), the typed-config node
   resolution (ADR-062), and both arms' behavior are unchanged. The default arm REWRITES
   each named fixture with canonical serde formatting; `--check` is non-mutating — it prints

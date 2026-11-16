@@ -103,12 +103,12 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy::primitives::{hex, keccak256, Address, Bytes, U256};
-use degenbot::core::errors::ProviderError;
-use degenbot::rpc::cassette::{
+use degenbot_core::errors::ProviderError;
+use degenbot_fixture_tools::paths;
+use degenbot_rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteResponse, CassetteSpan, RecordingTransport,
 };
-use degenbot::rpc::provider::AlloyProvider;
-use degenbot_fixture_tools::paths;
+use degenbot_rpc::provider::AlloyProvider;
 use serde::Serialize;
 use serde_json::Value;
 

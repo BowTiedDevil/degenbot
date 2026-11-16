@@ -14,10 +14,8 @@
 
 use alloy::primitives::{I256, U256};
 
-use crate::pools::state::v3_state::{
-    v3_simulate_swap, SimulateSwapError, V3PoolState, V3SwapOutcome,
-};
-use crate::pools::state::v4_state::{v4_simulate_swap, V4PoolState};
+use degenbot_pools::{v3_simulate_swap, SimulateSwapError, V3PoolState, V3SwapOutcome};
+use degenbot_pools::{v4_simulate_swap, V4PoolState};
 
 /// V2 exact-in `getAmountOut` with `gamma_num`/`fee_denom` fee (Sushi/Uni
 /// `997/1000` by default). Byte-identical to the tier-3 `V2SwapOracleHarness`

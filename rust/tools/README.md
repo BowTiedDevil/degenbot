@@ -111,7 +111,7 @@ Record / check / regenerate workflows for committed fixtures, and test-input gen
 
 | Binary | Purpose | Current command | Lane | Inputs | Writes | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| [`capture_path_fixture`](fixture-tools/src/bin/capture_path_fixture/main.rs) | Recapture a path-investigation fixture's recorded chain state at its `target_block` (V2 scalars, V3 ticks, V4 StateView, batched over Multicall3); authored identity stays verbatim | `cargo run -p degenbot-fixture-tools --bin capture_path_fixture -- [--check] <fixture.json>...` | default | LIVE archive node (ADR-062 resolution); the named committed fixtures | default mode REWRITES each fixture JSON; `--check` writes nothing, exits 1 on drift | diagnostic — **compile-lane only** (both arms read the chain). Schema/recapture library owned by `degenbot`'s investigation modules; offline consumers: `tier3_*` tests |
+| [`capture_path_fixture`](fixture-tools/src/bin/capture_path_fixture/main.rs) | Recapture a path-investigation fixture's recorded chain state at its `target_block` (V2 scalars, V3 ticks, V4 StateView, batched over Multicall3); authored identity stays verbatim | `cargo run -p degenbot-fixture-tools --bin capture_path_fixture -- [--check] <fixture.json>...` | default | LIVE archive node (ADR-062 resolution); the named committed fixtures | default mode REWRITES each fixture JSON; `--check` writes nothing, exits 1 on drift | diagnostic — **compile-lane only** (both arms read the chain). Schema/recapture library owned by `degenbot-simulation` (`degenbot_simulation::investigation`, re-exported by the `degenbot` umbrella); offline consumers: `tier3_*` tests |
 | [`generate_aave_adversarial_captures`](fixture-tools/src/bin/generate_aave_adversarial_captures/main.rs) | Generate the wave-3 aave-side adversarial goldens node-free; determinism asserted by generating twice byte-identically | `just check-aave-captures` | `sql-ledger` | offline — committed `tests/fixtures/cassettes/wave3` + `sql_goldens/wave3` (`--fixtures-home` re-points at a copy) | (Re)writes both fixture homes; `--check` writes nothing, exits 1 on drift | **gate** — offline drift gate. Offline consumer: `degenbot-aave`'s `wave3_capture_replay.rs` |
 | [`generate_aave_config_windows`](fixture-tools/src/bin/generate_aave_config_windows/main.rs) | Record the wave-5 Aave config-dispatch span cassettes from the live chain, replaying through the statement ledger | `cargo run -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_config_windows -- [--check] [--node <uri>]` | `sql-ledger` | LIVE node; committed wave-5 cassette + golden homes | (Re)writes cassettes, statement ledger, canonical DB dump; every window recorded twice | diagnostic — **compile-lane only** (recorder needs a node). Offline owner: `degenbot-aave`'s `wave5_config_span_replay.rs` + `CONFIG-SPAN-MAP.md` |
 | [`generate_aave_upgrade_windows`](fixture-tools/src/bin/generate_aave_upgrade_windows/main.rs) | Record the wave-4 Aave upgrade-span cassettes from the live chain; substrate from the chain's current reserve set | `cargo run -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_upgrade_windows -- [--check] [--node <uri>]` | `sql-ledger` | LIVE node; committed wave-4 homes | same write/`--check` shape as the wave-5 recorder; record-twice determinism | diagnostic — **compile-lane only**. Offline owner: `degenbot-aave`'s `wave4_upgrade_span_replay.rs` |
@@ -199,7 +199,7 @@ Four feature families must never be unified across tool packages:
 
 | Feature family | Owner crate feature | Reaches a tool only through | Must NOT appear in |
 | --- | --- | --- | --- |
-| SQL ledger | `degenbot/sql-ledger` → `degenbot-db/sql-ledger` | `degenbot-fixture-tools`'s `sql-ledger` forward | `degenbot-solver-lab`, `degenbot-engine-lab` |
+| SQL ledger | `degenbot-db/sql-ledger` | `degenbot-fixture-tools`'s `sql-ledger` forward | `degenbot-solver-lab`, `degenbot-engine-lab` |
 | Pool fixtures / cache lab | `degenbot-pools/capture-fixtures`, `degenbot-pools/cache-lab` | `degenbot-solver-lab`'s forwards | `degenbot-fixture-tools`, `degenbot-engine-lab` |
 | JIT | `degenbot-simulation/evm2-jit` | `degenbot-engine-lab`'s `evm2-jit` forward | `degenbot-fixture-tools`, `degenbot-solver-lab` |
 | Bot Prometheus exporter (`hotpath-prometheus`) | `degenbot-bot/hotpath-prometheus` | `degenbot-engine-lab`'s `prometheus` forward | `degenbot-fixture-tools`, `degenbot-solver-lab`, and every lane that is not the bot exporter |
@@ -213,11 +213,15 @@ owning pool profiling.
 Isolation is a claim about **tool-owned feature forwards** — no lane enables a family
 another tool package owns (`cargo tree -p <tool> --features <lane> -e features -i <owning
 crate>` names the `(command-line)` chain). It is **not** a claim of resolved-package
-absence, which is false if claimed: (a) the fixture SQL-ledger lane inherits the facade's
-Linux target-scoped `degenbot-simulation/evm2-jit` dependency; (b) `rusqlite` is a
-non-optional `degenbot-db` dependency wherever that crate is reached; (c) the `hotpath`
-no-op stub is non-optional in `degenbot-pools`. Removing any of the three is a product
-dependency redesign, not a tool-surface change.
+absence, which is false if claimed: (a) `rusqlite` is a
+non-optional `degenbot-db` dependency wherever that crate is reached (so the fixture
+SQL-ledger lane still resolves it); (b) the `hotpath`
+no-op stub is non-optional in `degenbot-pools`. Removing any of these is a product
+dependency redesign, not a tool-surface change. The fixture lanes resolve no
+`degenbot` facade package and no facade-forced feature: `degenbot-fixture-tools`'s
+product edges are default-features edges, so the Linux target-scoped
+`degenbot-simulation/evm2-jit` carriage (a facade dependency) is absent from both
+fixture lanes.
 
 Every tool package is `publish = false`, outside `default-members` (`degenbot` and
 `degenbot-cli` remain the only defaults), and reachable only by explicit `-p` selection.
@@ -225,9 +229,9 @@ Heavy binaries carry their own `[[bin]]` `required-features`, so a default check
 each one visibly in the manifest; a binary that needs no feature declares none and is the
 `default` lane's target (fixture-tools' five, solver-lab's `synth_corpus_gen` and
 `stateview_feasibility_probe`, engine-lab's fourteen no-feature probes). Each package's
-default tree is the product graph its default binaries read (facade for fixture-tools,
-pools graph for solver-lab, simulation graph for engine-lab); the feature lane is the only
-difference between lanes.
+default tree is the concrete product graph its default binaries read (the named product
+edges for fixture-tools, the pools graph for solver-lab, the simulation graph for
+engine-lab); the feature lane is the only difference between lanes.
 
 ## Boundaries
 

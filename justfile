@@ -1074,19 +1074,22 @@ check-rust-all-features:
 #     the solver profiler, and the SQL ledger belongs to the fixture tools alone;
 #   * that is a claim about the forwards these packages declare, NOT about
 #     resolved-package absence. A lane's tree still carries whatever the product
-#     crates it reaches already pull in: the fixture SQL-ledger lane reaches the
-#     `degenbot` facade and therefore inherits its Linux target-scoped
-#     `degenbot-simulation/evm2-jit` dependency (20 `evm2-jit` lines in the
-#     resolved tree, with no fixture-tools feature in the chain), `rusqlite` is a
-#     non-optional `degenbot-db` dependency wherever that crate is reached, and
-#     the `hotpath` crate is present in the solver capture lanes as
-#     `degenbot-pools`'s non-optional no-op stub.
+#     crates it reaches already pull in: `rusqlite` is a non-optional
+#     `degenbot-db` dependency wherever that crate is reached (so the fixture
+#     SQL-ledger lane still resolves it), and the `hotpath` crate is present in
+#     the solver capture lanes as `degenbot-pools`'s non-optional no-op stub.
+#     The fixture lanes reach NO `degenbot` facade package and no facade-forced
+#     feature: `degenbot-simulation/evm2-jit` is the facade's Linux target-scoped
+#     carriage, and `degenbot-fixture-tools`' product edges are default-features
+#     edges, so neither fixture lane resolves the vendored JIT family.
 #
 # Evidence (rust/tools/README.md, "Feature isolation"):
-#   `cargo tree -p degenbot-fixture-tools -e normal`  -> the facade graph: this
-#                                                  package's crates are plain
-#                                                  edges now, because its
-#                                                  default binary needs them;
+#   `cargo tree -p degenbot-fixture-tools -e normal`  -> the concrete product
+#                                                  graph: every product crate
+#                                                  its programs' sources name
+#                                                  is a plain edge, and no
+#                                                  `degenbot` facade package
+#                                                  resolves;
 #   `cargo tree -p degenbot-solver-lab -e normal`  -> the pools graph: its
 #                                                  default binary builds pool
 #                                                  state, so that edge is plain
@@ -1149,9 +1152,10 @@ check-rust-all-features:
 # `encode_three_hop` (whose one arm reads a JSON request document from argv and
 # prints the production command stream, offlining the Ape matrix's bytes -- no
 # node, no database, no fixture home). The dependency
-# consequence is that `degenbot-fixture-tools`' default tree is the facade graph
-# (see the manifest), so the two fixture lanes differ by the ledger feature
-# alone. With no argument the recipe runs `default` and prints the menu: an
+# consequence is that `degenbot-fixture-tools`' default tree is the concrete
+# product graph its programs' sources name (see the manifest) -- no facade
+# package in either fixture lane -- so the two fixture lanes differ by the
+# ledger feature alone. With no argument the recipe runs `default` and prints the menu: an
 # unqualified invocation is the feature-FREE check (support libraries plus the
 # five binaries that declare no feature), and never silently a union of every
 # lane.

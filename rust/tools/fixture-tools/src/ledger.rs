@@ -14,7 +14,7 @@
 //! (`wave2_capture_replay`, `wave3_capture_replay`) call the same two writers, which
 //! is what makes the committed goldens comparable in both directions.
 
-use degenbot::db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
+use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 
 /// Read the two SQL goldens from an armed [`LedgerDb`]: the ordered statement ledger
 /// and the canonical dump of `tables`.

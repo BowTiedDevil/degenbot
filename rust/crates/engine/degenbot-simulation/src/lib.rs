@@ -64,6 +64,14 @@ pub mod oracle;
 /// API.
 pub mod capture;
 
+/// degenbot's own path-fixture **investigation toolkit** — the superset capture
+/// schema, the chain-sourced state capture, the pool reconstruction helpers, the
+/// per-hop pool oracle checks, and the real-PoolManager V4 oracle driver behind
+/// [`crate::oracle`]. Consumed through the `degenbot::investigation` facade
+/// re-export and by the `capture_path_fixture` tool. See [`investigation`] for
+/// the API.
+pub mod investigation;
+
 /// Product-owned development support for the simulation probes and their
 /// behavior pins: the scripted and modeled chain fixtures, the recorded corpus
 /// readers, the read oracle, the session driver, the delta-parity comparison,

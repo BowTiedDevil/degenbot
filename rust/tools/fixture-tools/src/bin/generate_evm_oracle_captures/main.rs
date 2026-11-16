@@ -36,7 +36,7 @@
 //!
 //! `just check-evm-captures` is this exact invocation as a recipe. The `sql-ledger`
 //! lane feature is REQUIRED (the `[[bin]]` entry's required-features — without the
-//! feature the `degenbot::db::sql_ledger` import fails E0432).
+//! feature the `degenbot_db::sql_ledger` import fails E0432).
 //!
 //! Default mode (re)writes `tests/fixtures/cassettes/wave2/` +
 //! `tests/fixtures/sql_goldens/wave2/`. `--check` regenerates into a temp
@@ -66,21 +66,21 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use alloy::primitives::{keccak256, Address, Bytes, U256};
-use degenbot::db::sql_ledger::LedgerDb;
-use degenbot::db::DegenbotDb;
-use degenbot::pool_updater::{run_pool_update, run_pool_update_on_db, NoProgress};
-use degenbot::rpc::cassette::{
+use degenbot_db::sql_ledger::LedgerDb;
+use degenbot_db::DegenbotDb;
+use degenbot_fixture_tools::{ledger, paths};
+use degenbot_pool_updater::{run_pool_update, run_pool_update_on_db, NoProgress};
+use degenbot_rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
-use degenbot::rpc::cassette_replay::CassetteReplayTransport;
-use degenbot::rpc::provider::LogFilter;
-use degenbot::simulation::capture::{
+use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_rpc::provider::LogFilter;
+use degenbot_simulation::capture::{
     encode_capture_announce_pool, encode_capture_burn, encode_capture_initialize,
     encode_capture_mint, encode_capture_pool_getter, encode_capture_setup_pool,
     encode_capture_swap, load_capture_harness_creation_bytecode, log_emitter_initcode,
     ScratchDriver,
 };
-use degenbot_fixture_tools::{ledger, paths};
 use tempfile::TempDir;
 
 /// The chain every scenario serves (mainnet-shaped; `eth_chainId` answers
@@ -640,7 +640,7 @@ fn generate_scenario(
     // The ancillary round trips the live recorder captures too (driven
     // through the recording seam, ONE block_on on the shared runtime — the
     // example thread carries no ambient tokio context).
-    degenbot::core::runtime::get_runtime()
+    degenbot_core::runtime::get_runtime()
         .block_on(async {
             let chain_id = provider.get_chain_id().await.map_err(|e| e.to_string())?;
             if chain_id != CHAIN_ID {
@@ -697,7 +697,7 @@ fn generate_scenario(
     if let Some((from, to)) = scenario.raw_log_window {
         let filter = LogFilter::new(from, to, None, None)
             .map_err(|e| format!("{}: raw log filter: {e}", scenario.name))?;
-        let _ = degenbot::core::runtime::get_runtime()
+        let _ = degenbot_core::runtime::get_runtime()
             .block_on(provider.get_logs(&filter))
             .map_err(|e| format!("{}: raw log window: {e}", scenario.name))?;
     }

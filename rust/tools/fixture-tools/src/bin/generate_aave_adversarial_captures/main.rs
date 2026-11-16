@@ -69,7 +69,7 @@
 //!
 //! `just check-aave-captures` is this exact invocation as a recipe. The `sql-ledger`
 //! lane feature is REQUIRED (the `[[bin]]` entry's required-features — without the
-//! feature the `degenbot::db::sql_ledger` import fails E0432). Default mode (re)writes
+//! feature the `degenbot_db::sql_ledger` import fails E0432). Default mode (re)writes
 //! the two fixture homes; `--check` regenerates and exits 1 on any byte drift against
 //! the committed artifacts.
 //!
@@ -100,20 +100,20 @@ use std::sync::Arc;
 
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::transports::Transport as _;
-use degenbot::aave::updater::{
+use degenbot_aave::updater::{
     run_aave_update, run_aave_update_on_db, AaveUpdateReport, NoProgress, RunSpec, VerifyPolicy,
 };
-use degenbot::db::sql_ledger::LedgerDb;
-use degenbot::db::DegenbotDb;
-use degenbot::rpc::cassette::{
+use degenbot_db::sql_ledger::LedgerDb;
+use degenbot_db::DegenbotDb;
+use degenbot_fixture_tools::{ledger, paths};
+use degenbot_rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
-use degenbot::rpc::cassette_replay::CassetteReplayTransport;
-use degenbot::simulation::capture::{
+use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_simulation::capture::{
     scripted_actor_creation_code, scripted_coordinator_creation_code, ActorBranch, ScratchDriver,
     ScriptedLog,
 };
-use degenbot_fixture_tools::{ledger, paths};
 use tempfile::TempDir;
 
 /// The chain every scenario serves (mainnet-shaped; the wave-2 convention).
@@ -629,7 +629,7 @@ struct ScenarioArtifacts {
 fn run_recorded_chunk(
     db_path: &Path,
     market_id: i64,
-    provider: degenbot::rpc::provider::AlloyProvider,
+    provider: degenbot_rpc::provider::AlloyProvider,
 ) -> AaveUpdateReport {
     run_aave_update(
         db_path,

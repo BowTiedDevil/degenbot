@@ -2,7 +2,7 @@
 //! PoolManager (via the committed `V4SwapOracleHarness` unlocker artifact), seed
 //! a reconstructed pool's storage slot-for-slot, and drive a swap — as a reuseable
 //! building block for the path-investigation fixtures (the deep, contract-agnostic
-//! evm2 spine is [`degenbot_simulation::oracle`]; this module layers the V4
+//! evm2 spine is [`crate::oracle`]; this module layers the V4
 //! pool-specific deploy/seed/swap/call-encoding on top of it).
 //!
 //! **Layering.** Investigation tooling (like the wider [`crate::investigation`]
@@ -10,7 +10,7 @@
 //! pedantic `doc_markdown`/`cast_possible_wrap` nits the production cores keep
 //! (run-once diagnostic scaffolding, not library surface). It
 //! still emits no `pyo3` and holds no engine state—it is a thin, contract-level
-//! evm2 driver over the reusable [`degenbot_simulation::oracle`] spine.
+//! evm2 driver over the reusable [`crate::oracle`] spine.
 #![expect(
     clippy::cast_possible_wrap,
     clippy::doc_markdown,
@@ -31,6 +31,7 @@ use std::path::PathBuf;
 
 use hashbrown::{HashMap, HashSet};
 
+use crate::oracle::{self, TxSpec, Verdict};
 use alloy::primitives::{aliases::I256, Address, Bytes, U160, U256};
 use degenbot_pools::{
     encode_v4_liquidity_slot, encode_v4_slot0, encode_v4_tick_info_slot, v4_liquidity_slot,
@@ -38,10 +39,9 @@ use degenbot_pools::{
     v4_tick_mapping_slot, V4Slot0Parts,
 };
 use degenbot_pools::{V4PoolKey, V4PoolState};
-use degenbot_simulation::oracle::{self, TxSpec, Verdict};
 
 /// Resolve the tier3-oracle artifacts root from the repo (the crate's
-/// `CARGO_MANIFEST_DIR` is `<repo>/rust/crates/facade/degenbot`).
+/// `CARGO_MANIFEST_DIR` is `<repo>/rust/crates/engine/degenbot-simulation`).
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../../")

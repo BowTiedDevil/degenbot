@@ -66,7 +66,9 @@ each touched pool's FULL map every chunk regardless of delta size.
 - Existing coverage: `chunk_atomicity_contract.rs` / `no_duplicate_writer_contract.rs`
   drive the SQL apply with synthetic `ChunkInputs` (no RPC);
   `liquidity_verifier.rs` unit tests replay recorded call maps;
-  `facade/.../investigation/chain_capture.rs` has a "pseudo-golden" replay harness for a
+  `simulation/.../investigation/chain_capture.rs` (the
+  `degenbot_simulation::investigation` module, re-exported as
+  `degenbot::investigation`) has a "pseudo-golden" replay harness for a
   different subsystem. The middle — the real chunk loop over realistic RPC traffic — is
   the untested span.
 

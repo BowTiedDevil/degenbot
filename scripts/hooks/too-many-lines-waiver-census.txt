@@ -116,7 +116,7 @@ rust/crates/engine/degenbot-strategy/tests/sequence_deficit_probe.rs::sequence_d
 rust/crates/engine/degenbot-strategy/tests/v2_discovered_fee.rs::discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity	the interface test keeps discovery, admission, both encoders, and golden bytes visible
 rust/crates/facade/degenbot/examples/standalone_consumer.rs::in_process_sim_standalone_slice
 rust/crates/facade/degenbot/examples/standalone_consumer.rs::main
-rust/crates/facade/degenbot/src/investigation/chain_capture.rs::!module
+rust/crates/engine/degenbot-simulation/src/investigation/chain_capture.rs::!module
 rust/crates/facade/degenbot/tests/parity_evm_sim.rs::evm_sim_success_path_dual_driver_parity
 rust/crates/facade/degenbot/tests/parity_inspector.rs::inspector_dual_driver_parity_cafebabe_revert
 rust/crates/foundation/degenbot-config/src/schema.rs::strategy_facets_are_declared_as_typed_sections	one assertion block per declared facet key

@@ -42,7 +42,7 @@
 //!         --bin generate_aave_config_windows [-- --check] [--node <uri>]
 //!
 //! The `sql-ledger` lane feature is REQUIRED (the `[[bin]]` entry's required-features —
-//! without it the `degenbot::db::sql_ledger` import fails E0432). Default mode (re)writes
+//! without it the `degenbot_db::sql_ledger` import fails E0432). Default mode (re)writes
 //! `tests/fixtures/cassettes/wave5/` + `tests/fixtures/sql_goldens/wave5/`.
 //!
 //! `--check <cassette_home> <golden_home>` regenerates and exits 1 on drift, writing
@@ -64,18 +64,18 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use alloy::primitives::Address;
-use degenbot::aave::updater::aave_fetch::resolve_aave_substrate;
-use degenbot::aave::updater::{
+use degenbot_aave::updater::aave_fetch::resolve_aave_substrate;
+use degenbot_aave::updater::{
     run_aave_update, run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy,
 };
-use degenbot::db::sql_ledger::LedgerDb;
-use degenbot::db::DegenbotDb;
-use degenbot::rpc::cassette::{
+use degenbot_db::sql_ledger::LedgerDb;
+use degenbot_db::DegenbotDb;
+use degenbot_fixture_tools::{ledger, paths};
+use degenbot_rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
-use degenbot::rpc::cassette_replay::CassetteReplayTransport;
-use degenbot::rpc::provider::AlloyProvider;
-use degenbot_fixture_tools::{ledger, paths};
+use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_rpc::provider::AlloyProvider;
 use tempfile::TempDir;
 
 /// The default recording endpoint (overridden by `--node` or the configured
@@ -195,7 +195,7 @@ struct WindowArtifacts {
 fn seed_db(
     dir: &Path,
     file_name: &str,
-    substrate: &degenbot::aave::updater::aave_fetch::AaveSubstrate,
+    substrate: &degenbot_aave::updater::aave_fetch::AaveSubstrate,
     cursor: u64,
 ) -> (PathBuf, i64) {
     let path = dir.join(file_name);
@@ -306,7 +306,7 @@ fn seed_db(
 /// cassette bytes, then replay those bytes through the ledger for the goldens.
 fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
     let ap: Address = POOL_ADDRESS_PROVIDER.parse().expect("AP literal");
-    let runtime = degenbot::core::runtime::get_runtime();
+    let runtime = degenbot_core::runtime::get_runtime();
     let substrate_block = window.substrate_at.unwrap_or(window.cursor);
     let substrate = runtime.block_on(async {
         let side = AlloyProvider::new(node_uri, 3)
@@ -392,7 +392,7 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
 /// Serialize the seed manifest: the substrate and the window's cursor/chunk/to
 /// params. The offline replay reads it to rebuild the harness DB.
 fn seed_manifest(
-    substrate: &degenbot::aave::updater::aave_fetch::AaveSubstrate,
+    substrate: &degenbot_aave::updater::aave_fetch::AaveSubstrate,
     window: &Window,
     substrate_block: u64,
 ) -> String {

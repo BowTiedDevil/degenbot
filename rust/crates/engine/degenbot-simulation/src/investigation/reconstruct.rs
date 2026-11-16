@@ -10,13 +10,14 @@ use hashbrown::HashMap;
 
 use alloy::primitives::{aliases::U112, Address, B256, U256};
 
-use crate::decoders::v4_swap_decoder::V4PoolId;
-use crate::pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
-use crate::pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
-use crate::pools::TickInfo;
-use crate::substrate::BotState;
-use crate::{DexVariant, RegisterV2PoolParams};
+use degenbot_bot::bot_core::derive_hook_flags;
 use degenbot_core::fee::FeeRatio;
+use degenbot_decoders::v4_swap_decoder::V4PoolId;
+use degenbot_pools::TickInfo;
+use degenbot_pools::{DexVariant, RegisterV2PoolParams};
+use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+use degenbot_pools::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
+use degenbot_substrate::BotState;
 
 use super::fixture::{PoolData, TickJson};
 
@@ -153,7 +154,7 @@ pub fn register_v4_with(
             // and blind the ADR-037 guards in replay.
             hooks: p.hooks.unwrap_or_default(),
         },
-        hook_flags: crate::bot_core::derive_hook_flags(p.hooks.unwrap_or_default()),
+        hook_flags: derive_hook_flags(p.hooks.unwrap_or_default()),
         protocol_fee: protocol_fee_override.unwrap_or(p.protocol_fee.unwrap_or(0)),
         sqrt_price_x96: p.sqrt_price_x96.expect("v4 sqrt_price_x96").0,
         liquidity: u128::try_from(p.liquidity.expect("v4 liquidity").0).unwrap(),
@@ -213,7 +214,7 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
             // Same as register_v4_with: carry the REAL hook address.
             hooks: p.hooks.unwrap_or_default(),
         },
-        hook_flags: crate::bot_core::derive_hook_flags(p.hooks.unwrap_or_default()),
+        hook_flags: derive_hook_flags(p.hooks.unwrap_or_default()),
         protocol_fee: p.protocol_fee.unwrap_or(0),
         sqrt_price_x96: p.sqrt_price_x96.expect("v4 sqrt_price_x96").0,
         liquidity: u128::try_from(p.liquidity.expect("v4 liquidity").0).unwrap(),
@@ -238,7 +239,7 @@ mod hook_wiring_tests {
     //! guard surface stays truthful in investigations.
     use super::*;
     use crate::investigation::fixture::Amount;
-    use crate::substrate::BotState;
+    use degenbot_substrate::BotState;
 
     #[test]
     fn replay_v4_pool_carries_hook_from_fixture() {
@@ -248,7 +249,7 @@ mod hook_wiring_tests {
         hook_bytes[19] = 0x80; // low16 = 0x0080 = BEFORE_SWAP (amount-modifying)
         let hook = Address::new(hook_bytes);
         let pm = Address::new([0x44u8; 20]);
-        let pool_id = crate::pools::state::v4_storage_slots::v4_pool_id(&V4PoolKey {
+        let pool_id = degenbot_pools::v4_pool_id(&V4PoolKey {
             currency0: t0,
             currency1: t1,
             fee: 100,
@@ -279,7 +280,7 @@ mod hook_wiring_tests {
             "hook address must survive replay registration"
         );
         assert_eq!(
-            crate::pools::state::v4_storage_slots::v4_pool_id(&identity.pool_key),
+            degenbot_pools::v4_pool_id(&identity.pool_key),
             identity.pool_id,
             "replayed identity must round-trip the pool_id hash",
         );

@@ -5,12 +5,12 @@
 //! **Layering.** This is degenbot's OWN pool-level scaffold (its capture format,
 //! its V2/V3/V4 pool reconstruction, its per-hop pool oracle). It contains NO
 //! executor logic and is NOT the deep reusable primitive. The genuinely reusable,
-//! contract-agnostic EVM spine is [`degenbot_simulation::oracle`] — deploy a
+//! contract-agnostic EVM spine is [`crate::oracle`] — deploy a
 //! pinned contract into evm2, seed storage slots, drive a call, classify
 //! Revert-vs-Halt — which any individual/a user's OWN contract harness builds on
 //! as a standalone per-contract project at the user layer. This module's per-hop oracle checks currently use
 //! the fast Rust twins; a deep bytecode-level probe would replace them with
-//! `degenbot_simulation::oracle` verds.
+//! `crate::oracle` verds.
 //!
 //! The historical `path*_solver_fixture.rs` examples each copy-pasted the same
 //! ~200-line preamble (fixture structs, `tick_map`, `register_v2/v3`,

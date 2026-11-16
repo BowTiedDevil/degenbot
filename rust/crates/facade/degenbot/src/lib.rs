@@ -30,8 +30,10 @@ pub use degenbot_core::{diag, op_error, op_info, op_span, op_warn, telemetry_tar
 /// EIP-1559 base-fee math.
 pub use degenbot_core::eip_1559;
 
-/// `examples/path*_solver_fixture.rs` investigate-runner dialect.
-pub mod investigation;
+/// `examples/path*_solver_fixture.rs` investigate-runner dialect. The
+/// implementation is owned by `degenbot-simulation` (`degenbot_simulation::investigation`);
+/// this is the umbrella re-export for its consumers.
+pub use degenbot_simulation::investigation;
 
 // ---------------------------------------------------------------------------
 // State, substrate & the engine

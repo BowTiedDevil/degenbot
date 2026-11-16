@@ -2754,11 +2754,16 @@ name = "degenbot-fixture-tools"
 version = "0.6.0-alpha.19"
 dependencies = [
  "alloy",
- "degenbot",
+ "degenbot-aave",
+ "degenbot-config",
+ "degenbot-core",
+ "degenbot-db",
  "degenbot-execution",
  "degenbot-executor",
+ "degenbot-pool-updater",
  "degenbot-pools",
  "degenbot-rpc",
+ "degenbot-simulation",
  "hashbrown 0.17.1",
  "rusqlite",
  "serde",

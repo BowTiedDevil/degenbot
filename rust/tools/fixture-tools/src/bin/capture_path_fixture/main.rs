@@ -65,15 +65,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use alloy::primitives::{Address, B256};
-use degenbot::config::loader::load_process_config;
-use degenbot::config::resolvers::{resolve_chain_id, resolve_node_request_uri, NodeOverrides};
-use degenbot::investigation::capture::{
+use degenbot_config::loader::load_process_config;
+use degenbot_config::resolvers::{resolve_chain_id, resolve_node_request_uri, NodeOverrides};
+use degenbot_rpc::provider::AlloyProvider;
+use degenbot_simulation::investigation::capture::{
     diff_state, emit_json, pool_spec, refresh_fixture, FetchedState,
 };
-use degenbot::investigation::chain_capture::{
+use degenbot_simulation::investigation::chain_capture::{
     scrape_v2_state, scrape_v3_state, scrape_v4_state, TickScan,
 };
-use degenbot::rpc::provider::AlloyProvider;
 use serde_json::Value;
 
 /// The corpus's canonical V4 StateView deployment (the address both legacy

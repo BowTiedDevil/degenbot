@@ -76,17 +76,17 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use degenbot::aave::updater::aave_fetch::fetch_pool_logs;
-use degenbot::aave::updater::{activate_aave_market, run_aave_update, RunSpec, VerifyPolicy};
-use degenbot::db::DegenbotDb;
-use degenbot::pool_updater::fetch::{
+use degenbot_aave::updater::aave_fetch::fetch_pool_logs;
+use degenbot_aave::updater::{activate_aave_market, run_aave_update, RunSpec, VerifyPolicy};
+use degenbot_db::DegenbotDb;
+use degenbot_pool_updater::fetch::{
     fetch_pool_created_logs, fetch_v3_liquidity_logs_grouped, PoolFamily,
 };
-use degenbot::pool_updater::{run_pool_update, NoProgress as PoolNoProgress};
-use degenbot::rpc::cassette::{
+use degenbot_pool_updater::{run_pool_update, NoProgress as PoolNoProgress};
+use degenbot_rpc::cassette::{
     rfc3339_utc, verify_cassette_bytes, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
-use degenbot::rpc::provider::{AlloyProvider, LogFetcher};
+use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
 /// Seeded aToken/vToken revision for the harness-substrate `aave_v3_assets`
 /// rows. Inert for the pinned span (no `Upgraded` config event dispatches and
@@ -335,7 +335,7 @@ fn run_pool_update_off_runtime(
     chunk_size: u64,
     provider: AlloyProvider,
     verify_chunk: bool,
-) -> Result<degenbot::pool_updater::UpdateReport, String> {
+) -> Result<degenbot_pool_updater::UpdateReport, String> {
     std::thread::spawn(move || {
         run_pool_update(
             &database_path,
@@ -638,7 +638,7 @@ async fn record_aave_run_chunk(
         //     recorded run surface) on the shared runtime - legal on this
         //     plain thread - and the core's RPC half blocks on the same
         //     runtime internally.
-        let activate_provider = degenbot::core::runtime::get_runtime()
+        let activate_provider = degenbot_core::runtime::get_runtime()
             .block_on(AlloyProvider::new(&node_uri, 5))
             .map_err(|e| format!("activate provider: {e}"))?;
         let activated = activate_aave_market(
@@ -655,7 +655,7 @@ async fn record_aave_run_chunk(
         //     (unrecorded - harness inputs, not the run's RPC surface), under
         //     ONE block_on on the shared runtime (this thread carries no
         //     ambient tokio context, so the block_on is legal).
-        let substrate = degenbot::core::runtime::get_runtime().block_on(async {
+        let substrate = degenbot_core::runtime::get_runtime().block_on(async {
             let side_channel = AlloyProvider::new(&node_uri, 3)
                 .await
                 .map_err(|e| format!("side-channel provider: {e}"))?;
@@ -688,7 +688,7 @@ async fn record_aave_run_chunk(
                 max_block_range: 10_000,
                 provider: recorder.as_alloy_provider(),
                 cancel: Arc::new(AtomicBool::new(false)),
-                progress: Arc::new(degenbot::aave::updater::NoProgress),
+                progress: Arc::new(degenbot_aave::updater::NoProgress),
                 verify: VerifyPolicy::default(),
                 max_chunks: None,
             },
@@ -702,9 +702,8 @@ async fn record_aave_run_chunk(
 }
 
 async fn record(args: RecordSpec) -> Result<usize, String> {
-    let cfg =
-        degenbot::config::loader::load_process_config().map_err(|e| format!("config: {e}"))?;
-    let chain_id = degenbot::config::resolvers::resolve_chain_id(&cfg, None)
+    let cfg = degenbot_config::loader::load_process_config().map_err(|e| format!("config: {e}"))?;
+    let chain_id = degenbot_config::resolvers::resolve_chain_id(&cfg, None)
         .map_err(|e| format!("chain id: {e}"))?
         .value;
     // The recorder's transport is HTTP-only; route `--node` into the
@@ -712,21 +711,20 @@ async fn record(args: RecordSpec) -> Result<usize, String> {
     // http endpoint for the capture.
     let overrides = match args.node.as_deref() {
         Some(uri) if uri.starts_with("http") => {
-            degenbot::config::resolvers::NodeOverrides::new().with_http(uri)
+            degenbot_config::resolvers::NodeOverrides::new().with_http(uri)
         }
         Some(uri) if uri.starts_with("ws") => {
-            degenbot::config::resolvers::NodeOverrides::new().with_ws(uri)
+            degenbot_config::resolvers::NodeOverrides::new().with_ws(uri)
         }
         Some(uri) if uri.starts_with("ipc") => {
-            degenbot::config::resolvers::NodeOverrides::new().with_ipc(uri)
+            degenbot_config::resolvers::NodeOverrides::new().with_ipc(uri)
         }
         Some(uri) => return Err(format!("--node {uri:?} has no http/ws/ipc scheme")),
-        None => degenbot::config::resolvers::NodeOverrides::new(),
+        None => degenbot_config::resolvers::NodeOverrides::new(),
     };
-    let node_uri =
-        degenbot::config::resolvers::resolve_node_request_uri(&cfg, chain_id, &overrides)
-            .map_err(|e| format!("node uri: {e}"))?
-            .value;
+    let node_uri = degenbot_config::resolvers::resolve_node_request_uri(&cfg, chain_id, &overrides)
+        .map_err(|e| format!("node uri: {e}"))?
+        .value;
     let source = probe_source(&node_uri).await;
 
     // Recording seam: a real AlloyProvider over the recording transport —
