@@ -1302,9 +1302,11 @@ check-capability-catalog:
 #
 # live-invariant gate (ADR-087 D2): watches the live release-profile wiring in rust/Cargo.toml; not tripwire precedent.
 check-profile-policy:
-    # C7: the gate body lives as a cargo test on the umbrella crate
-    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
-    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- profile_release_policy_is_respected --exact --nocapture
+    # C7: the gate body lives as cargo tests on the umbrella crate
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs). The filter is a
+    # substring, so both profile gates run: the release shape and the test-only
+    # profile that carries it (ADR-088).
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- profile_release --nocapture
 
 # ADR-084 D3 dependency-charter gate: every deny rule in
 # rust/crates/facade/degenbot/tests/dependency_charter.txt asserted over

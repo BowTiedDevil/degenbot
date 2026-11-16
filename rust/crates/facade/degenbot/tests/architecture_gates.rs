@@ -3003,6 +3003,66 @@ fn module_segment_len(text: &str) -> usize {
     len
 }
 
+/// The `key = value` string in a section body, comments stripped.
+fn section_value<'a>(body: &'a [String], key: &str) -> Option<&'a str> {
+    let prefix = format!("{key} =");
+    body.iter().find_map(|line| {
+        let trimmed = line.trim();
+        trimmed
+            .strip_prefix(prefix.as_str())
+            .map(|value| value.split('#').next().unwrap_or_default().trim())
+    })
+}
+
+/// The `[profile.*]` bodies the ADR-088 gates reconcile.
+struct ProfileSections {
+    /// `[profile.release]`
+    release: Vec<String>,
+    /// `[profile.release-tests]`
+    release_tests: Vec<String>,
+    /// Every `[profile.release.package.<name>]`, name unquoted.
+    packages: Vec<(String, Vec<String>)>,
+}
+
+fn profile_sections() -> ProfileSections {
+    let manifest = std::fs::read_to_string(manifest_flag()).expect("read workspace Cargo.toml");
+    let mut sections = ProfileSections {
+        release: Vec::new(),
+        release_tests: Vec::new(),
+        packages: Vec::new(),
+    };
+    let mut current: Option<(String, Vec<String>)> = None;
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if let Some((header, body)) = current.take() {
+                record_section(&mut sections, &header, body);
+            }
+            current = Some((trimmed[1..trimmed.len() - 1].to_owned(), Vec::new()));
+        } else if let Some((_, body)) = current.as_mut() {
+            body.push(line.to_owned());
+        }
+    }
+    if let Some((header, body)) = current.take() {
+        record_section(&mut sections, &header, body);
+    }
+    sections
+}
+
+fn record_section(sections: &mut ProfileSections, header: &str, body: Vec<String>) {
+    match header {
+        "profile.release" => sections.release = body,
+        "profile.release-tests" => sections.release_tests = body,
+        other => {
+            if let Some(name) = other.strip_prefix("profile.release.package.") {
+                sections
+                    .packages
+                    .push((name.trim_matches('"').to_owned(), body));
+            }
+        }
+    }
+}
+
 /// ADR-088: the release-profile shape — member default 16, one binding pin.
 ///
 /// Asserts the manifest shape, not a member enumeration: `[profile.release]`
@@ -3013,81 +3073,39 @@ fn module_segment_len(text: &str) -> usize {
 /// override set deliberately, under review.
 #[test]
 fn profile_release_policy_is_respected() {
-    /// The `key = value` string in a section body, comments stripped.
-    fn section_value<'a>(body: &'a [String], key: &str) -> Option<&'a str> {
-        let prefix = format!("{key} =");
-        body.iter().find_map(|line| {
-            let trimmed = line.trim();
-            trimmed
-                .strip_prefix(prefix.as_str())
-                .map(|value| value.split('#').next().unwrap_or_default().trim())
-        })
-    }
-
-    let manifest = std::fs::read_to_string(manifest_flag()).expect("read workspace Cargo.toml");
-
-    // Collect (header, body) for every `profile.release*` section. Body lines
-    // are raw; the value lookups trim whitespace and trailing comments.
-    let mut release_body: Vec<String> = Vec::new();
-    let mut release_tests_body: Vec<String> = Vec::new();
-    let mut package_bodies: Vec<(String, Vec<String>)> = Vec::new();
-    let mut current: Option<(String, Vec<String>)> = None;
-    for line in manifest.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            if let Some((header, body)) = current.take() {
-                if header == "profile.release" {
-                    release_body = body;
-                } else if let Some(name) = header.strip_prefix("profile.release.package.") {
-                    package_bodies.push((name.trim_matches('"').to_owned(), body));
-                } else if header == "profile.release-tests" {
-                    release_tests_body = body;
-                }
-            }
-            current = Some((trimmed[1..trimmed.len() - 1].to_owned(), Vec::new()));
-        } else if let Some((_, body)) = current.as_mut() {
-            body.push(line.to_owned());
-        }
-    }
-    if let Some((header, body)) = current.take() {
-        if header == "profile.release" {
-            release_body = body;
-        } else if let Some(name) = header.strip_prefix("profile.release.package.") {
-            package_bodies.push((name.trim_matches('"').to_owned(), body));
-        } else if header == "profile.release-tests" {
-            release_tests_body = body;
-        }
-    }
+    let sections = profile_sections();
+    let release = &sections.release;
 
     assert!(
-        !release_body.is_empty(),
+        !release.is_empty(),
         "rust/Cargo.toml has no [profile.release] section"
     );
 
     for key in ["lto", "strip", "codegen-units"] {
         assert!(
-            section_value(&release_body, key).is_some(),
+            section_value(release, key).is_some(),
             "[profile.release] is missing `{key}` — the ADR-088 shape pins it"
         );
     }
     assert_eq!(
-        section_value(&release_body, "lto"),
+        section_value(release, "lto"),
         Some("\"thin\""),
         "[profile.release] lto must stay \"thin\" (per-package lto does not exist; ADR-088)"
     );
     assert_eq!(
-        section_value(&release_body, "strip"),
+        section_value(release, "strip"),
         Some("true"),
         "[profile.release] strip must stay true (ADR-088)"
     );
     assert_eq!(
-        section_value(&release_body, "codegen-units"),
+        section_value(release, "codegen-units"),
         Some("16"),
         "[profile.release] codegen-units must be 16 — every member lib inherits it; \
          strict codegen belongs to the shipped-artifact pin (ADR-088)"
     );
 
-    let unexpected: Vec<&String> = package_bodies
+    let unexpected: Vec<&String> = sections
+        .packages
         .iter()
         .map(|(name, _)| name)
         .filter(|name| name.as_str() != "degenbot_rs")
@@ -3097,32 +3115,40 @@ fn profile_release_policy_is_respected() {
         "unexpected [profile.release.package.*] overrides {unexpected:?} — the only \
          per-package pin is the shipped cdylib degenbot_rs (ADR-088)"
     );
-    for (name, body) in &package_bodies {
+    for (name, body) in &sections.packages {
         assert_eq!(
             section_value(body, "codegen-units"),
             Some("1"),
             "[profile.release.package.{name}] must pin codegen-units = 1 (ADR-088)"
         );
     }
+}
 
-    // The shipped-profile test leg runs under [profile.release-tests]: release's
-    // semantics minus its packaging shape. Pin both halves of that claim, so the
-    // leg can neither drift away from release's semantics nor quietly re-acquire
-    // the link cost the profile exists to drop.
+/// ADR-088: the test-only profile the shipped-profile leg runs under.
+///
+/// `[profile.release-tests]` inherits `release` and overrides exactly the two
+/// packaging keys, `lto` and `strip`. Both halves are pinned here: a semantic
+/// key appearing in this section would make the leg a different program than the
+/// one it guards, and either packaging key coming back would re-acquire the
+/// multi-minute link the profile exists to drop.
+#[test]
+fn profile_release_tests_policy_is_respected() {
+    let body = profile_sections().release_tests;
+
     assert!(
-        !release_tests_body.is_empty(),
+        !body.is_empty(),
         "rust/Cargo.toml has no [profile.release-tests] section — the shipped-profile \
          test leg runs under it (ADR-088)"
     );
     assert_eq!(
-        section_value(&release_tests_body, "inherits"),
+        section_value(&body, "inherits"),
         Some("\"release\""),
         "[profile.release-tests] must inherit release: it is a test run of the shipped \
          semantics, not a fourth profile (ADR-088)"
     );
     for (key, want) in [("lto", "false"), ("strip", "false")] {
         assert_eq!(
-            section_value(&release_tests_body, key),
+            section_value(&body, key),
             Some(want),
             "[profile.release-tests] {key} must stay {want}: the profile buys link time \
              back from the packaging shape, nothing else (ADR-088)"
@@ -3138,7 +3164,7 @@ fn profile_release_policy_is_respected() {
         "incremental",
     ] {
         assert!(
-            section_value(&release_tests_body, key).is_none(),
+            section_value(&body, key).is_none(),
             "[profile.release-tests] must not override `{key}`: a test leg that changes \
              code semantics is not the shipped profile (ADR-088)"
         );
