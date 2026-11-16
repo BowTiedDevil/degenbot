@@ -34,6 +34,7 @@
 use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::Address;
+use degenbot_core::address_utils::NATIVE_SENTINEL_ALL_ES as CURVE_NATIVE_SENTINEL;
 use degenbot_pathfinding::PoolKind;
 
 /// The V4 protocol's native-currency wire spelling (`address(0)`): one of the
@@ -44,17 +45,6 @@ use degenbot_pathfinding::PoolKind;
 /// token-contract spelling, and a generic entry point that receives it raw
 /// refuses rather than resolving it.
 const V4_NATIVE_SENTINEL: Address = Address::ZERO;
-
-/// The Curve protocol's native-coin wire spelling (the all-Es address), the
-/// second protocol-private sentinel. Its translation authority is
-/// `degenbot_core::address_utils::NATIVE_SENTINEL_ALL_ES` — the
-/// lower-level crate both this substrate and the pools capability share, so
-/// the authority needs no dependency edge back up the graph; this copy
-/// exists because the sentinel translation happens at this crate's call
-/// sites, and the in-crate test
-/// `curve_sentinel_spelling_matches_the_core_authority` is the drift gate
-/// that keeps the two spellings identical.
-const CURVE_NATIVE_SENTINEL: Address = Address::repeat_byte(0xEE);
 
 /// Whether `address` is one of the protocol-private spellings of the chain's
 /// conceptual native asset (the V4 `address(0)` currency, the Curve all-Es
@@ -595,16 +585,5 @@ mod tests {
         assert!(!is_protocol_native_sentinel(&Address::new(almost_all_es)));
         assert!(!is_protocol_native_sentinel(&Address::new([0x01; 20])));
         assert!(!is_protocol_native_sentinel(&Address::repeat_byte(0xFF)));
-    }
-
-    #[test]
-    fn curve_sentinel_spelling_matches_the_core_authority() {
-        // Drift gate: this crate's spelling of the Curve sentinel is a copy
-        // (degenbot-core owns the authority; pools re-exports it); the two
-        // must never diverge.
-        assert_eq!(
-            CURVE_NATIVE_SENTINEL,
-            degenbot_core::address_utils::NATIVE_SENTINEL_ALL_ES
-        );
     }
 }
