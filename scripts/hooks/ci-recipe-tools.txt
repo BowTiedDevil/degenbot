@@ -1,0 +1,45 @@
+# Toolchain requirements for the `just` recipes ci.yml invokes by name.
+#
+# A recipe whose tool is absent from the job that runs it fails on the runner
+# with a shell-level error (127, "no such command", "Failed to spawn") while
+# every local gate stays green, because the developer environment has the tool.
+# ci-parity reconciles this table against ci.yml in both directions: a recipe a
+# job runs with no row here is drift, and a row no job runs is a stale claim.
+#
+#   recipe|requires|provides
+#
+# `requires` names the tools the recipe needs the environment to already have;
+# `provides` names the ones the recipe installs itself. Each name is one
+# provisioning predicate over the running job's own step text:
+#
+#   uv            an `astral-sh/setup-uv` step
+#   cargo-nextest a `taiki-e/install-action` step installing nextest, or a
+#                 `cargo install ... cargo-nextest` run
+#   dev-venv      a `uv sync` run whose arguments include `--dev`, i.e. the
+#                 lock's dev group (pyproject's vyper, maturin, and pytest pins)
+#
+# Read a recipe's body before adding a name here: `publish-dry-run`, for
+# instance, is plain `python3` on purpose and needs neither uv nor the venv.
+
+bootstrap|uv|dev-venv
+build-rust-extension|uv,dev-venv|
+check-msrv||
+check-rust-consumer||
+check-rust-default||
+check-rust-dev-features||
+check-rust-extension-release||
+check-uv-lock|uv|
+fmt-check||
+fmt-check-python||
+lint-markdown-check||
+lint-python|uv|
+lint-rust-check||
+lint-stub-drift||
+publish-dry-run||
+test-executor-offline|uv,dev-venv|
+test-golden-replay|cargo-nextest,uv|
+test-python-noise-gate|uv,dev-venv|
+test-rust||
+test-rust-policy-lane|cargo-nextest,uv|
+verify-tier3-artifacts||
+verify-tier3-executor-artifact|uv,dev-venv|

@@ -316,6 +316,13 @@ jobs:
       - name: Sync the uv environment (no extension build)
         run: uv sync --locked --dev --no-install-project
 
+      # The gate itself runs the replay through `cargo nextest`, and the runner
+      # image ships none.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: nextest@0.9.152
+
       - name: Run two-sided golden replay gate (offline, blocks merge)
         run: just test-golden-replay
 

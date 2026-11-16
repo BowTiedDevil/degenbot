@@ -27,7 +27,7 @@
 #     push-gate manifest; notes carry no wiring claim.
 #
 # Override the sources for the negative probes (tests/test_ci_parity.py):
-#   MANIFEST=... CI=... JF=... PREK=...
+#   MANIFEST=... CI=... JF=... PREK=... TOOLS=...
 #
 # live-invariant gate (ADR-087 D2): watches the live ci-parity manifest and the prek.toml `stages = ["pre-push"]` entries it is cross-checked against; not tripwire precedent.
 set -euo pipefail
@@ -201,10 +201,128 @@ for name in "${ci_just[@]}"; do
     fi
 done
 
+# --- Toolchain parity -------------------------------------------------------
+# A `just` recipe whose tool the running job never installs fails at shell level
+# -- `no such command: nextest`, `Failed to spawn: vyper`, `uv: command not
+# found` -- while every local gate stays green, because a developer environment
+# has the tool. The requirement table names, per recipe ci.yml invokes, the
+# tools the recipe needs and the ones it provisions itself:
+#
+#   recipe|requires|provides
+#
+# Reconciled in both directions like the manifest above: a recipe a job runs
+# with no row is drift, and a row no job runs is a stale claim.
+tools_file="${TOOLS:-scripts/hooks/ci-recipe-tools.txt}"
+
+if [ ! -s "${tools_file}" ]; then
+    echo "ci-parity: toolchain table ${tools_file} is missing or empty -- refusing to pass" >&2
+    exit 2
+fi
+
+# The job's own YAML text, comments stripped: prose never provisions a tool,
+# and a comment mentioning `cargo nextest` must not read as an install.
+job_steps() {
+    awk -v want="$1" '
+        /^jobs:$/ { in_jobs=1; next }
+        in_jobs && /^[^ ]/ { in_jobs=0 }
+        in_jobs && /^  [A-Za-z0-9_-]+:$/ {
+            line=$0; sub(/^  /, "", line); sub(/:$/, "", line); cur=line; next
+        }
+        in_jobs && cur==want && !/^[[:space:]]*#/ { print }
+    ' "${ci}"
+}
+
+# The recipes a job invokes, read from its `run:` bodies only (single-line and
+# `run: |` blocks), so a recipe named in a comment or a step name is not a call.
+job_recipes() {
+    job_steps "$1" | awk '
+        /^[[:space:]]*-?[[:space:]]*run:[[:space:]]*[|>]-?[[:space:]]*$/ { in_run=1; next }
+        /^[[:space:]]*-?[[:space:]]*run:/ { in_run=0; print; next }
+        in_run && /^[[:space:]]{10,}[^[:space:]]/ { print; next }
+        in_run { in_run=0 }
+    ' | grep -oE '\bjust [a-z0-9_-]+' | awk '{print $2}' | sort -u || true
+}
+
+# One predicate per tool name: does this job's step text provision it?
+provisions_tool() {
+    local block="$1" tool="$2"
+    case "${tool}" in
+        uv) printf '%s\n' "${block}" | grep -qE 'uses:[[:space:]]*astral-sh/setup-uv@' ;;
+        cargo-nextest) printf '%s\n' "${block}" | grep -qE 'tool:[[:space:]]*nextest|cargo install[^|]*cargo-nextest' ;;
+        dev-venv) printf '%s\n' "${block}" | grep -qE 'uv sync[^|]*--dev' ;;
+        *)
+            echo "ci-parity: unknown tool '${tool}' in ${tools_file}" >&2
+            return 2
+            ;;
+    esac
+}
+
+declare -A requires_of=()
+declare -A provides_of=()
+declare -A declared=()
+
+while IFS='|' read -r recipe requires provides; do
+    [ -n "${recipe}" ] || continue
+    case "${recipe}" in \#*) continue ;; esac
+    declared["${recipe}"]=1
+    requires_of["${recipe}"]="${requires}"
+    provides_of["${recipe}"]="${provides}"
+done < "${tools_file}"
+
+if [ "${#declared[@]}" -eq 0 ]; then
+    echo "ci-parity: ${tools_file} produced 0 rows -- refusing to pass" >&2
+    exit 2
+fi
+
+tool_list() { printf '%s' "$1" | tr ',' ' '; }
+
+declare -A ci_recipes=()
+
+for job in "${jobs[@]}"; do
+    steps="$(job_steps "${job}")"
+    mapfile -t recipes_of_job < <(job_recipes "${job}")
+    [ "${#recipes_of_job[@]}" -gt 0 ] || continue
+    for recipe in "${recipes_of_job[@]}"; do
+        ci_recipes["${recipe}"]=1
+        if [ -z "${declared[${recipe}]:-}" ]; then
+            echo "ci-parity: job '${job}' runs 'just ${recipe}', which has no row in ${tools_file}" >&2
+            fail=1
+            continue
+        fi
+        for tool in $(tool_list "${requires_of[${recipe}]}"); do
+            if provisions_tool "${steps}" "${tool}"; then
+                continue
+            fi
+            provided=0
+            for other in "${recipes_of_job[@]}"; do
+                for given in $(tool_list "${provides_of[${other}]}"); do
+                    [ "${given}" = "${tool}" ] && provided=1
+                done
+            done
+            if [ "${provided}" -eq 0 ]; then
+                echo "ci-parity: job '${job}' runs 'just ${recipe}', which needs '${tool}', and nothing in that job provisions it" >&2
+                fail=1
+            fi
+        done
+    done
+done
+
+if [ "${#ci_recipes[@]}" -eq 0 ]; then
+    echo "ci-parity: extracted 0 'just <recipe>' calls from ${ci} -- refusing to pass" >&2
+    exit 2
+fi
+
+for recipe in "${!declared[@]}"; do
+    if [ -z "${ci_recipes[${recipe}]:-}" ]; then
+        echo "ci-parity: ${tools_file} declares '${recipe}', which no ci.yml job runs" >&2
+        fail=1
+    fi
+done
+
 if [ "${fail}" -ne 0 ]; then
     echo
-    echo "ci-parity FAILED: give each ci.yml job a local entrypoint (or record why it is CI-only), and keep the named just recipes alive."
+    echo "ci-parity FAILED: give each ci.yml job a local entrypoint (or record why it is CI-only), keep the named just recipes alive, and provision the tools those recipes need."
     exit 1
 fi
 
-echo "ci-parity: ${#jobs[@]} ci.yml jobs covered; ${#ci_just[@]} CI-named just recipes resolve."
+echo "ci-parity: ${#jobs[@]} ci.yml jobs covered; ${#ci_just[@]} CI-named just recipes resolve; ${#ci_recipes[@]} recipe toolchains provisioned."

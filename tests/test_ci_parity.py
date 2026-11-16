@@ -48,7 +48,7 @@ def _sed() -> str:
 
 def _run_ci_parity(**overrides: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
-    for var in ("MANIFEST", "CI", "JF", "PREK"):
+    for var in ("MANIFEST", "CI", "JF", "PREK", "TOOLS"):
         env.pop(var, None)
     env.update(overrides)
     return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
@@ -232,3 +232,76 @@ def test_sed_extraction_matches_a_real_toml_parser() -> None:
     sed_entries = [line for line in result.stdout.splitlines() if line]
 
     assert sed_entries == toml_entries
+
+
+TOOLS = REPO_ROOT / "scripts" / "hooks" / "ci-recipe-tools.txt"
+
+
+def test_the_requirement_table_provisions_every_recipe_toolchain() -> None:
+    """The committed tree passes the toolchain reconciliation too."""
+    result = _run_ci_parity()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "recipe toolchains provisioned" in result.stdout
+
+
+def test_a_job_missing_a_tool_its_recipe_needs_fails(tmp_path: Path) -> None:
+    """The tier-3 job without its uv step cannot run the vyper compile."""
+    mutated = _mutate(
+        tmp_path,
+        CI_YML,
+        "      - name: Install uv (executor vyper toolchain)\n"
+        "        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7",
+        "      - name: Provision nothing\n        run: echo skipped",
+    )
+
+    result = _run_ci_parity(CI=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "tier3-oracle" in result.stderr
+    assert "verify-tier3-executor-artifact" in result.stderr
+    assert "uv" in result.stderr
+
+
+def test_a_wrong_install_action_tool_fails(tmp_path: Path) -> None:
+    """`taiki-e/install-action` counts only when it installs nextest itself."""
+    mutated = _mutate(
+        tmp_path,
+        CI_YML,
+        "          tool: nextest@0.9.152",
+        "          tool: cargo-binstall",
+    )
+
+    result = _run_ci_parity(CI=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "cargo-nextest" in result.stderr
+
+
+def test_a_recipe_a_job_runs_without_a_row_fails(tmp_path: Path) -> None:
+    """A new `just` invocation in a job has to declare its toolchain."""
+    # `just test-fork` is a real recipe, so the name-existence check passes and
+    # this failure can only come from the missing requirement row.
+    mutated = _mutate(tmp_path, CI_YML, "run: just check-uv-lock", "run: just test-fork")
+
+    result = _run_ci_parity(CI=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "test-fork" in result.stderr
+    assert "no row" in result.stderr
+
+
+def test_a_row_no_job_runs_fails(tmp_path: Path) -> None:
+    """A requirement row that outlives its CI caller is a stale claim."""
+    mutated = _mutate(
+        tmp_path,
+        TOOLS,
+        "fmt-check-python||",
+        "fmt-check-python||\norphan-recipe|cargo-nextest|",
+    )
+
+    result = _run_ci_parity(CI=str(CI_YML), TOOLS=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "orphan-recipe" in result.stderr
+    assert "no ci.yml job runs" in result.stderr
