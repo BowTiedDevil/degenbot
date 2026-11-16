@@ -10,7 +10,6 @@ return codes, and a stop that always runs.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import signal
 from pathlib import Path
@@ -18,16 +17,14 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.repo_script import load_script
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "scripts" / "executor_bankroll_matrix.py"
-SPEC = importlib.util.spec_from_file_location("executor_bankroll_matrix", MODULE_PATH)
-assert SPEC is not None
-assert SPEC.loader is not None
-bankroll = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(bankroll)
+bankroll = load_script("executor_bankroll_matrix", MODULE_PATH)
 
 OWNER = "0x" + "11" * 20
 INJECTED = "0x" + "22" * 20

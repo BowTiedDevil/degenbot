@@ -124,7 +124,6 @@ import fcntl
 import hashlib
 import http.client
 import http.server
-import importlib.util
 import io
 import json
 import os
@@ -140,6 +139,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from tests.repo_script import load_script
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _ORACLE = _REPO_ROOT / "scripts" / "publish_verify.py"
@@ -207,12 +208,19 @@ def _census(tree: Path, rows: list[str]) -> None:
 
 
 def _oracle(tree: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the real oracle, with cargo's presentation pinned to plain text.
+
+    The assertions read cargo's status lines out of the oracle's streams, so the
+    ambient `CARGO_TERM_COLOR` (CI sets it to `always`) must not decide whether
+    ``Verifying`` arrives wrapped in escapes.
+    """
     return subprocess.run(
         [sys.executable, str(_ORACLE), "--root", str(tree), *args],
         check=False,
         capture_output=True,
         text=True,
         timeout=600,
+        env={**os.environ, "CARGO_TERM_COLOR": "never"},
     )
 
 
@@ -1839,24 +1847,7 @@ def test_a_sentinel_real_cargo_home_stays_untouched(tmp_path: Path) -> None:
 
 def _oracle_module() -> object:
     """The real script, imported for the focused lock-source unit tests."""
-    # Script mode puts the script's directory on sys.path; a module import of
-    # the file does not. The oracle imports its sibling (the static
-    # publication plan) the same way both spellings run, so the search path
-    # gets the same directory here -- only for the load, restored after, the
-    # imported module object retained.
-    scripts_dir = str(_ORACLE.parent)
-    added = scripts_dir not in sys.path
-    if added:
-        sys.path.insert(0, scripts_dir)
-    try:
-        spec = importlib.util.spec_from_file_location("publish_verify", _ORACLE)
-        module = importlib.util.module_from_spec(spec)
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-    finally:
-        if added:
-            sys.path.remove(scripts_dir)
-    return module
+    return load_script("publish_verify", _ORACLE)
 
 
 def _lock_entry(name: str, version: str, source: str | None) -> str:

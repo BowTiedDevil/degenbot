@@ -10,12 +10,13 @@ release artifact. No test re-implements the immutable layout.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 from pathlib import Path
 
 import pytest
+
+from tests.repo_script import load_script
 
 ROOT = Path(__file__).resolve().parents[1]
 RECOMPILE = ROOT / "contracts" / "recompile.py"
@@ -40,32 +41,8 @@ TAIL_HEX = 7 * 32 * 2
 WORD_HEX = 32 * 2
 
 
-def _load(name: str, path: Path):
-    """Load one repository script as a module, without running its entry point.
-
-    Registering the module under ``name`` is what makes the load behave like an
-    import. A script whose annotations are postponed (``from __future__ import
-    annotations``) resolves them from its own module namespace, and
-    ``dataclasses`` finds that namespace by looking the module up in
-    ``sys.modules``. A module built from a path spec never lands in that table
-    by itself, so the first ``@dataclass`` in such a script dies on a ``None``
-    lookup instead of reading its annotations.
-    """
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        del sys.modules[name]
-        raise
-    return module
-
-
-bankroll = _load("executor_bankroll_matrix", ROOT / "scripts" / "executor_bankroll_matrix.py")
-recompile = _load("contracts_recompile", RECOMPILE)
+bankroll = load_script("executor_bankroll_matrix", ROOT / "scripts" / "executor_bankroll_matrix.py")
+recompile = load_script("contracts_recompile", RECOMPILE)
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -203,26 +180,3 @@ def test_a_default_resolution_selects_the_release_owner_and_deployment() -> None
 
     assert request.owner.lower() == RELEASE_OWNER.lower()
     assert request.output_dir == RELEASE_DEPLOYMENT
-
-
-def test_loading_a_script_registers_it_like_an_import(tmp_path: Path) -> None:
-    """A loaded script resolves by name, so its own dataclasses can look it up."""
-    script = tmp_path / "probe_module.py"
-    script.write_text(
-        "from __future__ import annotations\n"
-        "\n"
-        "from dataclasses import KW_ONLY, dataclass\n"
-        "\n"
-        "\n"
-        "@dataclass(frozen=True)\n"
-        "class Probe:\n"
-        "    first: int\n"
-        "    _: KW_ONLY\n"
-        "    second: str = 'tail'\n",
-        encoding="utf-8",
-    )
-
-    module = _load("probe_module", script)
-
-    assert importlib.import_module("probe_module") is module
-    assert module.Probe(1).second == "tail"

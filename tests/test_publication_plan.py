@@ -51,7 +51,6 @@ gate (``tests/test_publish_blocked_gate.py``), the live audit
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shlex
@@ -64,6 +63,8 @@ from typing import Any
 
 import pytest
 
+from tests.repo_script import load_script
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PLAN = _REPO_ROOT / "scripts" / "publication_plan.py"
 _GIT_DEP = 'evm2 = {{ git = "https://example.invalid/evm2.git"{version} }}'
@@ -72,11 +73,7 @@ _VERSIONED = ', version = "0.1.0"'
 
 def _plan_module() -> Any:
     """The real script, imported for the focused fact and refusal tests."""
-    spec = importlib.util.spec_from_file_location("publication_plan", _PLAN)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    return load_script("publication_plan", _PLAN)
 
 
 def _tree(tmp_path: Path, members: dict[str, str]) -> Path:

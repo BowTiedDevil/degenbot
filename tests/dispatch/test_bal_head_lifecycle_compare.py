@@ -21,11 +21,12 @@ truth rather than a restatement of the implementation.
 from __future__ import annotations
 
 import json
-from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+
+from tests.repo_script import load_script
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -58,13 +59,7 @@ EMITTED_SUMMARY = """{
 @pytest.fixture(scope="module")
 def comparator() -> ModuleType:
     """The comparator script, loaded by path (it is not an importable package)."""
-    spec = spec_from_file_location("bal_head_lifecycle_compare", SCRIPT_PATH)
-    if spec is None or spec.loader is None:
-        message = f"cannot load comparator script: {SCRIPT_PATH}"
-        raise RuntimeError(message)
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_script("bal_head_lifecycle_compare", SCRIPT_PATH)
 
 
 def summary(

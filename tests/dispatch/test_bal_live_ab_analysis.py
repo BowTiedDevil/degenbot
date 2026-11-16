@@ -34,11 +34,12 @@ same wire shape.
 
 from __future__ import annotations
 
-from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+
+from tests.repo_script import load_script
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -50,13 +51,7 @@ SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "bal_live_ab_ana
 @pytest.fixture(scope="module")
 def analysis() -> ModuleType:
     """The analysis script, loaded by path (it is not an importable package)."""
-    spec = spec_from_file_location("bal_live_ab_analysis", SCRIPT_PATH)
-    if spec is None or spec.loader is None:
-        message = f"cannot load analysis script: {SCRIPT_PATH}"
-        raise RuntimeError(message)
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_script("bal_live_ab_analysis", SCRIPT_PATH)
 
 
 TRACE_LINE = (

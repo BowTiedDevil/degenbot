@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import itertools
 import json
 import sys
@@ -11,14 +10,11 @@ import pytest
 
 from degenbot.operator.operator_channel import PROBE_SUBMISSION_EVIDENCE, capital_from_wire
 from degenbot.runner._sim_submit import ProbeCapital
+from tests.repo_script import load_script
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "scripts" / "executor_three_hop_matrix.py"
-SPEC = importlib.util.spec_from_file_location("executor_three_hop_matrix", MODULE_PATH)
-assert SPEC is not None
-assert SPEC.loader is not None
-matrix = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(matrix)
+matrix = load_script("executor_three_hop_matrix", MODULE_PATH)
 
 if TYPE_CHECKING:
     from collections.abc import Callable

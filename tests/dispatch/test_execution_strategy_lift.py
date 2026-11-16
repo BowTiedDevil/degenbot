@@ -19,7 +19,6 @@ declared probe reads and minimum net profit. The functional encode round-trip
 from __future__ import annotations
 
 from dataclasses import dataclass
-from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +28,7 @@ if TYPE_CHECKING:
 import pytest
 
 from degenbot.crypto import function_selector
+from tests.repo_script import load_script
 
 EXAMPLE_PATH = Path(__file__).resolve().parents[2] / "examples" / "execution_strategy_foreign.py"
 
@@ -44,13 +44,7 @@ class _StrategyResult:
 
 @pytest.fixture(scope="module")
 def foreign_strategy_example() -> ModuleType:
-    spec = spec_from_file_location("execution_strategy_foreign_example", EXAMPLE_PATH)
-    if spec is None or spec.loader is None:
-        message = f"cannot load public example: {EXAMPLE_PATH}"
-        raise RuntimeError(message)
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_script("execution_strategy_foreign_example", EXAMPLE_PATH)
 
 
 def _ffi_execution() -> Any:
