@@ -61,10 +61,22 @@ A run therefore proceeds in two cargo-owned rounds over the same registry:
 
 The lock's crates.io-sourced external crates are mirrored verbatim from the
 real crates.io sparse index into the same registry, so the loopback can never
-satisfy a requirement the real registry cannot; a mirror fetch that comes up
-empty fails the run loudly instead of certifying a partial oracle. A pin
-locked to a path, a git repository, or an alternate registry fails the run
-loudly too: resolving it by name would serve a same-named stranger.
+satisfy a requirement the real registry cannot. Only the sparse-index
+metadata is mirrored eagerly -- resolution needs it before any cargo round --
+while the `.crate` bytes are served lazily: the registry's download handler
+fetches an external artifact the first time cargo requests it, validated
+against the locked external set, checksum-validated against the mirrored
+index entry's sha256 before it is served or cached, cached under the
+persistent lock-hash mirror, and coalesced across concurrent requests, so a
+verified run touches the network only for the artifacts its build graph
+actually requests. A `--no-verify` run (which resolves from the index alone)
+fetches none: its registry refuses every download request loudly. Cargo
+still independently verifies the served bytes against the served index, and
+the registry refuses to serve or cache bytes that fail the mirrored checksum
+first. A mirror fetch that comes up empty
+fails the run loudly instead of certifying a partial oracle. A pin locked to
+a path, a git repository, or an alternate registry fails the run loudly too:
+resolving it by name would serve a same-named stranger.
 
 Members the census withholds (genuinely unresolvable external/git shapes) are
 excluded from both rounds by name and keep their file-inclusion coverage
@@ -104,7 +116,10 @@ run's own directory inside its per-run directory: the named-registry token and
 source table live there, the loopback-registry caches and staging state cargo
 writes during the rounds (`127.0.0.1-*` residue) land there and are removed
 with the run directory, and the caller's real Cargo home -- and any real
-token inside it -- stays byte-for-byte unread and unchanged, and every token
+token inside it -- stays unmodified: the run never writes to it, and it is
+read only as a read-only byte source for external `.crate` artifacts already
+sitting in its crates.io download cache (each candidate validated against
+the mirrored index checksum before use). Every token
 environment override (`CARGO_TOKEN`, the `CARGO_REGISTRY_*` legacy spellings,
 and every named-registry `CARGO_REGISTRIES_*_TOKEN`) is stripped from the
 cargo child environment, so cargo's env-over-config preference can never put
@@ -126,9 +141,10 @@ then fails loud with an error naming the lock file and the recorded holder;
 the lock file itself is never deleted, because removing an `flock`'d file
 would let a waiter acquire against an inode the holder no longer holds.
 Mirror fetches carry an explicit timeout, bounded retries with backoff, and a
-failure naming the crate and URL; in the `--no-verify` form only index
-metadata is mirrored, because cargo resolves a no-verify run from the index
-alone.
+failure naming the crate and URL; the download handler's misses reuse the
+same bounded fetch policy. CLI-visible behavior is unchanged except network
+timing and cache work: eager pre-materialization of every external artifact
+became on-demand fetches served through the loopback download handler.
 
 Exit codes: 0 covered, 1 census findings / upload-round / resolution failure,
 2 census refused to certify.
@@ -216,6 +232,10 @@ CRATES_IO_DL = "https://crates.io/api/v1/crates"
 # field is read once and passed on whole, so the payloads stay Any-typed
 # instead of re-declaring cargo's JSON schema at every hop.
 Json = dict[str, Any]
+
+# The fixed shape of a `.crate` download URL under the index config's `dl`
+# root: dl/<name>/<version>/download -- three segments, the last one fixed.
+DOWNLOAD_SEGMENTS = 3
 
 # crates.io's sparse-index path buckets (the documented layout): a one- or
 # two-character name lives under a directory named for its length, a
@@ -402,7 +422,7 @@ def cargo_environment(cargo_home: Path) -> dict[str, str]:
     return env
 
 
-def write_cargo_home_config(cargo_home: Path, port: int) -> None:
+def write_cargo_home_config(cargo_home: Path, index_url: str) -> None:
     """Write the run's cargo config: the resolution seam and the upload seam.
 
     One loopback registry, two tables. The source replacement redirects plain
@@ -414,7 +434,6 @@ def write_cargo_home_config(cargo_home: Path, port: int) -> None:
     so no upload can reach it.
 
     """
-    index_url = f"sparse+http://127.0.0.1:{port}/index/"
     config = cargo_home / "config.toml"
     config.write_text(
         f'[source.crates-io]\nreplace-with = "{SOURCE_NAME}"\n\n'
@@ -641,37 +660,53 @@ def atomic_write(path: Path, data: bytes) -> None:
     staging.replace(path)
 
 
-def mirror_external(
+def caller_registry_cache() -> Path:
+    """Locate the caller's real crates.io download cache: a read-only source.
+
+    `CARGO_HOME` names the caller's real Cargo home when set, the default
+    `.cargo` home under the profile otherwise; the resolution happens at
+    registry construction. The run's own redirected `CARGO_HOME` lives only
+    in the cargo child environment and is never consulted here -- the
+    run-owned Cargo home is written by the run, never read as an artifact
+    source.
+
+    Returns:
+        The caller's `registry/cache` directory, the parent of cargo's
+        per-registry cache directories (`index.crates.io-*`).
+
+    """
+    home = os.environ.get("CARGO_HOME")
+    if home:
+        return Path(home) / "registry" / "cache"
+    return Path.home() / ".cargo" / "registry" / "cache"
+
+
+def mirror_index(
     name: str,
     versions: set[str],
     lock_hash: str,
     mirror: Path,
     overlay: Path,
     *,
-    no_verify: bool,
     index_base: str = CRATES_IO_INDEX,
-    dl_base: str = CRATES_IO_DL,
     timeout: float = FETCH_TIMEOUT_SECONDS,
     attempts: int = FETCH_ATTEMPTS,
     backoff: float = FETCH_BACKOFF_SECONDS,
 ) -> str:
-    """Mirror one external crate's index entry, plus its `.crate` when verified.
+    """Mirror one external crate's sparse-index entry into the run's overlay.
 
-    Index responses
-    are cached under `mirror` keyed by the lockfile hash, so an unchanged lock
-    re-fetches nothing; the cache write is atomic, so two runs sharing a
-    cache never serve each other half a response. Fetches carry an explicit
-    timeout and bounded retries with backoff, and a failure names the crate,
-    the URL, and the attempts spent.
+    The index metadata is the only thing resolution needs ahead of the cargo
+    rounds, so it is the only thing mirrored eagerly: the `.crate` bytes are
+    served lazily by the registry's download handler the first time cargo
+    requests them (see `LoopbackRegistry`). Index responses are cached under
+    `mirror` keyed by the lockfile hash, so an unchanged lock re-fetches
+    nothing; the cache write is atomic, so two runs sharing a cache never
+    serve each other half a response. Fetches carry an explicit timeout and
+    bounded retries with backoff, and a failure names the crate, the URL, and
+    the attempts spent.
 
     Returns:
         An error message, or the empty string on success.
-
-    In the `--no-verify` form only index metadata is mirrored: cargo resolves
-    a no-verify run from the index alone (an index-only loopback serves a
-    `--no-verify` round with no `/dl` request, while the verified form dies on
-    the missing download), so the run touches the network only for the
-    metadata resolution needs.
 
     """
     cache = mirror / lock_hash
@@ -695,33 +730,463 @@ def mirror_external(
     dest = overlay / "index" / index_rel(name)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text("".join(f"{line}\n" for line in matched), encoding="utf-8")
-    if no_verify:
-        return ""
-    for version in versions:
-        crate_file = None
-        for candidate in sorted(
-            (Path.home() / ".cargo" / "registry" / "cache").glob(f"*/{name}-{version}.crate")
-        ):
-            crate_file = candidate
-            break
-        if crate_file is None:
-            crate_file = cache / "dl" / f"{name}-{version}.crate"
-            if not crate_file.is_file():
-                crate_file.parent.mkdir(parents=True, exist_ok=True)
-                url = f"{dl_base}/{name}/{version}/download"
-                try:
-                    atomic_write(
-                        crate_file,
-                        fetch_bytes(url, timeout=timeout, attempts=attempts, backoff=backoff),
-                    )
-                except (RuntimeError, urllib.error.HTTPError) as exc:
-                    crate_file.unlink(missing_ok=True)
-                    return f"crates.io download failed for {name}-{version} ({url}): {exc}"
-        link = overlay / "dl" / name / version / "download"
-        link.parent.mkdir(parents=True, exist_ok=True)
-        link.unlink(missing_ok=True)
-        link.symlink_to(crate_file)
     return ""
+
+
+class _FetchError(Exception):
+    """An external artifact could not be served through the bounded fetcher."""
+
+
+def _validated_store(
+    cache: Path, body: bytes, expected: str, name: str, version: str, url: str
+) -> tuple[str | None, Path | None]:
+    """Validate fetched bytes against the mirrored checksum, then cache them.
+
+    Returns:
+        An error message naming the checksum evidence when the fetched bytes
+        fail the mirrored index checksum -- nothing is cached in that case,
+        so no corrupt bytes can poison the cache -- or the cache path holding
+        the validated bytes, stored atomically; exactly one of the two.
+
+    """
+    actual = hashlib.sha256(body).hexdigest()
+    if actual != expected:
+        failure = (
+            f"crates.io download for {name}-{version} ({url}) failed its "
+            f"checksum: the mirrored index expects sha256 {expected}, the "
+            f"fetched bytes hash to {actual} -- the corrupt bytes were not cached"
+        )
+        return failure, None
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(cache, body)
+    return None, cache
+
+
+class _InflightFetch:
+    """One coalesced external-artifact fetch in progress.
+
+    The leader performs the bounded fetch; requests that arrived while it was
+    outstanding wait on the event and adopt its result, so N concurrent
+    requests for one artifact produce exactly one upstream fetch.
+
+    """
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.path: Path | None = None
+        self.error: str | None = None
+
+
+class LoopbackRegistry:
+    """The one registry a run drives: index, downloads, uploads, receipts.
+
+    Everything the run's cargo rounds need from a registry hides behind this
+    interface: `start`/`close` own the loopback HTTP server (an ephemeral
+    port served from a daemon thread), `index_url` is the sparse-index URL
+    the run's cargo config names for both seams (the source replacement that
+    resolves and the named registry that uploads), and `receipts` reads back
+    the upload proof the Publish API endpoint recorded. The protocol surfaces
+    live under the run's own overlay directory: the sparse index under
+    `index/` (cargo's own upload entries plus the verbatim crates.io mirror),
+    the `.crate` tree under `dl/`, and `uploads.jsonl`.
+
+    Uploaded member artifacts are served straight from the overlay. External
+    (lock-pinned crates.io) artifacts are served lazily: the download handler
+    fetches an artifact the first time cargo requests it -- the request is
+    validated against the locked external set so the loopback can never serve
+    a same-named stranger, the persistent lock-hash cache and the caller's
+    real crates.io cache (read-only, resolved from the caller's real
+    `CARGO_HOME`, crates.io cache directories only) are reused before the
+    network, and every byte source is validated against the sha256 checksum
+    of the already-mirrored overlay index entry before it is served or
+    cached: a corrupt persistent cache is repaired, wrong-source or corrupt
+    real-cache candidates are ignored, and corrupt upstream bytes are
+    rejected before they can poison the cache. Misses go through the bounded
+    fetch policy, the cache write is atomic, and every concurrent request for
+    the same artifact coalesces onto one fetch. With downloads disabled -- the
+    `--no-verify` production shape -- every `/dl` request is refused loudly
+    before any resolution or fetch, because a no-verify run must download
+    nothing. Cargo independently verifies the served bytes against the served
+    index, as before.
+
+    """
+
+    def __init__(
+        self,
+        overlay: Path,
+        *,
+        token: str,
+        externals: dict[str, set[str]],
+        dl_cache: Path,
+        dl_base: str = CRATES_IO_DL,
+        downloads_enabled: bool = True,
+        caller_cache: Path | None = None,
+        timeout: float = FETCH_TIMEOUT_SECONDS,
+        attempts: int = FETCH_ATTEMPTS,
+        backoff: float = FETCH_BACKOFF_SECONDS,
+    ) -> None:
+        """Own one run's registry state; nothing is served before `start`.
+
+        `caller_cache` injects the caller's real crates.io cache in tests;
+        when omitted it is resolved from the caller's real `CARGO_HOME` (or
+        the default `.cargo` home) at construction.
+
+        """
+        self._overlay = overlay
+        self._token = token
+        self._externals = externals
+        self._dl_cache = dl_cache
+        self._dl_base = dl_base
+        self._downloads_enabled = downloads_enabled
+        self._caller_cache = caller_cache if caller_cache is not None else caller_registry_cache()
+        self._timeout = timeout
+        self._attempts = attempts
+        self._backoff = backoff
+        # A follower must never wait past the leader's own bounded budget; one
+        # bound covers every retry and backoff the leader can spend.
+        self._wait_budget = timeout * attempts + backoff * attempts * (attempts + 1) / 2
+        self._mutex = threading.Lock()
+        self._inflight: dict[tuple[str, str], _InflightFetch] = {}
+        self._server: ThreadingHTTPServer | None = None
+        self._port = 0
+
+    def start(self) -> None:
+        """Bind the loopback server on an ephemeral port and serve forever.
+
+        Binding port 0 lets the OS pick an unbound port at bind time, so no
+        fixed port can be pre-bound by something else ahead of the run and no
+        two concurrent runs can collide.
+
+        Raises:
+            RuntimeError: The registry was already started.
+
+        """
+        if self._server is not None:
+            message = "the loopback registry is already started"
+            raise RuntimeError(message)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler_class())
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self._server = server
+        self._port = server.server_address[1]
+
+    @property
+    def index_url(self) -> str:
+        """Read back the sparse-index URL the run's cargo config names.
+
+        Returns:
+            The `sparse+` index URL over the port bound at `start`.
+
+        Raises:
+            RuntimeError: The registry was never started (or was closed).
+
+        """
+        if self._server is None:
+            message = "the loopback registry is not started"
+            raise RuntimeError(message)
+        return f"sparse+http://127.0.0.1:{self._port}/index/"
+
+    def receipts(self) -> dict[str, Json]:
+        """Read back the upload receipts the Publish API endpoint recorded.
+
+        Returns:
+            The receipts keyed by crate name, empty before any upload.
+
+        """
+        uploads = self._overlay / "uploads.jsonl"
+        receipts: dict[str, Json] = {}
+        if uploads.is_file():
+            for line in uploads.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    receipt = json.loads(line)
+                    receipts[receipt["name"]] = receipt
+        return receipts
+
+    def close(self) -> None:
+        """Stop and release the loopback server; the registry is then spent."""
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+
+    def _index_checksum(self, name: str, version: str) -> str:
+        """Read the exact version's sha256 checksum from the mirrored index.
+
+        The overlay index was populated by the eager mirror before any cargo
+        round, so its `cksum` is the byte-level truth every candidate --
+        persistent cache, real cache, upstream fetch -- is validated against.
+
+        Returns:
+            The mirrored index entry's checksum.
+
+        Raises:
+            _FetchError: No mirrored index entry names this version, so no
+                byte source could be validated.
+
+        """
+        index = self._overlay / "index" / index_rel(name)
+        if index.is_file():
+            for line in index.read_text(encoding="utf-8").splitlines():
+                if not line:
+                    continue
+                entry = json.loads(line)
+                if entry.get("vers") == version:
+                    cksum = entry.get("cksum")
+                    if isinstance(cksum, str) and cksum:
+                        return cksum
+        message = f"{name}-{version}: no mirrored index checksum to validate the artifact against"
+        raise _FetchError(message)
+
+    def _external_artifact(self, name: str, version: str) -> Path:
+        """Resolve one locked external artifact to validated bytes, lazily.
+
+        Every byte source is validated against the mirrored index checksum
+        before it is served or cached: the persistent lock-hash cache is
+        accepted only when its bytes match (a corrupt cache is discarded and
+        repaired below), the caller's real crates.io cache is consulted as a
+        read-only byte source with wrong-source and corrupt candidates
+        ignored, and only a full miss fetches crates.io under the bounded
+        policy -- fetched bytes that fail the checksum are rejected before
+        they can reach the cache. Concurrent requests for the same artifact
+        coalesce: the first becomes the leader that fetches, the rest wait
+        for its result (bytes or failure) instead of fetching.
+
+        Returns:
+            The cache path holding the artifact's checksum-validated bytes.
+
+        Raises:
+            _FetchError: The artifact could not be fetched within the bounds,
+                or no byte source produced checksum-validated bytes.
+
+        """
+        cache = self._dl_cache / f"{name}-{version}.crate"
+        expected = self._index_checksum(name, version)
+        if cache.is_file():
+            try:
+                if hashlib.sha256(cache.read_bytes()).hexdigest() == expected:
+                    return cache
+            except OSError:
+                pass
+            # Corrupt cached bytes are never trusted and never served: drop
+            # them so the sources below repair the cache entry.
+            cache.unlink(missing_ok=True)
+        for candidate in sorted(
+            self._caller_cache.glob(f"index.crates.io-*/{name}-{version}.crate")
+        ):
+            try:
+                data = candidate.read_bytes()
+            except OSError:
+                continue
+            if hashlib.sha256(data).hexdigest() != expected:
+                continue
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(cache, data)
+            return cache
+        key = (name, version)
+        with self._mutex:
+            entry = self._inflight.get(key)
+            if entry is None:
+                entry = _InflightFetch()
+                self._inflight[key] = entry
+                leader = True
+            else:
+                leader = False
+        if not leader:
+            if not entry.done.wait(self._wait_budget):
+                message = (
+                    f"{name}-{version}: a concurrent fetch did not finish within "
+                    f"{self._wait_budget:g}s"
+                )
+                raise _FetchError(message)
+            if entry.error is not None:
+                raise _FetchError(entry.error)
+            if entry.path is None:
+                message = f"{name}-{version}: the coalesced fetch recorded no result"
+                raise _FetchError(message)
+            return entry.path
+        url = f"{self._dl_base}/{name}/{version}/download"
+        try:
+            body = fetch_bytes(
+                url, timeout=self._timeout, attempts=self._attempts, backoff=self._backoff
+            )
+            entry.error, entry.path = _validated_store(cache, body, expected, name, version, url)
+        except (RuntimeError, urllib.error.HTTPError, OSError) as exc:
+            entry.error = f"crates.io download failed for {name}-{version} ({url}): {exc}"
+        finally:
+            with self._mutex:
+                self._inflight.pop(key, None)
+            entry.done.set()
+        if entry.error is not None:
+            raise _FetchError(entry.error)
+        return cache
+
+    def _handler_class(self) -> type:
+        """Build the loopback registry's request handler over this run's state.
+
+        Three protocol surfaces, all backed by the run's own directory: the
+        sparse index under `index/` (entries are cargo's own upload metadata,
+        mapped by `publish_entry`, plus the verbatim crates.io mirror), the
+        `.crate` tree under `dl/` (uploaded artifacts served from the overlay,
+        locked external artifacts fetched lazily), and the Publish API upload
+        endpoint. Uploads require the run's dummy token and append one
+        receipt line per upload to `uploads.jsonl` -- the durable proof that
+        every upload hit this loopback endpoint under the dummy auth and
+        nothing else.
+
+        Returns:
+            The handler class for `ThreadingHTTPServer`.
+
+        """
+        overlay = self._overlay
+        token = self._token
+        externals = self._externals
+        downloads_enabled = self._downloads_enabled
+        resolve_artifact = self._external_artifact
+
+        class Handler(BaseHTTPRequestHandler):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+
+            # The stdlib protocol names the parameter `format`; the name stays so
+            # the override remains call-compatible (a renamed parameter is an
+            # invalid override), and the shadowing is the seam's, not ours.
+            def log_message(self, format: str, *args: object) -> None:  # ruff: ignore[builtin-argument-shadowing]
+                pass
+
+            def _send_body(self, status: int, body: bytes, content_type: str) -> None:
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _send_json(self, status: int, payload: Json) -> None:
+                self._send_body(status, json.dumps(payload).encode("utf-8"), "application/json")
+
+            def _serve_file(self, relative: Path) -> None:
+                # Never answer a conditional request with 304: the index is
+                # populated mid-run, and python's mtime comparison has second
+                # granularity, so a same-second population would otherwise let
+                # cargo keep resolving against the empty bytes it cached for this
+                # URL.
+                del self.headers["If-Modified-Since"]
+                del self.headers["If-None-Match"]
+                # Traversal fails closed: a `..` component (raw or
+                # percent-encoded -- do_GET decodes before this point) or an
+                # absolute path would read files outside the run's own overlay,
+                # so it is refused before any existence check.
+                parts = relative.parts
+                if not parts or parts[0] == os.sep or ".." in parts:
+                    self.send_error(403)
+                    return
+                target = overlay / relative
+                if not target.is_file():
+                    self.send_error(404)
+                    return
+                content_type = (
+                    "application/octet-stream"
+                    if target.suffix == ".crate" or target.name == "download"
+                    else "text/plain"
+                )
+                self._send_body(200, target.read_bytes(), content_type)
+
+            def _serve_download(self, rest: str) -> None:
+                # Traversal fails closed before any name or version is
+                # interpreted: a `..` component (raw or percent-encoded --
+                # do_GET decodes before this point) would read files outside
+                # the run's own overlay, so it is refused first.
+                parts = rest.split("/")
+                if ".." in parts:
+                    self.send_error(403)
+                    return
+                if (
+                    len(parts) != DOWNLOAD_SEGMENTS
+                    or parts[2] != "download"
+                    or not parts[0]
+                    or not parts[1]
+                ):
+                    self.send_error(404)
+                    return
+                name, version = parts[0], parts[1]
+                # With downloads disabled -- the `--no-verify` production
+                # shape -- every `/dl` request is refused before any
+                # uploaded/external resolution or upstream fetch: a no-verify
+                # run resolves from the index alone and must download
+                # nothing, so no defect in this handler could ever start
+                # fetching.
+                if not downloads_enabled:
+                    self._send_body(
+                        503,
+                        b"downloads are disabled: this is a --no-verify run and "
+                        b"it must download no artifacts",
+                        "text/plain",
+                    )
+                    return
+                # Uploaded members are served from the overlay; only a miss
+                # reaches the locked external set and its lazy fetch.
+                uploaded = overlay / "dl" / name / version / "download"
+                if uploaded.is_file():
+                    self._send_body(200, uploaded.read_bytes(), "application/octet-stream")
+                    return
+                if name not in externals or version not in externals[name]:
+                    self.send_error(404)
+                    return
+                try:
+                    artifact = resolve_artifact(name, version)
+                except _FetchError as exc:
+                    self._send_body(500, str(exc).encode("utf-8"), "text/plain")
+                    return
+                self._send_body(200, artifact.read_bytes(), "application/octet-stream")
+
+            def do_GET(self) -> None:
+                # Percent-encoded segments are decoded before the prefix checks
+                # and the traversal guards, so an encoded `..` cannot slip
+                # through as a literal-looking name.
+                path = urllib.parse.unquote(self.path).lstrip("/")
+                if path == "index/config.json":
+                    # `api` is the bare origin: cargo joins its upload path onto
+                    # it, and `dl` is the `.crate` tree cargo downloads from.
+                    # http.server sets `server_port` on the bound server outside
+                    # any type stub, so the attribute read needs the suppression.
+                    origin = f"http://127.0.0.1:{self.server.server_port}"  # ty: ignore[unresolved-attribute]
+                    self._send_json(200, {"dl": f"{origin}/dl", "api": origin})
+                    return
+                if path.startswith("index/"):
+                    self._serve_file(Path("index") / path[len("index/") :])
+                    return
+                if path.startswith("dl/"):
+                    self._serve_download(path[len("dl/") :])
+                    return
+                self.send_error(404)
+
+            def do_PUT(self) -> None:
+                if self.path != PUBLISH_API_PATH:
+                    self.send_error(404)
+                    return
+                if self.headers.get("Authorization") != token:
+                    self._send_json(401, {"errors": [{"detail": "upload denied: wrong token"}]})
+                    return
+                # One bounded step per upload: the payload is parsed, stored,
+                # indexed, and receipted inside `_store_upload`, and any defect in
+                # what cargo sent is answered, never swallowed.
+                try:
+                    length = int(self.headers["Content-Length"])
+                    body = self.rfile.read(length)
+                    _store_upload(
+                        overlay,
+                        body,
+                        self.server.server_port,  # ty: ignore[unresolved-attribute]
+                        self.headers.get("Authorization") or "",
+                    )
+                except Exception as exc:  # ruff: ignore[blind-except] -- the client must see the failure
+                    self._send_json(500, {"errors": [{"detail": str(exc)}]})
+                    return
+                self._send_json(
+                    200,
+                    {"warnings": {"invalid_categories": [], "invalid_badges": [], "other": []}},
+                )
+
+        return Handler
 
 
 def publish_entry(meta: Json, cksum: str) -> Json:
@@ -831,139 +1296,6 @@ def _store_upload(overlay: Path, body: bytes, port: int, auth: str) -> Json:
     with (overlay / "uploads.jsonl").open("a", encoding="utf-8") as receipt_file:
         receipt_file.write(json.dumps(receipt) + "\n")
     return receipt
-
-
-def _registry_handler(overlay: Path, token: str) -> type:
-    """Build the loopback registry's request handler.
-
-    Three protocol surfaces, all backed by the run's own directory: the sparse
-    index under `index/` (entries are cargo's own upload metadata, mapped by
-    `publish_entry`, plus the verbatim crates.io mirror), the `.crate` tree
-    under `dl/` (uploaded artifacts and mirrored downloads), and the Publish
-    API upload endpoint. Uploads require the run's dummy token and append one
-    receipt line per upload to `uploads.jsonl` -- the durable proof that every
-    upload hit this loopback endpoint under the dummy auth and nothing else.
-
-    Returns:
-        The handler class for `ThreadingHTTPServer`.
-
-    """
-
-    class Handler(BaseHTTPRequestHandler):
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, **kwargs)
-
-        # The stdlib protocol names the parameter `format`; the name stays so
-        # the override remains call-compatible (a renamed parameter is an
-        # invalid override), and the shadowing is the seam's, not ours.
-        def log_message(self, format: str, *args: object) -> None:  # ruff: ignore[builtin-argument-shadowing]
-            pass
-
-        def _send_body(self, status: int, body: bytes, content_type: str) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def _send_json(self, status: int, payload: Json) -> None:
-            self._send_body(status, json.dumps(payload).encode("utf-8"), "application/json")
-
-        def _serve_file(self, relative: Path) -> None:
-            # Never answer a conditional request with 304: the index is
-            # populated mid-run, and python's mtime comparison has second
-            # granularity, so a same-second population would otherwise let
-            # cargo keep resolving against the empty bytes it cached for this
-            # URL.
-            del self.headers["If-Modified-Since"]
-            del self.headers["If-None-Match"]
-            # Traversal fails closed: a `..` component (raw or
-            # percent-encoded -- do_GET decodes before this point) or an
-            # absolute path would read files outside the run's own overlay,
-            # so it is refused before any existence check.
-            parts = relative.parts
-            if not parts or parts[0] == os.sep or ".." in parts:
-                self.send_error(403)
-                return
-            target = overlay / relative
-            if not target.is_file():
-                self.send_error(404)
-                return
-            content_type = (
-                "application/octet-stream"
-                if target.suffix == ".crate" or target.name == "download"
-                else "text/plain"
-            )
-            self._send_body(200, target.read_bytes(), content_type)
-
-        def do_GET(self) -> None:
-            # Percent-encoded segments are decoded before the prefix checks
-            # and `_serve_file`'s traversal guard, so an encoded `..` cannot
-            # slip through as a literal-looking name.
-            path = urllib.parse.unquote(self.path).lstrip("/")
-            if path == "index/config.json":
-                # `api` is the bare origin: cargo joins its upload path onto
-                # it, and `dl` is the `.crate` tree cargo downloads from.
-                # http.server sets `server_port` on the bound server outside
-                # any type stub, so the attribute read needs the suppression.
-                origin = f"http://127.0.0.1:{self.server.server_port}"  # ty: ignore[unresolved-attribute]
-                self._send_json(200, {"dl": f"{origin}/dl", "api": origin})
-                return
-            if path.startswith("index/"):
-                self._serve_file(Path("index") / path[len("index/") :])
-                return
-            if path.startswith("dl/"):
-                self._serve_file(Path("dl") / path[len("dl/") :])
-                return
-            self.send_error(404)
-
-        def do_PUT(self) -> None:
-            if self.path != PUBLISH_API_PATH:
-                self.send_error(404)
-                return
-            if self.headers.get("Authorization") != token:
-                self._send_json(401, {"errors": [{"detail": "upload denied: wrong token"}]})
-                return
-            # One bounded step per upload: the payload is parsed, stored,
-            # indexed, and receipted inside `_store_upload`, and any defect in
-            # what cargo sent is answered, never swallowed.
-            try:
-                length = int(self.headers["Content-Length"])
-                body = self.rfile.read(length)
-                _store_upload(
-                    overlay,
-                    body,
-                    self.server.server_port,  # ty: ignore[unresolved-attribute]
-                    self.headers.get("Authorization") or "",
-                )
-            except Exception as exc:  # ruff: ignore[blind-except] -- the client must see the failure
-                self._send_json(500, {"errors": [{"detail": str(exc)}]})
-                return
-            self._send_json(
-                200,
-                {"warnings": {"invalid_categories": [], "invalid_badges": [], "other": []}},
-            )
-
-    return Handler
-
-
-def serve_registry(overlay: Path, token: str) -> tuple[ThreadingHTTPServer, int]:
-    """Serve the loopback registry over loopback on an ephemeral port.
-
-    Binding port 0 lets the OS pick an unbound port at bind time, so no fixed
-    port can be pre-bound by something else ahead of the run and no two
-    concurrent runs can collide; the returned port is the one actually bound,
-    read back after bind. The server runs on a daemon thread: it exists only
-    for the run's own cargo invocations and dies with the process.
-
-    Returns:
-        The bound server and the port it actually bound.
-
-    """
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _registry_handler(overlay, token))
-    server.daemon_threads = True
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, server.server_address[1]
 
 
 def overlay_run_dir(root: Path) -> Path:
@@ -1097,37 +1429,47 @@ def _verify(
     no_verify = "--no-verify" in extra
     forwarded = [flag for flag in extra if flag != "--no-verify"]
 
-    # The registry is up before the config is written (the config names its
-    # port), and the config is written after the lockfile is settled: a tree
+    # The lockfile is settled before anything names the registry: a tree
     # without one gets it generated here against the default sources, under
     # the same-workspace lock so two runs cannot race the shared lockfile.
-    server, port = serve_registry(overlay, DUMMY_TOKEN)
-    try:
-        if not (root / LOCK_REL).is_file():
-            lockfile = run(
-                ["cargo", "metadata", "--format-version", "1"],
-                cwd=rust,
-                capture=True,
-                env=cargo_env,
-            )
-            if lockfile.returncode != 0:
-                sys.stderr.write(lockfile.stderr)
-                return lockfile.returncode
-        write_cargo_home_config(cargo_home, port)
+    if not (root / LOCK_REL).is_file():
+        lockfile = run(
+            ["cargo", "metadata", "--format-version", "1"],
+            cwd=rust,
+            capture=True,
+            env=cargo_env,
+        )
+        if lockfile.returncode != 0:
+            sys.stderr.write(lockfile.stderr)
+            return lockfile.returncode
+    lock_hash = hashlib.sha256((root / LOCK_REL).read_bytes()).hexdigest()
+    externals, source_problems = lock_externals(root / LOCK_REL, set(packages))
+    for problem in source_problems:
+        fail(problem)
 
-        lock_hash = hashlib.sha256((root / LOCK_REL).read_bytes()).hexdigest()
-        externals, source_problems = lock_externals(root / LOCK_REL, set(packages))
-        for problem in source_problems:
-            fail(problem)
+    # The registry is up before the config is written (the config names its
+    # index URL). The locked external set is the download handler's validation
+    # set: only a locked name/version pair is ever fetched through, and only
+    # when cargo actually requests the artifact. A `--no-verify` run resolves
+    # from the index alone, so its registry refuses every download request --
+    # no code path can ever fetch an artifact under --no-verify.
+    registry = LoopbackRegistry(
+        overlay,
+        token=DUMMY_TOKEN,
+        externals=externals,
+        dl_cache=mirror / lock_hash / "dl",
+        downloads_enabled=not no_verify,
+    )
+    registry.start()
+    try:
+        write_cargo_home_config(cargo_home, registry.index_url)
         if externals:
             errors: list[str] = []
             with ThreadPoolExecutor(max_workers=16) as pool:
                 errors.extend(
                     message
                     for message in pool.map(
-                        lambda item: mirror_external(
-                            item[0], item[1], lock_hash, mirror, overlay, no_verify=no_verify
-                        ),
+                        lambda item: mirror_index(item[0], item[1], lock_hash, mirror, overlay),
                         sorted(externals.items()),
                     )
                     if message
@@ -1202,13 +1544,7 @@ def _verify(
                     "the loopback population round failed -- the published forms do not "
                     "resolve or upload against the loopback registry"
                 )
-            receipts: dict[str, Json] = {}
-            uploads = overlay / "uploads.jsonl"
-            if uploads.is_file():
-                for line in uploads.read_text(encoding="utf-8").splitlines():
-                    if line.strip():
-                        receipt = json.loads(line)
-                        receipts[receipt["name"]] = receipt
+            receipts = registry.receipts()
             # The round succeeded; what it uploaded must be exactly the
             # eligible covered set -- a missing receipt would certify a
             # member the registry never accepted, an unexpected one an
@@ -1265,8 +1601,7 @@ def _verify(
                 return verification.returncode
         return 0
     finally:
-        server.shutdown()
-        server.server_close()
+        registry.close()
 
 
 if __name__ == "__main__":

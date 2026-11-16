@@ -92,9 +92,20 @@ refuses to carry such a member to any other registry name, and the one
 registry this run drives is the loopback.
 
 The network and lifecycle cases pin the mirror's bounded fetches (explicit
-timeout, limited retries with backoff, transient failures only), the
-``--no-verify`` index-only mirroring, ephemeral loopback ports, and the
-per-run overlay directory.
+timeout, limited retries with backoff, transient failures only), the eager
+mirror copying sparse-index metadata only, and the lazy download handler
+behind the one ``LoopbackRegistry`` interface: a locked artifact fetched the
+first time cargo asks and reused from the persistent lock-hash cache after,
+unused and unlocked artifacts never fetched, concurrent requests for one
+artifact coalesced onto a single fetch, a failed miss answered loudly on the
+response, real ``cargo fetch`` resolving and downloading through the handler,
+and the registry's own checksum prevalidation over every byte source --
+persistent cache, real crates.io cache, and upstream fetch -- against the
+mirrored index entry's sha256 (corrupt or wrong-source bytes are repaired,
+ignored, or refused before they are served or cached, and cargo still
+verifies independently); downloads-disabled mode refusing every ``/dl``
+request without an upstream hit -- plus the ephemeral loopback ports and
+per-run overlay directories.
 
 The process-state cases pin the quarantine of everything a run would
 otherwise leave in the caller's Cargo home: every cargo invocation executes
@@ -114,16 +125,19 @@ import hashlib
 import http.client
 import http.server
 import importlib.util
+import io
 import json
 import os
 import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import urllib.error
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -213,12 +227,14 @@ def _loopback_get(port: int, path: str) -> tuple[int, bytes]:
         conn.close()
 
 
-class _LoopbackRegistry:
+class _Upstream:
     """A loopback HTTP server over a scratch directory; counts every GET.
 
     ``fail_remaining`` responses answer with ``failure_status`` before the
     file tree is served (probing the retry policy); ``hang`` accepts the
-    connection and never answers (probing the timeout).
+    connection and never answers (probing the timeout); ``delay`` seconds are
+    slept before every answer (widening the race window the coalescing probe
+    needs).
     """
 
     def __init__(
@@ -228,6 +244,7 @@ class _LoopbackRegistry:
         fail_remaining: int = 0,
         failure_status: int = 503,
         hang: bool = False,
+        delay: float = 0.0,
     ) -> None:
         outer = self
 
@@ -240,6 +257,8 @@ class _LoopbackRegistry:
                 if hang:
                     time.sleep(30)
                     return
+                if delay:
+                    time.sleep(delay)
                 if outer.fail_remaining > 0:
                     outer.fail_remaining -= 1
                     self.send_error(failure_status)
@@ -288,14 +307,14 @@ def test_the_plain_publish_fails_against_a_deterministic_local_registry(
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
         },
     )
-    registry = _LoopbackRegistry(tmp_path / "empty-index")
+    upstream = _Upstream(tmp_path / "empty-index")
     try:
         config = tree / "rust" / ".cargo" / "config.toml"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(
             '[source.crates-io]\nreplace-with = "probe-registry"\n\n'
             "[source.probe-registry]\n"
-            f'registry = "sparse+{registry.url}/index/"\n',
+            f'registry = "sparse+{upstream.url}/index/"\n',
             encoding="utf-8",
         )
         result = subprocess.run(
@@ -317,7 +336,7 @@ def test_the_plain_publish_fails_against_a_deterministic_local_registry(
             timeout=300,
         )
     finally:
-        registry.stop()
+        upstream.stop()
     assert result.returncode != 0
     assert "no matching package named `pubfix-leaf` found" in result.stderr
     assert "replacing registry `crates-io`" in result.stderr
@@ -734,81 +753,85 @@ def test_the_index_fetch_retries_transient_failures_then_succeeds(tmp_path: Path
     served.mkdir(parents=True)
     body = b'{"name": "pubfix-leaf"}\n'
     (served / "pubfix-leaf").write_bytes(body)
-    registry = _LoopbackRegistry(tmp_path / "served", fail_remaining=2, failure_status=503)
+    upstream = _Upstream(tmp_path / "served", fail_remaining=2, failure_status=503)
     try:
         raw = module.fetch_bytes(
-            f"{registry.url}/pu/bf/pubfix-leaf", timeout=5.0, attempts=3, backoff=0.05
+            f"{upstream.url}/pu/bf/pubfix-leaf", timeout=5.0, attempts=3, backoff=0.05
         )
     finally:
-        registry.stop()
+        upstream.stop()
     assert raw == body
-    assert registry.hits == ["/pu/bf/pubfix-leaf"] * 3
+    assert upstream.hits == ["/pu/bf/pubfix-leaf"] * 3
 
 
 def test_the_index_fetch_fails_fast_on_a_definitive_answer(tmp_path: Path) -> None:
     """A 4xx says what the registry serves; retrying it would only stall."""
     module = _oracle_module()
     (tmp_path / "empty").mkdir()
-    registry = _LoopbackRegistry(tmp_path / "empty")
+    upstream = _Upstream(tmp_path / "empty")
     try:
         with pytest.raises(urllib.error.HTTPError):
             module.fetch_bytes(
-                f"{registry.url}/pu/bf/pubfix-leaf", timeout=5.0, attempts=3, backoff=0.05
+                f"{upstream.url}/pu/bf/pubfix-leaf", timeout=5.0, attempts=3, backoff=0.05
             )
     finally:
-        registry.stop()
-    assert len(registry.hits) == 1
+        upstream.stop()
+    assert len(upstream.hits) == 1
 
 
 def test_the_index_fetch_is_bounded_and_names_the_url(tmp_path: Path) -> None:
     """A dead endpoint fails inside its own budget, naming the URL and attempts."""
     module = _oracle_module()
-    registry = _LoopbackRegistry(tmp_path / "hanging", hang=True)
+    upstream = _Upstream(tmp_path / "hanging", hang=True)
     try:
-        url = f"{registry.url}/pu/bf/pubfix-leaf"
+        url = f"{upstream.url}/pu/bf/pubfix-leaf"
         start = time.monotonic()
         with pytest.raises(RuntimeError) as raised:
             module.fetch_bytes(url, timeout=0.3, attempts=2, backoff=0.05)
         elapsed = time.monotonic() - start
     finally:
-        registry.stop()
+        upstream.stop()
     message = str(raised.value)
     assert url in message
     assert "after 2 attempts" in message
-    assert len(registry.hits) == 2
+    assert len(upstream.hits) == 2
     assert elapsed < 10
 
 
 def test_a_dead_registry_fails_the_mirror_with_a_useful_error(tmp_path: Path) -> None:
     module = _oracle_module()
     tree = _lockstep_tree(tmp_path, {"pubfix-leaf": ""})
-    registry = _LoopbackRegistry(tmp_path / "hanging", hang=True)
+    upstream = _Upstream(tmp_path / "hanging", hang=True)
     try:
-        message = module.mirror_external(
+        message = module.mirror_index(
             "pubfix-leaf",
             {"0.1.0"},
             "deadbeef",
             tree / "rust" / "target" / "publish-verify-mirror",
             tree / "rust" / "target" / "publish-verify-overlay" / "run-x",
-            no_verify=True,
-            index_base=registry.url,
+            index_base=upstream.url,
             timeout=0.3,
             attempts=2,
             backoff=0.05,
         )
     finally:
-        registry.stop()
+        upstream.stop()
     assert "pubfix-leaf" in message
     assert "after 2 attempts" in message
     assert "/pu/bf/pubfix-leaf" in message
 
 
-def test_the_no_verify_mirror_skips_crate_downloads(tmp_path: Path) -> None:
-    """``--no-verify`` needs index metadata only; the .crate round-trip is skipped.
+def test_the_mirror_is_index_only_and_never_downloads(tmp_path: Path) -> None:
+    """The eager mirror copies sparse-index metadata only; `.crate` bytes are lazy.
 
-    Pinned experimentally: a ``cargo publish/package --no-verify`` run over an
-    index-only overlay resolves and succeeds without a single ``/dl`` request,
-    while the verified form dies on the missing download.
+    Resolution needs the index entries before any cargo round, and that is all
+    the mirror fetches: the bytes are served by the registry's download
+    handler the first time cargo requests them. A `--no-verify` run -- which
+    resolves from the index alone -- therefore touches the network only for
+    metadata and downloads no artifacts (pinned experimentally: a
+    ``cargo publish/package --no-verify`` round over an index-only loopback
+    makes no ``/dl`` request, while the verified form dies on the missing
+    download -- which is now fetched on demand instead of pre-materialized).
     """
     module = _oracle_module()
     tree = _lockstep_tree(tmp_path, {"pubfix-leaf": ""})
@@ -816,20 +839,19 @@ def test_the_no_verify_mirror_skips_crate_downloads(tmp_path: Path) -> None:
     entry = served / "pu" / "bf" / "pubfix-leaf"
     entry.parent.mkdir(parents=True)
     entry.write_text(json.dumps({"name": "pubfix-leaf", "vers": "0.1.0"}) + "\n", encoding="utf-8")
-    registry = _LoopbackRegistry(served)
+    upstream = _Upstream(served)
     try:
-        message = module.mirror_external(
+        message = module.mirror_index(
             "pubfix-leaf",
             {"0.1.0"},
             "deadbeef",
             tree / "rust" / "target" / "publish-verify-mirror",
             tree / "rust" / "target" / "publish-verify-overlay" / "run-x",
-            no_verify=True,
-            index_base=registry.url,
+            index_base=upstream.url,
         )
-        hits = list(registry.hits)
+        hits = list(upstream.hits)
     finally:
-        registry.stop()
+        upstream.stop()
     assert not message
     assert hits == ["/pu/bf/pubfix-leaf"]
     overlay = tree / "rust" / "target" / "publish-verify-overlay" / "run-x"
@@ -837,47 +859,662 @@ def test_the_no_verify_mirror_skips_crate_downloads(tmp_path: Path) -> None:
     assert not (overlay / "dl").exists()
 
 
-def test_the_verified_mirror_downloads_the_locked_crate(tmp_path: Path) -> None:
-    """The verified form still mirrors the exact lock-pinned .crate bytes."""
+def _lazy_registry(
+    tmp_path: Path,
+    *,
+    externals: dict[str, set[str]],
+    dl_base: str | None = None,
+    timeout: float = 5.0,
+    attempts: int = 2,
+    backoff: float = 0.05,
+    downloads_enabled: bool = True,
+    caller_cache: Path | None = None,
+    cksum: str | None = None,
+) -> tuple[Any, Path, Path]:
+    """A started lazy-download registry over a fresh overlay.
+
+    The caller cache is injected (default: a nonexistent scratch path, so no
+    ambient ``CARGO_HOME`` leaks in); when `cksum` is given, the overlay index
+    carries entries naming it for every external, as the production mirror
+    would. Returns the registry, its overlay directory, and its persistent
+    lock-hash download cache.
+    """
     module = _oracle_module()
-    tree = _lockstep_tree(tmp_path, {"pubfix-leaf": ""})
+    overlay = tmp_path / "overlay"
+    if cksum is not None:
+        for name, versions in sorted(externals.items()):
+            index = overlay / "index" / module.index_rel(name)
+            index.parent.mkdir(parents=True, exist_ok=True)
+            for version in sorted(versions):
+                index.write_text(
+                    json.dumps({"name": name, "vers": version, "cksum": cksum}) + "\n",
+                    encoding="utf-8",
+                )
+    dl_cache = tmp_path / "dl-cache"
+    registry = module.LoopbackRegistry(
+        overlay,
+        token=module.DUMMY_TOKEN,
+        externals=externals,
+        dl_cache=dl_cache,
+        dl_base=dl_base or module.CRATES_IO_DL,
+        timeout=timeout,
+        attempts=attempts,
+        backoff=backoff,
+        downloads_enabled=downloads_enabled,
+        caller_cache=caller_cache or tmp_path / "caller-cache",
+    )
+    registry.start()
+    return registry, overlay, dl_cache
+
+
+def _registry_port(registry: Any) -> int:
+    """The bound port, read back through the interface the run itself uses."""
+    return int(registry.index_url.removeprefix("sparse+http://127.0.0.1:").removesuffix("/index/"))
+
+
+def test_a_locked_artifact_is_fetched_once_and_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The download handler fetches a locked artifact on demand, exactly once.
+
+    The first `/dl` request triggers the bounded fetch into the persistent
+    lock-hash cache and serves the exact fetched bytes; the second request is
+    answered from that cache without touching the upstream again.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     served = tmp_path / "served"
-    entry = served / "pu" / "bf" / "pubfix-leaf"
-    entry.parent.mkdir(parents=True)
-    version = "9.9.9"  # nothing local has ever staged this version
-    entry.write_text(json.dumps({"name": "pubfix-leaf", "vers": version}) + "\n", encoding="utf-8")
     payload = b"the exact bytes crates.io would serve"
-    crate = served / "dl" / "pubfix-leaf" / version / "download"
+    crate = served / "dl" / "pubfix-leaf" / "0.1.0" / "download"
     crate.parent.mkdir(parents=True)
     crate.write_bytes(payload)
-    registry = _LoopbackRegistry(served)
-    try:
-        message = module.mirror_external(
-            "pubfix-leaf",
-            {version},
-            "deadbeef",
-            tree / "rust" / "target" / "publish-verify-mirror",
-            tree / "rust" / "target" / "publish-verify-overlay" / "run-x",
-            no_verify=False,
-            index_base=registry.url,
-            dl_base=f"{registry.url}/dl",
-        )
-    finally:
-        registry.stop()
-    assert not message
-    link = (
-        tree
-        / "rust"
-        / "target"
-        / "publish-verify-overlay"
-        / "run-x"
-        / "dl"
-        / "pubfix-leaf"
-        / version
-        / "download"
+    upstream = _Upstream(served)
+    registry, _, dl_cache = _lazy_registry(
+        tmp_path / "run",
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_base=f"{upstream.url}/dl",
+        cksum=hashlib.sha256(payload).hexdigest(),
     )
-    assert link.is_symlink()
-    assert link.read_bytes() == payload
+    try:
+        port = _registry_port(registry)
+        status, body = _loopback_get(port, "/dl/pubfix-leaf/0.1.0/download")
+        again, reused = _loopback_get(port, "/dl/pubfix-leaf/0.1.0/download")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert status == 200
+    assert body == payload
+    assert again == 200
+    assert reused == payload
+    assert [hit for hit in upstream.hits if hit.startswith("/dl/")] == [
+        "/dl/pubfix-leaf/0.1.0/download"
+    ]
+    assert (dl_cache / "pubfix-leaf-0.1.0.crate").read_bytes() == payload
+
+
+def test_unused_and_unlocked_artifacts_are_never_fetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a locked, requested artifact is ever fetched; nothing else is.
+
+    The handler fetches nothing until cargo asks; a request naming an
+    artifact outside the locked external set is refused without a single
+    upstream hit, and a locked-but-unrequested artifact stays unfetched --
+    the run's network touch is exactly the artifacts the build graph needs.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    served = tmp_path / "served"
+    payload = b"locked bytes"
+    crate = served / "dl" / "pubfix-leaf" / "0.1.0" / "download"
+    crate.parent.mkdir(parents=True)
+    crate.write_bytes(payload)
+    stranger = served / "dl" / "stranger" / "9.9.9" / "download"
+    stranger.parent.mkdir(parents=True)
+    stranger.write_bytes(b"stranger bytes")
+    upstream = _Upstream(served)
+    registry, _, _ = _lazy_registry(
+        tmp_path / "run",
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_base=f"{upstream.url}/dl",
+        cksum=hashlib.sha256(payload).hexdigest(),
+    )
+    try:
+        port = _registry_port(registry)
+        assert upstream.hits == []  # nothing is fetched before cargo asks
+        refused, _ = _loopback_get(port, "/dl/stranger/9.9.9/download")
+        status, body = _loopback_get(port, "/dl/pubfix-leaf/0.1.0/download")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert refused == 404
+    assert status == 200
+    assert body == payload
+    assert not any("stranger" in hit for hit in upstream.hits)
+
+
+def test_concurrent_requests_for_one_artifact_coalesce(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simultaneous downloads of one artifact produce exactly one fetch.
+
+    The upstream delays every answer, so all eight requests overlap inside
+    the handler; coalescing turns them into one upstream fetch whose result
+    every requester shares.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    served = tmp_path / "served"
+    payload = b"shared bytes"
+    crate = served / "dl" / "pubfix-leaf" / "0.1.0" / "download"
+    crate.parent.mkdir(parents=True)
+    crate.write_bytes(payload)
+    upstream = _Upstream(served, delay=0.3)
+    registry, _, _ = _lazy_registry(
+        tmp_path / "run",
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_base=f"{upstream.url}/dl",
+        cksum=hashlib.sha256(payload).hexdigest(),
+    )
+    results: list[tuple[int, bytes]] = []
+    results_lock = threading.Lock()
+
+    def request() -> None:
+        result = _loopback_get(_registry_port(registry), "/dl/pubfix-leaf/0.1.0/download")
+        with results_lock:
+            results.append(result)
+
+    try:
+        threads = [threading.Thread(target=request) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    finally:
+        registry.close()
+        upstream.stop()
+    assert len(results) == 8
+    assert all(status == 200 and body == payload for status, body in results)
+    assert [hit for hit in upstream.hits if hit.startswith("/dl/")] == [
+        "/dl/pubfix-leaf/0.1.0/download"
+    ]
+
+
+def test_a_failed_download_fails_the_request_loudly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A miss the upstream cannot serve answers 500, naming the crate and URL.
+
+    The download handler reuses the bounded fetch policy: a dead upstream
+    exhausts the retries inside its own budget and the failure surfaces on
+    the response -- never a hang, never a silent empty body, and no cached
+    partial bytes.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    upstream = _Upstream(tmp_path / "hanging", hang=True)
+    registry, _, dl_cache = _lazy_registry(
+        tmp_path / "run",
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_base=f"{upstream.url}/dl",
+        timeout=0.3,
+        cksum=hashlib.sha256(b"never served").hexdigest(),
+    )
+    try:
+        start = time.monotonic()
+        status, body = _loopback_get(_registry_port(registry), "/dl/pubfix-leaf/0.1.0/download")
+        elapsed = time.monotonic() - start
+    finally:
+        registry.close()
+        upstream.stop()
+    assert status == 500
+    assert b"pubfix-leaf" in body
+    assert b"after 2 attempts" in body
+    assert elapsed < 10
+    assert not (dl_cache / "pubfix-leaf-0.1.0.crate").exists()
+
+
+def _crate_bytes(name: str, version: str) -> bytes:
+    """A minimal valid `.crate` archive: a gzipped tar with a package root."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        manifest = (
+            f'[package]\nname = "{name}"\nversion = "{version}"\nedition = "2021"\n'
+        ).encode()
+        library = b"pub fn f() {}\n"
+        for member, payload in (
+            (f"{name}-{version}/Cargo.toml", manifest),
+            (f"{name}-{version}/src/lib.rs", library),
+        ):
+            info = tarfile.TarInfo(member)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    return buffer.getvalue()
+
+
+def _external_dependency_tree(tmp_path: Path) -> Path:
+    """A workspace member requiring an external crate, resolved via the loopback.
+
+    The tree's ``.cargo/config.toml`` -- written by the caller once the
+    registry's port is known -- replaces crates.io with the loopback registry,
+    so resolution and download never touch the real crates.io.
+    """
+    tree = tmp_path / "tree"
+    rust = tree / "rust"
+    member = rust / "crates" / "pubfix-user"
+    (member / "src").mkdir(parents=True)
+    (member / "src" / "lib.rs").write_text("pub fn f() {}\n", encoding="utf-8")
+    (rust / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["crates/pubfix-user"]\nresolver = "2"\n\n'
+        '[workspace.package]\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (member / "Cargo.toml").write_text(
+        '[package]\nname = "pubfix-user"\nversion.workspace = true\n'
+        'edition.workspace = true\n\n[dependencies]\npubfix-ext = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    return tree
+
+
+def _start_external_registry(tmp_path: Path, index_cksum: str, upstream_url: str) -> Any:
+    """A started registry whose overlay indexes pubfix-ext 0.1.0 at `cksum`."""
+    module = _oracle_module()
+    overlay = tmp_path / "overlay"
+    entry = {
+        "name": "pubfix-ext",
+        "vers": "0.1.0",
+        "deps": [],
+        "cksum": index_cksum,
+        "features": {},
+        "yanked": False,
+    }
+    index = overlay / "index" / "pu" / "bf" / "pubfix-ext"
+    index.parent.mkdir(parents=True)
+    index.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+    registry = module.LoopbackRegistry(
+        overlay,
+        token=module.DUMMY_TOKEN,
+        externals={"pubfix-ext": {"0.1.0"}},
+        dl_cache=tmp_path / "dl-cache",
+        dl_base=f"{upstream_url}/dl",
+        timeout=5.0,
+        attempts=2,
+        backoff=0.05,
+        caller_cache=tmp_path / "caller-cache",
+    )
+    registry.start()
+    return registry
+
+
+def _cargo_fetch(tree: Path, index_url: str, cargo_home: Path) -> subprocess.CompletedProcess[str]:
+    """Resolve and download the external dependency through the loopback."""
+    config = tree / "rust" / ".cargo" / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        '[source.crates-io]\nreplace-with = "probe-registry"\n\n'
+        "[source.probe-registry]\n"
+        f'registry = "{index_url}"\n',
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        ["cargo", "fetch"],
+        cwd=tree / "rust",
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env={**os.environ, "CARGO_HOME": str(cargo_home)},
+    )
+
+
+def test_a_resolved_external_builds_through_the_lazy_handler(tmp_path: Path) -> None:
+    """The lazy download serves real cargo resolution, end to end, once.
+
+    cargo resolves pubfix-ext through the loopback index and downloads its
+    artifact through the lazy handler; the upstream is hit exactly once and
+    the served bytes verify against the index checksum.
+    """
+    good = _crate_bytes("pubfix-ext", "0.1.0")
+    served = tmp_path / "served"
+    crate = served / "dl" / "pubfix-ext" / "0.1.0" / "download"
+    crate.parent.mkdir(parents=True)
+    crate.write_bytes(good)
+    upstream = _Upstream(served)
+    tree = _external_dependency_tree(tmp_path)
+    registry = _start_external_registry(tmp_path, hashlib.sha256(good).hexdigest(), upstream.url)
+    try:
+        result = _cargo_fetch(tree, registry.index_url, tmp_path / "cargo-home")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [hit for hit in upstream.hits if hit.startswith("/dl/")] == [
+        "/dl/pubfix-ext/0.1.0/download"
+    ]
+
+
+def test_corrupt_bytes_fail_the_run_loudly(tmp_path: Path) -> None:
+    """Corrupt upstream bytes fail loudly with checksum evidence, no poison.
+
+    The upstream serves bytes that do not match the checksum of the served
+    index entry; the registry validates what it fetched before serving or
+    caching it, so the download is refused with a checksum error, the cargo
+    run fails loudly instead of certifying corrupt bytes, and no corrupt
+    bytes reach the persistent cache. Cargo remains the independent checksum
+    authority over anything the registry does serve.
+    """
+    good = _crate_bytes("pubfix-ext", "0.1.0")
+    served = tmp_path / "served"
+    crate = served / "dl" / "pubfix-ext" / "0.1.0" / "download"
+    crate.parent.mkdir(parents=True)
+    crate.write_bytes(b"corrupt bytes under the same name")
+    upstream = _Upstream(served)
+    tree = _external_dependency_tree(tmp_path)
+    registry = _start_external_registry(tmp_path, hashlib.sha256(good).hexdigest(), upstream.url)
+    try:
+        result = _cargo_fetch(tree, registry.index_url, tmp_path / "cargo-home")
+        status, body = _loopback_get(_registry_port(registry), "/dl/pubfix-ext/0.1.0/download")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert result.returncode != 0
+    assert "checksum" in (result.stdout + result.stderr).lower()
+    assert status == 500
+    assert b"failed its checksum" in body
+    assert b"not cached" in body
+    # Nothing is cached, so every retry re-fetches; what matters is that the
+    # only artifact ever requested is the locked one and the corrupt bytes
+    # never reached the persistent cache.
+    hits = [hit for hit in upstream.hits if hit.startswith("/dl/")]
+    assert hits
+    assert set(hits) == {"/dl/pubfix-ext/0.1.0/download"}
+    assert not (tmp_path / "dl-cache" / "pubfix-ext-0.1.0.crate").exists()
+
+
+def test_a_no_verify_registry_refuses_every_download_without_an_upstream_hit(
+    tmp_path: Path,
+) -> None:
+    """Downloads disabled: every /dl request fails loudly, nothing is fetched.
+
+    A `--no-verify` run must download no artifacts: with downloads disabled
+    the handler answers every `/dl` request with a 503 naming the
+    `--no-verify` mode -- before the uploaded-member lookup, the locked
+    external validation, or any upstream fetch. Pinned against a live
+    countable upstream recording zero hits, for both a locked-name request
+    and a path that would otherwise hit the uploaded-member tree.
+    """
+    served = tmp_path / "served"
+    payload = b"locked bytes"
+    crate = served / "dl" / "pubfix-leaf" / "0.1.0" / "download"
+    crate.parent.mkdir(parents=True)
+    crate.write_bytes(payload)
+    upstream = _Upstream(served)
+    registry, _, dl_cache = _lazy_registry(
+        tmp_path / "run",
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_base=f"{upstream.url}/dl",
+        downloads_enabled=False,
+        cksum=hashlib.sha256(payload).hexdigest(),
+    )
+    try:
+        port = _registry_port(registry)
+        status, body = _loopback_get(port, "/dl/pubfix-leaf/0.1.0/download")
+        uploaded_status, uploaded_body = _loopback_get(port, "/dl/pubfix-leaf/9.9.9/download")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert status == 503
+    assert b"--no-verify" in body
+    assert uploaded_status == 503
+    assert b"--no-verify" in uploaded_body
+    assert upstream.hits == []
+    assert not dl_cache.exists()
+
+
+def test_a_corrupt_persistent_cache_is_repaired_from_the_upstream(tmp_path: Path) -> None:
+    """A cached artifact that fails the index checksum is repaired, not trusted.
+
+    The persistent lock-hash cache is validated against the mirrored index
+    checksum at request time: corrupt cached bytes are discarded, a good
+    upstream fetch repairs the cache, and the repaired bytes are served.
+    """
+    good = _crate_bytes("pubfix-leaf", "0.1.0")
+    served = tmp_path / "served"
+    crate = served / "dl" / "pubfix-leaf" / "0.1.0" / "download"
+    crate.parent.mkdir(parents=True)
+    crate.write_bytes(good)
+    upstream = _Upstream(served)
+    registry, _, dl_cache = _lazy_registry(
+        tmp_path / "run",
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_base=f"{upstream.url}/dl",
+        cksum=hashlib.sha256(good).hexdigest(),
+    )
+    poisoned = dl_cache / "pubfix-leaf-0.1.0.crate"
+    poisoned.parent.mkdir(parents=True)
+    poisoned.write_bytes(b"corrupt cached bytes")
+    try:
+        status, body = _loopback_get(_registry_port(registry), "/dl/pubfix-leaf/0.1.0/download")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert status == 200
+    assert body == good
+    assert [hit for hit in upstream.hits if hit.startswith("/dl/")] == [
+        "/dl/pubfix-leaf/0.1.0/download"
+    ]
+    assert poisoned.read_bytes() == good
+
+
+def test_wrong_source_and_corrupt_real_cache_candidates_are_ignored(tmp_path: Path) -> None:
+    """Only a valid crates.io cache artifact is ever served from the real cache.
+
+    A same-named artifact left by an alternate registry's cache directory and
+    a corrupt artifact under a crates.io cache directory both fail the
+    mirrored index checksum; both are ignored, the good upstream fetch serves
+    instead, and neither candidate's bytes reach the persistent cache.
+    """
+    good = _crate_bytes("pubfix-leaf", "0.1.0")
+    served = tmp_path / "served"
+    crate = served / "dl" / "pubfix-leaf" / "0.1.0" / "download"
+    crate.parent.mkdir(parents=True)
+    crate.write_bytes(good)
+    upstream = _Upstream(served)
+    caller = tmp_path / "caller-home" / "registry" / "cache"
+    stranger = caller / "alternate-registry-0000" / "pubfix-leaf-0.1.0.crate"
+    stranger.parent.mkdir(parents=True)
+    stranger.write_bytes(b"stranger bytes from another registry")
+    corrupt = caller / "index.crates.io-1234" / "pubfix-leaf-0.1.0.crate"
+    corrupt.parent.mkdir(parents=True)
+    corrupt.write_bytes(b"corrupt same-name bytes")
+    registry, _, dl_cache = _lazy_registry(
+        tmp_path / "run",
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_base=f"{upstream.url}/dl",
+        caller_cache=caller,
+        cksum=hashlib.sha256(good).hexdigest(),
+    )
+    try:
+        status, body = _loopback_get(_registry_port(registry), "/dl/pubfix-leaf/0.1.0/download")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert status == 200
+    assert body == good
+    assert [hit for hit in upstream.hits if hit.startswith("/dl/")] == [
+        "/dl/pubfix-leaf/0.1.0/download"
+    ]
+    assert (dl_cache / "pubfix-leaf-0.1.0.crate").read_bytes() == good
+
+
+def test_a_valid_real_cache_candidate_is_reused_with_zero_upstream(tmp_path: Path) -> None:
+    """Valid crates.io cache bytes are reused; a fresh instance reuses again.
+
+    The caller's real crates.io cache holds bytes matching the mirrored index
+    checksum: the handler serves them, copies them into the persistent
+    lock-hash cache, and never touches the upstream; a fresh registry
+    instance over the same persistent cache serves again with zero upstream
+    hits.
+    """
+    module = _oracle_module()
+    good = _crate_bytes("pubfix-leaf", "0.1.0")
+    cksum = hashlib.sha256(good).hexdigest()
+    overlay = tmp_path / "overlay"
+    index = overlay / "index" / module.index_rel("pubfix-leaf")
+    index.parent.mkdir(parents=True)
+    index.write_text(
+        json.dumps({"name": "pubfix-leaf", "vers": "0.1.0", "cksum": cksum}) + "\n",
+        encoding="utf-8",
+    )
+    caller = tmp_path / "caller-home" / "registry" / "cache"
+    cached = caller / "index.crates.io-1dcc56b5f7" / "pubfix-leaf-0.1.0.crate"
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(good)
+
+    def fresh_registry(upstream: _Upstream) -> Any:
+        registry = module.LoopbackRegistry(
+            overlay,
+            token=module.DUMMY_TOKEN,
+            externals={"pubfix-leaf": {"0.1.0"}},
+            dl_cache=tmp_path / "dl-cache",
+            dl_base=f"{upstream.url}/dl",
+            timeout=5.0,
+            attempts=2,
+            backoff=0.05,
+            caller_cache=caller,
+        )
+        registry.start()
+        return registry
+
+    (tmp_path / "unreachable").mkdir()
+    upstream = _Upstream(tmp_path / "unreachable")
+    try:
+        registry = fresh_registry(upstream)
+        try:
+            status, body = _loopback_get(_registry_port(registry), "/dl/pubfix-leaf/0.1.0/download")
+        finally:
+            registry.close()
+        assert status == 200
+        assert body == good
+        assert upstream.hits == []
+        assert (tmp_path / "dl-cache" / "pubfix-leaf-0.1.0.crate").read_bytes() == good
+    finally:
+        upstream.stop()
+    (tmp_path / "unreachable-again").mkdir()
+    again = _Upstream(tmp_path / "unreachable-again")
+    try:
+        registry = fresh_registry(again)
+        try:
+            status, body = _loopback_get(_registry_port(registry), "/dl/pubfix-leaf/0.1.0/download")
+        finally:
+            registry.close()
+        assert status == 200
+        assert body == good
+        assert again.hits == []
+    finally:
+        again.stop()
+
+
+def test_the_real_cache_source_resolves_the_caller_s_cargo_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real-cache source derives from CARGO_HOME at registry construction.
+
+    With `CARGO_HOME` naming an explicit home, a registry built without
+    injection resolves its real-cache source there and serves a valid cached
+    artifact from it -- neither the ambient environment's cache nor a
+    hardcoded home path is consulted.
+    """
+    module = _oracle_module()
+    monkeypatch.setenv("HOME", str(tmp_path / "wrong-home"))
+    monkeypatch.setenv("CARGO_HOME", str(tmp_path / "real-home"))
+    good = _crate_bytes("pubfix-leaf", "0.1.0")
+    cksum = hashlib.sha256(good).hexdigest()
+    overlay = tmp_path / "overlay"
+    index = overlay / "index" / module.index_rel("pubfix-leaf")
+    index.parent.mkdir(parents=True)
+    index.write_text(
+        json.dumps({"name": "pubfix-leaf", "vers": "0.1.0", "cksum": cksum}) + "\n",
+        encoding="utf-8",
+    )
+    cached = (
+        tmp_path
+        / "real-home"
+        / "registry"
+        / "cache"
+        / "index.crates.io-1dcc56b5f7"
+        / "pubfix-leaf-0.1.0.crate"
+    )
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(good)
+    (tmp_path / "unreachable").mkdir()
+    upstream = _Upstream(tmp_path / "unreachable")
+    registry = module.LoopbackRegistry(
+        overlay,
+        token=module.DUMMY_TOKEN,
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_cache=tmp_path / "dl-cache",
+        dl_base=f"{upstream.url}/dl",
+        timeout=5.0,
+        attempts=2,
+        backoff=0.05,
+    )
+    registry.start()
+    try:
+        status, body = _loopback_get(_registry_port(registry), "/dl/pubfix-leaf/0.1.0/download")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert status == 200
+    assert body == good
+    assert upstream.hits == []
+
+
+def test_the_real_cache_source_falls_back_to_the_default_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without CARGO_HOME the real-cache source resolves under HOME/.cargo."""
+    module = _oracle_module()
+    monkeypatch.delenv("CARGO_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    good = _crate_bytes("pubfix-leaf", "0.1.0")
+    cksum = hashlib.sha256(good).hexdigest()
+    overlay = tmp_path / "overlay"
+    index = overlay / "index" / module.index_rel("pubfix-leaf")
+    index.parent.mkdir(parents=True)
+    index.write_text(
+        json.dumps({"name": "pubfix-leaf", "vers": "0.1.0", "cksum": cksum}) + "\n",
+        encoding="utf-8",
+    )
+    cached = (
+        tmp_path
+        / "home"
+        / ".cargo"
+        / "registry"
+        / "cache"
+        / "index.crates.io-1dcc56b5f7"
+        / "pubfix-leaf-0.1.0.crate"
+    )
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(good)
+    (tmp_path / "unreachable").mkdir()
+    upstream = _Upstream(tmp_path / "unreachable")
+    registry = module.LoopbackRegistry(
+        overlay,
+        token=module.DUMMY_TOKEN,
+        externals={"pubfix-leaf": {"0.1.0"}},
+        dl_cache=tmp_path / "dl-cache",
+        dl_base=f"{upstream.url}/dl",
+        timeout=5.0,
+        attempts=2,
+        backoff=0.05,
+    )
+    registry.start()
+    try:
+        status, body = _loopback_get(_registry_port(registry), "/dl/pubfix-leaf/0.1.0/download")
+    finally:
+        registry.close()
+        upstream.stop()
+    assert status == 200
+    assert body == good
+    assert upstream.hits == []
 
 
 def test_the_registry_server_binds_distinct_ephemeral_ports(tmp_path: Path) -> None:
@@ -887,21 +1524,28 @@ def test_the_registry_server_binds_distinct_ephemeral_ports(tmp_path: Path) -> N
     ahead of the run, and two concurrent runs cannot collide on it.
     """
     module = _oracle_module()
-    overlays = []
+    registries = []
     for i in range(2):
         overlay = tmp_path / f"overlay-{i}"
         (overlay / "index").mkdir(parents=True)
-        overlays.append(overlay)
-    servers = [module.serve_registry(overlay, module.DUMMY_TOKEN) for overlay in overlays]
+        registries.append(
+            module.LoopbackRegistry(
+                overlay,
+                token=module.DUMMY_TOKEN,
+                externals={},
+                dl_cache=tmp_path / f"dl-cache-{i}",
+            )
+        )
     try:
-        ports = [port for _, port in servers]
+        for registry in registries:
+            registry.start()
+        ports = [_registry_port(registry) for registry in registries]
         assert len(set(ports)) == 2
         bodies = [_loopback_get(port, "/index/config.json")[1] for port in ports]
         assert bodies[0] != bodies[1]
     finally:
-        for server, _ in servers:
-            server.shutdown()
-            server.server_close()
+        for registry in registries:
+            registry.close()
 
 
 def test_each_run_gets_a_distinct_overlay_directory(tmp_path: Path) -> None:
@@ -1726,8 +2370,15 @@ def test_the_loopback_registry_rejects_traversal_outside_its_root(tmp_path: Path
     secret = tmp_path / "secret.txt"
     secret.write_text("caller's own bytes", encoding="utf-8")
     assert (overlay / ".." / "secret.txt").resolve() == secret
-    server, port = module.serve_registry(overlay, module.DUMMY_TOKEN)
+    registry = module.LoopbackRegistry(
+        overlay,
+        token=module.DUMMY_TOKEN,
+        externals={},
+        dl_cache=tmp_path / "dl-cache",
+    )
+    registry.start()
     try:
+        port = _registry_port(registry)
         status, _ = _loopback_get(port, "/index/pu/bf/pubfix-leaf")
         assert status == 200
         for hostile in (
@@ -1740,5 +2391,4 @@ def test_the_loopback_registry_rejects_traversal_outside_its_root(tmp_path: Path
             status, _ = _loopback_get(port, hostile)
             assert status == 403, hostile
     finally:
-        server.shutdown()
-        server.server_close()
+        registry.close()

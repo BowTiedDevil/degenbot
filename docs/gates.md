@@ -573,10 +573,33 @@ default 1800 seconds — and then fails loud with an error naming the lock file
 and the recorded holder, while the lock path is derived from the tree root so
 runs in different workspaces never wait on each other. The persistent mirror
 cache under `rust/target/publish-verify-mirror/` (keyed by the lockfile hash)
-and its atomic cache writes are unchanged. External mirror fetches carry an
-explicit timeout, bounded retries with backoff, and a failure naming the
-crate and URL; in the `--no-verify` form only index metadata is mirrored,
-because cargo resolves a no-verify run from the index alone.
+and its atomic cache writes are unchanged. Only the sparse-index metadata is
+mirrored eagerly — resolution needs it before any cargo round — while `.crate`
+bytes are served lazily: the download handler of the one `LoopbackRegistry`
+(start, index URL, receipts, close) validates each
+`/dl/<name>/<version>/download` request against the locked external set,
+reuses the persistent cache and then the caller's real crates.io cache —
+resolved from the caller's real `CARGO_HOME` (falling back to `HOME/.cargo`)
+at registry construction, crates.io (`index.crates.io-*`) cache directories
+only, read-only, never written — and fetches misses under the same explicit
+timeout, bounded retries with backoff, and crate-and-URL-naming failure,
+writing the cache atomically and coalescing concurrent requests for the same
+artifact onto one fetch — so a verified run touches the network only for the
+artifacts its build graph requests. Every byte source is prevalidated by the
+registry against the sha256 `cksum` of the already-mirrored overlay index
+entry before it is served or cached: a corrupt persistent cache is discarded
+and repaired from a good source, wrong-source or corrupt real-cache
+candidates are ignored, and corrupt upstream bytes are rejected with a
+checksum-naming error before they can poison the cache. Cargo remains the
+independent checksum authority against the served index on top of that
+prevalidation. A `--no-verify` run (which resolves from the index alone)
+downloads nothing: its registry is built with downloads disabled, and every
+`/dl` request fails loudly (503 naming the `--no-verify` mode) before any
+uploaded/external resolution or upstream fetch, so no code path can ever
+fetch an artifact under `--no-verify`. CLI-visible behavior is unchanged
+except network timing and cache work: eager pre-materialization of every
+external artifact became on-demand fetches served through the loopback
+download handler.
 The RESOLUTION set and the VERIFICATION set are
 distinct: every publishable non-withheld member is uploaded to the loopback
 (resolution), while only the pending members get a verify build. release.yml's
@@ -611,8 +634,16 @@ the eligible set, receipts exactly matching it, a failed population round
 printing no covered lines), the dirty-staging rerun probe, the loopback
 server's traversal refusal, a member that
 cannot compile to fail the verified run, and
-the network/lifecycle bounds above (bounded mirror fetches, `--no-verify`
-index-only mirroring, ephemeral ports, per-run overlay directories, and two
+the network/lifecycle bounds above (bounded mirror fetches, the eager mirror
+copying index metadata only, the lazy download handler — locked artifact
+fetched once and reused, unused/unlocked artifacts never fetched, concurrent
+requests coalesced, a failed miss answered loudly, real `cargo fetch` through
+the handler, registry checksum prevalidation over every byte source — corrupt
+persistent cache repaired, wrong-source/corrupt real-cache candidates ignored,
+corrupt upstream bytes rejected before caching — downloads-disabled mode
+refusing every `/dl` request with zero upstream hits, and corrupt bytes still
+failing the cargo run loudly — ephemeral ports, per-run overlay directories,
+and two
 runs proceeding independently at once), the process-state quarantine (a
 sentinel real `CARGO_HOME` byte-identical after a run, with the
 `127.0.0.1-*` residue confined to the kept per-run overlay), and the
