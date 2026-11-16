@@ -41,11 +41,18 @@ gate (``tests/test_publish_blocked_gate.py``), the live audit
     ``--no-deps``, and ``--locked`` are forwarded to the membership metadata
     read, the trust anchor the live audit pins (asserted through a recording
     cargo shim, the same seam ``tests/test_crates_io_pending.py`` uses).
+  * the live release projection -- ``LivePublicationPlan`` composes the
+    static plan with the audit's conclusive ``--classify`` stream (the CLI's
+    ``--release-plan`` mode, stdin in, JSON out) into the one contract the
+    release workflow consumes: fresh, partial-resume, fully-live, withheld,
+    and allowlisted plans; unknown/duplicate/missing/invalid-state
+    classification and static cycles refused loudly; exit codes 0/2/3.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shlex
 import shutil
@@ -363,3 +370,238 @@ def test_the_cli_forwards_the_metadata_read_contract(
         str(_manifest(tree)),
         *flags,
     ]
+
+
+# --- The live release projection (`--release-plan`) -------------------------
+#
+# The static plan composed with the live audit's conclusive `--classify`
+# stream answers every set question the release workflow asks -- live,
+# pending, verification exclusions, upload exclusions, and the fully-live
+# verdict -- in one projection, so the workflow's shell never re-derives set
+# arithmetic. The classification stream is validated against the same static
+# plan that produced the audit's membership: every eligible name exactly
+# once, live or pending, no unknown names, no missing names, and no static
+# cycle.
+
+
+def _release_cli(tree: Path, classify: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the real CLI's `--release-plan` mode over `classify` on stdin."""
+    return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [
+            sys.executable,
+            str(_PLAN),
+            "--manifest-path",
+            str(_manifest(tree)),
+            "--locked",
+            "--release-plan",
+            *args,
+        ],
+        input=classify,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_release_plan_fresh_workspace(tmp_path: Path) -> None:
+    """A fresh release: every resolution member pending, nothing live, nothing
+    withheld, nothing excluded, not fully live."""
+    publication_plan = _plan_module()
+    tree = _tree(tmp_path, {"plan-alpha": "", "plan-beta": ""})
+    plan = publication_plan.load_plan(_manifest(tree))
+    projection = publication_plan.live_plan_from_classification(
+        plan, ["pending plan-alpha", "pending plan-beta"]
+    )
+    assert projection.to_json() == {
+        "live": [],
+        "pending": ["plan-alpha", "plan-beta"],
+        "withheld": [],
+        "verification_excludes": [],
+        "publish_excludes": [],
+        "fully_live": False,
+    }
+
+
+def test_release_plan_partial_resume(tmp_path: Path) -> None:
+    """A resumed release: the live member is excluded from verification and
+    upload, the pending member is the verification set, and the withheld
+    member is in neither."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {
+            "plan-free": "",
+            "plan-live": "",
+            "plan-site": _deps(_GIT_DEP.format(version=_VERSIONED)),
+        },
+    )
+    plan = publication_plan.load_plan(_manifest(tree))
+    projection = publication_plan.live_plan_from_classification(
+        plan,
+        [
+            "live plan-live",
+            "pending plan-free",
+            "pending plan-site",
+        ],
+    )
+    assert projection.to_json() == {
+        "live": ["plan-live"],
+        "pending": ["plan-free"],
+        "withheld": ["plan-site"],
+        "verification_excludes": ["plan-live"],
+        "publish_excludes": ["plan-live", "plan-site"],
+        "fully_live": False,
+    }
+
+
+def test_release_plan_fully_live(tmp_path: Path) -> None:
+    """Every resolution member live: fully live, everything excluded from
+    verification and upload, nothing pending to verify or publish."""
+    publication_plan = _plan_module()
+    tree = _tree(tmp_path, {"plan-a": "", "plan-b": ""})
+    plan = publication_plan.load_plan(_manifest(tree))
+    projection = publication_plan.live_plan_from_classification(
+        plan, ["live plan-a", "live plan-b"]
+    )
+    assert projection.to_json() == {
+        "live": ["plan-a", "plan-b"],
+        "pending": [],
+        "withheld": [],
+        "verification_excludes": ["plan-a", "plan-b"],
+        "publish_excludes": ["plan-a", "plan-b"],
+        "fully_live": True,
+    }
+
+
+def test_release_plan_withheld_state_is_never_live_or_pending(tmp_path: Path) -> None:
+    """A withheld member's index state is not acted on: classified pending or
+    live, it lands only in `withheld` -- ineligible for oracle coverage and
+    for real upload -- and never contributes to the pending set, so a
+    withheld-only release is fully live."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {
+            "plan-site1": _deps(_GIT_DEP.format(version=_VERSIONED)),
+            "plan-site2": _deps('evm2 = { git = "https://example.invalid/evm2.git" }'),
+        },
+    )
+    plan = publication_plan.load_plan(_manifest(tree))
+    assert set(plan.withheld) == {"plan-site1", "plan-site2"}
+    pending_withheld = publication_plan.live_plan_from_classification(
+        plan, ["pending plan-site1", "live plan-site2"]
+    )
+    assert pending_withheld.to_json() == {
+        "live": [],
+        "pending": [],
+        "withheld": ["plan-site1", "plan-site2"],
+        "verification_excludes": [],
+        "publish_excludes": ["plan-site1", "plan-site2"],
+        "fully_live": True,
+    }
+
+
+def test_release_plan_allowlisted_resolution_member_stays_pending(tmp_path: Path) -> None:
+    """An allowlisted resolution member stays pending: it is never excluded
+    from verification, so the verify oracle refuses it loudly before any
+    upload instead of the projection covering it."""
+    publication_plan = _plan_module()
+    tree = _tree(tmp_path, {"plan-io": 'publish = ["crates-io"]\n'})
+    plan = publication_plan.load_plan(_manifest(tree))
+    projection = publication_plan.live_plan_from_classification(plan, ["pending plan-io"])
+    assert projection.to_json() == {
+        "live": [],
+        "pending": ["plan-io"],
+        "withheld": [],
+        "verification_excludes": [],
+        "publish_excludes": [],
+        "fully_live": False,
+    }
+
+
+def test_release_plan_refuses_a_classification_that_does_not_match_the_plan(
+    tmp_path: Path,
+) -> None:
+    """Unknown, duplicate, missing, and invalid-state names all fail loudly,
+    naming the defect; nothing is projected from a stream that does not
+    conclusively describe the static plan."""
+    publication_plan = _plan_module()
+    tree = _tree(tmp_path, {"plan-a": "", "plan-b": ""})
+    plan = publication_plan.load_plan(_manifest(tree))
+    cases = [
+        ("unknown member", ["pending plan-a", "pending plan-ghost"], "plan-ghost"),
+        ("duplicate member", ["pending plan-a", "live plan-a"], "more than once"),
+        ("missing member", ["pending plan-a"], "never classified"),
+        ("missing every member", [], "never classified"),
+        ("invalid state", ["published plan-a", "pending plan-b"], "invalid"),
+        ("state without a member", ["pending", "live plan-b"], "invalid"),
+    ]
+    for label, lines, expected in cases:
+        with pytest.raises(publication_plan.ClassificationError) as exc:
+            publication_plan.live_plan_from_classification(plan, lines)
+        assert expected in str(exc.value), label
+
+
+def test_release_plan_refuses_a_static_cycle(tmp_path: Path) -> None:
+    """A static release-graph cycle has no upload order, so the projection
+    refuses before any classification is acted on, naming the cycle."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {
+            "plan-a": _deps('plan-b = { path = "../plan-b", version = "0.1.0" }'),
+            "plan-b": _dev_deps('plan-a = { path = "../plan-a", version = "0.1.0" }'),
+        },
+    )
+    plan = publication_plan.load_plan(_manifest(tree))
+    assert plan.cycle is not None
+    with pytest.raises(publication_plan.PublicationRefusal) as exc:
+        publication_plan.live_plan_from_classification(plan, ["pending plan-a", "pending plan-b"])
+    assert "publishable dependency cycle" in str(exc.value)
+    # the CLI translates the refusal to exit 2, the static-refusal code.
+    cycle = _release_cli(tree, "pending plan-a\npending plan-b\n")
+    assert cycle.returncode == 2
+    assert not cycle.stdout
+    assert "publishable dependency cycle" in cycle.stderr
+
+
+def test_release_plan_json_contract_is_exactly_six_sorted_fields(tmp_path: Path) -> None:
+    """The JSON contract: the six fields, lists sorted, `fully_live` a bool --
+    the single machine-readable contract the release workflow consumes."""
+    publication_plan = _plan_module()
+    tree = _tree(tmp_path, {"plan-z": "", "plan-a": ""})
+    plan = publication_plan.load_plan(_manifest(tree))
+    projection = publication_plan.live_plan_from_classification(
+        plan, ["pending plan-z", "live plan-a"]
+    )
+    document = projection.to_json()
+    assert list(document) == [
+        "live",
+        "pending",
+        "withheld",
+        "verification_excludes",
+        "publish_excludes",
+        "fully_live",
+    ]
+    assert document["live"] == ["plan-a"]
+    assert document["pending"] == ["plan-z"]
+    assert document["fully_live"] is False
+
+
+def test_the_release_plan_cli_emits_the_projection(tmp_path: Path) -> None:
+    """`--release-plan` reads the classification on stdin and prints the JSON
+    projection on stdout; a mismatching stream exits 3 with the defect named
+    on stderr and nothing on stdout."""
+    tree = _tree(tmp_path, {"plan-a": "", "plan-b": ""})
+    ok = _release_cli(tree, "pending plan-a\nlive plan-b\n")
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert not ok.stderr
+    document = json.loads(ok.stdout)
+    assert document["live"] == ["plan-b"]
+    assert document["pending"] == ["plan-a"]
+    assert document["fully_live"] is False
+
+    bad_state = _release_cli(tree, "published plan-a\npending plan-b\n")
+    assert bad_state.returncode == 3
+    assert not bad_state.stdout
+    assert "invalid" in bad_state.stderr

@@ -36,6 +36,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _AUDIT = _REPO_ROOT / "scripts" / "crates_io_pending.sh"
 _ORACLE = _REPO_ROOT / "scripts" / "publish_verify.py"
+_PLANNER = _REPO_ROOT / "scripts" / "publication_plan.py"
 
 
 def _workspace(tmp_path: Path, members: dict[str, str], workspace_version: str = "0.1.0") -> Path:
@@ -368,6 +369,43 @@ def test_a_workspace_with_no_publishable_member_fails_the_membership_read(
         index.stop()
     assert result.returncode == 1
     assert "could not read publishable members" in result.stderr
+
+
+def test_the_audit_classification_feeds_the_release_projection(tmp_path: Path) -> None:
+    """The audit's `--classify` lines pipe straight into the planner's
+    `--release-plan` mode: one conclusive classification in, one JSON
+    projection out, with the live/pending split the index answered."""
+    tree = _workspace(tmp_path, {"pubfix-live": "", "pubfix-new": ""})
+    index = _SparseIndex({"pubfix-live": [{"name": "pubfix-live", "vers": "0.1.0"}]})
+    manifest = tree / "rust" / "Cargo.toml"
+    try:
+        audit = _audit(index.url, "--classify", manifest=manifest)
+    finally:
+        index.stop()
+    assert audit.returncode == 0, audit.stdout + audit.stderr
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [
+            sys.executable,
+            str(_PLANNER),
+            "--manifest-path",
+            str(manifest),
+            "--locked",
+            "--release-plan",
+        ],
+        input=audit.stdout,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["live"] == ["pubfix-live"]
+    assert plan["pending"] == ["pubfix-new"]
+    assert plan["withheld"] == []
+    assert plan["verification_excludes"] == ["pubfix-live"]
+    assert plan["publish_excludes"] == ["pubfix-live"]
+    assert plan["fully_live"] is False
 
 
 def test_the_metadata_read_is_resolved_locked(tmp_path: Path) -> None:

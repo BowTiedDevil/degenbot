@@ -442,18 +442,34 @@ jobs:
         # verification step below RE-READS the live set at its own point of use:
         # the LLVM provisioning between the two steps takes minutes, and a
         # member that became live meanwhile must not be verified or re-uploaded.
+        #
+        # The classification is piped through the planner's --release-plan mode
+        # once (scripts/publication_plan.py): the JSON projection is the only
+        # machine-readable contract any step consumes -- live, pending, and
+        # withheld members, the verification/upload exclusion sets, and the
+        # fully-live verdict -- so no shell here re-derives that set
+        # arithmetic. A classification that does not match the static plan
+        # (unknown, duplicate, or missing member) fails the projection loud.
         run: |
           set -euo pipefail
-          audit="$(scripts/crates_io_pending.sh --classify)"
-          printf '%s\n' "$audit" | sed 's/^/  crates.io: /'
-          live=$(printf '%s\n' "$audit" | grep -c '^live ' || true)
-          pending=$(printf '%s\n' "$audit" | grep -c '^pending ' || true)
-          echo "live=$live pending=$pending"
+          classify_file="$RUNNER_TEMP/crates-classify.txt"
+          scripts/crates_io_pending.sh --classify > "$classify_file"
+          sed 's/^/  crates.io: /' "$classify_file"
+          plan="$(python3 scripts/publication_plan.py --manifest-path rust/Cargo.toml --locked --release-plan < "$classify_file")" \
+            || { echo "::error::could not construct a conclusive release plan from the static workspace and audit classification" >&2; exit 1; }
+          live=$(jq '.live | length' <<<"$plan")
+          pending=$(jq '.pending | length' <<<"$plan")
+          withheld=$(jq '.withheld | length' <<<"$plan")
+          echo "live=$live pending=$pending withheld=$withheld fully_live=$(jq -r '.fully_live' <<<"$plan")"
           {
             echo '### crates.io live-set audit'
             echo
             echo '```'
-            printf '%s\n' "$audit"
+            cat "$classify_file"
+            echo '```'
+            echo
+            echo '```json'
+            jq . <<<"$plan"
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
 
@@ -503,33 +519,36 @@ jobs:
         # member the census does not withhold — already-live siblings
         # included, because a still-pending member's rewritten manifest
         # requires them at the lockstep version and crates.io holds their
-        # live form. The VERIFICATION set is the pending members only: an
-        # already-live member cannot be re-uploaded, and re-verifying it is
-        # exactly what makes a resuming re-run expensive. The live members are
-        # forwarded as cargo's own `--exclude` spelling — the same flags the
-        # publish rounds below carry — and the oracle consumes them: upload
-        # everything to the loopback, verify-build only the rest. A fully live
-        # tag exits here, before any packaging or compilation.
+        # live form. The VERIFICATION set is the pending resolution members
+        # only: an already-live member cannot be re-uploaded, and re-verifying
+        # it is exactly what makes a resuming re-run expensive. The live
+        # resolution members are forwarded as cargo's own `--exclude` spelling
+        # — the same flags the publish rounds below carry — and the oracle
+        # consumes them: upload everything to the loopback, verify-build only
+        # the rest. Both sets come from the audit's classification projected
+        # through the planner's --release-plan mode once: its
+        # `verification_excludes` field IS this step's exclude set, and its
+        # `fully_live` verdict ends a fully live tag here, before any
+        # packaging or compilation. An allowlisted resolution member stays
+        # pending, so it reaches — and fails loud in — the oracle before any
+        # upload.
         run: |
           set -euo pipefail
-          audit="$(scripts/crates_io_pending.sh --classify)"
-          excludes=()
-          pending=0
-          live=0
-          while read -r state member; do
-            [ -n "$member" ] || continue
-            if [ "$state" = "live" ]; then
-              excludes+=(--exclude "$member")
-              live=$((live + 1))
-            else
-              pending=$((pending + 1))
-            fi
-          done <<< "$audit"
-          if [ "$pending" -eq 0 ]; then
-            echo "nothing to verify: every publishable member is already live at this version"
+          classify_file="$RUNNER_TEMP/crates-classify-verify.txt"
+          scripts/crates_io_pending.sh --classify > "$classify_file"
+          plan="$(python3 scripts/publication_plan.py --manifest-path rust/Cargo.toml --locked --release-plan < "$classify_file")" \
+            || { echo "::error::could not construct a conclusive release plan from the static workspace and audit classification" >&2; exit 1; }
+          if [ "$(jq -r '.fully_live' <<<"$plan")" = "true" ]; then
+            echo "nothing to verify: every resolution member is already live at this version"
             exit 0
           fi
-          echo "verifying $pending pending member(s); $live already-live member(s) resolve-only"
+          excludes=()
+          exclude_flags="$(jq -r '.verification_excludes[] | "--exclude", .' <<<"$plan")" \
+            || { echo "::error::the release projection is unreadable — refusing to act on it"; exit 1; }
+          if [ -n "$exclude_flags" ]; then
+            mapfile -t excludes <<< "$exclude_flags"
+          fi
+          echo "verifying $(jq '.pending | length' <<<"$plan") pending member(s); $(jq '.live | length' <<<"$plan") already-live member(s) resolve-only"
           python3 scripts/publish_verify.py "${excludes[@]}"
 
       - name: Publish (resumable across partial publishes; rate-limit rounds)
@@ -543,9 +562,13 @@ jobs:
         #      whose backend lags publication and reports a freshly published
         #      member as absent — the reading that turns a resume into a duplicate
         #      upload.
-        #   2. `cargo publish --workspace --exclude <live...>` therefore never
-        #      attempts an upload the registry would reject. If a concurrent
-        #      publisher still trips "already exists", the round counts as progress
+        #   2. `cargo publish --workspace --exclude <publish_excludes...>`
+        #      therefore never attempts an upload the registry would reject:
+        #      each round's classification is piped through the planner's
+        #      --release-plan mode once, and the excludes are the projection's
+        #      `publish_excludes` field — withheld members (never uploadable)
+        #      plus already-live resolution members. If a concurrent publisher
+        #      still trips "already exists", the round counts as progress
         #      rather than failure: the next audit drops that member.
         #   3. A 429 sleeps toward the server-stated retry-after, and the loop ends
         #      on a wall-clock budget with a diagnostic naming what is left, so a
@@ -577,22 +600,23 @@ jobs:
           while :; do
             round=$((round + 1))
             : > "$log"
-            if ! audit=$(scripts/crates_io_pending.sh --classify); then
+            classify_file="$RUNNER_TEMP/crates-classify-round-$round.txt"
+            if ! scripts/crates_io_pending.sh --classify > "$classify_file"; then
               echo "::error::the crates.io index could not be read — refusing to guess which members are live"
               exit 1
             fi
-            excludes=()
+            plan="$(python3 scripts/publication_plan.py --manifest-path rust/Cargo.toml --locked --release-plan < "$classify_file")" \
+              || { echo "::error::could not construct a conclusive release plan from the static workspace and audit classification" >&2; exit 1; }
             pending=()
-            while read -r state member; do
-              [ -n "$member" ] || continue
-              if [ "$state" = "live" ]; then
-                excludes+=(--exclude "$member")
-              else
-                pending+=("$member")
-              fi
-            done <<< "$audit"
+            excludes=()
+            pending_names="$(jq -r '.pending[]' <<<"$plan")" \
+              || { echo "::error::the release projection is unreadable — refusing to act on it"; exit 1; }
+            exclude_flags="$(jq -r '.publish_excludes[] | "--exclude", .' <<<"$plan")" \
+              || { echo "::error::the release projection is unreadable — refusing to act on it"; exit 1; }
+            if [ -n "$pending_names" ]; then mapfile -t pending <<< "$pending_names"; fi
+            if [ -n "$exclude_flags" ]; then mapfile -t excludes <<< "$exclude_flags"; fi
             if [ "${#pending[@]}" -eq 0 ]; then
-              echo "all publishable members are live at $ver — nothing to publish"
+              echo "all resolution members are live at $ver; withheld members are excluded — nothing to publish"
               exit 0
             fi
             echo "=== round $round: ${#pending[@]} pending at $ver — ${pending[*]} ==="

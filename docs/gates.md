@@ -485,6 +485,49 @@ workspace and requires the red path for a fresh member, both reason-drift
 directions, the stale row, the fail-closed exits, a retained normal+dev cycle
 (named by the gate), and the green paths for the stripped dev-dependency shape
 and an acyclic retained dev edge.
+
+**The live release projection.** The static plan composes with the live
+audit's conclusive output into one workflow-facing projection,
+`scripts/publication_plan.py`'s `LivePublicationPlan`. The audit's
+`--classify` mode prints one ``<live|pending> <member>`` line per eligible
+member, and the planner's `--release-plan` CLI mode reads that stream on
+stdin and emits the JSON contract the release workflow consumes — the
+projection is the single machine-readable release contract, and no step
+re-derives live/pending/withheld set arithmetic in shell:
+
+```json
+{"live": ["…"], "pending": ["…"], "withheld": ["…"],
+ "verification_excludes": ["…"], "publish_excludes": ["…"],
+ "fully_live": false}
+```
+
+Every list is sorted. `live` and `pending` carry the resolution members'
+index states at the workspace version; withheld members land only in
+`withheld`, whatever the index says — they have no resolution membership, so
+they are never verify-built and (new with the projection) never uploaded:
+`publish_excludes`, the `cargo publish --workspace --exclude` flag set of
+the release rounds, is withheld plus live resolution. `verification_excludes`,
+the `--exclude` set the pre-publish verification forwards to
+`scripts/publish_verify.py`, is the live resolution members only — an
+already-live member resolves against the loopback registry but gets no verify
+build — and every still-pending resolution member is verified, including an
+allowlisted one, which the oracle refuses loudly before any upload.
+`fully_live` is true exactly when no resolution member is pending; the
+pre-publish step exits there, before any packaging.
+
+The projection fails closed: a static cycle (no upload order exists) is the
+planner's refusal, exit 2; a classification line that is not
+``<live|pending> <member>``, names an unknown member, names a member twice,
+or omits an eligible member is a classification mismatch, exit 3 — the
+defect is named on stderr and nothing is projected. The planner performs no
+network I/O: the audit remains the only index reader, and each workflow
+consumer (preflight, pre-publish verification, and every publish round)
+re-runs the audit at its own point of use — fresh between steps and rounds —
+and pipes that exact classification through `--release-plan` once. The
+classification text protocol is unchanged and stays the audit's own output;
+the JSON projection is not a second protocol beside it but its one
+composition with the static plan.
+
 ### The publish-verify overlay
 
 **Failure class.** `cargo publish --dry-run` resolves every member's rewritten

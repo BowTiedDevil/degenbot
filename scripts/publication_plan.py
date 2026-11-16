@@ -56,6 +56,43 @@ fact above plus the package metadata behind it. A workspace the plan cannot
 certify -- a `cargo metadata` failure, no members, no eligible member -- is a
 `PublicationRefusal`, never a vacuously green answer.
 
+The live release projection
+---------------------------
+
+`LivePublicationPlan` composes the static plan with the live audit's
+conclusive output: `crates_io_pending.sh --classify` prints one
+``<live|pending> <member>`` line per eligible member, and
+`live_plan_from_classification` (the CLI's ``--release-plan`` mode, reading
+that stream on stdin) validates it against the same static plan and emits the
+one JSON contract the release workflow consumes:
+
+    {"live": [...], "pending": [...], "withheld": [...],
+     "verification_excludes": [...], "publish_excludes": [...],
+     "fully_live": bool}
+
+Every list is sorted. `live` and `pending` carry the resolution members'
+index states; `withheld` members are in neither -- their index state is not
+acted on, since they are never verified (no resolution membership) and never
+uploaded, so a withheld-only release is fully live. `verification_excludes`
+(forwarded to `publish_verify.py` as cargo `--exclude` flags) is the live
+resolution set: an already-live member resolves against the loopback but
+gets no verify build, while every still-pending member -- an allowlisted
+resolution member included, which the oracle refuses before any upload -- is
+verified. `publish_excludes` (forwarded to the `cargo publish --workspace`
+rounds as `--exclude` flags) is withheld plus live resolution: a withheld
+member is ineligible for real upload as well as oracle coverage.
+`fully_live` is true exactly when no resolution member is pending -- the
+pre-publish step exits there, before any packaging.
+
+Validation fails loudly: a static cycle (no upload order exists) is the
+plan's refusal; a classification line that is not ``<live|pending>
+<member>``, names an unknown member, names a member twice, or omits an
+eligible member is a `ClassificationError`. The CLI prints the JSON on
+stdout and exits 0, or prints the defect on stderr and exits 2 (static
+refusal, cycle) or 3 (classification mismatch) with nothing on stdout. The
+planner still performs no network I/O: the audit is the only index reader,
+and its stream is the only live input here.
+
 Consumers and migration
 -----------------------
 
@@ -76,11 +113,21 @@ Consumers and migration
 
 - `.github/workflows/release.yml` provisions this module beside the audit
   script, so a resumed older tag cannot be left with an audit whose planner
-  is missing.
+  is missing. Its preflight, pre-publish verification, and publish rounds
+  each re-run the audit at their own point of use and pipe that exact
+  classification through ``--release-plan`` once, consuming only the JSON
+  projection above -- no shell in the workflow re-derives live, pending,
+  withheld, or exclusion membership.
 
-Consumer-visible transitions of the migration: none. Every set, message, and
-exit code each consumer produced before is produced by the same consumer now;
-the only new fact is shared ownership.
+Consumer-visible transitions of the static census/audit/oracle migration:
+none. Every set, message, and exit code each of those consumers produced
+before is produced by the same consumer now; the only new fact there is
+shared ownership. The live ``--release-plan`` projection is the one new
+consumer-visible surface, and its behavior is by design, not inherited:
+``publish_excludes`` keeps withheld members out of real ``cargo publish``
+rounds -- they are excluded from upload, not merely from oracle coverage --
+and ``fully_live`` concerns resolution members only: a withheld member
+neither makes it false nor counts toward its scope.
 
 The CLI (`--eligible`) prints the eligible set for shell callers -- the live
 audit's seam. The withheld, resolution, and allowlisted facts live on the
@@ -97,12 +144,18 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_REL = "rust/Cargo.toml"
 
 VERSION_LESS = "(version-less)"
+
+# A classification line is exactly `<live|pending> <member>`: two fields.
+CLASSIFICATION_LINE_PARTS = 2
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # The dep payloads are cargo metadata entries read whole and mirrored into the
 # census reasons; no field is validated, so they stay Any-typed through the
@@ -113,6 +166,17 @@ Json = dict[str, Any]
 
 class PublicationRefusal(Exception):
     """The plan declines to certify a workspace it could not fully read."""
+
+
+class ClassificationError(Exception):
+    """The classification stream does not conclusively describe the static plan.
+
+    A line the audit cannot have printed (a state other than ``live`` or
+    ``pending``, a name that is not an eligible member, a member named
+    twice), or a stream that omits an eligible member, leaves some member's
+    live state unknown -- the release projection refuses rather than guess.
+
+    """
 
 
 @dataclass(frozen=True)
@@ -148,6 +212,118 @@ class PublicationPlan:
         return {
             name: package for name, package in self.eligible.items() if name not in self.withheld
         }
+
+
+RELEASE_PLAN_STATES = ("live", "pending")
+
+
+@dataclass(frozen=True)
+class LivePublicationPlan:
+    """The static plan composed with the live audit's conclusive classification.
+
+    `live` and `pending` are the resolution members' index states at the
+    workspace version; `withheld` members are in neither list -- their index
+    state is never acted on (they are never verified, never uploaded).
+    `verification_excludes` is what the pre-publish verification forwards to
+    `publish_verify.py` as cargo `--exclude` flags; `publish_excludes` is
+    what the `cargo publish --workspace` rounds forward as `--exclude`
+    flags; `fully_live` is true exactly when no resolution member is pending.
+    Every name list is sorted; `to_json` renders the module docstring's
+    contract verbatim.
+
+    """
+
+    live: list[str]
+    pending: list[str]
+    withheld: list[str]
+    verification_excludes: list[str]
+    publish_excludes: list[str]
+    fully_live: bool
+
+    def to_json(self) -> dict[str, Any]:
+        """Render the JSON document the ``--release-plan`` CLI mode prints.
+
+        Returns:
+            The six contract fields, lists in sorted order, `fully_live` a
+            JSON boolean.
+
+        """
+        return {
+            "live": list(self.live),
+            "pending": list(self.pending),
+            "withheld": list(self.withheld),
+            "verification_excludes": list(self.verification_excludes),
+            "publish_excludes": list(self.publish_excludes),
+            "fully_live": self.fully_live,
+        }
+
+
+def live_plan_from_classification(
+    plan: PublicationPlan, lines: Iterable[str]
+) -> LivePublicationPlan:
+    """Project the static plan onto the live audit's classification stream.
+
+    Args:
+        plan: The static publication plan the audit's membership read came
+            from -- the same manifest, so the eligible set is the stream's
+            only possible population.
+        lines: The ``<live|pending> <member>`` lines `crates_io_pending.sh
+            --classify` printed.
+
+    Returns:
+        The live release projection: live and pending resolution members,
+        the withheld population (regardless of its index state), the
+        verification and upload exclusions, and the fully-live verdict.
+
+    Raises:
+        PublicationRefusal: the plan carries a static cycle -- no upload
+            order exists, so no release projection of it may act on a
+            classification.
+        ClassificationError: a line is not ``<live|pending> <member>``,
+            names an unknown member, names a member twice, or the stream
+            omits an eligible member -- some member's live state is unknown.
+
+    """
+    if plan.cycle is not None:
+        raise PublicationRefusal(cycle_message(plan.cycle))
+    states: dict[str, str] = {}
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) != CLASSIFICATION_LINE_PARTS or parts[0] not in RELEASE_PLAN_STATES:
+            msg = (
+                f"invalid classification line {raw.rstrip()!r}: expected '<live|pending> <member>'"
+            )
+            raise ClassificationError(msg)
+        state, name = parts
+        if name not in plan.eligible:
+            msg = f"classification names {name!r}, which is not an eligible member of {plan.origin}"
+            raise ClassificationError(msg)
+        if name in states:
+            msg = f"member {name!r} is classified more than once"
+            raise ClassificationError(msg)
+        states[name] = state
+    missing = sorted(set(plan.eligible) - set(states))
+    if missing:
+        msg = "classification is incomplete; never classified: " + ", ".join(missing)
+        raise ClassificationError(msg)
+    live = sorted(
+        name for name, state in states.items() if state == "live" and name not in plan.withheld
+    )
+    pending = sorted(
+        name for name, state in states.items() if state == "pending" and name not in plan.withheld
+    )
+    withheld = sorted(plan.withheld)
+    return LivePublicationPlan(
+        live=live,
+        pending=pending,
+        withheld=withheld,
+        verification_excludes=list(live),
+        publish_excludes=sorted([*withheld, *live]),
+        fully_live=not pending,
+    )
 
 
 def cycle_message(cycle: list[str]) -> str:
@@ -478,7 +654,9 @@ def main(argv: list[str]) -> int:
 
     Returns:
         The process exit code: 0 with the facts on stdout, 2 when the
-        workspace cannot be certified (the refusal message is on stderr).
+        workspace cannot be certified or its release graph is cyclic (the
+        refusal message is on stderr), 3 in `--release-plan` mode when the
+        classification stream does not match the static plan.
 
     """
     parser = argparse.ArgumentParser(
@@ -496,7 +674,14 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="pin the membership metadata read to the tree's own lockfile",
     )
-    parser.add_argument("--eligible", action="store_true", help="members cargo could upload")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--eligible", action="store_true", help="members cargo could upload")
+    group.add_argument(
+        "--release-plan",
+        action="store_true",
+        help="read '<live|pending> <member>' classification lines on stdin, "
+        "emit the live release projection as JSON",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -504,6 +689,18 @@ def main(argv: list[str]) -> int:
     except PublicationRefusal as exc:
         print(f"publication-plan: {exc}", file=sys.stderr)
         return 2
+
+    if args.release_plan:
+        try:
+            projection = live_plan_from_classification(plan, sys.stdin.read().splitlines())
+        except PublicationRefusal as exc:
+            print(f"publication-plan: {exc}", file=sys.stderr)
+            return 2
+        except ClassificationError as exc:
+            print(f"publication-plan: {exc}", file=sys.stderr)
+            return 3
+        print(json.dumps(projection.to_json(), sort_keys=True, indent=2))
+        return 0
 
     names = sorted(plan.eligible)
     if names:
