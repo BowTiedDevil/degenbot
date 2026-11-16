@@ -631,6 +631,61 @@ jobs:
       - name: Verify committed executor artifact matches a fresh compile
         run: just verify-tier3-executor-artifact
 
+  python-wheel:
+    # One extension build for the whole Python matrix. The five legs each ran
+    # `just dev` (maturin, 217-309 s apiece) against identical source, so the
+    # build moves here and travels as one abi3 wheel that serves every
+    # interpreter leg. `rust-lint`/`rust-artifacts` still build the cdylib their
+    # own way; this job exists only to stop the matrix repeating itself.
+    name: Python extension wheel
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
+
+      - name: Cache Cargo
+        # Shared ci-rust prefix: every path-gated job chains off the others'
+        # saves, and rust-cache accounts for workspace source changes and prunes
+        # stale artifacts before saving (unlike a Cargo.lock-only key).
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: ci-rust
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      # The cdylib links the evm2 JIT's LLVM 23, like every other Linux build of
+      # default features.
+      - uses: ./.github/actions/llvm23
+
+      - name: Sync the uv environment (the wheel build needs maturin)
+        run: uv sync --locked --dev --no-install-project
+
+      - name: Build the extension wheel
+        run: just build-rust-extension-wheel dist
+
+      - name: Upload the extension wheel
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: degenbot-extension-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 1
+
   python:
     # Consolidation of the former python-lint / python-test matrix /
     # python-test-anvil jobs, which were byte-identical environments (uv +
@@ -693,8 +748,18 @@ jobs:
 
       - uses: ./.github/actions/llvm23
 
-      - name: Bootstrap development environment
-        run: just bootstrap
+      # The extension arrives as the artifact `python-wheel` built once: these
+      # legs used to run `just dev` (maturin) against identical source.
+      # `install-extension-wheel` syncs the lock venv first, so everything below
+      # sees the environment `just bootstrap` used to produce.
+      - name: Download the extension wheel
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: degenbot-extension-wheel
+          path: dist
+
+      - name: Install the extension wheel
+        run: just install-extension-wheel dist/*.whl
 
       # The comment-hygiene gate (scripts/hooks/comment-hygiene.sh) runs one rg
       # pass over the WORKING TREE, and tests/test_comment_hygiene_gate.py drives
@@ -737,6 +802,9 @@ jobs:
           # The profile leg force (auto is the enum default - same
           # behavior as unset; pinned is the forced-override leg).
           DEGENBOT_FLEET_PROFILE: ${{ matrix.fleet-profile }}
+          # The extension came from this run's wheel artifact, so `just dev`'s
+          # rebuild is exactly the duplicate work this job avoids.
+          DEGENBOT_EXTENSION_INSTALLED: "1"
 
   stub-drift:
     # ADR-066 D2/D3: the regenerate-and-diff stub gate, promoted out of the
@@ -795,7 +863,7 @@ jobs:
     # needed job failed - otherwise it would skip and report green.
     name: CI (aggregate)
     if: always()
-    needs: [changes, commitlint, markdownlint, msrv, rust-lint, rust-test, rust-release-tests, rust-artifacts, rust-policy-lanes, cli-no-python, tier3-oracle, python, stub-drift]
+    needs: [changes, commitlint, markdownlint, msrv, rust-lint, rust-test, rust-release-tests, rust-artifacts, rust-policy-lanes, cli-no-python, tier3-oracle, python-wheel, python, stub-drift]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

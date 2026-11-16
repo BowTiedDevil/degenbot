@@ -8,6 +8,7 @@
 # Modes:
 #   develop    editable install of the dev-feature extension  (`just dev`)
 #   build      release-equivalent extension build, no install (`just build-rust-extension`)
+#   wheel      dev-features extension wheel, no install (`just build-rust-extension-wheel`)
 #   coverage   instrumented editable install, dev features    (scripts/coverage.sh)
 set -euo pipefail
 
@@ -35,6 +36,11 @@ case "$mode" in
     build)
         cargo build --locked --manifest-path "$manifest" -p "$crate" --features extension-module "$@"
         ;;
+    wheel)
+        RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$hotpath" \
+            uv run --no-sync maturin build --features dev-features "$@"
+        ;;
+
     coverage)
         RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$hotpath -C instrument-coverage" \
             uv run --no-sync maturin develop --features dev-features "$@"
@@ -45,7 +51,7 @@ case "$mode" in
         printf '%s' "$hotpath"
         ;;
     *)
-        printf 'usage: %s {develop|build|coverage|rustflags}\n' "$(basename "$0")" >&2
+        printf 'usage: %s {develop|build|wheel|coverage|rustflags}\n' "$(basename "$0")" >&2
         exit 2
         ;;
 esac

@@ -1358,6 +1358,19 @@ check-consumer-probes:
 build-rust-extension:
     scripts/build_extension.sh build
 
+# Build the dev-features extension as a wheel. CI's `python-wheel` job builds this
+# once and every Python leg installs the artifact, instead of each leg paying its
+# own `maturin develop`. The wheel is abi3-py3.12, so one artifact serves 3.12-3.15.
+build-rust-extension-wheel out="dist":
+    scripts/build_extension.sh wheel --out {{out}}
+
+# The counterpart to `build-rust-extension-wheel`: sync the lock venv, then put
+# the prebuilt project wheel into it. `--no-deps` because the sync already
+# provided the runtime dependencies; only the project itself comes from the wheel.
+install-extension-wheel wheel:
+    uv sync --locked --dev --no-install-project
+    uv pip install --no-deps {{wheel}}
+
 # ========== Build-Artifact Housekeeping ==========
 
 # Reclaim disk space under the Cargo target roots. The sweep covers BOTH
@@ -1394,6 +1407,16 @@ bootstrap:
 # `just bootstrap` first; `--no-sync` keeps this build from silently replacing
 # the explicit development feature set with ordinary package defaults.
 dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # CI's Python matrix installs the extension from the artifact `python-wheel`
+    # builds once (`just install-extension-wheel`) and sets this to stop five
+    # legs from each rebuilding identical source. A local caller never sets it,
+    # so `just test-python` keeps its stale-.so guarantee.
+    if [ "${DEGENBOT_EXTENSION_INSTALLED:-0}" = "1" ]; then
+        echo "dev: extension already installed by the caller; skipping the build"
+        exit 0
+    fi
     scripts/build_extension.sh develop
 
 
