@@ -302,6 +302,20 @@ jobs:
       - name: Run Tests
         run: just test-rust
 
+      # `just test-rust` above is pure cargo, but this gate runs through
+      # `test-rust-nextest`, which resolves the venv python's LIBDIR to put on
+      # LD_LIBRARY_PATH for the test binaries that link libpython — a `uv`
+      # lookup, and the runner image ships no uv. Provision the same uv + lock
+      # venv pair the policy lane uses; no extension build, since those binaries
+      # link the system libpython rather than the built one.
+      - name: Install uv (nextest lane LIBDIR)
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+
+      - name: Sync the uv environment (no extension build)
+        run: uv sync --locked --dev --no-install-project
+
       - name: Run two-sided golden replay gate (offline, blocks merge)
         run: just test-golden-replay
 
