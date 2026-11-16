@@ -342,26 +342,31 @@ jobs:
           fetch-depth: 0
 
       - name: Provide the release audit tooling
-        # The audit script ships WITH this workflow rather than with the code, so it
+        # The audit tooling ships WITH this workflow rather than with the code, so it
         # is resolved here instead of assumed present: a tag cut after this change
         # carries its own copy (current by construction), while a tag that predates
         # the tooling — the case a resume exists for — takes main's. The tagged tree
         # supplies the code being published; this step supplies the machinery doing
-        # the publishing.
+        # the publishing. The audit script delegates its membership rule to the static
+        # publication plan (scripts/publication_plan.py), so the two are provisioned
+        # as one pair from one source: both from HEAD, or both from origin/main — a
+        # mixed-vintage pairing (an audit from one tree calling a planner contract
+        # from another) is refused, never half-copied.
         run: |
-          tooling=scripts/crates_io_pending.sh
-          if git cat-file -e "HEAD:$tooling" 2>/dev/null; then
-            echo "audit tooling: the tagged tree's copy"
-          elif git cat-file -e "origin/main:$tooling" 2>/dev/null; then
-            git show "origin/main:$tooling" > "$tooling"
-            chmod +x "$tooling"
-            echo "audit tooling: main's copy (the tag predates it)"
+          if git cat-file -e "HEAD:scripts/crates_io_pending.sh" 2>/dev/null && git cat-file -e "HEAD:scripts/publication_plan.py" 2>/dev/null; then
+            echo "audit tooling: the tagged tree's audit+planner pair"
+          elif git cat-file -e "origin/main:scripts/crates_io_pending.sh" 2>/dev/null && git cat-file -e "origin/main:scripts/publication_plan.py" 2>/dev/null; then
+            git show "origin/main:scripts/crates_io_pending.sh" > scripts/crates_io_pending.sh
+            git show "origin/main:scripts/publication_plan.py" > scripts/publication_plan.py
+            echo "audit tooling: main's audit+planner pair (the tag predates it)"
           else
-            echo "::error::neither the tagged tree nor main carries $tooling — merge the release-tooling change before resuming a tag" >&2
+            echo "::error::the audit and its planner are provisioned as one pair, but neither HEAD nor origin/main carries both scripts/crates_io_pending.sh and scripts/publication_plan.py — merge the release-tooling change before resuming a tag" >&2
             exit 1
           fi
-          bash -n "$tooling"
-          echo "audit tooling: $(wc -l < "$tooling") lines, syntax ok"
+          chmod +x scripts/crates_io_pending.sh
+          bash -n scripts/crates_io_pending.sh
+          python3 -c "import ast; ast.parse(open('scripts/publication_plan.py', encoding='utf-8').read())"
+          echo "audit tooling: $(wc -l < scripts/crates_io_pending.sh) audit lines, $(wc -l < scripts/publication_plan.py) planner lines, syntax ok"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1

@@ -644,6 +644,37 @@ def test_a_census_withheld_member_is_withheld_by_name(tmp_path: Path) -> None:
         assert f"publish-verify covered {name}" in result.stdout
 
 
+def test_an_allowlisted_member_the_census_withholds_keeps_its_withheld_coverage(
+    tmp_path: Path,
+) -> None:
+    """Census withholding outranks the allowlist refusal.
+
+    A member that is both allowlisted and census-withheld has no upload path
+    by the census's own verdict already, so it never reaches the allowlist
+    refusal: the run keeps its withheld package-list coverage and certifies
+    the rest of the resolution set.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {
+            "pubfix-leaf": "",
+            "pubfix-blocked": _PRIV_DEP,
+            "priv": "",
+        },
+        publishable=("pubfix-leaf", "pubfix-blocked"),
+        publish_tables={"pubfix-blocked": 'publish = ["crates-io"]'},
+    )
+    _census(tree, ["pubfix-blocked\tdepends on non-publishable priv"])
+
+    result = _oracle(tree, "--no-verify")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    output = result.stdout + result.stderr
+    assert "publish-blocked pubfix-blocked:" in output
+    assert "publishes only to" not in output
+    assert "publish-verify covered pubfix-blocked" not in output
+
+
 def test_an_unrecorded_block_fails_the_oracle_loud(tmp_path: Path) -> None:
     tree = _lockstep_tree(
         tmp_path,
@@ -1808,10 +1839,23 @@ def test_a_sentinel_real_cargo_home_stays_untouched(tmp_path: Path) -> None:
 
 def _oracle_module() -> object:
     """The real script, imported for the focused lock-source unit tests."""
-    spec = importlib.util.spec_from_file_location("publish_verify", _ORACLE)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
+    # Script mode puts the script's directory on sys.path; a module import of
+    # the file does not. The oracle imports its sibling (the static
+    # publication plan) the same way both spellings run, so the search path
+    # gets the same directory here -- only for the load, restored after, the
+    # imported module object retained.
+    scripts_dir = str(_ORACLE.parent)
+    added = scripts_dir not in sys.path
+    if added:
+        sys.path.insert(0, scripts_dir)
+    try:
+        spec = importlib.util.spec_from_file_location("publish_verify", _ORACLE)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+    finally:
+        if added:
+            sys.path.remove(scripts_dir)
     return module
 
 

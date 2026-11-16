@@ -400,8 +400,16 @@ the population is empty, and this gate is what keeps a git-only dependency
 from silently re-entering a publishable member's manifest.
 
 
-**Gate body.** `scripts/publish_blocked.py`, over the manifests `cargo
-metadata --no-deps` reports. A *site* is a dependency the published manifest
+**Gate body.** `scripts/publish_blocked.py`, reconciling the census against
+the static publication plan (`scripts/publication_plan.py`) over the manifests
+`cargo metadata --no-deps --offline` reports. The plan is the one derivation of the
+chain's static facts — eligibility (`publish != []`), the withheld population
+and its reasons, the retained edges and their cycles, and the resolution set
+(eligible minus withheld) the publish oracle uploads — and the census gate, the
+crates.io live audit (`scripts/crates_io_pending.sh`, whose membership read is
+the plan's `--eligible` CLI), and the verify oracle
+(`scripts/publish_verify.py`) all consume it; no consumer restates the rule.
+The gate itself owns only the census-file reconciliation below. A *site* is a dependency the published manifest
 retains in rewritten form: a version-less dev-dependency is the one shape
 cargo strips (so it blocks nothing); a version-less path or git dependency in
 any other slot is rejected outright; a version-keyed path or git dependency
@@ -466,10 +474,12 @@ The header is maintained by hand.
 **Run it.** `just check-publish-blocked` — also a dependency of
 `lint-rust-check`, so `just test`, the pre-push `rust-clippy` gate and CI run
 it over a complete tree, and the `publish-blocked` pre-commit hook runs it
-when a commit touches a manifest, the census, or the gate's own script. The
-script imports nothing outside the standard library and drives only `cargo
-metadata --no-deps`, so a plain `python3` runs it — the same uv-free
-constraint as section 6. `tests/test_publish_blocked_gate.py` is the committed
+when a commit touches a manifest, the census, the gate's own script, or the
+publication plan. The gate and the plan import nothing outside the standard
+library and drive only `cargo metadata --no-deps --offline` (the child cargo
+cannot reach a registry), so a plain `python3` runs
+them — the same uv-free constraint as section 6.
+`tests/test_publish_blocked_gate.py` is the committed
 negative probe: it drives the real gate with `--root` pointed at a throwaway
 workspace and requires the red path for a fresh member, both reason-drift
 directions, the stale row, the fail-closed exits, a retained normal+dev cycle

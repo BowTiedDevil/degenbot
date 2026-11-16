@@ -15,7 +15,6 @@ crates.io. What a member *publishes* is therefore never what it *tests* unless
 its external dependencies are declared as registry dependencies, and a member
 whose retained requirements cannot resolve on crates.io does not upload at all.
 
-
 The population of such members is machine-derived from the manifests and
 recorded, one row per member with its reason, in the census beside this script.
 `just publish-dry-run` withholds exactly that population from the run and keeps
@@ -23,6 +22,11 @@ its file-inclusion coverage through `cargo package --list`, so the members the
 publish oracle does not attempt are named in the tree rather than dropped by
 silence.
 
+The facts this gate reconciles against the census -- eligibility, the withheld
+population and its reasons, the retained edges and their cycles -- are the
+static publication plan's (`scripts/publication_plan.py`): the gate owns
+census-file reconciliation, the plan owns the rules. The rules below describe
+what the plan derives; this file no longer computes them.
 
 The rules
 ---------
@@ -81,7 +85,8 @@ Exit codes
 ----------
 
   0   every withheld member and row reconcile
-  1   at least one finding (fresh member, stale row, reason drift)
+  1   at least one finding (fresh member, stale row, reason drift), or a
+      retained-edge cycle (named, before any census work)
   2   refused to certify (missing census, unparseable row, no publishable
       member, cargo metadata failure)
 
@@ -101,8 +106,9 @@ Scope
 -----
 
 Every publishable workspace member of the manifest `--root`/`rust/Cargo.toml`
-describes (the packages `cargo metadata --no-deps` reports), read from the
-manifests themselves -- never from the lockfile, never from the network. A
+describes (the packages the plan's `cargo metadata --no-deps --offline`
+reports), read from the manifests themselves -- never from the lockfile,
+never from the network. A
 member that declares `publish = false` is out of scope except as a requirement
 target: cargo skips it at upload, and a retained requirement on it withholds
 every member that carries one. Documented blind spots: resolvability is never
@@ -115,28 +121,20 @@ this gate at exit 2 rather than passing over a population it never read.
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import NoReturn
+
+import publication_plan
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CENSUS_REL = "scripts/publish-blocked-census.txt"
-MANIFEST_REL = "rust/Cargo.toml"
-
-VERSION_LESS = "(version-less)"
-
-# The dep payloads are cargo metadata entries read whole and mirrored into the
-# census reasons; no field is validated, so they stay Any-typed through the
-# helpers below (the same spelling `scripts/publish_verify.py` uses for its
-# metadata payloads).
-Json = dict[str, Any]
+MANIFEST_REL = publication_plan.MANIFEST_REL
 
 CENSUS_ROW_FIELDS = 2
 
 
-def refuse(message: str) -> None:
+def refuse(message: str) -> NoReturn:
     """Exit 2: the gate declines to certify a tree it could not fully read.
 
     Raises:
@@ -147,204 +145,11 @@ def refuse(message: str) -> None:
     raise SystemExit(2)
 
 
-def load_members(manifest: Path) -> tuple[list[Json], set[str]]:
-    """Return the publishable members and the names of every member.
-
-    Refuses (SystemExit 2) on anything but a conclusive read: a workspace this
-    gate cannot enumerate is a workspace it must not certify.
-
-    Returns:
-        The members cargo can upload (a `publish` value cargo honors) and the
-        names of every member.
-
-    """
-    proc = subprocess.run(
-        [
-            "cargo",
-            "metadata",
-            "--format-version",
-            "1",
-            "--no-deps",
-            "--manifest-path",
-            str(manifest),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        refuse(f"cargo metadata failed (exit {proc.returncode}):\n{proc.stderr.strip()}")
-    meta = json.loads(proc.stdout)
-    member_ids = set(meta["workspace_members"])
-    members = [p for p in meta["packages"] if p["id"] in member_ids]
-    if not members:
-        refuse(f"no workspace members under {manifest}")
-    names = {p["name"] for p in members}
-    publishable = [p for p in members if p.get("publish") != []]
-    if not publishable:
-        refuse(f"no publishable member under {manifest}")
-    return publishable, names
-
-
-def dep_label(dep: Json) -> str:
-    """One dep rendering shared by every reason: `name@req` or `name (version-less)`.
-
-    Returns:
-        The rendering, shared by every reason.
-
-    """
-    if dep["req"] == "*":
-        return f"{dep['name']} {VERSION_LESS}"
-    return f"{dep['name']}@{dep['req']}"
-
-
-def source_kind(dep: Json) -> str | None:
-    """`git`, `path`, or None for a plain registry dependency.
-
-    Returns:
-        The dependency's source kind.
-
-    """
-    source = dep.get("source") or ""
-    if source.startswith("git+"):
-        return "git"
-    if not source:
-        return "path"
-    return None
-
-
-def stripped(dep: Json) -> bool:
-    """Rule 1: the dependency leaves the published manifest at packaging.
-
-    Returns:
-        True for a version-less path or git dev-dependency.
-
-    """
-    return bool(
-        dep.get("kind") == "dev" and dep["req"] == "*" and source_kind(dep) in {"git", "path"}
-    )
-
-
-def blocked_rows(publishable: list[Json], member_names: set[str]) -> dict[str, str]:
-    """Compute the withheld population and its per-member reason (rules 1-4).
-
-    Returns:
-        One entry per withheld member: the reason the manifests imply.
-
-    """
-    sites: dict[str, list[str]] = {}
-    edges: dict[str, list[str]] = {}
-    unavailable = {
-        p["name"] for p in publishable
-    } ^ member_names  # publish = false, or not a member
-    for member in publishable:
-        site_labels: list[tuple[str, str]] = []
-        requires: list[str] = []
-        for dep in member["dependencies"]:
-            if stripped(dep):
-                continue
-            kind = source_kind(dep)
-            if kind == "git" or (kind == "path" and dep["name"] not in member_names):
-                # An off-workspace path dependency is rewritten the same way.
-                site_labels.append((dep["name"], f"{kind} dep {dep_label(dep)}"))
-                continue
-            if dep["name"] in member_names:
-                requires.append(dep["name"])
-        if site_labels:
-            sites[member["name"]] = [label for _, label in sorted(site_labels)]
-        if requires:
-            edges[member["name"]] = sorted(set(requires))
-
-    blocked: dict[str, list[str]] = {name: list(labels) for name, labels in sites.items()}
-    # Rule 4 closes over dependents until the population is stable.
-    changed = True
-    while changed:
-        changed = False
-        for name, targets in edges.items():
-            if name in blocked:
-                continue
-            if any(target in blocked or target in unavailable for target in targets):
-                blocked[name] = []
-                changed = True
-
-    rows: dict[str, str] = {}
-    for name in blocked:
-        reasons: list[str] = []
-        if name in sites:
-            reasons.append(", ".join(sites[name]))
-        required_blocked = sorted(t for t in edges.get(name, []) if t in blocked)
-        if required_blocked:
-            reasons.append(f"depends on blocked {', '.join(required_blocked)}")
-        required_unavailable = sorted(t for t in edges.get(name, []) if t in unavailable)
-        if required_unavailable:
-            reasons.append(f"depends on non-publishable {', '.join(required_unavailable)}")
-        rows[name] = "; ".join(reasons)
-    return rows
-
-
-def retained_member_edges(publishable: list[Json], member_names: set[str]) -> dict[str, set[str]]:
-    """Collect the upload-ordering edges among publishable members (rules 1 and 3).
-
-    A dependency orders its dependent after its target exactly when the
-    published manifest retains it: every non-stripped dependency on another
-    workspace member, normal or dev. Stripped dev-dependencies are not
-    requirements, so they carry no ordering constraint and no cycle.
-
-    Returns:
-        The adjacency: member name -> the members it requires.
-
-    """
-    edges: dict[str, set[str]] = {}
-    for member in publishable:
-        name = member["name"]
-        targets = {
-            dep["name"]
-            for dep in member["dependencies"]
-            if dep["name"] in member_names and dep["name"] != name and not stripped(dep)
-        }
-        if targets:
-            edges[name] = targets
-    return edges
-
-
-def find_cycle(edges: dict[str, set[str]]) -> list[str] | None:
-    """One cycle in `edges` as a closed name list, or None when acyclic.
-
-    Iterative colored DFS over the sorted graph, so the named cycle is
-    deterministic for a given set of manifests.
-
-    Returns:
-        The cycle's closed name list, or None when the graph is acyclic.
-
-    """
-    unvisited, in_progress, done = 0, 1, 2
-    color: dict[str, int] = dict.fromkeys(edges, unvisited)
-    for start in sorted(edges):
-        if color[start] != unvisited:
-            continue
-        color[start] = in_progress
-        path = [start]
-        iters = [iter(sorted(edges[start]))]
-        while path:
-            advanced = False
-            for nxt in iters[-1]:
-                state = color.get(nxt, done)
-                if state == in_progress:
-                    return [*path[path.index(nxt) :], nxt]
-                if state == unvisited:
-                    color[nxt] = in_progress
-                    path.append(nxt)
-                    iters.append(iter(sorted(edges[nxt])))
-                    advanced = True
-                    break
-            if not advanced:
-                color[path.pop()] = done
-                iters.pop()
-    return None
-
-
 def read_census(path: Path) -> dict[str, str]:
     """Parse `member<TAB>reason` rows; anything else refuses to certify.
+
+    Args:
+        path: The census file's path.
 
     Returns:
         The rows: member name -> reason.
@@ -388,19 +193,18 @@ def main(argv: list[str]) -> int:
     mode.add_argument("--blocked", action="store_true", help="print the member names to withhold")
     args = parser.parse_args(argv)
 
-    publishable, member_names = load_members(args.root / MANIFEST_REL)
+    try:
+        plan = publication_plan.load_plan(args.root / MANIFEST_REL)
+    except publication_plan.PublicationRefusal as exc:
+        refuse(str(exc))
 
     # Rule 5 before any census work: a cycle means no member upload order
     # exists, so reconciliation is moot until the manifests are repaired.
-    cycle = find_cycle(retained_member_edges(publishable, member_names))
-    if cycle is not None:
-        print(
-            "publishable dependency cycle -- no crates.io publish order can "
-            f"exist; repair the manifests:\n  {' -> '.join(cycle)}"
-        )
+    if plan.cycle is not None:
+        print(publication_plan.cycle_message(plan.cycle))
         return 1
 
-    rows = blocked_rows(publishable, member_names)
+    rows = dict(plan.withheld)
 
     if args.rows:
         for name in sorted(rows):

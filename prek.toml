@@ -101,7 +101,7 @@ hooks = [
   # itself, so the filename list is only the trigger.
   #
   # live-invariant gate (ADR-087 D2): watches the live workspace manifests and the dependency shapes their published forms retain against their census; not tripwire precedent.
-  { id = "publish-blocked", name = "publish-blocked census", language = "system", entry = "just check-publish-blocked", files = '.*Cargo\.toml$|^scripts/publish-blocked-census\.txt$|^scripts/publish_blocked\.py$', stages = ["pre-commit"], pass_filenames = false },
+  { id = "publish-blocked", name = "publish-blocked census", language = "system", entry = "just check-publish-blocked", files = '.*Cargo\.toml$|^scripts/publish-blocked-census\.txt$|^scripts/publish_blocked\.py$|^scripts/publication_plan\.py$', stages = ["pre-commit"], pass_filenames = false },
 
   # The settlement-bot parity ledger's statuses live in exactly one
   # machine-checked place — the boot gate's oracle,

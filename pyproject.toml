@@ -208,12 +208,18 @@ allow-star-arg-any = true
 "scripts/publish_blocked.py" = [
     # The publish-blocked census, folded into the lint gate with only these
     # deliberate relaxations (each verified live by `just lint-python-check`):
-    "any-type",   # cargo metadata entries are dynamic JSON payloads (see the `Json` alias)
-    "suspicious-subprocess-import",   # the gate is a cargo driver; subprocess is the point
-    "subprocess-without-shell-equals-true",   # the one argv is a fixed literal list built in this file
-    "start-process-with-partial-path",   # cargo resolves on PATH exactly as the oracle and every just recipe invoke it
     "print",   # a CLI gate reports findings and refusals on the console streams
-    "too-many-branches",   # blocked_rows walks the withholding rules (1-4) in one body; splitting adds plumbing, not behavior
+]
+
+"scripts/publication_plan.py" = [
+    # The static publication plan, folded into the lint gate with only these
+    # deliberate relaxations (each verified live by `just lint-python-check`):
+    "any-type",   # cargo metadata entries are dynamic JSON payloads (see the `Json` alias)
+    "suspicious-subprocess-import",   # the plan is a cargo driver; subprocess is the point
+    "subprocess-without-shell-equals-true",   # the one argv is a fixed literal list built in this file
+    "start-process-with-partial-path",   # cargo resolves on PATH exactly as the census gate and every just recipe invoke it
+    "print",   # a CLI fact reporter prints the selected view on the console streams
+    "too-many-branches",   # the withheld population walks the census rules (1-4) in one body; splitting adds plumbing, not behavior
 ]
 
 [tool.pytest.ini_options]
