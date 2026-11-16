@@ -365,6 +365,16 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
 
+      # `test-rust-policy-lane` runs the package's suites through `cargo
+      # nextest` (the narrowing recipe's own choice of runner), and the runner
+      # image ships no nextest. Provision it here, at the version the
+      # devcontainer builds, so a red policy lane is a test verdict rather than
+      # a missing tool.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: nextest@0.9.152
+
       - name: Cache Cargo
         # Shares the ci-rust prefix so the common workspace deps are reused.
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -514,6 +524,14 @@ jobs:
           key: ${{ runner.os }}-uv-executor-${{ hashFiles('uv.lock') }}
           restore-keys: |
             ${{ runner.os }}-uv-executor-
+
+      # `build-tier3-executor-harness.sh` compiles through `uv run --no-sync
+      # vyper`, which deliberately refuses to resolve a different vyper than
+      # the lock pins — so the root project's venv has to already own it. That
+      # is the sync half of `just bootstrap`; the extension build half is not
+      # needed here and would cost a Rust compile.
+      - name: Sync the executor vyper toolchain
+        run: uv sync --locked --dev --no-install-project
 
       - name: Verify committed executor artifact matches a fresh compile
         run: just verify-tier3-executor-artifact
