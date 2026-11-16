@@ -284,6 +284,7 @@ provisions_tool() {
         uv) grep -qE 'uses:[[:space:]]*astral-sh/setup-uv@' <<< "${block}" ;;
         cargo-nextest) grep -qE 'tool:[[:space:]]*nextest|cargo install[^|]*cargo-nextest' <<< "${block}" ;;
         dev-venv) grep -qE 'uv sync[^|]*--dev' <<< "${block}" ;;
+        llvm23) grep -qE 'uses:[[:space:]]*\./\.github/actions/llvm23' <<< "${block}" ;;
         *)
             echo "ci-parity: unknown tool '${tool}' in ${tools_file}" >&2
             return 2

@@ -189,41 +189,22 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
-      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella crate's default
-      # features carry `jit`, so this job's default-feature compiles need a
-      # toolchain the runner image does not ship. scripts/provision-llvm23.sh is
-      # the one provisioning primitive (release.yml shares it); the cache key
-      # rides the script's digest because the pinned LLVM version lives there.
-      - name: Cache LLVM 23 (evm2 JIT toolchain)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ${{ runner.temp }}/llvm23
-          key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
-
-      - name: Provision LLVM 23 (evm2 JIT link)
-        env:
-          LLVM23_ROOT: ${{ runner.temp }}/llvm23
-        run: |
-          bash scripts/provision-llvm23.sh --system-deps --github-env
-          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
-          # (already provisioned, so cheap) prefix to assert discovery here.
-          eval "$(bash scripts/provision-llvm23.sh)"
-          bash scripts/provision-llvm23.sh --check
+      - uses: ./.github/actions/llvm23
 
       - name: Compile workspace at MSRV
         run: just check-msrv
 
-  rust:
-    # Consolidation of the former rust-check / rust-test /
-    # solver-replay-golden / rust-build / publish-dry-run jobs, which each paid
-    # toolchain install + cache restore + a workspace compile. One job = one
-    # target dir: clippy's dep artifacts are reused by test / golden replay /
-    # build / dry-run on the same runner.
-    name: Rust (lint, tests, F2 golden replay, build, publish dry-run)
+  rust-lint:
+    # Lint and feature-lane gate: everything here fails fast on a formatting,
+    # clippy, or feature-combination regression before a test binary is built,
+    # and the tree-clean assertion belongs here because clippy is what writes
+    # into the tree. Split out of the former consolidated `rust` job so a
+    # release-profile link can never delay this signal.
+    name: Rust (lint + feature lanes)
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -235,9 +216,9 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache Cargo
-        # Shared prefix so the jobs that survive the path gate chain off each
-        # other's saves. Unlike a Cargo.lock-only key, rust-cache accounts for
-        # workspace source changes and prunes stale artifacts before saving.
+        # Shared ci-rust prefix: every path-gated job chains off the others'
+        # saves, and rust-cache accounts for workspace source changes and prunes
+        # stale artifacts before saving (unlike a Cargo.lock-only key).
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
@@ -246,36 +227,12 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
-      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella crate's default
-      # features carry `jit`, so this job's default-feature compiles need a
-      # toolchain the runner image does not ship. scripts/provision-llvm23.sh is
-      # the one provisioning primitive (release.yml shares it); the cache key
-      # rides the script's digest because the pinned LLVM version lives there.
-      - name: Cache LLVM 23 (evm2 JIT toolchain)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ${{ runner.temp }}/llvm23
-          key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
+      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella's default features
+      # carry `jit`, so a default-feature compile needs a toolchain the runner
+      # image does not ship. The action takes the distro toolchain when the image
+      # has one and the pinned prebuilt otherwise (docs/llvm-release-ci.md).
+      - uses: ./.github/actions/llvm23
 
-      - name: Provision LLVM 23 (evm2 JIT link)
-        env:
-          LLVM23_ROOT: ${{ runner.temp }}/llvm23
-        run: |
-          bash scripts/provision-llvm23.sh --system-deps --github-env
-          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
-          # (already provisioned, so cheap) prefix to assert discovery here.
-          eval "$(bash scripts/provision-llvm23.sh)"
-          bash scripts/provision-llvm23.sh --check
-
-      # Architecture and hygiene tests shell out to ripgrep; ubuntu-latest no
-      # longer preinstalls it. Provision the same dependency as the devcontainer.
-      - name: Install ripgrep
-        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
-
-      # Cheapest first: a fmt/clippy failure never pays for the test build.
       - name: Check formatting
         run: just fmt-check
 
@@ -299,15 +256,55 @@ jobs:
           git diff --exit-code
           test -z "$(git status --porcelain)"
 
-      - name: Run Tests
-        run: just test-rust
+  rust-test:
+    # The cargo workspace suite in the dev profile, plus the two-sided golden
+    # replay, which reuses those warm dev artifacts instead of paying its own
+    # compile. Whole-workspace test execution is seconds; the compile is the
+    # cost, which is why this job carries nothing else.
+    name: Rust (workspace tests + golden replay)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
-      # `just test-rust` above is pure cargo, but this gate runs through
-      # `test-rust-nextest`, which resolves the venv python's LIBDIR to put on
-      # LD_LIBRARY_PATH for the test binaries that link libpython — a `uv`
-      # lookup, and the runner image ships no uv. Provision the same uv + lock
-      # venv pair the policy lane uses; no extension build, since those binaries
-      # link the system libpython rather than the built one.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
+
+      - name: Cache Cargo
+        # Shared ci-rust prefix: every path-gated job chains off the others'
+        # saves, and rust-cache accounts for workspace source changes and prunes
+        # stale artifacts before saving (unlike a Cargo.lock-only key).
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: ci-rust
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - uses: ./.github/actions/llvm23
+
+      # Architecture and hygiene tests shell out to ripgrep; ubuntu-latest no
+      # longer preinstalls it. Provision the same dependency as the devcontainer.
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
+
+      # `test-rust-dev` is pure cargo and tolerates a missing `uv` (best-effort
+      # LIBDIR probe), which is why this job installs none: the workspace lane
+      # must keep working with no Python state.
+      - name: Run Tests
+        run: just test-rust-dev
+
+      # The replay gate runs through `test-rust-nextest`, which resolves the
+      # venv python's LIBDIR to put on LD_LIBRARY_PATH for the test binaries
+      # that link libpython -- a `uv` lookup, and the runner image ships no uv.
       - name: Install uv (nextest lane LIBDIR)
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
@@ -316,8 +313,6 @@ jobs:
       - name: Sync the uv environment (no extension build)
         run: uv sync --locked --dev --no-install-project
 
-      # The gate itself runs the replay through `cargo nextest`, and the runner
-      # image ships none.
       - name: Install cargo-nextest
         uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
@@ -325,6 +320,85 @@ jobs:
 
       - name: Run two-sided golden replay gate (offline, blocks merge)
         run: just test-golden-replay
+
+  rust-release-tests:
+    # The shipped profile: debug_assertions off, which only `--release` gives.
+    # Test binaries built there inherit release's thin LTO and stripping, so this
+    # leg is link-bound (one link phase dominated the old consolidated job's wall
+    # clock). Isolated so that cost is measured on its own job instead of
+    # blocking the lint and dev-test verdicts.
+    #
+    # No LLVM 23 and no uv: the selected packages are pyo3-free core crates and
+    # evm2-jit is opt-in, so no test binary links libpython or llvm-sys.
+    name: Rust (release-profile tests)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
+
+      - name: Cache Cargo
+        # Shared ci-rust prefix: every path-gated job chains off the others'
+        # saves, and rust-cache accounts for workspace source changes and prunes
+        # stale artifacts before saving (unlike a Cargo.lock-only key).
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: ci-rust
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Run release-profile tests
+        run: just test-rust-release
+
+  rust-artifacts:
+    # The packaging path: the development extension build (maturin, dev profile)
+    # and the publish oracle over every member that can package. Both need the
+    # venv (maturin rides the dev group) and LLVM 23 (the cdylib carries `jit`).
+    name: Rust (extension build + publish dry-run)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
+
+      - name: Cache Cargo
+        # Shared ci-rust prefix: every path-gated job chains off the others'
+        # saves, and rust-cache accounts for workspace source changes and prunes
+        # stale artifacts before saving (unlike a Cargo.lock-only key).
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: ci-rust
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - uses: ./.github/actions/llvm23
+
+      # `scripts/build_extension.sh` builds through `uv run maturin`, so the lock
+      # venv (which owns maturin) has to exist first. No extension install from
+      # uv sync itself: the build step produces it.
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+
+      - name: Sync the uv environment (no extension build)
+        run: uv sync --locked --dev --no-install-project
 
       - name: Build extension
         run: just build-rust-extension
@@ -336,7 +410,7 @@ jobs:
       # their file-inclusion coverage through `cargo package --list`.
       # --no-verify keeps the PR gate fast (no isolated build); the verified
       # publish itself is the release workflow's pre-publish step plus the real
-      # `cargo publish` (always verified — release policy forbids --no-verify
+      # `cargo publish` (always verified - release policy forbids --no-verify
       # on publishes).
       - name: Dry-run publish of every member that can package
         run: just publish-dry-run --no-verify
@@ -617,26 +691,7 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
-      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella crate's default
-      # features carry `jit`, so this job's default-feature compiles need a
-      # toolchain the runner image does not ship. scripts/provision-llvm23.sh is
-      # the one provisioning primitive (release.yml shares it); the cache key
-      # rides the script's digest because the pinned LLVM version lives there.
-      - name: Cache LLVM 23 (evm2 JIT toolchain)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ${{ runner.temp }}/llvm23
-          key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
-
-      - name: Provision LLVM 23 (evm2 JIT link)
-        env:
-          LLVM23_ROOT: ${{ runner.temp }}/llvm23
-        run: |
-          bash scripts/provision-llvm23.sh --system-deps --github-env
-          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
-          # (already provisioned, so cheap) prefix to assert discovery here.
-          eval "$(bash scripts/provision-llvm23.sh)"
-          bash scripts/provision-llvm23.sh --check
+      - uses: ./.github/actions/llvm23
 
       - name: Bootstrap development environment
         run: just bootstrap
@@ -724,26 +779,7 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
-      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella crate's default
-      # features carry `jit`, so this job's default-feature compiles need a
-      # toolchain the runner image does not ship. scripts/provision-llvm23.sh is
-      # the one provisioning primitive (release.yml shares it); the cache key
-      # rides the script's digest because the pinned LLVM version lives there.
-      - name: Cache LLVM 23 (evm2 JIT toolchain)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ${{ runner.temp }}/llvm23
-          key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
-
-      - name: Provision LLVM 23 (evm2 JIT link)
-        env:
-          LLVM23_ROOT: ${{ runner.temp }}/llvm23
-        run: |
-          bash scripts/provision-llvm23.sh --system-deps --github-env
-          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
-          # (already provisioned, so cheap) prefix to assert discovery here.
-          eval "$(bash scripts/provision-llvm23.sh)"
-          bash scripts/provision-llvm23.sh --check
+      - uses: ./.github/actions/llvm23
 
       - name: Sync the uv environment (no extension build)
         run: uv sync --locked --dev --no-install-project
@@ -759,7 +795,7 @@ jobs:
     # needed job failed - otherwise it would skip and report green.
     name: CI (aggregate)
     if: always()
-    needs: [changes, commitlint, markdownlint, msrv, rust, rust-policy-lanes, cli-no-python, tier3-oracle, python, stub-drift]
+    needs: [changes, commitlint, markdownlint, msrv, rust-lint, rust-test, rust-release-tests, rust-artifacts, rust-policy-lanes, cli-no-python, tier3-oracle, python, stub-drift]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

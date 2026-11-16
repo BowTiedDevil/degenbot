@@ -1,0 +1,44 @@
+# Provision the LLVM 23 toolchain that `llvm-sys` 231's build script discovers
+# (docs/llvm-release-ci.md). One definition for every Linux job that compiles
+# LLVM-linked code, so the provisioning cannot drift job by job.
+#
+# Two paths, chosen at run time:
+#   - a distro that ships LLVM 23 needs nothing installed: Fedora's `llvm-devel`
+#     is what the devcontainer installs, and the script exports the llvm-config
+#     it finds, so the 0.6 GiB prebuilt cache is never even restored;
+#   - an image that ships none (GitHub's Ubuntu images stop at LLVM 22) restores
+#     the cache and falls back to the pinned official prebuilt.
+name: LLVM 23 (evm2 JIT link)
+description: Provision the LLVM 23 toolchain llvm-sys 231 links against.
+
+runs:
+  using: composite
+  steps:
+    - name: Probe for a distro LLVM 23
+      id: probe
+      shell: bash
+      run: |
+        if bash scripts/provision-llvm23.sh --probe; then
+          echo "distro=true" >> "$GITHUB_OUTPUT"
+          echo "llvm-config-23 is already on PATH; the prebuilt cache stays unused"
+        else
+          echo "distro=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Cache the prebuilt LLVM 23 subset
+      if: steps.probe.outputs.distro != 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ runner.temp }}/llvm23
+        key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
+
+    - name: Provision LLVM 23
+      shell: bash
+      env:
+        LLVM23_ROOT: ${{ runner.temp }}/llvm23
+      run: |
+        bash scripts/provision-llvm23.sh --system-deps --github-env
+        # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
+        # (already provisioned, so cheap) toolchain to assert discovery here.
+        eval "$(bash scripts/provision-llvm23.sh)"
+        bash scripts/provision-llvm23.sh --check

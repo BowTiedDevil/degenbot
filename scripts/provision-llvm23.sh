@@ -25,6 +25,8 @@
 #   scripts/provision-llvm23.sh                 print the exports (caller evals)
 #   scripts/provision-llvm23.sh --github-env    append them to $GITHUB_ENV
 #   scripts/provision-llvm23.sh --check         assert an LLVM 23 is discoverable
+#   scripts/provision-llvm23.sh --probe         exit 0 only when a distro LLVM 23
+#                                               is already on PATH (no download)
 #
 # Flags:
 #   --system-deps   install the static/dev libraries the LLVM archives link
@@ -46,6 +48,7 @@ for arg in "$@"; do
     case "$arg" in
         --github-env) mode="github-env" ;;
         --check) mode="check" ;;
+        --probe) mode="probe" ;;
         --system-deps) system_deps=1 ;;
         -h|--help) sed -n '2,38p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "provision-llvm23: unknown argument '$arg'" >&2; exit 2 ;;
@@ -105,10 +108,35 @@ if [ "$mode" = "check" ]; then
     exit 0
 fi
 
+
 case "$(uname -s)" in
     Linux) ;;
     *) die "this script provisions the Linux prebuilt only; other platforms need a toolchain this script cannot supply (docs/llvm-release-ci.md)" ;;
 esac
+
+# A distro that ships LLVM ${llvm_major} needs no tarball, and it is the case
+# this exists for: Fedora's `llvm-devel` is what the devcontainer installs, so a
+# job running in that image links the same toolchain the local build does. The
+# prebuilt below stays for the images that ship no LLVM ${llvm_major} (the Ubuntu
+# runner images stop before it — docs/llvm-release-ci.md).
+distro_llvm_config() {
+    local -a names=("llvm-config-${llvm_major}" "llvm-config${llvm_major}" "llvm${llvm_major}-config"
+                    "llvm-config-${llvm_major}.${llvm_minor}" "llvm-config${llvm_major}${llvm_minor}")
+    local -a dirs=()
+    local dir name candidate version
+    IFS=: read -r -a dirs <<<"$PATH"
+    for dir in "${dirs[@]}"; do
+        for name in "${names[@]}"; do
+            candidate="${dir}/${name}"
+            [ -x "$candidate" ] || continue
+            version="$("$candidate" --version 2>/dev/null)" || continue
+            case "$version" in
+                "${llvm_major}."*) printf '%s' "$candidate"; return 0 ;;
+            esac
+        done
+    done
+    return 1
+}
 
 case "$(uname -m)" in
     x86_64|amd64)
@@ -123,6 +151,11 @@ case "$(uname -m)" in
         ;;
     *) die "no prebuilt LLVM ${llvm_version} for $(uname -m)" ;;
 esac
+
+if [ "$mode" = "probe" ]; then
+    distro_llvm_config >/dev/null
+    exit $?
+fi
 
 root="${LLVM23_ROOT:-${RUNNER_TEMP:-/tmp}/llvm23-${llvm_version}-${tar_arch}}"
 archive="$root/LLVM-${llvm_version}-Linux-${tar_arch}.tar.xz"
@@ -187,6 +220,22 @@ fetch() {
 # stdout carries only the exports the caller evals: a package manager's
 # "Nothing to do." on stdout would otherwise be evaluated as a command.
 exec 3>&1 1>&2
+
+# Distro first. An image that ships LLVM ${llvm_major} already has the archives
+# and a llvm-config that names paths this machine has, so there is nothing to
+# download, extract, or repair -- and `--system-deps` has nothing to install.
+if distro_config="$(distro_llvm_config)"; then
+    log "using the distro LLVM: ${distro_config} (LLVM $("${distro_config}" --version))"
+    export_line="PATH=$(dirname "${distro_config}"):${PATH}"
+    if [ "$mode" = "github-env" ]; then
+        [ -n "${GITHUB_ENV:-}" ] || die "--github-env needs \$GITHUB_ENV set"
+        printf '%s\n' "${export_line}" >>"${GITHUB_ENV}"
+        log "exported the distro llvm-config directory through \$GITHUB_ENV"
+    else
+        printf '%s\n' "${export_line}"
+    fi
+    exit 0
+fi
 
 if [ "$system_deps" -eq 1 ]; then
     install_system_deps

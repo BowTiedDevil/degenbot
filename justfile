@@ -147,7 +147,7 @@ test-standalone:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --example standalone_consumer
     # The WS-ingestion crate's headless boot (no Python, no net) is an
     # owning-crate integration test, invoked directly: this recipe backs
-    # `test-rust` in CI with NO uv, and `test-rust-nextest` strictly
+    # `test-rust-dev` in CI with NO uv, and `test-rust-nextest` strictly
     # requires uv.
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-ingestion --test headless_boot
 
@@ -190,18 +190,25 @@ pre-push:
     command -v prek >/dev/null 2>&1 || uv tool install prek
     prek run --stage pre-push
 
-# Run only the Rust track (standalone smoke + cargo workspace). CI's rust-test
-# job and the pre-push hook call this subunit directly; humans use `just test`.
-test-rust: check-toolchain test-standalone
+# Run only the Rust track: the standalone smoke, the cargo workspace suite, and
+# the shipped-profile (release) leg. This aggregator is the whole truth for a
+# human and for the push hook; CI splits the two halves into its `rust-test` and
+# `rust-release-tests` jobs so one profile's link cost cannot delay the other's
+# verdict.
+test-rust: check-toolchain test-rust-dev test-rust-release
+
+# The dev-profile half of `test-rust`: the standalone smoke plus every workspace
+# suite. Pure cargo, and it tolerates a missing `uv` (best-effort LIBDIR probe).
+test-rust-dev: check-toolchain test-standalone
     #!/usr/bin/env bash
     set -euo pipefail
 
     # The venv python's LIBDIR for LD_LIBRARY_PATH (dep-crate test binaries
     # link libpython). BEST-EFFORT BY CONTRACT, unlike the rest of this recipe
-    # (which fails closed): this is the CI rust job's entrypoint and that job
-    # has no `uv`; an omitted probe just lets rust-lld autoprobe a LIBDIR.
-    # Tolerated ONLY here -- `test-rust-nextest` and the coverage recipe are
-    # uv-required by design and stay strict.
+    # (which fails closed): CI's `rust-test` job provisions no `uv`; an omitted
+    # probe just lets rust-lld autoprobe a LIBDIR. Tolerated ONLY here --
+    # `test-rust-nextest` and the coverage recipe are uv-required by design and
+    # stay strict.
     python_libdir=""
     if command -v uv >/dev/null 2>&1; then
         python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))' || true)"
@@ -219,13 +226,6 @@ test-rust: check-toolchain test-standalone
     # the assertion-free green exit of a zero-match filter can not hide a lost
     # corpus.
     cargo test --locked --manifest-path rust/Cargo.toml --workspace --features degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness
-    # The release profile is the one that ships (debug_assertions off). CI's rust
-    # job and the push hook's `rust-test` entry call `test-rust`, not `test`, so
-    # the release leg rides here, and only here: `test` skips the compile and
-    # leans on `debug_assert_with_mut_call` at lint speed for the shapes the
-    # lint can see. Wiring only the aggregator would leave the shipped-profile
-    # check out of every CI run and every push.
-    just test-rust-release
 
 # Reproduce CI's test-binary build exactly (ci.yml sets these two globally):
 # a crate-private fn's LAYOUT can depend on profile flags -- the ADR-071 D3
@@ -427,10 +427,10 @@ test-rust-policy-lane package policy='default':
 # cargo error, and dropping `degenbot-simulation/test-harness` would leave the
 # harness modules behind required-features.
 #
-# Plain `cargo test`, not nextest: this leg rides `test-rust`, the CI rust job's
-# entrypoint, and that job is a cargo lane — it provisions neither nextest nor
-# `uv`. A nextest-shaped body here leaves the shipped-profile check unrunnable
-# in the one environment it exists to guard. Nothing downstream consumes a
+# Plain `cargo test`, not nextest: this leg is CI's `rust-release-tests` job,
+# a cargo lane — it provisions neither nextest nor `uv`. A nextest-shaped body
+# here leaves the shipped-profile check unrunnable in the one environment it
+# exists to guard. Nothing downstream consumes a
 # JUnit report from this leg; `just test-timing` reads the whole-workspace `ci`
 # profile.
 #
@@ -442,7 +442,7 @@ test-rust-release: check-toolchain
     # `degenbot-substrate` + `degenbot-simulation`, pyo3-free core crates with
     # no pyo3 anywhere in their graph, so no test binary links libpython and
     # there is no LIBDIR to hand the loader. That is why this leg runs with no
-    # Python and no `uv` -- the state CI's rust job is in -- while the
+    # Python and no `uv` -- the state CI's release-test job is in -- while the
     # whole-workspace lane stays uv-required. Widening the selection to a crate
     # that turns pyo3 on (or a test that drives the binding) reinstates the
     # runtime dependency and the export with it.

@@ -39,7 +39,7 @@ is set, `PATH` is not consulted. `pkg-config`, CMake, and distro tags play no
 part, so "an LLVM is installed" is not the same as "llvm-sys can find it".
 
 The devcontainer satisfies this through Fedora 45's `llvm-devel`
-(`llvm-config-23` → 23.1.2, prefix `/usr/lib64/llvm23`).
+(`llvm-config-23` → 23.1.x as of the Fedora 45 image in use, prefix `/usr/lib64/llvm23`, with `/usr/bin/llvm-config-23` on `PATH` — which is what the distro-first probe finds).
 
 ## Where the requirement lands
 
@@ -139,23 +139,39 @@ Four behaviours are load-bearing:
   with the forward target-scoped to Linux (decision below), their wheels are
   interpreter-only.
 
-### Not applied: the `ci.yml` gate
+### `ci.yml` (applied) and `.github/actions/llvm23`
 
-`release.yml`'s `ci` job calls `ci.yml`, whose rust job builds the workspace with
-default features. It needs the same provisioning and does not have it. Ready to
-paste as the first step after the checkout in `ci.yml`'s `rust` job (and in the
-`python` job, which runs `just dev` through `just bootstrap`):
+Every Linux job in `ci.yml` that compiles default features needs the same
+toolchain, so the two provisioning steps live in one composite action
+(`.github/actions/llvm23`) that six jobs use: `rust-lint`, `rust-test`,
+`rust-artifacts`, `msrv`, `stub-drift`, and `python` (whose `just bootstrap`
+builds the extension through `just dev`). `rust-release-tests` needs none — its
+selection is `degenbot-substrate` + `degenbot-simulation`, pyo3-free and
+JIT-free — and neither does `rust-policy-lanes`, whose two policy crates enable
+no `evm2-jit`.
 
-```yaml
-      - name: Provision LLVM 23 (evm2 JIT link)
-        run: |
-          bash scripts/provision-llvm23.sh --system-deps --github-env
-          eval "$(bash scripts/provision-llvm23.sh)"
-          bash scripts/provision-llvm23.sh --check
-```
+The action is **distro-first**: it probes for a `llvm-config-23` already on
+`PATH` and, when one answers LLVM 23, exports that directory and skips the
+prebuilt cache entirely. Otherwise it restores the cache and the script falls
+back to the pinned tarball. That keeps the Ubuntu runner path unchanged while
+making a Fedora-based job work with no tarball at all.
 
-Left unapplied here to keep this change to the release workflow; it is the
-release's first gate, so it must land with (or before) this one.
+### Why not a newer runner image
+
+The hosted Ubuntu images do not carry LLVM 23, so a `runs-on` bump cannot
+replace the prebuilt. Measured from `actions/runner-images`' image manifests
+(2026-11-16):
+
+| Image label | Clang/LLVM shipped | Satisfies `llvm-sys` 231 (LLVM >= 23.1)? |
+| --- | --- | --- |
+| `ubuntu-24.04` (`ubuntu-latest`) | 16.0.6, 17.0.6, 18.1.3 | no |
+| `ubuntu-26.04` | 20.1.8, 21.1.8, 22.1.2 | no |
+
+Fedora 45's `llvm-devel` does (`llvm-config-23` → 23.1.x), which is why the
+devcontainer uses it and why a Fedora container is the supported route to
+dropping the prebuilt from a job. The distro-first probe above means such a
+container needs no action or script change, only its own prerequisites (git,
+curl, tar, a C toolchain) installed.
 
 ## Evidence (measured on the devcontainer, 2026-10-31)
 

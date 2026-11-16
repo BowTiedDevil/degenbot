@@ -305,3 +305,19 @@ def test_a_row_no_job_runs_fails(tmp_path: Path) -> None:
     assert result.returncode == 1, result.stdout + result.stderr
     assert "orphan-recipe" in result.stderr
     assert "no ci.yml job runs" in result.stderr
+
+
+def test_a_job_without_the_llvm_toolchain_fails(tmp_path: Path) -> None:
+    """A job that compiles default features needs the LLVM 23 composite action."""
+    mutated = _mutate(
+        tmp_path,
+        CI_YML,
+        "      - uses: ./.github/actions/llvm23\n\n      - name: Compile workspace at MSRV",
+        "\n      - name: Compile workspace at MSRV",
+    )
+
+    result = _run_ci_parity(CI=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "msrv" in result.stderr
+    assert "llvm23" in result.stderr

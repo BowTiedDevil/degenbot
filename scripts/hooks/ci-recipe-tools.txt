@@ -17,29 +17,34 @@
 #                 `cargo install ... cargo-nextest` run
 #   dev-venv      a `uv sync` run whose arguments include `--dev`, i.e. the
 #                 lock's dev group (pyproject's vyper, maturin, and pytest pins)
+#   llvm23        the `.github/actions/llvm23` composite, which supplies the LLVM
+#                 23 that `llvm-sys` 231 links (docs/llvm-release-ci.md). Every
+#                 recipe that compiles default features needs it: the Linux
+#                 target scope pulls evm2-jit into both consumers.
 #
 # Read a recipe's body before adding a name here: `publish-dry-run`, for
 # instance, is plain `python3` on purpose and needs neither uv nor the venv.
 
-bootstrap|uv|dev-venv
-build-rust-extension|uv,dev-venv|
-check-msrv||
-check-rust-consumer||
-check-rust-default||
-check-rust-dev-features||
-check-rust-extension-release||
+bootstrap|llvm23,uv|dev-venv
+build-rust-extension|llvm23,uv,dev-venv|
+check-msrv|llvm23|
+check-rust-consumer|llvm23|
+check-rust-default|llvm23|
+check-rust-dev-features|llvm23|
+check-rust-extension-release|llvm23|
 check-uv-lock|uv|
 fmt-check||
 fmt-check-python||
 lint-markdown-check||
 lint-python|uv|
-lint-rust-check||
-lint-stub-drift||
+lint-rust-check|llvm23|
+lint-stub-drift|llvm23|
 publish-dry-run||
 test-executor-offline|uv,dev-venv|
 test-golden-replay|cargo-nextest,uv|
 test-python-noise-gate|uv,dev-venv|
-test-rust||
+test-rust-dev|llvm23|
+test-rust-release||
 test-rust-policy-lane|cargo-nextest,uv|
 verify-tier3-artifacts||
 verify-tier3-executor-artifact|uv,dev-venv|
