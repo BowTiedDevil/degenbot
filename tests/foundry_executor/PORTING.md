@@ -89,10 +89,10 @@ expansion. Owning tasks are the port epic's ergo IDs.
 |---|---|---|---|---|---|---|
 | `test_cmd_executor_bribe_commands.py` | 5 | 5 | GTRKFA | test/CmdExecutorBribeCommands.t.sol | to create |  |
 | `test_cmd_executor_bribe_transfer.py` | 4 | 4 | GTRKFA | test/CmdExecutorBribeTransfer.t.sol | to create |  |
-| `test_cmd_executor_compact.py` | 5 | 5 | JBBFCQ | test/CmdExecutorCompact.t.sol | to create |  |
-| `test_cmd_executor_dynamic.py` | 6 | 6 | JBBFCQ | test/CmdExecutorDynamic.t.sol | to create |  |
+| `test_cmd_executor_compact.py` | 5 | 5 | JBBFCQ | test/CmdExecutorCompact.t.sol | ported (green) | All five executions keep the source's `config = 2`; V4_TAKE_COMPACT pins the exact USDC take and WETH_WITHDRAW_ALL pins the zero remaining WETH balance. |
+| `test_cmd_executor_dynamic.py` | 6 | 6 | JBBFCQ | test/CmdExecutorDynamic.t.sol | ported (green) | TAKE_DELTA / SETTLE_DELTA / SETTLE_ALL / SWAP_DYNAMIC and both mixed sequences under the default config (profit mode 1). |
 | `test_cmd_executor_edge_cases.py` | 2 | 2 | LVVJOU | test/EdgeCases.t.sol | ported (green) | Success-only port; both sources assert success paths, no broad revert assertions to harden. |
-| `test_cmd_executor_inline_wrap_unwrap.py` | 8 | 8 | JBBFCQ | test/CmdExecutorInlineWrapUnwrap.t.sol | to create |  |
+| `test_cmd_executor_inline_wrap_unwrap.py` | 8 | 8 | JBBFCQ | test/CmdExecutorInlineWrapUnwrap.t.sol | ported (green) | All four scenarios (A-D) with exact and _ALL variants under `config = 2`; the USDC-profit assertions (`> 0`) kept exact. |
 | `test_cmd_executor_three_hop_optimized.py` | 27 | 27 | 3VFCP5 | test/CmdExecutorThreeHopOptimized.t.sol | to create | `pytestmark = pytest.mark.gas`; sole `record_gas` caller (dispositions 9/11). |
 | `test_cmd_executor_three_hop_production_calldata.py` | 6 | 32 | 5SPJYJ | test/CmdExecutorThreeHopProductionCalldata.t.sol | to create | `pytestmark = pytest.mark.gas`; 27-combo PERMUTATIONS expansion; consumes the Rust `encode_three_hop` [[bin]] artifact (5SPJYJ FFI lane). |
 | `test_cmd_executor_three_pool_v2.py` | 9 | 9 | AVYD7W | test/CmdExecutorThreePoolV2.t.sol | ported (green) | All three approaches (nested callbacks, flash + 2× CALC, all-CALC) with economic equivalence (positive WETH profit each) and per-approach named gas evidence (disposition 11). |
@@ -100,10 +100,10 @@ expansion. Owning tasks are the port epic's ergo IDs.
 | `test_cmd_executor_v2v2_v3v3.py` | 2 | 2 | 72TJMU | test/CmdExecutorV2V2V3V3.t.sol | ported (green) | V3-V3 double auto-pay and V2-V2 nested callback under profit mode 2 (ERC6909 claims domain); both source configs preserved (`config = 2`). |
 | `test_cmd_executor_v2v3.py` | 2 | 2 | LVVJOU | test/V2V3.t.sol | ported (green) | Success-only port; no broad revert assertions to harden. Parity re-verified by 72TJMU against the source assertions (encoder fee defaults, `_setup_v3` liquidity factor, `config = 2`, custody/callback ordering) — no correction required. |
 | `test_cmd_executor_v3_three_hop.py` | 14 | 14 | 72TJMU | test/CmdExecutorV3ThreeHop.t.sol | ported (green) | All four auto-pay variants, reverse (success) and forward (exact-revert) direct custody, V4→V3(SWAP_DELTA)→V3 take/pre-funded forms, V3→V3→V4, and the Pancake callback variant. The 4 `*_gas` tests are named `ApproachGas` events (disposition 11), not prints. Forward-order direct custody pins the ACTUAL revert identity: the executor's zero USDC balance underflows V3b's auto-pay transfer and the checked-arithmetic panic reverts with EMPTY data — the pool's `"IIA"` assert is never reached; the source asserts status-only, so the pin is exact and strictly stronger. |
-| `test_cmd_executor_v4v2.py` | 3 | 3 | JBBFCQ | test/CmdExecutorV4V2.t.sol | to create |  |
-| `test_cmd_executor_v4v3.py` | 3 | 3 | JBBFCQ | test/CmdExecutorV4V3.t.sol | to create |  |
-| `test_cmd_executor_v4v4.py` | 7 | 7 | JBBFCQ | test/CmdExecutorV4V4.t.sol | to create |  |
-| `test_cmd_executor_v4v4_wrap_unwrap.py` | 4 | 4 | JBBFCQ | test/CmdExecutorV4V4WrapUnwrap.t.sol | to create |  |
+| `test_cmd_executor_v4v2.py` | 3 | 3 | JBBFCQ | test/CmdExecutorV4V2.t.sol | ported (green) | V4→V2 explicit-callback pay, V2-first outer callback opening the unlock, and the direct-custody V2_SWAP_CALC excess-balance form. |
+| `test_cmd_executor_v4v3.py` | 3 | 3 | JBBFCQ | test/CmdExecutorV4V3.t.sol | ported (green) | Explicit forward_data (pay + sync + transfer + settle inside the V3 callback), V4→V3 auto-pay, and V3-first auto-pay opening the unlock. |
+| `test_cmd_executor_v4v4.py` | 7 | 7 | JBBFCQ | test/CmdExecutorV4V4.t.sol | ported (green) | The module's WBTC/WETH PM fixture override is preserved in setUp (executor rebuilt with it); the three-hop test's class-local WETH/USDC PM + executor pair likewise. All three V4_BATCH cases keep the explicit-first / dynamic-second (amount 0) shape with auto-settle. |
+| `test_cmd_executor_v4v4_wrap_unwrap.py` | 4 | 4 | JBBFCQ | test/CmdExecutorV4V4WrapUnwrap.t.sol | ported (green) | Both unwrap and wrap scenarios, exact and _ALL; the two source balance assertions (`usdc >= AMOUNT_USDC`) kept exact. |
 | `test_conservation.py` | 4 | 4 | AL53BE | test/Conservation.t.sol | to create |  |
 | `test_donation_profit_inflation.py` | 2 | 2 | LVVJOU | test/DonationProfitInflation.t.sol | ported (green) | 2 defs; `test_pm_native_take_still_delivers_eth` is a permanent `pytest.skip` (disposition 4) — PM native-take delivery stays covered by the withdrawal native-ETH legs. Hardened: the donation pins the exact `Unauthorized(caller)` the `__default__` gate raises. |
 | `test_erc6909.py` | 5 | 5 | EMCYDR | test/ERC6909.t.sol | to create | `test_mint_vs_take_gas` inside (disposition 11). |

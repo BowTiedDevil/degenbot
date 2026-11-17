@@ -116,15 +116,21 @@ auto-pay path).
 | `test_cmd_executor_v2v2_v3v3.py` | `CmdExecutorV2V2V3V3.t.sol` | 2 | 2 |
 | `test_cmd_executor_v3_three_hop.py` | `CmdExecutorV3ThreeHop.t.sol` | 14 | 14 (incl. the four named `ApproachGas` evidence cases; forward direct custody pins the exact empty-data auto-pay underflow revert) |
 | `test_cmd_executor_v2v3.py` | `V2V3.t.sol` | 2 | 2 |
+| `test_cmd_executor_compact.py` | `CmdExecutorCompact.t.sol` | 5 | 5 (all executions keep the source's `config = 2`; the take-compact USDC and withdraw-all zero-WETH pins are exact) |
+| `test_cmd_executor_dynamic.py` | `CmdExecutorDynamic.t.sol` | 6 | 6 (TAKE_DELTA / SETTLE_DELTA / SETTLE_ALL / SWAP_DYNAMIC + both mixed sequences, default config) |
+| `test_cmd_executor_v4v2.py` | `CmdExecutorV4V2.t.sol` | 3 | 3 (explicit-callback V2 pay, V2-first outer callback, direct-custody V2_SWAP_CALC) |
+| `test_cmd_executor_v4v3.py` | `CmdExecutorV4V3.t.sol` | 3 | 3 (explicit V3 forward_data pay+sync+transfer+settle, V4→V3 auto-pay, V3-first auto-pay) |
+| `test_cmd_executor_v4v4.py` | `CmdExecutorV4V4.t.sol` | 7 | 7 (module WBTC/WETH PM fixture override preserved; three V4_BATCH explicit/dynamic auto-settle cases; WETH→USDC→WBTC→WETH three-hop with its class-local WETH/USDC PM + executor) |
+| `test_cmd_executor_v4v4_wrap_unwrap.py` | `CmdExecutorV4V4WrapUnwrap.t.sol` | 4 | 4 (unwrap/wrap scenarios, exact and _ALL; source USDC-profit assertions exact) |
+| `test_cmd_executor_inline_wrap_unwrap.py` | `CmdExecutorInlineWrapUnwrap.t.sol` | 8 | 8 (A-D scenarios × exact/_ALL under `config = 2`; USDC-profit assertions exact) |
 | `test_v3_v4_v3_residual_regression.py` | `V3V4V3ResidualRegression.t.sol` | 2 | 3 (2 source + 1 added: OLD static encoder's `config = 0` revert pinned exactly as `InvalidProfitMode(0)`; the added valid-config case runs the SAME old static stream and pins the PM's exact `CurrencyNotSettled:<wbtc>: +<surplus>` residual; NEW dynamic+delta+settle-all succeeds with positive profit) |
 | `test_v2_swap_calc_overflow.py` | `V2SwapCalcOverflow.t.sol` | 1 (permanently skipped) | 2 (executable checked-mul boundary + normal-path control; skip replaced) |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
 | — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
 
-Not ported: the swap-family files (`v4v2`, `v4v3`, `v4v4`,
-`v4v4_wrap_unwrap`, `compact`, `dynamic`, `inline_wrap_unwrap`,
-`bribe_commands`, `bribe_transfer`), the three-hop matrices
+Not ported: the remaining swap-family files (`bribe_commands`,
+`bribe_transfer`), the three-hop matrices
 (`three_hop_optimized`, `three_hop_production_calldata`), `conservation`,
 `erc6909`, `erc6909_composability`, `pm_as_bank`, `withdrawal`,
 `release_metadata`, the fake-parity tiers (`fake_pool_manager_parity`,
