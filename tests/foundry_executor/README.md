@@ -82,6 +82,7 @@ auto-pay path).
 - `gen_interfaces.py` — ABI → `src/generated/I<Contract>.sol` + tuple structs in `Types.sol`.
 - `src/Vm.sol` — minimal cheatcode interface (no forge-std dependency), carrying the declarations the planned FFI (`vm.ffi`), RPC/fork (`vm.rpc`, `createFork`/`selectFork`), JSON (`parseJson*`), and hex (`toString`) lanes need — and nothing speculative beyond those consumers.
 - `src/TestBase.sol` — artifact deployment, `execute` helpers, assertions, log/transfer accounting, balance snapshots with conservation diffs (`_snapshotBalances` + `_assert*Conserved`/`_assertExecutorProfit`), exact revert assertions over the generated `ExecutorErrors` vocabulary, and the `ExecutorFixture` that mirrors `tests/executor/conftest.py`.
+- `src/ConservationOps.sol` — the composed tracked-account conservation check (the port of `test_conservation.py`'s `_verify_conservation`): tokens[0] = WETH combined with NATIVE in the mode-1 profit domain, every other tracked token summed to zero, optional executor-profit assertion run first.
 - `src/Cmd.sol` — the command-stream encoder: the port of `conftest_shared.py`'s `enc_*` helpers and the `AddressTable` sentinel resolution (including the raw `0x30` V3 form and `V4_BATCH_OPEN_WETH`).
 - `src/Setup.sol` — pool setup: the port of `_setup_v2_pair`, `_setup_v3`, `_setup_v4_swap`, `v2_get_amount_out`.
 - `test/*.t.sol` — ported test files (each names the Python file it ports), plus `test/HarnessPrimitives.t.sol`, the named tests for the shared substrate primitives themselves (encoding bytes/lengths, the generated error vocabulary, conservation diffs, exact-revert negative controls, and the artifact additions).
@@ -98,7 +99,7 @@ auto-pay path).
 | `test_preprocess_addr_count.py` | `PreprocessAddrCount.t.sol` | 2 | 4 (288-byte accept and 289-byte ABI rejection added) |
 | `test_cmd_executor_edge_cases.py` | `EdgeCases.t.sol` | 2 | 2 |
 | `test_execution_receipt.py` | `ExecutionReceipt.t.sol` | 12 (parametrized) | 12 |
-| `test_events.py` | `Events.t.sol` | 6 | 6 |
+| `test_events.py` | `Events.t.sol` | 6 | 11 (6 source + 5 documented event-surface additions on the withdrawal exit paths: V4 take counted exactly once with no ERC6909 topic, ERC6909 mint logged exactly once, the burn/take/xfer-balance exit surface, the native-ETH exit's single-ERC6909 surface, SEND_ETH_ALL's zero-event surface) |
 | `test_withdraw_reentrancy.py` | `WithdrawReentrancy.t.sol` | 2 | 3 (withdraw owner-only added) |
 | `test_donation_profit_inflation.py` | `DonationProfitInflation.t.sol` | 1 (+1 skipped) | 1 |
 | `test_sentinel_failclosed.py` | `SentinelFailClosed.t.sol` | 21 (11 helper meta-tests) | 21 |
@@ -123,6 +124,8 @@ auto-pay path).
 | `test_cmd_executor_v4v4.py` | `CmdExecutorV4V4.t.sol` | 7 | 7 (module WBTC/WETH PM fixture override preserved; three V4_BATCH explicit/dynamic auto-settle cases; WETH→USDC→WBTC→WETH three-hop with its class-local WETH/USDC PM + executor) |
 | `test_cmd_executor_v4v4_wrap_unwrap.py` | `CmdExecutorV4V4WrapUnwrap.t.sol` | 4 | 4 (unwrap/wrap scenarios, exact and _ALL; source USDC-profit assertions exact) |
 | `test_cmd_executor_inline_wrap_unwrap.py` | `CmdExecutorInlineWrapUnwrap.t.sol` | 8 | 8 (A-D scenarios × exact/_ALL under `config = 2`; USDC-profit assertions exact) |
+| `test_withdrawal.py` | `Withdrawal.t.sol` | 9 | 9 (ERC6909→physical USDC in two/one tx, ERC6909 native ETH, ERC20_XFER_BALANCE and specific-amount ERC20_TRANSFER, SEND_ETH/SEND_ETH_ALL, both round trips; config = 2 preserved on every execution, the ERC20-only withdrawal tx at the default config = 1) |
+| `test_conservation.py` | `Conservation.t.sol` | 4 | 7 (4 source + 3 documented direct-helper meta-tests; every live failure pinned to its exact Error(string) reason via an external-call negative control, and the tracked-recipient case pins the positive conservation verdict before the profit mismatch) |
 | `test_v3_v4_v3_residual_regression.py` | `V3V4V3ResidualRegression.t.sol` | 2 | 3 (2 source + 1 added: OLD static encoder's `config = 0` revert pinned exactly as `InvalidProfitMode(0)`; the added valid-config case runs the SAME old static stream and pins the PM's exact `CurrencyNotSettled:<wbtc>: +<surplus>` residual; NEW dynamic+delta+settle-all succeeds with positive profit) |
 | `test_v2_swap_calc_overflow.py` | `V2SwapCalcOverflow.t.sol` | 1 (permanently skipped) | 2 (executable checked-mul boundary + normal-path control; skip replaced) |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
@@ -131,8 +134,8 @@ auto-pay path).
 
 Not ported: the remaining swap-family files (`bribe_commands`,
 `bribe_transfer`), the three-hop matrices
-(`three_hop_optimized`, `three_hop_production_calldata`), `conservation`,
-`erc6909`, `erc6909_composability`, `pm_as_bank`, `withdrawal`,
+(`three_hop_optimized`, `three_hop_production_calldata`),
+`erc6909`, `erc6909_composability`, `pm_as_bank`,
 `release_metadata`, the fake-parity tiers (`fake_pool_manager_parity`,
 `fake_abi_fidelity`), and the Rust-artifact cross-checks.
 
