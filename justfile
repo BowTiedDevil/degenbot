@@ -2104,7 +2104,9 @@ format: check-toolchain
 #      `uv sync --upgrade`/`uv lock --upgrade` cannot do this: re-resolving
 #      only advances within the existing ranges. Unpinned dev-group entries
 #      are already open-ended, and the script honors the [tool.uv]
-#      `exclude-newer` horizon so the new pins remain resolvable by uv.
+#      `exclude-newer` horizon so the new pins remain resolvable by uv. A
+#      requirement already pinned to a prerelease is left alone: the newest
+#      stable is often older than a deliberate beta pin.
 #   2. `uv lock --upgrade` re-resolves uv.lock inside the new ranges — direct
 #      + transitive, all groups — the `cargo update` analog; `uv sync` then
 #      refreshes the venv.

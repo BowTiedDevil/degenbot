@@ -19,8 +19,12 @@ left alone rather than made unsatisfiable.
 Only stable releases (no alpha/beta/rc/dev tail) uploaded before the
 project's `[tool.uv] exclude-newer` horizon (repo setting: 14 days) are
 considered, so the rewritten pins are always resolvable by uv under the very
-same setting. Stdlib + tomlkit only (tomlkit is a dev-group dependency, so it is
-in the project venv that `uv run` uses).
+same setting. A requirement that already pins a prerelease is left untouched:
+the newest stable release is often older than a deliberate beta pin, so
+rewriting one would be a silent downgrade of the operator's choice.
+
+Stdlib + tomlkit only (tomlkit is a dev-group dependency, so it is in the
+project venv that `uv run` uses).
 
 Usage:
   uv run python scripts/bump_python_deps.py            # rewrite pyproject.toml + report
@@ -176,6 +180,15 @@ def rewrite_requirement(req: str, latest: str) -> tuple[str, str]:
     clauses = [c.strip() for c in rest.split(",") if c.strip()]
     if not clauses:
         return req, "no version pin; uv lock --upgrade covers it"
+    # A prerelease version is the operator's choice, and the newest stable
+    # release is frequently older than it.
+    pinned = [
+        clause
+        for clause in clauses
+        if (matched := _CLAUSE.match(clause)) and not is_stable(matched.group(2))
+    ]
+    if pinned:
+        return req, f"prerelease pin kept as-is: {', '.join(pinned)}"
     new_clauses: list[str] = []
     kept: list[str] = []
     for clause in clauses:
