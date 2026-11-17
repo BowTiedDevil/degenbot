@@ -102,7 +102,6 @@ auto-pay path).
 | `test_withdraw_reentrancy.py` | `WithdrawReentrancy.t.sol` | 2 | 3 (withdraw owner-only added) |
 | `test_donation_profit_inflation.py` | `DonationProfitInflation.t.sol` | 1 (+1 skipped) | 1 |
 | `test_sentinel_failclosed.py` | `SentinelFailClosed.t.sol` | 21 (11 helper meta-tests) | 21 |
-| `test_cmd_executor_v2v3.py` | `V2V3.t.sol` | 2 | 2 |
 | `test_v3_libraries.py` | `V3Libraries.t.sol` | 53 | 53 |
 | `test_v3_pool.py` | `V3Pool.t.sol` | 2 | 2 |
 | `test_v3_debug.py` | `V3Debug.t.sol` | 1 | 1 |
@@ -114,12 +113,16 @@ auto-pay path).
 | `test_v2_swap_compact_fee.py` | `V2SwapCompactFee.t.sol` | 4 | 4 |
 | `test_cmd_executor_v2_swap_direct.py` | `CmdExecutorV2SwapDirect.t.sol` | 8 | 8 (incl. the named V2-V4-V4 DIRECT-vs-CALC gas case) |
 | `test_cmd_executor_three_pool_v2.py` | `CmdExecutorThreePoolV2.t.sol` | 9 | 9 (incl. per-approach named gas evidence) |
+| `test_cmd_executor_v2v2_v3v3.py` | `CmdExecutorV2V2V3V3.t.sol` | 2 | 2 |
+| `test_cmd_executor_v3_three_hop.py` | `CmdExecutorV3ThreeHop.t.sol` | 14 | 14 (incl. the four named `ApproachGas` evidence cases; forward direct custody pins the exact empty-data auto-pay underflow revert) |
+| `test_cmd_executor_v2v3.py` | `V2V3.t.sol` | 2 | 2 |
+| `test_v3_v4_v3_residual_regression.py` | `V3V4V3ResidualRegression.t.sol` | 2 | 3 (2 source + 1 added: OLD static encoder's `config = 0` revert pinned exactly as `InvalidProfitMode(0)`; the added valid-config case runs the SAME old static stream and pins the PM's exact `CurrencyNotSettled:<wbtc>: +<surplus>` residual; NEW dynamic+delta+settle-all succeeds with positive profit) |
 | `test_v2_swap_calc_overflow.py` | `V2SwapCalcOverflow.t.sol` | 1 (permanently skipped) | 2 (executable checked-mul boundary + normal-path control; skip replaced) |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
 | — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
 
-Not ported: the swap-family files (`v3_three_hop`, `v4v2`, `v4v3`, `v4v4`,
+Not ported: the swap-family files (`v4v2`, `v4v3`, `v4v4`,
 `v4v4_wrap_unwrap`, `compact`, `dynamic`, `inline_wrap_unwrap`,
 `bribe_commands`, `bribe_transfer`), the three-hop matrices
 (`three_hop_optimized`, `three_hop_production_calldata`), `conservation`,
