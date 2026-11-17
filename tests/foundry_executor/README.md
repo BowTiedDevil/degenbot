@@ -106,6 +106,8 @@ auto-pay path).
 | `test_v3_libraries.py` | `V3Libraries.t.sol` | 53 | 53 |
 | `test_v3_pool.py` | `V3Pool.t.sol` | 2 | 2 |
 | `test_v3_debug.py` | `V3Debug.t.sol` | 1 | 1 |
+| `test_v3_library_fuzz.py` | `V3LibraryFuzz.t.sol` | 24 (10 differential + 14 parity-helper meta) | 24 |
+| `test_v2_fee_denominator_fuzz.py` | `V2FeeDenominatorFuzz.t.sol` | 7 | 7 |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
 | — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
@@ -115,9 +117,10 @@ Not ported: the swap-family files (`v2_swap_direct`, `v3_three_hop`, `v4v2`,
 `three_pool_v2`, `bribe_commands`, `bribe_transfer`), the three-hop matrices
 (`three_hop_optimized`, `three_hop_production_calldata`), `conservation`,
 `erc6909`, `erc6909_composability`, `pm_as_bank`, `withdrawal`,
-`release_metadata`, the fake-parity and remaining library tiers
-(`fake_pool_manager_parity`, `fake_abi_fidelity`, `v3_library_fuzz`,
-`v2_*_fee*`, `v2_swap_calc_*`), and the Rust-artifact cross-checks.
+`release_metadata`, the fake-parity and remaining fee/swap-calc tiers
+(`fake_pool_manager_parity`, `fake_abi_fidelity`, `v2_configurable_fee`,
+`v2_fee_bounds`, `v2_swap_compact_fee`, `v2_swap_calc_*`), and the
+Rust-artifact cross-checks.
 
 ## Porting rules this lane encodes
 
