@@ -1559,6 +1559,33 @@ test-executor-offline target="tests/executor/" *args:
     exec env -u PYTEST_ADDOPTS APE_ETHEREUM_NETWORK=local \
         TEST_ETHEREUM_FULL_NODE_HTTP_URI="http://127.0.0.1:8545" \
         {{ py_run }} ape test "$target" -c ape-pytest.ini -m "not mainnet_fork" "$@"
+# Foundry lane for the Vyper executor contracts (tests/foundry_executor).
+#
+# Forge's Vyper import resolver only understands `from <dir> import <module>.vy`
+# and cannot resolve this tree's `from .interfaces.UniswapV4 import IPoolManager`
+# name-imports of `.vyi` interface files, so the lane compiles with the pinned
+# vyper from the uv environment and hands forge-ready artifacts to Solidity
+# tests. That keeps one compiler identity: the taken bytecode is the same
+# pinned-vyper output `verify-tier3-executor-artifact` certifies.
+#
+# Extra args forward to `forge test` (`-vvv`, `--match-test`, `--match-path`).
+foundry-executor-artifacts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+
+test-foundry-executor *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec forge test "$@"
+
 
 
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
