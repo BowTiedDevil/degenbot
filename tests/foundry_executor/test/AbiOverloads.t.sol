@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {PoolSetup} from "../src/Setup.sol";
 import {Cmd} from "../src/Cmd.sol";
+import {ExecutorErrors} from "../src/generated/Errors.sol";
 
 /// Vyper emits one selector per default-argument permutation: `config: uint256 = 1`
 /// produces BOTH `execute(bytes)` and `execute(bytes,uint256)`. This pins the
@@ -58,7 +59,11 @@ contract AbiOverloadsTest is PoolSetup {
 
         Outcome memory modeZero =
             _rawSimulated(abi.encodeWithSelector(EXECUTE_TWO_ARG, _stream(), uint256(0)));
-        assertFalse(modeZero.ok, "an explicit config = 0 is rejected (mode 0 is not legal)");
+        _assertRevertData(
+            modeZero,
+            _executorRevert(ExecutorErrors.INVALID_PROFIT_MODE, 0),
+            "explicit config = 0"
+        );
     }
 
     function _rawSimulated(bytes memory data) internal returns (Outcome memory o) {

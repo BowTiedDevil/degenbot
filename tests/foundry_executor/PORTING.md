@@ -91,36 +91,36 @@ expansion. Owning tasks are the port epic's ergo IDs.
 | `test_cmd_executor_bribe_transfer.py` | 4 | 4 | GTRKFA | test/CmdExecutorBribeTransfer.t.sol | to create |  |
 | `test_cmd_executor_compact.py` | 5 | 5 | JBBFCQ | test/CmdExecutorCompact.t.sol | to create |  |
 | `test_cmd_executor_dynamic.py` | 6 | 6 | JBBFCQ | test/CmdExecutorDynamic.t.sol | to create |  |
-| `test_cmd_executor_edge_cases.py` | 2 | 2 | LVVJOU | test/EdgeCases.t.sol | ported (green) |  |
+| `test_cmd_executor_edge_cases.py` | 2 | 2 | LVVJOU | test/EdgeCases.t.sol | ported (green) | Success-only port; both sources assert success paths, no broad revert assertions to harden. |
 | `test_cmd_executor_inline_wrap_unwrap.py` | 8 | 8 | JBBFCQ | test/CmdExecutorInlineWrapUnwrap.t.sol | to create |  |
 | `test_cmd_executor_three_hop_optimized.py` | 27 | 27 | 3VFCP5 | test/CmdExecutorThreeHopOptimized.t.sol | to create | `pytestmark = pytest.mark.gas`; sole `record_gas` caller (dispositions 9/11). |
 | `test_cmd_executor_three_hop_production_calldata.py` | 6 | 32 | 5SPJYJ | test/CmdExecutorThreeHopProductionCalldata.t.sol | to create | `pytestmark = pytest.mark.gas`; 27-combo PERMUTATIONS expansion; consumes the Rust `encode_three_hop` [[bin]] artifact (5SPJYJ FFI lane). |
 | `test_cmd_executor_three_pool_v2.py` | 9 | 9 | AVYD7W | test/CmdExecutorThreePoolV2.t.sol | to create | 3 `test_approach_*_gas` tests inside (disposition 11). |
 | `test_cmd_executor_v2_swap_direct.py` | 8 | 8 | AVYD7W | test/CmdExecutorV2SwapDirect.t.sol | to create | `test_gas_comparison_v2_v4_v4` inside (disposition 11). |
 | `test_cmd_executor_v2v2_v3v3.py` | 2 | 2 | 72TJMU | test/CmdExecutorV2V2V3V3.t.sol | to create |  |
-| `test_cmd_executor_v2v3.py` | 2 | 2 | LVVJOU | test/V2V3.t.sol | ported (green) |  |
+| `test_cmd_executor_v2v3.py` | 2 | 2 | LVVJOU | test/V2V3.t.sol | ported (green) | Success-only port; no broad revert assertions to harden. |
 | `test_cmd_executor_v3_three_hop.py` | 14 | 14 | 72TJMU | test/CmdExecutorV3ThreeHop.t.sol | to create | 4 ad-hoc `*_gas` tests inside (disposition 11). |
 | `test_cmd_executor_v4v2.py` | 3 | 3 | JBBFCQ | test/CmdExecutorV4V2.t.sol | to create |  |
 | `test_cmd_executor_v4v3.py` | 3 | 3 | JBBFCQ | test/CmdExecutorV4V3.t.sol | to create |  |
 | `test_cmd_executor_v4v4.py` | 7 | 7 | JBBFCQ | test/CmdExecutorV4V4.t.sol | to create |  |
 | `test_cmd_executor_v4v4_wrap_unwrap.py` | 4 | 4 | JBBFCQ | test/CmdExecutorV4V4WrapUnwrap.t.sol | to create |  |
 | `test_conservation.py` | 4 | 4 | AL53BE | test/Conservation.t.sol | to create |  |
-| `test_donation_profit_inflation.py` | 2 | 2 | LVVJOU | test/DonationProfitInflation.t.sol | ported (green) | 2 defs; `test_pm_native_take_still_delivers_eth` is a permanent `pytest.skip` (disposition 4). |
+| `test_donation_profit_inflation.py` | 2 | 2 | LVVJOU | test/DonationProfitInflation.t.sol | ported (green) | 2 defs; `test_pm_native_take_still_delivers_eth` is a permanent `pytest.skip` (disposition 4) — PM native-take delivery stays covered by the withdrawal native-ETH legs. Hardened: the donation pins the exact `Unauthorized(caller)` the `__default__` gate raises. |
 | `test_erc6909.py` | 5 | 5 | EMCYDR | test/ERC6909.t.sol | to create | `test_mint_vs_take_gas` inside (disposition 11). |
 | `test_erc6909_composability.py` | 6 | 7 | EMCYDR | test/ERC6909Composability.t.sol | to create |  |
 | `test_events.py` | 6 | 6 | AL53BE | test/Events.t.sol | ported (green) |  |
-| `test_execution_receipt.py` | 7 | 12 | LVVJOU | test/ExecutionReceipt.t.sol | ported (green) |  |
+| `test_execution_receipt.py` | 7 | 12 | LVVJOU | test/ExecutionReceipt.t.sol | ported (green) | Hardened: `InvalidProfitMode(mode)` argument pins for all four invalid modes, exact `InsufficientProfit(actual, expected)` pins (decrease, shortfall, bribe floor), `Unauthorized(caller)` sweep pin. |
 | `test_fake_abi_fidelity.py` | 6 | 9 | QKQOIZ | test/FakeABIFidelity.t.sol | to create |  |
 | `test_fake_pool_manager_parity.py` | 30 | 29 | LEZT6O | test/PoolManagerParity.t.sol (fork lane) | to create (fork lane) | 30 defs / 29 collected (duplicate `test_double_unlock_reverts`; first definition shadowed). `pytestmark mainnet_fork`. 5 fork failures recorded as baseline facts. The `ExttloadComparator` artifact (+ `IExttloadComparator`) is built by the lane's pinned-vyper pipeline since QXIGKC. |
-| `test_initialize_and_opcodes.py` | 5 | 5 | LVVJOU | test/InitializeAndOpcodes.t.sol | ported (green) |  |
-| `test_no_fe_prefix.py` | 2 | 2 | LVVJOU | test/NoFePrefix.t.sol | ported (green) |  |
+| `test_initialize_and_opcodes.py` | 5 | 5 | LVVJOU | test/InitializeAndOpcodes.t.sol | ported (green) | Hardened: exact `Unauthorized(caller)` and `InvalidMsgValue(value)` pins. |
+| `test_no_fe_prefix.py` | 2 | 2 | LVVJOU | test/NoFePrefix.t.sol | ported (green) | Hardened to exact pins: `InvalidCommand(0xFE)` for the prefixed stream, the empty-data revert for bare `0xFF`. |
 | `test_pm_as_bank.py` | 11 | 11 | EMCYDR | test/PMAsBank.t.sol | to create | 11 defs; `test_gas_comparison_table` is the ordering-dependent gas summary (disposition 6). |
-| `test_preprocess_addr_count.py` | 2 | 2 | LVVJOU | test/PreprocessAddrCount.t.sol | ported (green) |  |
-| `test_profit_guard_m1_m2.py` | 2 | 2 | LVVJOU | test/ProfitGuard.t.sol | ported (green) |  |
+| `test_preprocess_addr_count.py` | 2 | 2 | LVVJOU | test/PreprocessAddrCount.t.sol | ported (green) | Hardened: empty-data pin on the 294-byte ABI rejection; exact 288-byte accept and 289-byte ABI rejection cases added (both empty-data at the decoder). |
+| `test_profit_guard_m1_m2.py` | 2 | 2 | LVVJOU | test/ProfitGuard.t.sol | ported (green) | Hardened: exact `BipsTooHigh(10001)` pin via a non-degenerate stream (a bare separator reverts in the dispatch loop before any config handling). |
 | `test_release_metadata.py` | 19 | 22 | I5R3LB | test/ReleaseMetadata.t.sol | to create |  |
-| `test_sentinel_failclosed.py` | 21 | 21 | LVVJOU | test/SentinelFailClosed.t.sol | to create | Includes 11 harness meta-tests (`expect_revert`/`expect_accepted` negative controls). |
-| `test_stream_truncation.py` | 2 | 2 | LVVJOU | test/StreamTruncation.t.sol | ported (green) |  |
-| `test_token_sentinels.py` | 3 | 5 | LVVJOU | test/TokenSentinels.t.sol | ported (green) |  |
+| `test_sentinel_failclosed.py` | 21 | 21 | LVVJOU | test/SentinelFailClosed.t.sol | ported (green) | Includes 11 helper meta-tests (`expect_revert`/`expect_accepted` negative controls). Preserves the intentional downstream `ManagerLocked` acceptance (native hook sentinel) and the empty-data hook-sentinel semantics; exercises both `execute(bytes)` and `execute(bytes,uint256)`. |
+| `test_stream_truncation.py` | 2 | 2 | LVVJOU | test/StreamTruncation.t.sol | ported (green) | Hardened: the maximal stream's revert is pinned as the exact Error(string) `ManagerLocked` payload. |
+| `test_token_sentinels.py` | 3 | 5 | LVVJOU | test/TokenSentinels.t.sol | ported (green) | Hardened: the unassigned reserved index pins the empty-data fail-closed revert. |
 | `test_v2_configurable_fee.py` | 7 | 7 | AVYD7W | test/V2ConfigurableFee.t.sol | to create |  |
 | `test_v2_fee_bounds.py` | 4 | 4 | AVYD7W | test/V2FeeBounds.t.sol | to create |  |
 | `test_v2_fee_denominator_fuzz.py` | 7 | 7 | XYAZ7L | test/V2FeeDenominatorFuzz.t.sol | to create | 7 Hypothesis pure-math properties (examples internal to each case). |
@@ -132,7 +132,7 @@ expansion. Owning tasks are the port epic's ergo IDs.
 | `test_v3_library_fuzz.py` | 24 | 24 | XYAZ7L | test/V3LibraryFuzz.t.sol | to create | 10 Hypothesis differential tests (200-500 examples each) + 14 parity-helper meta-tests. The committed solc-0.7.6 `SolReference` artifact (+ `ISolReference`) is built by the lane since QXIGKC. |
 | `test_v3_pool.py` | 2 | 2 | XYAZ7L | test/V3Pool.t.sol | to create |  |
 | `test_v3_v4_v3_residual_regression.py` | 2 | 2 | 72TJMU | test/V3V4V3ResidualRegression.t.sol | to create | Intentional `config = 0` revert — disposition 10. |
-| `test_withdraw_reentrancy.py` | 2 | 2 | LVVJOU | test/WithdrawReentrancy.t.sol | ported (green) |  |
+| `test_withdraw_reentrancy.py` | 2 | 2 | LVVJOU | test/WithdrawReentrancy.t.sol | ported (green) | Hardened: the reentry pins the exact `Unauthorized(caller)` the owner gate raises at reentry; withdraw owner-only coverage added. |
 | `test_withdrawal.py` | 9 | 9 | AL53BE | test/Withdrawal.t.sol | to create |  |
 
 ## Support / config rows (one row per named file)

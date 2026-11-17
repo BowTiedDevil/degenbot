@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {PoolSetup} from "../src/Setup.sol";
 import {Cmd} from "../src/Cmd.sol";
+import {ExecutorErrors} from "../src/generated/Errors.sol";
 import {IFakeUniswapV2Pair} from "../src/generated/IFakeUniswapV2Pair.sol";
 import {IFakeErc20} from "../src/generated/IFakeErc20.sol";
 
@@ -66,10 +67,17 @@ contract ExecutionReceiptTest is PoolSetup {
         assertEq(simulated.grossProfit, expectedGross, "gross profit");
         assertEq(simulated.bribePaid, expectedBribe, "bribe accounting");
 
-        // A floor one wei above the measured gross must be refused.
+        // A floor one wei above the measured gross must be refused with the
+        // shortfall error naming (measured gross, demanded floor).
         Outcome memory tooHigh =
             _executeSimulated(executor, stream, ((expectedGross + 1) << 32) | baseConfig);
-        assertFalse(tooHigh.ok, "min_profit above the measured gross must revert");
+        _assertRevertData(
+            tooHigh,
+            _executorRevert(
+                ExecutorErrors.INSUFFICIENT_PROFIT, expectedGross, expectedGross + 1
+            ),
+            "min_profit above the measured gross"
+        );
 
         // The exact floor executes.
         _execute(executor, stream, (expectedGross << 32) | baseConfig);
@@ -89,7 +97,11 @@ contract ExecutionReceiptTest is PoolSetup {
     function _invalidMode(uint256 mode) internal {
         bytes memory stream = bytes.concat(Cmd.preamble(_emptyTable()), Cmd.wethDepositAll());
         Outcome memory o = _executeSimulated(executor, stream, mode);
-        assertFalse(o.ok, "invalid profit mode must fail loudly");
+        // The mode check sits at the top of execute(), so the revert names
+        // the rejected mode exactly.
+        _assertRevertData(
+            o, _executorRevert(ExecutorErrors.INVALID_PROFIT_MODE, mode), "invalid profit mode"
+        );
     }
 
     function testInvalidProfitMode0() public {
@@ -117,8 +129,15 @@ contract ExecutionReceiptTest is PoolSetup {
         bytes memory stream = bytes.concat(
             Cmd.preamble(at), Cmd.erc20Transfer(wethIdx, recipientIdx, amount)
         );
+        uint256 beforeBal = weth.balanceOf(address(executor)) + address(executor).balance;
         Outcome memory o = _executeSimulated(executor, stream, 1);
-        assertFalse(o.ok, "a physical decrease must be rejected by the default profit check");
+        // The decrease check raises InsufficientProfit(actual, expected) with
+        // the measured combined balances.
+        _assertRevertData(
+            o,
+            _executorRevert(ExecutorErrors.INSUFFICIENT_PROFIT, beforeBal - amount, beforeBal),
+            "physical decrease"
+        );
     }
 
     function testSweepIsSeparateFromExecution() public {
@@ -142,15 +161,27 @@ contract ExecutionReceiptTest is PoolSetup {
 
     function testSweepIsOwnerOnly() public {
         vm.prank(OTHER);
-        (bool ok,) = address(executor).call(
+        (bool ok, bytes memory ret) = address(executor).call(
             abi.encodeWithSignature("sweep(address)", BRIBE_RECIPIENT)
         );
-        assertFalse(ok, "non-owner sweep must revert");
+        _assertRevertData(
+            Outcome(ok, ret, 0, 0, 0),
+            _executorRevert(ExecutorErrors.UNAUTHORIZED, OTHER),
+            "non-owner sweep"
+        );
     }
 
     function testMinProfitRejectsShortfall() public {
+        // The stream must be non-degenerate: a bare separator reverts in the
+        // dispatch loop before any profit handling. WETH_DEPOSIT_ALL with no
+        // native ETH is a clean no-op that measures a zero gross, one wei
+        // short of the floor.
         bytes memory stream = bytes.concat(Cmd.preamble(_emptyTable()), Cmd.wethDepositAll());
         Outcome memory o = _executeSimulated(executor, stream, (uint256(1) << 32) | 1);
-        assertFalse(o.ok, "a min_profit above the measured gross must revert");
+        _assertRevertData(
+            o,
+            _executorRevert(ExecutorErrors.INSUFFICIENT_PROFIT, 0, 1),
+            "min_profit shortfall"
+        );
     }
 }

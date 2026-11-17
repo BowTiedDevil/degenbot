@@ -65,6 +65,9 @@ contract TokenSentinelsTest is PoolSetup {
         Cmd.Table memory at = _emptyTable();
         bytes memory commands = Cmd.v4Unlock(Cmd.v4TakeDelta(0xF9, SELF));
         Outcome memory o = _executeRaw(executor, bytes.concat(Cmd.preamble(at), commands));
-        assertFalse(o.ok, "unassigned reserved index must revert");
+        // 0xF9 is below the sentinel threshold and unassigned: the address
+        // index is out of bounds for the 32-slot table, fail-closed with no
+        // revert data (the source's NO_REVERT_DATA identity).
+        _assertRevertData(o, bytes(""), "unassigned reserved index");
     }
 }

@@ -14,7 +14,14 @@ contract StreamTruncationTest is PoolSetup {
             stream[i] = bytes1(Cmd.V4_SETTLE);
         }
         Outcome memory o = _executeRaw(executor, stream);
-        assertFalse(o.ok, "V4_SETTLE outside an unlock must revert, never silently truncate");
+        // The loop cap consumes every byte; the revert is the unrelated,
+        // expected ManagerLocked guard of V4_SETTLE outside an unlock — the
+        // PM's Error(string) payload — never a silent-success truncation.
+        _assertRevertData(o, _managerLocked(), "maximal stream");
+    }
+
+    function _managerLocked() private pure returns (bytes memory) {
+        return abi.encodeWithSignature("Error(string)", "ManagerLocked");
     }
 
     function testLoopCapEqualsByteBound() public pure {

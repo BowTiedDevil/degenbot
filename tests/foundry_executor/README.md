@@ -95,12 +95,13 @@ auto-pay path).
 | `test_stream_truncation.py` | `StreamTruncation.t.sol` | 2 | 2 |
 | `test_profit_guard_m1_m2.py` | `ProfitGuard.t.sol` | 2 | 2 |
 | `test_token_sentinels.py` | `TokenSentinels.t.sol` | 5 (parametrized) | 5 |
-| `test_preprocess_addr_count.py` | `PreprocessAddrCount.t.sol` | 2 | 2 |
+| `test_preprocess_addr_count.py` | `PreprocessAddrCount.t.sol` | 2 | 4 (288-byte accept and 289-byte ABI rejection added) |
 | `test_cmd_executor_edge_cases.py` | `EdgeCases.t.sol` | 2 | 2 |
 | `test_execution_receipt.py` | `ExecutionReceipt.t.sol` | 12 (parametrized) | 12 |
 | `test_events.py` | `Events.t.sol` | 6 | 6 |
-| `test_withdraw_reentrancy.py` | `WithdrawReentrancy.t.sol` | 2 | 2 |
+| `test_withdraw_reentrancy.py` | `WithdrawReentrancy.t.sol` | 2 | 3 (withdraw owner-only added) |
 | `test_donation_profit_inflation.py` | `DonationProfitInflation.t.sol` | 1 (+1 skipped) | 1 |
+| `test_sentinel_failclosed.py` | `SentinelFailClosed.t.sol` | 21 (11 helper meta-tests) | 21 |
 | `test_cmd_executor_v2v3.py` | `V2V3.t.sol` | 2 | 2 |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
@@ -111,7 +112,7 @@ Not ported: the swap-family files (`v2_swap_direct`, `v3_three_hop`, `v4v2`,
 `three_pool_v2`, `bribe_commands`, `bribe_transfer`), the three-hop matrices
 (`three_hop_optimized`, `three_hop_production_calldata`), `conservation`,
 `erc6909`, `erc6909_composability`, `pm_as_bank`, `withdrawal`,
-`sentinel_failclosed`, `release_metadata`, the fake-parity and library tiers
+`release_metadata`, the fake-parity and library tiers
 (`fake_pool_manager_parity`, `fake_abi_fidelity`, `v3_libraries`,
 `v3_library_fuzz`, `v3_pool`, `v2_*_fee*`, `v2_swap_calc_*`), and the
 Rust-artifact cross-checks.
@@ -138,3 +139,11 @@ Rust-artifact cross-checks.
   stands in for an EOA that receives ETH (WETH.withdraw payouts, bribes).
 - **`execute.call` becomes `_executeSimulated`** (snapshot → call → revert) to
   keep Ape's read-only `eth_call` semantics.
+- **Reverts are pinned, not merely expected.** Wherever the contract exposes a
+  revert identity, the port asserts the exact revert data — selector and
+  arguments through the generated `ExecutorErrors` vocabulary — instead of a
+  bare `assertFalse(ok)`. Reverts that carry no identity (Vyper bounds checks,
+  ABI decoder rejections) are pinned as the zero-length payload; the empty
+  execution section and the hook sentinels are deliberate empty-data cases,
+  and the native hook sentinel's downstream `ManagerLocked` Error(string) is
+  asserted as an identified acceptance, distinct from any executor guard.
