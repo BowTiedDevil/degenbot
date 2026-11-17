@@ -29,7 +29,6 @@ from degenbot.config import (
     RpcNotConfiguredError,
     resolve_chain_id,
     resolve_http_rpc_uri,
-    resolve_node,
     resolve_rpc_uris,
     resolve_ws_rpc_uri,
 )
@@ -120,7 +119,7 @@ def _probe(tmp_path: Path, file_body: str, *ops: list[Any], **env_overrides: str
                 results.append({"path": resolved.path, "source": resolved.source})
             else:
                 raise AssertionError("unknown probe op: " + kind)
-        except BaseException as exc:  # noqa: BLE001 - the message is the assertion
+        except BaseException as exc:  # ruff: ignore[blind-except] - the message is the assertion
             results.append({"error": type(exc).__name__ + ": " + str(exc)})
     return results
 
@@ -317,7 +316,7 @@ class TestNotConfigured:
 
     def test_it_stays_a_value_error(self) -> None:
         """Callers that already catch a misconfigured endpoint keep working."""
-        with pytest.raises(ValueError):  # noqa: PT011 - the class is the assertion
+        with pytest.raises(ValueError):  # ruff: ignore[pytest-raises-too-broad] - the class is the assertion
             resolve_rpc_uris(_UNCONFIGURED_CHAIN)
 
     def test_the_pair_reports_which_capability_is_missing(self) -> None:

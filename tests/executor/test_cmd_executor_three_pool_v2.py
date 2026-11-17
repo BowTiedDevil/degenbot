@@ -55,12 +55,13 @@ within the same callback.
 """
 
 import pytest
+
 from .conftest_shared import (
-    enc_v2_swap_compact,
-    enc_v2_swap_calc,
-    enc_erc20_transfer,
     AddressTable,
+    enc_erc20_transfer,
     enc_preamble,
+    enc_v2_swap_calc,
+    enc_v2_swap_compact,
 )
 
 # ── V2 constant-product helpers ──

@@ -18,12 +18,11 @@ verifies the constant-product invariant after each swap, ensuring
 correct fee handling.
 """
 
-import pytest
 from .conftest_shared import (
     WETH_DEPLOYMENT_WRAP_AMOUNT,
-    enc_v2_swap_calc,
     AddressTable,
     enc_preamble,
+    enc_v2_swap_calc,
     v2_get_amount_out,
 )
 

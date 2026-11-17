@@ -3,20 +3,21 @@ Tests for cmd_executor edge cases: native ETH settlement, V2 direct swap.
 """
 
 import pytest
+
 from .conftest_shared import (
     NATIVE_ADDRESS,
     ZERO_ADDRESS,
+    AddressTable,
+    _make_pool_key,
+    _setup_v2_pair,
+    _setup_v4_swap,
+    enc_erc20_transfer,
+    enc_preamble,
+    enc_v2_swap_compact,
+    enc_v4_settle_delta,
     enc_v4_swap_compact,
     enc_v4_take,
-    enc_v4_settle_delta,
     enc_v4_unlock,
-    enc_v2_swap_compact,
-    enc_erc20_transfer,
-    _make_pool_key,
-    _setup_v4_swap,
-    _setup_v2_pair,
-    AddressTable,
-    enc_preamble,
 )
 
 

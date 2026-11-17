@@ -30,29 +30,28 @@ V4 delta sign convention (after swap):
 """
 
 import pytest
+
 from .conftest_shared import (
     NATIVE_ADDRESS,
-    ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
-    V2_LIQUIDITY_WETH,
     V2_LIQUIDITY_USDC,
-    enc_v4_swap_compact,
+    V2_LIQUIDITY_WETH,
+    ZERO_ADDRESS,
+    AddressTable,
+    _make_pool_key,
+    _setup_v3,
+    _setup_v4_swap,
+    enc_erc20_transfer,
+    enc_preamble,
     enc_v2_swap_compact,
     enc_v3_swap_compact,
-    enc_v4_take,
-    enc_v4_take_delta,
     enc_v4_settle_delta,
-    enc_erc20_transfer,
+    enc_v4_swap_compact,
+    enc_v4_take,
     enc_v4_unlock,
     enc_weth_deposit,
-    enc_weth_withdraw,
     enc_weth_deposit_all,
+    enc_weth_withdraw,
     enc_weth_withdraw_all,
-    _make_pool_key,
-    _setup_v4_swap,
-    _setup_v3,
-    AddressTable,
-    enc_preamble,
     v2_get_amount_out,
 )
 

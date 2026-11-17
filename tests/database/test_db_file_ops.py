@@ -7,8 +7,6 @@ import pathlib
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 
-import pytest
-
 from degenbot.db import (
     db_backup_database,
     db_compact_database,

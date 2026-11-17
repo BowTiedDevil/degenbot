@@ -13,12 +13,6 @@ See .auto/h3-donation-truncation.md (since removed).
 
 import pytest
 
-from .conftest_shared import (
-    enc_preamble,
-    make_config,
-    AddressTable,
-)
-
 AMOUNT_WETH = 10 * 10**18
 DONATION = 5 * 10**18
 

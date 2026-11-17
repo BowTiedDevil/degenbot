@@ -9,9 +9,9 @@ than wrapping or silently overwriting.
 """
 
 import pytest
-
-from .conftest_shared import enc_set_address, enc_preamble, AddressTable
 from eth_utils import to_checksum_address
+
+from .conftest_shared import enc_set_address
 
 
 def _addr(i: int):

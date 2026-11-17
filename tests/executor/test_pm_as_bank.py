@@ -25,23 +25,19 @@ Key findings:
 import pytest
 
 from .conftest_shared import (
-    ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
-    enc_v2_swap_compact,
-    enc_v2_swap_calc,
-    enc_v3_swap_compact,
-    enc_v4_take,
-    enc_v4_take_delta,
-    enc_v4_mint_compact,
-    enc_v4_sync,
-    enc_v4_settle,
-    enc_v4_unlock,
+    AddressTable,
     enc_erc20_transfer,
     enc_preamble,
-    AddressTable,
+    enc_v2_swap_calc,
+    enc_v3_swap_compact,
+    enc_v4_mint_compact,
+    enc_v4_settle,
+    enc_v4_sync,
+    enc_v4_take,
+    enc_v4_take_delta,
+    enc_v4_unlock,
     v2_get_amount_out,
 )
-
 from .verify import count_transfers
 
 AMOUNT_WETH = 1 * 10**18
@@ -55,7 +51,7 @@ _gas_results = {}
 
 
 def _record(path, mode, gas, xf):
-    _gas_results[(path, mode)] = (gas, xf)
+    _gas_results[path, mode] = (gas, xf)
 
 
 def _v2sc(at, pool, zfo, recp, fee=V2_FEE):

@@ -12,7 +12,6 @@ the facade wiring.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -21,9 +20,6 @@ from degenbot.config import declared_database_path, resolve_chain_id, resolve_da
 from degenbot.provider import get_provider_from_config
 from degenbot.provider.factory import get_provider_from_config as factory_get
 from tests.helpers.seam import resolved_config
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class _BoundaryProvider:

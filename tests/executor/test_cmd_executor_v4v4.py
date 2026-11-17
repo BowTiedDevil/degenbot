@@ -7,15 +7,15 @@ import pytest
 from .conftest_shared import (
     NATIVE_ADDRESS,
     ZERO_ADDRESS,
+    AddressTable,
+    _make_pool_key,
+    _setup_v4_swap,
+    enc_preamble,
+    enc_v4_batch,
+    enc_v4_settle_delta,
     enc_v4_swap_compact,
     enc_v4_take,
     enc_v4_unlock,
-    enc_v4_settle_delta,
-    enc_v4_batch,
-    _make_pool_key,
-    _setup_v4_swap,
-    AddressTable,
-    enc_preamble,
 )
 
 

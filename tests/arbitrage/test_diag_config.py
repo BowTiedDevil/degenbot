@@ -19,7 +19,7 @@ import pytest
 from degenbot.runner.diag import DiagConfig, arm_diagnostics
 from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.helpers import verdict_probe as probe
-from tests.helpers.rpc_env import rpc_env_autouse  # noqa: F401 — registers the autouse fixture
+from tests.helpers.rpc_env import rpc_env_autouse  # ruff: ignore[unused-import] — registers the autouse fixture
 
 
 def _full_env() -> dict[str, str]:

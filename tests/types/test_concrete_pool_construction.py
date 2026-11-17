@@ -23,7 +23,6 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.helpers.v4_pool_factory import make_v4_pool
 
-
 # ---------------------------------------------------------------------------
 # Shared tokens (Ethereum mainnet)
 # ---------------------------------------------------------------------------

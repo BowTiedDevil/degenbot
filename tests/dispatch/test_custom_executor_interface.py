@@ -161,7 +161,7 @@ def _v2_hop(
     token0: str,
     token1: str,
     fee: int,
-    zfo: bool,  # noqa: FBT001 - the seam's own direction field is a bool
+    zfo: bool,  # ruff: ignore[boolean-type-hint-positional-argument] - the seam's own direction field is a bool
 ) -> dict[str, Any]:
     """One V2 hop literal — the full `HopInfo` shape for the family."""
     return {
@@ -179,7 +179,7 @@ def _v3_hop(
     token0: str,
     token1: str,
     fee: int,
-    zfo: bool,  # noqa: FBT001
+    zfo: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
 ) -> dict[str, Any]:
     """One V3 hop literal — the full `HopInfo` shape for the family."""
     return {
@@ -199,7 +199,7 @@ def _v4_hop(
     fee: int,
     tick_spacing: int,
     hook: str,
-    zfo: bool,  # noqa: FBT001
+    zfo: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
 ) -> dict[str, Any]:
     """One V4 hop literal — the full `HopInfo` shape for the family."""
     return {
@@ -485,7 +485,7 @@ class TestPerEncodeValidation:
     def test_the_declared_native_value_policy_checks_the_bound_value(
         self,
         policy: dict[str, Any] | None,
-        passes: bool,  # noqa: FBT001
+        passes: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
         message: str | None,
     ) -> None:
         """The three value arms, against the value the binding stamps."""

@@ -3,16 +3,17 @@ Tests for cmd_executor V2-V3 cross-protocol swaps.
 """
 
 import pytest
+
 from .conftest_shared import (
-    V2_LIQUIDITY_WETH,
     V2_LIQUIDITY_USDC,
-    enc_v3_swap_compact,
-    enc_v2_swap_compact,
-    enc_erc20_transfer,
+    V2_LIQUIDITY_WETH,
     AddressTable,
-    enc_preamble,
-    v2_get_amount_out,
     _setup_v3,
+    enc_erc20_transfer,
+    enc_preamble,
+    enc_v2_swap_compact,
+    enc_v3_swap_compact,
+    v2_get_amount_out,
 )
 
 

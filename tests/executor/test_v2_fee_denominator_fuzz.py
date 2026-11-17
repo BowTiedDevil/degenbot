@@ -19,7 +19,7 @@ We verify this proof by exhaustion for uint112-range inputs.
 formula CANNOT correctly represent 0.25% — it truncates to 0.2%.)
 """
 
-from hypothesis import given, settings, example, HealthCheck, assume
+from hypothesis import HealthCheck, assume, example, given, settings
 from hypothesis.strategies import integers
 
 UINT256_MAX = 2**256 - 1

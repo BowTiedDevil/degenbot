@@ -50,7 +50,7 @@ def test_public_db_mirror_matches_authoritative_stub() -> None:
 def test_updater_owns_pool_update_types_excluded_from_public_db() -> None:
     updater_exports = set(public_updater.__all__)
 
-    assert UPDATER_OWNED <= updater_exports
+    assert updater_exports >= UPDATER_OWNED
     assert UPDATER_OWNED.isdisjoint(public_db.__all__)
     for name in UPDATER_OWNED:
         assert getattr(public_updater, name) is getattr(ffi.db, name)

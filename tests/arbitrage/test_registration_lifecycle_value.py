@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.helpers.rpc_env import rpc_env_autouse  # noqa: F401 — registers the autouse fixture
+from tests.helpers.rpc_env import rpc_env_autouse  # ruff: ignore[unused-import] — registers the autouse fixture
 from tests.helpers.seam import ArbitrageEngine, Bot, RegistrationLifecycle, RetryPolicy
 
 _V3_ADDRESS = "0x" + "11" * 20

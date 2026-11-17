@@ -15,21 +15,19 @@ pre-configuration is needed.
 """
 
 import pytest
+
 from .conftest_shared import (
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
+    ZERO_ADDRESS,
+    AddressTable,
+    _make_pool_key,
+    _setup_v4_swap,
+    enc_preamble,
     enc_v2_swap_calc,
-    enc_erc20_transfer,
+    enc_v4_settle_delta,
     enc_v4_swap_compact,
     enc_v4_take,
     enc_v4_take_delta,
-    enc_v4_settle_delta,
     enc_v4_unlock,
-    enc_v2_swap_compact,
-    _make_pool_key,
-    _setup_v4_swap,
-    AddressTable,
-    enc_preamble,
-    ZERO_ADDRESS,
     v2_get_amount_out,
 )
 

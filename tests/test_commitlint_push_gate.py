@@ -53,11 +53,11 @@ def _throwaway_repo(tmp_path: Path) -> Path:
     repo.mkdir()
     git = [_git(), "-C", str(repo)]
     identity = ["-c", "user.name=gate", "-c", "user.email=gate@example.invalid"]
-    subprocess.run([*git, "init", "--quiet"], check=True)  # ruff: ignore[suspicious-subprocess-import]
+    subprocess.run([*git, "init", "--quiet"], check=True)
     for subject in ("feat: one", "feat: two"):
         (repo / "message.txt").write_text(subject, encoding="utf-8")
-        subprocess.run([*git, "add", "message.txt"], check=True)  # ruff: ignore[suspicious-subprocess-import]
-        subprocess.run([*git, *identity, "commit", "--quiet", "-m", subject], check=True)  # ruff: ignore[suspicious-subprocess-import]
+        subprocess.run([*git, "add", "message.txt"], check=True)
+        subprocess.run([*git, *identity, "commit", "--quiet", "-m", subject], check=True)
     return repo
 
 
@@ -89,7 +89,7 @@ def _run_gate(
         (bin_dir / "npx").unlink()
     env = dict(os.environ)
     env["PATH"] = str(bin_dir)
-    result = subprocess.run(  # ruff: ignore[suspicious-subprocess-import]
+    result = subprocess.run(
         [_bash(), str(SCRIPT)],
         cwd=repo,
         env=env,

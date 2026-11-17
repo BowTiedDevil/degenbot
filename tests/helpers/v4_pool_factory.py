@@ -17,14 +17,12 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20 import NativeToken
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool, v4_currency
-from tests.helpers.pool_bot import new_pool_bot
 from tests.helpers.seam import Bot
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from degenbot.erc20 import Erc20Token
-    from tests.helpers.seam import Bot
 
 # V4 registration is get-or-register on the `(pool_manager, pool_id)` pair: a
 # same-key + same-currencies build answers the EXISTING handle, while a genuine

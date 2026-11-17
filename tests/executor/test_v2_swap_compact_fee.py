@@ -15,15 +15,14 @@ Fee values (fraction of 10000):
   PancakeSwapV2:            25  (0.25%)
 """
 
-import pytest
 from .conftest_shared import (
-    enc_v2_swap_compact,
-    enc_erc20_transfer,
-    AddressTable,
-    enc_preamble,
-    v2_get_amount_out,
-    V2_LIQUIDITY_WETH,
     V2_LIQUIDITY_USDC,
+    V2_LIQUIDITY_WETH,
+    AddressTable,
+    enc_erc20_transfer,
+    enc_preamble,
+    enc_v2_swap_compact,
+    v2_get_amount_out,
 )
 
 AMOUNT_WETH = 1 * 10**18

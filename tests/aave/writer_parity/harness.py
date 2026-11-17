@@ -23,7 +23,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from degenbot.db import db_upgrade_database
 from tests.helpers.aave_logs import (

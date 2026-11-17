@@ -45,6 +45,8 @@ from tests.helpers.bot_factory import make_bot_with_provider
 # absent per-session file.
 from tests.helpers.seam import (
     Bot as EngineBot,
+)
+from tests.helpers.seam import (
     reinstall_config_holder_for_tests,
     shutdown_log_drainer,
 )

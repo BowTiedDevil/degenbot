@@ -6,15 +6,12 @@ V2 fee is a fraction of 10000. Values >= 10000 are invalid because
 revert with a clear error message rather than a cryptic underflow.
 """
 
-import pytest
 from .conftest_shared import (
     WETH_DEPLOYMENT_WRAP_AMOUNT,
-    enc_v2_swap_compact,
-    enc_v2_swap_calc,
     AddressTable,
     enc_preamble,
-    V2_LIQUIDITY_WETH,
-    V2_LIQUIDITY_USDC,
+    enc_v2_swap_calc,
+    enc_v2_swap_compact,
 )
 
 

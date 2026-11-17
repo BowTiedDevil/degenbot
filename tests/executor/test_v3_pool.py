@@ -9,13 +9,14 @@ invokes a callback on msg.sender, so direct calls from EOAs revert (same as the
 real UniswapV3Pool).
 """
 
-import pytest
 import math
 
+import pytest
+
 from .conftest_shared import (
-    enc_v3_swap_compact,
     AddressTable,
     enc_preamble,
+    enc_v3_swap_compact,
 )
 
 Q96 = 79228162514264337593543950336

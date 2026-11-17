@@ -23,18 +23,17 @@ import pytest
 from .conftest_shared import (
     NATIVE_ADDRESS,
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
-    enc_v4_swap_compact,
-    enc_v4_settle_delta,
-    enc_v4_unlock,
-    enc_v4_mint_compact,
-    enc_v4_burn_compact,
-    enc_v4_take_delta,
-    make_config,
+    AddressTable,
     _make_pool_key,
     _setup_v4_swap,
-    AddressTable,
     enc_preamble,
+    enc_v4_burn_compact,
+    enc_v4_mint_compact,
+    enc_v4_settle_delta,
+    enc_v4_swap_compact,
+    enc_v4_take_delta,
+    enc_v4_unlock,
+    make_config,
 )
 
 AMOUNT_WETH = 1 * 10**18

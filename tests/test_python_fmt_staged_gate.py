@@ -58,7 +58,7 @@ def _run_gate(
     bin_dir, argv_file = _stub_bin(tmp_path, uvx_exit=uvx_exit)
     env = dict(os.environ)
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    result = subprocess.run(  # ruff: ignore[suspicious-subprocess-import]
+    result = subprocess.run(
         [_bash(), str(SCRIPT), *args],
         cwd=REPO_ROOT,
         env=env,
@@ -71,7 +71,9 @@ def _run_gate(
 
 def _pinned_ruff() -> str:
     """The `ruff_version` value the justfile owns."""
-    match = re.search(r'^ruff_version := "(.*)"$', JUSTFILE.read_text(encoding="utf-8"), re.M)
+    match = re.search(
+        r'^ruff_version := "(.*)"$', JUSTFILE.read_text(encoding="utf-8"), re.MULTILINE
+    )
     assert match is not None, "the justfile must own a ruff_version pin"
     return match.group(1)
 

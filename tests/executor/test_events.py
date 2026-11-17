@@ -9,9 +9,8 @@ Events added:
 - fake_uniswap_v4_pool_manager: IPoolManager.Swap, IERC6909Claims.Transfer
 """
 
-import pytest
-from .verify import count_transfers, summarize_events
 from .conftest_shared import v2_get_amount_out
+from .verify import count_transfers, summarize_events
 
 V2_FEE = 30  # 0.3%
 

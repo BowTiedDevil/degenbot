@@ -12,10 +12,8 @@ consistent and the shared classes must be enumerated, not accidental.
 from __future__ import annotations
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.pool_type import derive_kind
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 def test_every_registration_carries_a_consistent_identity() -> None:

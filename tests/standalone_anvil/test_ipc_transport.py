@@ -116,7 +116,7 @@ def _resolve_from_operator_file(tmp_path: Path, body: str, *ops: list[Any]) -> l
                 results.append({"uri": _node(op[1], "subscription")["uri"]})
             else:
                 raise AssertionError("unknown probe op: " + kind)
-        except BaseException as exc:  # noqa: BLE001 - the message is the assertion
+        except BaseException as exc:  # ruff: ignore[blind-except] - the message is the assertion
             results.append({"error": type(exc).__name__ + ": " + str(exc)})
     return results
 

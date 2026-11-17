@@ -13,7 +13,7 @@ msg.sender == OWNER_ADDR enforced.
 
 import pytest
 
-from .conftest_shared import enc_send_eth, enc_send_eth_all, CMD_SEND_ETH, CMD_SEND_ETH_ALL
+from .conftest_shared import CMD_SEND_ETH, CMD_SEND_ETH_ALL, enc_send_eth, enc_send_eth_all
 
 
 class TestL1SendEthDocstrings:

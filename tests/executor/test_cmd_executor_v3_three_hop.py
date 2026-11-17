@@ -31,24 +31,24 @@ Test classes:
 """
 
 import pytest
+
 from .conftest_shared import (
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
+    AddressTable,
+    _make_pool_key,
     _setup_v3,
+    _setup_v4_swap,
+    enc_erc20_transfer,
+    enc_preamble,
     enc_v3_swap_compact,
     enc_v3_swap_delta,
-    enc_v4_swap_compact,
-    enc_v4_take,
-    enc_v4_take_delta,
-    enc_v4_sync,
     enc_v4_settle,
     enc_v4_settle_delta,
+    enc_v4_swap_compact,
+    enc_v4_sync,
+    enc_v4_take,
+    enc_v4_take_delta,
     enc_v4_unlock,
-    enc_erc20_transfer,
-    _make_pool_key,
-    _setup_v4_swap,
-    AddressTable,
-    enc_preamble,
 )
 
 # ── Amounts ──

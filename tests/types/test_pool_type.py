@@ -48,10 +48,13 @@ def test_classify_surfaces_unknown_spellings_as_unrecognized(raw: str) -> None:
 
 def test_balancer_variants_are_exactly_the_vault_dependent_pair() -> None:
     # The variants that REQUIRE a factory registration (no default class).
-    assert BALANCER_VARIANTS == frozenset({
-        PoolVariant.BALANCER_STABLE,
-        PoolVariant.BALANCER_WEIGHTED,
-    })
+    assert (
+        frozenset({
+            PoolVariant.BALANCER_STABLE,
+            PoolVariant.BALANCER_WEIGHTED,
+        })
+        == BALANCER_VARIANTS
+    )
 
 
 def test_the_unmodeled_variant_is_not_a_registerable_balancer_variant() -> None:

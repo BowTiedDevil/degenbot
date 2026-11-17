@@ -18,24 +18,22 @@ Scenarios:
 Each scenario is tested with both exact-amount and _ALL variants.
 """
 
-import pytest
 from .conftest_shared import (
     NATIVE_ADDRESS,
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
+    AddressTable,
+    _make_pool_key,
+    _setup_v4_swap,
+    enc_preamble,
+    enc_v4_settle_delta,
     enc_v4_swap_compact,
     enc_v4_take,
     enc_v4_take_delta,
-    enc_v4_settle_delta,
     enc_v4_unlock,
     enc_weth_deposit,
-    enc_weth_withdraw,
     enc_weth_deposit_all,
+    enc_weth_withdraw,
     enc_weth_withdraw_all,
-    _make_pool_key,
-    _setup_v4_swap,
-    AddressTable,
-    enc_preamble,
 )
 
 AMOUNT_WETH = 1 * 10**18

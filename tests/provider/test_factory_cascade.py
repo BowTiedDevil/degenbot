@@ -18,8 +18,7 @@ from typing import Any
 import pytest
 
 from degenbot.config import RpcNotConfiguredError
-from degenbot.provider.factory import ChainIdentityMismatchError
-from degenbot.provider.factory import get_provider_from_config
+from degenbot.provider.factory import ChainIdentityMismatchError, get_provider_from_config
 
 # A chain id no operator file or harness sets, so the refusal is genuinely the
 # absence of every layer rather than a leak from the developer's environment.
@@ -126,7 +125,7 @@ class TestFactoryRaisesWhenNoSource:
         assert "DEGENBOT_RPC_HTTP_CHAINID_" + str(_UNCONFIGURED_CHAIN) in str(exc_info.value)
 
     def test_it_stays_a_value_error(self) -> None:
-        with pytest.raises(ValueError):  # noqa: PT011 - the class is the assertion
+        with pytest.raises(ValueError):  # ruff: ignore[pytest-raises-too-broad] - the class is the assertion
             get_provider_from_config(chain_id=_UNCONFIGURED_CHAIN)
 
 

@@ -5,7 +5,6 @@ import pytest
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from tests.helpers.v2_cycle_engine import build_two_hop_v2_engine
 
-
 # The batch executor's path resolver is the engine's stage projection
 # (`EngineStages::path_info_for`), so seam tests must hand the executor a real
 # engine + a registered path_id. The engine's `register_and_solve_path`

@@ -37,7 +37,7 @@ def test_manifest_declares_the_published_keys() -> None:
 
 
 def test_python_refusal_list_is_the_manifest() -> None:
-    assert identity_module._PLACEHOLDER_OPERATOR_PRIVATE_KEYS == _manifest_keys()
+    assert _manifest_keys() == identity_module._PLACEHOLDER_OPERATOR_PRIVATE_KEYS
 
 
 # live-invariant gate (ADR-087 D2): watches the live `published_operator_private_keys.txt`

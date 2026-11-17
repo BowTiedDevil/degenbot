@@ -8,7 +8,6 @@ Solidity FullMath on a local Anvil instance.
 
 import pytest
 
-
 # ── Fixtures ──
 
 

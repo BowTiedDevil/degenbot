@@ -2,24 +2,19 @@
 Tests for cmd_executor dynamic value discovery commands.
 """
 
-import pytest
 from .conftest_shared import (
     NATIVE_ADDRESS,
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
-    MIN_SQRT_PRICE_X96,
-    MAX_SQRT_PRICE_X96,
-    enc_v4_swap_compact,
-    enc_v4_swap_dynamic,
-    enc_v4_take,
-    enc_v4_take_delta,
-    enc_v4_settle_delta,
-    enc_v4_settle_all,
-    enc_v4_unlock,
+    AddressTable,
     _make_pool_key,
     _setup_v4_swap,
-    AddressTable,
     enc_preamble,
+    enc_v4_settle_all,
+    enc_v4_settle_delta,
+    enc_v4_swap_compact,
+    enc_v4_swap_dynamic,
+    enc_v4_take_delta,
+    enc_v4_unlock,
 )
 
 

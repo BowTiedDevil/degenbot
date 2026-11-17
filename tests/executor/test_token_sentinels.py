@@ -1,8 +1,8 @@
 import pytest
 
 from .conftest_shared import (
-    AddressTable,
     ZERO_ADDRESS,
+    AddressTable,
     _make_pool_key,
     _setup_v4_swap,
     enc_preamble,

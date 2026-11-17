@@ -18,7 +18,6 @@ from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-
 CHAIN_DATA_PATH = Path(__file__).parent.parent / "fixtures" / "chain_data"
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 UNISWAP_V2_FACTORY_POOL_INIT_HASH = (

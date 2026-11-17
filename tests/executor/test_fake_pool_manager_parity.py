@@ -22,7 +22,6 @@ Requires mainnet-fork provider (ape foundry plugin with upstream RPC node).
 """
 
 import pytest
-
 from eth_utils.address import to_checksum_address
 
 # Uniswap V4 PoolManager on Ethereum mainnet

@@ -1,7 +1,6 @@
 """Test V3c pool with zfo=True through executor."""
 
-import pytest
-from .conftest_shared import Q96, _isqrt, enc_v3_swap_compact, enc_preamble, AddressTable
+from .conftest_shared import Q96, AddressTable, _isqrt, enc_preamble, enc_v3_swap_compact
 
 AMOUNT_WBTC = 100 * 10**8
 AMOUNT_WETH_PROFIT = 2 * 10**18

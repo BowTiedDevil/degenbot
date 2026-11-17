@@ -239,7 +239,7 @@ def test_every_registered_pool_builds_or_is_refused_typed(
                 continue
             refused[reason] += 1
             continue
-        except Exception as error:  # noqa: BLE001 — collected, reported as a census line
+        except Exception as error:  # ruff: ignore[blind-except] — collected, reported as a census line
             failures.append(
                 f"{type(error).__name__}: {error} — pool {index}/{len(pools)} @ {address} "
                 f"(corpus family {family!r}), block {SWEEP_FORK_BLOCK}. Reproduce: "

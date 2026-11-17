@@ -2,26 +2,24 @@
 Tests for cmd_executor compact and warm-balance commands.
 """
 
-import pytest
 from .conftest_shared import (
     NATIVE_ADDRESS,
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
-    enc_v4_swap_compact,
-    enc_v4_take,
-    enc_v4_take_delta,
-    enc_v4_take_compact,
-    enc_v4_sync,
-    enc_v4_settle,
-    enc_v4_settle_delta,
-    enc_erc20_xfer_balance,
-    enc_weth_deposit_all,
-    enc_weth_withdraw_all,
-    enc_v4_unlock,
+    AddressTable,
     _make_pool_key,
     _setup_v4_swap,
-    AddressTable,
+    enc_erc20_xfer_balance,
     enc_preamble,
+    enc_v4_settle,
+    enc_v4_settle_delta,
+    enc_v4_swap_compact,
+    enc_v4_sync,
+    enc_v4_take,
+    enc_v4_take_compact,
+    enc_v4_take_delta,
+    enc_v4_unlock,
+    enc_weth_deposit_all,
+    enc_weth_withdraw_all,
 )
 
 AMOUNT_WETH = 1 * 10**18

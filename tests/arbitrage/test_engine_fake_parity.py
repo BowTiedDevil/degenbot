@@ -25,7 +25,7 @@ from tests.fakes.engine import (
     FakeEngine,
 )
 from tests.helpers import verdict_probe as probe
-from tests.helpers.rpc_env import rpc_env_autouse  # noqa: F401 — registers the autouse fixture
+from tests.helpers.rpc_env import rpc_env_autouse  # ruff: ignore[unused-import] — registers the autouse fixture
 from tests.helpers.seam import ArbitrageEngine, Bot
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

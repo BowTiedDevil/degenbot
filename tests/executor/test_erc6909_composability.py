@@ -41,27 +41,24 @@ import pytest
 
 from .conftest_shared import (
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
+    AddressTable,
     _make_pool_key,
-    _setup_v4_swap,
     _setup_v2_pair,
     _setup_v3,
-    AddressTable,
-    enc_v4_swap_compact,
+    _setup_v4_swap,
+    enc_erc20_transfer,
+    enc_preamble,
     enc_v2_swap_compact,
     enc_v3_swap_compact,
-    enc_v2_swap_calc,
-    enc_v4_take,
-    enc_v4_take_compact,
-    enc_v4_mint_compact,
     enc_v4_burn_compact,
-    enc_v4_sync,
+    enc_v4_mint_compact,
     enc_v4_settle,
     enc_v4_settle_delta,
+    enc_v4_swap_compact,
+    enc_v4_sync,
+    enc_v4_take,
     enc_v4_unlock,
-    enc_erc20_transfer,
     enc_weth_deposit,
-    enc_preamble,
 )
 
 AMOUNT_WETH = 1 * 10**18
@@ -506,7 +503,7 @@ class TestERC6909MultiTxComposability:
             f"  TX3: V4_BURN({total_erc6909}) + V4_TAKE — withdrew as physical WETH (1 ERC20 xfer)"
         )
         print(
-            f"       Total: 0+0+1 = 1 ERC20 transfer across 3 transactions (vs 1+1+1 = 3 with V4_TAKE each)"
+            "       Total: 0+0+1 = 1 ERC20 transfer across 3 transactions (vs 1+1+1 = 3 with V4_TAKE each)"
         )
 
 

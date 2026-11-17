@@ -34,7 +34,6 @@ from .conftest_shared import (
     enc_v2_swap_calc,
     enc_v2_swap_compact,
     enc_v2_swap_direct,
-    enc_v3_swap_compact,
     enc_v3_swap_delta,
     enc_v3_swap_one_for_zero,
     enc_v3_swap_zero_for_one,
@@ -199,7 +198,7 @@ class TestManifestAgreement:
         )
         assert manifest["capabilities"]["commitment"] == "0x" + derived.hex()
         assert [capability["id"] for capability in manifest["capabilities"]["ids"]] == source_ids
-        assert CAPABILITIES_HASH == derived
+        assert derived == CAPABILITIES_HASH
 
     def test_manifest_commitment_is_reproducible_from_its_ids(self, manifest):
         ids = [capability["id"] for capability in manifest["capabilities"]["ids"]]

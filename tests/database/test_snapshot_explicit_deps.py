@@ -5,8 +5,8 @@ import pathlib
 import pytest
 
 from degenbot.db import (
-    db_upgrade_database,
     db_set_exchange_last_update_block,
+    db_upgrade_database,
     db_upsert_exchange,
 )
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot

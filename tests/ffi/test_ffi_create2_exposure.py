@@ -14,9 +14,9 @@ from tests.helpers.seam import (
     keccak256,
 )
 
-## Uniswap V2 DAI/WETH mainnet pool (golden, byte-level).
+# Uniswap V2 DAI/WETH mainnet pool (golden, byte-level).
 V2_DAI_WETH = "0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11"
-## Uniswap V3 USDC/WETH mainnet pools (on-chain golden).
+# Uniswap V3 USDC/WETH mainnet pools (on-chain golden).
 V3_USDC_WETH_005 = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
 V3_USDC_WETH_03 = "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"
 

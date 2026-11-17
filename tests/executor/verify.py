@@ -45,9 +45,10 @@ def count_transfers(receipt, v4_pm=None) -> int:
             continue
         topic0 = topics[0]
         topic0_hex = topic0.hex() if isinstance(topic0, bytes) else str(topic0)
-        if topic0_hex[:8] == _TRANSFER_TOPIC0_PREFIX:
-            n_transfer += 1
-        elif topic0_hex[:8] == _ERC6909_TRANSFER_TOPIC0_PREFIX:
+        if (
+            topic0_hex[:8] == _TRANSFER_TOPIC0_PREFIX
+            or topic0_hex[:8] == _ERC6909_TRANSFER_TOPIC0_PREFIX
+        ):
             n_transfer += 1
 
     return n_transfer
@@ -97,7 +98,7 @@ def snapshot_balances(tokens, accounts, track_eth=True):
     for token in tokens:
         for account in accounts:
             addr = account.address if hasattr(account, "address") else account
-            balances[(token.address, addr)] = token.balanceOf(addr)
+            balances[token.address, addr] = token.balanceOf(addr)
     if track_eth:
         for account in accounts:
             addr = account.address if hasattr(account, "address") else account
@@ -105,7 +106,7 @@ def snapshot_balances(tokens, accounts, track_eth=True):
             # For EOA accounts, this is the account's ETH balance.
             from ape import chain
 
-            balances[(NATIVE_ADDRESS, addr)] = chain.provider.get_balance(addr)
+            balances[NATIVE_ADDRESS, addr] = chain.provider.get_balance(addr)
     return balances
 
 

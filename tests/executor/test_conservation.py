@@ -37,25 +37,18 @@ import pytest
 
 from .conftest_shared import (
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
-    enc_v2_swap_compact,
-    enc_v2_swap_calc,
-    enc_v4_swap_compact,
-    enc_v4_take,
-    enc_v4_sync,
-    enc_v4_settle,
-    enc_v4_settle_delta,
-    enc_v4_unlock,
-    enc_erc20_transfer,
+    AddressTable,
     _make_pool_key,
     _setup_v4_swap,
-    _setup_v2_pair,
-    AddressTable,
-    enc_preamble,
+    enc_erc20_transfer,
+    enc_v2_swap_calc,
+    enc_v2_swap_compact,
+    enc_v4_swap_compact,
+    enc_v4_take,
+    enc_v4_unlock,
     v2_get_amount_out,
 )
-
-from .verify import snapshot_balances, diff_snapshots, NATIVE_ADDRESS
+from .verify import NATIVE_ADDRESS, diff_snapshots, snapshot_balances
 
 AMOUNT_WETH = 1 * 10**18
 AMOUNT_USDC = 2000 * 10**6

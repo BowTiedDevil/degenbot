@@ -23,9 +23,9 @@ from degenbot.utils.bytes import to_bytes
 from tests.helpers.erc20_factory import make_erc20, make_native_token
 
 if TYPE_CHECKING:
-    from degenbot.erc20 import NativeToken
     import pathlib
 
+    from degenbot.erc20 import NativeToken
     from degenbot.erc20.erc20 import Erc20Token
     from tests.helpers.seam import Bot
 

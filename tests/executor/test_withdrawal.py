@@ -10,28 +10,26 @@ These are the "exit" commands — they convert internal PM accounting entries
 (ERC6909 balances) into physical tokens and move them to external addresses.
 """
 
-import pytest
 from .conftest_shared import (
-    ZERO_ADDRESS,
     NATIVE_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
+    ZERO_ADDRESS,
+    AddressTable,
     _make_pool_key,
     _setup_v4_swap,
-    AddressTable,
-    enc_v4_swap_compact,
-    enc_v4_take_delta,
-    enc_v4_take_compact,
-    enc_v4_mint_compact,
-    enc_v4_burn_compact,
-    enc_v4_sync,
-    enc_v4_settle,
-    enc_v4_settle_delta,
-    enc_v4_unlock,
     enc_erc20_transfer,
     enc_erc20_xfer_balance,
+    enc_preamble,
     enc_send_eth,
     enc_send_eth_all,
-    enc_preamble,
+    enc_v4_burn_compact,
+    enc_v4_mint_compact,
+    enc_v4_settle,
+    enc_v4_settle_delta,
+    enc_v4_swap_compact,
+    enc_v4_sync,
+    enc_v4_take_compact,
+    enc_v4_take_delta,
+    enc_v4_unlock,
 )
 
 AMOUNT_WETH = 1 * 10**18

@@ -3,24 +3,24 @@ Tests for cmd_executor V4-V2 swap execution.
 """
 
 import pytest
+
 from .conftest_shared import (
-    ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
-    V2_LIQUIDITY_WETH,
     V2_LIQUIDITY_USDC,
-    enc_v4_swap_compact,
-    enc_v2_swap_compact,
-    enc_v2_swap_calc,
-    enc_v4_take,
-    enc_v4_sync,
-    enc_v4_settle,
-    enc_v4_settle_delta,
-    enc_erc20_transfer,
-    enc_v4_unlock,
+    V2_LIQUIDITY_WETH,
+    ZERO_ADDRESS,
+    AddressTable,
     _make_pool_key,
     _setup_v4_swap,
-    AddressTable,
+    enc_erc20_transfer,
     enc_preamble,
+    enc_v2_swap_calc,
+    enc_v2_swap_compact,
+    enc_v4_settle,
+    enc_v4_settle_delta,
+    enc_v4_swap_compact,
+    enc_v4_sync,
+    enc_v4_take,
+    enc_v4_unlock,
     v2_get_amount_out,
 )
 

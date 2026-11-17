@@ -18,7 +18,7 @@ from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness
 from tests.helpers import verdict_probe as probe
 from tests.helpers.boot_actors import FakeBootReadiness, boot_runner, noop_coro
-from tests.helpers.rpc_env import rpc_env_autouse  # noqa: F401 — registers the autouse fixture
+from tests.helpers.rpc_env import rpc_env_autouse  # ruff: ignore[unused-import] — registers the autouse fixture
 
 if TYPE_CHECKING:
     from degenbot.runner import BotRunner

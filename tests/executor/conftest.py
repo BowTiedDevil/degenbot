@@ -29,7 +29,7 @@ if os.environ.get("APE_ETHEREUM_NETWORK") == "local":
 from eth_utils.address import to_checksum_address
 from hypothesis import settings
 
-from .conftest_shared import WETH_DEPLOYMENT_WRAP_AMOUNT, enc_preamble, make_config
+from .conftest_shared import enc_preamble, make_config
 
 # pytest-xdist: pin one anvil port per worker.
 # ape-foundry's "host: auto" makes the FIRST caller prefer 127.0.0.1:8545

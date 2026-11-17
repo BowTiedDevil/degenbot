@@ -769,7 +769,7 @@ def record_gas(label: str, gas_used: int) -> None:
     Example: ``GAS TestV2V2V2 187849``
     """
     line = f"GAS {label} {gas_used}\n"
-    with open(_GAS_RESULTS_PATH, "a") as f:
+    with Path(_GAS_RESULTS_PATH).open("a") as f:
         f.write(line)
 
 

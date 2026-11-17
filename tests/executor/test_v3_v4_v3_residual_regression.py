@@ -32,6 +32,9 @@ import pytest
 
 from .conftest_shared import (
     AddressTable,
+    _make_pool_key,
+    _setup_v3,
+    _setup_v4_swap,
     enc_erc20_transfer,
     enc_preamble,
     enc_v3_swap_compact,
@@ -43,9 +46,6 @@ from .conftest_shared import (
     enc_v4_take_compact,
     enc_v4_take_delta,
     enc_v4_unlock,
-    _make_pool_key,
-    _setup_v3,
-    _setup_v4_swap,
 )
 
 AMOUNT_WETH = 1 * 10**18

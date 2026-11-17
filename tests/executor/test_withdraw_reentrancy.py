@@ -19,8 +19,6 @@ window (e.g. a codepath that credits `self.balance` *after* the raw_call).
 
 import pytest
 
-from .conftest_shared import ZERO_ADDRESS
-
 AMOUNT_WETH = 10 * 10**18
 
 

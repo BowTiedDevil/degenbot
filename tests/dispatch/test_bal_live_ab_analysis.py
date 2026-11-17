@@ -412,8 +412,10 @@ def test_the_fanout_id_joins_selection_prefetch_sim_and_trace_rows_for_one_fan_o
     assert list(joined) == [41], "one fan-out, one identifier"
     entry = joined[41]
     assert entry.selection is not None
-    assert entry.prefetch is not None and entry.prefetch.seeded == 247
-    assert entry.lab is not None and entry.lab.candidates == 50
+    assert entry.prefetch is not None
+    assert entry.prefetch.seeded == 247
+    assert entry.lab is not None
+    assert entry.lab.candidates == 50
     assert len(entry.traces) == 2, "both candidates of the fan-out join it"
     assert {row.cand for row in entry.traces} == {"47821@1"}
     assert analysis.unattributed_traces(capture) == []

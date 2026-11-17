@@ -23,8 +23,8 @@ from degenbot.dispatch import (
     dispatch_and_submit,
     typed_submit_record,
 )
-from tests.helpers.seam import CandidateId
 from degenbot.exceptions.base import DegenbotValueError
+from tests.helpers.seam import CandidateId
 
 
 class TestTypedSubmitRecord:

@@ -13,10 +13,10 @@ revert identity.
 import json
 from pathlib import Path
 
+import pytest
 from ape.exceptions import ApeAttributeError
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-import pytest
 
 from .conftest_shared import (
     NO_REVERT_DATA,
@@ -66,15 +66,15 @@ def harness(project, accounts):
 @pytest.fixture(scope="module")
 def sol_ref(accounts):
     """Deploy the Solidity reference contract from pre-compiled artifact."""
-    from ethpm_types import ContractType
     from ape.contracts.base import ContractContainer
+    from ethpm_types import ContractType
 
     if not SOL_REF_ARTIFACT.is_file():
         pytest.fail(
             f"missing committed artifact {SOL_REF_ARTIFACT} — build and commit it "
             "with contracts/scripts/build-sol-reference-artifact.sh"
         )
-    with open(SOL_REF_ARTIFACT) as f:
+    with Path(SOL_REF_ARTIFACT).open() as f:
         artifact = json.load(f)
 
     ct = ContractType(

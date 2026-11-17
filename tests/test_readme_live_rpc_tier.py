@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _collect(*marker_args: str) -> str:
-    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv, no shell
         [sys.executable, "-m", "pytest", "README.md", "--collect-only", "-q", *marker_args],
         cwd=ROOT,
         capture_output=True,

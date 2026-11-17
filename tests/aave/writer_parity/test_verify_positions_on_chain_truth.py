@@ -248,7 +248,7 @@ class _WrittenChunk:
     db_balance: int
 
 
-@pytest.fixture()
+@pytest.fixture
 def written_chunk(tmp_path: Path) -> Callable[..., AbstractContextManager[_WrittenChunk]]:
     """Seed the DB + MockRpcServer, then drive one chunk through the Rust writer.
 

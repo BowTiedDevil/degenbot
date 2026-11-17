@@ -22,26 +22,25 @@ import pytest
 
 from .conftest_shared import (
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
-    enc_v2_swap_compact,
+    AddressTable,
+    _make_pool_key,
+    _setup_v2_pair,
+    _setup_v4_swap,
+    enc_erc20_transfer,
+    enc_preamble,
     enc_v2_swap_calc,
+    enc_v2_swap_compact,
     enc_v2_swap_direct,
     enc_v3_swap_compact,
-    enc_v4_swap_compact,
-    enc_v4_take,
-    enc_v4_sync,
     enc_v4_settle,
     enc_v4_settle_delta,
+    enc_v4_swap_compact,
+    enc_v4_sync,
+    enc_v4_take,
     enc_v4_unlock,
-    enc_erc20_transfer,
-    _make_pool_key,
-    _setup_v4_swap,
-    _setup_v2_pair,
-    AddressTable,
-    enc_preamble,
     v2_get_amount_out,
 )
-from .verify import count_transfers, snapshot_balances, diff_snapshots, NATIVE_ADDRESS
+from .verify import NATIVE_ADDRESS, count_transfers, diff_snapshots, snapshot_balances
 
 AMOUNT_WETH = 1 * 10**18
 AMOUNT_USDC = 2000 * 10**6
@@ -764,7 +763,7 @@ class TestV2SwapDirectGasComparison:
         gas_direct = tx_direct.gas_used
 
         gas_saved = gas_calc - gas_direct
-        print(f"\n  V2-V4-V4 gas comparison:")
+        print("\n  V2-V4-V4 gas comparison:")
         print(f"    V2_SWAP_CALC:   {gas_calc:>8,} gas")
         print(f"    V2_SWAP_DIRECT: {gas_direct:>8,} gas  (saves {gas_saved:+,})")
 

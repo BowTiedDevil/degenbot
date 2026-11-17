@@ -44,7 +44,8 @@ class TestFakeV4PoolManagerAbi:
         payload = _self_verifying_payload(1200)
         receipt = echo.do_unlock(v4_pm.address, payload, sender=owner_account)
         out = receipt.return_value
-        assert isinstance(out, (bytes, bytearray)) and bytes(out) == payload
+        assert isinstance(out, (bytes, bytearray))
+        assert bytes(out) == payload
         assert echo.last_len() == 1200
         assert bytes(echo.last_digest()) == keccak(_covered(payload))
 

@@ -11,24 +11,21 @@ Key optimization: replacing take+sync+transfer+settle with mint
 Uses cmd_executor with V4_MINT_COMPACT (0x19) and V4_BURN_COMPACT (0x1A).
 """
 
-import pytest
-
 from .conftest_shared import (
     ZERO_ADDRESS,
-    WETH_DEPLOYMENT_WRAP_AMOUNT,
+    AddressTable,
     _make_pool_key,
     _setup_v4_swap,
-    AddressTable,
-    enc_v4_swap_compact,
-    enc_v4_take,
-    enc_v4_take_compact,
-    enc_v4_mint_compact,
-    enc_v4_burn_compact,
-    enc_v4_sync,
-    enc_v4_settle,
-    enc_v4_unlock,
     enc_erc20_transfer,
     enc_preamble,
+    enc_v4_burn_compact,
+    enc_v4_mint_compact,
+    enc_v4_settle,
+    enc_v4_swap_compact,
+    enc_v4_sync,
+    enc_v4_take,
+    enc_v4_take_compact,
+    enc_v4_unlock,
 )
 
 AMOUNT_WETH = 1 * 10**18

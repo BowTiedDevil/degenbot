@@ -220,4 +220,5 @@ def test_config_projection_stubs_are_typed() -> None:
     ]
     assert len(machinery) == 1, "ConfigSectionValues must keep its machinery __getattr__"
     param = (machinery[0].args.posonlyargs or machinery[0].args.args)[1]
-    assert isinstance(param.annotation, ast.Name) and param.annotation.id == "str"
+    assert isinstance(param.annotation, ast.Name)
+    assert param.annotation.id == "str"

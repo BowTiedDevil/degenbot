@@ -200,7 +200,7 @@ def _wait_for_rpc(port: int, timeout: float = _ANVIL_BOOT_GUARD_SECS) -> None:
                 data=payload,
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(request, timeout=1):  # noqa: S310
+            with urllib.request.urlopen(request, timeout=1):  # ruff: ignore[suspicious-url-open-usage]
                 return
         except OSError:
             time.sleep(0.25)
@@ -228,7 +228,7 @@ def _run_driver(command: list[str], env: dict[str, str]) -> None:
     """Run one driver bounded by LIVE_TIMEOUT_ENV (dry-run loops until stopped)."""
     timeout = float(os.environ.get(LIVE_TIMEOUT_ENV, "180"))
     try:
-        subprocess.run(command, env=env, check=False, timeout=timeout, capture_output=True)  # noqa: S603
+        subprocess.run(command, env=env, check=False, timeout=timeout, capture_output=True)  # ruff: ignore[subprocess-without-shell-equals-true]
     except subprocess.TimeoutExpired:
         # A dry-run driver may keep pumping until stopped; the timeout is the
         # bounded end of the fork-window run.
