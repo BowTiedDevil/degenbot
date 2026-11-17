@@ -224,3 +224,23 @@ design-named family arms remain anywhere.
 tier-3 oracle suites, the revm runtime matrix, the facade parity legs, and the
 solvers' crossing/parity + golden-replay suites stayed byte-identical across the
 move (recorded in the T4 sign-off).
+
+**A7 — Direct hop-payload capture (accepted; implemented).** A5 removed the
+crate-ownership premise that required the Solidly, Balancer weighted, Balancer
+stable, and Curve family read modules to return projection twins of their solver
+hop states. Each family's `capture_hop` instead returns the hop payload defined
+by its sibling family module. Sharing that value is not solver-kernel consumption:
+the read module remains a pure projection over its state slice and reads neither
+the state owner nor the search and envelope implementations. The resolve row keeps
+registry lookup, refusal mapping, the state nonce, and the `ResolvedHop` variant
+wrap. The four projection types and their field-copy routines are deleted together
+without compatibility aliases. Hop fields and their public layout stay unchanged;
+Solidly adopts its hop state's existing `Clone`-but-not-`Copy` contract. Acceptance
+requires identical resolved payloads, refusal mappings, and state nonces, with no
+solver-math change. Existing family and resolve-row tests keep their current seams
+and assertions; no duplicate field-by-field suites are added. The hard cutover carries
+a `rust/CHANGELOG.md` “Was → Is” entry for every deleted projection type (ADR-084
+D7). The cutover is complete: the four projection types and their field-copy
+routines are deleted with no aliases, `rust/CHANGELOG.md` carries the Was → Is
+migration rows, and the pools root surface pin tracks the four-name shrink with
+the full `just test` ladder green.

@@ -8,9 +8,10 @@
 //! exact-in, and the pair exact-out `GIVEN_OUT` read — behind one entry), the
 //! resolve projection as a pure function of the family state slice, and the
 //! family-local apply/observe behavior over that slice. It reads NO state
-//! owner and consumes NO solver kernel — the hop is solver vocabulary, so the
-//! wrapper stays at the dispatch row (the substrate resolve row does the
-//! registry lookup and wraps the solver's `ResolvedHop`).
+//! owner and consumes NO solver kernel — [`capture_hop`] returns the sibling
+//! family module's hop payload (`solve::BalancerWeightedHopState`, ADR-073
+//! A7) directly; the substrate resolve row only wraps it into the
+//! `ResolvedHop` variant and carries the state nonce.
 //!
 //! # The four intent doors (ADR-073 D4)
 //!
@@ -62,33 +63,11 @@ pub enum CaptureRefusal {
     UnknownVariant,
 }
 
-/// The Balancer-weighted hop projection — everything one weighted hop
-/// contributes to a solve, derived purely from the family state slice. The
-/// substrate resolve row wraps this into the solve tree's hop vocabulary.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BalancerWeightedHop {
-    /// Balance of the input token (upscaled to 18-decimal fixed-point).
-    pub balance_in: U256,
-    /// Balance of the output token (upscaled to 18-decimal fixed-point).
-    pub balance_out: U256,
-    /// Normalized weight of the input token (18-decimal, e.g. 5e17 for 50%).
-    pub weight_in: U256,
-    /// Normalized weight of the output token (18-decimal).
-    pub weight_out: U256,
-    /// Swap fee as a fraction of `ONE = 1e18` (e.g. 3e15 for 0.3%).
-    pub swap_fee: U256,
-    /// `PowVersion` discriminator — selects `FixedPoint::pow` fast paths.
-    pub pow_version: PowVersion,
-    /// Scaling factor for the input token (`10^(18 - decimals_in)`).
-    pub scaling_factor_in: U256,
-    /// Scaling factor for the output token (`10^(18 - decimals_out)`).
-    pub scaling_factor_out: U256,
-}
-
 /// The capture door — the resolve projection: one fresh projection of one
 /// Balancer-weighted hop, refused rather than defaulted. Pure over the family
-/// state slice; the dispatch row does the registry lookup and the
-/// solver-vocabulary wrap.
+/// state slice; the door returns the family module's
+/// [`solve::BalancerWeightedHopState`] directly (ADR-073 A7) and the
+/// substrate resolve row does the registry lookup and the `ResolvedHop` wrap.
 ///
 /// N-token pool: `zero_for_one` selects token[0]→token[1] (i=0, j=1) or
 /// token[1]→token[0] (i=1, j=0). The engine only handles the pairwise (0/1)
@@ -102,7 +81,7 @@ pub fn capture_hop(
     state: &BalancerWeightedPoolState,
     identity: &BalancerWeightedPoolIdentity,
     zero_for_one: bool,
-) -> Result<BalancerWeightedHop, CaptureRefusal> {
+) -> Result<solve::BalancerWeightedHopState, CaptureRefusal> {
     if identity.n_tokens() < 2 {
         return Err(CaptureRefusal::TooFewTokens);
     }
@@ -128,7 +107,7 @@ pub fn capture_hop(
         };
     let pow_version =
         PowVersion::from_u8(identity.pow_version).ok_or(CaptureRefusal::UnknownVariant)?; // Unknown pow_version → invalid
-    Ok(BalancerWeightedHop {
+    Ok(solve::BalancerWeightedHopState {
         balance_in,
         balance_out,
         weight_in,

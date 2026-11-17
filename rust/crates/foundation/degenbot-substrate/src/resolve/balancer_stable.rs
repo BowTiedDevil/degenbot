@@ -9,7 +9,7 @@
 //! lookups, the refusal mapping, the nonce, and the one `ResolvedHop` wrap.
 
 use degenbot_pools::families::balancer_stable as stable_read;
-use degenbot_pools::solve::{BalancerStableHopState, MixedPoolRef, ResolvedHop};
+use degenbot_pools::solve::{MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -32,18 +32,7 @@ pub(crate) fn project_balancer_stable(
     let hop = stable_read::capture_hop(state, id, pool_ref.zero_for_one)
         .map_err(balancer_stable_refusal)?;
     Ok((
-        ResolvedHop::BalancerStable {
-            state: BalancerStableHopState {
-                amp: hop.amp,
-                balances: hop.balances,
-                token_index_in: hop.token_index_in,
-                token_index_out: hop.token_index_out,
-                invariant: hop.invariant,
-                swap_fee: hop.swap_fee,
-                scaling_factor_in: hop.scaling_factor_in,
-                scaling_factor_out: hop.scaling_factor_out,
-            },
-        },
+        ResolvedHop::BalancerStable { state: hop },
         state.state_nonce,
     ))
 }

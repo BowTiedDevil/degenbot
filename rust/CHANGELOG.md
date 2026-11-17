@@ -45,6 +45,23 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **Family capture doors return the solver hop state directly (ADR-073 A7).**
+  With the family solve modules co-located in `degenbot-pools` (ADR-073 A5),
+  the four family read modules' `capture_hop` doors no longer build projection
+  twins of their solver hop states: each door now constructs the hop payload
+  defined by its sibling family module directly, and the substrate resolve
+  rows keep only the registry lookup, the refusal mapping, the state nonce,
+  and the `ResolvedHop` variant wrap. Hop fields, field types, public hop-state
+  layout, function parameters, refusal mappings, and state nonces are
+  unchanged, and no compatibility alias remains. Migration rows:
+
+  | Was | Is |
+  | --- | --- |
+  | `degenbot_pools::families::solidly::SolidlyHopProjection` + the resolve row's `wrap_hop` field copy | deleted — `families::solidly::capture_hop` returns `solve::SolidlyHopState` directly; the row wraps `ResolvedHop::SolidlyStable { state: hop }` |
+  | `degenbot_pools::families::balancer_weighted::BalancerWeightedHop` + the resolve row's field copy into `BalancerWeightedHopState` | deleted — `families::balancer_weighted::capture_hop` returns `solve::BalancerWeightedHopState` directly; the row wraps `ResolvedHop::BalancerWeighted { state: hop }` |
+  | `degenbot_pools::families::balancer_stable::BalancerStableHop` + the resolve row's field copy into `BalancerStableHopState` | deleted — `families::balancer_stable::capture_hop` returns `solve::BalancerStableHopState` directly; the row wraps `ResolvedHop::BalancerStable { state: hop }` |
+  | `degenbot_pools::families::curve_stableswap::CurveStableswapHop` + the resolve row's field copy into `CurveStableswapHopState` | deleted — `families::curve_stableswap::capture_hop` returns `solve::CurveStableswapHopState` directly; the row wraps `ResolvedHop::CurveStableswap { state: hop }` |
+
 - **A zero-capital refusal is typed data, and `EncodeOptions::zero_balance` is
   gone.** `degenbot_execution::ComposeError` gained a routine
   `InsolventZeroCapital(ZeroCapitalDeficit { asset, required, available })` arm:

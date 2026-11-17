@@ -132,6 +132,13 @@
 # `V2Reserves::read` refuses an over-wide word at decode before any hypothetical
 # reserve is answered. The V3/V4 `U256` width checks are untouched.
 #
+# The 1097 -> 1093 review is the direct hop-payload capture cutover (ADR-073
+# A7): the four family read modules' pass-through projection structs
+# (`SolidlyHopProjection`, `BalancerWeightedHop`, `BalancerStableHop`,
+# `CurveStableswapHop`) are deleted and `capture_hop` returns the sibling
+# family module's existing hop state, so the four projection names leave the
+# root surface; the four capability-module rows stay unchanged.
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

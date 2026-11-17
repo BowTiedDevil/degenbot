@@ -7,9 +7,10 @@
 //! the swap-read arm (every variant behind one entry), the resolve projection
 //! as a pure function of the family state slice, and the family-local
 //! apply/observe behavior over those slices. It reads NO state owner and
-//! consumes NO solver kernel — the hop payload it projects is wrapped into
-//! the solver's `SolidlyHopState` by the substrate resolve row (the
-//! wrap is the row's named seam, not a dependency).
+//! consumes NO solver kernel — [`capture_hop`] returns the sibling family
+//! module's hop payload (`solve::SolidlyHopState`, ADR-073 A7) directly; the
+//! substrate resolve row only wraps it into the `ResolvedHop` variant and
+//! carries the state nonce.
 //!
 //! # The family map
 //!
@@ -80,7 +81,6 @@
 use alloy::primitives::U256;
 
 use degenbot_math::solidly;
-use degenbot_uniswap::dex_identity::DexVariant;
 
 use crate::state::v3_state::SimulateSwapError;
 
@@ -129,40 +129,11 @@ pub enum SolidlyState<'a> {
     },
 }
 
-/// The capture door's hop payload — the family's fresh projection of one
-/// hop in the `degenbot-solidly-math` leaf's calling shape (un-oriented
-/// reserves + `token_in` direction flag + the FEE fraction). The substrate
-/// resolve row wraps it into the solver's `SolidlyHopState` field by
-/// field; this module owns no solver vocabulary.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SolidlyHopProjection {
-    /// Reserve of token0 (un-oriented).
-    pub reserves_0: U256,
-    /// Reserve of token1 (un-oriented).
-    pub reserves_1: U256,
-    /// Decimal scale of token0 (`10**decimals`).
-    pub decimals_0: U256,
-    /// Decimal scale of token1 (`10**decimals`).
-    pub decimals_1: U256,
-    /// Direction flag: `0` swaps token0→token1, `1` swaps token1→token0
-    /// (the leaf's `token_in` convention).
-    pub token_in: u8,
-    /// Fee numerator — the fee fraction is `fee_numer / fee_denom`.
-    pub fee_numer: U256,
-    /// Fee denominator.
-    pub fee_denom: U256,
-    /// `true` for the stable (x³y + xy³) invariant, `false` for volatile
-    /// (constant-product) — rides the identity; the solve branch owns the
-    /// volatile/stable dispatch.
-    pub stable: bool,
-    /// DEX+variant discriminator — selects the solidly vs camelot math leaf.
-    pub variant: DexVariant,
-}
-
 /// The capture door — the resolve projection: one fresh projection of one
 /// Solidly hop. Pure over the family state slice + the caller's registry
-/// scales; the substrate resolve row does the registry lookup and the
-/// solver-vocabulary wrap.
+/// scales; the door returns the family module's [`solve::SolidlyHopState`]
+/// directly (ADR-073 A7) and the substrate resolve row does the registry
+/// lookup and the `ResolvedHop` wrap.
 ///
 /// The projection is total: the payload is derivable from every well-formed
 /// slice, the stable flag rides the identity, and directional viability is
@@ -178,9 +149,9 @@ pub fn capture_hop(
     design: SolidlyState<'_>,
     decimals: (U256, U256),
     zero_for_one: bool,
-) -> SolidlyHopProjection {
+) -> solve::SolidlyHopState {
     match design {
-        SolidlyState::Aerodrome { identity, state } => SolidlyHopProjection {
+        SolidlyState::Aerodrome { identity, state } => solve::SolidlyHopState {
             reserves_0: state.reserve0.to::<U256>(),
             reserves_1: state.reserve1.to::<U256>(),
             decimals_0: decimals.0,
@@ -206,7 +177,7 @@ pub fn capture_hop(
             } else {
                 identity.fee_token1
             };
-            SolidlyHopProjection {
+            solve::SolidlyHopState {
                 reserves_0: state.reserve0.to::<U256>(),
                 reserves_1: state.reserve1.to::<U256>(),
                 decimals_0: decimals.0,

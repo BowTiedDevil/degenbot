@@ -10,9 +10,10 @@
 //! the resolve
 //! projection as a pure function of the family state slice, and the
 //! family-local apply/get/calc behavior over that slice. It reads NO state
-//! owner and consumes NO solver kernel — the hop is solver vocabulary, so the
-//! wrapper stays at the dispatch row (the substrate resolve row does the
-//! registry lookup and wraps the solver's `ResolvedHop`).
+//! owner and consumes NO solver kernel — [`capture_hop`] returns the sibling
+//! family module's hop payload (`solve::CurveStableswapHopState`, ADR-073 A7)
+//! directly; the substrate resolve row only wraps it into the `ResolvedHop`
+//! variant and carries the state nonce.
 //!
 //! # The four intent doors (ADR-073 D4)
 //!
@@ -73,44 +74,11 @@ pub enum CaptureRefusal {
     OutOfRange,
 }
 
-/// The Curve stableswap hop projection — everything one Curve hop contributes
-/// to a solve, derived purely from the family state slice. The substrate
-/// resolve row wraps this into the solve tree's hop vocabulary.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CurveStableswapHop {
-    /// `amp = a_coefficient * A_PRECISION` (Curve convention).
-    pub amp: U256,
-    /// `A_PRECISION` (100 for standard pools).
-    pub a_precision: U256,
-    /// Rate-adjusted balances `xp[i] = balances[i] * rate_multipliers[i] / PRECISION`.
-    /// Pre-computed at resolve time.
-    pub xp: Vec<U256>,
-    /// Token index of the input.
-    pub token_index_in: usize,
-    /// Token index of the output.
-    pub token_index_out: usize,
-    /// Number of coins (== `xp.len()`).
-    pub n_coins: U256,
-    /// Swap fee in `FEE_DENOMINATOR = 1e10` units.
-    pub fee: U256,
-    /// `FEE_DENOMINATOR = 10^10`.
-    pub fee_denom: U256,
-    /// `PRECISION = 10^18`.
-    pub precision: U256,
-    /// Rate multiplier for the input token.
-    pub rate_multiplier_in: U256,
-    /// Rate multiplier for the output token.
-    pub rate_multiplier_out: U256,
-    /// y-iteration variant.
-    pub y_variant: degenbot_math::curve::stableswap::YVariant,
-    /// d-iteration variant.
-    pub d_variant: degenbot_math::curve::stableswap::DVariant,
-}
-
 /// The capture door — the resolve projection: one fresh projection of one
 /// Curve stableswap hop, refused rather than defaulted. Pure over the family
-/// state slice; the dispatch row does the registry lookup and the
-/// solver-vocabulary wrap.
+/// state slice; the door returns the family module's
+/// [`solve::CurveStableswapHopState`] directly (ADR-073 A7) and the substrate
+/// resolve row does the registry lookup and the `ResolvedHop` wrap.
 ///
 /// # Errors
 ///
@@ -119,7 +87,7 @@ pub fn capture_hop(
     state: &CurvePoolState,
     identity: &CurvePoolIdentity,
     zero_for_one: bool,
-) -> Result<CurveStableswapHop, CaptureRefusal> {
+) -> Result<solve::CurveStableswapHopState, CaptureRefusal> {
     if identity.tokens.len() < 2 {
         return Err(CaptureRefusal::TooFewTokens);
     }
@@ -142,7 +110,7 @@ pub fn capture_hop(
     }
     let y_variant = identity.y_variant;
     let d_variant = identity.d_variant;
-    Ok(CurveStableswapHop {
+    Ok(solve::CurveStableswapHopState {
         amp,
         a_precision,
         xp,

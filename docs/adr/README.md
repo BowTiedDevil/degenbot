@@ -103,7 +103,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [069](ADR-069-prepared-hop-entry-surface.md) | The prepared hop becomes one value | accepted |
 | [070](ADR-070-updaters-are-the-sole-db-writers.md) | Updaters are the sole DB writers — the `writer` cargo fence, read-only opens, path-only schema init | accepted |
 | [071](ADR-071-family-modules-and-concentrated-liquidity-kernel.md) | Family modules and the Concentrated Liquidity Kernel — one module, one row, one enum arm supersedes the eight-site family change | accepted |
-| [073](ADR-073-family-read-modules.md) | The family read module — one family, two homes, rows at the seams; `concentrated_liquidity` naming | accepted / implemented (landed across epic JE3DED; A5 amendment dissolved `degenbot-solvers`) |
+| [073](ADR-073-family-read-modules.md) | The family read module — one family, two homes, rows at the seams; `concentrated_liquidity` naming | accepted / implemented through A7 |
 | [074](ADR-074-push-gate-manifest.md) | The push-gate manifest — `just pre-push` delegates to prek.toml's pre-push entries | accepted |
 | [076](ADR-076-epoch-phases.md) | The epoch phases — `SolveCycle::run_epoch` decomposes into named phases behind one interface | accepted |
 | [077](ADR-077-refusal-vocabulary.md) | The refusal vocabulary — one `RefusalKind` owned by the registration outcome ledger, and the eligibility gate moves core-side | accepted |

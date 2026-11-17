@@ -8,7 +8,7 @@
 //! lookups, the refusal mapping, the nonce, and the one `ResolvedHop` wrap.
 
 use degenbot_pools::families::curve_stableswap as curve_read;
-use degenbot_pools::solve::{CurveStableswapHopState, MixedPoolRef, ResolvedHop};
+use degenbot_pools::solve::{MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -29,23 +29,7 @@ pub(crate) fn project_curve(
         .ok_or(MissingHopReason::MissingState)?;
     let hop = curve_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(curve_refusal)?;
     Ok((
-        ResolvedHop::CurveStableswap {
-            state: CurveStableswapHopState {
-                amp: hop.amp,
-                a_precision: hop.a_precision,
-                xp: hop.xp,
-                token_index_in: hop.token_index_in,
-                token_index_out: hop.token_index_out,
-                n_coins: hop.n_coins,
-                fee: hop.fee,
-                fee_denom: hop.fee_denom,
-                precision: hop.precision,
-                rate_multiplier_in: hop.rate_multiplier_in,
-                rate_multiplier_out: hop.rate_multiplier_out,
-                y_variant: hop.y_variant,
-                d_variant: hop.d_variant,
-            },
-        },
+        ResolvedHop::CurveStableswap { state: hop },
         state.state_nonce,
     ))
 }

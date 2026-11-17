@@ -712,9 +712,10 @@ and `solve/profit_envelope/derive.rs`; per-family copies of the search template.
 The foundation-layer module owning everything one hop family contributes to being read and
 resolved: the state slice, the swap-read arm (every variant, miss-recovery and
 disarm-fetch included), the resolve projection as a pure function of the family state
-slice, and the family-local apply/get/calc behaviour over that slice. It reads no state
-owner and consumes no solver kernel, so the family's read story is one file named for the
-family. The state owner (`BotState`) and the central dispatchers (`simulate_swap`,
+slice, and the family-local apply/get/calc behaviour over that slice. Its resolve
+projection returns the hop payload consumed by the sibling **Family module**; sharing that
+value does not make the read module a solver-kernel consumer. It reads no state owner and
+consumes no solver kernel, so the family's read story is one file named for the family. The state owner (`BotState`) and the central dispatchers (`simulate_swap`,
 `resolve`, `swap_simulation`) keep one dispatch row per family and no family-shaped
 method set — since the C6 sweep, ZERO family-shaped names: the registry's rows name the
 operation (typed lens `pool_slice::<T>`, `apply_swap_by_pool_id`,

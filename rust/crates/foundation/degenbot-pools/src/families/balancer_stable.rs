@@ -8,9 +8,10 @@
 //! and the pair exact-out `GIVEN_OUT` read — behind one entry), the resolve
 //! projection as a pure function of the family state slice, and the
 //! family-local apply/observe behavior over that slice. It reads NO state
-//! owner and consumes NO solver kernel — the hop is solver vocabulary, so the
-//! wrapper stays at the dispatch row (the substrate resolve row does the
-//! registry lookup and wraps the solver's `ResolvedHop`).
+//! owner and consumes NO solver kernel — [`capture_hop`] returns the sibling
+//! family module's hop payload (`solve::BalancerStableHopState`, ADR-073 A7)
+//! directly; the substrate resolve row only wraps it into the `ResolvedHop`
+//! variant and carries the state nonce.
 //!
 //! # The four intent doors (ADR-073 D4)
 //!
@@ -62,35 +63,11 @@ pub enum CaptureRefusal {
     InvariantError,
 }
 
-/// The Balancer-stable hop projection — everything one stable hop contributes
-/// to a solve, derived purely from the family state slice. The substrate
-/// resolve row wraps this into the solve tree's hop vocabulary.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BalancerStableHop {
-    /// Amplification coefficient `amp` (deployed convention, includes
-    /// `AMP_PRECISION=1000`).
-    pub amp: U256,
-    /// BPT-skipped upscaled balances (all non-BPT tokens).
-    pub balances: Vec<U256>,
-    /// Token index of the input (in the BPT-skipped list).
-    pub token_index_in: usize,
-    /// Token index of the output (in the BPT-skipped list).
-    pub token_index_out: usize,
-    /// Pre-computed invariant `D` (via `calculate_invariant` or
-    /// `calculate_invariant_deployed`).
-    pub invariant: U256,
-    /// Swap fee as a fraction of `ONE = 1e18`.
-    pub swap_fee: U256,
-    /// Scaling factor for the input token (`10^(18 - decimals_in)`).
-    pub scaling_factor_in: U256,
-    /// Scaling factor for the output token.
-    pub scaling_factor_out: U256,
-}
-
 /// The capture door — the resolve projection: one fresh projection of one
 /// Balancer-stable hop, refused rather than defaulted. Pure over the family
-/// state slice; the dispatch row does the registry lookup and the
-/// solver-vocabulary wrap.
+/// state slice; the door returns the family module's
+/// [`solve::BalancerStableHopState`] directly (ADR-073 A7) and the substrate
+/// resolve row does the registry lookup and the `ResolvedHop` wrap.
 ///
 /// Pairwise (0/1) hop over the BPT-skipped, 18-decimal-upscaled balances with
 /// the pre-computed `invariant` (one-shot under the core lock at resolve
@@ -103,7 +80,7 @@ pub fn capture_hop(
     state: &BalancerStablePoolState,
     identity: &BalancerStablePoolIdentity,
     zero_for_one: bool,
-) -> Result<BalancerStableHop, CaptureRefusal> {
+) -> Result<solve::BalancerStableHopState, CaptureRefusal> {
     if identity.n_tokens() < 2 {
         return Err(CaptureRefusal::TooFewTokens);
     }
@@ -136,7 +113,7 @@ pub fn capture_hop(
         stable_math::calculate_invariant_deployed(amp_u256, &upscaled_balances, true)
     };
     let invariant = invariant.map_err(|_| CaptureRefusal::InvariantError)?;
-    Ok(BalancerStableHop {
+    Ok(solve::BalancerStableHopState {
         amp: amp_u256,
         balances: upscaled_balances,
         token_index_in,

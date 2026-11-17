@@ -11,8 +11,8 @@
 
 use alloy::primitives::{Address, U256};
 
-use degenbot_pools::families::solidly::{self, SolidlyHopProjection, SolidlyState};
-use degenbot_pools::solve::{MixedPoolRef, ResolvedHop, SolidlyHopState};
+use degenbot_pools::families::solidly::{self, SolidlyState};
+use degenbot_pools::solve::{MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -29,24 +29,6 @@ fn token_decimals(
             U256::from(10u64).pow(U256::from(t1.decimals)),
         )),
         _ => Err(MissingHopReason::MissingTokenPair), // Missing token entry → invalid
-    }
-}
-
-/// The solver-vocabulary wrap — the row's named seam: the family projection
-/// into the solver's hop payload, field by field.
-fn wrap_hop(hop: SolidlyHopProjection) -> ResolvedHop {
-    ResolvedHop::SolidlyStable {
-        state: SolidlyHopState {
-            reserves_0: hop.reserves_0,
-            reserves_1: hop.reserves_1,
-            decimals_0: hop.decimals_0,
-            decimals_1: hop.decimals_1,
-            token_in: hop.token_in,
-            fee_numer: hop.fee_numer,
-            fee_denom: hop.fee_denom,
-            stable: hop.stable,
-            variant: hop.variant,
-        },
     }
 }
 
@@ -73,7 +55,7 @@ pub(crate) fn project_solidly(
             (decimals_0, decimals_1),
             pool_ref.zero_for_one,
         );
-        Ok((wrap_hop(hop), state.state_nonce))
+        Ok((ResolvedHop::SolidlyStable { state: hop }, state.state_nonce))
     } else if let Some(id) = core.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_ref.pool_key) {
         let state = core
             .pool_slice::<degenbot_pools::V2PoolState>(pool_ref.pool_key)
@@ -88,7 +70,7 @@ pub(crate) fn project_solidly(
             (decimals_0, decimals_1),
             pool_ref.zero_for_one,
         );
-        Ok((wrap_hop(hop), state.state_nonce))
+        Ok((ResolvedHop::SolidlyStable { state: hop }, state.state_nonce))
     } else {
         // Not an Aerodrome/Camelot pool → invalid.
         Err(MissingHopReason::MissingIdentity)

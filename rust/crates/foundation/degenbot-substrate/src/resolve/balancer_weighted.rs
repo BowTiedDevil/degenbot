@@ -9,7 +9,7 @@
 //! `ResolvedHop` wrap.
 
 use degenbot_pools::families::balancer_weighted as weighted_read;
-use degenbot_pools::solve::{BalancerWeightedHopState, MixedPoolRef, ResolvedHop};
+use degenbot_pools::solve::{MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -32,18 +32,7 @@ pub(crate) fn project_balancer_weighted(
     let hop = weighted_read::capture_hop(state, id, pool_ref.zero_for_one)
         .map_err(balancer_weighted_refusal)?;
     Ok((
-        ResolvedHop::BalancerWeighted {
-            state: BalancerWeightedHopState {
-                balance_in: hop.balance_in,
-                balance_out: hop.balance_out,
-                weight_in: hop.weight_in,
-                weight_out: hop.weight_out,
-                swap_fee: hop.swap_fee,
-                pow_version: hop.pow_version,
-                scaling_factor_in: hop.scaling_factor_in,
-                scaling_factor_out: hop.scaling_factor_out,
-            },
-        },
+        ResolvedHop::BalancerWeighted { state: hop },
         state.state_nonce,
     ))
 }
