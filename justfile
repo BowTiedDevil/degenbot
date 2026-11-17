@@ -1365,11 +1365,26 @@ build-rust-extension-wheel out="dist":
     scripts/build_extension.sh wheel --out {{out}}
 
 # The counterpart to `build-rust-extension-wheel`: sync the lock venv, then put
-# the prebuilt project wheel into it. `--no-deps` because the sync already
-# provided the runtime dependencies; only the project itself comes from the wheel.
+# the artifact's compiled extension where the suite imports it from.
+#
+# pytest's `pythonpath = ["src", "."]` makes `degenbot` resolve to the source
+# tree, so the editable build's only piece CI is missing is the compiled
+# `src/degenbot/_ffi.abi3.so` — a site-packages install would be shadowed and
+# never imported (and `uv sync --no-install-project` deliberately installs no
+# project at all).
 install-extension-wheel wheel:
+    #!/usr/bin/env bash
+    set -euo pipefail
     uv sync --locked --dev --no-install-project
-    uv pip install --no-deps {{wheel}}
+    # `uv pip install` targets the project environment this recipe just synced,
+    # whichever way `UV_PROJECT_ENVIRONMENT` names it.
+    python_exe="$({{ py_run }} python -c 'import sys; print(sys.executable)')"
+    # `degenbot/version.py` reads installed distribution metadata, which
+    # `--no-install-project` deliberately leaves out.
+    uv pip install --no-deps --python "${python_exe}" {{wheel}}
+    # ... and the compiled extension has to sit in the source tree, because the
+    # import that matters resolves there first.
+    unzip -o -j {{wheel}} 'degenbot/_ffi.abi3.so' -d src/degenbot
 
 # ========== Build-Artifact Housekeeping ==========
 
