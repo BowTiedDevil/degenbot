@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 # `AlloyProvider` (the typed HTTP/WS provider) — the crate owns the transport;
 # the stage-machine runtime (degenbot-bot) owns the state machine.
 degenbot-rpc.workspace = true
@@ -25,6 +25,6 @@ tracing = { version = "^0.1" }
 
 [dev-dependencies]
 # Test-only constructors (`AlloyProvider::from_provider`) — mock transports.
-alloy = { version = "^2.5", features = ["full"] }
+alloy = { version = "^2.6", features = ["full"] }
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros", "test-util"] }

@@ -56,7 +56,7 @@ degenbot-core.workspace = true
 # `INITIAL_EXECUTE_GAS` pins (the same constant evm2's `Version::tx_gas_limit_cap`
 # installs at Osaka). `rpc-client` + `json-rpc` are the probe support's scripted
 # transport (`alloy::rpc::client`, `alloy::rpc::json_rpc`, `alloy::transports`).
-alloy = { version = "^2.5", features = ["eips", "rpc-client", "json-rpc"] }
+alloy = { version = "^2.6", features = ["eips", "rpc-client", "json-rpc"] }
 # `probe_support`'s scripted dispatch chain: the JSON its transport serves, the
 # `tower::Service` seam that transport implements, the multi-thread runtime the
 # scripted legs enter, and the raw EIP-7928 list bytes the scaling corpus serves
@@ -65,7 +65,7 @@ alloy = { version = "^2.5", features = ["eips", "rpc-client", "json-rpc"] }
 serde_json = { version = "^1.0" }
 tower = { version = "0.5", default-features = false }
 tokio = { version = "^1.54", features = ["rt", "rt-multi-thread", "sync", "time"] }
-alloy-eip7928 = { version = "0.4.12", features = ["rlp"] }
+alloy-eip7928 = { version = "0.4.13", features = ["rlp"] }
 parking_lot = "^0.13"
 tracing = { version = "^0.1" }
 # The net-profit order index — used (feature `order-index`) to make the pre-sim
@@ -90,4 +90,4 @@ tracing-subscriber = { version = "0.3.23", features = ["registry", "ansi"] }
 tokio = { version = "^1.54", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 # the dispatch unit suite's delaying transport
-alloy-json-rpc = "2.5.0"
+alloy-json-rpc = "2.6.1"

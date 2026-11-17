@@ -21,7 +21,7 @@ workspace = true
 # built from `crates/shells/degenbot-python/`) is a separate workspace member that
 # DOES pull pyo3; the umbrella never depends on it.
 [dependencies]
-alloy = { version = "^2.5", features = ["full"] }
+alloy = { version = "^2.6", features = ["full"] }
 serde = { version = "^1.0", features = ["derive"] }
 degenbot-config.workspace = true
 degenbot-aave.workspace = true
@@ -185,10 +185,10 @@ required-features = ["sql-ledger"]
 # The replay bench seeds throwaway harness DBs (temp dirs) and drives the raw
 # `exchanges` row the replay suites seed (the same UPDATE the suite code runs - no
 # `activate_exchange` substrate yet).
-rusqlite = { version = "^0.42" }
+rusqlite = { version = "^0.43" }
 tempfile = { version = "^3.27" }
 async-trait = "0.1"
-alloy = { version = "^2.5", features = ["full"] }
+alloy = { version = "^2.6", features = ["full"] }
 # The engine (ADR-089 cutover) — the parity tests drive the evm2 in-memory DB.
 # From the vendored fork (rust/vendor/, ADR-096) — test-only, never part of the
 # shipped dependency set.

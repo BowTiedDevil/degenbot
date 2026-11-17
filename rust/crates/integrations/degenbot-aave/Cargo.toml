@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 degenbot-core.workspace = true
 degenbot-config.workspace = true
 # ADR-070: this crate is an updater shell — it owns DB writes, so it is one of
@@ -22,7 +22,7 @@ degenbot-config.workspace = true
 degenbot-db = { workspace = true, features = ["writer"] }
 degenbot-decoders.workspace = true
 degenbot-rpc.workspace = true
-rusqlite = { version = "^0.42" }
+rusqlite = { version = "^0.43" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 

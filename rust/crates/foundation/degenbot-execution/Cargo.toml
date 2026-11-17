@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 # The declared contract interface (ADR-100 D2) reads standard ABI JSON. `alloy`'s
 # `json-abi` feature re-exports that module but not the `serde_json`-gated
 # `JsonAbi::from_json_str` parser, so the alloy family's own ABI crate carries

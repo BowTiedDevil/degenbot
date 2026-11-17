@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 hashbrown.workspace = true
 degenbot-core.workspace = true
 
@@ -35,7 +35,7 @@ evm2 = { workspace = true, features = [
 ] }
 # The oracle builds its fixture transactions as EIP-1559 envelopes, so the
 # test build needs alloy's consensus types.
-alloy = { version = "^2.5", features = ["consensus"] }
+alloy = { version = "^2.6", features = ["consensus"] }
 
 [[bench]]
 name = "swap"

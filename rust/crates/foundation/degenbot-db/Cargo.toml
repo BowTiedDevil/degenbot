@@ -18,7 +18,7 @@ workspace = true
 # SQLite lookups. Verified pyo3-free under default features by 
 # `just check-no-pyo3-in-cores`.
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 # Species-manifest decode (ADR-059 D3): `serde`/`toml` parse the embedded
 # `species.toml` into typed structs with `deny_unknown_fields`, so a typo'd
 # species key fails at first use. `toml` already resolves in the workspace
@@ -43,7 +43,7 @@ parking_lot = { version = "^0.13" }
 # only here so libsqlite3-sys is compiled once for the whole workspace.
 # See ADR-010/ADR-011 before reining this in — the on-disk SQLite version
 # this ships is the one creating/reading the Alembic-era .db files.
-rusqlite = { version = "^0.42", features = ["bundled", "backup"] }
+rusqlite = { version = "^0.43", features = ["bundled", "backup"] }
 # Golden-artifact serialization for the `sql-ledger` feature (the canonical
 # statement-ledger + DB-dump JSON writers). Optional: production builds never
 # enable the feature, so serde_json stays out of the default dependency graph

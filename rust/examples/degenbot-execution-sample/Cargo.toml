@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5", features = ["signers"] }
+alloy = { version = "^2.6", features = ["signers"] }
 thiserror = { version = "^2.0" }
 # The seam itself — `PayloadComposer` / `ExecutionAdapter` + value types, plus
 # the neutral `PathInfo` / `HopInfo` hop descriptors it owns (ADR-098 D1). The

@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5", features = ["full", "transport-throttle", "json-rpc"] }
+alloy = { version = "^2.6", features = ["full", "transport-throttle", "json-rpc"] }
 # Tick-bootstrap structs for degenbot-pools now carry hashbrown maps.
 hashbrown.workspace = true
 dashmap = { version = "^6.2" }

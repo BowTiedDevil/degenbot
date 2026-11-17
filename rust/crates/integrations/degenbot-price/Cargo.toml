@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 degenbot-core.workspace = true
 degenbot-abi.workspace = true
 degenbot-rpc.workspace = true

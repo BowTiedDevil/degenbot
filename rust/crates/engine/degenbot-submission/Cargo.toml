@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5", features = ["full", "signer-local", "network"] }
+alloy = { version = "^2.6", features = ["full", "signer-local", "network"] }
 # The relay POSTs (flashbots-compatible eth_sendBundle over HTTPS). Ordered
 # fan-out lives in relay.rs; rustls matches the bot crate's reqwest pinned
 # feature set (# no default-tls native openssl).

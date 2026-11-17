@@ -34,7 +34,7 @@ degenbot-math = { workspace = true }
 # Capture rows carry `U256` decimals and JSON documents: both replays parse them
 # and the generator emits them, so both edges are plain ones on the same rule as
 # `degenbot-pools` above.
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 serde_json = { version = "^1.0" }
 
 # The scale probe's fan-out: it builds its own `rayon::ThreadPoolBuilder` pools
@@ -68,7 +68,7 @@ alloy-primitives = { version = "^1.7", default-features = false, features = ["st
 # itself is in every tree that reaches `degenbot-pools`; it is optional here so
 # only the `hotpath` lane *enables* real measurement. It is the pool profiling
 # crate, NOT the bot's Prometheus exporter.
-hotpath = { version = "^0.31.2", default-features = false, optional = true }
+hotpath = { version = "^0.32.0", default-features = false, optional = true }
 
 [features]
 default = []

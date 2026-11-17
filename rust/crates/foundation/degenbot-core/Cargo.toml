@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 degenbot-config.workspace = true
 tracing = { version = "^0.1" }
 thiserror = { version = "^2.0" }

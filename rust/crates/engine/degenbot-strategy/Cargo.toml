@@ -28,7 +28,7 @@ degenbot-eventhub.workspace = true
 degenbot-runs = { workspace = true, features = ["tracing"] }
 degenbot-math.workspace = true
 degenbot-executor.workspace = true
-alloy = { version = "^2.5", features = ["full", "transport-throttle"] }
+alloy = { version = "^2.6", features = ["full", "transport-throttle"] }
 hashbrown.workspace = true
 parking_lot = "^0.13"
 serde = { version = "1", features = ["derive"] }

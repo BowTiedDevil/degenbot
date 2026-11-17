@@ -24,7 +24,7 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 degenbot-config.workspace = true
-alloy = { version = "^2.5", features = ["full", "transport-throttle"] }
+alloy = { version = "^2.6", features = ["full", "transport-throttle"] }
 # The workspace dependency enables the `pyo3` feature so `From<Error> for PyErr`
 # conversions from core are available at this binding layer.
 degenbot-rpc = { workspace = true, optional = true }

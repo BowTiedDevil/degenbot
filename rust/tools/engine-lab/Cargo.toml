@@ -47,7 +47,7 @@ evm2.workspace = true
 # The alloy umbrella, matching the simulation edge: the corpus frames are typed
 # `TxEip1559` recovered envelopes (`alloy::consensus`), the fixture stubs are
 # `sol!` interfaces, and the probe compares `Address`/`B256` sets.
-alloy = { version = "^2.5", features = ["full"] }
+alloy = { version = "^2.6", features = ["full"] }
 
 # The typed RPC provider the cold-miss probe's snapshot-backed stand-in node
 # serves (`AlloyProvider::from_provider`). Plain, not `test-utils`: the offline
@@ -89,7 +89,7 @@ degenbot-substrate = { workspace = true, optional = true }
 # Same version posture as `degenbot-bot`'s own hotpath edge: macros resolve
 # with `default-features = false` (no-op stubs) and the exporter/threads/tokio
 # features unify through `degenbot-bot/hotpath-prometheus` in this lane.
-hotpath = { version = "^0.31.2", default-features = false, optional = true }
+hotpath = { version = "^0.32.0", default-features = false, optional = true }
 
 [features]
 default = []

@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5", features = ["full"] }
+alloy = { version = "^2.6", features = ["full"] }
 # The resolved verdict (`BotConfig`) the executor policy converts FROM: the
 # single configuration authority (ADR-065) lives in this foundation crate,
 # and the engine←foundation direction is the existing dependency edge (the

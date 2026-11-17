@@ -95,8 +95,8 @@ hashbrown.workspace = true
 # unify to it anyway), and it is the honest one to write: the generators use `alloy::primitives`
 # (addresses/words/keccak), the `b256!`/`I256` aliases, and `alloy::transports` for the
 # recording seam's `boxed()` chain.
-alloy = { version = "^2.5", features = ["full"] }
-rusqlite = { version = "^0.42" }
+alloy = { version = "^2.6", features = ["full"] }
+rusqlite = { version = "^0.43" }
 tempfile = { version = "^3.27" }
 
 # The seed manifest (`<window>.seed.json`) is `serde_json` output, and the offline

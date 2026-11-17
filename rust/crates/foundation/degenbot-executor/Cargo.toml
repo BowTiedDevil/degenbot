@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 degenbot-abi.workspace = true
 degenbot-core.workspace = true
 # The neutral opportunity descriptors (`PathInfo` / `HopInfo` / the family hop

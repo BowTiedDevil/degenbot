@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 thiserror = { version = "^2.0" }
 parking_lot = { version = "^0.13" }
 # Hot map type for tick liquidity (foldhash; see workspace.dependencies note).
@@ -38,7 +38,7 @@ zstd = { workspace = true, optional = true }
 # hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
 # default-features = false -> no-op stubs in default builds; the
 # `hotpath` feature enables real instrumentation. Version matched to degenbot-bot.
-hotpath = { version = "^0.31.2", default-features = false }
+hotpath = { version = "^0.32.0", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]
@@ -89,7 +89,7 @@ evm2 = { workspace = true, features = [
 ] }
 # The oracles build their fixture transactions as EIP-1559 envelopes, so the
 # test build needs alloy's consensus types.
-alloy = { version = "^2.5", features = ["consensus"] }
+alloy = { version = "^2.6", features = ["consensus"] }
 
 # Fixture-reading integration tests: required-features keeps the default
 # `-p degenbot-pools` build compiling while the lanes that own the corpora

@@ -41,7 +41,7 @@ tempfile = "3.27"
 tracing = { version = "0.1" }
 
 smallvec = "1.16.5"
-oxc_index = { version = "5.0.0", features = ["nonmax"] }
+oxc_index = { version = "5.0.1", features = ["nonmax"] }
 indexmap = "2.14.2"
 
 [build-dependencies]

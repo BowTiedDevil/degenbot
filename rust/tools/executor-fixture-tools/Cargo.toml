@@ -23,7 +23,7 @@ workspace = true
 # through the production executor — the tree is minimal for what the oracle reads, not
 # free of the executor's own graph.
 [dependencies]
-alloy = { version = "^2.5" }
+alloy = { version = "^2.6" }
 degenbot-execution.workspace = true
 degenbot-executor.workspace = true
 serde = { version = "^1.0", features = ["derive"] }
