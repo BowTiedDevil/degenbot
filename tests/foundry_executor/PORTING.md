@@ -123,14 +123,14 @@ expansion. Owning tasks are the port epic's ergo IDs.
 | `test_token_sentinels.py` | 3 | 5 | LVVJOU | test/TokenSentinels.t.sol | ported (green) | Hardened: the unassigned reserved index pins the empty-data fail-closed revert. |
 | `test_v2_configurable_fee.py` | 7 | 7 | AVYD7W | test/V2ConfigurableFee.t.sol | to create |  |
 | `test_v2_fee_bounds.py` | 4 | 4 | AVYD7W | test/V2FeeBounds.t.sol | to create |  |
-| `test_v2_fee_denominator_fuzz.py` | 7 | 7 | XYAZ7L | test/V2FeeDenominatorFuzz.t.sol | to create | 7 Hypothesis pure-math properties (examples internal to each case). |
+| `test_v2_fee_denominator_fuzz.py` | 7 | 7 | WPGELX | test/V2FeeDenominatorFuzz.t.sol | to create | 7 Hypothesis pure-math properties (examples internal to each case); sequenced as the fuzz task following the deterministic V3 ports. |
 | `test_v2_swap_calc_excess.py` | 7 | 7 | AVYD7W | test/V2SwapCalcExcess.t.sol | to create |  |
 | `test_v2_swap_calc_overflow.py` | 1 | 1 | AVYD7W | test/V2SwapCalcOverflow.t.sol | to create (replaces skip; disposition 5) | 1 def; permanently `pytest.skip`s in Ape — ported as the executable checked-mul boundary test of disposition 5. |
 | `test_v2_swap_compact_fee.py` | 4 | 4 | AVYD7W | test/V2SwapCompactFee.t.sol | to create |  |
-| `test_v3_debug.py` | 1 | 1 | XYAZ7L | test/V3Debug.t.sol | to create |  |
-| `test_v3_libraries.py` | 53 | 53 | XYAZ7L | test/V3Libraries.t.sol | to create |  |
-| `test_v3_library_fuzz.py` | 24 | 24 | XYAZ7L | test/V3LibraryFuzz.t.sol | to create | 10 Hypothesis differential tests (200-500 examples each) + 14 parity-helper meta-tests. The committed solc-0.7.6 `SolReference` artifact (+ `ISolReference`) is built by the lane since QXIGKC. |
-| `test_v3_pool.py` | 2 | 2 | XYAZ7L | test/V3Pool.t.sol | to create |  |
+| `test_v3_debug.py` | 1 | 1 | XYAZ7L | test/V3Debug.t.sol | ported (green) | The single `v3c_zfo` stream pins executor-driven success end to end. The source's arbitrary-precision price product overflows uint256; the divisor divides the numerator exactly, so the port factors the division first — the same integer. |
+| `test_v3_libraries.py` | 53 | 53 | XYAZ7L | test/V3Libraries.t.sol | ported (green) | All 53 reference values, boundaries, and rounding cases preserved. FullMath zero-denominator and TickMath past-max pin their exact Error(string) messages (`FullMath: division by zero`, `T`); the two SafeCast narrowing-overflow cases pin the bare revert Vyper's checked `convert` raises before the `SafeCast: overflow` assert is reachable. Representative cases per section cross-check the committed `SolReference`; source expectations are never replaced by it. |
+| `test_v3_library_fuzz.py` | 24 | 24 | WPGELX | test/V3LibraryFuzz.t.sol | to create | 10 Hypothesis differential tests (200-500 examples each) + 14 parity-helper meta-tests; sequenced as the fuzz task following the deterministic V3 ports. The committed solc-0.7.6 `SolReference` artifact (+ `ISolReference`) is built by the lane since QXIGKC. |
+| `test_v3_pool.py` | 2 | 2 | XYAZ7L | test/V3Pool.t.sol | ported (green) | Both tests drive the pool through the executor: state assertions (sqrt price, liquidity, fee) plus the WETH-in swap's price direction, pool balance changes, and the 2% USDC-output window. `sqrtPriceX96` uses exact integer `isqrt` where the source went through Python float math. |
 | `test_v3_v4_v3_residual_regression.py` | 2 | 2 | 72TJMU | test/V3V4V3ResidualRegression.t.sol | to create | Intentional `config = 0` revert — disposition 10. |
 | `test_withdraw_reentrancy.py` | 2 | 2 | LVVJOU | test/WithdrawReentrancy.t.sol | ported (green) | Hardened: the reentry pins the exact `Unauthorized(caller)` the owner gate raises at reentry; withdraw owner-only coverage added. |
 | `test_withdrawal.py` | 9 | 9 | AL53BE | test/Withdrawal.t.sol | to create |  |
