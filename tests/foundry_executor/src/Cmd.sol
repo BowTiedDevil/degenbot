@@ -32,6 +32,13 @@ library Cmd {
     uint8 internal constant V4_SWAP_DYNAMIC = 0x41;
     uint8 internal constant V4_BATCH = 0x42;
 
+    /// `V4_BATCH_OPEN_WETH`: identical 0x42 layout; the tail settle leaves a
+    /// POSITIVE WETH delta open for a trailing `V4_MINT_COMPACT` (the
+    /// executor's ERC6909-capture pairing). A negative WETH delta still
+    /// settles, and a positive delta left open without a consuming mint
+    /// reverts at PM.unlock (`CurrencyNotSettled`).
+    uint8 internal constant V4_BATCH_OPEN_WETH = 0x43;
+
     uint8 internal constant V4_UNLOCK = 0x50;
     uint8 internal constant V4_TAKE = 0x51;
     uint8 internal constant V4_TAKE_COMPACT = 0x52;
@@ -211,6 +218,27 @@ library Cmd {
         );
     }
 
+    /// The raw `V3_SWAP_COMPACT` (0x30) form. One byte longer than the
+    /// direction-specific 0x33/0x34 layouts (17+N vs 16+N): the direction is
+    /// carried in-band as the `zeroForOne` flag byte instead of in the opcode.
+    function v3SwapCompactRaw(
+        uint8 pool,
+        bool zeroForOne,
+        uint256 amountSpecified,
+        uint8 recipient,
+        bytes memory forward
+    ) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            V3_SWAP_COMPACT,
+            pool,
+            flag(zeroForOne),
+            be(amountSpecified, 12),
+            recipient,
+            be(forward.length, 1),
+            forward
+        );
+    }
+
     function v3SwapDelta(uint8 pool, bool zeroForOne, uint8 recipient)
         internal
         pure
@@ -255,8 +283,19 @@ library Cmd {
         );
     }
 
-    function v4Batch(BatchSwap[] memory swaps) internal pure returns (bytes memory out) {
-        out = abi.encodePacked(V4_BATCH, be(swaps.length, 1));
+    function v4Batch(BatchSwap[] memory swaps) internal pure returns (bytes memory) {
+        return _v4Batch(V4_BATCH, swaps);
+    }
+
+    function v4BatchOpenWeth(BatchSwap[] memory swaps) internal pure returns (bytes memory) {
+        return _v4Batch(V4_BATCH_OPEN_WETH, swaps);
+    }
+
+    /// Shared 0x42/0x43 body: `[op][count:1][entry:20]*` with every entry
+    /// `[c0:1][c1:1][fee:2][ts:2][hooks:1][zfo:1][amount:12]`. An `amount` of
+    /// zero is the dynamic form (amount from the PM exttload delta).
+    function _v4Batch(uint8 opcode, BatchSwap[] memory swaps) private pure returns (bytes memory out) {
+        out = abi.encodePacked(opcode, be(swaps.length, 1));
         for (uint256 i = 0; i < swaps.length; i++) {
             BatchSwap memory s = swaps[i];
             out = bytes.concat(

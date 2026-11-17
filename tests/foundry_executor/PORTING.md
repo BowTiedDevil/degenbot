@@ -111,7 +111,7 @@ expansion. Owning tasks are the port epic's ergo IDs.
 | `test_events.py` | 6 | 6 | AL53BE | test/Events.t.sol | ported (green) |  |
 | `test_execution_receipt.py` | 7 | 12 | LVVJOU | test/ExecutionReceipt.t.sol | ported (green) |  |
 | `test_fake_abi_fidelity.py` | 6 | 9 | QKQOIZ | test/FakeABIFidelity.t.sol | to create |  |
-| `test_fake_pool_manager_parity.py` | 30 | 29 | LEZT6O | test/PoolManagerParity.t.sol (fork lane) | to create (fork lane) | 30 defs / 29 collected (duplicate `test_double_unlock_reverts`; first definition shadowed). `pytestmark mainnet_fork`. 5 fork failures recorded as baseline facts. |
+| `test_fake_pool_manager_parity.py` | 30 | 29 | LEZT6O | test/PoolManagerParity.t.sol (fork lane) | to create (fork lane) | 30 defs / 29 collected (duplicate `test_double_unlock_reverts`; first definition shadowed). `pytestmark mainnet_fork`. 5 fork failures recorded as baseline facts. The `ExttloadComparator` artifact (+ `IExttloadComparator`) is built by the lane's pinned-vyper pipeline since QXIGKC. |
 | `test_initialize_and_opcodes.py` | 5 | 5 | LVVJOU | test/InitializeAndOpcodes.t.sol | ported (green) |  |
 | `test_no_fe_prefix.py` | 2 | 2 | LVVJOU | test/NoFePrefix.t.sol | ported (green) |  |
 | `test_pm_as_bank.py` | 11 | 11 | EMCYDR | test/PMAsBank.t.sol | to create | 11 defs; `test_gas_comparison_table` is the ordering-dependent gas summary (disposition 6). |
@@ -129,7 +129,7 @@ expansion. Owning tasks are the port epic's ergo IDs.
 | `test_v2_swap_compact_fee.py` | 4 | 4 | AVYD7W | test/V2SwapCompactFee.t.sol | to create |  |
 | `test_v3_debug.py` | 1 | 1 | XYAZ7L | test/V3Debug.t.sol | to create |  |
 | `test_v3_libraries.py` | 53 | 53 | XYAZ7L | test/V3Libraries.t.sol | to create |  |
-| `test_v3_library_fuzz.py` | 24 | 24 | XYAZ7L | test/V3LibraryFuzz.t.sol | to create | 10 Hypothesis differential tests (200-500 examples each) + 14 parity-helper meta-tests. |
+| `test_v3_library_fuzz.py` | 24 | 24 | XYAZ7L | test/V3LibraryFuzz.t.sol | to create | 10 Hypothesis differential tests (200-500 examples each) + 14 parity-helper meta-tests. The committed solc-0.7.6 `SolReference` artifact (+ `ISolReference`) is built by the lane since QXIGKC. |
 | `test_v3_pool.py` | 2 | 2 | XYAZ7L | test/V3Pool.t.sol | to create |  |
 | `test_v3_v4_v3_residual_regression.py` | 2 | 2 | 72TJMU | test/V3V4V3ResidualRegression.t.sol | to create | Intentional `config = 0` revert — disposition 10. |
 | `test_withdraw_reentrancy.py` | 2 | 2 | LVVJOU | test/WithdrawReentrancy.t.sol | ported (green) |  |
@@ -139,9 +139,9 @@ expansion. Owning tasks are the port epic's ergo IDs.
 
 | File | Role | Owner | Disposition |
 |---|---|---|---|
-| `conftest.py` | Fixtures (`owner_account`, `usdc`, `weth`, `wbtc`, `v4_pm`, `executor`, `run_executor`), xdist per-worker foundry port pinning, hypothesis deadline profile, `.gas-results` session unlink | QXIGKC | Port fixture semantics into `Setup.sol`/`TestBase.sol` deployment + funding helpers; per-worker port pinning and the session-unlink side effect retire with the Ape runner |
-| `conftest_shared.py` | Stream encoders (`enc_preamble`, `make_config`, `enc_*`), snapshot/revert helpers, log counting support, `record_gas`, unused `run_gas_benchmark`/`compute_access_list` | QXIGKC (+Q3UOC6 for gas helpers) | Encoders → `Cmd.sol`/`TestBase.sol` builders (partially in place); snapshot helpers → forge cheatcodes; `record_gas` → Q3UOC6 gas evidence; unused helpers deleted (disposition 7) |
-| `verify.py` | Raw log topic0 ERC20/ERC6909 transfer counting for transfer-count assertions | QXIGKC | Port as a `TestBase.sol` log-counting helper so transfer-count assertions survive with equal strength |
+| `conftest.py` | Fixtures (`owner_account`, `usdc`, `weth`, `wbtc`, `v4_pm`, `executor`, `run_executor`), xdist per-worker foundry port pinning, hypothesis deadline profile, `.gas-results` session unlink | QXIGKC | Fixture semantics ported into `Setup.sol`/`TestBase.sol` deployment + funding helpers (landed in the QXIGKC substrate; see the primitives table below); per-worker port pinning and the session-unlink side effect retire with the Ape runner |
+| `conftest_shared.py` | Stream encoders (`enc_preamble`, `make_config`, `enc_*`), snapshot/revert helpers, log counting support, `record_gas`, unused `run_gas_benchmark`/`compute_access_list` | QXIGKC (+Q3UOC6 for gas helpers) | Encoders → `Cmd.sol` builders **landed** (incl. the raw 0x30 form and V4_BATCH_OPEN_WETH); snapshot/revert helpers → `TestBase.sol` conservation + exact-revert primitives **landed**; `record_gas` → Q3UOC6 gas evidence; unused helpers deleted (disposition 7) |
+| `verify.py` | Raw log topic0 ERC20/ERC6909 transfer counting for transfer-count assertions | QXIGKC | Ported as `TestBase.sol` log-counting helpers (`_countTransfers`, `_countTopic`, plus `_countTransfersInvolving` for tracked-address accounting) — **landed** |
 | `cmd_stream.py` | Standalone command-stream parser | KW5RDF | Stale, zero importers — delete at cutover, no port (disposition 8) |
 | `ape-config.yaml` (repo root) | Ape project config | KW5RDF | Delete at the hard cutover together with the Ape dependency surface |
 | `ape-pytest.ini` (repo root) | Ape pytest config (markers, xdist, timeout) | KW5RDF | Delete at the hard cutover; marker semantics (fork lane, gas) are superseded by the Foundry lane split (`test-foundry-executor` / fork recipes) |
@@ -153,7 +153,35 @@ expansion. Owning tasks are the port epic's ergo IDs.
 |---|---|---|---|
 | `test/AbiOverloads.t.sol` | 3 | QXIGKC | Pins the `execute(bytes)` / `execute(bytes,uint256)` selector pair Vyper emits for the defaulted `config` argument; both entry points must agree |
 | `test/RealLibraries.t.sol` | 2 | QKQOIZ | Canonical `UniswapV2Pair` (solc 0.5.16) and `UniswapV3Pool` (solc 0.7.6) bytecode fidelity behind the fake-pool suites |
-| `src/Cmd.sol`, `src/TestBase.sol`, `src/Setup.sol`, `src/Vm.sol`, `src/generated/*` + `build_artifacts.py`, `build_solidity_artifacts.py`, `gen_interfaces.py`, `foundry.toml` | — | QXIGKC | Harness/artifact substrate to extend before further ports (QXIGKC body: raw `0x30`/`0x33`/`0x34` encodings, config/bribe helpers, conservation diffs, exact revert assertions, error-map selector generation, SolReference + canonical V4 PoolManager) |
+| `src/Cmd.sol`, `src/TestBase.sol`, `src/Setup.sol`, `src/Vm.sol`, `src/generated/*` + `build_artifacts.py`, `build_solidity_artifacts.py`, `gen_interfaces.py`, `foundry.toml` | — | QXIGKC | Harness/artifact substrate. QXIGKC landed the shared primitives below; canonical V4 PoolManager compilation is QKQOIZ scope, not here |
+
+### Substrate primitives landed (QXIGKC)
+
+Each primitive has a named test in `test/HarnessPrimitives.t.sol` and at least
+one downstream port task. The revert-selector table is **generated**
+(`src/generated/Errors.sol`, from the executor artifact ABI + the tracked
+release `cmd_executor.error_map.json` vocabulary, cross-checked against the
+fresh compile on every rebuild) — no port may hand-write a second selector
+table.
+
+| Primitive | Named test(s) | Downstream task |
+|---|---|---|
+| Raw `V3_SWAP_COMPACT` 0x30 encoder (`Cmd.v3SwapCompactRaw`, 17+N bytes, in-band direction flag) | `testV3SwapCompactRawBytesAndLength`, `testV3SwapCompactRawDirectionFlagOnly` | XYAZ7L (`test_v3_debug.py`, `v3_debug` streams); 72TJMU (`v3_three_hop` nested-callback streams) |
+| `V4_BATCH_OPEN_WETH` 0x43 encoder (`Cmd.v4BatchOpenWeth`, shared 0x42 body) | `testV4BatchOpenWethOpAndLayout` | EMCYDR (`test_erc6909_composability.py` batch x ERC6909 capture) |
+| `makeConfig` field-width facts (mode 0 rejected loudly at the boundary) | `testMakeConfigFieldWidths`, `testMakeConfigRejectsBadMode` | GTRKFA, JBBFCQ (bribe/compact config ports) |
+| Generated `ExecutorErrors` vocabulary (`src/generated/Errors.sol`) | `testGeneratedSelectorsMatchCanonicalSignatures`, `testNameOfCoversGeneratedVocabulary` | LVVJOU (`SentinelFailClosed` exact-revert ports), 72TJMU (disposition 10 exact-revert characterization) |
+| Exact revert selector+argument assertions (`_assertRevertData`, `_assertRevertSelector`, `_executorRevert`) with success/wrong-selector/wrong-argument/unrelated-error negative controls | `testExecutorInvalidCommandExactSelectorAndArgument` + the `testAssertRevertData*` matrix | LVVJOU (harness meta-tests of `test_sentinel_failclosed.py`'s `TestRevertHelpers`) |
+| Balance snapshots & conservation diffs (`_snapshotBalances`, `_tokenDeltaSum`, `_assertTokenConserved`, `_assertWethEthConserved`, `_assertExecutorProfit`) | `testTokenConservationPassesWithinTrackedSet`, `testTokenConservationFailsOnLeakToUntrackedAddress`, `testWethEthConservationAndProfitDelta` | AL53BE (`test/Conservation.t.sol` port), 3VFCP5/5SPJYJ (three-hop profit checks) |
+| Tracked transfer/log accounting (`_countTransfersInvolving` alongside the existing topic counters; only the ERC20/ERC6909 Transfer topics count — Swap logs and the ERC6909 id topic never do) | `testCountTransfersInvolvingTracksBothSides`, `testCountTransfersInvolvingIgnoresSwapAndTokenIdTopics` | EMCYDR (`ERC6909` transfer-count ports), AL53BE (`test_withdrawal.py` round trips) |
+| `Vm.sol` lane declarations: `ffi` (5SPJYJ), `rpc`/`createFork`/`selectFork`/`activeFork` (LEZT6O fork, Q3UOC6 `eth_createAccessList`), `parseJson`/`parseJsonString`/`parseJsonUint` (I5R3LB), `expectRevert(bytes4)` (LVVJOU), `toString(bytes32)`/`toString(bytes)` (hex diagnostics) | `testParseJsonTypedGetters`, `testToStringHexForms` (the offline-safe lanes; FFI/RPC/fork declarations are exercised by their consuming ports, which set `--ffi` or a live endpoint) | 5SPJYJ, LEZT6O, Q3UOC6, I5R3LB, LVVJOU |
+| `ExttloadComparator.vy` compiled into the artifact substrate (+ `IExttloadComparator`) | `testExttloadComparatorArtifactSlotMath` | LEZT6O (fork-lane exttload parity comparisons) |
+| Committed solc-0.7.6 `SolReference` built into the lane's artifact shape (+ `ISolReference`) | `testSolReferenceMatchesVyperHarness` (differential vs `TestHarness`) | XYAZ7L (`test_v3_libraries.py`, `test_v3_library_fuzz.py`) |
+| `assertEq(string,string)` in `TestBase` | used throughout `HarnessPrimitives.t.sol` | all remaining ports |
+
+The 0x33/0x34 direction-specific encoders were already in place
+(`Cmd.v3SwapCompact`); the source helper `make_bribe_config` is subsumed by
+`Cmd.makeConfig` — its zero-mode packing has no ported call site, and a zero
+mode is rejected loudly at the executor boundary (`testMakeConfigRejectsBadMode`).
 
 ## Function inventory (source test functions per module)
 

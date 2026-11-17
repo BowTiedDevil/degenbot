@@ -77,14 +77,14 @@ auto-pay path).
 
 ## Layout
 
-- `build_artifacts.py` — pinned vyper in-process (`vyper.compile_code`) → `artifacts/<Contract>.json` (+ manifest with input-tree, source, bytecode, and whole-artifact hashes).
-- `build_solidity_artifacts.py` — pinned solc 0.5.16 / 0.7.6 binaries, driven through `py-solc-x` → the same artifact shape for canonical `UniswapV2Factory`/`UniswapV2Pair`/`UniswapV3Factory`/`UniswapV3Pool`.
+- `build_artifacts.py` — pinned vyper in-process (`vyper.compile_code`) → `artifacts/<Contract>.json` (+ manifest with input-tree, source, bytecode, and whole-artifact hashes), plus the generated revert vocabulary `src/generated/Errors.sol`: custom-error selectors computed from the built `CmdExecutor` ABI, with the compiler revert-label vocabulary taken from the tracked release `cmd_executor.error_map.json` and cross-checked against the fresh compile on every rebuild (an unknown label or a vocabulary divergence fails the build loudly).
+- `build_solidity_artifacts.py` — pinned solc 0.5.16 / 0.7.6 binaries, driven through `py-solc-x` → the same artifact shape for canonical `UniswapV2Factory`/`UniswapV2Pair`/`UniswapV3Factory`/`UniswapV3Pool` and the committed solc-0.7.6 `SolReference` (the original Solidity V3-math libraries, byte-identical to the committed Ape-lane artifact modulo its metadata hash, for the differential library ports).
 - `gen_interfaces.py` — ABI → `src/generated/I<Contract>.sol` + tuple structs in `Types.sol`.
-- `src/Vm.sol` — minimal cheatcode interface (no forge-std dependency).
-- `src/TestBase.sol` — artifact deployment, `execute` helpers, assertions, log helpers, and the `ExecutorFixture` that mirrors `tests/executor/conftest.py`.
-- `src/Cmd.sol` — the command-stream encoder: the port of `conftest_shared.py`'s `enc_*` helpers and the `AddressTable` sentinel resolution.
+- `src/Vm.sol` — minimal cheatcode interface (no forge-std dependency), carrying the declarations the planned FFI (`vm.ffi`), RPC/fork (`vm.rpc`, `createFork`/`selectFork`), JSON (`parseJson*`), and hex (`toString`) lanes need — and nothing speculative beyond those consumers.
+- `src/TestBase.sol` — artifact deployment, `execute` helpers, assertions, log/transfer accounting, balance snapshots with conservation diffs (`_snapshotBalances` + `_assert*Conserved`/`_assertExecutorProfit`), exact revert assertions over the generated `ExecutorErrors` vocabulary, and the `ExecutorFixture` that mirrors `tests/executor/conftest.py`.
+- `src/Cmd.sol` — the command-stream encoder: the port of `conftest_shared.py`'s `enc_*` helpers and the `AddressTable` sentinel resolution (including the raw `0x30` V3 form and `V4_BATCH_OPEN_WETH`).
 - `src/Setup.sol` — pool setup: the port of `_setup_v2_pair`, `_setup_v3`, `_setup_v4_swap`, `v2_get_amount_out`.
-- `test/*.t.sol` — ported test files (each names the Python file it ports).
+- `test/*.t.sol` — ported test files (each names the Python file it ports), plus `test/HarnessPrimitives.t.sol`, the named tests for the shared substrate primitives themselves (encoding bytes/lengths, the generated error vocabulary, conservation diffs, exact-revert negative controls, and the artifact additions).
 
 ## Ported coverage
 
@@ -104,6 +104,7 @@ auto-pay path).
 | `test_cmd_executor_v2v3.py` | `V2V3.t.sol` | 2 | 2 |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
+| — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
 
 Not ported: the swap-family files (`v2_swap_direct`, `v3_three_hop`, `v4v2`,
 `v4v3`, `v4v4`, `v4v4_wrap_unwrap`, `compact`, `dynamic`, `inline_wrap_unwrap`,

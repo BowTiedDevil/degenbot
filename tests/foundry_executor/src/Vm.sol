@@ -53,4 +53,50 @@ interface Vm {
 
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData)
         external;
+
+    function expectRevert(bytes4 revertSelector) external;
+
+    // ── FFI lane ──────────────────────────────────────────────────────────
+    // Consumer: the production-calldata port drives the Rust
+    // `encode_three_hop` binary and compares its bytes against the Solidity
+    // encoders. Requires `forge test --ffi`; the default gate never sets it.
+
+    function ffi(string[] calldata command) external returns (bytes memory);
+
+    // ── RPC / fork lanes ──────────────────────────────────────────────────
+    // Consumers: the fake-PM parity fork port pins a real PoolManager at an
+    // archive height with createFork/selectFork + rpc `eth_getCode`
+    // fail-closed probes; the access-list gas-evidence replacement
+    // benchmarks `eth_createAccessList` through rpc.
+
+    function rpc(string calldata method, string calldata params) external returns (bytes memory);
+
+    function createFork(string calldata urlOrAlias, uint256 blockNumber)
+        external
+        returns (uint256 forkId);
+
+    function selectFork(uint256 forkId) external;
+
+    function activeFork() external returns (uint256);
+
+    // ── JSON lane ─────────────────────────────────────────────────────────
+    // Consumer: the release-metadata port reads the release manifest's
+    // declared values out of its JSON document.
+
+    function parseJson(string calldata json, string calldata key) external pure returns (bytes memory);
+
+    function parseJsonString(string calldata json, string calldata key)
+        external
+        pure
+        returns (string memory);
+
+    function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
+
+    // ── Hex lanes ─────────────────────────────────────────────────────────
+    // Consumers: the sentinel/fail-closed and NoFePrefix ports render raw
+    // revert payloads and stream bytes as `0x…` hex in failure messages.
+
+    function toString(bytes32 value) external pure returns (string memory);
+
+    function toString(bytes calldata value) external pure returns (string memory);
 }
