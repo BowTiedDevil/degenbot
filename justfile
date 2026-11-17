@@ -1385,6 +1385,17 @@ install-extension-wheel wheel:
     # ... and the compiled extension has to sit in the source tree, because the
     # import that matters resolves there first.
     unzip -o -j {{wheel}} 'degenbot/_ffi.abi3.so' -d src/degenbot
+    # A wheel repaired by auditwheel vendors its shared libraries beside the
+    # extension and points RPATH at `$ORIGIN/../degenbot.libs`; keeping that
+    # relative layout is what makes the module loadable. An unrepaired wheel (a
+    # local build with no auditwheel on PATH) carries no such directory.
+    if unzip -l {{wheel}} | grep -q 'degenbot\.libs/'; then
+        unzip -o -q {{wheel}} 'degenbot.libs/*' -d src
+    else
+        # Switching artifacts must not leave a repaired wheel's vendored
+        # libraries shadowing the system ones an unrepaired build links.
+        rm -rf src/degenbot.libs
+    fi
 
 # ========== Build-Artifact Housekeeping ==========
 

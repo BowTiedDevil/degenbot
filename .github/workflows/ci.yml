@@ -637,6 +637,11 @@ jobs:
     # build moves here and travels as one abi3 wheel that serves every
     # interpreter leg. `rust-lint`/`rust-artifacts` still build the cdylib their
     # own way; this job exists only to stop the matrix repeating itself.
+    #
+    # The extension resolves its executor-runtime artifact against the path it
+    # was compiled in, so this job and the legs must share one checkout path
+    # (GitHub-hosted jobs do: `/home/runner/work/<repo>/<repo>`). A runner that
+    # mounts a different path per job needs `DEGENBOT_CONTRACTS_DIR` instead.
     name: Python extension wheel
     needs: changes
     if: needs.changes.outputs.python == 'true'

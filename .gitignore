@@ -6,6 +6,10 @@ __pycache__
 # C extensions
 *.so
 
+# Shared libraries an auditwheel-repaired wheel vendors beside the extension,
+# extracted into the source tree by `just install-extension-wheel`
+src/degenbot.libs/
+
 # Build-identity counter written by rust/crates/shells/degenbot-python/build.rs at
 # every compile of degenbot_rs (stale-.so detector, see AGENTS.md). Per-clone
 # local state: never commit it, and never put it under rust/target/ (a cargo
