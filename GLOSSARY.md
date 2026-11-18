@@ -816,6 +816,18 @@ deployments tables); a DEX type per fork.
 
 ## Verification idioms
 
+**Affected-test selection**:
+The pre-push mapping from the outgoing diff to the Rust packages whose tests it invalidates: directly touched members and reverse dependencies over every declared edge, with longest-prefix ownership for nested members and global Rust build/test inputs selecting the whole workspace. An unmapped path under `rust/` refuses selection rather than certifying an empty test set.
+_Avoid_: directory-containment-only selection; treating an empty selection as proof that no Rust tests are needed; confusing `default-members` with the whole workspace.
+
+**Publication plan**:
+The workspace's manifest-derived publication facts: eligible members, withheld members and reasons, the resolution set, dependency cycles, and internal version lockstep. Live registry state is a separate input to its release projection.
+_Avoid_: a release-only text check; a second publication-membership or lockstep rule in shell.
+
+**Justfile recipe index**:
+The authoritative answer to whether a name resolves to an invocable just recipe, obtained from `just` itself for gate and catalog validation. Private recipes count; variables and directives do not.
+_Avoid_: `just --summary` as a complete existence check; a second regex or text grammar for the justfile.
+
 **Drift gate**:
 The regenerate-and-diff family (`docs/rust-config-keys.md`'s `REGEN_*` test, `just
 gen-stubs --check`): a committed artifact that is machine-emitted must fail a plain
