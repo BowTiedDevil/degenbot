@@ -363,6 +363,9 @@ composition set block after block. The follow-up worth investigating is
 paths the registry feeds an epoch), event-driven dirtiness (which pools a
 block's logs actually touch), and the path cap (1,000,000 registered paths
 against a per-epoch probe budget of median 675) — NOT how long to retain.
+The follow-up analysis and minimal identity-bearing tap design live in
+[`walkmemo-dirty-set-overlap.md`](walkmemo-dirty-set-overlap.md); it also
+separates within-epoch uniqueness from true previous-epoch recurrence.
 
 ### Decision (b) — resolved by bounds: keep the deliberate safety gate
 

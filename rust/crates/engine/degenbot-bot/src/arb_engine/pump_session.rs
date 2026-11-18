@@ -684,7 +684,7 @@ impl PumpSession {
 
     /// Construction-time test seed: a session already in `Subscribed`, owning a
     /// local pump and its stream.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub(crate) fn seed_connected_for_test(&self, pending: Box<ConnectedSession>) {
         self.inner.lock().pose = PumpPose::Subscribed(pending);
     }

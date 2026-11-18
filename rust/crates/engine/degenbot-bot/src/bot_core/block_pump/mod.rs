@@ -248,7 +248,7 @@ pub struct BlockPump {
     /// `watchdog_tick_count_for_test`) to prove a tick actually landed inside
     /// its scenario; without that, the negative assertion could hold simply
     /// because no tick ever ran. Absent from production builds.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     watchdog_ticks: std::sync::atomic::AtomicU64,
     /// Wall-clock ms of the last accepted header — the anchor the driver
     /// measures `header_to_publish` (the ADR-041 epoch race) against
@@ -304,6 +304,60 @@ mod backfill;
 mod lifecycle;
 mod run_loop;
 mod stages;
+
+#[cfg(any(test, feature = "test-fixtures"))]
+impl BlockPump {
+    /// Test-only constructor with an injected `AlloyProvider` (typically a
+    /// mock transport) + a `Bot`/`sink`/`reorg_coordinator`. Lets tests drive
+    /// [`BlockPump::run_with_stream`] from a deterministic synthetic
+    /// `WsEvent` stream without a live RPC connection. The provider is only
+    /// touched on the 60s-timeout backfill path — tests that avoid timeouts
+    /// and block gaps never invoke it.
+    #[must_use]
+    pub fn for_test(
+        bot: Arc<Bot>,
+        engine: Arc<dyn StageHandlers>,
+        control: Arc<dyn PumpControl>,
+        reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
+        provider: Arc<degenbot_rpc::provider::AlloyProvider>,
+        shutdown: Arc<AtomicBool>,
+    ) -> Self {
+        // Per-pump completeness opt-out (see the field doc): the dispatcher's
+        // strict decode-miss fault follows this OFF stance so the synthetic
+        // tombstone logs never trip it.
+        bot.dispatcher().set_strict_decode_fault(false);
+        Self {
+            bot,
+            engine,
+            control,
+            reorg_coordinator,
+            // The injected mock provider rides inside the ingestion
+            // transport handle; tests that avoid timeouts never touch it.
+            ingestor: WsIngestor::with_provider(provider),
+            shutdown,
+            watchdog: Watchdog::new(),
+            watchdog_ticks: std::sync::atomic::AtomicU64::new(0),
+            stage_max_age: Duration::from_secs(
+                crate::bot_core::stage_telemetry::STAGE_MAX_AGE_SECS,
+            ),
+            header_ms: std::sync::atomic::AtomicU64::new(0),
+            // Same per-pump opt-out for the WS-delivery completeness cross-check:
+            // default-ON in production, deterministically OFF in tests so the
+            // synthetic log streams (which use relevant-topic logs as pure block
+            // tombstones) never trip a spurious eth_getLogs comparison/abort.
+            ws_completeness_enabled: false,
+            // Fixed-debounce posture exactly as the historical tests pin it
+            // (no ambient-env reads); adaptive-mode tests override via
+            // `set_quiesce_for_test`. The fixed 50 mirrors the retired
+            // `debounce_ms` field this constructor used to set.
+            quiesce_params: QuiesceParams::fixed(50),
+            // Production default — finite test streams end before
+            // the slice deadline, so existing quiesce tests are unaffected;
+            // the gap-stream tests below set the field explicitly.
+            early_slice_ms: 25,
+        }
+    }
+}
 
 #[expect(
     clippy::unwrap_used,

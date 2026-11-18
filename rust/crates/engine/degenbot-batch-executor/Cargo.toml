@@ -63,6 +63,8 @@ degenbot-core.workspace = true
 order-index = ["degenbot-arbitrage/order-index"]
 
 [dev-dependencies]
+# The armed-stream oracle constructs a whole connected session without a live WS.
+degenbot-bot = { workspace = true, features = ["test-fixtures"] }
 # The shared event-sequence oracle (`tests/session_consumption.rs`) reads its
 # recorded expectation from the parity fixture directory as JSON.
 serde_json = "^1.0"

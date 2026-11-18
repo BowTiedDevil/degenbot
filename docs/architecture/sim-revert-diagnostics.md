@@ -56,10 +56,9 @@ payload can and cannot support — nothing in the tree computes them. Applied pe
 reverted candidate (from its `[sim-diag]` payload), in order:
 
 1. **Drift** — any hop has `drift == true` (engine_state ≠ onchain_state). The
-   map basis is verified at startup (snapshot + backfill phases — see the
-   `WFDTUR` task), so a drift flag does **not** indict the snapshot; it means
-   the per-block event pump desynced post-backfill, or the sim block tag
-   differs from the solve block.
+   map basis is verified at startup (snapshot + backfill phases), so a drift
+   flag does **not** indict the snapshot; it means the per-block event pump
+   desynced post-backfill, or the sim block tag differs from the solve block.
 2. **SolverCalc** — no drift AND any hop `recompute.matches_solver == false`
    (an independent recompute of the on-chain output disagrees with the
    solver's reported `hop_outputs`). Meaningful for **V2** hops (the only
@@ -71,23 +70,13 @@ reverted candidate (from its `[sim-diag]` payload), in order:
    unavailable for the reverting hop family. Classified conservatively —
    **never** as "stale".
 
-### Fallback
+### No-profit tally
 
-When `[sim-diag]` lines are absent (older logs predating LAV44W), every revert
-falls into the `Unknown` column and the TSV carries a `# basis:` note:
-`fallback-unknown (no [sim-diag] lines — older logs)`. The `NoProfit` column is
-still derived from the bot's authoritative `by reason: no-profit=N` summary
-(the detailed `[sim-fail]` line count undercounts).
-
-### Verification-basis header note
-
-The `# basis:` line also records the verification basis detected in the run,
-because it qualifies what a `Drift` verdict means:
-
-- `[verify] … OK` present → drift is attributable to per-block pump desync (or a
-  sim-block ≠ solve-block mismatch); the snapshot is not implicated.
-- `verify … SKIPPED` present → drift could equally indicate a bad snapshot
-  (no verifier check ran), so the verdict is less certain.
+The bot's authoritative no-profit tally is rendered by
+`format_failure_breakdown` (`src/degenbot/runner/_render.py`) as `no-profit=N`;
+`tests/arbitrage/test_render_sim_failures.py` pins the `name=count` format. The
+detailed `[sim-fail]` line count undercounts because failure rendering is capped
+at `_SIM_FAIL_RENDER_CAP` records per batch.
 
 ## Recompute caveats (V2 vs V3/V4)
 

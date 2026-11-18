@@ -199,6 +199,8 @@ mod executor_ab_probe;
 mod test_harness;
 #[cfg(test)]
 mod tests;
+#[cfg(any(test, feature = "test-fixtures"))]
+pub use degenbot_ingestion::IngestEvent;
 pub use diagnostic::{
     compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
 };

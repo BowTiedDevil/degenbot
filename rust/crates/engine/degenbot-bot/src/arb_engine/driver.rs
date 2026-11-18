@@ -84,7 +84,7 @@ use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
 use crate::bot_core::{Bot, PumpControl, StageHandlers, VerifyLifecycle};
 use crate::strategy_host::HostHub;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-fixtures"))]
 use degenbot_ingestion::IngestEvent as WsEvent;
 
 /// Hub registration name for the session's ONE ordered event source.
@@ -1266,12 +1266,9 @@ impl Drop for EngineDriver {
     }
 }
 
-// ── the crate's own construction-time seams (test builds only) ─────────────
-
-#[cfg(test)]
+#[cfg(any(test, feature = "test-fixtures"))]
 impl EngineDriver {
-    /// A local pump over this driver's own seams: no WS endpoint, no dial.
-    pub(crate) fn local_pump_for_test(&self) -> BlockPump {
+    fn local_pump_for_fixture(&self) -> BlockPump {
         let stage_handlers: Arc<dyn StageHandlers> = self.stages.clone();
         let control: Arc<dyn PumpControl> = self.stages.clone();
         BlockPump::for_test(
@@ -1282,6 +1279,33 @@ impl EngineDriver {
             mock_provider(),
             Arc::clone(&self.shutdown),
         )
+    }
+
+    /// Seed a whole `Subscribed` session over a local pump and scripted events.
+    ///
+    /// Compiled for in-crate tests and for downstream consumers that enable
+    /// `test-fixtures` through their dev-dependencies. The seed changes only
+    /// construction: every later move uses the production session protocol.
+    pub fn seed_connected_for_test(&self, first_block: u64, events: Vec<WsEvent>) {
+        use futures_util::StreamExt;
+
+        let stream = futures_util::stream::iter(events).boxed();
+        self.session
+            .seed_connected_for_test(Box::new(ConnectedSession {
+                pump: self.local_pump_for_fixture(),
+                first_block,
+                stream,
+            }));
+    }
+}
+
+// ── the crate's own construction-time seams (test builds only) ─────────────
+
+#[cfg(test)]
+impl EngineDriver {
+    /// A local pump over this driver's own seams: no WS endpoint, no dial.
+    pub(crate) fn local_pump_for_test(&self) -> BlockPump {
+        self.local_pump_for_fixture()
     }
 
     /// Build the session in a pose a test cannot reach without a live WS
@@ -1375,14 +1399,14 @@ impl EngineDriver {
 }
 
 /// An alloy mock-transport provider (never hit on the no-RPC test paths).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-fixtures"))]
 fn mock_provider() -> Arc<degenbot_rpc::provider::AlloyProvider> {
     mock_provider_and_asserter().0
 }
 
 /// [`mock_provider`] plus the `Asserter`, so a test can queue the exact RPC
 /// response a backfill will consume.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-fixtures"))]
 fn mock_provider_and_asserter() -> (
     Arc<degenbot_rpc::provider::AlloyProvider>,
     alloy::transports::mock::Asserter,

@@ -516,7 +516,7 @@ impl BlockPump {
                     // the FSM decides. Negative watchdog tests assert a tick
                     // landed inside their scenario so "must NOT fire" cannot
                     // pass vacuously.
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-fixtures"))]
                     self.watchdog_ticks.fetch_add(1, Ordering::Relaxed);
                     // A4: the watchdog window decision lives in the FSM
                     // (`on_tick`), fed a synthetic `now_ms`; the interval only

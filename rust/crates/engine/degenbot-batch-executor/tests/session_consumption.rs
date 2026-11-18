@@ -44,7 +44,9 @@ use degenbot_batch_executor::session::{
 use degenbot_batch_executor::{
     BatchExecutor, ExecutorConfig, ExecutorRuntime, PathResolver, SessionReport,
 };
-use degenbot_bot::arb_engine::{BlockNotification, Heartbeat, ResultBatch, SessionEvent};
+use degenbot_bot::arb_engine::{
+    BlockNotification, Heartbeat, IngestEvent, ResultBatch, SessionEvent,
+};
 use degenbot_bot::arb_engine::{EngineDriver, EventHandoff};
 use degenbot_bot::bot_core::Bot;
 use degenbot_core::address_utils::parse_address;
@@ -557,6 +559,49 @@ async fn a_refused_resume_still_closes_the_session() {
         .expect("the closed stream is a quiet end");
     assert_eq!(report.consumer.end_of_stream, 1);
     assert_eq!(report.consumer.batches, 0);
+    assert!(driver.is_stopped());
+}
+
+/// A successful resume arms the real pump: the follow-on run consumes the
+/// ordered headers the armed stream delivers, then closes the session.
+#[tokio::test]
+async fn a_successful_resume_arms_the_session_stream() {
+    let driver = Arc::new(EngineDriver::new(
+        Arc::new(Bot::new(1)),
+        degenbot_config::holder::config_arc(),
+    ));
+    let handoff = driver.claim_consumer().expect("the session's one hand-off");
+    let mut consumer = SessionConsumer::new(
+        offline_executor().await,
+        SessionClock::new(dispatcher()),
+        ConsumerPolicy::new(true),
+    );
+    consumer
+        .attach(handoff, Arc::clone(&driver))
+        .expect("the fresh consumer admits the hand-off");
+
+    let header = |number| IngestEvent::BlockHeader {
+        number,
+        timestamp: 1_700_000_000 + number,
+        base_fee_per_gas: Some(1_000_000_000),
+        gas_used: 15_000_000,
+        gas_limit: 30_000_000,
+        hash: alloy::primitives::B256::ZERO,
+        parent_hash: alloy::primitives::B256::ZERO,
+    };
+    driver.seed_connected_for_test(100, vec![header(101), header(102)]);
+
+    consumer
+        .resume()
+        .await
+        .expect("the seeded connected session resumes");
+    let report = tokio::time::timeout(std::time::Duration::from_secs(5), consumer.run())
+        .await
+        .expect("the armed stream ends after its scripted headers")
+        .expect("the armed stream is consumed without a leaf failure");
+
+    assert_eq!(report.consumer.blocks, 2);
+    assert_eq!(report.consumer.end_of_stream, 1);
     assert!(driver.is_stopped());
 }
 
