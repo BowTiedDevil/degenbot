@@ -7,24 +7,16 @@ selection is only as trustworthy as this mapping.
 
 from __future__ import annotations
 
-import importlib.util
 import pathlib
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def _load(name: str):
-    spec = importlib.util.spec_from_file_location(name, _ROOT / "scripts" / f"{name}.py")
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from tests.repo_script import load_script
 
-
-rap = _load("rust_affected_packages")
-vm = _load("vendor_members")
-cmf = _load("cargo_metadata_field")
+rap = load_script("rust_affected_packages", _ROOT / "scripts" / "rust_affected_packages.py")
+vm = load_script("vendor_members", _ROOT / "scripts" / "vendor_members.py")
+cmf = load_script("cargo_metadata_field", _ROOT / "scripts" / "cargo_metadata_field.py")
 
 _METADATA = {
     "packages": [

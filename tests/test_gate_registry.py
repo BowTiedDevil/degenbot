@@ -19,26 +19,20 @@ its gate when the registry reorders the hooks.
 
 from __future__ import annotations
 
-import importlib.util
 import pathlib
 import re
 
 import pytest
 
+from tests.repo_script import load_script
+
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def _gate_registry():
-    path = _ROOT / "scripts" / "gate_registry.py"
-    spec = importlib.util.spec_from_file_location("gate_registry", path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-gate_registry = _gate_registry()
+# `load_script` registers the module before executing it: a dataclass resolves
+# its own namespace through `sys.modules`, so an unregistered spec load runs on
+# 3.15 and raises on the CI floor.
+gate_registry = load_script("gate_registry", _ROOT / "scripts" / "gate_registry.py")
 
 
 def _q(value: str) -> str:
