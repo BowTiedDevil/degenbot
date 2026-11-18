@@ -815,7 +815,7 @@ def test_the_gate_is_registered_where_it_runs() -> None:
     assert "check-tool-catalog:" in justfile
     assert "python3 scripts/tool_catalog_check.py" in justfile
     assert (
-        "lint-rust-check: check-toolchain check-too-many-lines-waivers check-publish-blocked "
+        "lint-rust-check: check-toolchain check-publish-blocked "
         "check-vendor-tracked check-tool-catalog" in justfile
     )
     assert "scripts/tool_catalog_check.py" in justfile  # lint-python / ty coverage

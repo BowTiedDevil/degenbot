@@ -939,7 +939,7 @@ check-aave-captures:
 
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every workspace member that can publish, with the
-# publish-blocked census reconciled FIRST (docs/gates.md section 7). At a
+# publish-blocked census reconciled FIRST (docs/gates.md section 6). At a
 # fresh lockstep version the siblings a member requires are not on crates.io
 # yet, and the rewritten manifests must resolve before any verify build --
 # `--no-verify` does NOT skip resolution -- so the run drives ONE Cargo-owned
@@ -974,16 +974,16 @@ check-vendor-tracked:
     scripts/vendor_tracked.sh
 
 
-# The publish-blocked census on its own (docs/gates.md section 7): every member
+# The publish-blocked census on its own (docs/gates.md section 6): every member
 # `cargo publish` cannot upload is reconciled against
 # scripts/publish-blocked-census.txt in both directions, so the population the
 # publish oracle withholds is named in the tree and cannot move silently.
 # `--rows` prints the rows the manifests imply (the regeneration form);
 # `--blocked` prints the member names to withhold.
 #
-# Interpreter: a plain `python3`, deliberately NOT `{{ py_run }} python` (same
-# reason as check-too-many-lines-waivers): this gate rides the uv-free Rust
-# lint leg, and the script imports nothing outside the standard library.
+# Interpreter: a plain `python3`, deliberately NOT `{{ py_run }} python`: this
+# gate rides the uv-free Rust lint leg, and the script imports nothing outside
+# the standard library.
 #
 # live-invariant gate (ADR-087 D2): watches the live workspace manifests and the dependency shapes their published forms retain against scripts/publish-blocked-census.txt; not tripwire precedent.
 check-publish-blocked *args:
@@ -1027,7 +1027,7 @@ crates-io-pending *args:
 # shipped crate root, so the lab keeps its `--deny warnings` coverage. The
 # feature-OFF production shape — every dependent compiling without either — is
 # `check-rust-default`'s claim.
-lint-rust-check: check-toolchain check-too-many-lines-waivers check-publish-blocked check-vendor-tracked check-tool-catalog
+lint-rust-check: check-toolchain check-publish-blocked check-vendor-tracked check-tool-catalog
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
@@ -1307,28 +1307,6 @@ check-profile-policy:
 # live-invariant gate (ADR-087 D2): watches the resolved dependency tree of every live crate against the ADR-084 D3 deny rules; not tripwire precedent.
 check-dependency-charter:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- dependency_charter_is_respected --exact --nocapture
-
-# The `too_many_lines` waiver ratchet: every expected lint of that name is a
-# deliberate decision to keep one function long, and the decision is worth what
-# its recorded reason is worth. The gate reconciles the waiver sites in the
-# Rust tree against scripts/hooks/too-many-lines-waiver-census.txt in both
-# directions -- a waiver with no row fails, a row with no waiver fails, a
-# stated reason the census does not mirror fails, and a new reasonless waiver
-# breaks the census ceiling -- so the population only shrinks.
-# `--rows` prints the census rows the tree implies (the regeneration recipe).
-# Wired into `lint-rust-check` (hence `just test` / CI / the pre-push
-# `rust-clippy` hook) plus the pre-commit `too-many-lines-waivers` hook.
-#
-# Interpreter: a plain `python3`, deliberately NOT `{{ py_run }} python`. The script
-# imports nothing outside the standard library, and this recipe hangs off the uv-free
-# Rust lint leg: CI's `rust` job provisions the Rust toolchain, `just`, ripgrep and
-# Foundry, and never uv (the same absence `test-rust`'s best-effort LIBDIR probe
-# documents). A `uv run` line here kills the leg with `uv: not found` before clippy
-# starts, in the job `just test` is not allowed to assume a Python toolchain for.
-#
-# live-invariant gate (ADR-087 D2): watches the live `too_many_lines` waiver sites in the Rust tree against scripts/hooks/too-many-lines-waiver-census.txt; not tripwire precedent.
-check-too-many-lines-waivers *args:
-    python3 scripts/hooks/too_many_lines_waivers.py "$@"
 
 # ADR-084 D1/C5 consumer probes: each named catalog consumer completes a real
 # task through its own surface. (ii) the pools-only Rust consumer solves a

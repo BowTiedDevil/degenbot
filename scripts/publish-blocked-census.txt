@@ -2,7 +2,7 @@
 #
 # Gate body: scripts/publish_blocked.py, reconciling these rows against the
 # static publication plan (scripts/publication_plan.py) that derives them.
-# Index: docs/gates.md section 7 "Publish-blocked census".
+# Index: docs/gates.md section 6 "Publish-blocked census".
 #
 # What this file is. `cargo publish` rewrites every path and git dependency at
 # packaging: the source key is stripped and what remains is a version
