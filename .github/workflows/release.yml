@@ -121,7 +121,10 @@ jobs:
           # Linux, so this build links no LLVM, and no x86_64 macOS LLVM 23 exists
           # to link against anyway. The interpreter fail-soft makes it the same
           # engine, uncompiled. docs/llvm-release-ci.md.
-          - os: macos-14
+          # An Intel host is what builds universal2: maturin compiles the
+          # x86_64 slice natively and cross-compiles the arm64 one. The arm64
+          # labels cannot produce the x86_64 slice at all.
+          - os: macos-15-intel
             target: universal2-apple-darwin
             args: "--target universal2-apple-darwin"
           # Windows x86_64. JIT-less for the same reason, and independently so:
@@ -215,7 +218,9 @@ jobs:
           # under QEMU user-mode on the x86 build host.
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - os: macos-14
+          # arm64, so the smoke test loads the cross-compiled slice of the
+          # universal2 wheel rather than the one its Intel build host produced.
+          - os: macos-15
             target: universal2-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
