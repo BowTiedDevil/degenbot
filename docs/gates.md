@@ -47,6 +47,29 @@ is a command; where the repair is an edit, it names the file and the rule.
 | Retirement-tripwire ratchet | Delete the artifact, or label it with the D2 marker naming the present code it watches |
 | rustfmt / clippy / python lint | `just format`, `just lint-rust`, `just lint-python` |
 
+### What each ratchet caught
+
+A gate earns its place by the defect it caught that tests and review missed. A
+row without a recorded catch is documentation consistency, not defect catching:
+it survives by keeping its document true, or it is deleted (ADR-087).
+
+| Ratchet | Recorded catch |
+| --- | --- |
+| Comment hygiene | 237 in-code tracker citations, none resolvable (2026-09-15 survey) |
+| Config-derived statics | A process-once static freezing a snapshot of the config holder (the SERRGX seam audit) |
+| Worker census | Two concurrent multi-thread tokio runtimes invisible to the census, the boot dump and the comm cross-check |
+| Stub drift | A worker claimed a regeneration it had not run |
+| pytest noise gate | Exception spray printed after the session ended while the exit code stayed 0 |
+| Publish-blocked census | Members whose retained requirements cannot resolve on crates.io, discovered only at upload |
+| Capability catalog | **None recorded** — keeps `docs/capabilities.md` complete; 24 of the last 200 commits touch it |
+| Dependency charter | **None recorded** — keeps the charter list current; 2 of the last 200 commits touch it |
+| Tool catalog | **None recorded** — keeps `rust/tools/README.md` complete; 53 of the last 200 commits touch it |
+
+The three unrecorded rows are the repository's highest-churn bookkeeping. They are
+kept for now because each keeps a living document true, and the next step is to
+derive their rows (regenerate and diff) so a landing change runs a command
+instead of hand-editing a table.
+
 ---
 
 ## 1. Comment hygiene
