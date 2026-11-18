@@ -18,7 +18,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
-import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -171,21 +170,3 @@ def test_hard_threshold_blocks_the_push_when_prune_cannot_help(tmp_path: Path) -
     output = (result.stdout + result.stderr).lower()
     assert "blocked" in output
     assert "prune" in output or "repack" in output
-
-
-def test_gate_is_wired_into_the_pre_push_stage() -> None:
-    with (REPO_ROOT / "prek.toml").open("rb") as handle:
-        config = tomllib.load(handle)
-
-    hooks = [
-        hook
-        for entry in config["repos"]
-        for hook in entry.get("hooks", [])
-        if hook["id"] == "object-gc"
-    ]
-    assert len(hooks) == 1, "object-gc must be registered exactly once in prek.toml"
-    assert "pre-push" in hooks[0]["stages"]
-    assert hooks[0]["always_run"] is True
-
-    justfile = (REPO_ROOT / "justfile").read_text()
-    assert "prek run --stage pre-push" in justfile, "just pre-push must delegate to this stage"

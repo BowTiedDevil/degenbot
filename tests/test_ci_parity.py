@@ -70,6 +70,23 @@ def _mutate(tmp_path: Path, source: Path, old: str, new: str) -> Path:
     return mutated
 
 
+def _push_gate_row() -> tuple[str, str]:
+    """The first manifest row that declares push gates: its line and the entry."""
+    for line in MANIFEST.read_text(encoding="utf-8").splitlines():
+        fields = line.split("|")
+        if len(fields) >= 3 and fields[2].strip():
+            return line, fields[2].strip()
+    raise AssertionError("no manifest row declares a push gate; the probes below would be vacuous")
+
+
+def _hook_line_for(entry: str) -> str:
+    """The prek.toml hook line running `entry`, so a probe never pins wiring text."""
+    for line in PREK_TOML.read_text(encoding="utf-8").splitlines():
+        if line.lstrip().startswith("{ id = ") and f'entry = "{entry}"' in line:
+            return line
+    raise AssertionError(f"no hook in prek.toml runs {entry!r}")
+
+
 def test_parity_holds_on_the_committed_tree() -> None:
     result = _run_ci_parity()
 
@@ -88,13 +105,11 @@ def test_the_manifest_is_a_file_the_script_reads() -> None:
 
 def test_a_push_gates_entry_outside_the_push_gate_manifest_fails(tmp_path: Path) -> None:
     # `just test-fork` is a real recipe, so the notes' existence check passes
-    # and the failure can only come from the push_gates wiring check.
-    mutated = _mutate(
-        tmp_path,
-        MANIFEST,
-        "cli-no-python|local|just ci-no-python-cli-gate|just ci-no-python-cli-gate",
-        "cli-no-python|local|just test-fork|just ci-no-python-cli-gate",
-    )
+    # and the failure can only come from the push_gates wiring check. The row is
+    # the first that declares one, so the probe follows the manifest rather than
+    # pinning a line that a re-wiring would leave stale.
+    row, gate = _push_gate_row()
+    mutated = _mutate(tmp_path, MANIFEST, row, row.replace(gate, "just test-fork", 1))
 
     result = _run_ci_parity(MANIFEST=str(mutated))
 
@@ -139,15 +154,16 @@ def test_the_commitlint_script_entry_is_wiring_checked(tmp_path: Path) -> None:
 
 
 def test_a_recipe_dropped_from_the_push_gate_manifest_fails(tmp_path: Path) -> None:
-    dropped = '  { id = "cli-no-python", name = "CLI no-Python gate", language = "system", '
-    dropped += 'entry = "just ci-no-python-cli-gate", stages = ["pre-push"], always_run = true, '
-    dropped += "pass_filenames = false, fail_fast = true },\n"
-    mutated = _mutate(tmp_path, PREK_TOML, dropped, "")
+    # Whichever hook the manifest's push-gate row names is the one to drop, so
+    # retiring or re-pointing a gate cannot leave this probe asserting a line
+    # that no longer exists.
+    _, gate = _push_gate_row()
+    mutated = _mutate(tmp_path, PREK_TOML, _hook_line_for(gate) + "\n", "")
 
     result = _run_ci_parity(PREK=str(mutated))
 
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "ci-no-python-cli-gate" in result.stderr
+    assert gate in result.stderr
 
 
 def test_a_ci_job_without_a_manifest_line_fails(tmp_path: Path) -> None:
