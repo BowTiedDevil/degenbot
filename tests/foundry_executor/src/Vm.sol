@@ -57,11 +57,24 @@ interface Vm {
     function expectRevert(bytes4 revertSelector) external;
 
     // ── FFI lane ──────────────────────────────────────────────────────────
-    // Consumer: the production-calldata port drives the Rust
-    // `encode_three_hop` binary and compares its bytes against the Solidity
-    // encoders. Requires `forge test --ffi`; the default gate never sets it.
+    // Consumer: the production-calldata port runs the Rust `encode_three_hop`
+    // binary and executes the returned bytes verbatim. `ffi` returns stdout and
+    // reverts on a non-zero exit carrying stderr; `tryFfi` reports the exit
+    // code and both streams so the encoder's CLI refusals can be pinned
+    // exactly. Requires `forge test --ffi`; the default gate never sets it, and
+    // `skip` is how that lane's suite stays out of it.
+
+    struct FfiResult {
+        uint8 exitCode;
+        bytes stdout;
+        bytes stderr;
+    }
 
     function ffi(string[] calldata command) external returns (bytes memory);
+
+    function tryFfi(string[] calldata command) external returns (FfiResult memory);
+
+    function skip(bool skipTest) external;
 
     // ── RPC / fork lanes ──────────────────────────────────────────────────
     // Consumers: the fake-PM parity fork port pins a real PoolManager at an

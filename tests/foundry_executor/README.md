@@ -11,6 +11,7 @@ generated interfaces are build outputs):
 just test-foundry-executor                                   # whole lane
 just test-foundry-executor --match-path 'test/V2V3.t.sol'    # one file
 just test-foundry-executor --match-test testV2V3 -vvvv       # one test, traced
+just test-foundry-executor-production-calldata               # trusted FFI lane (32 tests)
 just foundry-executor-artifacts                              # artifacts + interfaces only
 just py python tests/foundry_executor/build_artifacts.py --check-release  # compile identity
 ```
@@ -18,6 +19,41 @@ just py python tests/foundry_executor/build_artifacts.py --check-release  # comp
 `just test-foundry-executor` runs the same build steps with `--check-release` on
 the Vyper compile: the lane is red if the executor bytecode it deploys is not the
 tracked release bytecode (`rust/crates/foundation/degenbot-executor/releases/v2`).
+
+### Trusted FFI lane (production calldata)
+
+`test/CmdExecutorThreeHopProductionCalldata.t.sol` executes the bytes the
+production Rust composer emits, so it needs two things the default gate must
+never provide: `--ffi` and the `encode_three_hop` Cargo binary. Its own recipe
+builds that binary (`just build-executor-three-hop-encoder`) and runs only that
+suite:
+
+```bash
+just test-foundry-executor-production-calldata                          # encoder + 32 tests
+just test-foundry-executor-production-calldata --match-test testV2V4V4  # one row
+just foundry-executor-production-snapshot                               # regenerate .gas-snapshot-production
+just foundry-executor-production-snapshot-check                         # drift gate on that file
+```
+
+The 27 permutation rows carry their own committed gas snapshot,
+`tests/foundry_executor/.gas-snapshot-production` — one stable label per row,
+generated and drift-checked by the two recipes above (encoder build, lane
+switch, `--ffi`, and `--match-test 'testV'` so the five `testEncoder…` refusal
+cases never enter the file). It is a separate file from `.gas-snapshot` because
+the production streams are not the optimized matrix's bytes: V2-V2-V2 is
+self-funded and V3-V2-V4 runs its forward-flash/final-repayment arm (both one
+transfer wider), and V4-V2-V4 nets differently. The check fails closed even if
+the suite would skip — a missing lane switch surfaces as a missing snapshot
+entry, never a hollow pass.
+
+The suite takes its lane switch from `DEGENBOT_THREE_HOP_PRODUCTION_FFI` (set
+only by that recipe) and `vm.skip`s the whole contract otherwise, so
+`just test-foundry-executor` compiles the suite but never shells out. The
+encoder path resolves the Cargo target dir the way the justfile does
+(`CARGO_TARGET_DIR`, else `rust/target`) and reads
+`<target-dir>/debug/encode_three_hop` from the repository root. A valid-hex
+stdout is hex-decoded by the cheatcode, so the encoder's one hex line arrives in
+the test as the raw command stream to execute verbatim.
 
 ## How compilation works (and why it is not `forge build` on the Vyper tree)
 
@@ -80,7 +116,7 @@ auto-pay path).
 - `build_artifacts.py` — pinned vyper in-process (`vyper.compile_code`) → `artifacts/<Contract>.json` (+ manifest with input-tree, source, bytecode, and whole-artifact hashes), plus the generated revert vocabulary `src/generated/Errors.sol`: custom-error selectors computed from the built `CmdExecutor` ABI, with the compiler revert-label vocabulary taken from the tracked release `cmd_executor.error_map.json` and cross-checked against the fresh compile on every rebuild (an unknown label or a vocabulary divergence fails the build loudly).
 - `build_solidity_artifacts.py` — pinned solc 0.5.16 / 0.7.6 binaries, driven through `py-solc-x` → the same artifact shape for canonical `UniswapV2Factory`/`UniswapV2Pair`/`UniswapV3Factory`/`UniswapV3Pool` and the committed solc-0.7.6 `SolReference` (the original Solidity V3-math libraries, byte-identical to the committed Ape-lane artifact modulo its metadata hash, for the differential library ports).
 - `gen_interfaces.py` — ABI → `src/generated/I<Contract>.sol` + tuple structs in `Types.sol`.
-- `src/Vm.sol` — minimal cheatcode interface (no forge-std dependency), carrying the declarations the planned FFI (`vm.ffi`), RPC/fork (`vm.rpc`, `createFork`/`selectFork`), JSON (`parseJson*`), and hex (`toString`) lanes need — and nothing speculative beyond those consumers.
+- `src/Vm.sol` — minimal cheatcode interface (no forge-std dependency), carrying the declarations the FFI (`vm.ffi`, `vm.tryFfi` with its `FfiResult` exit-code/stdout/stderr struct, and `vm.skip` as the lane's default-gate control), RPC/fork (`vm.rpc`, `createFork`/`selectFork`), JSON (`parseJson*`), and hex (`toString`) lanes need — and nothing speculative beyond those consumers.
 - `src/TestBase.sol` — artifact deployment, `execute` helpers, assertions, log/transfer accounting, balance snapshots with conservation diffs (`_snapshotBalances` + `_assert*Conserved`/`_assertExecutorProfit`), exact revert assertions over the generated `ExecutorErrors` vocabulary, and the `ExecutorFixture` that mirrors `tests/executor/conftest.py`.
 - `src/ConservationOps.sol` — the composed tracked-account conservation check (the port of `test_conservation.py`'s `_verify_conservation`): tokens[0] = WETH combined with NATIVE in the mode-1 profit domain, every other tracked token summed to zero, optional executor-profit assertion run first.
 - `src/Cmd.sol` — the command-stream encoder: the port of `conftest_shared.py`'s `enc_*` helpers and the `AddressTable` sentinel resolution (including the raw `0x30` V3 form and `V4_BATCH_OPEN_WETH`).
@@ -134,12 +170,12 @@ auto-pay path).
 | `test_cmd_executor_bribe_transfer.py` | `CmdExecutorBribeTransfer.t.sol` | 4 | 4 (two-transaction native-ETH ERC6909 funding: TX1 WETH→native swap + V4_MINT_COMPACT at the source's config = 2, TX2 V4_BURN_COMPACT + V4_TAKE_DELTA; every bribe pinned to the wei via the source's `profit = combined delta + bribe` identity, TX2's recipient table entry kept at index ≥ 1 because config idx 0 is the coinbase recipient) |
 | `test_v2_swap_calc_overflow.py` | `V2SwapCalcOverflow.t.sol` | 1 (permanently skipped) | 2 (executable checked-mul boundary + normal-path control; skip replaced) |
 | `test_cmd_executor_three_hop_optimized.py` | `CmdExecutorThreeHopOptimized.t.sol` | 27 | 27 (one test per permutation, so the test name is the row label: `testV2V2V2` … `testV4V4V4`; exact transfer count per row — V4V4V4=1, V2V4V4/V3V4V4/V4V2V4/V4V3V4/V4V4V2/V4V4V3=3, all others=4 — plus tracked-account conservation through `ConservationOps`; `testV4V4V4` captures the net profit as an ERC6909 claim under the source's `profit_mode = 2`; per-row gas lives in the committed `.gas-snapshot`, generated by `just foundry-executor-snapshot` and drift-gated by `just foundry-executor-snapshot-check` — disposition 11) |
+| `test_cmd_executor_three_hop_production_calldata.py` | `CmdExecutorThreeHopProductionCalldata.t.sol` | 6 (32 collected) | 32 (27 permutations, one test per row so the test name is the row label, plus the five encoder CLI refusals; the streams come from the Rust `encode_three_hop` composer through `vm.ffi` and are executed verbatim — nothing is rebuilt with `Cmd.sol`; the source's production transfer counts are kept exactly — V4V4V4=1, V2V4V4/V3V4V4/V4V3V4/V4V4V2/V4V4V3=3, V2V2V2/V3V2V4=5, all others=4 — with tracked-account conservation over the deduplicated set (the source snapshots into a `(token, account)`-keyed mapping, so a repeated PoolManager collapses to one entry) and `profit_mode = 2` on the V4V4V4 MINT-capture row; the five refusals pin exit code 1, empty stdout and the exact stderr text through `vm.tryFfi`; trusted FFI lane only; per-row gas lives in the committed `.gas-snapshot-production`, generated by `just foundry-executor-production-snapshot` and drift-gated by `just foundry-executor-production-snapshot-check` — disposition 11) |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
 | — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
 
-Not ported: the three-hop production-calldata matrix
-(`three_hop_production_calldata`), `release_metadata`, the fake-parity tiers
+Not ported: `release_metadata`, the fake-parity tiers
 (`fake_pool_manager_parity`, `fake_abi_fidelity`), and the Rust-artifact
 cross-checks.
 

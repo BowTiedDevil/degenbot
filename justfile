@@ -1586,6 +1586,61 @@ test-foundry-executor *args:
     {{ py_run }} python gen_interfaces.py
     exec forge test "$@"
 
+# Trusted FFI lane for the three-hop production-calldata matrix. The suite drives
+# the production Rust composer through `vm.ffi` — it runs the encoder built by
+# `build-executor-three-hop-encoder`, executes the returned bytes verbatim, and
+# pins the encoder's five CLI refusals through `vm.tryFfi`. FFI and its lane
+# switch are set here and nowhere else: the default `test-foundry-executor` gate
+# keeps FFI off, and the suite skips rather than shelling out. Extra args forward
+# to `forge test` (`--match-test testV2V4V4`, `-vvv`).
+test-foundry-executor-production-calldata *args: build-executor-three-hop-encoder
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec env DEGENBOT_THREE_HOP_PRODUCTION_FFI=1 \
+        forge test --ffi --match-path test/CmdExecutorThreeHopProductionCalldata.t.sol "$@"
+
+# Forge gas snapshot for the production-calldata matrix: one stable row label per
+# permutation in `test/CmdExecutorThreeHopProductionCalldata.t.sol`, committed as
+# `tests/foundry_executor/.gas-snapshot-production`. The production streams are
+# not the optimized matrix's bytes — V2-V2-V2 is self-funded and V3-V2-V4 uses
+# its forward-flash/final-repayment arm (both one transfer wider), and V4-V2-V4
+# nets differently — so they carry their own file and drift gate rather than
+# sharing `.gas-snapshot`. The lane needs FFI and the encoder, exactly like
+# `test-foundry-executor-production-calldata`; `--match-test 'testV'` keeps the
+# five `testEncoder…` refusal cases out of the file.
+foundry-executor-production-snapshot: build-executor-three-hop-encoder
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec env DEGENBOT_THREE_HOP_PRODUCTION_FFI=1 \
+        forge snapshot --ffi \
+            --match-path test/CmdExecutorThreeHopProductionCalldata.t.sol \
+            --match-test 'testV' \
+            --snap .gas-snapshot-production
+
+# Drift gate for the production-calldata snapshot: regenerating the 27
+# permutation row figures must reproduce `.gas-snapshot-production`
+# byte-for-byte. Fails closed when a row's gas moves or its label disappears.
+foundry-executor-production-snapshot-check: build-executor-three-hop-encoder
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec env DEGENBOT_THREE_HOP_PRODUCTION_FFI=1 \
+        forge snapshot --ffi \
+            --match-path test/CmdExecutorThreeHopProductionCalldata.t.sol \
+            --match-test 'testV' \
+            --check .gas-snapshot-production
+
 # Forge gas snapshot for the optimized three-hop routing matrix: one stable row
 # label per test in `test/CmdExecutorThreeHopOptimized.t.sol`, committed as
 # `tests/foundry_executor/.gas-snapshot`. This is the gas-evidence replacement

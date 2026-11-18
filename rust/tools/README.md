@@ -52,7 +52,7 @@ production executor's graph and nothing else.
 
 | Binary | Purpose | Current command | Lane | Inputs | Writes | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| [`encode_three_hop`](executor-fixture-tools/src/bin/encode_three_hop/main.rs) | Encode one three-hop `PathInfo` through the production command grammar so the Ape execution matrix exercises production bytes | `just build-executor-three-hop-encoder` (build; the matrix consumes `<target-dir>/debug/encode_three_hop`), consumed by `just test-executor-offline` | default | none — one JSON request document as `argv[1]` | stdout only: one hex line; a missing/invalid request exits non-zero | **gate** — the executor offline matrix (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) consumes its output, including failure paths |
+| [`encode_three_hop`](executor-fixture-tools/src/bin/encode_three_hop/main.rs) | Encode one three-hop `PathInfo` through the production command grammar so the execution matrices exercise production bytes | `just build-executor-three-hop-encoder` (build; both matrices consume `<target-dir>/debug/encode_three_hop`), consumed by `just test-executor-offline` and by the Foundry FFI lane `just test-foundry-executor-production-calldata` | default | none — one JSON request document as `argv[1]` | stdout only: one hex line; a missing/invalid request exits non-zero | **gate** — the Ape offline matrix (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) and the Foundry port (`tests/foundry_executor/test/CmdExecutorThreeHopProductionCalldata.t.sol`) consume its output, including failure paths |
 
 ### `degenbot-solver-lab` (8 rows) — `solver-lab/src/bin/`
 
