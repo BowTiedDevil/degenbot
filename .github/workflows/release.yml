@@ -221,9 +221,10 @@ jobs:
           # under QEMU user-mode on the x86 build host.
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          # arm64, so the smoke test loads the cross-compiled slice of the
-          # universal2 wheel rather than the one its Intel build host produced.
-          - os: macos-15
+          # The Intel configuration, the same family the wheel is built on, so
+          # the smoke test loads the x86_64 slice natively. The universal2
+          # arm64 slice is not loaded by CI.
+          - os: macos-15-intel
             target: universal2-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
