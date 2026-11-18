@@ -8,4 +8,12 @@ solc_version = "0.8.28"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
-fs_permissions = [{ access = "read", path = "./artifacts" }]
+fs_permissions = [
+    { access = "read", path = "./artifacts" },
+    # The release-identity suite reads the COMMITTED release tree (the ABI, the
+    # method-identifier table, the v2 manifest and its pinned Vyper source) as
+    # its authority. Granting the released directory keeps the suite tied to
+    # what a deployment was built from instead of a copied duplicate that could
+    # drift from it.
+    { access = "read", path = "../../rust/crates/foundation/degenbot-executor/releases/v2" },
+]
