@@ -98,7 +98,7 @@ auto-pay path).
 | `test_token_sentinels.py` | `TokenSentinels.t.sol` | 5 (parametrized) | 5 |
 | `test_preprocess_addr_count.py` | `PreprocessAddrCount.t.sol` | 2 | 4 (288-byte accept and 289-byte ABI rejection added) |
 | `test_cmd_executor_edge_cases.py` | `EdgeCases.t.sol` | 2 | 2 |
-| `test_execution_receipt.py` | `ExecutionReceipt.t.sol` | 12 (parametrized) | 12 |
+| `test_execution_receipt.py` | `ExecutionReceipt.t.sol` | 12 (parametrized) | 13 (12 source + 1 added receipt boundary: a physical-balance-capped bribe reports the ACTUAL paid amount — `bribe_paid` = the seeded physical balance, drained to zero, with the retained profit left as ERC6909 claims) |
 | `test_events.py` | `Events.t.sol` | 6 | 11 (6 source + 5 documented event-surface additions on the withdrawal exit paths: V4 take counted exactly once with no ERC6909 topic, ERC6909 mint logged exactly once, the burn/take/xfer-balance exit surface, the native-ETH exit's single-ERC6909 surface, SEND_ETH_ALL's zero-event surface) |
 | `test_withdraw_reentrancy.py` | `WithdrawReentrancy.t.sol` | 2 | 3 (withdraw owner-only added) |
 | `test_donation_profit_inflation.py` | `DonationProfitInflation.t.sol` | 1 (+1 skipped) | 1 |
@@ -130,13 +130,14 @@ auto-pay path).
 | `test_erc6909.py` | `ERC6909.t.sol` | 5 | 5 (view surface, V4_MINT_COMPACT entry, two-phase V4_BURN_COMPACT settlement with the exact WETH take, and the mint-vs-take gas comparison as one self-contained state-snapshot-isolated named comparison — disposition 11; all executions keep the source's `config = 2`) |
 | `test_erc6909_composability.py` | `ERC6909Composability.t.sol` | 6 (7 expanded) | 8 (7 source + 1 added direct case: V4_BURN funding a residual -1 WETH PM debit on a V4→V2→V2 borrow — the no-burn negative control pins the PM's exact `CurrencyNotSettled:<weth>:-1e18` and the paying run settles it with zero ERC20 transfers and exact balance deltas; bribe receipt pinned from the simulated `(gross_profit, bribe_paid)`; warmup-wei accounting exact on every ERC6909 WETH expectation) |
 | `test_pm_as_bank.py` | `PMAsBank.t.sol` | 11 | 11 (four V2-ending paths × MINT/TAKE with exact profit pins, V2-V2-V3 as MINT-impossible — pinned to the executor's exact `InsufficientMintDelta(0, 1)` — plus TAKE-physical with the source's 5-transfer count, and the ordering-dependent `_gas_results` summary replaced by one self-contained `testMintVsTakeGasComparison` that runs every path's MINT and TAKE from the same pristine state — disposition 6) |
+| `test_cmd_executor_bribe_commands.py` | `CmdExecutorBribeCommands.t.sol` | 5 | 6 (5 source + 1 added boundary: zero gross profit pays zero regardless of bips — receipt `(0, 0)` exact for bips {1, 5000, 10000} with recipient untouched; coinbase cases pin `vm.coinbase` to a dedicated funded address and assert its exact delta — the lane's forge EVM credits the beneficiary nothing at gasprice 0/basefee 0; auto-withdraw pinned to the wei; the named `BribeGasOverhead` case is snapshot-isolated so both runs share byte-identical state) |
+| `test_cmd_executor_bribe_transfer.py` | `CmdExecutorBribeTransfer.t.sol` | 4 | 4 (two-transaction native-ETH ERC6909 funding: TX1 WETH→native swap + V4_MINT_COMPACT at the source's config = 2, TX2 V4_BURN_COMPACT + V4_TAKE_DELTA; every bribe pinned to the wei via the source's `profit = combined delta + bribe` identity, TX2's recipient table entry kept at index ≥ 1 because config idx 0 is the coinbase recipient) |
 | `test_v2_swap_calc_overflow.py` | `V2SwapCalcOverflow.t.sol` | 1 (permanently skipped) | 2 (executable checked-mul boundary + normal-path control; skip replaced) |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
 | — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
 
-Not ported: the remaining swap-family files (`bribe_commands`,
-`bribe_transfer`), the three-hop matrices
+Not ported: the three-hop matrices
 (`three_hop_optimized`, `three_hop_production_calldata`),
 `release_metadata`, the fake-parity tiers (`fake_pool_manager_parity`,
 `fake_abi_fidelity`), and the Rust-artifact cross-checks.

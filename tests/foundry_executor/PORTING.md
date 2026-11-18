@@ -87,8 +87,8 @@ expansion. Owning tasks are the port epic's ergo IDs.
 
 | Module | Defs | Cases | Owner | Forge destination | Status | Notes |
 |---|---|---|---|---|---|---|
-| `test_cmd_executor_bribe_commands.py` | 5 | 5 | GTRKFA | test/CmdExecutorBribeCommands.t.sol | to create |  |
-| `test_cmd_executor_bribe_transfer.py` | 4 | 4 | GTRKFA | test/CmdExecutorBribeTransfer.t.sol | to create |  |
+| `test_cmd_executor_bribe_commands.py` | 5 | 5 | GTRKFA | test/CmdExecutorBribeCommands.t.sol | ported (green) | 6 tests (5 source + 1 added boundary: zero gross profit pays zero regardless of bips, receipt `(0, 0)` exact for bips {1, 5000, 10000}). Coinbase cases pin `vm.coinbase` to a dedicated funded address with an exact coinbase-delta pin — the lane's forge EVM runs at gasprice 0/basefee 0 and credits the beneficiary nothing. Auto-withdraw pinned to the wei; the named `BribeGasOverhead` case runs baseline and bribe from snapshot-identical state (overhead 22,350 < 60,000). |
+| `test_cmd_executor_bribe_transfer.py` | 4 | 4 | GTRKFA | test/CmdExecutorBribeTransfer.t.sol | ported (green) | Two-transaction native-ETH ERC6909 funding (TX1 WETH→native + V4_MINT_COMPACT at the source's `config = 2`; TX2 V4_BURN_COMPACT + V4_TAKE_DELTA); every bribe exact via the source's `profit = combined delta + bribe` identity; TX2 recipient table entry kept at index ≥ 1 (config idx 0 is the coinbase recipient). |
 | `test_cmd_executor_compact.py` | 5 | 5 | JBBFCQ | test/CmdExecutorCompact.t.sol | ported (green) | All five executions keep the source's `config = 2`; V4_TAKE_COMPACT pins the exact USDC take and WETH_WITHDRAW_ALL pins the zero remaining WETH balance. |
 | `test_cmd_executor_dynamic.py` | 6 | 6 | JBBFCQ | test/CmdExecutorDynamic.t.sol | ported (green) | TAKE_DELTA / SETTLE_DELTA / SETTLE_ALL / SWAP_DYNAMIC and both mixed sequences under the default config (profit mode 1). |
 | `test_cmd_executor_edge_cases.py` | 2 | 2 | LVVJOU | test/EdgeCases.t.sol | ported (green) | Success-only port; both sources assert success paths, no broad revert assertions to harden. |

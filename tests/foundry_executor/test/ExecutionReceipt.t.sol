@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {PoolSetup} from "../src/Setup.sol";
 import {Cmd} from "../src/Cmd.sol";
 import {ExecutorErrors} from "../src/generated/Errors.sol";
+import {PoolKey} from "../src/generated/Types.sol";
 import {IFakeUniswapV2Pair} from "../src/generated/IFakeUniswapV2Pair.sol";
 import {IFakeErc20} from "../src/generated/IFakeErc20.sol";
 
@@ -182,6 +183,63 @@ contract ExecutionReceiptTest is PoolSetup {
             o,
             _executorRevert(ExecutorErrors.INSUFFICIENT_PROFIT, 0, 1),
             "min_profit shortfall"
+        );
+    }
+
+    // ── Physical-balance-capped bribe: the receipt reports the ACTUAL paid ─
+
+    /// A bribe demanded above the executor's physical WETH+ETH never reverts:
+    /// the executor pays its whole physical balance (auto-withdrawing WETH
+    /// first, of which there is none here) and `bribe_paid` reports the
+    /// ACTUAL paid amount, not the bips formula. The profit lives entirely
+    /// in the ERC6909 claims domain (mode 2, V4_MINT_COMPACT capture), so
+    /// the physical side stays at the seeded balance until the payout.
+    function testPhysicalBalanceCappedBribeReportsActualPaid() public {
+        uint256 physicalSeed = 0.3 ether;
+        uint256 gross = 1 ether;
+
+        // 2-hop WETH->USDC->WETH pools; the trailing V4_MINT_COMPACT captures
+        // the whole WETH profit as ERC6909 claims with no physical movement.
+        PoolKey memory keyA = _poolKey(address(weth), address(usdc), 0, 60);
+        bool za = keyA.currency0 == address(weth);
+        _setupV4Swap(v4Pm, keyA, gross, 2000e6, za, address(usdc));
+        PoolKey memory keyB = _poolKey(address(weth), address(usdc), 0, 120);
+        bool zb = keyB.currency0 == address(usdc);
+        _setupV4Swap(v4Pm, keyB, 2000e6, 2 * gross, zb, address(weth));
+
+        Cmd.Table memory at = _emptyTable();
+        uint8 wethIdx = Cmd.add(at, address(weth));
+        uint8 executorIdx = Cmd.add(at, address(executor));
+        uint8 recipientIdx = Cmd.add(at, BRIBE_RECIPIENT);
+
+        bytes memory inner = Cmd.v4SwapCompact(
+            Cmd.add(at, keyA.currency0), Cmd.add(at, keyA.currency1), 0, 60, Cmd.SENTINEL_NATIVE, za, gross
+        );
+        inner = bytes.concat(inner, Cmd.v4SwapCompact(
+            Cmd.add(at, keyB.currency0), Cmd.add(at, keyB.currency1), 0, 120, Cmd.SENTINEL_NATIVE, zb, 2000e6
+        ));
+        inner = bytes.concat(inner, Cmd.v4MintCompact(wethIdx, executorIdx, gross));
+        bytes memory stream = bytes.concat(Cmd.preamble(at), Cmd.v4Unlock(inner));
+
+        // Seed exactly the physical balance the cap will pay out: 0.3 ETH,
+        // no WETH. The demanded bribe is 5000 bips * 1 ETH = 0.5 ETH.
+        vm.deal(address(executor), physicalSeed);
+        uint256 recipientBefore = BRIBE_RECIPIENT.balance;
+
+        Outcome memory o = _execute(executor, stream, Cmd.makeConfig(2, 5000, recipientIdx, 0));
+
+        // Exact receipt identity: measured gross in the claims domain, and
+        // bribe_paid = min(demanded, physical) = the seeded balance itself.
+        assertEq(o.grossProfit, gross, "gross profit measured in the claims domain");
+        assertEq(o.bribePaid, physicalSeed, "bribe_paid is the actual paid amount");
+        assertEq(BRIBE_RECIPIENT.balance - recipientBefore, physicalSeed, "recipient got the capped amount");
+        // The physical side is drained; the retained profit stays as claims.
+        assertEq(address(executor).balance, 0, "physical ETH drained by the capped bribe");
+        assertEq(weth.balanceOf(address(executor)), 0, "no physical WETH");
+        assertEq(
+            v4Pm.balanceOf(address(executor), uint256(uint160(address(weth)))),
+            gross + 1,
+            "retained profit as ERC6909 claims (+1 warmup wei)"
         );
     }
 }
