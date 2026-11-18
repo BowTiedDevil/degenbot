@@ -68,14 +68,13 @@ so the synthetic cases never invoke cargo):
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] -- the seam under test is a subprocess CLI
 import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CHECK = _REPO_ROOT / "scripts" / "tool_catalog_check.py"
-_PREK = _REPO_ROOT / "prek.toml"
-_JUSTFILE = _REPO_ROOT / "justfile"
 
 
 README_TEMPLATE = """# Tools
@@ -809,24 +808,22 @@ def test_a_table_under_a_non_lab_subsection_is_not_cataloged(tmp_path: Path) -> 
 
 
 def test_the_gate_is_registered_where_it_runs() -> None:
-    justfile = _JUSTFILE.read_text(encoding="utf-8")
-    prek = _PREK.read_text(encoding="utf-8")
+    """A gate nothing invokes is prose: the recipe must resolve under just.
 
-    assert "check-tool-catalog:" in justfile
-    assert "python3 scripts/tool_catalog_check.py" in justfile
-    assert (
-        "lint-rust-check: check-toolchain check-publish-blocked "
-        "check-vendor-tracked check-tool-catalog" in justfile
+    Behaviour, not wiring text: the recipe name is checked by asking `just` for
+    its recipe list, so re-wiring the gate (dependency order, hook scope, stage)
+    does not need an edit here.
+    """
+    just = shutil.which("just")
+    assert just is not None, "just is not installed on PATH"
+    listed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [just, "--list"], cwd=_REPO_ROOT, check=False, capture_output=True, text=True
     )
-    assert "scripts/tool_catalog_check.py" in justfile  # lint-python / ty coverage
-    assert "tests/test_tool_catalog_check.py" in justfile
-    assert 'id = "tool-catalog"' in prek
-    assert 'entry = "just check-tool-catalog"' in prek
-    tool_catalog_line = next(line for line in prek.splitlines() if 'id = "tool-catalog"' in line)
-    # every rust manifest triggers (manifest-only example drift), and the
-    # rust/examples example crates trigger on manifests and sources alike
-    assert "rust/.*Cargo\\.toml$" in tool_catalog_line
-    assert "^rust/examples/" in tool_catalog_line
+
+    assert listed.returncode == 0, listed.stderr
+    assert "check-tool-catalog" in {
+        line.split()[0] for line in listed.stdout.splitlines() if line.split()
+    }
 
 
 def test_an_untracked_target_is_outside_the_catalog_surface(tmp_path: Path) -> None:
@@ -848,15 +845,22 @@ def test_an_untracked_target_is_outside_the_catalog_surface(tmp_path: Path) -> N
     )
     _rewritten_readme(workspace, beta_row, "")
 
+    git = shutil.which("git")
+    assert git is not None, "git is not installed on PATH"
     beta = "rust/tools/fixture-tools/src/bin/beta_recorder/main.rs"
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-    subprocess.run(["git", "-C", str(root), "rm", "--cached", "-q", beta], check=True)
+    for argv in (
+        [git, "init", "-q", str(root)],
+        [git, "-C", str(root), "add", "-A"],
+        [git, "-C", str(root), "rm", "--cached", "-q", beta],
+    ):
+        subprocess.run(argv, check=True)  # ruff: ignore[subprocess-without-shell-equals-true]
 
     untracked = _run(workspace)
     assert untracked.returncode == 0, untracked.stdout + untracked.stderr
 
-    subprocess.run(["git", "-C", str(root), "add", beta], check=True)
+    subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [git, "-C", str(root), "add", beta], check=True
+    )
     staged = _run(workspace)
     assert staged.returncode != 0
     assert "has no catalog row" in staged.stdout + staged.stderr

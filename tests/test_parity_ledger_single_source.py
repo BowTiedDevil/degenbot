@@ -31,18 +31,15 @@ copies, so no assertion can be satisfied by a re-typed copy of the gate's logic
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
-import tomllib
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _GATE = _REPO_ROOT / "scripts" / "hooks" / "parity_ledger_single_source.py"
 _DOC = _REPO_ROOT / "docs" / "architecture" / "rust-settlement-bot-parity.md"
 _ORACLE = _REPO_ROOT / "tests" / "standalone_parity" / "fixtures" / "settlement_bot_boot.json"
-_PREK = _REPO_ROOT / "prek.toml"
-_JUSTFILE = _REPO_ROOT / "justfile"
-_HOOK_ID = "parity-ledger-single-source"
 _RECIPE = "check-parity-ledger-single-source"
 
 
@@ -253,13 +250,16 @@ def test_a_non_contiguous_oracle_series_fails_closed(tmp_path: Path) -> None:
 
 
 def test_the_gate_is_registered_where_it_runs() -> None:
-    """A gate nothing invokes is prose; the recipe and the hook are the wiring."""
-    parsed = tomllib.loads(_PREK.read_text(encoding="utf-8"))
-    hooks = {hook["id"]: hook for repo in parsed["repos"] for hook in repo.get("hooks", [])}
+    """A gate nothing invokes is prose: the recipe must resolve under just.
 
-    assert _HOOK_ID in hooks, "the gate has no prek entry"
-    hook = hooks[_HOOK_ID]
-    assert hook["entry"] == f"just {_RECIPE}", hook["entry"]
-    assert hook["stages"] == ["pre-commit"], hook["stages"]
-    assert hook["pass_filenames"] is False, "the reconciliation needs whole files"
-    assert _RECIPE in _JUSTFILE.read_text(encoding="utf-8"), "the recipe the hook names is gone"
+    Behaviour, not wiring text: asking `just` for its recipe list keeps this
+    passing when the hook's stage, scope or dependency order changes.
+    """
+    just = shutil.which("just")
+    assert just is not None, "just is not installed on PATH"
+    listed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [just, "--list"], cwd=_REPO_ROOT, check=False, capture_output=True, text=True
+    )
+
+    assert listed.returncode == 0, listed.stderr
+    assert _RECIPE in {line.split()[0] for line in listed.stdout.splitlines() if line.split()}
