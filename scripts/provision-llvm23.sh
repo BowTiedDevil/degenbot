@@ -160,19 +160,47 @@ fi
 root="${LLVM23_ROOT:-${RUNNER_TEMP:-/tmp}/llvm23-${llvm_version}-${tar_arch}}"
 archive="$root/LLVM-${llvm_version}-Linux-${tar_arch}.tar.xz"
 
+# The prebuilt's `llvm-config --system-libs` names the zstd *static* archive,
+# and EL9 carries one in no repository: `libzstd-devel` installs only the shared
+# object, and there is no `libzstd-static` package to ask for. So the archive is
+# built from the pinned source when the image ships none; a Debian layout ships
+# it in `libzstd-dev` and skips the build.
+zstd_version="1.5.7"
+zstd_sha256="eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
+
+static_libzstd() {
+    find /usr/lib64 /usr/lib /lib64 /lib -maxdepth 3 -name libzstd.a \( -type f -o -type l \) 2>/dev/null | head -n 1
+}
+
+ensure_static_libzstd() {
+    [ -n "$(static_libzstd)" ] && return 0
+    command -v make >/dev/null 2>&1 || die "no make, needed to build the static zstd archive this image ships"
+    command -v "${CC:-cc}" >/dev/null 2>&1 || die "no ${CC:-cc}, needed to build the static zstd archive this image ships"
+    local build url
+    build=$(mktemp -d)
+    url="https://github.com/facebook/zstd/releases/download/v${zstd_version}/zstd-${zstd_version}.tar.gz"
+    log "no static zstd archive here: building ${zstd_version} from source"
+    curl -fsSL --retry 3 --retry-delay 5 -o "$build/zstd.tar.gz" "$url"
+    printf '%s  %s\n' "$zstd_sha256" "$build/zstd.tar.gz" | sha256sum -c - >/dev/null || die "sha256 mismatch for $url"
+    tar -xf "$build/zstd.tar.gz" -C "$build"
+    make -C "$build/zstd-${zstd_version}/lib" -j"$(nproc 2>/dev/null || echo 2)" libzstd.a >&2
+    as_root install -m 0644 "$build/zstd-${zstd_version}/lib/libzstd.a" /usr/lib64/libzstd.a
+    rm -rf "$build"
+    log "installed /usr/lib64/libzstd.a"
+}
+
 install_system_deps() {
     if command -v dnf >/dev/null 2>&1; then
-        as_root dnf install -y curl tar xz zlib-devel libzstd-devel libzstd-static ncurses-devel libxml2-devel libffi-devel
+        as_root dnf install -y curl tar xz zlib-devel libzstd-devel ncurses-devel libxml2-devel libffi-devel
     elif command -v yum >/dev/null 2>&1; then
-        # Some EL repos keep the zstd static archive out of libzstd-devel; a
-        # missing libzstd-static surfaces as an unresolved `zstd` at link time.
-        as_root yum install -y curl tar xz zlib-devel libzstd-devel libzstd-static ncurses-devel libxml2-devel libffi-devel
+        as_root yum install -y curl tar xz zlib-devel libzstd-devel ncurses-devel libxml2-devel libffi-devel
     elif command -v apt-get >/dev/null 2>&1; then
         as_root apt-get update -qq
         as_root apt-get install -y curl tar xz-utils zlib1g-dev libzstd-dev libncurses-dev libxml2-dev libffi-dev
     else
         log "no dnf/yum/apt-get here: skipping system dependency installation"
     fi
+    ensure_static_libzstd
 }
 
 # llvm-sys panics on any absolute path `llvm-config --system-libs` prints that is

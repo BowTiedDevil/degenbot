@@ -90,8 +90,14 @@ Four behaviours are load-bearing:
    component set, and the link fails with `could not find native static library
    'Polly'` without it.
 3. **`--system-deps`** installs the archives the static link pulls in
-   (`zlib, libzstd, ncurses, libxml2, libffi` — `libzstd-static` on dnf/yum, whose
-   static archive Fedora keeps out of `libzstd-devel`).
+   (`zlib, libzstd, ncurses, libxml2, libffi`). The zstd *static* archive is the
+   one no package manager reliably supplies: a Debian layout ships it in
+   `libzstd-dev`, while EL9 — the manylinux floor these wheels ship on — carries
+   it in no enabled repository (`libzstd-devel` installs only the shared object,
+   and no `libzstd-static` package exists; checked against the AlmaLinux 9
+   AppStream file lists). So the script builds the pinned zstd release from
+   source when the image ships no archive — 9 s measured — and the manylinux
+   legs could not link without it.
 4. **Recorded-path repair.** `llvm-config --system-libs` from the prebuilt prints
    its own build host's absolute path — `/usr/lib/x86_64-linux-gnu/libzstd.a` —
    and `llvm-sys` panics unless that path is a file where the build runs:
