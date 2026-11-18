@@ -68,6 +68,7 @@ One provisioning primitive, used by both kinds of consumer:
 eval "$(scripts/provision-llvm23.sh --system-deps)"   # containers / before-scripts
 scripts/provision-llvm23.sh --system-deps --github-env # runner steps ($GITHUB_ENV)
 scripts/provision-llvm23.sh --check                    # assert discovery resolves 23.x
+scripts/provision-llvm23.sh --check-static-lib PATH     # assert a zstd archive is -fPIC
 ```
 
 It pins LLVM **23.1.4** and the tarball's sha256 (taken from the release's
@@ -97,7 +98,11 @@ Four behaviours are load-bearing:
    and no `libzstd-static` package exists; checked against the AlmaLinux 9
    AppStream file lists). So the script builds the pinned zstd release from
    source when the image ships no archive — 9 s measured — and the manylinux
-   legs could not link without it.
+   legs could not link without it. That build passes `-fPIC`, and whichever
+   archive the script settles on — shipped or built — is proved
+   position-independent before the linker sees it: the archive is linked into
+   the extension's *shared object*, and zstd's own `libzstd.a` target builds
+   non-PIC objects. See the PIC measurement below.
 4. **Recorded-path repair.** `llvm-config --system-libs` from the prebuilt prints
    its own build host's absolute path — `/usr/lib/x86_64-linux-gnu/libzstd.a` —
    and `llvm-sys` panics unless that path is a file where the build runs:
@@ -229,6 +234,24 @@ The failure mode without provisioning, for calibration (both reproduced here):
 Unable to parse result of llvm-config --system-libs: /usr/lib/x86_64-linux-gnu/libzstd.a   # recorded-path repair missing
 could not find native static library 'Polly'                                              # subset missing libPolly*.a
 ```
+
+**The PIC requirement, measured on the `v0.6.0a19` wheel build.** The first
+x86_64 manylinux leg to link LLVM died 19 minutes in, while the aarch64 leg of
+the same matrix linked the same LLVM archives successfully:
+
+```
+rust-lld: error: relocation R_X86_64_32S cannot be used against local symbol; recompile with -fPIC
+>>> defined in /usr/lib/x86_64-linux-gnu/libzstd.a(zstd_decompress_block.o)
+```
+
+That path is the symlink `--system-deps` had just created at the archive it
+built, and the archive was `make libzstd.a` with no `-fPIC`: x86_64 `-fno-pic`
+code addresses data absolutely, which no shared object may contain. aarch64
+escapes the same flag because its default code generation addresses data
+PC-relatively, so the same archive carries no text relocation there. Counting
+relocations is the direct check — 1.5.7's default build carries 1161
+`R_X86_64_32/32S`, `CFLAGS="-O3 -fPIC"` carries none — and
+`--check-static-lib PATH` is that count, run over both candidate archives.
 
 **Why not another source.** `apt.llvm.org` ships Debian/Ubuntu packages only
 (the manylinux images are RPM-based) and its binaries carry the same glibc 2.35+

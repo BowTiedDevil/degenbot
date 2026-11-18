@@ -19,7 +19,8 @@
 #     archive from its own build host (`/usr/lib/x86_64-linux-gnu/libzstd.a`),
 #     and llvm-sys panics unless that path is a file where the build runs.
 #     --system-deps installs the -devel packages, then links every recorded
-#     path at the archive this machine actually ships.
+#     path at the archive this machine actually ships, built -fPIC because that
+#     archive is linked into the extension's shared object.
 #
 # Modes:
 #   scripts/provision-llvm23.sh                 print the exports (caller evals)
@@ -27,6 +28,9 @@
 #   scripts/provision-llvm23.sh --check         assert an LLVM 23 is discoverable
 #   scripts/provision-llvm23.sh --probe         exit 0 only when a distro LLVM 23
 #                                               is already on PATH (no download)
+#   scripts/provision-llvm23.sh --check-static-lib PATH
+#                                               assert a zstd archive is
+#                                               position-independent (-fPIC)
 #
 # Flags:
 #   --system-deps   install the static/dev libraries the LLVM archives link
@@ -44,15 +48,24 @@ llvm_version="23.1.4"
 mode="print"
 system_deps=0
 
-for arg in "$@"; do
-    case "$arg" in
+static_lib=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
         --github-env) mode="github-env" ;;
         --check) mode="check" ;;
         --probe) mode="probe" ;;
         --system-deps) system_deps=1 ;;
-        -h|--help) sed -n '2,38p' "${BASH_SOURCE[0]}"; exit 0 ;;
-        *) echo "provision-llvm23: unknown argument '$arg'" >&2; exit 2 ;;
+        --check-static-lib)
+            [ "$#" -ge 2 ] || { echo "provision-llvm23: --check-static-lib needs a path" >&2; exit 2; }
+            mode="check-static-lib"
+            static_lib="$2"
+            shift
+            ;;
+        -h|--help) sed -n '2,42p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        *) echo "provision-llvm23: unknown argument '$1'" >&2; exit 2 ;;
     esac
+    shift
 done
 
 log() { printf 'llvm23: %s\n' "$*" >&2; }
@@ -172,8 +185,26 @@ static_libzstd() {
     find /usr/lib64 /usr/lib /lib64 /lib -maxdepth 3 -name libzstd.a \( -type f -o -type l \) 2>/dev/null | head -n 1
 }
 
+# The archive becomes part of the extension's shared object (a PyO3 cdylib), so
+# its objects must be position-independent: on x86_64, `-fno-pic` code addresses
+# data absolutely, and the linker refuses those relocations in a shared object.
+# zstd's own `libzstd.a` target builds exactly that, so the flag is passed here
+# and every archive this script accepts is proved before it reaches the linker.
+require_pic_archive() {
+    local path="$1" non_pic
+    [ -f "$path" ] || die "$path is not a file"
+    command -v readelf >/dev/null 2>&1 || die "no readelf, needed to prove $path is position-independent"
+    non_pic=$(readelf -rW "$path" 2>/dev/null | grep -cE 'R_X86_64_32S?([[:space:]]|$)' || true)
+    [ "$non_pic" -eq 0 ] || die "$path carries $non_pic non-PIC x86_64 relocations (R_X86_64_32/32S): it was built without -fPIC and cannot be linked into the extension's shared object"
+}
+
 ensure_static_libzstd() {
-    [ -n "$(static_libzstd)" ] && return 0
+    local existing
+    existing=$(static_libzstd)
+    if [ -n "$existing" ]; then
+        require_pic_archive "$existing"
+        return 0
+    fi
     command -v make >/dev/null 2>&1 || die "no make, needed to build the static zstd archive this image ships"
     command -v "${CC:-cc}" >/dev/null 2>&1 || die "no ${CC:-cc}, needed to build the static zstd archive this image ships"
     local build url
@@ -183,7 +214,8 @@ ensure_static_libzstd() {
     curl -fsSL --retry 3 --retry-delay 5 -o "$build/zstd.tar.gz" "$url"
     printf '%s  %s\n' "$zstd_sha256" "$build/zstd.tar.gz" | sha256sum -c - >/dev/null || die "sha256 mismatch for $url"
     tar -xf "$build/zstd.tar.gz" -C "$build"
-    make -C "$build/zstd-${zstd_version}/lib" -j"$(nproc 2>/dev/null || echo 2)" libzstd.a >&2
+    make -C "$build/zstd-${zstd_version}/lib" -j"$(nproc 2>/dev/null || echo 2)" CFLAGS="-O3 -fPIC" libzstd.a >&2
+    require_pic_archive "$build/zstd-${zstd_version}/lib/libzstd.a"
     as_root install -m 0644 "$build/zstd-${zstd_version}/lib/libzstd.a" /usr/lib64/libzstd.a
     rm -rf "$build"
     log "installed /usr/lib64/libzstd.a"
@@ -221,6 +253,12 @@ repair_recorded_paths() {
         log "recorded system library $token -> $actual"
     done
 }
+
+if [ "$mode" = "check-static-lib" ]; then
+    require_pic_archive "$static_lib"
+    log "$static_lib is position-independent"
+    exit 0
+fi
 
 # Only the files llvm-sys reads: the config tool, the headers its --cxxflags
 # name, and the archives its --libs name. Polly is not part of the LLVM
