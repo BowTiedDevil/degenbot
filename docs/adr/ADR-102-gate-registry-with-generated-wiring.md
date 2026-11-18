@@ -95,4 +95,8 @@ high-churn ratchets are the first candidates.
 2. ~~Extend to the **pre-commit** hooks.~~ Done with phase 1: the registry is one
    list, so the stages came with it.
 3. Extend to the `docs/gates.md` table rows and the `ci-parity` manifest.
-4. Convert the three unrecorded high-churn censuses to `--rows` generation (D5).
+4. ~~Convert the three unrecorded high-churn censuses to `--rows` generation
+   (D5).~~ Measured and declined: the churn on those rows is content, not
+   bookkeeping (the last six tool-catalog commits changed one to three lines
+   each, all substantive). D5 stays a principle for data that is *purely*
+   derived, and no such surface is currently a census.

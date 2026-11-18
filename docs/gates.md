@@ -89,10 +89,14 @@ it survives by keeping its document true, or it is deleted (ADR-087).
 | Dependency charter | **None recorded** — keeps the charter list current; 2 of the last 200 commits touch it |
 | Tool catalog | **None recorded** — keeps `rust/tools/README.md` complete; 53 of the last 200 commits touch it |
 
-The three unrecorded rows are the repository's highest-churn bookkeeping. They are
-kept for now because each keeps a living document true, and the next step is to
-derive their rows (regenerate and diff) so a landing change runs a command
-instead of hand-editing a table.
+The three unrecorded rows are the repository's highest-churn bookkeeping, and
+the churn there is substance rather than ceremony: the last six commits touching
+`rust/tools/README.md` changed one to three lines each — retiring an experiment,
+recording a measurement, re-pointing a row's subject. A row states something
+`cargo metadata` cannot: what the target is *for*. Generating the derived cells
+(name, source link, lane) would leave the prose, which is the part a person
+writes, so these rows keep their place and their gate. What a missing row costs
+is one line, not a table.
 
 ---
 

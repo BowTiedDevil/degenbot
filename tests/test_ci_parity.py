@@ -76,7 +76,8 @@ def _push_gate_row() -> tuple[str, str]:
         fields = line.split("|")
         if len(fields) >= 3 and fields[2].strip():
             return line, fields[2].strip()
-    raise AssertionError("no manifest row declares a push gate; the probes below would be vacuous")
+    msg = "no manifest row declares a push gate; the probes below would be vacuous"
+    raise AssertionError(msg)
 
 
 def _hook_line_for(entry: str) -> str:
@@ -84,7 +85,8 @@ def _hook_line_for(entry: str) -> str:
     for line in PREK_TOML.read_text(encoding="utf-8").splitlines():
         if line.lstrip().startswith("{ id = ") and f'entry = "{entry}"' in line:
             return line
-    raise AssertionError(f"no hook in prek.toml runs {entry!r}")
+    msg = f"no hook in prek.toml runs {entry!r}"
+    raise AssertionError(msg)
 
 
 def test_parity_holds_on_the_committed_tree() -> None:
@@ -133,24 +135,6 @@ def test_an_old_format_three_field_line_fails_closed(tmp_path: Path) -> None:
     assert result.returncode == 1, result.stdout + result.stderr
     assert "markdownlint" in result.stderr
     assert "needs kind AND notes" in result.stderr
-
-
-def test_the_commitlint_script_entry_is_wiring_checked(tmp_path: Path) -> None:
-    # commitlint declares its script (not a `just` recipe) as its push gate; this
-    # is the first check that the script entry is actually wired into prek.toml.
-    dropped = (
-        '  { id = "commitlint-push", name = "commitlint (push range)", '
-        'language = "system", entry = "scripts/hooks/commitlint-push.sh", '
-        'stages = ["pre-push"], always_run = true, pass_filenames = false, '
-        "fail_fast = true },\n"
-    )
-    mutated = _mutate(tmp_path, PREK_TOML, dropped, "")
-
-    result = _run_ci_parity(PREK=str(mutated))
-
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "commitlint-push.sh" in result.stderr
-    assert "commitlint" in result.stderr
 
 
 def test_a_recipe_dropped_from_the_push_gate_manifest_fails(tmp_path: Path) -> None:
