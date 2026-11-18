@@ -17,6 +17,37 @@ SolReference math-harness artifact the cross-implementation ports deploy):
                     here in this lane's artifact shape so the V3-library ports
                     deploy the original Solidity libraries next to the Vyper
                     TestHarness, as `test_v3_library_fuzz.py` does in Ape)
+  PoolManager       solc 0.8.26   tier3-oracle/lib/v4-core (the repository's
+                    vendored v4-core, the same source the Tier-3 V4 oracle
+                    harness compiles; no second PoolManager implementation)
+
+PoolManager identity decisions, stated because the artifact is only as canonical
+as the compile that produced it:
+
+  - Source: `lib/v4-core/src/PoolManager.sol` plus everything it transitively
+    imports from the `lib/v4-core` tree, including the vendored
+    `lib/v4-core/lib/solmate` that `ProtocolFees` pulls `Owned` from. The digest
+    tree is the whole `lib/v4-core` checkout, so a v4-core edit or a solmate
+    bump reads as cold.
+  - Compiler: solc 0.8.26 with its pinned long version — the version v4-core's
+    own `foundry.toml` declares and the one the Tier-3 V4 harness fetches.
+  - EVM fork: `cancun`, stated rather than defaulted. v4-core keeps its lock,
+    nonzero-delta count, currency deltas and currency reserves in EIP-1153
+    transient storage (`tstore`/`tload`), so a pre-cancun artifact would deploy
+    and then fail every delta read.
+  - Optimizer: this file's single optimizer profile (enabled, `runs: 200`), no
+    via-IR. v4-core's own profile (`runs: 44444444`, via-IR) targets production
+    gas, not source fidelity, and its bytecode would still not be a mainnet
+    deployment's (metadata hash, constructor owner); what this lane needs from
+    the artifact is the canonical source's behavior. Without via-IR the runtime
+    is ~19.8 KB, inside the EIP-170 limit, so no size-limit override is needed.
+  - Remappings: `solmate/=lib/v4-core/lib/solmate/`, the one import prefix the
+    compile graph needs. `@openzeppelin` and `forge-std` stay unremapped because
+    only v4-core's own test tree imports them, and that tree is not in this
+    graph. The table is declared per target, not shared: remappings are compile
+    settings, Solidity appends a settings metadata hash to the bytecode, and a
+    shared table would therefore move the V2/V3/SolReference artifact bytes the
+    moment a target was added.
 """
 
 import contextlib
@@ -36,8 +67,17 @@ OUT = HERE / "artifacts"
 SVM = Path.home() / ".local/share/svm"
 SOLC_BINARIES = "https://binaries.soliditylang.org/linux-amd64"
 
+# Import-prefix tables, declared per target because they are part of the compile
+# settings — and therefore of Solidity's appended metadata hash, i.e. of the
+# artifact's bytes. The pre-V4 targets keep exactly the table they were built
+# with, so adding a target cannot move their artifact identity; the V4 target
+# declares only the prefix its graph needs (`ProtocolFees` pulls solmate's
+# `Owned`).
+V2_V3_REMAPPINGS = ["v2-core/=lib/v2-core/", "v3-core/=lib/v3-core/"]
+V4_REMAPPINGS = ["solmate/=lib/v4-core/lib/solmate/"]
+
 # (solc version, long version, evm version, entry source, contract names,
-# digest tree, compile root, optimizer enabled)
+# digest tree, compile root, optimizer enabled, remappings)
 # `evmVersion` is stated rather than defaulted for the v2/v3 cores: the compiler
 # default moves between releases, and istanbul is the fork the deployed v2/v3
 # bytecode targets (both solc 0.5.16 and 0.7.6 default to it). SolReference is
@@ -53,6 +93,7 @@ TARGETS = [
         "lib/v2-core",
         TIER3,
         True,
+        V2_V3_REMAPPINGS,
     ),
     (
         "0.7.6",
@@ -63,6 +104,7 @@ TARGETS = [
         "lib/v3-core",
         TIER3,
         True,
+        V2_V3_REMAPPINGS,
     ),
     (
         "0.7.6",
@@ -73,6 +115,18 @@ TARGETS = [
         "contracts/vyper/sol_reference",
         ROOT,
         False,
+        V2_V3_REMAPPINGS,
+    ),
+    (
+        "0.8.26",
+        "0.8.26+commit.8a97fa7a",
+        "cancun",
+        "lib/v4-core/src/PoolManager.sol",
+        ["PoolManager"],
+        "lib/v4-core",
+        TIER3,
+        True,
+        V4_REMAPPINGS,
     ),
 ]
 
@@ -124,12 +178,17 @@ def _artifact_hash(path: Path) -> str | None:
         return None
 
 
-def _cache_hit(recorded: object, digest: str, names: list[str]) -> bool:
-    """A cache hit requires the recorded source digest AND every generated
-    artifact to byte-match the hash recorded when it was written, so corruption
-    anywhere in an artifact — ABI included — reads as cold. Stamps from the old
-    existence-only schema and malformed stamps do the same."""
+def _cache_hit(recorded: object, digest: str, settings_digest: str, names: list[str]) -> bool:
+    """A cache hit requires the recorded source digest, the recorded compile
+    settings, AND every generated artifact to byte-match the hash recorded when
+    it was written, so an edit anywhere in the source tree, a settings change
+    (remappings and the EVM fork are compile inputs — Solidity folds them into
+    the metadata hash it appends to the bytecode), or corruption anywhere in an
+    artifact — ABI included — reads as cold. Stamps from the older schemas and
+    malformed stamps do the same."""
     if not isinstance(recorded, dict) or recorded.get("sources") != digest:
+        return False
+    if recorded.get("settings") != settings_digest:
         return False
     hashes = recorded.get("artifacts")
     if not isinstance(hashes, dict):
@@ -145,6 +204,7 @@ def compile_one(
     names: list[str],
     digest_tree: Path,
     compile_root: Path,
+    remappings: list[str],
     *,
     optimize: bool,
     force: bool = False,
@@ -158,19 +218,22 @@ def compile_one(
     if not isinstance(stamps, dict):
         stamps = {}
     digest = _sources_digest(digest_tree)
-    key = f"{version}:{evm_version}:{entry}"
-    if not force and _cache_hit(stamps.get(key), digest, names):
-        print(f"{entry} up to date (solc {version}, evm {evm_version})")
-        return
     settings = {
         "optimizer": {"enabled": optimize, "runs": 200},
         "outputSelection": {
             "*": {"*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"]}
         },
-        "remappings": ["v2-core/=lib/v2-core/", "v3-core/=lib/v3-core/"],
+        "remappings": remappings,
     }
     if evm_version is not None:
         settings["evmVersion"] = evm_version
+    settings_digest = hashlib.sha256(
+        json.dumps({"entry": entry, "settings": settings}, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    key = f"{version}:{evm_version}:{entry}"
+    if not force and _cache_hit(stamps.get(key), digest, settings_digest, names):
+        print(f"{entry} up to date (solc {version}, evm {evm_version})")
+        return
     payload = {
         "language": "Solidity",
         "sources": {entry: {"urls": [entry]}},
@@ -218,6 +281,7 @@ def compile_one(
         )
     stamps[key] = {
         "sources": digest,
+        "settings": settings_digest,
         "artifacts": {name: _artifact_hash(OUT / f"{name}.json") for name in names},
     }
     stamp.write_text(json.dumps(stamps, indent=2) + "\n")
@@ -234,6 +298,7 @@ def main() -> int:
         digest_tree,
         compile_root,
         optimize,
+        remappings,
     ) in TARGETS:
         compile_one(
             version,
@@ -247,6 +312,7 @@ def main() -> int:
             # ROOT/lib/v2-core, which does not exist.
             compile_root / digest_tree,
             compile_root,
+            remappings,
             optimize=optimize,
             force=force,
         )

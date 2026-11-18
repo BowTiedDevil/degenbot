@@ -8,7 +8,7 @@ Run it through the justfile (never `forge test` directly — the artifacts and t
 generated interfaces are build outputs):
 
 ```bash
-just test-foundry-executor                                   # whole lane
+just test-foundry-executor                                   # whole lane (398 tests, 1 skipped)
 just test-foundry-executor --match-path 'test/V2V3.t.sol'    # one file
 just test-foundry-executor --match-test testV2V3 -vvvv       # one test, traced
 just test-foundry-executor-production-calldata               # trusted FFI lane (32 tests)
@@ -94,27 +94,40 @@ taken bytecode is the *same* pinned-vyper output the release artifacts carry
 (verified byte-for-byte by `--check-release`), and an ABI change becomes a
 compile error in this lane instead of a stale hand-written declaration.
 
-### Canonical Uniswap bytecode (pre-0.8 solc, one-off)
+### Canonical Uniswap bytecode (one-off compiles)
 
 The same "does the toolchain need to be in the loop?" logic applies to Solidity:
-`v2-core` is `=0.5.16` and `v3-core` is `=0.7.6`, and **forge's solc manager
-cannot resolve pre-0.8 versions in this environment** — the repository's own
-harness scripts already say so and fetch binaries directly. Nothing is lost:
-`build_solidity_artifacts.py` fetches the pinned binaries into the same svm
-cache the harness scripts use and drives them through `py-solc-x`'s
-standard-JSON interface, emitting the same artifact shape this lane deploys.
-Its stamp records a per-artifact hash next to the source digest, so a stale or
-corrupted artifact (or an old/malformed stamp) reads as cold and forces one
-deterministic recompile. `test/RealLibraries.t.sol`
-then runs the executor against canonical `UniswapV2Pair` (behind the real
-`UniswapV2Factory`) and a canonical `UniswapV3Pool` (created by the real
+`v2-core` is `=0.5.16`, `v3-core` is `=0.7.6` and **forge's solc manager cannot
+resolve pre-0.8 versions in this environment** — the repository's own harness
+scripts already say so and fetch binaries directly. The v4-core `PoolManager`
+adds a second reason not to hand it to forge: it pins `pragma solidity 0.8.26`,
+which the lane's own solc (0.8.28) cannot compile, and it needs EIP-1153
+transient storage. Nothing is lost: `build_solidity_artifacts.py` fetches the
+pinned binaries into the same svm cache the harness scripts use and drives them
+through `py-solc-x`'s standard-JSON interface, emitting the same artifact shape
+this lane deploys. Its stamp records a per-artifact hash next to the source
+digest, so a stale or corrupted artifact (or an old/malformed stamp) reads as
+cold and forces one deterministic recompile. `test/RealLibraries.t.sol` then
+runs the executor against canonical `UniswapV2Pair` (behind the real
+`UniswapV2Factory`), a canonical `UniswapV3Pool` (created by the real
 `UniswapV3Factory`, with real tick/position liquidity and the executor's V3
-auto-pay path).
+auto-pay path), and the canonical v4-core `PoolManager` (solc 0.8.26, EVM
+`cancun`, built from `tier3-oracle/lib/v4-core`).
+
+The V4 half of that file is also the lane's v4 router: the harness implements
+`unlockCallback` itself and reads the manager's own transient storage
+(`exttload`/`extsload` slot identities from v4-core's `Lock`,
+`NonzeroDeltaCount`, `CurrencyDelta` and `CurrencyReserves`), so unlock,
+`modifyLiquidity` delta accounting, `take`, `sync`/`settle`, ERC6909
+`mint`/`burn` and one executor-driven swap are asserted against the manager's
+state rather than against a parallel model of it. The compile's identity
+decisions — source tree, solc, EVM fork, optimizer, remappings — are stated in
+the builder's docstring and in `PORTING.md`.
 
 ## Layout
 
 - `build_artifacts.py` — pinned vyper in-process (`vyper.compile_code`) → `artifacts/<Contract>.json` (+ manifest with input-tree, source, bytecode, and whole-artifact hashes), plus the generated revert vocabulary `src/generated/Errors.sol`: custom-error selectors computed from the built `CmdExecutor` ABI, with the compiler revert-label vocabulary taken from the tracked release `cmd_executor.error_map.json` and cross-checked against the fresh compile on every rebuild (an unknown label or a vocabulary divergence fails the build loudly).
-- `build_solidity_artifacts.py` — pinned solc 0.5.16 / 0.7.6 binaries, driven through `py-solc-x` → the same artifact shape for canonical `UniswapV2Factory`/`UniswapV2Pair`/`UniswapV3Factory`/`UniswapV3Pool` and the committed solc-0.7.6 `SolReference` (the original Solidity V3-math libraries, byte-identical to the committed Ape-lane artifact modulo its metadata hash, for the differential library ports).
+- `build_solidity_artifacts.py` — pinned solc 0.5.16 / 0.7.6 / 0.8.26 binaries, driven through `py-solc-x` → the same artifact shape for canonical `UniswapV2Factory`/`UniswapV2Pair`/`UniswapV3Factory`/`UniswapV3Pool`, the v4-core `PoolManager` (solc 0.8.26, EVM `cancun`, from `tier3-oracle/lib/v4-core`), and the committed solc-0.7.6 `SolReference` (the original Solidity V3-math libraries, byte-identical to the committed Ape-lane artifact modulo its metadata hash, for the differential library ports). Its module docstring carries the V4 compile's source/compiler/fork/optimizer/remapping decisions.
 - `gen_interfaces.py` — ABI → `src/generated/I<Contract>.sol` + tuple structs in `Types.sol`.
 - `src/Vm.sol` — minimal cheatcode interface (no forge-std dependency), carrying the declarations the FFI (`vm.ffi`, `vm.tryFfi` with its `FfiResult` exit-code/stdout/stderr struct, and `vm.skip` as the lane's default-gate control), RPC/fork (`vm.rpc`, `createFork`/`selectFork`), JSON (`parseJson*`), and hex (`toString`) lanes need — and nothing speculative beyond those consumers.
 - `src/TestBase.sol` — artifact deployment, `execute` helpers, assertions, log/transfer accounting, balance snapshots with conservation diffs (`_snapshotBalances` + `_assert*Conserved`/`_assertExecutorProfit`), exact revert assertions over the generated `ExecutorErrors` vocabulary, and the `ExecutorFixture` that mirrors `tests/executor/conftest.py`.
@@ -174,11 +187,12 @@ auto-pay path).
 | `test_cmd_executor_three_hop_production_calldata.py` | `CmdExecutorThreeHopProductionCalldata.t.sol` | 6 (32 collected) | 32 (27 permutations, one test per row so the test name is the row label, plus the five encoder CLI refusals; the streams come from the Rust `encode_three_hop` composer through `vm.ffi` and are executed verbatim — nothing is rebuilt with `Cmd.sol`; the source's production transfer counts are kept exactly — V4V4V4=1, V2V4V4/V3V4V4/V4V3V4/V4V4V2/V4V4V3=3, V2V2V2/V3V2V4=5, all others=4 — with tracked-account conservation over the deduplicated set (the source snapshots into a `(token, account)`-keyed mapping, so a repeated PoolManager collapses to one entry) and `profit_mode = 2` on the V4V4V4 MINT-capture row; the five refusals pin exit code 1, empty stdout and the exact stderr text through `vm.tryFfi`; trusted FFI lane only; per-row gas lives in the committed `.gas-snapshot-production`, generated by `just foundry-executor-production-snapshot` and drift-gated by `just foundry-executor-production-snapshot-check` — disposition 11) |
 | `test_release_metadata.py` | `ReleaseMetadata.t.sol` | 19 (22 expanded) | 23 (22 source cases across four contracts — declared values, getter shape, manifest agreement, declared grammar — plus the added executor-wide ABI-shape case: the committed ABI's complete function/selector set including both `execute` overloads, parameter and return types, constructor/fallback shape, and the 10 error selectors round-tripped through the generated vocabulary; every selector cross-checked against the release's `method_identifiers.json`; the capability commitment recomputed as `keccak256(scheme ++ abi.encode(uint32[] ids))` and cross-checked against the source `CAPABILITY_*` constants, the manifest IDs and its commitment; all 31 declared opcodes sampled — raw V3 `0x30`, direction-baked `0x33`/`0x34`, `V4_BATCH_OPEN_WETH` `0x43` — with opcode identity and declared byte width; config fields tile bits 0-255 with the packed values pinned; manifest/source/ABI drift fails with the opcode, field, capability index or signature named) |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
-| — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
+| `test_fake_abi_fidelity.py` | `FakeABIFidelity.t.sol` | 6 (9 collected) | 9 (one named test per collected case: three V2 callback variants, two V3 variants, and the four V4 oversized-`bytes` cases; every callback case pins the intentional `ECHO_VERIFIED` payload exactly, with a corrupted-digest `ECHO_BAD_DIGEST` control proving the marker is only reachable after verification) |
+| — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 8 (2 V2/V3 + 6 canonical v4-core `PoolManager`: unlock round trip and nested-unlock refusal, `modifyLiquidity` delta accounting via `exttload`, take + `sync`/`settle` reserves snapshot, ERC6909 mint and burn, and one executor-driven swap read back from the manager's `Swap` event) |
 | — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
 
-Not ported: the fake-parity tiers (`fake_pool_manager_parity`,
-`fake_abi_fidelity`), and the Rust-artifact cross-checks.
+Not ported: the fork-lane fake-parity tier (`fake_pool_manager_parity`) and the
+Rust-artifact cross-checks.
 
 ## Porting rules this lane encodes
 
