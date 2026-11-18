@@ -205,5 +205,6 @@ rust/tools/solver-lab/src/bin/concentrated_liquidity_cache_lab/main.rs::!module
 rust/tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs::!module
 rust/tools/solver-lab/src/bin/entry_ab_readout/main.rs::!module
 rust/tools/solver-lab/src/bin/mixed_solve_replay/main.rs::!module
+rust/tools/solver-lab/src/bin/mobius_normalization_readout/main.rs::!module	one interleaved measurement driver: capture/deep loops and their reports share one stdout contract
 rust/tools/solver-lab/src/bin/rayon_scale_probe/main.rs::!module
 rust/tools/solver-lab/src/bin/stateview_feasibility_probe/main.rs::!module

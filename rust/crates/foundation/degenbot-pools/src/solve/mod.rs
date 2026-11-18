@@ -96,6 +96,7 @@ pub use mixed::{
     MixedPoolRef, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolveArmOutcome,
     SolvePathResult, UnsupportedHopIdentity, V3SnapshotData, V4SnapshotData, INT128_MAX,
 };
+pub use runtime::MobiusPieceArithmetic;
 // Internal plumbing: the per-family solve entry and the dispatch rows the
 // family arms and the line-derivation kernel share.
 pub(crate) use mixed::solve::solve_golden_section_path_int;

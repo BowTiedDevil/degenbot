@@ -135,6 +135,13 @@ name = "entry_ab_readout"
 path = "src/bin/entry_ab_readout/main.rs"
 required-features = ["capture-fixtures"]
 
+# Exact I1024/BigInt vs normalized I512 shifted-piece arithmetic. The capture
+# reader is its only required forward; telemetry is an optional second shape.
+[[bin]]
+name = "mobius_normalization_readout"
+path = "src/bin/mobius_normalization_readout/main.rs"
+required-features = ["capture-fixtures"]
+
 # The cache-lab replay: it reads a capture through the same fixture reader and
 # solves every state through the instrumented cache strategies, so its lane is
 # both forwards. Neither is a profiler, a ledger, or a database lane. Its

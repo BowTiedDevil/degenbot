@@ -34,7 +34,7 @@ use crate::solve::concentrated_liquidity::{
 use crate::solve::gate::{
     path_bound_lines, path_output_bound_at, path_profit_bound, GateDeps, HopMath,
 };
-use crate::solve::runtime::{AnchorSweep, SolveRuntimeConfig};
+use crate::solve::runtime::{AnchorSweep, MobiusPieceArithmetic, SolveRuntimeConfig};
 
 // ---------------------------------------------------------------- helpers --
 
@@ -674,4 +674,20 @@ fn loop19_and_21_stance_messages_are_quiet_on_single_piece_paths() {
     let a = derive_and_solve_concentrated_liquidity_piecewise(&refs, &cfg_off);
     let b = derive_and_solve_concentrated_liquidity_piecewise(&refs, &cfg_on);
     assert_eq!(a.result, b.result);
+}
+
+#[test]
+fn normalized_i512_mobius_preserves_the_exact_walk_result() {
+    for (name, seqs) in concentrated_liquidity_corpus() {
+        let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
+        let exact_cfg = SolveRuntimeConfig::default();
+        let normalized_cfg = SolveRuntimeConfig {
+            mobius_piece_arithmetic: MobiusPieceArithmetic::NormalizedI512,
+            ..exact_cfg
+        };
+
+        let exact = derive_and_solve_concentrated_liquidity_piecewise(&refs, &exact_cfg);
+        let normalized = derive_and_solve_concentrated_liquidity_piecewise(&refs, &normalized_cfg);
+        assert_eq!(normalized.result, exact.result, "{name}");
+    }
 }

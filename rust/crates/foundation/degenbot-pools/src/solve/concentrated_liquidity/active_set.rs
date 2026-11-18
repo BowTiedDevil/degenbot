@@ -1027,10 +1027,17 @@ fn solve_active_set_path_inner(
     // Direct (non-recorder) probes share one outcome across walked pieces.
     let mut probe_outcome = WalkPathOutcome::default();
     // Loop-17 anchor memoization: consecutive pieces share tuple prefixes,
-    // so the Möbius fold reuses prefix partials (byte-exact — see
-    // `ShiftedPieceComposer`). One composer per solve; `hops` is immutable
+    // so the Möbius fold reuses prefix partials (exact arithmetic is byte-exact;
+    // normalized arithmetic matches a fresh normalized fold). One composer per solve; `hops` is immutable
     // within a solve.
-    let mut anchor_memo = crate::solve::mobius_shifted_piece::ShiftedPieceComposer::new();
+    let mut anchor_memo = match cfg.mobius_piece_arithmetic {
+        crate::solve::runtime::MobiusPieceArithmetic::Exact => {
+            crate::solve::mobius_shifted_piece::ShiftedPieceComposer::new()
+        }
+        crate::solve::runtime::MobiusPieceArithmetic::NormalizedI512 => {
+            crate::solve::mobius_shifted_piece::ShiftedPieceComposer::normalized()
+        }
+    };
     // window boundaries, so it doubles as the next piece's left-edge scan
     // start (saves a full bisection per visited piece).
     let mut prev_right_edge: Option<U256> = None;
