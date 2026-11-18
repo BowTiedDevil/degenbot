@@ -43,7 +43,7 @@ pytest_run := "uv run --no-sync pytest"
 # project-venv form (`ty`), so an index lookup would name a version uv then
 # refuses -- an un-pushable tree. The freshness lag is bounded by that cutoff,
 # the same 14-day window every dependency lives under.
-ty_version := "ty==0.0.95"
+ty_version := "ty==0.0.96"
 ruff_version := "ruff==0.17.5"
 
 # Default recipe - show available commands
