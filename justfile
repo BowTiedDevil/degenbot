@@ -1547,9 +1547,13 @@ test-executor target="tests/executor/" *args:
 
 
 # Offline executor lane for CI and machines without an archive endpoint: run
-# fake-contract tests on standalone Anvil, excluding only the real PoolManager
-# parity test marked mainnet_fork. The archive-backed test-executor recipe above
-# remains the complete local gate.
+# fake-contract tests on standalone Anvil. Both exclusions name real-PoolManager
+# parity and nothing else: the `mainnet_fork` marker keeps that module out on
+# its own declaration, and the explicit path ignore names the module whose fork
+# coverage the Foundry fork lane (`test-foundry-executor-pool-manager-parity`)
+# owns, so it stays out even if the marker is renamed. No other test or marker
+# is deselected. The archive-backed test-executor recipe above remains the
+# complete local gate.
 test-executor-offline target="tests/executor/" *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1558,7 +1562,8 @@ test-executor-offline target="tests/executor/" *args:
     # merely satisfies interpolation in the shared Ape project config.
     exec env -u PYTEST_ADDOPTS APE_ETHEREUM_NETWORK=local \
         TEST_ETHEREUM_FULL_NODE_HTTP_URI="http://127.0.0.1:8545" \
-        {{ py_run }} ape test "$target" -c ape-pytest.ini -m "not mainnet_fork" "$@"
+        {{ py_run }} ape test "$target" -c ape-pytest.ini -m "not mainnet_fork" \
+        --ignore=tests/executor/test_fake_pool_manager_parity.py "$@"
 # Foundry lane for the Vyper executor contracts (tests/foundry_executor).
 #
 # Forge's Vyper import resolver only understands `from <dir> import <module>.vy`
@@ -1602,6 +1607,65 @@ test-foundry-executor-production-calldata *args: build-executor-three-hop-encode
     {{ py_run }} python gen_interfaces.py
     exec env DEGENBOT_THREE_HOP_PRODUCTION_FFI=1 \
         forge test --ffi --match-path test/CmdExecutorThreeHopProductionCalldata.t.sol "$@"
+
+# Fork lane for the fake-vs-real PoolManager parity suite
+# (`tests/foundry_executor/test/PoolManagerParity.t.sol`).
+#
+# The suite is the parity tier for `contracts/vyper/fake_uniswap_v4_pool_manager.vy`:
+# it deploys the fake beside the DEPLOYED mainnet Uniswap V4 PoolManager at a
+# pinned archive height and asserts the same behavior on both, reading the
+# managers' own transient slots (`exttload`) and pool state (`extsload`). That
+# needs an archive endpoint, so this is an on-demand lane: the default
+# `test-foundry-executor` gate compiles the suite and `vm.skip`s it, and
+# `DEGENBOT_POOL_MANAGER_PARITY_FORK` is set here and nowhere else — the same
+# shape as the trusted FFI lane.
+#
+# The endpoint resolves through the declared layers `test-fork` probes
+# (`tests/conftest.py`: process env > tests.env > table default) and is probed
+# BEFORE forge runs: the chain ID must be 1 and `web3_clientVersion` must
+# answer, so a machine with no archive node fails closed here instead of
+# asserting parity against an account with no code. The suite repeats that
+# fail-closed check on the fork itself (PoolManager bytecode at the pinned
+# block). Extra args forward to `forge test`
+# (`--match-test testTakeNativeTransfersEth`, `-vvv`).
+test-foundry-executor-pool-manager-parity *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC declared — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
+        echo "       (the devcontainer's reth: http://host.containers.internal:8545/)" >&2
+        exit 1
+    fi
+    chain_id="$(curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "$rpc_uri")" \
+        || chain_id=""
+    if [[ ! $chain_id == *'"result"'* ]]; then
+        echo "ERROR: no reachable Ethereum RPC at TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI=$rpc_uri" >&2
+        echo "       (eth_chainId response: ${chain_id:-<none>}) — start the node or re-point the URI" >&2
+        exit 1
+    fi
+    chain_number="$({{ py_run }} python -c 'import json,sys; print(int(json.load(sys.stdin)["result"], 16))' <<<"$chain_id")"
+    if [ "$chain_number" != "1" ]; then
+        echo "ERROR: the parity fork needs Ethereum mainnet (chain 1); $rpc_uri answered chain $chain_number" >&2
+        exit 1
+    fi
+    client_version="$(curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"web3_clientVersion","params":[],"id":1}' "$rpc_uri")" \
+        || client_version=""
+    if [[ ! $client_version == *'"result"'* ]]; then
+        echo "ERROR: $rpc_uri did not answer web3_clientVersion; refusing to run without a node identity" >&2
+        echo "       (response: ${client_version:-<none>})" >&2
+        exit 1
+    fi
+    echo "▶ pool-manager parity fork: $rpc_uri (chain $chain_number, $({{ py_run }} python -c 'import json,sys; print(json.load(sys.stdin)["result"])' <<<"$client_version"))"
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec env DEGENBOT_POOL_MANAGER_PARITY_FORK=1 \
+        TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI="$rpc_uri" \
+        forge test --match-path test/PoolManagerParity.t.sol "$@"
 
 # Forge gas snapshot for the production-calldata matrix: one stable row label per
 # permutation in `test/CmdExecutorThreeHopProductionCalldata.t.sol`, committed as

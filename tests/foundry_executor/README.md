@@ -8,10 +8,11 @@ Run it through the justfile (never `forge test` directly — the artifacts and t
 generated interfaces are build outputs):
 
 ```bash
-just test-foundry-executor                                   # whole lane (398 tests, 1 skipped)
+just test-foundry-executor                                   # whole lane (398 tests, 2 skipped)
 just test-foundry-executor --match-path 'test/V2V3.t.sol'    # one file
 just test-foundry-executor --match-test testV2V3 -vvvv       # one test, traced
 just test-foundry-executor-production-calldata               # trusted FFI lane (32 tests)
+just test-foundry-executor-pool-manager-parity                # fake-vs-real PoolManager fork lane (33 tests)
 just foundry-executor-artifacts                              # artifacts + interfaces only
 just py python tests/foundry_executor/build_artifacts.py --check-release  # compile identity
 ```
@@ -54,6 +55,36 @@ encoder path resolves the Cargo target dir the way the justfile does
 `<target-dir>/debug/encode_three_hop` from the repository root. A valid-hex
 stdout is hex-decoded by the cheatcode, so the encoder's one hex line arrives in
 the test as the raw command stream to execute verbatim.
+
+### Fork lane (fake-vs-real PoolManager parity)
+
+`test/PoolManagerParity.t.sol` is the parity tier for the fake Vyper
+`PoolManager`: it deploys the fake beside the DEPLOYED mainnet manager
+(`0x000000000004444c5dc75cB358380D2e3dE08A90`, fork block 22,000,000) and asserts
+the same call on both, reading each manager's own transient slots and pool state
+through `exttload`/`extsload` instead of a model of them. `ExttloadComparator`
+supplies the inside-callback real-vs-fake delta, lock and nonzero-delta-count
+reads. Every negative case pins BOTH managers' identities — the deployed
+manager's exact custom error and the fake's exact `Error(string)` — so a parity
+case never passes on a shared "both reverted".
+
+The lane is on demand for the same reason the FFI lane is: it needs a resource the
+offline gate must never dial. `DEGENBOT_POOL_MANAGER_PARITY_FORK` is set only by
+`just test-foundry-executor-pool-manager-parity`, and without it `setUp` skips the
+whole contract, so `just test-foundry-executor` compiles the suite and runs 398
+tests with the production-calldata and fork suites skipped.
+
+The recipe resolves `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` through the declared
+layers `test-fork` probes (process env > `tests.env`), probes `eth_chainId`
+(chain 1) and `web3_clientVersion` BEFORE Forge starts, and fails closed on a
+missing or unreachable endpoint. The suite repeats the check that matters for its
+own claims: `REAL_PM` must have code on the fork, because a parity assertion
+against an empty account certifies nothing.
+
+```bash
+just test-foundry-executor-pool-manager-parity                            # 33 tests
+just test-foundry-executor-pool-manager-parity --match-test testTakeNativeTransfersEth -vvvv
+```
 
 ## How compilation works (and why it is not `forge build` on the Vyper tree)
 
@@ -188,11 +219,11 @@ the builder's docstring and in `PORTING.md`.
 | `test_release_metadata.py` | `ReleaseMetadata.t.sol` | 19 (22 expanded) | 23 (22 source cases across four contracts — declared values, getter shape, manifest agreement, declared grammar — plus the added executor-wide ABI-shape case: the committed ABI's complete function/selector set including both `execute` overloads, parameter and return types, constructor/fallback shape, and the 10 error selectors round-tripped through the generated vocabulary; every selector cross-checked against the release's `method_identifiers.json`; the capability commitment recomputed as `keccak256(scheme ++ abi.encode(uint32[] ids))` and cross-checked against the source `CAPABILITY_*` constants, the manifest IDs and its commitment; all 31 declared opcodes sampled — raw V3 `0x30`, direction-baked `0x33`/`0x34`, `V4_BATCH_OPEN_WETH` `0x43` — with opcode identity and declared byte width; config fields tile bits 0-255 with the packed values pinned; manifest/source/ABI drift fails with the opcode, field, capability index or signature named) |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | `test_fake_abi_fidelity.py` | `FakeABIFidelity.t.sol` | 6 (9 collected) | 9 (one named test per collected case: three V2 callback variants, two V3 variants, and the four V4 oversized-`bytes` cases; every callback case pins the intentional `ECHO_VERIFIED` payload exactly, with a corrupted-digest `ECHO_BAD_DIGEST` control proving the marker is only reachable after verification) |
+| `test_fake_pool_manager_parity.py` | `PoolManagerParity.t.sol` (fork lane) | 30 defs / 29 collected | 33 (29 ported + 4 added: the shadowed `test_double_unlock_reverts` intention as a real nested-unlock `AlreadyUnlocked`, the empty `test_swap_zero_amount_reverts` as an executed `SwapAmountCannotBeZero`, the guard-only clear case as a real exact-positive-delta clear, and the hook-caller dynamic-fee update the Ape lane could not impersonate; every negative case pins both managers' own revert identity; on-demand lane, skipped by the offline gate) |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 8 (2 V2/V3 + 6 canonical v4-core `PoolManager`: unlock round trip and nested-unlock refusal, `modifyLiquidity` delta accounting via `exttload`, take + `sync`/`settle` reserves snapshot, ERC6909 mint and burn, and one executor-driven swap read back from the manager's `Swap` event) |
 | — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
 
-Not ported: the fork-lane fake-parity tier (`fake_pool_manager_parity`) and the
-Rust-artifact cross-checks.
+Not ported: the Rust-artifact cross-checks.
 
 ## Porting rules this lane encodes
 
