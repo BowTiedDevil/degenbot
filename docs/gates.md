@@ -24,6 +24,29 @@ The nine ratchets:
 | Publish-blocked census | `scripts/publish_blocked.py` | `scripts/publish-blocked-census.txt` | `just check-publish-blocked` |
 | Tool catalog | `scripts/tool_catalog_check.py` | `rust/tools/README.md` (the living catalog itself) | `just check-tool-catalog` |
 
+### Repairing a red gate
+
+Every gate's red path ends with a `fix:` line naming its repair, so a failure is
+actionable without reading the detector. Where the data is derivable, that line
+is a command; where the repair is an edit, it names the file and the rule.
+
+| Gate | Repair |
+| --- | --- |
+| Comment hygiene (citation) | Strip the citation (docs/comments.md); delete the census row it leaves in the same change |
+| Comment hygiene (bare token) | Add the identifier to `scripts/hooks/comment-hygiene-census.txt` (lexicon section), or strip the token |
+| Config-derived statics | Update `rust/crates/facade/degenbot/tests/config_derived_statics_census.txt` |
+| Worker census | Register the worker through `degenbot-core`'s `worker_census` |
+| Stub drift | `just gen-stubs` |
+| pytest noise gate | Fix the call site that sprays (the signatures live in `scripts/pytest_noise_gate.sh`) |
+| Capability catalog | Add the crate to `docs/capabilities.md` |
+| Dependency charter | Update `rust/crates/facade/degenbot/tests/dependency_charter.txt` |
+| Publish-blocked census | `just check-publish-blocked --rows > scripts/publish-blocked-census.txt` |
+| Tool catalog | Add or repair the row in `rust/tools/README.md`, then re-run `just check-tool-catalog` |
+| Parity ledger | Reconcile `docs/architecture/rust-settlement-bot-parity.md` with the boot oracle |
+| Executor release ratchet | `python3 scripts/executor_release_ratchet.py generate`, only while adding a release |
+| Retirement-tripwire ratchet | Delete the artifact, or label it with the D2 marker naming the present code it watches |
+| rustfmt / clippy / python lint | `just format`, `just lint-rust`, `just lint-python` |
+
 ---
 
 ## 1. Comment hygiene
@@ -745,6 +768,9 @@ gate; the aliases are for fast diagnosis, not additional mandatory executions.
 ---
 
 ## Adding a new ratchet
+
+A new ratchet also ships its `fix:` line on the red path and its row in
+[Repairing a red gate](#repairing-a-red-gate), so a failure names its own repair.
 
 Two idioms cover the family. Pick the one that matches what the gate scans.
 

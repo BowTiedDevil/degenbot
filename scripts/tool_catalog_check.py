@@ -1253,6 +1253,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"tool-catalog: {len(findings)} finding(s) in {shown}", file=sys.stderr)
         for finding in findings:
             print(f"  {finding}", file=sys.stderr)
+        print(
+            "  fix: add or repair the row in rust/tools/README.md, then re-run "
+            "just check-tool-catalog",
+            file=sys.stderr,
+        )
         return 1
 
     lab_rows = sum(len(rows) for rows in catalog.labs.values())

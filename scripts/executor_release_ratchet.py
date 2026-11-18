@@ -220,6 +220,11 @@ def main() -> int:
     if complaints:
         for complaint in complaints:
             print(f"executor release ratchet: {complaint}", file=sys.stderr)
+        print(
+            "  fix: only while adding a release, regenerate with "
+            "`python3 scripts/executor_release_ratchet.py generate`",
+            file=sys.stderr,
+        )
         return 1
     print(f"executor release ratchet: clean ({INDEX_PATH})")
     return 0

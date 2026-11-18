@@ -232,6 +232,7 @@ def main(argv: list[str]) -> int:
     )
     if findings:
         print("\n".join(findings))
+        print("fix: just check-publish-blocked --rows > scripts/publish-blocked-census.txt")
         return 1
     withheld = ", ".join(sorted(rows)) if rows else "none"
     print(f"publish-blocked census reconciled; withheld from publish-dry-run: {withheld}")

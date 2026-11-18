@@ -270,6 +270,7 @@ if [ -n "$bare_fail" ]; then
   echo "  lexicon (see the census header's line-start-deref note)." >&2
   echo "  Otherwise strip the citation, or — only for a real word/identifier — add it" >&2
   echo "  to the census lexicon section:" >&2
+  echo "  fix: add the identifier to $census (lexicon section), or strip the token." >&2
   printf '%s\n' "$bare_fail" >&2
   fail=1
 fi
@@ -324,6 +325,7 @@ if [ -n "$d3_out" ]; then
   echo "  (docs/gates.md section 1). 'fresh' is a citation the census does not" >&2
   echo "  grandfather: strip it (docs/comments.md), never list a new one. 'stale'" >&2
   echo "  is a swept citation whose row has to go in the same change." >&2
+  echo "  fix: strip the citation (docs/comments.md); a stale row is deleted in the same change." >&2
   printf '%s\n' "$d3_out" >&2
   fail=1
 fi

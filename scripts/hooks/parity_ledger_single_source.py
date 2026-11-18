@@ -309,6 +309,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"parity-ledger single source: {len(complaints)} disagreement(s)", file=sys.stderr)
         for complaint in complaints:
             print(f"  {complaint}", file=sys.stderr)
+        print(
+            "  fix: reconcile docs/architecture/rust-settlement-bot-parity.md with the boot "
+            "oracle, then re-run just check-parity-ledger-single-source",
+            file=sys.stderr,
+        )
         return 1
 
     ledger_span = f"{ledger[0] + 1}-{ledger[2] + 1}"
