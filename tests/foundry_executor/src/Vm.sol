@@ -84,6 +84,12 @@ interface Vm {
 
     function rpc(string calldata method, string calldata params) external returns (bytes memory);
 
+    /// Explicit-endpoint form. The endpoint is named per call, so a lane can
+    /// talk to a declared node without creating or selecting a fork.
+    function rpc(string calldata urlOrAlias, string calldata method, string calldata params)
+        external
+        returns (bytes memory);
+
     function createFork(string calldata urlOrAlias, uint256 blockNumber)
         external
         returns (uint256 forkId);

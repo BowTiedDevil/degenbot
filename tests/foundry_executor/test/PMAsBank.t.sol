@@ -543,4 +543,74 @@ contract PMAsBankTest is PoolSetup {
         assertTrue(tk.ok, "V3-V3-V2 TAKE gas run");
         emit PmBankGasComparison("V3-V3-V2", mintGas, tk.gasUsed);
     }
+
+    // ── Per-variant gas labels (one test per path and mode) ──────────────
+    //
+    // The comparison above measures every path's MINT and TAKE arms in one
+    // test, which a snapshot can only see as one figure. These tests run the
+    // SAME arms through the same helpers, one variant per test, so the
+    // committed `.gas-snapshot-evidence` carries a stable label per path and
+    // mode (`testGasEvidencePmBank<Path><Mode>`). Setup is symmetric across a
+    // path's two modes, so the difference between the committed figures is
+    // the mode's cost, not a setup difference.
+
+    function testGasEvidencePmBankV2V2V2Mint() public {
+        _fundPm();
+        (Outcome memory o, ) = _execV2V2V2(_deployV2Chain(), true);
+        assertTrue(o.ok, "V2-V2-V2 MINT");
+        emit GasEvidence("pm-bank/v2-v2-v2/mint", o.gasUsed);
+    }
+
+    function testGasEvidencePmBankV2V2V2Take() public {
+        _fundPm();
+        (Outcome memory o, ) = _execV2V2V2(_deployV2Chain(), false);
+        assertTrue(o.ok, "V2-V2-V2 TAKE");
+        emit GasEvidence("pm-bank/v2-v2-v2/take", o.gasUsed);
+    }
+
+    function testGasEvidencePmBankV3V2V2Mint() public {
+        _fundPm();
+        (Outcome memory o, ) = _execV3V2V2(_deployV3WethUsdc(), _deployV2Chain(), true);
+        assertTrue(o.ok, "V3-V2-V2 MINT");
+        emit GasEvidence("pm-bank/v3-v2-v2/mint", o.gasUsed);
+    }
+
+    function testGasEvidencePmBankV3V2V2Take() public {
+        _fundPm();
+        (Outcome memory o, ) = _execV3V2V2(_deployV3WethUsdc(), _deployV2Chain(), false);
+        assertTrue(o.ok, "V3-V2-V2 TAKE");
+        emit GasEvidence("pm-bank/v3-v2-v2/take", o.gasUsed);
+    }
+
+    function testGasEvidencePmBankV2V3V2Mint() public {
+        _fundPm();
+        (Outcome memory o, ) = _execV2V3V2(_deployV2Chain(), _deployV3UsdcWbtc(), true);
+        assertTrue(o.ok, "V2-V3-V2 MINT");
+        emit GasEvidence("pm-bank/v2-v3-v2/mint", o.gasUsed);
+    }
+
+    function testGasEvidencePmBankV2V3V2Take() public {
+        _fundPm();
+        (Outcome memory o, ) = _execV2V3V2(_deployV2Chain(), _deployV3UsdcWbtc(), false);
+        assertTrue(o.ok, "V2-V3-V2 TAKE");
+        emit GasEvidence("pm-bank/v2-v3-v2/take", o.gasUsed);
+    }
+
+    function testGasEvidencePmBankV3V3V2Mint() public {
+        _fundPm();
+        (Outcome memory o, ) = _execV3V3V2(
+            _deployV3WethUsdc(), _deployV3UsdcWbtc(), _deployV2Chain().c, true
+        );
+        assertTrue(o.ok, "V3-V3-V2 MINT");
+        emit GasEvidence("pm-bank/v3-v3-v2/mint", o.gasUsed);
+    }
+
+    function testGasEvidencePmBankV3V3V2Take() public {
+        _fundPm();
+        (Outcome memory o, ) = _execV3V3V2(
+            _deployV3WethUsdc(), _deployV3UsdcWbtc(), _deployV2Chain().c, false
+        );
+        assertTrue(o.ok, "V3-V3-V2 TAKE");
+        emit GasEvidence("pm-bank/v3-v3-v2/take", o.gasUsed);
+    }
 }

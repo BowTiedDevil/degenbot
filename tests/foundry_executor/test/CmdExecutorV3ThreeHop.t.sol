@@ -449,7 +449,7 @@ contract CmdExecutorV3ThreeHopTest is PoolSetup {
     // ── 9. Gas comparison (disposition 11: named gas evidence, not prints) ──
 
     /// V3 nested callbacks (3 COMPACT): 6 transfers, 3 callbacks.
-    function testNestedCallbacksGas() public {
+    function testGasEvidenceV3NestedCallbacks() public {
         Pools memory p = _setupPools(v3c);
 
         Cmd.Table memory at = _emptyTable();
@@ -477,7 +477,7 @@ contract CmdExecutorV3ThreeHopTest is PoolSetup {
     }
 
     /// V3 double auto-pay: 4 transfers, 3 callbacks.
-    function testDoubleAutoPayGas() public {
+    function testGasEvidenceV3DoubleAutoPay() public {
         Pools memory p = _setupPools(v3c);
 
         Cmd.Table memory at = _emptyTable();
@@ -502,7 +502,7 @@ contract CmdExecutorV3ThreeHopTest is PoolSetup {
     }
 
     /// V4→V3→V3 (V4_TAKE + 2 COMPACT, all auto-pay).
-    function testV4V3V3Gas() public {
+    function testGasEvidenceV4V3V3TakePlusCompact() public {
         (PoolKey memory key, bool v4Zfo) = _setupV4WethUsdcPool();
         _setupV4Swap(v4Pm, key, AMOUNT_WETH, AMOUNT_USDC, v4Zfo, address(usdc));
 
@@ -544,7 +544,7 @@ contract CmdExecutorV3ThreeHopTest is PoolSetup {
     }
 
     /// V3→V3→V4 (2 COMPACT + unlock).
-    function testV3V3V4Gas() public {
+    function testGasEvidenceV3V3V4Unlock() public {
         (bool v3aZfo, uint256 v3aUsdcOut) =
             _setupV3(v3a, IFakeErc20(address(weth)), usdc, AMOUNT_WETH, AMOUNT_USDC);
         (bool v3bZfo, uint256 v3bWbtcOut) = _setupV3(v3b, usdc, wbtc, v3aUsdcOut, AMOUNT_WBTC);

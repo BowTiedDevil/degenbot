@@ -131,6 +131,14 @@ abstract contract TestBase {
         vm.revertToState(snapshot);
     }
 
+    // ── Gas-evidence marker ──────────────────────────────────────────────
+
+    /// One log per measured variant, so a `-vv` run shows the execution gas
+    /// next to the labels. The committed figure is the Forge snapshot entry
+    /// for the enclosing `testGasEvidence*` test (`.gas-snapshot-evidence`);
+    /// the log is diagnostic, not the artifact under drift check.
+    event GasEvidence(string label, uint256 gasUsed);
+
     // ── Log helpers (port of `tests/executor/verify.py`) ─────────────────
 
     bytes32 internal constant TRANSFER_TOPIC = keccak256("Transfer(address,address,uint256)");

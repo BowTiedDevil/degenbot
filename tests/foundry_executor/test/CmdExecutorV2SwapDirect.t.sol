@@ -479,6 +479,37 @@ contract CmdExecutorV2SwapDirectTest is PoolSetup {
         return (o.gasUsed, aOut);
     }
 
+    /// Per-variant gas evidence, CALC arm: the same V2-V4-V4 stream with
+    /// `V2_SWAP_CALC` on the V2a→PM leg. One test per variant so the Forge
+    /// snapshot label (`testGasEvidenceV2V4V4Calc`) names the variant; the
+    /// sibling DIRECT test runs the identical setup, so the two committed
+    /// figures isolate the command choice.
+    function testGasEvidenceV2V4V4Calc() public {
+        _setupV2ForCalc(v2A, IFakeErc20(address(weth)), usdc, AMOUNT_WETH, AMOUNT_USDC);
+        (uint256 gasUsed, uint256 aOut) = _runV2V4V4Leg(false);
+        assertGt(aOut, 0, "CALC arm produced V2 output");
+        assertEq(
+            weth.balanceOf(address(executor)),
+            AMOUNT_WETH_PROFIT - AMOUNT_WETH,
+            "CALC arm profit"
+        );
+        emit GasEvidence("v2-v4-v4/calc", gasUsed);
+    }
+
+    /// Per-variant gas evidence, DIRECT arm: identical setup and stream, with
+    /// `V2_SWAP_DIRECT` replacing the on-chain amount computation.
+    function testGasEvidenceV2V4V4Direct() public {
+        _setupV2ForCalc(v2A, IFakeErc20(address(weth)), usdc, AMOUNT_WETH, AMOUNT_USDC);
+        (uint256 gasUsed, uint256 aOut) = _runV2V4V4Leg(true);
+        assertGt(aOut, 0, "DIRECT arm produced V2 output");
+        assertEq(
+            weth.balanceOf(address(executor)),
+            AMOUNT_WETH_PROFIT - AMOUNT_WETH,
+            "DIRECT arm profit"
+        );
+        emit GasEvidence("v2-v4-v4/direct", gasUsed);
+    }
+
     /// Named gas-evidence case (the port of the source's `pytest.mark.gas`
     /// surface): V2_SWAP_DIRECT vs V2_SWAP_CALC on the V2-V4-V4 path. Both
     /// commands produce identical results; DIRECT saves ~4 staticcalls on cold

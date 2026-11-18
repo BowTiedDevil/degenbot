@@ -201,6 +201,41 @@ contract CmdExecutorBribeCommandsTest is PoolSetup {
         assertLt(overhead, 60_000, "bribe overhead too high");
     }
 
+    /// Per-variant gas label, baseline arm: the 2-hop flow with the fast-path
+    /// config (mode 1, no bribe). Shares its stream and setup with the bribed
+    /// arm below, so the two committed snapshot figures isolate the bribe.
+    function testGasEvidenceBribeBaseline() public {
+        Route memory r = _route();
+        (Cmd.Table memory at, uint8 wethIdx,, uint8 executorIdx, uint8 zeroIdx) = _table();
+        Cmd.add(at, address(this));
+        bytes memory stream =
+            bytes.concat(Cmd.preamble(at), Cmd.v4Unlock(_routeBody(at, r, wethIdx, executorIdx, zeroIdx)));
+
+        weth.mint(address(executor), IN_WETH);
+        Outcome memory baseline = _executeRaw(executor, stream, 1);
+        assertTrue(baseline.ok, "baseline arm should succeed");
+        assertEq(baseline.grossProfit, ROUTE_PROFIT, "baseline gross profit");
+        assertEq(baseline.bribePaid, 0, "no bribe with the fast-path config");
+        emit GasEvidence("bribe/baseline", baseline.gasUsed);
+    }
+
+    /// Per-variant gas label, bribed arm: same stream from the same pristine
+    /// state, with the 10% address bribe in the config word.
+    function testGasEvidenceBribeWithAddress() public {
+        Route memory r = _route();
+        (Cmd.Table memory at, uint8 wethIdx,, uint8 executorIdx, uint8 zeroIdx) = _table();
+        uint8 recipientIdx = Cmd.add(at, address(this));
+        bytes memory stream =
+            bytes.concat(Cmd.preamble(at), Cmd.v4Unlock(_routeBody(at, r, wethIdx, executorIdx, zeroIdx)));
+
+        weth.mint(address(executor), IN_WETH);
+        Outcome memory bribed = _executeRaw(executor, stream, Cmd.makeConfig(1, 1000, recipientIdx, 0));
+        assertTrue(bribed.ok, "bribed arm should succeed");
+        assertEq(bribed.grossProfit, ROUTE_PROFIT, "bribed gross profit");
+        assertEq(bribed.bribePaid, ROUTE_PROFIT / 10, "10% bribe paid");
+        emit GasEvidence("bribe/with-address", bribed.gasUsed);
+    }
+
     // ── TestBribeWETHAutoWithdraw ─────────────────────────────────────────
 
     /// When the profit is WETH and the executor holds no ETH, the bribe

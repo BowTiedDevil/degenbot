@@ -1667,6 +1667,63 @@ test-foundry-executor-pool-manager-parity *args:
         TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI="$rpc_uri" \
         forge test --match-path test/PoolManagerParity.t.sol "$@"
 
+# Optional RPC lane for the EIP-2930 access-list comparison
+# (`tests/foundry_executor/test/AccessListBenchmark.t.sol`) — the Foundry
+# replacement for the Ape lane's `run_gas_benchmark`/`compute_access_list`
+# helpers, which have no call sites and are deleted rather than ported
+# (migration manifest disposition 7).
+#
+# The suite estimates ONE real mainnet call object twice at a pinned block —
+# bare, then with exactly the access list `eth_createAccessList` returned —
+# and reports both gas figures. It is on demand for the same reason the fork
+# lane is: it dials an endpoint, and the offline gate must never do that.
+# `DEGENBOT_ACCESS_LIST_RPC` is set here and nowhere else; without it the suite
+# `vm.skip`s, so `just test-foundry-executor` compiles it and runs zero cases
+# against any node. The endpoint resolves through the declared layers
+# (`tests/conftest.py`: process env > tests.env) and is probed BEFORE forge
+# runs — `eth_chainId` must be 1 and `web3_clientVersion` must answer — so a
+# machine with no archive node fails closed here instead of measuring a call
+# against a chain this benchmark does not claim. `-vv` is the default so the
+# emitted figures print; extra args forward to `forge test`.
+test-foundry-executor-access-list *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC declared - set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
+        echo "       (the devcontainer's reth: http://host.containers.internal:8545/)" >&2
+        exit 1
+    fi
+    chain_id="$(curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "$rpc_uri")" \
+        || chain_id=""
+    if [[ ! $chain_id == *'"result"'* ]]; then
+        echo "ERROR: no reachable Ethereum RPC at TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI=$rpc_uri" >&2
+        echo "       (eth_chainId response: ${chain_id:-<none>}) - start the node or re-point the URI" >&2
+        exit 1
+    fi
+    chain_number="$({{ py_run }} python -c 'import json,sys; print(int(json.load(sys.stdin)["result"], 16))' <<<"$chain_id")"
+    if [ "$chain_number" != "1" ]; then
+        echo "ERROR: the access-list benchmark needs Ethereum mainnet (chain 1); $rpc_uri answered chain $chain_number" >&2
+        exit 1
+    fi
+    client_version="$(curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"web3_clientVersion","params":[],"id":1}' "$rpc_uri")" \
+        || client_version=""
+    if [[ ! $client_version == *'"result"'* ]]; then
+        echo "ERROR: $rpc_uri did not answer web3_clientVersion; refusing to run without a node identity" >&2
+        echo "       (response: ${client_version:-<none>})" >&2
+        exit 1
+    fi
+    echo "▶ access-list benchmark: $rpc_uri (chain $chain_number, $({{ py_run }} python -c 'import json,sys; print(json.load(sys.stdin)["result"])' <<<"$client_version"))"
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec env DEGENBOT_ACCESS_LIST_RPC=1 \
+        TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI="$rpc_uri" \
+        forge test --match-path test/AccessListBenchmark.t.sol -vv "$@"
+
 # Forge gas snapshot for the production-calldata matrix: one stable row label per
 # permutation in `test/CmdExecutorThreeHopProductionCalldata.t.sol`, committed as
 # `tests/foundry_executor/.gas-snapshot-production`. The production streams are
@@ -1731,6 +1788,45 @@ foundry-executor-snapshot-check:
     {{ py_run }} python build_solidity_artifacts.py
     {{ py_run }} python gen_interfaces.py
     exec forge snapshot --check --match-path test/CmdExecutorThreeHopOptimized.t.sol
+
+
+# Forge gas snapshot for the lane's per-variant gas evidence: one committed
+# label per measured variant. The tests are named `testGasEvidence…` (one test
+# per arm), so the snapshot key names the variant: direct-vs-calc on the
+# V2-V4-V4 path, the three three-pool approaches, bribe baseline-vs-bribed,
+# ERC6909 MINT-vs-TAKE, the four V3/V4 three-hop approaches, and every PM-bank
+# path × mode. These are disposition 11's replacement for the Ape lane's
+# print-only `*_gas` cases: a committed figure with a drift gate instead of a
+# number printed once and never checked. The comparison tests
+# (`testGasComparison…`, `testMintVsTake…`, `testBribeAddress…`) keep their
+# cross-variant assertions and stay out of this file on purpose — the file is
+# one label per arm, not one per comparison. The optimized matrix
+# (`.gas-snapshot`) and the production-calldata matrix
+# (`.gas-snapshot-production`) keep their own files: their labels are the 27
+# permutation rows, not these arms.
+foundry-executor-evidence-snapshot:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec forge snapshot --snap .gas-snapshot-evidence --match-test '^testGasEvidence'
+
+# Drift gate for the per-variant gas evidence: regenerating every arm's figure
+# must reproduce `.gas-snapshot-evidence` byte-for-byte. Fails closed when a
+# figure moves, a label disappears, or a renamed/removed `testGasEvidence…`
+# test drops its entry. Only `forge snapshot` writes this file — a plain
+# `forge test` never rewrites it — so the check compares against the committed
+# figures rather than against whatever the last test run happened to measure.
+foundry-executor-evidence-snapshot-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec forge snapshot --check --snap .gas-snapshot-evidence --match-test '^testGasEvidence'
 
 
 

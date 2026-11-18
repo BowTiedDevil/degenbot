@@ -8,11 +8,14 @@ Run it through the justfile (never `forge test` directly — the artifacts and t
 generated interfaces are build outputs):
 
 ```bash
-just test-foundry-executor                                   # whole lane (398 tests, 2 skipped)
+just test-foundry-executor                                   # whole lane (427 tests, 3 skipped)
 just test-foundry-executor --match-path 'test/V2V3.t.sol'    # one file
 just test-foundry-executor --match-test testV2V3 -vvvv       # one test, traced
 just test-foundry-executor-production-calldata               # trusted FFI lane (32 tests)
 just test-foundry-executor-pool-manager-parity                # fake-vs-real PoolManager fork lane (33 tests)
+just test-foundry-executor-access-list                        # optional RPC access-list lane (2 tests)
+just foundry-executor-evidence-snapshot                       # regenerate .gas-snapshot-evidence
+just foundry-executor-evidence-snapshot-check                 # drift gate on that file
 just foundry-executor-artifacts                              # artifacts + interfaces only
 just py python tests/foundry_executor/build_artifacts.py --check-release  # compile identity
 ```
@@ -36,6 +39,86 @@ just foundry-executor-production-snapshot                               # regene
 just foundry-executor-production-snapshot-check                         # drift gate on that file
 ```
 
+### Fork lane (fake-vs-real PoolManager parity)
+
+`test/PoolManagerParity.t.sol` is the parity tier for the fake Vyper
+`PoolManager`: it deploys the fake beside the DEPLOYED mainnet manager
+(`0x000000000004444c5dc75cB358380D2e3dE08A90`, fork block 22,000,000) and asserts
+the same call on both, reading each manager's own transient slots and pool state
+through `exttload`/`extsload` instead of a model of them. `ExttloadComparator`
+supplies the inside-callback real-vs-fake delta, lock and nonzero-delta-count
+reads. Every negative case pins BOTH managers' identities — the deployed
+manager's exact custom error and the fake's exact `Error(string)` — so a parity
+case never passes on a shared "both reverted".
+
+The lane is on demand for the same reason the FFI lane is: it needs a resource the
+offline gate must never dial. `DEGENBOT_POOL_MANAGER_PARITY_FORK` is set only by
+`just test-foundry-executor-pool-manager-parity`, and without it `setUp` skips the
+whole contract, so `just test-foundry-executor` compiles the suite and runs 427
+tests with the production-calldata and fork suites skipped.
+
+The recipe resolves `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` through the declared
+layers `test-fork` probes (process env > `tests.env`), probes `eth_chainId`
+(chain 1) and `web3_clientVersion` BEFORE Forge starts, and fails closed on a
+missing or unreachable endpoint. The suite repeats the check that matters for its
+own claims: `REAL_PM` must have code on the fork, because a parity assertion
+against an empty account certifies nothing.
+
+```bash
+just test-foundry-executor-pool-manager-parity                            # 33 tests
+just test-foundry-executor-pool-manager-parity --match-test testTakeNativeTransfersEth -vvvv
+```
+
+### Gas evidence (per-variant comparisons)
+
+The Ape lane printed its comparison figures: direct-vs-calc, the three three-pool
+approaches, bribe overhead, ERC6909 MINT-vs-TAKE, the four V3/V4 three-hop
+approaches and the PM-bank MINT/TAKE table (the last one order-dependent, since
+it read module-global state). Here each measured ARM is its own
+`testGasEvidence…` test, run from the same pristine fixture as its siblings, so
+the committed snapshot key names the variant:
+
+```bash
+just foundry-executor-evidence-snapshot        # write .gas-snapshot-evidence (21 labels)
+just foundry-executor-evidence-snapshot-check  # fail if any figure or label drifted
+```
+
+The comparison tests (`testGasComparison…`, `testMintVsTake…`,
+`testBribeAddress…`) stay and keep their cross-variant assertions — the snapshot
+cannot see two figures in one test, so it carries the arms and the comparisons
+carry the relations. The file is written only by `forge snapshot`; a plain
+`forge test` never rewrites it, which is what makes `--check` a drift gate
+against the committed figures rather than against the last local run.
+
+The other two matrices keep their own files: `.gas-snapshot` (optimized 27-row
+matrix) and `.gas-snapshot-production` (production-calldata 27-row matrix).
+
+### Optional access-list lane (EIP-2930)
+
+`test/AccessListBenchmark.t.sol` is the replacement for the Ape helpers
+`run_gas_benchmark` / `compute_access_list` (zero call sites, deleted rather
+than ported). It estimates ONE real mainnet call object twice — bare, then with
+exactly the access list `eth_createAccessList` returned — at one pinned block,
+and reports both figures:
+
+```bash
+just test-foundry-executor-access-list   # 2 tests against the declared archive node
+```
+
+The lane is isolated the same way the fork lane is: `DEGENBOT_ACCESS_LIST_RPC`
+is set only by that recipe, the endpoint is resolved through `tests/conftest.py`'s
+declared layers and probed (`eth_chainId` must be 1, `web3_clientVersion` must
+answer) BEFORE Forge runs, and a missing or unreachable endpoint fails closed.
+Without the switch the suite skips, so the offline gate runs zero cases against a
+node.
+
+The measured subject is a canonical `SwapRouter02` swap, not the executor's own
+stream, and the suite's contract doc says why: Ape's provider was a local chain
+that held the deployed executor, whereas a Foundry test's contracts exist only in
+forge's in-process EVM and forge's local EVM never applies EIP-2930 intrinsic
+gas — so no local run can produce a with/without-access-list pair at all. Both
+figures come back from the node on the run; nothing is hardcoded.
+
 The 27 permutation rows carry their own committed gas snapshot,
 `tests/foundry_executor/.gas-snapshot-production` — one stable label per row,
 generated and drift-checked by the two recipes above (encoder build, lane
@@ -55,36 +138,6 @@ encoder path resolves the Cargo target dir the way the justfile does
 `<target-dir>/debug/encode_three_hop` from the repository root. A valid-hex
 stdout is hex-decoded by the cheatcode, so the encoder's one hex line arrives in
 the test as the raw command stream to execute verbatim.
-
-### Fork lane (fake-vs-real PoolManager parity)
-
-`test/PoolManagerParity.t.sol` is the parity tier for the fake Vyper
-`PoolManager`: it deploys the fake beside the DEPLOYED mainnet manager
-(`0x000000000004444c5dc75cB358380D2e3dE08A90`, fork block 22,000,000) and asserts
-the same call on both, reading each manager's own transient slots and pool state
-through `exttload`/`extsload` instead of a model of them. `ExttloadComparator`
-supplies the inside-callback real-vs-fake delta, lock and nonzero-delta-count
-reads. Every negative case pins BOTH managers' identities — the deployed
-manager's exact custom error and the fake's exact `Error(string)` — so a parity
-case never passes on a shared "both reverted".
-
-The lane is on demand for the same reason the FFI lane is: it needs a resource the
-offline gate must never dial. `DEGENBOT_POOL_MANAGER_PARITY_FORK` is set only by
-`just test-foundry-executor-pool-manager-parity`, and without it `setUp` skips the
-whole contract, so `just test-foundry-executor` compiles the suite and runs 398
-tests with the production-calldata and fork suites skipped.
-
-The recipe resolves `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` through the declared
-layers `test-fork` probes (process env > `tests.env`), probes `eth_chainId`
-(chain 1) and `web3_clientVersion` BEFORE Forge starts, and fails closed on a
-missing or unreachable endpoint. The suite repeats the check that matters for its
-own claims: `REAL_PM` must have code on the fork, because a parity assertion
-against an empty account certifies nothing.
-
-```bash
-just test-foundry-executor-pool-manager-parity                            # 33 tests
-just test-foundry-executor-pool-manager-parity --match-test testTakeNativeTransfersEth -vvvv
-```
 
 ## How compilation works (and why it is not `forge build` on the Vyper tree)
 
@@ -164,6 +217,8 @@ the builder's docstring and in `PORTING.md`.
 - `src/TestBase.sol` — artifact deployment, `execute` helpers, assertions, log/transfer accounting, balance snapshots with conservation diffs (`_snapshotBalances` + `_assert*Conserved`/`_assertExecutorProfit`), exact revert assertions over the generated `ExecutorErrors` vocabulary, and the `ExecutorFixture` that mirrors `tests/executor/conftest.py`.
 - `src/ConservationOps.sol` — the composed tracked-account conservation check (the port of `test_conservation.py`'s `_verify_conservation`): tokens[0] = WETH combined with NATIVE in the mode-1 profit domain, every other tracked token summed to zero, optional executor-profit assertion run first.
 - `src/Cmd.sol` — the command-stream encoder: the port of `conftest_shared.py`'s `enc_*` helpers and the `AddressTable` sentinel resolution (including the raw `0x30` V3 form and `V4_BATCH_OPEN_WETH`).
+
+- `test/EventTopicFidelity.t.sol` — the fake-vs-canonical topic0 tier. `test/ArtifactIdentity.t.sol` — the in-suite artifact-identity tier (the build step's `--check-release` re-asserted from the files on disk). `test/AccessListBenchmark.t.sol` — the optional RPC access-list lane; `.gas-snapshot-evidence` next to this file is its offline sibling: the per-variant gas evidence.
 - `src/Setup.sol` — pool setup: the port of `_setup_v2_pair`, `_setup_v3`, `_setup_v4_swap`, `v2_get_amount_out`.
 - `test/*.t.sol` — ported test files (each names the Python file it ports), plus `test/HarnessPrimitives.t.sol`, the named tests for the shared substrate primitives themselves (encoding bytes/lengths, the generated error vocabulary, conservation diffs, exact-revert negative controls, and the artifact additions).
 - `foundry.toml` — the lane's forge project config. Its `fs_permissions` grants read on `./artifacts` (the lane's build output) and on the committed release directory under `rust/crates/foundation/degenbot-executor/releases/v2`, which `test/ReleaseMetadata.t.sol` reads as its authority: the release ABI, method-identifier table, v2 manifest and pinned Vyper source are read where they are committed, never copied into the lane.
@@ -180,7 +235,7 @@ the builder's docstring and in `PORTING.md`.
 | `test_preprocess_addr_count.py` | `PreprocessAddrCount.t.sol` | 2 | 4 (288-byte accept and 289-byte ABI rejection added) |
 | `test_cmd_executor_edge_cases.py` | `EdgeCases.t.sol` | 2 | 2 |
 | `test_execution_receipt.py` | `ExecutionReceipt.t.sol` | 12 (parametrized) | 13 (12 source + 1 added receipt boundary: a physical-balance-capped bribe reports the ACTUAL paid amount — `bribe_paid` = the seeded physical balance, drained to zero, with the retained profit left as ERC6909 claims) |
-| `test_events.py` | `Events.t.sol` | 6 | 11 (6 source + 5 documented event-surface additions on the withdrawal exit paths: V4 take counted exactly once with no ERC6909 topic, ERC6909 mint logged exactly once, the burn/take/xfer-balance exit surface, the native-ETH exit's single-ERC6909 surface, SEND_ETH_ALL's zero-event surface) |
+| `test_events.py` | `Events.t.sol` | 6 | 11 (6 source + 5 documented event-surface additions on the withdrawal exit paths: V4 take counted exactly once with no ERC6909 topic, ERC6909 mint logged exactly once, the burn/take/xfer-balance exit surface, the native-ETH exit's single-ERC6909 surface, SEND_ETH_ALL's zero-event surface). The topic0 identities those counts rely on are checked against REAL canonical emissions in `EventTopicFidelity.t.sol` (below) |
 | `test_withdraw_reentrancy.py` | `WithdrawReentrancy.t.sol` | 2 | 3 (withdraw owner-only added) |
 | `test_donation_profit_inflation.py` | `DonationProfitInflation.t.sol` | 1 (+1 skipped) | 1 |
 | `test_sentinel_failclosed.py` | `SentinelFailClosed.t.sol` | 21 (11 helper meta-tests) | 21 |
@@ -190,10 +245,10 @@ the builder's docstring and in `PORTING.md`.
 | `test_v3_library_fuzz.py` | `V3LibraryFuzz.t.sol` | 24 (10 differential + 14 parity-helper meta) | 24 |
 | `test_v2_fee_denominator_fuzz.py` | `V2FeeDenominatorFuzz.t.sol` | 7 | 7 |
 | `test_v2_configurable_fee.py` | `V2ConfigurableFee.t.sol` | 7 | 7 |
-| `test_v2_fee_bounds.py` | `V2FeeBounds.t.sol` | 4 | 4 |
+| `test_v2_fee_bounds.py` | `V2FeeBounds.t.sol` | 4 | 7 (the four source cases now pin the identity that actually fires — the pair's `INSUFFICIENT_LIQUIDITY` for the compact command, the empty-data excess-balance underflow for the three calc cases on the source's unfunded pair — plus three funded cases that reach the fee math: fee=0 EXECUTES as a fee-free swap, fee=10000 computes a zero output the pair refuses with its exact `INSUFFICIENT_OUTPUT_AMOUNT`, fee=20000 hits the checked multiplication with the empty-data revert and delivers nothing) |
 | `test_v2_swap_calc_excess.py` | `V2SwapCalcExcess.t.sol` | 7 | 7 |
 | `test_v2_swap_compact_fee.py` | `V2SwapCompactFee.t.sol` | 4 | 4 |
-| `test_cmd_executor_v2_swap_direct.py` | `CmdExecutorV2SwapDirect.t.sol` | 8 | 8 (incl. the named V2-V4-V4 DIRECT-vs-CALC gas case) |
+| `test_cmd_executor_v2_swap_direct.py` | `CmdExecutorV2SwapDirect.t.sol` | 8 | 10 (incl. the named V2-V4-V4 DIRECT-vs-CALC comparison and the two per-arm `testGasEvidenceV2V4V4Calc`/`…Direct` cases whose labels are the committed `.gas-snapshot-evidence` entries) |
 | `test_cmd_executor_three_pool_v2.py` | `CmdExecutorThreePoolV2.t.sol` | 9 | 9 (incl. per-approach named gas evidence) |
 | `test_cmd_executor_v2v2_v3v3.py` | `CmdExecutorV2V2V3V3.t.sol` | 2 | 2 |
 | `test_cmd_executor_v3_three_hop.py` | `CmdExecutorV3ThreeHop.t.sol` | 14 | 14 (incl. the four named `ApproachGas` evidence cases; forward direct custody pins the exact empty-data auto-pay underflow revert) |
@@ -208,10 +263,10 @@ the builder's docstring and in `PORTING.md`.
 | `test_withdrawal.py` | `Withdrawal.t.sol` | 9 | 9 (ERC6909→physical USDC in two/one tx, ERC6909 native ETH, ERC20_XFER_BALANCE and specific-amount ERC20_TRANSFER, SEND_ETH/SEND_ETH_ALL, both round trips; config = 2 preserved on every execution, the ERC20-only withdrawal tx at the default config = 1) |
 | `test_conservation.py` | `Conservation.t.sol` | 4 | 7 (4 source + 3 documented direct-helper meta-tests; every live failure pinned to its exact Error(string) reason via an external-call negative control, and the tracked-recipient case pins the positive conservation verdict before the profit mismatch) |
 | `test_v3_v4_v3_residual_regression.py` | `V3V4V3ResidualRegression.t.sol` | 2 | 3 (2 source + 1 added: OLD static encoder's `config = 0` revert pinned exactly as `InvalidProfitMode(0)`; the added valid-config case runs the SAME old static stream and pins the PM's exact `CurrencyNotSettled:<wbtc>: +<surplus>` residual; NEW dynamic+delta+settle-all succeeds with positive profit) |
-| `test_erc6909.py` | `ERC6909.t.sol` | 5 | 5 (view surface, V4_MINT_COMPACT entry, two-phase V4_BURN_COMPACT settlement with the exact WETH take, and the mint-vs-take gas comparison as one self-contained state-snapshot-isolated named comparison — disposition 11; all executions keep the source's `config = 2`) |
+| `test_erc6909.py` | `ERC6909.t.sol` | 5 | 7 (view surface, V4_MINT_COMPACT entry, two-phase V4_BURN_COMPACT settlement with the exact WETH take, the mint-vs-take comparison as one self-contained state-snapshot-isolated case — disposition 11 — and the two arms measured separately as `testGasEvidenceErc6909Take`/`…Mint` for their committed snapshot labels; all executions keep the source's `config = 2`) |
 | `test_erc6909_composability.py` | `ERC6909Composability.t.sol` | 6 (7 expanded) | 8 (7 source + 1 added direct case: V4_BURN funding a residual -1 WETH PM debit on a V4→V2→V2 borrow — the no-burn negative control pins the PM's exact `CurrencyNotSettled:<weth>:-1e18` and the paying run settles it with zero ERC20 transfers and exact balance deltas; bribe receipt pinned from the simulated `(gross_profit, bribe_paid)`; warmup-wei accounting exact on every ERC6909 WETH expectation) |
-| `test_pm_as_bank.py` | `PMAsBank.t.sol` | 11 | 11 (four V2-ending paths × MINT/TAKE with exact profit pins, V2-V2-V3 as MINT-impossible — pinned to the executor's exact `InsufficientMintDelta(0, 1)` — plus TAKE-physical with the source's 5-transfer count, and the ordering-dependent `_gas_results` summary replaced by one self-contained `testMintVsTakeGasComparison` that runs every path's MINT and TAKE from the same pristine state — disposition 6) |
-| `test_cmd_executor_bribe_commands.py` | `CmdExecutorBribeCommands.t.sol` | 5 | 6 (5 source + 1 added boundary: zero gross profit pays zero regardless of bips — receipt `(0, 0)` exact for bips {1, 5000, 10000} with recipient untouched; coinbase cases pin `vm.coinbase` to a dedicated funded address and assert its exact delta — the lane's forge EVM credits the beneficiary nothing at gasprice 0/basefee 0; auto-withdraw pinned to the wei; the named `BribeGasOverhead` case is snapshot-isolated so both runs share byte-identical state) |
+| `test_pm_as_bank.py` | `PMAsBank.t.sol` | 11 | 19 (four V2-ending paths × MINT/TAKE with exact profit pins, V2-V2-V3 as MINT-impossible — pinned to the executor's exact `InsufficientMintDelta(0, 1)` — plus TAKE-physical with the source's 5-transfer count, the ordering-dependent `_gas_results` summary replaced by one self-contained `testMintVsTakeGasComparison` that runs every path's MINT and TAKE from the same pristine state — disposition 6 — and eight `testGasEvidencePmBank<Path><Mode>` tests that give each path × mode its own committed snapshot label) |
+| `test_cmd_executor_bribe_commands.py` | `CmdExecutorBribeCommands.t.sol` | 5 | 8 (5 source + 2 per-variant `testGasEvidenceBribe…` cases for the committed baseline/bribed labels + 1 added boundary: zero gross profit pays zero regardless of bips — receipt `(0, 0)` exact for bips {1, 5000, 10000} with recipient untouched; coinbase cases pin `vm.coinbase` to a dedicated funded address and assert its exact delta — the lane's forge EVM credits the beneficiary nothing at gasprice 0/basefee 0; auto-withdraw pinned to the wei; the named `BribeGasOverhead` case is snapshot-isolated so both runs share byte-identical state) |
 | `test_cmd_executor_bribe_transfer.py` | `CmdExecutorBribeTransfer.t.sol` | 4 | 4 (two-transaction native-ETH ERC6909 funding: TX1 WETH→native swap + V4_MINT_COMPACT at the source's config = 2, TX2 V4_BURN_COMPACT + V4_TAKE_DELTA; every bribe pinned to the wei via the source's `profit = combined delta + bribe` identity, TX2's recipient table entry kept at index ≥ 1 because config idx 0 is the coinbase recipient) |
 | `test_v2_swap_calc_overflow.py` | `V2SwapCalcOverflow.t.sol` | 1 (permanently skipped) | 2 (executable checked-mul boundary + normal-path control; skip replaced) |
 | `test_cmd_executor_three_hop_optimized.py` | `CmdExecutorThreeHopOptimized.t.sol` | 27 | 27 (one test per permutation, so the test name is the row label: `testV2V2V2` … `testV4V4V4`; exact transfer count per row — V4V4V4=1, V2V4V4/V3V4V4/V4V2V4/V4V3V4/V4V4V2/V4V4V3=3, all others=4 — plus tracked-account conservation through `ConservationOps`; `testV4V4V4` captures the net profit as an ERC6909 claim under the source's `profit_mode = 2`; per-row gas lives in the committed `.gas-snapshot`, generated by `just foundry-executor-snapshot` and drift-gated by `just foundry-executor-snapshot-check` — disposition 11) |
@@ -222,6 +277,12 @@ the builder's docstring and in `PORTING.md`.
 | `test_fake_pool_manager_parity.py` | `PoolManagerParity.t.sol` (fork lane) | 30 defs / 29 collected | 33 (29 ported + 4 added: the shadowed `test_double_unlock_reverts` intention as a real nested-unlock `AlreadyUnlocked`, the empty `test_swap_zero_amount_reverts` as an executed `SwapAmountCannotBeZero`, the guard-only clear case as a real exact-positive-delta clear, and the hook-caller dynamic-fee update the Ape lane could not impersonate; every negative case pins both managers' own revert identity; on-demand lane, skipped by the offline gate) |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 8 (2 V2/V3 + 6 canonical v4-core `PoolManager`: unlock round trip and nested-unlock refusal, `modifyLiquidity` delta accounting via `exttload`, take + `sync`/`settle` reserves snapshot, ERC6909 mint and burn, and one executor-driven swap read back from the manager's `Swap` event) |
 | — (harness substrate primitives, QXIGKC) | `HarnessPrimitives.t.sol` | 0 | 22 |
+
+| — (fake-vs-canonical event topics, Q3UOC6) | `EventTopicFidelity.t.sol` | 0 | 9 (V2 `Sync`/`Swap`, V3 `Swap`, V4 `Initialize`/`ModifyLiquidity`/`Donate` and the ERC6909 `Approval`/`OperatorSet` surface compared emission-to-emission against the canonical artifacts through one shared unlock callback, plus the fake's V4 `Swap` and mint `Transfer` pinned to the canonical declarations) |
+
+| — (in-suite artifact identity, Q3UOC6) | `ArtifactIdentity.t.sol` | 0 | 3 (every artifact hashes to its manifest entry; the compiled executor hashes to the committed release `.hex` files; the deployed executor is the artifact runtime plus the documented immutable section) |
+
+| — (optional RPC access-list lane, Q3UOC6) | `AccessListBenchmark.t.sol` | 0 | 2 (node identity; the same mainnet call estimated bare and with the access list `eth_createAccessList` returned, at one pinned block — skipped by the offline gate) |
 
 Not ported: the Rust-artifact cross-checks.
 

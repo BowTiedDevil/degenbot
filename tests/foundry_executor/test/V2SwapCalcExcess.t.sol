@@ -70,6 +70,14 @@ contract V2SwapCalcExcessTest is PoolSetup {
             bytes.concat(Cmd.preamble(at), Cmd.v2SwapCalc(v2Idx, v2Zfo, executorIdx, 30));
         Outcome memory o = _executeRaw(executor, commands);
         assertFalse(o.ok, "Should revert - no excess balance");
+        // With no excess the input read is zero, the computed output is zero,
+        // and the pair's own guard refuses the swap — pinned to its exact
+        // Error(string) rather than a bare "it failed".
+        assertEq(
+            o.revertData,
+            abi.encodeWithSignature("Error(string)", "UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT"),
+            "zero excess computes a zero output, which the pair refuses"
+        );
     }
 
     /// V2_SWAP_CALC with excess balance calls swap() with data = b"" (no

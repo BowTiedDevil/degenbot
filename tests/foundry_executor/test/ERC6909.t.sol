@@ -173,17 +173,11 @@ contract ERC6909Test is PoolSetup {
 
     // ── Gas comparison: mint vs take (disposition 11) ─────────────────────
 
-    /// Self-contained named comparison replacing the source's
-    /// `test_mint_vs_take_gas`: the TAKE variant (physical transfer out of
-    /// the PM) and the MINT variant (ERC6909 entry, no transfer) each run
-    /// from the same pristine state — the TAKE run's state is rolled back
-    /// before the MINT run — so the comparison carries no execution-order
-    /// dependence and no module-global summary.
-    function testMintVsTakeGas() public {
+    /// TAKE arm: physical USDC transfer out of the PM. Runs from whatever
+    /// pristine state the caller established and returns the execution gas, so
+    /// the comparison and the per-variant gas-evidence test share one body.
+    function _runTakeArm() internal returns (uint256 gasUsed) {
         ETable memory t = _erc6909Table();
-
-        // TAKE variant: physical USDC transfer out of the PM.
-        uint256 snapshot = vm.snapshotState();
         weth.mint(address(executor), AMOUNT_WETH);
         (PoolKey memory key, bool zfo) =
             _setupWethUsdcPool(AMOUNT_WETH, AMOUNT_USDC, true, address(usdc));
@@ -199,12 +193,16 @@ contract ERC6909Test is PoolSetup {
             _executeRaw(executor, bytes.concat(Cmd.preamble(t.at), Cmd.v4Unlock(innerTake)), 2);
         assertTrue(take.ok, "take variant should succeed");
         assertEq(usdc.balanceOf(address(executor)), AMOUNT_USDC, "take moved USDC");
-        uint256 takeGas = take.gasUsed;
+        return take.gasUsed;
+    }
 
-        // MINT variant from the same pristine state.
-        vm.revertToState(snapshot);
+    /// MINT arm: the identical stream with `V4_MINT_COMPACT` where the TAKE
+    /// arm transfers physically. Same pristine-state precondition.
+    function _runMintArm() internal returns (uint256 gasUsed) {
+        ETable memory t = _erc6909Table();
         weth.mint(address(executor), AMOUNT_WETH);
-        (key, zfo) = _setupWethUsdcPool(AMOUNT_WETH, AMOUNT_USDC, true, address(usdc));
+        (PoolKey memory key, bool zfo) =
+            _setupWethUsdcPool(AMOUNT_WETH, AMOUNT_USDC, true, address(usdc));
         bytes memory innerMint = _v4Swap(t, key, zfo, AMOUNT_WETH);
         innerMint = bytes.concat(
             innerMint, Cmd.v4MintCompact(t.usdcIdx, t.executorIdx, AMOUNT_USDC)
@@ -221,9 +219,35 @@ contract ERC6909Test is PoolSetup {
             AMOUNT_USDC,
             "mint captured the delta as ERC6909"
         );
+        return mint.gasUsed;
+    }
+
+    /// Self-contained named comparison replacing the source's
+    /// `test_mint_vs_take_gas`: the TAKE arm (physical transfer out of the PM)
+    /// and the MINT arm (ERC6909 entry, no transfer) each run from the same
+    /// pristine state — the TAKE run's state is rolled back before the MINT
+    /// run — so the comparison carries no execution-order dependence and no
+    /// module-global summary.
+    function testMintVsTakeGas() public {
+        uint256 snapshot = vm.snapshotState();
+        uint256 takeGas = _runTakeArm();
+        vm.revertToState(snapshot);
+        uint256 mintGas = _runMintArm();
 
         // Mint avoids the ERC-20 transfer out of the PM.
-        assertTrue(mint.gasUsed < takeGas, "mint should be cheaper than take");
-        emit MintVsTakeGas("erc6909_mint_vs_take", takeGas, mint.gasUsed, takeGas - mint.gasUsed);
+        assertTrue(mintGas < takeGas, "mint should be cheaper than take");
+        emit MintVsTakeGas("erc6909_mint_vs_take", takeGas, mintGas, takeGas - mintGas);
+    }
+
+    /// Per-variant gas label for the TAKE arm: one test per variant so the
+    /// Forge snapshot (`testGasEvidenceErc6909Take`) names the arm, with the
+    /// same setup the sibling MINT test runs.
+    function testGasEvidenceErc6909Take() public {
+        emit GasEvidence("erc6909/take", _runTakeArm());
+    }
+
+    /// Per-variant gas label for the MINT arm.
+    function testGasEvidenceErc6909Mint() public {
+        emit GasEvidence("erc6909/mint", _runMintArm());
     }
 }

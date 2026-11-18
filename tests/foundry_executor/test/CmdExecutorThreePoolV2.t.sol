@@ -198,7 +198,7 @@ contract CmdExecutorThreePoolV2Test is PoolSetup {
     // ── Gas comparison across the three approaches ────────────────────────
 
     /// Approach 1 (3× COMPACT, nested callbacks): 6 transfers, 3 callbacks.
-    function testApproach1Gas() public {
+    function testGasEvidenceThreePoolApproach1CompactNested() public {
         _fundPools();
         Amounts memory amt = _computeAmounts();
         (Cmd.Table memory at, bytes memory commands) = _buildApproach(1, amt);
@@ -209,7 +209,7 @@ contract CmdExecutorThreePoolV2Test is PoolSetup {
 
     /// Approach 2 (1× COMPACT + 2× CALC, direct custody): 5 transfers, 1
     /// callback.
-    function testApproach2Gas() public {
+    function testGasEvidenceThreePoolApproach2CompactPlusCalc() public {
         _fundPools();
         Amounts memory amt = _computeAmounts();
         (Cmd.Table memory at, bytes memory commands) = _buildApproach(2, amt);
@@ -220,7 +220,7 @@ contract CmdExecutorThreePoolV2Test is PoolSetup {
 
     /// Approach 3 (3× CALC, zero callbacks): 4 transfers — the best shape when
     /// the executor already holds WETH.
-    function testApproach3Gas() public {
+    function testGasEvidenceThreePoolApproach3AllCalc() public {
         weth.mint(address(executor), AMOUNT_WETH_IN);
         _fundPools();
         Amounts memory amt = _computeAmounts();
