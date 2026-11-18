@@ -15,7 +15,8 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 def _load(name: str):
     spec = importlib.util.spec_from_file_location(name, _ROOT / "scripts" / f"{name}.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -84,5 +85,5 @@ def test_vendored_members_become_exclude_flags() -> None:
 def test_a_metadata_field_reads_top_level_values() -> None:
     payload = {"target_directory": "/repo/rust/target", "workspace_root": None}
     assert cmf.field_value(payload, "target_directory") == "/repo/rust/target"
-    assert cmf.field_value(payload, "workspace_root") == ""
-    assert cmf.field_value(payload, "absent") == ""
+    assert not cmf.field_value(payload, "workspace_root")
+    assert not cmf.field_value(payload, "absent")

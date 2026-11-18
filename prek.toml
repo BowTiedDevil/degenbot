@@ -55,7 +55,7 @@ hooks = [
   # `npx markdownlint-cli2 --fix <file>` if it fails. The vendored
   # executor/ tree keeps its own docs conventions — same
   # scoping principle as the src/-only Python lint gates.
-  { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], stages = ["pre-commit"], exclude = "^executor/|^logs/|^rust/vendor/" },
+  { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], exclude = "^executor/|^logs/|^rust/vendor/", stages = ["pre-commit"] },
 
   # Comment hygiene (AGENTS.md / docs/comments.md): work-tracker (ergo) IDs
   # and RED/GREEN gate narration are banned in code comments. The waiver
@@ -124,7 +124,7 @@ hooks = [
   # pre-push. rust-fmt-staged passes skip_children=true because plain
   # rustfmt recurses into a passed file's child modules, which would let an
   # unstaged sibling module fail a commit that does not contain it.
-  { id = "python-fmt-staged", name = "Python fmt (staged)", language = "system", entry = "scripts/hooks/python-fmt-staged.sh", types = ["python"], stages = ["pre-commit"], exclude = "^executor/" },
+  { id = "python-fmt-staged", name = "Python fmt (staged)", language = "system", entry = "scripts/hooks/python-fmt-staged.sh", types = ["python"], exclude = "^executor/", stages = ["pre-commit"] },
   { id = "rust-fmt-staged", name = "Rust fmt (staged)", language = "system", entry = "scripts/hooks/rust-fmt-staged.sh", types = ["rust"], stages = ["pre-commit"] },
 
   # Stub drift at commit time (ADR-066): the committed src/degenbot/_ffi/ stubs
@@ -139,7 +139,17 @@ hooks = [
   # FFI-surface change rather than run on every commit.
   #
   # live-invariant gate (ADR-087 D2): watches the committed stub tree against the live `just gen-stubs` output; not tripwire precedent.
-  { id = "stub-drift-staged", name = "Stub drift (staged FFI)", language = "system", entry = "just gen-stubs --check", files = "^rust/crates/shells/degenbot-python/(src/|Cargo\\.toml)|^rust/tools/stubgen/(src/|Cargo\\.toml)", stages = ["pre-commit"], pass_filenames = false },
+  { id = "stub-drift-staged", name = "Stub drift (staged FFI)", language = "system", entry = "just gen-stubs --check", files = '^rust/crates/shells/degenbot-python/(src/|Cargo\.toml)|^rust/tools/stubgen/(src/|Cargo\.toml)', stages = ["pre-commit"], pass_filenames = false },
+
+
+  # The gate registry (ADR-102, docs/gates.md): every hook's facts -- id, stage,
+  # entry, trigger, flags -- live in scripts/gates.toml, and the hook lines in
+  # this file are rendered from it. The check regenerates and diffs, so a
+  # hand-edited hook line (or a registry edit with no `just gates-regen`) fails
+  # here instead of surfacing as a gate that quietly stopped running.
+  #
+  # live-invariant gate (ADR-087 D2): watches the live registry against the hook lines prek loads; not tripwire precedent.
+  { id = "gate-registry", name = "Gate registry drift", language = "system", entry = "just gates-check", files = '^prek\.toml$|^scripts/gates\.toml$|^scripts/gate_registry\.py$', stages = ["pre-commit"], pass_filenames = false },
 
   # --- commit-msg -----------------------------------------------------------
   # The @commitlint/cli version is pinned to ci.yml's commitlint job's rule set
@@ -224,7 +234,7 @@ hooks = [
   { id = "rust-fmt-check", name = "Rust fmt check", language = "system", entry = "just fmt-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "python-fmt-check", name = "Python fmt check", language = "system", entry = "just fmt-check-python", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
-  { id = "rust-clippy", name = "Rust clippy", language = "system", entry = "just lint-rust-check",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "rust-clippy", name = "Rust clippy", language = "system", entry = "just lint-rust-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "python-lint", name = "Python lint", language = "system", entry = "just lint-python-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   # ADR-053: stubtest owns the stub<->runtime existence checks (R1/R2/R3/R4)
   # for the degenbot._ffi seam; the slimmed bespoke gate (R0 + driver-module

@@ -1,0 +1,208 @@
+# scripts/gates.toml -- the gate registry (ADR-102).
+#
+# Every git hook is declared here exactly once: its id, the stage it runs at,
+# the command it runs, the diff that triggers it and its flags. `prek.toml`
+# stays the file git loads, but its hook lines are rendered from this registry
+# by `just gates-regen`, and `just gates-check` (a pre-commit hook) fails a
+# commit whose file has drifted. The prose above each rendered line lives in
+# `prek.toml` itself, next to the gate it explains.
+#
+# Adding a gate: append one [[gate]] block below, run `just gates-regen`, and
+# add its rationale comment in `prek.toml` (a new block lands without prose and
+# the registry still owns its facts). Retiring one: delete the block and run
+# `just gates-regen` -- the hook line and its prose go with it (ADR-087).
+#
+# stage       pre-commit | commit-msg | pre-push, grouped contiguously in that
+#             order so prek.toml reads as three sections.
+# entry       the command prek runs: `just <recipe>`, a script path, or a
+#             pinned npx invocation. The recipe or script must exist.
+# types/types_or/files/exclude
+#             the trigger, in prek's own vocabulary. `files` is a regex; a
+#             whole-tree gate names the files whose change re-runs it.
+# always_run/fail_fast/skip_children
+#             emitted only when true. pass_filenames defaults to true and is
+#             emitted only when false (a gate that sweeps the tree itself).
+
+version = 1
+
+# --- pre-commit --------------------------------------------------------------
+
+[[gate]]
+id = "markdownlint"
+name = "Markdown lint"
+stage = "pre-commit"
+entry = "npx --yes markdownlint-cli2"
+types = ["markdown"]
+exclude = "^executor/|^logs/|^rust/vendor/"
+
+[[gate]]
+id = "comment-hygiene"
+name = "Comment hygiene gate"
+stage = "pre-commit"
+entry = "just lint-comment-hygiene"
+types_or = ["python", "rust", "shell"]
+pass_filenames = false
+
+[[gate]]
+id = "publish-blocked"
+name = "publish-blocked census"
+stage = "pre-commit"
+entry = "just check-publish-blocked"
+files = ".*Cargo\\.toml$|^scripts/publish-blocked-census\\.txt$|^scripts/publish_blocked\\.py$|^scripts/publication_plan\\.py$"
+pass_filenames = false
+
+[[gate]]
+id = "tool-catalog"
+name = "Tool catalog reconciliation"
+stage = "pre-commit"
+entry = "just check-tool-catalog"
+files = "^rust/tools/README\\.md$|^justfile$|^rust/.*Cargo\\.toml$|^rust/tools/|^rust/examples/|^rust/.*/examples/.*\\.rs$|^rust/crates/foundation/degenbot-ingestion/tests/headless_boot\\.rs$|^rust/crates/engine/degenbot-bot/tests/config_smoke_boot\\.rs$|^scripts/tool_catalog_check\\.py$|^tests/test_tool_catalog_check\\.py$"
+pass_filenames = false
+
+[[gate]]
+id = "parity-ledger-single-source"
+name = "Parity ledger single source"
+stage = "pre-commit"
+entry = "just check-parity-ledger-single-source"
+files = "^docs/architecture/rust-settlement-bot-parity\\.md$|^tests/standalone_parity/fixtures/settlement_bot_boot\\.json$|^scripts/hooks/parity_ledger_single_source\\.py$"
+pass_filenames = false
+
+[[gate]]
+id = "python-fmt-staged"
+name = "Python fmt (staged)"
+stage = "pre-commit"
+entry = "scripts/hooks/python-fmt-staged.sh"
+types = ["python"]
+exclude = "^executor/"
+
+[[gate]]
+id = "rust-fmt-staged"
+name = "Rust fmt (staged)"
+stage = "pre-commit"
+entry = "scripts/hooks/rust-fmt-staged.sh"
+types = ["rust"]
+
+[[gate]]
+id = "stub-drift-staged"
+name = "Stub drift (staged FFI)"
+stage = "pre-commit"
+entry = "just gen-stubs --check"
+files = "^rust/crates/shells/degenbot-python/(src/|Cargo\\.toml)|^rust/tools/stubgen/(src/|Cargo\\.toml)"
+pass_filenames = false
+
+[[gate]]
+id = "gate-registry"
+name = "Gate registry drift"
+stage = "pre-commit"
+entry = "just gates-check"
+files = '^prek\.toml$|^scripts/gates\.toml$|^scripts/gate_registry\.py$'
+pass_filenames = false
+
+# --- commit-msg --------------------------------------------------------------
+
+[[gate]]
+id = "commitlint"
+name = "commitlint"
+stage = "commit-msg"
+entry = "npx --yes @commitlint/cli@21.2.4 --edit"
+
+# --- pre-push ----------------------------------------------------------------
+
+[[gate]]
+id = "toolchain-tier"
+name = "Rust toolchain tier"
+stage = "pre-push"
+entry = "just check-toolchain"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "ci-parity"
+name = "CI job parity"
+stage = "pre-push"
+entry = "scripts/hooks/ci-parity.sh"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "commitlint-push"
+name = "commitlint (push range)"
+stage = "pre-push"
+entry = "scripts/hooks/commitlint-push.sh"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "rust-fmt-check"
+name = "Rust fmt check"
+stage = "pre-push"
+entry = "just fmt-check"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "python-fmt-check"
+name = "Python fmt check"
+stage = "pre-push"
+entry = "just fmt-check-python"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "rust-clippy"
+name = "Rust clippy"
+stage = "pre-push"
+entry = "just lint-rust-check"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "python-lint"
+name = "Python lint"
+stage = "pre-push"
+entry = "just lint-python-check"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "stubtest"
+name = "Stubtest drift gate"
+stage = "pre-push"
+entry = "just lint-stubtest"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "tripwire-ratchet"
+name = "Retirement-tripwire ratchet"
+stage = "pre-push"
+entry = "just lint-tripwire-ratchet"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "executor-release-ratchet"
+name = "Executor release ratchet"
+stage = "pre-push"
+entry = "just check-executor-release-ratchet"
+always_run = true
+pass_filenames = false
+fail_fast = true
+
+[[gate]]
+id = "rust-test-affected"
+name = "Rust tests (affected packages)"
+stage = "pre-push"
+entry = "just test-rust-affected"
+always_run = true
+pass_filenames = false
+fail_fast = true

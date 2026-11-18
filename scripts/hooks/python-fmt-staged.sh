@@ -32,4 +32,14 @@ fi
 # different ruff — `uv sync` or `just dev` is the fix.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
-exec uv run --no-sync ruff format --check -- "$@"
+if ! uv run --no-sync ruff format --check -- "$@"; then
+
+  # Name the repair: ruff lists the files, and this line turns the list into the
+
+  # command that fixes them, so a red commit costs one attempt instead of three.
+
+  printf 'fix: uv run --no-sync ruff format %s\n' "$*" >&2
+
+  exit 1
+
+fi

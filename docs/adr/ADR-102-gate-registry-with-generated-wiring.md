@@ -1,6 +1,7 @@
 # ADR-102: One registry for the gate tier, with generated wiring
 
-**Status: accepted (design; migration phased below).** Elaborates
+**Status: accepted (implemented for the hook wiring; the doc table and the
+parity manifest are pending, see Migration).** Elaborates
 [ADR-074](ADR-074-the-push-gate-manifest.md)'s single-manifest principle and
 [ADR-087](ADR-087-deleting-code-is-the-complete-retirement.md)'s retirement
 hygiene for the gate tier itself.
@@ -38,11 +39,13 @@ a gate's identity: `id`, `tier` (prek stage or CI job), `scope` (`index`,
 owns, and its probe suite. Prose rationale stays in `docs/gates.md` and the
 body's header comment; the registry carries the facts that must agree.
 
-**D2 — generated wiring.** The justfile recipe line, the prek hook entry, the
-`docs/gates.md` table row and the `scripts/hooks/ci-parity-manifest.txt` entry
-are generated from the registry by `just gates-regen`. Hand-editing a generated
-region fails a drift gate that regenerates and diffs, the idiom the stub and
-census gates already use.
+**D2 — generated wiring.** `just gates-regen` renders the registry into the
+wiring; hand-editing a generated region fails `just gates-check`, which
+regenerates and diffs (the idiom the stub and census gates already use). In the
+shipped phase it renders `prek.toml`'s hook *lines*, leaving the rationale prose
+in `prek.toml` beside the gate it explains — a hook's facts are generated, its
+argument stays where a reader looks for it. The `docs/gates.md` table rows and
+the `scripts/hooks/ci-parity-manifest.txt` entries follow in phase 3.
 
 **D3 — the registry is the retirement surface.** Deleting a gate is deleting its
 entry and its body; the generator removes its wiring in the same commit. No
@@ -83,8 +86,13 @@ high-churn ratchets are the first candidates.
 
 ## Migration
 
-1. Registry + `gates-regen` + drift gate over the **pre-push** hooks, verified by
-   an empty regeneration diff.
-2. Extend to the **pre-commit** hooks.
+1. ~~Registry + `gates-regen` + drift gate over the **pre-push** hooks, verified
+   by an empty regeneration diff.~~ Done: all 21 hooks (pre-commit, commit-msg and
+   pre-push) are declared in `scripts/gates.toml`; the first regeneration changed
+   four lines of field order and nothing else, and the hook set is identical as
+   data. `tests/test_gate_registry.py` carries the drift assertion and the
+   rejection cases.
+2. ~~Extend to the **pre-commit** hooks.~~ Done with phase 1: the registry is one
+   list, so the stages came with it.
 3. Extend to the `docs/gates.md` table rows and the `ci-parity` manifest.
 4. Convert the three unrecorded high-churn censuses to `--rows` generation (D5).

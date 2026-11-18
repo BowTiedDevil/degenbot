@@ -131,7 +131,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [099](ADR-099-executor-capability-set-commitments.md) | Executor capability-set commitments — one constant-size hash, the manifest keeps the full list | accepted (implemented) |
 | [100](ADR-100-progressive-custom-adapter-validation.md) | Progressive custom-adapter validation — a declared interface, explicit cases, execution-backed certification | accepted (implemented) |
 | [101](ADR-101-immutable-typed-executor-release-packages.md) | Immutable typed executor release packages | accepted (implemented) |
-| [102](ADR-102-gate-registry-with-generated-wiring.md) | One registry for the gate tier, with generated wiring | accepted (design; migration phased) |
+| [102](ADR-102-gate-registry-with-generated-wiring.md) | One registry for the gate tier, with generated wiring | accepted (implemented for hook wiring; doc table and parity manifest pending) |
 
 ## Historical — provenance only
 

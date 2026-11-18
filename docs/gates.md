@@ -24,6 +24,30 @@ The nine ratchets:
 | Publish-blocked census | `scripts/publish_blocked.py` | `scripts/publish-blocked-census.txt` | `just check-publish-blocked` |
 | Tool catalog | `scripts/tool_catalog_check.py` | `rust/tools/README.md` (the living catalog itself) | `just check-tool-catalog` |
 
+### The gate registry
+
+`scripts/gates.toml` declares every git hook exactly once: its id, stage, entry
+command, file trigger and flags. `prek.toml` stays the file git loads, but its
+hook lines are rendered from the registry by `just gates-regen`. The prose above
+a hook line stays in `prek.toml`, beside the gate it explains — only the facts
+are generated.
+
+- **Add a hook.** Append a `[[gate]]` block, grouped by stage, then run
+  `just gates-regen` and write its rationale comment in `prek.toml`. The
+  registry validates before it renders: a duplicate id, an unknown stage, a
+  `just` recipe the justfile does not define, a script path that does not exist,
+  or gates out of stage order fails with the reason named.
+- **Retire a hook.** Delete the block and run `just gates-regen`; the line and
+  its prose go with it ([ADR-087](adr/ADR-087-deleting-code-is-the-complete-retirement.md)
+  — no waiver, no tombstone).
+- **Never hand-edit a hook line.** `just gates-check` regenerates and diffs, and
+  the `gate-registry` pre-commit hook runs it, so a hand-edited line cannot
+  outlive its commit. `ci-parity` extracts entries with a line-anchored `sed`,
+  so every hook line stays on one line; the renderer guarantees that shape.
+
+The decision, its rejected alternatives and the remaining migration phases are
+[ADR-102](adr/ADR-102-gate-registry-with-generated-wiring.md).
+
 ### Repairing a red gate
 
 Every gate's red path ends with a `fix:` line naming its repair, so a failure is
@@ -804,8 +828,10 @@ more than a filter (`scripts/hooks/tripwire_ratchet.py`); a plain-text census or
 `signatures`-style array beside it holds the grandfathered entries. The script must (a) fail closed when its census is
 missing, (b) run one pass (no per-token subprocesses) if it rides the
 pre-commit tier, and (c) state its scope and blind spots in its header. Wire it
-as a `just` recipe and, if it is instant, a `prek.toml` hook (file-scoped where
-possible; `pass_filenames = false` only when it must sweep the tree).
+as a `just` recipe and, if it is instant, a hook declared in
+`scripts/gates.toml` (file-scoped where possible; `pass_filenames = false` only
+when it must sweep the tree) — then `just gates-regen`, never a hand-typed
+`prek.toml` line.
 
 **Cargo architecture-gate test + census file** (config-derived statics). Add a
 `#[test]` to `architecture_gates.rs` that scans the workspace (derive crates
