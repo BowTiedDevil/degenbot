@@ -54,18 +54,11 @@
 //!    overflow possible. The result is narrowed to `U256` with saturation
 //!    at the end.
 //!
-//! Both exact paths produce the SAME mathematical coefficients; the only
+//! Both paths produce the SAME mathematical coefficients; the only
 //! difference is the storage type. Consumers drive the result through
 //! [`ShiftedMobiusPieceCoefficients::model_optimal_input`] /
 //! [`shifted_piece_model_optimal_input`] and never branch on which path
 //! ran.
-//!
-//! The opt-in normalized composer is a third, approximate arithmetic mode:
-//! local matrices are built directly in I512 when possible, and each complete
-//! matrix is uniformly rescaled to at most 255 bits before multiplication.
-//! Matrix scale is projectively irrelevant, but discarded low bits can move
-//! the model anchor. The active-set walk's integer path simulation remains
-//! authoritative. Exact I1024/BigInt composition is the default.
 
 // The Möbius 2×2 matrix entries are canonically `a, b, c, d`; the module is
 // already `non_snake_case`-allowed for that reason, so the matching
@@ -76,26 +69,18 @@
 // Boxing would add a heap indirection to the per-candidate solver hot path.
 #![expect(clippy::large_enum_variant)]
 
-use alloy::primitives::{Sign as AlloySign, U256, U512};
+use alloy::primitives::{Sign as AlloySign, U256};
 use degenbot_math::bigint::{isqrt_u2048, U2048};
 use degenbot_math::v2::IntHopState;
 use num_bigint::BigInt;
 
-/// 512-bit signed integer — normalized coefficient width.
-type I512 = alloy::primitives::Signed<512, 8>;
-/// 1024-bit signed integer — exact fast-path coefficient width.
+/// 1024-bit signed integer — fast-path coefficient width.
 ///
 /// Covers ≤4-hop paths with realistic reserves. See the module-level width
-/// note. The raw constructor accepts any `(BITS, LIMBS)` where
+/// note. `Signed<1024, 16>` because alloy 1.6's `Signed` aliases stop at
+/// `I512`; the raw constructor accepts any `(BITS, LIMBS)` where
 /// `LIMBS == nlimbs(BITS)`.
 type I1024 = alloy::primitives::Signed<1024, 16>;
-
-/// Largest coefficient magnitude used as a normalized multiplication operand.
-/// Two operands below 2^255 produce terms below 2^510 and a sum below 2^511,
-/// so every checked I512 product and addition is overflow-free by construction.
-const NORMALIZED_PRODUCT_BITS: usize = 255;
-/// Largest positive magnitude representable by the normalized coefficient type.
-const NORMALIZED_STORAGE_BITS: usize = 511;
 
 /// 2048-bit signed integer — width for the composed determinant.
 ///
@@ -152,35 +137,19 @@ pub struct BigShiftedCoeffs {
     pub d: BigInt,
 }
 
-/// Hop-local and composed matrices in I512 storage. Products rescale both
-/// complete matrices to [`NORMALIZED_PRODUCT_BITS`] first.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NormalizedShiftedCoeffs {
-    /// Numerator linear coefficient.
-    pub a: I512,
-    /// Numerator constant coefficient.
-    pub b: I512,
-    /// Denominator linear coefficient.
-    pub c: I512,
-    /// Denominator constant coefficient.
-    pub d: I512,
-    /// Upper bound on the largest coefficient bit length, carried so the next
-    /// product does not rescan all four values merely to choose its shift.
-    max_bits: usize,
-}
-
 /// Composed Möbius coefficients for a path piece.
 ///
-/// Holds exact fast-path [`FastShiftedCoeffs`], arbitrary-precision
-/// [`BigShiftedCoeffs`], or opt-in projectively normalized
-/// [`NormalizedShiftedCoeffs`]. Consumers drive every representation through
-/// [`Self::model_optimal_input`] / [`shifted_piece_model_optimal_input`].
+/// Holds EITHER the fast-path [`FastShiftedCoeffs`] (I1024 fixed-width,
+/// chosen by [`compute_shifted_piece_mobius_coefficients`] when no
+/// intermediate overflowed) OR the arbitrary-precision
+/// [`BigShiftedCoeffs`] fallback (selected when any composition step
+/// overflowed I1024). Consumers do not branch on the variant — drive the
+/// result through [`Self::model_optimal_input`] (or the free function
+/// [`shifted_piece_model_optimal_input`]) and
+/// [`shifted_piece_slope_exceeds_unity_at`].
 pub enum ShiftedMobiusPieceCoefficients {
     /// I1024 fast path: ≤4-hop paths with realistic reserves.
     Fast(FastShiftedCoeffs),
-    /// Projectively normalized I512 path. Uniform power-of-two truncation can
-    /// make this anchor approximate; the walk's integer simulation remains authoritative.
-    Normalized(NormalizedShiftedCoeffs),
     /// Arbitrary-precision fallback: deep paths that overflow I1024.
     Big(BigShiftedCoeffs),
 }
@@ -194,7 +163,6 @@ impl ShiftedMobiusPieceCoefficients {
     pub fn model_optimal_input(&self) -> Option<U256> {
         match self {
             Self::Fast(c) => fast_model_optimal_input(c),
-            Self::Normalized(c) => normalized_model_optimal_input(c),
             Self::Big(c) => big_model_optimal_input(c),
         }
     }
@@ -424,237 +392,6 @@ fn fast_slope_exceeds_unity_at(c: &FastShiftedCoeffs, x: U256) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Projectively normalized I512 composition
-// ---------------------------------------------------------------------------
-
-fn max_i1024_coefficient_bits(c: &FastShiftedCoeffs) -> usize {
-    [&c.a, &c.b, &c.c, &c.d]
-        .into_iter()
-        .map(|v| v.into_sign_and_abs().1.bit_len())
-        .max()
-        .unwrap_or(0)
-}
-
-/// Scale one signed coefficient toward zero by a matrix-common power of two.
-/// Uniform scaling leaves the represented Möbius map unchanged until the
-/// discarded low bits are considered; those bits are the experiment's error.
-fn i512_from_i1024_shift(v: I1024, shift: usize) -> I512 {
-    let (sign, abs) = v.into_sign_and_abs();
-    let limbs = (abs >> shift).into_limbs();
-    let mut narrow = [0u64; 8];
-    narrow.copy_from_slice(&limbs[..8]);
-    let (result, overflow) = I512::overflowing_from_sign_and_abs(sign, U512::from_limbs(narrow));
-    debug_assert!(!overflow, "normalized coefficient must fit I512");
-    result
-}
-
-fn normalized_from_fast(c: &FastShiftedCoeffs) -> NormalizedShiftedCoeffs {
-    let max_bits = max_i1024_coefficient_bits(c);
-    let shift = max_bits.saturating_sub(NORMALIZED_STORAGE_BITS);
-    NormalizedShiftedCoeffs {
-        a: i512_from_i1024_shift(c.a, shift),
-        b: i512_from_i1024_shift(c.b, shift),
-        c: i512_from_i1024_shift(c.c, shift),
-        d: i512_from_i1024_shift(c.d, shift),
-        max_bits: max_bits - shift,
-    }
-}
-
-fn i512_from_big_shift(v: &BigInt, shift: usize) -> I512 {
-    let scaled = v >> shift;
-    let (sign, bytes) = scaled.to_bytes_be();
-    debug_assert!(
-        bytes.len() <= 64,
-        "normalized BigInt coefficient must fit U512"
-    );
-    let mut limbs = [0u8; 64];
-    let start = limbs.len().saturating_sub(bytes.len());
-    limbs[start..].copy_from_slice(&bytes);
-    let sign = if sign == num_bigint::Sign::Minus {
-        AlloySign::Negative
-    } else {
-        AlloySign::Positive
-    };
-    let (result, overflow) = I512::overflowing_from_sign_and_abs(sign, U512::from_be_bytes(limbs));
-    debug_assert!(!overflow, "normalized BigInt coefficient must fit I512");
-    result
-}
-
-fn normalized_from_big(c: &BigShiftedCoeffs) -> NormalizedShiftedCoeffs {
-    let max_bits = [&c.a, &c.b, &c.c, &c.d]
-        .into_iter()
-        .map(|v| usize::try_from(v.bits()).unwrap_or(usize::MAX))
-        .max()
-        .unwrap_or(0);
-    let shift = max_bits.saturating_sub(NORMALIZED_STORAGE_BITS);
-    NormalizedShiftedCoeffs {
-        a: i512_from_big_shift(&c.a, shift),
-        b: i512_from_big_shift(&c.b, shift),
-        c: i512_from_big_shift(&c.c, shift),
-        d: i512_from_big_shift(&c.d, shift),
-        max_bits: max_bits - shift,
-    }
-}
-
-fn i512_shift(v: I512, shift: usize) -> I512 {
-    if shift == 0 {
-        return v;
-    }
-    let (sign, abs) = v.into_sign_and_abs();
-    let (result, overflow) = I512::overflowing_from_sign_and_abs(sign, abs >> shift);
-    debug_assert!(!overflow, "right shift cannot overflow I512");
-    result
-}
-
-fn normalized_for_product(c: &NormalizedShiftedCoeffs) -> NormalizedShiftedCoeffs {
-    let shift = c.max_bits.saturating_sub(NORMALIZED_PRODUCT_BITS);
-    NormalizedShiftedCoeffs {
-        a: i512_shift(c.a, shift),
-        b: i512_shift(c.b, shift),
-        c: i512_shift(c.c, shift),
-        d: i512_shift(c.d, shift),
-        max_bits: c.max_bits - shift,
-    }
-}
-
-fn normalized_dot(p1: I512, q1: I512, p2: I512, q2: I512) -> I512 {
-    let (t1, of1) = p1.overflowing_mul(q1);
-    let (t2, of2) = p2.overflowing_mul(q2);
-    let (sum, of_sum) = t1.overflowing_add(t2);
-    debug_assert!(
-        !(of1 || of2 || of_sum),
-        "255-bit normalized operands guarantee I512 dot products"
-    );
-    sum
-}
-
-fn i512_from_u256(v: U256) -> I512 {
-    let limbs = v.into_limbs();
-    let mut wide = [0u64; 8];
-    wide[..4].copy_from_slice(&limbs);
-    I512::from_limbs(wide)
-}
-
-fn checked_dot_i512(p1: I512, q1: I512, p2: I512, q2: I512) -> Option<I512> {
-    let (t1, of1) = p1.overflowing_mul(q1);
-    if of1 {
-        return None;
-    }
-    let (t2, of2) = p2.overflowing_mul(q2);
-    if of2 {
-        return None;
-    }
-    let (sum, of_sum) = t1.overflowing_add(t2);
-    if of_sum {
-        return None;
-    }
-    Some(sum)
-}
-
-/// Build the hop-local matrix directly in I512 whenever its unscaled entries
-/// fit. Realistic states avoid the wider local-matrix arithmetic entirely;
-/// pathological U256 offsets fall back to the exact I1024/BigInt builders.
-fn build_local_matrix_normalized(hop: &ShiftedPieceHop) -> Option<NormalizedShiftedCoeffs> {
-    let gamma = i512_from_u256(hop.hop.gamma_numer);
-    let fee_denom = i512_from_u256(hop.hop.fee_denom);
-    let r = i512_from_u256(hop.hop.reserve_in);
-    let s = i512_from_u256(hop.hop.reserve_out);
-    let gross = i512_from_u256(hop.gross_input_offset);
-    let output = i512_from_u256(hop.output_offset);
-
-    let (dr, of_dr) = fee_denom.overflowing_mul(r);
-    let (gamma_gross, of_gamma_gross) = gamma.overflowing_mul(gross);
-    if of_dr || of_gamma_gross {
-        return None;
-    }
-    let (d, of_d) = dr.overflowing_sub(gamma_gross);
-    if of_d {
-        return None;
-    }
-    let a = checked_dot_i512(gamma, s, output, gamma)?;
-    let (gs, of_gs) = gamma.overflowing_mul(s);
-    if of_gs {
-        return None;
-    }
-    let (gsg, of_gsg) = gs.overflowing_mul(gross);
-    if of_gsg {
-        return None;
-    }
-    let (neg_gsg, of_neg) = gsg.overflowing_neg();
-    if of_neg {
-        return None;
-    }
-    let (output_d, of_output_d) = output.overflowing_mul(d);
-    if of_output_d {
-        return None;
-    }
-    let (b, of_b) = neg_gsg.overflowing_add(output_d);
-    if of_b {
-        return None;
-    }
-    let max_bits = [&a, &b, &gamma, &d]
-        .into_iter()
-        .map(|v| v.into_sign_and_abs().1.bit_len())
-        .max()
-        .unwrap_or(0);
-    Some(NormalizedShiftedCoeffs {
-        a,
-        b,
-        c: gamma,
-        d,
-        max_bits,
-    })
-}
-
-fn normalized_matrix_compose(
-    second: &NormalizedShiftedCoeffs,
-    first: &NormalizedShiftedCoeffs,
-) -> NormalizedShiftedCoeffs {
-    let second = normalized_for_product(second);
-    let first = normalized_for_product(first);
-    NormalizedShiftedCoeffs {
-        a: normalized_dot(second.a, first.a, second.b, first.c),
-        b: normalized_dot(second.a, first.b, second.b, first.d),
-        c: normalized_dot(second.c, first.a, second.d, first.c),
-        d: normalized_dot(second.c, first.b, second.d, first.d),
-        max_bits: second.max_bits + first.max_bits + 1,
-    }
-}
-
-fn widen_i512_to_i2048(v: I512) -> I2048 {
-    let (sign, abs) = v.into_sign_and_abs();
-    let limbs = abs.into_limbs();
-    let mut wide = [0u64; 32];
-    wide[..8].copy_from_slice(&limbs);
-    let (result, overflow) = I2048::overflowing_from_sign_and_abs(sign, U2048::from_limbs(wide));
-    debug_assert!(!overflow, "widening I512 -> I2048 cannot overflow");
-    result
-}
-
-fn normalized_model_optimal_input(c: &NormalizedShiftedCoeffs) -> Option<U256> {
-    if c.c <= I512::ZERO {
-        return None;
-    }
-    let a_w = widen_i512_to_i2048(c.a);
-    let b_w = widen_i512_to_i2048(c.b);
-    let c_w = widen_i512_to_i2048(c.c);
-    let d_w = widen_i512_to_i2048(c.d);
-    let det = a_w * d_w - b_w * c_w;
-    if det <= I2048::ZERO {
-        return None;
-    }
-    let (_, det_abs) = det.into_sign_and_abs();
-    let sqrt = isqrt_u2048(det_abs);
-    let (sqrt_i2048, of_sqrt) = I2048::overflowing_from_sign_and_abs(AlloySign::Positive, sqrt);
-    debug_assert!(!of_sqrt, "normalized determinant root fits I2048");
-    let numerator = sqrt_i2048 - d_w;
-    if numerator <= I2048::ZERO {
-        return None;
-    }
-    Some(i2048_to_u256_saturating(numerator / c_w))
-}
-
-// ---------------------------------------------------------------------------
 // BigInt fallback helpers
 // ---------------------------------------------------------------------------
 
@@ -696,17 +433,6 @@ fn bigint_to_u256_saturating(v: &BigInt) -> U256 {
     let mut arr = [0u8; 32];
     arr[32 - bytes.len()..].copy_from_slice(&bytes);
     U256::from_be_bytes(arr)
-}
-
-/// Convert an [`I512`] to `BigInt`, preserving sign.
-fn bigint_from_i512_signed(v: I512) -> BigInt {
-    let (sign, abs) = v.into_sign_and_abs();
-    let bytes = abs.to_be_bytes::<64>();
-    let big_sign = match sign {
-        AlloySign::Negative => num_bigint::Sign::Minus,
-        AlloySign::Positive => num_bigint::Sign::Plus,
-    };
-    BigInt::from_bytes_be(big_sign, &bytes)
 }
 
 /// Build the local matrix for one hop in `BigInt` (no overflow possible).
@@ -815,9 +541,7 @@ pub fn compute_shifted_piece_mobius_coefficients(
 // Incremental prefix-fold composer (loop-17 anchor memoization)
 // ---------------------------------------------------------------------------
 
-/// Incremental composer for the walk's successive piece anchors. The default
-/// arithmetic is byte-exact; the opt-in normalized mode is deterministic but
-/// truncates low coefficient bits.
+/// Byte-exact incremental composer for the walk's successive piece anchors.
 ///
 /// [`compute_shifted_piece_mobius_coefficients`] folds the hop-local matrices
 /// left-to-right, so the prefix partial `P_i = L_i ∘ … ∘ L_0` depends only on
@@ -839,16 +563,14 @@ pub fn compute_shifted_piece_mobius_coefficients(
 #[derive(Default)]
 pub struct ShiftedPieceComposer {
     last_ks: Vec<usize>,
-    normalized: bool,
-    /// Prefix partials of the last piece, one per hop. Each composer mode
-    /// keeps its own representation (`Fast`, `Big`, or `Normalized`).
+    /// Prefix partials of the last piece, one per hop. All entries share one
+    /// representation (`Fast` or `Big`), enforced by the commit paths.
     stages: Vec<StageCoeffs>,
 }
 
 #[derive(Clone)]
 enum StageCoeffs {
     Fast(FastShiftedCoeffs),
-    Normalized(NormalizedShiftedCoeffs),
     Big(BigShiftedCoeffs),
 }
 
@@ -857,24 +579,13 @@ impl ShiftedPieceComposer {
     pub fn new() -> Self {
         Self {
             last_ks: Vec::new(),
-            normalized: false,
             stages: Vec::new(),
         }
     }
 
-    /// Normalized I512 experiment: the same prefix-reuse seam, with
-    /// projective truncation before products instead of exact wide arithmetic.
-    #[must_use]
-    pub fn normalized() -> Self {
-        Self {
-            normalized: true,
-            ..Self::new()
-        }
-    }
-
-    /// Memoizing counterpart of fresh left-to-right composition over
-    /// successive pieces of the same hop sequence. Exact mode is byte-exact;
-    /// normalized mode produces the same result as a fresh normalized fold.
+    /// Byte-exact memoizing replacement for
+    /// [`compute_shifted_piece_mobius_coefficients`] when called on
+    /// successive pieces of the same hop sequence.
     ///
     /// # Panics
     ///
@@ -898,16 +609,6 @@ impl ShiftedPieceComposer {
         } else {
             0
         };
-
-        if self.normalized {
-            let stages = self.extend_normalized(hops, shared);
-            let final_coeffs = match stages.last() {
-                Some(StageCoeffs::Normalized(c)) => c.clone(),
-                _ => unreachable!("normalized extension produces only normalized stages"),
-            };
-            self.commit(stages, ks);
-            return ShiftedMobiusPieceCoefficients::Normalized(final_coeffs);
-        }
 
         // Fast extension only when the reusable prefix is fast-typed.
         let fast_extensible = shared > 0
@@ -973,34 +674,6 @@ impl ShiftedPieceComposer {
             acc = Some(candidate);
         }
         Some(stages)
-    }
-
-    /// Normalized extension from prefix depth `from`. Every matrix is
-    /// rescaled independently, which is valid because matrix scale is
-    /// projectively irrelevant; every individual matrix uses one common shift.
-    fn extend_normalized(&self, hops: &[ShiftedPieceHop], from: usize) -> Vec<StageCoeffs> {
-        let usable = from <= self.stages.len()
-            && self.stages[..from]
-                .iter()
-                .all(|s| matches!(s, StageCoeffs::Normalized(_)));
-        let from = if usable { from } else { 0 };
-        let mut stages: Vec<StageCoeffs> = self.stages[..from].to_vec();
-        let mut acc: Option<NormalizedShiftedCoeffs> = match stages.last() {
-            Some(StageCoeffs::Normalized(c)) => Some(c.clone()),
-            _ => None,
-        };
-        for hop in &hops[from..] {
-            let local = build_local_matrix_normalized(hop)
-                .or_else(|| build_local_matrix_fast(hop).map(|c| normalized_from_fast(&c)))
-                .unwrap_or_else(|| normalized_from_big(&build_local_matrix_big(hop)));
-            let candidate = match acc {
-                None => local,
-                Some(prev) => normalized_matrix_compose(&local, &prev),
-            };
-            stages.push(StageCoeffs::Normalized(candidate.clone()));
-            acc = Some(candidate);
-        }
-        stages
     }
 
     /// `BigInt` extension from prefix depth `from` (infallible — arbitrary
@@ -1082,12 +755,12 @@ fn compute_big(hops: &[ShiftedPieceHop]) -> BigShiftedCoeffs {
 ///
 /// Returns `None` when the piece's envelope is not profitable anywhere on
 /// the nonnegative half-line (`A·D − B·C ≤ D²`, i.e. slope ≤ 1 at `x = 0`)
-/// or the composition is degenerate (`C ≤ 0`). Exact representations are
-/// exact at the Möbius-model layer; normalized composition is approximate
-/// because projective rescaling truncates low bits. EVM floor staircase
-/// effects remain the caller's refinement responsibility.
+/// or the composition is degenerate (`C ≤ 0`). The result is exact at the
+/// Möbius-model layer — same two-layer discipline as
+/// `mobius_int_anchor::compute_mobius_model_optimal_input`: EVM floor
+/// staircase effects are the caller's ±2 sweep.
 ///
-/// Dispatches over the exact or normalized representation carried by
+/// Dispatches over the fast / `BigInt` representation carried by
 /// [`ShiftedMobiusPieceCoefficients`].
 #[must_use]
 pub fn shifted_piece_model_optimal_input(coeffs: &ShiftedMobiusPieceCoefficients) -> Option<U256> {
@@ -1114,16 +787,6 @@ pub fn shifted_piece_slope_exceeds_unity_at(
 ) -> bool {
     match coeffs {
         ShiftedMobiusPieceCoefficients::Fast(c) => fast_slope_exceeds_unity_at(c, x),
-        ShiftedMobiusPieceCoefficients::Normalized(c) => {
-            let a = bigint_from_i512_signed(c.a);
-            let b = bigint_from_i512_signed(c.b);
-            let cc = bigint_from_i512_signed(c.c);
-            let d = bigint_from_i512_signed(c.d);
-            let det = &a * &d - &b * &cc;
-            let xi = bigint_from_u256(x);
-            let denom_at = &cc * &xi + &d;
-            det > &denom_at * &denom_at
-        }
         ShiftedMobiusPieceCoefficients::Big(c) => {
             let det = &(&c.a * &c.d) - &(&c.b * &c.c);
             let xi = bigint_from_u256(x);
@@ -1150,9 +813,8 @@ mod tests {
     fn expect_fast(coeffs: &ShiftedMobiusPieceCoefficients) -> &FastShiftedCoeffs {
         match coeffs {
             ShiftedMobiusPieceCoefficients::Fast(c) => c,
-            ShiftedMobiusPieceCoefficients::Big(_)
-            | ShiftedMobiusPieceCoefficients::Normalized(_) => {
-                panic!("expected Fast variant for u64-reserve test")
+            ShiftedMobiusPieceCoefficients::Big(_) => {
+                panic!("expected Fast variant for u64-reserve test, got Big fallback")
             }
         }
     }
@@ -1340,58 +1002,6 @@ mod tests {
         // Must have taken the Big path AND returned without panic.
         assert!(matches!(coeffs, ShiftedMobiusPieceCoefficients::Big(_)));
         let _ = shifted_piece_model_optimal_input(&coeffs); // no panic
-    }
-
-    #[test]
-    fn normalized_composer_matches_exact_when_scaling_is_inactive() {
-        let pieces = [
-            ShiftedPieceHop {
-                hop: v2_hop(1_000_000, 5_000_000),
-                gross_input_offset: U256::ZERO,
-                output_offset: U256::ZERO,
-            },
-            ShiftedPieceHop {
-                hop: v2_hop(1_500_000, 3_000_000),
-                gross_input_offset: u256(10_000),
-                output_offset: u256(20_000),
-            },
-        ];
-        let ks = [0, 1];
-        let exact = compute_shifted_piece_mobius_coefficients(&pieces);
-        let normalized = ShiftedPieceComposer::normalized().piece_coefficients(&pieces, &ks);
-
-        assert_eq!(
-            shifted_piece_model_optimal_input(&normalized),
-            shifted_piece_model_optimal_input(&exact)
-        );
-    }
-
-    #[test]
-    fn normalized_composer_handles_deep_full_u256_scaling() {
-        let near_max = U256::MAX - U256::from(1u64);
-        let pieces: Vec<ShiftedPieceHop> = (0..6)
-            .map(|i| ShiftedPieceHop {
-                hop: IntHopState::new(
-                    near_max - U256::from(i),
-                    near_max - U256::from(i + 1),
-                    997,
-                    1000,
-                ),
-                gross_input_offset: U256::ZERO,
-                output_offset: U256::ZERO,
-            })
-            .collect();
-        let exact = compute_shifted_piece_mobius_coefficients(&pieces);
-        let normalized = ShiftedPieceComposer::normalized().piece_coefficients(&pieces, &[0; 6]);
-
-        assert!(matches!(
-            normalized,
-            ShiftedMobiusPieceCoefficients::Normalized(_)
-        ));
-        assert_eq!(
-            shifted_piece_model_optimal_input(&normalized),
-            shifted_piece_model_optimal_input(&exact)
-        );
     }
 
     /// Loop-17: the memoizing composer must be byte-exact against a fresh

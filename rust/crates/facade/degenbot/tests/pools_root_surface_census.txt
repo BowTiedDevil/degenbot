@@ -132,12 +132,6 @@
 # `V2Reserves::read` refuses an over-wide word at decode before any hypothetical
 # reserve is answered. The V3/V4 `U256` width checks are untouched.
 #
-# The 1093 -> 1097 review is the normalized shifted-piece arithmetic A/B:
-# `MobiusPieceArithmetic` and its solve-door re-export, the normalized
-# coefficient representation, and its composer constructor. Exact I1024/BigInt
-# remains the default; the normalized I512 arm is an opt-in measurement stance
-# with integer path simulation still authoritative.
-#
 # The 1097 -> 1093 review is the direct hop-payload capture cutover (ADR-073
 # A7): the four family read modules' pass-through projection structs
 # (`SolidlyHopProjection`, `BalancerWeightedHop`, `BalancerStableHop`,

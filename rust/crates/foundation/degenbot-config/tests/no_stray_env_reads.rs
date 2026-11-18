@@ -651,14 +651,6 @@ fn insert_solver_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
             "DRCLAB_MICRO",
         ][..],
     );
-
-    // The shifted-piece arithmetic A/B, same lab-only class: repetitions per
-    // arm for the captured-path and deep-width microbenches. Neither name is
-    // operator configuration; they only bound local measurement runtime.
-    map.insert(
-        "tools/solver-lab/src/bin/mobius_normalization_readout/main.rs",
-        &["DR_NORMALIZATION_ITERS", "DR_DEEP_ITERS"][..],
-    );
 }
 
 /// The Python companion's entries, inserted into the same map the Rust scan

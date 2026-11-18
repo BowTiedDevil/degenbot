@@ -17,17 +17,6 @@ pub enum AnchorSweep {
     Off,
 }
 
-/// Arithmetic used to compose shifted-piece Möbius matrices.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MobiusPieceArithmetic {
-    /// Exact checked I1024 composition with arbitrary-precision fallback.
-    #[default]
-    Exact,
-    /// Experimental projectively normalized I512 composition. Low-bit
-    /// truncation can move the model anchor; integer path simulation stays authoritative.
-    NormalizedI512,
-}
-
 /// The solve tree's runtime tunables. Defaults match the loop-17
 /// production stances; the owner overrides at construction. The bool flags
 /// are deliberate — each names one rollout stance from the perf campaign
@@ -67,9 +56,6 @@ pub struct SolveRuntimeConfig {
     /// undisproved region — inputs the bound proves cannot beat the walk's
     /// best candidate are skipped without a simulation.
     pub envelope_pruned_refine: bool,
-    /// Shifted-piece composition arithmetic A/B stance. Exact by default;
-    /// normalized I512 is an offline performance experiment.
-    pub mobius_piece_arithmetic: MobiusPieceArithmetic,
 }
 
 impl Default for SolveRuntimeConfig {
@@ -85,7 +71,6 @@ impl Default for SolveRuntimeConfig {
             refine_model_anchor: false,
             tangent_sample_by_mass: false,
             envelope_pruned_refine: true,
-            mobius_piece_arithmetic: MobiusPieceArithmetic::Exact,
         }
     }
 }

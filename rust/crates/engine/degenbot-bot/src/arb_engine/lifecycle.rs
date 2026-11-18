@@ -31,7 +31,6 @@ pub(crate) fn solve_runtime_config_from_cfg(
         refine_model_anchor: false,
         tangent_sample_by_mass: false,
         envelope_pruned_refine: true,
-        mobius_piece_arithmetic: ::degenbot_pools::solve::MobiusPieceArithmetic::Exact,
     }
 }
 /// T4: the ONE config parse point for the engine's runtime stances —

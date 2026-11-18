@@ -2590,14 +2590,3 @@ lint-stub-drift:
 # (exits 1 on divergence). DR_AB_ITERS / DR_AB_MEMO shape the run.
 entry-ab corpus="heavy_concentrated_liquidity_solve_captures.jsonl":
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solver-lab --features capture-fixtures --bin entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
-
-# Interleaved exact-I1024/BigInt vs normalized-I512 shifted-piece A/B. Prepared
-# hops are reused; DR_NORMALIZATION_ITERS controls repetitions per arm.
-mobius-normalization-ab corpus="heavy_concentrated_liquidity_solve_captures.jsonl":
-    cargo run --locked --release --manifest-path rust/Cargo.toml -p degenbot-solver-lab --features capture-fixtures --bin mobius_normalization_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
-
-# The same arithmetic A/B with anchor build/compose/argmax wall-time counters.
-mobius-normalization-telemetry corpus="heavy_concentrated_liquidity_solve_captures.jsonl":
-    cargo run --locked --release --manifest-path rust/Cargo.toml -p degenbot-solver-lab --features capture-fixtures,telemetry --bin mobius_normalization_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
-
-
