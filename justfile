@@ -275,10 +275,14 @@ test-golden-replay:
 # every crate's suite, catching cross-crate fallout (signature changes
 # rippling into dependents, e.g. examples/settlement_bot) that a scoped run
 # never sees.
-# The pre-push test leg: the packages the outgoing diff touches, and nothing
-# else. The whole workspace suite is CI's job, where its legs run as parallel
-# jobs; repeating it serially before every push is what made a session long
-# without telling anyone anything a push could not already prove.
+# The pre-push test leg: the packages the outgoing diff touches plus every
+# package that depends on them, so a foundation-crate edit re-runs the
+# dependents that consume it. An edit to a workspace-wide build input
+# (`rust/Cargo.toml`, the lockfile, nextest and toolchain config,
+# `.cargo/config.toml`, `pyproject.toml`) invalidates every member instead. The
+# whole workspace suite otherwise stays CI's job, where its legs run as
+# parallel jobs; repeating it serially before every push is what made a session
+# long without telling anyone anything a push could not already prove.
 # Loose-object housekeeping. Not a verdict about the tree, so it is not a gate:
 # it rewrites the object database, and a push hook that mutates the repository
 # is a side effect nobody asked for. Run it when the object DB grows.
