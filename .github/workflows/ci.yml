@@ -67,6 +67,7 @@ jobs:
               - 'rust/**'
               - 'src/**'
               - 'tests/**'
+              - 'contracts/vyper/**'
               - 'examples/**'
               - 'pyproject.toml'
               - 'uv.lock'
@@ -80,9 +81,6 @@ jobs:
             tier3:
               - 'tier3-oracle/**'
               - 'contracts/vyper/**'
-              - 'tests/executor/**'
-              - 'ape-config.yaml'
-              - 'ape-pytest.ini'
             # CI machinery: the gated jobs execute justfile recipes, gate
             # scripts, and this workflow file itself, so an edit to any of
             # them must re-run the gates - a machinery-only change must not
@@ -779,11 +777,11 @@ jobs:
       - name: Install ripgrep
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
 
-      # Foundry provides `anvil` so the standalone-anvil (T1) tier executes on
-      # the floor leg (no RPC secret is ever plumbed: standalone-anvil tests
-      # run against a seeded local chain with no upstream). The other legs
-      # skip that tier, matching the historical matrix behavior.
-      - name: Install Foundry (anvil)
+      # Foundry provides `forge` for the executor contract lane and `anvil` for
+      # the standalone-anvil (T1) tier, both on the floor leg (no RPC secret is
+      # ever plumbed: the offline lane takes no node and standalone-anvil runs
+      # against a seeded local chain). The other legs skip both.
+      - name: Install Foundry (forge + anvil)
         if: matrix.python-version == '3.12'
         uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
 
@@ -796,7 +794,14 @@ jobs:
         if: matrix.python-version == '3.12'
         run: just lint-python
 
-      - name: Run executor contract tests (standalone Anvil)
+      # The executor lane compiles the canonical Uniswap V2/V3/V4 sources from
+      # the gitignored `tier3-oracle/lib` checkout (the same reference contracts
+      # the Tier-3 harnesses use), so provision them on the leg that runs it.
+      - name: Fetch canonical reference contracts (executor lane)
+        if: matrix.python-version == '3.12'
+        run: tier3-oracle/bootstrap-libs.sh
+
+      - name: Run executor contract tests (offline Forge lane)
         if: matrix.python-version == '3.12'
         run: just test-executor-offline
 

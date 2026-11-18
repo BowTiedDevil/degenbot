@@ -355,46 +355,37 @@ After extensive optimization, the 27 three-hop permutations total **4,947,078 ga
 
 ## Test Suite
 
-276 passing, 0 skipped.
+The canonical contract suite is the Foundry project in
+[`tests/foundry_executor/`](../../tests/foundry_executor/README.md). It compiles the
+sources with the root project's pinned Vyper and runs Forge; the README owns the
+file-by-file coverage table, the compilation model, and the lane isolation rules.
+
+| Lane | Recipe | What runs |
+|------|--------|-----------|
+| ordinary tree | `just test-executor-tree` | every non-lane-gated suite (427 tests) |
+| trusted production calldata | `just test-executor-production-calldata` | the Rust composer's bytes through `vm.ffi` (32) |
+| live PoolManager parity | `just test-executor-pool-manager-parity` | the fake beside the deployed mainnet manager on an archive fork (33) |
+| full acceptance | `just test-executor` | tree + production calldata + PoolManager parity (492), against the declared archive node |
+| offline | `just test-executor-offline` | tree + production calldata (459), no node |
+| optional access-list RPC | `just test-executor-access-list` | EIP-2930 comparison against the declared archive node (2) |
+
+`just test-executor` resolves the archive endpoint through the test harness's declared
+layers (process env > `tests.env`) and fails closed before Forge runs when the machine
+declares nothing, the endpoint does not answer, or it is not Ethereum mainnet. Each lane
+requires its own executed tests and zero skips, so a missing lane switch cannot read as
+a green run.
+
+Per-variant gas evidence is committed: `tests/foundry_executor/.gas-snapshot`,
+`.gas-snapshot-production`, and `.gas-snapshot-evidence`, each with a
+`test-executor-*-snapshot-check` drift gate.
+
+The Rust engine's three-hop matrices are separate lanes:
 
 ```bash
-uv run ape test tests/ -v -s
+just test-rust-nextest -p degenbot-simulation -E 'test(full_matrix_executes_with_expected_profit) or test(matrix_covers_full_reachable_grammar)'
+just test-rust-nextest -p degenbot-simulation -E 'test(full_three_hop_matrix_executes_production_solver_amounts)'
+just test-rust-nextest -p degenbot-simulation -E 'test(full_three_hop_self_fund_matrix) or test(full_three_hop_zero_balance_matrix) or test(capital)'
 ```
-
-| Test file | Tests | Coverage |
-|-----------|-------|----------|
-| `test_cmd_executor_compact.py` | 5 | V4_SWAP_COMPACT, V4_TAKE_COMPACT, ERC20_XFER_BALANCE, WETH_DEPOSIT_ALL, WETH_WITHDRAW_ALL |
-| `test_cmd_executor_dynamic.py` | 6 | V4_TAKE_DELTA, V4_SETTLE_DELTA, V4_SETTLE_ALL, V4_SWAP_DYNAMIC |
-| `test_cmd_executor_v4v4.py` | 7 | V4→V4 same-currency, cross-currency, V4_BATCH, V4→V4→V4 three-hop |
-| `test_cmd_executor_v4v3.py` | 3 | V4→V3, V3→V4, V3 auto-pay |
-| `test_cmd_executor_v4v2.py` | 3 | V4→V2, V2→V4, V2_SWAP_CALC with excess balance |
-| `test_cmd_executor_v2v3.py` | 2 | V2→V3, V3→V2 |
-| `test_cmd_executor_v2v2_v3v3.py` | 2 | V2→V2 nested callback, V3→V3 nested callback |
-| `test_cmd_executor_v3_three_hop.py` | 14 | V3→V3→V3 (nested callbacks, auto-pay variants, reverse-order direct custody), V4→V3→V3, V3→V3→V4, PancakeSwap V3 callback |
-| `test_cmd_executor_three_hop_optimized.py` | 27 | All 27 V2/V3/V4 three-hop permutations with optimal routing: **ALL 27 at ≤4 transfers** |
-| `test_cmd_executor_edge_cases.py` | 2 | Native ETH, V2 direct swap |
-| `test_cmd_executor_v2_swap_direct.py` | 8 | V2_SWAP_DIRECT with pre-funded pairs, explicit amounts |
-| `test_cmd_executor_three_pool_v2.py` | 9 | Three-pool V2 paths, multi-hop V2 callbacks |
-| `test_cmd_executor_inline_wrap_unwrap.py` | 8 | WETH_DEPOSIT/WITHDRAW inline, V4_V4 wrap/unwrap flows |
-| `test_cmd_executor_v4v4_wrap_unwrap.py` | 4 | V4→V4 with WETH wrapping, native ETH handling |
-| `test_cmd_executor_bribe_commands.py` | 5 | Bribe via config param, zero bips, gas overhead |
-| `test_cmd_executor_bribe_transfer.py` | 4 | BRIBE actual ETH transfer, no-bribe baseline |
-| `test_erc6909.py` | 5 | ERC6909 mint/burn view functions, mint test, burn test, gas savings |
-| `test_erc6909_composability.py` | 6 | ERC6909 composability: V4_MINT profit, multi-tx BURN withdrawal, ETH-funded settlement |
-| `test_v2_configurable_fee.py` | 7 | V2 configurable fee: Uniswap 0.3%, PancakeSwap 0.25%, sub-1% |
-| `test_v2_swap_compact_fee.py` | 4 | V2_SWAP_COMPACT with inline fee: Uniswap, PancakeSwap, mixed-fee paths |
-| `test_v2_fee_bounds.py` | 4 | V2 fee bounds: fee=0, fee=10000, out-of-range reverts |
-| `test_v2_fee_denominator_fuzz.py` | 7 | Fuzz testing for V2 fee denominator edge cases |
-| `test_v2_swap_calc_excess.py` | 7 | V2 excess-balance: direct, V4→V2, V2→V2, revert without deposit |
-| `test_withdrawal.py` | 9 | ERC6909/ERC20 withdrawal, SEND_ETH/SEND_ETH_ALL, full round-trip |
-| `test_conservation.py` | 4 | Token conservation invariants across paths |
-| `test_events.py` | 6 | Event emission for commands and settlements |
-| `test_pm_as_bank.py` | 11 | PoolManager as bank: lending, settlement, no-prefund verification |
-| `test_fake_pool_manager_parity.py` | 30 | Fake vs real PoolManager parity checks (mainnet fork) |
-| `test_v3_libraries.py` | 53 | Uniswap V3 TickMath/SqrtPriceMath/FullMath library parity (port + mainnet fork) |
-| `test_v3_library_fuzz.py` | 10 | Hypothesis fuzz of V3 math libraries vs SolReference |
-| `test_v3_pool.py` | 2 | V3 pool fixture sanity |
-| `test_v3_v4_v3_residual_regression.py` | 2 | V3↔V4↔V3 overproduction residual regression guard |
 
 ### Three-Hop Comparison (WETH→USDC→WBTC→WETH)
 
@@ -414,58 +405,123 @@ uv run ape test tests/ -v -s
 ## Build & Run
 
 ```bash
-# Install dependencies
-uv sync
+# Install the locked Python environment and the editable extension.
+just bootstrap
 
-# Run all tests (Ape compiles automatically)
-uv run ape test tests/ -v -s
+# The executor contract lane: full (declared archive node) or offline.
+just test-executor
+just test-executor-offline
 
-# Run only cmd_executor tests
-uv run ape test tests/test_cmd_executor_*.py -v
-
-# Run gas benchmarks
-uv run ape test tests/test_gas_benchmark.py tests/test_gas_benchmark_optimal.py tests/test_gas_benchmark_dynamic.py tests/test_gas_benchmark_access_list.py -v -s
+# Focused loops.
+just test-executor-tree --match-path 'test/V2V3.t.sol'
+just test-executor-production-calldata --match-test testV2V4V4 -vvv
 ```
 
 ## Project Structure
 
 ```
-contracts/
+contracts/vyper/
 ├── cmd_executor.vy                  # Compact command-stream executor
 ├── tstore_executor.vy               # Static payload-queue executor
-├── fake_erc20.vy                    # Mock ERC-20
-├── fake_weth.vy                     # Mock WETH (with deposit/withdraw)
-├── fake_uniswap_v2_pair.vy         # Mock V2 pair (3 callback variants + getReserves + K-invariant + reset + configurable fee)
-├── fake_uniswap_v3_pool.vy         # Mock V3 pool (2 callback variants + balance-delta check)
-├── fake_uniswap_v4_pool_manager.vy  # Mock V4 PoolManager (with exttload + ERC6909)
-├── fake_external_callback.vy        # Mock external callback contract for TSTORE_CONTINUATION tests
-├── exttload_comparator.vy           # Exttload gas comparison utility
-├── utility_functions.vy            # Address formatting helpers
-└── interfaces/
-    ├── IWETH.vyi                   # WETH deposit/withdraw interface
-    ├── UniswapV2/                  # V2 pair/callee interfaces
-    ├── UniswapV3/                   # V3 pool/callback interfaces
-    └── UniswapV4/                  # V4 PoolManager/exttload/ERC6909/unlock interfaces
+├── fake_*.vy                        # ERC-20, WETH, V2 pair, V3 pool and V4 PoolManager test doubles
+├── test_harness.vy                  # Harness contract the Solidity suites deploy for V3 math calls
+├── ExttloadComparator.vy            # exttload comparison utility for the parity lane
+├── echo_callee.vy                   # Callback echo target
+├── reentering_destination.vy        # Reentrancy negative-control destination
+├── custom_executor_*.vy             # Probe/refusal executor variants
+├── utility_functions.vy             # Address formatting helpers
+├── libraries/                       # Vyper V3 math library ports
+├── sol_reference/                   # Solidity V3 math reference sources + committed artifact
+└── interfaces/                      # WETH / V2 / V3 / V4 interfaces
 
-tests/
-├── conftest.py                     # Shared fixtures
-├── conftest_shared.py              # Shared encoding helpers, constants, AddressTable
-├── test_cmd_executor_compact.py    # Compact/warm-balance command tests
-├── test_cmd_executor_dynamic.py    # Dynamic command tests
-├── test_cmd_executor_*.py          # cmd_executor path tests
-├── test_gas_benchmark.py           # Gas comparison benchmarks (explicit)
-├── test_gas_benchmark_optimal.py   # Optimal command selection benchmarks
-├── test_gas_benchmark_dynamic.py  # Dynamic command + AL benchmarks (max calldata reduction)
-├── test_gas_benchmark_access_list.py  # EIP-2930 access list benchmarks
-├── test_tstore_executor_*.py      # tstore_executor path tests
+tests/foundry_executor/
+├── foundry.toml                    # Forge project config (solc 0.8.28, via-IR)
+├── src/                            # command encoder, fixture, conservation/assert helpers, generated interfaces
+├── test/                           # Solidity suites, one per contract surface
+├── build_artifacts.py              # pinned-Vyper compile → artifacts/ + generated error vocabulary
+├── build_solidity_artifacts.py     # pinned-solc compile of the canonical V2/V3/V4 sources
+├── gen_interfaces.py               # ABI → src/generated/I*.sol
+├── PORTING.md                      # migration manifest and evidence
+└── README.md                       # canonical lane documentation
 ```
 
 ## Configuration
 
-See `ape-config.yaml`. The project uses:
-- **Vyper 0.5.0b2** with `#pragma experimental-codegen` (Venom) and `#pragma optimize gas`
-- **Foundry** (Anvil) for local test execution with mainnet fork
-- **Custom test mnemonic** to avoid EIP-7702 delegation issues on forked networks
+The sources are compiled with the pinned **Vyper 0.5.0b2** from the root uv project
+(`pyproject.toml`; `just bootstrap`), using `#pragma experimental-codegen` (Venom) and
+`#pragma optimize gas`. The Foundry lane's project settings live in
+[`tests/foundry_executor/foundry.toml`](../../tests/foundry_executor/foundry.toml):
+solc 0.8.28 with via-IR for the Solidity harness, while the Vyper and canonical
+Solidity artifacts come from the lane's pinned builders. The canonical release
+artifacts under `rust/crates/foundation/degenbot-executor/releases/v2/` are the
+compile-vs-use authority (`just verify-tier3-executor-artifact`).
+
+## Live bankroll matrix
+
+`just executor-bankroll-matrix` owns the whole session: one fresh `run_bot.sh start`,
+ONE injection of the registration set, both capital-posture probes against that same
+set, every artifact archived, and `run_bot.sh stop` in its `finally` (also on
+inject/probe failure and on SIGINT/SIGTERM). It refuses a nonempty output directory and
+an already-running bot, and it never reads, accepts, or prints key material.
+
+```bash
+just executor-bankroll-matrix -- \
+  --owner 0x... \
+  --injected-address 0x... \
+  --runtime /path/to/cmd_executor_runtime_bytecode.txt \
+  --output-dir /path/to/run
+```
+
+`--owner`, `--injected-address`, `--runtime`, and `--output-dir` are required.
+Optional: `--capital both|self_fund|zero_balance` (default `both`), `--fixed-input WEI`
+(default `1000000000000000`), `--chain-id` (default `1`), `--release-id` (default
+`cmd_executor/2`), and `--ready-timeout SECONDS` (default `120`). Each posture picks its
+own expectation: `self_fund` must execute every row (`--expect executed`), `zero_balance`
+must refuse every row on capital policy (`--expect insolvent`).
+
+`--runtime` must be the release's deployed runtime (the immutable tail already baked
+in), and `--release-id` must name a release whose tail layout the runner knows
+(`cmd_executor/2` today). The tracked artifact bakes the production release owner, so a
+session signing with another key is refused at composition (`OwnerNotSigner`) — bake the
+probe runtime for the signer instead:
+
+```bash
+uv run python contracts/recompile.py \
+  --owner <session signer> \
+  --output-dir /path/to/probe-runtime
+```
+
+The run directory is the evidence envelope: `metadata.json` (written before the first
+probe), `run_metadata.json`, `registrations.json`, one `report_<capital>.json` per
+selected posture, `matrix_inject.log`, `matrix_probe_<capital>.log`, `launcher.log`, and
+the archived `bot_run.log`.
+
+Exit codes: `0` — every selected report complete and policy-matched; `1` — a failed
+launch/injection/probe, an incomplete report, a policy mismatch, or a session that left a
+bot, pidfile, or socket behind; `2` — refused before launch (unusable argument, a runtime
+artifact that is missing or owned by another address, an unsupported `--release-id`, a
+nonempty output directory, a bot already running, an unreachable or wrong-chain endpoint);
+`130` — stopped by SIGINT/SIGTERM, which still cleans up and records the postures that
+never ran as skipped.
+
+The probe/report schema and its fail-closed classification rules are documented in
+[`docs/architecture/operator-add-path-surface.md`](../architecture/operator-add-path-surface.md)
+and [`docs/architecture/production-simulation-composition.md`](../architecture/production-simulation-composition.md).
+The fixed-path triangle is `scripts/executor_three_hop_matrix.json`; the manual two-shell
+debug flow is that script's `inject` / `probe` / `report` subcommands.
+
+## Fake artifact rebuild and verification
+
+`tier3-oracle/harness-artifacts.tsv` maps every committed fake artifact to its tracked
+source, build script, and publish group. After editing a fake:
+
+```bash
+just rebuild-tier3-executor-stubs    # compile + republish the five fakes, refresh source hashes
+just verify-tier3-artifacts          # byte-compare committed artifacts against a fresh compile
+```
+
+The executor release artifact has its own compile-vs-use gate:
+`just verify-tier3-executor-artifact`.
 
 ## Known Limitations
 

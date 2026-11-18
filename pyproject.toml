@@ -241,9 +241,6 @@ allow-star-arg-any = true
 # Four workers keep local-node forks below the resource and RPC pressure that
 # made unbounded parallelism flaky. Live and recording lanes override this with -n0.
 addopts = [
-    # Ape owns only the explicit `ape test` lane; ordinary root pytest must not
-    # start a fork in its collection-finish hook. `ape test` injects ape_test itself.
-    "-p", "no:ape_test",
     "--numprocesses", "4",
     "--dist", "loadgroup",
     "--import-mode", "importlib",
@@ -264,7 +261,7 @@ timeout_method = "thread"
 pythonpath = ["src", "."]
 python_files = "test_*.py"
 testpaths = ["tests", "README.md"]
-norecursedirs = ["archive", ".hypothesis", "executor"]
+norecursedirs = ["archive", ".hypothesis"]
 filterwarnings = [
     "error", # Fail on all warnings by default
 ]
@@ -281,7 +278,8 @@ markers = [
 
 [dependency-groups]
 dev = [
-    "eth-ape[recommended-plugins]",
+    "eth-abi==5.2.0",
+    "eth-utils==5.3.1",
     "hypothesis",
     "maturin",
     "mypy",
@@ -322,9 +320,11 @@ paths = ["src/degenbot"]
 
 [tool.uv]
 exclude-newer = "14 days"
-# The executor toolchain is pinned deliberately; these four packages postdate
-# the rolling cutoff, so exempt only them rather than weakening every dependency.
-exclude-newer-package = { "ape-foundry" = "2026-11-08T00:00:00Z", "ape-vyper" = "2026-11-08T00:00:00Z", "eth-ape" = "2026-11-08T00:00:00Z", "vyper" = "2026-11-08T00:00:00Z" }
+# The executor compiler is pinned deliberately and postdates the rolling cutoff,
+# so exempt only it rather than weakening every dependency.
+exclude-newer-package = { "vyper" = "2026-11-08T00:00:00Z" }
+# Preserves the pre-cutover resolver result: eth_typing is not a direct import.
+constraint-dependencies = ["eth-typing==5.2.1"]
 link-mode = "copy"
 cache-keys = [
     # Any uv *project* build (uv build, or a plain uv sync) must invalidate when

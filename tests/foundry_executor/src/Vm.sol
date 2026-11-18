@@ -61,8 +61,8 @@ interface Vm {
     // binary and executes the returned bytes verbatim. `ffi` returns stdout and
     // reverts on a non-zero exit carrying stderr; `tryFfi` reports the exit
     // code and both streams so the encoder's CLI refusals can be pinned
-    // exactly. Requires `forge test --ffi`; the default gate never sets it, and
-    // `skip` is how that lane's suite stays out of it.
+    // exactly. Requires `forge test --ffi`; the ordinary tree excludes the
+    // suite, and `skip` keeps it inert in any run without the lane switch.
 
     struct FfiResult {
         uint8 exitCode;

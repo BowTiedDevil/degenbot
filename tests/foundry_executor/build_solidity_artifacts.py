@@ -16,7 +16,7 @@ SolReference math-harness artifact the cross-implementation ports deploy):
                     contracts/scripts/build-sol-reference-artifact.sh; rebuilt
                     here in this lane's artifact shape so the V3-library ports
                     deploy the original Solidity libraries next to the Vyper
-                    TestHarness, as `test_v3_library_fuzz.py` does in Ape)
+                    TestHarness, as the V3 library differential suite does here)
   PoolManager       solc 0.8.26   tier3-oracle/lib/v4-core (the repository's
                     vendored v4-core, the same source the Tier-3 V4 oracle
                     harness compiles; no second PoolManager implementation)

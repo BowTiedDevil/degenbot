@@ -19,22 +19,24 @@ An on-chain arbitrage executor for Uniswap V2/V3/V4, written in **Vyper 0.5.0b2*
 | Fake V4 PM | `vyper/fake_uniswap_v4_pool_manager.vy` | exttload + ERC6909 + delta accounting |
 | Fake ERC20 | `vyper/fake_erc20.vy` | Standard mock with mint |
 | Fake WETH | `vyper/fake_weth.vy` | deposit/withdraw wrapping |
-| Test suite | `../tests/executor/` | Run with `just test-executor` |
-| Benchmark | `../tests/executor/test_cmd_executor_three_hop_optimized.py` | 27 three-hop permutations — the gas benchmark |
-| Gas results | `.gas-results` | Written by test suite, consumed by `.auto/measure.sh` |
+| Test suite | `../tests/foundry_executor/` | Run with `just test-executor`; its README is canonical |
+| Benchmark | `../tests/foundry_executor/test/CmdExecutorThreeHopOptimized.t.sol` | 27 three-hop permutations — the gas benchmark |
+| Gas evidence | `../tests/foundry_executor/.gas-snapshot*` | Committed per-row / per-variant snapshots with drift gates |
 | Autoresearch | `.auto/` | Config, logs, ideas from gas optimization sessions |
 
 ## Build & Run
 
 ```bash
-just test-executor                                               # All tests
-just test-executor tests/executor/test_cmd_executor_compact.py    # Focused file
-just test-executor tests/executor/test_cmd_executor_three_hop_optimized.py  # Gas benchmark
+just test-executor                                        # Full lane (archive node + Forge)
+just test-executor-offline                                # Tree + production calldata, no node
+just test-executor-tree --match-path 'test/V2V3.t.sol'    # Focused file
+just test-executor-tree --match-path 'test/CmdExecutorThreeHopOptimized.t.sol'  # Gas benchmark
 ```
 
-Uses **Foundry (Anvil)** for local test execution. `ape-config.yaml` sets Vyper 0.5.0b2, mainnet-fork default, and a custom test mnemonic (to avoid EIP-7702 delegation issues).
-
-Sequential runs (`-j1`) if xdist races appear. The test suite uses Hypothesis for fuzz testing — `.hypothesis/` contains cached examples.
+Uses **Foundry (forge)** for local test execution; the suite compiles `vyper/` with the
+pinned Vyper 0.5.0b2 from the root uv project (`just bootstrap`). The parity lane runs on
+an archive fork of the deployed mainnet PoolManager. `tests/foundry_executor/README.md`
+owns the lane, compilation model, and gas-snapshot gates.
 
 ## Contract Architecture: cmd_executor
 
@@ -267,7 +269,7 @@ Bribe configuration is packed into the ABI `config` parameter (bits 8-23 = bribe
 
 | File | Reason |
 |------|--------|
-| `vyper/fake_*.vy` | Fake contracts — checksums verified by measure.sh |
+| `vyper/fake_*.vy` | Fake contracts — committed artifacts verified by `just verify-tier3-artifacts` against `tier3-oracle/harness-artifacts.tsv` |
 | `vyper/tstore_executor.vy` | Separate implementation, not optimization target |
 | `vyper/interfaces/` | Interface definitions |
 | `vyper/utility_functions.vy` | Shared helpers |

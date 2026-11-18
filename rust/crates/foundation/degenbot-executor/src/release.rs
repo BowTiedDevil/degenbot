@@ -2052,8 +2052,8 @@ mod tests {
     /// Opcodes the contract decodes but the Rust encoder surface does not emit.
     ///
     /// They are hand-written streams (the direction-baked V3 variants), so the
-    /// encoder cross-check below cannot size them; the Python encoding helpers
-    /// in `tests/executor/test_release_metadata.py` cross-check instead.
+    /// encoder cross-check below cannot size them; the declared-grammar suite
+    /// in `tests/foundry_executor/test/ReleaseMetadata.t.sol` cross-checks instead.
     const CONTRACT_ONLY_OPCODES: &[&str] = &["V3_SWAP_ONE_FOR_ZERO", "V3_SWAP_ZERO_FOR_ONE"];
 
     /// The commitment the shipped release declares, pinned as a golden.

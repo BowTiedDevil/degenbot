@@ -21,6 +21,11 @@
 #                 23 that `llvm-sys` 231 links (docs/llvm-release-ci.md). Every
 #                 recipe that compiles default features needs it: the Linux
 #                 target scope pulls evm2-jit into both consumers.
+#   foundry       a `foundry-rs/foundry-toolchain` install step, which supplies
+#                 `forge` and `anvil` for the executor contract lane.
+#   tier3-libs    a `tier3-oracle/bootstrap-libs.sh` run, which fetches the
+#                 gitignored canonical Uniswap V2/V3/V4 sources the executor
+#                 lane's Solidity artifact builder compiles.
 #
 # Read a recipe's body before adding a name here: `publish-dry-run`, for
 # instance, is plain `python3` on purpose and needs neither uv nor the venv.
@@ -41,7 +46,7 @@ lint-python|uv|
 lint-rust-check|llvm23|
 lint-stub-drift|llvm23|
 publish-dry-run||
-test-executor-offline|uv,dev-venv|
+test-executor-offline|uv,dev-venv,foundry,tier3-libs|
 test-golden-replay|cargo-nextest,uv|
 test-python-noise-gate|uv,dev-venv|
 test-rust-dev|llvm23|

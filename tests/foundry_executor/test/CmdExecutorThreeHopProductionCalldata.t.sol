@@ -24,11 +24,11 @@ import {PoolKey} from "../src/generated/Types.sol";
 ///
 /// `vm.ffi` is enabled only by `forge test --ffi`, and the encoder is a Cargo
 /// artifact, so the suite runs only through
-/// `just test-foundry-executor-production-calldata`. That recipe builds
+/// `just test-executor-production-calldata`. That recipe builds
 /// `encode_three_hop` (`just build-executor-three-hop-encoder`), enables FFI,
 /// and sets `DEGENBOT_THREE_HOP_PRODUCTION_FFI=1`. Without that switch `setUp`
-/// skips the contract, so the FFI-disabled default gate
-/// (`just test-foundry-executor`) never shells out and stays green.
+/// skips the contract, so the FFI-disabled ordinary tree
+/// (`just test-executor-tree`) never shells out and stays green.
 ///
 /// The encoder path resolves the Cargo target dir exactly as the justfile does
 /// (`CARGO_TARGET_DIR`, else `rust/target`) and reads
@@ -52,7 +52,7 @@ import {PoolKey} from "../src/generated/Types.sol";
 /// exit code, empty stdout, and the exact stderr text.
 contract CmdExecutorThreeHopProductionCalldataTest is PoolSetup, ConservationOps {
     /// The trusted FFI lane's opt-in switch, set only by
-    /// `just test-foundry-executor-production-calldata`.
+    /// `just test-executor-production-calldata`.
     string internal constant FFI_LANE_ENV = "DEGENBOT_THREE_HOP_PRODUCTION_FFI";
 
     /// The repository root as seen from this forge project

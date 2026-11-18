@@ -26,8 +26,8 @@ import {Vm} from "../src/Vm.sol";
 /// exact custom-error payload and the fake's exact string payload.
 ///
 /// The lane is on demand: `DEGENBOT_POOL_MANAGER_PARITY_FORK` is set only by
-/// `just test-foundry-executor-pool-manager-parity`, so the offline gate compiles
-/// this file and skips the whole contract. `setUp` refuses to run against a fork
+/// `just test-executor-pool-manager-parity`; the ordinary tree compiles this
+/// file and never runs the contract. `setUp` refuses to run against a fork
 /// whose `REAL_PM` account has no code — a parity assertion against an empty
 /// account is vacuous, and a fork that cannot serve the pinned block is an error,
 /// not a skip.
@@ -174,7 +174,7 @@ contract PoolManagerParityTest is TestBase {
 
     function setUp() public {
         if (bytes(vm.envOr(FORK_LANE_ENV, "")).length == 0) {
-            // The offline gate has no endpoint and must never dial one.
+            // The ordinary tree has no endpoint and must never dial one.
             vm.skip(true);
         }
 

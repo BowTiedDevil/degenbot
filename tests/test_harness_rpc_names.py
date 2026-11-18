@@ -109,7 +109,7 @@ def test_hidden_execution_regions_are_not_reader_facing() -> None:
 
 def test_tests_env_example_states_the_harness_boundary() -> None:
     text = (REPO_ROOT / "tests.env.example").read_text()
-    for statement in ("test harness", "DEGENBOT_RPC_", "[nodes]", "ape-config.yaml"):
+    for statement in ("test harness", "DEGENBOT_RPC_", "[nodes]", "declared_rpc_uri"):
         assert statement in text, f"tests.env.example does not state the boundary via {statement!r}"
 
 

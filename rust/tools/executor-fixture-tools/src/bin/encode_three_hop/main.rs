@@ -5,10 +5,10 @@
 
 //! Encode one three-hop `PathInfo` through the production command grammar.
 //!
-//! The Ape execution matrix (`tests/executor/`) uses this pure-Rust consumer to
-//! ensure its on-chain checks exercise production bytes rather than a second
-//! test encoder: it reads ONE JSON request document from argv, builds the
-//! V2/V3/V4 hop payloads, and prints the command stream
+//! The executor contract lane (`tests/foundry_executor/`) uses this pure-Rust
+//! consumer to ensure its on-chain checks exercise production bytes rather than
+//! a second test encoder: it reads ONE JSON request document from argv, builds
+//! the V2/V3/V4 hop payloads, and prints the command stream
 //! `degenbot_executor::composers::encode_cmd_3_hop` produces, hex-encoded.
 //!
 //! # Home
@@ -19,9 +19,10 @@
 //! under the package's default features and `just check-dev-tools default` is the lane
 //! that builds it.
 //!
-//! `just build-executor-three-hop-encoder` wraps the build; the Ape execution matrix
-//! (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) consumes the
-//! binary at its canonical cargo output path `<target-dir>/debug/encode_three_hop`.
+//! `just build-executor-three-hop-encoder` wraps the build; the trusted FFI suite
+//! (`tests/foundry_executor/test/CmdExecutorThreeHopProductionCalldata.t.sol`)
+//! consumes the binary at its canonical cargo output path
+//! `<target-dir>/debug/encode_three_hop`.
 //!
 //! Usage (one JSON argument, no flags):
 //!

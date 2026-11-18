@@ -285,6 +285,8 @@ provisions_tool() {
         cargo-nextest) grep -qE 'tool:[[:space:]]*nextest|cargo install[^|]*cargo-nextest' <<< "${block}" ;;
         dev-venv) grep -qE 'uv sync[^|]*--dev' <<< "${block}" ;;
         llvm23) grep -qE 'uses:[[:space:]]*\./\.github/actions/llvm23' <<< "${block}" ;;
+        foundry) grep -qE 'uses:[[:space:]]*foundry-rs/foundry-toolchain@' <<< "${block}" ;;
+        tier3-libs) grep -qE 'tier3-oracle/bootstrap-libs\.sh' <<< "${block}" ;;
         *)
             echo "ci-parity: unknown tool '${tool}' in ${tools_file}" >&2
             return 2

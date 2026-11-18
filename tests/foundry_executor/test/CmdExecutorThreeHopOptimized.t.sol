@@ -43,8 +43,8 @@ import {PoolKey} from "../src/generated/Types.sol";
 /// `_run_and_verify`/`_verify_conservation` pair).
 ///
 /// The source's `record_gas`/`.gas-results` surface is replaced by the
-/// committed Forge gas snapshot (`just foundry-executor-snapshot`): each test
-/// name is the stable per-row label, and `just foundry-executor-snapshot-check`
+/// committed Forge gas snapshot (`just test-executor-snapshot`): each test
+/// name is the stable per-row label, and `just test-executor-snapshot-check`
 /// fails on snapshot drift.
 contract CmdExecutorThreeHopOptimizedTest is PoolSetup, ConservationOps {
     uint256 internal constant AMOUNT_WETH_PROFIT = 2 ether;

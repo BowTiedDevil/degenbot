@@ -11,7 +11,7 @@ rust-policy-lanes|local||just test-rust-policy-lane (both policy configurations 
 cli-no-python|local|just ci-no-python-cli-gate|just ci-no-python-cli-gate
 tier3-oracle|local||just verify-tier3-artifacts, just verify-tier3-executor-artifact
 python-wheel|local||just build-rust-extension-wheel (one abi3 wheel the whole matrix installs)
-python|local||just check-uv-lock, just fmt-check-python, just lint-python, just install-extension-wheel, just test-python-noise-gate
+python|local||just check-uv-lock, just fmt-check-python, just lint-python, just install-extension-wheel, just test-executor-offline, just test-python-noise-gate
 python|local|just test-python-no-anvil-spawn-surface|just test-python-no-anvil-spawn-surface
 python|local||full-suite no-anvil mirror of the CI non-floor legs (manual): just test-python-no-anvil
 stub-drift|local||just lint-stub-drift (input-scoped in CI; staged FFI edits run stub-drift-staged locally)

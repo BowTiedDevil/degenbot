@@ -222,8 +222,8 @@ Validation cross-checks, so a contradictory manifest cannot pass as current:
 Rust encoder surface: every declared opcode's declared size must equal the byte
 length the corresponding `enc_*` builder produces. The two opcodes with no Rust
 builder (`V3_SWAP_ONE_FOR_ZERO`, `V3_SWAP_ZERO_FOR_ONE`) are contract-only, so
-their declared sizes are cross-checked against the Python encoding helpers in
-`tests/executor/test_release_metadata.py` instead.
+their declared sizes are cross-checked against the encoding helpers in
+`tests/foundry_executor/test/ReleaseMetadata.t.sol` instead.
 
 ### Release identity is not artifact integrity
 
@@ -708,7 +708,7 @@ does. It is mandatory for every new deployment.
 ## Gates
 
 ```bash
-just test-executor-offline                     # contract tests (Ape, offline)
+just test-executor-offline                     # contract tests (offline Forge lane)
 just verify-tier3-executor-artifact            # compile-vs-use, needs vyper + solc
 just check-executor-release-ratchet           # append-only package + mutation probes
 just test-rust-nextest -p degenbot-executor    # strict decoders, manifest validation, the bounded registry
@@ -729,6 +729,6 @@ classification, and a test-only alternate command grammar with its own opcode,
 operand width, and stream bound; the `degenbot-executor` unit suite covers
 manifest validation and commitment derivation (including a 48-ID list, above
 the retired bound).
-`tests/executor/test_release_metadata.py` is the three-way drift gate: the
-deployed getter, the source's `CAPABILITY_*` constants plus `CAPABILITIES_HASH`,
-and the manifest's `ids` plus `commitment` must all agree.
+`tests/foundry_executor/test/ReleaseMetadata.t.sol` is the three-way drift gate:
+the deployed getter, the source's `CAPABILITY_*` constants plus
+`CAPABILITIES_HASH`, and the manifest's `ids` plus `commitment` must all agree.

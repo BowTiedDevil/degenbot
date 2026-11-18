@@ -260,8 +260,9 @@ def _set_degenbot_logging():
 # from the table raises at collection, so the vocabulary cannot drift from its
 # defaults. The names are imported across
 # the suite (``tests/test_anvil_fork.py``, the parity suites) and the ``_FULL_``
-# env spellings are an external contract (``ape-config.yaml``), so the
-# bindings stay real module-level assignments.
+# env spellings are an external contract (the ``just`` fork and executor recipes
+# resolve the same declared layers), so the bindings stay real module-level
+# assignments.
 _DEFAULT_RPC_URIS: dict[str, str] = {
     "TEST_ARBITRUM_FULL_NODE_HTTP_URI": "https://arbitrum-one-rpc.publicnode.com",
     "TEST_ARBITRUM_FULL_NODE_WS_URI": "wss://arbitrum-one-rpc.publicnode.com",
@@ -335,9 +336,9 @@ def _rpc(key: str) -> str:
     chain has nowhere to fold into. They are therefore not
     ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>`` names and must not grow a fallback
     onto them — a second namespace that shares a fallback is how the next
-    ambiguity starts. ``ape-config.yaml`` reads
-    ``${TEST_ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
-    ``_FULL_`` names outlive the suite that defines them.
+    ambiguity starts. The out-of-process lanes (the ``just`` fork and executor
+    recipes) resolve the same declared layers through ``declared_rpc_uri``,
+    which is why the ``_FULL_`` names are not private to this module.
     """
     return _resolve_rpc_uri(key, os.environ, _TESTS_ENV_VALUES, _DEFAULT_RPC_URIS)
 

@@ -489,7 +489,7 @@ criterion, and each one fails on the defect it describes.
     arm unchanged: zero answers plus an entry is `Legacy`, zero answers alone is
     `Unknown`, and a mapping never overrides four answers.
 
-**Contract (`tests/executor/test_release_metadata.py`, offline Ape suite)**
+**Contract (`tests/foundry_executor/test/ReleaseMetadata.t.sol`, offline Forge suite)**
 
 16. `test_capabilities_hash` — the deployed getter returns the manifest's
     commitment.

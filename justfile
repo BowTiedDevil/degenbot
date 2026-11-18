@@ -19,9 +19,8 @@ target_dir := env_var_or_default("CARGO_TARGET_DIR", "rust/target")
 set positional-arguments := true
 
 py_run := "uv run --no-sync"
-# Ordinary root pytest must not start Ape's provider during collection-finish.
-# `ape test` injects the plugin explicitly, so it does not use this prefix.
-pytest_run := "env 'PYTEST_ADDOPTS=-p no:ape_test' uv run --no-sync pytest"
+# Root pytest runs through the lock venv like every other Python command.
+pytest_run := "uv run --no-sync pytest"
 
 # The lint/format tool pins. Every tool the python gates run carries exactly ONE
 # pin -- these two, the `markdownlint-cli2@X` in the markdown recipes, and the
@@ -170,11 +169,13 @@ test-standalone:
 # backstop at the boundary.
 
 # Default gate: workspace lint (fails fast) + the retirement-tripwire ratchet +
-# standalone smoke + cargo workspace + full pytest. The
-# ratchet is a ~1s source scan (ADR-087 D4), so it rides here as well as at
-# pre-push: a tripwire introduced while iterating fails at `just test`, not only
-# at the push that follows.
-test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-python test-executor check-consumer-probes
+# standalone smoke + cargo workspace + full pytest + the executor contract lane
+# (ordinary Forge tree + trusted production calldata; the live PoolManager
+# parity lane is explicit-only via `just test-executor`). The ratchet is a ~1s
+# source scan (ADR-087 D4), so it rides here as well as at pre-push: a tripwire
+# introduced while iterating fails at `just test`, not only at the push that
+# follows.
+test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-python test-executor-offline check-consumer-probes
 
 # Run the pre-push gates before `git push`. prek.toml's
 # `stages = ["pre-push"]` entries are the single owner of the gate list (the
@@ -1480,8 +1481,8 @@ check-executor-release-ratchet:
 # invoke cargo directly or test a stale helper binary.
 #
 # The helper is the `degenbot-executor-fixture-tools` `encode_three_hop` [[bin]]; the matrix
-# (`tests/executor/test_cmd_executor_three_hop_production_calldata.py`) reads the
-# binary at its canonical cargo output path `{{ target_dir }}/debug/encode_three_hop`,
+# (`tests/foundry_executor/test/CmdExecutorThreeHopProductionCalldata.t.sol`) reads
+# the binary at its canonical cargo output path `{{ target_dir }}/debug/encode_three_hop`,
 # resolving {{ target_dir }} the same way this file does. The JSON-in/hex-out contract
 # and the binary name are stable.
 build-executor-three-hop-encoder:
@@ -1500,7 +1501,7 @@ build-executor-three-hop-encoder:
 # metadata) in the output directory, and stops the bot through the launcher's
 # own `stop` on every exit path. Optional: --capital, --fixed-input, --chain-id,
 # --release-id, --ready-timeout. Artifact layout and exit codes live in
-# tests/executor/README.md.
+# docs/executor/README.md ("Live bankroll matrix").
 #
 # Run both bankroll postures against one registration set.
 executor-bankroll-matrix *args:
@@ -1513,122 +1514,46 @@ executor-bankroll-matrix *args:
     exec {{ py_run }} python scripts/executor_bankroll_matrix.py "$@"
 
 
-# The root project's Ape suite (tests/executor) — the canonical wrapper for
-# testing the Vyper executor contracts under contracts/vyper. The root uv lock
-# owns Ape and vyper ==0.5.0b2, so the suite uses the same environment as every
-# other root-project gate. ape-config.yaml's mainnet-fork upstream is
-# ${TEST_ETHEREUM_FULL_NODE_HTTP_URI},
-# resolved through tests/conftest.py's declared layers (env > tests.env) and
-# exported here like `test-fork`; fail closed when the machine declares no
-# endpoint. Extra args forward to `ape test` for tight loops (a single file,
-# a -k filter, -n0); the bare recipe runs the whole suite.
-#   just test-executor                                    # full suite
-#   just test-executor tests/executor/test_sentinel_failclosed.py  # one file
-#   just test-executor tests/ -k 'sentinel'               # filtered
-test-executor target="tests/executor/" *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    target="${1:-tests/executor/}"; [ $# -eq 0 ] || shift
-    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_FULL_NODE_HTTP_URI") or "")')"
-    if [ -z "$rpc_uri" ]; then
-        echo "ERROR: no RPC declared — set TEST_ETHEREUM_FULL_NODE_HTTP_URI (process env or tests.env) to a reachable Ethereum endpoint" >&2
-        echo "       (the devcontainer's reth: http://host.containers.internal:8545/)" >&2
-        exit 1
-    fi
-    if ! curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
-        --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "$rpc_uri" | grep -q '"result"'; then
-        echo "ERROR: no reachable Ethereum RPC at TEST_ETHEREUM_FULL_NODE_HTTP_URI=$rpc_uri" >&2
-        exit 1
-    fi
-    # Ape has its own strict pytest policy and narrowly scoped upstream warning
-    # exceptions; ordinary root pytest never starts this provider.
-    exec env -u PYTEST_ADDOPTS TEST_ETHEREUM_FULL_NODE_HTTP_URI="$rpc_uri" \
-        {{ py_run }} ape test "$target" -c ape-pytest.ini "$@"
-
-
-# Offline executor lane for CI and machines without an archive endpoint: run
-# fake-contract tests on standalone Anvil. Both exclusions name real-PoolManager
-# parity and nothing else: the `mainnet_fork` marker keeps that module out on
-# its own declaration, and the explicit path ignore names the module whose fork
-# coverage the Foundry fork lane (`test-foundry-executor-pool-manager-parity`)
-# owns, so it stays out even if the marker is renamed. No other test or marker
-# is deselected. The archive-backed test-executor recipe above remains the
-# complete local gate.
-test-executor-offline target="tests/executor/" *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    target="${1:-tests/executor/}"; [ $# -eq 0 ] || shift
-    # Local (non-fork) mode never reads the upstream URI; the valid placeholder
-    # merely satisfies interpolation in the shared Ape project config.
-    exec env -u PYTEST_ADDOPTS APE_ETHEREUM_NETWORK=local \
-        TEST_ETHEREUM_FULL_NODE_HTTP_URI="http://127.0.0.1:8545" \
-        {{ py_run }} ape test "$target" -c ape-pytest.ini -m "not mainnet_fork" \
-        --ignore=tests/executor/test_fake_pool_manager_parity.py "$@"
-# Foundry lane for the Vyper executor contracts (tests/foundry_executor).
+# ── Executor contract tests (Vyper sources under contracts/vyper) ────────────
 #
-# Forge's Vyper import resolver only understands `from <dir> import <module>.vy`
-# and cannot resolve this tree's `from .interfaces.UniswapV4 import IPoolManager`
-# name-imports of `.vyi` interface files, so the lane compiles with the pinned
-# vyper from the uv environment and hands forge-ready artifacts to Solidity
-# tests. That keeps one compiler identity: the taken bytecode is the same
-# pinned-vyper output `verify-tier3-executor-artifact` certifies.
+# The canonical test suite is the Forge project at tests/foundry_executor; its
+# README owns the lane documentation. Forge's Vyper import resolver only
+# understands `from <dir> import <module>.vy` and cannot resolve this tree's
+# `from .interfaces.UniswapV4 import IPoolManager` name-imports of `.vyi`
+# interface files, so the lane compiles with the pinned vyper from the uv
+# environment and hands forge-ready artifacts to Solidity tests. That keeps one
+# compiler identity: the taken bytecode is the same pinned-vyper output
+# `verify-tier3-executor-artifact` certifies.
 #
-# Extra args forward to `forge test` (`-vvv`, `--match-test`, `--match-path`).
-foundry-executor-artifacts:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
+# The suites split by the resource they need. `test-executor-tree` is the
+# ordinary tree; `test-executor-production-calldata` is the trusted FFI lane
+# that executes the production Rust composer's bytes;
+# `test-executor-pool-manager-parity` is the live fake-vs-real PoolManager fork
+# lane; `test-executor-access-list` is an on-demand RPC benchmark. The canonical
+# `test-executor` composes the tree, the trusted lane and the live parity lane
+# against the declared archive node; `test-executor-offline` composes the first
+# two and touches no node.
 
-test-foundry-executor *args:
+# Rebuild the lane's test artifacts: the pinned-vyper executor and fakes, the
+# canonical Solidity references, and the generated interfaces. Every lane recipe
+# depends on this one build step. `--check-release` makes the lane red when the
+# compiled executor is not the tracked release bytecode
+# (rust/crates/foundation/degenbot-executor/releases/v2).
+#
+# Build the lane's artifacts + generated interfaces.
+test-executor-artifacts:
     #!/usr/bin/env bash
     set -euo pipefail
     cd tests/foundry_executor
     {{ py_run }} python build_artifacts.py --check-release
     {{ py_run }} python build_solidity_artifacts.py
     {{ py_run }} python gen_interfaces.py
-    exec forge test "$@"
 
-# Trusted FFI lane for the three-hop production-calldata matrix. The suite drives
-# the production Rust composer through `vm.ffi` — it runs the encoder built by
-# `build-executor-three-hop-encoder`, executes the returned bytes verbatim, and
-# pins the encoder's five CLI refusals through `vm.tryFfi`. FFI and its lane
-# switch are set here and nowhere else: the default `test-foundry-executor` gate
-# keeps FFI off, and the suite skips rather than shelling out. Extra args forward
-# to `forge test` (`--match-test testV2V4V4`, `-vvv`).
-test-foundry-executor-production-calldata *args: build-executor-three-hop-encoder
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
-    exec env DEGENBOT_THREE_HOP_PRODUCTION_FFI=1 \
-        forge test --ffi --match-path test/CmdExecutorThreeHopProductionCalldata.t.sol "$@"
-
-# Fork lane for the fake-vs-real PoolManager parity suite
-# (`tests/foundry_executor/test/PoolManagerParity.t.sol`).
-#
-# The suite is the parity tier for `contracts/vyper/fake_uniswap_v4_pool_manager.vy`:
-# it deploys the fake beside the DEPLOYED mainnet Uniswap V4 PoolManager at a
-# pinned archive height and asserts the same behavior on both, reading the
-# managers' own transient slots (`exttload`) and pool state (`extsload`). That
-# needs an archive endpoint, so this is an on-demand lane: the default
-# `test-foundry-executor` gate compiles the suite and `vm.skip`s it, and
-# `DEGENBOT_POOL_MANAGER_PARITY_FORK` is set here and nowhere else — the same
-# shape as the trusted FFI lane.
-#
-# The endpoint resolves through the declared layers `test-fork` probes
-# (`tests/conftest.py`: process env > tests.env > table default) and is probed
-# BEFORE forge runs: the chain ID must be 1 and `web3_clientVersion` must
-# answer, so a machine with no archive node fails closed here instead of
-# asserting parity against an account with no code. The suite repeats that
-# fail-closed check on the fork itself (PoolManager bytecode at the pinned
-# block). Extra args forward to `forge test`
-# (`--match-test testTakeNativeTransfersEth`, `-vvv`).
-test-foundry-executor-pool-manager-parity *args:
+# Resolve and probe the declared archive endpoint, printing only the URI. Every
+# node-backed lane resolves the URI through tests/conftest.py's declared layers
+# (process env > tests.env) and fails closed BEFORE forge runs when the machine
+# declares nothing, the endpoint does not answer, or it is not Ethereum mainnet.
+_executor-archive-rpc:
     #!/usr/bin/env bash
     set -euo pipefail
     rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
@@ -1647,7 +1572,7 @@ test-foundry-executor-pool-manager-parity *args:
     fi
     chain_number="$({{ py_run }} python -c 'import json,sys; print(int(json.load(sys.stdin)["result"], 16))' <<<"$chain_id")"
     if [ "$chain_number" != "1" ]; then
-        echo "ERROR: the parity fork needs Ethereum mainnet (chain 1); $rpc_uri answered chain $chain_number" >&2
+        echo "ERROR: the executor lane needs Ethereum mainnet (chain 1); $rpc_uri answered chain $chain_number" >&2
         exit 1
     fi
     client_version="$(curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
@@ -1658,71 +1583,124 @@ test-foundry-executor-pool-manager-parity *args:
         echo "       (response: ${client_version:-<none>})" >&2
         exit 1
     fi
-    echo "▶ pool-manager parity fork: $rpc_uri (chain $chain_number, $({{ py_run }} python -c 'import json,sys; print(json.load(sys.stdin)["result"])' <<<"$client_version"))"
-    cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
-    exec env DEGENBOT_POOL_MANAGER_PARITY_FORK=1 \
-        TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI="$rpc_uri" \
-        forge test --match-path test/PoolManagerParity.t.sol "$@"
+    printf '%s\n' "$rpc_uri"
 
-# Optional RPC lane for the EIP-2930 access-list comparison
-# (`tests/foundry_executor/test/AccessListBenchmark.t.sol`) — the Foundry
-# replacement for the Ape lane's `run_gas_benchmark`/`compute_access_list`
-# helpers, which have no call sites and are deleted rather than ported
-# (migration manifest disposition 7).
+# The ordinary Forge tree: every suite except the three lane-gated ones (the
+# trusted production-calldata suite, the PoolManager parity fork suite and the
+# optional access-list RPC suite). They are EXCLUDED rather than left to skip, so
+# a lane can require zero skipped tests: a contract that skips itself in `setUp`
+# still exits forge 0, and a lane must never report green over coverage it did
+# not run. Extra args forward to `forge test` (`--match-path`, `--match-test`,
+# `-vvv`) for tight loops; the summary guard still refuses a filter that matched
+# nothing.
 #
-# The suite estimates ONE real mainnet call object twice at a pinned block —
-# bare, then with exactly the access list `eth_createAccessList` returned —
-# and reports both gas figures. It is on demand for the same reason the fork
-# lane is: it dials an endpoint, and the offline gate must never do that.
-# `DEGENBOT_ACCESS_LIST_RPC` is set here and nowhere else; without it the suite
-# `vm.skip`s, so `just test-foundry-executor` compiles it and runs zero cases
-# against any node. The endpoint resolves through the declared layers
-# (`tests/conftest.py`: process env > tests.env) and is probed BEFORE forge
-# runs — `eth_chainId` must be 1 and `web3_clientVersion` must answer — so a
-# machine with no archive node fails closed here instead of measuring a call
-# against a chain this benchmark does not claim. `-vv` is the default so the
-# emitted figures print; extra args forward to `forge test`.
-test-foundry-executor-access-list *args:
+# Ordinary Forge tree: no node, no FFI.
+test-executor-tree *args: test-executor-artifacts
     #!/usr/bin/env bash
     set -euo pipefail
-    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
-    if [ -z "$rpc_uri" ]; then
-        echo "ERROR: no RPC declared - set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable archive endpoint" >&2
-        echo "       (the devcontainer's reth: http://host.containers.internal:8545/)" >&2
-        exit 1
-    fi
-    chain_id="$(curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
-        --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "$rpc_uri")" \
-        || chain_id=""
-    if [[ ! $chain_id == *'"result"'* ]]; then
-        echo "ERROR: no reachable Ethereum RPC at TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI=$rpc_uri" >&2
-        echo "       (eth_chainId response: ${chain_id:-<none>}) - start the node or re-point the URI" >&2
-        exit 1
-    fi
-    chain_number="$({{ py_run }} python -c 'import json,sys; print(int(json.load(sys.stdin)["result"], 16))' <<<"$chain_id")"
-    if [ "$chain_number" != "1" ]; then
-        echo "ERROR: the access-list benchmark needs Ethereum mainnet (chain 1); $rpc_uri answered chain $chain_number" >&2
-        exit 1
-    fi
-    client_version="$(curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
-        --data '{"jsonrpc":"2.0","method":"web3_clientVersion","params":[],"id":1}' "$rpc_uri")" \
-        || client_version=""
-    if [[ ! $client_version == *'"result"'* ]]; then
-        echo "ERROR: $rpc_uri did not answer web3_clientVersion; refusing to run without a node identity" >&2
-        echo "       (response: ${client_version:-<none>})" >&2
-        exit 1
-    fi
-    echo "▶ access-list benchmark: $rpc_uri (chain $chain_number, $({{ py_run }} python -c 'import json,sys; print(json.load(sys.stdin)["result"])' <<<"$client_version"))"
     cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
-    exec env DEGENBOT_ACCESS_LIST_RPC=1 \
+    log="$(mktemp)"
+    trap 'rm -f "$log"' EXIT
+    forge test --no-match-path 'test/{AccessListBenchmark,CmdExecutorThreeHopProductionCalldata,PoolManagerParity}.t.sol' "$@" 2>&1 | tee "$log"
+    {{ justfile_directory() }}/scripts/forge_lane_summary.sh test-executor-tree "$log"
+
+# The trusted FFI lane for the three-hop production-calldata matrix. The suite
+# drives the production Rust composer through `vm.ffi` — it runs the encoder
+# built by `build-executor-three-hop-encoder`, executes the returned bytes
+# verbatim, and pins the encoder's five CLI refusals through `vm.tryFfi`. FFI and
+# its lane switch are set here and nowhere else: the ordinary tree keeps FFI off,
+# and the suite skips rather than shelling out when the switch is absent (the
+# summary guard turns such a skip into a red lane). Extra args forward to
+# `forge test` (`--match-test testV2V4V4`, `-vvv`).
+#
+# Trusted FFI lane: production Rust calldata.
+test-executor-production-calldata *args: test-executor-artifacts build-executor-three-hop-encoder
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    log="$(mktemp)"
+    trap 'rm -f "$log"' EXIT
+    env DEGENBOT_THREE_HOP_PRODUCTION_FFI=1 \
+        forge test --ffi --match-path test/CmdExecutorThreeHopProductionCalldata.t.sol "$@" 2>&1 | tee "$log"
+    {{ justfile_directory() }}/scripts/forge_lane_summary.sh test-executor-production-calldata "$log"
+
+# Fork lane for the fake-vs-real PoolManager parity suite
+# (`tests/foundry_executor/test/PoolManagerParity.t.sol`).
+#
+# The suite is the parity tier for `contracts/vyper/fake_uniswap_v4_pool_manager.vy`:
+# it deploys the fake beside the DEPLOYED mainnet Uniswap V4 PoolManager at a
+# pinned archive height and asserts the same behavior on both, reading the
+# managers' own transient slots (`exttload`) and pool state (`extsload`). That
+# needs an archive endpoint, so this is an on-demand lane: the ordinary tree
+# excludes the suite, and `DEGENBOT_POOL_MANAGER_PARITY_FORK` is set here and
+# nowhere else — the same shape as the trusted FFI lane.
+#
+# The endpoint is resolved and probed BEFORE forge runs by `_executor-archive-rpc`
+# (chain 1 + node identity), so a machine with no archive node fails closed here
+# instead of asserting parity against an account with no code. The suite repeats
+# the check that matters for its own claims (PoolManager bytecode at the pinned
+# block). Extra args forward to `forge test`
+# (`--match-test testTakeNativeTransfersEth`, `-vvv`).
+#
+# Live fake-vs-real PoolManager parity lane.
+test-executor-pool-manager-parity *args: test-executor-artifacts
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$(just _executor-archive-rpc)"
+    echo "▶ pool-manager parity fork: $rpc_uri"
+    cd tests/foundry_executor
+    log="$(mktemp)"
+    trap 'rm -f "$log"' EXIT
+    env DEGENBOT_POOL_MANAGER_PARITY_FORK=1 \
         TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI="$rpc_uri" \
-        forge test --match-path test/AccessListBenchmark.t.sol -vv "$@"
+        forge test --match-path test/PoolManagerParity.t.sol "$@" 2>&1 | tee "$log"
+    {{ justfile_directory() }}/scripts/forge_lane_summary.sh test-executor-pool-manager-parity "$log"
+
+# Optional RPC lane for the EIP-2930 access-list comparison
+# (`tests/foundry_executor/test/AccessListBenchmark.t.sol`): ONE real mainnet
+# call object estimated twice at a pinned block — bare, then with exactly the
+# access list `eth_createAccessList` returned. It is on demand for the same
+# reason the parity lane is: it dials an endpoint, and neither canonical gate
+# runs it. `DEGENBOT_ACCESS_LIST_RPC` is set here and nowhere else; the endpoint
+# is resolved and probed BEFORE forge runs, and the summary guard refuses a run
+# that skipped the suite. `-vv` is the default so the emitted figures print;
+# extra args forward to `forge test`.
+#
+# On-demand EIP-2930 access-list benchmark.
+test-executor-access-list *args: test-executor-artifacts
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="$(just _executor-archive-rpc)"
+    echo "▶ access-list benchmark: $rpc_uri"
+    cd tests/foundry_executor
+    log="$(mktemp)"
+    trap 'rm -f "$log"' EXIT
+    env DEGENBOT_ACCESS_LIST_RPC=1 \
+        TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI="$rpc_uri" \
+        forge test --match-path test/AccessListBenchmark.t.sol -vv "$@" 2>&1 | tee "$log"
+    {{ justfile_directory() }}/scripts/forge_lane_summary.sh test-executor-access-list "$log"
+
+# The full executor acceptance lane: the ordinary Forge tree, the trusted
+# production-calldata lane and the live fake-vs-real PoolManager parity lane,
+# against the archive node the machine declares. The node is probed before any
+# lane runs, so a machine with no archive endpoint fails at the start rather
+# than after the offline work. The access-list benchmark is NOT part of this
+# lane (on demand only: `just test-executor-access-list`).
+#
+# Full executor lane: tree + production calldata + live PoolManager parity.
+test-executor: _executor-archive-rpc test-executor-tree test-executor-production-calldata test-executor-pool-manager-parity
+    @echo "executor: full lane green (tree + production calldata + PoolManager parity)"
+
+# The offline executor lane for CI and machines without an archive node: the
+# SAME ordinary tree and trusted production-calldata lane as `test-executor`,
+# with the node-backed PoolManager parity lane as the only omission. Nothing else
+# is deselected and no suite is left to skip: each lane's summary guard requires
+# its own executed tests. The access-list benchmark is on demand only and never
+# runs here.
+#
+# Offline executor lane: ordinary tree + production calldata, no node.
+test-executor-offline: test-executor-tree test-executor-production-calldata
+    @echo "executor: offline lane green (tree + production calldata)"
 
 # Forge gas snapshot for the production-calldata matrix: one stable row label per
 # permutation in `test/CmdExecutorThreeHopProductionCalldata.t.sol`, committed as
@@ -1731,15 +1709,14 @@ test-foundry-executor-access-list *args:
 # its forward-flash/final-repayment arm (both one transfer wider), and V4-V2-V4
 # nets differently — so they carry their own file and drift gate rather than
 # sharing `.gas-snapshot`. The lane needs FFI and the encoder, exactly like
-# `test-foundry-executor-production-calldata`; `--match-test 'testV'` keeps the
-# five `testEncoder…` refusal cases out of the file.
-foundry-executor-production-snapshot: build-executor-three-hop-encoder
+# `test-executor-production-calldata`; `--match-test 'testV'` keeps the five
+# `testEncoder…` refusal cases out of the file.
+#
+# Write .gas-snapshot-production.
+test-executor-production-snapshot: test-executor-artifacts build-executor-three-hop-encoder
     #!/usr/bin/env bash
     set -euo pipefail
     cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
     exec env DEGENBOT_THREE_HOP_PRODUCTION_FFI=1 \
         forge snapshot --ffi \
             --match-path test/CmdExecutorThreeHopProductionCalldata.t.sol \
@@ -1749,13 +1726,12 @@ foundry-executor-production-snapshot: build-executor-three-hop-encoder
 # Drift gate for the production-calldata snapshot: regenerating the 27
 # permutation row figures must reproduce `.gas-snapshot-production`
 # byte-for-byte. Fails closed when a row's gas moves or its label disappears.
-foundry-executor-production-snapshot-check: build-executor-three-hop-encoder
+#
+# Drift-check .gas-snapshot-production.
+test-executor-production-snapshot-check: test-executor-artifacts build-executor-three-hop-encoder
     #!/usr/bin/env bash
     set -euo pipefail
     cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
     exec env DEGENBOT_THREE_HOP_PRODUCTION_FFI=1 \
         forge snapshot --ffi \
             --match-path test/CmdExecutorThreeHopProductionCalldata.t.sol \
@@ -1764,53 +1740,44 @@ foundry-executor-production-snapshot-check: build-executor-three-hop-encoder
 
 # Forge gas snapshot for the optimized three-hop routing matrix: one stable row
 # label per test in `test/CmdExecutorThreeHopOptimized.t.sol`, committed as
-# `tests/foundry_executor/.gas-snapshot`. This is the gas-evidence replacement
-# for the retired `.gas-results` artifact the Ape lane wrote through
-# `record_gas` (migration manifest disposition 9/11) — a stable per-row label
-# and a drift check, not an Ape-vs-Forge total comparison.
-foundry-executor-snapshot:
+# `tests/foundry_executor/.gas-snapshot`. A committed per-row figure with a
+# drift check, not a printed total: a moved figure fails its check gate.
+#
+# Write .gas-snapshot.
+test-executor-snapshot: test-executor-artifacts
     #!/usr/bin/env bash
     set -euo pipefail
     cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
     exec forge snapshot --match-path test/CmdExecutorThreeHopOptimized.t.sol
 
 # Drift gate for the committed snapshot: regenerating the row gas figures must
 # reproduce `.gas-snapshot` byte-for-byte. Fails closed when a row's gas moves
 # or its label disappears.
-foundry-executor-snapshot-check:
+#
+# Drift-check .gas-snapshot.
+test-executor-snapshot-check: test-executor-artifacts
     #!/usr/bin/env bash
     set -euo pipefail
     cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
     exec forge snapshot --check --match-path test/CmdExecutorThreeHopOptimized.t.sol
-
 
 # Forge gas snapshot for the lane's per-variant gas evidence: one committed
 # label per measured variant. The tests are named `testGasEvidence…` (one test
 # per arm), so the snapshot key names the variant: direct-vs-calc on the
 # V2-V4-V4 path, the three three-pool approaches, bribe baseline-vs-bribed,
 # ERC6909 MINT-vs-TAKE, the four V3/V4 three-hop approaches, and every PM-bank
-# path × mode. These are disposition 11's replacement for the Ape lane's
-# print-only `*_gas` cases: a committed figure with a drift gate instead of a
-# number printed once and never checked. The comparison tests
-# (`testGasComparison…`, `testMintVsTake…`, `testBribeAddress…`) keep their
-# cross-variant assertions and stay out of this file on purpose — the file is
-# one label per arm, not one per comparison. The optimized matrix
-# (`.gas-snapshot`) and the production-calldata matrix
+# path × mode. The comparison tests (`testGasComparison…`, `testMintVsTake…`,
+# `testBribeAddress…`) keep their cross-variant assertions and stay out of this
+# file on purpose — the file is one label per arm, not one per comparison. The
+# optimized matrix (`.gas-snapshot`) and the production-calldata matrix
 # (`.gas-snapshot-production`) keep their own files: their labels are the 27
 # permutation rows, not these arms.
-foundry-executor-evidence-snapshot:
+#
+# Write .gas-snapshot-evidence.
+test-executor-evidence-snapshot: test-executor-artifacts
     #!/usr/bin/env bash
     set -euo pipefail
     cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
     exec forge snapshot --snap .gas-snapshot-evidence --match-test '^testGasEvidence'
 
 # Drift gate for the per-variant gas evidence: regenerating every arm's figure
@@ -1819,15 +1786,13 @@ foundry-executor-evidence-snapshot:
 # test drops its entry. Only `forge snapshot` writes this file — a plain
 # `forge test` never rewrites it — so the check compares against the committed
 # figures rather than against whatever the last test run happened to measure.
-foundry-executor-evidence-snapshot-check:
+#
+# Drift-check .gas-snapshot-evidence.
+test-executor-evidence-snapshot-check: test-executor-artifacts
     #!/usr/bin/env bash
     set -euo pipefail
     cd tests/foundry_executor
-    {{ py_run }} python build_artifacts.py --check-release
-    {{ py_run }} python build_solidity_artifacts.py
-    {{ py_run }} python gen_interfaces.py
     exec forge snapshot --check --snap .gas-snapshot-evidence --match-test '^testGasEvidence'
-
 
 
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs

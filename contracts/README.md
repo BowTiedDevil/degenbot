@@ -7,10 +7,9 @@ On-chain executor contracts for MEV arbitrage.
 ```
 contracts/
 ├── README.md                            ← you are here
-├── cmd_executor_bytecode.txt            ← Creation bytecode (deployment + constructor args)
-├── cmd_executor_runtime_bytecode.txt    ← Runtime bytecode + CBOR + immutables (for code injection)
-├── cmd_executor_abi.json                ← ABI (for web3.py contract objects)
-└── tests/                               ← Ape + Foundry test suite
+├── recompile.py                         ← owner-rebinding artifact bake
+├── scripts/                             ← artifact build helpers
+└── vyper/                               ← executor sources, fakes, interfaces, reference math
 ```
 
 ## Bytecode Files
@@ -156,7 +155,7 @@ address.
 
 **Vyper**: 0.5.0b2 | **EVM**: Cancun | **Runtime**: 18,638 bytes of code + CBOR, plus the 224-byte immutable tail (18,862 B deployed)
 **Source**: in-repo `rust/crates/foundation/degenbot-executor/releases/v2/contract.vy` (vendored); committed artifacts in `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/` (vyper 0.5.0b2, compile-vs-use gate: `just verify-tier3-executor-artifact`)
-**Tests**: in-repo `tests/executor/` (Ape + Foundry)
+**Tests**: in-repo `tests/foundry_executor/` (Forge; canonical README there)
 
 Compact command-stream executor. All execution decisions are made off-chain and encoded as a byte stream; the contract is a pure command interpreter. Two modes are freely mixed:
 

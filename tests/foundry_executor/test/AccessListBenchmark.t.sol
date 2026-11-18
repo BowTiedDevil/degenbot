@@ -9,9 +9,8 @@ import {TestBase} from "../src/TestBase.sol";
 /// three ways:
 ///
 ///   - Lane switch. `DEGENBOT_ACCESS_LIST_RPC` is set only by
-///     `just test-foundry-executor-access-list`; without it `setUp` skips every
-///     case, so `just test-foundry-executor` compiles this suite and never
-///     dials an endpoint.
+///     `just test-executor-access-list`; the canonical lanes exclude this suite,
+///     so they compile it and never dial an endpoint.
 ///   - Endpoint. `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` resolves through the
 ///     same declared layers `test-fork` uses (process env > tests.env), and
 ///     the recipe probes `eth_chainId` (chain 1) plus `web3_clientVersion`
@@ -52,7 +51,7 @@ import {TestBase} from "../src/TestBase.sol";
 /// run, and the assertions only pin relations that must hold for a genuine
 /// measurement of this call.
 contract AccessListBenchmarkTest is TestBase {
-    /// Lane switch, set only by `just test-foundry-executor-access-list`.
+    /// Lane switch, set only by `just test-executor-access-list`.
     string internal constant LANE_ENV = "DEGENBOT_ACCESS_LIST_RPC";
     /// The declared archive endpoint (same resolution layers as `test-fork`).
     string internal constant RPC_ENV = "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI";
