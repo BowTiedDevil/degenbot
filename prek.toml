@@ -210,7 +210,10 @@ hooks = [
   #
   # These `entry` strings ARE the push-gate manifest (ADR-074): `just pre-push`
   # runs `prek run --stage pre-push` and keeps no gate list of its own, so this
-  # stage is the single place a gate is added, removed, or re-pointed.
+  # stage is the manifest a gate joins. The declaration itself lives in
+  # scripts/gates.toml (ADR-102): the lines below are rendered from it, so a
+  # gate is added, retired or re-pointed there and `just gates-regen` writes the
+  # result here.
   # scripts/hooks/ci-parity.sh extracts them with a sed anchored on the
   # single-line `{ id = ... }` table opener, so every pre-push entry must stay
   # on ONE line -- a multi-line TOML table would be invisible to that check.
