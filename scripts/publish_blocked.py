@@ -28,6 +28,16 @@ static publication plan's (`scripts/publication_plan.py`): the gate owns
 census-file reconciliation, the plan owns the rules. The rules below describe
 what the plan derives; this file no longer computes them.
 
+The census is not the only release-manifest fact reconciled here: the plan
+also derives ADR-009's shared-version lockstep rule -- every internal
+versioned requirement in the workspace root's `[workspace.dependencies]`
+table must equal `[workspace.package].version` -- and this gate reports a
+mismatch the same way, as an ordinary finding with a `fix:` naming
+`just bump-version`. The release workflow runs this gate before packaging, so
+the invariant is enforced over the manifests instead of re-derived by the
+workflow's shell. A workspace with no shared version has no invariant to
+validate; a root manifest the plan cannot read refuses (exit 2).
+
 The rules
 ---------
 
@@ -85,10 +95,11 @@ Exit codes
 ----------
 
   0   every withheld member and row reconcile
-  1   at least one finding (fresh member, stale row, reason drift), or a
-      retained-edge cycle (named, before any census work)
+  1   at least one finding (fresh member, stale row, reason drift,
+      shared-version drift), or a retained-edge cycle (named, before any
+      census work)
   2   refused to certify (missing census, unparseable row, no publishable
-      member, cargo metadata failure)
+      member, cargo metadata failure, unreadable root manifest)
 
 
 Modes
@@ -216,23 +227,31 @@ def main(argv: list[str]) -> int:
         return 0
 
     census = read_census(args.root / CENSUS_REL)
-    findings: list[str] = []
+    census_findings: list[str] = []
     for name in sorted(rows):
         row = f"{name}\t{rows[name]}"
         if name not in census:
-            findings.append(f"publish-blocked member with no census row -- add:\n  {row}")
+            census_findings.append(f"publish-blocked member with no census row -- add:\n  {row}")
         elif census[name] != rows[name]:
-            findings.append(
+            census_findings.append(
                 f"reason drift for {name} -- the manifests imply one reason, the census another:\n"
                 f"  manifests: {rows[name]}\n  census:    {census[name]}"
             )
-    findings.extend(
+    census_findings.extend(
         f"census row with no publish-blocked member -- delete:\n  {name}\t{census[name]}"
         for name in sorted(set(census) - set(rows))
     )
+    lockstep_findings = [drift.render() for drift in plan.lockstep]
+    findings = [*lockstep_findings, *census_findings]
     if findings:
         print("\n".join(findings))
-        print("fix: just check-publish-blocked --rows > scripts/publish-blocked-census.txt")
+        if lockstep_findings:
+            print(
+                "fix: just bump-version <the intended release version> -- it rewrites "
+                "[workspace.package].version and every internal requirement together"
+            )
+        if census_findings:
+            print("fix: just check-publish-blocked --rows > scripts/publish-blocked-census.txt")
         return 1
     withheld = ", ".join(sorted(rows)) if rows else "none"
     print(f"publish-blocked census reconciled; withheld from publish-dry-run: {withheld}")

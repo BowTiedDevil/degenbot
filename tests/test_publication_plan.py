@@ -27,6 +27,15 @@ gate (``tests/test_publish_blocked_gate.py``), the live audit
   * resolution -- eligible minus withheld, and the allowlisted members stay
     inside the resolution set (the verify oracle refuses them explicitly
     before upload; the audit keeps classifying them).
+  * lockstep -- every internal versioned requirement in
+    ``[workspace.dependencies]`` equals ``[workspace.package].version``: the
+    rows are identified by their resolved package identity (the alias's
+    ``package = "..."`` or the key itself) plus workspace membership and a
+    ``path`` source, so the umbrella row and the renamed ``evm2*`` rows are
+    compared and third-party registry rows are not. A readable tree with a
+    stale literal is a finding on the plan, never a refusal; a workspace
+    without a shared version has no invariant to validate, so the
+    independent-version fixtures stay valid.
   * refusals -- a metadata read failure, a memberless workspace, and a
     workspace with no eligible member are ``PublicationRefusal``, never a
     vacuously green plan; the CLI translates to exit 2.
@@ -76,14 +85,21 @@ def _plan_module() -> Any:
     return load_script("publication_plan", _PLAN)
 
 
-def _tree(tmp_path: Path, members: dict[str, str]) -> Path:
-    """A throwaway workspace whose members carry `members`' manifest extras."""
+def _tree(tmp_path: Path, members: dict[str, str], *, workspace_extra: str = "") -> Path:
+    """A throwaway workspace whose members carry `members`' manifest extras.
+
+    `workspace_extra` is appended to the root manifest, so a fixture can carry
+    a shared version and `[workspace.dependencies]` rows -- or omit them, the
+    independent-version shape with nothing to validate.
+    """
     root = tmp_path / "tree"
     names = list(members)
     workspace = root / "rust" / "Cargo.toml"
     workspace.parent.mkdir(parents=True)
     quoted = ", ".join(f'"crates/{name}"' for name in names)
-    workspace.write_text(f'[workspace]\nmembers = [{quoted}]\nresolver = "2"\n', encoding="utf-8")
+    workspace.write_text(
+        f'[workspace]\nmembers = [{quoted}]\nresolver = "2"\n{workspace_extra}', encoding="utf-8"
+    )
     for name, extras in members.items():
         crate = root / "rust" / "crates" / name
         (crate / "src").mkdir(parents=True)
@@ -270,6 +286,133 @@ def test_load_plan_refuses_a_failed_metadata_read(tmp_path: Path) -> None:
     assert "cargo metadata failed" in str(exc.value)
 
 
+# --- The shared-version lockstep invariant --------------------------------
+#
+# ADR-009's lockstep rule reaches every internal versioned requirement in the
+# root manifest's `[workspace.dependencies]`, the umbrella row and the renamed
+# `evm2*` rows included: the literal must equal `[workspace.package].version`,
+# or cargo packs crates whose manifests require stale siblings and the
+# registry rejects the upload. The plan carries a readable tree's mismatch as
+# a fact for the census gate to report; it refuses only a manifest it cannot
+# read. A workspace with no shared version has no invariant.
+
+
+def _shared(version: str, rows: str = "") -> str:
+    """A root-manifest fragment with the shared version and workspace rows."""
+    return f'\n\n[workspace.package]\nversion = "{version}"\n\n[workspace.dependencies]\n{rows}'
+
+
+def test_lockstep_flags_a_stale_umbrella_requirement(tmp_path: Path) -> None:
+    """The umbrella row -- key = resolved package, `path` source, versioned --
+    is an internal requirement: a literal behind the shared version is a
+    finding on the plan, never a refusal, naming the row and both literals."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {"plan-umbrella": ""},
+        workspace_extra=_shared(
+            "0.2.0", 'plan-umbrella = { version = "0.1.0", path = "crates/plan-umbrella" }'
+        ),
+    )
+    plan = publication_plan.load_plan(_manifest(tree))
+    assert [drift.render() for drift in plan.lockstep] == [
+        (
+            "lockstep version drift for [workspace.dependencies] 'plan-umbrella' "
+            "(package plan-umbrella): requires 0.1.0, [workspace.package].version is 0.2.0"
+        )
+    ]
+    drift = plan.lockstep[0]
+    assert (drift.required, drift.shared) == ("0.1.0", "0.2.0")
+
+
+def test_lockstep_flags_a_stale_aliased_requirement(tmp_path: Path) -> None:
+    """A renamed `evm2*` row is identified by its resolved package identity
+    (`package = ...`), not by its key, so the alias's literal is compared
+    against the shared version too."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {"plan-evm2": "", "plan-user": _deps("evm2 = { workspace = true }")},
+        workspace_extra=_shared(
+            "0.2.0",
+            'evm2 = { package = "plan-evm2", path = "crates/plan-evm2", '
+            'version = "0.1.0", default-features = false }',
+        ),
+    )
+    plan = publication_plan.load_plan(_manifest(tree))
+    assert [
+        (drift.row, drift.package, drift.required, drift.shared) for drift in plan.lockstep
+    ] == [("evm2", "plan-evm2", "0.1.0", "0.2.0")]
+
+
+def test_lockstep_accepts_a_clean_renamed_row(tmp_path: Path) -> None:
+    """A renamed row at the shared version is clean; a registry row and a
+    version-less path row are not internal versioned requirements, so the
+    check keys on resolved identity rather than the table's keys."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {
+            "plan-evm2": "",
+            "plan-user": _deps("evm2 = { workspace = true }"),
+            "plan-raw": "",
+        },
+        workspace_extra=_shared(
+            "0.1.0",
+            'evm2 = { package = "plan-evm2", path = "crates/plan-evm2", version = "0.1.0" }\n'
+            'third-party = { version = "9.9.9" }\n'
+            'plan-raw = { path = "crates/plan-raw" }',
+        ),
+    )
+    plan = publication_plan.load_plan(_manifest(tree))
+    assert plan.lockstep == ()
+
+
+def test_lockstep_has_no_invariant_without_a_shared_version(tmp_path: Path) -> None:
+    """A workspace with no `[workspace.package].version` has no shared-version
+    invariant: a versioned internal row is not compared, so independent-version
+    workspaces stay valid."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {"plan-free": ""},
+        workspace_extra=(
+            "\n[workspace.dependencies]\n"
+            'plan-free = { version = "0.1.0", path = "crates/plan-free" }\n'
+        ),
+    )
+    plan = publication_plan.load_plan(_manifest(tree))
+    assert plan.lockstep == ()
+
+
+@pytest.mark.parametrize(
+    ("root_manifest", "expected"),
+    [
+        (None, "cannot read the workspace root manifest"),
+        ("[workspace]\nmembers = []\n\n[workspace.package]\nversion = 1\n", "malformed"),
+    ],
+)
+def test_lockstep_refuses_a_root_manifest_it_cannot_read(
+    tmp_path: Path, root_manifest: str | None, expected: str
+) -> None:
+    """A root manifest the plan cannot read, or whose shared version is not a
+    string, is a refusal -- never a silently skipped invariant. The metadata
+    document is hand-built because cargo itself refuses these shapes."""
+    publication_plan = _plan_module()
+    rust = tmp_path / "rust"
+    rust.mkdir()
+    if root_manifest is not None:
+        (rust / "Cargo.toml").write_text(root_manifest, encoding="utf-8")
+    meta = {
+        "workspace_root": str(rust),
+        "workspace_members": ["plan-free"],
+        "packages": [{"id": "plan-free", "name": "plan-free", "publish": None, "dependencies": []}],
+    }
+    with pytest.raises(publication_plan.PublicationRefusal) as exc:
+        publication_plan.plan_from_metadata(meta, origin="m")
+    assert expected in str(exc.value)
+
+
 def test_the_real_plan_loads_structurally_offline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -289,6 +432,7 @@ def test_the_real_plan_loads_structurally_offline(
     assert plan.cycle is None
     assert plan.withheld == {}
     assert plan.allowlisted == {}
+    assert plan.lockstep == ()
     assert len(plan.eligible) >= 1
 
 

@@ -166,6 +166,21 @@ for verification at any point in a release.
 
 ## Amendments
 
+- **2026-11-18 — the shared literal's reach, and where it is enforced.** The
+  decision's "one version literal" claim is about the shared version itself:
+  `[workspace.package].version` stays the only place a release version is
+  chosen. Every internal requirement literal in the root manifest's
+  `[workspace.dependencies]` table is derived from it and part of the same
+  lockstep set — the umbrella `degenbot` row and the renamed `evm2*` rows
+  included — because a stale literal packs a release whose published
+  manifests require sibling versions the registry does not hold. Equality is
+  enforced as a finding of the publish-blocked census gate
+  (`just check-publish-blocked`), derived from the static publication plan;
+  the release workflow runs that gate instead of carrying its own `sed`/`grep`
+  comparison, and tag-to-version normalization stays its own concern. A bump
+  moves the whole set through `just bump-version <semver>`: cargo-edit
+  rewrites the shared literal, every member's inherited version, every internal
+  requirement, and `Cargo.lock` together.
 - **2026-10-14 — the build receipt stamp retires; freshness is build-on-run.**
   The per-build receipt stamp (a stamp a Python run checked before exercising
   the built extension) is gone. Its guarantee — *a Python run always exercises

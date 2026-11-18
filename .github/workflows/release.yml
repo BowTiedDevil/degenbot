@@ -408,18 +408,16 @@ jobs:
             -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)b([0-9]+)$/\1.\2.\3-beta.\4/' \
             -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)rc([0-9]+)$/\1.\2.\3-rc.\4/')
           ws_ver=$(sed -n 's/^version = //p' rust/Cargo.toml | head -n 1 | tr -d '"' | tr -d ' ')
-          # ADR-009 lockstep: every [workspace.dependencies] version literal must
-          # equal the workspace version, or cargo packs 0.6.0-alpha.N crates whose
-          # manifests require stale sibling versions (0.6.0-alpha.N-1) — crates.io
-          # rejects the upload. Fail here, before the dry-run/publish steps.
-          # Only the internal degenbot-* path deps are lockstep-managed (ADR-009);
-          # third-party entries in the same table (e.g. hashbrown, zstd) carry
-          # their own upstream version literals and must not be compared here.
-          dep_ver=$(sed -n '/^\[workspace.dependencies\]/,/^\[/p' rust/Cargo.toml | grep -o 'degenbot-[a-z0-9-]* = { version = "[^"]*", path' | sed -E 's/.*version = "([^"]+)".*/\1/' | sort -u | grep -v "^$ws_ver$" | head -n 1)
-          if [ -n "$dep_ver" ]; then
-            echo "[workspace.dependencies] version '$dep_ver' is out of lockstep with workspace version '$ws_ver'" >&2
-            exit 1
-          fi
+          # ADR-009 lockstep: every internal versioned requirement in
+          # [workspace.dependencies] must equal the workspace version, or cargo
+          # packs crates whose manifests require stale sibling versions and
+          # crates.io rejects the upload. The invariant is the publication plan's
+          # (scripts/publication_plan.py), reconciled by the publish-blocked
+          # census gate -- the same gate the pre-commit hook and the dry-run run --
+          # so this step runs that gate rather than re-deriving the comparison.
+          # It fails here, before the dry-run/publish steps: a stale literal is a
+          # census finding (exit 1), while an unreadable manifest refuses (exit 2).
+          python3 scripts/publish_blocked.py
           if [ "$cargo_ver" != "$ws_ver" ]; then
             echo "Tag $RELEASE_TAG does not match [workspace.package] version '$ws_ver'" >&2
             exit 1

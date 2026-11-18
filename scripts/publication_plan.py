@@ -50,6 +50,21 @@ verify oracle's registry is the only resolver):
   membership classification does not package, so it proceeds -- exactly as
   before the plan existed.
 
+- LOCKSTEP. Every internal versioned requirement in the workspace root's
+  `[workspace.dependencies]` table -- a row whose resolved package identity
+  (the alias's `package = "..."`, or the key itself) is a workspace member
+  and whose source is a `path` -- must carry exactly the shared
+  `[workspace.package].version` literal. The umbrella `degenbot` row and
+  the renamed `evm2*` rows are internal by that rule; a third-party registry
+  row carries its own upstream version and is not. The root manifest is read
+  with stdlib `tomllib`: `cargo metadata` is the membership and resolution
+  authority, and the root text is the only place the raw shared version and
+  the raw requirement literals survive (metadata normalizes them into
+  requirements). A readable tree with a stale literal is a `LockstepDrift`
+  finding on the plan for the census gate to report; a workspace with no
+  `[workspace.package].version` has no invariant, and an unreadable or
+  malformed root manifest is a refusal.
+
 The interface is one deep read: `load_plan` (or `plan_from_metadata` over
 metadata a caller already holds) returns a `PublicationPlan` carrying every
 fact above plus the package metadata behind it. A workspace the plan cannot
@@ -99,7 +114,9 @@ Consumers and migration
 - `scripts/publish_blocked.py` (the census gate) owns census-file
   reconciliation and reports the plan's withheld facts against it; cycle and
   eligibility wording it previously owned itself now come from here, byte
-  for byte.
+  for byte. It also reports the plan's lockstep findings, so a
+  shared-version mismatch fails the gate (exit 1) with a `fix:` naming
+  `just bump-version`.
 
 - `scripts/crates_io_pending.sh` (the live audit) is a shell adapter over
   this module's CLI (`--eligible`): the audit never re-states the publish
@@ -117,7 +134,9 @@ Consumers and migration
   each re-run the audit at their own point of use and pipe that exact
   classification through ``--release-plan`` once, consuming only the JSON
   projection above -- no shell in the workflow re-derives live, pending,
-  withheld, or exclusion membership.
+  withheld, or exclusion membership. The tag/version step runs the census
+  gate before packaging, so the shared-version invariant has one enforcement
+  point there too and no shell in the workflow owns a lockstep comparison.
 
 Consumer-visible transitions of the static census/audit/oracle migration:
 none. Every set, message, and exit code each of those consumers produced
@@ -142,12 +161,14 @@ import argparse
 import json
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_REL = "rust/Cargo.toml"
+ROOT_MANIFEST_NAME = "Cargo.toml"
 
 VERSION_LESS = "(version-less)"
 
@@ -180,6 +201,31 @@ class ClassificationError(Exception):
 
 
 @dataclass(frozen=True)
+class LockstepDrift:
+    """One internal requirement whose literal is not the shared version.
+
+    `row` is the `[workspace.dependencies]` key (the alias, for a renamed
+    row), `package` the identity the row resolves to, `required` the version
+    literal it carries, and `shared` the `[workspace.package].version` every
+    internal requirement must equal.
+
+    """
+
+    row: str
+    package: str
+    required: str
+    shared: str
+
+    def render(self) -> str:
+        """The finding the census gate prints for this row."""
+        return (
+            f"lockstep version drift for [workspace.dependencies] {self.row!r} "
+            f"(package {self.package}): requires {self.required}, "
+            f"[workspace.package].version is {self.shared}"
+        )
+
+
+@dataclass(frozen=True)
 class PublicationPlan:
     """The static publication facts one workspace's manifests imply.
 
@@ -188,8 +234,10 @@ class PublicationPlan:
     `withheld`) are its publish-relevant sub-populations; `withheld` carries
     the census reason beside each withheld name; `cycle` is the closed name
     list of a retained-edge cycle, or None when the release graph can be
-    ordered. `origin` is the label refusal messages name (the manifest path
-    that produced the plan).
+    ordered; `lockstep` carries every internal requirement whose literal
+    disagrees with the shared version (empty when the workspace declares no
+    shared version, or every requirement equals it). `origin` is the label
+    refusal messages name (the manifest path that produced the plan).
 
     """
 
@@ -199,6 +247,7 @@ class PublicationPlan:
     allowlisted: dict[str, Json]
     withheld: dict[str, str]
     cycle: list[str] | None
+    lockstep: tuple[LockstepDrift, ...]
 
     @property
     def resolution(self) -> dict[str, Json]:
@@ -403,6 +452,88 @@ def _publish_selection(package: Json) -> str:
     return "absent"
 
 
+def _shared_version_facts(meta: Json) -> tuple[str | None, Json]:
+    """Read the workspace root manifest's shared version and dependency rows.
+
+    `cargo metadata` is the membership and resolution authority, but it
+    normalizes version literals into requirements; the root manifest's own
+    text is the only place the raw `[workspace.package].version` literal and
+    the raw `[workspace.dependencies]` literals survive.
+
+    Args:
+        meta: The `cargo metadata --format-version 1 --no-deps` document.
+
+    Returns:
+        The shared version literal (None when the workspace declares none --
+        there is then no invariant to validate) and the
+        `[workspace.dependencies]` table (empty when there is none).
+
+    Raises:
+        PublicationRefusal: the root manifest cannot be read or parsed, or a
+            shared version or dependency table it declares is malformed.
+
+    """
+    root = meta.get("workspace_root")
+    if not root:
+        return None, {}
+    manifest = Path(root) / ROOT_MANIFEST_NAME
+    try:
+        document = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        msg = f"cannot read the workspace root manifest {manifest}: {exc}"
+        raise PublicationRefusal(msg) from exc
+    workspace = document.get("workspace")
+    if not isinstance(workspace, dict):
+        return None, {}
+    package = workspace.get("package")
+    if not isinstance(package, dict) or "version" not in package:
+        return None, {}
+    shared = package["version"]
+    if not isinstance(shared, str):
+        msg = f"malformed {manifest}: [workspace.package].version is not a string"
+        raise PublicationRefusal(msg)
+    dependencies = workspace.get("dependencies") or {}
+    if not isinstance(dependencies, dict):
+        msg = f"malformed {manifest}: [workspace.dependencies] is not a table"
+        raise PublicationRefusal(msg)
+    return shared, dependencies
+
+
+def _lockstep_drift(
+    shared: str | None, requirements: Json, member_names: set[str]
+) -> tuple[LockstepDrift, ...]:
+    """Every internal versioned requirement whose literal is not `shared`.
+
+    An internal row is one whose resolved package identity (`package = ...`,
+    or the row key itself) names a workspace member and whose source is a
+    `path`; a third-party registry row carries its own upstream version and
+    is not compared. A workspace with no shared version has no invariant.
+
+    Args:
+        shared: The `[workspace.package].version` literal, or None.
+        requirements: The root manifest's `[workspace.dependencies]` table.
+        member_names: The names of every workspace member.
+
+    Returns:
+        One finding per stale row, sorted by row key.
+
+    """
+    if shared is None:
+        return ()
+    drift: list[LockstepDrift] = []
+    for row, requirement in requirements.items():
+        if not isinstance(requirement, dict) or "path" not in requirement:
+            continue
+        package = requirement.get("package", row)
+        version = requirement.get("version")
+        if not isinstance(package, str) or package not in member_names:
+            continue
+        if not isinstance(version, str) or version == shared:
+            continue
+        drift.append(LockstepDrift(row=row, package=package, required=version, shared=shared))
+    return tuple(sorted(drift, key=lambda finding: finding.row))
+
+
 def plan_from_metadata(meta: Json, *, origin: str) -> PublicationPlan:
     """Derive the static publication plan from a loaded metadata document.
 
@@ -414,13 +545,14 @@ def plan_from_metadata(meta: Json, *, origin: str) -> PublicationPlan:
             produced the document.
 
     Returns:
-        The plan: members, eligible, allowlisted, withheld, cycle, and the
-        resolution set they compose into.
+        The plan: members, eligible, allowlisted, withheld, cycle, lockstep,
+        and the resolution set they compose into.
 
     Raises:
         PublicationRefusal: the document names no workspace member, or no
-            eligible member -- a population the publication chain cannot act
-            on is a refusal, not an empty green.
+            eligible member, or the workspace root manifest cannot be read or
+            is malformed -- a population or invariant the publication chain
+            cannot act on is a refusal, not an empty green.
 
     """
     member_ids = set(meta["workspace_members"])
@@ -442,6 +574,7 @@ def plan_from_metadata(meta: Json, *, origin: str) -> PublicationPlan:
     if not eligible:
         msg = f"no publishable member under {origin}"
         raise PublicationRefusal(msg)
+    shared, requirements = _shared_version_facts(meta)
     edges = _retained_edges(eligible, set(members))
     return PublicationPlan(
         origin=origin,
@@ -450,6 +583,7 @@ def plan_from_metadata(meta: Json, *, origin: str) -> PublicationPlan:
         allowlisted=allowlisted,
         withheld=_withheld_population(eligible, set(members)),
         cycle=_find_cycle(edges),
+        lockstep=_lockstep_drift(shared, requirements, set(members)),
     )
 
 
@@ -461,9 +595,10 @@ def load_plan(manifest: Path, *, locked: bool = False) -> PublicationPlan:
         locked: Pins the metadata read to the tree's own lockfile.
 
     Returns:
-        The plan. The metadata read failing, or the workspace read not being
-        certifiable (no members, no eligible member), surfaces as the
-        `PublicationRefusal` the plan raises for either.
+        The plan. The metadata read failing, the workspace read not being
+        certifiable (no members, no eligible member), or the workspace root
+        manifest not being readable, surfaces as the `PublicationRefusal`
+        the plan raises for any of them.
 
     """
     return plan_from_metadata(_metadata(manifest, locked=locked), origin=str(manifest))

@@ -38,6 +38,16 @@ here can be satisfied by a re-typed copy of the gate's logic.
     cannot close a cycle.
   * ``test_an_acyclic_retained_dev_dep_passes`` -- a retained dev edge is
     only an ordering constraint; without a cycle nothing is withheld.
+  * ``test_a_stale_internal_requirement_is_a_finding`` -- ADR-009's lockstep
+    rule is a census finding, not a refusal: a `[workspace.dependencies]`
+    literal that disagrees with `[workspace.package].version` fails the gate
+    (exit 1) with the row and the `just bump-version` repair named.
+  * ``test_a_clean_shared_version_passes_the_gate`` -- the renamed-row shape
+    at the shared version is clean through the same seam; rows are identified
+    by resolved package identity, not by their keys.
+  * ``test_an_unreadable_manifest_refuses_not_a_finding`` -- the exit-code
+    distinction: a mismatch is exit 1, a workspace the plan cannot read is
+    the exit-2 refusal.
   * ``test_the_committed_census_matches_the_tree`` -- the real gate over the
     real tree.
 """
@@ -58,12 +68,18 @@ _VERSIONED = ', version = "0.1.0"'
 
 
 def _tree(
-    tmp_path: Path, members: dict[str, str], publishable: tuple[str, ...] | None = None
+    tmp_path: Path,
+    members: dict[str, str],
+    publishable: tuple[str, ...] | None = None,
+    *,
+    workspace_extra: str = "",
 ) -> Path:
     """A throwaway workspace whose members carry `members`' dependency tables.
 
     `publishable` narrows the members that declare no `publish = false`; every
     listed member gets a real lib target so `cargo metadata` will enumerate it.
+    `workspace_extra` is appended to the root manifest, so a fixture can carry
+    a shared version and `[workspace.dependencies]` rows beside them.
     """
     root = tmp_path / "tree"
     names = list(members)
@@ -71,7 +87,9 @@ def _tree(
     workspace = root / "rust" / "Cargo.toml"
     workspace.parent.mkdir(parents=True)
     quoted = ", ".join(f'"crates/{name}"' for name in names)
-    workspace.write_text(f'[workspace]\nmembers = [{quoted}]\nresolver = "2"\n', encoding="utf-8")
+    workspace.write_text(
+        f'[workspace]\nmembers = [{quoted}]\nresolver = "2"\n{workspace_extra}', encoding="utf-8"
+    )
     for name, dependency_table in members.items():
         crate = root / "rust" / "crates" / name
         (crate / "src").mkdir(parents=True)
@@ -282,6 +300,56 @@ def test_an_acyclic_retained_dev_dep_passes(tmp_path: Path) -> None:
     result = _run(tree)
     assert result.returncode == 0
     assert result.stdout.strip().endswith("withheld from publish-dry-run: none")
+
+
+# --- ADR-009's shared-version lockstep rule, through the gate --------------
+#
+# The root manifest's `[workspace.dependencies]` literals are requirements the
+# published manifests retain: one that disagrees with `[workspace.package]`
+# version cannot resolve on crates.io at this release. It is an ordinary
+# census finding (exit 1) with the repair named, never a refusal, and a
+# workspace the plan cannot read is still the exit-2 refusal.
+
+
+def _shared(version: str, rows: str = "") -> str:
+    """A root-manifest fragment with the shared version and workspace rows."""
+    return f'\n\n[workspace.package]\nversion = "{version}"\n\n[workspace.dependencies]\n{rows}'
+
+
+def test_a_stale_internal_requirement_is_a_finding(tmp_path: Path) -> None:
+    tree = _tree(
+        tmp_path,
+        {"b": _deps("")},
+        workspace_extra=_shared("0.2.0", 'b = { version = "0.1.0", path = "crates/b" }'),
+    )
+    _census(tree, [])
+    result = _run(tree)
+    assert result.returncode == 1
+    assert "lockstep version drift for [workspace.dependencies] 'b'" in result.stdout
+    assert "[workspace.package].version is 0.2.0" in result.stdout
+    assert "fix: just bump-version" in result.stdout
+
+
+def test_a_clean_shared_version_passes_the_gate(tmp_path: Path) -> None:
+    tree = _tree(
+        tmp_path,
+        {"b": _deps(""), "a": _deps("evm2 = { workspace = true }")},
+        workspace_extra=_shared(
+            "0.1.0", 'evm2 = { package = "b", path = "crates/b", version = "0.1.0" }'
+        ),
+    )
+    _census(tree, [])
+    result = _run(tree)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "lockstep version drift" not in result.stdout
+
+
+def test_an_unreadable_manifest_refuses_not_a_finding(tmp_path: Path) -> None:
+    tree = _tree(tmp_path, {"b": _deps("")})
+    (tree / "rust" / "Cargo.toml").write_text("[workspace\n", encoding="utf-8")
+    result = _run(tree)
+    assert result.returncode == 2
+    assert "refusing to certify" in result.stderr
 
 
 def test_the_committed_census_matches_the_tree() -> None:
