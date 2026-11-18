@@ -286,8 +286,8 @@ scans an existing capture (the negative-probe entry point).
 
 **Adding an entry.** Add the new spray signature to that `signatures` array.
 
-**Run it.** `just test-python-noise-gate` (also the `python-test` pre-push hook
-and the CI python job's "Run Tests" step in `.github/workflows/ci.yml`); the
+**Run it.** `just test-python-noise-gate` (also the CI python job's "Run Tests"
+step in `.github/workflows/ci.yml`); the
 single positional is a pytest keyword filter, trailing tokens forward verbatim.
 The bare `just test-python` recipe stays for callers that only want the suite's
 exit code. Red probe without re-running the suite:

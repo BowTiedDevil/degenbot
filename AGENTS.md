@@ -19,7 +19,7 @@ Every build and test command goes through the justfile. **Never hand-type `cargo
 - `just test` is the default gate: the Rust lint leg first (fail fast), then standalone smoke, the whole cargo workspace suite under nextest, and the full pytest suite, in one command. Run everything, not a slice — both tracks are fast, and scoped runs hide cross-module breakage.
 - Tight red-green loops may narrow through the recipe (`just test-rust-nextest -p <crate>`, `-E 'test(name)'`); re-run `just test` whole before declaring work done.
 - `just test-python` (and `just test`) depends on `just dev`, the sole editable-extension build path, so the suite can never test a stale `.so`. After a Rust edit that a running bot must reflect, run `just dev`.
-- Before pushing: `just pre-push` delegates to the pre-push stage; prek.toml's `stages = ["pre-push"]` entries are the one gate manifest (ADR-074).
+- Before pushing: `just pre-push` delegates to the pre-push stage; prek.toml's `stages = ["pre-push"]` entries are the one gate manifest (ADR-074). That stage is the **lint contract over the whole tree plus the tests of the packages the outgoing diff touches** (`just test-rust-affected`); the full matrix — `--workspace` tests, golden replay, maturin, pytest, the no-Python gates — belongs to CI, where its legs run as parallel jobs.
 
 ## ADRs
 

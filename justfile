@@ -275,6 +275,27 @@ test-golden-replay:
 # every crate's suite, catching cross-crate fallout (signature changes
 # rippling into dependents, e.g. examples/settlement_bot) that a scoped run
 # never sees.
+# The pre-push test leg: the packages the outgoing diff touches, and nothing
+# else. The whole workspace suite is CI's job, where its legs run as parallel
+# jobs; repeating it serially before every push is what made a session long
+# without telling anyone anything a push could not already prove.
+# Loose-object housekeeping. Not a verdict about the tree, so it is not a gate:
+# it rewrites the object database, and a push hook that mutates the repository
+# is a side effect nobody asked for. Run it when the object DB grows.
+gc-objects:
+    scripts/hooks/object-gc.sh
+
+test-rust-affected:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    packages="$(scripts/rust_affected_packages.sh)"
+    if [ -z "$packages" ]; then
+        echo "pre-push: the outgoing diff touches no Rust package; no test leg runs."
+        exit 0
+    fi
+    echo "pre-push: testing what this push changes: $packages"
+    just test-rust-nextest $packages
+
 test-rust-nextest *args: check-toolchain
     #!/usr/bin/env bash
     set -euo pipefail
