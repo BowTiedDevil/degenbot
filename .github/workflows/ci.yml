@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: ''
+      full_suite:
+        description: 'Run every track regardless of the diff; release.yml sets it.'
+        required: false
+        type: boolean
+        default: false
 
 # Least privilege: every job in this workflow only reads the repository.
 permissions:
@@ -34,18 +39,19 @@ env:
 jobs:
   # Path gate: cheap first job that decides which tracks the event actually
   # touched. PRs diff against the merge-base, pushes against the previous
-  # commit (dorny/paths-filter handles both). release.yml calls this
-  # workflow at a tag; that event carries no diff, so every output defaults to
-  # true and the release gate runs the full matrix.
+  # commit (dorny/paths-filter handles both). A tag carries no diff to filter
+  # on, and a reusable workflow's callee sees the caller's event name rather
+  # than `workflow_call`, so the release gate is identified by the `full_suite`
+  # input release.yml passes, not by the event.
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      rust: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.rust == 'true' || steps.filter.outputs.machinery == 'true' }}
-      python: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.python == 'true' || steps.filter.outputs.machinery == 'true' }}
-      stubs: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.stubs == 'true' || steps.filter.outputs.machinery == 'true' }}
-      tier3: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.tier3 == 'true' || steps.filter.outputs.machinery == 'true' }}
+      rust: ${{ inputs.full_suite || steps.filter.outputs.rust == 'true' || steps.filter.outputs.machinery == 'true' }}
+      python: ${{ inputs.full_suite || steps.filter.outputs.python == 'true' || steps.filter.outputs.machinery == 'true' }}
+      stubs: ${{ inputs.full_suite || steps.filter.outputs.stubs == 'true' || steps.filter.outputs.machinery == 'true' }}
+      tier3: ${{ inputs.full_suite || steps.filter.outputs.tier3 == 'true' || steps.filter.outputs.machinery == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

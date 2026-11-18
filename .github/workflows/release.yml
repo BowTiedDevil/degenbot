@@ -87,6 +87,9 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ inputs.tag || github.ref_name }}
+      # A tag carries no diff for the path gate to filter on, so the gate is
+      # told to run every track rather than deciding from the event.
+      full_suite: true
 
   build-wheels:
     name: Build wheels on ${{ matrix.os }} (${{ matrix.target }})
