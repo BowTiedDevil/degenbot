@@ -22,29 +22,18 @@ py_run := "uv run --no-sync"
 # Root pytest runs through the lock venv like every other Python command.
 pytest_run := "uv run --no-sync pytest"
 
-# The lint/format tool pins. Every tool the python gates run carries exactly ONE
-# pin -- these two, the `markdownlint-cli2@X` in the markdown recipes, and the
-# `@commitlint/cli@X` pair in prek.toml + this file -- so a gate's verdict can
-# never move without a reviewable diff. That precision is also what makes ruff
-# safe to run in a rewriting pass: `format` / `check --fix` and the gen-stubs
-# pipeline whose output lands in the committed stub tree produce the same bytes
-# here as in CI.
+# The python linters are dev dependencies (`[dependency-groups] dev` in
+# pyproject.toml) run out of the lock venv, so `uv.lock` owns their versions:
+# `ruff format` / `check --fix` and the gen-stubs pipeline whose output lands in
+# the committed stub tree produce the same bytes here as in CI, and a version
+# move is a lock diff rather than a recipe edit. `just update-deps`
+# (`uv lock --upgrade`) is what advances them.
 #
-# The pins are tracked, not frozen. An exact pin nobody refreshes ages out, so
-# `just lint-tools-latest` reports every pin that is behind what this repo can
-# actually install (the pre-push `lint-tools` gate runs exactly that), and
-# `just bump-lint-tools` refreshes them all in ONE reviewable diff and re-runs
-# the gates on the result. A registry that cannot be reached is a warning, never
-# a red: freshness never breaks an offline push, and the remedy is always the
-# same one command.
-#
-# The comparison asks uv rather than a package index: uv is the resolver the
-# gates themselves use, and `[tool.uv] exclude-newer` applies to the
-# project-venv form (`ty`), so an index lookup would name a version uv then
-# refuses -- an un-pushable tree. The freshness lag is bounded by that cutoff,
-# the same 14-day window every dependency lives under.
-ty_version := "ty==0.0.96"
-ruff_version := "ruff==0.17.5"
+# The npm tools the markdown and commit-message gates run have no python lock to
+# live in: markdownlint-cli2 carries the one literal below, used by both markdown
+# recipes, and @commitlint/cli's literal must agree across prek.toml, the commit
+# range recipe, and ci.yml (tests/test_commitlint_push_gate.py).
+markdownlint_cli := "markdownlint-cli2@0.24.1"
 
 # Default recipe - show available commands
 default:
@@ -2200,12 +2189,12 @@ coverage *args:
 # lint-python / lint-python-check already set. rust/vendor/ carries
 # upstream's docs verbatim (ADR-096) and keeps upstream's conventions.
 lint-markdown:
-    npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
+    npx --yes {{ markdownlint_cli }} --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
 
 
 # Lint Markdown (check-only; non-mutating). Mirrors CI's pinned step.
 lint-markdown-check:
-    npx --yes markdownlint-cli2@0.24.1 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
+    npx --yes {{ markdownlint_cli }} "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
 
 # Lint Python files. The release-critical set: the package source and the
 # examples, the publication chain (the static publication plan, the verify
@@ -2213,11 +2202,10 @@ lint-markdown-check:
 # them, plus the crates.io live-audit suite. Coverage moves file by file so
 # historical scripts are fixed or consciously scoped, never swept in.
 lint-python:
-    uvx --with {{ ruff_version }} ruff check --fix src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
-    # ty must run under the project environment (it resolves third-party imports
-    # and the degenbot stubs from the venv), so `uvx ty` cannot work; `--with`
-    # installs it beside the venv, at the exact version `ty_version` pins.
-    {{ py_run }} --with {{ ty_version }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py
+    {{ py_run }} ruff check --fix src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
+    # ty runs in the project environment (it resolves third-party imports and the
+    # degenbot stubs from the venv), which is where its dev dependency installs it.
+    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -2246,27 +2234,8 @@ lint-tripwire-ratchet:
     {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
 lint-python-check:
-    uvx --with {{ ruff_version }} ruff check src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
-    {{ py_run }} --with {{ ty_version }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py
-
-# Report every lint/format tool pin against what this repo can install today.
-# Network-dependent by design (it asks uv / the npm registry), so an unreachable
-# registry is a warning, not a failure. The pre-push `lint-tools` gate runs this
-# exact recipe, so a pin that goes stale fails the push instead of aging out
-# quietly in the justfile.
-lint-tools-latest:
-    scripts/hooks/lint-tool-pins.sh --report
-
-# Refresh every behind pin in ONE reviewable diff, then re-run the gates on the
-# result, so the churn lands here rather than on some later, unrelated push.
-bump-lint-tools:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    scripts/hooks/lint-tool-pins.sh --bump
-    git --no-pager diff -- justfile prek.toml
-    just fmt-check-python
-    just lint-python-check
-    scripts/hooks/lint-tool-pins.sh --report
+    {{ py_run }} ruff check src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
+    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see
@@ -2294,7 +2263,7 @@ dead-code-deep:
 # carry, so the push sweep and the commit hook can never disagree about a
 # tracked file. Run `just format` to fix.
 fmt-check-python:
-    git ls-files -z '*.py' | grep -zv '^executor/' | xargs -0 -r uvx --with {{ ruff_version }} ruff format --check
+    git ls-files -z '*.py' | grep -zv '^executor/' | xargs -0 -r {{ py_run }} ruff format --check
 
 # Lint commit messages across a range (default: everything not yet pushed).
 # Examples: just lint-commits              # @{push}..HEAD
@@ -2322,7 +2291,7 @@ lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
 
 # Format all code
 format: check-toolchain
-    git ls-files -z '*.py' | grep -zv '^executor/' | xargs -0 -r uvx --with {{ ruff_version }} ruff format
+    git ls-files -z '*.py' | grep -zv '^executor/' | xargs -0 -r {{ py_run }} ruff format
     cargo fmt --manifest-path rust/Cargo.toml --all
 
 # ========== Dependency Updates ==========
@@ -2582,8 +2551,8 @@ gen-stubs check="":
     # and the tree would not be reproducible. The generated-stub rules the
     # check pass cannot fix (Rust doc-comment prose) are exempted under the
     # bare `"*.pyi"` per-file-ignores key, which matches the temp dir too.
-    uvx --with {{ ruff_version }} ruff format --config pyproject.toml "$out"
-    uvx --with {{ ruff_version }} ruff check --fix --config pyproject.toml "$out"
+    {{ py_run }} ruff format --config pyproject.toml "$out"
+    {{ py_run }} ruff check --fix --config pyproject.toml "$out"
     if [ "$check" = 1 ] && [ -z "${REGEN_STUBS:-}" ]; then
         if diff -ru src/degenbot/_ffi "$out"; then
             echo "✓ committed stubs match generator output"

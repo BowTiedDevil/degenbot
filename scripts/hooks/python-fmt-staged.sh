@@ -18,20 +18,18 @@
 # list we never looked at — a vacuous green on an unexamined list is exactly
 # the failure mode this tier exists to prevent.
 set -euo pipefail
+
 if [ "$#" -eq 0 ]; then
   echo "python-fmt-staged: empty file list; refusing a vacuous pass" >&2
   exit 1
 fi
-# Format-check with the one pinned ruff vintage (the justfile's `ruff_version`):
-# a floating `uvx ruff` resolved whatever PyPI published that minute, and ruff
-# rewrites files under `format`, so an upstream release could flip -- or
-# silently rewrite -- this shared gate's verdict with no diff to review. The
-# pin is read, not duplicated; tests/test_python_fmt_staged_gate.py drives this
-# script against a recording uvx stub and fails if the gate floats.
+
+# ruff is a dev dependency, so the vintage judging this commit is the one
+# uv.lock records and every other python gate in the repo runs. `--no-sync`
+# keeps a commit-time hook from re-resolving or reinstalling the environment
+# underneath the caller: a venv that has not been synced since ruff entered the
+# lock fails here (loudly, from uv) rather than silently checking with a
+# different ruff — `uv sync` or `just dev` is the fix.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ruff_pin="$(grep -m1 '^ruff_version := ' "$repo_root/justfile" | cut -d'"' -f2)"
-if [ -z "$ruff_pin" ]; then
-  echo "python-fmt-staged: cannot read the ruff_version pin from the justfile" >&2
-  exit 1
-fi
-exec uvx --with "$ruff_pin" ruff format --check -- "$@"
+cd "$repo_root"
+exec uv run --no-sync ruff format --check -- "$@"

@@ -242,11 +242,6 @@ hooks = [
 
   { id = "rust-clippy", name = "Rust clippy", language = "system", entry = "just lint-rust-check",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "python-lint", name = "Python lint", language = "system", entry = "just lint-python-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-
-  # Freshness of the lint/format pins themselves (ruff, ty, markdownlint,
-  # commitlint): a pin that has been overtaken fails the push with the one-command
-  # remedy (`just bump-lint-tools`) instead of aging out silently.
-  { id = "lint-tools", name = "Lint tool pins (freshness)", language = "system", entry = "just lint-tools-latest", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   # ADR-053: stubtest owns the stub<->runtime existence checks (R1/R2/R3/R4)
   # for the degenbot._ffi seam; the slimmed bespoke gate (R0 + driver-module
   # tombstones) runs in the pytest suites below.

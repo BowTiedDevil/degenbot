@@ -293,8 +293,10 @@ dev = [
     "pytest-xdist",
     "python-dotenv",
     "requests",
+    "ruff",
     "sybil",
     "tomlkit",
+    "ty",
     "vyper == 0.5.0b2",
 ]
 
