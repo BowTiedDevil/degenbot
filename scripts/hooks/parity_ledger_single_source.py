@@ -42,7 +42,10 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -103,10 +106,12 @@ def _oracle_rows(oracle_path: Path) -> dict[str, str]:
     rows = payload.get("expected", {}).get("ledger_rows")
     if not isinstance(rows, dict) or not rows:
         raise ExtractionError(f"{_display(oracle_path)} carries no expected.ledger_rows")
+    ledger: dict[str, str] = {}
     for key, value in rows.items():
         if not isinstance(value, str) or not _status(value):
             raise ExtractionError(f"{_display(oracle_path)}: ledger_rows[{key}] is not a status")
-    return rows
+        ledger[str(key)] = value
+    return ledger
 
 
 def _numbered_keys(oracle: dict[str, str]) -> dict[int, str]:
@@ -121,7 +126,8 @@ def _numbered_keys(oracle: dict[str, str]) -> dict[int, str]:
             raise ExtractionError(f"oracle keys {numbers[number]!r} and {key!r} share a number")
         numbers[number] = key
     if sorted(numbers) != list(range(1, len(numbers) + 1)):
-        raise ExtractionError("the oracle's keys are not a contiguous 01..NN series")
+        msg = "the oracle's keys are not a contiguous 01..NN series"
+        raise ExtractionError(msg)
     return numbers
 
 
@@ -159,13 +165,14 @@ def _ledger_table(lines: Sequence[str]):
     for index in range(heading + 1, len(lines)):
         if _cells(lines[index]) is not None:
             return _rows_after(lines, index, "ledger table")
-    raise ExtractionError("no table follows the ledger heading")
+    msg = "no table follows the ledger heading"
+    raise ExtractionError(msg)
 
 
 def _keyed(cell: str) -> str:
     """The oracle key a cell names, or the empty string when it names none."""
     match = _BACKTICKED.search(cell)
-    return match.group(1) if match is not None else ""
+    return str(match.group(1)) if match is not None else ""
 
 
 def _check_ledger(rows: Sequence[Sequence[str]], oracle: dict[str, str], numbers: dict[int, str]):
@@ -278,8 +285,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     doc_path = _resolve(args.doc)
     oracle_path = _resolve(args.oracle)
     try:
-        lines = _doc_lines(doc_path)
-        oracle = _oracle_rows(oracle_path)
+        lines, oracle = _doc_lines(doc_path), _oracle_rows(oracle_path)
         numbers = _numbered_keys(oracle)
         ledger = _ledger_table(lines)
         pinned = _table_by_header(lines, _PINNED_HEADER, "pinned decision rows table")

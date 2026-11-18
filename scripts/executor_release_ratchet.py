@@ -17,7 +17,7 @@ import hashlib
 import json
 import os
 import re
-import subprocess
+import subprocess  # ruff: ignore[suspicious-subprocess-import] -- git plumbing, fixed argv
 import sys
 from pathlib import Path
 from typing import Any
@@ -155,15 +155,15 @@ def base_index_from_git(root: Path) -> list[dict[str, Any]] | None:
         base = explicit
     else:
         upstream = subprocess.run(
-            ["git", "merge-base", "HEAD", "@{upstream}"],
+            ["git", "merge-base", "HEAD", "@{upstream}"],  # ruff: ignore[start-process-with-partial-path] -- git PATH lookup is intended
             cwd=root,
             text=True,
             capture_output=True,
             check=False,
         )
         base = upstream.stdout.strip() if upstream.returncode == 0 else "HEAD"
-    result = subprocess.run(
-        ["git", "show", f"{base}:{INDEX_PATH.as_posix()}"],
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] -- fixed argv, no shell
+        ["git", "show", f"{base}:{INDEX_PATH.as_posix()}"],  # ruff: ignore[start-process-with-partial-path] -- git PATH lookup is intended
         cwd=root,
         text=True,
         capture_output=True,

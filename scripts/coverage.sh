@@ -60,7 +60,7 @@ export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # The cargo target dir is where cargo-llvm-cov parks its profraws + test
 # binaries (<target>/llvm-cov-target). Resolve it the way cargo does.
 target_dir="$(cargo metadata --manifest-path rust/Cargo.toml --no-deps --format-version 1 \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["target_directory"])')"
+    | python3 "$(dirname "${BASH_SOURCE[0]}")/cargo_metadata_field.py" target_directory)"
 LV_TARGET="$target_dir/llvm-cov-target"
 
 cov_pkg_features() {

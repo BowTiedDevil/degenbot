@@ -91,7 +91,7 @@ def main() -> None:
         fork.close()
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(cassette, indent=2, sort_keys=True) + "\n")
+    out.write_text(json.dumps(cassette, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote {out}")
 
 

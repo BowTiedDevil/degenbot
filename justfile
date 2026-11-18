@@ -288,7 +288,7 @@ gc-objects:
 test-rust-affected:
     #!/usr/bin/env bash
     set -euo pipefail
-    packages="$(scripts/rust_affected_packages.sh)"
+    packages="$(python3 scripts/rust_affected_packages.py)"
     if [ -z "$packages" ]; then
         echo "pre-push: the outgoing diff touches no Rust package; no test leg runs."
         exit 0
@@ -2195,16 +2195,19 @@ lint-markdown:
 lint-markdown-check:
     npx --yes {{ markdownlint_cli }} "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**" "!rust/vendor/**" "!**/target/**"
 
-# Lint Python files. The release-critical set: the package source and the
-# examples, the publication chain (the static publication plan, the verify
-# oracle and the publish-blocked census) and the behavior suites that drive
-# them, plus the crates.io live-audit suite. Coverage moves file by file so
-# historical scripts are fixed or consciously scoped, never swept in.
+# Lint Python files. The package source and examples, the behavior suites that
+# drive the publication chain, and every script gate by *glob* -- a new gate
+# script or hook is linted the moment it lands, instead of waiting for someone
+# to add its name here. `pyproject.toml` scopes the library-shaped rules
+# (docstrings, complexity caps, annotations) away from `scripts/`, whose stdout
+# is its interface; correctness, security and bugbear rules apply there too.
+# `ty` covers the gate surface; the one-off recorders and math oracles join when
+# their pre-existing diagnostics are triaged.
 lint-python:
-    {{ py_run }} ruff check --fix src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
+    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
     # ty runs in the project environment (it resolves third-party imports and the
     # degenbot stubs from the venv), which is where its dev dependency installs it.
-    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py
+    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/hooks/*.py
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -2233,8 +2236,8 @@ lint-tripwire-ratchet:
     {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
 lint-python-check:
-    {{ py_run }} ruff check src/ examples/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
-    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py
+    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py
+    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/hooks/*.py
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see

@@ -1061,7 +1061,7 @@ def _probe_rows(
         sys.stdout.flush()
 
 
-def probe_paths(  # ruff: ignore[too-many-arguments] - one explicit keyword per probe-policy input
+def probe_paths(
     registrations: list[dict[str, Any]],
     output_path: Path,
     *,

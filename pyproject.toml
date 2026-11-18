@@ -112,6 +112,31 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
+
+# Dev tooling under `scripts/` is a CLI surface, not a library API: stdout is
+# its interface and its docstrings are for the operator reading `--help`, so the
+# documentation and exception-message policies that keep `src/` reviewable are
+# noise here. Correctness, security (bandit) and bugbear rules stay on, which is
+# why the coverage is a directory glob rather than a hand-picked file list -- a
+# new gate script is linted the moment it lands.
+"scripts/*.py" = [
+    # docstring policy is a library concern; these are operator-facing CLIs
+    "D", "DOC201", "DOC501", "T201", "TRY003", "EM102",
+    # report tables are fixed-width by construction: a markdown row is one line
+    "E501",
+    # analysis drivers are one long narrative by design; the complexity caps and
+    # annotation policy exist for library code that must stay navigable
+    "PLR0911", "PLR0912", "PLR0913", "PLR0914", "PLR0915", "PLR2004",
+    "ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN401",
+    # module shape: these are scripts, not packages
+    "EXE001", "ISC004", "SLF001", "PLC0415", "INP001", "PERF401",
+]
+"scripts/hooks/*.py" = [
+    "D", "DOC201", "DOC501", "T201", "TRY003", "EM102", "E501",
+    "PLR0911", "PLR0912", "PLR0913", "PLR0914", "PLR0915", "PLR2004",
+    "ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN401",
+    "EXE001", "ISC004", "SLF001", "PLC0415", "INP001", "PERF401",
+]
 "src/degenbot/fork/__init__.py" = [
     # AnvilFork is the deliberate legacy facade (ADR-005 Python shell): it
     # carries the pre-0.7 constructor knobs + dev-method names on purpose,

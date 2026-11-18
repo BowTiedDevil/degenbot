@@ -39,7 +39,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -93,20 +93,20 @@ def as_utc(raw: str) -> datetime | None:
     if not raw:
         return None
     try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(raw)
     except ValueError:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def fetch_releases(name: str) -> list[tuple[str, str]]:
     """[(upload_time, version)] for every non-empty PyPI release of the name."""
     lookup = _NAME_NORM.sub("-", name).lower()
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # ruff: ignore[suspicious-url-open-usage] -- crates.io https over TLS
         PYPI_JSON.format(name=lookup), headers={"User-Agent": "degenbot-dep-bump"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as resp:
+        with urllib.request.urlopen(request, timeout=30) as resp:  # ruff: ignore[suspicious-url-open-usage] -- crates.io https over TLS
             payload = json.load(resp)
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
         die(f"PyPI lookup for '{lookup}' failed: {exc}")
@@ -144,7 +144,7 @@ def exclude_newer_cutoff(doc: Any) -> datetime | None:
     m = _RELATIVE.match(raw)
     if m:
         days = int(m.group(1)) * _UNIT_DAYS[m.group(2).lower()]
-        return datetime.now(timezone.utc) - timedelta(days=days)
+        return datetime.now(UTC) - timedelta(days=days)
     if _ISO.match(raw):
         dt = as_utc(raw)
         if dt is not None:
@@ -201,9 +201,9 @@ def rewrite_requirement(req: str, latest: str) -> tuple[str, str]:
             new_clauses.append(f"~= {leading_components(latest, 2)}")
         elif op == "==" and ver.endswith(".*"):
             new_clauses.append(f"== {leading_components(latest, 2)}.*")
-        elif op in ("==", ">="):
+        elif op in {"==", ">="}:
             new_clauses.append(f"{op} {latest}")
-        elif op in ("<", "<="):
+        elif op in {"<", "<="}:
             cap = compare_versions(latest, ver)
             if (op == "<" and cap >= 0) or (op == "<=" and cap > 0):
                 return req, f"upper bound '{clause}' is below latest {latest} (kept as-is)"
@@ -244,7 +244,7 @@ def main() -> int:
 
     path = Path(args.pyproject)
     try:
-        doc = tomlkit.parse(path.read_text())
+        doc = tomlkit.parse(path.read_text(encoding="utf-8"))
     except (OSError, TOMLKitError) as exc:
         die(f"cannot parse {path}: {exc}")
 
@@ -267,8 +267,8 @@ def main() -> int:
     latest_cache: dict[str, str] = {}
     for section, deps in sections:
         label = "" if section == "main" else f" [{section}]"
-        for index, req in enumerate(deps):
-            req = str(req)
+        for index, raw_req in enumerate(deps):
+            req = str(raw_req)
             parts = requirement_parts(req)
             if parts is None:
                 print(f"{req.strip()}: untouched (direct URL dependency)")
@@ -300,7 +300,7 @@ def main() -> int:
     if args.dry_run:
         print(f"dry run: {changed} requirement(s) would change in {path.name}")
     else:
-        path.write_text(tomlkit.dumps(doc))
+        path.write_text(tomlkit.dumps(doc), encoding="utf-8")
         print(
             f"{changed} requirement(s) updated in {path.name}; next: uv lock --upgrade && uv sync"
         )

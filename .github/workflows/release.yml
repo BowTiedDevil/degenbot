@@ -374,7 +374,7 @@ jobs:
           fi
           chmod +x scripts/crates_io_pending.sh
           bash -n scripts/crates_io_pending.sh
-          python3 -c "import ast; ast.parse(open('scripts/publication_plan.py', encoding='utf-8').read())"
+          python3 -m py_compile scripts/publication_plan.py
           echo "audit tooling: $(wc -l < scripts/crates_io_pending.sh) audit lines, $(wc -l < scripts/publication_plan.py) planner lines, syntax ok"
 
       - name: Install Rust

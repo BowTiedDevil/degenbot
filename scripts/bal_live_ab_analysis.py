@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline analysis of a live `DEGENBOT_DELTA_DISPATCH` OFF/ON capture pair.
+r"""Offline analysis of a live `DEGENBOT_DELTA_DISPATCH` OFF/ON capture pair.
 
 Two production evidence classes arrive in one bot log and they answer different
 questions:
@@ -1583,7 +1583,7 @@ def render_markdown(off: Capture, on: Capture) -> str:
         "## Whole-window candidate timing",
         "",
         "Every `fanout-trace` row in the capture, unattributed to a storage lane.",
-        "Regimes are per-head sample volume: sparse 1–2, steady 3–19, burst 20+.",
+        "Regimes are per-head sample volume: sparse 1-2, steady 3-19, burst 20+.",
         "",
         "| capture | candidates | total ms | mean ms | p50 ms | p95 ms | max ms |",
         "| --- | --- | --- | --- | --- | --- | --- |",

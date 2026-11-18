@@ -65,8 +65,8 @@ def _fetch(upstream: str, body: bytes) -> bytes:
     last: Exception | None = None
     for attempt in range(_RETRIES):
         try:
-            req = Request(upstream, data=body, headers={"Content-Type": "application/json"})
-            with urlopen(req, timeout=60) as response:  # noqa: S310 - the configured archive node
+            req = Request(upstream, data=body, headers={"Content-Type": "application/json"})  # ruff: ignore[suspicious-url-open-usage] -- upstream release host over https
+            with urlopen(req, timeout=60) as response:  # ruff: ignore[suspicious-url-open-usage] - the configured archive node
                 return response.read()
         except (URLError, TimeoutError, OSError) as exc:
             last = exc
@@ -104,7 +104,7 @@ class _Recorder:
             def log_message(self, *_args: object) -> None:
                 pass
 
-            def do_POST(self) -> None:  # noqa: N802 - http.server API
+            def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", 0))
                 sent = json.loads(self.rfile.read(length))
                 batch = isinstance(sent, list)

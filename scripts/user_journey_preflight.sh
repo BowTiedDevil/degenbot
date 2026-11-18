@@ -33,7 +33,7 @@ B1=$(cast block-number --rpc-url "$RPC" 2>/dev/null || echo 0)
 OP=$(cast wallet address --private-key "$(grep -E '^PRIVATE_KEY=' bot.env | cut -d= -f2)" 2>/dev/null)
 BAL=$(cast balance "$OP" --rpc-url "$RPC" 2>/dev/null || echo 0)
 MIN_WEI=$(cast to-wei "$MIN_ETH" eth)
-if [ "$(python3 -c "print(1 if $BAL >= $MIN_WEI else 0)")" = "1" ]; then
+if [ "$BAL" -ge "$MIN_WEI" ]; then
   ok "operator $OP funded ($(cast from-wei "$BAL" 2>/dev/null) ETH >= $MIN_ETH)"
 else
   bad "operator $OP under-funded ($(cast from-wei "$BAL" 2>/dev/null || echo "$BAL wei") ETH < $MIN_ETH)"
@@ -64,12 +64,12 @@ fi
 BF=$(cast base-fee --rpc-url "$RPC" 2>/dev/null || echo 0)
 DEPLOY_GAS=3595884
 if [ "$BF" != "0" ]; then
-  DEPLOY_WEI=$(python3 -c "print($DEPLOY_GAS * $BF)")
+  DEPLOY_WEI=$(( DEPLOY_GAS * BF ))
   DEPLOY_ETH=$(cast from-wei "$DEPLOY_WEI" 2>/dev/null)
   # warn if deploy alone would exceed the funded floor + leave < 0.002 buffer
-  [ "$(python3 -c "print(1 if $BF <= 1_300_000_000 else 0)")" = "1" ] \
-    && ok "base fee $(python3 -c "print(round($BF/1e9,3))") gwei — deploy ~$DEPLOY_ETH ETH (window open)" \
-    || warn "base fee $(python3 -c "print(round($BF/1e9,3))") gwei — deploy ~$DEPLOY_ETH ETH; wait for <= ~1.3 gwei"
+  [ "$BF" -le 1300000000 ] \
+    && ok "base fee $(awk -v f="$BF" 'BEGIN { printf "%.3f", f / 1e9 }') gwei — deploy ~$DEPLOY_ETH ETH (window open)" \
+    || warn "base fee $(awk -v f="$BF" 'BEGIN { printf "%.3f", f / 1e9 }') gwei — deploy ~$DEPLOY_ETH ETH; wait for <= ~1.3 gwei"
 fi
 
 # 7. relay allowlist liveness (read-only chain-id probes)

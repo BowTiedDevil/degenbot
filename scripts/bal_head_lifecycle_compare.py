@@ -279,7 +279,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"REFUSED — {error}", file=sys.stderr)
         return EXIT_MALFORMED
 
-    for side, paths, series in (
+    for side, _paths, series in (
         ("before", before_paths, before),
         ("after", after_paths, after),
     ):

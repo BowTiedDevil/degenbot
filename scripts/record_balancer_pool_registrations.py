@@ -28,12 +28,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import operator
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from degenbot._ffi import BotIo
+from degenbot._ffi import BotIo  # ruff: ignore[import-private-name] -- the recorder drives the FFI seam directly
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import keccak256
@@ -60,10 +61,10 @@ DEFAULT_WORKERS = 8
 
 def _rpc(url: str, method: str, params: list[object]) -> object:
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
-    request = urllib.request.Request(  # noqa: S310 — archive URI from the test env
+    request = urllib.request.Request(  # ruff: ignore[suspicious-url-open-usage] — archive URI from the test env
         url, data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=120) as response:  # ruff: ignore[suspicious-url-open-usage]
         payload = json.loads(response.read())
     if "error" in payload:
         raise RuntimeError(payload["error"])
@@ -91,11 +92,12 @@ def _scan_registrations(url: str, *, end_block: int, chunk: int, workers: int) -
                         }
                     ],
                 )
-            except Exception:  # noqa: BLE001 — retry, then give up loudly
+            except Exception:
                 if attempt == 3:
                     raise
                 time.sleep(1 + attempt)
-        raise AssertionError("unreachable")
+        msg = "unreachable"
+        raise AssertionError(msg)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         batches = list(pool.map(fetch, ranges))
@@ -149,14 +151,15 @@ class _FamilyProbe:
 
         Returns:
             ``"weighted"``, ``"stable"``, ``"unmodeled"``, or ``"unknown"``.
+
         """
         try:
             self._io.fetch_balancer_pool_id(address)
-        except Exception:  # noqa: BLE001 — no decodable pool id means no pool identity
+        except Exception:  # ruff: ignore[blind-except] — no decodable pool id means no pool identity
             return "unknown"
         try:
             return self._io.probe_balancer_pool_type(address, block=self._block)
-        except Exception:  # noqa: BLE001 — a revert is the family probe's negative
+        except Exception:  # ruff: ignore[blind-except] — a revert is the family probe's negative
             # A Balancer pool (the pool id decoded) whose family probe did not:
             # the identity is positive, the shape is one no arm models. Kept
             # apart from "unknown" so the sweep can assert the refusal names it.
@@ -232,7 +235,7 @@ def main() -> None:
         "pin_block": args.block,
         "census": census,
         "duplicate_registrations": duplicate_registrations,
-        "pools": sorted(rows.values(), key=lambda row: row["address"]),
+        "pools": sorted(rows.values(), key=operator.itemgetter("address")),
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(document, indent=1) + "\n")

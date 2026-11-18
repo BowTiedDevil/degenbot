@@ -245,8 +245,9 @@ def is_rust_test_file(rel: str, text: str) -> bool:
 
 def in_surface(rel: str, text: str) -> bool:
     """ADR-087 D4's surface: rust test files, `tests/`, `justfile`, `prek.toml`,
-    `scripts/`, `docs/`."""
-    if rel in ("justfile", "prek.toml"):
+    `scripts/`, `docs/`.
+    """
+    if rel in {"justfile", "prek.toml"}:
         return True
     if rel.startswith(("tests/", "scripts/", "docs/")):
         return True
@@ -260,7 +261,7 @@ def enumerate_files(root: Path) -> list[str]:
     at, so a brand-new untracked test file must be examined the moment it is written.
     """
     result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
-        ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard"],
+        ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard"],  # ruff: ignore[start-process-with-partial-path] -- git PATH lookup is intended
         check=False,
         capture_output=True,
         text=True,

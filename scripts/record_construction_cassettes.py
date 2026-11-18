@@ -109,7 +109,7 @@ def _fetch(upstream: str, body: bytes, pace_s: float) -> bytes:
     for attempt in range(_RETRIES):
         time.sleep(pace_s)
         try:
-            req = Request(
+            req = Request(  # ruff: ignore[suspicious-url-open-usage] -- operator-configured RPC endpoint over https
                 upstream,
                 data=body,
                 # The public gateways reject the urllib default agent.

@@ -1659,7 +1659,7 @@ def resolve_rpc_transport(chain_id: int) -> Callable[[str], object]:
         try:
             # Imported here so `--help` and the argument refusals need no
             # configured extension.
-            from degenbot.provider.factory import (  # ruff: ignore[import-outside-top-level]
+            from degenbot.provider.factory import (
                 get_provider_from_config,
             )
 

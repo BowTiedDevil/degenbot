@@ -10,6 +10,7 @@ Examples:
 Percentiles are the ceil-index estimate over cumulative `*_bucket` le
 values (same method as stateview-feasibility doc §3), so numbers are
 byte-comparable against the baseline table there.
+
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ def pct(buckets, count, q):
 
 def main() -> int:
     url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
-    text = urllib.request.urlopen(url, timeout=10).read().decode()
+    text = urllib.request.urlopen(url, timeout=10).read().decode()  # ruff: ignore[suspicious-url-open-usage] -- operator-configured endpoint
     print(f"# scrape {url}")
     hdr = f"{'series':<46} {'count':>10} {'p50':>8} {'p90':>8} {'p95':>8} {'p99':>8}".format()
     print(hdr)

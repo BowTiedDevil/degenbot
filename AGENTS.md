@@ -115,7 +115,9 @@ The one on-demand lane for the legs every offline gate deliberately deselects: t
 
 ## Python Environment
 
-Use `uv`. The `--no-sync` prefix is defined once as the justfile `py_run` variable; `just venv` prints the active venv path, `just py <cmd>` runs ad-hoc commands against it. Python linters (`ruff`, `ty`) are `dev` dependencies executed out of the lock venv with `{{ py_run }}`, so `uv.lock` owns their versions and `just update-deps` advances them — a version move is a reviewable lock diff, never a floating `latest` that flips a shared gate's verdict with no diff to review. `ty` needs the project venv anyway (it resolves third-party imports and the generated stubs); `uvx` is left to off-gate triage tools. On the host, direnv loads a gitignored `.envrc` (template: `.envrc.example`) that redirects the venv, bytecode cache, and cargo target dir; the devcontainer sets equivalents in `containerEnv`.
+Use `uv`. The `--no-sync` prefix is defined once as the justfile `py_run` variable; `just venv` prints the active venv path, `just py <cmd>` runs ad-hoc commands against it. Python linters (`ruff`, `ty`) are `dev` dependencies executed out of the lock venv with `{{ py_run }}`, so `uv.lock` owns their versions and `just update-deps` advances them — a version move is a reviewable lock diff, never a floating `latest` that flips a shared gate's verdict with no diff to review. `ty` needs the project venv anyway (it resolves third-party imports and the generated stubs); `uvx` is left to off-gate triage tools. Python that stands on its own is a module under `scripts/`, never an inline interpreter (`python3 -c`, a heredoc inside a shell script): inline code escapes ruff, `ty` and formatting, and reads as shell in a diff. Shell keeps the orchestration — pipelines, environment, exit codes — and calls the module.
+
+On the host, direnv loads a gitignored `.envrc` (template: `.envrc.example`) that redirects the venv, bytecode cache, and cargo target dir; the devcontainer sets equivalents in `containerEnv`.
 
 ## Node access
 
