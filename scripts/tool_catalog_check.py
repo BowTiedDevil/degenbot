@@ -721,7 +721,7 @@ def _target_view(raw: Json) -> TargetView:
 
 
 def _index_paths(root: Path) -> frozenset[Path] | None:
-    """The repository's index, as resolved paths; None outside a git checkout.
+    """Return the repository's index as resolved paths, or None outside git.
 
     Reconciling against the index is what keeps another lane's untracked
     work-in-progress from failing this run, while a staged new target stays
@@ -734,8 +734,9 @@ def _index_paths(root: Path) -> frozenset[Path] | None:
     Returns:
         Every indexed path resolved against root, or None when root is not a
         git work tree.
+
     """
-    inside = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+    inside = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
         capture_output=True,
         text=True,
@@ -743,7 +744,7 @@ def _index_paths(root: Path) -> frozenset[Path] | None:
     )
     if inside.returncode != 0:
         return None
-    listed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+    listed = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z", "--cached"],
         capture_output=True,
         text=True,
