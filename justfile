@@ -1586,6 +1586,33 @@ test-foundry-executor *args:
     {{ py_run }} python gen_interfaces.py
     exec forge test "$@"
 
+# Forge gas snapshot for the optimized three-hop routing matrix: one stable row
+# label per test in `test/CmdExecutorThreeHopOptimized.t.sol`, committed as
+# `tests/foundry_executor/.gas-snapshot`. This is the gas-evidence replacement
+# for the retired `.gas-results` artifact the Ape lane wrote through
+# `record_gas` (migration manifest disposition 9/11) — a stable per-row label
+# and a drift check, not an Ape-vs-Forge total comparison.
+foundry-executor-snapshot:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec forge snapshot --match-path test/CmdExecutorThreeHopOptimized.t.sol
+
+# Drift gate for the committed snapshot: regenerating the row gas figures must
+# reproduce `.gas-snapshot` byte-for-byte. Fails closed when a row's gas moves
+# or its label disappears.
+foundry-executor-snapshot-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/foundry_executor
+    {{ py_run }} python build_artifacts.py --check-release
+    {{ py_run }} python build_solidity_artifacts.py
+    {{ py_run }} python gen_interfaces.py
+    exec forge snapshot --check --match-path test/CmdExecutorThreeHopOptimized.t.sol
+
 
 
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
