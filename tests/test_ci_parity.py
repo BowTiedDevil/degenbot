@@ -180,6 +180,62 @@ def test_a_manifest_entry_naming_a_nonexistent_recipe_fails(tmp_path: Path) -> N
     assert "does not exist" in result.stderr
 
 
+def test_a_manifest_entry_naming_a_variable_fails(tmp_path: Path) -> None:
+    """`just py_run` can never validate as a recipe: `py_run` is a variable."""
+    mutated = _mutate(
+        tmp_path,
+        MANIFEST,
+        "markdownlint|local||just lint-markdown-check",
+        "markdownlint|local||just py_run",
+    )
+
+    result = _run_ci_parity(MANIFEST=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "py_run" in result.stderr
+    assert "does not exist" in result.stderr
+
+
+def test_a_manifest_entry_naming_a_directive_fails(tmp_path: Path) -> None:
+    """`just set` can never validate as a recipe: `set` is a directive."""
+    mutated = _mutate(
+        tmp_path,
+        MANIFEST,
+        "markdownlint|local||just lint-markdown-check",
+        "markdownlint|local||just set",
+    )
+
+    result = _run_ci_parity(MANIFEST=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "'set'" in result.stderr or "just set" in result.stderr
+    assert "does not exist" in result.stderr
+
+
+def test_a_malformed_justfile_refuses(tmp_path: Path) -> None:
+    """A justfile that will not parse is a refusal, not a missing-recipe finding."""
+    bad = tmp_path / "justfile"
+    bad.write_text("this is : not valid\n:::\n", encoding="utf-8")
+
+    result = _run_ci_parity(JF=str(bad))
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "refusing to pass" in result.stderr
+    assert "does not exist" not in result.stderr
+
+
+def test_a_missing_just_executable_refuses(tmp_path: Path) -> None:
+    """`just` is a declared dependency of this gate: without it there is no oracle."""
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+
+    result = _run_ci_parity(PATH=str(empty_bin))
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "'just' is required" in result.stderr
+    assert "refusing to pass" in result.stderr
+
+
 def test_a_missing_manifest_fails_closed(tmp_path: Path) -> None:
     result = _run_ci_parity(MANIFEST=str(tmp_path / "no-such-manifest.txt"))
 

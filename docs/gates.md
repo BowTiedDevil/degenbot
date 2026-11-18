@@ -712,8 +712,12 @@ drift would surface only when a human followed a stale row.
 
 **Gate body.** `scripts/tool_catalog_check.py`, driven by
 `just check-tool-catalog`. It runs `cargo metadata --format-version 1
---no-deps --locked --offline` over `rust/Cargo.toml` and parses the current
-justfile's recipe names, then reconciles the catalog in both directions:
+--no-deps --locked --offline` over `rust/Cargo.toml` and asks `just` itself
+whether each referenced name resolves to an invocable recipe
+(`scripts/just_recipe_index.py`: per-name `just --show`, private recipes
+counted -- never a justfile text grammar, and `just --summary` runs only to
+validate that the justfile parses), then reconciles the catalog in both
+directions:
 
 - every Public examples row resolves to exactly one live example target
   outside the tool packages, by source path and target name, and every such
@@ -755,7 +759,8 @@ and the gate never generates it.
 
 Exit codes: `0` reconciled, `1` findings, `2` refused to certify (unreadable
 inputs, a `cargo metadata` failure, a malformed metadata payload, a missing
-catalog section, or a justfile that yields no recipe names).
+catalog section, a justfile that yields no recipe names, or a recipe-existence
+refusal -- `just` is missing or the justfile will not parse).
 
 **Data.** No census file: `rust/tools/README.md` is the living data, and
 per-slice history lives in git history and the ADRs.

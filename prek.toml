@@ -4,6 +4,10 @@
 # hooks (pre-commit, commit-msg, pre-push). Hooks can also be run on demand
 # with `uv run prek run` / `uv run prek run --all-files`.
 #
+# Local hook runs need `just` and a plain `python3` on PATH: the recipe entries
+# delegate through the justfile, and recipe existence is asked of `just` itself
+# (scripts/just_recipe_index.py), never read from justfile text.
+#
 # THE TWO-TIER CONTRACT — what a green hook means:
 #   - pre-commit green means "the files THIS COMMIT contains are clean".
 #     Every pre-commit check operates on the staged file list prek passes.

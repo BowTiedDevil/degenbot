@@ -9,6 +9,10 @@ verbatim, so a rationale keeps its home next to the gate it explains.
     python3 scripts/gate_registry.py check    # drift gate; exit 1 on divergence
     python3 scripts/gate_registry.py regen    # rewrite the hook lines
 
+An entry naming `just <recipe>` is validated by asking `just` itself
+(scripts/just_recipe_index.py), never by reading justfile text: a missing `just`
+or a justfile that will not parse refuses validation with exit 2.
+
 Adding a gate is one `[[gate]]` block plus `regen`; retiring one is deleting the
 block plus `regen`. The `gate-registry` hook fails a commit whose `prek.toml`
 does not match the registry, so the two cannot disagree in silence.
@@ -22,6 +26,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import just_recipe_index
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = "scripts/gates.toml"
@@ -166,12 +172,11 @@ def _validate(gates: list[Gate], root: Path) -> None:
         raise RegistryError(
             f"{REGISTRY_PATH}: gates must be grouped by stage in {STAGE_ORDER} order"
         )
-    justfile = (root / JUSTFILE_PATH).read_text(encoding="utf-8")
-    recipes = set(re.findall(r"^(?P<name>[a-z0-9][a-z0-9_-]*)(?=[ :])", justfile, re.MULTILINE))
+    index = just_recipe_index.RecipeIndex(root / JUSTFILE_PATH)
     for gate in gates:
         if gate.entry.startswith("just "):
             recipe = gate.entry.split()[1]
-            if recipe not in recipes:
+            if not index.exists(recipe):
                 raise RegistryError(
                     f"{REGISTRY_PATH}: {gate.id}: entry names `just {recipe}`, "
                     f"which {JUSTFILE_PATH} does not define"
@@ -244,6 +249,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"gate-registry: {exc}", file=sys.stderr)
         print("fix: correct the declaration in scripts/gates.toml", file=sys.stderr)
         return 1
+    except just_recipe_index.RecipeIndexRefusal as exc:
+        print(f"gate-registry: {exc}", file=sys.stderr)
+        print("fix: install `just` and make the justfile parse, then re-run", file=sys.stderr)
+        return 2
     rendered = render_prek(gates)
     current = (ROOT / PREK_PATH).read_text(encoding="utf-8")
     if command[0] == "regen":

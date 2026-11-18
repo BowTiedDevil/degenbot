@@ -13,7 +13,9 @@
 #   0   parity
 #   1   drift (prints the offending entries)
 #   2   an extraction produced nothing -- fails closed, so a broken read can
-#       never report a green that examined nothing
+#       never report a green that examined nothing -- or a refusal: `just` is
+#       missing or the justfile will not parse, so recipe existence cannot be
+#       answered at all
 #
 # Scope and blind spots:
 #   - release.yml is not covered (tag lifecycle; its steps are the publish
@@ -22,6 +24,9 @@
 #     unchanged step name is invisible here.
 #   - Only `run: just <recipe>` lines are machine-checked against the
 #     justfile. Raw `run:` commands are the manifest's prose.
+#   - `just` (and a plain python3) must be on PATH: recipe existence is asked
+#     of `just` itself through scripts/just_recipe_index.py, never read from
+#     justfile text.
 #   - The manifest's push_gates column names entry strings that must appear as
 #     `stages = ["pre-push"]` entries in prek.toml, i.e. must be part of the
 #     push-gate manifest; notes carry no wiring claim.
@@ -31,6 +36,14 @@
 #
 # live-invariant gate (ADR-087 D2): watches the live ci-parity manifest and the prek.toml `stages = ["pre-push"]` entries it is cross-checked against; not tripwire precedent.
 set -euo pipefail
+
+# The `just` executable is a declared dependency of this gate: recipe
+# existence is answered by `just` itself, never by grepping justfile text.
+# Fail closed before touching anything else when it is missing.
+if ! command -v just >/dev/null 2>&1; then
+    echo "ci-parity: 'just' is required on PATH (recipe existence is asked of just itself) -- refusing to pass" >&2
+    exit 2
+fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
@@ -78,10 +91,20 @@ fi
 
 fail=0
 
-# Does the justfile define this recipe? (a recipe line starts with the name,
-# then `:`, whitespace, or a parameter list)
+# Does the justfile define this recipe? `just` is the authority (private
+# recipes count): the recipe index answers one name per call -- 0 exists,
+# 1 unknown, 2 refusal (no `just`, or a justfile that will not parse).
 recipe_exists() {
-    grep -I -qE "^${1}(:|[[:space:]])" "$jf"
+    local rc=0
+    python3 "${repo_root}/scripts/just_recipe_index.py" --justfile "$jf" "$1" || rc=$?
+    case "$rc" in
+        0) return 0 ;;
+        1) return 1 ;;
+        *)
+            echo "ci-parity: refusing to pass: ${jf} cannot be asked about recipe '$1' (recipe index exit ${rc})" >&2
+            exit 2
+            ;;
+    esac
 }
 
 trim() {

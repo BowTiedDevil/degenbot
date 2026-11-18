@@ -142,6 +142,71 @@ def test_an_entry_naming_a_missing_recipe_is_rejected(workspace: pathlib.Path) -
         gate_registry.load(workspace)
 
 
+def test_an_entry_naming_a_private_recipe_validates(workspace: pathlib.Path) -> None:
+    """Private recipes count: `just` resolves them, so a gate may name one."""
+    (workspace / "justfile").write_text(
+        "_internal:\n    true\nalpha:\n    true\nbeta:\n    true\n", encoding="utf-8"
+    )
+    (workspace / "scripts" / "gates.toml").write_text(
+        _registry(
+            _gate("alpha", entry="just _internal"),
+            _gate("beta", stage="pre-push"),
+        ),
+        encoding="utf-8",
+    )
+
+    gates = gate_registry.load(workspace)
+
+    assert {gate.id for gate in gates} == {"alpha", "beta"}
+
+
+def test_an_entry_naming_a_variable_is_rejected(workspace: pathlib.Path) -> None:
+    """`just py_run` can never validate as a gate entry: `py_run` is a variable."""
+    (workspace / "justfile").write_text(
+        'py_run := "uv run --no-sync"\nalpha:\n    true\nbeta:\n    true\n', encoding="utf-8"
+    )
+    (workspace / "scripts" / "gates.toml").write_text(
+        _registry(
+            _gate("alpha", entry="just py_run"),
+            _gate("beta", stage="pre-push"),
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(gate_registry.RegistryError, match="does not define"):
+        gate_registry.load(workspace)
+
+
+def test_an_entry_naming_a_directive_is_rejected(workspace: pathlib.Path) -> None:
+    """`just set` can never validate as a gate entry: `set` is a directive."""
+    (workspace / "justfile").write_text(
+        'set shell := ["bash", "-cu"]\nalpha:\n    true\nbeta:\n    true\n', encoding="utf-8"
+    )
+    (workspace / "scripts" / "gates.toml").write_text(
+        _registry(
+            _gate("alpha", entry="just set"),
+            _gate("beta", stage="pre-push"),
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(gate_registry.RegistryError, match="does not define"):
+        gate_registry.load(workspace)
+
+
+def test_a_malformed_justfile_refuses_validation(workspace: pathlib.Path) -> None:
+    """A justfile that will not parse is a refusal, not a missing-recipe finding."""
+    (workspace / "justfile").write_text("this is : not valid\n:::\n", encoding="utf-8")
+    (workspace / "scripts" / "gates.toml").write_text(
+        _registry(_gate("alpha"), _gate("beta", stage="pre-push")), encoding="utf-8"
+    )
+
+    with pytest.raises(
+        gate_registry.just_recipe_index.RecipeIndexRefusal, match="refusing to index"
+    ):
+        gate_registry.load(workspace)
+
+
 def test_an_entry_naming_a_missing_script_is_rejected(workspace: pathlib.Path) -> None:
     (workspace / "scripts" / "gates.toml").write_text(
         _registry(_gate("alpha"), _gate("beta", stage="pre-push", entry="scripts/hooks/gone.sh")),

@@ -23,10 +23,14 @@ so the synthetic cases never invoke cargo):
     documented secondary shape ignored.
   * ``test_an_unknown_recipe_fails`` -- a ``just <recipe>`` the justfile does
     not define.
+  * ``test_an_empty_justfile_refuses_to_certify`` /
+    ``test_a_malformed_justfile_refuses_to_certify`` -- the empty-input
+    refusal and the refusal a justfile that will not parse earns, both exit 2
+    and never a missing-recipe finding.
   * ``test_just_directives_are_not_recipes`` -- the justfile's top-level
-    directives (``set``/``alias``/``export``) and ``:=`` variables are not
-    recipe definitions: a row referencing them fails while a row referencing
-    a real recipe passes.
+    directives (``set``/``alias``/``export``) and ``:=`` variables (``witness``,
+    ``py_run``) are not recipe definitions: a row referencing them fails while
+    a row referencing a real recipe passes.
   * ``test_a_prose_just_reference_is_not_a_recipe_reference`` -- ``just
     <recipe>`` extraction reads Markdown code spans only; prose 'just any
     word' is not a recipe reference.
@@ -449,7 +453,9 @@ def test_just_directives_are_not_recipes(tmp_path: Path) -> None:
         'set shell := ["bash", "-cu"]\n'
         "alias d := build-demo\n"
         'export FLAG := "1"\n'
-        "unexport FLAG\n"
+        # A variable both exported and unexported is a justfile `just` rejects;
+        # the fixture has to parse for the recipe authority to answer at all.
+        "unexport GONE\n"
         'witness := "a:b"\n'
     )
     justfile: Path = workspace["root"] / "justfile"
@@ -457,20 +463,44 @@ def test_just_directives_are_not_recipes(tmp_path: Path) -> None:
     _rewritten_readme(
         workspace,
         "`just check-alpha` | default | none | stdout | gate |",
-        "`just set`, `just alias`, `just export`, `just witness`, `just check-alpha`"
-        " | default | none | stdout | gate |",
+        "`just set`, `just alias`, `just export`, `just witness`, `just py_run`,"
+        " `just check-alpha` | default | none | stdout | gate |",
     )
 
     result = _run(workspace)
 
     assert result.returncode == 1, result.stdout + result.stderr
     findings = [line for line in result.stderr.splitlines() if "does not define" in line]
-    assert len(findings) == 4, result.stderr
-    for pseudo in ("set", "alias", "export", "witness"):
+    assert len(findings) == 5, result.stderr
+    for pseudo in ("set", "alias", "export", "witness", "py_run"):
         assert any(
             f"`just {pseudo}`, which the justfile does not define" in line for line in findings
         )
     assert all("check-alpha" not in line for line in findings)
+
+
+def test_an_empty_justfile_refuses_to_certify(tmp_path: Path) -> None:
+    """The empty-input refusal: a justfile yielding no recipe names is not a pass."""
+    workspace = _workspace(tmp_path)
+    (workspace["root"] / "justfile").write_text("", encoding="utf-8")
+
+    result = _run(workspace)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "yields no recipe names" in result.stderr
+    assert "refusing to certify" in result.stderr
+
+
+def test_a_malformed_justfile_refuses_to_certify(tmp_path: Path) -> None:
+    """A justfile that will not parse is a refusal, not a missing-recipe finding."""
+    workspace = _workspace(tmp_path)
+    (workspace["root"] / "justfile").write_text("this is : not valid\n:::\n", encoding="utf-8")
+
+    result = _run(workspace)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "refusing to certify" in result.stderr
+    assert "does not define" not in result.stderr
 
 
 def test_a_prose_just_reference_is_not_a_recipe_reference(tmp_path: Path) -> None:

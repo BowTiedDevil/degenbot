@@ -61,6 +61,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import just_recipe_index
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _README = Path("rust") / "tools" / "README.md"
@@ -103,15 +105,6 @@ _LAB_HEADING = re.compile(r"^`([^`]+)`\s*\((\d+) rows?\)")
 _LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
 _CODE_SPAN = re.compile(r"`([^`]+)`")
 _JUST_REF = re.compile(r"\bjust\s+([a-zA-Z0-9][a-zA-Z0-9_-]*)")
-_RECIPE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
-# A recipe's colon is never the ``:=`` of a variable assignment: the ``(?!=)``
-# keeps ``name :=`` / ``name:=`` from reading as a recipe definition even when
-# a variable's value itself contains a colon.
-_RECIPE_DEF = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s[^:]*)?:(?!=)")
-_VARIABLE_DEF = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*\s*:=")
-# Just's top-level directives are not recipes: ``set shell := [...]`` must not
-# register a recipe named ``set``.
-_JUST_DIRECTIVE = re.compile(r"^(?:set|alias|export|unexport|import|include|mod)\b")
 _SEPARATOR_CELL = re.compile(r"^:?-+:?$")
 
 if TYPE_CHECKING:
@@ -594,36 +587,6 @@ def parse_catalog(text: str, readme_dir: Path, root: Path) -> tuple[Catalog, lis
                 f"section {section_name!r} declares {declared} rows, its tables hold {count}"
             )
     return catalog, findings
-
-
-def _justfile_recipes(text: str) -> frozenset[str]:
-    """Collect the recipe names the current justfile defines.
-
-    Args:
-        text: The justfile's text.
-
-    Returns:
-        The defined recipe names.
-
-    Raises:
-        CatalogRefusal: The justfile yields no recipe names.
-
-    """
-    names: set[str] = set()
-    for line in text.splitlines():
-        if line.startswith(("#", " ", "\t")):
-            continue
-        if _JUST_DIRECTIVE.match(line):
-            continue
-        if _VARIABLE_DEF.match(line):
-            continue
-        match = _RECIPE_DEF.match(line)
-        if match is not None and _RECIPE_NAME.match(match.group(1)):
-            names.add(match.group(1))
-    if not names:
-        msg = "the justfile yields no recipe names"
-        raise CatalogRefusal(msg)
-    return frozenset(names)
 
 
 def _load_metadata(root: Path) -> Json:
@@ -1110,12 +1073,12 @@ def _reconcile_integration(
             )
 
 
-def _reconcile_recipes(catalog: Catalog, recipes: frozenset[str], findings: list[str]) -> None:
+def _reconcile_recipes(catalog: Catalog, known: frozenset[str], findings: list[str]) -> None:
     """Check every ``just <recipe>`` a row references against the justfile.
 
     Args:
         catalog: The parsed catalog.
-        recipes: The recipe names the current justfile defines.
+        known: The referenced names ``just`` resolves.
         findings: The accumulated findings to append to.
 
     """
@@ -1123,14 +1086,14 @@ def _reconcile_recipes(catalog: Catalog, recipes: frozenset[str], findings: list
         f"{_label(row)}: references `just {ref}`, which the justfile does not define"
         for row in catalog.rows()
         for ref in row.just_refs
-        if ref not in recipes
+        if ref not in known
     )
 
 
 def reconcile(
     packages: dict[str, PackageView],
     catalog: Catalog,
-    recipes: frozenset[str],
+    known: frozenset[str],
     root: Path,
 ) -> list[str]:
     """Reconcile the parsed catalog against the metadata view and recipes.
@@ -1138,7 +1101,7 @@ def reconcile(
     Args:
         packages: The metadata package views.
         catalog: The parsed catalog.
-        recipes: The recipe names the current justfile defines.
+        known: The referenced ``just`` names that resolve.
         root: The repository root paths are displayed relative to.
 
     Returns:
@@ -1150,7 +1113,7 @@ def reconcile(
     _reconcile_examples(packages, catalog, root, findings, seen)
     _reconcile_labs(packages, catalog, root, findings, seen)
     _reconcile_integration(packages, catalog, root, findings, seen)
-    _reconcile_recipes(catalog, recipes, findings)
+    _reconcile_recipes(catalog, known, findings)
     return findings
 
 
@@ -1178,19 +1141,20 @@ def _read(path: Path) -> str:
 def _load_inputs(
     root: Path,
     readme: Path,
-    justfile: Path,
     metadata_arg: str | None,
-) -> tuple[Json, str, str]:
-    """Load the gate's three inputs.
+) -> tuple[Json, str]:
+    """Load the gate's metadata and catalog inputs.
+
+    The justfile is not read here: ``just`` is the recipe existence authority
+    (``scripts/just_recipe_index.py``) and reads the file itself.
 
     Args:
         root: The repository root.
         readme: The catalog's path.
-        justfile: The justfile's path.
         metadata_arg: A metadata JSON dump's path, or None to run cargo.
 
     Returns:
-        The metadata payload, the README text, and the justfile text.
+        The metadata payload and the README text.
 
     Raises:
         CatalogRefusal: Any input is missing, unreadable, or unparseable.
@@ -1207,7 +1171,33 @@ def _load_inputs(
     if not isinstance(metadata, dict):
         msg = "the metadata payload is not a JSON object"
         raise CatalogRefusal(msg)
-    return metadata, _read(readme), _read(justfile)
+    return metadata, _read(readme)
+
+
+def _resolved_recipe_refs(justfile: Path, catalog: Catalog) -> frozenset[str]:
+    """Resolve every ``just <recipe>`` a row references through the recipe index.
+
+    Args:
+        justfile: The justfile's path.
+        catalog: The parsed catalog.
+
+    Returns:
+        The referenced names ``just`` resolves.
+
+    Raises:
+        CatalogRefusal: The justfile yields no recipe names.
+
+    """
+    index = just_recipe_index.RecipeIndex(justfile)
+    refs = {ref for row in catalog.rows() for ref in row.just_refs}
+    known = frozenset(ref for ref in refs if index.exists(ref))
+    # The empty-input refusal: a justfile yielding no recipe name the gate can
+    # see -- neither the summary's names nor a resolved reference -- cannot
+    # certify anything.
+    if not index.names() and not known:
+        msg = "the justfile yields no recipe names"
+        raise CatalogRefusal(msg)
+    return known
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1238,16 +1228,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     justfile = Path(args.justfile) if args.justfile is not None else root / _JUSTFILE
 
     try:
-        metadata, readme_text, justfile_text = _load_inputs(root, readme, justfile, args.metadata)
+        metadata, readme_text = _load_inputs(root, readme, args.metadata)
         catalog, findings = parse_catalog(readme_text, readme.parent, root)
-        recipes = _justfile_recipes(justfile_text)
+        known = _resolved_recipe_refs(justfile, catalog)
         packages = _catalog_view(metadata, root)
-    except CatalogRefusal as error:
+    except (CatalogRefusal, just_recipe_index.RecipeIndexRefusal) as error:
         print(f"tool-catalog: {error}", file=sys.stderr)
         print("tool-catalog: refusing to certify a catalog it could not examine", file=sys.stderr)
         return 2
 
-    findings.extend(reconcile(packages, catalog, recipes, root))
+    findings.extend(reconcile(packages, catalog, known, root))
     if findings:
         shown = _display(readme, root)
         print(f"tool-catalog: {len(findings)} finding(s) in {shown}", file=sys.stderr)
