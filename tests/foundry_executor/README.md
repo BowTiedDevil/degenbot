@@ -127,6 +127,9 @@ auto-pay path).
 | `test_withdrawal.py` | `Withdrawal.t.sol` | 9 | 9 (ERC6909→physical USDC in two/one tx, ERC6909 native ETH, ERC20_XFER_BALANCE and specific-amount ERC20_TRANSFER, SEND_ETH/SEND_ETH_ALL, both round trips; config = 2 preserved on every execution, the ERC20-only withdrawal tx at the default config = 1) |
 | `test_conservation.py` | `Conservation.t.sol` | 4 | 7 (4 source + 3 documented direct-helper meta-tests; every live failure pinned to its exact Error(string) reason via an external-call negative control, and the tracked-recipient case pins the positive conservation verdict before the profit mismatch) |
 | `test_v3_v4_v3_residual_regression.py` | `V3V4V3ResidualRegression.t.sol` | 2 | 3 (2 source + 1 added: OLD static encoder's `config = 0` revert pinned exactly as `InvalidProfitMode(0)`; the added valid-config case runs the SAME old static stream and pins the PM's exact `CurrencyNotSettled:<wbtc>: +<surplus>` residual; NEW dynamic+delta+settle-all succeeds with positive profit) |
+| `test_erc6909.py` | `ERC6909.t.sol` | 5 | 5 (view surface, V4_MINT_COMPACT entry, two-phase V4_BURN_COMPACT settlement with the exact WETH take, and the mint-vs-take gas comparison as one self-contained state-snapshot-isolated named comparison — disposition 11; all executions keep the source's `config = 2`) |
+| `test_erc6909_composability.py` | `ERC6909Composability.t.sol` | 6 (7 expanded) | 8 (7 source + 1 added direct case: V4_BURN funding a residual -1 WETH PM debit on a V4→V2→V2 borrow — the no-burn negative control pins the PM's exact `CurrencyNotSettled:<weth>:-1e18` and the paying run settles it with zero ERC20 transfers and exact balance deltas; bribe receipt pinned from the simulated `(gross_profit, bribe_paid)`; warmup-wei accounting exact on every ERC6909 WETH expectation) |
+| `test_pm_as_bank.py` | `PMAsBank.t.sol` | 11 | 11 (four V2-ending paths × MINT/TAKE with exact profit pins, V2-V2-V3 as MINT-impossible — pinned to the executor's exact `InsufficientMintDelta(0, 1)` — plus TAKE-physical with the source's 5-transfer count, and the ordering-dependent `_gas_results` summary replaced by one self-contained `testMintVsTakeGasComparison` that runs every path's MINT and TAKE from the same pristine state — disposition 6) |
 | `test_v2_swap_calc_overflow.py` | `V2SwapCalcOverflow.t.sol` | 1 (permanently skipped) | 2 (executable checked-mul boundary + normal-path control; skip replaced) |
 | — (gap filled, not a port) | `AbiOverloads.t.sol` | 0 | 3 |
 | — (canonical Uniswap bytecode) | `RealLibraries.t.sol` | 0 | 2 |
@@ -135,7 +138,6 @@ auto-pay path).
 Not ported: the remaining swap-family files (`bribe_commands`,
 `bribe_transfer`), the three-hop matrices
 (`three_hop_optimized`, `three_hop_production_calldata`),
-`erc6909`, `erc6909_composability`, `pm_as_bank`,
 `release_metadata`, the fake-parity tiers (`fake_pool_manager_parity`,
 `fake_abi_fidelity`), and the Rust-artifact cross-checks.
 
