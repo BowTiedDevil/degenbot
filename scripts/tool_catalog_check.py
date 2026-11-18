@@ -720,6 +720,40 @@ def _target_view(raw: Json) -> TargetView:
     )
 
 
+def _index_paths(root: Path) -> frozenset[Path] | None:
+    """The repository's index, as resolved paths; None outside a git checkout.
+
+    Reconciling against the index is what keeps another lane's untracked
+    work-in-progress from failing this run, while a staged new target stays
+    covered. A fixture tree that is not a checkout keeps the unfiltered view, so
+    the probes below still exercise the reconciliation.
+
+    Args:
+        root: The repository root.
+
+    Returns:
+        Every indexed path resolved against root, or None when root is not a
+        git work tree.
+    """
+    inside = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if inside.returncode != 0:
+        return None
+    listed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        ["git", "-C", str(root), "ls-files", "-z", "--cached"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        return None
+    return frozenset((root / rel).resolve() for rel in listed.stdout.split("\0") if rel)
+
+
 def _catalog_view(metadata: Json, root: Path) -> dict[str, PackageView]:
     """Convert the metadata package list into per-package target views.
 
@@ -737,6 +771,7 @@ def _catalog_view(metadata: Json, root: Path) -> dict[str, PackageView]:
     if not isinstance(metadata.get("packages"), list):
         msg = "the cargo metadata carries no package list"
         raise CatalogRefusal(msg)
+    indexed = _index_paths(root)
     view: dict[str, PackageView] = {}
     for pkg in metadata["packages"]:
         if not isinstance(pkg, dict):
@@ -760,11 +795,14 @@ def _catalog_view(metadata: Json, root: Path) -> dict[str, PackageView]:
         except ValueError:
             relative = None
         is_tool = relative is not None and relative.parts[:2] == ("rust", "tools")
+        target_views = tuple(_target_view(raw) for raw in targets)
+        if indexed is not None:
+            target_views = tuple(t for t in target_views if t.src_path in indexed)
         view[name] = PackageView(
             name=name,
             manifest=manifest,
             is_tool=is_tool,
-            targets=tuple(_target_view(raw) for raw in targets),
+            targets=target_views,
         )
     return view
 

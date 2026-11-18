@@ -827,3 +827,36 @@ def test_the_gate_is_registered_where_it_runs() -> None:
     # rust/examples example crates trigger on manifests and sources alike
     assert "rust/.*Cargo\\.toml$" in tool_catalog_line
     assert "^rust/examples/" in tool_catalog_line
+
+
+def test_an_untracked_target_is_outside_the_catalog_surface(tmp_path: Path) -> None:
+    """A peer lane's new, uncommitted binary cannot fail this run.
+
+    The catalog reconciles against the index, so a target whose source is on disk
+    but not in the commit under test is outside the surface this run certifies.
+    Staging it brings it back in, and then it needs its row.
+    """
+    workspace = _workspace(tmp_path)
+    root: Path = workspace["root"]
+    beta_row = (
+        "| [`beta_recorder`](fixture-tools/src/bin/beta_recorder/main.rs) | record "
+        "| `just check-alpha` | `sql-ledger` | none | stdout | gate |\n"
+    )
+    _rewritten_readme(workspace, "## Lab binaries (2 rows)", "## Lab binaries (1 rows)")
+    _rewritten_readme(
+        workspace, "`degenbot-fixture-tools` (2 rows)", "`degenbot-fixture-tools` (1 rows)"
+    )
+    _rewritten_readme(workspace, beta_row, "")
+
+    beta = "rust/tools/fixture-tools/src/bin/beta_recorder/main.rs"
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "rm", "--cached", "-q", beta], check=True)
+
+    untracked = _run(workspace)
+    assert untracked.returncode == 0, untracked.stdout + untracked.stderr
+
+    subprocess.run(["git", "-C", str(root), "add", beta], check=True)
+    staged = _run(workspace)
+    assert staged.returncode != 0
+    assert "has no catalog row" in staged.stdout + staged.stderr
