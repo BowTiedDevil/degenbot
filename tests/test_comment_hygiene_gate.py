@@ -177,3 +177,68 @@ def test_the_committed_census_matches_the_tree() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "stale:" not in result.stderr, result.stderr
+
+
+def _git_fixture(tmp_path: Path) -> Path:
+    """A throwaway git checkout the gate can certify in its real (non-HCR) mode.
+
+    Index scope only exists when the scan runs inside a git work tree, so this
+    fixture commits the three census files (empty is enough: the tree states no
+    bare token) plus one clean source file, and returns the checkout.
+    """
+    repo = tmp_path / "repo"
+    (repo / "scripts" / "hooks").mkdir(parents=True)
+    (repo / "src").mkdir()
+    for name in (
+        "comment-hygiene-waivers.txt",
+        "comment-hygiene-census.txt",
+        "comment-hygiene-citation-census.txt",
+    ):
+        (repo / "scripts" / "hooks" / name).write_text("")
+    (repo / "src" / "lib.rs").write_text("// nothing to see here\n")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)  # ruff: ignore[subprocess-without-shell-equals-true]
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.email=probe@example.com",
+            "-c",
+            "user.name=probe",
+            "commit",
+            "-qm",
+            "probe fixture",
+        ],
+        check=True,
+    )
+    return repo
+
+
+def _run_in_repo(repo: Path) -> subprocess.CompletedProcess[str]:
+    """Run the hook with HCR unset, so it takes the index-scope path."""
+    env = {k: v for k, v in os.environ.items() if k not in {"HCR", "WAF", "CHF", "CCF"}}
+    return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [_BASH, str(_HOOK)],
+        cwd=repo,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_the_scan_scope_is_the_index_not_the_working_tree(tmp_path: Path) -> None:
+    """A concurrent lane's untracked work cannot fail this commit; staging it can."""
+    repo = _git_fixture(tmp_path)
+    violating = repo / "src" / "in_progress.rs"
+    violating.write_text("// " + _TRACKER_HEX + "\n")
+
+    untracked = _run_in_repo(repo)
+    assert untracked.returncode == 0, untracked.stderr
+
+    subprocess.run(["git", "-C", str(repo), "add", str(violating)], check=True)
+    staged = _run_in_repo(repo)
+    assert staged.returncode != 0
+    assert "comment-hygiene" in staged.stderr

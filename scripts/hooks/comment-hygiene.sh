@@ -103,6 +103,71 @@ set -euo pipefail
 # seams only: a gate run has to examine the whole working tree.
 cd "${HCR:-$(git rev-parse --show-toplevel)}"
 
+# --- Scope ------------------------------------------------------------------
+# Scan the INDEX, not the working tree. The commit being certified contains the
+# index, so a brand-new staged source file is scanned while another lane's
+# untracked work-in-progress cannot fail this commit -- prek's stash hides
+# tracked dirt but leaves untracked files, which is how a peer's half-finished
+# file used to fail someone else's push. HCR points the scan at a fixture tree
+# (the negative probe), which is not a git checkout, so that seam keeps the
+# working-tree walk.
+tree_scope() {
+    [ -n "${HCR:-}" ] && return 0
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+    return 1
+}
+
+scope_all=()
+scope_cite=()
+scope_glob=()
+scope_cite_glob=()
+scope_code=()
+if tree_scope; then
+    # An empty list means rg defaults to the working tree, which keeps the
+    # fixture seam's reported paths identical to a historical run.
+    scope_glob=(-g '!rust/vendor/**' -g '!tier3-oracle/src*/**')
+    scope_cite_glob=("${scope_glob[@]}" -g '!scripts/hooks/comment-hygiene*')
+    scope_code=(src tests rust/crates run_bot.sh scripts examples justfile prek.toml rust/Cargo.toml .github tier3-oracle)
+else
+    # The exclusions ride the pathspec, not rg's -g: an explicitly listed file is
+    # searched whatever the glob list says.
+    mapfile -d '' -t scope_all < <(git ls-files -z --cached -- \
+        '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
+        ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**')
+    # Detector 3 exempts its own hook and censuses: the docstring above lists the
+    # shapes it bans, so the file that spells them is not evidence against itself.
+    mapfile -d '' -t scope_cite < <(git ls-files -z --cached -- \
+        '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
+        ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**' \
+        ':(exclude)scripts/hooks/comment-hygiene*')
+    # Detector 2 scans shipped code only, so the index listing is filtered by
+    # root and by extension here: rg's glob list cannot narrow explicitly
+    # listed files, and a git pathspec ORs its patterns rather than intersecting
+    # them.
+    # Single-quoted: an unquoted pattern in an array literal is pathname-expanded
+    # against the working tree at assignment, which silently replaces the glob
+    # with today's matches.
+    code_roots=('src/' 'tests/' 'rust/crates/' 'scripts/' 'examples/' '.github/' 'tier3-oracle/')
+    code_exact=('run_bot.sh' 'justfile' 'prek.toml' 'rust/Cargo.toml')
+    code_excludes=('rust/crates/*/tests/*' 'rust/crates/*/benches/*' 'rust/crates/*/examples/*' \
+                   'tier3-oracle/artifacts/*' 'tier3-oracle/src*/*' 'scripts/hooks/comment-hygiene*')
+    while IFS= read -r -d '' f; do
+        skip=0
+        for pat in "${code_excludes[@]}"; do
+            case "$f" in $pat) skip=1 ;; esac
+        done
+        [ "$skip" -eq 1 ] && continue
+        in_root=0
+        for root in "${code_roots[@]}"; do
+            case "$f" in "$root"*) in_root=1 ;; esac
+        done
+        for exact in "${code_exact[@]}"; do
+            [ "$f" = "$exact" ] && in_root=1
+        done
+        [ "$in_root" -eq 1 ] && scope_code+=("$f")
+    done < <(git ls-files -z --cached -- '*.py' '*.rs' '*.sh' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sol' 'justfile')
+fi
+
 waf="${WAF:-scripts/hooks/comment-hygiene-waivers.txt}"
 census="${CHF:-scripts/hooks/comment-hygiene-census.txt}"
 # Migration-work-item labels ("ADR-005 slice <NN>[x]", "Plan <NNN>")
@@ -112,20 +177,12 @@ label='(\b[Ss]lices?([[:space:]]+|-)[0-9]+[a-z]?\b)|(\b[Pp]lan([[:space:]]+|-)[0
 pat="(${label})|([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))"
 
 fail=0
-# rg, not git grep: git grep only sees files the index knows about, so a
-# brand-new untracked source file gets no scan at all. rg walks the
-# working tree (gitignore-aware), matching Detector 2's view.
 command -v rg >/dev/null 2>&1 || {
   echo "comment-hygiene: rg not found; refusing to run both detectors blind" >&2
   exit 1
 }
 hits="$(rg -n --no-heading -e "$pat" \
-  -g '*.py' -g '*.rs' -g '*.pyi' -g '*.toml' \
-  -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.sol' \
-  -g 'justfile' \
-  -g '!rust/vendor/**' \
-  -g '!tier3-oracle/src*/**' \
-  2>/dev/null || true)"
+  "${scope_glob[@]}" "${scope_all[@]}" 2>/dev/null || true)"
 if [ -n "$hits" ]; then
   while IFS= read -r line; do
     path="${line%%:*}"
@@ -153,18 +210,8 @@ fi
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 rg -n --no-heading -P \
-  -g '*.py' -g '*.rs' -g '*.sh' \
-  -g '*.pyi' -g '*.toml' -g '*.yml' -g '*.yaml' -g '*.sol' \
-  -g 'justfile' \
-  -g '!rust/crates/**/tests/**' \
-  -g '!rust/crates/**/benches/**' \
-  -g '!rust/crates/**/examples/**' \
-  -g '!tier3-oracle/artifacts/**' \
-  -g '!tier3-oracle/src*/**' \
-  -g '!scripts/hooks/comment-hygiene*' \
   '(?<![A-Za-z0-9_])[A-Z0-9]{6}(?![A-Za-z0-9_])' \
-  src tests rust/crates run_bot.sh scripts examples \
-  justfile prek.toml rust/Cargo.toml .github tier3-oracle >"$tmp" 2>/dev/null || true
+  "${scope_code[@]}" >"$tmp" 2>/dev/null || true
 
 bare_fail="$(awk -v CENSUS="$census" '
   BEGIN {
@@ -240,14 +287,8 @@ fi
 d3_tmp="$(mktemp)"
 trap 'rm -f "$tmp" "$d3_tmp"' EXIT
 d3='(\btodo[ \t]*[-_][ \t]*[0-9a-f]{4,}\b)|(\btodo\([a-z][a-z0-9_-]*\))|(\bepic\b[ \t]+[a-z0-9][a-z0-9_-]*)|(\bslice\b[ \t-]+[a-z0-9_-]*[0-9][a-z0-9_-]*)|(\bphase\b[ \t]+[a-z][0-9]\b)|(\b(?:pre|post)-epic\b)'
-rg -n -o --no-heading -i -P \
-  -g '*.py' -g '*.rs' -g '*.pyi' -g '*.toml' \
-  -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.sol' \
-  -g 'justfile' \
-  -g '!rust/vendor/**' \
-  -g '!tier3-oracle/src*/**' \
-  -g '!scripts/hooks/comment-hygiene*' \
-  -e "$d3" >"$d3_tmp" 2>/dev/null || true
+rg -n -o --no-heading -i -P -e "$d3" \
+  "${scope_cite_glob[@]}" "${scope_cite[@]}" >"$d3_tmp" 2>/dev/null || true
 d3_out="$(awk -v CENSUS="$ccf" '
   BEGIN {
     while ((getline row < CENSUS) > 0) {
