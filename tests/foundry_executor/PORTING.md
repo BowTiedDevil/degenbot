@@ -122,7 +122,7 @@ expansion. Owning tasks are the port epic's ergo IDs.
 | `test_erc6909.py` | 5 | 5 | EMCYDR | test/ERC6909.t.sol | ported (green) | View surface (balance/allowance/operator), V4_MINT_COMPACT entry, two-phase V4_BURN_COMPACT settlement (exact WETH take), and `test_mint_vs_take_gas` as ONE self-contained named comparison (disposition 11): TAKE and MINT variants each run from the same pristine state behind a state snapshot, no module-global summary, mint-cheaper asserted. All executions keep the source's `config = 2`. Q3UOC6 splits the two arms into shared `_runTakeArm`/`_runMintArm` bodies and measures each as its own test (`testGasEvidenceErc6909Take`, `testGasEvidenceErc6909Mint`, 7 tests total), so `.gas-snapshot-evidence` carries `erc6909/take` and `erc6909/mint` labels while the comparison keeps the `mint < take` assertion. |
 | `test_erc6909_composability.py` | 6 | 7 | EMCYDR | test/ERC6909Composability.t.sol | ported (green) | 7 source cases + 1 added direct case: mint-profit V4-V4-V4 with the source's bribe parametrization (simulated receipt `(gross_profit, bribe_paid)` pinned, bribe floored at the executor's physical WETH+ETH = 0), MINT→compound→withdraw three-tx flows (warmup-wei accounting exact: every ERC6909 WETH expectation carries the +1), V2-V4-V4 / V3-V4-V4 MINT profit, WETH_DEPOSIT-funded settlement. The added `testBurnFundsResidualWethDebit` runs the V4→V2→V2 borrow whose -1 WETH PM debit delta netting never covers: the negative control (same stream without the burn) pins the PM's exact `CurrencyNotSettled:<weth>:-1e18`, and the paying run settles it with zero ERC20 transfers — ERC6909 down by exactly 1 WETH, executor physical WETH up by the full V2c output. |
 | `test_events.py` | 6 | 6 | AL53BE | test/Events.t.sol | ported (green) | The 6 source cases (ERC20/WETH transfer surface, V2 `Sync`+`Swap`) plus 5 documented exit-path additions. Q3UOC6 closes the row's remaining gap in `test/EventTopicFidelity.t.sol`: every topic the fakes emit is checked against a REAL emission from the canonical artifact (`UniswapV2Pair`, `UniswapV3Pool`, the v4-core `PoolManager`) — V2 `Sync`/`Swap`, V3 `Swap`, V4 `Initialize`/`ModifyLiquidity`/`Donate`, and the ERC6909 `Approval`/`OperatorSet` surface — so a fake declaring a wrong field width cannot silently zero the lane's topic0 counts. Recorded divergences: the fake V3 pool models `Swap` only (no `Mint`/`Burn`/`Collect`/`Flash`), and the ERC6909 mint `Transfer` is emitted for real on the fake while the canonical declaration is the pinned signature (the canonical mint is lock- and settlement-gated). |
-| `test_execution_receipt.py` | 7 | 12 | LVVJOU | test/ExecutionReceipt.t.sol | ported (green) | Hardened: `InvalidProfitMode(mode)` argument pins for all four invalid modes, exact `InsufficientProfit(actual, expected)` pins (decrease, shortfall, bribe floor), `Unauthorized(caller)` sweep pin. |
+| `test_execution_receipt.py` | 7 | 12 | LVVJOU | test/ExecutionReceipt.t.sol | ported (green) | 13 Forge tests = 12 source cases + 1 added receipt boundary: exact `InvalidProfitMode(mode)` argument pins for all four invalid modes, exact `InsufficientProfit(actual, expected)` pins (decrease, shortfall, bribe floor), the `Unauthorized(caller)` sweep pin, and a physical-balance-capped bribe that reports the ACTUAL paid amount (seeded physical balance drained to zero, retained profit left as ERC6909 claims). |
 | `test_fake_abi_fidelity.py` | 6 | 9 | QKQOIZ | test/FakeABIFidelity.t.sol | ported (green) | 6 source functions / 9 collected cases. The two parametrized source cases became one NAMED test per variant (three V2 callback variants, two V3 variants), so each collected case keeps its own test name and row: 9 tests for 9 cases. Every callback case pins the intentional `ECHO_VERIFIED` revert payload exactly — `EchoCallee` raises it only AFTER its length and digest checks pass, because revert data is the only thing that survives the callback frame's rollback — and every callback case also drives a corrupted-digest control that must fail the earlier check (`ECHO_BAD_DIGEST`), so the marker is evidence of a verified payload rather than a swallowed error. The four V4 cases keep their oversized `bytes` payloads (1200-byte unlock round trip with exact `last_len`/`last_digest` pins, 600-byte swap hook data, 100-byte modifyLiquidity and donate hook data) and pin the fake's lock gate (`ManagerLocked`) instead of a length rejection, which is the fidelity claim these fakes exist to make: the entry points mirror real unbounded `bytes` and must not inherit the fake's own 32-byte next-swap cap. |
 | `test_fake_pool_manager_parity.py` | 30 | 29 | LEZT6O | test/PoolManagerParity.t.sol (fork lane) | ported (green) (fork lane) | 30 defs / 29 collected (duplicate `test_double_unlock_reverts`; first definition shadowed) → 33 Forge tests = 29 ported + 4 added for the source's stated-but-unexecuted intentions: `testDoubleUnlockRevertsInsideCallback` (the shadowed definition's `AlreadyUnlocked`), `testSwapZeroAmountRevertsInsideUnlock` (the empty `test_swap_zero_amount_reverts`), `testClearExactPositiveDeltaInsideUnlock` (the guard-only clear case), `testUpdateDynamicLpFeeHookCallerUpdatesFee` (the hook-caller update Ape could not impersonate). Every negative case pins BOTH identities — the deployed manager's exact custom error and the fake's exact `Error(string)` — never a shared "both reverted". `just test-executor-pool-manager-parity` owns the lane (33 passed); the ordinary tree excludes it, so `just test-executor-tree` runs 427 passed, 0 failed, 0 skipped. The five historical fork failures are dispositioned under "Fork lane" below; at the baseline the standing archive endpoint ran the Ape module green (29 passed), confirming they were fork-setup failures. The `ExttloadComparator` artifact (+ `IExttloadComparator`) is built by the lane's pinned-vyper pipeline since QXIGKC. |
 | `test_initialize_and_opcodes.py` | 5 | 5 | LVVJOU | test/InitializeAndOpcodes.t.sol | ported (green) | Hardened: exact `Unauthorized(caller)` and `InvalidMsgValue(value)` pins. |
@@ -179,6 +179,7 @@ expansion. Owning tasks are the port epic's ergo IDs.
 
 | `test/AccessListBenchmark.t.sol` | 2 | Q3UOC6 | The optional RPC access-list lane (see the recipe row above): node identity (`eth_chainId` / `web3_clientVersion`) and the same-call comparison, which re-serializes the returned entries and asserts the traced gas is one frame inside the listed estimate |
 
+| `test/HarnessPrimitives.t.sol` | 22 | QXIGKC | Named tests for the shared substrate primitives themselves — the encoders and their byte/length layouts, the generated `ExecutorErrors` vocabulary, the conservation diffs, the exact-revert negative-control matrix, the `parseJson*`/`toString` declarations, and the `ExttloadComparator`/`SolReference` artifact additions. No Ape module stands behind this file |
 | `test/RealLibraries.t.sol` | 8 | QKQOIZ | Canonical bytecode fidelity behind the fake-pool suites: `UniswapV2Pair` (solc 0.5.16) and `UniswapV3Pool` (solc 0.7.6) driven by the executor, plus the v4-core `PoolManager` (solc 0.8.26, EVM `cancun`) — 2 V2/V3 tests + 6 canonical-V4 tests. The V4 cases run the manager's own lock/transient-storage mechanics (unlock round trip and nested-unlock refusal, modifyLiquidity delta accounting read through `exttload`, take + sync/settle with the reserves snapshot, ERC6909 mint and burn, and one executor-driven swap whose amounts are read back out of the manager's `Swap` event) |
 | `src/Cmd.sol`, `src/TestBase.sol`, `src/Setup.sol`, `src/Vm.sol`, `src/generated/*` + `build_artifacts.py`, `build_solidity_artifacts.py`, `gen_interfaces.py`, `foundry.toml` | — | QXIGKC | Harness/artifact substrate. QXIGKC landed the shared primitives below; the canonical V4 `PoolManager` target in `build_solidity_artifacts.py` (with its `src/generated/IPoolManager.sol`) landed with its consumer, `test/RealLibraries.t.sol` |
 
@@ -239,7 +240,9 @@ All five were fork-setup failures, not contract-behavior facts: the Ape fork
 provider answered on a local chain where `REAL_PM` had no code, so
 `get_code(REAL_PM_ADDRESS)` returned `0x` and every typed `exttload` read into
 that account reverted on empty returndata. The standing environment serves the
-real account — the then-current Ape lane ran 29 passed (historical command:
+real account — the then-current Ape lane ran 29 passed against it (the Ape-era
+invocation, from before this manifest's cutover renamed the recipe and deleted
+`tests/executor/`:
 `just test-executor tests/executor/test_fake_pool_manager_parity.py -q -n0`) — and
 the Forge port pins the same claims to an explicitly created fork.
 
@@ -354,13 +357,23 @@ collection path; a bare name is module-level. The shadowed duplicate is marked.
 
 Each port task flips its rows' Status to "ported (green)" only after its scoped gate
 passes, appends any new disposition decisions discovered mid-port, and keeps this
-manifest the single migration checklist. Final acceptance (LSUERW) requires every
-module row retired, the 410-case census reconciled against the Foundry lanes (381
-offline + 29 fork collected cases at baseline), and all five known-red parity cases
-ported and PASSING against a validated archive fork with real PoolManager bytecode
-(the fork lane is green at 33 passed; the 29 collected cases carry the four
-executed intentions above)
-at the expected height — the reth archive node is part of the standing environment
-contract, and LEZT6O's fork lane must be green. Fail-closed behavior applies when an
-endpoint is invalid or unavailable (probe/diagnose and stop loudly), not as a
-substitute for passing the parity cases at final acceptance.
+manifest the single migration checklist.
+
+## Final acceptance (LSUERW, tree `df7122c4b`)
+
+Every module row above is retired: 47/47 `test_*.py` modules are `ported (green)`,
+each backed by named Forge tests whose assertions the row states, an explicit
+replacement/disposition, or a concrete retirement reason — no row rests on a name
+or a test count alone. The 410-case baseline census (381 offline + 29 fork
+collected cases) reconciles against the lanes: ordinary tree 427, production
+calldata 32, offline 459, live PoolManager parity 33, full lane 492, plus the
+on-demand access-list benchmark's 2 declared cases (that lane takes no part in a
+canonical gate). The fork lane is green at block
+22,000,000 against the reth archive node that is part of the standing environment
+contract: the five historical fork failures are ported and PASS against real
+PoolManager bytecode, and the 29 collected parity cases carry the four executed
+intentions above.
+
+Fail-closed behavior applies when an endpoint is invalid or unavailable
+(probe/diagnose and stop loudly), not as a substitute for passing the parity cases
+at final acceptance.
