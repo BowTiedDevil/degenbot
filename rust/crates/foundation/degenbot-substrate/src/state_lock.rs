@@ -434,18 +434,21 @@ pub fn dump_active_holds() -> String {
 /// the writer, the writer waits on read#1, and read#1 lives until the
 /// expression completes — which needs read#2. Both soak-2026-08-22
 /// deadlocks (`a3ab1c676` V3, `decf7cd8a` V4) were exactly this shape.
-/// Scope the first guard explicitly so it drops before the second
-/// acquires; the compiler cannot catch this class.
+/// The compiler cannot catch this class.
 ///
-/// The positive pattern is a **fused accessor** that takes the lock once and
-/// chains the whole lookup under that guard — see
-/// [`crate::registration_lifecycle`]'s
-/// `pool_tick_data_block_by_address` / `pool_tick_data_block_by_v4_key`.
+/// The lease is the structural remedy: [`StateLock::read_with`] /
+/// [`StateLock::write_with`] acquire exactly one guard and hand the closure
+/// `&T`/`&mut T`, so every step of a dependent lookup runs under that one
+/// acquisition and a second acquisition is not reachable from the closure.
+/// Use [`StateLock::read_at`] / [`StateLock::write_at`] for a single-step
+/// access, with the guard scoped so it drops before the next acquisition —
+/// the alternative ordering (read#1 held across the request for read#2) is
+/// what cycles.
 pub struct StateLock<T> {
     inner: RwLock<T>,
     /// Read-acquisition counter (see [`StateLock::read_acquires_for_tests`]):
-    /// a regression test asserts that a fused lookup takes the lock exactly
-    /// ONCE, because the nested-read self-deadlock class is otherwise
+    /// a regression test asserts that a fused/leased lookup takes the lock
+    /// exactly ONCE, because the nested-read self-deadlock class is otherwise
     /// observable only by hanging (see the `NEVER NEST ACQUISITIONS` note
     /// above). Test-only: the asserting test lives beside the fused accessors
     /// in this crate (`registration_anchor`), so the pool-state read path
@@ -567,6 +570,43 @@ impl<T> StateLock<T> {
             site,
             acquired: t0,
         }
+    }
+
+    /// Run `f` under ONE read guard — the guard-scoped read lease.
+    ///
+    /// A dependent lookup (e.g. `address → pool_id → liquidity clock`) chains
+    /// every step inside the closure instead of acquiring a second guard while
+    /// the first is alive. The closure receives `&T`, never the lock, so the
+    /// lookup cannot request the second acquisition that cycles the lock when
+    /// a writer queues between the two (see the `NEVER NEST ACQUISITIONS`
+    /// note on [`StateLock`]).
+    ///
+    /// Diagnostics are unchanged: the guard comes from [`Self::read_at`], so a
+    /// `#[track_caller]` acquire site, the wait/hold histograms, and slow-hold
+    /// forensics all report this call exactly as for a directly scoped guard.
+    /// The guard is released after `f` returns, before the lease result
+    /// escapes.
+    ///
+    /// [`Self::read_at`] remains the shape for a single-step read; reach for
+    /// this lease whenever one logical operation needs more than one read of
+    /// the same state.
+    #[track_caller]
+    pub fn read_with<R>(&self, site: LockSite, f: impl FnOnce(&T) -> R) -> R {
+        let guard = self.read_at(site);
+        f(&guard)
+    }
+
+    /// Run `f` under ONE write guard — the guard-scoped write lease.
+    ///
+    /// The mutable twin of [`Self::read_with`]: every step of a multi-step
+    /// mutation runs inside one acquisition, so no intermediate guard can be
+    /// held while the mutation requests another. The closure receives
+    /// `&mut T`; the guard is released before the lease result escapes, and
+    /// the hold forensics of [`Self::write_at`] apply unchanged.
+    #[track_caller]
+    pub fn write_with<R>(&self, site: LockSite, f: impl FnOnce(&mut T) -> R) -> R {
+        let mut guard = self.write_at(site);
+        f(&mut guard)
     }
 
     /// Test-only count of `read_at` acquisitions on THIS lock instance —
@@ -1170,5 +1210,109 @@ mod tests {
         // runs (log-content assertions belong to an integration harness).
         let lock: StateLock<u16> = StateLock::new(3);
         assert_eq!(*lock.write_at(LockSite::Core), 3);
+    }
+
+    // ---- guard-scoped leases (`read_with` / `write_with`) ----
+    //
+    // A lease takes exactly ONE guard and runs the whole dependent lookup
+    // inside it: the closure receives `&T`/`&mut T`, never the lock itself, so
+    // a lookup cannot request the second acquisition that cycles the lock.
+
+    #[test]
+    fn read_with_returns_the_closure_value_from_one_live_guard() {
+        let lock: StateLock<u64> = StateLock::new(7);
+        let mut writer_refused_inside = false;
+        let value = lock.read_with(LockSite::Core, |state| {
+            // The guard is live for the whole closure: no writer can take the
+            // lock while the lookup is in flight.
+            writer_refused_inside = lock.try_write_at(LockSite::Core).is_none();
+            *state
+        });
+        assert_eq!(value, 7, "the closure result is the lease result");
+        assert!(
+            writer_refused_inside,
+            "the lease holds its guard across the closure"
+        );
+        assert_eq!(lock.read_acquires_for_tests(), 1, "a lease acquires once");
+        assert!(
+            lock.try_write_at(LockSite::Core).is_some(),
+            "the guard is released when the lease returns"
+        );
+    }
+
+    #[test]
+    fn write_with_mutates_under_one_guard_and_returns_a_value() {
+        let lock: StateLock<String> = StateLock::new("a".into());
+        let len = lock.write_with(LockSite::Core, |state| {
+            state.push('b');
+            state.len()
+        });
+        assert_eq!(len, 2, "the closure result is the lease result");
+        assert_eq!(*lock.read_at(LockSite::Core), "ab");
+    }
+
+    #[test]
+    fn read_with_registers_and_releases_its_hold() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
+        let lock: StateLock<u8> = StateLock::new(0);
+        let key = lock.key_of();
+        let observed = lock.read_with(LockSite::Core, |state| {
+            let holds = ACTIVE_READS.lock().get(&key).map_or(0, Vec::len);
+            (*state, holds)
+        });
+        assert_eq!(observed, (0, 1), "the lease registers its hold");
+        assert!(
+            ACTIVE_READS.lock().get(&key).is_none(),
+            "the lease's guard drop releases the hold"
+        );
+        set_diag_enabled_for_tests(false);
+    }
+
+    #[test]
+    fn independent_guard_and_lease_accessors_compose() {
+        // Ordinary independent call sites keep `read_at`/`write_at` with an
+        // explicitly scoped guard; a lease is just another single acquisition.
+        let lock: StateLock<u32> = StateLock::new(0);
+        *lock.write_at(LockSite::Core) = 41;
+        assert_eq!(lock.read_with(LockSite::Core, |s| s.saturating_add(1)), 42);
+        assert_eq!(*lock.read_at(LockSite::Core), 41);
+        assert_eq!(
+            lock.read_acquires_for_tests(),
+            2,
+            "guard and lease acquisitions are each counted exactly once"
+        );
+    }
+
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn read_with_lease_completes_under_queued_writer() {
+        let lock = std::sync::Arc::new(StateLock::<u64>::new(0));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader_lock = std::sync::Arc::clone(&lock);
+        let reader = std::thread::spawn(move || {
+            let observed: Vec<u64> = (0..2_000)
+                .map(|_| reader_lock.read_with(LockSite::Core, |state| state.wrapping_add(1)))
+                .collect();
+            tx.send(observed).expect("send observations");
+        });
+        let writer_lock = std::sync::Arc::clone(&lock);
+        let writer = std::thread::spawn(move || {
+            for block in 0..2_000 {
+                writer_lock.write_with(LockSite::Core, |state| *state = block);
+            }
+        });
+        // The watchdog is the assertion: a lookup that composed two
+        // acquisitions with a writer queued between them would park forever.
+        let observed = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("a lease lookup must complete under a queued writer");
+        writer.join().expect("writer joins");
+        reader.join().expect("reader joins");
+        assert_eq!(observed.len(), 2_000);
+        assert!(
+            observed.iter().all(|&value| (1..=2_000).contains(&value)),
+            "every lease observes a written value"
+        );
     }
 }

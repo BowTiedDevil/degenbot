@@ -5,67 +5,74 @@
 use alloy::primitives::Address;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 
-use crate::state_lock::StateLock;
+use crate::state_lock::{LockSite, StateLock};
 use crate::BotState;
 
+/// Guard-scoped leases for the registration-anchor lookups.
 ///
-/// Both chain the two-step lookup — V3 `address → pool_id → liquidity clock`,
-/// V4 `(pool_manager, pool_id) → pool_id → clock` — under ONE
-/// `read_at(LockSite::Registration)`, so a caller cannot hold read#1 while
-/// requesting read#2 on the same lock. That nested shape is the
-/// soak-2026-08-22 self-deadlock class (a writer queued between the two reads
-/// cycles the lock); see the `NEVER NEST ACQUISITIONS` note in
-/// [`crate::state_lock`]. **Single acquisition is the invariant:**
-/// keep these fused rather than recomposing the single-step accessors at a
-/// call site.
+/// Each accessor takes the `Registration` read exactly once — through
+/// [`StateLock::read_with`] — and chains the whole two-step lookup inside that
+/// one closure: V3 `address → pool_id → value`, V4
+/// `(pool_manager, pool_id) → pool_id → value`. A caller receives the value,
+/// never a guard, so no path here can hold read#1 while requesting read#2 on
+/// the same lock: the soak-2026-08-22 cycle (a writer queued between two
+/// nested reads) is not reachable from these lookups. Rationale, and the
+/// single-step alternative, in the `NEVER NEST ACQUISITIONS` note on
+/// [`crate::state_lock`].
 ///
-/// Returns `0` when the pool is unregistered — the same unset-clock sentinel
-/// as [`BotState::pool_tick_data_block`] — so the caller's fallback to the
-/// aggregate snapshot block `S` is unchanged.
+/// The clock accessors return `0` when the pool is unregistered — the same
+/// unset-clock sentinel as [`BotState::pool_tick_data_block`] — so the
+/// caller's fallback to the aggregate snapshot block `S` is unchanged; the
+/// spacing accessors return `None` for an unregistered key.
 impl StateLock<BotState> {
-    /// V3: pool address → `pool_id` → `tick_data_block` under one read.
+    /// V3: pool address → `pool_id` → `tick_data_block` under one read lease.
     #[must_use]
     pub fn pool_tick_data_block_by_address(&self, address: &Address) -> u64 {
-        let state = self.read_at(crate::state_lock::LockSite::Registration);
-        let Some(id) = state.pool_id_by_address(address) else {
-            return 0;
-        };
-        state.pool_tick_data_block(id)
+        self.read_with(LockSite::Registration, |state| {
+            let Some(id) = state.pool_id_by_address(address) else {
+                return 0;
+            };
+            state.pool_tick_data_block(id)
+        })
     }
 
-    /// V3: pool address → immutable tick spacing under one read.
+    /// V3: pool address → immutable tick spacing under one read lease.
     #[must_use]
     pub fn pool_tick_spacing_by_address(&self, address: &Address) -> Option<i32> {
-        let state = self.read_at(crate::state_lock::LockSite::Registration);
-        let id = state.pool_id_by_address(address)?;
-        state
-            .pool_slice::<degenbot_pools::V3PoolIdentity>(id)
-            .map(|identity| identity.tick_spacing)
+        self.read_with(LockSite::Registration, |state| {
+            let id = state.pool_id_by_address(address)?;
+            state
+                .pool_slice::<degenbot_pools::V3PoolIdentity>(id)
+                .map(|identity| identity.tick_spacing)
+        })
     }
 
-    /// V4: `(pool_manager, pool_id)` → immutable tick spacing under one read.
+    /// V4: `(pool_manager, pool_id)` → immutable tick spacing under one read
+    /// lease.
     #[must_use]
     pub fn pool_tick_spacing_by_v4_key(
         &self,
         pool_manager: Address,
         pool_id: &V4PoolId,
     ) -> Option<i32> {
-        let state = self.read_at(crate::state_lock::LockSite::Registration);
-        let id = state.pool_id_by_key(pool_manager, pool_id)?;
-        state
-            .pool_slice::<degenbot_pools::V4PoolIdentity>(id)
-            .map(|identity| identity.pool_key.tick_spacing)
+        self.read_with(LockSite::Registration, |state| {
+            let id = state.pool_id_by_key(pool_manager, pool_id)?;
+            state
+                .pool_slice::<degenbot_pools::V4PoolIdentity>(id)
+                .map(|identity| identity.pool_key.tick_spacing)
+        })
     }
 
-    /// V4: `(pool_manager, pool_id)` → `pool_id` → `tick_data_block`
-    /// under one read.
+    /// V4: `(pool_manager, pool_id)` → `pool_id` → `tick_data_block` under one
+    /// read lease.
     #[must_use]
     pub fn pool_tick_data_block_by_v4_key(&self, pool_manager: Address, pool_id: &V4PoolId) -> u64 {
-        let state = self.read_at(crate::state_lock::LockSite::Registration);
-        let Some(id) = state.pool_id_by_key(pool_manager, pool_id) else {
-            return 0;
-        };
-        state.pool_tick_data_block(id)
+        self.read_with(LockSite::Registration, |state| {
+            let Some(id) = state.pool_id_by_key(pool_manager, pool_id) else {
+                return 0;
+            };
+            state.pool_tick_data_block(id)
+        })
     }
 }
 
@@ -87,15 +94,9 @@ mod tests {
 
     // ── Fused single-acquisition lookups ────────────────────────
     //
-    // The two seed-anchor sites used to compose
-    // `pool_id_by_address`/`pool_id_by_key` with `pool_tick_data_block`
-    // in ONE expression, holding read#1 as the expression temporary while the
-    // closure requested read#2 on the same `StateLock`. With a writer queued
-    // between them that is a cycle (soak-2026-08-22: read#2 parks behind the
-    // writer, the writer waits on read#1, and read#1 lives until the
-    // expression completes). The fused accessors take
-    // `read_at(Registration)` once; the tests below pin both the hazard and
-    // the single-acquisition invariant.
+    // The tests below pin the single-acquisition invariant of the leased
+    // lookups, and calibrate the acquisition counter against the
+    // one-expression composition that takes two reads.
 
     /// Register a V3 pool whose liquidity clock (`tick_data_block`) is
     /// `clock` — the value a fused lookup must return.
@@ -144,7 +145,7 @@ mod tests {
         .expect("test setup: V4 registration with a liquidity clock")
     }
 
-    /// A fused lookup takes `read_at(LockSite::Registration)` EXACTLY ONCE.
+    /// A leased lookup takes the `Registration` read EXACTLY ONCE.
     ///
     /// Chosen test design (the task allowed either this or reproducing the
     /// hang): the lock's test-only acquisition counter is the assertion,
@@ -206,6 +207,22 @@ mod tests {
             "fused V4 lookup returns the pool's liquidity clock"
         );
 
+        let before = core.read_acquires_for_tests();
+        assert_eq!(core.pool_tick_spacing_by_address(&addr), Some(60));
+        assert_eq!(
+            core.read_acquires_for_tests() - before,
+            1,
+            "the fused V3 tick-spacing lookup must take exactly one Registration read"
+        );
+
+        let before = core.read_acquires_for_tests();
+        assert_eq!(core.pool_tick_spacing_by_v4_key(pm, &pid), Some(10));
+        assert_eq!(
+            core.read_acquires_for_tests() - before,
+            1,
+            "the fused V4 tick-spacing lookup must take exactly one Registration read"
+        );
+
         // Unregistered keys keep the unset-clock sentinel 0, still one read.
         let before = core.read_acquires_for_tests();
         assert_eq!(
@@ -217,6 +234,18 @@ mod tests {
             core.read_acquires_for_tests() - before,
             2,
             "one read per fused lookup, registered or not"
+        );
+
+        let before = core.read_acquires_for_tests();
+        assert_eq!(
+            core.pool_tick_spacing_by_address(&Address::from([0xeeu8; 20])),
+            None
+        );
+        assert_eq!(core.pool_tick_spacing_by_v4_key(pm, &[0xeeu8; 32]), None);
+        assert_eq!(
+            core.read_acquires_for_tests() - before,
+            2,
+            "one read per fused spacing lookup, registered or not"
         );
     }
 
@@ -236,8 +265,13 @@ mod tests {
         let (observed_tx, observed_rx) = std::sync::mpsc::channel();
         let reader_core = Arc::clone(&core);
         let reader = std::thread::spawn(move || {
-            let observed: Vec<u64> = (0..2_000)
-                .map(|_| reader_core.pool_tick_data_block_by_address(&addr))
+            let observed: Vec<(u64, Option<i32>)> = (0..2_000)
+                .map(|_| {
+                    (
+                        reader_core.pool_tick_data_block_by_address(&addr),
+                        reader_core.pool_tick_spacing_by_address(&addr),
+                    )
+                })
                 .collect();
             observed_tx.send(observed).expect("send observations");
         });
@@ -258,8 +292,10 @@ mod tests {
         reader.join().expect("reader joins");
         assert_eq!(observed.len(), 2_000);
         assert!(
-            observed.iter().all(|&clock| clock == 4242),
-            "every fused lookup observes the same registered liquidity clock"
+            observed
+                .iter()
+                .all(|&(clock, spacing)| clock == 4242 && spacing == Some(60)),
+            "every fused lookup observes the registered clock and tick spacing"
         );
     }
 }

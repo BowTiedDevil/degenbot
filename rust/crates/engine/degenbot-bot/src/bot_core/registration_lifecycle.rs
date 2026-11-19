@@ -20,8 +20,8 @@
 //!   must pass before `Live` (no pool becomes solvable on unverified state);
 //! - a **tracked** pool whose post-drain pin is INCOMPLETE (the drain held a
 //!   pump event back at/below the map's own liquidity clock) is neither
-//!   verified nor promoted: the machine answers `Ok` with the pool still
-//!   `Quarantined`, deferring to a later call whose drain completed that
+//!   verified nor promoted: the pin parks it in `VerificationDeferred` and the
+//!   machine answers `Ok`, deferring to a later call whose drain completed that
 //!   block. `Ok` therefore means "this lifecycle call finished", never
 //!   unconditionally "verified".
 //!
@@ -197,10 +197,11 @@ where
             key.take_seed(&mut state)
         };
         if let Some(seed) = seed {
-            // Single acquisition by construction: the fused accessor chains
-            // key → liquidity clock under ONE `read_at(Registration)`. Never
-            // recompose the two single-step reads here — nested reads are a
-            // self-deadlock when a writer queues between them (soak-2026-08-22).
+            // Single acquisition by construction: the leased accessor chains
+            // key → liquidity clock inside ONE `read_with(Registration)`.
+            // Never recompose the two single-step reads here — nested reads
+            // are a self-deadlock when a writer queues between them
+            // (soak-2026-08-22).
             let own = key.own_liquidity_clock(core);
             let seed_block = if own > 0 { own } else { snapshot_block };
             verify_seed(seed, seed_block).await?;
@@ -221,8 +222,12 @@ where
 
     // An INCOMPLETE drain is neither verifiable nor promotable: the seam stored
     // no pair (dropping any stale one), so return WITHOUT step-2 and WITHOUT
-    // `set_live`. The pool stays `Quarantined`, and a later call whose drain has
-    // completed that block re-pins, verifies and promotes it.
+    // `set_live`. The pin has already parked the pool in
+    // `RegistrationLifecycle::VerificationDeferred` — verification is still
+    // owed, so its live events keep buffering exactly as under `Quarantined`
+    // and the orphan sweep skips it (`VerificationDeferred` is not an orphan). A
+    // later call whose drain has completed that block re-quarantines, re-pins,
+    // verifies and promotes it.
     if let PostDrainPin::Incomplete { .. } = pin_outcome {
         return Ok(LifecycleOutcome::Deferred);
     }

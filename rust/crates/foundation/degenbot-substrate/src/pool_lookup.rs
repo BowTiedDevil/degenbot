@@ -152,10 +152,10 @@ impl PoolLookup {
     /// registered concentrated-liquidity pool.
     ///
     /// Takes the lock rather than a guard, exactly like
-    /// [`Self::own_liquidity_clock`]: the state owner's fused accessors chain
-    /// key → spacing under ONE `read_at(Registration)`, so this must not be
-    /// recomposed from two single-step reads (nested reads are a self-deadlock
-    /// when a writer queues between them — soak-2026-08-22).
+    /// [`Self::own_liquidity_clock`]: the state owner chains key → spacing
+    /// inside one `read_with(Registration)` lease, so a caller never holds a
+    /// read while requesting a second one on the same lock (nested reads are a
+    /// self-deadlock when a writer queues between them — soak-2026-08-22).
     #[must_use]
     pub fn tick_spacing(&self, core: &StateLock<BotState>) -> Option<i32> {
         match self {
@@ -230,9 +230,9 @@ impl PoolLookup {
     /// The pool's OWN liquidity clock (the block its tick data reflects); `0`
     /// when unset.
     ///
-    /// Takes the lock rather than a guard: the state owner's fused accessor
-    /// chains key → clock under ONE `read_at(Registration)`, so this must not
-    /// be recomposed from two single-step reads (nested reads are a
+    /// Takes the lock rather than a guard: the state owner chains key → clock
+    /// inside one `read_with(Registration)` lease, so a caller never holds a
+    /// read while requesting a second one on the same lock (nested reads are a
     /// self-deadlock when a writer queues between them — soak-2026-08-22).
     pub fn own_liquidity_clock(&self, core: &StateLock<BotState>) -> u64 {
         match self {
