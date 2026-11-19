@@ -388,6 +388,7 @@ samples, and `--workspace` when a command must cover every member.
 | Build the two default Rust entry points | `cargo build --manifest-path rust/Cargo.toml` |
 | Check pure-Rust consumer defaults | `just check-rust-consumer` |
 | Check binding defaults without extension link mode | `just check-rust-binding-default` |
+| Check the no-default (no-bot) binding module tree | `just check-rust-binding-no-default` |
 | Check the exact development-wheel features | `just check-rust-dev-features` |
 | Check one development-tool lane (`default`, `fixture-sql-ledger`, `solver-capture-fixtures`, `solver-cache-lab`, `solver-cache-telemetry`, `solver-hotpath`, `solver-envelope`, `engine-jit`, `engine-prometheus`) | `just check-dev-tools <lane>` |
 | Check the release-equivalent extension set | `just check-rust-extension-release` |

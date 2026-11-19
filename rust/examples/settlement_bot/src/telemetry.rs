@@ -16,7 +16,7 @@
 //!    take effect — and a `[telemetry]` table in the operator file does too.
 //! 2. `tracing_subscriber` console layer — compact fmt on stderr, filtered by
 //!    the shared ADR-043 section 4 plan
-//!    (`bot_telemetry::resolve_filters`). The example is the Python driver's
+//!    (`degenbot::telemetry::resolve_filters`). The example is the Python driver's
 //!    parity twin, so it adopts the Python-driver wiring default (`info`) so
 //!    the boot census the Python boot emits is actually visible.
 //! 3. OTLP span layer — env-gated (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` >
@@ -49,7 +49,8 @@
 
 use std::net::SocketAddr;
 
-use degenbot::bot::{metrics, otel, telemetry as bot_telemetry};
+use degenbot::bot::{metrics, otel};
+use degenbot::telemetry as filter_plan;
 use degenbot::{op_info, op_warn};
 use tracing_subscriber::layer::{Layer, SubscriberExt as _};
 use tracing_subscriber::EnvFilter;
@@ -112,7 +113,7 @@ pub(crate) fn init(loaded: &degenbot::config::LoadedConfig) -> TelemetryBoot {
     let _ = degenbot::substrate::stance::install(std::sync::Arc::new(loaded.config.clone()));
 
     // Step 2: resolve the console/OTel record filters (ADR-043 section 4).
-    let plan = bot_telemetry::resolve_filters(bot_telemetry::CONSOLE_WIRING_DEFAULT_PYTHON);
+    let plan = filter_plan::resolve_filters(filter_plan::CONSOLE_WIRING_DEFAULT_PYTHON);
     let otel_enabled = degenbot::config::holder::config().telemetry.otel;
     let endpoint_env = OTLP_ENDPOINT_ENVS
         .into_iter()

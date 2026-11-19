@@ -1096,6 +1096,14 @@ check-rust-consumer:
 check-rust-binding-default:
     cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml
 
+# Check the binding crate with no domain feature on (`--no-default-features`):
+# the module tree a consumer that selects domains explicitly compiles, and the
+# shape that proves each `#[pymodule_export]` carries the gate its module needs.
+# Only the domains the caller names exist here, so an export reaching a gated
+# module without its own gate fails to compile.
+check-rust-binding-no-default:
+    cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --no-default-features
+
 # Check the dev-wheel feature set. Keep this explicit: these profiling and
 # telemetry features are not part of the release-wheel or standalone-default
 # matrix. The dev wheel uses the system allocator; mimalloc is a separate opt-in.

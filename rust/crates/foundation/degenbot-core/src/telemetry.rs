@@ -14,6 +14,10 @@
 //!   `op_error!`, `op_span!`.
 //! - the engine-span guard ([`guard_diag`]) that fires when a diagnostic is
 //!   emitted with no active engine span (ADR-043 §3).
+//! - the console-vs-trace filter split ([`resolve_filters`]): the ONE
+//!   resolution of both record layers every sink installs (the Python driver,
+//!   the standalone console, the `OTel` layer), so no sink can invent its own
+//!   precedence.
 //!
 //! The core crates emit through these macros; the pure-Rust binary and the
 //! `PyO3` binding install sinks (the facade never installs a subscriber).
@@ -100,6 +104,103 @@ pub fn guard_diag(context: &str) {
 /// The diagnostic target used by failure events (matches `degenbot-bot`'s
 /// `DIAGNOSTIC_TARGET`); panic failures ride it.
 pub const DIAGNOSTIC_TARGET: &str = "degenbot::diag";
+
+/// Third-party transport crates whose routine INFO is throttled to warn on
+/// every sink (their WARN/ERROR still pass).
+pub const ALLOY_NOISE_TARGETS: &[&str] = &[
+    "alloy_pubsub",
+    "alloy_transport",
+    "alloy_transport_ws",
+    "alloy_transport_ipc",
+    "alloy_transport_http",
+    "alloy_provider",
+    "alloy_rpc",
+    "alloy_network",
+    "alloy_contract",
+    "tungstenite",
+];
+
+/// Console wiring default for the Python driver (ADR-043 section 6).
+pub const CONSOLE_WIRING_DEFAULT_PYTHON: &str = "info";
+/// Console wiring default for the standalone Rust bot (ADR-043 section 6).
+pub const CONSOLE_WIRING_DEFAULT_RUST: &str = "warn";
+/// `OTel` record-layer default (ADR-043 section 4): all of degenbot at debug,
+/// everything else at warn.
+pub const OTEL_RECORD_DEFAULT: &str = "warn,degenbot=debug";
+
+/// The resolved filter directives for the two record layers (ADR-043 §4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilterPlan {
+    /// Console (stderr fmt + Python forwarder) directives.
+    pub console: String,
+    /// `OTel` record-layer directives.
+    pub otel: String,
+    /// True when an explicit `RUST_LOG` supplied both; the config knobs are
+    /// then ignored (with one WARN naming the active source).
+    pub rust_log: bool,
+}
+
+/// Resolve the console + `OTel` record filters (ADR-043 §4).
+///
+/// Precedence is a BRANCH: an explicit `RUST_LOG` is used verbatim on both
+/// layers and `telemetry.log_level` / `telemetry.diag` are ignored (one WARN
+/// names the active source). Otherwise the console layer is `wiring_default`,
+/// overridden by `telemetry.log_level` and escalated per-domain by the
+/// validated `telemetry.diag` map; the `OTel` layer keeps its
+/// `warn,degenbot=debug` default.
+#[must_use]
+pub fn resolve_filters(wiring_default: &str) -> FilterPlan {
+    use std::fmt::Write as _;
+
+    if let Ok(raw) = std::env::var("RUST_LOG") {
+        if !raw.trim().is_empty() {
+            warn_config_filters_ignored_once();
+            return FilterPlan {
+                console: raw.clone(),
+                otel: raw,
+                rust_log: true,
+            };
+        }
+    }
+
+    let cfg = ::degenbot_config::holder::config();
+    let level = cfg
+        .telemetry
+        .log_level
+        .map_or_else(|| wiring_default.to_string(), |l| l.to_string());
+    let mut console = level;
+    for target in ALLOY_NOISE_TARGETS {
+        let _ = write!(console, ",{target}=warn");
+    }
+    for (domain, level) in &cfg.telemetry.diag {
+        let _ = write!(console, ",degenbot::{domain}={level}");
+    }
+    let mut otel = OTEL_RECORD_DEFAULT.to_string();
+    for target in ALLOY_NOISE_TARGETS {
+        let _ = write!(otel, ",{target}=warn");
+    }
+
+    FilterPlan {
+        console,
+        otel,
+        rust_log: false,
+    }
+}
+
+/// Emit the "config knobs ignored under `RUST_LOG`" WARN exactly once.
+fn warn_config_filters_ignored_once() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let cfg = ::degenbot_config::holder::config();
+        if cfg.telemetry.log_level.is_some() || !cfg.telemetry.diag.is_empty() {
+            crate::op_warn!(
+                domain = pump,
+                source = "RUST_LOG",
+                "RUST_LOG is set; telemetry.log_level and telemetry.diag are ignored (RUST_LOG is the active filter source)"
+            );
+        }
+    });
+}
 
 /// Install the process panic hook (ADR-043 §2).
 ///
@@ -436,5 +537,44 @@ mod tests {
             let span = crate::op_span!(domain = sim, "degenbot.sim.probe", block = 1u64);
             let _guard = span.enter();
         });
+    }
+
+    /// The filter plan is ONE resolution both record layers take: an explicit
+    /// `RUST_LOG` is used verbatim on both (`rust_log` reports it), and the
+    /// config branch keeps the `OTel` record default while both layers
+    /// throttle the third-party transport targets. Written against whatever
+    /// environment runs the suite: the branch flag must name the source the
+    /// process actually has, so either branch proves its own half.
+    #[test]
+    fn filter_plan_names_its_source_and_throttles_transport_noise() {
+        let plan = super::resolve_filters("info");
+        let rust_log = std::env::var("RUST_LOG").is_ok_and(|raw| !raw.trim().is_empty());
+        assert_eq!(
+            plan.rust_log, rust_log,
+            "the plan must name the filter source the process used"
+        );
+        if plan.rust_log {
+            assert_eq!(
+                plan.console, plan.otel,
+                "RUST_LOG is used verbatim on both record layers"
+            );
+            return;
+        }
+        assert!(
+            plan.console.starts_with("info,"),
+            "the wiring default leads the console layer: {plan:?}"
+        );
+        let mut expected_otel = super::OTEL_RECORD_DEFAULT.to_string();
+        for target in super::ALLOY_NOISE_TARGETS {
+            let _ = write!(expected_otel, ",{target}=warn");
+            assert!(
+                plan.console.contains(&format!(",{target}=warn")),
+                "the console layer throttles {target}"
+            );
+        }
+        assert_eq!(
+            plan.otel, expected_otel,
+            "the OTel layer keeps its record default plus the transport throttle"
+        );
     }
 }

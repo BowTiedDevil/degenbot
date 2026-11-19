@@ -150,7 +150,7 @@ contract and this section tracks the gap.
   corrected accordingly).
 - **Phase 4** — landed: `telemetry.log_level` (closed enum, defaults to the
   wiring default) and `telemetry.diag` (validated map, ships empty) resolve
-  both record-layer filters through `degenbot_bot::telemetry::resolve_filters`;
+  both record-layer filters through `degenbot_core::telemetry::resolve_filters`;
   an explicit `RUST_LOG` is a branch that wins verbatim on every sink (the
   config knobs are ignored, with one WARN naming the active source). The
   console writer is single-owner and bounded with its drop counter;

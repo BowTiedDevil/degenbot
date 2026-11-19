@@ -35,11 +35,10 @@ degenbot-config.workspace = true
 # `warn_retired_env_names`, the worker-census boot line, and the `op_*` macros
 # the boot announcements ride.
 degenbot-core.workspace = true
-# The sink crate: `telemetry::resolve_filters` is the SAME console/record
-# filter resolution `degenbot-python` boots (ADR-043 section 4), and
-# `bot_core::stance` is the typed-config install site. Depending on the sink
-# crate - never on a domain-engine crate - is what keeps the console's log
-# surface identical to the Python driver's.
+# The sink crate: only the substrate telemetry port the one-shot console boots
+# rides here. The console/record filter resolution is `degenbot-core`'s
+# (ADR-043 section 4) - never a domain-engine crate's - which keeps the
+# console's log surface identical to the Python driver's.
 degenbot-bot.workspace = true
 degenbot-substrate.workspace = true
 # argv declaration: the ONE clap tree (ADR-051 D2).

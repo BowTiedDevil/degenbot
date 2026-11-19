@@ -943,6 +943,7 @@ mod tests {
     use ::degenbot_config::{
         BotConfig, BotConfigLoader, MapEnv, NodeScope, Source, StrategyArm, StrategyReadiness,
     };
+    #[cfg(feature = "submission")]
     use ::degenbot_strategy::Settlement;
 
     use super::{
@@ -1228,6 +1229,7 @@ mod tests {
     /// or whitespace-only set is the refusal shape both splitters agree on:
     /// the composition settles to empty, and the readiness resolution refuses
     /// it outright because an active facet may not carry an unsettled set.
+    #[cfg(feature = "submission")]
     #[test]
     fn readiness_and_composition_settle_the_same_settlement_endpoints() {
         let explicit = {

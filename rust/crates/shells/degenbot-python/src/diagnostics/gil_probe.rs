@@ -84,6 +84,7 @@ fn now_ms() -> u64 {
 ///
 /// Single source of truth for the Python driver's reaction behavior (the
 /// Rust core owns the matrix; Python must not duplicate the table).
+#[cfg(feature = "bot")]
 #[pyfunction]
 fn failure_action(kind: &str, reason: Option<&str>) -> &'static str {
     degenbot_bot::failure_policy::action(kind, reason).as_str()
@@ -356,8 +357,11 @@ enum WatchdogVerdict {
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
 pub mod diagnostics {
+    #[cfg(feature = "bot")]
     #[pymodule_export]
-    use super::{failure_action, mark_progress, start_gil_probe};
+    use super::failure_action;
+    #[pymodule_export]
+    use super::{mark_progress, start_gil_probe};
 }
 
 // Keep the unused-import linter quiet in builds without the probe wired.

@@ -349,7 +349,9 @@ pub fn init_otel_tracing() -> Result<OtelHandle, OtelInitError> {
     // record-level RUST_LOG filter (uncapped); stderr fmt gets the console
     // filter with the diagnostic cap, so high-frequency `degenbot::diag`
     // events stay off stdout while remaining visible in traces.
-    let plan = crate::telemetry::resolve_filters(crate::telemetry::CONSOLE_WIRING_DEFAULT_RUST);
+    let plan = degenbot_core::telemetry::resolve_filters(
+        degenbot_core::telemetry::CONSOLE_WIRING_DEFAULT_RUST,
+    );
     let console_filter = tracing_subscriber::EnvFilter::new(&plan.console);
     let record_filter = tracing_subscriber::EnvFilter::new(&plan.otel);
     let subscriber = tracing_subscriber::registry()

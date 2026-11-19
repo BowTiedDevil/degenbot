@@ -540,8 +540,8 @@ static INIT_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 /// `telemetry.diag`; an explicit `RUST_LOG` wins verbatim on every sink.
 fn console_env_filter() -> EnvFilter {
     EnvFilter::new(
-        &degenbot_bot::telemetry::resolve_filters(
-            degenbot_bot::telemetry::CONSOLE_WIRING_DEFAULT_PYTHON,
+        &degenbot_core::telemetry::resolve_filters(
+            degenbot_core::telemetry::CONSOLE_WIRING_DEFAULT_PYTHON,
         )
         .console,
     )
@@ -553,8 +553,8 @@ fn console_env_filter() -> EnvFilter {
 #[cfg(feature = "otel")]
 fn record_env_filter() -> EnvFilter {
     EnvFilter::new(
-        &degenbot_bot::telemetry::resolve_filters(
-            degenbot_bot::telemetry::CONSOLE_WIRING_DEFAULT_PYTHON,
+        &degenbot_core::telemetry::resolve_filters(
+            degenbot_core::telemetry::CONSOLE_WIRING_DEFAULT_PYTHON,
         )
         .otel,
     )
@@ -923,7 +923,7 @@ mod tests {
             // thread, so the thread-local layer sees them.
             tracing::info_span!("seam.c.diag.span").in_scope(|| {
                 tracing::info!(
-                    target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
+                    target: degenbot_core::telemetry::DIAGNOSTIC_TARGET,
                     "seam c diag event"
                 );
             });

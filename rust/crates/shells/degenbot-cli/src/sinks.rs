@@ -12,7 +12,7 @@
 //!    invalid config is a loud boot refusal (exit 2), exactly as Python's
 //!    module init refuses.
 //! 2. **The tracing registry.** A `fmt` layer on stderr filtered by
-//!    [`resolve_filters`](degenbot_bot::telemetry::resolve_filters) with the
+//!    [`resolve_filters`](degenbot_core::telemetry::resolve_filters) with the
 //!    Python-driver wiring default (`info`) - the same resolution the binding
 //!    boots, so an explicit `RUST_LOG` wins verbatim on this sink too - plus
 //!    the [`progress`](crate::progress) bar layer (ADR-051 D9).
@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use degenbot_bot::telemetry as bot_telemetry;
+use degenbot_core::telemetry::{resolve_filters, CONSOLE_WIRING_DEFAULT_RUST};
 use tracing_subscriber::layer::{Layer as _, SubscriberExt as _};
 use tracing_subscriber::EnvFilter;
 
@@ -71,7 +71,7 @@ pub fn boot() -> Result<TelemetryBoot, String> {
     // it resolves with the standalone-Rust-consumer default (ADR-043 §6):
     // silent at `info`, loud through an explicit RUST_LOG. The Python driver
     // resolves ITS console filter in driver_boot() with its own default.
-    let plan = bot_telemetry::resolve_filters(bot_telemetry::CONSOLE_WIRING_DEFAULT_RUST);
+    let plan = resolve_filters(CONSOLE_WIRING_DEFAULT_RUST);
     let painter = Arc::new(Painter::console());
     let console_filter = EnvFilter::new(&plan.console);
     let subscriber = tracing_subscriber::registry()

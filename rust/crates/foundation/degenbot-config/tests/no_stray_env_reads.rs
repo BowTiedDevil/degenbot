@@ -72,14 +72,6 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
                 "DEGENBOT_LOG_FMT",
             ][..],
         );
-        // The ADR-043 §4 filter branch: RUST_LOG is the tracing-convention
-        // override (it wins verbatim on every sink; the typed
-        // `telemetry.log_level`/`telemetry.diag` knobs apply otherwise).
-        // Output plumbing, not config (same class as the Python layer's).
-        m.insert(
-            "crates/engine/degenbot-bot/src/telemetry.rs",
-            &["RUST_LOG"][..],
-        );
         // (2) Dev-test knobs in library code (offline tooling only).
         m.insert(
             "crates/engine/degenbot-bot/src/profiling.rs",
@@ -193,9 +185,14 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
         // (4) The ADR-043 §5 retired-name boot detection: reads the env by
         // iterating a closed list (`RETIRED_ENV_NAMES`), so the name is
         // computed at the call site. Detection only — no alias is honored.
+        //
+        // The ADR-043 §4 filter branch rides the same file: `RUST_LOG` is the
+        // tracing-convention override (it wins verbatim on every sink; the
+        // typed `telemetry.log_level`/`telemetry.diag` knobs apply otherwise).
+        // Output plumbing, not config (same class as the Python layer's).
         m.insert(
             "crates/foundation/degenbot-core/src/telemetry.rs",
-            &["name"][..],
+            &["name", "RUST_LOG"][..],
         );
 
         insert_python_entries(&mut m);

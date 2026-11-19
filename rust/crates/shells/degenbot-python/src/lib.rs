@@ -111,8 +111,10 @@ pub mod python_log_layer;
 #[cfg(feature = "rpc")]
 pub mod rpc;
 /// FF-T5: the runtime fleet status — budget, plan, census
-/// ("degenbot.runtime_status()"). Unconditional — the plan
-/// function and the census are.
+/// ("degenbot.runtime_status()"), gated on `bot`: the plan and the census it
+/// projects are the engine's (the bot's fleet status over the workers' plan),
+/// so a build with no engine has no fleet to report.
+#[cfg(feature = "bot")]
 pub mod runtime_status;
 #[cfg(feature = "simulation")]
 pub mod simulation;
@@ -238,7 +240,9 @@ fn driver_boot(_py: Python<'_>) {
     degenbot_core::worker_census::emit_boot_table();
 
     // The substrate's telemetry port delegates to this crate's instruments
-    // registry (see `degenbot_bot::instruments`).
+    // registry (see `degenbot_bot::instruments`). Gated with the bot: without
+    // an engine there is no port to install.
+    #[cfg(feature = "bot")]
     degenbot_bot::instruments::install_substrate_telemetry_port();
 }
 
@@ -285,8 +289,10 @@ mod _ffi {
     #[pymodule_export]
     use crate::cli::cli_main;
 
-    // FF-T5: the runtime fleet status — budget, plan,
-    // census ("degenbot.runtime_status()").
+    // FF-T5: the runtime fleet status — budget, plan, census
+    // ("degenbot.runtime_status()"). Gated with its module: the fleet plan and
+    // census are the engine's.
+    #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::runtime_status::runtime_status;
 
@@ -365,18 +371,13 @@ mod _ffi {
     #[pymodule_export]
     use crate::bot::pump::session_end_rank;
 
-    // Bot — Rust-owned state (feature = "bot"). `PyConcentratedLiquidityView`
-    // keeps the (missing) gate it had in the pre-conversion registration body —
-    // mirrored, not fixed, so the surface stays byte-equivalent; `bot` is a
-    // default feature so every real build compiles it.
-    #[pymodule_export]
-    use crate::bot::pool::PyConcentratedLiquidityView;
+    // Bot — Rust-owned state (feature = "bot").
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::pool::{
-        PyBalanceVectorView, PyBalancerStableView, PyBalancerWeightedView, PyCurveView,
-        PyPoolTickCoverage, PyReservePairView, PySwapRead as SwapRead, PySwapReadFamily,
-        PySwapRefusalKind, SwapRefused,
+        PyBalanceVectorView, PyBalancerStableView, PyBalancerWeightedView,
+        PyConcentratedLiquidityView, PyCurveView, PyPoolTickCoverage, PyReservePairView,
+        PySwapRead as SwapRead, PySwapReadFamily, PySwapRefusalKind, SwapRefused,
     };
     #[cfg(feature = "bot")]
     #[pymodule_export]
@@ -540,7 +541,9 @@ mod _ffi {
 
     // Diagnostics instrumentation: GIL-acquire-latency probe
     // + main-loop stuck-watchdog. Unconditional (no feature gate) so the
-    // probe is available in every build; the example opts in at startup.
+    // probe is available in every build; the example opts in at startup. The
+    // submodule's failure-matrix read (`failure_action`) is the one member
+    // that rides `bot`, with its own gate beside the engine's matrix.
     #[pymodule_export]
     use crate::diagnostics::gil_probe::diagnostics;
 
@@ -575,20 +578,13 @@ mod _ffi {
         // DEGENBOT_CONFIG (or ~/.config/degenbot/config.toml) feeds the typed
         // BotConfig; the retired pre-0.6 vocabulary ([rpc]/[ws]/[database]/
         // [otel]/default_chain_id) fails the load with pointed migration
-        // errors (docs/config-migration.md). [failure_policy] is a sanctioned
-        // free-form table the loader skips; the reader below consumes it from
-        // the SAME file via the single standard_file_path() contract.
-        // ADR-040 D3: per-bucket failure-policy overrides, boot-validated. An
-        // invalid bucket/action is a boot ERROR (process exits) — the operator
-        // asked for a specific containment stance; silently ignoring it would
-        // trade on a policy the process does not actually have.
-        let config_file = ::degenbot_config::standard_file_path();
+        // errors (docs/config-migration.md).
         match ::degenbot_config::load_process_config() {
             Ok(loaded) => {
                 // First-wins: a test harness or an embedding that installed
                 // earlier keeps ITS config; this is the production boot path.
                 let installed =
-                    degenbot_substrate::stance::install(std::sync::Arc::new(loaded.config.clone()));
+                    ::degenbot_config::holder::install(std::sync::Arc::new(loaded.config.clone()));
                 // The driver-domain resolvers read the LAYERS, not just the typed
                 // value, so they need the provenance this same load produced. One
                 // load, published once: a resolver cannot see a different file or
@@ -607,51 +603,64 @@ mod _ffi {
                 std::process::exit(2);
             }
         }
-        match crate::python_log_layer::read_failure_policy_overrides(config_file.as_deref()) {
-            Ok(overrides) if !overrides.is_empty() => {
-                let refs: Vec<(&str, &str)> = overrides
-                    .iter()
-                    .map(|(k, a)| (k.as_str(), a.as_str()))
-                    .collect();
-                if let Err(e) = degenbot_bot::failure_policy::install_overrides(refs) {
-                    // DELIBERATE fail-loud import seam: module init has no
-                    // subscriber yet and no trading surface is up, so a refused
-                    // policy exits the process before any boot can proceed on a
-                    // half-read containment stance. Both lints are suppressed for
-                    // this one seam (the same predicates block_pump.rs grants its
-                    // pre-abort stderr marker).
+        // [failure_policy] is a sanctioned free-form table the loader
+        // skips; the reader below consumes it from the SAME file via the
+        // single standard_file_path() contract. ADR-040 D3: per-bucket
+        // overrides, boot-validated. An invalid bucket/action is a boot
+        // ERROR (process exits) — the operator asked for a specific
+        // containment stance; silently ignoring it would trade on a policy
+        // the process does not actually have. The overrides feed the
+        // engine's failure matrix, which is the bot's (`feature = "bot"`):
+        // a build with no engine has no lane to contain.
+        #[cfg(feature = "bot")]
+        {
+            let config_file = ::degenbot_config::standard_file_path();
+            match crate::python_log_layer::read_failure_policy_overrides(config_file.as_deref()) {
+                Ok(overrides) if !overrides.is_empty() => {
+                    let refs: Vec<(&str, &str)> = overrides
+                        .iter()
+                        .map(|(k, a)| (k.as_str(), a.as_str()))
+                        .collect();
+                    if let Err(e) = degenbot_bot::failure_policy::install_overrides(refs) {
+                        // DELIBERATE fail-loud import seam: module init has no
+                        // subscriber yet and no trading surface is up, so a refused
+                        // policy exits the process before any boot can proceed on a
+                        // half-read containment stance. Both lints are suppressed for
+                        // this one seam (the same predicates block_pump.rs grants its
+                        // pre-abort stderr marker).
+                        #[expect(clippy::print_stderr)]
+                        {
+                            eprintln!("invalid override - boot refused: {e}");
+                        }
+                        #[expect(clippy::exit)]
+                        std::process::exit(2);
+                    }
+                    // ADR-040 D3 loudness: a softened tainted bucket must be visible
+                    // as an operator DECISION on the boot surface, not a silent count.
+                    // (Softening = any kind whose default is quarantine/exit set to a
+                    // weaker action; the pair list makes it greppable.)
+                    let pairs = overrides
+                        .iter()
+                        .map(|(k, a)| format!("{k}={a}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    op_info!(domain = pump, count = overrides.len(),
+                        overrides = %pairs,
+                        "failure_policy overrides installed"
+                    );
+                }
+                Ok(_) => {}
+                // A malformed [failure_policy] VALUES table is a boot error (ADR-040
+                // D3): the operator asked for a containment stance; refuse loudly.
+                Err(e) => {
+                    // DELIBERATE fail-loud import seam (see the Ok arm above).
                     #[expect(clippy::print_stderr)]
                     {
-                        eprintln!("invalid override - boot refused: {e}");
+                        eprintln!("invalid override table - boot refused: {e}");
                     }
                     #[expect(clippy::exit)]
                     std::process::exit(2);
                 }
-                // ADR-040 D3 loudness: a softened tainted bucket must be visible
-                // as an operator DECISION on the boot surface, not a silent count.
-                // (Softening = any kind whose default is quarantine/exit set to a
-                // weaker action; the pair list makes it greppable.)
-                let pairs = overrides
-                    .iter()
-                    .map(|(k, a)| format!("{k}={a}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                op_info!(domain = pump, count = overrides.len(),
-                    overrides = %pairs,
-                    "failure_policy overrides installed"
-                );
-            }
-            Ok(_) => {}
-            // A malformed [failure_policy] VALUES table is a boot error (ADR-040
-            // D3): the operator asked for a containment stance; refuse loudly.
-            Err(e) => {
-                // DELIBERATE fail-loud import seam (see the Ok arm above).
-                #[expect(clippy::print_stderr)]
-                {
-                    eprintln!("invalid override table - boot refused: {e}");
-                }
-                #[expect(clippy::exit)]
-                std::process::exit(2);
             }
         }
 
