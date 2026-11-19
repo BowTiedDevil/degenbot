@@ -48,24 +48,60 @@ use std::collections::BTreeMap;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+use serde::{Deserialize, Serialize};
 
-/// A frame parked at its gap boundary, carrying the wire fields a flip-side
-/// replay needs when the gap closes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParkedFrame {
+/// The identity every parked frame carries, wire or not: the hash the chain
+/// knows it by, the sender whose nonce gap parked it, and the gap's two edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameIdentity {
     pub hash: B256,
     pub from: Address,
+    /// The nonce the wire claims for this frame (the gap's upper bound).
+    pub claimed_nonce: u64,
+    /// The head-state account nonce at capture (`expected`); the predecessor
+    /// set is `[expected, claimed)`.
+    pub expected_at_capture: u64,
+}
+
+impl FrameIdentity {
+    /// Gap nonces that must land before the frame validates.
+    #[must_use]
+    pub fn gap_range(&self) -> Vec<u64> {
+        (self.expected_at_capture..self.claimed_nonce).collect()
+    }
+}
+
+/// Why a park carries no wire. Only the journal's migration fold produces one:
+/// a legacy line whose wire fields the current schema could not rebuild keeps
+/// its identity and this reason, nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissingWire {
+    /// A legacy park line (pre-versioning, foreign version, or schema-rejected)
+    /// whose wire the fold could not rebuild.
+    LegacyIncomplete,
+}
+
+impl MissingWire {
+    /// The stable label the journal rows and trace lines carry.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LegacyIncomplete => "legacy_incomplete",
+        }
+    }
+}
+
+/// The complete wire a flip-side replay needs: every feed field that is not
+/// identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameWire {
     pub to: Option<Address>,
     pub value: U256,
     pub data: Bytes,
     pub gas: u64,
     pub max_fee_per_gas: u128,
     pub max_priority_fee_per_gas: u128,
-    /// The nonce the wire claims for this frame (the gap's TOP edge).
-    pub claimed_nonce: u64,
-    /// The head-state account nonce at capture (`expected`); the predecessor
-    /// set is `[expected, claimed)`.
-    pub expected_at_capture: u64,
     /// Chain the frame was observed on (funnel re-entry wire field).
     pub chain_id: u64,
     /// EIP-2718 transaction type (funnel re-entry wire field).
@@ -79,44 +115,170 @@ pub struct ParkedFrame {
     pub raw_signed_tx: Option<Bytes>,
 }
 
-impl ParkedFrame {
-    /// Gap nonces that must land before the frame validates.
-    #[must_use]
-    pub fn gap_range(&self) -> Vec<u64> {
-        (self.expected_at_capture..self.claimed_nonce).collect()
-    }
+/// A park whose whole wire survived: the only shape a rescue can replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteFrame {
+    /// The identity this wire belongs to.
+    pub identity: FrameIdentity,
+    /// Every field a replay needs beyond the identity.
+    pub wire: FrameWire,
+}
 
-    /// Whether this frame lost its wire to a degraded journal migration. A
-    /// degraded frame carries only identity (its hash, nonce, and the sender
-    /// when readable); the zeroed `chain_id`/`gas` distinguish it because a
-    /// real feed frame always carries both. It can never rebuild its event, so
-    /// `poll` never rescues it into the funnel.
-    #[must_use]
-    pub fn is_degraded(&self) -> bool {
-        self.chain_id == 0 && self.gas == 0
-    }
-
-    /// Rebuild the feed event a funnel re-entry needs. Infallible: every wire
-    /// field is already typed on the frame (the journal read path parses the
-    /// hex strings before constructing the frame).
+impl CompleteFrame {
+    /// Rebuild the feed event a funnel re-entry needs. Infallible: a complete
+    /// frame carries every wire field by construction, so no sentinel or
+    /// fallback value can stand in for one.
     #[must_use]
     pub fn to_event(&self) -> BackrunFeedEvent {
         BackrunFeedEvent {
-            chain_id: self.chain_id,
-            from: self.from,
-            to: self.to,
-            value: self.value,
-            data: self.data.clone(),
-            gas: self.gas,
-            max_fee_per_gas: self.max_fee_per_gas,
-            max_priority_fee_per_gas: self.max_priority_fee_per_gas,
-            nonce: self.claimed_nonce,
-            hash: self.hash,
-            access_list: self.access_list.clone(),
-            tx_type: self.tx_type,
-            received_unix_ms: self.received_unix_ms,
-            raw_signed_tx: self.raw_signed_tx.clone(),
+            chain_id: self.wire.chain_id,
+            from: self.identity.from,
+            to: self.wire.to,
+            value: self.wire.value,
+            data: self.wire.data.clone(),
+            gas: self.wire.gas,
+            max_fee_per_gas: self.wire.max_fee_per_gas,
+            max_priority_fee_per_gas: self.wire.max_priority_fee_per_gas,
+            nonce: self.identity.claimed_nonce,
+            hash: self.identity.hash,
+            access_list: self.wire.access_list.clone(),
+            tx_type: self.wire.tx_type,
+            received_unix_ms: self.wire.received_unix_ms,
+            raw_signed_tx: self.wire.raw_signed_tx.clone(),
         }
+    }
+}
+
+/// Identity only: no wire survived the migration fold, so no event can be
+/// rebuilt and this frame can never be rescued into the funnel. It stays
+/// tracked (one quiet hold per head advance) until the chain proves its nonce
+/// consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DegradedFrame {
+    /// The identity the fold retained.
+    pub identity: FrameIdentity,
+    /// Why the wire is gone.
+    pub reason: MissingWire,
+}
+
+/// A frame parked at its gap boundary: identity plus either the wire a rescue
+/// replays or the reason that wire is gone. The variants are the states, so a
+/// zero-valued wire field can never be read as degradation and a degraded park
+/// cannot fabricate an event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParkedFrame {
+    /// The whole wire survived: rescuable.
+    Complete(Box<CompleteFrame>),
+    /// Identity only: never rescuable.
+    Degraded(DegradedFrame),
+}
+
+impl ParkedFrame {
+    /// Park a feed event as a complete frame: every wire field came from the
+    /// feed, so none is a fabricated default.
+    #[must_use]
+    pub fn from_event(event: &BackrunFeedEvent, expected_at_capture: u64) -> Self {
+        Self::Complete(Box::new(CompleteFrame {
+            identity: FrameIdentity {
+                hash: event.hash,
+                from: event.from,
+                claimed_nonce: event.nonce,
+                expected_at_capture,
+            },
+            wire: FrameWire {
+                to: event.to,
+                value: event.value,
+                data: event.data.clone(),
+                gas: event.gas,
+                max_fee_per_gas: event.max_fee_per_gas,
+                max_priority_fee_per_gas: event.max_priority_fee_per_gas,
+                chain_id: event.chain_id,
+                tx_type: event.tx_type,
+                access_list: event.access_list.clone(),
+                received_unix_ms: event.received_unix_ms,
+                raw_signed_tx: event.raw_signed_tx.clone(),
+            },
+        }))
+    }
+
+    /// A migrated park whose wire did not survive: identity and the reason.
+    #[must_use]
+    pub const fn degraded(identity: FrameIdentity, reason: MissingWire) -> Self {
+        Self::Degraded(DegradedFrame { identity, reason })
+    }
+
+    /// The identity every variant carries.
+    #[must_use]
+    pub const fn identity(&self) -> FrameIdentity {
+        match self {
+            Self::Complete(frame) => frame.identity,
+            Self::Degraded(frame) => frame.identity,
+        }
+    }
+
+    /// The frame's wire hash.
+    #[must_use]
+    pub const fn hash(&self) -> B256 {
+        self.identity().hash
+    }
+
+    /// The sender whose nonce gap parked the frame.
+    #[must_use]
+    pub const fn from(&self) -> Address {
+        self.identity().from
+    }
+
+    /// The nonce the wire claims (the gap's upper bound).
+    #[must_use]
+    pub const fn claimed_nonce(&self) -> u64 {
+        self.identity().claimed_nonce
+    }
+
+    /// The head-state account nonce at capture (the gap's lower bound).
+    #[must_use]
+    pub const fn expected_at_capture(&self) -> u64 {
+        self.identity().expected_at_capture
+    }
+
+    /// The same park retagged with a different wire hash.
+    #[must_use]
+    pub fn with_hash(mut self, hash: B256) -> Self {
+        match &mut self {
+            Self::Complete(frame) => frame.identity.hash = hash,
+            Self::Degraded(frame) => frame.identity.hash = hash,
+        }
+        self
+    }
+
+    /// Gap nonces that must land before the frame validates.
+    #[must_use]
+    pub fn gap_range(&self) -> Vec<u64> {
+        self.identity().gap_range()
+    }
+
+    /// The complete frame, when this park still carries its wire. A rescue can
+    /// only be built from this arm; the degraded arm has no event at all.
+    #[must_use]
+    pub fn complete(&self) -> Option<&CompleteFrame> {
+        match self {
+            Self::Complete(frame) => Some(frame),
+            Self::Degraded(_) => None,
+        }
+    }
+
+    /// Why the wire is gone, when it is.
+    #[must_use]
+    pub const fn degraded_reason(&self) -> Option<MissingWire> {
+        match self {
+            Self::Complete(_) => None,
+            Self::Degraded(frame) => Some(frame.reason),
+        }
+    }
+
+    /// Whether this park carries no wire.
+    #[must_use]
+    pub fn is_degraded(&self) -> bool {
+        self.degraded_reason().is_some()
     }
 }
 
@@ -232,6 +394,13 @@ pub enum QuarantineDecision {
         /// Gap nonces whose tx the pool view still cannot produce.
         unknown: Vec<u64>,
     },
+    /// A degraded frame surfaced its quiet hold: identity only, no wire to
+    /// replay, so no rescue exists for it. Reported once per head advance;
+    /// the frame stays tracked until the chain proves the nonce consumed.
+    WireLost {
+        /// Why the wire is gone.
+        reason: MissingWire,
+    },
 }
 
 /// Why a pool-pred rescue is known-futile. Recorded only when the caller's
@@ -287,7 +456,7 @@ impl Quarantine {
     /// Park a frame as [`FrameState::Tracked`]. Returns the total frame count
     /// (tracked + tentative) after insert.
     pub fn push(&mut self, frame: ParkedFrame) -> usize {
-        self.pending.entry(frame.from).or_default().push(Entry {
+        self.pending.entry(frame.from()).or_default().push(Entry {
             frame,
             state: FrameState::Tracked,
             last_hold_head: None,
@@ -326,8 +495,9 @@ impl Quarantine {
                 if !matches!(entry.state, FrameState::Tracked) || entry.frame.is_degraded() {
                     continue;
                 }
-                let start = entry.frame.expected_at_capture.max(head_nonce);
-                let end = entry.frame.claimed_nonce.min(pending_count);
+                let identity = entry.frame.identity();
+                let start = identity.expected_at_capture.max(head_nonce);
+                let end = identity.claimed_nonce.min(pending_count);
                 if start < end {
                     nonces.extend(start..end);
                 }
@@ -344,7 +514,7 @@ impl Quarantine {
         self.pending
             .values()
             .flatten()
-            .find(|entry| entry.frame.hash == hash)
+            .find(|entry| entry.frame.hash() == hash)
             .map(|entry| entry.state)
     }
 
@@ -377,7 +547,9 @@ impl Quarantine {
     /// `StillWaiting` keep it parked -- the caller classifies a consumed
     /// nonce via [`Self::enter_tentative`]. A Rescue whose exact predecessor
     /// list (and, for a re-park, boundary) was already proved futile is
-    /// suppressed to `StillWaiting` (see `repark_guard`).
+    /// suppressed to `StillWaiting` (see `repark_guard`). A degraded frame has
+    /// no wire to replay, so its decision is `WireLost` (once per head advance,
+    /// pegged to the missing-wire reason) and never a rescue.
     pub fn poll(
         &mut self,
         sender: Address,
@@ -421,54 +593,39 @@ impl Quarantine {
                 keep.push(entry);
                 continue;
             }
-            if entry.frame.is_degraded() {
-                // A degraded frame has no wire to replay, so it can never
-                // rescue. It stays quietly tracked until the chain proves the
-                // claimed nonce consumed (head past the claim); the hold is
-                // reported once per head advance, never per poll.
-                if head_nonce > entry.frame.claimed_nonce {
-                    out.push((entry.frame.clone(), QuarantineDecision::NonceConsumed));
-                    keep.push(entry);
-                } else if entry.last_hold_head != Some(head_nonce) {
-                    entry.last_hold_head = Some(head_nonce);
-                    let unknown: Vec<u64> = entry
-                        .frame
-                        .gap_range()
-                        .into_iter()
-                        .filter(|n| !pool_known_gap.contains(n) && *n >= head_nonce)
-                        .collect();
-                    out.push((
-                        entry.frame.clone(),
-                        QuarantineDecision::StillWaiting { unknown },
-                    ));
-                    keep.push(entry);
-                } else {
-                    keep.push(entry);
-                }
-                continue;
-            }
-            if head_nonce > entry.frame.claimed_nonce {
+            let identity = entry.frame.identity();
+            if head_nonce > identity.claimed_nonce {
                 out.push((entry.frame.clone(), QuarantineDecision::NonceConsumed));
                 keep.push(entry);
                 continue;
             }
-            let unknown: Vec<u64> = entry
-                .frame
+            if let Some(reason) = entry.frame.degraded_reason() {
+                // A degraded frame has no wire to replay, so no rescue exists
+                // for it. It stays quietly tracked until the chain proves the
+                // claimed nonce consumed (head past the claim); the hold names
+                // the missing wire once per head advance, never per poll.
+                if entry.last_hold_head != Some(head_nonce) {
+                    entry.last_hold_head = Some(head_nonce);
+                    out.push((entry.frame.clone(), QuarantineDecision::WireLost { reason }));
+                }
+                keep.push(entry);
+                continue;
+            }
+            let unknown: Vec<u64> = identity
                 .gap_range()
                 .into_iter()
                 .filter(|n| !pool_known_gap.contains(n) && *n >= head_nonce)
                 .collect();
-            let preds: Vec<u64> = entry
-                .frame
+            let preds: Vec<u64> = identity
                 .gap_range()
                 .into_iter()
                 .filter(|n| *n >= head_nonce)
                 .collect();
             if unknown.is_empty() {
                 if self.rescue_is_guarded(
-                    entry.frame.hash,
+                    identity.hash,
                     &preds,
-                    entry.frame.expected_at_capture,
+                    identity.expected_at_capture,
                     content,
                 ) {
                     // The caller already proved an identical rescue futile
@@ -486,7 +643,7 @@ impl Quarantine {
                     // the claim and `preds` is empty: the whole gap is already
                     // mined and replaying against the current head needs no
                     // prefix.
-                    self.repark_guard.remove(&entry.frame.hash);
+                    self.repark_guard.remove(&entry.frame.hash());
                     out.push((
                         entry.frame.clone(),
                         QuarantineDecision::Rescue {
@@ -590,7 +747,7 @@ impl Quarantine {
         self.pending.get(&sender).is_some_and(|frames| {
             frames
                 .iter()
-                .any(|entry| self.repark_guard.contains_key(&entry.frame.hash))
+                .any(|entry| self.repark_guard.contains_key(&entry.frame.hash()))
         })
     }
 
@@ -601,8 +758,8 @@ impl Quarantine {
         self.pending
             .values()
             .flatten()
-            .find(|entry| entry.frame.hash == frame_hash)
-            .map(|entry| entry.frame.expected_at_capture)
+            .find(|entry| entry.frame.hash() == frame_hash)
+            .map(|entry| entry.frame.expected_at_capture())
     }
 
     /// Move a tracked frame into [`FrameState::Tentative`] with the caller's
@@ -610,7 +767,7 @@ impl Quarantine {
     /// already tentative.
     pub fn enter_tentative(&mut self, frame_hash: B256, consumed: NonceConsumed) -> bool {
         for entry in self.pending.values_mut().flatten() {
-            if entry.frame.hash == frame_hash && entry.state == FrameState::Tracked {
+            if entry.frame.hash() == frame_hash && entry.state == FrameState::Tracked {
                 entry.state = FrameState::Tentative(consumed);
                 self.repark_guard.remove(&frame_hash);
                 return true;
@@ -643,7 +800,7 @@ impl Quarantine {
             if let FrameState::Tentative(consumed) = entry.state {
                 if consumed.block() == block && canonical_hash != Some(consumed.block_hash()) {
                     entry.state = FrameState::Tracked;
-                    self.repark_guard.remove(&entry.frame.hash);
+                    self.repark_guard.remove(&entry.frame.hash());
                     revived.push(entry.frame.clone());
                 }
             }
@@ -669,7 +826,7 @@ impl Quarantine {
         }
         self.pending.retain(|_, entries| !entries.is_empty());
         for (frame, _) in &dead {
-            self.repark_guard.remove(&frame.hash);
+            self.repark_guard.remove(&frame.hash());
         }
         dead
     }
@@ -685,7 +842,7 @@ impl Quarantine {
             .map(|entry| entry.frame)
             .collect();
         for frame in &frames {
-            self.repark_guard.remove(&frame.hash);
+            self.repark_guard.remove(&frame.hash());
         }
         frames
     }
@@ -698,9 +855,10 @@ mod tests {
 
     const SENDER: Address = Address::ZERO;
 
-    fn frame(nonce: u64, expected: u64) -> ParkedFrame {
-        ParkedFrame {
-            hash: b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+    const HASH: B256 = b256!("0000000000000000000000000000000000000000000000000000000000000001");
+
+    fn event(hash: B256, nonce: u64) -> BackrunFeedEvent {
+        BackrunFeedEvent {
             chain_id: 1,
             from: SENDER,
             to: None,
@@ -709,13 +867,57 @@ mod tests {
             gas: 300_000,
             max_fee_per_gas: 514_684_409,
             max_priority_fee_per_gas: 1_000_000_000,
-            claimed_nonce: nonce,
-            expected_at_capture: expected,
-            tx_type: 2,
+            nonce,
+            hash,
             access_list: serde_json::json!([]),
-            raw_signed_tx: None,
+            tx_type: 2,
             received_unix_ms: 1_700_000_000_000,
+            raw_signed_tx: None,
         }
+    }
+
+    /// A complete park: every wire field came from the feed.
+    fn frame(nonce: u64, expected: u64) -> ParkedFrame {
+        ParkedFrame::from_event(&event(HASH, nonce), expected)
+    }
+
+    /// A complete park whose wire fields are explicitly ZERO: real values, not
+    /// a degradation sentinel.
+    fn zero_wire_frame(nonce: u64, expected: u64) -> ParkedFrame {
+        ParkedFrame::Complete(Box::new(CompleteFrame {
+            identity: FrameIdentity {
+                hash: HASH,
+                from: SENDER,
+                claimed_nonce: nonce,
+                expected_at_capture: expected,
+            },
+            wire: FrameWire {
+                to: None,
+                value: U256::ZERO,
+                data: Bytes::new(),
+                gas: 0,
+                max_fee_per_gas: 0,
+                max_priority_fee_per_gas: 0,
+                chain_id: 0,
+                tx_type: 0,
+                access_list: serde_json::json!([]),
+                received_unix_ms: 0,
+                raw_signed_tx: None,
+            },
+        }))
+    }
+
+    /// A migrated park: identity only, no wire to replay.
+    fn degraded(nonce: u64, expected: u64) -> ParkedFrame {
+        ParkedFrame::degraded(
+            FrameIdentity {
+                hash: HASH,
+                from: SENDER,
+                claimed_nonce: nonce,
+                expected_at_capture: expected,
+            },
+            MissingWire::LegacyIncomplete,
+        )
     }
 
     fn hash(byte: u8) -> B256 {
@@ -730,8 +932,8 @@ mod tests {
         q.push(frame(12, 10));
         let out = q.poll(SENDER, 10, &[10, 11]);
         let (f, decision) = &out[0];
-        assert_eq!(f.claimed_nonce, 12);
-        assert_eq!(f.expected_at_capture, 10);
+        assert_eq!(f.claimed_nonce(), 12);
+        assert_eq!(f.expected_at_capture(), 10);
         assert_eq!(
             decision,
             &QuarantineDecision::Rescue {
@@ -783,7 +985,7 @@ mod tests {
         // deterministic-futile signal plus the predecessors' content identity.
         let content = [(10, hash(0xa1)), (11, hash(0xa2))];
         q.record_repark_guard_with_content(
-            frame(12, 10).hash,
+            frame(12, 10).hash(),
             &[10, 11],
             &[content[0].1, content[1].1],
             10,
@@ -819,7 +1021,7 @@ mod tests {
 
         // Stored content empty: the incoming content cannot make it match.
         let mut q = Quarantine::new();
-        q.record_unhydratable_guard_with_content(frame(12, 10).hash, &[10, 11], &[]);
+        q.record_unhydratable_guard_with_content(frame(12, 10).hash(), &[10, 11], &[]);
         q.push(frame(12, 10));
         assert_eq!(
             q.poll_with_content(SENDER, 10, &[10, 11], &[(10, h10), (11, h11)])[0].1,
@@ -831,7 +1033,7 @@ mod tests {
 
         // Incoming content empty (or absent): the stored content cannot match.
         let mut q = Quarantine::new();
-        q.record_unhydratable_guard_with_content(frame(12, 10).hash, &[10, 11], &[h10, h11]);
+        q.record_unhydratable_guard_with_content(frame(12, 10).hash(), &[10, 11], &[h10, h11]);
         q.push(frame(12, 10));
         assert_eq!(
             q.poll_with_content(SENDER, 10, &[10, 11], &[])[0].1,
@@ -842,7 +1044,7 @@ mod tests {
         );
 
         let mut q = Quarantine::new();
-        q.record_unhydratable_guard_with_content(frame(12, 10).hash, &[10, 11], &[h10, h11]);
+        q.record_unhydratable_guard_with_content(frame(12, 10).hash(), &[10, 11], &[h10, h11]);
         q.push(frame(12, 10));
         assert_eq!(
             q.poll(SENDER, 10, &[10, 11])[0].1,
@@ -878,7 +1080,7 @@ mod tests {
         let mut q = Quarantine::new();
         let content = [(10, hash(0xa1)), (11, hash(0xa2))];
         q.record_unhydratable_guard_with_content(
-            frame(12, 10).hash,
+            frame(12, 10).hash(),
             &[10, 11],
             &[content[0].1, content[1].1],
         );
@@ -916,7 +1118,7 @@ mod tests {
     fn consumed_nonce_stays_tracked_until_classified() {
         let mut q = Quarantine::new();
         let f = frame(12, 10);
-        let h = f.hash;
+        let h = f.hash();
         q.push(f);
         // Head past the claim: consumption, classification begins.
         let out = q.poll(SENDER, 13, &[]);
@@ -943,7 +1145,7 @@ mod tests {
     fn finality_tombstones_only_at_or_below_the_tag() {
         let mut q = Quarantine::new();
         let f = frame(12, 10);
-        let h = f.hash;
+        let h = f.hash();
         q.push(f);
         let _ = q.poll(SENDER, 13, &[]);
         q.enter_tentative(
@@ -969,7 +1171,7 @@ mod tests {
     fn reorg_revives_on_hash_mismatch_but_not_on_match() {
         let mut q = Quarantine::new();
         let f = frame(12, 10);
-        let h = f.hash;
+        let h = f.hash();
         q.push(f);
         let _ = q.poll(SENDER, 13, &[]);
         q.enter_tentative(
@@ -1002,16 +1204,14 @@ mod tests {
     #[test]
     fn tentative_blocks_are_deduped() {
         let mut q = Quarantine::new();
-        let mut a = frame(12, 10);
-        a.hash = hash(1);
-        let mut b = frame(13, 11);
-        b.hash = hash(2);
+        let a = frame(12, 10).with_hash(hash(1));
+        let b = frame(13, 11).with_hash(hash(2));
         q.push(a);
         q.push(b);
         // Both frames share a sender, so poll once and classify both.
         for f in q.poll(SENDER, 20, &[]) {
             q.enter_tentative(
-                f.0.hash,
+                f.0.hash(),
                 NonceConsumed::MinedAt {
                     block: 100,
                     block_hash: hash(7),
@@ -1030,30 +1230,109 @@ mod tests {
     #[test]
     fn degraded_frame_never_rescues_and_holds_once_per_head_advance() {
         let mut q = Quarantine::new();
-        let mut f = frame(14, 12);
-        f.chain_id = 0;
-        f.gas = 0;
+        let f = degraded(14, 12);
         assert!(f.is_degraded());
-        let h = f.hash;
+        assert!(f.complete().is_none(), "a degraded park carries no wire");
+        assert_eq!(f.degraded_reason(), Some(MissingWire::LegacyIncomplete));
+        let h = f.hash();
         q.push(f);
-        // head 12: one hold surfaces, never a rescue.
-        let first = q.poll(SENDER, 12, &[]);
+        // A degraded park contributes no gap nonce: there is no predecessor
+        // lane for a frame that can never rescue.
+        assert!(q.pool_known_gap(SENDER, 12, 14).is_empty());
+        // head 12: one hold surfaces, never a rescue - even with the whole gap
+        // in the pool view.
+        let first = q.poll(SENDER, 12, &[12, 13]);
         assert_eq!(first.len(), 1);
         assert_eq!(
             first[0].1,
-            QuarantineDecision::StillWaiting {
-                unknown: vec![12, 13]
+            QuarantineDecision::WireLost {
+                reason: MissingWire::LegacyIncomplete
             }
         );
         // Same head: quiet, no repeat.
-        assert!(q.poll(SENDER, 12, &[]).is_empty());
+        assert!(q.poll(SENDER, 12, &[12, 13]).is_empty());
         // Head advance: one more hold.
-        assert_eq!(q.poll(SENDER, 13, &[]).len(), 1);
-        assert!(q.poll(SENDER, 13, &[]).is_empty());
+        assert_eq!(q.poll(SENDER, 13, &[12, 13]).len(), 1);
+        assert!(q.poll(SENDER, 13, &[12, 13]).is_empty());
         assert_eq!(q.state(h), Some(FrameState::Tracked));
         // Head past the claim: chain proof, not a rescue.
         let consumed = q.poll(SENDER, 15, &[]);
         assert_eq!(consumed[0].1, QuarantineDecision::NonceConsumed);
+    }
+
+    /// Wire completeness, not a sentinel value, decides the variant: a frame
+    /// whose real wire fields are zero is complete and rescues like any other.
+    #[test]
+    fn complete_frame_with_real_zero_values_still_rescues() {
+        let mut q = Quarantine::new();
+        let f = zero_wire_frame(12, 10);
+        assert!(
+            !f.is_degraded(),
+            "zero values are values, never degradation"
+        );
+        assert_eq!(f.degraded_reason(), None);
+        q.push(f);
+        assert_eq!(
+            q.poll(SENDER, 10, &[10, 11])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            }
+        );
+        assert!(q.is_empty(), "a complete frame leaves through the funnel");
+    }
+
+    /// The funnel's event rebuild exists only on the complete arm, so a
+    /// degraded park can never fabricate one.
+    #[test]
+    fn event_rebuild_exists_only_for_complete_frames() {
+        let complete = frame(12, 10);
+        let event = complete.complete().map(CompleteFrame::to_event);
+        assert!(event.is_some(), "a complete park rebuilds its feed event");
+        assert_eq!(event.map(|e| e.nonce), Some(12));
+
+        let degraded = degraded(12, 10);
+        assert!(degraded.complete().is_none(), "no wire, no event");
+        assert_eq!(
+            degraded.degraded_reason(),
+            Some(MissingWire::LegacyIncomplete)
+        );
+    }
+
+    /// A degraded frame's life is the chain's to end: consumption, reorg
+    /// revival, then finality -- identical to a complete frame's path.
+    #[test]
+    fn degraded_frame_walks_the_finality_and_reorg_paths() {
+        let mut q = Quarantine::new();
+        let f = degraded(12, 10);
+        let h = f.hash();
+        q.push(f);
+        assert_eq!(
+            q.poll(SENDER, 13, &[])[0].1,
+            QuarantineDecision::NonceConsumed
+        );
+        assert!(q.enter_tentative(
+            h,
+            NonceConsumed::MinedAt {
+                block: 100,
+                block_hash: hash(7),
+            }
+        ));
+        assert!(q.check_finalized(99).is_empty());
+        // A reorg revives it exactly like a complete frame: the tombstone had
+        // no wire to lose.
+        assert_eq!(q.check_reorg(100, Some(hash(8))).len(), 1);
+        assert_eq!(q.state(h), Some(FrameState::Tracked));
+        assert!(q.enter_tentative(
+            h,
+            NonceConsumed::MinedAt {
+                block: 100,
+                block_hash: hash(8),
+            }
+        ));
+        let dead = q.check_finalized(100);
+        assert_eq!(dead.len(), 1);
+        assert!(dead[0].0.is_degraded(), "the tombstone keeps the identity");
+        assert!(q.is_empty(), "a finalized frame leaves the FSM");
     }
 
     #[test]
@@ -1063,7 +1342,7 @@ mod tests {
         // evidence to eviction -- only finality tombstones and rescue remove.
         let mut q = Quarantine::new();
         let f = frame(12, 10);
-        let h = f.hash;
+        let h = f.hash();
         q.push(f);
         for _ in 0..100 {
             let out = q.poll(SENDER, 10, &[]);

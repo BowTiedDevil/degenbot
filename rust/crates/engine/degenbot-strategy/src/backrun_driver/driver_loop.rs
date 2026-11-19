@@ -175,9 +175,11 @@ pub(super) fn journal_reentry_outcome(
         ReentryOutcome::Terminal => {
             if let Some(journal) = journal {
                 let resolved_unix_ms = now_unix_ms();
-                if let Err(error) =
-                    journal.record_resolve(frame.hash, Resolution::RescueConsumed, resolved_unix_ms)
-                {
+                if let Err(error) = journal.record_resolve(
+                    frame.hash(),
+                    Resolution::RescueConsumed,
+                    resolved_unix_ms,
+                ) {
                     tracing::warn!(%error, "quarantine resolve not journaled");
                 }
                 let archived = ResolutionArchiveRecord::new(
@@ -225,32 +227,6 @@ pub(super) fn record_gap_park(
     true
 }
 
-/// The park shape of one frame: the wire fields a re-entry needs, against the
-/// boundary it was parked at. `expected_at_capture` is the head-state account
-/// nonce at capture, so `[expected, claimed)` is the predecessor set.
-pub(super) fn parked_frame(
-    ev: &degenbot_rpc::backrun_feed::BackrunFeedEvent,
-    expected_at_capture: u64,
-) -> ParkedFrame {
-    ParkedFrame {
-        hash: ev.hash,
-        from: ev.from,
-        to: ev.to,
-        value: ev.value,
-        data: ev.data.clone(),
-        gas: ev.gas,
-        max_fee_per_gas: ev.max_fee_per_gas,
-        max_priority_fee_per_gas: ev.max_priority_fee_per_gas,
-        claimed_nonce: ev.nonce,
-        expected_at_capture,
-        chain_id: ev.chain_id,
-        tx_type: ev.tx_type,
-        access_list: ev.access_list.clone(),
-        received_unix_ms: ev.received_unix_ms,
-        raw_signed_tx: ev.raw_signed_tx.clone(),
-    }
-}
-
 /// Park a frame whose bid nonce contention blocked, and journal the park.
 ///
 /// The frame's own nonce is the boundary: it reached the submit stage, so that
@@ -266,7 +242,7 @@ pub(super) fn park_blocked_frame(
     journal: Option<&mut QuarantineJournal>,
     memo: &mut GapParkMemo,
 ) -> usize {
-    let parked_count = quarantine.push(parked_frame(ev, ev.nonce));
+    let parked_count = quarantine.push(ParkedFrame::from_event(ev, ev.nonce));
     let record = ParkRecord::new(ev, ev.nonce, now_unix_ms());
     if !record_gap_park(journal, &record, ev.hash, ev.nonce, memo) {
         trace_jsonl(
@@ -415,7 +391,7 @@ pub(super) async fn run_frame(
         expected,
     }) = &artifacts.replay_frame_error
     {
-        let parked_count = quarantine.push(parked_frame(ev, *expected));
+        let parked_count = quarantine.push(ParkedFrame::from_event(ev, *expected));
         let record = ParkRecord::new(ev, *expected, now_unix_ms());
         if !record_gap_park(
             journal.as_deref_mut(),
@@ -720,20 +696,20 @@ pub(super) fn route_unhydratable_hydration(
     quarantine: &mut Quarantine,
     journal: Option<&mut QuarantineJournal>,
 ) {
-    quarantine.record_unhydratable_guard_with_content(frame.hash, predecessors, content);
+    quarantine.record_unhydratable_guard_with_content(frame.hash(), predecessors, content);
     journal_reentry_outcome(frame, ReentryOutcome::Transient, quarantine, journal);
     trace_jsonl(
         "quarantine",
         serde_json::json!({
             "action": "rescue_unhydratable",
-            "tx": frame.hash.to_string(),
+            "tx": frame.hash().to_string(),
             "predecessor_nonces": predecessors,
             "reason": reason,
             "permanent": true,
         }),
     );
     tracing::warn!(
-        tx = %frame.hash,
+        tx = %frame.hash(),
         reason,
         "pool-pred predecessor structurally unhydratable - pool-pred lane suppressed"
     );
@@ -766,7 +742,7 @@ async fn classify_consumption(
     frame: &ParkedFrame,
 ) -> Option<NonceConsumed> {
     let receipt = provider
-        .get_transaction_receipt(&frame.hash.to_string())
+        .get_transaction_receipt(&frame.hash().to_string())
         .await
         .ok()
         .flatten();
@@ -776,11 +752,11 @@ async fn classify_consumption(
         }
         return None;
     }
-    let nonce_hex = format!("0x{:x}", frame.claimed_nonce);
+    let nonce_hex = format!("0x{:x}", frame.claimed_nonce());
     let other = sim
         .make_request(
             "eth_getTransactionBySenderAndNonce",
-            serde_json::json!([frame.from, nonce_hex]),
+            serde_json::json!([frame.from(), nonce_hex]),
         )
         .await
         .ok();
@@ -858,7 +834,7 @@ fn reload_quarantine(
     for record in &read.pending {
         match record.to_parked_frame() {
             Ok(frame) => {
-                let hash = frame.hash;
+                let hash = frame.hash();
                 quarantine.push(frame);
                 if let Some(consumed) = record.tentative {
                     quarantine.enter_tentative(hash, consumed.to_consumed());
@@ -869,7 +845,7 @@ fn reload_quarantine(
             Err(error) => {
                 dropped += 1;
                 tracing::warn!(
-                    tx = %record.frame.hash,
+                    tx = %record.hash,
                     %error,
                     "quarantine reload record undecodable - dropped"
                 );
@@ -884,6 +860,7 @@ fn reload_quarantine(
         loaded = read.pending.len(),
         reparked = reparked.len(),
         tentative,
+        degraded = read.degraded,
         dropped,
         skipped = read.skipped,
         "quarantine journal reloaded"
@@ -1520,17 +1497,17 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                     classify_consumption(&provider, &sim_provider, &frame).await
                                 else {
                                     tracing::warn!(
-                                        tx = %frame.hash,
+                                        tx = %frame.hash(),
                                         "nonce-consumption classification failed - frame stays tracked"
                                     );
                                     continue;
                                 };
-                                if !quarantine.enter_tentative(frame.hash, consumed) {
+                                if !quarantine.enter_tentative(frame.hash(), consumed) {
                                     continue;
                                 }
                                 if let Some(journal) = quarantine_journal.as_mut() {
                                     if let Err(error) = journal.record_tentative(
-                                        frame.hash,
+                                        frame.hash(),
                                         consumed,
                                         now_unix_ms(),
                                     ) {
@@ -1540,8 +1517,8 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                 trace_jsonl(
                                     "nonce_consumed",
                                     serde_json::json!({
-                                        "tx": frame.hash.to_string(),
-                                        "sender": format!("0x{:x}", frame.from),
+                                        "tx": frame.hash().to_string(),
+                                        "sender": format!("0x{:x}", frame.from()),
                                         "mined": consumed.mined(),
                                         "block": consumed.block(),
                                         "block_hash": consumed.block_hash().to_string(),
@@ -1549,7 +1526,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                 );
                                 if consumed.mined() {
                                     tracing::info!(
-                                        tx = %frame.hash,
+                                        tx = %frame.hash(),
                                         reason = "already_settled",
                                         block = consumed.block(),
                                         "observe"
@@ -1561,7 +1538,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                     "quarantine",
                                     serde_json::json!({
                                         "action": "rescue_reentered",
-                                        "tx": frame.hash.to_string(),
+                                        "tx": frame.hash().to_string(),
                                         "predecessors": predecessors.len(),
                                         "predecessor_nonces": predecessors.clone(),
                                     }),
@@ -1576,7 +1553,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                 if !predecessors.is_empty() {
                                     match hydrate_predecessors(
                                         &sim_provider,
-                                        frame.from,
+                                        frame.from(),
                                         &predecessors,
                                     )
                                     .await
@@ -1586,7 +1563,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                                 "quarantine",
                                                 serde_json::json!({
                                                     "action": "rescue_hydrated",
-                                                    "tx": frame.hash.to_string(),
+                                                    "tx": frame.hash().to_string(),
                                                     "predecessors": hydrated.txs.len(),
                                                 }),
                                             );
@@ -1598,14 +1575,14 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                                 "quarantine",
                                                 serde_json::json!({
                                                     "action": "rescue_hydration_failed",
-                                                    "tx": frame.hash.to_string(),
+                                                    "tx": frame.hash().to_string(),
                                                     "predecessor_nonces": predecessors.clone(),
                                                     "reason": reason,
                                                     "permanent": false,
                                                 }),
                                             );
                                             tracing::warn!(
-                                                tx = %frame.hash,
+                                                tx = %frame.hash(),
                                                 reason = reason,
                                                 "pool-pred predecessor hydration failed - transient"
                                             );
@@ -1632,8 +1609,21 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                 // Re-enter the funnel exactly as the feed loop
                                 // does, with the same context. `run_frame`
                                 // owns its own spent/consumption accounting, so
-                                // nothing is double-counted here.
-                                let ev = frame.to_event();
+                                // nothing is double-counted here. Only a
+                                // complete park is ever rescued (`poll` reports
+                                // a wireless park as `WireLost`), so the event
+                                // rebuild is the complete arm's alone.
+                                let Some(complete) = frame.complete() else {
+                                    tracing::warn!(
+                                        tx = %frame.hash(),
+                                        reason = frame
+                                            .degraded_reason()
+                                            .map_or("", crate::gap_quarantine::MissingWire::as_str),
+                                        "rescue decision for a park with no wire - ignored"
+                                    );
+                                    continue;
+                                };
+                                let ev = complete.to_event();
                                 let outcome = run_frame(
                                     &ev,
                                     &prefix_txs,
@@ -1666,10 +1656,11 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                 // journal's `(hash, boundary)` dedup are its
                                 // bound instead.
                                 if outcome == FrameOutcome::GapPending {
-                                    if let Some(boundary) = quarantine.expected_boundary(frame.hash)
+                                    if let Some(boundary) =
+                                        quarantine.expected_boundary(frame.hash())
                                     {
                                         quarantine.record_repark_guard_with_content(
-                                            frame.hash,
+                                            frame.hash(),
                                             &predecessors,
                                             &prefix_hashes,
                                             boundary,
@@ -1704,8 +1695,23 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                 trace_jsonl(
                                     "quarantine",
                                     serde_json::json!({"action": "still_waiting",
-                                        "tx": frame.hash.to_string(),
+                                        "tx": frame.hash().to_string(),
                                         "unknown_nonces": unknown,
+                                    }),
+                                );
+                            }
+
+                            QuarantineDecision::WireLost { reason } => {
+                                // Identity only: no wire to replay, so no
+                                // rescue exists. One hold per head advance; the
+                                // frame stays tracked until chain proof.
+                                trace_jsonl(
+                                    "quarantine",
+                                    serde_json::json!({"action": "wire_lost",
+                                        "tx": frame.hash().to_string(),
+                                        "sender": format!("0x{:x}", frame.from()),
+                                        "reason": reason.as_str(),
+                                        "claimed_nonce": frame.claimed_nonce(),
                                     }),
                                 );
                             }
@@ -1722,14 +1728,14 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                         trace_jsonl(
                             "reorg_revived",
                             serde_json::json!({
-                                "tx": frame.hash.to_string(),
+                                "tx": frame.hash().to_string(),
                                 "block": block,
                                 "recorded_hash": recorded_hash.to_string(),
                                 "canonical_hash": canonical.map(|h| h.to_string()),
                             }),
                         );
                         tracing::info!(
-                            tx = %frame.hash,
+                            tx = %frame.hash(),
                             block,
                             "reorg revived - frame back to tracked"
                         );
@@ -1748,7 +1754,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                         if let Some(journal) = quarantine_journal.as_mut() {
                             let resolved_unix_ms = now_unix_ms();
                             if let Err(error) =
-                                journal.record_resolve(frame.hash, resolution, resolved_unix_ms)
+                                journal.record_resolve(frame.hash(), resolution, resolved_unix_ms)
                             {
                                 tracing::warn!(%error, "finalized tombstone not journaled");
                             }
@@ -1766,7 +1772,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                         trace_jsonl(
                             "finalized",
                             serde_json::json!({
-                                "tx": frame.hash.to_string(),
+                                "tx": frame.hash().to_string(),
                                 "reason": reason,
                                 "mined": consumed.mined(),
                                 "block": consumed.block(),
@@ -1774,7 +1780,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                             }),
                         );
                         tracing::info!(
-                            tx = %frame.hash,
+                            tx = %frame.hash(),
                             mined = consumed.mined(),
                             block = consumed.block(),
                             finalized,

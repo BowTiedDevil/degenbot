@@ -27,23 +27,9 @@ fn hash(byte: u8) -> B256 {
 }
 
 fn frame(nonce: u64, expected: u64) -> ParkedFrame {
-    ParkedFrame {
-        hash: hash(1),
-        chain_id: 1,
-        from: SENDER,
-        to: None,
-        value: U256::ZERO,
-        data: Bytes::new(),
-        gas: 300_000,
-        max_fee_per_gas: 514_684_409,
-        max_priority_fee_per_gas: 1_000_000_000,
-        claimed_nonce: nonce,
-        expected_at_capture: expected,
-        tx_type: 2,
-        access_list: serde_json::json!([]),
-        received_unix_ms: 1_700_000_000_000,
-        raw_signed_tx: None,
-    }
+    let mut parked = event(1, nonce);
+    parked.from = SENDER;
+    ParkedFrame::from_event(&parked, expected)
 }
 
 #[test]
@@ -94,7 +80,7 @@ fn unrelated_pool_tx_does_not_re_arm_a_futile_rescue() {
     // with the predecessors' content identity.
     let content = [(10, hash(0xa1)), (11, hash(0xa2))];
     q.record_repark_guard_with_content(
-        frame(12, 10).hash,
+        frame(12, 10).hash(),
         &[10, 11],
         &[content[0].1, content[1].1],
         10,
@@ -138,12 +124,12 @@ fn frontier_rescues_with_an_empty_prefix_and_leaves_the_fsm() {
         "no NonceConsumed AT the claim"
     );
     assert!(q.is_empty(), "a frontier rescue removes the frame");
-    assert_eq!(q.state(f.hash), None);
+    assert_eq!(q.state(f.hash()), None);
 
     // A frame whose head LATER passes the claim still classifies as consumed.
     let mut q = Quarantine::new();
     let g = frame(12, 10);
-    let h = g.hash;
+    let h = g.hash();
     q.push(g);
     let out = q.poll(SENDER, 13, &[]);
     assert_eq!(out[0].1, QuarantineDecision::NonceConsumed);
@@ -181,8 +167,7 @@ fn same_head_rescue_is_not_refired_but_a_later_boundary_waits() {
     assert!(q.poll(SENDER, 12, &[]).is_empty());
 
     // A fresh captured boundary (a later gap) is its own frame.
-    let mut fresh = frame(15, 12);
-    fresh.hash = hash(2);
+    let fresh = frame(15, 12).with_hash(hash(2));
     q.push(fresh);
     assert_eq!(q.len(), 1);
     let out = q.poll(SENDER, 12, &[]);
@@ -199,7 +184,7 @@ fn same_head_rescue_is_not_refired_but_a_later_boundary_waits() {
 fn finality_tombstones_only_at_or_below_the_tag() {
     let mut q = Quarantine::new();
     let f = frame(12, 10);
-    let h = f.hash;
+    let h = f.hash();
     q.push(f);
     let _ = q.poll(SENDER, 13, &[]);
     q.enter_tentative(
@@ -223,7 +208,7 @@ fn finality_tombstones_only_at_or_below_the_tag() {
 fn reorg_revives_on_hash_mismatch_but_not_on_match() {
     let mut q = Quarantine::new();
     let f = frame(12, 10);
-    let h = f.hash;
+    let h = f.hash();
     q.push(f);
     let _ = q.poll(SENDER, 13, &[]);
     q.enter_tentative(
@@ -253,15 +238,13 @@ fn reorg_revives_on_hash_mismatch_but_not_on_match() {
 #[test]
 fn tentative_blocks_are_deduped() {
     let mut q = Quarantine::new();
-    let mut a = frame(12, 10);
-    a.hash = hash(1);
-    let mut b = frame(13, 11);
-    b.hash = hash(2);
+    let a = frame(12, 10).with_hash(hash(1));
+    let b = frame(13, 11).with_hash(hash(2));
     q.push(a);
     q.push(b);
     for f in q.poll(SENDER, 20, &[]) {
         q.enter_tentative(
-            f.0.hash,
+            f.0.hash(),
             NonceConsumed::MinedAt {
                 block: 100,
                 block_hash: hash(7),
@@ -275,7 +258,7 @@ fn tentative_blocks_are_deduped() {
 fn no_pool_absence_ever_evicts() {
     let mut q = Quarantine::new();
     let f = frame(12, 10);
-    let h = f.hash;
+    let h = f.hash();
     q.push(f);
     for _ in 0..100 {
         let out = q.poll(SENDER, 10, &[]);
@@ -306,7 +289,7 @@ fn legacy_migrated_park_reenters_the_fsm_as_tracked() {
     let mut q = Quarantine::new();
     let frame = read.pending[0].to_parked_frame().expect("frame");
     assert!(frame.is_degraded());
-    let frame_hash = frame.hash;
+    let frame_hash = frame.hash();
     q.push(frame);
     for _ in 0..10 {
         let out = q.poll(SENDER, 44, &[]);
@@ -366,11 +349,10 @@ fn transient_reentry_failure_keeps_the_frame_tracked_and_unresolved() {
     journal.record_park(&original).expect("park");
 
     let mut q = Quarantine::new();
-    let mut f = frame(12, 10);
-    f.hash = hash(21);
+    let f = frame(12, 10).with_hash(hash(21));
     q.push(f.clone());
 
-    assert_eq!(q.state(f.hash), Some(FrameState::Tracked));
+    assert_eq!(q.state(f.hash()), Some(FrameState::Tracked));
     let read = read_pending(&path).expect("read");
     assert_eq!(read.pending.len(), 1, "no resolve tombstone was written");
     assert_eq!(read.pending[0].expected_nonce, 10, "original boundary");
@@ -390,11 +372,10 @@ fn rescue_with_predecessors_then_transient_failure_keeps_the_frame_tracked() {
     journal.record_park(&original).expect("park");
 
     let mut q = Quarantine::new();
-    let mut f = frame(12, 10);
-    f.hash = hash(61);
+    let f = frame(12, 10).with_hash(hash(61));
     q.push(f.clone());
 
-    let rescued = q.poll(f.from, 10, &[10, 11]);
+    let rescued = q.poll(f.from(), 10, &[10, 11]);
     assert_eq!(
         rescued[0].1,
         QuarantineDecision::Rescue {
@@ -407,7 +388,7 @@ fn rescue_with_predecessors_then_transient_failure_keeps_the_frame_tracked() {
     // The hydration failed transiently: the caller re-parks the ORIGINAL frame
     // and writes no resolve (the journal router's Transient arm).
     q.push(f.clone());
-    assert_eq!(q.state(f.hash), Some(FrameState::Tracked));
+    assert_eq!(q.state(f.hash()), Some(FrameState::Tracked));
 
     let read = read_pending(&path).expect("read");
     assert_eq!(read.pending.len(), 1, "no resolve tombstone was written");
@@ -427,9 +408,7 @@ fn gap_pending_reentry_leaves_only_the_fresh_park() {
     journal.record_park(&fresh).expect("fresh park");
 
     let mut q = Quarantine::new();
-    let mut re_parked = frame(15, 12);
-    re_parked.hash = hash(31);
-    q.push(re_parked);
+    q.push(frame(15, 12).with_hash(hash(31)));
 
     let read = read_pending(&path).expect("read");
     assert_eq!(read.pending.len(), 1, "the fresh park is the only record");

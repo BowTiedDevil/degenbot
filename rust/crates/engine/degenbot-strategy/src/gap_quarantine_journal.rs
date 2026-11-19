@@ -14,8 +14,11 @@
 //!
 //! Append-on-change with resolution tombstones, compacted once at boot:
 //!
-//! - A park appends `{"v":2,"kind":"park", ...}` carrying the full feed event
-//!   plus the claimed/expected nonce and the wall clock.
+//! - A park appends `{"v":3,"kind":"park","wire":"complete", ...}` carrying the
+//!   complete feed wire plus the identity (hash, sender, claimed/expected
+//!   nonce) and the wall clock. A park whose wire did not survive a migration
+//!   appends `{"v":3,"kind":"park","wire":"degraded","reason":"...", ...}`
+//!   carrying identity and the missing-wire reason and NO wire fields at all.
 //! - A nonce-consumption classification appends `{"kind":"tentative", ...}`
 //!   naming the frame hash and the carrying block (hash + kind), so a restart
 //!   mid-finality-window reconstructs the tentative set.
@@ -34,10 +37,17 @@
 //! Records carry `v` ([`JOURNAL_RECORD_VERSION`]); a line without it is
 //! version 1, the format before versioning. A version this binary does not
 //! fully understand is not a death sentence: a park-shaped line is migrated
-//! into a [`ParkRecord`] and stays tracked (degraded when the wire cannot be
-//! rebuilt), and anything the fold cannot classify is appended verbatim
-//! to a `.corrupt` sidecar before compaction runs — a frame cannot die at boot
-//! for the parser's ignorance, and rejected bytes are never overwritten.
+//! into a [`ParkRecord`] and stays tracked — as a [`ParkWire::Complete`] park
+//! when every wire field survives and its own `fidelity` label does not claim
+//! otherwise, else as a [`ParkWire::Degraded`] park carrying
+//! [`MissingWire::LegacyIncomplete`]. The label decides, never a zero value: a
+//! real zero is a value, and a label this binary does not recognize is
+//! malformed input rather than a full-wire claim. A park-shaped line whose
+//! identity (hash, claimed nonce) or wire label does not survive is rejected by
+//! the corruption policy below rather than reinterpreted, and anything the fold
+//! cannot classify is appended verbatim to a `.corrupt` sidecar before
+//! compaction runs — a frame cannot die at boot for the parser's ignorance, and
+//! rejected bytes are never overwritten.
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -47,7 +57,9 @@ use std::path::{Path, PathBuf};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::gap_quarantine::{NonceConsumed, ParkedFrame};
+use crate::gap_quarantine::{
+    CompleteFrame, DegradedFrame, FrameIdentity, FrameWire, MissingWire, NonceConsumed, ParkedFrame,
+};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 
 /// Fixed journal filename under the durable-state root.
@@ -65,32 +77,13 @@ pub const RESOLVED_ARCHIVE_FILE_NAME: &str = "backrun-quarantine-resolved.jsonl"
 pub const RESOLVED_ARCHIVE_RECORD_VERSION: u32 = 1;
 
 /// The record schema version this binary writes. A line without an explicit
-/// `v` predates versioning and is read as [`LEGACY_RECORD_VERSION`].
-pub const JOURNAL_RECORD_VERSION: u32 = 2;
+/// `v` predates versioning and is read as [`LEGACY_RECORD_VERSION`]. Version 3
+/// replaced version 2's wire-plus-`fidelity`-label record with the typed
+/// [`ParkWire`] variant.
+pub const JOURNAL_RECORD_VERSION: u32 = 3;
 
 /// The implicit version of a line that carries no `v` field.
 const LEGACY_RECORD_VERSION: u32 = 1;
-
-/// How much of a migrated record's wire survived. A degraded park keeps only
-/// identity, so later stages know the feed event cannot be rebuilt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RecordFidelity {
-    /// The wire shape survives; the feed event can be rebuilt.
-    #[default]
-    Full,
-    /// Only identity survives (hash, nonce, and the sender when readable);
-    /// no event reconstruction is possible.
-    Degraded,
-}
-
-impl RecordFidelity {
-    /// Whether the record can rebuild its feed event.
-    #[must_use]
-    pub const fn is_full(&self) -> bool {
-        matches!(self, Self::Full)
-    }
-}
 
 /// Why a parked frame left the quarantine. Only finalized nonce-consumptions
 /// (and the operational rescue/eviction) write tombstones -- there is no
@@ -178,14 +171,13 @@ pub struct TentativeEntryRecord {
     pub entered_at_unix_ms: u64,
 }
 
-/// The feed event as it round-trips through the journal. The wire fields are
-/// hex strings so a line stays human-readable in the forensics surface; the
-/// conversion is lossless against [`BackrunFeedEvent`].
+/// The persisted half of a complete park's wire: every feed field that is not
+/// identity. Fields the feed carries as numbers ride as hex/decimal strings so
+/// a line stays human-readable in the forensics surface; the conversion is
+/// lossless against [`FrameWire`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WireFrame {
-    pub hash: String,
+pub struct WireFields {
     pub chain_id: u64,
-    pub from: String,
     pub to: Option<String>,
     pub value: String,
     pub data: String,
@@ -193,7 +185,6 @@ pub struct WireFrame {
     /// Decimal string: `serde_json` cannot deserialize a bare `u128`.
     pub max_fee_per_gas: String,
     pub max_priority_fee_per_gas: String,
-    pub nonce: u64,
     pub tx_type: u8,
     pub received_unix_ms: u64,
     pub access_list: serde_json::Value,
@@ -203,21 +194,18 @@ pub struct WireFrame {
     pub raw_signed_tx: Option<String>,
 }
 
-impl WireFrame {
-    /// Encode one feed event.
+impl WireFields {
+    /// Encode the wire half of one feed event.
     #[must_use]
     pub fn encode(event: &BackrunFeedEvent) -> Self {
         Self {
-            hash: event.hash.to_string(),
             chain_id: event.chain_id,
-            from: event.from.to_string(),
             to: event.to.map(|a| a.to_string()),
             value: format!("0x{:x}", event.value),
             data: format!("0x{}", alloy::hex::encode(&event.data)),
             gas: event.gas,
             max_fee_per_gas: event.max_fee_per_gas.to_string(),
             max_priority_fee_per_gas: event.max_priority_fee_per_gas.to_string(),
-            nonce: event.nonce,
             tx_type: event.tx_type,
             received_unix_ms: event.received_unix_ms,
             access_list: event.access_list.clone(),
@@ -228,17 +216,16 @@ impl WireFrame {
         }
     }
 
-    /// Decode back to a feed event.
+    /// Decode back to the typed wire the FSM holds.
     ///
     /// # Errors
     ///
     /// [`JournalError`] when a hex field does not parse (a hand-edited or
     /// truncated line).
-    pub fn decode(&self) -> Result<BackrunFeedEvent, JournalError> {
-        let hash = self.hash.parse::<B256>()?;
-        let from = self.from.parse::<Address>()?;
+    pub fn decode(&self) -> Result<FrameWire, JournalError> {
         let to = self.to.as_deref().map(str::parse::<Address>).transpose()?;
         let value = parse_u256(&self.value)?;
+        let data = Bytes::from(alloy::hex::decode(self.data.trim_start_matches("0x"))?);
         let max_fee_per_gas = self
             .max_fee_per_gas
             .parse::<u128>()
@@ -247,20 +234,16 @@ impl WireFrame {
             .max_priority_fee_per_gas
             .parse::<u128>()
             .map_err(|e| JournalError::Field(e.to_string()))?;
-        let data = Bytes::from(alloy::hex::decode(self.data.trim_start_matches("0x"))?);
-        Ok(BackrunFeedEvent {
-            chain_id: self.chain_id,
-            from,
+        Ok(FrameWire {
             to,
             value,
             data,
             gas: self.gas,
             max_fee_per_gas,
             max_priority_fee_per_gas,
-            nonce: self.nonce,
-            hash,
-            access_list: self.access_list.clone(),
+            chain_id: self.chain_id,
             tx_type: self.tx_type,
+            access_list: self.access_list.clone(),
             received_unix_ms: self.received_unix_ms,
             raw_signed_tx: match self.raw_signed_tx.as_deref() {
                 None => None,
@@ -280,11 +263,25 @@ fn parse_u256(raw: &str) -> Result<U256, JournalError> {
     U256::from_str_radix(hex, 16).map_err(|e| JournalError::Field(e.to_string()))
 }
 
-/// One park: the full feed event plus the gap edges, wall clock, and optional
-/// tentative classification (present once the nonce consumption is known).
+/// The wire a park record persists: the complete wire, or the reason it is
+/// gone. A degraded record stores no wire field at all, so a zero value is
+/// never read back as "the wire was lost".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "wire", rename_all = "snake_case")]
+pub enum ParkWire {
+    /// The whole wire survived: the record can rebuild its feed event.
+    Complete { fields: Box<WireFields> },
+    /// Identity only; `reason` names the missing wire.
+    Degraded { reason: MissingWire },
+}
+
+/// One park: the identity, the wall clock, the wire (or the reason it is gone),
+/// and the optional tentative classification (present once the nonce
+/// consumption is known).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParkRecord {
-    pub frame: WireFrame,
+    /// The frame hash the record belongs to; the fold's key.
+    pub hash: B256,
     /// The frame's sender when the record carries one. `None` is absence as a
     /// fact: no fold ever borrows an address for a sender the line did not
     /// carry, and [`Self::to_parked_frame`] refuses to rebuild a sender-less
@@ -296,24 +293,47 @@ pub struct ParkRecord {
     pub parked_at_unix_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tentative: Option<TentativeRecord>,
-    /// Wire survival of a migrated record; a degraded park carries only
-    /// identity and cannot rebuild the feed event.
-    #[serde(default, skip_serializing_if = "RecordFidelity::is_full")]
-    pub fidelity: RecordFidelity,
+    /// The wire, or the explicit reason it is gone.
+    #[serde(flatten)]
+    pub wire: ParkWire,
 }
 
 impl ParkRecord {
-    /// Build a park record from the event that produced the gap.
+    /// Build a complete park record from the event that produced the gap.
     #[must_use]
     pub fn new(event: &BackrunFeedEvent, expected_nonce: u64, parked_at_unix_ms: u64) -> Self {
         Self {
-            frame: WireFrame::encode(event),
+            hash: event.hash,
             sender: Some(event.from),
             claimed_nonce: event.nonce,
             expected_nonce,
             parked_at_unix_ms,
             tentative: None,
-            fidelity: RecordFidelity::Full,
+            wire: ParkWire::Complete {
+                fields: Box::new(WireFields::encode(event)),
+            },
+        }
+    }
+
+    /// A record whose wire did not survive a migration: identity plus the
+    /// reason, never a zero-filled wire.
+    #[must_use]
+    pub const fn degraded(
+        hash: B256,
+        sender: Option<Address>,
+        claimed_nonce: u64,
+        expected_nonce: u64,
+        parked_at_unix_ms: u64,
+        reason: MissingWire,
+    ) -> Self {
+        Self {
+            hash,
+            sender,
+            claimed_nonce,
+            expected_nonce,
+            parked_at_unix_ms,
+            tentative: None,
+            wire: ParkWire::Degraded { reason },
         }
     }
 
@@ -324,81 +344,63 @@ impl ParkRecord {
         self
     }
 
-    /// Rebuild the feed event a replay needs.
-    ///
-    /// # Errors
-    ///
-    /// [`JournalError`] when a hex field fails to parse.
-    pub fn to_event(&self) -> Result<BackrunFeedEvent, JournalError> {
-        self.frame.decode()
+    /// Why the record's wire is gone, when it is.
+    #[must_use]
+    pub fn degraded_reason(&self) -> Option<MissingWire> {
+        match &self.wire {
+            ParkWire::Complete { .. } => None,
+            ParkWire::Degraded { reason } => Some(*reason),
+        }
     }
 
     /// Rebuild the FSM frame. No clock rides the frame: liveness is finality,
     /// so the rebuild is lossless regardless of downtime. A degraded record
-    /// rebuilds only its identity and leaves the wire zeroed, so the frame can
-    /// never be rescued into the funnel.
+    /// rebuilds its identity and missing-wire reason only — there is no wire to
+    /// fabricate, so the frame can never be rescued into the funnel.
     ///
     /// # Errors
     ///
-    /// [`JournalError`] when the frame hash fails to parse, or when a degraded
-    /// record carries no sender — [`ParkedFrame`] needs one and absence is
-    /// never filled in.
+    /// [`JournalError`] when the record carries no sender (absence is never
+    /// filled in with a fabricated address), or when a wire field fails to
+    /// parse.
     pub fn to_parked_frame(&self) -> Result<ParkedFrame, JournalError> {
-        if self.fidelity == RecordFidelity::Degraded {
-            let hash = self.frame.hash.parse::<B256>()?;
-            // The sender is the record's own, exactly as recorded: absence
-            // refuses the rebuild instead of parking the frame under the zero
-            // address (which no tx could ever have sent), and a zero address
-            // the record genuinely carries is preserved as recorded.
-            let from = self.sender.ok_or_else(|| {
-                JournalError::Field(String::from("degraded park carries no sender"))
-            })?;
-            return Ok(ParkedFrame {
-                hash,
-                from,
-                to: self
-                    .frame
-                    .to
-                    .as_deref()
-                    .and_then(|raw| raw.parse::<Address>().ok()),
-                value: U256::ZERO,
-                data: Bytes::new(),
-                gas: 0,
-                max_fee_per_gas: 0,
-                max_priority_fee_per_gas: 0,
-                claimed_nonce: self.claimed_nonce,
-                expected_at_capture: self.expected_nonce,
-                chain_id: 0,
-                tx_type: 0,
-                access_list: serde_json::json!([]),
-                received_unix_ms: 0,
-                raw_signed_tx: None,
-            });
+        let identity = self.identity()?;
+        match &self.wire {
+            ParkWire::Complete { fields } => Ok(ParkedFrame::Complete(Box::new(CompleteFrame {
+                identity,
+                wire: fields.decode()?,
+            }))),
+            ParkWire::Degraded { reason } => Ok(ParkedFrame::Degraded(DegradedFrame {
+                identity,
+                reason: *reason,
+            })),
         }
-        let event = self.to_event()?;
-        Ok(ParkedFrame {
-            hash: event.hash,
-            from: event.from,
-            to: event.to,
-            value: event.value,
-            data: event.data,
-            gas: event.gas,
-            max_fee_per_gas: event.max_fee_per_gas,
-            max_priority_fee_per_gas: event.max_priority_fee_per_gas,
+    }
+
+    /// The identity the record carries, when its sender survived.
+    ///
+    /// # Errors
+    ///
+    /// [`JournalError`] when the record carries no sender: absence is a fact,
+    /// and a park is never rebuilt under a borrowed address.
+    fn identity(&self) -> Result<FrameIdentity, JournalError> {
+        Ok(FrameIdentity {
+            hash: self.hash,
+            from: self.sender.ok_or_else(|| {
+                JournalError::Field(String::from("park record carries no sender"))
+            })?,
             claimed_nonce: self.claimed_nonce,
             expected_at_capture: self.expected_nonce,
-            chain_id: event.chain_id,
-            tx_type: event.tx_type,
-            access_list: event.access_list,
-            received_unix_ms: event.received_unix_ms,
-            raw_signed_tx: event.raw_signed_tx,
         })
     }
 
-    /// The original receive time, preserved for forensics.
+    /// The original receive time, when the wire that carried it survived.
     #[must_use]
-    pub fn original_received_unix_ms(&self) -> u64 {
-        self.frame.received_unix_ms
+    pub fn original_received_unix_ms(&self) -> Option<u64> {
+        match &self.wire {
+            ParkWire::Complete { fields } => Some(fields.received_unix_ms),
+            ParkWire::Degraded { .. } => None,
+        }
     }
 }
 
@@ -471,9 +473,9 @@ impl ResolutionArchiveRecord {
     pub fn new(frame: &ParkedFrame, resolution: ArchivedResolution, resolved_unix_ms: u64) -> Self {
         Self {
             version: RESOLVED_ARCHIVE_RECORD_VERSION,
-            frame_hash: frame.hash,
-            sender: frame.from,
-            claimed_nonce: frame.claimed_nonce,
+            frame_hash: frame.hash(),
+            sender: frame.from(),
+            claimed_nonce: frame.claimed_nonce(),
             resolution,
             block: None,
             block_hash: None,
@@ -547,8 +549,8 @@ pub struct PendingRead {
     pub skipped: usize,
     /// Older- or unknown-version parks folded as tracked frames.
     pub migrated: usize,
-    /// Migrated parks that kept only identity (hash, nonce, sender when
-    /// readable).
+    /// Migrated parks whose wire did not survive ([`ParkWire::Degraded`]): the
+    /// identity alone re-entered the FSM.
     pub degraded: usize,
 }
 
@@ -558,10 +560,7 @@ enum Classified {
     Fold(JournalRecordPayload),
     /// A park-shaped record (any version or field state) rebuilt as a park,
     /// degraded when its wire cannot be reconstructed.
-    Migrated {
-        record: Box<ParkRecord>,
-        fidelity: RecordFidelity,
-    },
+    Migrated(Box<ParkRecord>),
     /// Genuinely unparseable; preserve verbatim in the sidecar.
     Corrupt,
 }
@@ -606,12 +605,12 @@ pub fn read_pending(path: &Path) -> io::Result<PendingRead> {
         let parse_line = line.strip_prefix('\u{feff}').unwrap_or(line);
         match classify_line(parse_line) {
             Classified::Fold(payload) => apply_fold(&mut pending, payload),
-            Classified::Migrated { record, fidelity } => {
+            Classified::Migrated(record) => {
                 migrated += 1;
-                if fidelity == RecordFidelity::Degraded {
+                if record.degraded_reason().is_some() {
                     degraded += 1;
                 }
-                pending.insert(record.frame.hash.clone(), *record);
+                pending.insert(record.hash.to_string(), *record);
             }
             Classified::Corrupt => {
                 skipped += 1;
@@ -654,11 +653,8 @@ fn classify_line(line: &str) -> Classified {
     // A park-shaped line is never junk: whatever the version or field state,
     // fold it as a park, degrading the wire it cannot rebuild.
     if park_shaped(&value) {
-        if let Some((record, fidelity)) = migrate_legacy_park(&value) {
-            return Classified::Migrated {
-                record: Box::new(record),
-                fidelity,
-            };
+        if let Some(record) = migrate_legacy_park(&value) {
+            return Classified::Migrated(Box::new(record));
         }
     }
     Classified::Corrupt
@@ -677,11 +673,10 @@ fn sample_version(value: &serde_json::Value) -> u32 {
 
 fn apply_fold(pending: &mut BTreeMap<String, ParkRecord>, payload: JournalRecordPayload) {
     match payload {
-        JournalRecordPayload::Park(mut record) => {
-            if record.fidelity == RecordFidelity::Full && !wire_is_full(&record.frame) {
-                record.fidelity = RecordFidelity::Degraded;
-            }
-            pending.insert(record.frame.hash.clone(), *record);
+        JournalRecordPayload::Park(record) => {
+            // The record's own wire variant is the truth: a zero-valued field
+            // in a complete record is a value, never a degradation signal.
+            pending.insert(record.hash.to_string(), *record);
         }
         JournalRecordPayload::Tentative(record) => {
             if let Some(park) = pending.get_mut(&record.frame_hash.to_string()) {
@@ -712,7 +707,7 @@ fn append_corrupt(path: &Path, line: &str) -> io::Result<()> {
 /// missing one degrades instead of rejecting the line.
 #[derive(Debug, Default, Deserialize)]
 struct LegacyParkRecord {
-    frame: Option<LegacyWireFrame>,
+    frame: Option<LegacyWireFields>,
     sender: Option<Address>,
     claimed_nonce: Option<u64>,
     expected_nonce: Option<u64>,
@@ -720,12 +715,30 @@ struct LegacyParkRecord {
     hash: Option<B256>,
     nonce: Option<u64>,
     tentative: Option<serde_json::Value>,
+    /// The pre-versioning wire-survival label (version 2's `fidelity`). A
+    /// `degraded` label is the ONLY thing that marks a legacy wire as lost:
+    /// zeroed wire fields never do, and a label this binary does not recognize
+    /// fails the deserialize (corrupt policy) rather than meaning "full".
+    fidelity: Option<LegacyFidelity>,
+}
+
+/// The wire-survival label older writers stamped on a park.
+///
+/// Only the labels this binary wrote are accepted. An unknown label is
+/// malformed legacy input, not a "no degradation claim": it fails the fold's
+/// deserialization, so the row follows the corruption policy (verbatim
+/// sidecar, no pending record) instead of being reinterpreted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LegacyFidelity {
+    Full,
+    Degraded,
 }
 
 /// The wire fields a legacy park might carry. All optional: whatever survives
 /// is folded, and hash-plus-nonce alone still yields a degraded tracked park.
 #[derive(Debug, Default, Deserialize)]
-struct LegacyWireFrame {
+struct LegacyWireFields {
     hash: Option<String>,
     chain_id: Option<u64>,
     from: Option<String>,
@@ -742,13 +755,42 @@ struct LegacyWireFrame {
     raw_signed_tx: Option<String>,
 }
 
+impl LegacyWireFields {
+    /// The complete wire this legacy frame carries, when every field is
+    /// present. Presence is the test: a zero VALUE is a real value, so it never
+    /// degrades the record.
+    fn complete_fields(&self) -> Option<WireFields> {
+        Some(WireFields {
+            chain_id: self.chain_id?,
+            to: self.to.clone(),
+            value: self.value.clone()?,
+            data: self.data.clone()?,
+            gas: self.gas?,
+            max_fee_per_gas: self.max_fee_per_gas.clone()?,
+            max_priority_fee_per_gas: self.max_priority_fee_per_gas.clone()?,
+            tx_type: self.tx_type?,
+            received_unix_ms: self.received_unix_ms?,
+            access_list: self.access_list.clone()?,
+            // Raw bytes are optional evidence; their absence never degrades
+            // a complete wire.
+            raw_signed_tx: self.raw_signed_tx.clone(),
+        })
+    }
+}
+
 /// Rebuild a tracked park from a park-shaped line the current schema rejects.
-/// The wire is FULL only when every field survives and decodes to a
-/// non-degenerate value; any shortcoming degrades to identity only. The sender
-/// survives only when the line carries one — its `sender` field or a parsable
-/// `from`; a line carrying none migrates with the sender absent. Returns `None`
-/// when not even the hash and claimed nonce survive.
-fn migrate_legacy_park(value: &serde_json::Value) -> Option<(ParkRecord, RecordFidelity)> {
+///
+/// The wire is [`ParkWire::Complete`] only when the line's own `fidelity` label
+/// does not claim degradation AND every wire field survives. A `degraded`
+/// label, a missing field, or an unparsable field migrates as identity plus
+/// [`MissingWire::LegacyIncomplete`]: the label and field survival decide, never
+/// a zero value. The sender survives only when the line carries one — its
+/// `sender` field or a parsable `from`; a line carrying none migrates with the
+/// sender absent. Returns `None` for malformed input that is never
+/// reinterpreted: not even the hash and claimed nonce survive, or the wire
+/// label is not one this binary knows (an unknown label is a failed fold, not a
+/// full-wire claim).
+fn migrate_legacy_park(value: &serde_json::Value) -> Option<ParkRecord> {
     let legacy: LegacyParkRecord = serde_json::from_value(value.clone()).ok()?;
     let frame = legacy.frame.unwrap_or_default();
     let hash = frame
@@ -765,87 +807,34 @@ fn migrate_legacy_park(value: &serde_json::Value) -> Option<(ParkRecord, RecordF
             .as_deref()
             .and_then(|raw| raw.parse::<Address>().ok())
     });
-    let (wire, fidelity) = match full_wire_candidate(&frame, hash, claimed_nonce) {
-        Some(wire) => (wire, RecordFidelity::Full),
-        None => (
-            degraded_wire(&frame, hash, claimed_nonce),
-            RecordFidelity::Degraded,
-        ),
+    let wire = if matches!(legacy.fidelity, Some(LegacyFidelity::Degraded)) {
+        ParkWire::Degraded {
+            reason: MissingWire::LegacyIncomplete,
+        }
+    } else {
+        match (frame.complete_fields(), sender) {
+            (Some(fields), Some(_)) if fields.decode().is_ok() && fields.access_list.is_array() => {
+                ParkWire::Complete {
+                    fields: Box::new(fields),
+                }
+            }
+            _ => ParkWire::Degraded {
+                reason: MissingWire::LegacyIncomplete,
+            },
+        }
     };
     let tentative = legacy
         .tentative
         .and_then(|raw| serde_json::from_value::<TentativeRecord>(raw).ok());
-    Some((
-        ParkRecord {
-            frame: wire,
-            sender,
-            claimed_nonce,
-            expected_nonce: legacy.expected_nonce.unwrap_or(claimed_nonce),
-            parked_at_unix_ms: legacy.parked_at_unix_ms.unwrap_or(0),
-            tentative,
-            fidelity,
-        },
-        fidelity,
-    ))
-}
-
-/// The full wire a legacy park carries, when every field is present and
-/// decodes to a non-degenerate value. `None` on the first shortcoming.
-fn full_wire_candidate(frame: &LegacyWireFrame, hash: B256, nonce: u64) -> Option<WireFrame> {
-    let wire = WireFrame {
-        hash: hash.to_string(),
-        chain_id: frame.chain_id?,
-        from: frame.from.clone()?,
-        to: frame.to.clone(),
-        value: frame.value.clone()?,
-        data: frame.data.clone()?,
-        gas: frame.gas?,
-        max_fee_per_gas: frame.max_fee_per_gas.clone()?,
-        max_priority_fee_per_gas: frame.max_priority_fee_per_gas.clone()?,
-        nonce,
-        tx_type: frame.tx_type?,
-        received_unix_ms: frame.received_unix_ms?,
-        access_list: frame.access_list.clone()?,
-        // Raw bytes are optional evidence; their absence never degrades FULL.
-        raw_signed_tx: frame.raw_signed_tx.clone(),
-    };
-    wire_is_full(&wire).then_some(wire)
-}
-
-/// A degraded park keeps its identity (hash, nonce, and the sender when
-/// readable — carried by [`ParkRecord::sender`]); the wire defaults are zeroed
-/// so no event can be fabricated. A missing `from` stays missing — the wire
-/// never spells a sender the record does not carry.
-fn degraded_wire(frame: &LegacyWireFrame, hash: B256, nonce: u64) -> WireFrame {
-    WireFrame {
-        hash: hash.to_string(),
-        chain_id: 0,
-        from: frame.from.clone().unwrap_or_default(),
-        to: frame.to.clone(),
-        value: String::from("0x0"),
-        data: String::from("0x"),
-        gas: 0,
-        max_fee_per_gas: String::from("0"),
-        max_priority_fee_per_gas: String::from("0"),
-        nonce,
-        tx_type: 0,
-        received_unix_ms: 0,
-        access_list: serde_json::json!([]),
-        raw_signed_tx: None,
-    }
-}
-
-/// A wire that can rebuild a real feed event: every field decodes and the
-/// identity fields are non-degenerate. A fabricated default is never FULL.
-fn wire_is_full(wire: &WireFrame) -> bool {
-    let Ok(event) = wire.decode() else {
-        return false;
-    };
-    event.hash != B256::ZERO
-        && event.from != Address::ZERO
-        && event.chain_id != 0
-        && event.gas != 0
-        && wire.access_list.is_array()
+    Some(ParkRecord {
+        hash,
+        sender,
+        claimed_nonce,
+        expected_nonce: legacy.expected_nonce.unwrap_or(claimed_nonce),
+        parked_at_unix_ms: legacy.parked_at_unix_ms.unwrap_or(0),
+        tentative,
+        wire,
+    })
 }
 
 /// Atomically rewrite `path` to exactly `pending`, creating parent directories.
@@ -1109,11 +1098,243 @@ mod tests {
         }
     }
 
+    fn park_line(record: &ParkRecord) -> serde_json::Value {
+        serde_json::to_value(JournalRecord::new(JournalRecordPayload::Park(Box::new(
+            record.clone(),
+        ))))
+        .expect("serialize")
+    }
+
     #[test]
-    fn wire_frame_round_trips_the_feed_event() {
+    fn complete_record_round_trips_every_wire_field() {
         let original = event(1, 12, 1_700_000_000_000);
-        let decoded = WireFrame::encode(&original).decode().expect("decode");
-        assert_eq!(decoded, original);
+        let record = ParkRecord::new(&original, 10, now_ms());
+        assert_eq!(record.degraded_reason(), None);
+
+        let line = park_line(&record);
+        assert_eq!(
+            line.get("wire").and_then(serde_json::Value::as_str),
+            Some("complete"),
+            "a complete row names its wire variant"
+        );
+        assert_eq!(
+            line.get("hash").and_then(serde_json::Value::as_str),
+            Some(original.hash.to_string().as_str()),
+            "the identity hash is a top-level field"
+        );
+
+        let frame = record.to_parked_frame().expect("frame");
+        let complete = frame.complete().expect("complete");
+        assert_eq!(frame.identity().hash, original.hash);
+        assert_eq!(frame.identity().from, original.from);
+        assert_eq!(frame.claimed_nonce(), 12);
+        assert_eq!(frame.expected_at_capture(), 10);
+        assert_eq!(complete.wire.chain_id, original.chain_id);
+        assert_eq!(complete.wire.gas, original.gas);
+        assert_eq!(complete.wire.to, original.to);
+        assert_eq!(complete.wire.received_unix_ms, original.received_unix_ms);
+        assert_eq!(
+            complete.to_event(),
+            original,
+            "the complete wire round-trips losslessly"
+        );
+    }
+
+    #[test]
+    fn degraded_record_round_trips_identity_and_reason() {
+        let hash = B256::from([0x0b; 32]);
+        let sender = Address::with_last_byte(7);
+        let record = ParkRecord::degraded(
+            hash,
+            Some(sender),
+            12,
+            10,
+            1_700_000_000_000,
+            MissingWire::LegacyIncomplete,
+        );
+        assert_eq!(
+            record.degraded_reason(),
+            Some(MissingWire::LegacyIncomplete)
+        );
+
+        let line = park_line(&record);
+        assert_eq!(
+            line.get("wire").and_then(serde_json::Value::as_str),
+            Some("degraded")
+        );
+        assert_eq!(
+            line.get("reason").and_then(serde_json::Value::as_str),
+            Some("legacy_incomplete")
+        );
+        assert!(
+            line.get("fields").is_none() && line.get("frame").is_none(),
+            "a degraded row carries no wire fields at all: {line}"
+        );
+
+        let frame = record.to_parked_frame().expect("frame");
+        assert!(frame.is_degraded());
+        assert_eq!(frame.degraded_reason(), Some(MissingWire::LegacyIncomplete));
+        assert_eq!(frame.hash(), hash);
+        assert_eq!(frame.from(), sender);
+        assert_eq!(frame.claimed_nonce(), 12);
+        assert!(
+            frame.complete().is_none(),
+            "no wire survives the round trip"
+        );
+        assert_eq!(record.original_received_unix_ms(), None);
+    }
+
+    #[test]
+    fn degraded_record_survives_compaction_as_degraded() {
+        let path = scratch("degraded-compact").join(JOURNAL_FILE_NAME);
+        let record = ParkRecord::degraded(
+            B256::from([0x0c; 32]),
+            Some(Address::with_last_byte(7)),
+            12,
+            10,
+            1,
+            MissingWire::LegacyIncomplete,
+        );
+        compact(&path, std::slice::from_ref(&record)).expect("compact");
+        let read = read_pending(&path).expect("read");
+        assert_eq!(read.skipped, 0);
+        assert_eq!(read.pending.len(), 1);
+        assert_eq!(
+            read.pending[0].degraded_reason(),
+            Some(MissingWire::LegacyIncomplete)
+        );
+        assert_eq!(read.pending[0].claimed_nonce, 12);
+        assert!(read.pending[0]
+            .to_parked_frame()
+            .expect("frame")
+            .is_degraded());
+        let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    /// Complete records are independent of sentinel values: a wire whose REAL
+    /// fields are zero is complete, round-trips complete, and stays rescuable.
+    #[test]
+    fn complete_record_with_zero_wire_values_round_trips_complete() {
+        let mut zeroed = event(2, 46, 0);
+        zeroed.chain_id = 0;
+        zeroed.gas = 0;
+        zeroed.value = U256::ZERO;
+        zeroed.max_fee_per_gas = 0;
+        zeroed.max_priority_fee_per_gas = 0;
+        zeroed.tx_type = 0;
+        zeroed.data = Bytes::new();
+        zeroed.to = None;
+        zeroed.received_unix_ms = 0;
+        let record = ParkRecord::new(&zeroed, 45, 0);
+        assert_eq!(
+            record.degraded_reason(),
+            None,
+            "zero values never degrade a record"
+        );
+        assert_eq!(
+            park_line(&record)
+                .get("wire")
+                .and_then(serde_json::Value::as_str),
+            Some("complete")
+        );
+        let frame = record.to_parked_frame().expect("frame");
+        let complete = frame.complete().expect("complete");
+        assert_eq!(complete.wire.gas, 0);
+        assert_eq!(complete.wire.chain_id, 0);
+        assert_eq!(complete.to_event(), zeroed);
+    }
+
+    /// A malformed legacy identity is never reinterpreted: the corruption
+    /// policy preserves the line verbatim and keeps it out of the pending set.
+    #[test]
+    fn malformed_legacy_identity_lands_in_the_corrupt_sidecar() {
+        let path = scratch("malformed-identity").join(JOURNAL_FILE_NAME);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        let line = "{\"kind\":\"park\",\"frame\":{\"hash\":\"not-a-hash\",\"nonce\":12},\"claimed_nonce\":12}";
+        std::fs::write(&path, format!("{line}\n")).expect("write");
+        let read = read_pending(&path).expect("read");
+        assert_eq!(read.skipped, 1, "a park with no identity is corrupt");
+        assert!(read.pending.is_empty());
+        assert_eq!(read.migrated, 0);
+        let sidecar = std::fs::read_to_string(corrupt_sidecar_path(&path)).expect("sidecar");
+        assert!(
+            sidecar.contains(line),
+            "the rejected line is preserved verbatim"
+        );
+        let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    /// An unknown wire-survival label is malformed legacy input, never a "no
+    /// degradation claim": the row follows the corruption policy (verbatim
+    /// sidecar, no pending record) instead of migrating as a complete park.
+    #[test]
+    fn unknown_legacy_fidelity_label_is_corrupt_never_complete() {
+        let path = scratch("unknown-fidelity").join(JOURNAL_FILE_NAME);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        let hash = B256::from([0x0f; 32]);
+        let sender = Address::with_last_byte(7);
+        let line = format!(
+            "{{\"v\":2,\"kind\":\"park\",\"frame\":{{\"hash\":\"{hash}\",\"chain_id\":1,\"from\":\"{sender}\",\"to\":null,\"value\":\"0x7b\",\"data\":\"0xabcd\",\"gas\":300000,\"max_fee_per_gas\":\"514684409\",\"max_priority_fee_per_gas\":\"1000000000\",\"nonce\":48,\"tx_type\":2,\"received_unix_ms\":1700000000000,\"access_list\":[]}},\"sender\":\"{sender}\",\"claimed_nonce\":48,\"expected_nonce\":46,\"parked_at_unix_ms\":0,\"fidelity\":\"future_or_broken\"}}"
+        );
+        std::fs::write(&path, format!("{line}\n")).expect("write");
+
+        let read = read_pending(&path).expect("read");
+        assert_eq!(read.skipped, 1, "an unknown label is corrupt input");
+        assert_eq!(read.migrated, 0);
+        assert_eq!(read.degraded, 0);
+        assert!(read.pending.is_empty(), "no pending record is invented");
+        let sidecar = std::fs::read_to_string(corrupt_sidecar_path(&path)).expect("sidecar");
+        assert!(
+            sidecar.contains(&line),
+            "the rejected line is preserved verbatim"
+        );
+
+        // Negative probe: the label is the rejection, not the field content --
+        // the SAME wire without the label migrates as a complete park.
+        let value: serde_json::Value = serde_json::from_str(&line).expect("json");
+        assert!(
+            migrate_legacy_park(&value).is_none(),
+            "an unknown label must fail the legacy fold"
+        );
+        let mut unlabelled = value.as_object().expect("object").clone();
+        unlabelled.remove("fidelity");
+        let record = migrate_legacy_park(&serde_json::Value::Object(unlabelled))
+            .expect("the unlabelled complete wire migrates");
+        assert_eq!(record.degraded_reason(), None);
+        assert_eq!(record.hash, hash);
+
+        let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    /// The version-2 `degraded` label maps to the named reason. The label
+    /// decides — the zeroed wire such a row wrote is never read back as real.
+    #[test]
+    fn legacy_degraded_label_maps_to_the_named_reason() {
+        let hash = B256::from([0x0d; 32]);
+        let sender = Address::with_last_byte(7);
+        let value = serde_json::json!({
+            "kind": "park",
+            "v": 2,
+            "frame": {
+                "hash": hash.to_string(),
+                "from": sender.to_string(),
+                "to": null,
+                "nonce": 46,
+            },
+            "sender": sender.to_string(),
+            "claimed_nonce": 46,
+            "expected_nonce": 45,
+            "fidelity": "degraded",
+        });
+        let record = migrate_legacy_park(&value).expect("migrates");
+        assert_eq!(
+            record.degraded_reason(),
+            Some(MissingWire::LegacyIncomplete)
+        );
+        let frame = record.to_parked_frame().expect("frame");
+        assert!(frame.is_degraded());
+        assert_eq!(frame.claimed_nonce(), 46);
+        assert_eq!(frame.from(), sender);
     }
 
     #[test]
@@ -1125,18 +1346,14 @@ mod tests {
         journal.record_park(&first).expect("park 1");
         journal.record_park(&second).expect("park 2");
         journal
-            .record_resolve(
-                second.frame.hash.parse().expect("hash"),
-                Resolution::MinedFinalized,
-                now_ms(),
-            )
+            .record_resolve(second.hash, Resolution::MinedFinalized, now_ms())
             .expect("resolve");
 
         let read = read_pending(&path).expect("read");
         assert_eq!(read.skipped, 0);
         assert_eq!(read.pending.len(), 1);
         assert_eq!(read.pending[0].claimed_nonce, 12);
-        assert_eq!(read.pending[0].original_received_unix_ms(), 1_000);
+        assert_eq!(read.pending[0].original_received_unix_ms(), Some(1_000));
 
         let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
     }
@@ -1186,8 +1403,9 @@ mod tests {
     fn parked_frame_rebuild_is_clock_free_and_lossless() {
         let record = ParkRecord::new(&event(5, 50, 7_000), 48, now_ms());
         let frame = record.to_parked_frame().expect("parked frame");
-        assert_eq!(frame.expected_at_capture, 48);
-        assert_eq!(frame.claimed_nonce, 50);
+        assert_eq!(frame.expected_at_capture(), 48);
+        assert_eq!(frame.claimed_nonce(), 50);
+        assert!(frame.complete().is_some(), "the wire survived the rebuild");
     }
 
     #[test]
@@ -1202,7 +1420,7 @@ mod tests {
             by: None,
         };
         journal
-            .record_tentative(record.frame.hash.parse().expect("hash"), consumed, now_ms())
+            .record_tentative(record.hash, consumed, now_ms())
             .expect("tentative");
 
         let read = read_pending(&path).expect("read");
@@ -1232,9 +1450,9 @@ mod tests {
     /// address, rebuilds exactly as recorded.
     #[test]
     fn degraded_frame_refuses_absent_sender_and_preserves_a_recorded_zero() {
-        let mut record = ParkRecord::new(&event(7, 70, 9_000), 68, now_ms());
-        record.fidelity = RecordFidelity::Degraded;
-        record.sender = None;
+        let hash = B256::from([0x07; 32]);
+        let record =
+            ParkRecord::degraded(hash, None, 70, 68, now_ms(), MissingWire::LegacyIncomplete);
 
         let err = record
             .to_parked_frame()
@@ -1246,17 +1464,32 @@ mod tests {
 
         // A zero address the record genuinely carries is preserved as
         // recorded: absence and zero are different facts.
-        record.sender = Some(Address::ZERO);
+        let record = ParkRecord::degraded(
+            hash,
+            Some(Address::ZERO),
+            70,
+            68,
+            now_ms(),
+            MissingWire::LegacyIncomplete,
+        );
         let frame = record
             .to_parked_frame()
             .expect("a recorded zero sender rebuilds");
-        assert_eq!(frame.from, Address::ZERO);
+        assert_eq!(frame.from(), Address::ZERO);
+        assert!(frame.is_degraded());
 
         // The readable-sender case rebuilds exactly as recorded: the refusal
-        // is the absence, not the degraded fidelity.
-        record.sender = Some(Address::with_last_byte(7));
+        // is the absence, not the degraded wire.
+        let record = ParkRecord::degraded(
+            hash,
+            Some(Address::with_last_byte(7)),
+            70,
+            68,
+            now_ms(),
+            MissingWire::LegacyIncomplete,
+        );
         let frame = record.to_parked_frame().expect("readable sender rebuilds");
-        assert_eq!(frame.from, Address::with_last_byte(7));
+        assert_eq!(frame.from(), Address::with_last_byte(7));
     }
 
     /// The legacy fold preserves a missing sender as absence — never the zero
@@ -1269,15 +1502,14 @@ mod tests {
             "frame": {"hash": hash.to_string(), "from": "not-an-address", "nonce": 12},
             "claimed_nonce": 12,
         });
-        let (record, fidelity) = migrate_legacy_park(&absent).expect("migrates");
-        assert_eq!(fidelity, RecordFidelity::Degraded);
+        let record = migrate_legacy_park(&absent).expect("migrates");
+        assert_eq!(
+            record.degraded_reason(),
+            Some(MissingWire::LegacyIncomplete)
+        );
         assert_eq!(
             record.sender, None,
             "absence is preserved, never Address::ZERO"
-        );
-        assert_eq!(
-            record.frame.from, "not-an-address",
-            "the raw wire string survives for forensics"
         );
         record
             .to_parked_frame()
@@ -1289,7 +1521,7 @@ mod tests {
             "sender": Address::ZERO.to_string(),
             "claimed_nonce": 12,
         });
-        let (record, _) = migrate_legacy_park(&zero).expect("migrates");
+        let record = migrate_legacy_park(&zero).expect("migrates");
         assert_eq!(
             record.sender,
             Some(Address::ZERO),
@@ -1298,6 +1530,6 @@ mod tests {
         let frame = record
             .to_parked_frame()
             .expect("a recorded zero sender rebuilds");
-        assert_eq!(frame.from, Address::ZERO);
+        assert_eq!(frame.from(), Address::ZERO);
     }
 }

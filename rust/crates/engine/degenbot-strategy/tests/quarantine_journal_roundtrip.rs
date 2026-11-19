@@ -15,12 +15,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+use degenbot_strategy::gap_quarantine::MissingWire;
 use degenbot_strategy::gap_quarantine::{
     FrameState, NonceConsumed, Quarantine, QuarantineDecision,
 };
 use degenbot_strategy::gap_quarantine_journal::{
     compact, corrupt_sidecar_path, read_pending, ArchivedResolution, ParkRecord, QuarantineJournal,
-    RecordFidelity, Resolution, ResolutionArchiveRecord, TentativeRecord, JOURNAL_FILE_NAME,
+    Resolution, ResolutionArchiveRecord, TentativeRecord, JOURNAL_FILE_NAME,
     RESOLVED_ARCHIVE_FILE_NAME,
 };
 
@@ -98,17 +99,13 @@ fn journal_round_trips_tentative_state_across_a_restart() {
         let frame = ParkRecord::new(&event(1, 12, 1_000), 10, now_ms());
         journal.record_park(&frame).expect("park");
         journal
-            .record_tentative(frame.frame.hash.parse().expect("hash"), consumed, now_ms())
+            .record_tentative(frame.hash, consumed, now_ms())
             .expect("tentative");
 
         let dead = ParkRecord::new(&event(2, 20, 2_000), 18, now_ms());
         journal.record_park(&dead).expect("park dead");
         journal
-            .record_resolve(
-                dead.frame.hash.parse().expect("hash"),
-                Resolution::SlotTakenFinalized,
-                now_ms(),
-            )
+            .record_resolve(dead.hash, Resolution::SlotTakenFinalized, now_ms())
             .expect("resolve");
     }
 
@@ -129,7 +126,7 @@ fn journal_round_trips_tentative_state_across_a_restart() {
     // dropped.
     let mut q = Quarantine::new();
     let rebuilt = record.to_parked_frame().expect("frame");
-    let frame_hash = rebuilt.hash;
+    let frame_hash = rebuilt.hash();
     q.push(rebuilt);
     assert!(
         q.enter_tentative(
@@ -158,7 +155,7 @@ fn journal_round_trips_tentative_state_across_a_restart() {
             Resolution::SlotTakenFinalized
         };
         journal
-            .record_resolve(dead[0].0.hash, resolution, now_ms())
+            .record_resolve(dead[0].0.hash(), resolution, now_ms())
             .expect("resolve");
     }
     assert!(read_pending(&path).expect("final fold").pending.is_empty());
@@ -173,16 +170,17 @@ fn parked_frame_to_event_round_trips_the_full_wire() {
     let original = event(9, 42, 1_700_000_000_123);
     let record = ParkRecord::new(&original, 40, now_ms());
     let frame = record.to_parked_frame().expect("frame");
-    assert_eq!(frame.chain_id, original.chain_id);
-    assert_eq!(frame.tx_type, original.tx_type);
-    assert_eq!(frame.access_list, original.access_list);
-    assert_eq!(frame.received_unix_ms, original.received_unix_ms);
-    assert_eq!(frame.claimed_nonce, original.nonce);
-    assert_eq!(frame.expected_at_capture, 40);
+    let complete = frame.complete().expect("complete park");
+    assert_eq!(complete.wire.chain_id, original.chain_id);
+    assert_eq!(complete.wire.tx_type, original.tx_type);
+    assert_eq!(complete.wire.access_list, original.access_list);
+    assert_eq!(complete.wire.received_unix_ms, original.received_unix_ms);
+    assert_eq!(frame.claimed_nonce(), original.nonce);
+    assert_eq!(frame.expected_at_capture(), 40);
     assert_eq!(
-        frame.to_event(),
+        complete.to_event(),
         original,
-        "to_event is lossless against the source feed event"
+        "the complete wire round-trips losslessly against the source feed event"
     );
 }
 
@@ -197,11 +195,11 @@ fn a_very_late_frame_is_never_dropped_for_age_or_pool_absence() {
         journal.record_park(&ancient).expect("park");
     }
     let read = read_pending(&path).expect("read");
-    assert_eq!(read.pending[0].original_received_unix_ms(), 1);
+    assert_eq!(read.pending[0].original_received_unix_ms(), Some(1));
 
     let mut q = Quarantine::new();
     let frame = read.pending[0].to_parked_frame().expect("frame");
-    let frame_hash = frame.hash;
+    let frame_hash = frame.hash();
     q.push(frame);
     for _ in 0..10 {
         let out = q.poll(SENDER, 28, &[]);
@@ -235,12 +233,15 @@ fn legacy_park_without_version_folds_as_tracked_alive() {
     assert_eq!(read.skipped, 0);
     assert_eq!(read.pending.len(), 1);
     let record = &read.pending[0];
-    assert_eq!(record.frame.hash, hash(1).to_string());
+    assert_eq!(record.hash.to_string(), hash(1).to_string());
     assert_eq!(record.claimed_nonce, 12);
     assert_eq!(record.expected_nonce, 10);
-    assert_eq!(record.fidelity, RecordFidelity::Degraded);
+    assert_eq!(
+        record.degraded_reason(),
+        Some(MissingWire::LegacyIncomplete)
+    );
     let frame = record.to_parked_frame().expect("frame");
-    assert_eq!(frame.claimed_nonce, 12);
+    assert_eq!(frame.claimed_nonce(), 12);
     assert!(frame.is_degraded());
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -289,7 +290,7 @@ fn corrupt_line_is_preserved_in_sidecar_and_survives_compaction() {
 
 /// Every line this binary writes carries the explicit schema version.
 #[test]
-fn current_records_serialize_with_explicit_version_two() {
+fn current_records_serialize_with_explicit_version_three() {
     let dir = scratch("version-marker");
     let path = dir.join(JOURNAL_FILE_NAME);
     {
@@ -303,8 +304,13 @@ fn current_records_serialize_with_explicit_version_two() {
         serde_json::from_str(text.lines().next().expect("line")).expect("json");
     assert_eq!(
         value.get("v").and_then(serde_json::Value::as_u64),
-        Some(2),
+        Some(3),
         "the version marker is explicit"
+    );
+    assert_eq!(
+        value.get("wire").and_then(serde_json::Value::as_str),
+        Some("complete"),
+        "the wire variant is explicit on every row"
     );
     assert_eq!(
         value.get("kind").and_then(serde_json::Value::as_str),
@@ -346,7 +352,7 @@ fn mixed_journal_folds_and_normalizes_to_current_version() {
     assert_eq!(read.skipped, 1);
     assert_eq!(read.migrated, 1);
     assert_eq!(read.pending.len(), 1);
-    assert_eq!(read.pending[0].frame.hash, hash(2).to_string());
+    assert_eq!(read.pending[0].hash.to_string(), hash(2).to_string());
 
     compact(&path, &read.pending).expect("compact");
     let text = std::fs::read_to_string(&path).expect("journal");
@@ -362,14 +368,11 @@ fn mixed_journal_folds_and_normalizes_to_current_version() {
     let value: serde_json::Value = serde_json::from_str(lines[0]).expect("json");
     assert_eq!(
         value.get("v").and_then(serde_json::Value::as_u64),
-        Some(2),
+        Some(3),
         "compaction normalizes to the current version"
     );
     assert_eq!(
-        value
-            .get("frame")
-            .and_then(|frame| frame.get("hash"))
-            .and_then(serde_json::Value::as_str),
+        value.get("hash").and_then(serde_json::Value::as_str),
         Some(hash(2).to_string().as_str())
     );
 
@@ -394,7 +397,7 @@ fn future_version_park_is_migrated_not_destroyed() {
     assert_eq!(read.skipped, 0);
     assert_eq!(read.migrated, 1);
     assert_eq!(read.pending.len(), 1);
-    assert_eq!(read.pending[0].frame.hash, hash(3).to_string());
+    assert_eq!(read.pending[0].hash.to_string(), hash(3).to_string());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -414,7 +417,7 @@ fn full_fidelity_legacy_park_rebuilds_the_present_wire_fields() {
     let read = read_pending(&path).expect("read");
     assert_eq!(read.pending.len(), 1);
     let frame = read.pending[0].to_parked_frame().expect("frame");
-    let event_out = frame.to_event();
+    let event_out = frame.complete().expect("complete park").to_event();
     assert_eq!(event_out.hash, h);
     assert_eq!(event_out.from, SENDER);
     assert_eq!(event_out.nonce, 44);
@@ -440,7 +443,10 @@ fn current_version_park_shaped_parse_failure_migrates_not_sidecar() {
     let read = read_pending(&path).expect("read");
     assert_eq!(read.skipped, 0, "a park-shaped line is never junk");
     assert_eq!(read.pending.len(), 1);
-    assert_eq!(read.pending[0].fidelity, RecordFidelity::Degraded);
+    assert_eq!(
+        read.pending[0].degraded_reason(),
+        Some(MissingWire::LegacyIncomplete)
+    );
     assert!(
         !corrupt_sidecar_path(&path).exists(),
         "a park-shaped line is never preserved only as sidecar bytes"
@@ -449,7 +455,10 @@ fn current_version_park_shaped_parse_failure_migrates_not_sidecar() {
     compact(&path, &read.pending).expect("compact");
     let reread = read_pending(&path).expect("reread");
     assert_eq!(reread.pending.len(), 1);
-    assert_eq!(reread.pending[0].fidelity, RecordFidelity::Degraded);
+    assert_eq!(
+        reread.pending[0].degraded_reason(),
+        Some(MissingWire::LegacyIncomplete)
+    );
     assert_eq!(reread.pending[0].claimed_nonce, 12);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -467,7 +476,7 @@ fn degraded_migrated_park_boot_folds_tracked_and_dies_by_chain_proof() {
     assert_eq!(read.pending.len(), 1);
     let frame = read.pending[0].to_parked_frame().expect("frame");
     assert!(frame.is_degraded());
-    let frame_hash = frame.hash;
+    let frame_hash = frame.hash();
     let mut q = Quarantine::new();
     q.push(frame);
     assert_eq!(q.state(frame_hash), Some(FrameState::Tracked));
@@ -486,7 +495,7 @@ fn degraded_migrated_park_boot_folds_tracked_and_dies_by_chain_proof() {
     // Head advances past the claim: the consumption classification begins.
     let consumed = q.poll(SENDER, 13, &[]);
     assert!(
-        consumed.iter().any(|(f, decision)| f.hash == frame_hash
+        consumed.iter().any(|(f, decision)| f.hash() == frame_hash
             && matches!(decision, QuarantineDecision::NonceConsumed)),
         "head past the claim classifies consumption"
     );
@@ -504,42 +513,43 @@ fn degraded_migrated_park_boot_folds_tracked_and_dies_by_chain_proof() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A park whose wire fields are all defaults is DEGRADED, never Full: a
-/// defaulted wire cannot smuggle a fabricated feed event into the funnel.
+/// A record whose wire did not survive carries identity and the named reason; a
+/// complete record keeps real zero values as values. The variant decides —
+/// never a zero field.
 #[test]
-fn degenerate_wire_is_degraded_never_full() {
-    let dir = scratch("degenerate-wire");
+fn degraded_reason_and_complete_zero_values_are_distinct_records() {
+    let dir = scratch("typed-wire");
     let path = dir.join(JOURNAL_FILE_NAME);
     // Missing-wire migrate path: only identity survives.
     let missing = format!(
         "{{\"kind\":\"park\",\"frame\":{{\"hash\":\"{}\",\"nonce\":45}},\"claimed_nonce\":45}}",
         hash(6)
     );
-    // Current-version but all-zero wire path: typed parse succeeds.
-    let zeroed = format!(
-        "{{\"v\":2,\"kind\":\"park\",\"frame\":{{\"hash\":\"{}\",\"chain_id\":0,\"from\":\"0x0000000000000000000000000000000000000000\",\"to\":null,\"value\":\"0x0\",\"data\":\"0x\",\"gas\":0,\"max_fee_per_gas\":\"0\",\"max_priority_fee_per_gas\":\"0\",\"nonce\":46,\"tx_type\":0,\"received_unix_ms\":0,\"access_list\":[]}},\"sender\":\"0x0000000000000000000000000000000000000000\",\"claimed_nonce\":46,\"expected_nonce\":45,\"parked_at_unix_ms\":0}}",
+    // A version-2 row whose writer labelled its wire degraded: the label
+    // decides, even though every field is present.
+    let labelled = format!(
+        "{{\"v\":2,\"kind\":\"park\",\"frame\":{{\"hash\":\"{}\",\"chain_id\":0,\"from\":\"0x0000000000000000000000000000000000000000\",\"to\":null,\"value\":\"0x0\",\"data\":\"0x\",\"gas\":0,\"max_fee_per_gas\":\"0\",\"max_priority_fee_per_gas\":\"0\",\"nonce\":46,\"tx_type\":0,\"received_unix_ms\":0,\"access_list\":[]}},\"sender\":\"0x0000000000000000000000000000000000000000\",\"claimed_nonce\":46,\"expected_nonce\":45,\"parked_at_unix_ms\":0,\"fidelity\":\"degraded\"}}",
         hash(7)
     );
-    std::fs::write(&path, format!("{missing}\n{zeroed}\n")).expect("write");
+    // A version-2 row with no label and every field present: complete, even
+    // with zero values.
+    let complete = format!(
+        "{{\"v\":2,\"kind\":\"park\",\"frame\":{{\"hash\":\"{}\",\"chain_id\":0,\"from\":\"0x0000000000000000000000000000000000000000\",\"to\":null,\"value\":\"0x0\",\"data\":\"0x\",\"gas\":0,\"max_fee_per_gas\":\"0\",\"max_priority_fee_per_gas\":\"0\",\"nonce\":47,\"tx_type\":0,\"received_unix_ms\":0,\"access_list\":[]}},\"sender\":\"0x0000000000000000000000000000000000000000\",\"claimed_nonce\":47,\"expected_nonce\":46,\"parked_at_unix_ms\":0}}",
+        hash(8)
+    );
+    std::fs::write(&path, format!("{missing}\n{labelled}\n{complete}\n")).expect("write");
 
     let read = read_pending(&path).expect("read");
-    assert_eq!(read.skipped, 0);
-    assert_eq!(read.pending.len(), 2);
-    for record in &read.pending {
-        assert_eq!(
-            record.fidelity,
-            RecordFidelity::Degraded,
-            "a defaulted wire is degraded, never Full"
-        );
-    }
-    assert_eq!(read.degraded, 1, "the migrated line counts as degraded");
+    assert_eq!(read.skipped, 0, "park-shaped rows are never junk");
+    assert_eq!(read.pending.len(), 3);
+    assert_eq!(
+        read.degraded, 2,
+        "only the wire-less rows count as degraded"
+    );
 
-    // The fold parks by hash string, so the 0x06 park (no sender on the line)
-    // precedes the 0x07 park (a zero address the line genuinely carries):
-    // absence refuses at the rebuild — never a fabricated zero address —
-    // while a recorded zero sender rebuilds exactly as recorded.
-    let (absent, recorded_zero) = (&read.pending[0], &read.pending[1]);
-    assert_eq!(absent.frame.hash, hash(6).to_string());
+    // The fold parks by identity hash.
+    let (absent, labelled, complete) = (&read.pending[0], &read.pending[1], &read.pending[2]);
+    assert_eq!(absent.hash.to_string(), hash(6).to_string());
     assert_eq!(
         absent.sender, None,
         "absence is preserved, never Address::ZERO"
@@ -547,17 +557,30 @@ fn degenerate_wire_is_degraded_never_full() {
     absent
         .to_parked_frame()
         .expect_err("a sender-less record must not park under a fabricated address");
-    assert_eq!(recorded_zero.sender, Some(Address::ZERO));
-    let frame = recorded_zero.to_parked_frame().expect("frame");
-    assert!(
-        frame.is_degraded(),
-        "to_parked_frame agrees with the fidelity label"
-    );
+
+    assert_eq!(labelled.sender, Some(Address::ZERO));
     assert_eq!(
-        frame.from,
+        labelled.degraded_reason(),
+        Some(MissingWire::LegacyIncomplete)
+    );
+    let frame = labelled.to_parked_frame().expect("frame");
+    assert!(frame.is_degraded(), "the label decides, not the values");
+    assert_eq!(
+        frame.from(),
         Address::ZERO,
         "a genuinely recorded zero sender rebuilds as recorded"
     );
+
+    assert_eq!(
+        complete.degraded_reason(),
+        None,
+        "zero values never degrade"
+    );
+    let frame = complete.to_parked_frame().expect("frame");
+    let wire = frame.complete().expect("complete wire");
+    assert_eq!(wire.wire.gas, 0);
+    assert_eq!(wire.wire.chain_id, 0);
+    assert_eq!(wire.to_event().nonce, 47);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -640,14 +663,10 @@ fn resolved_outcome_survives_compaction_in_the_archive() {
         let mut journal = QuarantineJournal::open(&path).expect("open");
         journal.record_park(&frame).expect("park");
         journal
-            .record_tentative(frame.frame.hash.parse().expect("hash"), consumed, now_ms())
+            .record_tentative(frame.hash, consumed, now_ms())
             .expect("tentative");
         journal
-            .record_resolve(
-                frame.frame.hash.parse().expect("hash"),
-                Resolution::MinedFinalized,
-                resolved_unix_ms,
-            )
+            .record_resolve(frame.hash, Resolution::MinedFinalized, resolved_unix_ms)
             .expect("resolve");
         let archived = ResolutionArchiveRecord::new(
             &frame.to_parked_frame().expect("frame"),
@@ -771,11 +790,7 @@ fn torn_final_archive_line_is_tolerated_by_readers() {
         let mut journal = QuarantineJournal::open(&path).expect("open");
         journal.record_park(&frame).expect("park");
         journal
-            .record_resolve(
-                frame.frame.hash.parse().expect("hash"),
-                Resolution::MinedFinalized,
-                now_ms(),
-            )
+            .record_resolve(frame.hash, Resolution::MinedFinalized, now_ms())
             .expect("resolve");
         let archived = ResolutionArchiveRecord::new(
             &frame.to_parked_frame().expect("frame"),

@@ -412,7 +412,7 @@ fn predecessor_failure_classes_route_by_evidence_not_by_death() {
     let f = parked(77);
     q.push(f.clone());
     assert_eq!(
-        q.poll_with_content(f.from, f.expected_at_capture, &[10, 11], &[])[0].1,
+        q.poll_with_content(f.from(), f.expected_at_capture(), &[10, 11], &[])[0].1,
         QuarantineDecision::Rescue {
             predecessors: vec![10, 11]
         }
@@ -420,8 +420,8 @@ fn predecessor_failure_classes_route_by_evidence_not_by_death() {
     journal_reentry_outcome(&f, ReentryOutcome::Transient, &mut q, None);
     assert_eq!(
         q.poll_with_content(
-            f.from,
-            f.expected_at_capture,
+            f.from(),
+            f.expected_at_capture(),
             &[10, 11],
             &[(10, B256::repeat_byte(0x01)), (11, B256::repeat_byte(0x02))]
         )[0]
@@ -454,7 +454,7 @@ fn predecessor_malformed_parks_with_guard_content_and_rearms_on_replacement() {
         Some(&mut journal),
     );
     assert_eq!(
-        q.state(f.hash),
+        q.state(f.hash()),
         Some(FrameState::Tracked),
         "the frame stays parked (un-resolved)"
     );
@@ -466,7 +466,7 @@ fn predecessor_malformed_parks_with_guard_content_and_rearms_on_replacement() {
 
     let unchanged = [(10, content[0]), (11, content[1])];
     assert_eq!(
-        q.poll_with_content(f.from, 10, &[10, 11], &unchanged)[0].1,
+        q.poll_with_content(f.from(), 10, &[10, 11], &unchanged)[0].1,
         QuarantineDecision::StillWaiting {
             unknown: vec![10, 11]
         },
@@ -475,7 +475,7 @@ fn predecessor_malformed_parks_with_guard_content_and_rearms_on_replacement() {
 
     let replaced = [(10, B256::repeat_byte(0xb1)), (11, content[1])];
     assert_eq!(
-        q.poll_with_content(f.from, 10, &[10, 11], &replaced)[0].1,
+        q.poll_with_content(f.from(), 10, &[10, 11], &replaced)[0].1,
         QuarantineDecision::Rescue {
             predecessors: vec![10, 11]
         },
@@ -533,12 +533,12 @@ fn failed_pending_read_degrades_to_empty_gap_and_frontier_still_rescues() {
     let mut q = Quarantine::new();
     let f = parked(71);
     q.push(f.clone());
-    let gap = pool_known_gap_for_tick(&q, f.from, f.claimed_nonce, None);
+    let gap = pool_known_gap_for_tick(&q, f.from(), f.claimed_nonce(), None);
     assert!(
         gap.is_empty(),
         "a failed pending read yields no pool evidence"
     );
-    let out = q.poll(f.from, f.claimed_nonce, &gap);
+    let out = q.poll(f.from(), f.claimed_nonce(), &gap);
     assert_eq!(
         out[0].1,
         QuarantineDecision::Rescue {
@@ -576,7 +576,7 @@ fn predecessor_hydration_failure_routes_transient_through_the_fold() {
     let mut q = Quarantine::new();
     let f = parked(72);
     route_failed_hydration(&f, &mut q, Some(&mut journal));
-    assert_eq!(q.state(f.hash), Some(FrameState::Tracked));
+    assert_eq!(q.state(f.hash()), Some(FrameState::Tracked));
     assert_eq!(resolve_count(&path), 0, "a transient writes no resolve");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -607,14 +607,14 @@ fn transient_hydration_failure_records_no_guard_and_retries() {
     let f = parked(73);
     q.push(f.clone());
     assert_eq!(
-        q.poll(f.from, 10, &[10, 11])[0].1,
+        q.poll(f.from(), 10, &[10, 11])[0].1,
         QuarantineDecision::Rescue {
             predecessors: vec![10, 11]
         }
     );
     route_failed_hydration(&f, &mut q, None);
     assert_eq!(
-        q.poll(f.from, 10, &[10, 11])[0].1,
+        q.poll(f.from(), 10, &[10, 11])[0].1,
         QuarantineDecision::Rescue {
             predecessors: vec![10, 11]
         },
@@ -630,7 +630,7 @@ fn unhydratable_predecessor_suppresses_pool_pred_and_keeps_the_frontier() {
     let f = parked(74);
     q.push(f.clone());
     assert_eq!(
-        q.poll(f.from, 10, &[10, 11])[0].1,
+        q.poll(f.from(), 10, &[10, 11])[0].1,
         QuarantineDecision::Rescue {
             predecessors: vec![10, 11]
         }
@@ -638,7 +638,13 @@ fn unhydratable_predecessor_suppresses_pool_pred_and_keeps_the_frontier() {
     let content = [B256::repeat_byte(0xa1), B256::repeat_byte(0xa2)];
     route_unhydratable_hydration(&f, &[10, 11], &content, "unparseable value", &mut q, None);
     assert_eq!(
-        q.poll_with_content(f.from, 10, &[10, 11], &[(10, content[0]), (11, content[1])])[0].1,
+        q.poll_with_content(
+            f.from(),
+            10,
+            &[10, 11],
+            &[(10, content[0]), (11, content[1])]
+        )[0]
+        .1,
         QuarantineDecision::StillWaiting {
             unknown: vec![10, 11]
         },
@@ -646,7 +652,7 @@ fn unhydratable_predecessor_suppresses_pool_pred_and_keeps_the_frontier() {
     );
     // Head reaches the claim: the mined frontier needs no predecessors.
     assert_eq!(
-        q.poll(f.from, 12, &[])[0].1,
+        q.poll(f.from(), 12, &[])[0].1,
         QuarantineDecision::Rescue {
             predecessors: vec![]
         },
@@ -662,21 +668,25 @@ fn consecutive_identical_gap_parks_write_one_journal_line() {
     let (dir, path) = temp_journal("gap-dedup");
     let mut journal = QuarantineJournal::open(&path).expect("open");
     let f = parked(75);
-    let record = ParkRecord::new(&f.to_event(), f.expected_at_capture, 1);
+    let record = ParkRecord::new(
+        &f.complete().expect("complete park").to_event(),
+        f.expected_at_capture(),
+        1,
+    );
     let mut memo: GapParkMemo = None;
     assert!(record_gap_park(
         Some(&mut journal),
         &record,
-        f.hash,
-        f.expected_at_capture,
+        f.hash(),
+        f.expected_at_capture(),
         &mut memo,
     ));
     assert!(
         !record_gap_park(
             Some(&mut journal),
             &record,
-            f.hash,
-            f.expected_at_capture,
+            f.hash(),
+            f.expected_at_capture(),
             &mut memo,
         ),
         "a consecutive identical re-park is folded"
@@ -740,23 +750,25 @@ fn parked(hash_byte: u8) -> ParkedFrame {
     use alloy::primitives::{Address, Bytes, B256, U256};
     let mut raw = [0u8; 32];
     raw[0] = hash_byte;
-    ParkedFrame {
-        hash: B256::from(raw),
-        chain_id: 1,
-        from: Address::with_last_byte(7),
-        to: None,
-        value: U256::ZERO,
-        data: Bytes::new(),
-        gas: 300_000,
-        max_fee_per_gas: 514_684_409,
-        max_priority_fee_per_gas: 1_000_000_000,
-        claimed_nonce: 12,
-        expected_at_capture: 10,
-        tx_type: 2,
-        access_list: serde_json::json!([]),
-        received_unix_ms: 1_700_000_000_000,
-        raw_signed_tx: None,
-    }
+    ParkedFrame::from_event(
+        &degenbot_rpc::backrun_feed::BackrunFeedEvent {
+            chain_id: 1,
+            from: Address::with_last_byte(7),
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas: 300_000,
+            max_fee_per_gas: 514_684_409,
+            max_priority_fee_per_gas: 1_000_000_000,
+            nonce: 12,
+            hash: B256::from(raw),
+            access_list: serde_json::json!([]),
+            tx_type: 2,
+            received_unix_ms: 1_700_000_000_000,
+            raw_signed_tx: None,
+        },
+        10,
+    )
 }
 
 /// P1: a transient re-entry failure re-parks the ORIGINAL frame and writes
@@ -770,7 +782,7 @@ fn transient_reentry_failure_reparks_and_leaves_no_resolve() {
     journal_reentry_outcome(&f, ReentryOutcome::Transient, &mut q, Some(&mut journal));
 
     assert_eq!(
-        q.state(f.hash),
+        q.state(f.hash()),
         Some(crate::gap_quarantine::FrameState::Tracked),
         "the original frame is back in quarantine"
     );
@@ -832,7 +844,7 @@ fn a_blocked_bid_parks_at_the_frontier_and_reenters_on_the_next_pass() {
     let mut journal = QuarantineJournal::open(&path).expect("open");
     let mut q = Quarantine::new();
     let f = parked(66);
-    let ev = f.to_event();
+    let ev = f.complete().expect("complete park").to_event();
     let mut memo: GapParkMemo = None;
 
     assert_eq!(
@@ -841,7 +853,7 @@ fn a_blocked_bid_parks_at_the_frontier_and_reenters_on_the_next_pass() {
         "the blocked frame is parked exactly once"
     );
     assert_eq!(
-        q.state(f.hash),
+        q.state(f.hash()),
         Some(FrameState::Tracked),
         "a blocked bid is tracked, never resolved"
     );
@@ -857,7 +869,7 @@ fn a_blocked_bid_parks_at_the_frontier_and_reenters_on_the_next_pass() {
 
     // The next frontier pass re-enters: no gap, so no predecessor prefix.
     assert_eq!(
-        q.poll(f.from, ev.nonce, &[])[0].1,
+        q.poll(f.from(), ev.nonce, &[])[0].1,
         QuarantineDecision::Rescue {
             predecessors: vec![]
         },
@@ -881,7 +893,7 @@ fn a_blocked_bid_parks_at_the_frontier_and_reenters_on_the_next_pass() {
     // A head that passed the claim is chain evidence: the caller classifies the
     // consumption (the landed target's own receipt).
     assert_eq!(
-        q.poll(f.from, ev.nonce + 1, &[])[0].1,
+        q.poll(f.from(), ev.nonce + 1, &[])[0].1,
         QuarantineDecision::NonceConsumed
     );
 
