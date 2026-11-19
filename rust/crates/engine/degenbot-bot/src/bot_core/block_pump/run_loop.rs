@@ -996,6 +996,13 @@ impl BlockPump {
                             hash,
                             parent_hash,
                         ));
+                        // The session's ONE head source: the same accepted
+                        // header, published into the hub every strategy's head
+                        // subscription and the hosted head edge read. Fired on
+                        // this edge so a duplicate/stale header publishes
+                        // nothing, and with no RPC — the fields ride the
+                        // header the ingestion stream already held.
+                        self.publish_accepted_head(number, &metadata);
                     }
                     // The `PendingSuccessor` / `OpenNew` decisions carry no
                     // pump action beyond the above — the liveness-probe signal

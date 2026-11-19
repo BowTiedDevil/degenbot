@@ -219,11 +219,14 @@ file vocabulary.
   empty route registry (the hosted driver's discovery fan waits on boot-DB
   wiring) — **status: resolved** (post-acceptance hardening): the hosted boot
   now builds its registry through the shared `degenbot-submission` resolver, so
-  both runtime shapes discover over one boot snapshot. The live per-head feed drives
-  `on_head` from the Python settlement consumer's accepted-header clock, with
-  the guard
-  (`has_hosted_activity`) short-circuiting a settlement-only boot so it pays no
-  new RPC.
+  both runtime shapes discover over one boot snapshot. The live per-head feed
+  drives `on_head` from the session hub's ONE head source, which the engine's
+  block pump owns: its accepted-header edge registers the source and publishes
+  every accepted header, so a settlement-only boot and a mixed-strategy boot
+  report head liveness through the same registry and no second `newHeads`
+  subscription exists. The guard (`has_hosted_activity`) keeps an idle host from
+  paying a per-head chain read; it is one rule for every boot shape, not a
+  settlement-only shortcut.
 
 ## Supplement — the authority is the sole nonce issuer
 

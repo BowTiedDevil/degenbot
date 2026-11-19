@@ -37,11 +37,6 @@
 //!   are `&mut self`; nothing can mint them after sharing, and every strategy
 //!   needs the same window, so the settlement arm holds no registrar of its
 //!   own.
-//! - **ADR-057 head-liveness coupling.** The hosted head feed runs from the
-//!   Python settlement consumer's accepted-header clock, and
-//!   `has_hosted_activity` short-circuits a settlement-only boot so it pays no
-//!   new chain read. Why: the settlement pump already watches heads, so a
-//!   second head source would double-read the chain nonce.
 //!
 //! [`DriverSpawnFactory`]: degenbot_substrate::driver_spawn::DriverSpawnFactory
 //! [`NonceLane`]: degenbot_substrate::nonce::NonceLane

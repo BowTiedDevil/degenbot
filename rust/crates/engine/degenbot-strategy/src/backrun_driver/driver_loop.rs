@@ -1376,9 +1376,10 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         return;
     };
 
-    // The head clock is hosted too: the hub's head source is advanced by the
-    // process's one watch (with its fallback poller), and this loop is one of
-    // its subscribers. No feed spawn, no watch, and no poll live here.
+    // The head clock is hosted too: the hub's head source belongs to the
+    // engine's block pump, whose accepted-header edge publishes every head, and
+    // this loop is one of its subscribers. No feed spawn, no watch, and no poll
+    // live here.
     let mut head_source: Option<HeadSubscription> = hub.subscribe_head().ok();
 
     loop {

@@ -99,3 +99,36 @@ async fn a_lone_accepted_header_pokes_the_clock_and_the_head_once() {
         "the poke reaches the control seam whatever the seam does with it"
     );
 }
+/// The session hub's ONE head source is the pump's accepted-header edge: an
+/// accepted header lands there, and a header the stage machine drops as stale
+/// lands nowhere — the source carries exactly the heads the pump accepted.
+#[tokio::test]
+async fn accepted_headers_arrive_at_the_hub_head_source_and_dropped_ones_do_not() {
+    use degenbot_eventhub::Hub;
+
+    let hub = Arc::new(Hub::new());
+    let sender = hub
+        .register_head_source()
+        .expect("the session hub's head source registers once");
+    let (mut pump, _sink) = pump_for_test(Some(100));
+    pump.install_head_source_for_test(sender);
+
+    pump.run_test_loop(
+        stream::iter(vec![
+            header(101),
+            // A stale header: the stage machine rejects it, so it must publish
+            // nothing — an unconditional publish would leave the source at 99.
+            header(99),
+        ])
+        .boxed(),
+        100,
+    )
+    .await;
+
+    let head = hub.subscribe_head().expect("the source is registered");
+    assert_eq!(
+        head.head(),
+        Some(101),
+        "the source carries the accepted header, not the dropped one"
+    );
+}

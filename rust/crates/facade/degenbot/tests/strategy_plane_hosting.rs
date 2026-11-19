@@ -199,13 +199,15 @@ fn the_umbrella_boots_the_hosted_strategy_plane() {
                 probe_arm("mevblocker_backrun", PendingTxSource::Mevblocker),
                 probe_arm("txpool_backrun", PendingTxSource::Txpool),
             ],
-            clock: Some(HostedHeadClock::Hub),
+            clock: Some(HostedHeadClock::PumpOwned),
             trigger: None,
         }),
     )
     .expect("the umbrella boots the hosted strategy plane");
 
-    // Provisioned, not started: one pump per arm, no head edge, no driver loop.
+    // Provisioned, not started: one pump per arm, no driver loop, and the
+    // session's ONE head source registered by the pump (its owner) with no head
+    // published yet — the mint dialed nothing.
     assert_eq!(
         session
             .hosted()
@@ -215,9 +217,12 @@ fn the_umbrella_boots_the_hosted_strategy_plane() {
         "one pump per hosted arm"
     );
     let hub = Arc::clone(session.host().lock().hub());
+    let head = hub
+        .subscribe_head()
+        .expect("the pump owns and registers the session's one head source");
     assert!(
-        hub.subscribe_head().is_err(),
-        "the mint registers no head source, so nothing dialed"
+        head.head().is_none(),
+        "the mint published no head: nothing dialed"
     );
 
     let arms = ["mevblocker_backrun", "txpool_backrun"];

@@ -668,8 +668,10 @@ impl StrategyHost {
     /// Whether any strategy holds a lease/broadcast or any reconciled
     /// submission record is still non-terminal.
     ///
-    /// The per-head feed gates its one chain-nonce read on this, so a
-    /// settlement-only boot with no hosted activity stays byte-identical.
+    /// The per-head feed gates its one chain-nonce read on this, so an idle
+    /// host pays nothing per head. The gate is one rule for every boot shape:
+    /// the heads that reach it come from the session's ONE hub head source
+    /// (the block pump's accepted-header edge), whatever strategies are active.
     #[must_use]
     pub fn has_hosted_activity(&self) -> bool {
         self.nonce.has_outstanding()

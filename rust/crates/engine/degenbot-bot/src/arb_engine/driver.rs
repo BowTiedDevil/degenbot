@@ -57,7 +57,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use degenbot_core::{diag, op_error, op_info, op_warn};
-use degenbot_eventhub::Hub;
+use degenbot_eventhub::{HeadSender, Hub};
 use degenbot_substrate::session_registry::PoolIdentity;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
@@ -490,6 +490,12 @@ pub struct EngineDriver {
     verify: Arc<VerifyLifecycle>,
     /// The engine host's process-lifetime event hub.
     hub: Arc<Hub>,
+
+    /// The hub's ONE head source, which this session's pump owns: the pump's
+    /// accepted-header edge publishes into it. `None` when another transport
+    /// already registered the hub's head source, so this pump must not publish
+    /// beside it.
+    head_source: Option<HeadSender>,
     /// The one teardown's completion, shared by every `close` caller.
     close: tokio::sync::Mutex<Option<TeardownReport>>,
     /// The live pump's independent stall facts, retained when `run` hands the
@@ -608,6 +614,25 @@ impl EngineDriver {
         let session = Arc::new(PumpSession::new(completion_tx));
         stages.install_session(Arc::clone(&session));
 
+        // The head source's OWNERSHIP is claimed here, once, at composition:
+        // the pump's accepted-header edge is the process's head clock, so the
+        // hosted head edge, every driver's head subscription, and the per-head
+        // reconciliation all read the one `newHeads` subscription the pump
+        // already holds instead of dialing a second one. A hub whose source a
+        // transport already owns keeps that owner; the pump then publishes
+        // nothing rather than racing it.
+        let head_source = match hub.register_head_source() {
+            Ok(sender) => Some(sender),
+            Err(refusal) => {
+                op_error!(
+                    domain = pump,
+                    %refusal,
+                    "EngineDriver: the hub head source is already owned; this pump publishes no heads"
+                );
+                None
+            }
+        };
+
         let verify_core = stages.core();
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         Self {
@@ -622,6 +647,7 @@ impl EngineDriver {
                 VerifyLifecycleConfig::default(),
             )),
             hub,
+            head_source,
             close: tokio::sync::Mutex::new(None),
             stall_facts: Mutex::new(None),
             #[cfg(test)]
@@ -836,6 +862,7 @@ impl EngineDriver {
             control,
             Arc::clone(&self.reorg_coordinator),
             Arc::clone(&self.shutdown),
+            self.head_source.clone(),
         )
         .await
         .map_err(|source| SubscribeRefusal::Handshake { source })?;

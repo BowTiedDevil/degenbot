@@ -334,7 +334,7 @@ fn hosted_plane(
     // the same ledger.
     let ledger = Arc::new(degenbot_submission::SubmissionLedger::new());
     let (lanes, backruns) = hosted_lanes(nonce, &ledger);
-    let (arms, clock) = hosted_arms(cfg, backrun_resources, backruns);
+    let arms = hosted_arms(cfg, backrun_resources, backruns);
     HostedPlane {
         reconciler: Some(Arc::clone(&ledger) as Arc<dyn HeadReconciler>),
         // A hosted driver scopes its run-artifacts under the host state root; a
@@ -347,7 +347,12 @@ fn hosted_plane(
         },
         hosted: HostedBoot {
             arms,
-            clock,
+            // The engine's block pump owns the session's ONE head source in
+            // every shape this root boots: settlement-only and mixed-strategy
+            // boots read the same accepted-header stream, and the per-head
+            // reconciliation fires from it. No second `newHeads` subscription
+            // and no polled duplicate ride beside the pump.
+            clock: Some(HostedHeadClock::PumpOwned),
             trigger: head_trigger(cfg, lanes, backrun_resources),
         },
     }
@@ -457,7 +462,7 @@ fn hosted_arms(
     cfg: &degenbot_config::schema::BotConfig,
     backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
     backruns: BackrunLanes,
-) -> (Vec<HostedArmBoot>, Option<HostedHeadClock>) {
+) -> Vec<HostedArmBoot> {
     use degenbot_eventhub::PendingTxSource;
     use degenbot_rpc::backrun_feed::BackrunFeedConfig;
     use degenbot_rpc::txpool_feed::TxpoolFeedConfig;
@@ -468,15 +473,6 @@ fn hosted_arms(
         let boot = backrun_resources.strategy_boot(ecosystem);
         arm_boots.push((id, ecosystem, lane, boot));
     }
-    let head_ws_url = arm_boots
-        .iter()
-        .find_map(|(_, _, _, boot)| boot.head_ws_url().map(str::to_string));
-    let provider = backrun_resources.node_provider().cloned();
-    let clock = match (head_ws_url, provider) {
-        (Some(ws_url), Some(provider)) => Some(HostedHeadClock::Watch { ws_url, provider }),
-        (None, Some(provider)) => Some(HostedHeadClock::Poll { provider }),
-        _ => None,
-    };
     let mut arms = Vec::new();
     for (id, ecosystem, lane, boot) in arm_boots {
         let name = match ecosystem {
@@ -519,7 +515,7 @@ fn hosted_arms(
             }),
         });
     }
-    (arms, clock)
+    arms
 }
 
 impl PyArbEngine {
@@ -556,23 +552,23 @@ impl PyArbEngine {
     /// the START boundary, ordered by the core session boot.
     ///
     /// The second half of the start flow, called once the session consumer's
-    /// `resume` armed the pump: the head-watch WS connect and each active arm's
-    /// feed pump launch BEFORE the drivers, because each driver's loop
-    /// subscribes the hub head source the head edge registers as it starts.
-    /// Construction dials nothing.
+    /// `resume` armed the pump: each active arm's feed pump launches BEFORE the
+    /// drivers, and the head edge attaches to the hub head source the ENGINE'S
+    /// PUMP owns (it registered the source and publishes every accepted header
+    /// into it), so each driver's loop finds a live head source. Construction
+    /// dials nothing.
     ///
-    /// The GIL is released across the whole start so a slow WS connect never
-    /// parks the interpreter, and the ordering (feed pumps and head edge
-    /// before any driver loop) lives in the boot.
+    /// The GIL is released across the whole start, and the ordering (feed pumps
+    /// and head edge before any driver loop) lives in the boot.
     ///
     /// # Errors
     ///
-    /// `RuntimeError` when the hosted head source cannot be registered — a
+    /// `RuntimeError` when the hosted head source cannot be resolved — a
     /// miswired boot fails closed rather than driving a clockless fleet — and
     /// the host's typed refusal when a driver's start is refused. The hosted
     /// start consumes its deferred-I/O latch before launching anything, so a
     /// failure there is terminal: the caller must drop the engine, whose drop
-    /// stops the pumps and tears the head-watch runtime down.
+    /// stops the pumps and tears the head edge down.
     fn start_hosted_session(&self, py: Python<'_>) -> PyResult<usize> {
         py.detach(|| degenbot_core::runtime::get_runtime().block_on(self.session.start()))
             .map_err(map_session_boot_error)
@@ -727,13 +723,21 @@ mod tests {
         });
     }
 
-    /// The engine boot wires the head feed's per-strategy lanes and leaves the
-    /// reconcile guard closed, so a settlement-only boot pays no per-head work.
+    /// The engine boot wires the head feed's per-strategy lanes, reads heads
+    /// from the pump-owned hub head source, and leaves the reconcile guard
+    /// closed, so an idle boot pays no per-head work.
     #[test]
     fn the_boot_installs_head_lanes_and_starts_with_the_guard_closed() {
         hermetic_db_layer();
         Python::attach(|py| {
             let engine = PyArbEngine::new(py, None).expect("boot the engine");
+            // The settlement-only shape reports head liveness through the same
+            // registry a mixed boot uses: the engine's block pump owns the hub
+            // head source, so Python and standalone hosting agree.
+            assert!(
+                engine.session.host().lock().hub().subscribe_head().is_ok(),
+                "the pump registered the session's one head source at boot"
+            );
             assert!(
                 !engine.session.host().lock().has_hosted_activity(),
                 "a fresh boot has no lease and no record, so the head feed short-circuits"

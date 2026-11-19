@@ -12,6 +12,10 @@ impl BlockPump {
     /// 1. Run backfill up to `subscribe_state.first_block`
     /// 2. Call `resume(subscribe_state)` to begin normal processing
     ///
+    /// `head_source` is the session hub's ONE head source when the driver's hub
+    /// named this pump its owner; the pump then publishes every accepted header
+    /// into it. `None` leaves the hub's source to whichever transport owns it.
+    ///
     /// During this phase, no events are buffered. The backfill is the sole
     /// authority for blocks S+1..W (inclusive). The subscribe phase only
     /// observes until
@@ -24,6 +28,7 @@ impl BlockPump {
         control: Arc<dyn PumpControl>,
         reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
         shutdown: Arc<AtomicBool>,
+        head_source: Option<degenbot_eventhub::HeadSender>,
     ) -> Result<(Self, SubscribeState), String> {
         // Transport connect + subscribe + handshake all live in
         // degenbot-ingestion; the driver receives the fused, re-injected
@@ -36,6 +41,7 @@ impl BlockPump {
             control,
             reorg_coordinator,
             ingestor,
+            head_source,
             shutdown: Arc::clone(&shutdown),
             watchdog: Watchdog::new(),
             #[cfg(any(test, feature = "test-fixtures"))]

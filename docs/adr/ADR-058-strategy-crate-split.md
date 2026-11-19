@@ -110,9 +110,10 @@ the pump is ADR-018's on-demand work.
   every strategy's registration. Settlement is no longer the sole registrar:
   a named channel is `&mut self`, so each strategy declares its set while the
   hub is still unshared.
-- **ADR-057 head-liveness coupling.** The hosted head feed runs from the
-  Python settlement consumer's accepted-header clock, guarded on hosted
-  activity.
+- **Head-source ownership.** The session hub's one head source belongs to the
+  engine's block pump, whose accepted-header edge registers it and publishes
+  every accepted header; the hosted head edge, the drivers, and the per-head
+  reconciliation all consume that one source, guarded on hosted activity.
 
 ### D6 — Seam learnings from the exercise
 

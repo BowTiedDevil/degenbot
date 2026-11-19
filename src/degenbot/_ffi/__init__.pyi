@@ -705,23 +705,23 @@ class ArbitrageEngine:
         the START boundary, ordered by the core session boot.
 
         The second half of the start flow, called once the session consumer's
-        `resume` armed the pump: the head-watch WS connect and each active arm's
-        feed pump launch BEFORE the drivers, because each driver's loop
-        subscribes the hub head source the head edge registers as it starts.
-        Construction dials nothing.
+        `resume` armed the pump: each active arm's feed pump launches BEFORE the
+        drivers, and the head edge attaches to the hub head source the ENGINE'S
+        PUMP owns (it registered the source and publishes every accepted header
+        into it), so each driver's loop finds a live head source. Construction
+        dials nothing.
 
-        The GIL is released across the whole start so a slow WS connect never
-        parks the interpreter, and the ordering (feed pumps and head edge
-        before any driver loop) lives in the boot.
+        The GIL is released across the whole start, and the ordering (feed pumps
+        and head edge before any driver loop) lives in the boot.
 
         # Errors
 
-        `RuntimeError` when the hosted head source cannot be registered — a
+        `RuntimeError` when the hosted head source cannot be resolved — a
         miswired boot fails closed rather than driving a clockless fleet — and
         the host's typed refusal when a driver's start is refused. The hosted
         start consumes its deferred-I/O latch before launching anything, so a
         failure there is terminal: the caller must drop the engine, whose drop
-        stops the pumps and tears the head-watch runtime down.
+        stops the pumps and tears the head edge down.
         """
     def strategies(self, /) -> list[tuple[str, str, str | None]]:
         """

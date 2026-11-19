@@ -5,11 +5,14 @@
 //! pump registers its own [`HubClass::PendingTx`] ring under its
 //! [`PendingTxSource`], so two backrun arms can run in one process without a
 //! registration tombstone and each arm's frame corpus is exactly its own
-//! feed's. The head clock is also engine-lifetime: ONE `newHeads` watch
-//! registered on the hub head source, ONE stale-fallback `eth_blockNumber`
-//! poller, and ONE feed-telemetry sampler — drivers never spawn feeds, watch
-//! heads, or scrape status; they drain their arm's typed stream and read the
-//! hub's latest head ([`Hub::subscribe_head`] is multi-subscriber).
+//! feed's. The head clock is also engine-lifetime and, in every composition root
+//! that drives an engine, owned by the BLOCK PUMP: the pump registers the hub's
+//! one head source and publishes each accepted header into it, so there is ONE
+//! `newHeads` subscription and no polled duplicate. A boot that hosts its own
+//! watch instead adds ONE stale-fallback `eth_blockNumber` poller. Either way
+//! there is ONE feed-telemetry sampler — drivers never spawn feeds, watch heads,
+//! or scrape status; they drain their arm's typed stream and read the hub's
+//! latest head ([`Hub::subscribe_head`] is multi-subscriber).
 //!
 //! # Deferred start
 //!
@@ -46,6 +49,17 @@
 //! this module only knows "a head was observed at the source edge, fire the
 //! trigger" — once per observed head; the reconciliation's once-per-head
 //! dedupe makes redundant triggers free.
+//!
+//! # Who owns the head source
+//!
+//! The hub head source has exactly one owner, named by the boot's
+//! [`HostedHeadClock`]. The session's block pump owns it in every composition
+//! root that drives an engine ([`HostedHeadClock::PumpOwned`]): it registers the
+//! source at composition and publishes each ACCEPTED header, so the edge, the
+//! drivers' head subscriptions, and the per-head reconciliation all read the one
+//! `newHeads` subscription the pump already holds. A boot that hosts its own
+//! watch or poller instead ([`HostedHeadClock::Watch`] / [`HostedHeadClock::Poll`])
+//! registers the source itself, and is the only shape that dials for heads.
 //!
 //! # Lifetime & teardown
 //!
@@ -117,9 +131,17 @@ pub enum HostedHeadClock {
         /// The chain-node provider the poller reads.
         provider: Arc<AlloyProvider>,
     },
-    /// A head source hosted elsewhere already publishes into the hub; this
-    /// module's edge only fires the trigger per observed head.
-    Hub,
+    /// The engine's block pump OWNS the hub head source: it registers the
+    /// source at composition and publishes every accepted header into it. This
+    /// module's edge only fires the trigger per observed head, so the process
+    /// keeps ONE `newHeads` subscription (the pump's) and no polled fallback —
+    /// whatever strategies the boot admits.
+    ///
+    /// The ownership is declared, not inferred: a start whose hub carries no
+    /// registered head source is refused by name
+    /// ([`HostedStartError::HeadSourceUnregistered`]) instead of registering a
+    /// second source of its own.
+    PumpOwned,
 }
 
 /// The clock, the per-head trigger, and the dedicated pubsub runtime a mint
@@ -207,6 +229,13 @@ pub enum HostedStartError {
     /// dropping it and minting again.
     #[error("hosted-sources head source: {0}")]
     Hub(#[from] HubError),
+
+    /// The boot names the engine's block pump as the hub head source's owner
+    /// ([`HostedHeadClock::PumpOwned`]) and no source is registered on the hub:
+    /// the pump never claimed it. A miswired boot fails closed here rather than
+    /// registering a second source and double-reading the chain.
+    #[error("the block pump owns no hub head source: this hub has no registered head source")]
+    HeadSourceUnregistered,
     /// Another start is in flight: the phase is `Starting`, which is never
     /// reported as running.
     #[error("a hosted-sources start is already in flight")]
@@ -359,7 +388,7 @@ impl HostedLifecycle {
 /// replaces the `watch_live`/`poll_only` booleans that inferred the mode from
 /// which resource happened to exist. The externally hosted modes are data:
 /// [`PollCause::PrimaryPoll`] is a boot that hosts no watch, and
-/// [`Self::HubHosted`] is a head source hosted elsewhere on the hub.
+/// [`Self::PumpHosted`] is the pump-owned hub head source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeadEdgeMode {
     /// No edge task has been spawned (a mint, or a boot hosting no clock).
@@ -372,9 +401,9 @@ pub enum HeadEdgeMode {
     WatchLive,
     /// The poll clock is in force for the whole run, with the cause as data.
     PollFallback(PollCause),
-    /// A head source hosted elsewhere publishes into the hub; the edge only
-    /// fires the trigger per observed head.
-    HubHosted,
+    /// The pump owns the hub head source; the edge only fires the trigger per
+    /// observed head.
+    PumpHosted,
     /// The edge exited, after dropping its WS transport. Published once.
     Stopped,
 }
@@ -409,7 +438,7 @@ impl HeadEdgeMode {
         match clock {
             HostedHeadClock::Watch { .. } => Self::WatchConnecting,
             HostedHeadClock::Poll { .. } => Self::PollFallback(PollCause::PrimaryPoll),
-            HostedHeadClock::Hub => Self::HubHosted,
+            HostedHeadClock::PumpOwned => Self::PumpHosted,
         }
     }
 
@@ -439,7 +468,7 @@ impl HeadEdgeMode {
     fn iteration(self) -> HeadIteration {
         match self {
             Self::PollFallback(_) => HeadIteration::Poll,
-            Self::WatchLive | Self::HubHosted | Self::WatchConnecting => HeadIteration::AwaitHead,
+            Self::WatchLive | Self::PumpHosted | Self::WatchConnecting => HeadIteration::AwaitHead,
             Self::NotSpawned | Self::Stopped => HeadIteration::Exit,
         }
     }
@@ -650,10 +679,11 @@ impl HostedSources {
     /// lifecycle: legal from [`HostedPhase::Provisioned`] (which it moves to
     /// `Starting`), an idempotent no-op from `Running`, and a typed refusal from
     /// every other phase. A start that runs launches every arm's feed pump (its
-    /// first dial), spawns the feed-telemetry sampler, connects the head-watch
-    /// WS transport on the owned runtime (the second dial), registers the hub
-    /// head source, and spawns the head edge. [`Self::mint`] performed none of
-    /// this, so an engine that is minted and never started dials nothing.
+    /// first dial), spawns the feed-telemetry sampler, resolves the hub head
+    /// source the boot's clock names (a hosted WS watch dials and connects here;
+    /// a pump-owned clock resolves the source the pump registered), and spawns
+    /// the head edge. [`Self::mint`] performed none of this, so an engine that
+    /// is minted and never started dials nothing.
     ///
     /// No lock is held across an await: the admission takes the lifecycle lock
     /// for the transition only, the pumps lock for the launch call only, and the
@@ -661,10 +691,13 @@ impl HostedSources {
     ///
     /// # Errors
     ///
-    /// - [`HostedStartError::Hub`] when the hub head-source registration fails:
-    ///   a miswired boot fails closed rather than hosting a clock with no
-    ///   source. The owner lands in [`HostedPhase::HalfStarted`] holding exactly
-    ///   what it launched — a terminal failure, never success. The caller MUST
+    /// - [`HostedStartError::Hub`] when the hub head-source step fails, and
+    ///   [`HostedStartError::HeadSourceUnregistered`] when the boot's
+    ///   [`HostedHeadClock::PumpOwned`] names the pump as the owner but no
+    ///   source is registered: a miswired boot fails closed rather than hosting
+    ///   a clock with no source. The owner lands in [`HostedPhase::HalfStarted`]
+    ///   holding exactly what it launched — a terminal failure, never success.
+    ///   The caller MUST
     ///   drop the owner; [`Drop`] stops and tears down everything the partial
     ///   launch created.
     /// - [`HostedStartError::StartInFlight`] when another start is between its
@@ -689,10 +722,11 @@ impl HostedSources {
         }
         // 2. The one feed-telemetry sampler.
         spawn_feed_sampler(Arc::clone(&self.pumps), self.shutdown.subscribe());
-        // 3. The head edge: connect the WS transport on the owned runtime,
-        //    register the hub head source, and spawn the edge loop. The deferred
-        //    set is owned by this call, never by the lifecycle lock, so nothing
-        //    holds a lock across the await.
+        // 3. The head edge: resolve the hub head source the clock names (a
+        //    hosted watch dials and connects on the owned runtime; a pump-owned
+        //    clock resolves the pump's own source) and spawn the edge loop. The
+        //    deferred set is owned by this call, never by the lifecycle lock, so
+        //    nothing holds a lock across the await.
         let launch = match clock {
             Some(clock) => {
                 spawn_head_task(
@@ -719,7 +753,7 @@ impl HostedSources {
             }
             Some(error) => {
                 lifecycle.launch_failed(live);
-                Err(HostedStartError::Hub(error))
+                Err(error)
             }
         }
     }
@@ -780,12 +814,13 @@ impl HostedSources {
     }
 
     /// Subscribe a reader of the hub's latest head. Multi-subscriber: every
-    /// driver reads the same hosted clock.
+    /// driver reads the same head source the pump publishes into.
     ///
     /// # Errors
     ///
-    /// [`HubError::NotRegistered`] while no head source is registered (a
-    /// joinless boot hosts no clock); callers pace on the refusal.
+    /// [`HubError::NotRegistered`] when the hub carries no head source — a host
+    /// that composed no engine pump and named no clock; callers pace on the
+    /// refusal.
     pub fn subscribe_head(&self) -> Result<HeadSubscription, HubError> {
         self.hub.subscribe_head()
     }
@@ -899,7 +934,7 @@ async fn connect_head_watch(
 /// teardown drops it in order instead of leaving it to a local drop.
 struct HeadEdgeLaunch {
     transport: Option<Arc<dyn Provider<Ethereum>>>,
-    failure: Option<HubError>,
+    failure: Option<HostedStartError>,
 }
 
 impl HeadEdgeLaunch {
@@ -912,13 +947,23 @@ impl HeadEdgeLaunch {
     }
 }
 
-/// Resolve the hub head source and its subscription for the edge loop:
-/// register the source here when no external publisher hosts one yet.
-fn resolve_head_source(hub: &Arc<Hub>) -> Result<(HeadSender, HeadSubscription), HubError> {
+/// Resolve the hub head source and its subscription for the edge loop.
+///
+/// A [`HostedHeadClock::PumpOwned`] edge CONSUMES the source its owner
+/// registered: a hub with no source is a typed refusal, never a second
+/// registration. The hosted-watch clocks register the source for the poller's
+/// own publisher (a live watch registers at its subscribe).
+fn resolve_head_source(
+    hub: &Arc<Hub>,
+    clock: &HostedHeadClock,
+) -> Result<(HeadSender, HeadSubscription), HostedStartError> {
     let sender = match hub.head_sender() {
         Ok(sender) => sender,
+        Err(HubError::NotRegistered(_)) if matches!(clock, HostedHeadClock::PumpOwned) => {
+            return Err(HostedStartError::HeadSourceUnregistered);
+        }
         Err(HubError::NotRegistered(_)) => hub.register_head_source()?,
-        Err(error) => return Err(error),
+        Err(error) => return Err(HostedStartError::Hub(error)),
     };
     Ok((sender, hub.subscribe_head()?))
 }
@@ -944,7 +989,7 @@ fn resolve_head_source(hub: &Arc<Hub>) -> Result<(HeadSender, HeadSubscription),
 /// drop.
 ///
 /// The edge's mode machine advances here: `head_edge_spawned` publishes
-/// `WatchConnecting`/`PollFallback(PrimaryPoll)`/`HubHosted`, the connect
+/// `WatchConnecting`/`PollFallback(PrimaryPoll)`/`PumpHosted`, the connect
 /// outcome publishes `WatchLive` or `PollFallback(WatchConnectFailed)`, and
 /// the exit publishes `Stopped` exactly once — by this launch on a pre-spawn
 /// failure (no task exists to publish it), and by the edge task on exit.
@@ -963,7 +1008,7 @@ async fn spawn_head_task(
     head_edge.publish(mode);
     // The WS transport the edge owns for its lifetime; the owner keeps its own
     // clone and this one is dropped on exit (see this function's doc). `None`
-    // when the boot hosts no WS watch (a poll or hub clock, or a WS connect
+    // when the boot hosts no WS watch (a poll or pump-owned clock, or a WS connect
     // that failed at boot).
     let mut head_transport: Option<Arc<dyn Provider<Ethereum>>> = None;
     if let HostedHeadClock::Watch { ws_url, .. } = &clock {
@@ -986,15 +1031,15 @@ async fn spawn_head_task(
         head_edge.publish(mode);
     }
     // The fallback poller's publish handle beside the transport's own: the
-    // hub's head source is registered by the watch when it subscribed, and
-    // by this module otherwise. `Hub` mode reuses (or registers) the source
-    // the external publisher hosts.
+    // hub's head source is registered by the watch when it subscribed, and by
+    // this module for the poll clock. `PumpOwned` consumes the source the pump
+    // owns and refuses to run without it.
     // ANY failure here is a PRE-SPAWN failure: the edge task will never exist,
     // so this launch publishes the once-only terminal `Stopped` fact itself —
     // without it the projection would stay live past a half-started owner's
     // teardown. The transport still rides the failure back into `HalfStarted`,
     // so the ordered teardown drops it in order.
-    let (sender, mut head) = match resolve_head_source(&hub) {
+    let (sender, mut head) = match resolve_head_source(&hub, &clock) {
         Ok(parts) => parts,
         Err(error) => {
             head_edge.publish_stopped();
@@ -1008,7 +1053,7 @@ async fn spawn_head_task(
         HostedHeadClock::Watch { provider, .. } | HostedHeadClock::Poll { provider } => {
             Some(Arc::clone(provider))
         }
-        HostedHeadClock::Hub => None,
+        HostedHeadClock::PumpOwned => None,
     };
     let mut last_published = head.head().unwrap_or(0);
     // The owner keeps its own Arc clone; the edge keeps this one
@@ -1377,13 +1422,13 @@ mod tests {
         let hosted = HostedSources::mint(
             Arc::clone(&hub),
             [],
-            Some(HostedHeadClock::Hub),
+            Some(HostedHeadClock::PumpOwned),
             Some(trigger),
         )
-        .expect("the hub clock mints");
+        .expect("the pump-owned clock mints");
         // The head edge is deferred: it must be started before it observes a
         // head (mint alone spawns nothing).
-        hosted.start().await.expect("the hub clock starts");
+        hosted.start().await.expect("the pump-owned clock starts");
 
         let sender = hub.head_sender().expect("the head source is registered");
         sender.publish(HubEvent::NewHead {
@@ -1397,22 +1442,84 @@ mod tests {
         assert_eq!(fired, 42, "the trigger carries the observed head");
     }
 
-    /// One head registration per process: a second started mint reuses the
-    /// hosted head source instead of colliding with it. The registration is
-    /// deferred to `start`, so both owners must start before the source exists.
+    /// One head source per process: the PUMP owns it, so every hosted owner
+    /// over that hub consumes the same source rather than registering a second
+    /// one — the pump publishes a head and both edges fire on it.
     #[tokio::test]
-    async fn a_second_mint_reuses_the_head_source() {
+    async fn a_second_mint_consumes_the_pumps_single_head_source() {
         let hub = Arc::new(Hub::new());
-        let first = HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
-            .expect("first mint");
+        let pump = hub
+            .register_head_source()
+            .expect("the pump owns the source");
+        let recorder = |tx: tokio::sync::mpsc::UnboundedSender<u64>| -> HeadTrigger {
+            Arc::new(move |head| {
+                let tx = tx.clone();
+                Box::pin(async move {
+                    let _ = tx.send(head);
+                })
+            })
+        };
+        let (first_tx, mut first_rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
+        let (second_tx, mut second_rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
+        let first = HostedSources::mint(
+            Arc::clone(&hub),
+            [],
+            Some(HostedHeadClock::PumpOwned),
+            Some(recorder(first_tx)),
+        )
+        .expect("first mint");
         first.start().await.expect("first start");
-        let second = HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
-            .expect("second mint reuses the head source");
+        let second = HostedSources::mint(
+            Arc::clone(&hub),
+            [],
+            Some(HostedHeadClock::PumpOwned),
+            Some(recorder(second_tx)),
+        )
+        .expect("second mint consumes the same head source");
         second
             .start()
             .await
-            .expect("second start reuses the head source");
+            .expect("second start consumes the same head source");
+
+        pump.publish(HubEvent::NewHead {
+            number: 7,
+            timestamp: 0,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        });
+        assert_eq!(first_rx.recv().await, Some(7), "the first edge fires");
+        assert_eq!(
+            second_rx.recv().await,
+            Some(7),
+            "the second edge reads the same pump-owned source"
+        );
         assert!(hub.head_sender().is_ok(), "exactly one head source");
+    }
+
+    /// Ownership is DECLARED, not inferred: a pump-owned clock whose hub carries
+    /// no registered head source refuses the start by name instead of
+    /// registering a second source of its own.
+    #[tokio::test]
+    async fn a_pump_owned_clock_refuses_a_start_with_no_registered_source() {
+        let hub = Arc::new(Hub::new());
+        let hosted =
+            HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::PumpOwned), None)
+                .expect("the pump-owned clock mints");
+        let refused = hosted.start().await;
+        assert!(
+            matches!(refused, Err(HostedStartError::HeadSourceUnregistered)),
+            "a pump-owned clock with no source fails closed: {refused:?}"
+        );
+        assert_eq!(
+            hosted.phase(),
+            HostedPhase::HalfStarted,
+            "the refusal is a terminal launch failure, never running"
+        );
+        assert!(
+            hub.head_sender().is_err(),
+            "the edge registered no source of its own"
+        );
     }
 
     /// The sampler record: one arm aggregates to exactly what the per-driver
@@ -2058,10 +2165,10 @@ mod tests {
                     ..BackrunFeedConfig::for_mainnet()
                 }),
             )],
-            Some(HostedHeadClock::Hub),
+            Some(HostedHeadClock::PumpOwned),
             None,
         )
-        .expect("the pump and the hub clock mint");
+        .expect("the pump and the pump-owned clock mint");
         assert_eq!(
             hosted.phase(),
             HostedPhase::Provisioned,
@@ -2119,8 +2226,8 @@ mod tests {
         // TornDown: repeated post-teardown starts all answer `TornDown`.
         let hub = Arc::new(Hub::new());
         let mut hosted =
-            HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
-                .expect("the hub clock mints");
+            HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::PumpOwned), None)
+                .expect("the pump-owned clock mints");
         hosted.teardown();
         assert_eq!(hosted.phase(), HostedPhase::TornDown);
         for attempt in 1..=3 {
@@ -2142,10 +2249,10 @@ mod tests {
         let hosted = HostedSources::mint(
             Arc::clone(&hub),
             [closed_feed_arm()],
-            Some(HostedHeadClock::Hub),
+            Some(HostedHeadClock::PumpOwned),
             None,
         )
-        .expect("the pump and the hub clock mint");
+        .expect("the pump and the pump-owned clock mint");
         let first = hosted.start().await;
         assert!(
             matches!(first, Err(HostedStartError::Hub(_))),
@@ -2167,8 +2274,9 @@ mod tests {
         // Starting: a concurrent refusal answers `StartInFlight` and the
         // in-flight phase never moves.
         let hub = Arc::new(Hub::new());
-        let hosted = HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
-            .expect("the hub clock mints");
+        let hosted =
+            HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::PumpOwned), None)
+                .expect("the pump-owned clock mints");
         *hosted.lifecycle.lock() = HostedLifecycle::Starting;
         for attempt in 1..=2 {
             let refused = hosted.start().await;
@@ -2283,9 +2391,12 @@ mod tests {
     #[tokio::test]
     async fn a_running_owner_treats_a_second_start_as_an_idempotent_no_op() {
         let hub = Arc::new(Hub::new());
-        let hosted = HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
-            .expect("the hub clock mints");
-        hosted.start().await.expect("the hub clock starts");
+        hub.register_head_source()
+            .expect("the pump owns the head source");
+        let hosted =
+            HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::PumpOwned), None)
+                .expect("the pump-owned clock mints");
+        hosted.start().await.expect("the pump-owned clock starts");
         assert_eq!(hosted.phase(), HostedPhase::Running);
         hosted
             .start()
@@ -2430,9 +2541,9 @@ mod tests {
             "a boot hosting no watch polls as its primary clock"
         );
         assert_eq!(
-            HeadEdgeMode::spawned(&HostedHeadClock::Hub),
-            HeadEdgeMode::HubHosted,
-            "an externally hosted hub source is its own mode"
+            HeadEdgeMode::spawned(&HostedHeadClock::PumpOwned),
+            HeadEdgeMode::PumpHosted,
+            "the pump-owned hub source is its own mode"
         );
 
         // A stale live watch: polls for THIS iteration, stays live, and cannot
@@ -2443,13 +2554,13 @@ mod tests {
             live.stale_poll(),
             "a live watch may fall back to one polled read while its watchdog reconnects"
         );
-        assert!(!HeadEdgeMode::HubHosted.stale_poll());
+        assert!(!HeadEdgeMode::PumpHosted.stale_poll());
         assert_eq!(
             HeadEdgeMode::PollFallback(PollCause::PrimaryPoll).iteration(),
             HeadIteration::Poll
         );
         assert_eq!(
-            HeadEdgeMode::HubHosted.iteration(),
+            HeadEdgeMode::PumpHosted.iteration(),
             HeadIteration::AwaitHead
         );
         assert_eq!(HeadEdgeMode::NotSpawned.iteration(), HeadIteration::Exit);

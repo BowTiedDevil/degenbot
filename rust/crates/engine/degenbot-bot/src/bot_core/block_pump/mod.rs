@@ -67,6 +67,7 @@ use alloy::primitives::B256;
 use alloy::rpc::types::Log;
 // The event/fetch surface of the ingestion crate. `PoolEvent` +
 // `build_backfill_filter` are imported by the test module below.
+use degenbot_eventhub::{HeadSender, HubEvent};
 use degenbot_ingestion::{
     IngestEvent as WsEvent, Watchdog, WsIngestor, BACKFILL_TIMEOUT_SECS,
     DEFAULT_BACKFILL_CHUNK_SIZE, RELEVANT_TOPICS,
@@ -232,6 +233,15 @@ pub struct BlockPump {
     /// gap-backfill fetching live in `degenbot-ingestion`; this driver only
     /// consumes the emitted `IngestEvent` stream and calls the fetch API.
     ingestor: WsIngestor,
+
+    /// The session hub's ONE head source, which this pump OWNS: every accepted
+    /// header is published here, so the hosted head edge, every strategy's head
+    /// subscription, and the per-head reconciliation all read the one
+    /// subscription this pump already holds — never a second `newHeads` watch
+    /// or polled head read. `None` when the session hub's head source belongs to
+    /// another transport (or the pump has no session hub at all): the pump
+    /// publishes nothing then, and the owner of that source publishes.
+    head_source: Option<HeadSender>,
     /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
     shutdown: Arc<AtomicBool>,
     /// Max age of a held stage-span interval before the pump
@@ -380,8 +390,17 @@ impl BlockPump {
             early_slice_ms: 25,
             stall_window: Duration::from_secs(liveness::PUMP_STALL_SECS),
             stall: SessionEndFacts::channel().0,
+            head_source: None,
             park_gate: None,
         }
+    }
+
+    /// Install the hub head-source publisher a session pump receives from its
+    /// driver's hub: the accepted-header edge then publishes into the session's
+    /// ONE head source, exactly as production does.
+    #[cfg(test)]
+    pub fn install_head_source_for_test(&mut self, sender: HeadSender) {
+        self.head_source = Some(sender);
     }
 }
 
@@ -395,6 +414,25 @@ impl BlockPump {
     #[must_use]
     pub fn stall_facts(&self) -> SessionEndFacts {
         self.stall.facts()
+    }
+
+    /// Publish ONE accepted header into the session hub's head source.
+    ///
+    /// Fired on the same accepted-header edge as the canonical-head poke, so a
+    /// header the stage machine drops as duplicate or stale publishes nothing.
+    /// The header's own fields ride the event: a hub reader sees the block the
+    /// pump accepted, with no re-derivation and no second RPC.
+    fn publish_accepted_head(&self, number: u64, metadata: &BlockMetadata) {
+        let Some(head) = self.head_source.as_ref() else {
+            return;
+        };
+        head.publish(HubEvent::NewHead {
+            number,
+            timestamp: metadata.timestamp,
+            base_fee_per_gas: metadata.base_fee_per_gas,
+            gas_used: metadata.gas_used,
+            gas_limit: metadata.gas_limit,
+        });
     }
 }
 

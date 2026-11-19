@@ -18,9 +18,10 @@
 //!    sources (one pending-tx pump per arm) and each arm's spawn factory, which
 //!    the boot hands the arm's own typed stream.
 //! 4. **Start** ([`EngineSession::start`]). The hosted sources' deferred I/O
-//!    launches before any driver: a driver's loop subscribes the hub head
-//!    source that the head edge registers as it starts, so a driver started
-//!    first would poll a clock with no source.
+//!    launches before any driver: the head edge attaches to the hub head source
+//!    the engine's block pump owns (the pump registers it at driver composition
+//!    and publishes every accepted header), so a driver's loop always finds the
+//!    one source the whole session reads.
 //!
 //! The boot returns handles and runs no consume loop (ADR-050 D9). Admission
 //! and lifecycle stay with the host (ADR-057): this module orders calls into
@@ -278,10 +279,9 @@ impl EngineSession {
     /// Launch the session's deferred I/O and then its drivers — the one start
     /// boundary.
     ///
-    /// The hosted sources start first because a driver's loop subscribes the
-    /// hub head source the head edge registers as it starts; a driver started
-    /// first would poll a clock with no source. Returns the number of drivers
-    /// booted.
+    /// The hosted sources start first because the head edge must attach to the
+    /// session hub's one head source (the pump owns it) before a driver's loop
+    /// subscribes that same source. Returns the number of drivers booted.
     ///
     /// # Errors
     ///
@@ -462,9 +462,10 @@ mod tests {
                 fake_arm("mevblocker_backrun", PendingTxSource::Mevblocker),
                 fake_arm("txpool_backrun", PendingTxSource::Txpool),
             ],
-            // A hub clock registers the hub head source without dialing, so the
-            // ordering fact is observable with no endpoint at all.
-            clock: Some(HostedHeadClock::Hub),
+            // The pump owns the hub head source (the driver registered it at
+            // composition, without dialing), so the ordering fact is observable
+            // with no endpoint at all.
+            clock: Some(HostedHeadClock::PumpOwned),
             trigger: None,
         }
     }
@@ -537,9 +538,12 @@ mod tests {
             }
         }
         let hub = Arc::clone(session.host().lock().hub());
+        let head = hub
+            .subscribe_head()
+            .expect("the pump owns and registers the session's one head source");
         assert!(
-            hub.subscribe_head().is_err(),
-            "the head edge is not up before the start boundary"
+            head.head().is_none(),
+            "the mint published no head: no head read was dialed before the start boundary"
         );
         for id in ["mevblocker_backrun", "txpool_backrun"] {
             let id = StrategyId::new(id);
@@ -703,5 +707,95 @@ mod tests {
             detail.contains("stream=None"),
             "the factory is handed no stream: {detail}"
         );
+    }
+
+    /// A settlement-only boot reports head liveness through the SAME registry a
+    /// mixed boot uses: the engine's block pump owns the hub head source, so the
+    /// boot's head edge fires the reconcile trigger per accepted head with no
+    /// backrun arm, no second `newHeads` subscription, and no dial.
+    #[test]
+    fn a_settlement_only_boot_reports_heads_through_the_pumps_shared_source() {
+        let (fire_tx, mut fire_rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
+        let trigger: HeadTriggerComposer = Box::new(move |_host| {
+            Arc::new(move |head: u64| {
+                let fire_tx = fire_tx.clone();
+                Box::pin(async move {
+                    let _ = fire_tx.send(head);
+                })
+                    as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            }) as HeadTrigger
+        });
+        let session = EngineSession::boot(
+            construction(),
+            facet_table(|name| {
+                if name == "settlement" {
+                    FacetStatus::Configured
+                } else {
+                    FacetStatus::Unconfigured
+                }
+            }),
+            Some(HostedBoot {
+                arms: Vec::new(),
+                clock: Some(HostedHeadClock::PumpOwned),
+                trigger: Some(trigger),
+            }),
+        )
+        .expect("a settlement-only boot composes the plane");
+
+        // The pump owns the boot's ONE head source: registered at composition,
+        // not deferred to a start, and shared by every reader on the hub.
+        let hub = Arc::clone(session.host().lock().hub());
+        assert!(
+            hub.subscribe_head().is_ok(),
+            "the pump registered the session's one head source"
+        );
+        assert!(
+            session
+                .hosted()
+                .expect("the boot hosts the session's sources")
+                .pump_sources()
+                .is_empty(),
+            "a settlement-only boot admits no backrun arm, so it mints no pending-tx pump"
+        );
+        assert!(
+            hub.subscribe_head()
+                .expect("the head source is registered")
+                .head()
+                .is_none(),
+            "the mint publishes nothing: no head has been dialed or read"
+        );
+
+        degenbot_core::runtime::get_runtime().block_on(async {
+            session
+                .start()
+                .await
+                .expect("the start boundary attaches the head edge");
+            assert_eq!(
+                session
+                    .hosted()
+                    .expect("the boot hosts the session's sources")
+                    .head_edge()
+                    .mode(),
+                crate::hosted_sources::HeadEdgeMode::PumpHosted,
+                "the edge consumes the pump-owned source instead of dialing its own"
+            );
+            hub.head_sender()
+                .expect("the pump's publish handle")
+                .publish(degenbot_eventhub::HubEvent::NewHead {
+                    number: 55,
+                    timestamp: 0,
+                    base_fee_per_gas: None,
+                    gas_used: 0,
+                    gas_limit: 0,
+                });
+            let fired = tokio::time::timeout(Duration::from_secs(5), fire_rx.recv())
+                .await
+                .expect("the head edge fires inside the window")
+                .expect("the recorder lives");
+            assert_eq!(
+                fired, 55,
+                "the reconcile trigger carries the pump's accepted head"
+            );
+        });
     }
 }
