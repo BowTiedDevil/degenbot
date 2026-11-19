@@ -1371,6 +1371,117 @@ mod tests {
         );
     }
 
+    /// The edge's layout descriptor routes the extractor's field reads to the
+    /// fork's real storage: Pancake V3's two-word `slot0` (word1 at slot 1)
+    /// shifts `liquidity` to 5 and `ticks` to 6, while Uniswap V3 and the
+    /// Sushi / Aerodrome forks stay at 4/5. A `pools` row whose `kind` names
+    /// no fork this index loads fails closed before candidate discovery: it
+    /// never becomes an edge (no layout exists to decode it under), and the
+    /// unsupported-family roster names it at the descriptor seam instead.
+    #[test]
+    fn v3_edge_layouts_select_the_fork_slots_and_refuse_unknown_forks() {
+        use degenbot_pools::{
+            PANCAKE_V3_LIQUIDITY_SLOT, PANCAKE_V3_SLOT0_WORD0_SLOT, PANCAKE_V3_SLOT0_WORD1_SLOT,
+            PANCAKE_V3_TICKS_MAPPING_SLOT,
+        };
+
+        const TOK: Address = Address::new([0x11; 20]);
+        const OTHER: Address = Address::new([0x22; 20]);
+        const UNKNOWN: Address = Address::new([0xD0; 20]);
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
+        let tok_id = db
+            .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
+            .unwrap();
+        let other_id = db
+            .get_or_create_erc20_token(1, &OTHER.to_checksum(None), None, None, None)
+            .unwrap();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO exchanges (id, chain_id, name, active, last_update_block, factory) \
+                 VALUES (1, 1, 'test', 0, NULL, '0x0000000000000000000000000000000000000001')",
+                [],
+            )
+            .unwrap();
+            // One row per indexed fork table.
+            for (i, (kind, table)) in [
+                ("uniswap_v3", "uniswap_v3_pools"),
+                ("sushiswap_v3", "sushiswap_v3_pools"),
+                ("pancakeswap_v3", "pancakeswap_v3_pools"),
+                ("aerodrome_v3", "aerodrome_v3_pools"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                let id = 70 + i64::try_from(i).unwrap();
+                let addr = format!("{:?}", Address::new([u8::try_from(i).unwrap() + 0xA0; 20]));
+                conn.execute(
+                    "INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) \
+                     VALUES (?1, ?2, 1, ?3, ?4, ?5, 1)",
+                    rusqlite::params![id, addr, kind, tok_id, other_id],
+                )
+                .unwrap();
+                conn.execute(
+                    &format!(
+                        "INSERT INTO {table} (pool_id, tick_spacing, liquidity_update_block, \
+                         liquidity_update_log_index, fee_token0, fee_token1, fee_denominator) \
+                         VALUES (?1, 10, NULL, NULL, 500, 500, 1000000)"
+                    ),
+                    rusqlite::params![id],
+                )
+                .unwrap();
+            }
+            // A fork kind outside the fork table: no subclass row exists to
+            // name a layout.
+            conn.execute(
+                "INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) \
+                 VALUES (80, ?1, 1, 'zyberswap_v3', ?2, ?3, 1)",
+                rusqlite::params![UNKNOWN.to_checksum(None), tok_id, other_id],
+            )
+            .unwrap();
+        }
+
+        let mut ix = V2ConnectorIndex::default();
+        ix.load_v3(&db, 1).unwrap();
+
+        // Canonical-shape forks (Uniswap, Sushi, Aerodrome): one-word `slot0`,
+        // `liquidity`@4, `ticks`@5.
+        for byte in [0xA0_u8, 0xA1, 0xA3] {
+            let edge = ix
+                .v3_edge_by_address(Address::new([byte; 20]))
+                .expect("every fork table feeds the roster");
+            assert_eq!(edge.layout, ConcentratedLiquiditySlotLayout::UniswapV3);
+            assert_eq!(edge.layout.slot0_slot(), 0);
+            assert_eq!(edge.layout.liquidity_slot(), 4);
+            assert_eq!(edge.layout.ticks_mapping_slot(), 5);
+        }
+        // Pancake V3: `slot0` spans TWO words, so `liquidity` lands at 5 and
+        // `ticks` at 6.
+        let cake = ix
+            .v3_edge_by_address(Address::new([0xA2; 20]))
+            .expect("pancake row loads");
+        assert_eq!(cake.layout, ConcentratedLiquiditySlotLayout::PancakeV3);
+        assert_eq!(PANCAKE_V3_SLOT0_WORD0_SLOT, 0);
+        assert_eq!(PANCAKE_V3_SLOT0_WORD1_SLOT, 1, "slot0 spans two words");
+        assert_eq!(cake.layout.slot0_slot(), PANCAKE_V3_SLOT0_WORD0_SLOT);
+        assert_eq!(cake.layout.liquidity_slot(), 5);
+        assert_eq!(cake.layout.liquidity_slot(), PANCAKE_V3_LIQUIDITY_SLOT);
+        assert_eq!(cake.layout.ticks_mapping_slot(), 6);
+        assert_eq!(
+            cake.layout.ticks_mapping_slot(),
+            PANCAKE_V3_TICKS_MAPPING_SLOT
+        );
+
+        // The unknown fork fails closed: no edge carries it into candidate
+        // discovery, and the unsupported roster names it instead.
+        assert_eq!(ix.v3_len(), 4);
+        assert!(ix.v3_edge_by_address(UNKNOWN).is_none());
+        ix.load_unsupported(&db, 1).unwrap();
+        assert_eq!(ix.unsupported_kind(UNKNOWN), Some("zyberswap_v3"));
+        assert_eq!(ix.unsupported_kind(Address::new([0xA2; 20])), None);
+    }
+
     /// Seed a chain-scoped V4 roster: two tokens, managers on chains 1 and
     /// 8453, and four managed pools (clean, hooked, other-chain, overflowing
     /// fee).

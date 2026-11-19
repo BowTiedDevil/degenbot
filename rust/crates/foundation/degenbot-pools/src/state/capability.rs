@@ -19,19 +19,13 @@
 //! # Footnotes
 //!
 //! - Backrun V4 is hookless-only ([`V4_HOOKLESS_ONLY`]): `connector_index`
-//!   (`degenbot-bot`) drops every roster row whose `hooks` is non-zero before
+//!   (`degenbot-substrate`) drops every roster row whose `hooks` is non-zero before
 //!   it can become a lane edge. The same arm refuses a key whose fee reaches
 //!   [`V4_FEE_CEILING_EXCLUSIVE`] at admission.
 //! - Backrun V2 discovery excludes the `AerodromeV2 { stable: true }` species
 //!   (`LaneFamilyTag::from_identity` projects it to `None` — the stable branch
 //!   is Solidly math the V2 lane cannot express) even though the database
 //!   `kind` string `aerodrome_v2` projects to the V2 graph kind.
-//! - Backrun V3 discovery admits every `pancakeswap_v3` / `aerodrome_v3` row
-//!   the connector index loads, but the frame descriptor hardcodes the
-//!   canonical `ConcentratedLiquiditySlotLayout::UniswapV3`. `aerodrome_v3` shares that layout;
-//!   `pancakeswap_v3` does not (two-word `slot0`, liquidity@5, ticks@6), so its
-//!   rows decode under the wrong slots — a documented extraction gap, not a
-//!   capability claim.
 //! - Settlement's seven solver families all `solve` (mixed `HopType` dispatch),
 //!   but only the three [`ENCODER_FAMILIES`] `compose`; Solidly / Balancer /
 //!   Curve have no `HopInfo` arm (`arb_engine::path_info` returns
@@ -80,7 +74,9 @@ impl Arm {
 pub enum Family {
     /// Constant-product reserve pair (and its volatile Aerodrome species).
     V2,
-    /// Concentrated liquidity under the canonical V3 fork layout.
+    /// Concentrated liquidity, decoded at its pool's declared fork slot
+    /// layout (canonical Uniswap V3, or the Pancake V3 fork's two-word
+    /// `slot0` with `liquidity`@5 / `ticks`@6).
     V3,
     /// V4 concentrated liquidity under the `PoolManager` singleton.
     V4,

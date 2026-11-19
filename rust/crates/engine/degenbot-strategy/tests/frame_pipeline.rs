@@ -1001,6 +1001,303 @@ fn manager_without_roster_edges_stays_unsupported() {
     );
 }
 
+/// V3 fork fixture pools: one per indexed fork table (Uniswap, Pancake,
+/// Aerodrome), plus a `pools` row whose kind names no fork the connector
+/// index loads.
+const POOL_UNI: Address = address!("000000000000000000000000000000000000d001");
+const POOL_CAKE: Address = address!("000000000000000000000000000000000000d002");
+const POOL_AERO: Address = address!("000000000000000000000000000000000000d003");
+const POOL_UNKNOWN_FORK: Address = address!("000000000000000000000000000000000000d004");
+
+/// Seed the fork fixture rows (see the `POOL_*` consts): one pool per indexed
+/// V3 fork table, plus the unknown-fork row.
+fn seed_v3_fork_pools(db: &DegenbotDb) {
+    let t0 = db
+        .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
+        .unwrap();
+    let t1 = db
+        .get_or_create_erc20_token(1, &WETH.to_checksum(None), None, None, None)
+        .unwrap();
+    let conn = db.lock();
+    conn.execute_batch(&format!(
+        "PRAGMA foreign_keys=OFF;
+         INSERT INTO exchanges (id, chain_id, name, active, factory) VALUES
+           (1, 1, 'test', 1, '0x0000000000000000000000000000000000000001');
+         INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) VALUES
+           (701, '{uni}', 1, 'uniswap_v3', {t0}, {t1}, 1),
+           (702, '{cake}', 1, 'pancakeswap_v3', {t0}, {t1}, 1),
+           (703, '{aero}', 1, 'aerodrome_v3', {t0}, {t1}, 1),
+           (704, '{unknown}', 1, 'zyberswap_v3', {t0}, {t1}, 1);
+         INSERT INTO uniswap_v3_pools (pool_id, tick_spacing, liquidity_update_block,
+           liquidity_update_log_index, fee_token0, fee_token1, fee_denominator)
+           VALUES (701, 10, NULL, NULL, 500, 500, 1000000);
+         INSERT INTO pancakeswap_v3_pools (pool_id, tick_spacing, liquidity_update_block,
+           liquidity_update_log_index, fee_token0, fee_token1, fee_denominator)
+           VALUES (702, 10, NULL, NULL, 500, 500, 1000000);
+         INSERT INTO aerodrome_v3_pools (pool_id, tick_spacing, liquidity_update_block,
+           liquidity_update_log_index, fee_token0, fee_token1, fee_denominator)
+           VALUES (703, 10, NULL, NULL, 500, 500, 1000000);",
+        uni = POOL_UNI.to_checksum(None),
+        cake = POOL_CAKE.to_checksum(None),
+        aero = POOL_AERO.to_checksum(None),
+        unknown = POOL_UNKNOWN_FORK.to_checksum(None),
+        t0 = t0,
+        t1 = t1,
+    ))
+    .unwrap();
+}
+
+/// The independent truth the extraction assertions read against: each fork's
+/// LITERAL storage shape (never the layout accessors under test) — canonical
+/// Uniswap V3 (`liquidity`@4, `ticks`@5) and the Pancake V3 fork (two-word
+/// `slot0`, `liquidity`@5, `ticks`@6).
+struct ForkFixture {
+    addr: Address,
+    layout: degenbot_pools::ConcentratedLiquiditySlotLayout,
+    liquidity_slot: u64,
+    ticks_base: u64,
+    liquidity: u128,
+    post_tick: i32,
+    touched_tick: i32,
+}
+
+/// The fixture's one touched tick word (`uint128 liquidityGross | int128
+/// liquidityNet`).
+const TICK_GROSS: u128 = 7_000;
+const TICK_NET: i128 = -250;
+
+fn v3_fork_fixtures() -> [ForkFixture; 3] {
+    use degenbot_pools::ConcentratedLiquiditySlotLayout;
+    [
+        ForkFixture {
+            addr: POOL_UNI,
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+            liquidity_slot: 4,
+            ticks_base: 5,
+            liquidity: 1_000,
+            post_tick: 0,
+            touched_tick: 10,
+        },
+        ForkFixture {
+            addr: POOL_CAKE,
+            layout: ConcentratedLiquiditySlotLayout::PancakeV3,
+            liquidity_slot: 5,
+            ticks_base: 6,
+            liquidity: 2_000,
+            post_tick: 20,
+            touched_tick: 30,
+        },
+        ForkFixture {
+            addr: POOL_AERO,
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+            liquidity_slot: 4,
+            ticks_base: 5,
+            liquidity: 3_000,
+            post_tick: 40,
+            touched_tick: 50,
+        },
+    ]
+}
+
+/// The three fork pools' replayed frame: each pool's words at ITS OWN fork's
+/// literal slots (never the layout accessors) — `slot0` word0 at 0 (plus the
+/// Pancake word1 at 1), `liquidity` at the fork's slot, and one touched tick
+/// word at the fork's `ticks` base.
+fn v3_fork_journal() -> Evm2ReplayOutcome {
+    use degenbot_pools::{
+        encode_pancake_v3_slot0_word1, encode_v3_slot0, ConcentratedLiquiditySlotLayout,
+        V3Slot0Parts,
+    };
+
+    let tick_word = U256::from_be_bytes(slot_layout::tick_word_of(TICK_GROSS, TICK_NET).0);
+    let sqrt = U256::from(1u128) << 96;
+    let mut slot_values = Vec::new();
+    let mut touched = Vec::new();
+    for f in v3_fork_fixtures() {
+        let slot0 = encode_v3_slot0(V3Slot0Parts {
+            sqrt_price_x96: sqrt,
+            tick: f.post_tick,
+            ..Default::default()
+        });
+        let mut words = vec![
+            (U256::ZERO, slot0),
+            (U256::from(f.liquidity_slot), U256::from(f.liquidity)),
+            (
+                slot_layout::tick_mapping_slot_at_base(f.touched_tick, U256::from(f.ticks_base)),
+                tick_word,
+            ),
+        ];
+        if f.layout == ConcentratedLiquiditySlotLayout::PancakeV3 {
+            // The fork's second `slot0` word (`feeProtocol`/`unlocked`).
+            words.push((U256::from(1u64), encode_pancake_v3_slot0_word1(0, true)));
+        }
+        slot_values.extend(words.iter().map(|&(s, v)| (f.addr, s, v)));
+        touched.push((f.addr, words.iter().map(|&(s, _)| s).collect()));
+    }
+    Evm2ReplayOutcome {
+        status: RunVerdict::Success,
+        gas_used: 21_000,
+        output: Bytes::new(),
+        storage_writes: slot_values.clone(),
+        accounts: touched
+            .iter()
+            .map(|(a, _)| (*a, ::evm2::evm::AccountInfo::default()))
+            .collect(),
+        slot_values,
+        touched,
+        rpc_reads: 0,
+        wall: std::time::Duration::from_micros(1),
+        base_fee_source: BaseFeeSource::Projected,
+    }
+}
+
+/// The V3 roster edge's fork layout rides into the frame descriptor, so
+/// journal extraction decodes each fork's REAL slots: the Pancake words at
+/// two-word `slot0` / `liquidity`@5 / `ticks`@6, the Uniswap and Aerodrome
+/// controls at 4/5.
+#[test]
+fn pancake_v3_frame_descriptor_extracts_from_the_fork_slots() {
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    seed_v3_fork_pools(&db);
+    let mut index = V2ConnectorIndex::default();
+    index.load_v3(&db, 1).unwrap();
+
+    let outcome = v3_fork_journal();
+    let descriptors = build_descriptors(Some(&index), &outcome.touched, &test_execution());
+    let extracted = degenbot_simulation::sim::journal_pools::extract_pool_post_states(
+        &outcome,
+        &descriptors.by_address,
+    );
+    for f in v3_fork_fixtures() {
+        // The descriptor carries the roster edge's own layout ...
+        assert_eq!(
+            descriptors.by_address.get(&f.addr),
+            Some(&PoolFamily::V3 {
+                layout: f.layout,
+                tick_spacing: 10,
+                current_tick_hint: None,
+            }),
+            "{:?}: the roster edge's layout rides the descriptor",
+            f.layout
+        );
+        // ... so every field decodes from that fork's slots.
+        let state = extracted
+            .iter()
+            .find(|s| s.address == f.addr)
+            .expect("touched fork pool extracts");
+        let PoolPostKind::Typed(TypedPoolPost::V3 {
+            sqrt_price_x96,
+            tick,
+            liquidity,
+            touched_ticks,
+        }) = &state.kind
+        else {
+            panic!("expected a typed V3 post-state, got {:?}", state.kind);
+        };
+        assert_eq!(
+            *sqrt_price_x96,
+            Some(U256::from(1u128) << 96),
+            "{:?}",
+            f.layout
+        );
+        assert_eq!(*tick, Some(f.post_tick), "{:?}", f.layout);
+        assert_eq!(*liquidity, Some(f.liquidity), "{:?}", f.layout);
+        assert_eq!(touched_ticks.len(), 1, "{:?}", f.layout);
+        assert_eq!(touched_ticks[0].tick, f.touched_tick, "{:?}", f.layout);
+        assert_eq!(touched_ticks[0].liquidity_gross, TICK_GROSS);
+        assert_eq!(touched_ticks[0].liquidity_net, TICK_NET);
+    }
+}
+
+/// Contrast pinning why the fork label is load-bearing: the SAME Pancake
+/// words under a canonical-layout descriptor decode EMPTY (no `liquidity`,
+/// no touched ticks), so a wrong layout label yields a garbage tick map
+/// instead of the pool's real state.
+#[test]
+fn a_canonical_layout_descriptor_reads_the_pancake_words_as_empty() {
+    use degenbot_pools::ConcentratedLiquiditySlotLayout;
+
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    seed_v3_fork_pools(&db);
+    let mut index = V2ConnectorIndex::default();
+    index.load_v3(&db, 1).unwrap();
+
+    let outcome = v3_fork_journal();
+    let descriptors = build_descriptors(Some(&index), &outcome.touched, &test_execution());
+    let mut canonical = descriptors.by_address.clone();
+    canonical.insert(
+        POOL_CAKE,
+        PoolFamily::V3 {
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+            tick_spacing: 10,
+            current_tick_hint: None,
+        },
+    );
+    let wrong =
+        degenbot_simulation::sim::journal_pools::extract_pool_post_states(&outcome, &canonical);
+    let cake = wrong
+        .iter()
+        .find(|s| s.address == POOL_CAKE)
+        .expect("the pancake pool extracts under any descriptor");
+    let PoolPostKind::Typed(TypedPoolPost::V3 {
+        sqrt_price_x96,
+        tick,
+        liquidity,
+        touched_ticks,
+    }) = &cake.kind
+    else {
+        panic!("expected a typed V3 post-state, got {:?}", cake.kind);
+    };
+    assert!(
+        sqrt_price_x96.is_some() && tick.is_some(),
+        "slot0 word0 lives at slot 0 on both forks"
+    );
+    assert_eq!(
+        *liquidity, None,
+        "the fork's liquidity word at slot 5 is unread"
+    );
+    assert!(
+        touched_ticks.is_empty(),
+        "tick words at the fork's base-6 slots are no canonical-base preimages"
+    );
+}
+
+/// A touched pool whose `kind` names no fork the connector index loads never
+/// becomes a frame descriptor: no layout exists to decode it under, so it
+/// fails closed as `family-unsupported` before candidate discovery — never a
+/// canonical-layout guess.
+#[test]
+fn an_unknown_v3_fork_fails_closed_before_candidate_discovery() {
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    seed_v3_fork_pools(&db);
+    let mut index = V2ConnectorIndex::default();
+    index.load_v3(&db, 1).unwrap();
+    index.load_unsupported(&db, 1).unwrap();
+
+    let outcome = manager_journal_outcome(POOL_UNKNOWN_FORK, &[(U256::ZERO, U256::from(1u64))]);
+    let descriptors = build_descriptors(Some(&index), &outcome.touched, &test_execution());
+    assert!(
+        descriptors.by_address.is_empty(),
+        "an unknown fork has no layout, so it never enters the descriptor map"
+    );
+    assert_eq!(
+        descriptors.unsupported,
+        vec![(POOL_UNKNOWN_FORK, "zyberswap_v3".to_string())],
+    );
+    assert_eq!(
+        empty_frame_observe_reason(&descriptors),
+        ObserveReason::FamilyUnsupported
+    );
+    let extracted = degenbot_simulation::sim::journal_pools::extract_pool_post_states(
+        &outcome,
+        &descriptors.by_address,
+    );
+    assert!(
+        extracted.is_empty(),
+        "no descriptor, no post state — the discovery fan has no anchor to start from"
+    );
+}
+
 /// One hand-built frame whose only touched account is `manager`, holding the
 /// given `(slot, present_value)` writes.
 fn manager_journal_outcome(manager: Address, writes: &[(U256, U256)]) -> Evm2ReplayOutcome {
