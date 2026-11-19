@@ -151,6 +151,10 @@ from degenbot._ffi.execution import (
     abi_encode_call,
 )
 
+# fork: the spawned-node handle, for the seam-level spawn claims a companion
+# cannot make (ADR-103's typed family rides the shipped exceptions package).
+from degenbot._ffi.fork import AnvilFork
+
 # provider: the transport the offline harnesses stub.
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider, is_local_rpc_url
 
@@ -196,6 +200,7 @@ __all__ = [
     "MIN_TICK",
     "REGISTRATION_SURFACE",
     "AlloyProvider",
+    "AnvilFork",
     "ArbitrageEngine",
     "AsyncAlloyProvider",
     "Bot",

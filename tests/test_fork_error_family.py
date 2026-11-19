@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi.fork import AnvilFork as _FFIAnvilFork
 from degenbot.exceptions import AnvilChildExitError, AnvilSpawnError, AnvilSpawnTimeoutError
+from tests.helpers.seam import AnvilFork as _FFIAnvilFork
 
 ROOT = Path(__file__).resolve().parents[1]
 
