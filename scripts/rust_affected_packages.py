@@ -8,7 +8,8 @@ So the selection is the touched packages closed over the declared dependency
 graph, unless the diff touches an input the whole workspace consumes, in which
 case every member is selected. A path under `rust/` that no member owns is a
 refusal rather than an empty selection, because incomplete knowledge must not
-read as "no test needs to run".
+read as "no test needs to run" — except documentation, which no build reads and
+which therefore invalidates nothing.
 
 Prints nothing when the outgoing diff touches no Rust test subject, so the
 caller runs no test leg at all.
@@ -23,6 +24,11 @@ import sys
 from typing import Any
 
 MANIFEST = pathlib.Path("rust") / "Cargo.toml"
+
+# Suffixes of files no build reads. An unowned file under `rust/` carrying one
+# invalidates no test, so it is the one refusal case answered by knowledge
+# instead of by declining to guess.
+DOCUMENTATION_SUFFIXES = frozenset({".md"})
 
 # Inputs every workspace member's build or test behavior reads. Touching one
 # invalidates the whole workspace without touching any member's directory.
@@ -173,6 +179,8 @@ def affected_packages(metadata: dict[str, Any], paths: list[str], root: pathlib.
                 selected.add(name)
                 break
         else:
+            if pathlib.Path(path).suffix in DOCUMENTATION_SUFFIXES:
+                continue
             raise SelectionRefused(
                 f"no workspace package owns {path}; refusing an incomplete test selection"
             )

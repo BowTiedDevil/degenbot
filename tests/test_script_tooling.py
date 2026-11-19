@@ -209,9 +209,14 @@ def test_an_empty_diff_selects_nothing() -> None:
     assert rap.affected_packages(_WORKSPACE, [], pathlib.Path("/repo")) == []
 
 
+@pytest.mark.parametrize("path", ["rust/README.md", "rust/tools/README.md"])
+def test_documentation_under_rust_selects_nothing(path: str) -> None:
+    assert rap.affected_packages(_WORKSPACE, [path], pathlib.Path("/repo")) == []
+
+
 def test_an_unmapped_rust_path_refuses_selection() -> None:
     with pytest.raises(rap.SelectionRefused, match="rust/tools/notes"):
-        rap.affected_packages(_WORKSPACE, ["rust/tools/notes.md"], pathlib.Path("/repo"))
+        rap.affected_packages(_WORKSPACE, ["rust/tools/notes.toml"], pathlib.Path("/repo"))
 
 
 def test_the_outgoing_diff_reads_both_ends_of_a_rename(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -303,8 +308,8 @@ def test_the_cli_reports_a_refusal_without_a_traceback(
             0, json.dumps({"packages": [_member("core", "rust/core", root=tmp_path)]})
         ),
     )
-    assert rap.main(["rust/tools/notes.md"]) == 1
-    assert "rust/tools/notes.md" in capsys.readouterr().err
+    assert rap.main(["rust/tools/notes.toml"]) == 1
+    assert "rust/tools/notes.toml" in capsys.readouterr().err
 
 
 def test_the_cli_emits_package_flags(
