@@ -2791,8 +2791,6 @@ dependencies = [
  "degenbot-core",
  "thiserror",
  "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

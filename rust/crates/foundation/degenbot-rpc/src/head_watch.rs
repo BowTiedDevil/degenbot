@@ -76,8 +76,9 @@ impl HeadWatch {
     /// `spawn_on` is the runtime the driving task is spawned on. It MUST be the
     /// runtime the provider's pubsub service lives on, so a teardown that
     /// discards that runtime also cancels the driving task deterministically
-    /// (the `AnvilFork::pubsub_runtime` discipline). A caller hosting the
-    /// provider on the ambient shared runtime passes
+    /// (the `AnvilFork` transport-session discipline: one runtime per
+    /// transport, retired by one close). A caller hosting the provider on the
+    /// ambient shared runtime passes
     /// `degenbot_core::runtime::get_runtime().handle().clone()`.
     ///
     /// # Errors
