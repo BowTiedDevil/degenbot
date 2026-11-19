@@ -124,6 +124,7 @@ fn work(block: u64) -> BatchWork {
         base_fee_next: 1_000_000_000,
         block_timestamp: 0,
         block_priority_fees: None,
+        lineage: degenbot_bot::telemetry::BlockLineage::unattached(block),
     }
 }
 

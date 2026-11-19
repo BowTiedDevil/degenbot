@@ -518,6 +518,7 @@ async fn resume_anchors_to_subscribe_block() {
     let _ = sink.on_solve(&crate::bot_core::Solve {
         ctx: BlockContext::new(w, meta_w),
         paths: crate::bot_core::AffectedPaths::default(),
+        lineage: crate::telemetry::BlockLineage::unattached(w),
     });
     assert_eq!(
         sink.last_processed_block(),

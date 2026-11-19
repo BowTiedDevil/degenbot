@@ -34,7 +34,7 @@ pub(crate) fn expect_batch(
     recv: Result<super::session_events::SessionEvent, tokio::sync::mpsc::error::TryRecvError>,
 ) -> Result<super::ResultBatch, tokio::sync::mpsc::error::TryRecvError> {
     recv.map(|event| match event {
-        super::session_events::SessionEvent::Batch(batch) => batch,
+        super::session_events::SessionEvent::Batch(batch) => *batch,
         super::session_events::SessionEvent::Block(block) => {
             panic!("the delivery edge writes only the Batch arm, got Block({block:?})")
         }

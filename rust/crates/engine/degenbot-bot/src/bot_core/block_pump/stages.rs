@@ -33,9 +33,17 @@ impl BlockPump {
         let StageDecision::Drain { block, metadata } = fsm.drain_decision(state_head) else {
             unreachable!("drain_decision always drains when called");
         };
+        // The epoch's own exporter lineage, captured from the span this solve
+        // runs under — the solve span and the batch this block publishes
+        // attach the same ancestry instead of looking one up afterwards.
+        let lineage = match block_span {
+            Some(span) => crate::telemetry::BlockLineage::from_span(block, span),
+            None => crate::telemetry::BlockLineage::unattached(block),
+        };
         self.drive_solve(
             fsm,
             fsm.context_for(block, metadata),
+            lineage,
             header_receipts.resolve(block),
         );
     }
@@ -81,6 +89,7 @@ impl BlockPump {
         &self,
         fsm: &StageMachine,
         ctx: degenbot_substrate::BlockContext,
+        lineage: crate::telemetry::BlockLineage,
         header_at: Option<std::time::Instant>,
     ) {
         if self.reorg_flying_stale(fsm, &ctx) {
@@ -111,7 +120,11 @@ impl BlockPump {
                 return;
             }
         };
-        match self.engine.on_solve(&Solve { ctx, paths }) {
+        match self.engine.on_solve(&Solve {
+            ctx,
+            paths,
+            lineage,
+        }) {
             Ok(outcome) => {
                 // The block-to-solve leg: header receipt → this solve's
                 // completion, measured on the live window's monotonic anchor.

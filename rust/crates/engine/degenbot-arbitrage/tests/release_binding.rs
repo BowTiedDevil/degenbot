@@ -1500,6 +1500,7 @@ fn run_fanout(
                     deployments: registry,
                     block: &block,
                     current_block: BLOCK,
+                    lineage: &degenbot_bot::telemetry::BlockLineage::unattached(BLOCK),
                     target_selection: selection,
                     path_suppression: &suppression,
                     pool_divergence: &divergence,

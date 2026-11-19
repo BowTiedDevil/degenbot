@@ -90,16 +90,18 @@ fn layer_builds_on_bare_registry() {
     let _subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
 }
 
-/// f701ccd3 session: the block→simulate handoff broke the `OTel` context at
-/// the Rust→Python bridge — `degenbot.simulate.dispatch` exported as a ROOT
-/// span, uncorrelated with `degenbot.epoch` (two trace families joined
-/// only by the `current_block` tag). The block-context bridge
-/// (`telemetry::publish_block_context` when a batch is sent +
-/// `telemetry::simulate_dispatch_span` re-attaching the remote parent at the
-/// Python seam) must make the simulate dispatch a CHILD of the published
-/// block span so the full chain renders as ONE Jaeger trace.
+/// The Rust→simulate handoff broke the `OTel` context at the bridge —
+/// `degenbot.simulate.dispatch` exported as a ROOT span, uncorrelated with
+/// `degenbot.epoch` (two trace families joined only by the `current_block`
+/// tag). The lineage the publish captures travels WITH the batch and is
+/// attached by `telemetry::simulate_dispatch_span`, so the full chain
+/// (epoch → arb.solve → simulate.dispatch → bundle.*) is ONE Jaeger trace.
+///
+/// The span is built OUTSIDE the epoch span here on purpose: the fan-out runs
+/// after the publish returns (and, in the Python-driven shape, on another
+/// task), so no ambient context can be inherited.
 #[test]
-fn simulate_dispatch_span_carries_published_block_parent() {
+fn block_lineage_carries_the_publishing_span_into_the_dispatch_span() {
     use degenbot_bot::telemetry;
 
     let exporter = InMemorySpanExporter::default();
@@ -107,17 +109,18 @@ fn simulate_dispatch_span_carries_published_block_parent() {
     let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    {
+    // Production call site: the publish reads the lineage off the settle-
+    // entered block span and stamps it on the batch.
+    let lineage = {
         let block_span = tracing::info_span!("degenbot.epoch.run", block.number = 77);
         let _entered = block_span.enter();
-        // Production call site: `compute_diff_and_send` under the settle-
-        // entered block span.
-        telemetry::publish_block_context(77);
+        let lineage = telemetry::BlockLineage::capture(77);
         let _ = block_span; // guard order: publish inside the block span
-    }
+        lineage
+    };
 
     {
-        let dispatch_span = telemetry::simulate_dispatch_span(77, 3);
+        let dispatch_span = telemetry::simulate_dispatch_span(&lineage, 77, 3);
         let _entered = dispatch_span.enter();
     }
 
@@ -148,19 +151,35 @@ fn simulate_dispatch_span_carries_published_block_parent() {
     assert_eq!(
         child.parent_span_id,
         block.span_context.span_id(),
-        "simulate.dispatch must parent to the published block span"
+        "simulate.dispatch must parent to its own block's span"
+    );
+    // Attribute parity with the historical inline span survives the move to
+    // an explicit lineage.
+    let attribute = |name: &str| {
+        child
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == name)
+            .map(|kv| format!("{}", kv.value))
+    };
+    assert_eq!(
+        attribute("current_block").as_deref(),
+        Some("77"),
+        "current_block must still be stamped"
+    );
+    assert_eq!(
+        attribute("phase_candidate_count").as_deref(),
+        Some("3"),
+        "phase_candidate_count must still be stamped"
     );
 }
 
-/// The attribute-key comparison used above relies on `Key` equality by static
-/// str — pin it so an `OTel` bump can't silently weaken the content assertion.
-/// The verifier task (ADR-021) creates its span on a DETACHED tokio task —
-/// the `simulate_dispatch_span` constructor form does not apply there. The
-/// attach helper must parent an EXISTING span to the published block's span,
-/// with the nearest-previous fallback (the judged block can trail the newest
-/// published one, and unrelated blocks may sit in between).
+/// N/N+1 interleaving: block N's batch is consumed while block N+1 is
+/// already in flight. Each publish captures its OWN epoch span, and the
+/// fan-out attaches the lineage it was handed, so the two dispatch spans land
+/// in two trace families.
 #[test]
-fn attach_published_parent_parents_a_detached_task_span() {
+fn interleaved_blocks_keep_separate_trace_families() {
     use degenbot_bot::telemetry;
 
     let exporter = InMemorySpanExporter::default();
@@ -168,17 +187,109 @@ fn attach_published_parent_parents_a_detached_task_span() {
     let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
     let _guard = tracing::subscriber::set_default(subscriber);
 
+    let lineage_n = {
+        let span = tracing::info_span!("degenbot.epoch.run", block.number = 100u64);
+        let _entered = span.enter();
+        telemetry::BlockLineage::capture(100)
+    };
+    let lineage_n1 = {
+        let span = tracing::info_span!("degenbot.epoch.run", block.number = 101u64);
+        let _entered = span.enter();
+        telemetry::BlockLineage::capture(101)
+    };
+
+    // Both fan-outs run with the NEWER epoch entered: the interleaved shape,
+    // where an ambient parent would put block 100's work in block 101's trace.
     {
+        let newer = tracing::info_span!("degenbot.epoch.run", block.number = 102u64);
+        let _entered = newer.enter();
+        {
+            let span = telemetry::simulate_dispatch_span(&lineage_n, 101, 1);
+            let _entered = span.enter();
+        }
+        {
+            let span = telemetry::simulate_dispatch_span(&lineage_n1, 102, 1);
+            let _entered = span.enter();
+        }
+    } // the ambient span closes here, so it exports under its own trace
+
+    provider.force_flush().expect("flush");
+    let spans = exporter.get_finished_spans().expect("spans");
+    // A `u64` span field reaches the exporter through the field visitor's
+    // `record_debug` fallback, so the SAME number arrives as `I64` or as a
+    // `String` depending on which visitor the tracer installed. The identity
+    // under test is the NUMBER, never its encoding: compare the decoded value
+    // so a tracer-version change cannot turn a real attribution failure into a
+    // silent no-match (or vice versa).
+    let records_block = |kv: &opentelemetry::KeyValue, key: &str, block: u64| {
+        kv.key.as_str() == key
+            && match &kv.value {
+                opentelemetry::Value::I64(v) => *v == block.cast_signed(),
+                opentelemetry::Value::String(v) => v.as_str() == block.to_string(),
+                _ => false,
+            }
+    };
+    let epoch = |block: u64| {
+        spans.iter().find(|s| {
+            s.name.as_ref() == "degenbot.epoch.run"
+                && s.attributes
+                    .iter()
+                    .any(|kv| records_block(kv, "block.number", block))
+        })
+    };
+    let dispatch = |current_block: u64| {
+        spans.iter().find(|s| {
+            s.name.as_ref() == "degenbot.simulate.dispatch"
+                && s.attributes
+                    .iter()
+                    .any(|kv| records_block(kv, "current_block", current_block))
+        })
+    };
+    let epoch_100 = epoch(100).expect("epoch(100) exported");
+    let epoch_101 = epoch(101).expect("epoch(101) exported");
+    let n = dispatch(101).expect("the block-100 fan-out span exported");
+    let n1 = dispatch(102).expect("the block-101 fan-out span exported");
+    assert_eq!(
+        n.parent_span_id,
+        epoch_100.span_context.span_id(),
+        "block 100's fan-out parents to epoch(100), not the newer ambient block"
+    );
+    assert_eq!(
+        n1.parent_span_id,
+        epoch_101.span_context.span_id(),
+        "block 101's fan-out parents to epoch(101)"
+    );
+    assert_ne!(
+        n.span_context.trace_id(),
+        n1.span_context.trace_id(),
+        "interleaved blocks must never share a trace family"
+    );
+}
+
+/// The verifier task (ADR-021) creates its span on a DETACHED task — the
+/// `simulate_dispatch_span` constructor form does not apply there, since the
+/// task inherits no ambient context. `attach_lineage` pins the EXISTING span
+/// to the lineage the request carried, and to nothing else.
+#[test]
+fn attach_lineage_parents_a_detached_task_span() {
+    use degenbot_bot::telemetry;
+
+    let exporter = InMemorySpanExporter::default();
+    let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+    let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let lineage = {
         let block_span = tracing::info_span!("degenbot.epoch.run", block.number = 91);
         let _entered = block_span.enter();
-        telemetry::publish_block_context(91);
-    }
+        telemetry::BlockLineage::capture(91)
+    };
 
-    // Detached-task semantics: no active parent, judged block 92 where the
-    // last published context is 91 (exact miss -> nearest-previous fallback).
+    // Detached-task semantics: no active parent, and the request carries the
+    // judged block's own lineage.
     {
         let verify_span = tracing::info_span!("degenbot.solver.verify", block = 92, paths = 4);
-        telemetry::attach_published_parent(&verify_span, 92);
+        telemetry::attach_lineage(&verify_span, &lineage);
         let _entered = verify_span.enter();
     } // span handle + guard drop here — the exporter only sees closed spans
 
@@ -195,7 +306,7 @@ fn attach_published_parent_parents_a_detached_task_span() {
     assert_eq!(
         verify.parent_span_id,
         block.span_context.span_id(),
-        "detached verify span must parent to the published block span"
+        "detached verify span must parent to the lineage's block span"
     );
     assert_eq!(
         verify.span_context.trace_id(),
@@ -204,6 +315,71 @@ fn attach_published_parent_parents_a_detached_task_span() {
     );
 }
 
+/// Late / missing context: a request whose lineage was never captured (or was
+/// captured for a DIFFERENT block) attaches nothing. The span exports as its
+/// own trace root — never re-parented onto an older block's closed family.
+#[test]
+fn missing_lineage_leaves_the_span_an_intentional_root() {
+    use degenbot_bot::telemetry;
+
+    let exporter = InMemorySpanExporter::default();
+    let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+    let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // Block 91 published; the request in hand judges block 92, for which no
+    // lineage exists (the publish has not landed yet — the late-context case).
+    let older = {
+        let block_span = tracing::info_span!("degenbot.epoch.run", block.number = 91);
+        let _entered = block_span.enter();
+        telemetry::BlockLineage::capture(91)
+    };
+    assert_eq!(
+        older.block(),
+        91,
+        "the captured lineage belongs to its own block"
+    );
+
+    {
+        let verify_span = tracing::info_span!("degenbot.solver.verify", block = 92, paths = 4);
+        telemetry::attach_lineage(&verify_span, &telemetry::BlockLineage::unattached(92));
+        let _entered = verify_span.enter();
+    }
+
+    {
+        // The outbound dispatch span for a batch whose publish carried no
+        // context is a deliberate root too.
+        let span =
+            telemetry::simulate_dispatch_span(&telemetry::BlockLineage::unattached(93), 93, 2);
+        let _entered = span.enter();
+    }
+
+    provider.force_flush().expect("flush");
+    let spans = exporter.get_finished_spans().expect("spans");
+    let epoch = spans
+        .iter()
+        .find(|s| s.name.as_ref() == "degenbot.epoch.run")
+        .expect("epoch span exported");
+    for name in ["degenbot.solver.verify", "degenbot.simulate.dispatch"] {
+        let span = spans
+            .iter()
+            .find(|s| s.name.as_ref() == name)
+            .expect("span exported");
+        assert_eq!(
+            span.parent_span_id,
+            opentelemetry::trace::SpanId::INVALID,
+            "{name} must be an intentional root, never attached to an older block"
+        );
+        assert_ne!(
+            span.span_context.trace_id(),
+            epoch.span_context.trace_id(),
+            "{name} must not join a neighbouring block's trace family"
+        );
+    }
+}
+
+/// The attribute-key comparisons above rely on `Key` equality by static str —
+/// pin it so an `OTel` bump can't silently weaken the content assertions.
 #[test]
 fn key_value_lookup_roundtrip() {
     let kv = KeyValue::new("probe.kind", "plumbing");

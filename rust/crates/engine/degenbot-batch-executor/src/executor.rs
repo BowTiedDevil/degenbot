@@ -209,6 +209,11 @@ pub struct BatchWork {
     pub block_timestamp: u64,
     /// The latest priority-fee percentiles (p10/p50).
     pub block_priority_fees: Option<degenbot_rpc::BlockPriorityFees>,
+    /// The exporter lineage of the batch's solve — the block plus the span
+    /// context its publish captured. The sim fan-out and the submit batch
+    /// parent their spans to it, so an interleaved N/N+1 pair keeps two trace
+    /// families; an unattached lineage leaves those spans deliberate roots.
+    pub lineage: degenbot_bot::telemetry::BlockLineage,
 }
 
 /// The sim stage's product, re-exported from its ONE owner
@@ -281,6 +286,7 @@ impl SubmitLeaf<BatchWork, SimStageOutput> for EngineLeaves {
         let outcomes = outcome.outcomes.clone();
         let candidates = outcome.submit_candidates.clone();
         let current_block = work.current_block;
+        let lineage = work.lineage.clone();
         Box::pin(async move {
             // Forensic capture BEFORE broadcast: one line per gate-clearing
             // candidate, so any later tx can be replayed at its solve block.
@@ -299,7 +305,7 @@ impl SubmitLeaf<BatchWork, SimStageOutput> for EngineLeaves {
                 &cfg.signer,
                 Arc::clone(&cfg.probe),
                 &cfg.nonce_lane,
-                current_block,
+                lineage,
                 cfg.submission.dry_run(),
                 cfg.inject_code_guard,
                 &cfg.extra_broadcast,
@@ -688,6 +694,7 @@ mod tests {
             base_fee_next: 0,
             block_timestamp: 0,
             block_priority_fees: None,
+            lineage: degenbot_bot::telemetry::BlockLineage::unattached(block),
         }
     }
 

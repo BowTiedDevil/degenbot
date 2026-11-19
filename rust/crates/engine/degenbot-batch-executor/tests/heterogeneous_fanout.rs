@@ -400,6 +400,7 @@ fn work() -> BatchWork {
         base_fee_next: 1_000_000_000,
         block_timestamp: 0,
         block_priority_fees: None,
+        lineage: degenbot_bot::telemetry::BlockLineage::unattached(BLOCK),
     }
 }
 
@@ -438,6 +439,7 @@ fn the_submit_plan_carries_each_targets_own_transaction() {
                     deployments: &registry,
                     block: &block,
                     current_block: BLOCK,
+                    lineage: &degenbot_bot::telemetry::BlockLineage::unattached(BLOCK),
                     target_selection: degenbot_arbitrage::TargetSelection::AllTargets,
                     path_suppression: &suppression,
                     pool_divergence: &divergence,
@@ -921,6 +923,7 @@ fn run_admitted_fanout(
                             deployments: registry,
                             block: &block,
                             current_block: BLOCK,
+                            lineage: &degenbot_bot::telemetry::BlockLineage::unattached(BLOCK),
                             target_selection: TargetSelection::AllTargets,
                             path_suppression: &arcs.suppression,
                             pool_divergence: &arcs.divergence,
@@ -1113,6 +1116,7 @@ fn a_poisoned_ledger_panics_at_the_pre_admitted_leaf() {
             deployments: &registry,
             block: &block,
             current_block: BLOCK,
+            lineage: &degenbot_bot::telemetry::BlockLineage::unattached(BLOCK),
             target_selection: TargetSelection::AllTargets,
             path_suppression: &suppression,
             pool_divergence: &arcs.divergence,

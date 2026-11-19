@@ -718,8 +718,9 @@ fn session_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<SessionEvent> {
             gas_limit: field_u64(dict, "gas_limit")?,
         })),
         "batch" => {
+            let solve_block = field_u64(dict, "solve_block")?;
             let mut batch = ResultBatch {
-                solve_block: field_u64(dict, "solve_block")?,
+                solve_block,
                 timestamp: optional_u64(dict, "timestamp")?.unwrap_or_default(),
                 base_fee_per_gas: optional_u64(dict, "base_fee_per_gas")?,
                 gas_used: optional_u64(dict, "gas_used")?.unwrap_or_default(),
@@ -729,6 +730,10 @@ fn session_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<SessionEvent> {
                 expired: id_list(dict, "expired")?,
                 removed: id_list(dict, "removed")?,
                 payloads: hashbrown::HashMap::default(),
+                // A scripted (Python-built) batch carries no exporter context:
+                // its downstream spans are deliberate roots, never a guess at
+                // an ancestor this seam cannot see.
+                lineage: degenbot_bot::telemetry::BlockLineage::unattached(solve_block),
             };
             if let Some(payloads) = dict.get_item("payloads")? {
                 if !payloads.is_none() {
@@ -751,7 +756,7 @@ fn session_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<SessionEvent> {
                     }
                 }
             }
-            Ok(SessionEvent::Batch(batch))
+            Ok(SessionEvent::Batch(Box::new(batch)))
         }
         other => Err(PyValueError::new_err(format!(
             "unknown scripted session event kind {other:?} (expected block|batch)"

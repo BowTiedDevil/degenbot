@@ -58,7 +58,12 @@ pub enum SessionEvent {
     Block(BlockNotification),
     /// A published result batch: zero or more per epoch, ascending
     /// `solve_block`.
-    Batch(ResultBatch),
+    ///
+    /// Boxed: the batch carries the solve rows AND the block lineage, and this
+    /// enum rides the session's mpsc stream as a moved message — the box keeps
+    /// the stream's item one pointer wide instead of inlining the batch into
+    /// every arm.
+    Batch(Box<ResultBatch>),
 }
 
 /// Why a consumer claim was refused.
@@ -216,7 +221,7 @@ mod tests {
     }
 
     fn batch(n: u64) -> SessionEvent {
-        SessionEvent::Batch(ResultBatch {
+        SessionEvent::Batch(Box::new(ResultBatch {
             solve_block: n,
             timestamp: 0,
             base_fee_per_gas: None,
@@ -227,7 +232,8 @@ mod tests {
             expired: Vec::new(),
             removed: Vec::new(),
             payloads: hashbrown::HashMap::new(),
-        })
+            lineage: crate::telemetry::BlockLineage::unattached(n),
+        }))
     }
 
     #[tokio::test]

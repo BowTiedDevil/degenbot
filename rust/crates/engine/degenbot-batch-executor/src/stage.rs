@@ -363,6 +363,7 @@ impl SimStage {
                 deployments: &cfg.deployments,
                 block: &block,
                 current_block: work.current_block,
+                lineage: &work.lineage,
                 target_selection: cfg.target_selection,
                 path_suppression: &cfg.suppression,
                 pool_divergence: &cfg.divergence,

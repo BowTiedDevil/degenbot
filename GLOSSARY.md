@@ -1528,6 +1528,15 @@ invalidating pre-rewind solve contexts.
 _Avoid_: `DrainSink`, `Engine` as per-block fan-out, `SolveCoordinator`, `DispatchOwner`,
 `DirtySets` (the retired per-block machines' vocabulary).
 
+**Block lineage**:
+The solve block plus the exporter span context of the block span its work was published
+under (`telemetry::BlockLineage`): captured once at the publish, stamped on the
+`ResultBatch`, and carried through the batch work into the simulate fan-out, the verifier,
+and the submit batch. A consumer attaches exactly the lineage it was handed; a lineage the
+producer never captured is `unattached`, and that span is a deliberate trace root.
+_Avoid_: looking span ancestry up by block number (the consumer's clock runs one block
+ahead of the solve); re-deriving a parent from the ambient span.
+
 **StageMachine**:
 The single pure, I/O-free state machine owning every per-block edge condition: header
 admission, log routing, reorg window, cursors, WS-completeness, watchdogs, quiesce, and

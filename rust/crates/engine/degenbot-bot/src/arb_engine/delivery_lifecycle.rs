@@ -109,7 +109,7 @@ impl DeliveryLifecycle {
     /// [`SendOutcome::Closed`], never a panic; a vanished receiver reports
     /// [`SendOutcome::ReceiverGone`] and latches the stream closed.
     pub(crate) fn send_batch(&self, batch: ResultBatch) -> SendOutcome {
-        self.source.send(SessionEvent::Batch(batch))
+        self.source.send(SessionEvent::Batch(Box::new(batch)))
     }
 }
 
@@ -131,6 +131,7 @@ mod tests {
             expired: Vec::new(),
             removed: Vec::new(),
             payloads: HashMap::new(),
+            lineage: crate::telemetry::BlockLineage::unattached(1),
         }
     }
 

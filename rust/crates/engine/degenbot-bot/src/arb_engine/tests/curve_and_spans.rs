@@ -569,18 +569,17 @@ fn finalize_boundary_publishes_even_when_nothing_dirtied() {
         "guard must not double-publish a settled boundary"
     );
 }
-/// ZZS6CG (trace hygiene): a solve span must parent to its OWN block's
-/// published epoch root span (`degenbot.epoch`) - exact-match only. The stale
-/// `DrainWork::Finalize` retired) crossing a block boundary parked
-/// block N-1's
-/// `arb.solve` inside block N's trace in 19/20 of the recent traces
-/// analyzed (the drain/finalize arms inherited the dispatch-time loop
-/// context unconditionally). RED before `attach_published_parent_exact`
-/// existed. Two assertions:
-/// 1. exact hit - solve(100) with a published context for 100 parents to
-///    the published epoch(100) span, not the ambient newer block;
-/// 2. exact miss - solve with NO published context keeps its ambient
-///    parent (no fallback onto an unrelated older block, no orphan).
+/// Trace hygiene: a solve span parents to its OWN block's epoch root span
+/// (`degenbot.epoch`), and only to what its caller handed it. The stale
+/// drain/finalize crossing that parked block N-1's `arb.solve` inside block
+/// N's trace (19/20 of the recent traces analyzed) is what the explicit
+/// lineage closes: the driver captures the epoch's span once and passes it
+/// in, so a solve can neither inherit a neighbouring block's ambient context
+/// nor be re-parented by a lookup. Two assertions:
+/// 1. exact lineage - solve(100) handed the epoch(100) lineage parents to
+///    the epoch(100) span, not the ambient newer block;
+/// 2. no lineage - solve(101) handed a bare block number (an unattached
+///    lineage) keeps its ambient parent (no guessed ancestor, no orphan).
 #[cfg(feature = "otel")]
 #[test]
 #[expect(clippy::expect_used)]
@@ -605,26 +604,27 @@ fn solve_spans_anchor_to_their_own_published_block() {
         })
         .collect();
     tracing::subscriber::with_default(subscriber, || {
-        // Published context for block 100 (a completed earlier settle).
-        {
+        // The epoch(100) lineage, captured once from the span that owns it (a
+        // completed earlier settle).
+        let lineage_100 = {
             let block100 = tracing::info_span!("degenbot.epoch.run", block.number = 100u64);
             let _guard = block100.enter();
-            crate::telemetry::publish_block_context(100);
-        }
+            crate::telemetry::BlockLineage::capture(100)
+        };
         // The newer block's loop context is ambient during both solves
         // (the stale-crossing shape: block 101's context is current).
         let ambient = tracing::info_span!("degenbot.epoch.run", block.number = 101u64);
         let _ambient_guard = ambient.enter();
-        // (1) Exact hit: solve of the PUBLISHED block 100 re-attaches to
-        // the published epoch(100) span, not the ambient 101 span.
+        // (1) Exact lineage: solve of block 100 attaches the lineage it was
+        // handed - the epoch(100) span, not the ambient 101 span.
         let h100 = Arc::clone(&handles[0]);
         h100.run_solve_cycle(
             crate::arb_engine::test_harness::cycle_ticket(&oracle.to_affected_keys()),
-            100,
+            &lineage_100,
             &BlockMetadata::default(),
         );
-        // (2) Exact miss: solve of block 101 (never published) keeps the
-        // ambient parent - no fallback re-parenting, no orphan.
+        // (2) No lineage: solve of block 101 handed a bare block number keeps
+        // the ambient parent - no guessed ancestor, no orphan.
         let h101 = Arc::clone(&handles[1]);
         h101.run_solve_cycle(
             crate::arb_engine::test_harness::cycle_ticket(&oracle.to_affected_keys()),

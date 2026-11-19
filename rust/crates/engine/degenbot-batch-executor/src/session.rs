@@ -1140,6 +1140,7 @@ pub fn batch_work(
         base_fee_next: clock.base_fee_next,
         block_timestamp: clock.block_timestamp,
         block_priority_fees: None,
+        lineage: batch.lineage.clone(),
     }
 }
 
@@ -1180,6 +1181,7 @@ mod tests {
             expired: Vec::new(),
             removed: Vec::new(),
             payloads: Default::default(),
+            lineage: degenbot_bot::telemetry::BlockLineage::unattached(solve_block),
         }
     }
 
@@ -1489,7 +1491,7 @@ mod tests {
         tx.send(SessionEvent::Block(block(100, 1))).unwrap();
         let mut batch = empty_batch(100);
         batch.removed = vec![7];
-        tx.send(SessionEvent::Batch(batch)).unwrap();
+        tx.send(SessionEvent::Batch(Box::new(batch))).unwrap();
         drop(tx);
 
         let report = consumer.consume(&mut rx).await.expect("no leaf failed");
@@ -1575,7 +1577,8 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         tx.send(SessionEvent::Block(block(100, 1))).unwrap();
-        tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+        tx.send(SessionEvent::Batch(Box::new(empty_batch(100))))
+            .unwrap();
         // The next event waits for the failing batch's pass through the leaf, so
         // the loop's check has a stored failure to find.
         tokio::spawn(async move {
@@ -1584,7 +1587,8 @@ mod tests {
             // failure on the next poll of its own loop, so yield the scheduler
             // past that store before the next event can be read.
             tokio::time::sleep(Duration::from_millis(20)).await;
-            tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+            tx.send(SessionEvent::Batch(Box::new(empty_batch(100))))
+                .unwrap();
             drop(tx);
         });
 
@@ -1620,7 +1624,8 @@ mod tests {
         let (mut consumer, _heartbeat) = consumer(Arc::clone(&executor), true);
 
         let (tx, mut rx) = mpsc::unbounded_channel();
-        tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+        tx.send(SessionEvent::Batch(Box::new(empty_batch(100))))
+            .unwrap();
         drop(tx);
 
         let report = consumer
@@ -1649,7 +1654,8 @@ mod tests {
         // quiesce reports the leaf's own text.
         let (tx, mut rx) = mpsc::unbounded_channel();
         tx.send(SessionEvent::Block(block(100, 1))).unwrap();
-        tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+        tx.send(SessionEvent::Batch(Box::new(empty_batch(100))))
+            .unwrap();
         drop(tx);
         let first = consumer
             .consume(&mut rx)
@@ -1661,7 +1667,8 @@ mod tests {
         // The second stream meets a terminal lane: the batch is declined, and
         // the loop surfaces the SAME failure instead of inventing one.
         let (tx, mut rx) = mpsc::unbounded_channel();
-        tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+        tx.send(SessionEvent::Batch(Box::new(empty_batch(100))))
+            .unwrap();
         drop(tx);
         let second = consumer
             .consume(&mut rx)
@@ -1711,7 +1718,8 @@ mod tests {
         let (mut consumer, heartbeat) = consumer(executor, true);
         let (tx, mut rx) = mpsc::unbounded_channel();
         tx.send(SessionEvent::Block(block(100, 1))).unwrap();
-        tx.send(SessionEvent::Batch(empty_batch(100))).unwrap();
+        tx.send(SessionEvent::Batch(Box::new(empty_batch(100))))
+            .unwrap();
         drop(tx);
 
         let detection = degenbot_bot::arb_engine::SessionEndDetection::stall(
@@ -1736,8 +1744,10 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         tx.send(SessionEvent::Block(block(100, 1_700_000_100)))
             .unwrap();
-        tx.send(SessionEvent::Batch(empty_batch(99))).unwrap();
-        tx.send(SessionEvent::Batch(empty_batch(101))).unwrap();
+        tx.send(SessionEvent::Batch(Box::new(empty_batch(99))))
+            .unwrap();
+        tx.send(SessionEvent::Batch(Box::new(empty_batch(101))))
+            .unwrap();
         drop(tx);
 
         let report = consumer.consume(&mut rx).await.expect("no leaf failed");

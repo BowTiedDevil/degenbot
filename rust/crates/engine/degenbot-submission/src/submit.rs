@@ -1151,7 +1151,10 @@ pub async fn dispatch_and_submit(
     signer: &TxSigner,
     probe: Arc<dyn ReceiptProbe + Send + Sync>,
     nonce_lane: &Arc<NonceLane<SubmissionLedger>>,
-    current_block: u64,
+    // The solve block plus its exporter span context, carried from the batch
+    // that produced these candidates. A bare block number converts to an
+    // unattached lineage (see `From<u64> for BlockLineage`).
+    lineage: impl Into<degenbot_bot::telemetry::BlockLineage>,
     dry_run: bool,
     inject_code: bool,
     extra_broadcast: &[std::sync::Arc<AlloyProvider>],
@@ -1160,18 +1163,16 @@ pub async fn dispatch_and_submit(
     // relays); `Public` fans the SAME signed bytes across the relays.
     target: SubmissionTarget,
 ) -> Result<SubmitOutcome, crate::SubmissionError> {
+    let lineage = lineage.into();
+    let current_block = lineage.block();
     // One Jaeger node per dispatch batch
     // (degenbot.bundle.dispatch).
     // - NO span for an EMPTY batch: the observed failure shape was 20
     //   consecutive single-span root traces, candidates=0, pure noise.
-    // - The span re-attaches the published block's span context as a REMOTE
-    //   parent (the f701ccd3 bridge family): the Python-driven submit task
-    //   has no ambient block span, so without this every batch exported as
-    //   its own disconnected trace family keyed only by the block tag.
-    //   The publisher is the Rust settle-side compute_diff_and_send
-    //   (telemetry::publish_block_context, keyed by results_block); the
-    //   nearest-previous fallback matches the one-ahead block semantics the
-    //   Python seam's simulate_dispatch_span already uses.
+    // - The span attaches the batch's OWN lineage as a REMOTE parent: the
+    //   submit task has no ambient block span, and the lineage is the one the
+    //   publish captured for this solve block. A lineage that was never
+    //   captured (unattached) leaves the span an intentional root.
     // - Field unified to block.number (the pump/solve span vocabulary).
     let span = (!candidates.is_empty()).then(|| {
         let span = tracing::info_span!(
@@ -1182,7 +1183,7 @@ pub async fn dispatch_and_submit(
             dispatch.submitted = tracing::field::Empty,
             dispatch.skipped = tracing::field::Empty,
         );
-        degenbot_bot::telemetry::attach_published_parent(&span, current_block);
+        degenbot_bot::telemetry::attach_lineage(&span, &lineage);
         span
     });
     let _guard = span.as_ref().map(tracing::Span::enter);

@@ -124,6 +124,8 @@ impl ExecutionProbeRequest {
             base_fee_next: self.base_fee_next,
             block_timestamp: self.block_timestamp,
             block_priority_fees: None,
+            // A probe call is not part of a batch's work: nothing to attach.
+            lineage: degenbot_bot::telemetry::BlockLineage::unattached(self.current_block),
         }
     }
 }

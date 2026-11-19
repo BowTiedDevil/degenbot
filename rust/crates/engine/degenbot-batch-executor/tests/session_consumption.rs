@@ -303,12 +303,15 @@ fn session_event(oracle: &Value, event: &Value) -> SessionEvent {
                 expired: Vec::new(),
                 removed: Vec::new(),
                 payloads: Default::default(),
+                lineage: degenbot_bot::telemetry::BlockLineage::unattached(
+                    event["solve_block"].as_u64().unwrap(),
+                ),
             };
             for sim in event["payloads"].as_array().into_iter().flatten() {
                 let sim = payload(sim);
                 batch.payloads.insert(sim.path_id, sim);
             }
-            SessionEvent::Batch(batch)
+            SessionEvent::Batch(Box::new(batch))
         }
         other => panic!("the oracle names an unknown event kind {other:?}"),
     }

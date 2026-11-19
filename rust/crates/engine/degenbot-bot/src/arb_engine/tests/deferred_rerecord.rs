@@ -132,7 +132,11 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
         "cycle 1 draws every seed key"
     );
     stages
-        .on_solve(&Solve { ctx, paths: drawn })
+        .on_solve(&Solve {
+            ctx,
+            paths: drawn,
+            lineage: crate::telemetry::BlockLineage::unattached(ctx.block()),
+        })
         .expect("solve hook is infallible");
     assert!(
         !latest_results(&engine.lock()).0.contains_key(&deferred),
@@ -167,7 +171,11 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
         );
     }
     let solved = stages
-        .on_solve(&Solve { ctx, paths: drawn })
+        .on_solve(&Solve {
+            ctx,
+            paths: drawn,
+            lineage: crate::telemetry::BlockLineage::unattached(ctx.block()),
+        })
         .expect("solve hook is infallible");
     // Q1a: the retried path's solve block is the RETRY cycle's block.
     assert_eq!(
@@ -230,7 +238,11 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
     // The typed Solved outcome carries the anchor the deferral was
     // re-recorded against.
     let defer_block = stages
-        .on_solve(&Solve { ctx, paths: drawn })
+        .on_solve(&Solve {
+            ctx,
+            paths: drawn,
+            lineage: crate::telemetry::BlockLineage::unattached(ctx.block()),
+        })
         .expect("solve hook is infallible")
         .solved
         .block();
@@ -258,7 +270,11 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
         "the deferred retry lead expired at the retention window boundary"
     );
     stages
-        .on_solve(&Solve { ctx, paths: drawn })
+        .on_solve(&Solve {
+            ctx,
+            paths: drawn,
+            lineage: crate::telemetry::BlockLineage::unattached(ctx.block()),
+        })
         .expect("solve hook is infallible");
     let expired_after = engine
         .lock()

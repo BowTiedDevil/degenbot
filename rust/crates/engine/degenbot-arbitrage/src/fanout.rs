@@ -45,10 +45,11 @@
 //! # Call shape
 //!
 //! Both entries take one named [`FanOutInputs`] — registry, block, block number,
-//! selection policy, the three policy registries, `BotState`, and the warm cache
-//! — so no argument order can transpose two inputs of the same shape, and a new
-//! shared input is one field rather than a signature-wide rewrite. The
-//! CANDIDATES stay outside it, because the entries take different kinds of row.
+//! the batch's block lineage, selection policy, the three policy registries,
+//! `BotState`, and the warm cache — so no argument order can transpose two
+//! inputs of the same shape, and a new shared input is one field rather than a
+//! signature-wide rewrite. The CANDIDATES stay outside it, because the entries
+//! take different kinds of row.
 //!
 //! The raw entry takes [`RawFanOutInputs`]: those same named inputs plus the
 //! thin-margin floor its own admission pass applies. The pre-admitted entry
@@ -61,6 +62,7 @@
 //!     deployments: &registry,
 //!     block: &block,
 //!     current_block: BLOCK,
+//!     lineage: &lineage,
 //!     target_selection: TargetSelection::AllTargets,
 //!     path_suppression: &suppression,
 //!     pool_divergence: &divergence,
@@ -169,8 +171,9 @@ impl DeploymentFanOutOutcome {
 }
 
 /// The shared configuration ONE registry fan-out runs with: the ordered
-/// registry, the simulated block and its number, the target-selection policy,
-/// the three policy registries, and the engine handles.
+/// registry, the simulated block and its number, the batch's block lineage, the
+/// target-selection policy, the three policy registries, and the engine
+/// handles.
 ///
 /// Every field is NAMED at the call site. The two positional hazards the old
 /// signatures carried are gone: the simulated block [`Self::block`] and the
@@ -193,6 +196,7 @@ impl DeploymentFanOutOutcome {
 ///     deployments: &registry,
 ///     block: &block,
 ///     current_block: BLOCK,
+///     lineage: &lineage,
 ///     target_selection: TargetSelection::AllTargets,
 ///     path_suppression: &suppression,
 ///     pool_divergence: &divergence,
@@ -221,6 +225,17 @@ pub struct FanOutInputs<'a> {
     /// the two are separate inputs: the policy clock is not read off the block
     /// facts.
     pub current_block: u64,
+    /// The exporter lineage of the solve these candidates came from — the
+    /// per-lane `degenbot.simulate.dispatch` span parents to it.
+    ///
+    /// Carried explicitly from the batch's publish: the clock
+    /// ([`Self::current_block`]) can be one block ahead of the solve, which is
+    /// why the ancestry travels as a value rather than being looked up by
+    /// block number. A lineage the producer never captured is
+    /// [`BlockLineage::unattached`](degenbot_bot::telemetry::BlockLineage::unattached)
+    /// — the span is then a deliberate root, never a neighbouring block's
+    /// trace family.
+    pub lineage: &'a degenbot_bot::telemetry::BlockLineage,
     /// Which deployments each path is offered to ([`TargetSelection`]).
     pub target_selection: TargetSelection,
     /// The retry-interval ledger: the admission/finalization read stamps it and
@@ -302,6 +317,7 @@ fn fan_out_over<Entry: FanOutEntry>(
     deployments: &DeploymentRegistry,
     target_selection: TargetSelection,
     current_block: u64,
+    lineage: &degenbot_bot::telemetry::BlockLineage,
     mut leaf: impl FnMut(
         &Arc<SimulationDeployment>,
         Vec<Entry>,
@@ -360,10 +376,14 @@ fn fan_out_over<Entry: FanOutEntry>(
             .remove(&deployment.deployment_id())
             .unwrap_or_default();
         // ONE Jaeger span per deployment's simulate fan-out (ADR-043), entered
-        // only across the synchronous leaf call.
+        // only across the synchronous leaf call. It parents to the batch's
+        // own lineage, so interleaved blocks cannot merge trace families.
         let outcome = {
-            let span =
-                degenbot_bot::telemetry::simulate_dispatch_span(current_block, lane_entries.len());
+            let span = degenbot_bot::telemetry::simulate_dispatch_span(
+                lineage,
+                current_block,
+                lane_entries.len(),
+            );
             let _guard = span.enter();
             leaf(deployment, lane_entries)?
         };
@@ -423,6 +443,7 @@ pub fn dispatch_across_deployments(
         shared.deployments,
         shared.target_selection,
         shared.current_block,
+        shared.lineage,
         |deployment, lane| {
             let ctx = SimulateContext {
                 block: shared.block.clone(),
@@ -535,6 +556,7 @@ pub fn dispatch_admitted_across_deployments(
         inputs.deployments,
         inputs.target_selection,
         inputs.current_block,
+        inputs.lineage,
         |deployment, lane| {
             let ctx = SimulateContext {
                 block: inputs.block.clone(),

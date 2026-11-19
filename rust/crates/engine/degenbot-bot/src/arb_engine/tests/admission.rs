@@ -126,7 +126,11 @@ fn admission_zero_budget_sheds_the_whole_cycle() {
         .shed_cycles
         .load(std::sync::atomic::Ordering::Relaxed);
     stages
-        .on_solve(&Solve { ctx, paths: drawn })
+        .on_solve(&Solve {
+            ctx,
+            paths: drawn,
+            lineage: crate::telemetry::BlockLineage::unattached(ctx.block()),
+        })
         .expect("solve hook is infallible");
     let guard = engine.lock();
     assert_eq!(
@@ -230,7 +234,11 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
         "zero budget draws nothing"
     );
     stages
-        .on_solve(&Solve { ctx, paths: drawn })
+        .on_solve(&Solve {
+            ctx,
+            paths: drawn,
+            lineage: crate::telemetry::BlockLineage::unattached(ctx.block()),
+        })
         .expect("solve hook is infallible");
     {
         let guard = engine.lock();
@@ -260,7 +268,11 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
         })
         .expect("resolve hook is infallible");
     stages
-        .on_solve(&Solve { ctx, paths: drawn })
+        .on_solve(&Solve {
+            ctx,
+            paths: drawn,
+            lineage: crate::telemetry::BlockLineage::unattached(ctx.block()),
+        })
         .expect("solve hook is infallible");
     // the cycle enqueues and returns; wait for the sidecar merge.
     // Widened ~15s: the sidecar merge shares solve seats with concurrently
@@ -361,7 +373,11 @@ fn admission_race_positive_draw_never_sheds() {
         .shed_cycles
         .load(std::sync::atomic::Ordering::Relaxed);
     stages
-        .on_solve(&Solve { ctx, paths: drawn })
+        .on_solve(&Solve {
+            ctx,
+            paths: drawn,
+            lineage: crate::telemetry::BlockLineage::unattached(ctx.block()),
+        })
         .expect("solve hook is infallible");
     // the dispatch enqueues and returns; the sidecar merges. Wait
     // for the merge before reading the results/pending pipe.

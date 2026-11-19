@@ -47,6 +47,7 @@ use crate::bot_core::stage_handlers::{
     QuiesceOutcome, Resolve, Simulate, SimulateOutcome, Solve, SolveOutcome, StageError,
 };
 use crate::bot_core::{PumpControl, Rewind, RewindOutcome};
+use crate::telemetry::BlockLineage;
 use degenbot_core::block_notification::BlockNotification;
 use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
 use degenbot_core::diag;
@@ -262,6 +263,7 @@ impl EngineStages {
             expired: Vec::new(),
             removed: Vec::new(),
             payloads: hashbrown::HashMap::new(),
+            lineage: BlockLineage::unattached(solve_block),
         };
         let _ = self.engine.lock().delivery.lifecycle.send_batch(batch);
     }
@@ -568,9 +570,15 @@ impl EngineStages {
     pub(crate) fn run_solve_cycle(
         &self,
         ticket: CycleTicket,
-        block: u64,
+        lineage: impl Into<BlockLineage>,
         metadata: &BlockMetadata,
     ) -> CycleOutcome {
+        // The lineage the solve span hangs from: the epoch's own captured
+        // block span, handed in by the driver (a bare block number is an
+        // unattached lineage — the span is then a deliberate root, never a
+        // guessed ancestor).
+        let lineage = lineage.into();
+        let block = lineage.block();
         // span-gate lineage preserved verbatim from the
         // dissolved wrapper: one Jaeger node for dirty solves, none for the
         // ~2µs empty pass, gate + work under ONE mutex acquisition.
@@ -594,11 +602,9 @@ impl EngineStages {
             // verdict (or the admission shed) in the solve cycle.
             cycle.arm = tracing::field::Empty,
         );
-        // exact-match reparent onto this block's published pump
-        // span. The work now runs INLINE in the driver (no drainer task), so
-        // the ambient span is already the pump's block span; the published-
-        // parent attach keeps the block-boundary exactness.
-        crate::telemetry::attach_published_parent_exact(&span, block);
+        // Exact ancestry, from the value the driver handed in: the solve span
+        // hangs off ITS OWN epoch's block span, never a neighbouring block's.
+        crate::telemetry::attach_lineage(&span, &lineage);
         let _guard = span.enter();
         // T3: solve duration + registered-path gauge (dirty solves only).
         let solve_start = std::time::Instant::now();
@@ -857,7 +863,7 @@ impl StageHandlers for EngineStages {
         // The row yields its ticket exactly once: the epoch consumes it here,
         // so a second Solved pass over this Resolved row fails loudly.
         let ticket = work.paths.take_ticket();
-        let outcome = self.run_solve_cycle(ticket, work.ctx.block(), work.ctx.metadata());
+        let outcome = self.run_solve_cycle(ticket, &work.lineage, work.ctx.metadata());
         Ok(SolveOutcome {
             candidates: Vec::new(),
             solved: Epoch::at(outcome.solved_block()),

@@ -87,6 +87,7 @@ pub use stage::SimRuntime;
 /// capability — an unreadable head or canonical lineage, or an access list that
 /// cannot be acquired and decoded
 /// ([`degenbot_simulation::sim::evm2::bal_capability`]).
+pub use degenbot_bot::telemetry::BlockLineage;
 pub use degenbot_simulation::sim::evm2::bal_capability::BalCapabilityError;
 pub use policy::{ExecutorPolicy, ExecutorRuntime, ProbeCapital, SubmissionPolicy};
 pub use record::{

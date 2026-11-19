@@ -59,23 +59,31 @@ Incident shorthand: `f701ccd3` = trace `f701ccd36f4ecf80d671e798df218fa4`
 
 The Rust→Python bridge (batch → `simulate.dispatch` fan-out) used to snap the
 OTel context: simulate/bundle spans exported as ROOT traces, correlated only
-by the `current_block` tag. The bridge (`telemetry::publish_block_context` at
-batch send + `telemetry::simulate_dispatch_span` at the Python seam) parents
-the dispatch fan-out to the published block's span, so ONE Jaeger trace now
-carries `degenbot.epoch.run → arb.solve → simulate.dispatch → bundle.*` (the per-epoch
-`degenbot.epoch.run` root succeeded the retired `pump.block` waterfall, BF43PM). The lookup
-falls back to the closest earlier block because Python's `current_block` can
-be one ahead (the batch is dispatched after the next header arrives). If
-simulate spans reappear as roots, the registry capture (batch send) or the
-seam call regressed; the continuity test
-(`otel_plumbing::simulate_dispatch_span_carries_published_block_parent`)
-covers the contract end to end on the InMemory exporter.
+by the `current_block` tag. The fix carries the ancestry as a VALUE:
+`telemetry::BlockLineage` (the solve block plus the exporter span context of
+the block span it published under) is captured once at the publish, stamped on
+the `ResultBatch`, and travels through `BatchWork` / `FanOutInputs` into
+`telemetry::simulate_dispatch_span`, so ONE Jaeger trace carries
+`degenbot.epoch.run → arb.solve → simulate.dispatch → bundle.*` (the per-epoch
+`degenbot.epoch.run` root succeeded the retired `pump.block` waterfall,
+BF43PM).
 
-The ADR-021 verifier's `degenbot.solver.verify` span rides the same bridge
-via `telemetry::attach_published_parent` (pinned AFTER span creation — the
-verifier runs on a detached task with no ambient context, so the constructor
-form does not apply). Test:
-`otel_plumbing::attach_published_parent_parents_a_detached_task_span`.
+There is no lookup and no clock-keyed fallback: the lineage names its own
+block, so an N/N+1 interleaving (block N's batch consumed while N+1 is already
+in flight) keeps two trace families, and a lineage the producer never captured
+(`BlockLineage::unattached` — no `otel` layer, a scripted batch, a historical
+backfill solve) leaves the span a deliberate root. If simulate spans reappear
+as roots, the capture at publish or a seam's lineage hand-off regressed; the
+continuity and interleaving tests
+(`otel_plumbing::block_lineage_carries_the_publishing_span_into_the_dispatch_span`,
+`otel_plumbing::interleaved_blocks_keep_separate_trace_families`) cover the
+contract end to end on the InMemory exporter.
+
+The ADR-021 verifier's `degenbot.solver.verify` span rides the same lineage
+via `telemetry::attach_lineage` (pinned AFTER span creation — the verifier
+runs on a detached task with no ambient context, so the constructor form does
+not apply). Tests: `otel_plumbing::attach_lineage_parents_a_detached_task_span`
+and `otel_plumbing::missing_lineage_leaves_the_span_an_intentional_root`.
 The verify span judges the whole registered set against chain state
 (O(registered x hops x RPC), tens of seconds at scale) and is inherently
 BEHIND the block loop — the latest-wins watch skips stale requests, so

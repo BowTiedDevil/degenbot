@@ -302,162 +302,154 @@ mod otel_tests {
 }
 
 // ---------------------------------------------------------------------------
-// Block-context propagation bridge (session f701ccd3).
+// Block lineage: the solve block and its exporter span context, carried as a
+// value through every dispatch/request seam.
 //
-// The Rust→Python handoff broke the OTel context: the batch leaves the
-// engine under the settle-entered block span, but the Python-driven simulate
-// future (`degenbot.simulate.dispatch`) created a FRESH root span — two
-// disconnected Jaeger trace families correlated only by the `current_block`
-// tag. The bridge: capture the exporter-visible span context at batch-send
-// time (`publish_block_context`, keyed by the batch's solve block), and
-// re-attach it as a REMOTE parent when the Python seam builds its dispatch
-// span (`simulate_dispatch_span`). Same trace id + block span id as parent —
-// Jaeger renders the full chain (epoch → arb.solve → simulate.dispatch
-// → bundle.*) as ONE trace. Remote (not in-process) semantics is correct:
-// the block span is usually already closed when the future starts.
+// The Rust→Python handoff broke the OTel context: the batch left the engine
+// under the settle-entered block span, but the downstream work (the simulate
+// fan-out, the verifier, the submit batch) has no ambient context and
+// exported as FRESH root spans — disconnected Jaeger trace families
+// correlated only by the block tag. [`BlockLineage`] is that context carried
+// EXPLICITLY: the publish captures it ONCE, stamps it on the batch, and each
+// consumer attaches exactly the lineage it was handed. Ancestry travels only
+// as a value, so an interleaved N/N+1 pair (N publishing while N+1 is
+// consumed) cannot merge families: a lineage the producer never captured is
+// `unattached`, and an unattached lineage yields an intentionally unattached
+// span.
 // ---------------------------------------------------------------------------
 
-/// Live block-span contexts, keyed by the batch's `solve_block`. Bounded at
-/// the last 8 settle points (publish → Python simulate latency is < 1 block;
-/// older entries are dead weight). Lock hold is nanoseconds — no I/O, no
-/// await; safe for the hot path.
-#[cfg(feature = "otel")]
-static PUBLISHED_BLOCK_CONTEXTS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<u64, opentelemetry::trace::SpanContext>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-#[cfg(feature = "otel")]
-const PUBLISHED_BLOCK_CONTEXTS_CAPACITY: usize = 8;
-
-/// Capture the CURRENT span's exporter context as the propagation parent for
-/// `block`. Call at result batch send time (with the block span entered by
-/// the settle gate — see `DeliveryPolicy::diff_and_send`). No-op when the
-/// active span has no `OTel` context (layer not installed / disabled span) so
-/// callers never gate their logic on telemetry.
+/// The solve block plus the exporter span context of the block span that
+/// work was published under — the exact ancestry every downstream span of
+/// that block's work parents to.
 ///
-/// Runs with the block span entered by the settle gate in production.
-#[cfg(feature = "otel")]
-pub fn publish_block_context(block: u64) {
-    use opentelemetry::trace::TraceContextExt as _;
-    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-    let sc = tracing::Span::current()
-        .context()
-        .span()
-        .span_context()
-        .clone();
-    if !sc.is_valid() {
-        return;
-    }
-    let mut map = PUBLISHED_BLOCK_CONTEXTS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if map.len() >= PUBLISHED_BLOCK_CONTEXTS_CAPACITY {
-        if let Some(&oldest) = map.keys().min() {
-            map.remove(&oldest);
-        }
-    }
-    map.insert(block, sc);
+/// A missing context is a real answer, never an error: no `otel` layer, a
+/// disabled span, or a producer with nothing to hand over (a scripted batch,
+/// a historical backfill solve). Consumers then build an intentionally
+/// unattached span rather than guessing an ancestor.
+#[derive(Clone, Debug)]
+pub struct BlockLineage {
+    block: u64,
+    #[cfg(feature = "otel")]
+    context: Option<opentelemetry::trace::SpanContext>,
 }
 
-#[cfg(not(feature = "otel"))]
-pub fn publish_block_context(_block: u64) {}
+impl BlockLineage {
+    /// The lineage of the CURRENT span at `block` — the producer's capture
+    /// form (the settle gate enters the block span before delivery runs).
+    ///
+    /// A span with no valid exporter context answers
+    /// [`Self::unattached`], so callers never gate their logic on telemetry.
+    #[must_use]
+    pub fn capture(block: u64) -> Self {
+        Self::from_span(block, &tracing::Span::current())
+    }
 
-/// Exporter-visible context for `block`: exact hit first, then the nearest
-/// previous block — consumers' notion of "current block" can be one ahead
-/// (a batch is dispatched / a block judged after the next header arrives),
-/// and parenting to the closest earlier block span is the correct lineage
-/// either way. Bounded-ring insert order makes the scan trivially cheap.
-#[cfg(feature = "otel")]
-fn published_parent_for(current_block: u64) -> Option<opentelemetry::trace::SpanContext> {
-    let map = PUBLISHED_BLOCK_CONTEXTS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    map.get(&current_block).cloned().or_else(|| {
-        map.keys()
-            .filter(|&&b| b <= current_block)
-            .max()
-            .and_then(|b| map.get(b).cloned())
-    })
-}
-
-/// Re-attach the published block's span context as a remote parent on an
-/// EXISTING span. For spans created on detached tasks (the ADR-021 verifier
-/// loop) where the constructor form of [`simulate_dispatch_span`] does not
-/// apply: the task has no ambient context, so the parent is pinned explicitly
-/// after span creation. Best-effort / never blocks the caller's logic.
-#[cfg(feature = "otel")]
-pub fn attach_published_parent(span: &tracing::Span, current_block: u64) {
-    if let Some(sc) = published_parent_for(current_block) {
+    /// The lineage of `span` at `block`, captured explicitly from the handle
+    /// the driver already holds (the pump's per-epoch span).
+    #[cfg(feature = "otel")]
+    #[must_use]
+    pub fn from_span(block: u64, span: &tracing::Span) -> Self {
         use opentelemetry::trace::TraceContextExt as _;
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let cx = opentelemetry::Context::new().with_remote_span_context(sc);
-        // Best-effort: a rejected parent propagation degrades to a root
-        // span, never blocks the caller.
-        let _ = span.set_parent(cx);
+        let sc = span.context().span().span_context().clone();
+        Self {
+            block,
+            context: sc.is_valid().then_some(sc),
+        }
+    }
+
+    /// No-`otel`-feature twin: there is no exporter context to capture, so
+    /// every lineage is [`Self::unattached`].
+    #[cfg(not(feature = "otel"))]
+    #[must_use]
+    pub fn from_span(block: u64, _span: &tracing::Span) -> Self {
+        Self::unattached(block)
+    }
+
+    /// A `block` lineage with no exporter context: spans built from it are
+    /// deliberate trace roots.
+    #[must_use]
+    pub const fn unattached(block: u64) -> Self {
+        #[cfg(feature = "otel")]
+        let lineage = Self {
+            block,
+            context: None,
+        };
+        #[cfg(not(feature = "otel"))]
+        let lineage = Self { block };
+        lineage
+    }
+
+    /// The block this lineage belongs to — the SOLVE block, never the
+    /// consumer's clock.
+    #[must_use]
+    pub const fn block(&self) -> u64 {
+        self.block
+    }
+
+    /// The exporter context to parent to, when one was captured.
+    #[cfg(feature = "otel")]
+    fn context(&self) -> Option<&opentelemetry::trace::SpanContext> {
+        self.context.as_ref()
     }
 }
 
-#[cfg(not(feature = "otel"))]
-pub fn attach_published_parent(_span: &tracing::Span, _current_block: u64) {}
+/// A bare block number converts to an [`BlockLineage::unattached`] lineage:
+/// the caller had a block and no exporter context, and the downstream span is
+/// a deliberate root rather than a guess at an ancestor.
+impl From<u64> for BlockLineage {
+    fn from(block: u64) -> Self {
+        Self::unattached(block)
+    }
+}
 
-/// Build the `degenbot.simulate.dispatch` span for the Python simulate fan-
-/// out, re-attaching the published block's span context as a remote parent
-/// when one is registered for `current_block` (f701ccd3 bridge). Attribute
-/// parity with the historical inline span is exact (`current_block`,
-/// `phase_candidate_count`).
+/// A borrowed lineage converts by clone, so a seam that takes
+/// `impl Into<BlockLineage>` accepts the caller's own value by reference.
+impl From<&BlockLineage> for BlockLineage {
+    fn from(lineage: &BlockLineage) -> Self {
+        lineage.clone()
+    }
+}
+
+/// Re-attach `lineage`'s block span as a REMOTE parent on an EXISTING span —
+/// the detached-task form (the ADR-021 verifier loop, the submit batch),
+/// whose constructor has no ambient context to inherit. An
+/// [`BlockLineage::unattached`] lineage attaches nothing, so the span stays an
+/// intentional root. Best-effort / never blocks the caller's logic.
 #[cfg(feature = "otel")]
+pub fn attach_lineage(span: &tracing::Span, lineage: &BlockLineage) {
+    use opentelemetry::trace::TraceContextExt as _;
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+    let Some(sc) = lineage.context() else {
+        return;
+    };
+    let cx = opentelemetry::Context::new().with_remote_span_context(sc.clone());
+    // Best-effort: a rejected parent propagation degrades to a root
+    // span, never blocks the caller.
+    let _ = span.set_parent(cx);
+}
+
+#[cfg(not(feature = "otel"))]
+pub fn attach_lineage(_span: &tracing::Span, _lineage: &BlockLineage) {}
+
+/// Build the `degenbot.simulate.dispatch` span for one deployment lane's
+/// simulate fan-out, parented to `lineage`'s block span — the SOLVE block the
+/// candidates were produced for, never the consumer's clock (which can
+/// already be one block ahead). Attribute parity with the historical inline
+/// span is exact (`current_block`, `phase_candidate_count`).
 #[must_use]
-pub fn simulate_dispatch_span(current_block: u64, candidate_count: usize) -> tracing::Span {
+pub fn simulate_dispatch_span(
+    lineage: &BlockLineage,
+    current_block: u64,
+    candidate_count: usize,
+) -> tracing::Span {
     let span = tracing::info_span!(
         "degenbot.simulate.dispatch",
         current_block,
         phase_candidate_count = candidate_count
     );
-    attach_published_parent(&span, current_block);
+    attach_lineage(&span, lineage);
     span
-}
-
-#[cfg(not(feature = "otel"))]
-#[must_use]
-pub fn simulate_dispatch_span(current_block: u64, candidate_count: usize) -> tracing::Span {
-    tracing::info_span!(
-        "degenbot.simulate.dispatch",
-        current_block,
-        phase_candidate_count = candidate_count
-    )
-}
-
-/// Exact-match-only re-attach for SOLVE spans: a solve span must
-/// parent to its OWN block's published span, or nowhere else. The nearest-
-/// previous fallback of [`attach_published_parent`] is correct when the
-/// consumer's notion of "current block" may run one AHEAD of the published
-/// contexts (the Python simulate seam, the verifier); it is WRONG for the
-/// solver arms — a fresh ad-hoc in-block solve (ambient = block N's loop
-/// context) must not be re-parented onto block N-1's closed span just
-/// because its publish has not landed yet. Exact hit = the late
-/// finalize/drain crossing a block boundary (19/20 of the recent Jaeger
-/// traces carried block N-1's arb.solve inside block N's trace); exact miss
-/// = keep the ambient parent, never orphan, never mis-date.
-#[cfg(feature = "otel")]
-pub fn attach_published_parent_exact(span: &tracing::Span, block: u64) {
-    if let Some(sc) = published_parent_exact(block) {
-        use opentelemetry::trace::TraceContextExt as _;
-        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let cx = opentelemetry::Context::new().with_remote_span_context(sc);
-        let _ = span.set_parent(cx);
-    }
-}
-
-#[cfg(not(feature = "otel"))]
-pub fn attach_published_parent_exact(_span: &tracing::Span, _block: u64) {}
-
-/// Exporter-visible context for EXACTLY `block` — no fallback.
-#[cfg(feature = "otel")]
-fn published_parent_exact(block: u64) -> Option<opentelemetry::trace::SpanContext> {
-    let map = PUBLISHED_BLOCK_CONTEXTS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    map.get(&block).cloned()
 }
 
 /// Best-effort flush of the `OTel` span exporter.

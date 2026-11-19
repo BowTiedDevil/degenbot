@@ -56,6 +56,7 @@ use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
 use self::solve_cycle::{BlockScope, SolveCycle};
+use crate::telemetry::BlockLineage;
 use ::degenbot_pools::solve::{MixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
@@ -284,6 +285,14 @@ pub struct ResultBatch {
     /// (SIMPIPE stance `DEGENBOT_SOLVE_INLINE_SIM`). Absent (empty map) = the
     /// legacy FFI-sim path for every entry — per-entry presence decides.
     pub payloads: HashMap<u64, inline_sim::SimulatedPathResult>,
+    /// The exporter lineage this batch was published under: the solve block
+    /// plus the block span's context, captured ONCE at the publish. Every
+    /// downstream span of the batch's work (the simulate fan-out, the
+    /// verifier, the submit batch) attaches exactly this lineage, so a batch
+    /// cannot be re-parented onto a neighbouring block's trace family. An
+    /// unattached lineage (no `otel` layer, a scripted batch) means those
+    /// spans are deliberate roots.
+    pub lineage: BlockLineage,
 }
 /// the deferred-path re-record hook (the ledger carry). The
 /// dispatch calls it with the deferred paths' hop-pool keys and the cycle's

@@ -278,6 +278,11 @@ impl DeliveryPolicy {
             .chain(updated.iter())
             .filter_map(|(id, _)| inline_payloads.get(id).map(|p| (*id, p.clone())))
             .collect();
+        // The publish's exporter lineage, captured ONCE under the entered
+        // block span and carried on the batch so every downstream span of this
+        // block's work (simulate fan-out, verifier, submit) attaches exactly
+        // it, never a neighbouring block's trace family.
+        let lineage = crate::telemetry::BlockLineage::capture(results_block);
         let batch = ResultBatch {
             solve_block: results_block,
             timestamp: metadata.timestamp,
@@ -289,6 +294,7 @@ impl DeliveryPolicy {
             expired,
             removed,
             payloads,
+            lineage,
         };
         self.lifecycle.send_batch(batch);
     }
@@ -329,6 +335,10 @@ impl DeliveryPolicy {
         let payloads: HashMap<u64, SimulatedPathResult> = payload
             .map(|p| HashMap::from([(path_id, p.clone())]))
             .unwrap_or_default();
+        // The publish's exporter lineage, captured ONCE under the entered
+        // block span and carried on the batch: a streaming entry's downstream
+        // spans attach exactly this block, never a neighbouring one.
+        let lineage = crate::telemetry::BlockLineage::capture(results_block);
         let batch = ResultBatch {
             solve_block: results_block,
             timestamp: metadata.timestamp,
@@ -340,6 +350,7 @@ impl DeliveryPolicy {
             expired: Vec::new(),
             removed: Vec::new(),
             payloads,
+            lineage,
         };
         self.lifecycle.send_batch(batch);
     }
@@ -378,11 +389,6 @@ pub(crate) fn set_profit_thresholds(
 /// anchor has been seeded yet.
 pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &BlockMetadata) {
     let results_block = engine.cycle.cursor.coordinates().results_block;
-    // f701ccd3 bridge: capture the settle-entered block span as the
-    // propagation parent for `results_block` — the Python simulate seam
-    // re-attaches it (telemetry::simulate_dispatch_span) so the whole block
-    // chain renders as one Jaeger trace.
-    crate::telemetry::publish_block_context(results_block);
     // The store holds a report per path; the delivery diff is about the
     // figures (the status rode to the store, where an operator/telemetry read
     // can see it), so the snapshot carries the report's result.

@@ -42,6 +42,7 @@ use std::fmt;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use crate::telemetry::BlockLineage;
 use degenbot_substrate::{BlockContext, Epoch};
 
 // ----------------------------------------------------------------------
@@ -379,6 +380,10 @@ pub struct Solve {
     pub ctx: BlockContext,
     /// The affected-path set from the Resolved row.
     pub paths: AffectedPaths,
+    /// The exporter lineage this solve hangs from: the epoch's own captured
+    /// block span, carried from the driver that owns the span so the solve
+    /// span attaches exact ancestry instead of a post-hoc lookup.
+    pub lineage: BlockLineage,
 }
 
 /// Simulate (Simulated) work item.
@@ -942,7 +947,11 @@ mod conformance {
 
             self.advance(Stage::Solve, None)?;
             let solved = self.drive(Stage::Solve, epoch, |engine, _| {
-                engine.on_solve(&Solve { ctx, paths })
+                engine.on_solve(&Solve {
+                    ctx,
+                    paths,
+                    lineage: BlockLineage::unattached(ctx.block()),
+                })
             })?;
 
             self.advance(Stage::Simulate, None)?;

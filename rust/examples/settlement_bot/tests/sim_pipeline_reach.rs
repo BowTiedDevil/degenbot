@@ -196,6 +196,7 @@ async fn batch_executor_is_reachable_through_the_umbrella() {
         ],
         payloads: Vec::new(),
         current_block: 100,
+        lineage: degenbot::batch_executor::BlockLineage::unattached(100),
         base_fee_next: 1_000_000_000,
         block_timestamp: 1_700_000_000,
         block_priority_fees: None,

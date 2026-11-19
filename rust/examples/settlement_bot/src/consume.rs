@@ -200,6 +200,7 @@ mod tests {
             expired: Vec::new(),
             removed: Vec::new(),
             payloads: Default::default(),
+            lineage: degenbot::batch_executor::BlockLineage::unattached(solve_block),
         }
     }
 
@@ -247,9 +248,9 @@ mod tests {
         second.fresh.push((2, solve_row()));
         for event in [
             SessionEvent::Block(block(100, 1_700_000_100)),
-            SessionEvent::Batch(first),
+            SessionEvent::Batch(Box::new(first)),
             SessionEvent::Block(block(101, 1_700_000_101)),
-            SessionEvent::Batch(second),
+            SessionEvent::Batch(Box::new(second)),
         ] {
             tx.send(event).unwrap();
         }
@@ -314,7 +315,7 @@ mod tests {
             },
         );
         tx.send(SessionEvent::Block(block(1, 1))).unwrap();
-        tx.send(SessionEvent::Batch(batch)).unwrap();
+        tx.send(SessionEvent::Batch(Box::new(batch))).unwrap();
         drop(tx);
 
         let error = consumer

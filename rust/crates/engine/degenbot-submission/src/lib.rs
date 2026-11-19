@@ -101,6 +101,10 @@ pub mod submit;
 
 // ---- Convenience top-level re-exports (mirrors the umbrella convention) ----
 
+/// The batch's exporter lineage: [`dispatch_and_submit`] parents its span to
+/// the value the publish captured (a bare block number converts to an
+/// unattached lineage).
+pub use degenbot_bot::telemetry::BlockLineage;
 pub use error::{SubmissionError, SubmissionResult};
 pub use fee::{compute_max_fee, finalize_fees, MAX_FEE_HEADROOM};
 pub use params::TxParams;
