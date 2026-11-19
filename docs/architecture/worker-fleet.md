@@ -188,13 +188,21 @@ Notes:
   are *runnable* concurrently (admission-gated walk start; a gated bin parks —
   exactly what bins already do half their window waiting on sim joins, so
   makespan impact is bounded well under the current ~175 ms window).
-- **Fractional-quota ceil policy (reviewed):** detection keeps
-  `v2_quota_cpus`' ceil (an existing worker must be schedulable). Allocation
-  arithmetic **floors**: integer core shares sum against `floor(Q)`; the
-  fractional remainder (e.g. the 0.5 of a 4.5-core quota) is spendable only by
-  I/O-dominant consumers (SimDriver slots, ambient I/O), whose measured duty
-  is partial-core by construction. A fractional quota below `sum(H, A, R, M)
-  + 2` fails fast — the fleet cannot host the two pinned latency roles there.
+- **Fractional-quota floor policy (reviewed):** ONE interpretation for both
+  authorities — detection (`v2_quota_cpus`/`v1_quota_cpus`) and allocation both
+  **floor**. A fractional remainder is not a schedulable whole worker, so a
+  4.5-core quota admits four workers on both sides: integer core shares sum
+  against `floor(Q)` and the solve-bin count is that same `floor(Q) − headroom`
+  (min'd with affinity on the detection side only), so solve bins can never
+  outnumber fleet seats — property-tested as the cross-authority oracle in
+  `FleetBudget`. The remainder (e.g. the 0.5 of a 4.5-core quota) is spendable
+  only by I/O-dominant consumers (SimDriver slots, ambient I/O), whose measured
+  duty is partial-core by construction; duty that is I/O-dominant by design is
+  **declared** (`DEGENBOT_IO_WORKERS`, the SimDriver/PoolStateUpdater slot
+  caps) rather than recovered by an independent ceil sizing, and an explicit
+  `DEGENBOT_SOLVE_CPUS` override stays terminal. A fractional quota below
+  `sum(H, A, R, M) + 2` fails fast — the fleet cannot host the two pinned
+  latency roles there.
 - **Overrides are terminal** (same rule as `DEGENBOT_SOLVE_CPUS` today): a
   configured value wins, is logged at startup, and participates in the same
   sum check.

@@ -1,9 +1,9 @@
 //! Fractional cgroup-quota detection for the fleet budget authority.
 //!
-//! `degenbot_core::cpu_budget` owns runtime CPU sizing and keeps its ceil'd
-//! integer budget (worker-existence sizing: a 4.5-core quota still buys a
-//! 5th worker). The fleet's ALLOCATION arithmetic (ADR-042 §5) needs the
-//! EXACT pre-ceil ratio instead — integer shares sum against `floor(Q)` and
+//! `degenbot_core::cpu_budget` owns runtime CPU sizing and FLOORS its
+//! integer budget to whole cores (worker-existence sizing: a 4.5-core quota
+//! buys 4 workers). The fleet's ALLOCATION arithmetic (ADR-042 §5) needs the
+//! EXACT pre-floor ratio instead — integer shares sum against `floor(Q)` and
 //! the fractional remainder is spendable only by I/O-dominant consumers —
 //! and the reviewed scope keeps that addition out of `cpu_budget.rs`. This
 //! module is therefore the fleet-local fractional detector: the same
@@ -149,8 +149,8 @@ fn cgroup_roots(mounts_text: &str) -> (Option<PathBuf>, Option<PathBuf>) {
 /// 1.0. `cgroup_text`/`mounts_text` are `/proc/self/{cgroup,mounts}`
 /// bodies; `fixture_root` lets tests inject a synthetic cgroup tree in
 /// place of the real mount roots. Share arithmetic (ADR-042 §5) floors
-/// against THIS value; worker-existence sizing keeps the ceil'd integer
-/// budget in `degenbot_core::cpu_budget`.
+/// against THIS value; worker-existence sizing carries the same floored
+/// integer budget in `degenbot_core::cpu_budget`.
 fn fractional_budget_from(
     cgroup_text: &str,
     mounts_text: &str,

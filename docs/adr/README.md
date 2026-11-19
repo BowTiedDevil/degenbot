@@ -74,7 +74,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [039](ADR-039-state-lock-sim-anchor-projection.md) | State-lock — enumerated sim-anchor projection | accepted |
 | [040](ADR-040-per-bucket-failure-reactions.md) | Failure reactions are per-bucket | accepted |
 | [041](ADR-041-block-epoch-pipeline.md) | The block-epoch pipeline — one stage machine over a cheap-read data plane | implemented |
-| [042](ADR-042-role-switching-worker-fleet.md) | One role-switching worker fleet | proposed (sign-off satisfied; fleet-core may begin) |
+| [042](ADR-042-role-switching-worker-fleet.md) | One role-switching worker fleet; one fractional-quota reading (floor on both sizing sides) | proposed (sign-off satisfied; fleet-core may begin) |
 | [043](ADR-043-observability-standard.md) | The observability standard | accepted |
 | [044](ADR-044-fleet-intake-liveness.md) | Fleet intake liveness — BackstopTick + PostureEdge | accepted |
 | [045](ADR-045-solve-cycle-extraction.md) | The solve cycle as a deep module | accepted |

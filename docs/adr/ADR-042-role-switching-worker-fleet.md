@@ -6,7 +6,7 @@ fleet task can execute without it. **Implementation is gated on a user sign-off
 checkpoint: the role/state table and the budget allocation table in the
 [design doc](../architecture/worker-fleet.md) must be approved before fleet-core
 work begins.** The canonical, maintained form of the design lives in the design
-doc; this ADR records the decisions and the evidence. **The user sign-off checkpoint is satisfied (2026-09-09) — fleet-core (O4CCVX) may begin.**
+doc; this ADR records the decisions and the evidence. **The user sign-off checkpoint is satisfied (2026-09-09) — fleet-core (O4CCVX) may begin.** **§3 amended 2026-11-19: the fractional-quota reading floors on both sizing sides (the earlier detection-ceil / allocation-floor split is retired).**
 
 ## Context
 
@@ -99,11 +99,18 @@ start if the declared shares exceed the quota. Today each pool derives its own
 count and the *sum* is bounded only by luck; the burst evidence (10–11
 runnable vs 8) is that luck running out.
 
-Fractional-quota ceil policy — reviewed here, verdict recorded in the design
-doc: detection keeps `v2_quota_cpus`' ceil (a worker that exists must be
-schedulable), but the allocation arithmetic floors: integer shares sum against
-`floor(Q)` and the fractional remainder is spendable only by I/O-dominant
-consumers (sim slots, ambient I/O), whose measured duty is partial.
+Fractional-quota floor policy — reviewed here, verdict recorded in the design
+doc: **one reading for both authorities, and it floors.** Detection floors
+`v2_quota_cpus`/`v1_quota_cpus` to whole cores (a 4.5-core quota admits four
+workers: the fractional remainder is not a schedulable whole worker) and the
+allocation arithmetic floors the same `floor(Q)`, so the solve-bin count can
+never outnumber the fleet seats. Integer shares sum against `floor(Q)` and the
+fractional remainder is spendable only by I/O-dominant consumers (sim slots,
+ambient I/O), whose measured duty is partial by construction. Duty that is
+I/O-dominant by design is *declared* — `DEGENBOT_IO_WORKERS`, the
+SimDriver/PoolStateUpdater slot caps — rather than recovered by an independent
+ceil sizing; an explicit `DEGENBOT_SOLVE_CPUS`, like every override, stays
+terminal.
 
 ### 4. Throttle reaction: a `Nominal ⇄ Cordoned` posture FSM
 
@@ -142,6 +149,7 @@ the stranded-pipe tripwire. Never runtime-selectable.
 | Q4 | **Bin telemetry:** `arb.solve.bin` span per bin with bin index and makespan histogram — closes the per-bin makespan gap; every fleet worker self-registers with the census registry (`FPNT36`) |
 | Q5 | **Python/FFI:** cross only for runtime/startup and standalone-result delivery; simulation never round-trips Python; the inline-sim runtime is fleet-hosted |
 | Q6 | **Migration:** `DEGENBOT_FLEET` stance flag (`legacy`/`fleet`), parallel implementations during migration with pinned tests passing in both stances, hard cutover deleting the legacy mechanisms at the end — per the repository switch-over policy (0.6 alpha; no back-compat layer) |
+| Q7 | **Fractional quota:** one floor for both authorities — the fractional remainder is not a worker, so detection and seat allocation derive from the same `floor(Q)`; I/O-dominant duty is declared through overrides and duty-counted slots, never recovered by an independent ceil |
 
 ## Consequences
 

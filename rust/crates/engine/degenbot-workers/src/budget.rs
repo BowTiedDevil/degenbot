@@ -4,12 +4,15 @@
 //! Every consumer declares a peak-CPU share and a thread/slot count; the
 //! fleet refuses to boot when the declared shares exceed the quota —
 //! oversubscription is a configuration bug surfaced at boot, never a runtime
-//! throttle storm. Fractional-quota policy (reviewed in the ADR): detection
-//! keeps `degenbot_core::cpu_budget`'s ceil for worker-existence sizing,
-//! while allocation arithmetic FLOORS — integer shares sum against
-//! `floor(Q)` and the fractional remainder is spendable only by I/O-dominant
-//! consumers (`SimDriver` slots, ambient I/O), whose measured duty is
-//! partial-core by construction. `Q` comes from [`crate::quota`].
+//! throttle storm. Fractional-quota policy (reviewed in the ADR): ONE
+//! reading for both authorities — detection and allocation both FLOOR the
+//! quota, so integer shares sum against the same `floor(Q)` the
+//! worker-existence sizing bounds and the fractional remainder is never a
+//! worker. The remainder is spendable only by I/O-dominant consumers
+//! (`SimDriver` slots, ambient I/O), whose measured duty is partial-core by
+//! construction, and duty that is I/O-dominant by design is DECLARED (slot
+//! caps, `DEGENBOT_IO_WORKERS`) rather than recovered by a ceil. `Q` comes
+//! from [`crate::quota`].
 //!
 //! # Discrepancy note (recorded, not redesigned)
 //!
@@ -31,18 +34,18 @@
 //! 6 bins — retires with the hard cutover). Walk ADMISSION stays the
 //! share `S`: a gated bin parks, per design doc §5.
 //!
-//! # Cross-authority contract: allocation floors, detection ceils
+//! # Cross-authority contract: floor, both sides
 //!
-//! `degenbot_core::cpu_budget` CEILS fractional cgroup quotas for
-//! worker-existence sizing (a 4.5-core quota still buys a 5th worker);
-//! this authority FLOORS (`floor(Q) − headroom`), because Solver threads
-//! are never I/O-dominant and must never spend the fractional remainder.
-//! Consequence (property-tested in this file, `cross_authority`): the two
-//! sizing authorities agree at integer quotas with `affinity >= Q`; under
-//! a fractional quota with `affinity >= ceil(Q)` the legacy-stance solve
-//! bins sit exactly one ABOVE the fleet seats. Integer quotas are the
-//! deployment norm, and fleet-hosted cycles bind bins at the seat count
-//! anyway, so the divergence is inert in production.
+//! `degenbot_core::cpu_budget` FLOORS fractional cgroup quotas for
+//! worker-existence sizing (a 4.5-core quota buys 4 workers, never a
+//! fractional 5th), min'd with affinity; this authority derives the same
+//! `floor(Q) − headroom` seat count. Consequence (property-tested in this
+//! file, `cross_authority`): solve bins never exceed fleet seats at any
+//! affinity, and the two agree exactly once affinity reaches `ceil(Q)` — the
+//! point past which detection stops tightening the floored quota. A host
+//! whose duty is genuinely I/O-dominant says so through the terminal
+//! overrides (`DEGENBOT_IO_WORKERS`, the `SimDriver`/`PoolStateUpdater` slot
+//! caps) instead of leaning on a sizing formula to buy partial cores.
 //!
 //! Design: docs/architecture/worker-fleet.md
 
@@ -319,12 +322,12 @@ impl FleetBudget {
         let pool_state_updater_slots = overrides
             .pool_state_updater_slots
             .unwrap_or(DEFAULT_POOL_STATE_UPDATER_SLOTS);
-        // Pin seats are STRUCTURAL: one per LPT
-        // bin, the bin count following cpu_budget's solve-bin POLICY —
-        // minus the solve headroom, floored at 1 — but FLOORING the quota:
-        // cpu_budget ceils fractional quotas for worker-existence; Solver
-        // threads never spend the fractional remainder (design doc §5).
-        // Walk admission stays the share S — a gated bin parks (design doc §5).
+        // Pin seats are STRUCTURAL: one per LPT bin, the bin count following
+        // cpu_budget's solve-bin POLICY — the floored quota minus the solve
+        // headroom, floored at 1. cpu_budget floors that same fractional quota
+        // for worker-existence sizing, so the counts cannot diverge into more
+        // bins than seats (design doc §5). Walk admission stays the share S —
+        // a gated bin parks (design doc §5).
         let pinned_pin_count = usize::try_from(quota_floor)
             .unwrap_or(usize::MAX)
             .saturating_sub(solve_headroom)
@@ -514,9 +517,9 @@ mod tests {
         assert_eq!(b.ambient_cpus, 1);
         assert_eq!(b.solver_cpus, 4);
         // Pins are STRUCTURAL: one seat per LPT bin = floor(Q) - the solve
-        // headroom (allocation FLOORS the quota; cpu_budget's worker-
-        // existence detection ceils it — the cross-authority property in this file
-        // pins that split) — not the 2:1 parked-wait over-subscription.
+        // headroom (the same floored quota cpu_budget sizes worker existence
+        // from — the cross-authority property in this file pins the agreement)
+        // — not the 2:1 parked-wait over-subscription.
         assert_eq!(b.solver_pin_count, 6);
     }
 
@@ -536,6 +539,43 @@ mod tests {
         assert_eq!(b.solver_cpus, 3);
         assert_eq!(b.solver_pin_count, 6);
         assert_eq!(b.declared_sum(), 8);
+    }
+
+    /// One quota interpretation: a fractional quota under ample affinity
+    /// derives the SAME structural count on both sides (the retired
+    /// detection-ceil bought one extra solve bin above the fleet seats here).
+    #[test]
+    fn fractional_quotas_derive_bins_and_seats_from_the_same_floor() {
+        for (quota, floor) in [(6.5_f64, 6_usize), (8.5, 8), (12.25, 12)] {
+            // Ample affinity: detection budgets the floored quota.
+            let bins = degenbot_core::cpu_budget::solve_worker_count_from(None, None, floor);
+            let b = FleetBudget::derive(quota, &overrides()).expect("hostable");
+            assert_eq!(
+                b.solver_pin_count, bins,
+                "quota {quota}: solve bins never exceed fleet seats"
+            );
+            assert_eq!(
+                b.solver_pin_count,
+                floor - degenbot_core::cpu_budget::DEFAULT_SOLVE_HEADROOM,
+                "quota {quota}: seats = floor(Q) - headroom"
+            );
+        }
+        // A tightened affinity budget shrinks the solve bins; seats are
+        // structural, so the inequality only ever goes one way.
+        let tight = degenbot_core::cpu_budget::solve_worker_count_from(None, None, 5);
+        let seats = FleetBudget::derive(6.5, &overrides())
+            .expect("hostable")
+            .solver_pin_count;
+        assert!(
+            tight < seats,
+            "affinity-tightened bins {tight} < seats {seats}"
+        );
+        // floor(4.5) = 4 cannot host the pinned roles (H+A+R+M+2 = 6), and
+        // the refusal names the floor — never a ceil'd host.
+        assert!(matches!(
+            FleetBudget::derive(4.5, &overrides()),
+            Err(BudgetError::QuotaTooSmallForPinnedRoles { .. })
+        ));
     }
 
     #[test]
@@ -1067,22 +1107,33 @@ mod tests {
     }
 
     mod cross_authority {
-        //! The settled contract between the two CPU
-        //! sizing authorities over ARBITRARY quota shapes. Fleet allocation
-        //! floors: `seats = max(1, floor(Q) - headroom)`. `cpu_budget`
-        //! worker-existence ceils: `solve = max(1, min(ceil(cgroup Q),
-        //! affinity) - headroom)`. Consequences (see the module-note
-        //! addendum above): agreement iff the quota is integer AND affinity
-        //! covers it; a fractional quota under affinity >= ceil(Q) leaves
-        //! legacy-stance solve bins exactly ONE above the fleet seats.
+        //! One quota interpretation for both CPU sizing
+        //! authorities over ARBITRARY quota shapes. Both FLOOR the fractional
+        //! cgroup quota to whole cores: `cpu_budget` worker-existence sizing
+        //! is `solve = max(1, min(floor(Q), affinity) - headroom)`; fleet
+        //! allocation derives `seats = max(1, floor(Q) - headroom)`.
+        //! Consequences (see the module note above): affinity can only
+        //! tighten the detection side, so solve bins never exceed fleet seats
+        //! at ANY affinity; affinity at or above `ceil(Q)` leaves detection
+        //! on `floor(Q)`, so the two agree exactly.
         use super::*;
         use proptest::prelude::*;
 
         prop_compose! {
-            fn quota_shape()(base in 1u64..=512u64, half in 0u8..2u8, affinity in 1u64..=1024u64)
-                -> (u64, u8, u64) {
-                    (base, half, affinity)
+            fn quota_shape()(base in 1u64..=512u64, half in 0u8..2u8)
+                -> (u64, u8) {
+                    (base, half)
                 }
+        }
+
+        /// The affinity regimes the contract must hold under: strictly below
+        /// `ceil(Q)`, exactly at it, and above it.
+        fn affinity_regimes(ceil_q: u64) -> Vec<u64> {
+            let mut regimes = vec![ceil_q, ceil_q + 1, ceil_q + 7];
+            if ceil_q > 1 {
+                regimes.push(ceil_q - 1);
+            }
+            regimes
         }
 
         proptest! {
@@ -1092,34 +1143,39 @@ mod tests {
                 clippy::cast_precision_loss,
                 reason = "quota units (1e6 scale, <= 5e8) are exact in f64"
             )]
-            fn pins_and_solve_workers_follow_the_documented_floor_ceil_split(
-                (base, half, affinity) in quota_shape(),
+            fn bins_never_exceed_seats_and_integer_quotas_agree_exactly(
+                (base, half) in quota_shape(),
             ) {
                 // cgroup encodes the quota at 1_000_000-unit periods; a
                 // half-step quota is a fractional f64 core count.
                 let units = base * 1_000_000 + u64::from(half) * 500_000;
                 let floor_q = units / 1_000_000;
-                let fractional = units % 1_000_000 != 0;
-                // effective_budget_from_with_roots: ceil the cgroup quota,
-                // then min with affinity (the budget floored at 1).
-                let budget = units.div_ceil(1_000_000).min(affinity).max(1);
-                let budget_usize = usize::try_from(budget).unwrap_or(usize::MAX);
-                let solve = degenbot_core::cpu_budget::solve_worker_count_from(
-                    None, None, budget_usize,
-                );
+                let ceil_q = units.div_ceil(1_000_000);
                 let q = (units as f64) / 1_000_000.0;
 
-                if floor_q < 6 {
-                    // Below the pinned-role floor (H+A+R+M+2) nothing hosts.
-                    // (bound first: prop_assert stringifies its expression,
-                    // and `{ .. }` from `matches!` would break the format
-                    // string)
-                    let refused = matches!(
-                        FleetBudget::derive(q, &BudgetOverrides::default()),
-                        Err(BudgetError::QuotaTooSmallForPinnedRoles { .. })
+                for affinity in affinity_regimes(ceil_q) {
+                    // effective_budget_from_with_roots: floor the cgroup
+                    // quota, then min with affinity (floored at 1).
+                    let budget = floor_q.max(1).min(affinity);
+                    let solve = degenbot_core::cpu_budget::solve_worker_count_from(
+                        None,
+                        None,
+                        usize::try_from(budget).unwrap_or(usize::MAX),
                     );
-                    prop_assert!(refused);
-                } else {
+
+                    if floor_q < 6 {
+                        // Below the pinned-role floor (H+A+R+M+2) nothing
+                        // hosts, whatever the affinity. (bound first:
+                        // prop_assert stringifies its expression, and
+                        // `{ .. }` from `matches!` would break the format
+                        // string)
+                        let refused = matches!(
+                            FleetBudget::derive(q, &BudgetOverrides::default()),
+                            Err(BudgetError::QuotaTooSmallForPinnedRoles { .. })
+                        );
+                        prop_assert!(refused);
+                        continue;
+                    }
                     // derive fails only on over-subscription or a
                     // too-small quota; our defaults cannot oversubscribe
                     // (floor_q >= 6 => base + MIN_SOLVER_CPUS <= floor).
@@ -1128,28 +1184,25 @@ mod tests {
                             "hostable shape refused: q = {q}"
                         )));
                     };
-                    // The formula, as written.
+                    // The exact integer formula on the seat side.
                     prop_assert_eq!(
                         b.solver_pin_count,
                         usize::try_from((floor_q - 2).max(1)).unwrap_or(usize::MAX)
                     );
-                    if !fractional && affinity >= floor_q {
-                        // Integer quota, adequate affinity: agreement.
-                        prop_assert_eq!(b.solver_pin_count, solve);
-                    } else if fractional && budget == floor_q + 1 {
-                        // Fractional quota under affinity >= ceil(Q):
-                        // worker-existence buys exactly one more core than
-                        // allocation spends; pins never bank the remainder.
-                        prop_assert_eq!(solve, b.solver_pin_count + 1);
-                    } else if !fractional && affinity < floor_q {
-                        // Affinity-take-over: the (smaller) budget rules
-                        // the solve bins; the seat count never shrinks.
-                        prop_assert!(solve <= b.solver_pin_count);
-                    } else if fractional && budget <= floor_q {
-                        // Affinity clamped below the ceiling.
-                        prop_assert!(solve <= b.solver_pin_count);
+                    // The acceptance invariant, at every affinity regime.
+                    prop_assert!(
+                        solve <= b.solver_pin_count,
+                        "bins {} exceed seats {} at q = {}, affinity {}",
+                        solve,
+                        b.solver_pin_count,
+                        q,
+                        affinity
+                    );
+                    // Affinity at or above ceil(Q) leaves detection on the
+                    // floored quota, so both authorities agree exactly.
+                    if affinity >= ceil_q {
+                        prop_assert_eq!(solve, b.solver_pin_count);
                     }
-                    let _ = fractional; // documented above
                 }
             }
         }

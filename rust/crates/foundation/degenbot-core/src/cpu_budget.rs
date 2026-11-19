@@ -10,7 +10,10 @@
 //!
 //! Detection walks UP the cgroup hierarchy (containers nest under slices
 //! whose parents may be tighter) and takes the tightest limit found, min'd
-//! with the affinity budget.
+//! with the affinity budget. A fractional quota floors to whole cores — the
+//! remainder is not a schedulable worker — and the fleet's seat derivation
+//! floors the same ratio, so solve bins can never exceed fleet seats
+//! (ADR-042 §3).
 //!
 //! Two-runtime sizing policy (this module is the single sizing
 //! authority for BOTH runtimes):
@@ -30,7 +33,8 @@ use std::sync::OnceLock;
 
 /// Cpus the cgroup v2 `cpu.max` in `dir` admits: `quota period`, or `None`
 /// when unbounded (`max`) or the file is missing/unreadable. Fractional
-/// ratios ceil (a 4.5-core quota still buys a 5th worker).
+/// ratios floor (a 4.5-core quota admits 4 whole workers; the remainder is
+/// not a schedulable worker), floored at 1.
 pub(crate) fn v2_quota_cpus(dir: &Path) -> Option<u64> {
     let raw = std::fs::read_to_string(dir.join("cpu.max")).ok()?;
     let mut parts = raw.split_whitespace();
@@ -43,11 +47,12 @@ pub(crate) fn v2_quota_cpus(dir: &Path) -> Option<u64> {
     if period == 0 {
         return None;
     }
-    Some(ceil_div_cpus(quota, period))
+    Some(floor_div_cpus(quota, period))
 }
 
 /// Cpus the cgroup v1 files (`cpu.cfs_quota_us`/`cpu.cfs_period_us`) in
-/// `dir` admit. `-1` quota = unbounded -> `None`.
+/// `dir` admit. `-1` quota = unbounded -> `None`. Fractional ratios floor,
+/// exactly as the v2 probe does.
 pub(crate) fn v1_quota_cpus(dir: &Path) -> Option<u64> {
     let quota: i64 = std::fs::read_to_string(dir.join("cpu.cfs_quota_us"))
         .ok()?
@@ -64,7 +69,7 @@ pub(crate) fn v1_quota_cpus(dir: &Path) -> Option<u64> {
         .and_then(|raw| raw.trim().parse().ok())
         .filter(|p: &u64| *p > 0)
         .unwrap_or(100_000);
-    Some(ceil_div_cpus(quota as u64, period))
+    Some(floor_div_cpus(quota as u64, period))
 }
 
 /// Tightest cgroup v2 quota found walking `<root>/<rel>` upward to
@@ -306,8 +311,8 @@ fn join_under_root(root: &Path, rel: &Path) -> PathBuf {
     }
 }
 
-fn ceil_div_cpus(quota: u64, period: u64) -> u64 {
-    quota.div_ceil(period).max(1)
+fn floor_div_cpus(quota: u64, period: u64) -> u64 {
+    (quota / period).max(1)
 }
 
 /// Walk `start` (or its nearest existing ancestor chain up to `root`),
@@ -457,9 +462,14 @@ mod tests {
     }
 
     #[test]
-    fn v2_fractional_ceils() {
+    fn v2_fractional_floors() {
+        // 4.5 cores admits 4 whole workers: the remainder is not schedulable.
         let d = fixture_dir("v2-frac");
         write_cpu_max(&d, "x", "450000 100000\n");
+        assert_eq!(v2_quota_cpus(&d.join("x")), Some(4));
+        write_cpu_max(&d, "x", "499999 100000\n");
+        assert_eq!(v2_quota_cpus(&d.join("x")), Some(4));
+        write_cpu_max(&d, "x", "500000 100000\n");
         assert_eq!(v2_quota_cpus(&d.join("x")), Some(5));
         fs::remove_dir_all(&d).ok();
     }
@@ -494,7 +504,7 @@ mod tests {
     fn walk_takes_parent_tighter_when_child_missing() {
         let root = fixture_dir("walk-parent");
         write_cpu_max(&root, "svc", "250000 100000\n");
-        assert_eq!(min_quota_v2(&root, Path::new("svc/task")), Some(3));
+        assert_eq!(min_quota_v2(&root, Path::new("svc/task")), Some(2));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -519,11 +529,11 @@ mod tests {
     }
 
     #[test]
-    fn v1_quota_ratio_ceils() {
+    fn v1_quota_ratio_floors() {
         let root = fixture_dir("v1-ratio");
         let dir = write_v1(&root, "cpu/cpuacct", "cpu.cfs_quota_us", "450000\n");
         write_v1(&root, "cpu/cpuacct", "cpu.cfs_period_us", "100000\n");
-        assert_eq!(v1_quota_cpus(&dir), Some(5));
+        assert_eq!(v1_quota_cpus(&dir), Some(4));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -597,6 +607,27 @@ mod tests {
         let text = "0::/\n";
         let mounts = "proc /proc proc rw\n";
         assert_eq!(effective_budget_from_with_roots(text, mounts, 24, None), 24);
+    }
+
+    #[test]
+    fn fractional_quota_floors_under_every_affinity_regime() {
+        // A 4.5-core quota admits FOUR whole workers, so ceil(Q) = 5 is a
+        // regime boundary, not a sizing authority: affinity can only tighten
+        // the floored quota, never restore the fractional fifth worker.
+        let text = "0::/\n";
+        let mounts = "cgroup2 /sys/fs/cgroup cgroup2 rw\n";
+        let root = fixture_dir("frac-regimes");
+        write_cpu_max(&root, "", "450000 100000\n");
+        for (affinity, budget) in [(3_usize, 3_usize), (5, 4), (24, 4)] {
+            let got = effective_budget_from_with_roots(text, mounts, affinity, Some(&root));
+            assert_eq!(got, budget, "affinity {affinity} budget");
+            assert_eq!(
+                solve_worker_count_from(None, None, got),
+                budget.saturating_sub(DEFAULT_SOLVE_HEADROOM).max(1),
+                "affinity {affinity}: solve bins follow the floored budget"
+            );
+        }
+        fs::remove_dir_all(&root).ok();
     }
 
     // ---- solve worker-count policy ----
@@ -754,7 +785,7 @@ mod tests {
     mod derivation {
         //! Host-shape derivation properties. Any
         //! combination of cgroup quota text and affinity must produce the
-        //! documented `min(ceil(cgroup quota), affinity)` floored at 1 —
+        //! documented `min(floor(cgroup quota), affinity)` floored at 1 —
         //! never zero, never a panic, fail-closed on malformed text.
         use super::*;
         use proptest::prelude::*;
@@ -770,7 +801,7 @@ mod tests {
         proptest! {
             #![proptest_config(proptest::test_runner::Config::with_cases(256))]
             #[test]
-            fn budget_is_the_documented_min_of_ceiled_cgroup_and_affinity(
+            fn budget_is_the_documented_min_of_floored_cgroup_and_affinity(
                 quota_units in proptest::option::of(1u64..=64_000_000u64),
                 affinity in 1u64..=1024u64,
             ) {
@@ -784,7 +815,10 @@ mod tests {
                     Some(&root),
                 );
                 let expected = match quota_units {
-                    Some(q) => q.div_ceil(100_000).min(affinity).max(1),
+                    // The cgroup quota admits whole cores only: a 4.5-core
+                    // limit is a 4-core budget (floored at 1), min'd with
+                    // affinity.
+                    Some(q) => (q / 100_000).max(1).min(affinity),
                     None => affinity,
                 };
                 prop_assert_eq!(
@@ -792,7 +826,6 @@ mod tests {
                     usize::try_from(expected).unwrap_or(usize::MAX)
                 );
                 fs::remove_dir_all(&root).ok();
-                let _ = affinity_usize;
             }
 
             #[test]
