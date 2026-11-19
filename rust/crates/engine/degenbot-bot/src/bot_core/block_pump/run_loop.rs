@@ -1,9 +1,12 @@
 use super::{
     feed_executor_throttle_sample, op_error, op_info, op_warn, stream, us_to_secs, wall_ms,
     BlockMetadata, BlockPump, CompletenessDecision, Duration, Epoch, GateOutcome, HashSet,
-    HeaderReceipts, Instrument, LogDecision, Ordering, PreSolveGapTrack, PumpControl,
-    StageDecision, StageMachine, StreamExt, WsEvent, B256, BACKFILL_TIMEOUT_SECS, RELEVANT_TOPICS,
+    HeaderReceipts, Instrument, LivenessPhase, LogDecision, Ordering, PreSolveGapTrack,
+    PumpControl, StageDecision, StageMachine, StreamExt, WsEvent, B256, BACKFILL_TIMEOUT_SECS,
+    RELEVANT_TOPICS,
 };
+
+use super::liveness::LoopLiveness;
 // `Arc` is used by the exit guard (a `PumpControl` handle) and by the
 // `hotpath`-gated cooperative timed-exit block (`Arc::clone(&self.shutdown)`).
 use super::Arc;
@@ -334,12 +337,24 @@ impl BlockPump {
         // it runs the SAME
         // `handle_timeout_eager` catch-up the no-activity path uses.
         //
-        // Limitation:: this fires only when the
-        // pump is parked AT the select. If the pump parks BEFORE the select
-        // (GIL re-entry park via `PySubscriberAdapter`, or engine-lock
-        // contention inside `on_drain`/`apply_buffer_v3`), the interval can't
-        // advance — that residual unbounded risk is Option B's
-        // notify-delocalization work, out of scope here.
+        // Independence: this interval fires only while the pump is parked AT
+        // the select — it is polled by the same `select!` it competes in. A
+        // park BEFORE the select (a GIL re-entry via `PySubscriberAdapter`
+        // inside `drive_publish`, or engine-lock contention inside the stage
+        // hooks) advances no timer this task owns, so that silence is the
+        // independent liveness clock's fact (`liveness`, armed below): it beats
+        // on this task at each arrival and is observed on a separate task, and
+        // its stall raises the shutdown flag for the cooperative close. The
+        // two clocks are complementary — this one answers "is the CHAIN
+        // quiet?" and recovers by backfilling; that one answers "is this LOOP
+        // alive at all?".
+        let liveness =
+            LoopLiveness::arm(Arc::clone(&self.shutdown), &self.stall, self.stall_window);
+        let mut phase = LivenessPhase::Progressing;
+        // The test-only park seam's gate, hoisted out of the loop so the await
+        // holds no borrow of `self`.
+        #[cfg(any(test, feature = "test-fixtures"))]
+        let park_gate = self.park_gate.clone();
         let mut staleness_tick = tokio::time::interval(self.watchdog.header_staleness);
         staleness_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         staleness_tick.tick().await; // discard the immediate first tick
@@ -457,9 +472,32 @@ impl BlockPump {
             // timer: publication is gated on the truth condition (all
             // dispatched logs applied), not schedule.
 
-            // Check shutdown
+            // Arrival beat: cheap, first, and BEFORE any work that can block.
+            // The independent clock's evidence that this loop is still the
+            // engine's live driver (see `liveness`).
+            liveness.beat();
+            phase = phase.arrived();
+
+            // Test-only park seam: the loop executes nothing until the gate is
+            // free — the shape of a park before the select, which no timer on
+            // this task can observe.
+            #[cfg(any(test, feature = "test-fixtures"))]
+            if let Some(gate) = park_gate.as_ref() {
+                let _held = gate.lock().await;
+            }
+
+            // Check shutdown. The landing folds the independent clock into the
+            // phase, so the exit line names which state ended the loop: a close
+            // that clock requested reads `Closing`, any other raise of the flag
+            // (`stop()`, a too-deep reorg, the hotpath timer) keeps the phase
+            // the loop was in.
             if self.shutdown.load(Ordering::Relaxed) {
-                op_info!(domain = pump, "BlockPump: shutting down");
+                let landing = liveness.landing(phase);
+                op_info!(
+                    domain = pump,
+                    phase = landing.name(),
+                    "BlockPump: shutting down"
+                );
                 return;
             }
 
@@ -496,7 +534,12 @@ impl BlockPump {
                 // is free relative to the window (minutes) it serves.
                 _ = timed_exit_tick.tick() => {
                     if self.shutdown.load(Ordering::Relaxed) {
-                        op_info!(domain = pump, "timed exit: shutdown signaled — unwinding pump loop");
+                        let landing = liveness.landing(phase);
+                        op_info!(
+                            domain = pump,
+                            phase = landing.name(),
+                            "BlockPump: shutdown signaled on the cooperative tick — unwinding pump loop"
+                        );
                         break;
                     }
                     // Preserved G3: force-close a stale
@@ -541,6 +584,7 @@ impl BlockPump {
                     ) {
                         match decision {
                             StageDecision::Recover => {
+                                phase = phase.recovering();
                                 self.handle_timeout_eager(&mut fsm)
                                     .instrument(block_span.clone().unwrap_or_else(tracing::Span::none))
                                     .await;

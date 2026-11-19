@@ -1,7 +1,7 @@
 use super::{
     op_error, op_info, op_warn, stance, stream, Arc, AtomicBool, BlockPump, Bot, Duration,
-    PumpControl, QuiesceParams, StageHandlers, StreamExt, SubscribeState, Watchdog, WsEvent,
-    WsIngestor, DEFAULT_BACKFILL_CHUNK_SIZE,
+    PumpControl, QuiesceParams, SessionEndFacts, StageHandlers, StreamExt, SubscribeState,
+    Watchdog, WsEvent, WsIngestor, DEFAULT_BACKFILL_CHUNK_SIZE,
 };
 
 impl BlockPump {
@@ -50,6 +50,10 @@ impl BlockPump {
                 stance::config(),
                 stance::config().pump.pump_debounce_ms,
             ),
+            stall_window: Duration::from_secs(super::liveness::PUMP_STALL_SECS),
+            stall: SessionEndFacts::channel().0,
+            #[cfg(any(test, feature = "test-fixtures"))]
+            park_gate: None,
         };
         // the dispatcher-side strict decode-miss fault follows the
         // pump's completeness stance (respecting any per-pump opt-out).

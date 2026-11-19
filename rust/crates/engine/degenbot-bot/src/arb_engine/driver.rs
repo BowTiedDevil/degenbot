@@ -61,7 +61,6 @@ use degenbot_eventhub::Hub;
 use degenbot_substrate::session_registry::PoolIdentity;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
-#[cfg(test)]
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
@@ -75,11 +74,12 @@ use crate::arb_engine::pump_session::{
     ConnectedSession, CrawlExit, CrawlTeardown, LiveLoop, MovePayload, PumpDecline, PumpEvent,
     PumpExit, PumpPhase, PumpSession,
 };
+use crate::arb_engine::session_end::{SessionEndCause, SessionEndFacts};
 use crate::arb_engine::session_events::{
     ClaimRefusal, ConsumerClaim, EventHandoff, SessionEvent, SessionStream,
 };
 use crate::arb_engine::EngineStages;
-use crate::bot_core::block_pump::{BlockPump, SubscribeState};
+use crate::bot_core::block_pump::{BlockPump, LivenessPhase, SubscribeState};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
 use crate::bot_core::{Bot, PumpControl, StageHandlers, VerifyLifecycle};
@@ -101,9 +101,12 @@ pub const SESSION_EVENT_CHANNEL_NAME: &str = "engine_session_event";
 /// shutdown flag, so a halted session unwinds the loop normally within one
 /// tick. Four ticks with margin is the window: long enough that a healthy pump
 /// always returns through its own machinery, short enough that teardown stays
-/// prompt. The escalation only exists for a loop parked somewhere that tick
-/// cannot reach (the `run_loop.rs` limitation note: a GIL re-entry park through
-/// `PySubscriberAdapter`, or engine-lock contention inside `on_drain`).
+/// prompt. The shutdown flag is raised from outside the loop too — by this
+/// teardown, and by the pump's independent liveness clock when the loop stops
+/// arriving (a GIL re-entry park through `PySubscriberAdapter`, engine-lock
+/// contention inside `on_drain`) — so a parked-but-reachable loop still lands
+/// cooperatively. The escalation exists only for a loop that never regains
+/// control at all; the [`LivenessPhase::Aborted`] phase is that landing.
 pub const PUMP_STOP_GRACE: Duration = Duration::from_secs(2);
 
 /// [`PUMP_STOP_GRACE`] in milliseconds, for the teardown log fields — the
@@ -487,6 +490,11 @@ pub struct EngineDriver {
     hub: Arc<Hub>,
     /// The one teardown's completion, shared by every `close` caller.
     close: tokio::sync::Mutex<Option<TeardownReport>>,
+    /// The live pump's independent stall facts, retained when `run` hands the
+    /// pump to its loop task. The fact IS the session's end cause when the
+    /// pump's liveness clock reported a stall, so
+    /// [`Self::wait_session_end`] prefers it over the plain pump-finished end.
+    stall_facts: Mutex<Option<SessionEndFacts>>,
     /// Test-only injected failure for the next `connect`.
     #[cfg(test)]
     connect_fault: Mutex<Option<ConnectFault>>,
@@ -613,6 +621,7 @@ impl EngineDriver {
             )),
             hub,
             close: tokio::sync::Mutex::new(None),
+            stall_facts: Mutex::new(None),
             #[cfg(test)]
             connect_fault: Mutex::new(None),
             #[cfg(test)]
@@ -983,6 +992,11 @@ impl EngineDriver {
             }
         };
 
+        // Retain the pump's own liveness facts before the loop task takes
+        // ownership: a stall its independent clock reports is this session's
+        // end cause, not an anonymous pump end.
+        *self.stall_facts.lock() = Some(pump.stall_facts());
+
         // Arm the completion broadcast: the sender is owned by the spawned task,
         // so wherever the pump ends — cooperative return, stream end, abort, or
         // panic — the sender drops and every `wait_pump_finished` waiter
@@ -1005,6 +1019,15 @@ impl EngineDriver {
             DriverError::Phase(phase_error("run", Some(PumpPhase::Subscribed), decline))
         })?;
         Ok(())
+    }
+
+    /// The pump's retained liveness fact, if its independent clock published
+    /// one — the end cause the session reports instead of a clean pump end.
+    pub(crate) fn pump_stall_fact(&self) -> Option<SessionEndCause> {
+        self.stall_facts
+            .lock()
+            .as_ref()
+            .and_then(SessionEndFacts::current)
     }
 
     /// The `S+1..W` range a resume must close, when the snapshot seed is behind
@@ -1119,7 +1142,15 @@ impl EngineDriver {
                 domain = pump,
                 "EngineDriver: BlockPump not running (no live loop to join)"
             ),
-            PumpExit::Aborted | PumpExit::JoinError => {}
+            PumpExit::Aborted => op_warn!(
+                domain = pump,
+                phase = LivenessPhase::Aborted.name(),
+                grace_ms = pump_stop_grace_ms(),
+                "EngineDriver: the pump loop did not unwind inside the grace — last-resort \
+                 abort (the cooperative close, including the independent liveness clock's \
+                 stall close, could not land)"
+            ),
+            PumpExit::JoinError => {}
         }
 
         // Final WalkMemo stats drain: the pump is down and no further cycle can
@@ -1306,6 +1337,13 @@ impl EngineDriver {
     /// A local pump over this driver's own seams: no WS endpoint, no dial.
     pub(crate) fn local_pump_for_test(&self) -> BlockPump {
         self.local_pump_for_fixture()
+    }
+
+    /// Hand the driver the pump liveness facts a running `run` would retain, so
+    /// a test can read [`EngineDriver::wait_session_end`]'s cause without a live
+    /// pump loop.
+    pub(crate) fn seed_stall_facts_for_test(&self, facts: SessionEndFacts) {
+        *self.stall_facts.lock() = Some(facts);
     }
 
     /// Build the session in a pose a test cannot reach without a live WS
@@ -2137,6 +2175,29 @@ mod tests {
     }
 
     // ── the completion broadcast ─────────────────────────────────────────
+
+    /// The pump's own liveness fact is the session's end cause: a stall close
+    /// reads as the unexpected session end, a clean end as the pump finishing.
+    #[test]
+    fn wait_session_end_prefers_the_pumps_stall_fact() {
+        let stalled = driver_for_test();
+        stalled.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
+        let (publisher, facts) = SessionEndFacts::channel();
+        publisher.publish(SessionEndCause::StallWatchdogTripped);
+        stalled.seed_stall_facts_for_test(facts);
+        assert_eq!(
+            runtime().block_on(stalled.wait_session_end()),
+            SessionEndCause::StallWatchdogTripped
+        );
+
+        let clean = driver_for_test();
+        clean.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
+        assert_eq!(
+            runtime().block_on(clean.wait_session_end()),
+            SessionEndCause::PumpFinished,
+            "a loop that ends on its own reports the plain pump-finished end"
+        );
+    }
 
     #[test]
     fn wait_pump_finished_resolves_after_the_armed_pump_ends() {

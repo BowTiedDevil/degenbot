@@ -40,7 +40,8 @@ pub enum SessionEndCause {
     /// The pump-completion surface resolved: the pump ended on its own (stream
     /// end, normal return, abort, or panic) outside `stop()`.
     PumpFinished,
-    /// No consume-loop beat arrived within the stall window.
+    /// No heartbeat beat arrived within the stall window — the consume loop's
+    /// or the pump loop's (see [`SessionEndDetection::stall_with`]).
     StallWatchdogTripped,
 }
 
@@ -369,6 +370,17 @@ pub struct SessionEndPublisher {
 }
 
 impl SessionEndPublisher {
+    /// The observation half of this publisher's channel. The publisher keeps the
+    /// channel open for as long as it lives, so a late waiter observes the
+    /// retained fact rather than a closed channel.
+    #[must_use]
+    pub fn facts(&self) -> SessionEndFacts {
+        SessionEndFacts {
+            rx: self.tx.subscribe(),
+            _keepalive: Arc::clone(&self.tx),
+        }
+    }
+
     /// Publish a detection fact. Idempotent: the FIRST cause wins and later
     /// publications are dropped, so a detection race still yields exactly one
     /// fact to every waiter.
@@ -476,6 +488,28 @@ impl SessionEndDetection {
         Self::from_future(stall_watchdog(heartbeat, stall_after))
     }
 
+    /// Arm stall detection over `heartbeat`, running `on_stall` on the OBSERVING
+    /// task as the stall is observed, before
+    /// [`SessionEndCause::StallWatchdogTripped`] is published.
+    ///
+    /// The hook belongs to the loop that owns the heartbeat: a stalled loop is
+    /// parked where it cannot act for itself, so the observer acts on its
+    /// behalf — raise the cooperative-close flag, record why — instead of
+    /// leaving the park for the owner's teardown grace to abort. It runs exactly
+    /// once, on the observer's task, and only when a whole window passed with no
+    /// beat.
+    #[must_use]
+    pub fn stall_with<F>(heartbeat: Heartbeat, stall_after: Duration, on_stall: F) -> Self
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        Self::from_future(async move {
+            let cause = stall_watchdog(heartbeat, stall_after).await;
+            on_stall();
+            cause
+        })
+    }
+
     /// Arm pump-finished detection over the driver's completion surface.
     #[must_use]
     pub fn pump_finished(driver: Arc<EngineDriver>) -> Self {
@@ -498,9 +532,23 @@ impl Drop for SessionEndDetection {
 impl EngineDriver {
     /// Await the session's end as the core detection fact — the public typed
     /// wrapper over the driver's internal pump-completion wait.
+    ///
+    /// A pump whose independent liveness clock reported a stall ended for that
+    /// reason, not because its stream or loop finished: the cause reads
+    /// [`SessionEndCause::StallWatchdogTripped`], so the ranking names the
+    /// unexpected session end instead of a clean pump end.
     pub async fn wait_session_end(&self) -> SessionEndCause {
         self.wait_pump_finished().await;
-        SessionEndCause::PumpFinished
+        self.session_end_cause()
+    }
+
+    /// The ended session's detection cause, read without waiting: the pump's own
+    /// stall fact when its liveness clock published one, else the plain
+    /// pump-finished end.
+    #[must_use]
+    pub fn session_end_cause(&self) -> SessionEndCause {
+        self.pump_stall_fact()
+            .unwrap_or(SessionEndCause::PumpFinished)
     }
 }
 
@@ -552,6 +600,57 @@ mod tests {
         let facts = detection.facts().clone();
         tokio::time::advance(Duration::from_millis(1_100)).await;
         assert_eq!(facts.wait().await, SessionEndCause::StallWatchdogTripped);
+    }
+
+    /// The stall hook runs exactly once, on the observing task, as the fact is
+    /// published — the parked loop's one way to act on its own stall.
+    #[tokio::test(start_paused = true)]
+    async fn a_stall_hook_runs_once_with_the_fact() {
+        let ran = Arc::new(AtomicU64::new(0));
+        let hook = Arc::clone(&ran);
+        let detection =
+            SessionEndDetection::stall_with(Heartbeat::new(), Duration::from_secs(1), move || {
+                hook.fetch_add(1, Ordering::Relaxed);
+            });
+        let facts = detection.facts().clone();
+        tokio::time::advance(Duration::from_millis(1_100)).await;
+        assert_eq!(facts.wait().await, SessionEndCause::StallWatchdogTripped);
+        assert_eq!(
+            ran.load(Ordering::Relaxed),
+            1,
+            "the hook runs exactly once, alongside the one fact"
+        );
+    }
+
+    /// A beating heartbeat never runs the hook: the hook is the stall's action,
+    /// not a per-window callback.
+    #[tokio::test(start_paused = true)]
+    async fn a_stall_hook_never_runs_while_beats_arrive() {
+        let ran = Arc::new(AtomicU64::new(0));
+        let heartbeat = Heartbeat::new();
+        let hook = Arc::clone(&ran);
+        let detection =
+            SessionEndDetection::stall_with(heartbeat.clone(), Duration::from_secs(1), move || {
+                hook.fetch_add(1, Ordering::Relaxed);
+            });
+        for _ in 0..6 {
+            tokio::time::advance(Duration::from_millis(500)).await;
+            heartbeat.beat();
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(ran.load(Ordering::Relaxed), 0);
+        assert_eq!(detection.facts().current(), None);
+    }
+
+    /// The publisher's observation half retains a fact published before the
+    /// handle was taken: a late waiter still observes it.
+    #[tokio::test]
+    async fn a_publisher_hands_out_the_observation_half() {
+        let (publisher, _early) = SessionEndFacts::channel();
+        publisher.publish(SessionEndCause::StallWatchdogTripped);
+        let late = publisher.facts();
+        assert_eq!(late.current(), Some(SessionEndCause::StallWatchdogTripped));
+        assert_eq!(late.wait().await, SessionEndCause::StallWatchdogTripped);
     }
 
     #[tokio::test]

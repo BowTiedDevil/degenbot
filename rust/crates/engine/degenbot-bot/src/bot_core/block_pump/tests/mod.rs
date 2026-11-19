@@ -70,6 +70,22 @@ impl BlockPump {
         self.watchdog.log_silence = silence;
     }
 
+    /// Test-only override of the independent liveness clock's stall window.
+    /// The production window is [`PUMP_STALL_SECS`]; scenarios drive a
+    /// sub-second one so a park is observable in virtual time.
+    pub fn set_stall_window_for_test(&mut self, window: Duration) {
+        self.stall_window = window;
+    }
+
+    /// Test-only park seam, installed on the loop's arrival: the loop awaits
+    /// this gate at the head of every iteration AFTER its beat, standing in for
+    /// the parks that cannot reach its select (a GIL re-entry, engine-lock
+    /// contention). Holding the gate from another task makes the loop execute
+    /// nothing at all.
+    pub fn set_park_gate_for_test(&mut self, gate: Arc<tokio::sync::Mutex<()>>) {
+        self.park_gate = Some(gate);
+    }
+
     /// Count of logs-silence alarms fired since the pump started (test
     /// observable for the logs-subscription liveness watchdog — incremented
     /// once per silence episode, re-armed when the next `WsEvent::Log`
@@ -1148,6 +1164,7 @@ fn header_receipts_resolve_the_drained_blocks_own_header() {
 
 mod backfill;
 mod canonical_head_edge;
+mod liveness;
 mod quiesce;
 mod reorg;
 mod resume;

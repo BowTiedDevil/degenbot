@@ -75,6 +75,8 @@ use degenbot_workers::posture::ThrottleSample;
 use futures_util::{stream, StreamExt};
 use tracing::Instrument;
 
+use crate::arb_engine::{SessionEndFacts, SessionEndPublisher};
+
 use crate::bot_core::LogDecision;
 use crate::bot_core::{
     stage_handlers::{Finalize, GateOutcome, Publish, Resolve, Solve},
@@ -282,6 +284,24 @@ pub struct BlockPump {
     /// now carries the live debounce value (`fixed_ms`; the retired
     /// `debounce_ms` field was its last read side).
     quiesce_params: QuiesceParams,
+    /// How long a live loop may go without an ARRIVAL before the independent
+    /// liveness clock reports it stalled (see [`liveness`]). Held as a field
+    /// (not read from the ambient stance inside the loop) so tests drive the
+    /// window directly.
+    stall_window: Duration,
+    /// The pump's independent stall channel: the one-shot
+    /// `StallWatchdogTripped` the out-of-loop liveness observer publishes when
+    /// the loop stops arriving, retained for every waiter
+    /// ([`BlockPump::stall_facts`]). A clean loop end publishes nothing.
+    stall: SessionEndPublisher,
+    /// Test-only park seam, awaited at the head of every loop iteration AFTER
+    /// the arrival beat and BEFORE the select: holding this gate from another
+    /// task makes the loop execute nothing at all, the shape of the two
+    /// production parks that cannot reach the select (a `PySubscriberAdapter`
+    /// GIL re-entry inside `drive_publish`, engine-lock contention inside the
+    /// stage hooks). Absent from production builds.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    park_gate: Option<Arc<tokio::sync::Mutex<()>>>,
 }
 
 /// State held between `subscribe()` and `resume()` calls.
@@ -302,8 +322,11 @@ pub struct SubscribeState {
 
 mod backfill;
 mod lifecycle;
+mod liveness;
 mod run_loop;
 mod stages;
+
+pub(crate) use liveness::LivenessPhase;
 
 #[cfg(any(test, feature = "test-fixtures"))]
 impl BlockPump {
@@ -355,7 +378,23 @@ impl BlockPump {
             // the slice deadline, so existing quiesce tests are unaffected;
             // the gap-stream tests below set the field explicitly.
             early_slice_ms: 25,
+            stall_window: Duration::from_secs(liveness::PUMP_STALL_SECS),
+            stall: SessionEndFacts::channel().0,
+            park_gate: None,
         }
+    }
+}
+
+impl BlockPump {
+    /// The pump loop's independent stall facts: the one-shot
+    /// `StallWatchdogTripped` fact its liveness clock publishes when the loop
+    /// stops arriving (a park before the select), retained for every waiter.
+    ///
+    /// A session watcher attaches this handle to rank a stall close as the
+    /// unexpected session end it is, rather than reading it as an ordinary one.
+    #[must_use]
+    pub fn stall_facts(&self) -> SessionEndFacts {
+        self.stall.facts()
     }
 }
 
