@@ -55,6 +55,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_METRICS_ADDR` | `telemetry.metrics_addr` | `string` | `127.0.0.1:9464` | `core` | Prometheus scrape endpoint bind address (only active when otel is on). |
 | `DEGENBOT_JAEGER_ENDPOINT` | `telemetry.jaeger_endpoint` | `string` | `http://127.0.0.1:4318` | `core` | OTLP endpoint used by the opt-in Jaeger E2E test. |
 | `DEGENBOT_JAEGER_E2E` | `telemetry.jaeger_e2e` | `bool` | `false` | `test-only` | Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint). |
+| `DEGENBOT_JAEGER_QUERY_ENDPOINT` | `telemetry.jaeger_query_endpoint` | `string` | `http://127.0.0.1:16686` | `test-only` | Jaeger query API the opt-in Jaeger E2E test reads back through to prove span receipt (test-only). |
 ## `diagnostics`
 
 | Env var | TOML key | Type | Default | Owner | Description |

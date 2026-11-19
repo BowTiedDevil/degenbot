@@ -118,6 +118,7 @@ pub const TEST_ONLY_KEYS: &[&str] = &[
     "simulation.probe_fixture",
     "simulation.probe_passes",
     "telemetry.jaeger_e2e",
+    "telemetry.jaeger_query_endpoint",
     "test_hooks.alloc_track",
     "test_hooks.self_abort_test",
     "test_hooks.unused_test_flag",
@@ -413,6 +414,8 @@ crate::config_schema! {
             doc = "OTLP endpoint used by the opt-in Jaeger E2E test.";
         jaeger_e2e [bool] = false, env = "DEGENBOT_JAEGER_E2E", def = "false",
             doc = "Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint).";
+        jaeger_query_endpoint [string] = String::from("http://127.0.0.1:16686"), env = "DEGENBOT_JAEGER_QUERY_ENDPOINT", def = "http://127.0.0.1:16686",
+            doc = "Jaeger query API the opt-in Jaeger E2E test reads back through to prove span receipt (test-only).";
     }
 
     // The driver cockpit's incident probes: the per-interval tracemalloc
@@ -1562,7 +1565,7 @@ mod tests {
         }
         assert_eq!(
             TEST_ONLY_KEYS.len(),
-            15,
+            16,
             "the test-only census changed: give the fixture a review, or move the key"
         );
     }

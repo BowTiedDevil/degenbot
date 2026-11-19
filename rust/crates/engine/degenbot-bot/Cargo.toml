@@ -53,18 +53,15 @@ futures-util = { version = "^0.3", default-features = false, features = ["async-
 # `lib_off.rs`) — zero compile-time or runtime cost in default builds. Enable
 # the `hotpath` / `hotpath-cpu` / `hotpath-alloc` features below (or in a
 # consumer crate) to turn the macros into real instrumentation.
-# OpenTelemetry tracer bullet. All four are optional: default
-# builds compile zero OTel code. Version-locked trio: tracing-opentelemetry
-# 0.33 is built against opentelemetry(-sdk) 0.32; bump them together.
-# opentelemetry-otlp: OTLP/HTTP-protobuf over rustls (no OpenSSL system dep);
-# http-proto pulls in the trace (+metrics proto) signal set.
+# OpenTelemetry tracer bullet. All optional: default builds compile zero OTel
+# code. Version-locked set: tracing-opentelemetry 0.34 is built against
+# opentelemetry(-sdk/-otlp) 0.33; bump them together.
+# opentelemetry-otlp: OTLP/HTTP-protobuf over rustls (no OpenSSL system dep),
+# carrying the SDK's own reqwest client; http-proto pulls in the trace
+# (+metrics proto) signal set.
 opentelemetry = { version = "0.33", optional = true, default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls"] }
 opentelemetry_sdk = { version = "0.33", optional = true, default-features = false, features = ["trace", "metrics", "experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio-current-thread"] }
-# HttpClient trait for our custom exporter client (see src/otel.rs reqwest-timeout note).
-opentelemetry-http = { version = "0.33", optional = true, default-features = false }
-reqwest = { version = "0.13", optional = true, default-features = false, features = ["rustls"] }
-http = { version = "1", optional = true }
 tracing-opentelemetry = { version = "0.34", optional = true, default-features = false }
 # Regular (optional) counterpart of the dev-dependency below: init_otel_tracing
 # composes a tracing-subscriber registry at the call site, so the crate needs
@@ -106,7 +103,7 @@ allocator-ctrl = ["dep:libmimalloc-sys", "libmimalloc-sys/extended"]
 # T1 metrics pipeline rides the same feature gate: opentelemetry-prometheus
 # (Prometheus text-format reader for Grafana scrapes) + the prometheus crate
 # (registry + TextEncoder). Same zero-footprint rule as the trace deps.
-otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber", "dep:opentelemetry-prometheus", "dep:prometheus", "dep:opentelemetry-http", "dep:reqwest", "dep:http"]
+otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber", "dep:opentelemetry-prometheus", "dep:prometheus"]
 # Drain-path profiling tracer bullet (see `src/profiling.rs`). Enable with
 # `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
 # only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
